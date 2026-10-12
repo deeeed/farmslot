@@ -14,14 +14,15 @@ follow refs. Source configuration MUST belong to the gateway's farm configuratio
 outside the materialized pack it bootstraps. It MUST include every transitive
 source dependency used by a selected execution; undeclared imports MUST fail.
 
-| Record                  | Required facts                                                                                                                                               |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `SourceDeclaration`     | Stable `id`, `kind` of `pack`, `recipe-library` or `helper`, credential-free `repo`, `ref` defaulting to `main`.                                             |
-| `SourcePin`             | Source ID, selection of experiment branch or explicit main override, ref, scope and target ID, actor, declaration revision, base main commit, creation time. |
-| `SourceLock`            | Schema version, monotonically increasing generation, canonical digest, declaration/pin revisions, resolution time and complete source entries.               |
-| Lock entry              | Source ID/kind/repository, declared and effective refs, exact Git object ID and object format, selected scope, pin context and dependency closure.           |
-| Materialization receipt | Execution node or gateway identity, lock digest, source commits, verified tree digests, protection result and verification time.                             |
-| Run provenance          | Attempt identity, lock digest and immutable lock entries, materialization receipt IDs and consumed pack/library/helper bindings.                             |
+| Record                  | Required facts                                                                                                                                                                                     |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SourceDeclaration`     | Stable `id`, `kind` of `pack`, `recipe-library` or `helper`, credential-free `repo`, `ref` defaulting to `main`.                                                                                   |
+| `SourcePin`             | Source ID, selection of experiment branch or explicit main override, ref, scope and target ID, actor, declaration revision, base main commit, creation time.                                       |
+| `SourceResolution`      | Source ID, effective ref, declaration revision, independently increasing generation, exact fetched commit, last successful resolution and current resolved/stale/failed status.                    |
+| `SourceLock`            | Schema version, admission context, generation within that context, canonical digest, declaration/pin revisions, resolution time and complete selected-closure entries with resolution generations. |
+| Lock entry              | Source ID/kind/repository, declared and effective refs, exact Git object ID and object format, selected scope, pin context and dependency closure.                                                 |
+| Materialization receipt | Execution node or gateway identity, lock digest, source commits, verified tree digests, protection result and verification time.                                                                   |
+| Run provenance          | Attempt identity, lock digest and immutable lock entries, materialization receipt IDs and consumed pack/library/helper bindings.                                                                   |
 
 Repository identity MUST be canonicalized consistently across authentication,
 locks and caches. Credentials, local checkout paths and embedded URL credentials
@@ -43,6 +44,14 @@ require a schema version transition, not be ignored by an older node.
 
 ## Resolution and branch updates
 
+Resolution records MUST be maintained independently for each source ID/effective
+ref/declaration revision. A failed record MAY retain its last verified commit in
+cache, but MUST be marked failed or stale and MUST NOT be used in a new lock.
+A source lock MUST be composed for one admission context: selected run inputs
+over node selections over farm selections, restricted to the selected closure.
+There is no single farm-wide generation whose publication waits on unrelated
+repositories. All entries in a new effective lock MUST be current and verified.
+
 The gateway MUST resolve and fetch every required commit before publishing a new
 lock generation. Publication MUST be atomic for the dependency closure. Failure
 of any required source MUST leave the prior complete lock intact and expose the
@@ -59,8 +68,9 @@ require an explicit declaration revision before adoption.
 A force-pushed branch MUST resolve to its newly observed commit after complete
 fetch and validation, with an audited `ref-rewritten` transition containing old
 and new commits. Automatic tracking MUST NOT rewrite existing run provenance or
-delete referenced old objects. An unavailable old or new commit MUST refuse the
-affected admission; another branch or a nearby commit is never a substitute.
+delete referenced old objects. An unavailable new commit MUST refuse new
+admission. An unavailable old commit MUST refuse only work/replay requiring that
+old lock; another branch or a nearby commit is never a substitute.
 
 The resolver MUST define a bounded polling/reconciliation interval and expose
 last successful resolution, pending updates and failures. A selected closure
@@ -129,7 +139,8 @@ repository-relative entry paths. No loose checkout or deployment-copy fallback
 is allowed. Changes to pack/library/helper inputs MUST preserve existing library
 precedence, qualified references and dependency authorization under ADR-068.
 
-Node status MUST report expected/current lock digests, actual source commits,
+Node status MUST report node-scope effective lock digests for eligible closures,
+the composed lock digest per admitted run, actual source commits,
 protection/integrity results and drift reasons. Missing reports, a modified tree,
 substituted repository, missing commit or mismatched lock MUST refuse new work.
 An older generation intentionally retained by an active run is not undeclared
@@ -151,6 +162,11 @@ replace, restart or unmount active inputs.
 | Branch deleted/force-pushed; commit no longer fetchable    | Report the exact missing object/ref and preserve old run locks. Use retained verified objects where available; otherwise refuse, with no ref or commit fallback.                                                                                  |
 | Partial fetch or lost acknowledgement                      | Preserve the prior complete generation. Reconcile the operation ID and receipt before retry; no partial source set is eligible.                                                                                                                   |
 | Invalid configuration, unsupported schema or unknown drift | Expose the reason and refuse affected admission rather than infer defaults or report clean.                                                                                                                                                       |
+
+Retained objects for deleted or unfetchable refs MUST serve only already-locked
+work and replay. New admission on that ref MUST refuse and status MUST show it
+as dangling. Later attempts of an admitted run MUST reuse its frozen lock and
+refuse when exact retained inputs are missing.
 
 Source locks and receipts referenced by retained runs/evidence MUST be retained
 with their provenance under ADR-062. Objects/materializations needed by active
@@ -181,7 +197,7 @@ materialize; it MUST NOT restart services, execute project hooks or grant leases
 Read-only status MUST NOT fetch, acknowledge or repair sources.
 
 `@farmslot/protocol` owns proposed exports `SourceDeclaration`, `SourcePin`,
-`SourceLock`, `SourceMaterializationReceipt`, `RunSourceProvenance`, typed
+`SourceResolution`, `SourceLock`, `SourceMaterializationReceipt`, `RunSourceProvenance`, typed
 `SourcesStatusParams/Result`, `SourcesSyncParams/Result`,
 `SourcesPinParams/Result`, `SourcesUnpinParams/Result`, `SourceStatusViewModel`,
 `deriveSourceStatusView` and `validateSourceSelection`. Gateway/node RPCs,

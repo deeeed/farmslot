@@ -27,6 +27,9 @@ stable ID, repository identity and ref. The default ref is `main`. The gateway
 resolves those declarations and scoped branch pins into exact commits and
 publishes complete, versioned source locks. Branch-tracking refs auto-advance;
 an admitted run keeps its original lock even when a branch moves.
+Resolution records are versioned independently per source/ref. Each lock covers
+one admission context and selected dependency closure, so an unrelated source's
+failure cannot prevent a complete, current closure from being admitted.
 
 Nodes materialize the locked commits into immutable, read-only source trees
 before admission. They report the expected lock, actual commits and integrity
