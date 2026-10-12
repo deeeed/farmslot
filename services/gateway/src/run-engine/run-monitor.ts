@@ -59,6 +59,7 @@ import {
   sendRunnerInstructionWithOutcome,
   stripRunnerNoise,
 } from '../runners/registry.js';
+import { readRunProgress, runDecisionWaitingStatus } from '../runners/run-progress.js';
 import {
   isRunnerAliveUnderPane,
   resolveRunnerSessionForRun,
@@ -2643,8 +2644,13 @@ async function createBlockedDecision(
         : undefined,
   };
 
+  const progress = await readRunProgress(run);
+  if (!current()) return 'abort';
   run.decisions.push(decision);
-  updateRun(runId, { status: 'blocked', decisions: run.decisions });
+  updateRun(runId, {
+    status: runDecisionWaitingStatus(run, progress, reason),
+    decisions: run.decisions,
+  });
   broadcastFn(Events.RUN_DECISION_NEW, {
     runId,
     decision: pendingDecisionForRun(run, decision),

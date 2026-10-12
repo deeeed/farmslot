@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Show shared gate prerequisite reasons and run lifecycle labels for correction, review failure and reconciliation.
+
 - Inspect each review finding at its reviewed revision and select which finding comments to publish. Android report dialogs retain the shared recipe HUD.
 - Active-development baseline; add user-facing changes here before release or package publication.
 - Release cuts ship production Android to Play internal and closed testing, verify both tracks, and require an explicit iOS platform.

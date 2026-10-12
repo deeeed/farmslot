@@ -16,8 +16,10 @@ import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
+  ACTIVE_RUN_STATUSES,
   type AgentContext,
   type AgentContextStatus,
+  agentContextStatusFromRunStatus,
   agentContextTaskFile,
   agentRoleLabel,
   closeStepWait,
@@ -135,17 +137,10 @@ export function runSessionArchiveDir(runId: string): string {
 }
 
 const ACTIVE_STATUSES: Set<RunStatus> = new Set([
+  ...ACTIVE_RUN_STATUSES,
   'created',
-  'grading',
-  'writing-task',
-  'slot-finding',
-  'preparing',
-  'dispatching',
-  'monitoring',
-  'reviewing',
+  'review-failed',
   'human-gating',
-  'completing',
-  'ci-watching',
   'paused',
   'blocked',
 ]);
@@ -228,14 +223,6 @@ function initialAgentContextsForRun(
       updatedAt: run.updatedAt,
     },
   ];
-}
-
-function agentContextStatusFromRunStatus(status: Run['status']): AgentContextStatus {
-  if (status === 'done') return 'complete';
-  if (status === 'failed' || status === 'cancelled') return 'failed';
-  if (status === 'blocked') return 'blocked';
-  if (status === 'paused') return 'waiting';
-  return 'working';
 }
 
 function syncPrimaryAgentContextStatus(

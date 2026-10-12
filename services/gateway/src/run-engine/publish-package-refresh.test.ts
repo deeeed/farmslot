@@ -523,6 +523,7 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
       entry.id === decision.id
         ? {
             ...entry,
+            context: undefined,
             actions: [
               ...entry.actions,
               {
@@ -548,6 +549,7 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
       },
     },
     () => {},
+    { assertGatePrerequisites: async () => {} },
   );
   assert.equal(
     getRun(run.id)!.decisions.find((entry) => entry.id === decision.id)?.resolvedAction,
