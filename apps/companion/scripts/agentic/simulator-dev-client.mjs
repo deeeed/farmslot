@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 
 function simulatorMetroOrigin() {
   const port = process.env.METRO_PORT;
@@ -8,16 +9,17 @@ function simulatorMetroOrigin() {
   return `http://${host}:${port}`;
 }
 
+export function devClientUrl(origin = simulatorMetroOrigin()) {
+  const scheme = process.env.SCHEME ?? 'farmslot-development';
+  const url = new URL(`${scheme}://expo-development-client/`);
+  url.searchParams.set('url', origin);
+  url.searchParams.set('disableOnboarding', '1');
+  return url.toString();
+}
+
 /** Open the installed client on the proof's Metro, rather than its cached bundle. */
 export async function openSimulatorDevClient(simulator, { waitForBridge = true } = {}) {
-  const origin = simulatorMetroOrigin();
-  const scheme = process.env.SCHEME ?? 'farmslot-development';
-  execFileSync('xcrun', [
-    'simctl',
-    'openurl',
-    simulator,
-    `${scheme}://expo-development-client/?url=${encodeURIComponent(origin)}`,
-  ]);
+  execFileSync('xcrun', ['simctl', 'openurl', simulator, devClientUrl()]);
   if (!waitForBridge) return;
   await waitForSimulatorRecipeBridge();
 }
@@ -46,8 +48,6 @@ export async function waitForSimulatorRecipeBridge({ platform = 'ios' } = {}) {
 }
 
 export async function openAndroidDevClient(serial, bundleId) {
-  const origin = simulatorMetroOrigin();
-  const scheme = process.env.SCHEME ?? 'farmslot-development';
   execFileSync('adb', [
     '-s',
     serial,
@@ -58,9 +58,14 @@ export async function openAndroidDevClient(serial, bundleId) {
     '-a',
     'android.intent.action.VIEW',
     '-d',
-    `${scheme}://expo-development-client/?url=${encodeURIComponent(origin)}`,
+    `'${devClientUrl().replaceAll("'", "'\\''")}'`,
     '-p',
     bundleId,
   ]);
   await waitForSimulatorRecipeBridge({ platform: 'android' });
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  assert.equal(process.argv[2], 'url', 'Usage: simulator-dev-client.mjs url <metro-origin>');
+  process.stdout.write(devClientUrl(process.argv[3]));
 }

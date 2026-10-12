@@ -46,7 +46,7 @@ start_metro_background() {
   local config_file="${APP_DIR}/.agent/metro-${METRO_PORT}.env"
   local metro_session="farmslot-companion-metro-${METRO_PORT}"
   local expected_config
-  printf -v expected_config 'APP_VARIANT=%s\nGATEWAY_PORT=%s\nGATEWAY_URL=%s\nPACKAGER_HOST=%s' \
+  printf -v expected_config 'APP_VARIANT=%s\nGATEWAY_PORT=%s\nGATEWAY_URL=%s\nPACKAGER_HOST=%s\nWATCH=1\nPREPARED=1' \
     "${APP_VARIANT}" \
     "${GATEWAY_PORT}" \
     "${COMPANION_GATEWAY_URL}" \
@@ -88,13 +88,13 @@ start_metro_background() {
   fi
   local metro_command
   printf -v metro_command '%q ' \
-    env \
-    CI=1 \
+    env -u CI \
     APP_VARIANT="${APP_VARIANT}" \
     METRO_PORT="${METRO_PORT}" \
     GATEWAY_PORT="${GATEWAY_PORT}" \
     EXPO_PUBLIC_GATEWAY_URL="${COMPANION_GATEWAY_URL}" \
     EXPO_PUBLIC_FARMSLOT_RECIPE_BRIDGE=1 \
+    EXPO_PUBLIC_FARMSLOT_PREPARED=1 \
     REACT_NATIVE_PACKAGER_HOSTNAME="${COMPANION_PACKAGER_HOSTNAME}" \
     yarn expo start --dev-client --port "${METRO_PORT}" --lan
   printf -v metro_command '%s >>%q 2>&1' "${metro_command}" "${log_file}"
@@ -144,16 +144,16 @@ check_gateway() {
 
 if [[ "$MODE" == "full" ]]; then
   boot_ios_sim_if_needed
+  start_metro_background
   if [[ -n "$SIM_NAME" ]]; then
     # run-ios.sh installs simulator builds without Expo's bundler; start the managed Metro first.
-    start_metro_background
     PLATFORM=ios DEVICE_MODE=simulator IOS_SIMULATOR="${SIM_NAME}" \
       METRO_PORT="${METRO_PORT}" GATEWAY_PORT="${GATEWAY_PORT}" \
       bash "${SCRIPT_DIR}/run-ios.sh"
   elif [[ -n "$ADB_TARGET" ]]; then
     PLATFORM=android DEVICE_MODE=device ADB_SERIAL="${ADB_TARGET}" \
       METRO_PORT="${METRO_PORT}" GATEWAY_PORT="${GATEWAY_PORT}" \
-      bash "${SCRIPT_DIR}/run-android.sh"
+      bash "${SCRIPT_DIR}/run-android.sh" -- --no-bundler
   else
     echo "[prepare-profile] full requires IOS_SIMULATOR or ADB_SERIAL" >&2
     exit 1
@@ -161,6 +161,12 @@ if [[ "$MODE" == "full" ]]; then
 else
   boot_ios_sim_if_needed
   start_metro_background
+fi
+
+if [[ -n "$SIM_NAME" ]]; then
+  node "${SCRIPT_DIR}/prepare-dev-client.mjs" ios "${SIM_NAME}" "${BUNDLE_ID}"
+elif [[ -n "$ADB_TARGET" ]]; then
+  node "${SCRIPT_DIR}/prepare-dev-client.mjs" android "${ADB_TARGET}" "${BUNDLE_ID}"
 fi
 
 check_gateway || true

@@ -153,7 +153,7 @@ companion_run_ios_simulator() {
   app_path="${derived}/Build/Products/Debug-iphonesimulator/${scheme}.app"
   xcrun simctl install "${udid}" "${app_path}"
   xcrun simctl openurl "${udid}" \
-    "${SCHEME}://expo-development-client/?url=$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "${metro_url}")"
+    "$(SCHEME="${SCHEME}" node "${SCRIPT_DIR}/simulator-dev-client.mjs" url "${metro_url}")"
   echo "[run-ios] Installed ${BUNDLE_ID} on ${udid}; dev client opened on ${metro_url}"
 }
 
