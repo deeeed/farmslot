@@ -1,14 +1,17 @@
+import path from 'node:path';
+
 import {
   normalizeRecipeRef,
   type RecipeResolutionDocument,
   type RecipeResolutionEdge,
   type RecipeSourceProvenance,
   resolvedRecipeArtifactPath,
+  validateResolvedRecipeActionNode,
 } from '@farmslot/protocol';
 
 import { DEFAULT_MAX_RECIPE_CALL_DEPTH } from './execution.js';
 import { extractWorkflowGraph } from './graph.js';
-import { isRecord } from './json.js';
+import { isRecord, normalizeRelativePath } from './json.js';
 import type { ResolvedLibraryRecipe } from './library.js';
 import { resolveRecipeParams, resolveRecipeValue } from './parameters.js';
 import { RecipeResolutionError } from './resolution-error.js';
@@ -23,29 +26,48 @@ export function rootResolutionRef(digest: string): string {
   return `$root:${digest}`;
 }
 
-/** Validate every static call boundary after parent defaults and parameters are applied. */
+/** Validate static invocations and return their run-scoped log paths before effects. */
 export function validateRecipeDependencyParams(options: {
   root: Record<string, unknown>;
   params: Record<string, unknown>;
   recipes: ReadonlyMap<string, ResolvedLibraryRecipe>;
-}): void {
+  actionManifest?: unknown;
+}): Set<string> {
+  const runLogPaths = new Set<string>();
   const visit = (document: Record<string, unknown>, params: Record<string, unknown>): void => {
     for (const [nodeId, rawNode] of Object.entries(extractWorkflowGraph(document).nodes)) {
-      if (rawNode.action !== 'call' || typeof rawNode.ref !== 'string') continue;
-      const ref = normalizeRecipeRef(rawNode.ref);
+      const node = resolveRecipeValue(rawNode, params, undefined, { nodeId });
+      if (!isRecord(node)) continue;
+      if (node.action === 'watch_logs' && options.actionManifest) {
+        const validation = validateResolvedRecipeActionNode(node, options.actionManifest, {
+          allowTemplates: true,
+        });
+        if (validation.status === 'invalid') {
+          throw new RecipeResolutionError(
+            'RECIPE_PARAMS_INVALID',
+            `Recipe node ${nodeId}: ${validation.findings.map((finding) => finding.message).join('; ')}`,
+            'correct the log observation parameters before running the recipe',
+          );
+        }
+        if (node.scope !== 'file' && typeof node.path === 'string') {
+          runLogPaths.add(normalizeRelativePath(node.path).split(path.sep).join('/'));
+        }
+      }
+      if (node.action !== 'call' || typeof node.ref !== 'string') continue;
+      const ref = normalizeRecipeRef(node.ref);
       const dependency = options.recipes.get(ref);
       if (!dependency) continue;
-      const node = resolveRecipeValue(rawNode, params, undefined, { nodeId });
       const childParams = resolveRecipeParams(
         ref,
         dependency.document,
-        isRecord(node) && isRecord(node.params) ? node.params : {},
+        isRecord(node.params) ? node.params : {},
         { allowTemplates: true },
       );
       visit(dependency.document, childParams);
     }
   };
   visit(options.root, options.params);
+  return runLogPaths;
 }
 
 /** Resolve the exact static recipe call DAG before any side effect. */

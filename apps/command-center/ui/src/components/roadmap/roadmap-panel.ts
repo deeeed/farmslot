@@ -62,12 +62,12 @@ import {
 } from '../shared/planning-projects.js';
 import {
   applyWorkInventorySort,
-  inventoryShowsBackAffordance,
+  focusWorkInventoryRow,
   inventoryShowsDetail,
   inventoryShowsList,
   nextSortState,
   parseWorkInventorySort,
-  renderWorkInventoryBackButton,
+  renderWorkInventoryDetailClose,
   renderWorkInventoryLayout,
   renderWorkInventoryRow,
   renderWorkInventoryTable,
@@ -196,6 +196,7 @@ export class RoadmapPanel extends LitElement {
    * filter/search change that was already in flight.
    */
   private _listGeneration = 0;
+  private _selectionGeneration = 0;
   private _deliveryReloadInFlight = false;
   private _deliveryReloadQueued = false;
   /**
@@ -213,6 +214,7 @@ export class RoadmapPanel extends LitElement {
   @state() private _workGraphs: WorkGraphProjection[] = [];
   @state() private _globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private _selectedId = '';
+  private _selectionDismissed = false;
   @state() private _narrowViewport = false;
   @state() private _forceInventoryList = false;
   private _narrowMedia?: MediaQueryList;
@@ -522,7 +524,6 @@ export class RoadmapPanel extends LitElement {
       }
       .row.selected {
         border-color: ${unsafeCSS(colors.accent)}99;
-        background: ${unsafeCSS(colors.accent)}11;
       }
       .title {
         font-weight: 700;
@@ -853,7 +854,11 @@ export class RoadmapPanel extends LitElement {
     const { route, params } = parseHashRoute();
     if (!isRoadmapRoute(route)) return;
     const selectedParam = params.get(ROADMAP_ITEM_PARAM)?.trim() ?? '';
-    this._selectedId = selectedParam || this._selectedId || this.items?.[0]?.id || '';
+    this._selectedId =
+      selectedParam ||
+      this._selectedId ||
+      (!this._selectionDismissed ? this.items?.[0]?.id : '') ||
+      '';
     this._editorMode =
       this._selectedId && params.get(ROADMAP_MODE_PARAM) === 'edit' ? 'edit' : 'view';
     this._runnerPickerOpen = params.get(ROADMAP_RUNNER_PICKER_PARAM) === '1';
@@ -932,8 +937,7 @@ export class RoadmapPanel extends LitElement {
     if (this.items) {
       this._allItems = this.items;
       const visibleItems = this._items;
-      const selected =
-        visibleItems.find((item) => item.id === this._selectedId) ?? visibleItems[0] ?? null;
+      const selected = this._resolveSelectedItem(visibleItems);
       if (!selected || this._editHash !== selected.fileHash) {
         this._syncEditor(selected);
         this._writeUrlState();
@@ -971,7 +975,7 @@ export class RoadmapPanel extends LitElement {
       if (this._allItems.length > 0) {
         const visibleItems = this._items;
         if (!visibleItems.some((item) => item.id === this._selectedId)) {
-          this._syncEditor(visibleItems[0] ?? null);
+          this._syncEditor(this._resolveSelectedItem(visibleItems));
           this._writeUrlState();
         }
       }
@@ -1065,8 +1069,18 @@ export class RoadmapPanel extends LitElement {
     return sortRoadmapItems(visible, this._sortKey, this._sortDirection);
   }
 
+  private _resolveSelectedItem(
+    items: RoadmapItem[],
+    selectedId = this._selectedId,
+  ): RoadmapItem | null {
+    return (
+      items.find((item) => item.id === selectedId) ??
+      (this._selectionDismissed ? null : (items[0] ?? null))
+    );
+  }
+
   private get _selected(): RoadmapItem | null {
-    return this._items.find((item) => item.id === this._selectedId) ?? this._items[0] ?? null;
+    return this._resolveSelectedItem(this._items);
   }
 
   private _openRunnerPicker() {
@@ -1228,7 +1242,10 @@ export class RoadmapPanel extends LitElement {
     if (!this._promptPreviews[promptPath]) void this._loadPromptPreview(promptPath);
   }
 
-  private async _refresh(selectId = this._selectedId) {
+  private async _refresh(
+    selectId = this._selectedId,
+    selectionGeneration = this._selectionGeneration,
+  ) {
     if (this.items) {
       this._syncState(getState());
       return;
@@ -1261,7 +1278,10 @@ export class RoadmapPanel extends LitElement {
       // the cached one for the same item id.
       this._deliveryDetail = null;
       const visibleItems = this._items;
-      const selected = visibleItems.find((item) => item.id === selectId) ?? visibleItems[0] ?? null;
+      const selected = this._resolveSelectedItem(
+        visibleItems,
+        selectionGeneration === this._selectionGeneration ? selectId : this._selectedId,
+      );
       this._syncEditor(selected);
       this._writeUrlState();
     } catch (err) {
@@ -1274,6 +1294,7 @@ export class RoadmapPanel extends LitElement {
 
   private async _create(event: Event) {
     event.preventDefault();
+    const selectionGeneration = this._selectionGeneration;
     this._busy = 'create';
     this._error = '';
     this._message = '';
@@ -1299,7 +1320,7 @@ export class RoadmapPanel extends LitElement {
       });
       this._newTargetProjectsTouched = false;
       this._message = 'Roadmap item captured';
-      await this._refresh(result.item.id);
+      await this._refresh(result.item.id, selectionGeneration);
     } catch (err) {
       this._error = (err as Error).message;
     } finally {
@@ -1309,6 +1330,7 @@ export class RoadmapPanel extends LitElement {
 
   private async _saveSelected() {
     if (!this._selected) return;
+    const selectionGeneration = this._selectionGeneration;
     this._busy = 'save';
     this._error = '';
     this._message = '';
@@ -1328,7 +1350,7 @@ export class RoadmapPanel extends LitElement {
         },
       });
       this._message = 'Roadmap item saved';
-      await this._refresh(result.item.id);
+      await this._refresh(result.item.id, selectionGeneration);
     } catch (err) {
       this._error = (err as Error).message;
     } finally {
@@ -1338,6 +1360,7 @@ export class RoadmapPanel extends LitElement {
 
   private async _refineSelected(launch: boolean) {
     if (!this._selected) return;
+    const selectionGeneration = this._selectionGeneration;
     this._busy = launch ? 'refine-launch' : 'refine';
     this._error = '';
     this._message = '';
@@ -1362,7 +1385,7 @@ export class RoadmapPanel extends LitElement {
           : `Refinement terminal reopened${runnerSuffix}: ${result.attachCommand}`
         : `Refinement prompt ready${runnerSuffix}: ${result.promptPath}`;
       if (launch) this._setRunnerPickerOpen(false);
-      await this._refresh(result.item.id);
+      await this._refresh(result.item.id, selectionGeneration);
       if (launch && result.tmuxWorker) this._navigateToWorkerTerminal(result.tmuxWorker);
     } catch (err) {
       this._error = (err as Error).message;
@@ -1548,6 +1571,7 @@ export class RoadmapPanel extends LitElement {
 
   private async _promoteSelected() {
     if (!this._selected) return;
+    const selectionGeneration = this._selectionGeneration;
     this._busy = 'promote';
     this._error = '';
     this._message = '';
@@ -1563,7 +1587,7 @@ export class RoadmapPanel extends LitElement {
         })),
       });
       this._message = `Promoted ${result.backlogItems.length} backlog spec${result.backlogItems.length === 1 ? '' : 's'}`;
-      await this._refresh(result.roadmapItem.id);
+      await this._refresh(result.roadmapItem.id, selectionGeneration);
     } catch (err) {
       this._error = (err as Error).message;
     } finally {
@@ -1668,6 +1692,8 @@ export class RoadmapPanel extends LitElement {
   }
 
   private _selectItem(item: RoadmapItem, mode: RoadmapEditorMode = 'view') {
+    this._selectionGeneration++;
+    this._selectionDismissed = false;
     this._syncEditor(item);
     this._editorMode = mode;
     this._forceInventoryList = false;
@@ -1676,6 +1702,15 @@ export class RoadmapPanel extends LitElement {
 
   private _backToInventoryList() {
     this._forceInventoryList = true;
+  }
+
+  private _deselectItem() {
+    const id = this._selectedId;
+    this._selectionGeneration++;
+    this._selectionDismissed = true;
+    this._syncEditor(null);
+    this._writeUrlState();
+    void this.updateComplete.then(() => focusWorkInventoryRow(this.renderRoot, id));
   }
 
   private _setEditorMode(mode: RoadmapEditorMode) {
@@ -2252,10 +2287,11 @@ export class RoadmapPanel extends LitElement {
     return renderWorkInventoryRow({
       row: {
         id: item.id,
-        selected: this._selectedId === item.id,
+        selected: this._selectedId === item.id && !this._forceInventoryList,
         className: 'row',
         testId: `roadmap-row-${item.id}`,
         onActivate: () => this._selectItem(item),
+        onDeselect: () => this._deselectItem(),
       },
       cells: [
         renderPlanningBadge(item.stage, statusTone(item.stage)),
@@ -2715,12 +2751,12 @@ export class RoadmapPanel extends LitElement {
             })}
           </div>
         </div>`;
-        const detail = html`${inventoryShowsBackAffordance(layout)
-            ? renderWorkInventoryBackButton({
-                testId: 'work-inventory-back',
-                onBack: () => this._backToInventoryList(),
-              })
-            : nothing}
+        const detail = html`${renderWorkInventoryDetailClose({
+            layout,
+            testId: 'work-inventory-back',
+            onBack: () => this._backToInventoryList(),
+            onClose: () => this._deselectItem(),
+          })}
           <div class="shell">${this._renderEditor()}</div>`;
         return renderWorkInventoryLayout({
           list,

@@ -71,6 +71,19 @@ Per-worktree device pins live in gitignored `apps/companion/scripts/agentic/agen
 
 ## Companion bridge proof — critical gotchas
 
+### Leased Metro serves a frozen bundle
+
+The prepared Metro runs with `CI=1` and does not watch files. After an app edit,
+restart it with `--clear`, asking the operator when the lease is not yours. Before
+a device run, grep the served bundle for a string the edit introduced.
+Remove this stopgap once Companion prepare supports file watching or a worker-callable clear restart.
+
+### Pressables need an accessibility role
+
+agent-device skips role-less elements and taps the nearest hittable ancestor's centre,
+so a successful press can land on another control. Give pressables an
+`accessibilityRole` and assert each press's effect.
+
 ### The app/dev client must be launched, not just Metro
 
 `companion-warm` prepare starts Metro and the simulator, but the React Native bridge is only

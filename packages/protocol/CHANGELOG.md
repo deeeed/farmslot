@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Share the five-round review budget and its gate display independently of passing-review counts.
+- Validate bounded `watch_logs` windows and require explicit file scope for output-derived log paths.
 
 - Share gate prerequisite reasons and presentation for fixing, reviewer failure and reconciliation states.
 - Share review finding curation and bind publication choices to the reviewed content.
