@@ -125,9 +125,9 @@ function expandTemplateInternal(
   result = result.replaceAll('{{farmslot_dir}}', farmslotDir);
   result = result.replaceAll('{{FARMSLOT_DIR}}', farmslotDir);
   // Legacy aliases
-  const watcherPort = slotVars.resourceVars.metro_port?.trim() || slotVars.resourceVars.port || '';
-  result = result.replaceAll('{{WATCHER_PORT}}', watcherPort);
-  result = result.replaceAll('{{watcher_port}}', watcherPort);
+  const port = slotVars.resourceVars.port ?? '';
+  result = result.replaceAll('{{WATCHER_PORT}}', port);
+  result = result.replaceAll('{{watcher_port}}', port);
   // SESSION = configured tmux session name. Do not infer it from slot id:
   // machine ids can contain hyphens and session names are independently configured.
   const session = slotVars.session;

@@ -234,7 +234,7 @@ export async function expandReviewTemplate(
     TASK_DIR: taskDir,
     REPO: vars.remoteRepo,
     PLATFORM: vars.platform || 'ios',
-    WATCHER_PORT: expandTemplate('{{WATCHER_PORT}}', vars, pv ?? undefined),
+    WATCHER_PORT: vars.resourceVars.port ?? '',
     CDP_PORT: vars.resourceVars.cdp_port ?? '',
     RUNTIME_DIR: runtimeDir,
     TICKET: run?.ticketOrPr ?? '',
