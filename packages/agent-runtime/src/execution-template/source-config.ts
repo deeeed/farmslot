@@ -69,6 +69,7 @@ function configuredRoot(
     };
   }
   if (typeof source.root.env === 'string') {
+    if (options.resolveSourceBinding) return { reason: 'invalid-root' };
     const value = (options.env ?? process.env)[source.root.env]?.trim();
     if (!value) return { reason: 'missing-environment' };
     if (!path.isAbsolute(value)) return { reason: 'invalid-root' };

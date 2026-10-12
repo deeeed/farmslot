@@ -826,6 +826,7 @@ export async function resolveProjectContext(
       );
     }
   };
+  const attestedCommits = new Map<string, string>();
   const sourceRoot = (ref: ExecutionTemplateSourceRoot): string => {
     if (ref.sourceId) {
       if (!options.resolveSourceBinding)
@@ -834,7 +835,10 @@ export async function resolveProjectContext(
           'Declared source has no verified materialization.',
           'execute through a source-admitted Farmslot invocation',
         );
-      return options.resolveSourceBinding({ sourceId: ref.sourceId, entry: ref.entry }).root;
+      const binding = options.resolveSourceBinding({ sourceId: ref.sourceId, entry: ref.entry });
+      const root = existingSourceRoot(binding.root);
+      attestedCommits.set(root, binding.commit);
+      return root;
     }
     if (options.resolveSourceBinding && ref.env)
       throw new ProjectBindingError(
@@ -859,12 +863,14 @@ export async function resolveProjectContext(
       );
     return existingSourceRoot(value, ref.env ?? ref.projectPath);
   };
+  const providerRoot = recipe.provider.root ? sourceRoot(recipe.provider.root) : undefined;
   const provider = resolveProvider(
     recipe.provider,
     root,
     configured,
-    recipe.provider.root ? sourceRoot(recipe.provider.root) : undefined,
+    providerRoot,
     excludedRoots,
+    providerRoot ? attestedCommits.get(providerRoot) : undefined,
   );
   const overrides = await resolveRecipeLibrarySources({
     cliEntries: optionValues(options.tokens, '--library'),
@@ -911,6 +917,9 @@ export async function resolveProjectContext(
         ? existingSourceRoot(path.resolve(root, entry.source))
         : sourceRoot(entry.source);
     const identity = inputSourceSnapshot(libraryRoot, excludedRoots);
+    const attestedCommit = attestedCommits.get(libraryRoot);
+    if (attestedCommit)
+      Object.assign(identity, { head: attestedCommit, status: '', dirtyDigest: null });
     if (identity.head && !entry.revision) {
       throw new ProjectBindingError(
         'SOURCE_REVISION_MISSING',
@@ -1197,6 +1206,7 @@ function resolveProvider(
   configured: boolean,
   declaredRoot?: string,
   excludedRoots: string[] = [],
+  attestedCommit?: string,
 ): ResolvedProjectBinding['provider'] {
   let file: string;
   try {
@@ -1229,6 +1239,8 @@ function resolveProvider(
     );
   }
   const identity = providerSourceSnapshot(packageRoot, file, excludedRoots);
+  if (attestedCommit)
+    Object.assign(identity, { head: attestedCommit, status: '', dirtyDigest: null });
   checkRevision(declaration.revision, identity.head, 'provider');
   return {
     ref: declaration.module,

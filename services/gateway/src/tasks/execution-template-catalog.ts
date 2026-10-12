@@ -67,12 +67,13 @@ function configuredCatalog(projectVars: ProjectVars): {
   unavailable: ExecutionTemplateOptions['unavailableSources'];
 } {
   const root = projectPackRoot(projectVars);
+  const sources = currentProjectSources() ?? projectVars.sourceContext;
   const configured = resolveConfiguredExecutionTemplateSources(
     projectVars.projectJson.execution_templates,
     {
       projectPackRoot: root,
-      resolveSourceBinding: currentProjectSources()
-        ? (selection) => resolveSourceBinding(selection, currentProjectSources()!.materialization)
+      resolveSourceBinding: sources
+        ? (selection) => resolveSourceBinding(selection, sources.materialization)
         : undefined,
     },
   );

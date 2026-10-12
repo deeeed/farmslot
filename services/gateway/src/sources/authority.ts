@@ -57,6 +57,7 @@ export function sourceDependencies(value: unknown): SourceEntryRef[] {
 /** Sole gateway ref resolver. Publication is serialized and persisted before it is observable. */
 export class SourceAuthority {
   private pending = Promise.resolve();
+  private resolving = new Map<string, Promise<void>>();
   private state: AuthorityState;
 
   private constructor(
@@ -154,123 +155,135 @@ export class SourceAuthority {
   async reconcile(
     sourceIds = this.configuration.sources.map((source) => source.id),
   ): Promise<void> {
-    return this.serialize(async () => {
+    await Promise.all(sourceIds.map((id) => this.reconcileSource(id)));
+  }
+
+  private reconcileSource(id: string): Promise<void> {
+    const source = this.configuration.sources.find((value) => value.id === id);
+    if (!source) throw new Error(`Undeclared source: ${id}`);
+    const repository = canonicalSourceRepo(source.repo);
+    const previousFetch = this.resolving.get(repository) ?? Promise.resolve();
+    const work = previousFetch.then(async () => {
       const next = structuredClone(this.state);
-      next.revision = this.configuration.revision;
-      next.declarationDigest = sourceDigest(this.configuration);
-      for (const id of sourceIds) {
-        const declaration = this.configuration.sources.find((source) => source.id === id);
-        if (!declaration) throw new Error(`Undeclared source: ${id}`);
-        const ref = declaration.ref ?? 'main';
-        const key = this.key(id, ref);
-        const previous = next.records[key];
-        const resolution: SourceResolution = {
-          ...previous?.resolution,
-          sourceId: id,
-          ref,
-          declarationRevision: this.configuration.revision,
-          generation: previous?.resolution.generation ?? 0,
-          status: 'failed',
-          rewrites: previous?.resolution.rewrites ?? [],
-        };
-        try {
-          const tree = await this.git.resolve(declaration, ref);
-          if (
-            tree.refKind === 'tag' &&
-            previous?.tree &&
-            previous.tree.refObject !== tree.refObject
-          )
-            throw new Error('Source tag was rewritten; revise its declaration before adoption');
-          const manifest = await this.git.readJson(declaration.repo, tree, 'farm-sources.json');
-          if (
-            manifest !== undefined &&
-            (!isRecord(manifest) ||
-              manifest.schemaVersion !== 1 ||
-              !Array.isArray(manifest.dependencies) ||
-              Object.keys(manifest).some((key) => !['schemaVersion', 'dependencies'].includes(key)))
-          )
-            throw new Error('Invalid or unsupported source dependency manifest');
-          const bindings = Object.values(this.configuration.packs).filter(
-            (binding) => binding.sourceId === id,
-          );
-          const dependencies: SourceEntryRef[] = sourceDependencies(manifest);
-          for (const binding of bindings) {
-            const entry = path.posix.join(binding.entry, 'project.json');
-            const project = await this.git.readJson(declaration.repo, tree, entry);
-            if (!project)
-              throw new Error(`Declared pack has no project.json: ${id}/${binding.entry}`);
-            dependencies.push(...sourceDependencies(project));
-            const texts: string[] = [];
-            const collect = (value: unknown): void => {
-              if (typeof value === 'string') texts.push(value);
-              else if (Array.isArray(value)) value.forEach(collect);
-              else if (isRecord(value)) Object.values(value).forEach(collect);
-            };
-            collect(project);
-            for (const text of texts) {
-              for (const match of text.matchAll(
-                /\{\{(?:farmslot_dir|FARMSLOT_DIR)\}\}\/projects\/([a-zA-Z0-9._-]+)/g,
-              )) {
-                const referenced = this.configuration.packs[match[1]];
-                if (!referenced) throw new Error('Pack references an undeclared pack');
-                dependencies.push(referenced);
-              }
+      const declaration = this.configuration.sources.find((source) => source.id === id);
+      if (!declaration) throw new Error(`Undeclared source: ${id}`);
+      const ref = declaration.ref ?? 'main';
+      const key = this.key(id, ref);
+      const previous = next.records[key];
+      const resolution: SourceResolution = {
+        ...previous?.resolution,
+        sourceId: id,
+        ref,
+        declarationRevision: this.configuration.revision,
+        generation: previous?.resolution.generation ?? 0,
+        status: 'failed',
+        rewrites: previous?.resolution.rewrites ?? [],
+      };
+      try {
+        const tree = await this.git.resolve(declaration, ref);
+        if (tree.refKind === 'tag' && previous?.tree && previous.tree.refObject !== tree.refObject)
+          throw new Error('Source tag was rewritten; revise its declaration before adoption');
+        const manifest = await this.git.readJson(declaration.repo, tree, 'farm-sources.json');
+        if (
+          manifest !== undefined &&
+          (!isRecord(manifest) ||
+            manifest.schemaVersion !== 1 ||
+            !Array.isArray(manifest.dependencies) ||
+            Object.keys(manifest).some((key) => !['schemaVersion', 'dependencies'].includes(key)))
+        )
+          throw new Error('Invalid or unsupported source dependency manifest');
+        const bindings = Object.values(this.configuration.packs).filter(
+          (binding) => binding.sourceId === id,
+        );
+        const dependencies: SourceEntryRef[] = sourceDependencies(manifest);
+        for (const binding of bindings) {
+          const entry = path.posix.join(binding.entry, 'project.json');
+          const project = await this.git.readJson(declaration.repo, tree, entry);
+          if (!project)
+            throw new Error(`Declared pack has no project.json: ${id}/${binding.entry}`);
+          dependencies.push(...sourceDependencies(project));
+          const texts: string[] = [];
+          const collect = (value: unknown): void => {
+            if (typeof value === 'string') texts.push(value);
+            else if (Array.isArray(value)) value.forEach(collect);
+            else if (isRecord(value)) Object.values(value).forEach(collect);
+          };
+          collect(project);
+          for (const text of texts) {
+            for (const match of text.matchAll(
+              /\{\{(?:farmslot_dir|FARMSLOT_DIR)\}\}\/projects\/([a-zA-Z0-9._-]+)/g,
+            )) {
+              const referenced = this.configuration.packs[match[1]];
+              if (!referenced) throw new Error('Pack references an undeclared pack');
+              dependencies.push(referenced);
             }
           }
-          if (
-            dependencies.some(
-              (dependency) =>
-                !this.configuration.sources.some((source) => source.id === dependency.sourceId),
-            )
-          )
-            throw new Error('Source references an undeclared dependency');
-          const observedAt = new Date(this.now()).toISOString();
-          if (previous?.tree && previous.tree.commit !== tree.commit && tree.refKind === 'branch') {
-            const ancestry = await this.git.git(declaration.repo, ['rev-list', tree.commit]);
-            if (!ancestry.toString().split('\n').includes(previous.tree.commit))
-              resolution.rewrites.push({
-                before: previous.tree.commit,
-                after: tree.commit,
-                observedAt,
-              });
-          }
-          Object.assign(resolution, {
-            generation: resolution.generation + (previous?.tree?.commit === tree.commit ? 0 : 1),
-            commit: tree.commit,
-            refObject: tree.refObject,
-            objectFormat: tree.objectFormat,
-            treeDigest: tree.treeDigest,
-            resolvedAt: observedAt,
-            status: 'resolved',
-          });
-          delete resolution.reason;
-          for (const binding of dependencies.filter((dependency) => dependency.sourceId === id)) {
-            const prefix = binding.entry === '.' ? '' : `${binding.entry}/`;
-            if (
-              !tree.files.some(
-                (file) => file.path === binding.entry || file.path.startsWith(prefix),
-              )
-            )
-              throw new Error('Contained self-source entry is missing');
-          }
-          next.records[key] = {
-            resolution,
-            tree,
-            dependencies: dependencies.filter((dependency) => dependency.sourceId !== id),
-          };
-        } catch (error) {
-          // Keep the prior exact objects and report this failure. They cannot authorize new locks.
-          resolution.status = 'failed';
-          resolution.reason = `Source ${id} resolution failed: ${(error as Error).message}`;
-          next.records[key] = {
-            ...previous,
-            resolution,
-            dependencies: previous?.dependencies ?? [],
-          };
         }
+        if (
+          dependencies.some(
+            (dependency) =>
+              !this.configuration.sources.some((source) => source.id === dependency.sourceId),
+          )
+        )
+          throw new Error('Source references an undeclared dependency');
+        const observedAt = new Date(this.now()).toISOString();
+        if (previous?.tree && previous.tree.commit !== tree.commit && tree.refKind === 'branch') {
+          const ancestry = await this.git.git(declaration.repo, ['rev-list', tree.commit]);
+          if (!ancestry.toString().split('\n').includes(previous.tree.commit))
+            resolution.rewrites.push({
+              before: previous.tree.commit,
+              after: tree.commit,
+              observedAt,
+            });
+        }
+        Object.assign(resolution, {
+          generation: resolution.generation + (previous?.tree?.commit === tree.commit ? 0 : 1),
+          commit: tree.commit,
+          refObject: tree.refObject,
+          objectFormat: tree.objectFormat,
+          treeDigest: tree.treeDigest,
+          resolvedAt: observedAt,
+          status: 'resolved',
+        });
+        delete resolution.reason;
+        for (const binding of dependencies.filter((dependency) => dependency.sourceId === id)) {
+          const prefix = binding.entry === '.' ? '' : `${binding.entry}/`;
+          if (
+            !tree.files.some((file) => file.path === binding.entry || file.path.startsWith(prefix))
+          )
+            throw new Error('Contained self-source entry is missing');
+        }
+        next.records[key] = {
+          resolution,
+          tree,
+          dependencies: dependencies.filter((dependency) => dependency.sourceId !== id),
+        };
+      } catch (error) {
+        // Keep the prior exact objects and report this failure. They cannot authorize new locks.
+        resolution.status = 'failed';
+        resolution.reason = `Source ${id} resolution failed: ${(error as Error).message}`;
+        next.records[key] = {
+          ...previous,
+          resolution,
+          dependencies: previous?.dependencies ?? [],
+        };
       }
-      await this.persist(next);
+      await this.serialize(async () => {
+        const published = structuredClone(this.state);
+        published.revision = this.configuration.revision;
+        published.declarationDigest = sourceDigest(this.configuration);
+        published.records[key] = next.records[key];
+        await this.persist(published);
+      });
     });
+    this.resolving.set(
+      repository,
+      work.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return work;
   }
 
   private serialize<T>(operation: () => Promise<T>): Promise<T> {
