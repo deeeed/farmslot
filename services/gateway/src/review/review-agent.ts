@@ -52,9 +52,7 @@ import {
 import {
   captureRunnerPromptAcceptanceBaseline,
   runnerHasDurablePromptHandoff,
-  runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
-  runnerPaneShowsCurrentInteractiveProgress,
   runnerRetainedSessionHandoff,
   runnerSupportsInteractivePrompt,
   sendRunnerPostLaunchPrompt,
@@ -1678,23 +1676,19 @@ export async function waitForReviewCompletion(
       `Reviewer ${reviewContextId} completed with an invalid result artifact: ${reason}`,
     );
   };
-  const completedOutputIsValid = async (completionEstablished: boolean): Promise<boolean> => {
+  const validateCompletedOutput = async (): Promise<void> => {
     if (!(await outputExists(requiredOutputPaths[0]!))) {
-      if (!completionEstablished) return false;
       return terminalInvalid(`${feedbackRelPath} is missing`);
     }
     if (resultRelPath && !(await outputExists(requiredOutputPaths[1]!))) {
-      if (!completionEstablished) return false;
       return terminalInvalid(`${resultRelPath} is missing`);
     }
     if (resultRelPath) {
       const feedback = await readReviewFeedback(vars, taskDir, feedbackRelPath, resultRelPath);
       if (feedback.terminalInvalidReason) {
-        if (!completionEstablished) return false;
         return terminalInvalid(feedback.terminalInvalidReason);
       }
     }
-    return true;
   };
   let reviewerWasObservedActive = false;
 
@@ -1702,60 +1696,6 @@ export async function waitForReviewCompletion(
     const remainingMs = Math.max(0, timeoutMs - (Date.now() - start));
     await new Promise((r) => setTimeout(r, Math.min(pollInterval, remainingMs)));
     let reviewerActive = false;
-
-    // Check the immutable reviewer target. Window names are not unique in tmux
-    // and must never be used for lifecycle or completion decisions.
-    const hasWindow =
-      (
-        await execOnSlot(
-          vars,
-          tmuxShellSnippet(`list-panes -t ${shellQuote(reviewTarget)} 2>/dev/null`),
-        )
-      ).exitCode === 0;
-
-    if (!hasWindow) {
-      // Window disappearance establishes completion. Required artifacts must
-      // now be valid; unlike pane heuristics, this branch may fail closed.
-      await completedOutputIsValid(true);
-      debugReviewLog(`[review] review window gone + feedback written — agent completed`);
-      await markAgentContextStatus(runId, 'review', 'complete', {
-        id: reviewContextId,
-        lastSignalAt: new Date().toISOString(),
-      });
-      return true;
-    }
-
-    // Check if the configured runner process is still running in the review pane.
-    const panePid = (
-      await execOnSlot(
-        vars,
-        tmuxShellSnippet(
-          `list-panes -t ${shellQuote(reviewTarget)} -F '#{pane_pid}' 2>/dev/null | head -1`,
-        ),
-      )
-    ).stdout.trim();
-
-    if (panePid) {
-      const agentAlive = await isRunnerAliveUnderPane(vars, panePid, runner);
-      reviewerActive = agentAlive;
-      reviewerWasObservedActive ||= agentAlive;
-
-      if (!agentAlive) {
-        // Only absence after observing the process is completion. A runner can
-        // be temporarily absent while its launcher is still starting.
-        if (await completedOutputIsValid(reviewerWasObservedActive)) {
-          debugReviewLog(`[review] ${runner} process exited + feedback written — agent completed`);
-          await markAgentContextStatus(runId, 'review', 'complete', {
-            id: reviewContextId,
-            lastSignalAt: new Date().toISOString(),
-          });
-          return true;
-        }
-        debugReviewLog(
-          `[review] no ${runner} child found but no feedback yet — may be starting up, continuing poll`,
-        );
-      }
-    }
 
     // Successful terminal signals require every configured feedback artifact.
     // Failed/blocked signals take the existing failed-review path immediately.
@@ -1786,7 +1726,7 @@ export async function waitForReviewCompletion(
         );
         return true;
       }
-      await completedOutputIsValid(true);
+      await validateCompletedOutput();
       debugReviewLog(
         `[review] terminal ${signalBasename} (status=${terminalSignal.status}) + feedback — agent completed`,
       );
@@ -1797,52 +1737,42 @@ export async function waitForReviewCompletion(
       return true;
     }
 
-    // Check pane output for signs of completion
-    const pane = (
-      await execOnSlot(
-        vars,
-        tmuxShellSnippet(`capture-pane -p -t ${shellQuote(reviewTarget)} 2>/dev/null | tail -5`),
-      )
-    ).stdout;
+    // Check the immutable reviewer target. Window names are not unique in tmux
+    // and must never be used for lifecycle or completion decisions.
+    const hasWindow =
+      (
+        await execOnSlot(
+          vars,
+          tmuxShellSnippet(`list-panes -t ${shellQuote(reviewTarget)} 2>/dev/null`),
+        )
+      ).exitCode === 0;
 
-    // Runner at idle prompt, not mid-tool-call.
-    const tailLines = pane.split('\n');
-    const reviewerAtIdlePrompt =
-      tailLines.some((line) => runnerLineLooksWaiting(line, runner)) &&
-      !runnerPaneShowsCurrentInteractiveProgress(pane, runner);
-    if (reviewerAtIdlePrompt) {
-      // Double-check: the reviewer-specific feedback file exists = work is done.
-      if (await completedOutputIsValid(false)) {
-        debugReviewLog(`[review] idle prompt + feedback file — agent completed`);
-        await markAgentContextStatus(runId, 'review', 'complete', {
-          id: reviewContextId,
-          lastSignalAt: new Date().toISOString(),
-        });
-        return true;
-      }
+    if (!hasWindow) {
+      return terminalInvalid(`${signalBasename} is missing after the reviewer window closed`);
     }
 
-    // Shell prompt without feedback is not success — Codex can bounce back to shell after an internal shortcut.
-    if (pane.match(/[\$%]\s*$/m) && !pane.includes('⏵⏵')) {
-      if (await completedOutputIsValid(false)) {
-        debugReviewLog(`[review] shell prompt + feedback file — agent completed`);
-        await markAgentContextStatus(runId, 'review', 'complete', {
-          id: reviewContextId,
-          lastSignalAt: new Date().toISOString(),
-        });
-        return true;
+    // Check if the configured runner process is still running in the review pane.
+    const panePid = (
+      await execOnSlot(
+        vars,
+        tmuxShellSnippet(
+          `list-panes -t ${shellQuote(reviewTarget)} -F '#{pane_pid}' 2>/dev/null | head -1`,
+        ),
+      )
+    ).stdout.trim();
+
+    if (panePid) {
+      const agentAlive = await isRunnerAliveUnderPane(vars, panePid, runner);
+      reviewerActive = agentAlive;
+      reviewerWasObservedActive ||= agentAlive;
+
+      if (!agentAlive && reviewerWasObservedActive) {
+        debugReviewLog(`[review] runner stopped without its terminal mark; continuing signal wait`);
       }
-      console.warn(
-        `[review] shell prompt detected before feedback file existed — treating as incomplete and continuing wait`,
-      );
     }
 
     if (Date.now() - start >= timeoutMs) {
-      const state = reviewerAtIdlePrompt
-        ? 'idle at its prompt'
-        : reviewerActive
-          ? 'still active'
-          : 'inactive';
+      const state = reviewerActive ? 'still active' : 'inactive';
       console.warn(
         `[review] reviewer was ${state} without complete review artifacts after ${timeoutMs}ms`,
       );

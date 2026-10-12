@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Wait for the reviewer-owned terminal mark before archiving its checklist and result.
+
 - Publish the exact selected review findings and report, preserving accepted choices across refresh races.
 
 - Declare mid-turn prompt support and verify complete Enter-submitted queue messages for guarded lane steering.

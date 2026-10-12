@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Honor explicit checklist targets and resume cleared blockers with the existing start command.
+
 ## 0.14.2 - 2026-10-12
 
 - Validate called log-observation parameters before execution using the shared invocation checks.
