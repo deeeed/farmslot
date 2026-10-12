@@ -64,7 +64,9 @@ rejects stale responses from another connection or run.
 
 ## Public surface
 
-`@farmslot/protocol` owns pure finding/curation models and optional fingerprint
+`@farmslot/protocol` exports `savedReviewView` beside `reviewResultForRun` for the
+native saved-result reader. Both read existing Run fields and add no storage or RPC.
+It owns pure finding/curation models and optional fingerprint
 validation for the two clients and gateway. Existing request/response methods,
 review result persistence and review-dispatch controls remain the consumers.
 No new public command, flag, harness extension or result-store version. The

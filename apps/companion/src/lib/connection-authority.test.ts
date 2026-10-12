@@ -47,3 +47,35 @@ test('a delayed farm result cannot repopulate state after principal, access or g
     assert.equal(visible, null);
   }
 });
+
+test('farm reads also bind the profile, authorization epoch and selected client', () => {
+  const client = {
+    connectionGeneration: 1,
+    connectionState: 'connected',
+    workspaceAccess: 'farm',
+    authenticatedPrincipal: { id: 'admin' },
+  } as GatewayClient;
+  const authority = {
+    client: client as GatewayClient | null,
+    activeProfileId: 'first' as string | null,
+    authorityEpoch: 1,
+  };
+  for (const change of [
+    () => {
+      authority.activeProfileId = 'second';
+    },
+    () => {
+      authority.authorityEpoch++;
+    },
+    () => {
+      authority.client = null;
+    },
+  ]) {
+    authority.client = client;
+    authority.activeProfileId = 'first';
+    const current = currentFarmConnection(client, () => authority);
+    assert.equal(current(), true);
+    change();
+    assert.equal(current(), false);
+  }
+});

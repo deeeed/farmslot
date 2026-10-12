@@ -1050,3 +1050,9 @@ test('resolveReviewInputCaptureTimeoutMs ignores non-numeric overrides', () => {
     8_000,
   );
 });
+
+test('numstat parser rejects patch lines, including tabbed source content', () => {
+  const mixed =
+    '1\t1\ttracked.ts\ndiff --git a/tracked.ts b/tracked.ts\n@@ -1 +1 @@\n+1\t2\tcode\n0\t0\t\n-\t-\tasset.bin\n';
+  assert.deepEqual(parseGitNumstat(mixed), { files: 2, additions: 1, deletions: 1 });
+});
