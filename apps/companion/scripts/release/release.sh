@@ -4,8 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 EAS_CLI_VERSION="${EAS_CLI_VERSION:-18.13.0}"
-VARIANT="preview"
-PLATFORM="all"
+VARIANT="production"
+PLATFORM="android"
 MESSAGE=""
 EXECUTE=0
 SKIP_BUILD=0
@@ -23,12 +23,12 @@ Dry-run by default. Add --execute to run EAS commands.
 
 Options:
   --variant development|preview|production
-  --platform ios|android|all
+  --platform ios|android (default: android; iOS must be explicit)
   --message <text>       EAS Update message
   --skip-build           Do not run EAS Build
   --skip-update          Do not run EAS Update
   --cut-release          Regenerate companion release proposal from farmslot root
-  --submit               Submit latest matching build after build/update plan
+  --submit               Submit matching build (automatic for production Android)
   --local                Use local build for development profiles only
   --execute              Actually run the mutating commands
   -h, --help             Show this help
@@ -75,7 +75,7 @@ case "${VARIANT}" in
   *) echo "ERROR: unsupported variant '${VARIANT}'." >&2; exit 1 ;;
 esac
 case "${PLATFORM}" in
-  ios|android|all) ;;
+  ios|android) ;;
   *) echo "ERROR: unsupported platform '${PLATFORM}'." >&2; exit 1 ;;
 esac
 if [[ "${VARIANT}" == "development" && "${SUBMIT}" -eq 1 ]]; then
@@ -83,11 +83,11 @@ if [[ "${VARIANT}" == "development" && "${SUBMIT}" -eq 1 ]]; then
   exit 1
 fi
 
-platforms=()
-if [[ "${PLATFORM}" == "all" ]]; then
-  platforms=(ios android)
-else
-  platforms=("${PLATFORM}")
+platforms=("${PLATFORM}")
+PLAY_RELEASE=0
+if [[ "${VARIANT}" == "production" && "${PLATFORM}" == "android" ]]; then
+  PLAY_RELEASE=1
+  SUBMIT=1
 fi
 
 print_command() {
@@ -107,6 +107,17 @@ run_cmd() {
   fi
 }
 
+capture_cmd() {
+  local output="$1"
+  shift
+  COMMAND_COUNT=$((COMMAND_COUNT + 1))
+  printf '[release] '
+  print_command "$@"
+  if [[ "${EXECUTE}" -eq 1 ]]; then
+    "$@" > "$output"
+  fi
+}
+
 REPO_ROOT="$(cd "${APP_DIR}/../.." && pwd)"
 
 if [[ "${CUT_RELEASE}" -eq 1 ]]; then
@@ -116,6 +127,13 @@ if [[ "${CUT_RELEASE}" -eq 1 ]]; then
 fi
 
 cd "${APP_DIR}"
+RELEASE_TMP="<private-release-state>"
+if [[ "${PLAY_RELEASE}" -eq 1 && "${EXECUTE}" -eq 1 ]]; then
+  RELEASE_TMP="$(mktemp -d "${TMPDIR:-/tmp}/companion-release.XXXXXX")"
+  trap 'rm -rf "$RELEASE_TMP"' EXIT
+fi
+BUILD_JSON="${RELEASE_TMP}/build.json"
+PLAY_STATE="${RELEASE_TMP}/tracks-before.json"
 echo "[release] Variant: ${VARIANT}"
 echo "[release] Platform: ${PLATFORM}"
 if [[ "${EXECUTE}" -eq 1 ]]; then
@@ -126,41 +144,62 @@ fi
 
 for target_platform in "${platforms[@]}"; do
   if [[ "${SKIP_BUILD}" -eq 0 ]]; then
-    build_args=(env APP_VARIANT="${VARIANT}" NODE_ENV="${VARIANT}" yarn dlx eas-cli@"${EAS_CLI_VERSION}" build --platform "${target_platform}" --profile "${VARIANT}")
+    build_args=(env APP_VARIANT="${VARIANT}" NODE_ENV="${VARIANT}" yarn dlx --quiet eas-cli@"${EAS_CLI_VERSION}" build --platform "${target_platform}" --profile "${VARIANT}" --non-interactive)
     if [[ "${VARIANT}" == "development" && "${LOCAL_BUILD}" -eq 1 ]]; then
       build_args+=(--local)
     fi
-    run_cmd "${build_args[@]}"
+    if [[ "${PLAY_RELEASE}" -eq 1 ]]; then
+      capture_cmd "$BUILD_JSON" "${build_args[@]}" --wait --json
+    else
+      run_cmd "${build_args[@]}"
+    fi
   fi
 done
 
+if [[ "${PLAY_RELEASE}" -eq 1 && "${SKIP_BUILD}" -eq 1 ]]; then
+  capture_cmd "$BUILD_JSON" env APP_VARIANT=production NODE_ENV=production yarn dlx --quiet eas-cli@"${EAS_CLI_VERSION}" build:list --platform android --build-profile production --distribution store --status finished --limit 1 --json --non-interactive
+fi
+
 if [[ "${SKIP_UPDATE}" -eq 0 ]]; then
   update_message="${MESSAGE:-${VARIANT} release $(date -u +%Y-%m-%dT%H:%M:%SZ)}"
-  run_cmd env APP_VARIANT="${VARIANT}" NODE_ENV="${VARIANT}" yarn dlx eas-cli@"${EAS_CLI_VERSION}" update --channel "${VARIANT}" --environment "${VARIANT}" --message "${update_message}"
+  run_cmd env APP_VARIANT="${VARIANT}" NODE_ENV="${VARIANT}" yarn dlx eas-cli@"${EAS_CLI_VERSION}" update --platform "${PLATFORM}" --channel "${VARIANT}" --environment "${VARIANT}" --message "${update_message}"
 fi
 
 if [[ "${SUBMIT}" -eq 1 ]]; then
   for target_platform in "${platforms[@]}"; do
+    if [[ "${PLAY_RELEASE}" -eq 1 ]]; then
+      run_cmd bash "${SCRIPT_DIR}/ensure-play-service-account.sh"
+      run_cmd node "${SCRIPT_DIR}/play-tracks.mjs" snapshot "$BUILD_JSON" "$PLAY_STATE"
+      build_id="<built-production-android-id>"
+      if [[ "${EXECUTE}" -eq 1 ]]; then
+        build_id="$(node -e 'const s=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(s.buildId)' "$PLAY_STATE")"
+      fi
+      submit_source=(--id "$build_id" --wait)
+    else
+      submit_source=(--latest)
+    fi
     submit_args=(
       env APP_VARIANT="${VARIANT}" NODE_ENV="${VARIANT}"
       yarn dlx eas-cli@"${EAS_CLI_VERSION}" submit
       --platform "${target_platform}"
       --profile "${VARIANT}"
-      --latest
+      "${submit_source[@]}"
       --non-interactive
     )
     if [[ "${target_platform}" == "android" ]]; then
-      if [[ "${VARIANT}" == "production" ]]; then
-        echo "[release] Android Play submit targets internal testing (share via Console opt-in link)."
-        echo "[release] Promote to production in Play Console after the first store release is configured."
-      fi
-      if [[ "${EXECUTE}" -eq 1 ]]; then
+      if [[ "${PLAY_RELEASE}" -eq 1 ]]; then
+        echo "[release] Upload once to internal, promote that versionCode to alpha, then verify both tracks."
+        echo "[release] Public production-track publication remains manual."
+      elif [[ "${EXECUTE}" -eq 1 ]]; then
         bash "${SCRIPT_DIR}/ensure-play-service-account.sh"
       else
         echo "[release] Android submit uses .eas/google-play-service-account.json (symlinked at execute time)."
       fi
     fi
     run_cmd "${submit_args[@]}"
+    if [[ "${PLAY_RELEASE}" -eq 1 ]]; then
+      run_cmd node "${SCRIPT_DIR}/play-tracks.mjs" promote "$BUILD_JSON" "$PLAY_STATE"
+    fi
   done
 fi
 

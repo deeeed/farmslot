@@ -65,11 +65,11 @@ chore(release): cut command-center-ui@X.Y.Z, gateway@X.Y.Z, …
 
 ## Step 4 — Ship
 
-| Group       | Next step                                                                       |
-| ----------- | ------------------------------------------------------------------------------- |
-| `hosted-cc` | Merge PR → `docs-site.yml` deploys `farmslot.io/cc` with What's New             |
-| `companion` | `bash apps/companion/scripts/release/release.sh --execute` (after cut)          |
-| `npm`       | `yarn packages:publish:check:strict` then manual `yarn npm publish` per package |
+| Group       | Next step                                                                                                      |
+| ----------- | -------------------------------------------------------------------------------------------------------------- |
+| `hosted-cc` | Merge PR → `docs-site.yml` deploys `farmslot.io/cc` with What's New                                            |
+| `companion` | `bash apps/companion/scripts/release/release.sh --variant production --platform android --execute` (after cut) |
+| `npm`       | `yarn packages:publish:check:strict` then manual `yarn npm publish` per package                                |
 
 ## PR rule
 
@@ -80,3 +80,10 @@ Any PR that changes workspace code must add a non-placeholder bullet under that 
 - Do **not** `--execute` without reviewing `.release-cut/proposal.json`.
 - Do **not** skip changelog bullets on user-facing PRs.
 - Release-cut commits are exempt from the PR changelog delta guard.
+
+Companion cuts default to production Android. The ship step builds with
+`--non-interactive`, submits that build once to Play internal, promotes the same
+versionCode to closed testing (`alpha`), and reads back both tracks. Either
+track failing to advance fails the release. iOS requires `--platform ios`;
+public production-track publication stays manual. Run without `--execute` to
+review the full plan.
