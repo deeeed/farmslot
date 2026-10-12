@@ -175,3 +175,93 @@ test('worker prompts use the inherited pack in the admitted closure and never re
   );
   assert.equal(floatingReads, 0);
 });
+
+test('review and fix templates use locked pack bytes and bound paths while legacy CI keeps its default', async (t) => {
+  const { mkdir, mkdtemp, readFile, realpath, rm, writeFile } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const path = await import('node:path');
+  const { withLegacyProjectSources, loadProjectVars, invalidateProjectVarsCache } =
+    await import('@farmslot/slot-config');
+  const { projectWorkerTemplatePath } = await import('../core/worker-templates.js');
+  const { expandTemplateWithReservedLast } = await import('../core/hooks.js');
+  const { expandReviewTemplate } = await import('../review/templates.js');
+  const { resolveCiFixTemplatePath } = await import('../ci-monitor/inline-fix.js');
+  const { createRun, deleteRun, updateRun } = await import('../runs/store.js');
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), 'locked-review-templates-')));
+  t.after(async () => {
+    invalidateProjectVarsCache('demo');
+    await rm(root, { recursive: true, force: true });
+  });
+  await mkdir(path.join(root, 'templates/worker'), { recursive: true });
+  await writeFile(
+    path.join(root, 'project.json'),
+    JSON.stringify({ name: 'demo', ci: { local_check: 'true' } }),
+  );
+  for (const name of ['review.md', 'review-fix.md', 'ci-fix.md'])
+    await writeFile(
+      path.join(root, 'templates/worker', name),
+      `# Locked ${name}\n{{farmslot_dir}}/projects/demo/fixtures/check {{CI_PARITY_STEP}}\n`,
+    );
+  const value = materialization();
+  value.roots.pack = root;
+  const sources = inputs(value);
+  await withProjectSources(sources, async () => {
+    const vars = makeVars({ projectName: 'demo', remoteRepo: root });
+    const pv = await loadProjectVars('demo');
+    for (const name of ['review.md', 'review-fix.md', 'ci-fix.md']) {
+      const file = await projectWorkerTemplatePath('demo', name);
+      assert.equal(file, path.join(root, 'templates/worker', name));
+      const raw = await readFile(file, 'utf8');
+      const rendered = expandTemplateWithReservedLast(raw, vars, pv, {
+        TASK_DIR: 'tasks/demo',
+        CI_PARITY_CHECKLIST: 'CHECKLIST.md',
+      });
+      assert.ok(rendered.includes(`${root}/fixtures/check`));
+      assert.ok(!rendered.includes('/projects/demo/'));
+    }
+    assert.equal(
+      await resolveCiFixTemplatePath('demo'),
+      path.join(root, 'templates/worker/ci-fix.md'),
+    );
+    const run = createRun({
+      flowType: 'dev',
+      mode: 'autonomous',
+      project: 'demo',
+      ticketOrPr: 'TEST-LOCKED-REVIEW',
+    });
+    try {
+      await writeFile(
+        path.join(root, 'templates/worker/review.md'),
+        '# Locked review\n{{FARMSLOT_DIR}}/projects/demo/fixtures/check\n',
+      );
+      const rendered = await expandReviewTemplate(vars, 'tasks/demo', run.id, 'static-code');
+      assert.ok(rendered.startsWith(`# Locked review\n${root}/fixtures/check`));
+    } finally {
+      updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+    await rm(path.join(root, 'templates/worker/ci-fix.md'));
+    await assert.rejects(
+      resolveCiFixTemplatePath('demo'),
+      /Locked pack demo has no declared CI fix default/,
+    );
+    const frameworkRoot = path.join(root, 'framework');
+    await mkdir(path.join(frameworkRoot, 'templates/worker'), { recursive: true });
+    const defaultFile = path.join(frameworkRoot, 'templates/worker/ci-fix.md');
+    await writeFile(defaultFile, '# Locked framework default');
+    const complete = structuredClone(value);
+    complete.roots.framework = frameworkRoot;
+    complete.lock.entries.push({ ...complete.lock.entries[0], sourceId: 'framework' });
+    complete.lock.packBindings['farmslot-farm'] = { sourceId: 'framework', entry: '.' };
+    const { digest: _, ...content } = complete.lock;
+    complete.lock.digest = sourceLockDigest(content);
+    complete.receipt.lockDigest = complete.lock.digest;
+    await withProjectSources(inputs(complete), async () => {
+      assert.equal(await resolveCiFixTemplatePath('demo'), defaultFile);
+    });
+  });
+  const legacy = await withLegacyProjectSources('missing', () =>
+    resolveCiFixTemplatePath('missing'),
+  );
+  assert.ok(legacy?.endsWith('/templates/worker/ci-fix.md'));
+});

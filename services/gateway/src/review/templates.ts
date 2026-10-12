@@ -9,6 +9,7 @@ import {
   type ReviewMode,
   type ReviewValidationDepth,
 } from '@farmslot/protocol';
+import { expandSourceBindings } from '@farmslot/slot-config';
 
 import {
   getOrchestratorTaskRoot,
@@ -26,6 +27,7 @@ import {
   knownTemplatePlaceholders,
 } from '../core/hooks.js';
 import { shellQuote } from '../core/tmux.js';
+import { projectWorkerTemplatePath } from '../core/worker-templates.js';
 import { remoteBranchRefspec } from '../methods/slot/slot-tracking.js';
 import { buildReviewPlanningBrief } from '../run-engine/review-artifacts.js';
 import { stackPrBase } from '../run-engine/stack-base.js';
@@ -186,10 +188,11 @@ export async function expandReviewTemplate(
 
   let template: string;
   try {
-    const { farmslotRoot } = await import('../fleet/state.js');
-    const templateDir = path.join(farmslotRoot, 'projects', project, 'templates', 'worker');
-    const depthTemplatePath = path.join(templateDir, `review.${validationDepth}.md`);
-    const fallbackTemplatePath = path.join(templateDir, 'review.md');
+    const depthTemplatePath = await projectWorkerTemplatePath(
+      project,
+      `review.${validationDepth}.md`,
+    );
+    const fallbackTemplatePath = await projectWorkerTemplatePath(project, 'review.md');
     try {
       template = await readFile(depthTemplatePath, 'utf-8');
     } catch (err) {
@@ -204,6 +207,8 @@ export async function expandReviewTemplate(
       `Review template not found for project ${project} (${validationDepth}): ${(err as Error).message}`,
     );
   }
+
+  template = expandSourceBindings(template, configured.sourceContext);
 
   // Resolve runtimeDir and mobile reference repo path from project vars
   const runtimeDir = await resolveProjectRuntimeDir(project);

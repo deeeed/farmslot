@@ -41,6 +41,7 @@ import {
 import { execOnSlot } from '../core/exec.js';
 import {
   assertNoUnknownPlaceholders,
+  expandSourceBindings,
   expandTemplateWithReservedLast,
   knownTemplatePlaceholders,
 } from '../core/hooks.js';
@@ -52,6 +53,7 @@ import {
   TMUX_WINDOW_RESPAWN_SETTLE_MS,
   tmuxShellSnippet,
 } from '../core/tmux.js';
+import { projectWorkerTemplatePath } from '../core/worker-templates.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 import { runSupersededSince } from '../run-engine/run-generation.js';
@@ -2174,15 +2176,7 @@ async function sendOwnedFeedbackToWorker(
   // Read and expand the review-fix template
   let template: string;
   try {
-    const { farmslotRoot } = await import('../fleet/state.js');
-    const templatePath = path.join(
-      farmslotRoot,
-      'projects',
-      project,
-      'templates',
-      'worker',
-      'review-fix.md',
-    );
+    const templatePath = await projectWorkerTemplatePath(project, 'review-fix.md');
     template = await readFile(templatePath, 'utf-8');
   } catch (err) {
     throw new Error(
@@ -2203,6 +2197,7 @@ async function sendOwnedFeedbackToWorker(
     DEFAULT_BRANCH: getProjectField(pv.projectJson, 'default_branch') || DEFAULT_BRANCH,
   };
 
+  template = expandSourceBindings(template, pv.sourceContext);
   assertNoUnknownPlaceholders(
     template,
     [...Object.keys(replacements), ...knownTemplatePlaceholders(vars, pv)],

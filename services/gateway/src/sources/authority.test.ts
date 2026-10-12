@@ -120,39 +120,51 @@ test('selected dependencies, missing entries, undeclared sources and cycles refu
   }
 });
 
-test('a slow unrelated fetch cannot prevent healthy source publication or admission', async () => {
+test('healthy sources keep polling across intervals while an unrelated fetch remains pending', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const root = await mkdtemp(path.join(os.tmpdir(), 'source-independent-test-'));
   let finishFetch!: () => void;
   const held = new Promise<void>((resolve) => {
     finishFetch = resolve;
   });
-  let reconciliation: Promise<void> | undefined;
+  let stop: (() => void) | undefined;
+  let authority: SourceAuthority | undefined;
   try {
     let now = Date.now();
     const git = new FixtureSources(root);
-    const authority = await SourceAuthority.open(config, root, git, () => now);
+    authority = await SourceAuthority.open(config, root, git, () => now);
     await authority.reconcile();
-    now += 2_001;
     git.held = { id: 'unrelated', completion: held };
-    git.commits.set('demo', 'd'.repeat(40));
-    reconciliation = authority.reconcile();
-    const deadline = Date.now() + 500;
-    while (
-      authority.resolutions().find((record) => record.sourceId === 'demo')?.commit !==
-      'd'.repeat(40)
-    ) {
-      assert.ok(Date.now() < deadline, 'healthy publication must not wait for the unrelated fetch');
+    stop = authority.startReconciliation((_, error) => {
+      throw error;
+    });
+    for (let pass = 1; pass <= 3; pass++) {
+      now += 2_001;
+      git.commits.set('demo', String(pass).repeat(40));
+      t.mock.timers.tick(config.pollIntervalMs);
+      const deadline = Date.now() + 500;
+      while (
+        authority.resolutions().find((record) => record.sourceId === 'demo')?.resolvedAt !==
+        new Date(now).toISOString()
+      ) {
+        assert.ok(Date.now() < deadline, 'healthy polls must continue during the held fetch');
+        await setImmediate();
+      }
+      assert.equal(
+        (await authority.lock({ project: 'demo' })).entries[0].commit,
+        String(pass).repeat(40),
+      );
       await setImmediate();
     }
-    const lock = await authority.lock({ project: 'demo' });
-    assert.equal(lock.entries[0].commit, 'd'.repeat(40));
     assert.equal(
       authority.resolutions().find((record) => record.sourceId === 'unrelated')?.status,
       'stale',
     );
   } finally {
+    stop?.();
     finishFetch();
-    await reconciliation;
+    // Drain outstanding persistence before deleting its fixture.
+    await authority?.reconcile();
     await rm(root, { recursive: true, force: true });
   }
 });

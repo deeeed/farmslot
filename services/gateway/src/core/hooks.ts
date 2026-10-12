@@ -8,6 +8,8 @@ import {
   renderTemplatePlaceholders,
 } from '@farmslot/protocol';
 import {
+  currentProjectSources,
+  expandSourceBindings,
   expandTemplateWithReservedLast as expandReservedTemplate,
   knownTemplatePlaceholders,
 } from '@farmslot/slot-config';
@@ -19,6 +21,7 @@ export const expandTemplateWithReservedLast: typeof expandReservedTemplate = (
   projectVars,
   reserved,
 ) => {
+  template = expandSourceBindings(template, currentProjectSources() ?? projectVars?.sourceContext);
   if (!template.includes('{{CI_PARITY_STEP}}')) {
     return expandReservedTemplate(template, vars, projectVars, reserved);
   }

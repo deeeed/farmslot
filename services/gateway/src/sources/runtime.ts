@@ -31,7 +31,7 @@ import { SourceAuthority } from './authority.js';
 
 let authority: SourceAuthority | undefined;
 let gateway: SourceMaterializer | undefined;
-let timer: ReturnType<typeof setTimeout> | undefined;
+let stopReconciliation: (() => void) | undefined;
 
 export class SourceAdmissionRefusal extends Error {
   readonly code = 'SOURCE_ADMISSION_REFUSED';
@@ -67,24 +67,17 @@ export async function initializeSources(): Promise<void> {
   }
   authority = await SourceAuthority.open(configuration, path.join(home, 'sources'));
   gateway = new SourceMaterializer('gateway', path.join(home, 'sources', 'gateway'));
-  // Initial failures are represented per source; only affected closures refuse admission.
-  await authority.reconcile();
+  // Configure fail-closed reads immediately; each closure becomes available as
+  // its own sources finish, without waiting for an unrelated repository.
   configureProjectSources(projectContext, () => Object.keys(configuration.packs));
-  const poll = async (): Promise<void> => {
-    try {
-      await authority!.reconcile();
-    } catch (error) {
-      console.error('[sources] authority persistence failed; admission must reconcile:', error);
-    }
-    timer = setTimeout(() => void poll(), configuration.pollIntervalMs);
-    timer.unref();
-  };
-  timer = setTimeout(() => void poll(), configuration.pollIntervalMs);
-  timer.unref();
+  stopReconciliation = authority.startReconciliation((id, error) => {
+    console.error(`[sources] ${id} persistence failed; admission must reconcile:`, error);
+  });
 }
 
 export function stopSourceReconciliation(): void {
-  if (timer) clearTimeout(timer);
+  stopReconciliation?.();
+  stopReconciliation = undefined;
 }
 
 export async function projectContext(project: string): Promise<ProjectSourceContext> {

@@ -784,6 +784,10 @@ test('locked provider and library revisions use attested commits without Git met
   assert.equal(context.project?.provider.identity.head, commit);
   assert.equal(context.project?.libraries[0].identity.head, commit);
   assert.equal(globals.bindingImports, 0);
+  await loadProjectProvider(context);
+  assert.equal(globals.bindingImports, 1);
+  fs.appendFileSync(path.join(helper, 'provider.mjs'), '\n// changed delivery bytes\n');
+  await assert.rejects(loadProjectProvider(context), { code: 'PROVIDER_SOURCE_CHANGED' });
   const wrong = {
     ...config,
     recipe: {

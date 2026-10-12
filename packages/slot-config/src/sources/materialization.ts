@@ -33,7 +33,10 @@ import { assertSourceLock } from './lock.js';
 export interface SourceVolume {
   publish(tree: string, image: string, mount: string): Promise<void>;
   verify(mount: string): Promise<void>;
+  restore(image: string, mount: string): Promise<void>;
 }
+
+export class SourceVolumeMissing extends Error {}
 
 interface SourceDiskImage {
   'image-path': string;
@@ -119,13 +122,28 @@ export class ReadOnlySourceVolume implements SourceVolume {
     await this.verify(mount);
   }
 
+  async restore(image: string, mount: string): Promise<void> {
+    try {
+      await this.verify(mount);
+      return;
+    } catch (error) {
+      // A reboot loses mounts, not the retained image. Writable or substituted
+      // mounts still refuse; never hide files by mounting over a changed tree.
+      if (!(error instanceof SourceVolumeMissing)) throw error;
+    }
+    await lstat(image);
+    if ((await readdir(mount)).length) throw new Error('Unmounted source path contains files');
+    await this.publish('', image, mount);
+  }
+
   async verify(mount: string): Promise<void> {
     if ((await realpath(mount)) !== mount) throw new Error('Source mount path was substituted');
     if (process.platform === 'darwin') {
       const plist = (await this.command('diskutil', ['info', '-plist', mount])).toString();
       const location = /<key>MountPoint<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)?.[1];
-      if (location !== mount || !/<key>WritableVolume<\/key>\s*<false\/>/.test(plist))
-        throw new Error('Source volume is missing or writable');
+      if (location !== mount) throw new SourceVolumeMissing('Source volume is missing');
+      if (!/<key>WritableVolume<\/key>\s*<false\/>/.test(plist))
+        throw new Error('Source volume is writable');
     } else if (process.platform === 'linux') {
       const report = JSON.parse(
         (
@@ -133,8 +151,9 @@ export class ReadOnlySourceVolume implements SourceVolume {
         ).toString(),
       );
       const volume = report.filesystems?.[0];
-      if (volume?.target !== mount || !String(volume.options).split(',').includes('ro'))
-        throw new Error('Source volume is missing or writable');
+      if (volume?.target !== mount) throw new SourceVolumeMissing('Source volume is missing');
+      if (!String(volume.options).split(',').includes('ro'))
+        throw new Error('Source volume is writable');
     } else throw new Error('Read-only source volumes are unsupported on this platform');
   }
 }
@@ -202,7 +221,7 @@ export class SourceMaterializer {
     return path.join(this.mount(entry), 'tree');
   }
 
-  async verify(lock: SourceLock): Promise<SourceMaterialization> {
+  private async readReceipt(lock: SourceLock): Promise<SourceMaterialization> {
     assertSourceLock(lock);
     const stored = JSON.parse(
       await readFile(path.join(this.root, 'receipts', `${lock.digest}.json`), 'utf8'),
@@ -223,9 +242,16 @@ export class SourceMaterializer {
       stored.receiptPath !== path.join(this.root, 'receipts', `${lock.digest}.json`)
     )
       throw new Error('Source receipt does not match the authorized lock and node');
+    for (const entry of lock.entries)
+      if (stored.roots[entry.sourceId] !== this.sourceRoot(entry))
+        throw new Error('Source root was substituted');
+    return stored;
+  }
+
+  async verify(lock: SourceLock): Promise<SourceMaterialization> {
+    const stored = await this.readReceipt(lock);
     for (const entry of lock.entries) {
       const expected = this.sourceRoot(entry);
-      if (stored.roots[entry.sourceId] !== expected) throw new Error('Source root was substituted');
       await this.volume.verify(this.mount(entry));
       if ((await sourceTreeIdentity(expected, entry.objectFormat)) !== entry.treeDigest)
         throw new Error(`Source drift: ${entry.sourceId}`);
@@ -255,7 +281,15 @@ export class SourceMaterializer {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       receiptPresent = false;
     }
-    if (receiptPresent) return this.verify(lock);
+    if (receiptPresent) {
+      await this.readReceipt(lock);
+      for (const entry of lock.entries)
+        await this.volume.restore(
+          path.join(this.root, 'images', `${this.sourceKey(entry)}.dmg`),
+          this.mount(entry),
+        );
+      return this.verify(lock);
+    }
     const roots: Record<string, string> = {};
     for (const entry of lock.entries) {
       const mount = this.mount(entry);

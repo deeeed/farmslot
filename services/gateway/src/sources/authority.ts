@@ -158,6 +158,33 @@ export class SourceAuthority {
     await Promise.all(sourceIds.map((id) => this.reconcileSource(id)));
   }
 
+  /** Each source owns its next poll. A stalled repository never stops healthy polls. */
+  startReconciliation(onError: (sourceId: string, error: unknown) => void): () => void {
+    let stopped = false;
+    const timers = new Set<ReturnType<typeof setTimeout>>();
+    const poll = async (id: string): Promise<void> => {
+      try {
+        await this.reconcile([id]);
+      } catch (error) {
+        // Persistence failure remains visible; stale records refuse admission.
+        onError(id, error);
+      }
+      if (stopped) return;
+      const timer = setTimeout(() => {
+        timers.delete(timer);
+        void poll(id);
+      }, this.configuration.pollIntervalMs);
+      timer.unref();
+      timers.add(timer);
+    };
+    for (const source of this.configuration.sources) void poll(source.id);
+    return () => {
+      stopped = true;
+      for (const timer of timers) clearTimeout(timer);
+      timers.clear();
+    };
+  }
+
   private reconcileSource(id: string): Promise<void> {
     const source = this.configuration.sources.find((value) => value.id === id);
     if (!source) throw new Error(`Undeclared source: ${id}`);
@@ -208,11 +235,13 @@ export class SourceAuthority {
           if (
             sharedPack &&
             sharedPack.sourceId !== id &&
-            ['worker-dispatch.md', 'worker-nudge.md'].some(
-              (name) =>
-                !tree.files.some(
-                  (file) => file.path === path.posix.join(binding.entry, 'templates/prompts', name),
-                ),
+            [
+              'templates/prompts/worker-dispatch.md',
+              'templates/prompts/worker-nudge.md',
+              'templates/worker/ci-fix.md',
+            ].some(
+              (entry) =>
+                !tree.files.some((file) => file.path === path.posix.join(binding.entry, entry)),
             )
           )
             dependencies.push(sharedPack);

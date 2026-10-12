@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -19,7 +19,12 @@ import { sourceWorkerEnvironment } from '../source-environment.js';
 import { assertSourceAttestation } from './attestation.js';
 import { type FetchedSource, SourceGitStore } from './git.js';
 import { sourceLockDigest } from './lock.js';
-import { SourceMaterializer, sourceTreeIdentity, type SourceVolume } from './materialization.js';
+import {
+  SourceMaterializer,
+  sourceTreeIdentity,
+  type SourceVolume,
+  SourceVolumeMissing,
+} from './materialization.js';
 
 class FixtureGit extends SourceGitStore {
   constructor(
@@ -41,12 +46,23 @@ class FixtureVolume implements SourceVolume {
   publications = 0;
   protected = true;
   failPublication = false;
-  async publish(tree: string, _image: string, mount: string): Promise<void> {
+  async publish(tree: string, image: string, mount: string): Promise<void> {
     this.publications++;
     if (this.failPublication) throw new Error('interrupted volume publication');
     await cp(tree, mount, { recursive: true });
+    await mkdir(path.dirname(image), { recursive: true });
+    await cp(tree, image, { recursive: true });
   }
-  async verify(): Promise<void> {
+  async restore(image: string, mount: string): Promise<void> {
+    try {
+      await this.verify(mount);
+    } catch (error) {
+      if (!(error instanceof SourceVolumeMissing)) throw error;
+      await cp(image, mount, { recursive: true });
+    }
+  }
+  async verify(mount: string): Promise<void> {
+    if (!(await readdir(mount)).includes('tree')) throw new SourceVolumeMissing('volume missing');
     if (!this.protected) throw new Error('source volume is writable');
   }
 }
@@ -127,6 +143,24 @@ test('drift and lost protection refuse work without silently rematerializing an 
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('a lost mount restores the retained image and receipt without fetching or accepting changed bytes', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'source-remount-test-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { lock, materializer, volume } = await fixture(root);
+  const admitted = await materializer.materialize(lock);
+  await rm(admitted.roots.demo, { recursive: true });
+  await assert.rejects(materializer.verify(lock), /missing/);
+  const restored = await materializer.materialize(lock);
+  assert.deepEqual(restored, admitted);
+  assert.equal(volume.publications, 1);
+  const images = path.join(materializer.root, 'images');
+  const image = path.join(images, (await readdir(images))[0]);
+  await rm(admitted.roots.demo, { recursive: true });
+  await writeFile(path.join(image, 'tree/project.json'), 'changed image');
+  await assert.rejects(materializer.materialize(lock), /drift/);
+  assert.equal(volume.publications, 1);
 });
 
 test('interrupted publication has no usable receipt; retry publishes once and then verifies', async () => {

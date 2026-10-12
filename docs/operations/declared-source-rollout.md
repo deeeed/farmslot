@@ -48,8 +48,8 @@ Its configuration contains `sources` as above and `nodes` with unique
 
 The driver starts its own loopback gateway and temporary nodes with issued
 credentials. It copies service code only; packs arrive through exact Git locks.
-It verifies equal node inputs, write/chmod refusal, exact sync retry and missing
-mount drift. It closes its services, tunnels and mounts, retaining `evidence.json`
+It verifies equal node inputs, write/chmod refusal, exact sync retry, retained-image
+remount after a lost mount and drift refusal. It closes its services, tunnels and mounts, retaining `evidence.json`
 and logs. Live fleet proofs stay outside default tests and CI.
 
 ## Enable admission and retire copies
@@ -59,6 +59,12 @@ unknown; never relabel them as lock-admitted. With declarations enabled, new run
 freeze their selected closure and record it before execution. Nodes attest that
 same lock before source-dependent actions. Drift holds the run in reconciliation
 with ownership preserved. Restore the exact admitted inputs before replaying.
+
+After a host reboot, materialization reattaches a missing mount from its retained
+image and verifies the complete tree against the admitted lock. The receipt and
+commit remain unchanged. Missing images, changed files at the mountpoint, writable
+mounts and tree drift refuse work. Status and verify stay read-only. Explicit
+`sources.sync` or the next admitted run step triggers recovery.
 
 Sources mount read-only. macOS uses read-only disk images; Linux requires
 SquashFS creation and permission to mount read-only volumes. Missing tools or

@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { cp, mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -361,7 +362,47 @@ try {
         { timeout: 15_000, requireSameConnection: true },
       )) as { exitCode: number; stdout: string };
       assert.equal(result.exitCode, 0);
-      protections.push({ node: node.id, ...JSON.parse(result.stdout) });
+      const detach = (await sendNodeRequest(
+        connection,
+        'exec',
+        {
+          argv: ['hdiutil', 'detach', '-quiet', path.dirname(source)],
+          timeout: 30_000,
+        },
+        { timeout: 35_000, requireSameConnection: true },
+      )) as { exitCode: number };
+      assert.equal(detach.exitCode, 0);
+      await assert.rejects(
+        sendNodeRequest(
+          connection,
+          'sources.verify',
+          { lock },
+          { timeout: 30_000, requireSameConnection: true },
+        ),
+        /missing/,
+      );
+      const recovery = await client.call<SourcesSyncResult>('sources.sync', {
+        ...request,
+        operationId: `proof-remount-${node.id}`,
+        nodeId: node.id,
+      });
+      assert.deepEqual(recovery.errors, []);
+      const restored = await sendNodeRequest(
+        connection,
+        'sources.verify',
+        { lock },
+        { timeout: 30_000, requireSameConnection: true },
+      );
+      assert.deepEqual(restored, materialization);
+      protections.push({
+        node: node.id,
+        ...JSON.parse(result.stdout),
+        remount: {
+          receiptId: materialization.receipt.id,
+          lockDigest: lock.digest,
+          unchanged: true,
+        },
+      });
     }
   evidence.protection = protections;
   await writeFile(path.join(output, 'progress.json'), JSON.stringify(evidence, null, 2) + '\n');
@@ -546,7 +587,60 @@ try {
         second.run.sourceProvenance!.workerLock.digest,
         first.run.sourceProvenance!.workerLock.digest,
       );
-      workers.push({ nodeId: node.id, first, second });
+      const templates = await runtime.withRunSources(second.run, async () => {
+        const { loadSlotVars, loadProjectVars, currentProjectSources } =
+          await import('@farmslot/slot-config');
+        const { projectWorkerTemplatePath } =
+          await import('../../services/gateway/src/core/worker-templates.js');
+        const { expandReviewTemplate } =
+          await import('../../services/gateway/src/review/templates.js');
+        const { resolveCiFixTemplatePath } =
+          await import('../../services/gateway/src/ci-monitor/inline-fix.js');
+        const sources = currentProjectSources()!;
+        const vars = await loadSlotVars(slotId);
+        const pv = await loadProjectVars(workerProject);
+        const records = [];
+        for (const name of ['review.md', 'review-fix.md']) {
+          const file = await projectWorkerTemplatePath(workerProject, name);
+          assert.equal(
+            file,
+            path.join(
+              sources.materialization.roots[sources.pack.sourceId],
+              sources.pack.entry,
+              'templates/worker',
+              name,
+            ),
+          );
+          const raw = await readFile(file, 'utf8');
+          records.push({ name, file, sha256: createHash('sha256').update(raw).digest('hex') });
+        }
+        const rendered = await expandReviewTemplate(
+          vars,
+          'source-proof-review',
+          second.run.id,
+          'static-code',
+        );
+        assert.ok(rendered.includes('Description and evidence check'));
+        assert.ok(!rendered.includes('{{farmslot_dir}}'));
+        const ci = await resolveCiFixTemplatePath(workerProject);
+        assert.ok(
+          ci?.startsWith(sources.materialization.roots[pv.sourceContext!.pack.sourceId] + '/'),
+        );
+        records.push({
+          name: 'ci-fix.md',
+          file: ci!,
+          sha256: createHash('sha256')
+            .update(await readFile(ci!, 'utf8'))
+            .digest('hex'),
+        });
+        return {
+          runId: second.run.id,
+          lockDigest: second.run.sourceProvenance!.lock.digest,
+          records,
+          rendered: true,
+        };
+      });
+      workers.push({ nodeId: node.id, first, second, templates });
       evidence.workers = workers;
       await writeFile(path.join(output, 'progress.json'), JSON.stringify(evidence, null, 2) + '\n');
       await client.call('run.cancel', { runId: second.run.id });
@@ -568,16 +662,25 @@ try {
 
   const project = Object.keys(configuration.sources.packs)[0];
   const context = await runtime.projectContext(project);
-  await sourceCommand('hdiutil', [
-    'detach',
-    '-quiet',
-    path.dirname(context.materialization.roots[context.pack.sourceId]),
-  ]);
+  const mount = path.dirname(context.materialization.roots[context.pack.sourceId]);
+  await sourceCommand('hdiutil', ['detach', '-quiet', mount]);
+  const remount = await client.call<SourcesSyncResult>('sources.sync', {
+    ...request,
+    operationId: 'proof-remount-gateway',
+  });
+  assert.deepEqual(remount.errors, []);
+  assert.deepEqual(
+    (await runtime.projectContext(project)).materialization,
+    context.materialization,
+  );
+  evidence.gatewayRemount = { receiptId: context.materialization.receipt.id, unchanged: true };
+  await sourceCommand('hdiutil', ['detach', '-quiet', mount]);
+  await writeFile(path.join(mount, 'source-drift'), 'do not hide changed inputs');
   const refusal = await client.call<SourcesSyncResult>('sources.sync', {
     ...request,
     operationId: 'proof-drift',
   });
-  assert.ok(refusal.errors.length);
+  assert.ok(refusal.errors.some((error) => error.reason.includes('contains files')));
   evidence.drift = refusal;
   evidence.result = 'PASS';
 } catch (error) {

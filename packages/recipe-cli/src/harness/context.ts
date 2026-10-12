@@ -625,6 +625,7 @@ export interface LoadProjectProviderOptions {
 const projectProviders = new WeakMap<HarnessContext, ResolvedProjectBinding['provider']>();
 const projectLibraries = new WeakMap<HarnessContext, ResolvedProjectLibrary[]>();
 const providerOutputRoots = new WeakMap<HarnessContext, string[]>();
+const providerAttestedCommits = new WeakMap<HarnessContext, string>();
 const importedProviderSources = new Map<string, string>();
 
 /** Read project metadata and resolve defaults without importing executable code. */
@@ -864,13 +865,14 @@ export async function resolveProjectContext(
     return existingSourceRoot(value, ref.env ?? ref.projectPath);
   };
   const providerRoot = recipe.provider.root ? sourceRoot(recipe.provider.root) : undefined;
+  const providerCommit = providerRoot ? attestedCommits.get(providerRoot) : undefined;
   const provider = resolveProvider(
     recipe.provider,
     root,
     configured,
     providerRoot,
     excludedRoots,
-    providerRoot ? attestedCommits.get(providerRoot) : undefined,
+    providerCommit,
   );
   const overrides = await resolveRecipeLibrarySources({
     cliEntries: optionValues(options.tokens, '--library'),
@@ -987,6 +989,7 @@ export async function resolveProjectContext(
   projectProviders.set(context, structuredClone(provider));
   projectLibraries.set(context, structuredClone(libraries));
   providerOutputRoots.set(context, excludedRoots);
+  if (providerCommit) providerAttestedCommits.set(context, providerCommit);
   return context;
 }
 
@@ -1030,6 +1033,10 @@ export async function loadProjectProvider(
     provider.module,
     providerOutputRoots.get(context),
   );
+  // Exported locked trees omit .git; retain the resolver's attested commit while
+  // rechecking the actual source and delivery bytes before import.
+  const attestedCommit = providerAttestedCommits.get(context);
+  if (attestedCommit) current.head = attestedCommit;
   if (
     current.head !== provider.identity.head ||
     current.sourceFingerprint !== provider.identity.sourceFingerprint
