@@ -576,7 +576,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
         verification = 'unverified';
     }
     if (!verification) {
-      let receipt = readReceipt(files);
+      let receipt = runner === 'shell' ? null : readReceipt(files);
       const retry = ownedRetry(before);
       if (retry && before.accepted) {
         evidence = before.accepted;
