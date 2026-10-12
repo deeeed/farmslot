@@ -115,10 +115,7 @@ export function reviewCurationView(payload: ReviewGatePayload, state: ReviewCura
     })),
     includedCount: state.includedIndices.length,
     recommendation: state.recommendation,
-    evidenceAvailable: Boolean(
-      payload.evidenceMarkdown?.trim() ||
-      payload.artifactManifest?.some((item) => /\.(png|jpe?g|webp|mp4|mov)$/i.test(item.path)),
-    ),
+    evidenceAvailable: Boolean(payload.evidenceMarkdown?.trim()),
     includeEvidence: state.includeEvidence,
     reportNote: 'Selection controls finding comments. The original review report stays unchanged.',
   };

@@ -47,6 +47,23 @@ test('all findings start selected; toggles and an empty selection are explicit',
     ['Handle A.', 'Handle B.'],
   );
 });
+test('evidence choice follows attachable markdown rather than media file extensions', () => {
+  const mediaOnly = {
+    ...payload,
+    artifactManifest: [{ path: 'evidence.webm', type: 'video' as const }],
+  };
+  assert.equal(
+    reviewCurationView(mediaOnly, createReviewCuration(mediaOnly)).evidenceAvailable,
+    false,
+  );
+  for (const evidenceMarkdown of ['', '  ', '![Proof](https://example.test/evidence.gif)']) {
+    const review = { ...mediaOnly, evidenceMarkdown };
+    assert.equal(
+      reviewCurationView(review, createReviewCuration(review)).evidenceAvailable,
+      Boolean(evidenceMarkdown.trim()),
+    );
+  }
+});
 test('selected result carries the requested finding and preserves the original report', () => {
   const state = {
     ...createReviewCuration(payload),

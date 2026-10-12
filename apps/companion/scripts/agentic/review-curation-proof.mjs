@@ -34,9 +34,11 @@ const evidence = (name, data) =>
   write(path.join(process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR ?? proof, `${name}.json`), data);
 const stop = () => {
   if (fs.existsSync(stateFile)) {
-    if (state().refreshPid) stopProofGateway(state().refreshPid);
-    if (state().writerPid) stopProofGateway(state().writerPid);
-    stopProofGateway(state().pid);
+    const owned = state();
+    if (owned.refreshPid) stopProofGateway(owned.refreshPid);
+    if (owned.writerPid) stopProofGateway(owned.writerPid);
+    if (owned.pid) stopProofGateway(owned.pid);
+    fs.rmSync(owned.farm, { recursive: true, force: true });
   }
 };
 const report = 'Recommendation: REQUEST_CHANGES\n\n## Summary\nOriginal saved review report.';

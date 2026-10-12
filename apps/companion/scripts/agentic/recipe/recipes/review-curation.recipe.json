@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Companion review finding curation",
-  "description": "Private production gateway, real Git commits, dirty current checkout and an isolated provider sink. Drives workspace and slot gates and select-none on an owned Android emulator. Requires explicit ADB_SERIAL, METRO_PORT and the dev client. Always stop the proof gateway in caller teardown. No external publication.",
+  "description": "Private production gateway, real Git commits, dirty current checkout and an isolated provider sink. Drives workspace and slot gates and select-none on an owned Android emulator. Requires explicit ADB_SERIAL, METRO_PORT and the dev client. Workflow teardown stops owned processes on every exit. No external publication.",
   "proofTargets": [
     {
       "id": "finding-context",
@@ -10,6 +10,7 @@
   ],
   "workflow": {
     "entry": "setup",
+    "teardown": "stop",
     "nodes": {
       "setup": {
         "action": "command",
@@ -351,14 +352,18 @@
         "text": "Failed to resolve",
         "expected": "absent",
         "timeout_ms": 1000,
-        "next": "stop"
+        "next": "done"
       },
       "stop": {
         "action": "command",
         "intent": "Stop the owned private proof gateway.",
         "cmd": "node scripts/agentic/review-curation-proof.mjs stop",
         "timeout_ms": 120000,
-        "next": "done"
+        "next": "cleanup-done"
+      },
+      "cleanup-done": {
+        "action": "end",
+        "status": "pass"
       },
       "done": {
         "action": "end",
