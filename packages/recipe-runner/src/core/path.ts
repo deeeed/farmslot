@@ -47,8 +47,13 @@ export async function writeFileWithinRoot(
   root: string,
   relativePath: string,
   data: string | Uint8Array,
+  exclusive = false,
 ): Promise<string> {
-  const { handle, path: outputPath } = await openOutputFileWithinRoot(root, relativePath);
+  const { handle, path: outputPath } = await openOutputFileWithinRoot(
+    root,
+    relativePath,
+    exclusive,
+  );
   try {
     await handle.writeFile(data);
   } finally {
@@ -98,6 +103,7 @@ async function openExistingFileWithinRoot(root: string, relativePath: string): P
 async function openOutputFileWithinRoot(
   root: string,
   relativePath: string,
+  exclusive = false,
 ): Promise<{ handle: FileHandle; path: string }> {
   const normalized = normalizeRelativePath(relativePath);
   const rootReal = await realpath(root);
@@ -121,7 +127,10 @@ async function openOutputFileWithinRoot(
     path: outputPath,
     handle: await open(
       outputPath,
-      constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
+      constants.O_WRONLY |
+        constants.O_CREAT |
+        (exclusive ? constants.O_EXCL : constants.O_TRUNC) |
+        constants.O_NOFOLLOW,
       0o600,
     ),
   };
