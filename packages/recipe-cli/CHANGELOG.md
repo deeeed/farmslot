@@ -5,6 +5,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 ## Unreleased
 
 - Require an attested source binding for declared providers and recipe libraries.
+- Honor explicit checklist targets and resume cleared blockers with the existing start command.
 
 ## 0.14.2 - 2026-10-12
 

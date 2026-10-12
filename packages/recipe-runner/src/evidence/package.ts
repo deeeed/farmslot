@@ -14,6 +14,7 @@ import {
 
 import type { ProofDocument, ProofTraceEntry } from './assertions.js';
 import { deriveRecipeClaims } from './claims.js';
+import { indexRecordingTimelines } from './moments.js';
 import { planRecipeEvidence } from './plan.js';
 
 /** Validate actual package identities before consumers derive a moment or publish evidence. */
@@ -58,17 +59,28 @@ export function validateRecordedEvidencePackage(
       issue('acceptance-status.json', 'Claims belong to another execution.');
     for (const claim of input.claims.criteria) {
       for (const moment of claim.moments) {
-        const segment = input.claims.recording.segments.find(
+        const matching = input.claims.recording.segments.filter(
           (entry) => entry.videoDigest === moment.videoDigest,
         );
         if (
-          !segment ||
-          input.artifactDigests[segment.videoPath]?.replace(/^sha256:/u, '') !==
-            moment.videoDigest.slice(7)
+          !matching.some(
+            (segment) =>
+              input.artifactDigests[segment.videoPath]?.replace(/^sha256:/u, '') ===
+              moment.videoDigest.slice(7),
+          )
         )
           issue(`claims.${claim.id}.moments`, 'Moment does not reference retained video bytes.');
-        const timeline = segment?.timelinePath ? input.timelines[segment.timelinePath] : undefined;
-        if (timeline && !timeline.markers.some((marker) => marker.traceIndex === moment.traceIndex))
+        if (
+          !matching.some((segment) => {
+            const timeline = segment.timelinePath
+              ? input.timelines[segment.timelinePath]
+              : undefined;
+            return (
+              !timeline ||
+              timeline.markers.some((marker) => marker.traceIndex === moment.traceIndex)
+            );
+          })
+        )
           issue(`claims.${claim.id}.moments`, 'Moment does not reference a retained occurrence.');
       }
     }
@@ -107,9 +119,7 @@ export function validateRecordedEvidencePackage(
           artifacts: input.manifest.artifacts as RecipeArtifactManifestEntry[],
           segments: input.claims.recording.segments,
           judgments: input.claims.judgments,
-          timelines: new Map(
-            Object.values(input.timelines).map((timeline) => [timeline.videoDigest, timeline]),
-          ),
+          timelines: indexRecordingTimelines(Object.values(input.timelines)),
         });
         for (const actual of derived) {
           if (!input.claims.criteria.some((claim) => claim.id === actual.id))

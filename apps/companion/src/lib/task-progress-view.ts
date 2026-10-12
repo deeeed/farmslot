@@ -5,13 +5,16 @@
  * and whether a child's steps list starts collapsed.
  */
 import {
-  acceptanceCriteriaView,
+  createEvidenceReviewModel,
+  type EvidenceReviewClaim,
+  type EvidenceReviewModel,
+} from '@farmslot/adapter-sdk/evidence';
+import {
   type AcceptanceCriterionRef,
   type AcceptanceCriterionView,
   type AcceptanceEvidenceLink,
   type AcceptanceStatusLedger,
   isSettledSubtaskStatus,
-  summarizeAcceptanceStatus,
   type TaskStepSubtaskProgress,
 } from '@farmslot/protocol';
 // The shared palette, not `./theme`: that module builds StyleSheets, which pulls
@@ -75,7 +78,7 @@ export function acceptanceVerdictColor(verdict: string | null): string {
   // No verdict yet is neutral: the panel must not imply one.
   if (verdict === null) return colors.textMuted;
   if (verdict === 'proven') return colors.statusOk;
-  if (verdict === 'weak' || verdict === 'missing') return colors.statusFail;
+  if (verdict === 'weak' || verdict === 'missing' || verdict === 'failed') return colors.statusFail;
   if (verdict === 'untestable') return colors.statusWarn;
   return colors.accent;
 }
@@ -88,6 +91,7 @@ export interface AcceptanceEvidenceEntry {
 }
 
 export interface AcceptanceLedgerRow {
+  review?: EvidenceReviewClaim;
   criterion: AcceptanceCriterionView;
   /** The recorded verdict, or null while the criterion is unjudged. */
   verdict: string | null;
@@ -118,10 +122,10 @@ export function acceptanceLedgerView(
   ledger: AcceptanceStatusLedger,
   criteria: ReadonlyArray<AcceptanceCriterionRef> = ledger.criteria,
   evidenceLinks: ReadonlyArray<AcceptanceEvidenceLink> = [],
+  model: EvidenceReviewModel = createEvidenceReviewModel({ criteria, ledger, evidenceLinks }),
 ): AcceptanceLedgerView {
-  const summary = summarizeAcceptanceStatus(ledger, criteria);
+  const summary = model.summary;
   const assessed = summary.total - summary.unrecorded;
-  const linked = new Map(evidenceLinks.map((link) => [link.id, link.evidence]));
   return {
     counts: `${assessed}/${summary.total} assessed · ${summary.proven} proven`,
     countsLabel:
@@ -131,14 +135,12 @@ export function acceptanceLedgerView(
     countsColor: summary.unrecorded > 0 ? colors.statusFail : colors.textSecondary,
     unassessed: summary.unrecorded,
     hasOpenCriteria: summary.proven + summary.untestable < summary.total,
-    rows: acceptanceCriteriaView(criteria, ledger).map((criterion) => ({
+    rows: model.claims.map((criterion) => ({
       criterion,
+      review: criterion,
       verdict: criterion.status?.verdict ?? null,
       color: acceptanceVerdictColor(criterion.status?.verdict ?? null),
-      // A path the ledger repeats is one file: one chip, one viewer slide.
-      evidence: [
-        ...new Set(criterion.status ? criterion.status.evidence : (linked.get(criterion.id) ?? [])),
-      ].map((path) => ({ path, name: path.split('/').pop() || path })),
+      evidence: criterion.evidence.map(({ artifactPath, name }) => ({ path: artifactPath, name })),
     })),
   };
 }

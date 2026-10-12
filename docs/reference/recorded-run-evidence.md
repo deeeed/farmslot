@@ -199,14 +199,14 @@ engine contracts belong in `@farmslot/adapter-sdk`; `ProjectRuntime` denotes the
 runtime role represented by the existing provider contract, not a second protocol
 interface to implement.
 
-| API/signature                                                                                                                     | Owner and consumers                                                                       | Status/replacement                                                                                                                            |
-| --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AdapterRecording.target(context): Promise<RecordingTarget>`; `videoRecorder(): Promise<VideoRecorder>`                           | `@farmslot/adapter-sdk`; engine and platform providers                                    | Evolve existing contract; target resolution stays provider-owned                                                                              |
-| `VideoRecorder.start(request): Promise<ActiveVideoRecording>`; `stop(): Promise<VideoRecordingResult>` returning ordered segments | Executable backend contract in the SDK; runner/platform backends                          | Version changed result shape; keep one definition and built-in backends                                                                       |
-| `createDefaultRecipeEngine(options: DefaultRecipeEngineOptions): RecipeEngine`                                                    | Proposed `@farmslot/adapter-sdk`; CLI and custom harness composition                      | Existing public export is `@farmslot/recipe-cli/harness`; move only these engine factory/types in coordinated breaking release, no alias shim |
-| `createEvidenceReviewModel(input): EvidenceReviewModel`; `validateRecordedEvidencePackage(package): ValidationResult`             | Proposed `@farmslot/adapter-sdk/evidence`; every review context, artifact CLI and gateway | Portable model/validator; methods own claim/step selection, caption, seek and bounded playback state                                          |
-| `materializeEvidenceClip(package, moment, outputDir): Promise<ArtifactRef>`                                                       | Proposed `@farmslot/recipe-runner`; artifact CLI/publication                              | Bounded on-demand derivative from validated references                                                                                        |
-| `refreshPublishedEvidence(client, params): Promise<RunRefreshPublishedEvidenceResult>`                                            | Proposed SDK client entry; authorized artifact CLI/integrations                           | Existing typed gateway RPC remains sole publication authority                                                                                 |
+| API/signature                                                                                                                                    | Owner and consumers                                                                   | Status/replacement                                                                                                                            |
+| ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AdapterRecording.target(context): Promise<RecordingTarget>`; `videoRecorder(): Promise<VideoRecorder>`                                          | `@farmslot/adapter-sdk`; engine and platform providers                                | Evolve existing contract; target resolution stays provider-owned                                                                              |
+| `VideoRecorder.start(request): Promise<ActiveVideoRecording>`; `stop(): Promise<VideoRecordingResult>` returning ordered segments                | Executable backend contract in the SDK; runner/platform backends                      | Version changed result shape; keep one definition and built-in backends                                                                       |
+| `createDefaultRecipeEngine(options: DefaultRecipeEngineOptions): RecipeEngine`                                                                   | Proposed `@farmslot/adapter-sdk`; CLI and custom harness composition                  | Existing public export is `@farmslot/recipe-cli/harness`; move only these engine factory/types in coordinated breaking release, no alias shim |
+| `createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceReviewModel`; `validateRecordedEvidencePackage(package): RecipeValidationResult` | Experimental `@farmslot/adapter-sdk/evidence`; web/native review contexts and gateway | Portable model/validator; methods own claim/step selection, caption, seek and bounded playback state                                          |
+| `materializeEvidenceClip(package, moment, outputDir): Promise<ArtifactRef>`                                                                      | Proposed `@farmslot/recipe-runner`; artifact CLI/publication                          | Bounded on-demand derivative from validated references                                                                                        |
+| `refreshPublishedEvidence(client, params): Promise<RunRefreshPublishedEvidenceResult>`                                                           | Proposed SDK client entry; authorized artifact CLI/integrations                       | Existing typed gateway RPC remains sole publication authority                                                                                 |
 
 `readRecordedEvidencePackage(artifactDir)` is the single Node filesystem reader
 exported from the Node entry `@farmslot/adapter-sdk`. CLI artifact validation and gateway
@@ -279,3 +279,25 @@ successful test results:
 - **Frozen refresh:** Replace approved media bytes or request an unapproved artifact and observe refusal; valid approved refresh preserves selection, dependencies, approval and PR identity, and renders hosted media with HTTP 200.
 - **Clean cutover:** One normal ledger writer, no replaced recorder/linking/mapper copies or shim imports; unrecorded headless control and explicitly untimed legacy viewing remain honest.
 - **HUD:** Intent lint accepts 80 characters without a length warning, warns at 81–120 and fails at 121; multi-sentence intents fail. Across supported viewports the shared HUD displays the complete sentence in at most two lines inside its bounded panel, without hiding the checked app content. A harness inherits that HUD without supplying a renderer.
+
+### Review implementation interfaces
+
+The experimental portable SDK model owns claim/occurrence projection, original
+media identity, captions and playback effects. Renderer adapters use each file's
+`artifactPath`; the model retains its package-relative `path` separately. Legacy
+task-ledger paths already belong to the task transport namespace and remain
+untimed. `loadRecordingEvidenceReview` loads only timeline/trace metadata for an
+existing standalone player. It cannot promote a legacy file into a recorded claim.
+
+The Node retained reader accepts optional trusted `RecordedEvidencePackageReadIO`
+callbacks for one root's file inventory, contained JSON reads and actual-byte
+hashes. Local and remote hosts share its input-closure logic and diagnostics.
+The existing recipe-artifact RPC may return selected-package metadata on demand;
+that display snapshot is not frozen approval authority. Gate consumers still
+require the approved complete inventory and canonical validation.
+
+Report review reuses `OutputReviewPayload` and `RunOutput` identity.
+`readEvidenceReviewReport` refuses a changed snapshot or changed report bytes.
+The existing document viewers render that checked text and the same case/check
+controls used at the gate. Publication, visual-judgment persistence and resource
+qualification remain separate completion gates for this feature.

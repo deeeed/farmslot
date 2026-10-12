@@ -20,6 +20,7 @@ import {
 
 import { proofDocument } from '../evidence/assertions.js';
 import { deriveRecipeClaims } from '../evidence/claims.js';
+import { occurrenceRecordingCoverage } from '../evidence/moments.js';
 import { validateRecordedEvidencePackage } from '../evidence/package.js';
 import { planRecipeEvidence, type RecipeEvidencePlan } from '../evidence/plan.js';
 import { materializeEvidenceStill } from '../evidence/stills.js';
@@ -634,7 +635,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       });
       if (artifact.timelinePath)
         timelines.set(
-          videoDigest,
+          artifact.path,
           (await readJsonFile(
             path.join(artifactsDir, artifact.timelinePath),
           )) as RecipeRecordingTimelineDocument,
@@ -665,12 +666,8 @@ class DefaultRecipeRunner implements RecipeRunner {
           )
       )
         continue;
-      const claim = pendingClaims.find((entry) => entry.assertionIndices.includes(traceIndex));
-      const moment = claim?.moments.find((entry) => entry.traceIndex === traceIndex);
-      const segment = moment
-        ? segments.find((entry) => entry.videoDigest === moment.videoDigest)
-        : undefined;
-      const timeline = segment ? timelines.get(segment.videoDigest) : undefined;
+      const segment = occurrenceRecordingCoverage(traceIndex, segments, timelines).segments.at(-1);
+      const timeline = segment ? timelines.get(segment.videoPath) : undefined;
       if (!segment || !timeline) continue;
       try {
         const still = await materializeEvidenceStill(
@@ -768,7 +765,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       timelines: Object.fromEntries(
         segments
           .filter((segment) => segment.timelinePath)
-          .map((segment) => [segment.timelinePath!, timelines.get(segment.videoDigest)!]),
+          .map((segment) => [segment.timelinePath!, timelines.get(segment.videoPath)!]),
       ),
       recipe,
       resolvedRecipes: Object.fromEntries(

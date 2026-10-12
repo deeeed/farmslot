@@ -30,6 +30,21 @@ const { resolveChecklistPaths } =
       target: { checklist: string; signal: string };
     };
   };
+const { resolveChecklistTargetWithOverrides } =
+  require('@farmslot/agent-runtime/scripts/checklist-target.cjs') as {
+    resolveChecklistTargetWithOverrides: (
+      taskDir: string,
+      overrides: ChecklistTargetOverrides,
+    ) => {
+      checklist: string;
+      signal: string;
+    };
+  };
+
+interface ChecklistTargetOverrides {
+  checklist?: string;
+  signal?: string;
+}
 const { readSubtaskIndex, SubtaskRefusal } =
   require('@farmslot/agent-runtime/scripts/subtask-unit.cjs') as {
     readSubtaskIndex: (taskDir: string) => SubtaskIndex | null;
@@ -76,12 +91,18 @@ function parseChecklistArgv(argv: string[]): {
   taskDir?: string;
   step?: string;
   forwarded: string[];
+  targetOverrides: ChecklistTargetOverrides;
 } {
   const positionals: Array<{ index: number; value: string }> = [];
+  const targetOverrides: ChecklistTargetOverrides = {};
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] ?? '';
     if (arg.startsWith('-')) {
       const option = arg.split('=', 1)[0] ?? arg;
+      if (option === '--checklist' || option === '--signal') {
+        const value = arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : argv[index + 1];
+        targetOverrides[option === '--checklist' ? 'checklist' : 'signal'] = value;
+      }
       if (CHECKLIST_VALUE_OPTIONS.has(option) && !arg.includes('=')) index += 1;
       continue;
     }
@@ -93,6 +114,7 @@ function parseChecklistArgv(argv: string[]): {
     taskDir: positionals[1]?.value,
     step: positionals[2]?.value,
     forwarded: argv.filter((_, index) => !consumed.has(index)),
+    targetOverrides,
   };
 }
 
@@ -121,8 +143,9 @@ function stageLearningPackage(
   );
 }
 
-function terminalSignalStatus(taskDir: string): string | null {
-  const { signalPath } = resolveChecklistPaths(taskDir);
+function terminalSignalStatus(taskDir: string, overrides: ChecklistTargetOverrides): string | null {
+  const target = resolveChecklistTargetWithOverrides(taskDir, overrides);
+  const signalPath = path.join(taskDir, target.signal);
   let signal: { status?: string };
   try {
     signal = JSON.parse(fs.readFileSync(signalPath, 'utf8')) as { status?: string };
@@ -134,11 +157,16 @@ function terminalSignalStatus(taskDir: string): string | null {
   return isTerminalWorkerSignalStatus(signal.status) ? (signal.status ?? null) : null;
 }
 
-function preserveTerminalSignal(taskDir: string, step: string | undefined): boolean {
+function preserveTerminalSignal(
+  taskDir: string,
+  step: string | undefined,
+  overrides: ChecklistTargetOverrides,
+): boolean {
   if (step !== 'start' && numericMarkStep(step) === null) return false;
 
-  const status = terminalSignalStatus(taskDir);
+  const status = terminalSignalStatus(taskDir, overrides);
   if (!status) return false;
+  if (step === 'start' && status === 'blocked') return false;
 
   console.log(`signal already terminal: status=${status}; ignoring non-terminal mark ${step}`);
   return true;
@@ -185,7 +213,7 @@ export async function handleChecklist(
   const usage = options.closeout
     ? `${host} checklist <mark <task-dir> <step> | closeout <task-dir>> [options]`
     : `${host} checklist mark <task-dir> <step> [options]`;
-  const { action, taskDir, step, forwarded } = parseChecklistArgv(argv);
+  const { action, taskDir, step, forwarded, targetOverrides } = parseChecklistArgv(argv);
   if (!taskDir) {
     console.error(`usage: ${usage}`);
     return EXIT.usage;
@@ -204,7 +232,7 @@ export async function handleChecklist(
     console.error(`usage: ${usage}`);
     return EXIT.usage;
   }
-  if (preserveTerminalSignal(resolvedTaskDir, step)) return EXIT.ok;
+  if (preserveTerminalSignal(resolvedTaskDir, step, targetOverrides)) return EXIT.ok;
   const gates = options.stepGates ?? [];
   if (step === 'sub' && forwarded[2] === 'complete') {
     try {
@@ -228,7 +256,7 @@ export async function handleChecklist(
       return error.code;
     }
   }
-  if (!stepGatesReady(resolvedTaskDir, step, gates)) return EXIT.runtime;
+  if (!stepGatesReady(resolvedTaskDir, step, gates, targetOverrides.checklist)) return EXIT.runtime;
   if (step === 'complete') options.beforeComplete?.(resolvedTaskDir);
 
   const result = spawnSync(process.execPath, [MARK_SCRIPT, resolvedTaskDir, ...forwarded], {

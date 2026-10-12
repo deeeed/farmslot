@@ -14,13 +14,18 @@
 
 import { css, html, nothing, type TemplateResult, unsafeCSS } from 'lit';
 
+import {
+  createEvidenceReviewModel,
+  type EvidenceReviewClaim,
+  type EvidenceReviewModel,
+} from '@farmslot/adapter-sdk/evidence';
 import type {
   AcceptanceCriterionRef,
   AcceptanceCriterionView,
   AcceptanceEvidenceLink,
   AcceptanceStatusLedger,
 } from '@farmslot/protocol';
-import { acceptanceCriteriaView, summarizeAcceptanceStatus } from '@farmslot/protocol';
+import { summarizeAcceptanceStatus } from '@farmslot/protocol';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
@@ -36,8 +41,9 @@ export interface AcceptancePanelPresentation {
 export function acceptancePanelPresentation(
   ledger: AcceptanceStatusLedger,
   criteria: ReadonlyArray<AcceptanceCriterionRef> = ledger.criteria,
+  model?: EvidenceReviewModel,
 ): AcceptancePanelPresentation {
-  const summary = summarizeAcceptanceStatus(ledger, criteria);
+  const summary = model?.summary ?? summarizeAcceptanceStatus(ledger, criteria);
   const assessed = summary.total - summary.unrecorded;
   return {
     counts: `${assessed}/${summary.total} assessed${assessed ? ` · ${summary.proven} proven` : ''}`,
@@ -142,6 +148,7 @@ export const acceptancePanelStyles = css`
     color: ${unsafeCSS(colors.statusOk)};
   }
   /* Weak and missing are the verdicts that block a terminal mark. */
+  .ac-row.ac-failed .ac-verdict,
   .ac-row.ac-weak .ac-verdict,
   .ac-row.ac-missing .ac-verdict {
     border-color: ${unsafeCSS(colors.statusFail)};
@@ -187,6 +194,17 @@ export const acceptancePanelStyles = css`
     text-decoration: none;
     font-family: ${unsafeCSS(fonts.mono)};
   }
+  button.ac-evidence {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    text-align: left;
+    font-size: inherit;
+  }
+  .ac-proof-step {
+    display: block;
+  }
   .ac-evidence:hover {
     text-decoration: underline;
   }
@@ -205,6 +223,7 @@ export const acceptancePanelStyles = css`
 
 /** A click on one of a criterion's evidence files: which criterion, its files in order, and which one. */
 export interface AcceptanceEvidenceOpen {
+  evidenceModel?: EvidenceReviewModel;
   criterion: AcceptanceCriterionView;
   evidence: readonly string[];
   index: number;
@@ -216,7 +235,7 @@ function isPlainClick(event: MouseEvent): boolean {
 }
 
 export interface AcceptanceEvidenceRow {
-  view: AcceptanceCriterionView;
+  view: EvidenceReviewClaim;
   /** The manifest link, only for a run with no ledger. */
   link?: AcceptanceEvidenceLink;
   /** The files the row lists, in order: the ledger's, else the manifest link's. */
@@ -232,22 +251,28 @@ export function acceptanceEvidenceRows(
   ledger: AcceptanceStatusLedger,
   criteria: ReadonlyArray<AcceptanceCriterionRef> = ledger.criteria,
   evidenceLinks: ReadonlyArray<AcceptanceEvidenceLink> = [],
+  model = createEvidenceReviewModel({
+    ledger,
+    criteria,
+    evidenceLinks: ledger.criteria.length ? [] : evidenceLinks,
+  }),
 ): AcceptanceEvidenceRow[] {
   // The gateway sends links only without a ledger; a ledger still wins here.
   const links = ledger.criteria.length === 0 ? evidenceLinks : [];
   const linkById = new Map(links.map((link) => [link.id, link]));
-  return acceptanceCriteriaView(criteria, ledger).map((view) => {
+  return model.claims.map((view) => {
     const link = linkById.get(view.id);
     return {
       view,
       ...(link ? { link } : {}),
-      evidence: view.status?.evidence ?? link?.evidence ?? [],
+      evidence: view.evidence.map((file) => file.artifactPath),
     };
   });
 }
 
 /** A run's acceptance data as run detail holds it; null means none or not loaded. */
 export interface RunAcceptanceData {
+  evidenceModel?: EvidenceReviewModel | null;
   acceptanceStatus?: AcceptanceStatusLedger | null;
   acceptanceCriteria?: AcceptanceCriterionRef[] | null;
   acceptanceStatusError?: string | null;
@@ -256,6 +281,7 @@ export interface RunAcceptanceData {
 }
 
 export interface AcceptancePanelInputs {
+  evidenceModel?: EvidenceReviewModel;
   ledger: AcceptanceStatusLedger;
   criteria?: ReadonlyArray<AcceptanceCriterionRef>;
   error?: string;
@@ -269,11 +295,17 @@ export interface AcceptancePanelInputs {
  * acceptance evidence link from it, so both read the same rows.
  */
 export function acceptancePanelInputs(data: RunAcceptanceData): AcceptancePanelInputs | null {
-  if (!data.acceptanceStatus && !data.acceptanceCriteria?.length && !data.acceptanceStatusError) {
+  if (
+    !data.evidenceModel?.claims.length &&
+    !data.acceptanceStatus &&
+    !data.acceptanceCriteria?.length &&
+    !data.acceptanceStatusError
+  ) {
     return null;
   }
   return {
     ledger: data.acceptanceStatus ?? { schemaVersion: 1, criteria: [] },
+    ...(data.evidenceModel ? { evidenceModel: data.evidenceModel } : {}),
     ...(data.acceptanceCriteria?.length ? { criteria: data.acceptanceCriteria } : {}),
     ...(data.acceptanceStatusError ? { error: data.acceptanceStatusError } : {}),
     ...(data.acceptanceEvidenceLinks?.length
@@ -288,7 +320,14 @@ export function acceptancePanelInputs(data: RunAcceptanceData): AcceptancePanelI
 /** The rows the run page's panel shows, each with its evidence; empty when it is hidden. */
 export function runAcceptanceEvidenceRows(data: RunAcceptanceData): AcceptanceEvidenceRow[] {
   const inputs = acceptancePanelInputs(data);
-  return inputs ? acceptanceEvidenceRows(inputs.ledger, inputs.criteria, inputs.evidenceLinks) : [];
+  return inputs
+    ? acceptanceEvidenceRows(
+        inputs.ledger,
+        inputs.criteria,
+        inputs.evidenceLinks,
+        inputs.evidenceModel,
+      )
+    : [];
 }
 
 /** Each shown criterion with its evidence files: what an acceptance evidence link resolves against. */
@@ -306,6 +345,7 @@ function renderRow(
   { view, link, evidence }: AcceptanceEvidenceRow,
   evidenceHref?: (evidencePath: string) => string,
   openEvidence?: (open: AcceptanceEvidenceOpen) => void,
+  model?: EvidenceReviewModel,
 ): TemplateResult {
   const criterion = view.status;
   // A registered criterion with no verdict yet is a row, not an absence: the panel
@@ -321,6 +361,28 @@ function renderRow(
     >
       <span class="ac-id">${view.id}</span>
       <span class="ac-text">${view.text}</span>
+      ${view.moments.length && !model?.errors.length && openEvidence
+        ? html`<button
+            class="ac-evidence"
+            data-testid="acceptance-clip"
+            @click=${() => {
+              const selected = model?.selectClaim(view.id);
+              const path = selected?.clips[0]?.videoPath;
+              if (path)
+                openEvidence({
+                  criterion: view,
+                  evidence,
+                  index: evidence.indexOf(model?.artifactPath(path) ?? path),
+                  evidenceModel: model,
+                });
+            }}
+          >
+            Play proof
+          </button>`
+        : nothing}
+      ${view.timing && view.timing !== 'measured'
+        ? html`<span class="ac-mode">${view.timing}</span>`
+        : nothing}
       ${criterion?.proofMode ? html`<span class="ac-mode">${criterion.proofMode}</span>` : nothing}
       <span class="ac-verdict"
         >${criterion ? criterion.verdict : link ? 'evidence linked' : 'not assessed'}</span
@@ -341,7 +403,8 @@ function renderRow(
                     @click=${(event: MouseEvent) => {
                       if (!openEvidence || !isPlainClick(event)) return;
                       event.preventDefault();
-                      openEvidence({ criterion: view, evidence, index });
+                      model?.selectClaim(view.id, evidencePath);
+                      openEvidence({ criterion: view, evidence, index, evidenceModel: model });
                     }}
                     >${evidenceLabel(evidencePath)}</a
                   >`
@@ -353,6 +416,17 @@ function renderRow(
           </div>
         `
       : nothing}
+    ${model?.claims
+      .find((claim) => claim.id === view.id)
+      ?.occurrences.map(
+        (occurrence) =>
+          html`<div class="ac-meta">
+            <span>${occurrence.intent}</span>
+            ${occurrence.expectation
+              ? html`<code>${JSON.stringify(occurrence.expectation)}</code>`
+              : nothing}
+          </div>`,
+      )}
     ${criterion?.note ? html`<div class="ac-note">${criterion.note}</div>` : nothing}
   `;
 }
@@ -366,6 +440,9 @@ function renderRow(
 export function renderAcceptancePanel(
   ledger: AcceptanceStatusLedger,
   options: {
+    evidenceModel?: EvidenceReviewModel;
+    showOccurrences?: boolean;
+    openOccurrence?: (traceIndex: number) => void;
     evidenceHref?: (evidencePath: string) => string;
     openEvidence?: (open: AcceptanceEvidenceOpen) => void;
     /** Registered criteria, so an unjudged one still gets a row. */
@@ -378,13 +455,27 @@ export function renderAcceptancePanel(
     evidenceLinksError?: string | null;
   } = {},
 ): TemplateResult | typeof nothing {
+  const model =
+    options.evidenceModel ??
+    createEvidenceReviewModel({
+      ledger,
+      criteria: options.criteria,
+      evidenceLinks: ledger.criteria.length ? [] : options.evidenceLinks,
+    });
   const rows = acceptanceEvidenceRows(
     ledger,
     options.criteria ?? ledger.criteria,
     options.evidenceLinks,
+    model,
   );
-  if (rows.length === 0 && !options.error) return nothing;
-  const view = acceptancePanelPresentation(ledger, options.criteria ?? ledger.criteria);
+  if (
+    rows.length === 0 &&
+    !options.error &&
+    !model?.errors.length &&
+    !(options.showOccurrences && model?.occurrences.length)
+  )
+    return nothing;
+  const view = acceptancePanelPresentation(ledger, options.criteria ?? ledger.criteria, model);
   const linked = rows.filter((row) => row.link).length;
   // Like the links, a manifest read error only matters while there is no ledger.
   const linksError = ledger.criteria.length === 0 ? options.evidenceLinksError : null;
@@ -392,7 +483,11 @@ export function renderAcceptancePanel(
     <details
       class="ac-panel"
       data-testid="acceptance-panel"
-      ?open=${view.hasOpenCriteria || Boolean(options.error)}
+      ?data-proof-steps=${Boolean(options.showOccurrences)}
+      ?open=${view.hasOpenCriteria ||
+      Boolean(options.error) ||
+      Boolean(model?.errors.length) ||
+      Boolean(model?.claims.some((claim) => claim.kind === 'qa-case'))}
     >
       <summary class="ac-summary">
         <span class="ac-caret"></span>
@@ -420,7 +515,22 @@ export function renderAcceptancePanel(
               evidence manifest unreadable: ${linksError}
             </div>`
           : nothing}
-        ${rows.map((row) => renderRow(row, options.evidenceHref, options.openEvidence))}
+        ${rows.map((row) => renderRow(row, options.evidenceHref, options.openEvidence, model))}
+        ${model?.warnings.map((warning) => html`<p class="ac-note">${warning}</p>`)}
+        ${model?.errors.map((error) => html`<p class="ac-error">${error}</p>`)}
+        ${options.showOccurrences
+          ? model?.occurrences.map(
+              (occurrence) =>
+                html`<button
+                  class="ac-evidence ac-proof-step"
+                  data-testid="recipe-proof-step"
+                  data-trace-index=${occurrence.traceIndex}
+                  @click=${() => options.openOccurrence?.(occurrence.traceIndex)}
+                >
+                  ${occurrence.nodeId}: ${occurrence.intent} · ${occurrence.ok ? 'pass' : 'fail'}
+                </button>`,
+            )
+          : nothing}
       </div>
     </details>
   `;

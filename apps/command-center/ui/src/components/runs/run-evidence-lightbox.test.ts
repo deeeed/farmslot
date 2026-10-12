@@ -55,6 +55,7 @@ const ctx = {
   onEvidenceArtifactClick: () => {},
   closeEvidenceLightbox: () => {},
   navigateEvidenceLightbox: () => {},
+  replaceEvidenceLightbox: () => {},
 };
 
 test('a run with no results card still mounts the evidence lightbox', () => {

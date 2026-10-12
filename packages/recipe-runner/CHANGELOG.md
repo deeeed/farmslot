@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- Expose the existing occurrence recording-coverage helper and trusted-host reader transport to the shared review model; equal-byte originals retain their distinct clocks (ADR-062).
+
 ## 0.31.0 - 2026-10-12
 
 - Add bounded `watch_logs` observation with cancellation. Breaking correction: run-scoped logs now require paths resolved before producers execute; output-derived paths must declare `scope=file`, and stale content no longer passes parameterized observations.

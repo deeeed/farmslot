@@ -35,9 +35,33 @@ export interface SourceVolume {
   verify(mount: string): Promise<void>;
 }
 
+interface SourceDiskImage {
+  'image-path': string;
+  'system-entities': Array<{ 'dev-entry': string; 'content-hint': string }>;
+}
+
 /** A read-only filesystem, rather than mode bits that the same worker UID can undo. */
 export class ReadOnlySourceVolume implements SourceVolume {
   constructor(private readonly command: SourceCommand = sourceCommand) {}
+
+  private async detachOwnedImage(images: string[]): Promise<void> {
+    const temporary = path.join(os.tmpdir(), `source-images-${randomUUID()}.plist`);
+    try {
+      await writeFile(temporary, await this.command('hdiutil', ['info', '-plist']), { flag: 'wx' });
+      const data = JSON.parse(
+        (await this.command('plutil', ['-convert', 'json', '-o', '-', temporary])).toString(),
+      ) as { images: SourceDiskImage[] };
+      for (const image of data.images.filter((value) => images.includes(value['image-path']))) {
+        const device = image['system-entities'].find((entry) =>
+          /^\/dev\/disk\d+$/.test(entry['dev-entry']),
+        )?.['dev-entry'];
+        if (!device) throw new Error('Owned source image has no detachable device identity');
+        await this.command('hdiutil', ['detach', '-quiet', device]);
+      }
+    } finally {
+      await rm(temporary, { force: true });
+    }
+  }
 
   async publish(tree: string, image: string, mount: string): Promise<void> {
     await mkdir(mount, { recursive: true });
@@ -51,26 +75,39 @@ export class ReadOnlySourceVolume implements SourceVolume {
     if (process.platform === 'darwin') {
       if (!imagePresent) {
         const incoming = `${image}.${randomUUID()}.dmg`;
-        await this.command('hdiutil', [
-          'create',
-          '-quiet',
-          '-srcfolder',
-          tree,
-          '-format',
-          'UDRO',
-          incoming,
-        ]);
-        await rename(incoming, image);
+        try {
+          await this.command('hdiutil', [
+            'create',
+            '-quiet',
+            '-srcfolder',
+            tree,
+            '-format',
+            'UDRO',
+            '-fs',
+            'HFS+',
+            incoming,
+          ]);
+          await this.detachOwnedImage([incoming]);
+          await rename(incoming, image);
+        } catch (error) {
+          await this.detachOwnedImage([incoming, image]);
+          throw error;
+        }
       }
-      await this.command('hdiutil', [
-        'attach',
-        '-readonly',
-        '-nobrowse',
-        '-quiet',
-        '-mountpoint',
-        mount,
-        image,
-      ]);
+      try {
+        await this.command('hdiutil', [
+          'attach',
+          '-readonly',
+          '-nobrowse',
+          '-quiet',
+          '-mountpoint',
+          mount,
+          image,
+        ]);
+      } catch (error) {
+        await this.detachOwnedImage([image]);
+        throw error;
+      }
     } else if (process.platform === 'linux') {
       if (!imagePresent) {
         const incoming = `${image}.${randomUUID()}.squashfs`;

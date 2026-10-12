@@ -4772,6 +4772,7 @@ __metadata:
   dependencies:
     "@farmslot/protocol": "workspace:*"
     "@farmslot/recipe-runner": "workspace:*"
+    "@noble/hashes": "npm:^1.8.0"
     "@types/node": "npm:^22.0.0"
     eslint: "npm:^10.3.0"
     prettier: "npm:^3.8.3"
@@ -4869,6 +4870,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@farmslot/command-center-ui@workspace:apps/command-center/ui"
   dependencies:
+    "@farmslot/adapter-sdk": "workspace:*"
     "@farmslot/protocol": "workspace:*"
     "@farmslot/review-dispatch": "workspace:*"
     "@farmslot/theme": "workspace:*"
@@ -4990,6 +4992,7 @@ __metadata:
     "@expo/log-box": "npm:^57.0.2"
     "@expo/vector-icons": "npm:^15.0.3"
     "@farmslot/adapter-rn": "workspace:*"
+    "@farmslot/adapter-sdk": "workspace:*"
     "@farmslot/protocol": "workspace:*"
     "@farmslot/recipe-runner": "workspace:*"
     "@farmslot/review-dispatch": "workspace:*"
