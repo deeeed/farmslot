@@ -22,6 +22,7 @@ const config = JSON.parse(await fs.readFile(process.argv[2]!, 'utf8')) as {
   prNumber: number;
   branch: string;
   outputDir: string;
+  layout?: 'nested' | 'task-root' | 'promoted' | 'inherited';
 };
 const code = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'recorded-publication-proof-'));
@@ -81,7 +82,14 @@ const { createGatewayAuthRuntime, initializeGatewayIdentity } =
   await import('../services/gateway/src/security/auth.js');
 const { createWebSocketServer } = await import('../services/gateway/src/server.js');
 const taskDir = path.join(root, 'task');
-const executionRoot = path.join(taskDir, 'artifacts/recipe-run');
+const executionPrefix =
+  config.layout === 'task-root'
+    ? ''
+    : config.layout === 'promoted' || config.layout === 'inherited'
+      ? 'recipe-runs/retained/'
+      : 'recipe-run/';
+const executionRoot = path.join(taskDir, 'artifacts', executionPrefix);
+await fs.mkdir(executionRoot, { recursive: true });
 await fs.cp(config.sourceDir, executionRoot, { recursive: true });
 await fs.writeFile(path.join(taskDir, 'TASK.md'), '# Retained publication proof\n');
 const source = await readRecordedEvidencePackage(executionRoot);
@@ -94,16 +102,42 @@ assert(
   images.length >= 2 && videos.length,
   'Retain two HUD stills and a recording for selection controls.',
 );
-const selected = [`artifacts/recipe-run/${images[0]}`, `artifacts/recipe-run/${videos[0]}`];
+const selected = [
+  `artifacts/${executionPrefix}${images[0]}`,
+  `artifacts/${executionPrefix}${videos[0]}`,
+];
+const promoted = config.layout === 'promoted' || config.layout === 'inherited';
+const manifestPrefix = promoted ? '' : executionPrefix;
+const manifestDir =
+  config.layout === 'inherited'
+    ? path.join(taskDir, 'inputs/inherited')
+    : config.layout === 'promoted'
+      ? executionRoot
+      : path.join(taskDir, 'artifacts');
+await fs.mkdir(manifestDir, { recursive: true });
+if (promoted)
+  await fs.writeFile(
+    path.join(taskDir, 'artifacts/latest-valid-recipe-run.json'),
+    JSON.stringify({
+      version: 1,
+      runId: 'retained',
+      relativeArtifactRoot: executionPrefix.replace(/\/$/u, ''),
+    }),
+  );
+const manifestPath = path.join(manifestDir, 'evidence-manifest.json');
 await fs.writeFile(
-  path.join(taskDir, 'artifacts/evidence-manifest.json'),
+  manifestPath,
   JSON.stringify({
     version: 1,
-    standalone: images.map((file, index) => ({
-      label: `Claim still ${index + 1}`,
-      file: `recipe-run/${file}`,
-    })),
-    videos: { after: `recipe-run/${videos[0]}`, preferred: false },
+    before_after_pairs: [
+      {
+        label: 'Recorded claim',
+        before: `${manifestPrefix}${images[1]}`,
+        after: `${manifestPrefix}${images[0]}`,
+      },
+    ],
+    omit: [`${manifestPrefix}${images[1]}`],
+    videos: { after: `${manifestPrefix}${videos[0]}`, preferred: false },
   }),
 );
 const run = createRun({
@@ -121,8 +155,10 @@ const inventory = await buildPackageEvidenceManifest(
   await scanArtifacts(taskDir),
   manifest,
 );
-assert(inventory.some((entry) => entry.path === 'artifacts/recipe-run/trace.json'));
-assert(inventory.some((entry) => entry.path === 'artifacts/recipe-run/summary.json'));
+assert(inventory.some((entry) => entry.path === `artifacts/${executionPrefix}trace.json`));
+assert(inventory.some((entry) => entry.path === `artifacts/${executionPrefix}summary.json`));
+for (const file of ['pr-package.json', 'pr-package.md', 'diff.txt'])
+  await fs.writeFile(path.join(taskDir, 'artifacts', file), 'Gateway package/report output');
 const prepared = {
   id: 'recorded-closure',
   artifactPath: 'artifacts/pr-package.json',
@@ -173,7 +209,7 @@ try {
   await assert.rejects(
     client.call('run.refreshPublishedEvidence', {
       runId: run.id,
-      selectedEvidenceKeys: [`artifacts/recipe-run/${images[1]}`],
+      selectedEvidenceKeys: [`artifacts/${executionPrefix}${images[1]}`],
     }),
     /selection was not approved/,
   );
@@ -188,7 +224,6 @@ try {
   } finally {
     await fs.writeFile(tracePath, trace);
   }
-  const manifestPath = path.join(taskDir, 'artifacts/evidence-manifest.json');
   const capturedManifest = await fs.readFile(manifestPath);
   try {
     await fs.writeFile(manifestPath, JSON.stringify({ version: 1, standalone: [] }));
@@ -245,6 +280,9 @@ try {
         changedManifestRefused: true,
         productionRpc: true,
         dispatchedFarmRuns: 0,
+        layout: config.layout ?? 'nested',
+        gatewayPackageFilesPreserved: true,
+        pairedOmissionRespected: true,
       },
       null,
       2,

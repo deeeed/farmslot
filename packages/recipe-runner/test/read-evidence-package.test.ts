@@ -102,3 +102,13 @@ test('host IO consumes the same closure and diagnostics without transferring ori
   assert.deepEqual(transported, original);
   assert(readPaths.every((file) => file.endsWith('.json')));
 });
+
+test('task-root package consumes its indexed execution rather than unrelated gateway files', async (t) => {
+  const root = await fixture(t);
+  const original = await readRecordedEvidencePackage(root);
+  for (const name of ['pr-package.json', 'pr-package.md', 'diff.txt', 'report.html'])
+    await writeFile(path.join(root, name), 'unrelated task output');
+  const prepared = await readRecordedEvidencePackage(root);
+  assert.deepEqual(prepared, original);
+  assert.equal(validateRecordedEvidencePackage(prepared.input).status, 'valid');
+});

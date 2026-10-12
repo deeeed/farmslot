@@ -2,6 +2,7 @@ import { INTERNAL_RUN_ARTIFACT_TOP_LEVELS } from '@farmslot/protocol';
 
 export const GATEWAY_OWNED_DIFF_ARTIFACTS = ['diff.txt', 'diff-stat.json'] as const;
 export const GATEWAY_OWNED_RUN_ARTIFACTS = ['session-metrics.json'] as const;
+export const PUBLICATION_SELECTION_DIR = 'pr-package-evidence';
 export const GATEWAY_OWNED_EVAL_ARTIFACTS = [
   'experiment-manifest.json',
   'packages/reference.result-package.json',
@@ -74,7 +75,8 @@ export function isGatewayOwnedArtifactMirrorEntry(name: string): boolean {
     /^(review|review)-\d+\.(json|md)$/.test(name) ||
     /^publication-gate-[a-z0-9-]+\.md$/i.test(name) ||
     /^pr-package\.(json|md)$/.test(name) ||
-    name === 'workflow.mmd'
+    name === 'workflow.mmd' ||
+    name === PUBLICATION_SELECTION_DIR
   );
 }
 
@@ -83,6 +85,7 @@ export function isGatewayOwnedArtifactPath(artifactPath: string): boolean {
   if (!normalized.startsWith('artifacts/')) return false;
   const artifactName = normalized.slice('artifacts/'.length);
   const [topLevel, ...rest] = artifactName.split('/');
-  if (rest.length > 0) return isGatewayOwnedReviewDirName(topLevel);
+  if (rest.length > 0)
+    return topLevel === PUBLICATION_SELECTION_DIR || isGatewayOwnedReviewDirName(topLevel);
   return isGatewayOwnedArtifactMirrorEntry(artifactName);
 }

@@ -14,7 +14,7 @@ import { getRun } from '../runs/store.js';
 
 import { isPublishedStatus, publicationStatusForRun } from './orchestrator.js';
 import {
-  expandEvidenceSelectionForManifest,
+  expandPublicationEvidenceSelection,
   postProcessPRBody,
   publishSelectedEvidence,
 } from './publication-artifacts.js';
@@ -60,8 +60,11 @@ export async function refreshPublishedEvidence(
   verifyReadyGatePackageHash(prepared);
   const inventory = prepared.evidenceManifest ?? [];
   const manifest = await readFrozenPublicationManifest(run, inventory);
-  const approved =
-    expandEvidenceSelectionForManifest(manifest, prepared.selectedEvidenceKeys ?? []) ?? [];
+  const approved = expandPublicationEvidenceSelection({
+    trustedEvidenceManifest: manifest,
+    evidenceManifest: inventory,
+    selectedEvidenceKeys: prepared.selectedEvidenceKeys ?? [],
+  });
   const selectedEvidenceKeys = params.selectedEvidenceKeys ?? approved;
   const allowed = new Set(approved.map((key) => resolveSelectedEvidenceRef(key, inventory)?.path));
   for (const key of selectedEvidenceKeys) {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -15,8 +15,17 @@ const { readFrozenPublicationManifest, verifyFrozenPublicationEvidence } =
   await import('./recorded-publication-evidence.js');
 const { allSelectedEvidenceKeysForPublication, assertPublicationEvidenceSelection } =
   await import('./publication-evidence-policy.js');
+const { expandPublicationEvidenceSelection, readEvidenceManifest } =
+  await import('./publication-artifacts.js');
 
 const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+
+async function indexMedia(root: string, filename: string) {
+  const manifestPath = path.join(root, 'artifact-manifest.json');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  manifest.artifacts.push({ path: filename, type: 'screenshot', label: 'Captured still' });
+  await writeFile(manifestPath, JSON.stringify(manifest));
+}
 
 async function fixture(t: TestContext) {
   const taskDir = await mkdtemp(path.join(os.tmpdir(), 'recorded-publication-'));
@@ -32,6 +41,7 @@ async function fixture(t: TestContext) {
     { recursive: true },
   );
   await writeFile(path.join(root, 'proof.png'), 'captured HUD image');
+  await indexMedia(root, 'proof.png');
   const manifest = {
     version: 1,
     standalone: [{ label: 'Observed claim', file: 'recipe-run/proof.png' }],
@@ -89,9 +99,10 @@ test('selection manifest substitution and files added after approval cannot repl
   await assert.rejects(readFrozenPublicationManifest(run, inventory), /hash mismatch/);
   await writeFile(manifestPath, originalManifest);
   await writeFile(path.join(root, 'new.png'), 'new media');
+  await indexMedia(root, 'new.png');
   await assert.rejects(
     verifyFrozenPublicationEvidence(run, inventory, ['artifacts/recipe-run/proof.png']),
-    /missing or changed.*new.png/,
+    /missing or changed.*artifact-manifest.json/,
   );
 });
 
@@ -129,6 +140,7 @@ test('a selection manifest changed between selection and freezing is refused', a
 test('omitted media is frozen for validation without becoming selectable public evidence', async (t) => {
   const { taskDir, root, artifacts, manifest } = await fixture(t);
   await writeFile(path.join(root, 'private.png'), 'orientation still');
+  await indexMedia(root, 'private.png');
   artifacts.push({ path: 'artifacts/recipe-run/private.png', purpose: 'screenshot' });
   const inventory = await buildPackageEvidenceManifest(taskDir, artifacts, manifest);
   assert.equal(
@@ -148,3 +160,107 @@ test('omitted media is frozen for validation without becoming selectable public 
     /none is selected/,
   );
 });
+
+test('an omitted paired image stays retained but never enters expanded publication selection', async (t) => {
+  const { taskDir, root, artifacts } = await fixture(t);
+  await writeFile(path.join(root, 'private.png'), 'before still omitted by author');
+  await indexMedia(root, 'private.png');
+  artifacts.push({ path: 'artifacts/recipe-run/private.png', purpose: 'screenshot' });
+  const manifest = {
+    version: 1,
+    before_after_pairs: [
+      { label: 'Change', before: 'recipe-run/private.png', after: 'recipe-run/proof.png' },
+    ],
+    omit: ['recipe-run/private.png'],
+  };
+  await writeFile(path.join(taskDir, 'artifacts/evidence-manifest.json'), JSON.stringify(manifest));
+  const inventory = await buildPackageEvidenceManifest(taskDir, artifacts, manifest);
+  assert.deepEqual(
+    expandPublicationEvidenceSelection({
+      selectedEvidenceKeys: ['artifacts/recipe-run/proof.png'],
+      evidenceManifest: inventory,
+      trustedEvidenceManifest: manifest,
+    }),
+    ['artifacts/recipe-run/proof.png'],
+  );
+});
+
+test('a headless task with an unrelated summary prepares an empty publication inventory', async (t) => {
+  const { taskDir } = await fixture(t);
+  await writeFile(path.join(taskDir, 'artifacts/summary.json'), '{}');
+  assert.deepEqual(
+    await buildPackageEvidenceManifest(
+      taskDir,
+      [{ path: 'artifacts/summary.json', purpose: 'summary' }],
+      null,
+    ),
+    [],
+  );
+});
+
+test('task-root preparation remains valid after gateway package files are written', async (t) => {
+  const { taskDir, root, run } = await fixture(t);
+  const artifactsDir = path.join(taskDir, 'artifacts');
+  for (const file of await readdir(root))
+    await rename(path.join(root, file), path.join(artifactsDir, file));
+  await rm(root, { recursive: true });
+  const manifest = { version: 1, standalone: [{ label: 'Root capture', file: 'proof.png' }] };
+  await writeFile(path.join(artifactsDir, 'evidence-manifest.json'), JSON.stringify(manifest));
+  await writeFile(path.join(artifactsDir, 'diff.txt'), 'gateway source diff');
+  const artifacts = (await readdir(artifactsDir)).map((file) => ({
+    path: `artifacts/${file}`,
+    purpose: 'other',
+  }));
+  const inventory = await buildPackageEvidenceManifest(taskDir, artifacts, manifest);
+  for (const file of ['pr-package.json', 'pr-package.md'])
+    await writeFile(path.join(artifactsDir, file), 'prepared package');
+  await verifyFrozenPublicationEvidence(run, inventory, ['artifacts/proof.png']);
+  assert(!inventory.some((entry) => entry.path.endsWith('/diff.txt')));
+});
+
+for (const location of ['promoted', 'inherited'] as const) {
+  test(`${location} selection freezes normalized media paths and its original source`, async (t) => {
+    const { taskDir, root, run, artifacts } = await fixture(t);
+    const promotedRoot = path.join(taskDir, 'artifacts/recipe-runs/retained');
+    await mkdir(path.dirname(promotedRoot), { recursive: true });
+    await rename(root, promotedRoot);
+    for (const artifact of artifacts)
+      artifact.path = artifact.path.replace('recipe-run/', 'recipe-runs/retained/');
+    await rm(path.join(taskDir, 'artifacts/evidence-manifest.json'));
+    await writeFile(
+      path.join(taskDir, 'artifacts/latest-valid-recipe-run.json'),
+      JSON.stringify({
+        version: 1,
+        runId: 'retained',
+        relativeArtifactRoot: 'recipe-runs/retained',
+      }),
+    );
+    const sourceDir =
+      location === 'promoted' ? promotedRoot : path.join(taskDir, 'inputs/inherited');
+    await mkdir(sourceDir, { recursive: true });
+    const sourcePath = path.join(sourceDir, 'evidence-manifest.json');
+    await writeFile(
+      sourcePath,
+      JSON.stringify({ version: 1, standalone: [{ label: 'Promoted proof', file: 'proof.png' }] }),
+    );
+    const effective = await readEvidenceManifest(run);
+    const inventory = await buildPackageEvidenceManifest(taskDir, artifacts, effective);
+    assert.deepEqual(
+      await readFrozenPublicationManifest(run, inventory),
+      JSON.parse(JSON.stringify(effective)),
+    );
+    assert.deepEqual(
+      expandPublicationEvidenceSelection({
+        selectedEvidenceKeys: ['artifacts/recipe-runs/retained/proof.png'],
+        evidenceManifest: inventory,
+        trustedEvidenceManifest: await readFrozenPublicationManifest(run, inventory),
+      }),
+      ['artifacts/recipe-runs/retained/proof.png'],
+    );
+    await verifyFrozenPublicationEvidence(run, inventory, [
+      'artifacts/recipe-runs/retained/proof.png',
+    ]);
+    await writeFile(sourcePath, JSON.stringify({ version: 1, standalone: [] }));
+    await assert.rejects(readFrozenPublicationManifest(run, inventory), /hash mismatch/);
+  });
+}
