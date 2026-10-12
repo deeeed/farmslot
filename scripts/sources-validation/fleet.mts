@@ -647,9 +647,13 @@ try {
     }
     evidence.workers = workers;
   }
+  const admissionProject =
+    Object.keys(configuration.sources.packs).find(
+      (project) => project !== configuration.consumerProject,
+    ) ?? Object.keys(configuration.sources.packs)[0];
   const created = await client.call<{ run: import('@farmslot/protocol').Run }>('run.create', {
     flowType: 'dev',
-    project: Object.keys(configuration.sources.packs)[0],
+    project: admissionProject,
     ticketOrPr: 'MANUAL-000001',
     mode: 'interactive',
     runner: 'codex',
