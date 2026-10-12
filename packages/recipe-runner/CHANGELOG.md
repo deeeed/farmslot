@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- Honor nested `all`/`any`/`none` output assertions and reject invalid static assertion JSON paths during preflight, including parameterized and called recipes.
+
 ## 0.30.0 - 2026-10-12
 
 - Expose one retained evidence-package reader for CLI and gateway validation, with contained file reads, actual byte digests and read diagnostics.

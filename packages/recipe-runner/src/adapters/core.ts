@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import type { RecipeArtifactManifestEntry } from '@farmslot/protocol';
 
+import { type AssertionNode, parseAssertionNode } from '../core/assertions.js';
 import { assertRecipeActive, recipeAbortError, RecipeExecutionError } from '../core/failure.js';
 import {
   asNumber,
@@ -166,7 +167,11 @@ function defineAssertOutputAdapter(): ActionAdapter {
         }
         return { output: { source, stream, match: pattern } };
       }
-      const assertion = parseAssertion(node.assert, 'assert_output.assert');
+      const assertion = parseAssertionNode(node.assert, 'assert_output.assert');
+      if (!('path' in assertion)) {
+        assertAssertion(output, assertion, source, actual);
+        return { output: { source, stream, assertion } };
+      }
       const selected = assertion.path === '$' ? actual : getJsonPathValue(output, assertion.path);
       assertAtomicValue(
         selected,
@@ -487,51 +492,13 @@ async function runShellCommand(
   return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
 }
 
-interface ParsedAssertion {
-  path: string;
-  operator: string;
-  value: unknown;
-}
-
-type AssertionNode =
-  | ParsedAssertion
-  | { all: AssertionNode[] }
-  | { any: AssertionNode[] }
-  | { none: AssertionNode[] };
-
-function parseAssertion(value: unknown, label: string): ParsedAssertion {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error(`${label} must be an object.`);
-  }
-  const record = value as Record<string, unknown>;
-  return {
-    path: asOptionalString(record.path, `${label}.path`) ?? '$',
-    operator: asString(record.operator, `${label}.operator`),
-    value: record.value,
-  };
-}
-
-function parseAssertionNode(value: unknown, label: string): AssertionNode {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error(`${label} must be an object.`);
-  }
-  const record = value as Record<string, unknown>;
-  for (const key of ['all', 'any', 'none'] as const) {
-    if (record[key] == null) continue;
-    const entries = record[key];
-    if (!Array.isArray(entries)) throw new Error(`${label}.${key} must be an array.`);
-    const assertions = entries.map((entry, index) =>
-      parseAssertionNode(entry, `${label}.${key}[${index}]`),
-    );
-    if (key === 'all') return { all: assertions };
-    if (key === 'any') return { any: assertions };
-    return { none: assertions };
-  }
-  return parseAssertion(value, label);
-}
-
-function assertAssertion(actualRoot: unknown, assertion: AssertionNode, label: string): void {
-  if (!evaluateAssertion(actualRoot, assertion)) {
+function assertAssertion(
+  actualRoot: unknown,
+  assertion: AssertionNode,
+  label: string,
+  rootValue: unknown = actualRoot,
+): void {
+  if (!evaluateAssertion(actualRoot, assertion, rootValue)) {
     throw new RecipeExecutionError(
       'subject',
       `${label} failed assertion ${JSON.stringify(assertion)}.`,
@@ -539,14 +506,18 @@ function assertAssertion(actualRoot: unknown, assertion: AssertionNode, label: s
   }
 }
 
-function evaluateAssertion(actualRoot: unknown, assertion: AssertionNode): boolean {
+function evaluateAssertion(
+  actualRoot: unknown,
+  assertion: AssertionNode,
+  rootValue: unknown = actualRoot,
+): boolean {
   if ('all' in assertion)
-    return assertion.all.every((entry) => evaluateAssertion(actualRoot, entry));
+    return assertion.all.every((entry) => evaluateAssertion(actualRoot, entry, rootValue));
   if ('any' in assertion)
-    return assertion.any.some((entry) => evaluateAssertion(actualRoot, entry));
+    return assertion.any.some((entry) => evaluateAssertion(actualRoot, entry, rootValue));
   if ('none' in assertion)
-    return !assertion.none.some((entry) => evaluateAssertion(actualRoot, entry));
-  const actual = assertion.path === '$' ? actualRoot : getJsonPathValue(actualRoot, assertion.path);
+    return !assertion.none.some((entry) => evaluateAssertion(actualRoot, entry, rootValue));
+  const actual = assertion.path === '$' ? rootValue : getJsonPathValue(actualRoot, assertion.path);
   return evaluateAtomicValue(actual, assertion.operator, assertion.value);
 }
 
