@@ -3,7 +3,12 @@
 // Drives filter buttons and checks rendered rows against the gateway projection.
 const root = document.querySelector('roadmap-panel')?.shadowRoot;
 if (!root) throw new Error('Roadmap panel unavailable');
-const { gateway } = await import('/src/gateway-client.ts');
+// Reuse the loaded module, including Vite's HMR version, instead of a second client.
+const gatewayModule = performance
+  .getEntriesByType('resource')
+  .findLast((entry) => entry.name.startsWith(`${location.origin}/src/gateway-client.ts`))?.name;
+if (!gatewayModule) throw new Error('Gateway client module unavailable');
+const { gateway } = await import(gatewayModule);
 const waitFor = async (predicate) => {
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
