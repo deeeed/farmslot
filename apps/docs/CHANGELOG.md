@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document required farm-owned QA presets at project pack admission and gateway support sync.
+
 - Add a project compatibility tutorial using the executable example-app pack, with provider actions, live teardown proof and selected-flow dispatch requirements.
 - Generate the recipe CLI reference from the same command grammar as help and completion.
 - Publish the recorded-evidence claim, retry and composition fields in the Recipe v1 editor schema.
