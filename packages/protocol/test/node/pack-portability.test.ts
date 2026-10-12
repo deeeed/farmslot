@@ -80,7 +80,16 @@ test('pack scan excludes Git-ignored runtime data', (t) => {
   writeFileSync(join(root, '.gitignore'), 'tasks/\n');
   mkdirSync(join(root, 'tasks'));
   writeFileSync(join(root, 'tasks/report.md'), '/Users/operator/runtime');
-  writeFileSync(join(root, 'project.json'), '{"repo":"{{repo}}"}');
+  writeFileSync(
+    join(root, 'project.json'),
+    JSON.stringify({
+      repo: '{{repo}}',
+      qa: {
+        default_profile: 'smoke',
+        profiles: [{ id: 'smoke', title: 'Smoke', template_id: 'qa/default' }],
+      },
+    }),
+  );
   assert.deepEqual(validatePackPortability(root), []);
 });
 
@@ -184,7 +193,7 @@ test('ordinary pool hostnames do not turn branch, mode or tool names into fixed 
   const names = ['main', 'dev', 'node'];
   assert.deepEqual(
     validatePackFilePortability(
-      'project.json',
+      'config.json',
       '{"default_branch":"main","mode":"dev","command":"node script.js"}',
       names,
     ),
@@ -196,7 +205,7 @@ test('ordinary pool hostnames do not turn branch, mode or tool names into fixed 
     'HOST=main',
     '{"allowedMachines":["dev"]}',
   ])
-    assert.equal(validatePackFilePortability('project.json', value, names).length, 1, value);
+    assert.equal(validatePackFilePortability('config.json', value, names).length, 1, value);
 });
 
 test('control tests remain pack-owned without treating their invalid inputs as runtime references', (t) => {
@@ -224,9 +233,40 @@ test('copied packs honor their own ignore rules under an ignoring parent reposit
   mkdirSync(pack, { recursive: true });
   writeFileSync(join(pack, '.gitignore'), 'operator.private\n');
   writeFileSync(join(pack, 'operator.private'), '/Users/operator/restored-fixture');
-  writeFileSync(join(pack, 'project.json'), '{"repo":"{{repo}}"}');
+  writeFileSync(
+    join(pack, 'project.json'),
+    JSON.stringify({
+      repo: '{{repo}}',
+      qa: {
+        default_profile: 'smoke',
+        profiles: [{ id: 'smoke', title: 'Smoke', template_id: 'qa/default' }],
+      },
+    }),
+  );
   assert.deepEqual(validatePackPortability(pack), []);
   assert.ok(!listPackOwnedEntries(pack).some((entry) => entry.rel === 'operator.private'));
   writeFileSync(join(pack, 'hook.sh'), 'cd /Users/operator/app');
   assert.equal(validatePackPortability(pack).length, 1);
+});
+
+test('project packs require a valid farm-owned QA preset with a fix hint', () => {
+  const qa = {
+    default_profile: 'smoke',
+    profiles: [{ id: 'smoke', title: 'Smoke', template_id: 'qa/default' }],
+  };
+  const file = 'projects/example-farm/project.json';
+  assert.deepEqual(validatePackFilePortability(file, JSON.stringify({ qa })), []);
+  for (const value of [
+    undefined,
+    null,
+    {},
+    { ...qa, profiles: [] },
+    { ...qa, default_profile: 'unknown' },
+  ]) {
+    const errors = validatePackFilePortability(file, JSON.stringify({ qa: value }));
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /project.json:1: (missing required|invalid) qa flow/);
+    assert.match(errors[0], /configure qa.default_profile and qa.profiles/);
+  }
+  assert.deepEqual(validatePackFilePortability('recipes/fixture.json', '{}'), []);
 });
