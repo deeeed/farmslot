@@ -1696,6 +1696,7 @@ export class RoadmapPanel extends LitElement {
 
   private _deselectItem() {
     const id = this._selectedId;
+    this._listGeneration++;
     this._selectionDismissed = true;
     this._syncEditor(null);
     this._writeUrlState();
