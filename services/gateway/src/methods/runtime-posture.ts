@@ -43,7 +43,7 @@ const reconciler = new RunResourcePostureReconciler({
   getRun,
   updateRun,
   capabilityStatus: (slotId) => getRuntimeCapabilityRegistry().status({ slotId }),
-  acquireCapability: (params) => getRuntimeCapabilityRegistry().acquire(params),
+  acquireCapabilities: (params) => getRuntimeCapabilityRegistry().acquireBatch(params),
   enqueueScopedClaimWaiter: (params) =>
     getRuntimeCapabilityRegistry().enqueueScopedClaimWaiter(params),
   assertTargetInInventory: (slotId, parameters) =>

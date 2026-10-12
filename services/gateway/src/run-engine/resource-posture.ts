@@ -18,7 +18,10 @@ import {
 
 import { getRunResourcePostureReconciler } from '../methods/runtime-posture.js';
 import { getRun, updateRun } from '../runs/store.js';
-import type { RunResourcePostureReconciler } from '../runtime-capabilities/posture.js';
+import type {
+  ResourcePostureRequest,
+  RunResourcePostureReconciler,
+} from '../runtime-capabilities/posture.js';
 
 export const RUN_POSTURE_BOUNDARIES = [
   /** The run parked itself on an operator or on CI and will not progress alone. */
@@ -64,6 +67,7 @@ export interface ReconcileRunPostureRequest {
   /** Overrides the registry's stored proof plan (validation re-applies its own). */
   proofRequirements?: RuntimeCapabilityProofRequirement[];
   operationId?: string;
+  assertAdmissible?: ResourcePostureRequest['assertAdmissible'];
 }
 
 function isWaitBoundary(boundary: RunPostureBoundary): boolean {
@@ -118,6 +122,7 @@ export async function reconcileRunPosture(
         : {}),
       ...(request.proofRequirements ? { proofRequirements: request.proofRequirements } : {}),
       ...(request.operationId ? { operationId: request.operationId } : {}),
+      ...(request.assertAdmissible ? { assertAdmissible: request.assertAdmissible } : {}),
     });
     return { ok: result.ok, result };
   } catch (error) {
@@ -269,11 +274,13 @@ export async function prepareRunPostureForValidation(
   runId: string,
   proofRequirements?: RuntimeCapabilityProofRequirement[],
   reconciler?: RunResourcePostureReconciler,
+  options: Pick<ReconcileRunPostureRequest, 'assertAdmissible'> = {},
 ): Promise<PrepareRunPostureOutcome> {
   const outcome = await reconcileRunPosture(
     {
       runId,
       boundary: 'validation-prepare',
+      ...options,
       ...(proofRequirements ? { proofRequirements } : {}),
     },
     reconciler,

@@ -24,6 +24,10 @@ import { FLOW_STEPS, Methods } from '@farmslot/protocol';
 
 import { alive, matchesProcess } from '../../../packages/agent-runtime/src/native/storage.ts';
 import { taskInit } from '../../../packages/agent-runtime/src/task-init/index.ts';
+import {
+  prepareDeclaredCapabilityProof,
+  proveDeclaredCapabilityAcquisition,
+} from '../../e2e-declared-capabilities.mts';
 
 import {
   prepareCleanupGuards,
@@ -85,7 +89,10 @@ const queuedClose = process.argv.includes('--queued-close');
 const parkClaim = process.argv.includes('--park-claim');
 const missingContract = process.argv.includes('--missing-contract');
 const generationGuard = process.argv.includes('--generation-guard');
-const guardsOnly = process.argv.includes('--guards-only') || providerRecovery;
+const declaredCapabilities = process.argv.includes('--declared-capabilities');
+let declaredFixture;
+const guardsOnly =
+  process.argv.includes('--guards-only') || providerRecovery || declaredCapabilities;
 const providersOnly =
   process.argv.includes('--providers-only') || realAdoption || guardsOnly || reconcileHeld;
 let realFixture;
@@ -112,7 +119,13 @@ const rpc = (method, params = {}) =>
         method,
         JSON.stringify(params),
       ],
-      { cwd: sourceRoot, env, encoding: 'utf8', timeout: 105000, maxBuffer: 8 * 1024 * 1024 },
+      {
+        cwd: sourceRoot,
+        env: declaredCapabilities ? { ...env, NODE_OPTIONS: '' } : env,
+        encoding: 'utf8',
+        timeout: 105000,
+        maxBuffer: 8 * 1024 * 1024,
+      },
     ),
   );
 const cdp = (...args) => {
@@ -587,6 +600,19 @@ try {
     });
     writeJson(statusFile, realStatus);
   }
+  if (declaredCapabilities) {
+    declaredFixture = await prepareDeclaredCapabilityProof({
+      root,
+      project,
+      repo: emptyRepo,
+      runId: emptyRunId,
+      slotId: emptySlot,
+      missingMode: process.argv.includes('--missing-proof-mode'),
+      lightweight: process.argv.includes('--lightweight-declarations'),
+      writeJson,
+    });
+    mode({ mode: 'complete' });
+  }
   const port = await freePort();
   const token = randomUUID();
   env = {
@@ -618,7 +644,10 @@ try {
     FARMSLOT_COHERENCE_FAULTS: JSON.stringify(cleanupGuards.filter((fixture) => fixture.fault)),
     FARMSLOT_COHERENCE_GENERATION_RUN_ID: generationGuard ? realFixture?.runId : '',
     NODE_OPTIONS: `--import ${path.join(sourceRoot, 'scripts/runner-validation/gateway/native-cleanup-faults.mjs')}`,
+    ...(declaredCapabilities ? { FARMSLOT_DECLARED_RACE_DIR: temporary } : {}),
   };
+  if (declaredCapabilities)
+    env.NODE_OPTIONS = `--import ${fileURLToPath(import.meta.resolve('tsx'))} --import ${path.join(sourceRoot, 'scripts/e2e-declared-capabilities.mts')}`;
   delete env.CODEX_LB_API_KEY;
   if (control)
     Object.assign(env, {
@@ -647,6 +676,20 @@ try {
     }
     assert.ok(Date.now() < startupDeadline, 'isolated gateway must start');
     await delay(250);
+  }
+  if (declaredFixture) {
+    runId = declaredFixture.runId;
+    await proveDeclaredCapabilityAcquisition({
+      ...declaredFixture,
+      raceDir: temporary,
+      rpc,
+      wait,
+      restartGateway,
+      check,
+      outDir,
+      sourceRoot,
+      writeJson,
+    });
   }
   if (!guardsOnly) {
     if (!providersOnly) {
@@ -1265,15 +1308,16 @@ try {
       check('pre-written task uses shared runtime');
     }
   }
-  proveCleanupGuards({
-    fixtures: cleanupGuards,
-    rpc,
-    readStatus: () => JSON.parse(readFileSync(statusFile, 'utf8')),
-    check,
-    executable,
-    configFile,
-    temporary,
-  });
+  if (!declaredCapabilities)
+    proveCleanupGuards({
+      fixtures: cleanupGuards,
+      rpc,
+      readStatus: () => JSON.parse(readFileSync(statusFile, 'utf8')),
+      check,
+      executable,
+      configFile,
+      temporary,
+    });
   if (providerRecovery)
     await proveProviderRecovery({
       fixtures: cleanupGuards,
@@ -1389,6 +1433,12 @@ try {
   throw error;
 } finally {
   await cleanupFixture();
+  if (declaredFixture)
+    writeJson(path.join(outDir, 'declared-capabilities-cleanup.json'), {
+      finished: true,
+      fixtureRemoved: !existsSync(temporary),
+      gatewayStopped: !gateway || gateway.exitCode !== null || gateway.signalCode !== null,
+    });
 }
 
 async function cleanupFixture() {

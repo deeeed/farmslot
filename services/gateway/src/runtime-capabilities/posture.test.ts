@@ -20,6 +20,7 @@ import {
 } from '@farmslot/protocol';
 
 import { MachinePausePreviewStaleError } from '../machine-parking/preview-errors.js';
+import { prepareDeclaredRunCapabilities } from '../run-engine/declared-capabilities.js';
 import { prepareRunPostureForValidation } from '../run-engine/resource-posture.js';
 
 import {
@@ -88,7 +89,7 @@ interface HarnessOptions {
     action: RuntimeCapabilityProviderActionRef,
     parameters: Record<string, unknown>,
     declaredParameters: readonly string[],
-  ) => { ok: boolean; detail?: string };
+  ) => { ok: boolean; detail?: string } | Promise<{ ok: boolean; detail?: string }>;
   parkPreview?: (params: MachinePausePreviewParams) => Promise<MachinePausePreviewResult>;
   parkExecute?: (params: MachinePauseExecuteParams) => Promise<MachinePauseExecuteResult>;
   /** Simulate a status read taken while an acquire is still in flight. */
@@ -202,7 +203,7 @@ async function harness(t: TestContext, options: HarnessOptions) {
       }
       return status;
     },
-    acquireCapability: (params) => registry.acquire(params),
+    acquireCapabilities: (params) => registry.acquireBatch(params),
     enqueueScopedClaimWaiter: (params) => registry.enqueueScopedClaimWaiter(params),
     ...(options.assertTargetInInventory
       ? { assertTargetInInventory: options.assertTargetInInventory }
@@ -256,6 +257,125 @@ async function harness(t: TestContext, options: HarnessOptions) {
     run,
   };
 }
+
+test('queued automatic preparation cannot undo a completed explicit target change', async (t) => {
+  let started!: () => void;
+  let release!: () => void;
+  let queued!: () => void;
+  const booting = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const inQueue = new Promise<void>((resolve) => {
+    queued = resolve;
+  });
+  const { registry, reconciler, runs, actionCalls } = await harness(t, {
+    capabilities: [entry('device')],
+    runAction: async (_slot, action, parameters) => {
+      if (
+        action.kind === 'slot-action' &&
+        action.actionId === 'device.acquire' &&
+        parameters.simulator === 'device-b'
+      ) {
+        started();
+        await barrier;
+      }
+      return { ok: true };
+    },
+  });
+  const requirement = {
+    capabilityId: 'device',
+    mode: 'state' as const,
+    reason: 'Authored target',
+    parameters: { simulator: 'device-a' },
+  };
+  assert.equal(
+    (
+      await registry.acquire({
+        slotId: SLOT,
+        ownerRunId: 'run-a',
+        capabilityId: 'device',
+        proofRequirement: requirement,
+      })
+    ).ok,
+    true,
+  );
+  const original = await registry.status({ slotId: SLOT });
+  const retarget = reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: [{ ...requirement, parameters: { simulator: 'device-b' } }],
+  });
+  await booting;
+  let first = true;
+  const preparation = prepareDeclaredRunCapabilities('run-a', ['device'], {
+    getRun: (id) => runs.get(id),
+    status: async () => {
+      if (first) {
+        first = false;
+        return original;
+      }
+      return registry.status({ slotId: SLOT });
+    },
+    prepare: (id, requirements, _reconciler, options) => {
+      queued();
+      return prepareRunPostureForValidation(id, requirements, reconciler, options);
+    },
+  });
+  await inQueue;
+  release();
+  assert.equal((await retarget).ok, true);
+  const outcome = await preparation;
+  assert.equal(outcome.ok, false);
+  if (!outcome.ok) assert.match(outcome.reason, /different frozen acquire parameters/);
+  const held = (await registry.status({ slotId: SLOT })).leases.find(
+    (lease) => lease.state === 'acquired',
+  );
+  assert.equal(held?.parameters.simulator, 'device-b');
+  assert.equal(
+    actionCalls.filter(
+      (call) => call.action === 'device.acquire' && call.parameters.simulator === 'device-a',
+    ).length,
+    1,
+  );
+});
+
+test('validation preparation rolls back an earlier provider when a later required acquire fails', async (t) => {
+  const { reconciler, registry, actions } = await harness(t, {
+    capabilities: [
+      entry('base'),
+      entry('a-client', { dependencies: ['base'] }),
+      entry('z-unavailable'),
+    ],
+    runAction: (_slot, action) => ({
+      ok: !(action.kind === 'slot-action' && action.actionId === 'z-unavailable.acquire'),
+      detail: 'provider cannot start',
+    }),
+  });
+  const result = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: [
+      { capabilityId: 'a-client', mode: 'state', reason: 'Authored validation' },
+      { capabilityId: 'z-unavailable', mode: 'state', reason: 'Authored validation' },
+    ],
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.transition.rejection?.kind, 'capability-unavailable');
+  assert.deepEqual(
+    actions.filter((action) => action.endsWith('.release')),
+    ['z-unavailable.release', 'a-client.release', 'base.release'],
+  );
+  assert.ok(
+    (await registry.status({ slotId: SLOT })).leases.every((lease) => lease.state === 'released'),
+  );
+  assert.equal(
+    result.status.capabilities.find((state) => state.capabilityId === 'a-client')?.observedState,
+    'stopped',
+  );
+});
 
 /** The record a completed release park leaves on the run. */
 function parkRecord(runId: string, machine: string, operationId: string): MachineParkRecord {
