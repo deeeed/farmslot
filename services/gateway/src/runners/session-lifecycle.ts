@@ -97,7 +97,7 @@ export interface InspectRunnerRecoveryOptions {
   vars?: SlotVars;
   runnerId: string | null | undefined;
   recoveryHandle: MachinePauseRecoveryHandle | null | undefined;
-  /** Release requires live; restore preview may accept stopped or live; reload requires stopped. */
+  /** Gate parking accepts stopped or live; reload requires a stopped pane in the owned session. */
   expectedRunnerState?: 'live' | 'stopped' | 'stopped-or-live';
   /**
    * Liveness-probe policy for this inspection. A park's pre-flight is the same
@@ -212,17 +212,14 @@ export async function inspectRunnerRecovery(
       'inspection budget exhausted before the exact-pane read',
     );
   }
-  const pane = await inspectExactPane(options.vars, options.recoveryHandle, deps, paneBudget);
-  if ('error' in pane) {
-    const targetReason = `Exact runner target is uninspectable: ${pane.error}`;
-    return {
-      ...inspection,
-      supported: false,
-      liveTarget: { valid: false, reason: targetReason },
-      liveBinding: { valid: false, reason: targetReason },
-      reason: targetReason,
-    };
-  }
+  const observed = await inspectExactPane(options.vars, options.recoveryHandle, deps, paneBudget);
+  const expected = options.expectedRunnerState ?? 'live';
+  let pane: ExactRunnerPane;
+  if ('error' in observed) {
+    if (!observed.pane || expected !== 'stopped-or-live')
+      return uninspectableTarget(inspection, observed.error);
+    pane = observed.pane;
+  } else pane = observed;
   const livenessBudget = stepBudgetMs(options.deadline, RUNNER_PROCESS_PROBE_TIMEOUT_MS);
   if (livenessBudget <= 0) {
     throw new RunnerProcessProbeError(
@@ -241,7 +238,9 @@ export async function inspectRunnerRecovery(
       : { deadline: Math.min(options.livenessProbe?.deadline ?? Infinity, options.deadline) }),
   });
   const state = runnerPid ? 'live' : 'stopped';
-  const expected = options.expectedRunnerState ?? 'live';
+  // Review handoff can move the primary pane into an archive session. The
+  // exact pane id still pins the process; a live one must prove its saved
+  // conversation below before any stop. Reload keeps the owned-session check.
   if (expected !== 'stopped-or-live' && state !== expected) {
     const targetReason = `Exact runner pane ${pane.paneId} is ${state}; expected ${expected} '${runnerId}' process`;
     return {
@@ -297,6 +296,20 @@ export async function inspectRunnerRecovery(
     ...inspection,
     liveTarget: { valid: true, paneTarget: pane.paneId, state },
     liveBinding: { valid: false, reason: 'runner is stopped' },
+  };
+}
+
+function uninspectableTarget(
+  inspection: RunnerRecoveryInspection,
+  error: string,
+): RunnerRecoveryInspection {
+  const reason = `Exact runner target is uninspectable: ${error}`;
+  return {
+    ...inspection,
+    supported: false,
+    liveTarget: { valid: false, reason },
+    liveBinding: { valid: false, reason },
+    reason,
   };
 }
 
@@ -605,17 +618,22 @@ export async function stopRunnerForPark(
     // at loop entry let an admitted iteration spend a 10s pane read plus three
     // escalating probe attempts (10s, 20s, 40s) on top of it, so a 120s ceiling
     // could return near 190s.
-    const pane = await inspectExactPane(
+    const observed = await inspectExactPane(
       options.vars,
       handle,
       deps,
       Math.min(RUNNER_PANE_INSPECT_TIMEOUT_MS, hardDeadline - Date.now()),
     );
-    if ('error' in pane) {
-      lastUnusable = `Exact runner target is uninspectable: ${pane.error}`;
-      await deps.sleep(200);
-      continue;
-    }
+    let pane: ExactRunnerPane;
+    if ('error' in observed) {
+      if (!observed.pane) {
+        lastUnusable = `Exact runner target is uninspectable: ${observed.error}`;
+        await deps.sleep(200);
+        continue;
+      }
+      // The preflight already verified this exact pane's saved conversation.
+      pane = observed.pane;
+    } else pane = observed;
     lastUnusable = null;
     const live = await (deps.probeRunnerPid ?? probeRunnerDescendantPid)(
       options.vars,
@@ -875,6 +893,13 @@ function reloadFailure(
   return { ok: false, status, runnerId, target, sessionId, error };
 }
 
+interface ExactRunnerPane {
+  paneId: string;
+  panePid: string;
+  session: string;
+  windowName: string;
+}
+
 async function inspectExactPane(
   vars: SlotVars,
   handle: MachinePauseRecoveryHandle,
@@ -884,9 +909,7 @@ async function inspectExactPane(
    * and this read sits inside it, so it cannot keep a fixed budget of its own.
    */
   timeoutMs: number = RUNNER_PANE_INSPECT_TIMEOUT_MS,
-): Promise<
-  { paneId: string; panePid: string; session: string; windowName: string } | { error: string }
-> {
+): Promise<ExactRunnerPane | { error: string; pane?: ExactRunnerPane }> {
   const paneId = handle.target.paneId;
   const panes = await deps.exec(
     vars,
@@ -906,21 +929,24 @@ async function inspectExactPane(
     return { error: `Expected one exact tmux pane ${paneId}, found ${rows.length}` };
   }
   const [session, windowName, observedPaneId, panePid] = rows[0]!.split('\t', 4);
-  if (observedPaneId !== paneId || !panePid) {
+  if (observedPaneId !== paneId || !panePid || !session) {
     return { error: `Tmux pane identity changed for ${paneId}` };
   }
+  const pane = { paneId, panePid, session, windowName: windowName ?? '' };
   if (session !== handle.target.session) {
     return {
       error: `Tmux pane ${paneId} moved from session ${handle.target.session} to ${session ?? 'unknown'}`,
+      pane,
     };
   }
   const expectedWindow = handle.target.window?.trim();
   if (expectedWindow && !/^\d+$/.test(expectedWindow) && windowName !== expectedWindow) {
     return {
       error: `Tmux pane ${paneId} moved from window ${expectedWindow} to ${windowName ?? 'unknown'}`,
+      pane,
     };
   }
-  return { paneId, panePid, session, windowName: windowName ?? '' };
+  return pane;
 }
 
 // ─── Re-hosting a parked session (ADR-054 `free-slot`) ───────────────────────
