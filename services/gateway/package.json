@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.82.1",
+    "@farmslot/adapter-sdk": "workspace:*",
     "@farmslot/agent-runtime": "workspace:*",
     "@farmslot/capabilities": "workspace:*",
     "@farmslot/credential-store": "workspace:*",

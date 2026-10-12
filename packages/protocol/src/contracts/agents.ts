@@ -1,3 +1,5 @@
+import type { RunStatus } from './runs.js';
+
 export type SlotAgent = 'idle' | 'working' | 'no-tmux';
 
 /** Execution transport is independent of the selected runner and model. */
@@ -252,4 +254,13 @@ export interface ExecutorPolicy {
   review?: ExecutorRef;
   ciRepair?: ExecutorRef;
   validation?: ExecutorRef;
+}
+
+/** One status projection for stored and synthesized worker contexts. */
+export function agentContextStatusFromRunStatus(status: RunStatus): AgentContextStatus {
+  if (status === 'done') return 'complete';
+  if (status === 'failed' || status === 'cancelled') return 'failed';
+  if (status === 'blocked') return 'blocked';
+  if (['paused', 'human-gating', 'review-failed', 'reconciling'].includes(status)) return 'waiting';
+  return 'working';
 }

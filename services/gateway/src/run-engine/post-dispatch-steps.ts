@@ -64,6 +64,7 @@ import {
   stampPublishGateReviewStatusForPackage,
   supersedeStaleHumanGateDecisions,
 } from './gate-policy.js';
+import { assertRunGateReady } from './gate-prerequisites.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
 import {
   publicationReviewPolicyForRun,
@@ -89,6 +90,7 @@ import {
   resolveHumanGateReviewExecutionPlan,
 } from './review-plan.js';
 import { recordArtifactOnlyReviewResult } from './review-result.js';
+import { runSupersededSince } from './run-generation.js';
 import { type MonitorResult, monitorRun, probeWorkerSignalForRun } from './run-monitor.js';
 
 const S = PipelineSteps;
@@ -136,6 +138,7 @@ type MonitorTerminalErrorArgs = {
 };
 
 export interface PostDispatchStepContext {
+  assertGatePrerequisites?: typeof assertRunGateReady;
   activeMonitors: Map<string, AbortController>;
   blockedRunError: (message: string, reason: string) => Error;
   broadcastFn: BroadcastFn;
@@ -1284,9 +1287,14 @@ export async function executeCompleteStep(
 ): Promise<StepIO> {
   const { broadcastFn, getDiffStat, refreshRunLinks } = context;
   const current = getRun(runId)!;
+  const generation = current.engineState?.generation ?? 0;
   if (!current.slotId) throw new Error('No slot assigned');
+  if (!shouldPrepareLocalFirstPackage(current))
+    await (context.assertGatePrerequisites ?? assertRunGateReady)(current, null);
   // Revalidate on completion/replay so a checklist or force-skipped monitor cannot supply QA proof.
   if (current.flowType === 'qa') await assertQaCompletion(current);
+  if (runSupersededSince(getRun(runId), generation))
+    throw new Error('Completion was superseded during gate validation');
   const noCodeDisposition = isNoCodeTerminalDisposition(current.metrics.disposition);
   const artifactOnly = isArtifactOnlyRun(current);
   const inputs: Record<string, unknown> = {

@@ -3,6 +3,7 @@ import { html, nothing } from 'lit';
 import {
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   type ArtifactRef,
+  deriveRunLifecycleView,
   type GitBranchDiffFile,
   latestExhaustedReview,
   type ReadyGatePayload,
@@ -33,14 +34,19 @@ export function renderReadyTopBar(input: {
   confirmAction: (actionId: string) => void;
 }) {
   const { branch, prNumber, repo, diffStat } = input.payload;
+  const lifecycle = deriveRunLifecycleView({
+    status: 'human-gating',
+    gateReadiness: input.payload.gateReadiness,
+  });
   const prUrl = prNumber && repo ? `https://github.com/${repo}/pull/${prNumber}` : null;
   const packageGate = !!input.payload.prPackage;
   const hasApprovePublish =
     input.decision?.actions?.some((action) => action.id === 'approve-publish') ?? false;
-  const canApprove =
+  const offeredApproval =
     input.decision?.actions?.some(
       (action) => action.id === 'approve-publish' || action.id === 'ready',
     ) ?? !packageGate;
+  const canApprove = offeredApproval && (!input.payload.gateReadiness || lifecycle.canAdvance);
   const extraReviewAction = input.decision?.actions?.find(
     (action) => action.id === 'request-review',
   );
@@ -50,8 +56,7 @@ export function renderReadyTopBar(input: {
   const bypassAction = input.decision?.actions?.find(
     (action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION,
   );
-  const reviewBlockingReason =
-    packageGate && !canApprove ? readyReviewBlockingReason(input.payload) : '';
+  const reviewBlockingReason = !canApprove ? readyReviewBlockingReason(input.payload) : '';
   const approveLabel = hasApprovePublish
     ? `Approve Publish (${input.publicationTarget === 'ready' ? 'ready' : 'draft'})`
     : 'Mark Ready';
@@ -62,6 +67,7 @@ export function renderReadyTopBar(input: {
   return html`
     <div class="rdy-top-bar">
       <span class="rdy-branch">${branch}</span>
+      ${lifecycle.gateLabel ? html`<span role="status">${lifecycle.gateLabel}</span>` : nothing}
       ${prUrl
         ? html`
             <a class="rdy-pr-link" href=${prUrl} target="_blank" rel="noopener">#${prNumber}</a>

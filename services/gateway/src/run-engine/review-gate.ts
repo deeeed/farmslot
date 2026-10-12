@@ -49,6 +49,7 @@ import { captureReviewInputArtifactsForRun, readReviewInputSnapshot } from './di
 import { createEngineDecision } from './engine-decisions.js';
 import { BlockedRunError } from './errors.js';
 import { isOwnPrApprovalError } from './gate-policy.js';
+import { refreshRunGateReadiness } from './gate-prerequisites.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
 import { copyWorkerArtifacts, readReviewArtifacts } from './review-artifacts.js';
 import { completedReviewSessionTrace } from './review-result.js';
@@ -579,9 +580,10 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
           : entry,
       ),
     });
-    await persistRunNow(refreshed, 'refresh workspace review gate');
-    broadcastFn(Events.RUN_UPDATED, { run: refreshed });
-    return refreshed;
+    const evaluated = await refreshRunGateReadiness(refreshed);
+    await persistRunNow(evaluated, 'refresh workspace review gate');
+    broadcastFn(Events.RUN_UPDATED, { run: evaluated });
+    return evaluated;
   }
   await copyWorkerArtifacts(runId);
   const review = await readReviewArtifacts(runId);
@@ -624,16 +626,17 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
     payload: nextPayload,
     description: nextDescription,
     actions: reviewPostingActions(review.reviewMd),
+    context: { ...decision.context, gateActions: reviewPostingActions(review.reviewMd) },
   };
   const nextDecisions = target.run.decisions.map((d) => (d.id === decision.id ? nextDecision : d));
 
-  updateRun(runId, { decisions: nextDecisions });
+  const evaluated = await refreshRunGateReadiness(updateRun(runId, { decisions: nextDecisions }));
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
   console.log(
     `[run-engine] run ${runId.slice(0, 8)} — review gate refreshed (rec=${review.recommendation}, comments=${review.lineComments.length})`,
   );
 
-  return getRun(runId)!;
+  return evaluated;
 }
 
 export function reviewPostingActions(

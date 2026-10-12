@@ -27,6 +27,7 @@ test('projects stored run decisions into the complete websocket decision contrac
     familyId: 'family-1',
     project: 'farmslot-farm',
     flowType: 'dev',
+    status: 'human-gating',
     ticketOrPr: 'MANUAL-1',
     slotId: 'slot-1',
     branch: 'feat/manual-1',
@@ -42,6 +43,7 @@ test('projects stored run decisions into the complete websocket decision contrac
       runId: 'run-1',
       project: 'farmslot-farm',
       flowType: 'dev',
+      runStatus: 'human-gating',
       ticketOrPr: 'MANUAL-1',
     },
     runMeta: {

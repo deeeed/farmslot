@@ -12,7 +12,11 @@
       "@farmslot/credential-store": ["../../packages/credential-store/src/index.ts"],
       "@farmslot/slot-config": ["../../packages/slot-config/src/index.ts"],
       "@farmslot/slot-config/*": ["../../packages/slot-config/src/*"],
-      "@farmslot/review-dispatch": ["../../packages/review-dispatch/src/index.ts"]
+      "@farmslot/review-dispatch": ["../../packages/review-dispatch/src/index.ts"],
+      "@farmslot/adapter-sdk": ["../../packages/adapter-sdk/src/index.ts"],
+      "@farmslot/adapter-sdk/*": ["../../packages/adapter-sdk/src/*"],
+      "@farmslot/recipe-runner": ["../../packages/recipe-runner/src/index.ts"],
+      "@farmslot/recipe-runner/*": ["../../packages/recipe-runner/src/*"]
     }
   },
   "include": ["src/**/*.ts"]

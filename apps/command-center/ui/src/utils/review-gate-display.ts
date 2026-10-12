@@ -311,6 +311,12 @@ export function summarizeReviewCounts(payload: ReadyGatePayload): ReviewGateCoun
 }
 
 export function readyReviewBlockingDisplayReason(payload: ReadyGatePayload): string {
+  if (payload.gateReadiness && payload.gateReadiness.state !== 'ready') {
+    return (
+      payload.gateReadiness.reasons.map((reason) => reason.message).join(' ') ||
+      'Gate prerequisites are still being collected.'
+    );
+  }
   const reviews = payload.reviews ?? [];
   const exhausted = latestExhaustedReview(reviews);
   if (exhausted) return reviewRetryCapReason(exhausted);

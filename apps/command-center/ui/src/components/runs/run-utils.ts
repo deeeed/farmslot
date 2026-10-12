@@ -15,6 +15,7 @@ import type {
 } from '@farmslot/protocol';
 import {
   buildFamilySummary,
+  deriveRunLifecycleView,
   githubPullUrl,
   interactiveOperatorPacketArtifacts,
   isInternalRunArtifactPath,
@@ -168,6 +169,18 @@ export function runStatusColor(status: RunStatus | string): string {
     case 'monitoring':
     case 'reviewing':
       return '#818cf8';
+    case 'fixing':
+    case 'review-failed':
+    case 'reconciling': {
+      const tone = deriveRunLifecycleView({ status }).tone;
+      return {
+        ok: colors.statusOk,
+        fail: colors.statusFail,
+        warn: colors.statusWarn,
+        running: '#818cf8',
+        muted: colors.textMuted,
+      }[tone];
+    }
     case 'completing':
     case 'ci-watching':
     case 'human-gating':
