@@ -1,5 +1,5 @@
 import type { Run, RunnerSessionUsage } from '@farmslot/protocol';
-import { runSessionUsage } from '@farmslot/slot-config';
+import { expandTemplate, runSessionUsage } from '@farmslot/slot-config';
 
 import type { SlotVars } from '../core/config.js';
 import { execOnSlot, isLocal } from '../core/exec.js';
@@ -92,9 +92,10 @@ export async function extractRunnerSessionUsage({
   }
   try {
     if (vars && !isLocal(vars.host, vars.machine)) {
+      const farmslotDir = expandTemplate('{{farmslot_dir}}', vars);
       const result = await execOnSlot(
         vars,
-        `RUNNER_SESSION_PATH=${shellQuote(runnerSessionPath)} RUNNER_SESSION_RUNNER=${shellQuote(runner ?? '')} bash ~/farmslot-node/scripts/session-usage.sh ${shellQuote(slotId)} total`,
+        `RUNNER_SESSION_PATH=${shellQuote(runnerSessionPath)} RUNNER_SESSION_RUNNER=${shellQuote(runner ?? '')} bash ${farmslotDir}/scripts/session-usage.sh ${shellQuote(slotId)} total`,
         { timeout: 30_000, maxBuffer: 64 * 1024, selectNodeSupport: false },
       );
       if (result.exitCode !== 0)

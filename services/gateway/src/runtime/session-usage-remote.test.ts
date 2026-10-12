@@ -19,7 +19,7 @@ mock.module('../core/exec.js', {
 const { extractRunnerSessionUsage } = await import('./session-usage.js');
 
 test('remote usage uses supported node execution and preserves slot support selection', async () => {
-  const vars = { host: 'remote.example', machine: 'remote-test' } as SlotVars;
+  const vars = { host: 'remote.example', machine: 'remote-test', resourceVars: {} } as SlotVars;
   const usage = await extractRunnerSessionUsage({
     slotId: 'slot-1',
     vars,
