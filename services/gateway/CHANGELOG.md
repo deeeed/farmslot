@@ -5,6 +5,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Freeze selected recorded evidence with its execution dependencies and publication manifest; refresh verifies the approved selection and refuses replaced media or metadata.
+- Render reviewer checklist, signal and feedback paths for the allocated lane in local and catalog templates, and give fix workers every matching lane feedback file.
+
 - Add a portable Farmslot QA preset and validation checklist with recipe evidence and required local CI parity, preserving eval template comparisons through catalog snapshots.
 
 - Validate artifact-only QA completion from retained output and declared cases, preserving pending visual review and recovery across refreshes and restarts.

@@ -6,8 +6,10 @@ import path from 'node:path';
 import {
   DEFAULT_BRANCH,
   DEFAULT_TASK_DIR,
+  type ReviewIssue,
   type ReviewMode,
   type ReviewValidationDepth,
+  type Run,
 } from '@farmslot/protocol';
 
 import {
@@ -23,6 +25,7 @@ import { execOnSlot, isLocal } from '../core/exec.js';
 import {
   assertNoUnknownPlaceholders,
   expandTemplate,
+  expandTemplateWithReservedLast,
   knownTemplatePlaceholders,
 } from '../core/hooks.js';
 import { shellQuote } from '../core/tmux.js';
@@ -30,6 +33,7 @@ import { remoteBranchRefspec } from '../methods/slot/slot-tracking.js';
 import { buildReviewPlanningBrief } from '../run-engine/review-artifacts.js';
 import { stackPrBase } from '../run-engine/stack-base.js';
 import { getRun } from '../runs/store.js';
+import { REVIEW_FIX_CHECKLIST_TARGET } from '../tasks/checklist-target.js';
 import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-template-catalog.js';
 
 import {
@@ -38,6 +42,12 @@ import {
   descriptionCheckFindings,
 } from './description-check.js';
 import { parseReviewMode } from './session-mode.js';
+import {
+  renderReviewTemplatePaths,
+  reviewFeedbackFileList,
+  reviewFeedbackPathsForFix,
+  type ReviewTemplatePaths,
+} from './template-paths.js';
 
 interface ReviewConfig {
   enabled: boolean;
@@ -122,6 +132,11 @@ export async function expandReviewTemplate(
   taskDir: string,
   runId: string,
   validationDepth: ReviewValidationDepth,
+  lanePaths: ReviewTemplatePaths = {
+    checklist: 'REVIEW.md',
+    signal: 'REVIEW-SIGNAL.json',
+    feedback: 'artifacts/review-feedback.md',
+  },
 ): Promise<string> {
   // Read template from project
   const run = getRun(runId);
@@ -129,6 +144,8 @@ export async function expandReviewTemplate(
   if (!project) throw new Error(`Cannot expand review template without a project for run ${runId}`);
 
   const configured = await loadProjectVars(project);
+  let template: string;
+  let bindingSection = '';
   const references = configured.projectJson.review?.execution_templates;
   if (references !== undefined) {
     if (
@@ -175,37 +192,44 @@ export async function expandReviewTemplate(
       validationDepth,
       executionTemplate: selected.reference,
       ...(provenanceArtifact ? { retainedProvenanceArtifact: provenanceArtifact } : {}),
-      checklistFile: 'REVIEW.md',
-      signalFile: 'REVIEW-SIGNAL.json',
+      checklistFile: lanePaths.checklist,
+      signalFile: lanePaths.signal,
+      feedbackFile: lanePaths.feedback,
     };
-    const planningBrief = await buildReviewPlanningBrief(run.taskFile ?? null, taskDir);
-    const document = `${selected.markdown}\n## Review execution bindings\n\n\`\`\`json\n${JSON.stringify(bindings, null, 2)}\n\`\`\`\n\nUse the task's mark wrapper for this reviewer checklist. Preserve the parent worker's CHECKLIST.md. The gateway retains the indexed provenance artifact and owns session termination.\n${planningBrief}\n`;
-    const check = await descriptionCheckSection(vars, taskDir, run, configured.projectJson);
-    return `${document.trimEnd()}\n\n${check}\n`;
-  }
+    template = selected.markdown;
+    bindingSection = `
+## Review execution bindings
 
-  let template: string;
-  try {
-    const { farmslotRoot } = await import('../fleet/state.js');
-    const templateDir = path.join(farmslotRoot, 'projects', project, 'templates', 'worker');
-    const depthTemplatePath = path.join(templateDir, `review.${validationDepth}.md`);
-    const fallbackTemplatePath = path.join(templateDir, 'review.md');
+\`\`\`json
+${JSON.stringify(bindings, null, 2)}
+\`\`\`
+
+Use the task's mark wrapper for this reviewer checklist. Preserve the parent worker's CHECKLIST.md. The gateway retains the indexed provenance artifact and owns session termination.
+`;
+  } else {
     try {
-      template = await readFile(depthTemplatePath, 'utf-8');
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code !== 'ENOENT') {
-        throw new Error(`Failed to read ${depthTemplatePath}: ${(err as Error).message}`);
+      const { farmslotRoot } = await import('../fleet/state.js');
+      const templateDir = path.join(farmslotRoot, 'projects', project, 'templates', 'worker');
+      const depthTemplatePath = path.join(templateDir, `review.${validationDepth}.md`);
+      const fallbackTemplatePath = path.join(templateDir, 'review.md');
+      try {
+        template = await readFile(depthTemplatePath, 'utf-8');
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT') {
+          throw new Error(`Failed to read ${depthTemplatePath}: ${(err as Error).message}`);
+        }
+        template = await readFile(fallbackTemplatePath, 'utf-8');
       }
-      template = await readFile(fallbackTemplatePath, 'utf-8');
+    } catch (err) {
+      throw new Error(
+        `Review template not found for project ${project} (${validationDepth}): ${(err as Error).message}`,
+      );
     }
-  } catch (err) {
-    throw new Error(
-      `Review template not found for project ${project} (${validationDepth}): ${(err as Error).message}`,
-    );
   }
 
   // Resolve runtimeDir and mobile reference repo path from project vars
+  template = renderReviewTemplatePaths(template, lanePaths);
   const runtimeDir = await resolveProjectRuntimeDir(project);
   let pv: Awaited<ReturnType<typeof loadProjectVars>> | null = null;
   let mobileRepo = '';
@@ -266,7 +290,73 @@ export async function expandReviewTemplate(
   // derivation: a prerequisite that moved since dispatch must be detectable.
   const planningBrief = await buildReviewPlanningBrief(run?.taskFile ?? null, taskDir);
   const check = await descriptionCheckSection(vars, taskDir, run, pv?.projectJson);
-  return `${expanded.trimEnd()}\n${planningBrief.trimEnd()}\n\n${check}\n`;
+  return `${expanded.trimEnd()}${bindingSection}\n${planningBrief.trimEnd()}\n\n${check}\n`;
+}
+
+export async function expandReviewFixTemplate(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  taskDir: string,
+  run: Run,
+  issues: ReviewIssue[],
+): Promise<string> {
+  const { farmslotRoot } = await import('../fleet/state.js');
+  // Format issues as bullet list for template insertion
+  const issueLines = issues
+    .map((i) => {
+      const loc = i.line ? `${i.file}:${i.line}` : i.file;
+      return `- **${loc}** — ${i.description}`;
+    })
+    .join('\n');
+
+  // Read and expand the review-fix template
+  let template: string;
+  try {
+    const templatePath = path.join(
+      farmslotRoot,
+      'projects',
+      run.project,
+      'templates',
+      'worker',
+      'review-fix.md',
+    );
+    template = await readFile(templatePath, 'utf-8');
+  } catch (err) {
+    throw new Error(
+      `Review fix template not found for project ${run.project}: ${(err as Error).message}`,
+    );
+  }
+
+  const runtimeDir = await resolveProjectRuntimeDir(run.project);
+  const pv = await loadProjectVars(run.project);
+
+  const replacements: Record<string, string> = {
+    CI_PARITY_CHECKLIST: REVIEW_FIX_CHECKLIST_TARGET.checklist,
+    TASK_DIR: taskDir,
+    REPO: vars.remoteRepo,
+    TICKET: run?.ticketOrPr ?? '',
+    ISSUES: issueLines,
+    REVIEW_FEEDBACK_FILES: reviewFeedbackFileList(taskDir, reviewFeedbackPathsForFix(run, taskDir)),
+    RUNTIME_DIR: runtimeDir,
+    DEFAULT_BRANCH: getProjectField(pv.projectJson, 'default_branch') || DEFAULT_BRANCH,
+  };
+
+  assertNoUnknownPlaceholders(
+    template,
+    [...Object.keys(replacements), ...knownTemplatePlaceholders(vars, pv)],
+    `Review fix template for ${run.project}`,
+  );
+  // Hooks pass covers {{farmslot_dir}}, {{SLOT_ID}}, {{recipe_*}} beyond the
+  // explicit set; explicit values land last so reviewer-authored ISSUES text
+  // is never re-expanded and a colliding var cannot consume the placeholder.
+  const hasFeedbackList = template.includes('{{REVIEW_FEEDBACK_FILES}}');
+  template = template.replaceAll(
+    '{{TASK_DIR}}/artifacts/review-feedback.md',
+    'the reviewer lane feedback files',
+  );
+  const feedbackSection = hasFeedbackList
+    ? ''
+    : `## Reviewer lane feedback\n\nRead every lane's feedback before applying the findings.\n\n${replacements.REVIEW_FEEDBACK_FILES}\n\n`;
+  return feedbackSection + expandTemplateWithReservedLast(template, vars, pv, replacements);
 }
 
 export async function getReviewConfig(project: string): Promise<ReviewConfig> {

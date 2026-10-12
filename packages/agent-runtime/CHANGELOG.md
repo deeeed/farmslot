@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Accept the reviewer feedback path binding in template lint while retaining the required feedback artifact check.
+
 ## 0.18.1 - 2026-10-12
 
 - Update shared runtime dependencies for bounded recipe log observations.
