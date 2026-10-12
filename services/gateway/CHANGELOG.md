@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Acquire declared run capabilities before dispatch and fix delivery, reusing frozen proof plans and rolling back only new leases on preparation failure.
 - Validate artifact-only QA completion from retained output and declared cases, preserving pending visual review and recovery across refreshes and restarts.
 - Count review diff files from numstat rows instead of patch text while retaining untracked source identities.
 - Return artifact-relative package paths for retained evidence review.

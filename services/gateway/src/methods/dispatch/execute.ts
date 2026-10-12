@@ -16,6 +16,7 @@ import {
   type PressureAdmissionRejected,
   type PressureOverrideAudit,
   primaryRoleForFlow,
+  recipeFlowRequirements,
   type ReviewSessionTrace,
 } from '@farmslot/protocol';
 import { resolveEffectiveDomain } from '@farmslot/slot-config';
@@ -55,6 +56,10 @@ import {
   invalidateArtifactTextCache,
   invalidateLiveRecipeContextMemo,
 } from '../../live-recipe/context.js';
+import {
+  assertDeclaredCapabilityPreparation,
+  prepareDeclaredRunCapabilities,
+} from '../../run-engine/declared-capabilities.js';
 import {
   attemptRepeatReviewResume,
   resolveRepeatReviewResumePlan,
@@ -1172,6 +1177,14 @@ export async function dispatchExecute(
       }),
     );
     options.assertCurrent?.();
+    const resources = recipeFlowRequirements(selected.entry.frontmatter).resources;
+    if (resources.length > 0) {
+      if (!currentRun) throw new Error('Declared resources require a persisted run owner.');
+      assertDeclaredCapabilityPreparation(
+        await prepareDeclaredRunCapabilities(currentRun.id, resources),
+      );
+      options.assertCurrent?.();
+    }
   };
   const defaultFlowKey =
     flowTypeToKey(taskProfileFlowType) ||
@@ -1324,6 +1337,7 @@ export async function dispatchExecute(
   ) {
     // Reconcile the existing reservation before preparation, slot claims or task copies.
     // Re-copying TASK.md here would erase progress written while the gateway was away.
+    await runRecipeGate();
     try {
       return await launchNative();
     } catch (error) {

@@ -24,6 +24,10 @@ import { FLOW_STEPS, Methods } from '@farmslot/protocol';
 
 import { alive, matchesProcess } from '../../../packages/agent-runtime/src/native/storage.ts';
 import { taskInit } from '../../../packages/agent-runtime/src/task-init/index.ts';
+import {
+  prepareDeclaredCapabilityProof,
+  proveDeclaredCapabilityAcquisition,
+} from '../../e2e-declared-capabilities.mts';
 
 import {
   prepareCleanupGuards,
@@ -85,7 +89,10 @@ const queuedClose = process.argv.includes('--queued-close');
 const parkClaim = process.argv.includes('--park-claim');
 const missingContract = process.argv.includes('--missing-contract');
 const generationGuard = process.argv.includes('--generation-guard');
-const guardsOnly = process.argv.includes('--guards-only') || providerRecovery;
+const declaredCapabilities = process.argv.includes('--declared-capabilities');
+let declaredFixture;
+const guardsOnly =
+  process.argv.includes('--guards-only') || providerRecovery || declaredCapabilities;
 const providersOnly =
   process.argv.includes('--providers-only') || realAdoption || guardsOnly || reconcileHeld;
 let realFixture;
@@ -587,6 +594,18 @@ try {
     });
     writeJson(statusFile, realStatus);
   }
+  if (declaredCapabilities) {
+    declaredFixture = await prepareDeclaredCapabilityProof({
+      root,
+      project,
+      repo: emptyRepo,
+      runId: emptyRunId,
+      slotId: emptySlot,
+      missingMode: process.argv.includes('--missing-proof-mode'),
+      writeJson,
+    });
+    mode({ mode: 'complete' });
+  }
   const port = await freePort();
   const token = randomUUID();
   env = {
@@ -647,6 +666,19 @@ try {
     }
     assert.ok(Date.now() < startupDeadline, 'isolated gateway must start');
     await delay(250);
+  }
+  if (declaredFixture) {
+    runId = declaredFixture.runId;
+    await proveDeclaredCapabilityAcquisition({
+      ...declaredFixture,
+      rpc,
+      wait,
+      restartGateway,
+      check,
+      outDir,
+      sourceRoot,
+      writeJson,
+    });
   }
   if (!guardsOnly) {
     if (!providersOnly) {
@@ -1265,15 +1297,16 @@ try {
       check('pre-written task uses shared runtime');
     }
   }
-  proveCleanupGuards({
-    fixtures: cleanupGuards,
-    rpc,
-    readStatus: () => JSON.parse(readFileSync(statusFile, 'utf8')),
-    check,
-    executable,
-    configFile,
-    temporary,
-  });
+  if (!declaredCapabilities)
+    proveCleanupGuards({
+      fixtures: cleanupGuards,
+      rpc,
+      readStatus: () => JSON.parse(readFileSync(statusFile, 'utf8')),
+      check,
+      executable,
+      configFile,
+      temporary,
+    });
   if (providerRecovery)
     await proveProviderRecovery({
       fixtures: cleanupGuards,
@@ -1389,6 +1422,12 @@ try {
   throw error;
 } finally {
   await cleanupFixture();
+  if (declaredFixture)
+    writeJson(path.join(outDir, 'declared-capabilities-cleanup.json'), {
+      finished: true,
+      fixtureRemoved: !existsSync(temporary),
+      gatewayStopped: !gateway || gateway.exitCode !== null || gateway.signalCode !== null,
+    });
 }
 
 async function cleanupFixture() {

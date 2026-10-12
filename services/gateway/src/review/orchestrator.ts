@@ -54,6 +54,7 @@ import {
 } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
+import { prepareConfiguredRunCapabilities } from '../run-engine/declared-capabilities.js';
 import { runSupersededSince } from '../run-engine/run-generation.js';
 import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
 import { resumeNativeWorker } from '../runners/native/worker-recovery.js';
@@ -1293,6 +1294,7 @@ type FixPromptRecoveryContext = Pick<
 
 interface FixPromptRecoveryDeps {
   getRun: typeof getRun;
+  prepareCapabilities?: (runId: string) => Promise<void>;
   resolvePrompt: typeof resolveWorkerDispatchPrompt;
   resolveRuntimeDir: typeof resolveProjectRuntimeDir;
   readLaunchAck: typeof readLaunchAckSignalSnapshot;
@@ -1316,6 +1318,7 @@ interface FixPromptRecoveryDeps {
 
 const FIX_PROMPT_RECOVERY_DEPS: FixPromptRecoveryDeps = {
   getRun,
+  prepareCapabilities: prepareConfiguredRunCapabilities,
   resolvePrompt: resolveWorkerDispatchPrompt,
   resolveRuntimeDir: resolveProjectRuntimeDir,
   readLaunchAck: readLaunchAckSignalSnapshot,
@@ -1382,6 +1385,9 @@ export async function resumeReviewFixPromptDelivery(
     priorPromptSendAttempted?: boolean;
   } = {},
 ): Promise<FixPromptDeliveryResult> {
+  assertNativeReviewOperationCurrent();
+  if (!deps.getRun(runId)) return { status: 'unsupported' };
+  await deps.prepareCapabilities?.(runId);
   assertNativeReviewOperationCurrent();
   if (deps.getRun(runId)?.transport === 'native') {
     if (context.taskFile)
@@ -2162,6 +2168,8 @@ async function sendOwnedFeedbackToWorker(
   const run = getRun(runId);
   const project = run?.project;
   if (!project) throw new Error(`Cannot send review feedback without a project for run ${runId}`);
+  await prepareConfiguredRunCapabilities(runId);
+  assertNativeReviewOperationCurrent();
 
   // Format issues as bullet list for template insertion
   const issueLines = issues
@@ -2662,6 +2670,8 @@ async function relaunchWorkerForFix(
   model: string,
   runId: string,
 ): Promise<boolean> {
+  assertNativeReviewOperationCurrent();
+  await prepareConfiguredRunCapabilities(runId);
   assertNativeReviewOperationCurrent();
   if (getRun(runId)?.transport === 'native') {
     await resumeNativeWorker(runId, {

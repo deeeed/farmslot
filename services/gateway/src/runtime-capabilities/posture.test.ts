@@ -202,7 +202,7 @@ async function harness(t: TestContext, options: HarnessOptions) {
       }
       return status;
     },
-    acquireCapability: (params) => registry.acquire(params),
+    acquireCapabilities: (params) => registry.acquireBatch(params),
     enqueueScopedClaimWaiter: (params) => registry.enqueueScopedClaimWaiter(params),
     ...(options.assertTargetInInventory
       ? { assertTargetInInventory: options.assertTargetInInventory }
@@ -256,6 +256,41 @@ async function harness(t: TestContext, options: HarnessOptions) {
     run,
   };
 }
+
+test('validation preparation rolls back an earlier provider when a later required acquire fails', async (t) => {
+  const { reconciler, registry, actions } = await harness(t, {
+    capabilities: [
+      entry('base'),
+      entry('a-client', { dependencies: ['base'] }),
+      entry('z-unavailable'),
+    ],
+    runAction: (_slot, action) => ({
+      ok: !(action.kind === 'slot-action' && action.actionId === 'z-unavailable.acquire'),
+      detail: 'provider cannot start',
+    }),
+  });
+  const result = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: [
+      { capabilityId: 'a-client', mode: 'state', reason: 'Authored validation' },
+      { capabilityId: 'z-unavailable', mode: 'state', reason: 'Authored validation' },
+    ],
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.transition.rejection?.kind, 'capability-unavailable');
+  assert.deepEqual(
+    actions.filter((action) => action.endsWith('.release')),
+    ['z-unavailable.release', 'a-client.release', 'base.release'],
+  );
+  assert.ok(
+    (await registry.status({ slotId: SLOT })).leases.every((lease) => lease.state === 'released'),
+  );
+  assert.equal(
+    result.status.capabilities.find((state) => state.capabilityId === 'a-client')?.observedState,
+    'stopped',
+  );
+});
 
 /** The record a completed release park leaves on the run. */
 function parkRecord(runId: string, machine: string, operationId: string): MachineParkRecord {
