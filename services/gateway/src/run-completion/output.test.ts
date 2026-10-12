@@ -75,6 +75,12 @@ test('a failed manual refresh does not mark an active worker finished', async (t
     false,
     'an active retry must not inherit completion from its previous attempt',
   );
+  updateRun(run.id, { status: 'completing', output: { ...failed.output!, workerFinished: true } });
+  assert.equal(
+    failRunOutputCapture(run.id, new Error('Gate refresh failed')).output?.workerFinished,
+    true,
+    'a refresh failure during completion preserves the already observed worker terminal mark',
+  );
 });
 
 test('capture follows the existing narrative report names for every flow', async (t) => {
