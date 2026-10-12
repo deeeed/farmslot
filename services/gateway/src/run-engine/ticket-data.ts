@@ -11,6 +11,7 @@ import {
 import type { RawProjectJson } from '../core/config.js';
 import { fetchGitHubIssue, fetchGitHubPR } from '../external/github.js';
 import { fetchJiraIssue } from '../external/jira.js';
+import { JIRA_KEY_RE } from '../methods/dispatch/ticket-ref.js';
 import { getRun, updateRun } from '../runs/store.js';
 
 import { loadProjectVarsOrNull } from './project-vars.js';
@@ -199,7 +200,7 @@ export async function fetchTicketData(run: Run): Promise<RunTicketData | null> {
   if (!ticket) return null;
 
   // Determine source: Jira key (PROJ-1234) or GitHub ref (owner/repo#123)
-  const isJira = /^[A-Z]+-\d+$/i.test(ticket);
+  const isJira = JIRA_KEY_RE.test(ticket.toUpperCase());
   const isGitHub = parseGitHubRef(ticket) !== null;
 
   let jiraData: Partial<RunTicketData> = {};

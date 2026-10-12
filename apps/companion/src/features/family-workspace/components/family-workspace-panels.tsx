@@ -739,9 +739,7 @@ export function FamilyChangeLedgerPanel({
                   <Text style={styles.iterationPr}>{card.prLabel}</Text>
                 </View>
                 <Text style={styles.iterationReason}>{card.reason}</Text>
-                <Text style={styles.iterationTitle} numberOfLines={2}>
-                  {card.title}
-                </Text>
+                <RunTitle style={styles.iterationTitle} title={card.title} />
                 <View style={styles.iterationSignalGrid}>
                   <IterationSignal label="Diff" value={card.diffLabel} />
                   <IterationSignal label="Reviewed input" value={card.reviewedInputLabel} />

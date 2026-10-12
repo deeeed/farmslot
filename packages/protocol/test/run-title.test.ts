@@ -42,6 +42,7 @@ test('later acceptance headings and code comments never replace a free-text firs
     'Make the run list sortable',
   );
   assert.equal(taskTitleText('Deploy node\n```\n# build\nyarn build\n```'), 'Deploy node');
+  assert.equal(taskTitleText('Fix header\n```html\n<h1>Welcome</h1>\n```'), 'Fix header');
 });
 
 test('shared display retains each client title source priority', () => {

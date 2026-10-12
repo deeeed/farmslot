@@ -14,19 +14,21 @@ test('free-text fetch derives a title once and preserves the full task descripti
   assert.equal(data?.description, body);
 });
 
-test('tracker fetch fallback still merges its attached backlog spec and acceptance criteria', async () => {
-  const data = await fetchTicketData(
-    makeRun({ project: 'missing-title-test-project', ticketOrPr: 'TAT-78001' }),
-  );
-  assert.equal(data?.source, 'manual');
-  assert.equal(data?.description, '');
-  const merged = mergeInitialContextIntoTicketData(
-    data!,
-    'Backlog specification\n\n## Acceptance Criteria\n- Preserve the attached specification',
-  );
-  assert.match(merged.description, /Backlog specification/);
-  assert.deepEqual(merged.acceptanceCriteria, ['Preserve the attached specification']);
-});
+for (const key of ['TAT-78001', 'ABC2-145']) {
+  test(`${key} fetch fallback still merges its attached backlog spec and acceptance criteria`, async () => {
+    const data = await fetchTicketData(
+      makeRun({ project: 'missing-title-test-project', ticketOrPr: key }),
+    );
+    assert.equal(data?.source, 'manual');
+    assert.equal(data?.description, '');
+    const merged = mergeInitialContextIntoTicketData(
+      data!,
+      'Backlog specification\n\n## Acceptance Criteria\n- Preserve the attached specification',
+    );
+    assert.match(merged.description, /Backlog specification/);
+    assert.deepEqual(merged.acceptanceCriteria, ['Preserve the attached specification']);
+  });
+}
 
 test('free-text Markdown is not classified as a GitHub reference', async () => {
   const body = '# PR #112 native dispatch proof\n\nKeep the full task text.';

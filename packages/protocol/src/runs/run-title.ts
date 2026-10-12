@@ -54,9 +54,10 @@ function recordField(
 
 /** Extract a human title without changing the task body. Also handles stored legacy summaries. */
 export function taskTitleText(value: string, maxLength = 120): string {
-  const htmlHeading =
-    value.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i) ??
-    value.match(/<h1\b[^>]*>([\s\S]*?)<\/h1\s*>/i);
+  const htmlHeading = value.trimStart().startsWith('<')
+    ? (value.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i) ??
+      value.match(/<h1\b[^>]*>([\s\S]*?)<\/h1\s*>/i))
+    : null;
   const firstLine = value.trim().split(/\r?\n/)[0] ?? '';
   const markdownHeading = firstLine.match(/^[ \t]{0,3}#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$/);
   const candidate = htmlHeading?.[1] ?? markdownHeading?.[1] ?? firstLine;
