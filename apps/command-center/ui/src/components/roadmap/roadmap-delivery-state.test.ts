@@ -23,9 +23,11 @@ const panel = source.statements.find(
 );
 assert(panel);
 const members = panel.members.filter(
-  (member) => member.name && ['_reloadDelivery', '_selected'].includes(member.name.getText(source)),
+  (member) =>
+    member.name &&
+    ['_reloadDelivery', '_selected', '_resolveSelectedItem'].includes(member.name.getText(source)),
 );
-assert.equal(members.length, 2);
+assert.equal(members.length, 3);
 const compiled = ts.transpileModule(
   `class Panel { ${members.map((member) => member.getText(source)).join('\n')} }`,
   { compilerOptions: { target: ts.ScriptTarget.ES2022 } },

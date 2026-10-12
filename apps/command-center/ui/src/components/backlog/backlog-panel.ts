@@ -97,12 +97,12 @@ import type { SlotChoiceChangeDetail } from '../shared/slot-choice-list.js';
 import type { SlotSelectorChangeDetail } from '../shared/slot-selector-modal.js';
 import {
   applyWorkInventorySort,
-  inventoryShowsBackAffordance,
+  focusWorkInventoryRow,
   inventoryShowsDetail,
   inventoryShowsList,
   nextSortState,
   parseWorkInventorySort,
-  renderWorkInventoryBackButton,
+  renderWorkInventoryDetailClose,
   renderWorkInventoryLayout,
   renderWorkInventoryRow,
   renderWorkInventoryTable,
@@ -985,10 +985,6 @@ export class BacklogPanel extends LitElement {
         background: ${unsafeCSS(colors.bgCard)};
         border-color: ${unsafeCSS(colors.textMuted)}33;
       }
-      .compact-row.selected {
-        background: ${unsafeCSS(colors.accent)}11;
-        border-color: ${unsafeCSS(colors.accent)}77;
-      }
       .compact-row.has-error {
         border-left: 2px solid ${unsafeCSS(colors.statusFail)};
         padding-left: 6px;
@@ -1831,6 +1827,18 @@ export class BacklogPanel extends LitElement {
 
   private _backToInventoryList() {
     this._forceInventoryList = true;
+  }
+
+  private _deselectItem() {
+    const id = this._selectedItemId;
+    this._confirmTimer.clear();
+    this._selectedItemId = '';
+    this._selectedItemMode = 'view';
+    this._dispatchConfigOpen = false;
+    this._specViewerOpen = false;
+    this._runnerPickerOpen = false;
+    this._writeUrlState();
+    void this.updateComplete.then(() => focusWorkInventoryRow(this.renderRoot, id));
   }
 
   private _setSelectedItemMode(mode: BacklogDetailMode) {
@@ -3068,7 +3076,7 @@ export class BacklogPanel extends LitElement {
   }
 
   private _renderCompactRow(item: BacklogItem, linkedRun?: Run) {
-    const selected = this._selectedItemId === item.id;
+    const selected = this._selectedItemId === item.id && !this._forceInventoryList;
     const displayedStatus = displayedBacklogStatus(item, linkedRun);
     const tone = statusTone(displayedStatus);
     const activeRun = linkedRun && !isTerminalRunStatus(linkedRun.status) ? linkedRun : undefined;
@@ -3084,6 +3092,7 @@ export class BacklogPanel extends LitElement {
         className: item.lastDispatchError ? 'has-error' : '',
         testId: `backlog-row-${item.sourceRef || item.id}`,
         onActivate: () => this._selectItem(item),
+        onDeselect: () => this._deselectItem(),
       },
       cells: [
         renderPlanningBadge(displayedStatus, tone),
@@ -3638,12 +3647,12 @@ export class BacklogPanel extends LitElement {
         })}
       </div>
     </section>`;
-    const detail = html`${inventoryShowsBackAffordance(layout)
-      ? renderWorkInventoryBackButton({
-          testId: 'work-inventory-back',
-          onBack: () => this._backToInventoryList(),
-        })
-      : nothing}${this._renderSelectedItemPanel()}`;
+    const detail = html`${renderWorkInventoryDetailClose({
+      layout,
+      testId: 'work-inventory-back',
+      onBack: () => this._backToInventoryList(),
+      onClose: () => this._deselectItem(),
+    })}${this._renderSelectedItemPanel()}`;
     return html`<section class="shell">
       <div class="header header-compact">
         <h1>Backlog</h1>

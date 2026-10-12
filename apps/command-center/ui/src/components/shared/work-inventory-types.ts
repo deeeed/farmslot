@@ -30,6 +30,8 @@ export interface WorkInventoryRowRenderOptions {
   className?: string;
   testId?: string;
   onActivate: () => void;
+  /** Close the detail for an already-selected row. Omit for selection-only controls. */
+  onDeselect?: () => void;
 }
 
 export interface WorkInventoryUrlSortOptions<TSortKey extends string> {

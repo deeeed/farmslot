@@ -70,8 +70,14 @@ export const workInventoryTableStyles = css`
     background: ${unsafeCSS(colors.bgCard)};
     border-color: ${unsafeCSS(colors.textMuted)}33;
   }
-  .work-inventory-row.selected {
-    background: ${unsafeCSS(colors.accent)}11;
+  .work-inventory-row.selected,
+  .work-inventory-row.selected:hover {
+    background: color-mix(
+      in srgb,
+      var(--accent, ${unsafeCSS(colors.accent)}) 28%,
+      var(--bg-surface, ${unsafeCSS(colors.bgSurface)})
+    );
+    color: var(--text-primary, ${unsafeCSS(colors.textPrimary)});
     border-color: ${unsafeCSS(colors.accent)}77;
   }
   .work-inventory-row:focus-visible {
@@ -102,6 +108,9 @@ export const workInventoryTableStyles = css`
     color: ${unsafeCSS(colors.textMuted)};
     font-size: ${unsafeCSS(fonts.sizeXs)};
     white-space: nowrap;
+  }
+  .work-inventory-row.selected .updated-cell {
+    color: ${unsafeCSS(colors.textSecondary)};
   }
   .work-inventory-empty {
     color: ${unsafeCSS(colors.textMuted)};
