@@ -136,6 +136,10 @@ The generated bridge no-ops unless both conditions are true:
 - `__DEV__`
 - `EXPO_PUBLIC_FARMSLOT_RECIPE_BRIDGE=1`
 
+Native HUD consumers install the optional `react-native-safe-area-context` peer.
+The generated provider supplies that context and the shared renderer uses host
+insets for top placement. CLI-only consumers need no native peers.
+
 The bridge and HUD are copied into local source files by design, so each app can customize `bridgeName`, bridge enablement, HUD text, HUD styles, or full HUD rendering without forking the harness.
 
 Default HUD text is compact and wraps instead of ellipsizing. To tune the generated HUD without replacing it:

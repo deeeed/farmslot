@@ -1,9 +1,11 @@
-import React, { createContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useEffect, useMemo, useRef } from 'react';
 import { Dimensions, Platform, View } from 'react-native';
 import { FullWindowOverlay } from 'react-native-screens';
 
+import { hudPlacement } from '@farmslot/protocol/recipe';
+
 import { useRecipeBridgeRelay } from './recipe-bridge-relay';
-import { type FarmslotRecipeHudState, RecipeHud } from './RecipeHud';
+import { type FarmslotRecipeHudState, RecipeHud, useRecipeHudState } from './RecipeHud';
 
 export interface FarmslotRecipeBridgeCommand {
   command: string;
@@ -53,7 +55,7 @@ export function RecipeBridgeProvider({
   observeUi,
 }: Readonly<RecipeBridgeProviderProps>): React.ReactElement {
   const enabled = isEnabled();
-  const [hud, setHud] = useState<FarmslotRecipeHudState | null>(null);
+  const [hud, setHud] = useRecipeHudState();
   const hudRef = useRef(hud);
   hudRef.current = hud;
 
@@ -68,7 +70,7 @@ export function RecipeBridgeProvider({
         }
         if (command.command === 'hud') {
           // `clear` is part of the app.hud action manifest; it hides the HUD.
-          setHud(command.payload?.clear === true ? null : normalizeHudState(command.payload));
+          await setHud(command.payload?.clear === true ? null : normalizeHudState(command.payload));
           return { ok: true };
         }
         if (command.command === 'trace') {
@@ -87,7 +89,7 @@ export function RecipeBridgeProvider({
         return { ok: false, error: `Unsupported Farmslot bridge command: ${command.command}` };
       },
     }),
-    [bridgeName, enabled, observeUi],
+    [bridgeName, enabled, observeUi, setHud],
   );
 
   useRecipeBridgeRelay(bridge, enabled);
@@ -109,7 +111,14 @@ export function RecipeBridgeProvider({
       <RecipeHudContext.Provider value={hud}>
         <View style={{ flex: 1 }}>
           {children}
-          {renderHud ? renderHud(hud) : <RecipeHud state={hud} overlay={FullWindowOverlay} />}
+          {renderHud ? (
+            renderHud(hud)
+          ) : (
+            <RecipeHud
+              state={hud}
+              overlay={Platform.OS === 'ios' ? FullWindowOverlay : undefined}
+            />
+          )}
         </View>
       </RecipeHudContext.Provider>
     </FarmslotRecipeBridgeContext.Provider>
@@ -182,6 +191,7 @@ function normalizeHudState(payload: Record<string, unknown> | undefined): Farmsl
     ),
     totalSteps: asOptionalNumber(payload?.totalSteps ?? payload?.total_steps ?? progress?.total),
     error: asOptionalString(payload?.error),
+    position: hudPlacement(payload?.display),
   };
 }
 

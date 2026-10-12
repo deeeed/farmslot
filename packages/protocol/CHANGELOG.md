@@ -5,6 +5,9 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Declare versioned source locks, exact source receipts and run input provenance.
+- Honor HUD top/bottom placement through automatic progress and capture the painted final outcome.
+
+- Keep frozen recording dependencies out of selectable publication media.
 - Require a valid farm-owned QA preset during project pack admission and gateway support sync, with a missing-flow error and configuration hint.
 
 - Include the retained package display path in evidence review snapshots.

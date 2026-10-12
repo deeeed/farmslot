@@ -1,7 +1,7 @@
 import { hudIntentDisplay, hudSecondaryText } from '@farmslot/protocol/recipe';
 
 import { isRecord } from './json.js';
-import type { RecipeHudOptions } from './types.js';
+import type { RecipeHudDisplayOptions, RecipeHudOptions } from './types.js';
 
 export function buildHudNode(
   status: 'running' | 'pass' | 'fail',
@@ -38,7 +38,7 @@ export function buildHudNode(
     proves: event.node.proves,
     intent: text,
     error: event.error ? hudErrorSummary(event.error) : undefined,
-    display: isRecord(event.node.display) ? event.node.display : hudDisplay(options),
+    display: mergeHudDisplay(options, event.node),
     progress: {
       current: event.index,
       total: event.total,
@@ -46,9 +46,14 @@ export function buildHudNode(
   };
 }
 
-function hudDisplay(options: RecipeHudOptions | false | undefined): Record<string, unknown> {
-  if (!options || !options.display) return {};
-  return { ...options.display };
+export function mergeHudDisplay(
+  options: RecipeHudOptions | false | undefined,
+  node: Record<string, unknown>,
+): RecipeHudDisplayOptions {
+  return {
+    ...(options ? options.display : {}),
+    ...(isRecord(node.display) ? node.display : {}),
+  };
 }
 
 function lifecyclePhase(status: 'running' | 'pass' | 'fail'): string {

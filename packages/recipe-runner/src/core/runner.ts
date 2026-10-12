@@ -57,7 +57,7 @@ import {
   RUNTIME_CONNECTION_CLOSED,
 } from './failure.js';
 import { extractWorkflowGraph, type WorkflowGraph } from './graph.js';
-import { buildHudNode } from './hud.js';
+import { buildHudNode, mergeHudDisplay } from './hud.js';
 import { createRecipeInvocation } from './invocation.js';
 import { isRecord, normalizeRelativePath, readJsonFile } from './json.js';
 import {
@@ -389,6 +389,8 @@ class DefaultRecipeRunner implements RecipeRunner {
     enforceRecipeExecutionPlan(executionPlan, request, this.#blockedCapabilities);
     const startedAt = new Date();
     const recipeRunId = randomUUID();
+    const runHud: RecipeHudOptions | false =
+      this.#hud === false ? false : { ...this.#hud, display: { ...this.#hud?.display } };
     await mkdir(artifactsDir, { recursive: true });
     const runFileOffsets = await collectRunFileOffsets(runLogPaths, projectRoot);
 
@@ -478,8 +480,18 @@ class DefaultRecipeRunner implements RecipeRunner {
           registerArtifacts: (artifacts) => {
             for (const artifact of artifacts) artifactWriter.register(artifact);
           },
-          publishHudProgress: (hudStatus, event) =>
-            this.#publishHudProgressOrRecord(traceWriter, hudStatus, event),
+          publishHudProgress: (hudStatus, event) => {
+            if (
+              runHud &&
+              isRecord(event.node.display) &&
+              event.node.display.position !== undefined
+            ) {
+              runHud.display = mergeHudDisplay(runHud, {
+                display: { position: event.node.display.position },
+              });
+            }
+            return this.#publishHudProgressOrRecord(traceWriter, hudStatus, event, runHud);
+          },
           ...(request.stopAfterNode !== undefined ? { stopAfterNode: request.stopAfterNode } : {}),
         });
         status = hasUnresolvedRecipeFailure(traceWriter.list()) ? 'fail' : execution.status;
@@ -501,13 +513,11 @@ class DefaultRecipeRunner implements RecipeRunner {
       if (status === 'pass' || status === 'fail') {
         const runHudStartedAt = new Date();
         try {
-          await this.#publishRunHud(status, {
-            recipe,
-            projectRoot,
-            artifactsDir,
-            env,
-            outputs,
-          });
+          await this.#publishRunHud(
+            status,
+            { recipe, projectRoot, artifactsDir, env, outputs },
+            runHud,
+          );
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           const fields = recipeFailureTraceFields(error);
@@ -1127,10 +1137,11 @@ class DefaultRecipeRunner implements RecipeRunner {
       context: Parameters<ActionAdapter['execute']>[1];
       error?: string;
     },
+    hud: RecipeHudOptions | false,
   ): Promise<boolean> {
     const startedAt = new Date();
     try {
-      await this.#publishHudProgress(status, event);
+      await this.#publishHudProgress(status, event, hud);
       return true;
     } catch (error) {
       // HUD is first-class when advertised, so rendering failures fail the run.
@@ -1163,13 +1174,14 @@ class DefaultRecipeRunner implements RecipeRunner {
       context: Parameters<ActionAdapter['execute']>[1];
       error?: string;
     },
+    hud: RecipeHudOptions | false,
   ): Promise<void> {
     const hudAction = this.#hudAction();
     if (!hudAction || event.action === hudAction) return;
     const adapter = this.#adapters.get(hudAction);
     if (!adapter) return;
     await verifyExecutableSource(adapter, `Action ${hudAction}`);
-    await adapter.execute(buildHudNode(status, event, this.#hud), event.context);
+    await adapter.execute(buildHudNode(status, event, hud), event.context);
   }
 
   async #publishRunHud(
@@ -1181,6 +1193,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       env: Record<string, string | undefined>;
       outputs: ReadonlyMap<string, unknown>;
     },
+    hud: RecipeHudOptions | false,
   ): Promise<void> {
     const hudAction = this.#hudAction();
     if (!hudAction) return;
@@ -1220,6 +1233,7 @@ class DefaultRecipeRunner implements RecipeRunner {
         flow: 'run',
         detail: status === 'pass' ? 'Recipe completed' : 'Recipe failed',
         text: status === 'pass' ? 'Recipe completed' : 'Recipe failed',
+        display: hud ? hud.display : undefined,
         progress: { complete: true },
       },
       context,

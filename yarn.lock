@@ -4754,12 +4754,15 @@ __metadata:
     agent-device: ">=0.19.3"
     react: ">=19"
     react-native: ">=0.79"
+    react-native-safe-area-context: ">=5"
   peerDependenciesMeta:
     agent-device:
       optional: true
     react:
       optional: true
     react-native:
+      optional: true
+    react-native-safe-area-context:
       optional: true
   bin:
     farmslot-adapter-rn: ./bin/farmslot-adapter-rn.mjs
