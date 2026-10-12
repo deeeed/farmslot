@@ -7,6 +7,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 - Show shared gate prerequisite reasons and run lifecycle labels for correction, review failure and reconciliation.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Release cuts ship production Android to Play internal and closed testing, verify both tracks, and require an explicit iOS platform.
 
 ## 0.8.1 - 2026-10-11
 

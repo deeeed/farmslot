@@ -75,7 +75,8 @@
       },
       "android": {
         "track": "internal",
-        "serviceAccountKeyPath": ".eas/google-play-service-account.json"
+        "serviceAccountKeyPath": ".eas/google-play-service-account.json",
+        "applicationId": "net.siteed.farmslot"
       }
     }
   }
