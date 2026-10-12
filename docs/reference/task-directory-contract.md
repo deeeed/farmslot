@@ -2,6 +2,16 @@
 
 One directory per run, the same shape whether Farmslot dispatched the worker or an engineer started the task from a skill. Farmslot defines the files; `@farmslot/agent-runtime` and any harness built on it consume them.
 
+Review completion MUST wait for the reviewer's own terminal mark before archiving
+its checklist and artifacts. A result file, idle runner or closed window alone
+does not establish successful completion.
+
+The shared harness checklist command MUST resolve explicit `--checklist` and
+`--signal` overrides before preserving a terminal signal. To resume a cleared
+blocker, run `checklist mark <task-dir> start`, then continue numbered marks. This
+uses the existing runtime start verb, preserves checked boxes and resumes signal
+progress under the launcher's attempt identity. Successful terminal verdicts remain protected.
+
 ## Two documents, one checklist
 
 The task document says **what** the work is. The execution checklist says **how** to do it, step by step. Only the checklist has steps.
