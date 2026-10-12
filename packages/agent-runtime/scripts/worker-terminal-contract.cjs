@@ -391,7 +391,10 @@ function lintWorkerTemplateAgainstContract(templateContent, contract) {
     const spec = contract.commands[/** @type {WorkerTerminalCommand} */ (command)];
     if (!spec) continue;
     for (const artifactPath of spec.artifacts) {
-      if (!templateContent.includes(artifactPath)) {
+      const reviewerFeedbackBinding =
+        artifactPath === 'artifacts/review-feedback.md' &&
+        templateContent.includes('{{REVIEW_FEEDBACK}}');
+      if (!templateContent.includes(artifactPath) && !reviewerFeedbackBinding) {
         issues.push(
           `missing checklist/reference to required artifact \`${artifactPath}\` for \`${command}\``,
         );

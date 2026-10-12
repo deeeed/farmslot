@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Resolve declared execution-template sources through an attested source binding.
+- Accept the reviewer feedback path binding in template lint while retaining the required feedback artifact check.
 
 ## 0.18.1 - 2026-10-12
 

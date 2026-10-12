@@ -184,7 +184,7 @@ test('review and fix templates use locked pack bytes and bound paths while legac
     await import('@farmslot/slot-config');
   const { projectWorkerTemplatePath } = await import('../core/worker-templates.js');
   const { expandTemplateWithReservedLast } = await import('../core/hooks.js');
-  const { expandReviewTemplate } = await import('../review/templates.js');
+  const { expandReviewFixTemplate, expandReviewTemplate } = await import('../review/templates.js');
   const { resolveCiFixTemplatePath } = await import('../ci-monitor/inline-fix.js');
   const { createRun, deleteRun, updateRun } = await import('../runs/store.js');
   const root = await realpath(await mkdtemp(path.join(tmpdir(), 'locked-review-templates-')));
@@ -232,10 +232,23 @@ test('review and fix templates use locked pack bytes and bound paths while legac
     try {
       await writeFile(
         path.join(root, 'templates/worker/review.md'),
-        '# Locked review\n{{FARMSLOT_DIR}}/projects/demo/fixtures/check\n',
+        '# Locked review\n{{FARMSLOT_DIR}}/projects/demo/fixtures/check\n{{REVIEW_CHECKLIST}} {{REVIEW_SIGNAL}} {{TASK_DIR}}/{{REVIEW_FEEDBACK}}\n',
       );
-      const rendered = await expandReviewTemplate(vars, 'tasks/demo', run.id, 'static-code');
+      const rendered = await expandReviewTemplate(vars, 'tasks/demo', run.id, 'static-code', {
+        checklist: 'REVIEW.rev-locked.md',
+        signal: 'REVIEW.rev-locked-SIGNAL.json',
+        feedback: 'artifacts/review-feedback.rev-locked.md',
+      });
       assert.ok(rendered.startsWith(`# Locked review\n${root}/fixtures/check`));
+      assert.ok(
+        rendered.includes(
+          'REVIEW.rev-locked.md REVIEW.rev-locked-SIGNAL.json tasks/demo/artifacts/review-feedback.rev-locked.md',
+        ),
+      );
+      const fixed = await expandReviewFixTemplate(vars, 'tasks/demo', run, []);
+      assert.ok(fixed.includes(`# Locked review-fix.md\n${root}/fixtures/check`));
+      assert.ok(fixed.includes('tasks/demo/artifacts/review-feedback.md'));
+      assert.ok(!fixed.includes('/projects/demo/'));
     } finally {
       updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
       await deleteRun(run.id);

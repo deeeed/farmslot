@@ -20,6 +20,56 @@ import {
 } from './orchestrator.js';
 import type { ReviewAgentResult } from './review-agent.js';
 
+test('recovered fix delivery prepares declared capabilities before sending any instruction', async () => {
+  const events: string[] = [];
+  let refuse = true;
+  const context = {
+    id: 'review-fix',
+    runner: 'claude',
+    model: 'opus',
+    taskFile: 'tasks/REVIEW-FIX.md',
+    attemptStartedAt: '2026-10-12T00:00:00.000Z',
+    target: { session: 'session', target: 'session:worker' },
+  };
+  const deps = {
+    getRun: (() => ({
+      id: 'run-1',
+      project: 'test-project',
+      metrics: { runner: 'claude' },
+    })) as never,
+    prepareCapabilities: async () => {
+      events.push('prepare');
+      if (refuse) throw new Error('declared resource unavailable');
+    },
+    resolvePrompt: async () => 'read tasks/REVIEW-FIX.md',
+    resolveRuntimeDir: async () => '.agent',
+    readLaunchAck: async () => null,
+    syncChecklistTarget: async () => {
+      events.push('checklist');
+    },
+    ensureTarget: async () => 'session:worker',
+    persistTarget: async () => {},
+    deliver: async () => {
+      events.push('deliver');
+      return { delivered: true as const, acknowledgement: 'safe-send' as const };
+    },
+  };
+  await assert.rejects(
+    resumeReviewFixPromptDelivery({ remoteRepo: '/repo' } as never, 'run-1', context, deps),
+    /declared resource unavailable/,
+  );
+  assert.deepEqual(events, ['prepare']);
+  refuse = false;
+  events.length = 0;
+  assert.equal(
+    (await resumeReviewFixPromptDelivery({ remoteRepo: '/repo' } as never, 'run-1', context, deps))
+      .status,
+    'delivered',
+  );
+  assert.equal(events[0], 'prepare');
+  assert.equal(events.at(-1), 'deliver');
+});
+
 test('recovery binds a completed fix when its running signal was missed, but never a successor', () => {
   const context: AgentContext = {
     id: 'review-fix',

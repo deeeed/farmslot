@@ -111,6 +111,8 @@ import {
   type ReviewSessionMeta,
   waitForSessionTranscriptToSettle,
 } from './snapshots.js';
+import { reviewerChecklistBasename, reviewerFeedbackRelPath } from './template-paths.js';
+export { reviewerChecklistBasename, reviewerFeedbackRelPath } from './template-paths.js';
 import { expandReviewTemplate } from './templates.js';
 import {
   isSuccessfulTerminalReviewSignal,
@@ -230,14 +232,6 @@ export function prependReviewerExecutionContract(
   executionContract: string,
 ): string {
   return `## Reviewer-specific execution contract\n\n${executionContract}\n\n${checklist}`;
-}
-
-export function reviewerChecklistBasename(contextId: string): string {
-  return `REVIEW.${contextId}.md`;
-}
-
-export function reviewerFeedbackRelPath(contextId: string): string {
-  return `artifacts/review-feedback.${contextId}.md`;
 }
 
 export function reviewerResultRelPath(contextId: string): string {
@@ -1174,7 +1168,10 @@ export async function runReviewAgent(
       resultRelPath,
     );
     let expandedTemplate = scopeReviewFeedbackPath(
-      await expandReviewTemplate(vars, taskDir, _runId, validationDepth),
+      await expandReviewTemplate(vars, taskDir, _runId, validationDepth, {
+        ...reviewChecklistTarget,
+        feedback: feedbackRelPath,
+      }),
       feedbackRelPath,
       resultRelPath,
     );

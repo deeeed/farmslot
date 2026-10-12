@@ -40,7 +40,6 @@ import {
   type RunResourceWait,
   type RunStep,
   type RuntimeCapabilityAcquireParams,
-  type RuntimeCapabilityAcquireResult,
   type RuntimeCapabilityCatalogEntry,
   type RuntimeCapabilityLease,
   type RuntimeCapabilityProofRequirement,
@@ -55,6 +54,7 @@ import {
 import { MachinePausePreviewStaleError } from '../machine-parking/preview-errors.js';
 
 import { sameCapabilityParameters } from './parameters.js';
+import type { RuntimeCapabilityBatchAcquireResult } from './registry.js';
 
 const POLICY_SOURCE_RANK: Record<ResourcePosturePolicySource, number> = {
   'gate-choice': 3,
@@ -394,7 +394,7 @@ export interface ResourcePostureRequest {
    * behind another one executes later, by which time a park may have landed.
    * Throw from here to refuse. Engine-internal boundaries omit it.
    */
-  assertAdmissible?: () => void;
+  assertAdmissible?: () => void | Promise<void>;
 }
 
 /**
@@ -443,9 +443,9 @@ export interface RunResourcePostureDeps {
   getRun: (runId: string) => Run | undefined;
   updateRun: (runId: string, partial: Partial<Run>) => Run;
   capabilityStatus: (slotId: string) => Promise<RuntimeCapabilityStatusResult>;
-  acquireCapability: (
-    params: RuntimeCapabilityAcquireParams,
-  ) => Promise<RuntimeCapabilityAcquireResult>;
+  acquireCapabilities: (
+    params: readonly RuntimeCapabilityAcquireParams[],
+  ) => Promise<RuntimeCapabilityBatchAcquireResult>;
   releaseForPosture: (
     slotId: string,
     dispositions: Array<{ leaseId: string; keepWarm: boolean }>,
@@ -648,10 +648,10 @@ export class RunResourcePostureReconciler {
   }
 
   async apply(request: ResourcePostureRequest): Promise<RuntimePostureApplyResult> {
-    return this.serialize(request.runId, () => {
+    return this.serialize(request.runId, async () => {
       // Inside the queue, not before it. This is the only point where the check
       // and the effect are not separated by another request's execution.
-      request.assertAdmissible?.();
+      await request.assertAdmissible?.();
       // Always called so the one-shot suppression is consumed even when an
       // explicit choice is present; that explicit choice then wins over what it
       // returns.
@@ -1034,6 +1034,7 @@ export class RunResourcePostureReconciler {
             ...context.states.filter((state) => !reservedCapabilityIds.has(state.capabilityId)),
           ]
         : context.states;
+    const acquireRequests: RuntimeCapabilityAcquireParams[] = [];
     for (const state of acquireOrder) {
       if (state.desiredDisposition !== 'acquired') continue;
       const requirement = context.proofRequirements.find(
@@ -1044,7 +1045,7 @@ export class RunResourcePostureReconciler {
         completed += 1;
         continue;
       }
-      const result = await this.deps.acquireCapability({
+      acquireRequests.push({
         slotId: context.slotId,
         capabilityId: state.capabilityId,
         ownerRunId: context.run.id,
@@ -1064,22 +1065,24 @@ export class RunResourcePostureReconciler {
         // as waiting on a resource until the holder releases.
         queueOnConflict: true,
       });
-      if (!result.ok) {
-        // Blocking, not partial: the caller's action cannot run, and no other
-        // owner's resource was touched.
-        return this.rejectedTransition(context, inProgress, {
-          effects,
-          failures,
-          completed,
-          rejection: {
-            kind: 'capability-unavailable',
-            capabilityId: state.capabilityId,
-            reason: result.conflict.reason,
-            conflict: result.conflict,
-          },
-        });
-      }
-      completed += 1;
+    }
+    // Registry serialization makes the rollback set authoritative even when an
+    // SDK recording admission acquires concurrently for the same run.
+    const acquired = await this.deps.acquireCapabilities(acquireRequests);
+    completed += acquired.completed;
+    if (!acquired.ok) {
+      failures.push(...acquired.cleanupFailures);
+      return this.rejectedTransition(context, inProgress, {
+        effects,
+        failures,
+        completed,
+        rejection: {
+          kind: 'capability-unavailable',
+          capabilityId: acquired.capabilityId,
+          reason: acquired.conflict.reason,
+          conflict: acquired.conflict,
+        },
+      });
     }
 
     const refreshed = await this.refresh(context);
