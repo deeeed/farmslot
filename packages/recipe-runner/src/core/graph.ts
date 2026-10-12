@@ -1,4 +1,5 @@
-import { isRecord } from './json.js';
+import { isRecord } from '@farmslot/protocol';
+
 import type { ActionResult } from './types.js';
 
 export interface WorkflowGraph {
@@ -59,7 +60,7 @@ export function resolveNextNode(
   return typeof node.next === 'string' ? node.next : undefined;
 }
 
-function reachableNodes(
+export function reachableNodes(
   nodes: Record<string, Record<string, unknown>>,
   entry: string,
 ): Set<string> {

@@ -11,7 +11,9 @@ import {
 } from '@farmslot/recipe-runner/runtime/operation';
 
 import { harnessHost, hostEnvName } from './host.js';
+import { parseArgs } from './parse-args.js';
 import { recipeRuntimeDir } from './paths.js';
+import { isRecipeExecution } from './project-command.js';
 
 export const COMMAND_JOURNAL_FILE = 'last-command.json';
 
@@ -39,17 +41,23 @@ interface CommandJournalHandle {
   operation: OperationRecord;
 }
 
+export interface CommandJournalContext {
+  target: string;
+  runtimeDir?: string;
+}
+
 let activeCommandJournal: CommandJournalHandle | undefined;
 
 export async function withCommandJournal(
   command: string,
   argv: readonly string[],
   execute: () => Promise<number>,
+  context?: CommandJournalContext,
 ): Promise<number> {
   // Persist commands whose side effects or proof work should not be guessed or repeated after interruption.
   if (!harnessHost().journaledCommands.includes(command)) return execute();
   const operationEnv = hostEnvName('OPERATION_ID');
-  const handle = tryBeginCommandJournal(command, argv);
+  const handle = tryBeginCommandJournal(command, argv, context);
   const previous = activeCommandJournal;
   const parentId = process.env[operationEnv];
   if (handle) process.env[operationEnv] = handle.operation.value.id;
@@ -122,6 +130,35 @@ export function readCommandJournal(
   const file = selected
     ? path.join(path.dirname(legacyFile), 'operations', `${selected.id}.journal.json`)
     : legacyFile;
+  return readJournalFile(file);
+}
+
+/** A later launch/stop must not hide the latest retained recipe evidence. */
+export function readLatestProofJournal(
+  target: string,
+  runtimeDir?: string,
+): ReturnType<typeof readCommandJournal> {
+  const legacyFile = commandJournalPath(target, runtimeDir);
+  const directory = path.join(path.dirname(legacyFile), 'operations');
+  const operations = readOperations(directory).sort((a, b) =>
+    (b.finishedAt ?? b.startedAt).localeCompare(a.finishedAt ?? a.startedAt),
+  );
+  for (const operation of operations) {
+    const journal = readJournalFile(path.join(directory, `${operation.id}.journal.json`));
+    if (hasProof(journal.record)) return journal;
+  }
+  const legacy = readJournalFile(legacyFile);
+  return hasProof(legacy.record) ? legacy : { file: legacyFile, record: null };
+}
+
+function hasProof(record: CommandJournalRecord | null): boolean {
+  return Boolean(
+    record?.evidencePaths.length &&
+    isRecipeExecution(record.command, parseArgs(record.args).options),
+  );
+}
+
+function readJournalFile(file: string): { file: string; record: CommandJournalRecord | null } {
   let descriptor: number | undefined;
   try {
     // O_NOFOLLOW blocks symlinks where supported; matching the opened file's
@@ -193,11 +230,12 @@ function pruneCompletedJournals(
 function tryBeginCommandJournal(
   command: string,
   argv: readonly string[],
+  context?: CommandJournalContext,
 ): CommandJournalHandle | undefined {
   try {
-    const target = invocationTarget(argv);
+    const target = context?.target ?? invocationTarget(argv);
     if (!fs.existsSync(target)) return undefined;
-    const runtimeDir = optionValue(argv, '--runtime-dir');
+    const runtimeDir = context?.runtimeDir ?? optionValue(argv, '--runtime-dir');
     const legacyFile = commandJournalPath(target, runtimeDir);
     const taskDir = latestTaskDir(path.join(target, 'temp', 'tasks'));
     const signalFile = taskDir && path.join(taskDir, 'SIGNAL.json');

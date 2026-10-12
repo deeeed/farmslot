@@ -4,14 +4,12 @@
 // only through it.
 import path from 'node:path';
 
-import type { PlatformAdapter } from '@farmslot/adapter-sdk';
+import type { ActionCapabilitySource, PlatformAdapter, RecipeCatalog } from '@farmslot/adapter-sdk';
 import {
   OFFICIAL_RECIPE_ACTIONS,
   type OfficialActionName,
   officialRecipeActionCapabilities,
-  type RecipeActionManifestDocument,
   type RecipeExecutionCapability,
-  type RecipeSourceProvenance,
   validateRecipeActionManifestDocument,
 } from '@farmslot/protocol';
 import { digestRecipeLibrary, type RecipeLibrarySource } from '@farmslot/recipe-runner';
@@ -30,44 +28,16 @@ import { harnessAdapters } from './adapters.js';
 import { color } from './cli-color.js';
 import { isSensitiveKey, redactStructuredValue } from './command-journal.js';
 import { harnessHost } from './host.js';
+import { prepareLiveAdapterScript, runLiveAdapterScript } from './live-adapter-contract.js';
+import { runNetworkCaptureAction } from './network-observation.js';
 import { isRecord, shellQuoteArg } from './parse-args.js';
 import { closest } from './suggest.js';
 
-/** Where one resolved action came from. */
-export interface ActionCapabilitySource {
-  name: string;
-  tier: 'official' | 'personal' | 'team' | 'canonical' | 'task';
-  manifestPath: string;
-  shadows?: string[];
-  trust?: RecipeSourceProvenance['trust'];
-  implementationRoot?: string;
-  digest?: string;
-  resolveDigest?: () => Promise<string>;
-}
-
-export interface ResolvedActionManifest {
-  manifest: RecipeActionManifestDocument;
-  actionSources: Map<string, ActionCapabilitySource>;
-}
-
-export interface RecipeCatalog {
-  /** The library the host ships: its source name, root, and the namespace of its action names. */
-  bundledLibrary: { name: string; root: string; actionNamespace: string };
-  /**
-   * The adapter's action manifest merged across the library sources (the
-   * bundled one last), or the override manifest with its task action root.
-   */
-  resolveActionManifest(
-    adapter: string,
-    overridePath?: string,
-    sources?: readonly RecipeLibrarySource[],
-    taskActionRoot?: string,
-  ): Promise<ResolvedActionManifest>;
-  /** Throws when the manifest document is invalid. */
-  validateManifest(manifest: RecipeActionManifestDocument): Promise<unknown>;
-  /** The execution capabilities the host enforces for a bundled action. */
-  actionCapabilities(action: string): readonly RecipeExecutionCapability[];
-}
+export type {
+  ActionCapabilitySource,
+  RecipeCatalog,
+  ResolvedActionManifest,
+} from '@farmslot/adapter-sdk';
 
 export interface RuntimeRecipeCatalogOptions {
   runtime: PlatformAdapter;
@@ -81,6 +51,56 @@ export function createRuntimeRecipeCatalog({
 }: RuntimeRecipeCatalogOptions): RecipeCatalog {
   return {
     bundledLibrary,
+    async resolveActionAdapter(action, source, options) {
+      if (action === 'app.network_capture' && runtime.observation?.network?.actions)
+        return {
+          action,
+          execute: (node, context) => runNetworkCaptureAction(runtime.id, node, context),
+        };
+      if (!source?.implementationRoot) return undefined;
+      const prepared = await prepareLiveAdapterScript({
+        platform: runtime.id,
+        action,
+        namespace: bundledLibrary.actionNamespace,
+        implementationRoot: source.implementationRoot,
+        allowRuntimeImports:
+          source.trust === 'trusted' || (source.tier === 'task' && options.trustTaskActions),
+      });
+      if (!prepared) return undefined;
+      return {
+        action,
+        capabilities: [...this.actionCapabilities(action)],
+        source: {
+          kind: source.tier === 'canonical' ? 'bundled' : 'custom-adapter',
+          trust:
+            source.tier === 'task' && options.trustTaskActions
+              ? 'trusted'
+              : (source.trust ?? 'unknown'),
+          name: source.name,
+          path: prepared.entryPath,
+          digest: prepared.sourceDigest,
+        },
+        async execute(node, context) {
+          const live = await runLiveAdapterScript({
+            platform: runtime.id,
+            action,
+            namespace: bundledLibrary.actionNamespace,
+            node,
+            context,
+            prepared,
+          });
+          if (!live) throw new Error(`Prepared live adapter for ${action} is unavailable.`);
+          const output = live.result;
+          return {
+            output,
+            ...(isRecord(output) && typeof output.case === 'string' ? { case: output.case } : {}),
+            ...(isRecord(output) && Array.isArray(output.artifacts)
+              ? { artifacts: output.artifacts }
+              : {}),
+          };
+        },
+      };
+    },
     async validateManifest(manifest) {
       const validation = validateRecipeActionManifestDocument(manifest);
       if (validation.status === 'invalid') {

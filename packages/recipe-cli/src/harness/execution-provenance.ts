@@ -90,7 +90,7 @@ export async function captureExecutionProvenance(
     : digestRecipeDocument(input.recipeDocument);
   const libraries = (input.librarySources ?? []).map((source, index) => ({
     name: source.name ?? `library-${index + 1}`,
-    ...sourceSnapshot(source.root),
+    ...inputSourceSnapshot(source.root, input.excludedProductRoots ?? []),
   }));
   const runnerRoot = input.runnerRoot ?? harnessHost().packageRoot;
   return {

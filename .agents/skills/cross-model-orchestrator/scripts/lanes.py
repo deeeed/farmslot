@@ -120,6 +120,18 @@ def _env(config, lane, record):
     return env
 
 
+def _acknowledge(config, lane, pane, accepted):
+    if not accepted.get("receipt_id"):
+        return
+    result = run(["bash", str(DRIVER_DIR / "ack-acceptance.sh"), pane, lane["runner"],
+                  accepted["receipt_id"]], cwd=str(DRIVER_DIR.parents[3]),
+                 env=_env(config, lane, _record(config, lane["id"])), check=False)
+    acknowledgement = json.loads(result.stdout)
+    if not acknowledgement.get("acknowledged") and acknowledgement.get("verification") not in {
+            "driver_busy", "no_accepted_receipt"}:
+        raise RuntimeError(f"lane {lane['id']} acceptance acknowledgement failed: {acknowledgement}")
+
+
 def _observe(config, lane, pane, record, *, persist=True):
     env = _env(config, lane, record)
     env.pop("TMUX_MODEL_DRIVER_READ_ONLY", None)
@@ -139,14 +151,7 @@ def _observe(config, lane, pane, record, *, persist=True):
     if accepted:
         observed["last_delivery"] = accepted
     _update(config, lane["id"], {"pane_id": pane, **observed})
-    if accepted.get("receipt_id"):
-        result = run(["bash", str(DRIVER_DIR / "ack-acceptance.sh"), pane, lane["runner"],
-                      accepted["receipt_id"]], cwd=str(DRIVER_DIR.parents[3]),
-                     env=_env(config, lane, _record(config, lane["id"])), check=False)
-        acknowledgement = json.loads(result.stdout)
-        if not acknowledgement.get("acknowledged") and acknowledgement.get("verification") not in {
-                "driver_busy", "no_accepted_receipt"}:
-            raise RuntimeError(f"lane {lane['id']} acceptance acknowledgement failed: {acknowledgement}")
+    _acknowledge(config, lane, pane, accepted)
     return observation
 
 
@@ -210,6 +215,10 @@ def send(config, lane_id, payload):
         raise ValueError(f"lane {lane_id} is missing; launch or restore it first")
     delivery = _send(config, lane, pane, record, payload)
     _observe(config, lane, pane, record)
+    if delivery.get("submitted") and delivery.get("evidence"):
+        # Observation can find an older alias receipt. Persist and acknowledge this handoff too.
+        _update(config, lane_id, {"last_delivery": delivery["evidence"]})
+        _acknowledge(config, lane, pane, delivery["evidence"])
     return {"lane": lane_id, "pane_id": pane, "delivery": delivery}
 
 

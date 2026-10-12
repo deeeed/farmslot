@@ -6,6 +6,13 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Share review finding curation and bind publication choices to the reviewed content.
 
+- Allow project packs to declare default static recipe check invocations.
+
+- Share selected-flow requirement validation and scoped compatibility across gateway and clients, including template parameters and positive evidence for static and live checks.
+- Bind live recipe conformance to named runtime and teardown proof targets, retained artifact digests and typed capture metadata.
+- Declare optional recording-target resource claim bindings for scoped recording admission.
+
+- Define automatic registered claim evidence and original recording segments, with checked timeline identities and one shared acceptance validator (ADR-062).
 - Expose shared snapshot and current-check views for CI decisions.
 - Carry frozen deterministic checklist commands and verified local CI receipts into publication packages.
 - Replace runner-diversity review contracts with WARM/COLD selections, ordered review sequences and separate-session review provenance.

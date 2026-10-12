@@ -110,7 +110,13 @@ async function run(
     defaultSource: { kind: 'operator', trust: 'trusted', name: 'observation test' },
     hud: false,
   });
-  const result = await runner.run({ artifactsDir, recipeDocument, librarySources });
+  const result = await runner.run({
+    artifactsDir,
+    recipeDocument,
+    librarySources,
+    recordVideo: false,
+    recordingReason: 'This observation unit fixture has no recording backend.',
+  });
   return {
     status: result.status,
     trace: JSON.parse(await readFile(result.tracePath, 'utf8')) as TraceEntry[],

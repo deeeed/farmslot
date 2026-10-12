@@ -22,12 +22,13 @@ All lane input goes through [tmux-model-driver](../tmux-model-driver/SKILL.md).
 Use `launch <lane>`, `lanes-status`, `send <lane> --file <message>`, and `restore`.
 Launch syntax, resume, hooks, and acceptance evidence come from the shared runner adapter.
 Submit with named Enter. Never queue with Tab, resend buffered text, or send a model prompt to
-a shell. A send reports exact native acceptance or explicit pending queued input with a retained
-receipt. Queued input does not claim delivery or a new turn.
+a shell. A send reports exact native acceptance or complete driver-owned Codex queue delivery
+with a retained receipt. Queue delivery does not claim a new turn.
 
 Read and surface pending questions before answering. A blocked question, shell, or foreign queue stops a send. Codex busy/unknown
-phases accept steering with exact native proof, or report queued input with its
-receipt retained until native acceptance; other runners
+phases accept steering with exact native proof or the complete owned submitted-queue marker.
+The queue receipt survives until delivery acknowledgement; a same-prompt retry uses its
+evidence or submits only the owned composer with Enter. Other runners
 still require idle readiness. After reading its choices, use the driver's `answer-question.sh <pane> <runner> <question_fingerprint>`
 with an explicit JSON key list on stdin. It refuses if the pane, session, or question changed.
 A response acknowledgement does not itself prove a new turn. Interactive attachment is also available. Flush only driver-owned buffered input with `flush <lane>`.

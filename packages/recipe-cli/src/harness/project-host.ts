@@ -1,6 +1,11 @@
 import path from 'node:path';
 
-import { createAdapterRegistry } from '@farmslot/adapter-sdk';
+import {
+  createAdapterRegistry,
+  createDefaultRecipeEngine,
+  type DefaultRecipeEngineOptions,
+  type RecipeEngine,
+} from '@farmslot/adapter-sdk';
 import type { RecipeLibrarySource } from '@farmslot/recipe-runner';
 import { assertRecipeActive } from '@farmslot/recipe-runner/adapters/core';
 
@@ -35,12 +40,12 @@ import { applyRuntimeDirOption, type CliOptions, type ParsedArgs } from './parse
 import { recipeOutputRoots } from './paths.js';
 import { isRecipeExecution } from './project-command.js';
 import { resolveLibrarySources } from './recipe-library.js';
-import { createDefaultRecipeEngine, type RecipeEngine } from './run-engine.js';
 
 export interface ProjectRecipeHostOptions
   extends ResolveProjectContextOptions, LoadProjectProviderOptions {
   signal?: AbortSignal;
   deferOutput?: boolean;
+  recordingAdmission?: DefaultRecipeEngineOptions['recordingAdmission'];
 }
 
 export interface ProjectRecipeHost {
@@ -69,7 +74,12 @@ export function withProjectRecipeHost<T>(
   invoke: (host: ProjectRecipeHost) => Promise<T>,
 ): Promise<T> {
   return withHarnessInvocation(async () => {
-    const executes = isRecipeExecution(options.command, options.options);
+    // Lifecycle and log followers share owned-child cancellation, without granting
+    // recipe execution or funding authority to a readiness/log query.
+    const needsSignals =
+      isRecipeExecution(options.command, options.options) ||
+      (options.command === 'doctor' && options.options?.fix === true) ||
+      ['launch', 'reload', 'stop', 'logs'].includes(options.command ?? '');
     const execute = async (signal?: AbortSignal): Promise<T> => {
       const previousHost = harnessHost();
       const previousContext = harnessContext();
@@ -166,6 +176,7 @@ export function withProjectRecipeHost<T>(
             provider.engine ??
             createDefaultRecipeEngine({
               runtime: provider.runtime,
+              recordingAdmission: options.recordingAdmission,
               catalog: createRuntimeRecipeCatalog({
                 runtime: provider.runtime,
                 bundledLibrary: {
@@ -243,7 +254,7 @@ export function withProjectRecipeHost<T>(
     const finishOutput = options.deferOutput ? deferCommandOutput() : undefined;
     let succeeded = false;
     try {
-      const result = await (executes
+      const result = await (needsSignals
         ? withRecipeSignals(execute, options.signal)
         : execute(options.signal));
       succeeded = true;

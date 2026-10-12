@@ -58,11 +58,20 @@ export interface DoctorAdvisorySection {
   render(out: Paint): void;
 }
 
+export interface DoctorFixResult {
+  fixed: string[];
+  failed: string[];
+}
+
 export interface DoctorFixOptions {
   // Create the checkout's runtime context when it has none.
   ensureRuntimeContext?(target: string, adapter: string): { created: boolean };
   // The host's own repairs, after the overlay.
-  repair?(target: string, adapter: string, json: boolean): { fixed: string[]; failed: string[] };
+  repair?(
+    target: string,
+    adapter: string,
+    json: boolean,
+  ): DoctorFixResult | Promise<DoctorFixResult>;
   // Next steps for the host's failed repairs, listed first.
   nextActions?(
     failed: readonly string[],
@@ -73,6 +82,7 @@ export interface DoctorFixOptions {
 }
 
 export interface DoctorCommandOptions extends ReadinessViewOptions {
+  stream?: JsonStreamWriter;
   // Load and validate the platform's action manifest (or --action-manifest).
   manifest(
     adapter: string,
@@ -114,18 +124,24 @@ function executableName(): string {
   return executable ? shellQuote(executable) : harnessHost().name;
 }
 
+function doctorCommand(executable = harnessHost().name): string {
+  return harnessHost().doctorCommand ?? `${executable} doctor`;
+}
+
 export async function handleDoctor(
   parsed: ParsedArgs,
   commandOptions: DoctorCommandOptions,
 ): Promise<number> {
   // --json-stream (doctor --fix): stdout is NDJSON, a `stage` event per fix and
   // then `complete` with what was fixed; anything else printed goes to stderr.
-  const stream = new JsonStreamWriter('doctor', optionFlag(parsed.options, 'jsonStream'));
+  const stream =
+    commandOptions.stream ??
+    new JsonStreamWriter('doctor', optionFlag(parsed.options, 'jsonStream'));
   if (stream.enabled && !optionFlag(parsed.options, 'fix')) {
     stream.error({
       code: 'CLI_USAGE_ERROR',
       message: '--json-stream is for doctor --fix; use doctor --json for the report',
-      userAction: `${harnessHost().name} doctor --fix --json-stream --adapter <adapter> --target <path>`,
+      userAction: `${doctorCommand()} --fix --json-stream --adapter <adapter> --target <path>`,
     });
     stream.complete('fail', EXIT.usage);
     return EXIT.usage;
@@ -180,7 +196,7 @@ async function handleDoctorBody(
   if (printReady && json) {
     return refuse(
       '--print-ready owns stdout for Farmslot health_check; drop --json (use --expect-live --json for the doctor envelope)',
-      `${host} doctor --print-ready --adapter <adapter> --target <path>`,
+      `${doctorCommand()} --print-ready --adapter <adapter> --target <path>`,
     );
   }
   const actionManifestPath = actionManifestPathOption(options, adapter);
@@ -233,13 +249,16 @@ async function handleDoctorBody(
     } catch (error) {
       runtimeProbeError = error instanceof Error ? error.message : String(error);
     }
-    const ready = runtime?.decision === 'ready';
+    const recorder = runtime?.decision === 'ready' ? await readiness.recorder?.() : undefined;
+    const ready = doctorReady(runtime, recorder);
     const block = readiness.runtimeBlock?.(target, runtime);
     if (block) failed.push(block.id);
+    if (recorder?.status === 'fail') failed.push(recorder.id);
     const nextActions = doctorFixNextActions(failed, adapter, target, block, commandOptions.fix);
+    if (recorder?.status === 'fail' && recorder.userAction) nextActions.push(recorder.userAction);
     if (failed.length === 0 && !ready && runtime?.nextAction) nextActions.push(runtime.nextAction);
     const status = result.status === 'pass' && failed.length === 0 ? 'pass' : 'fail';
-    const retryDoctor = `${host} doctor --fix --adapter ${adapter} --target ${shellQuote(target)} --json`;
+    const retryDoctor = `${doctorCommand()} --fix --adapter ${adapter} --target ${shellQuote(target)} --json`;
     const fixUserAction =
       commandOptions.fix?.userAction?.(failed, retryDoctor) ?? nextActions[0] ?? retryDoctor;
     const error =
@@ -255,6 +274,7 @@ async function handleDoctorBody(
         fixed,
         failed,
         ready,
+        ...(recorder ? { recorder } : {}),
         nextActions,
         ...(error ? { error } : {}),
       });
@@ -268,6 +288,7 @@ async function handleDoctorBody(
             failed,
             ready,
             runtime,
+            ...(recorder ? { recorder } : {}),
             ...(runtimeProbeError ? { runtimeProbeError } : {}),
             nextActions,
             ...(error ? { error } : {}),
@@ -290,6 +311,7 @@ async function handleDoctorBody(
       } else if (runtimeProbeError) {
         console.log(`runtime probe failed: ${runtimeProbeError}`);
       }
+      renderDoctorRecorder(recorder);
       for (const action of nextActions) console.error(`  Next: ${action}`);
     }
     return status === 'pass' ? 0 : 1;
@@ -361,9 +383,11 @@ async function handleDoctorBody(
     runtimeProbeError = error instanceof Error ? error.message : String(error);
   }
   const runtimeCheck = doctorRuntimeCheck(runtime, runtimeProbeError, expectLive);
+  const recorder = runtime?.decision === 'ready' ? await readiness.recorder?.() : undefined;
   const checks = [
     ...result.checks,
     runtimeCheck,
+    ...(recorder ? [recorder] : []),
     ...((await readiness.liveChecks?.(target)) ?? []),
     ...(await platformDoctorChecks(adapter, target)),
     // Which library plugin code this process loaded: library, module and digest.
@@ -403,6 +427,7 @@ async function handleDoctorBody(
       adapter,
       target,
       runtime,
+      recorder,
       result: doctorResult,
       orphans: { [orphanField]: orphans },
       capture,
@@ -430,7 +455,7 @@ async function handleDoctorBody(
     doctorResult.checks.find(
       (check) => check.required && check.status === 'fail' && check.userAction,
     )?.userAction ??
-    `${host} doctor --fix --adapter ${adapter} --target ${shellQuote(target)} --json`;
+    `${doctorCommand()} --fix --adapter ${adapter} --target ${shellQuote(target)} --json`;
   const doctorError =
     doctorResult.status === 'fail'
       ? {
@@ -448,8 +473,9 @@ async function handleDoctorBody(
       JSON.stringify(
         {
           ...doctorResult,
-          ready: runtime?.decision === 'ready',
+          ready: doctorReady(runtime, recorder),
           runtime,
+          ...(recorder ? { recorder } : {}),
           ...(view ? { view: view.json } : {}),
           [orphanField]: orphans,
           capture,
@@ -501,6 +527,7 @@ async function handleDoctorBody(
     } else if (runtimeProbeError) {
       console.log(`${out('err', 'runtime probe failed:')} ${out('dim', runtimeProbeError)}`);
     }
+    renderDoctorRecorder(recorder, out);
     if (view) console.log(view.text);
     if (featureFlags) renderFeatureFlagLine(featureFlags, out);
     for (const line of readiness.lines?.(target) ?? []) console.log(line);
@@ -538,7 +565,7 @@ async function platformDoctorChecks(adapter: string, target: string): Promise<Do
         required: true,
         message: `${adapter}'s doctor checks failed to run.`,
         detail: error instanceof Error ? error.message : String(error),
-        userAction: `fix the doctor() of the ${adapter} adapter, then rerun ${harnessHost().name} doctor --adapter ${adapter}`,
+        userAction: `fix the doctor() of the ${adapter} adapter, then rerun ${doctorCommand()} --adapter ${adapter}`,
       },
     ];
   }
@@ -590,20 +617,43 @@ export function doctorFixNextActions(
   ];
   if (failed.includes('runtime-context')) {
     actions.push(
-      `inspect ${shellQuote(resolveRuntimeContextPath(target))}, then retry ${executable} doctor --fix ${scope}`,
+      `inspect ${shellQuote(resolveRuntimeContextPath(target))}, then retry ${doctorCommand(executable)} --fix ${scope}`,
     );
   }
-  if (failed.includes('overlay')) actions.push(`${executable} install ${scope}`);
+  if (failed.includes('overlay'))
+    actions.push(
+      harnessHost().doctorCommand
+        ? `${doctorCommand()} --fix ${scope}`
+        : `${executable} install ${scope}`,
+    );
   if (block?.userAction && failed.includes(block.id)) actions.push(block.userAction);
   return actions;
 }
 
 // Print a teaching stderr escape for --expect-live / --print-ready failures.
+export function doctorReady(
+  runtime: AdapterRuntimeStatus | undefined,
+  recorder?: DoctorCheck,
+): boolean {
+  return runtime?.decision === 'ready' && recorder?.status !== 'fail';
+}
+
+export function renderDoctorRecorder(
+  recorder: DoctorCheck | undefined,
+  out: Paint = (_style, text) => text,
+): void {
+  if (recorder)
+    console.log(
+      `${out('label', 'recorder:')} ${out(recorder.status === 'pass' ? 'ok' : 'err', recorder.status)} ${recorder.message}`,
+    );
+}
+
 function emitExpectLiveVerdict(
   adapter: string,
   target: string,
   runtime: AdapterRuntimeStatus | undefined,
   verdict: 'not-live' | 'not-ready',
+  recorder?: DoctorCheck,
 ): void {
   const out: Paint = (style, text) => color(style, text, { stream: process.stderr });
   const detail = runtime
@@ -611,6 +661,11 @@ function emitExpectLiveVerdict(
     : 'runtime probe unavailable';
   console.error(`${out('err', verdict)} ${out('bold', adapter)} ${detail} ${out('dim', target)}`);
   for (const reason of runtime?.reasons ?? []) console.error(`  ${out('dim', reason)}`);
+  if (recorder?.status === 'fail') {
+    console.error(`  ${out('err', 'recorder:')} ${recorder.message}`);
+    if (recorder.userAction) console.error(`  Next: ${recorder.userAction}`);
+    return;
+  }
   console.error(
     `  Next: ${runtime?.nextAction ?? harnessAdapter(adapter).hints.runtimeProbeRecovery(target)}`,
   );
@@ -623,6 +678,7 @@ function emitExpectLive(input: {
   adapter: string;
   target: string;
   runtime: AdapterRuntimeStatus | undefined;
+  recorder?: DoctorCheck;
   result: DoctorReport;
   orphans: Record<string, string[]>;
   capture: CaptureHealth | null;
@@ -634,8 +690,9 @@ function emitExpectLive(input: {
 }): number {
   const { adapter, target, runtime, json, printReady } = input;
   const live = runtime?.decision === 'ready';
+  const ready = doctorReady(runtime, input.recorder);
   if (printReady) {
-    if (live) {
+    if (ready) {
       // A platform without an indicator is never ready for Farmslot's health check.
       const indicator =
         adapterReadiness(harnessAdapter(adapter)).readyIndicator?.(input.devices) ?? '';
@@ -646,21 +703,32 @@ function emitExpectLive(input: {
       emitExpectLiveVerdict(adapter, target, runtime, 'not-ready');
       return EXIT.runtime;
     }
-    emitExpectLiveVerdict(adapter, target, runtime, 'not-live');
+    emitExpectLiveVerdict(
+      adapter,
+      target,
+      runtime,
+      live ? 'not-ready' : 'not-live',
+      input.recorder,
+    );
     return EXIT.runtime;
   }
   if (json) {
     const userAction =
       runtime?.nextAction ?? harnessAdapter(adapter).hints.runtimeProbeRecovery(target);
-    const error = live
+    const error = ready
       ? undefined
-      : { code: 'RUNTIME_NOT_LIVE', message: `${adapter} runtime is not live`, userAction };
+      : {
+          code: live ? 'RECORDER_UNAVAILABLE' : 'RUNTIME_NOT_LIVE',
+          message: live ? input.recorder!.message : `${adapter} runtime is not live`,
+          userAction: input.recorder?.userAction ?? userAction,
+        };
     console.log(
       JSON.stringify(
         {
           ...input.result,
-          ready: live,
+          ready,
           runtime,
+          ...(input.recorder ? { recorder: input.recorder } : {}),
           ...input.orphans,
           capture: input.capture,
           devices: input.devices,
@@ -672,14 +740,14 @@ function emitExpectLive(input: {
         2,
       ),
     );
-    return live ? EXIT.ok : EXIT.runtime;
+    return ready ? EXIT.ok : EXIT.runtime;
   }
   const out: Paint = (style, text) => color(style, text, { stream: process.stdout });
-  if (live) {
+  if (ready) {
     console.log(`${out('ok', 'live')} ${out('bold', adapter)} runtime ready`);
     return EXIT.ok;
   }
-  emitExpectLiveVerdict(adapter, target, runtime, 'not-live');
+  emitExpectLiveVerdict(adapter, target, runtime, live ? 'not-ready' : 'not-live', input.recorder);
   return EXIT.runtime;
 }
 
@@ -820,7 +888,7 @@ async function runDoctorFix(
     }
 
     const hostStage = fix?.repair ? stage('host repair') : undefined;
-    const host = fix?.repair?.(target, adapter, json);
+    const host = await fix?.repair?.(target, adapter, json);
     if (host) {
       fixed.push(...host.fixed);
       failed.push(...host.failed);

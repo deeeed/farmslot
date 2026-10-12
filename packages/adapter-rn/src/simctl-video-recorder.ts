@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process';
-import { readFile, stat } from 'node:fs/promises';
+import { open, stat } from 'node:fs/promises';
+import path from 'node:path';
 
 import {
   type ActiveVideoRecording,
   errorMessage,
   manifestTarget,
+  optionalVideoTiming,
   type RecordingTarget,
   type VideoRecorder,
   type VideoRecorderDoctorResult,
@@ -17,16 +19,21 @@ export interface SimctlVideoRecorderOptions {
   stopTimeoutMs?: number;
 }
 
-export function createSimctlVideoRecorder(options: SimctlVideoRecorderOptions = {}): VideoRecorder {
-  return new SimctlVideoRecorder(options);
+export function createIosSimulatorVideoRecorder(
+  simulator: string,
+  options: SimctlVideoRecorderOptions = {},
+): VideoRecorder {
+  return new SimctlVideoRecorder(simulator, options);
 }
 
 class SimctlVideoRecorder implements VideoRecorder {
   readonly name = 'simctl';
   readonly platform = 'ios';
   readonly #stopTimeoutMs: number;
+  readonly #simulator: string;
 
-  constructor(options: SimctlVideoRecorderOptions) {
+  constructor(simulator: string, options: SimctlVideoRecorderOptions) {
+    this.#simulator = simulator;
     this.#stopTimeoutMs = options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
   }
 
@@ -41,7 +48,9 @@ class SimctlVideoRecorder implements VideoRecorder {
     }
     let result: CommandResult;
     try {
-      result = await runCommand('xcrun', ['simctl', 'help', 'io'], { timeoutMs: 10_000 });
+      result = await runCommand('xcrun', ['simctl', 'getenv', this.#simulator, 'SIMULATOR_UDID'], {
+        timeoutMs: 10_000,
+      });
     } catch (error) {
       return {
         ok: false,
@@ -67,6 +76,8 @@ class SimctlVideoRecorder implements VideoRecorder {
 
   async start(request: VideoRecorderStartRequest): Promise<ActiveVideoRecording> {
     const device = simulatorDevice(request.target);
+    if (device !== this.#simulator)
+      throw new Error('Recording target differs from the selected simulator.');
     const args = [
       'simctl',
       'io',
@@ -76,6 +87,7 @@ class SimctlVideoRecorder implements VideoRecorder {
       '--force',
       request.outputPath,
     ];
+    const startedAtUnixMs = Date.now();
     const child = spawn('xcrun', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     const stderr: string[] = [];
     child.stderr.setEncoding('utf-8');
@@ -120,16 +132,36 @@ class SimctlVideoRecorder implements VideoRecorder {
         }
         const stats = await stat(request.outputPath);
         if (stats.size <= 0) throw new Error(`Recording output is empty: ${request.outputPath}`);
-        const bytes = await readFile(request.outputPath);
-        if (!bytes.includes(Buffer.from('moov'))) {
+        const handle = await open(request.outputPath, 'r');
+        let finalized = false;
+        try {
+          const size = Math.min(stats.size, 1_048_576);
+          const head = Buffer.alloc(size);
+          const tail = Buffer.alloc(size);
+          await handle.read(head, 0, size, 0);
+          await handle.read(tail, 0, size, Math.max(0, stats.size - size));
+          finalized = head.includes(Buffer.from('moov')) || tail.includes(Buffer.from('moov'));
+        } finally {
+          await handle.close();
+        }
+        if (!finalized) {
           throw new Error(`Recording output is missing moov atom: ${request.outputPath}`);
         }
         return {
-          recorder: {
-            name: 'simctl',
-            platform: 'ios',
-            target: manifestTarget(target),
-          },
+          segments: [
+            {
+              path: path.basename(request.outputPath),
+              ...(await optionalVideoTiming(request.outputPath, {
+                startedAtUnixMs,
+                stoppedAtUnixMs: Date.now(),
+              })),
+              recorder: {
+                name: 'simctl',
+                platform: 'ios',
+                target: manifestTarget(target),
+              },
+            },
+          ],
         };
       },
     };

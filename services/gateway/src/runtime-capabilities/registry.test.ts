@@ -4,14 +4,19 @@ import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
-import type {
-  RuntimeCapabilityCatalogEntry,
-  RuntimeCapabilityLifecycleEvent,
-  RuntimeCapabilityProviderActionRef,
+import {
+  recordingTargetClaimKey,
+  type RuntimeCapabilityCatalogEntry,
+  type RuntimeCapabilityLifecycleEvent,
+  type RuntimeCapabilityProviderActionRef,
 } from '@farmslot/protocol';
 
 import { deviceTargetExtraVars } from './device-target.js';
-import { runtimeCapabilityProviderDigest, RuntimeCapabilityRegistry } from './registry.js';
+import {
+  type RuntimeCapabilityClaimGrant,
+  runtimeCapabilityProviderDigest,
+  RuntimeCapabilityRegistry,
+} from './registry.js';
 import { RUNTIME_CAPABILITY_TERMINAL_FENCE_TTL_MS, RuntimeCapabilityStore } from './store.js';
 
 const SLOT = 'slot-a';
@@ -3738,3 +3743,287 @@ for (const warm of [false, true]) {
     assert.ok(!actions.includes('app.release'));
   });
 }
+
+const RECORDING_PARAMETERS = {
+  type: 'object',
+  required: ['recording'],
+  additionalProperties: false,
+  properties: {
+    recording: {
+      type: 'object',
+      required: ['backend', 'target'],
+      additionalProperties: false,
+      properties: {
+        backend: { enum: ['test-recorder'] },
+        target: { type: 'object' },
+      },
+    },
+  },
+};
+
+function recordingEntry(
+  id = 'recording',
+  resourceId = 'capture-helper',
+  scope: 'machine' | 'fleet' = 'machine',
+): RuntimeCapabilityCatalogEntry {
+  const base = entry(id);
+  return {
+    ...base,
+    parameters: RECORDING_PARAMETERS,
+    cost: {
+      class: 'low',
+      resources: [{ id: resourceId, access: 'exclusive', scope, binding: 'recording-target' }],
+    },
+  };
+}
+
+function recordingAcquire(
+  registry: RuntimeCapabilityRegistry,
+  slotId: string,
+  ownerRunId: string,
+  target: unknown,
+  capabilityId = 'recording',
+  queueOnConflict = false,
+) {
+  return registry.acquire({
+    slotId,
+    capabilityId,
+    ownerRunId,
+    queueOnConflict,
+    parameters: { recording: { backend: 'test-recorder', target } },
+    proofRequirement: { capabilityId, reason: 'record target', mode: 'visual' },
+  });
+}
+
+test('recording claims admit independent targets and conflict on the same machine target', async (t) => {
+  const { registry, actions } = await fixture(t, [recordingEntry()], {
+    machineFor: () => 'machine-a',
+  });
+  const target = { kind: 'pid', pid: 101 } as const;
+  const held = await recordingAcquire(registry, SLOT, 'recording-a', target);
+  assert.equal(held.ok, true);
+  if (!held.ok) return;
+  assert.deepEqual(held.lease.claims, [
+    {
+      id: `capture-helper/${recordingTargetClaimKey({ backend: 'test-recorder', target })}`,
+      access: 'exclusive',
+      scope: 'machine',
+    },
+  ]);
+  assert.equal(
+    (await recordingAcquire(registry, SLOT_B, 'recording-b', { kind: 'pid', pid: 102 })).ok,
+    true,
+  );
+  actions.length = 0;
+  const sameTarget = await recordingAcquire(registry, SLOT_C, 'recording-c', target);
+  assert.equal(sameTarget.ok, false);
+  if (!sameTarget.ok) {
+    assert.equal(sameTarget.conflict.kind, 'lease-conflict');
+    assert.equal('owner' in sameTarget.conflict && sameTarget.conflict.owner?.runId, 'recording-a');
+  }
+  assert.deepEqual(actions, []);
+});
+
+test('recording identities retain their declared resource id and target scope', async (t) => {
+  const capabilities = [recordingEntry(), recordingEntry('other-resource', 'other-helper')];
+  const { registry } = await fixture(t, capabilities, {
+    machineFor: (slot) => (slot === SLOT_C ? 'machine-b' : 'machine-a'),
+  });
+  const target = { kind: 'window-id', windowId: 'window-1' };
+  assert.equal((await recordingAcquire(registry, SLOT, 'run-a', target)).ok, true);
+  assert.equal(
+    (await recordingAcquire(registry, SLOT_B, 'run-b', target, 'other-resource')).ok,
+    true,
+  );
+  assert.equal((await recordingAcquire(registry, SLOT_C, 'run-c', target)).ok, true);
+
+  const device = recordingEntry('device-recording', 'device-helper', 'fleet');
+  const { registry: devices } = await fixture(t, [device], { machineFor: (slot) => slot });
+  const serial = { kind: 'android-device', serial: 'device-1' };
+  assert.equal((await recordingAcquire(devices, SLOT, 'device-a', serial, device.id)).ok, true);
+  const refused = await recordingAcquire(devices, SLOT_B, 'device-b', serial, device.id);
+  assert.equal(refused.ok, false);
+  assert.equal(
+    (
+      await recordingAcquire(
+        devices,
+        SLOT_C,
+        'device-c',
+        { kind: 'android-device', serial: 'device-2' },
+        device.id,
+      )
+    ).ok,
+    true,
+  );
+});
+
+test('bound claims reject invalid identities and declarations before provider or queue mutation', async (t) => {
+  const malformedDeclarations = [
+    { ...recordingEntry(), parameters: undefined },
+    { ...recordingEntry(), parameters: { type: 'unknown-schema-type' } },
+    {
+      ...recordingEntry(),
+      cost: {
+        class: 'low' as const,
+        resources: [
+          {
+            id: 'capture-helper',
+            binding: 'recording-target' as const,
+            access: 'shared' as const,
+            scope: 'machine' as const,
+          },
+        ],
+      },
+    },
+    recordingEntry('recording', 'capture-helper', 'fleet'),
+  ];
+  for (const capability of malformedDeclarations) {
+    const { registry, actions, store } = await fixture(t, [capability], {
+      machineFor: () => 'machine-a',
+    });
+    assert.equal(
+      await registry.enqueueScopedClaimWaiter({
+        slotId: SLOT,
+        capabilityId: 'recording',
+        ownerRunId: 'invalid',
+        parameters: { recording: { backend: 'test-recorder', target: { kind: 'pid', pid: 101 } } },
+        proofRequirement: { capabilityId: 'recording', reason: 'record', mode: 'visual' },
+      }),
+      null,
+    );
+    const refused = await recordingAcquire(registry, SLOT, 'invalid', { kind: 'pid', pid: 101 });
+    assert.equal(refused.ok, false);
+    if (!refused.ok) assert.equal(refused.conflict.kind, 'invalid-request');
+    assert.deepEqual(actions, []);
+    assert.deepEqual(store.snapshot().leases, []);
+    assert.deepEqual(store.snapshot().proofPlans, {});
+  }
+  const { registry, actions, store } = await fixture(t, [recordingEntry()], {
+    machineFor: () => 'machine-a',
+  });
+  for (const target of [
+    null,
+    { kind: 'pid', pid: 0 },
+    { kind: 'pid', pid: 101, extra: true },
+    { kind: 'cdp-page', host: 'localhost', port: 70000, targetId: 'page' },
+    { kind: 'unknown' },
+  ]) {
+    const params = {
+      slotId: SLOT,
+      capabilityId: 'recording',
+      ownerRunId: 'invalid',
+      queueOnConflict: true,
+      parameters: { recording: { backend: 'test-recorder', target } },
+      proofRequirement: { capabilityId: 'recording', reason: 'record', mode: 'visual' as const },
+    };
+    assert.equal(await registry.enqueueScopedClaimWaiter(params), null);
+    const refused = await registry.acquire(params);
+    assert.equal(refused.ok, false);
+    if (!refused.ok) assert.equal(refused.conflict.kind, 'invalid-request');
+  }
+  const withClientKey = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'recording',
+    ownerRunId: 'invalid',
+    parameters: {
+      recording: {
+        backend: 'test-recorder',
+        target: { kind: 'pid', pid: 101 },
+        claimKey: 'foreign',
+      },
+    },
+    proofRequirement: { capabilityId: 'recording', reason: 'record', mode: 'visual' },
+  });
+  assert.equal(withClientKey.ok, false);
+  assert.deepEqual(actions, []);
+  assert.deepEqual(store.snapshot().leases, []);
+  assert.deepEqual(store.snapshot().proofPlans, {});
+});
+
+test('exact preheld recording parameters reuse the lease and changed parameters preserve it', async (t) => {
+  const { registry, actions, store } = await fixture(t, [recordingEntry()], {
+    machineFor: () => 'machine-a',
+  });
+  const target = { kind: 'pid', pid: 101 } as const;
+  const held = await recordingAcquire(registry, SLOT, 'held-owner', target);
+  assert.equal(held.ok, true);
+  if (!held.ok) return;
+  actions.length = 0;
+  const repeated = await recordingAcquire(registry, SLOT, 'held-owner', target);
+  assert.equal(repeated.ok, true);
+  if (repeated.ok) {
+    assert.equal(repeated.idempotent, true);
+    assert.equal(repeated.lease.id, held.lease.id);
+  }
+  const before = structuredClone(store.snapshot());
+  const changed = await recordingAcquire(registry, SLOT, 'held-owner', { kind: 'pid', pid: 102 });
+  assert.equal(changed.ok, false);
+  if (!changed.ok) assert.equal(changed.conflict.kind, 'invalid-request');
+  assert.deepEqual(store.snapshot(), before);
+  assert.deepEqual(actions, []);
+  const foreign = await registry.release({
+    slotId: SLOT,
+    ownerRunId: 'foreign-owner',
+    leaseId: held.lease.id,
+  });
+  assert.equal(foreign.released.length, 0);
+  assert.equal(
+    store.snapshot().leases.find((lease) => lease.id === held.lease.id)?.state,
+    'acquired',
+  );
+  assert.deepEqual(actions, []);
+});
+
+test('empty preheld recording parameters refuse binding without rewriting the existing lease', async (t) => {
+  const capability = entry('recording');
+  const { registry, actions, store } = await fixture(t, [capability], {
+    machineFor: () => 'machine-a',
+  });
+  const held = await acquire(registry, capability.id, 'held-owner');
+  assert.equal(held.ok, true);
+  Object.assign(capability, recordingEntry());
+  const before = structuredClone(store.snapshot());
+  actions.length = 0;
+  const refused = await recordingAcquire(registry, SLOT, 'held-owner', { kind: 'pid', pid: 101 });
+  assert.equal(refused.ok, false);
+  if (!refused.ok) assert.equal(refused.conflict.kind, 'invalid-request');
+  assert.deepEqual(store.snapshot(), before);
+  assert.deepEqual(actions, []);
+});
+
+test('recording waiters retain frozen target claims through handoff and refuse changed payloads', async (t) => {
+  const grants: RuntimeCapabilityClaimGrant[] = [];
+  const { registry, actions, store } = await fixture(t, [recordingEntry()], {
+    machineFor: () => 'machine-a',
+    onClaimGranted: (grant) => {
+      grants.push(grant);
+    },
+  });
+  const target = { kind: 'pid', pid: 101 } as const;
+  assert.equal((await recordingAcquire(registry, SLOT, 'holder', target)).ok, true);
+  const waiting = await recordingAcquire(registry, SLOT_B, 'waiter', target, 'recording', true);
+  assert.equal(waiting.ok, false);
+  if (waiting.ok || waiting.conflict.kind !== 'scoped-wait') return;
+  const claimId = `capture-helper/${recordingTargetClaimKey({ backend: 'test-recorder', target })}`;
+  assert.equal(waiting.conflict.claimId, claimId);
+  const before = structuredClone(store.snapshot());
+  const changed = await recordingAcquire(
+    registry,
+    SLOT_B,
+    'waiter',
+    { kind: 'pid', pid: 102 },
+    'recording',
+    true,
+  );
+  assert.equal(changed.ok, false);
+  if (!changed.ok) assert.equal(changed.conflict.kind, 'invalid-request');
+  assert.deepEqual(store.snapshot(), before);
+  actions.length = 0;
+  await registry.release({ slotId: SLOT, ownerRunId: 'holder' });
+  assert.equal(grants.length, 1);
+  assert.equal(grants[0].claimId, claimId);
+  assert.deepEqual(actions, ['recording.release']);
+  const completed = await recordingAcquire(registry, SLOT_B, 'waiter', target, 'recording', true);
+  assert.equal(completed.ok, true);
+  if (completed.ok) assert.equal(completed.lease.claims?.[0].id, claimId);
+});

@@ -231,11 +231,13 @@ test('unhooked observation reads the native session held open by the runner', ()
     fs.writeFileSync(file, records.map(JSON.stringify).join('\n') + '\n');
     fd = fs.openSync(file, 'r');
     const meta = { pane_id: '%1', process_started_at: 0, runner_pids: [String(process.pid)] };
-    assert.equal(nativeState(meta, 'codex', dir).phase, 'idle');
-    assert.equal(nativeState(meta, 'codex', dir).source, 'native-session-read-only');
+    const readOnly = nativeState(meta, 'codex', dir);
+    assert.equal(readOnly.phase, 'idle');
+    assert.equal(readOnly.source, 'native-session-read-only');
     delete process.env.TMUX_MODEL_DRIVER_READ_ONLY;
-    assert.equal(nativeState(meta, 'codex', dir).phase, 'idle');
-    assert.equal(nativeState(meta, 'codex', dir).source, 'native-session');
+    const writable = nativeState(meta, 'codex', dir);
+    assert.equal(writable.phase, 'idle');
+    assert.equal(writable.source, 'native-session');
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
     if (saved === undefined) delete process.env.TMUX_MODEL_DRIVER_READ_ONLY;

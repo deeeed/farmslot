@@ -6,10 +6,41 @@ export function runnerPaneContainsInstruction(pane: string, message: string): bo
   return normalizeInstructionText(pane).includes(needle);
 }
 
+export function runnerPaneBufferedInstruction(pane: string): string {
+  const lines = pane
+    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
+    .trimEnd()
+    .split('\n');
+  const footer = lines
+    .map((line) =>
+      /\? for shortcuts|\bcontext(?:\s+\d+%)?\s+left\b|\btab to queue message\b|← for agents|⚠\s+\d+\s+warnings?\b/i.test(
+        line,
+      ),
+    )
+    .lastIndexOf(true);
+  const content = footer === -1 ? lines : lines.slice(0, footer);
+  const composer = content.map((line) => /^\s*[›❯](?:\s|$)/.test(line)).lastIndexOf(true);
+  if (composer === -1 || (footer === -1 && composer !== lines.length - 1)) return '';
+  const body = content.slice(composer);
+  // Only the bottom composer above the status footer is live input. Transcript prompts are history.
+  const separator = body.map((line) => !line.trim()).lastIndexOf(true);
+  const buffered = (separator === -1 ? body : body.slice(0, separator))
+    .map((line, index) => (index === 0 ? line.replace(/^\s*[›❯]\s?/, '') : line))
+    .join('\n');
+  const text = normalizeInstructionText(buffered);
+  return text === 'Ask Codex to do anything' ? '' : text;
+}
+
+export function runnerPaneHasBufferedInstruction(pane: string, message: string): boolean {
+  const buffered = runnerPaneBufferedInstruction(pane);
+  return Boolean(buffered) && buffered === normalizeInstructionText(message);
+}
+
 export function runnerPaneHasQueuedInstruction(
   pane: string,
   message?: string,
   submittedExact = false,
+  allowTruncatedPreview = false,
 ): boolean {
   const lines = pane.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').split('\n');
   const marker = lines
@@ -32,11 +63,22 @@ export function runnerPaneHasQueuedInstruction(
     const composer = body.map((line) => /^\s*[›❯](?:\s|$)/.test(line)).lastIndexOf(true);
     const firstMessage = body.findIndex((line) => /^\s*[↳›❯](?:\s|$)/.test(line));
     if (composer === -1 || firstMessage === -1 || firstMessage >= composer) return false;
-    const queued = body
+    const queuedLines = body
       .slice(firstMessage, composer)
       .map((line) => line.replace(/^\s*[↳›❯]\s?/, ''))
-      .join('\n');
-    return normalizeInstructionText(queued) === normalizeInstructionText(message);
+      .filter((line) => line.trim());
+    const expected = normalizeInstructionText(message);
+    if (normalizeInstructionText(queuedLines.join('\n')) === expected) return true;
+    const preview = normalizeInstructionText(queuedLines.slice(0, -1).join('\n'));
+    // The native preview caps long messages and renders a separate overflow line.
+    // Only a fresh owned submit from an empty queue may use that preview as delivery proof.
+    return (
+      allowTruncatedPreview &&
+      queuedLines.at(-1)?.trim() === '…' &&
+      body.slice(firstMessage, composer).filter((line) => /^\s*↳\s/.test(line)).length === 1 &&
+      Boolean(preview) &&
+      expected.startsWith(preview)
+    );
   }
   if (!runnerPaneContainsInstruction(pane, message)) return false;
   const compactPane = normalizeInstructionText(pane).toLowerCase();

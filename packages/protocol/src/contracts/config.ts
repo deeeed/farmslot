@@ -1,4 +1,5 @@
 import { isRecord } from '../recipe/common.js';
+import { normalizeRecipeRef } from '../recipe/workflow.js';
 
 import type { SafetyTier } from './agents.js';
 import type { ProjectBacklogConfig } from './backlog.js';
@@ -185,9 +186,15 @@ export interface ProjectRecipeLibrary {
   revision?: string;
 }
 
+export interface ProjectRecipeCheck {
+  recipe: string;
+  params?: Record<string, unknown>;
+}
+
 export interface ProjectRecipeConfig {
   provider: ProjectRecipeProvider;
   libraries?: ProjectRecipeLibrary[];
+  checks?: ProjectRecipeCheck[];
   adapter?: string;
   app?: string;
   domain?: string;
@@ -218,6 +225,34 @@ export function validateProjectRecipeConfig(value: unknown): asserts value is Pr
   }
   for (const field of ['adapter', 'app', 'domain', 'template', 'manifest']) {
     if (value[field] !== undefined && !string(value[field])) fail(field);
+  }
+  if (value.checks !== undefined) {
+    if (!Array.isArray(value.checks) || value.checks.length === 0) return fail('checks');
+    const refs = new Set<string>();
+    const jsonValue = (entry: unknown): boolean => {
+      if (entry === null || typeof entry === 'string' || typeof entry === 'boolean') return true;
+      if (typeof entry === 'number') return Number.isFinite(entry);
+      if (Array.isArray(entry)) return entry.every(jsonValue);
+      return record(entry) && Object.values(entry).every(jsonValue);
+    };
+    value.checks.forEach((entry: unknown, index: number) => {
+      const field = `checks[${index}]`;
+      if (!record(entry) || Object.keys(entry).some((key) => !['recipe', 'params'].includes(key))) {
+        return fail(field);
+      }
+      if (!string(entry.recipe)) return fail(`${field}.recipe`);
+      const ref = normalizeRecipeRef(entry.recipe);
+      if (
+        !/^[A-Za-z0-9_-][A-Za-z0-9_.-]*(?:\/[A-Za-z0-9_-][A-Za-z0-9_.-]*)*$/u.test(ref) ||
+        ref.endsWith('.json') ||
+        refs.has(ref)
+      )
+        return fail(`${field}.recipe`);
+      refs.add(ref);
+      if (entry.params !== undefined && (!record(entry.params) || !jsonValue(entry.params))) {
+        fail(`${field}.params`);
+      }
+    });
   }
   if (value.libraries !== undefined) {
     if (!Array.isArray(value.libraries)) return fail('libraries');

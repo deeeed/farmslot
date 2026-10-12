@@ -4,7 +4,14 @@
 import { adapterPortEnv, harnessAdapter } from '../adapters.js';
 import { color } from '../cli-color.js';
 import { harnessHost } from '../host.js';
-import { optionFlag, optionString, parseArgs, resolveAdapter, shellQuote } from '../parse-args.js';
+import {
+  optionFlag,
+  optionString,
+  parseArgs,
+  type ParsedArgs,
+  resolveAdapter,
+  shellQuote,
+} from '../parse-args.js';
 import { usageOut } from '../shared.js';
 
 export interface StoppedCompanion {
@@ -14,6 +21,7 @@ export interface StoppedCompanion {
 }
 
 export interface StopCommandOptions {
+  parsed?: ParsedArgs;
   // Stops the host's own processes for the checkout (for example a collector a
   // run started) and returns the ones it stopped.
   companions?(target: string): Promise<StoppedCompanion[]>;
@@ -23,7 +31,7 @@ export async function handleStop(
   argv: string[],
   commandOptions: StopCommandOptions = {},
 ): Promise<number> {
-  const { options } = parseArgs(argv);
+  const { options } = commandOptions.parsed ?? parseArgs(argv);
   const json = optionFlag(options, 'json');
   const { adapter, target } = resolveAdapter(options);
   const surface = harnessAdapter(adapter);

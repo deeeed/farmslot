@@ -7,6 +7,7 @@ import type {
   VideoRecorder,
   VideoRecorderDoctorResult,
   VideoRecorderStartRequest,
+  VideoRecordingSegment,
 } from '../core/types.js';
 import { CdpSession, selectCdpTarget, sleep } from '../runtime/cdp.js';
 
@@ -19,6 +20,8 @@ export interface CdpVideoRecorderOptions {
   cdpHost?: string;
   urlIncludes?: string;
   ffmpegPath?: string;
+  /** Maintainer qualification can force short original segments without changing author recipes. */
+  spoolBytes?: number;
 }
 
 export function createCdpVideoRecorder(options: CdpVideoRecorderOptions): VideoRecorder {
@@ -27,17 +30,26 @@ export function createCdpVideoRecorder(options: CdpVideoRecorderOptions): VideoR
 
 class CdpVideoRecorder implements VideoRecorder {
   readonly name = 'cdp-screencast';
+  readonly continuousSegments = true;
   readonly platform = 'web';
   readonly #cdpPort: number;
   readonly #cdpHost: string;
   readonly #urlIncludes: string | undefined;
   readonly #ffmpegPath: string;
+  readonly #spoolBytes: number;
 
   constructor(options: CdpVideoRecorderOptions) {
     this.#cdpPort = options.cdpPort;
     this.#cdpHost = options.cdpHost ?? '127.0.0.1';
     this.#urlIncludes = options.urlIncludes;
     this.#ffmpegPath = options.ffmpegPath ?? process.env.FFMPEG_PATH ?? 'ffmpeg';
+    this.#spoolBytes = options.spoolBytes ?? 16 * 1024 * 1024;
+    if (
+      !Number.isInteger(this.#spoolBytes) ||
+      this.#spoolBytes < 1 ||
+      this.#spoolBytes > 16 * 1024 * 1024
+    )
+      throw new Error('CDP spoolBytes must be between 1 and 16 MiB.');
   }
 
   async doctor(): Promise<VideoRecorderDoctorResult> {
@@ -67,15 +79,25 @@ class CdpVideoRecorder implements VideoRecorder {
   }
 
   async start(request: VideoRecorderStartRequest): Promise<ActiveVideoRecording> {
-    const maxFps = request.maxFps ?? 30;
+    const maxFps = request.maxFps ?? 15;
     if (!Number.isFinite(maxFps) || maxFps <= 0)
       throw new Error('Recording maxFps must be positive.');
+    const spoolLimit = this.#spoolBytes;
+    const recordingTarget = request.target;
     const target = await selectCdpTarget({
       host: this.#cdpHost,
       port: this.#cdpPort,
       type: 'page',
       urlIncludes: this.#urlIncludes,
+      ...(recordingTarget.kind === 'cdp-page'
+        ? { predicate: (target) => target.id === recordingTarget.targetId }
+        : {}),
     });
+    if (
+      request.target.kind === 'cdp-page' &&
+      (request.target.host !== this.#cdpHost || request.target.port !== this.#cdpPort)
+    )
+      throw new Error('CDP recording target belongs to a different endpoint.');
     if (!target.webSocketDebuggerUrl) throw new Error('Selected CDP target has no debugger URL.');
     const session = await CdpSession.connect(target.webSocketDebuggerUrl);
     let framesDir: string;
@@ -85,11 +107,15 @@ class CdpVideoRecorder implements VideoRecorder {
       session.close();
       throw error;
     }
-    const timestamps: number[] = [];
+    let timestamps: number[] = [];
+    let spoolBytes = 0;
+    let pendingBytes = 0;
     let lastReceivedAt = 0;
+    const segments: VideoRecordingSegment[] = [];
     const pendingAcks = new Set<Promise<unknown>>();
     let captureError: unknown;
     let receivedFrames = 0;
+    let latestFrame: (CapturedFrame & { segmentIndex: number }) | undefined;
     const sampler = new RecordingFrameSampler(maxFps);
     let writeChain = Promise.resolve();
     let clock: { minOffsetMs: number; maxOffsetMs: number } | undefined;
@@ -99,14 +125,61 @@ class CdpVideoRecorder implements VideoRecorder {
     } catch (error) {
       clockError = `Recording clock unavailable: ${errorMessage(error)}`;
     }
-    const retain = async (frame: CapturedFrame): Promise<void> => {
+    const ffmpegPath = this.#ffmpegPath;
+    const flush = async (endSourceMs: number) => {
+      if (!timestamps.length) return;
+      const output =
+        segments.length === 0
+          ? request.outputPath
+          : request.outputPath.replace(/\.mp4$/u, `-${segments.length}.mp4`);
+      await encodePngSequenceToMp4({
+        ffmpegPath,
+        framesDir,
+        outputPath: output,
+        timestamps,
+        lastFrameDurationMs: Math.max(1, endSourceMs - timestamps.at(-1)!),
+      });
+      const stats = await stat(output);
+      if (!stats.size) throw new Error(`Recording output is empty: ${output}`);
+      const timing = clock
+        ? await optionalVideoTiming(output, {
+            clock: {
+              source: 'cdp-source-clock',
+              earliestZeroUnixMs: timestamps[0]! - clock.maxOffsetMs,
+              latestZeroUnixMs: timestamps[0]! - clock.minOffsetMs,
+            },
+          })
+        : { timingUnavailableReason: clockError };
+      segments.push({
+        path: path.basename(output),
+        ...timing,
+        recorder: {
+          name: 'cdp-screencast',
+          platform: 'web',
+          target: { selector: 'cdp-page', value: target.id },
+        },
+      });
+      await rm(framesDir, { recursive: true, force: true });
+      await mkdir(framesDir);
+      timestamps = [];
+      spoolBytes = 0;
+    };
+    const retain = async (frame: CapturedFrame) => {
+      const bytes = Buffer.from(frame.data, 'base64');
+      if (bytes.length > 16 * 1024 * 1024)
+        throw new Error('A CDP frame exceeds the 16 MiB spool limit.');
+      if (
+        timestamps.length &&
+        (spoolBytes + bytes.length > spoolLimit ||
+          frame.timestampMs - timestamps[0]! >= 10 * 60 * 1000)
+      )
+        await flush(frame.timestampMs);
       const index = timestamps.length;
+      await writeFile(path.join(framesDir, `frame_${String(index).padStart(6, '0')}.png`), bytes);
       timestamps.push(frame.timestampMs);
+      spoolBytes += bytes.length;
       lastReceivedAt = frame.receivedAtUnixMs;
-      await writeFile(
-        path.join(framesDir, `frame_${String(index).padStart(6, '0')}.png`),
-        Buffer.from(frame.data, 'base64'),
-      );
+      latestFrame = { ...frame, segmentIndex: segments.length };
     };
     const unsubscribe = session.on('Page.screencastFrame', (params) => {
       const timestamp = (params.metadata as { timestamp?: number } | undefined)?.timestamp;
@@ -119,20 +192,31 @@ class CdpVideoRecorder implements VideoRecorder {
         })
         .finally(() => pendingAcks.delete(ack));
       pendingAcks.add(ack);
+      const queuedBytes = typeof data === 'string' ? Math.ceil((data.length * 3) / 4) : 0;
+      if (pendingBytes + queuedBytes > 16 * 1024 * 1024) {
+        captureError = new Error('CDP encoding backlog exceeds the 16 MiB queue limit.');
+        return;
+      }
+      pendingBytes += queuedBytes;
       writeChain = writeChain
         .then(async () => {
+          if (captureError) return;
           if (
             typeof timestamp !== 'number' ||
             !Number.isFinite(timestamp) ||
             typeof data !== 'string'
           )
             throw new Error('CDP frame is missing its source timestamp or image.');
-          const ready = sampler.accept({ timestampMs: timestamp * 1000, receivedAtUnixMs, data });
+          const frame = { timestampMs: timestamp * 1000, receivedAtUnixMs, data };
+          const ready = sampler.accept(frame);
           if (ready) await retain(ready);
           receivedFrames++;
         })
         .catch((error) => {
           captureError = error;
+        })
+        .finally(() => {
+          pendingBytes -= queuedBytes;
         });
     });
     try {
@@ -153,9 +237,33 @@ class CdpVideoRecorder implements VideoRecorder {
       await rm(framesDir, { recursive: true, force: true });
       throw error;
     }
-    const ffmpegPath = this.#ffmpegPath;
     let stopped = false;
     return {
+      async snapshot(outputPath) {
+        const snapshot = writeChain.then(async () => {
+          if (stopped || captureError) throw new Error('CDP recording has no active source frame.');
+          // A proof still pins this source frame before another repaint can replace it.
+          const pending = sampler.finish();
+          if (pending) await retain(pending);
+          if (!latestFrame) throw new Error('CDP recording has no retained source frame.');
+          const frame = latestFrame;
+          await writeFile(outputPath, Buffer.from(frame.data, 'base64'));
+          return {
+            output: outputPath,
+            provider: 'cdp-screencast',
+            sourceTimestampMs: frame.timestampMs,
+            segmentIndex: frame.segmentIndex,
+          };
+        });
+        writeChain = snapshot.then(
+          () => undefined,
+          (error) => {
+            // The caller receives this failure; stop retains usable originals as partial capture.
+            captureError = error;
+          },
+        );
+        return snapshot;
+      },
       async stop() {
         if (stopped) throw new Error('CDP recording was already stopped.');
         stopped = true;
@@ -163,53 +271,46 @@ class CdpVideoRecorder implements VideoRecorder {
         unsubscribe();
         try {
           await Promise.all(pendingAcks);
-          await session.call('Page.stopScreencast');
-          await writeChain;
-          if (captureError) throw captureError;
-          const finalFrame = sampler.finish();
-          if (finalFrame) await retain(finalFrame);
-          if (clock) {
-            try {
-              const endClock = await measureBrowserClock(session);
-              clock.minOffsetMs = Math.min(clock.minOffsetMs, endClock.minOffsetMs);
-              clock.maxOffsetMs = Math.max(clock.maxOffsetMs, endClock.maxOffsetMs);
-            } catch (error) {
-              clockError = `Recording end clock unavailable: ${errorMessage(error)}`;
-              clock = undefined;
-            }
+          try {
+            await session.call('Page.stopScreencast');
+          } catch (error) {
+            captureError ??= error;
           }
-          await encodePngSequenceToMp4({
-            ffmpegPath,
-            framesDir,
-            outputPath: request.outputPath,
-            timestamps,
-            lastFrameDurationMs: Math.max(
-              1,
-              clock
-                ? stoppedAtUnixMs + (clock.minOffsetMs + clock.maxOffsetMs) / 2 - timestamps.at(-1)!
-                : stoppedAtUnixMs - lastReceivedAt,
-            ),
-          });
-          const stats = await stat(request.outputPath);
-          if (stats.size <= 0) throw new Error(`Recording output is empty: ${request.outputPath}`);
-          // A CDP first frame can predate startScreencast. Use its source clock,
-          // calibrated through an isolated world, rather than process lifetime.
-          const timing = clock
-            ? await optionalVideoTiming(request.outputPath, {
-                clock: {
-                  source: 'cdp-source-clock',
-                  earliestZeroUnixMs: timestamps[0]! - clock.maxOffsetMs,
-                  latestZeroUnixMs: timestamps[0]! - clock.minOffsetMs,
-                },
-              })
-            : { timingUnavailableReason: clockError };
+          await writeChain;
+          const finalFrame = sampler.finish();
+          try {
+            if (finalFrame) await retain(finalFrame);
+          } catch (error) {
+            if (!segments.length) throw error;
+            captureError ??= error;
+          }
+          const endSourceMs = captureError
+            ? timestamps.at(-1)! + 1
+            : clock
+              ? stoppedAtUnixMs + (clock.minOffsetMs + clock.maxOffsetMs) / 2
+              : timestamps.at(-1)! + Math.max(1, stoppedAtUnixMs - lastReceivedAt);
+          try {
+            await flush(endSourceMs);
+          } catch (error) {
+            if (!segments.length) throw error;
+            captureError ??= error;
+          }
+          if (!segments.length)
+            throw captureError ?? new Error('CDP recording has no finalized source segment.');
           return {
-            ...timing,
-            recorder: {
-              name: 'cdp-screencast',
-              platform: 'web',
-              target: { selector: 'cdp-page', value: target.url ?? `cdp:${request.nodeId}` },
-            },
+            segments,
+            ...(captureError
+              ? {
+                  interruption: {
+                    frames: segments.reduce(
+                      (count, segment) => count + (segment.timing?.framesMs.length ?? 0),
+                      0,
+                    ),
+                    mediaTimeMs: segments.at(-1)?.timing?.framesMs.at(-1) ?? 0,
+                    cause: errorMessage(captureError),
+                  },
+                }
+              : {}),
           };
         } finally {
           session.close();
@@ -318,7 +419,18 @@ async function encodePngSequenceToMp4({
       '-fps_mode',
       'vfr',
       '-c:v',
-      'libx264',
+      process.platform === 'darwin' ? 'h264_videotoolbox' : 'libx264',
+      ...(process.platform === 'darwin' ? ['-allow_sw', '0'] : ['-preset', 'ultrafast']),
+      '-b:v',
+      '1000000',
+      '-maxrate',
+      '1000000',
+      '-bufsize',
+      '2000000',
+      '-fs',
+      String(100 * 1024 * 1024),
+      '-bf',
+      '0',
       '-pix_fmt',
       'yuv420p',
       '-vf',

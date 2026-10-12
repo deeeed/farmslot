@@ -3,6 +3,7 @@ import type {
   ConfigTemplateOptionsResult,
   ConfigTemplatePreviewResult,
   DispatchCandidatesResult,
+  DispatchPreviewParams,
   DispatchPreviewResult,
   ExecutionTemplateCatalogOption,
   FlowType,
@@ -96,6 +97,12 @@ export interface DispatchProjectMatchResult {
   issueType?: string;
 }
 
+export async function requestDispatchPreview(
+  input: DispatchPreviewParams,
+): Promise<DispatchPreviewResult> {
+  return gateway.request<DispatchPreviewResult>(Methods.DISPATCH_PREVIEW, input, 150_000);
+}
+
 export async function requestDispatchProfileFit(input: {
   project: string;
   flowType: FlowType;
@@ -109,19 +116,7 @@ export async function requestDispatchProfileFit(input: {
   freshReuse?: boolean;
   skipPrepare?: boolean;
 }): Promise<ProfileFitSuggestion | null> {
-  const res = await gateway.request<DispatchPreviewResult>(Methods.DISPATCH_PREVIEW, {
-    project: input.project,
-    flowType: input.flowType,
-    ticketOrPr: input.ticketOrPr,
-    slotId: input.slotId,
-    mode: input.mode,
-    domain: input.domain,
-    executionTemplateId: input.executionTemplateId,
-    prepareProfile: input.prepareProfile || undefined,
-    app: input.app || undefined,
-    freshReuse: input.freshReuse,
-    ...(input.skipPrepare ? { skipPrepare: true } : {}),
-  });
+  const res = await requestDispatchPreview(input);
   return res.preview.profileFit ?? null;
 }
 

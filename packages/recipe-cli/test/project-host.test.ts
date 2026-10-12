@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import type { ProjectConfig } from '@farmslot/protocol';
 
@@ -74,6 +74,40 @@ const invocationContract: CommandContract = {
   minimumPositionals: 1,
 };
 
+test('project host matches file URLs and absolute local repository origins', async (t) => {
+  const options = fixture(t);
+  execFileSync('git', ['init', '--quiet', options.cwd]);
+  const origin = path.join(options.cwd, 'origin with spaces.git');
+  const url = pathToFileURL(origin).href;
+  execFileSync('git', ['-C', options.cwd, 'remote', 'add', 'origin', url]);
+  for (const [remote, declared] of [
+    [url, origin],
+    [origin, url],
+  ]) {
+    execFileSync('git', ['-C', options.cwd, 'remote', 'set-url', 'origin', remote!]);
+    options.projects[0]!.config.repoUrl = declared!;
+    await withProjectRecipeHost(options, async () => {
+      assert.equal(harnessContext()?.project?.name, 'example');
+    });
+  }
+});
+
+test('project host refuses different local repository origins before provider effects', async (t) => {
+  const options = fixture(t);
+  execFileSync('git', ['init', '--quiet', options.cwd]);
+  const origin = path.join(options.cwd, 'origin.git');
+  execFileSync('git', ['-C', options.cwd, 'remote', 'add', 'origin', pathToFileURL(origin).href]);
+  options.projects[0]!.config.repoUrl = path.join(options.cwd, 'different.git');
+  const factoryLog = path.join(options.cwd, 'factory.jsonl');
+  await assert.rejects(
+    withProjectRecipeHost({ ...options, options: { factoryLog } }, async () => {
+      assert.fail('Mismatched repository reached the handler');
+    }),
+    { code: 'PROJECT_INCOMPATIBLE' },
+  );
+  assert.equal(fs.existsSync(factoryLog), false);
+});
+
 test('project recovery hints survive the declared provider host configuration', async (t) => {
   const options = fixture(t);
   fs.appendFileSync(
@@ -98,6 +132,98 @@ test('project recovery hints survive the declared provider host configuration', 
       assert.equal(host.doctorHint, doctorHint);
       assert.equal(host.supportsLast, false);
       assert.equal(JSON.parse(fs.readFileSync(hostLog, 'utf8')).doctorHint, doctorHint);
+    },
+  );
+});
+
+test('project host forwards recording admission only to execution, before backend start', async (t) => {
+  const options = fixture(t);
+  const file = path.join(options.cwd, 'provider.mjs');
+  fs.writeFileSync(
+    file,
+    fs.readFileSync(file, 'utf8').replace(
+      "runtimeStatus: async () => ({decision:'ready', reasons:[]}),",
+      `runtimeStatus: async () => ({decision:'ready', reasons:[]}),
+    recording: {
+      target: async () => ({kind:'pid',pid:123}),
+      videoRecorder: async () => ({name:'host-fixture',start:async () => {
+        fs.writeFileSync(${JSON.stringify(path.join(options.cwd, 'backend-started'))}, 'started');
+        throw new Error('Backend must not start when admission refuses');
+      }}),
+    },`,
+    ),
+  );
+  let acquired = 0;
+  await withProjectRecipeHost(
+    {
+      ...options,
+      recordingAdmission: {
+        async acquire(context) {
+          acquired++;
+          assert.equal(context.backend, 'host-fixture');
+          assert.deepEqual(context.target, { kind: 'pid', pid: 123 });
+          throw new Error('Host admission refused');
+        },
+      },
+    },
+    async (host) => {
+      assert.equal(acquired, 0, 'Host discovery must not acquire');
+      const manifest = JSON.parse(
+        fs.readFileSync(new URL('./fixtures/proof.action-manifest.json', import.meta.url), 'utf8'),
+      );
+      const runner = await host.engine.createRunner('headless', manifest, {
+        actionSources: new Map(),
+        trustTaskActions: false,
+        autoHud: false,
+      });
+      const request = {
+        projectRoot: options.cwd,
+        artifactsDir: path.join(options.cwd, 'run-artifacts'),
+        recordVideo: 'full-run' as const,
+        recipeDocument: {
+          $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+          workflow: { entry: 'done', nodes: { done: { action: 'end', status: 'pass' } } },
+        },
+      };
+      await runner.preflight(request);
+      assert.equal(acquired, 0, 'Planning must not acquire');
+      const result = await runner.run(request);
+      assert.equal(result.status, 'fail');
+      assert.equal(acquired, 1);
+      const trace = fs.readFileSync(path.join(request.artifactsDir, 'trace.json'), 'utf8');
+      assert.match(trace, /Host admission refused/);
+      assert.equal(fs.existsSync(path.join(options.cwd, 'backend-started')), false);
+    },
+  );
+});
+
+test('project host preserves a provider-supplied engine with admission configured', async (t) => {
+  const options = fixture(t);
+  const file = path.join(options.cwd, 'provider.mjs');
+  fs.writeFileSync(
+    file,
+    fs
+      .readFileSync(file, 'utf8')
+      .replace(
+        'return {\n        runtime:',
+        'return {\n        engine: { marker: "provider-engine", bundledLibrary: { name: "provider", root: context.target.value } },\n        runtime:',
+      ),
+  );
+  await withProjectRecipeHost(
+    {
+      ...options,
+      recordingAdmission: {
+        async acquire() {
+          throw new Error('Discovery acquired a lease');
+        },
+      },
+    },
+    async (host) => {
+      assert.deepEqual(host.engine, {
+        marker: 'provider-engine',
+        bundledLibrary: { name: 'provider', root: options.cwd },
+      });
+      assert.equal(host.engine, host.provider.engine);
     },
   );
 });
@@ -624,4 +750,22 @@ for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
       assert.throws(() => process.kill(ready.ready, 0), { code: 'ESRCH' });
     },
   );
+}
+
+for (const command of ['launch', 'reload', 'stop', 'logs']) {
+  test(`${command} receives owned-child cancellation without recipe authority`, async (t) => {
+    const options = fixture(t);
+    const control = new AbortController();
+    const hookLog = path.join(options.cwd, 'hooks.log');
+    await withProjectRecipeHost(
+      { ...options, command, signal: control.signal, options: { hookLog } },
+      async (host) => {
+        assert.ok(host.signal);
+        assert.equal(recipeExecutionSignal(), host.signal);
+        control.abort(new Error('operator cancelled'));
+        assert.equal(host.signal.aborted, true);
+      },
+    );
+    assert.equal(fs.readFileSync(hookLog, 'utf8'), 'cancel\nfinalize\n');
+  });
 }

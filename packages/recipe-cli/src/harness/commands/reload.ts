@@ -2,12 +2,19 @@
 
 import { adapterDetectNext, harnessAdapter, undetectedAdapterMessage } from '../adapters.js';
 import { harnessHost } from '../host.js';
-import { flag, parseFlags, resolveFlagsAdapter, targetOf, usageOut } from '../shared.js';
+import {
+  flag,
+  type ParsedFlags,
+  parseFlags,
+  resolveFlagsAdapter,
+  targetOf,
+  usageOut,
+} from '../shared.js';
 
 const RELOAD_BOOLEANS = new Set(['json']);
 
-export async function handleReload(argv: string[]): Promise<number> {
-  const { options } = parseFlags(argv, RELOAD_BOOLEANS);
+export async function handleReload(argv: string[], parsed?: ParsedFlags): Promise<number> {
+  const { options } = parsed ?? parseFlags(argv, RELOAD_BOOLEANS);
   const json = flag(options, 'json');
   const target = targetOf(options);
   const adapter = resolveFlagsAdapter(options, target);

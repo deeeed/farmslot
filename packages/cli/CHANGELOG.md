@@ -4,6 +4,19 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Forward the declared recording opt-out reason through checkout recipe commands.
+
+- Validate retained recipe claims, invocations and video timelines through the shared evidence SDK; legacy media remains explicitly untimed.
+
+- Pass the resolved task directory to project scripted commands so they can retain run-bound QA evidence.
+
+- Use pack-declared default recipe checks and preserve explicit raw versus compact log selection.
+
+- Run declared scripted commands from ordinary product checkouts using verified project support and the installed CLI; retain checkout-local scenario execution.
+
+- Use shared protocol outcomes for artifact validation; retain partial-run warnings without certifying partial results as live proof.
+
+- Run project lifecycle commands through the declared provider and inspect retained recipe evidence with journal-backed status. Logs preserve application-source selection and `--full` raw follow. Recipe commands and conformance use the explicitly selected Farmslot root's registry before an inherited workspace, keeping project and pool resolution together.
 - Expose WARM/COLD review mode and ordered review selections through the shared request contract; preserve model, effort and retained lineage across run, dispatch and gate review requests.
 
 - Run the public CLI in its invoking process so signals sent to its PID reach recipe cancellation and teardown. Preserve checkout TypeScript mappings and the scripted-runner entry.

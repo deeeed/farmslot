@@ -1116,6 +1116,100 @@ test('resource claim scope defaults to slot and rejects an unknown value', () =>
   );
 });
 
+function recordingProject(): RawProjectJson {
+  return {
+    slot_actions: { record: { label: 'Record', command: 'record' } },
+    runtime_capabilities: {
+      providers: {
+        recording: {
+          label: 'Recording',
+          version: '1',
+          share_policy: 'exclusive',
+          cost: {
+            class: 'low',
+            resources: [
+              {
+                id: 'recorder',
+                access: 'exclusive',
+                scope: 'machine',
+                binding: 'recording-target',
+              },
+            ],
+          },
+          parameters: {
+            type: 'object',
+            required: ['recording'],
+            additionalProperties: false,
+            properties: {
+              recording: {
+                type: 'object',
+                required: ['backend', 'target'],
+                additionalProperties: false,
+                properties: {
+                  backend: { const: 'cdp-video' },
+                  target: {
+                    type: 'object',
+                    required: ['kind', 'host', 'port', 'targetId'],
+                    additionalProperties: false,
+                    properties: {
+                      kind: { const: 'cdp-page' },
+                      host: { type: 'string', minLength: 1 },
+                      port: { type: 'integer', minimum: 1, maximum: 65535 },
+                      targetId: { type: 'string', minLength: 1 },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          actions: {
+            acquire: { kind: 'slot-action', action_id: 'record' },
+            health: { kind: 'slot-action', action_id: 'record' },
+            release: { kind: 'slot-action', action_id: 'record' },
+          },
+          release_effects: ['stop recording'],
+        },
+      },
+    },
+  };
+}
+
+test('recording target binding and provider parameter restrictions survive normalization', () => {
+  const config = recordingProject();
+  assert.doesNotThrow(() => validateRuntimeCapabilitiesConfig(config, 'project.json'));
+  const raw = config.runtime_capabilities!.providers!.recording!;
+  const normalized = normalizeRawRuntimeCapabilities(config.runtime_capabilities)!.providers
+    .recording!;
+  assert.deepEqual(normalized.cost.resources, raw.cost!.resources);
+  assert.deepEqual(normalized.parameters, raw.parameters);
+  assert.equal(normalized.cost.resources[0]!.binding, 'recording-target');
+});
+
+test('recording bindings require known binding, exclusive access, explicit target scope and parameters', () => {
+  for (const changes of [
+    { binding: 'recording' },
+    { binding: null },
+    { access: 'shared' },
+    { scope: undefined },
+    { scope: 'slot' },
+  ]) {
+    const config = recordingProject();
+    Object.assign(config.runtime_capabilities!.providers!.recording!.cost!.resources![0]!, changes);
+    assert.throws(
+      () => validateRuntimeCapabilitiesConfig(config, 'project.json'),
+      /binding|recording-target/,
+    );
+  }
+  for (const parameters of [undefined, null, []]) {
+    const config = recordingProject();
+    Object.assign(config.runtime_capabilities!.providers!.recording!, { parameters });
+    assert.throws(() => validateRuntimeCapabilitiesConfig(config, 'project.json'), /parameters/);
+  }
+  const fleet = recordingProject();
+  fleet.runtime_capabilities!.providers!.recording!.cost!.resources![0]!.scope = 'fleet';
+  assert.doesNotThrow(() => validateRuntimeCapabilitiesConfig(fleet, 'project.json'));
+});
+
 test('host-pressure admission is opt-in, validated, and normalized', () => {
   const slotActions = {
     'browser-start': { label: 'Start browser', command: 'start' },

@@ -1,0 +1,107 @@
+{
+  "$schema": "https://farmslot.io/schemas/action-manifest-v1.schema.json",
+  "actions": {
+    "assert_output": {
+      "description": "Assert a previous node's stdout/stderr with contains or match, or compare a structured output field using assert.path and an operator such as eq or length_eq.",
+      "examples": [
+        {
+          "action": "assert_output",
+          "source": "run-tests",
+          "stream": "stdout",
+          "contains": "PASS",
+          "intent": "Confirm the recorded output satisfies the requested condition.",
+          "next": "done"
+        }
+      ],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "node": {
+            "type": "string"
+          },
+          "stream": {
+            "type": "string"
+          },
+          "contains": {
+            "type": "string"
+          },
+          "match": {
+            "type": "string"
+          },
+          "assert": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "operator": {
+                "type": "string"
+              },
+              "value": {
+                "type": ["string", "number", "integer", "boolean", "object", "array"],
+                "items": {
+                  "type": ["string", "number", "integer", "boolean", "object"]
+                }
+              },
+              "all": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "any": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "none": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "end": {
+      "description": "Base terminal action.",
+      "examples": [
+        {
+          "action": "end",
+          "status": "pass"
+        }
+      ]
+    },
+    "example.note": {
+      "description": "Create, observe or remove the note owned by this provider session. Existing files are preserved.",
+      "execution_capabilities": ["host-exec", "host-read-export"],
+      "examples": [
+        {
+          "action": "example.note",
+          "operation": "observe",
+          "intent": "Observe the disposable note.",
+          "next": "done"
+        }
+      ],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": ["create", "observe", "cleanup"]
+          }
+        },
+        "required": ["operation"],
+        "additionalProperties": false
+      }
+    }
+  }
+}

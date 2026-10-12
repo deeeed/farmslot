@@ -207,6 +207,8 @@ async function runScrollRecipe(
       },
       artifactsDir,
       projectRoot: root,
+      recordVideo: false,
+      recordingReason: 'This geometry unit fixture has no recording backend.',
     });
     return {
       status: result.status,

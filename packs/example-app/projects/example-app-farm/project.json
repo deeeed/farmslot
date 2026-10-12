@@ -4,7 +4,8 @@
   "type": "standalone",
   "default_branch": "main",
   "paths": {
-    "runtime_dir": ".agent"
+    "runtime_dir": ".agent",
+    "artifact_dir": ".agent/artifacts"
   },
   "defaults": {
     "dev": {
@@ -34,6 +35,74 @@
   "platforms": {
     "cli": {
       "device_check": "true"
+    }
+  },
+  "worker_terminal": {
+    "flows": {
+      "qa": {
+        "complete": {
+          "report": "artifacts/report.md",
+          "artifacts": [
+            "artifacts/report.md",
+            "artifacts/scripted-command-result.json",
+            "artifacts/qa-result.json",
+            "artifacts/scripted-command.stdout.txt",
+            "artifacts/scripted-runner-provenance.json"
+          ]
+        }
+      }
+    }
+  },
+  "recipe": {
+    "checks": [{ "recipe": "smoke" }],
+    "adapter": "headless",
+    "domain": "example",
+    "provider": {
+      "module": "./provider.mjs"
+    }
+  },
+  "node_support": {
+    "paths": [
+      "projects/example-app-farm/provider.mjs",
+      "projects/example-app-farm/recipe-library.json",
+      "projects/example-app-farm/manifests",
+      "projects/example-app-farm/recipes",
+      "projects/example-app-farm/scripts"
+    ]
+  },
+  "execution_templates": {
+    "sources": [],
+    "defaults": [
+      {
+        "when": {
+          "flow": "qa"
+        },
+        "templateId": "qa/recipe-smoke"
+      },
+      {
+        "when": {
+          "flow": "dev"
+        },
+        "templateId": "dev/default"
+      }
+    ]
+  },
+  "qa": {
+    "default_profile": "smoke",
+    "profiles": [
+      {
+        "id": "smoke",
+        "title": "Example recipe smoke",
+        "template_id": "qa/recipe-smoke"
+      }
+    ]
+  },
+  "scripted": {
+    "commands": {
+      "recipe-smoke": {
+        "command": "bash \"$FARMSLOT_ROOT/projects/example-app-farm/scripts/recipe-smoke.sh\" \"$FARMSLOT_ROOT\" \"$PWD\"",
+        "timeout_ms": 60000
+      }
     }
   }
 }

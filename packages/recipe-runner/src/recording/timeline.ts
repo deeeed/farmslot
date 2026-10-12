@@ -9,7 +9,7 @@ import {
 } from '@farmslot/protocol';
 
 import { digestFileWithinRoot, writeFileWithinRoot } from '../core/path.js';
-import type { TraceEntry, VideoRecordingResult } from '../core/types.js';
+import type { TraceEntry, VideoRecordingSegment } from '../core/types.js';
 
 const exec = promisify(execFile);
 
@@ -82,7 +82,7 @@ export async function probeVideoTiming(
 /** Optional observability failure stays explicit without discarding a valid video. */
 export async function optionalVideoTiming(
   ...args: Parameters<typeof probeVideoTiming>
-): Promise<Pick<VideoRecordingResult, 'timing' | 'timingUnavailableReason'>> {
+): Promise<Pick<VideoRecordingSegment, 'timing' | 'timingUnavailableReason'>> {
   try {
     return { timing: await probeVideoTiming(...args) };
   } catch (error) {

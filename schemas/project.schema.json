@@ -96,6 +96,23 @@
             "additionalProperties": false
           }
         },
+        "checks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["recipe"],
+            "additionalProperties": false,
+            "properties": {
+              "recipe": {
+                "type": "string",
+                "pattern": "^\\s*[A-Za-z0-9_-][A-Za-z0-9_.-]*(/[A-Za-z0-9_-][A-Za-z0-9_.-]*)*\\s*$",
+                "not": { "pattern": "\\.json\\s*$" }
+              },
+              "params": { "type": "object" }
+            }
+          }
+        },
         "adapter": {
           "type": "string",
           "minLength": 1,
@@ -2115,8 +2132,35 @@
                     "type": "string",
                     "description": "How far this claim's exclusivity reaches. Omit for 'slot' (arbitrates only against leases on the same slot, the behaviour of every claim before scopes existed). 'machine' reaches every slot on the same host; 'fleet' reaches every slot the Gateway knows about, which is how one physical device shared by several slots is expressed.",
                     "enum": ["slot", "machine", "fleet"]
+                  },
+                  "binding": {
+                    "const": "recording-target",
+                    "description": "Bind this exclusive claim to the validated recording backend and target. Machine-local targets require machine scope; a device-global serial requires fleet scope."
                   }
-                }
+                },
+                "allOf": [
+                  {
+                    "if": {
+                      "required": ["binding"],
+                      "properties": {
+                        "binding": {
+                          "const": "recording-target"
+                        }
+                      }
+                    },
+                    "then": {
+                      "required": ["scope"],
+                      "properties": {
+                        "access": {
+                          "const": "exclusive"
+                        },
+                        "scope": {
+                          "enum": ["machine", "fleet"]
+                        }
+                      }
+                    }
+                  }
+                ]
               }
             }
           }
@@ -2157,7 +2201,34 @@
         "retention": {
           "$ref": "#/$defs/resource_posture_retention_map"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["cost"],
+            "properties": {
+              "cost": {
+                "required": ["resources"],
+                "properties": {
+                  "resources": {
+                    "contains": {
+                      "required": ["binding"],
+                      "properties": {
+                        "binding": {
+                          "const": "recording-target"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "required": ["parameters"]
+          }
+        }
+      ]
     },
     "runtime_capability_affected_resources": {
       "type": "array",

@@ -1,4 +1,30 @@
 export { adapterDetectFromSpec, type AdapterDetectSpec } from './detect.js';
+export {
+  type ClassifiedConsoleRecord,
+  type ConsoleAllowlist,
+  type ConsoleAllowlistMatch,
+  type ConsoleClassifier,
+  type ConsoleEventKey,
+  type ConsoleRecord,
+  createDefaultConsoleClassifier,
+  type DiagnosticLevel,
+} from './diagnostics.js';
+export {
+  type ActionCapabilitySource,
+  createDefaultRecipeEngine,
+  type DefaultRecipeEngineOptions,
+  type RecipeCatalog,
+  type RecipeEngine,
+  type RecipeRunnerOptions,
+  type ResolvedActionManifest,
+  type TrustedMutationAuthorizeContext,
+  type TrustedMutationLoadInput,
+} from './engine.js';
+export {
+  createRuntimeCapabilityRecordingAdmission,
+  type RecordingAdmissionAuthority,
+  recordingTargetClaimKey,
+} from './recording-admission.js';
 export { type AdapterRegistry, createAdapterRegistry, defineAdapter } from './registry.js';
 export {
   ADAPTER_SDK_VERSION,
@@ -55,3 +81,23 @@ export {
   type StageHandle,
   type StageProgress,
 } from './types.js';
+export type {
+  ActiveVideoRecording,
+  RecordingTarget,
+  RecordingTargetContext,
+  VideoRecorder,
+  VideoRecorderStartRequest,
+  VideoRecordingResult,
+} from '@farmslot/recipe-runner';
+export type {
+  RecordingAdmission,
+  RecordingAdmissionContext,
+  RecordingAdmissionLease,
+} from '@farmslot/recipe-runner';
+
+/** Node-only retained package reader; portable validation lives at ./evidence. */
+export {
+  readRecordedEvidencePackage,
+  type RecordedEvidencePackageReadCheck,
+  type RecordedEvidencePackageReadResult,
+} from '@farmslot/recipe-runner';

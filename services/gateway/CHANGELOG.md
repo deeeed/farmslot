@@ -7,6 +7,12 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Publish the exact selected review findings and report, preserving accepted choices across refresh races.
 
 - Declare mid-turn prompt support and verify complete Enter-submitted queue messages for guarded lane steering.
+- Run declared scripted commands from ordinary product checkouts using verified project support and the installed CLI; retain checkout-local scenario execution.
+
+- Check selected-template recipe parameters and resource requirements through shared protocol validation without requiring runtime QA for static review, and retain the checked target and revision.
+- Run declared project readiness through the shared doctor command, preserving the selected checkout, slot and pool environment.
+- Bind declared recording leases to validated backend/target identities and retain those claims through conflicts, waiters and recovery. Offline review tasks include the shared acceptance module.
+- Verify queued lane handoffs, use only live bottom-composer input, and retain uncertain receipts while fresh messages proceed without replaying old ones. Parent-session probes support subagents.
 
 - Retain CI check metadata at decisions and return current details through pr.status.
 - Validate deterministic local CI receipts before package preparation and publication, including current source inputs and runtime support.
@@ -15,7 +21,6 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Publish-approval action ids and review-depth counting come from `@farmslot/protocol`, shared with the clients' publish guards; gate behavior is unchanged.
 - PR-producing worker templates record acceptance verdicts and derive recipe coverage before completion, including development and interactive sessions.
-
 - Run declared project recipes and action discovery through the shared CLI with explicit checkout, slot and artifact bindings; retain task trust and pool environment.
 - Keep cancellable node executions bound to their original connection, send explicit cancellation and wait for closeout without retrying a started command. Hold the slot when recipe process closeout is unconfirmed.
 - Run replay and startup recovery reuse the run branch. New-work prepare refuses to replace a published branch with commits outside the default branch or recorded start ref, and reports those commits before resetting or deleting any branch.

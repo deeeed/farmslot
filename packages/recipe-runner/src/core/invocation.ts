@@ -1,4 +1,4 @@
-import { digestRecipeDocument, isRecord } from '@farmslot/protocol';
+import { digestRecipeDocument, isRecord, type RecipeClaimDeclaration } from '@farmslot/protocol';
 
 const SENSITIVE_KEY =
   /(?:api[-_]?key|auth|credential|mnemonic|pass(?:word)?|private[-_]?key|secret|seed|srp|token|vault)/iu;
@@ -10,6 +10,8 @@ export interface RecipeInvocationDocument {
   startedAt: string;
   params: Record<string, unknown>;
   redactedPaths: string[];
+  claims?: readonly RecipeClaimDeclaration[];
+  recipeRunId?: string;
 }
 
 /** Retain typed public inputs without recording credential-bearing fields. */
@@ -64,12 +66,16 @@ export function createRecipeInvocation(
   recipe: unknown,
   params: Record<string, unknown>,
   startedAt: string,
+  claims?: readonly RecipeClaimDeclaration[],
+  recipeRunId?: string,
 ): RecipeInvocationDocument {
   return {
     version: 1,
+    ...(recipeRunId ? { recipeRunId } : {}),
     recipeDigest: digestRecipeDocument(recipe),
     startedAt,
     ...redactRecipeParams(params, isRecord(recipe) ? recipe.paramsSchema : undefined),
+    ...(claims ? { claims } : {}),
   };
 }
 

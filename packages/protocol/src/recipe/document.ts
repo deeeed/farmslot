@@ -10,6 +10,7 @@ import {
   type RecipeValidationResult,
   validateOptionalStringField,
 } from './common.js';
+import { normalizeRecipeClaimId, validateRecipeClaimDeclarations } from './evidence.js';
 import { RECIPE_INTENT_MAX_LENGTH, RECIPE_INTENT_WARN_LENGTH } from './hud-intent.js';
 import {
   getRecipeActionManifestActionNames,
@@ -270,84 +271,58 @@ export function validateRecipeDocument(
       ...(options?.externalRecipeIds ? { externalRecipeIds: options.externalRecipeIds } : {}),
       skipResolution: options?.skipRecipeCallResolution === true,
     });
-    validateProofLinks(ctx, workflow.nodes, proofTargetIds);
+    const parentIds = new Set(
+      Array.isArray(recipe.proofTargets)
+        ? recipe.proofTargets
+            .filter(isRecord)
+            .filter((target) => isNonEmptyString(target.parentId))
+            .map((target) => normalizeRecipeClaimId(String(target.parentId)))
+        : [],
+    );
+    validateProofLinks(ctx, workflow.nodes, proofTargetIds, parentIds);
   }
 
   return finishResult(ctx);
 }
 
 function validateProofTargets(ctx: ReturnType<typeof createContext>, value: unknown): Set<string> {
-  const ids = new Set<string>();
-  if (!Array.isArray(value)) {
-    addFinding(
-      ctx,
-      'error',
-      'recipe.invalid_proof_targets',
-      'proofTargets',
-      'proofTargets must be an array.',
-    );
-    return ids;
-  }
-  value.forEach((target, index) => {
-    const path = `proofTargets[${index}]`;
-    if (!isRecord(target)) {
-      addFinding(ctx, 'error', 'recipe.invalid_proof_target', path, `${path} must be an object.`);
-      return;
-    }
-    for (const field of Object.keys(target)) {
-      if (field !== 'id' && field !== 'claim') {
-        addFinding(
-          ctx,
-          'error',
-          'recipe.unsupported_proof_target_field',
-          `${path}.${field}`,
-          `Proof targets do not support ${field}.`,
-        );
-      }
-    }
-    if (!isNonEmptyString(target.id)) {
-      addFinding(
-        ctx,
-        'error',
-        'recipe.invalid_proof_target_id',
-        `${path}.id`,
-        'Proof target id must be a non-empty string.',
-      );
-    } else if (ids.has(target.id)) {
-      addFinding(
-        ctx,
-        'error',
-        'recipe.duplicate_proof_target',
-        `${path}.id`,
-        `Proof target ${target.id} is duplicated.`,
-      );
-    } else {
-      ids.add(target.id);
-    }
-    if (!isNonEmptyString(target.claim)) {
-      addFinding(
-        ctx,
-        'error',
-        'recipe.invalid_proof_target_claim',
-        `${path}.claim`,
-        'Proof target claim must be a non-empty string.',
-      );
-    }
-  });
-  return ids;
+  ctx.findings.push(...validateRecipeClaimDeclarations(value).findings);
+  return new Set(
+    Array.isArray(value)
+      ? value
+          .filter(isRecord)
+          .filter((target) => isNonEmptyString(target.id))
+          .map((target) => normalizeRecipeClaimId(String(target.id)))
+      : [],
+  );
 }
 
 function validateProofLinks(
   ctx: ReturnType<typeof createContext>,
   nodes: Record<string, Record<string, unknown>>,
   declared: Set<string>,
+  parents: ReadonlySet<string>,
 ): void {
   const covered = new Set<string>();
   for (const [nodeId, node] of Object.entries(nodes)) {
+    if (node.action === 'call' && isRecord(node.claimBindings)) {
+      for (const target of Object.values(node.claimBindings)) {
+        if (isNonEmptyString(target) && declared.has(normalizeRecipeClaimId(target)))
+          covered.add(normalizeRecipeClaimId(target));
+        else
+          addFinding(
+            ctx,
+            'error',
+            'recipe.undeclared_proof_target',
+            `workflow.nodes.${nodeId}.claimBindings`,
+            'Claim binding must name a registered parent claim.',
+          );
+      }
+    }
     if (!Array.isArray(node.proves)) continue;
     node.proves.forEach((target, index) => {
       if (!isNonEmptyString(target)) return;
-      if (!declared.has(target)) {
+      if (!declared.has(normalizeRecipeClaimId(target))) {
         addFinding(
           ctx,
           'error',
@@ -356,11 +331,11 @@ function validateProofLinks(
           `Proof target ${target} is not declared by recipe.proofTargets.`,
         );
       }
-      covered.add(target);
+      covered.add(normalizeRecipeClaimId(target));
     });
   }
   for (const target of declared) {
-    if (!covered.has(target)) {
+    if (!covered.has(target) && !parents.has(target)) {
       addFinding(
         ctx,
         'error',

@@ -101,8 +101,8 @@ mock.module('../core/config.js', {
   },
 });
 const { recipeProjectHookRun, recipeCancel } = await import('./recipe.js');
-test('declared projects keep readiness hooks and configured pool tools before output validation', async (t) => {
-  declared = true;
+test('undeclared projects keep readiness hooks and configured pool tools before output validation', async (t) => {
+  declared = false;
   t.after(() => {
     declared = false;
   });
@@ -129,44 +129,126 @@ const actionManifest = {
   },
 };
 
-test('declared hooks use the shared CLI with exact checkout, registry and slot arguments', async (t) => {
-  repo = await mkdtemp(path.join(tmpdir(), "recipe 'hosted' env "));
-  declared = true;
-  cli = path.join(repo, 'cli');
-  t.after(async () => {
-    declared = false;
-    cli = '';
-    await rm(repo, { recursive: true, force: true });
-  });
-  const argvFile = path.join(repo, 'argv.json');
-  await writeFile(
-    cli,
-    `#!${process.execPath}
-require('node:fs').writeFileSync(${JSON.stringify(argvFile)}, JSON.stringify(process.argv.slice(2))); process.stdout.write(${JSON.stringify(JSON.stringify(actionManifest))});
+for (const mode of ['manifest', 'readiness', 'conformance'] as const) {
+  const hook = mode === 'manifest' ? 'recipe_action_manifest' : 'recipe_doctor';
+  test(`declared ${mode} uses the shared CLI with exact checkout, registry, slot and pool environment`, async (t) => {
+    repo = await mkdtemp(path.join(tmpdir(), "recipe 'hosted' env "));
+    declared = true;
+    cli = path.join(repo, 'cli');
+    t.after(async () => {
+      declared = false;
+      cli = '';
+      await rm(repo, { recursive: true, force: true });
+    });
+    const argvFile = path.join(repo, 'argv.json');
+    const parameterText = 'hello, world; $(exit 19) "quoted" and \'single\'';
+    const conformance =
+      mode === 'conformance'
+        ? {
+            recipes: ['smoke'],
+            params: { expected: parameterText, items: ['one', 'two'] },
+            reportName: 'dispatch-check.json',
+          }
+        : undefined;
+    const document =
+      mode === 'conformance'
+        ? {
+            data: {
+              report: {
+                schemaVersion: 1,
+                status: 'pass',
+                mode: 'static',
+                identity: { project: 'fixture-project', selection: { poolSlot: 'recipe-env' } },
+                checks: [
+                  {
+                    id: 'recipe.smoke',
+                    status: 'pass',
+                    required: true,
+                    evidence: {
+                      plan: {
+                        schemaVersion: 1,
+                        digest: 'plan',
+                        executionContextDigest: 'context',
+                        source: { kind: 'library', trust: 'trusted' },
+                        nodes: [],
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          }
+        : hook === 'recipe_doctor'
+          ? {
+              runner_protocol_version: 1,
+              status: 'pass',
+              checks: [{ id: 'configured-node', status: 'pass' }],
+            }
+          : actionManifest;
+    await writeFile(
+      cli,
+      `#!${process.execPath}
+require('node:assert/strict').equal(process.env.AUDIOLAB_NODE_BIN, ${JSON.stringify(path.join(repo, 'configured node'))});
+require('node:fs').writeFileSync(${JSON.stringify(argvFile)}, JSON.stringify(process.argv.slice(2))); process.stdout.write(${JSON.stringify(JSON.stringify(document))});
 `,
-  );
-  await chmod(cli, 0o755);
-  const result = await recipeProjectHookRun({
-    slotId: 'recipe-env',
-    project: 'fixture-project',
-    hook: 'recipe_action_manifest',
+    );
+    await chmod(cli, 0o755);
+    const result = await recipeProjectHookRun(
+      {
+        slotId: 'recipe-env',
+        project: 'fixture-project',
+        hook,
+      },
+      conformance,
+    );
+    assert.equal(Boolean(result.conformance), mode === 'conformance');
+    assert.equal(result.validation.status, 'pass');
+    assert.deepEqual(JSON.parse(await readFile(argvFile, 'utf8')), [
+      ...(hook === 'recipe_doctor' ? ['doctor'] : ['recipe', 'actions']),
+      '--target',
+      repo,
+      ...(conformance
+        ? [
+            '--conformance',
+            '--recipe',
+            'smoke',
+            '--param',
+            `expected=${JSON.stringify(parameterText)}`,
+            '--param',
+            'items=["one","two"]',
+            '--report-name',
+            'dispatch-check.json',
+          ]
+        : []),
+      ...(hook === 'recipe_doctor' ? [] : ['--raw']),
+      '--project',
+      'fixture-project',
+      '--slot',
+      'recipe-env',
+      '--json',
+      '--projects-dir',
+      path.join(repo, 'projects'),
+    ]);
+    if ('data' in document && document.data) {
+      document.data.report.identity.selection.poolSlot = 'another-slot';
+      await writeFile(
+        cli,
+        `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(JSON.stringify(document))});\n`,
+      );
+      await assert.rejects(
+        recipeProjectHookRun(
+          {
+            slotId: 'recipe-env',
+            project: 'fixture-project',
+            hook,
+          },
+          conformance,
+        ),
+        /selected project and slot/,
+      );
+    }
   });
-  assert.equal(result.validation.status, 'pass');
-  assert.deepEqual(JSON.parse(await readFile(argvFile, 'utf8')), [
-    'recipe',
-    'actions',
-    '--target',
-    repo,
-    '--raw',
-    '--project',
-    'fixture-project',
-    '--slot',
-    'recipe-env',
-    '--json',
-    '--projects-dir',
-    path.join(repo, 'projects'),
-  ]);
-});
+}
 
 for (const changedOwner of [false, true]) {
   test(`unconfirmed closeout retains tracking and ${changedOwner ? 'preserves a new owner' : 'persists a hold across tracking reset'}`, async (t) => {

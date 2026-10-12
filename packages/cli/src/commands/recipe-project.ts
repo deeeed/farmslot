@@ -34,13 +34,15 @@ export function recipeProjectOptions(command: Command): Command {
     .option('--app <name>', 'Select a monorepo app')
     .option('--slot <id>', 'Select one pool slot')
     .option('--device <id>', 'Select one device')
+    .option('--platform <name>', 'Select a provider platform')
+    .option('--watcher-port <port>', 'Select the app transport port')
     .option('--cdp-port <port>', 'Select the CDP transport port')
     .option('--runtime-dir <path>', 'Target-relative recipe runtime directory')
     .option('--library <name=path>', 'Override a recipe library', collectRecipeOption, []);
 }
 
 /** Commander consumes host options; provider flags remain for strict validation after import. */
-function projectCommandInvocation(
+export function projectCommandInvocation(
   cmd: Command,
   contract: Omit<CommandContract, 'options'>,
 ): ProjectCommandInvocation {
@@ -89,8 +91,6 @@ export function registerProjectExecutionCommand(
       .allowUnknownOption(),
   )
     .option('--target <path>', 'Checkout to execute against')
-    .option('--platform <name>', 'Select a provider platform')
-    .option('--watcher-port <port>', 'Select the app transport port')
     .option('--artifacts-dir <path>', 'Checkout-relative artifact directory')
     .option('--action-manifest <path>', 'Select an action manifest')
     .addOption(
@@ -98,6 +98,7 @@ export function registerProjectExecutionCommand(
     )
     .addOption(new Option('--hud <mode>', 'Evidence HUD').choices(['show', 'hide']))
     .addOption(new Option('--record-video [mode]', 'Record evidence').choices(['full-run', 'off']))
+    .option('--recording-reason <text>', 'Explain an explicit recording opt-out')
     .option('--source-trust <trust>', 'Explicit recipe source trust')
     .option('--source-kind <kind>', 'Explicit recipe source kind')
     .option('--source-name <name>', 'Recipe source name')
@@ -217,15 +218,23 @@ export function registerProjectExecutionCommand(
           ...(await projectRecipeHostOptions(operation, undefined, options)),
           invocation,
         },
-        ({ engine, invocation: parsed, signal, finalize, librarySources }) =>
-          (operation === 'run' ? shared.handleRun : shared.handleCall)([...invocation.argv], {
-            engine,
-            parsed,
-            librarySources,
-            stream,
-            signal,
-            beforeResult: finalize,
-          }),
+        ({ context, engine, invocation: parsed, cli, signal, finalize, librarySources }) => {
+          const execute = () =>
+            (operation === 'run' ? shared.handleRun : shared.handleCall)([...invocation.argv], {
+              engine,
+              parsed,
+              librarySources,
+              stream,
+              signal,
+              beforeResult: finalize,
+            });
+          return shared.isRecipeExecution(operation, cli)
+            ? shared.withCommandJournal(operation, [operation, ...invocation.argv], execute, {
+                target: context.target.value,
+                runtimeDir: context.project!.runtimeDir,
+              })
+            : execute();
+        },
       );
     } catch (error) {
       if (stream?.enabled) {
@@ -277,7 +286,10 @@ export async function projectRecipeHostOptions(
         : undefined;
   const registry =
     shared.optionString(options, 'projectsDir') ??
-    path.join(workspace?.farmslotDir ?? process.env.FARMSLOT_ROOT ?? repoRoot, 'projects');
+    path.resolve(
+      process.env.FARMSLOT_ROOT?.trim() || workspace?.farmslotDir || repoRoot,
+      'projects',
+    );
   const diagnosis = recipeProjectOptions(new Command());
   for (const option of diagnosis.options)
     diagnosis.setOptionValue(option.attributeName(), options[option.attributeName()]);
@@ -295,7 +307,9 @@ export async function projectRecipeHostOptions(
     authorizedProviders: shared.optionStrings(options, 'authorizeProvider'),
     hostHints: {
       supportsLast: false,
-      doctorHint: `farmslot doctor --conformance ${doctorArgs.map(shared.shellQuoteArg).join(' ')}`,
+      journaledCommands: ['run', 'call', 'launch', 'reload', 'stop', 'doctor'],
+      doctorCommand: 'farmslot doctor',
+      doctorHint: `farmslot doctor ${doctorArgs.map(shared.shellQuoteArg).join(' ')}`,
     },
   };
 }
@@ -336,4 +350,116 @@ export function registerProjectActionsCommand(recipe: Command): void {
         emit.fail(error);
       }
     });
+}
+
+export function registerProjectLifecycleCommands(recipe: Command): void {
+  for (const operation of ['status', 'launch', 'reload', 'stop', 'logs'] as const) {
+    const command = recipeProjectOptions(
+      recipe
+        .command(operation)
+        .description(
+          `${operation[0]!.toUpperCase()}${operation.slice(1)} the selected project runtime`,
+        ),
+    ).option('--target <path>', 'Checkout to inspect or operate');
+    if (operation === 'launch')
+      command
+        .argument('[args...]', 'Provider-specific launch options')
+        .allowUnknownOption()
+        .option('--verify', 'Verify the launched runtime is ready')
+        .option('--json-stream', 'Stream JSONL progress and a terminal result')
+        .addOption(
+          new Option('--heal <policy>', 'Healing policy').choices(['off', 'infra-only', 'auto']),
+        );
+    if (operation === 'status')
+      command
+        .option('--fast', 'Skip live readiness probes')
+        .option('--watch', 'Watch the current task without changing it')
+        .option('--task <path>', 'Inspect a specific task')
+        .option('--all-devices', 'Include all discovered devices');
+    if (operation === 'logs')
+      command
+        .option('--source <name>', 'Select one runtime log source')
+        .option('--full', 'Follow the entire selected log without filtering')
+        .option('--lines <count>', 'Number of initial raw log lines')
+        .option('--events <count>', 'Number of compact events to follow')
+        .option('--window', 'Reopen the owned primary log window')
+        .option('--follow', 'Follow the selected log until interrupted');
+    command.action(async (...args: unknown[]) => {
+      const cmd = args.at(-1) as Command;
+      const output = new OutputContext(Boolean(cmd.optsWithGlobals().json));
+      const emit = createEmitter(output, cmd);
+      const options: CliOptions = { ...cmd.optsWithGlobals(), json: isMachineMode(output) };
+      let stream: JsonStreamWriter | undefined;
+      let releaseResult = () => {};
+      let restoreStdout = () => {};
+      try {
+        const shared = await import('@farmslot/recipe-cli/harness');
+        if (operation === 'launch' && options.jsonStream === true) {
+          stream = new shared.JsonStreamWriter('launch', true);
+          releaseResult = stream.deferResult();
+          restoreStdout = stream.isolateStdout();
+        }
+        const invocation = projectCommandInvocation(cmd, {});
+        process.exitCode = await shared.withProjectRecipeHost(
+          {
+            ...(await projectRecipeHostOptions(operation, undefined, options)),
+            invocation,
+          },
+          async ({ context, provider, invocation: parsed, finalize }) => {
+            if (!parsed) throw new Error('Project lifecycle invocation was not validated.');
+            // Repeatable library/authorization selectors are resolved by the host.
+            // The existing lifecycle SDK accepts scalar runtime options only.
+            const flags = {
+              positional: parsed.positional,
+              options: Object.fromEntries(
+                Object.entries(parsed.options).filter(
+                  (entry): entry is [string, string | boolean] =>
+                    typeof entry[1] === 'string' || typeof entry[1] === 'boolean',
+                ),
+              ),
+            };
+            return shared.withCommandJournal(
+              operation,
+              [operation, ...invocation.argv],
+              async () => {
+                let code: number;
+                switch (operation) {
+                  case 'status':
+                    code = await shared.handleStatus(parsed, provider.commandOptions?.status);
+                    break;
+                  case 'launch':
+                    code = await shared.handleLaunch([], { parsed: flags, stream });
+                    break;
+                  case 'reload':
+                    code = await shared.handleReload([], flags);
+                    break;
+                  case 'stop':
+                    code = await shared.handleStop([], {
+                      ...provider.commandOptions?.stop,
+                      parsed,
+                    });
+                    break;
+                  case 'logs':
+                    code = await shared.handleLogs(parsed, provider.commandOptions?.logs);
+                    break;
+                }
+                await finalize();
+                return code;
+              },
+              { target: context.target.value, runtimeDir: context.project!.runtimeDir },
+            );
+          },
+        );
+      } catch (error) {
+        if (stream?.enabled) {
+          const shared = await import('@farmslot/recipe-cli/harness');
+          stream.error({ ...errorEnvelope(`recipe.${operation}`, error).error }, error);
+          process.exitCode = shared.failStream(stream, error, 'LAUNCH_FAILED', shared.EXIT.runtime);
+        } else emit.fail(error);
+      } finally {
+        restoreStdout();
+        releaseResult();
+      }
+    });
+  }
 }

@@ -681,12 +681,19 @@ function buildScriptedRunnerLaunch(options: {
   taskDir: string;
   scripted: ScriptedRunnerConfig;
   command?: ScriptedCommandLaunchConfig;
+  supportDir: string;
+  farmDir: string;
 }): string {
+  const scenario = options.scripted.mode === 'scenario';
   const base = [
-    'FARMSLOT_ROOT="$PWD"',
-    ...(options.scripted.mode === 'scenario' ? ['FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1'] : []),
-    'node',
-    '"$PWD/packages/cli/bin/farmslot.mjs"',
+    ...(scenario
+      ? [
+          'FARMSLOT_ROOT="$PWD"',
+          'FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1',
+          'node',
+          '"$PWD/packages/cli/bin/farmslot.mjs"',
+        ]
+      : []),
     'scripted-runner',
     '--task-dir',
     shellQuote(options.taskDir),
@@ -704,6 +711,11 @@ function buildScriptedRunnerLaunch(options: {
     base.push('--command-ref', shellQuote(options.scripted.commandRef));
     const timeoutMs = options.scripted.timeoutMs ?? options.command.timeoutMs;
     if (timeoutMs !== undefined) base.push('--timeout-ms', String(timeoutMs));
+  }
+  if (!scenario) {
+    const script =
+      'farm="$1"; support="$2"; shift 2; export FARMSLOT_POOL_DIR="${FARMSLOT_POOL_DIR:-$farm/pool}"; export FARMSLOT_ROOT="$support"; source "$support/scripts/lib/resolve-farmslot-cli.sh" && exec "$FARMSLOT_CLI" "$@"';
+    return `cd ${shellQuote(options.repo)} && bash -c ${shellQuote(script)} farmslot-scripted ${shellExpressionForRemotePath(options.farmDir)} ${shellExpressionForRemotePath(options.supportDir)} ${base.join(' ')}`;
   }
   return `cd ${shellQuote(options.repo)} && ${base.join(' ')}`;
 }
@@ -723,6 +735,8 @@ export interface BuildLaunchOptions {
   scripted?: ScriptedRunnerConfig;
   /** Resolved project-owned command for scripted.command mode. */
   scriptedCommand?: ScriptedCommandLaunchConfig;
+  /** Verified project support for scripted command mode; scenario mode stays checkout-local. */
+  scriptedSupportDir?: string;
   /**
    * When true, the Claude runner routes through `expandDispatchCmd` and
    * requires a pool `dispatch_cmd` (production dispatch flow).
@@ -790,7 +804,7 @@ export function buildLaunchCommand(
   // none runner: no launch command (silent sentinel; callers decide what to do).
   if (runner === 'none') return '';
 
-  // scripted runner: checkout-local non-LLM harness; ignores dispatch_cmd entirely.
+  // Scripted scenarios use their checkout; project commands use verified node support.
   if (runner === 'scripted') {
     if (!opts.taskDir) {
       throw new Error(`Runner 'scripted' requires opts.taskDir to locate the task directory`);
@@ -805,6 +819,8 @@ export function buildLaunchCommand(
         taskDir: opts.taskDir,
         scripted: opts.scripted,
         command: opts.scriptedCommand,
+        supportDir: opts.scriptedSupportDir ?? expandTemplate('{{farmslot_dir}}', vars),
+        farmDir: expandTemplate('{{farmslot_dir}}', vars),
       }),
     );
   }

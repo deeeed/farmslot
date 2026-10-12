@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
-import type { RuntimeCapabilityCatalogEntry } from '@farmslot/protocol';
+import { recordingTargetClaimKey, type RuntimeCapabilityCatalogEntry } from '@farmslot/protocol';
 
 import { reconcileRuntimeCapabilityLeases } from './recovery.js';
 import { RuntimeCapabilityRegistry } from './registry.js';
@@ -723,4 +723,88 @@ test('restart retains an exclusive claim while remote observation is unavailable
   assert.equal(lease.health.state, 'healthy');
   assert.equal(lease.owner.runId, 'run-a');
   assert.ok(!actions.includes('browser.release'));
+});
+
+test('recording claim and waiter snapshots survive restart and complete under the original frozen target', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'recording-claim-recovery-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const storePath = path.join(directory, 'leases.json');
+  const capability: RuntimeCapabilityCatalogEntry = {
+    ...browser(),
+    parameters: {
+      type: 'object',
+      required: ['recording'],
+      additionalProperties: false,
+      properties: {
+        recording: {
+          type: 'object',
+          required: ['backend', 'target'],
+          additionalProperties: false,
+          properties: { backend: { const: 'test-recorder' }, target: { type: 'object' } },
+        },
+      },
+    },
+    cost: {
+      class: 'low',
+      resources: [
+        {
+          id: 'capture-helper',
+          access: 'exclusive',
+          scope: 'machine',
+          binding: 'recording-target',
+        },
+      ],
+    },
+  };
+  const actions: string[] = [];
+  let sequence = 0;
+  const createRegistry = (store: RuntimeCapabilityStore) =>
+    new RuntimeCapabilityRegistry({
+      store,
+      catalogForSlot: async (slotId) => ({
+        slotId,
+        project: 'test-project',
+        machine: 'machine-a',
+        capabilities: [capability],
+      }),
+      runAction: async (_slot, action) => {
+        actions.push(action.kind === 'slot-action' ? action.actionId : action.action);
+        return { ok: true };
+      },
+      leaseId: () => `recording-lease-${++sequence}`,
+    });
+  const target = { kind: 'pid', pid: 101 } as const;
+  const params = (slotId: string, ownerRunId: string) => ({
+    slotId,
+    capabilityId: 'browser',
+    ownerRunId,
+    queueOnConflict: true,
+    parameters: { recording: { backend: 'test-recorder', target } },
+    proofRequirement: { capabilityId: 'browser', reason: 'record', mode: 'visual' as const },
+  });
+  const original = createRegistry(new RuntimeCapabilityStore(storePath));
+  const held = await original.acquire(params('slot-a', 'holder'));
+  assert.equal(held.ok, true);
+  if (!held.ok) return;
+  const queued = await original.acquire(params('slot-b', 'waiter'));
+  assert.equal(queued.ok, false);
+  if (queued.ok || queued.conflict.kind !== 'scoped-wait') return;
+  const originalClaim = `capture-helper/${recordingTargetClaimKey({ backend: 'test-recorder', target })}`;
+  const persistedStore = new RuntimeCapabilityStore(storePath);
+  const recovered = createRegistry(persistedStore);
+  await reconcileRuntimeCapabilityLeases(recovered);
+  const after = await recovered.status({ slotId: 'slot-b' });
+  assert.equal(after.claimWaiters?.[0].claimId, originalClaim);
+  const frozen = persistedStore.snapshot().leases;
+  assert.deepEqual(frozen.find((lease) => lease.id === held.lease.id)?.claims, held.lease.claims);
+  assert.equal(
+    frozen.find((lease) => lease.owner.runId === 'waiter')?.claims?.[0].id,
+    originalClaim,
+  );
+  actions.length = 0;
+  await recovered.release({ slotId: 'slot-a', ownerRunId: 'holder' });
+  const completed = await recovered.acquire(params('slot-b', 'waiter'));
+  assert.equal(completed.ok, true);
+  if (completed.ok) assert.equal(completed.lease.claims?.[0].id, originalClaim);
+  assert.equal(actions.filter((action) => action === 'browser.acquire').length, 1);
 });
