@@ -72,6 +72,9 @@ internal post-review snapshot flag is owned by the gateway slot publisher.
 
 ## Acceptance
 
+Native proof consumes the Expo adapter's existing selected-device recording
+target and Android recorder. Explicit recording target overrides retain precedence.
+
 1. Phone inspection shows the finding beside source from its reviewed SHA even
    when the current checkout differs. Missing source is explicit.
 2. Select/deselect and select-none produce exact indices; confirmation sends
