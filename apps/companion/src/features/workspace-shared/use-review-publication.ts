@@ -12,34 +12,39 @@ import {
   type Run,
   type RunDecision,
   type RunGetResult,
+  savedReviewView,
   toggleReviewFinding,
 } from '@farmslot/protocol';
 
 import { currentFarmConnection } from '../../lib/connection-authority';
 import { loadReviewFindingSource, reviewFindingSourceRequest } from '../../lib/review-curation';
-import { reviewPublicationView } from '../../lib/review-publication';
+import { reviewPublicationView, reviewRunForDisplay } from '../../lib/review-publication';
 import { useConnectionStore } from '../../store/connection';
 import { useRunStore } from '../../store/runs';
 
-import { retryReviewPublication } from './review-publication-action';
+import { readReviewRun, retryReviewPublication } from './review-publication-action';
+
+export type ReviewPublicationContext = 'publication' | 'saved';
 
 export function useReviewPublication(
   run: Run | null,
   decision?: RunDecision | null,
   onRefreshed?: (run: Run) => void,
+  context: ReviewPublicationContext = 'publication',
 ) {
   const client = useConnectionStore((state) => state.client);
   const profileId = useConnectionStore((state) => state.activeProfileId);
   const epoch = useConnectionStore((state) => state.authorityEpoch);
   const status = useConnectionStore((state) => state.status);
   const payload =
+    context === 'publication' &&
     decision?.type === 'engine_review_posting' &&
     !decision.resolvedAt &&
     decision.payload?.kind === 'review'
       ? decision.payload
       : null;
   const fingerprint = payload ? reviewPostingFingerprint(payload) : '';
-  const identity = `${run?.id}:${decision?.id}:${fingerprint}:${profileId}:${epoch}:${client?.connectionGeneration}`;
+  const identity = `${run?.id}:${decision?.id}:${fingerprint}:${profileId}:${epoch}:${client?.connectionGeneration}:${context}`;
   const scope = useRef({ client, identity });
   if (scope.current.client !== client || scope.current.identity !== identity)
     scope.current = { client, identity };
@@ -71,24 +76,59 @@ export function useReviewPublication(
   const pending = useRef<object | undefined>(undefined);
   const currentAction = action?.scope === scope.current ? action : undefined;
   const storedRun = useRunStore((state) => state.runs.find((item) => item.id === run?.id));
-  const effectiveRun = storedRun && run && storedRun.updatedAt >= run.updatedAt ? storedRun : run;
+  const effectiveRun = reviewRunForDisplay(run, storedRun);
+  const savedCandidate = !payload && effectiveRun ? savedReviewView(effectiveRun) : null;
+  const [detail, setDetail] = useState<{
+    scope: object;
+    run?: Run;
+    loading: boolean;
+    error?: string;
+  }>();
+  const detailRequest = useRef<object | undefined>(undefined);
+  const currentDetail =
+    detail?.scope === scope.current &&
+    (!detail.run || !effectiveRun || detail.run.updatedAt >= effectiveRun.updatedAt)
+      ? detail
+      : undefined;
   const viewModel = effectiveRun ? reviewPublicationView(effectiveRun) : null;
   const captureCurrent = (bindSelection = true) => {
     const capturedScope = scope.current;
     const capturedCuration = curation;
     if (!client) return () => false;
-    const isCurrentConnection = currentFarmConnection(client);
+    const isCurrentConnection = currentFarmConnection(client, useConnectionStore.getState);
     return () =>
       active.current &&
       scope.current === capturedScope &&
       (!bindSelection || curationRef.current === capturedCuration) &&
-      useConnectionStore.getState().client === client &&
-      useConnectionStore.getState().activeProfileId === profileId &&
-      useConnectionStore.getState().authorityEpoch === epoch &&
       isCurrentConnection();
   };
   const curationRef = useRef(curation);
   curationRef.current = curation;
+  const readSaved = async () => {
+    if (!client || !run || status !== 'connected') return;
+    const capturedScope = scope.current;
+    const request = {};
+    detailRequest.current = request;
+    const connectionCurrent = captureCurrent(false);
+    const current = () => connectionCurrent() && detailRequest.current === request;
+    setDetail({ scope: capturedScope, loading: true });
+    try {
+      await readReviewRun(client, run.id, current, (fullRun) => {
+        setDetail({ scope: capturedScope, run: fullRun, loading: false });
+      });
+    } catch (error) {
+      if (current())
+        setDetail({
+          scope: capturedScope,
+          loading: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+    }
+  };
+  useEffect(() => {
+    if (savedCandidate && status === 'connected') void readSaved();
+    // A reconnect or newer run invalidates a full read, even if run.list trimmed it.
+  }, [identity, status, effectiveRun?.updatedAt, Boolean(savedCandidate)]);
   const changeCuration = (change: (state: ReviewCurationState) => ReviewCurationState) => {
     if (!curation) return;
     const state = change(curationRef.current!);
@@ -100,7 +140,7 @@ export function useReviewPublication(
     const capturedScope = scope.current;
     const request = {};
     sourceRequest.current = request;
-    const isCurrentConnection = currentFarmConnection(client);
+    const isCurrentConnection = currentFarmConnection(client, useConnectionStore.getState);
     const current = () =>
       active.current &&
       scope.current === capturedScope &&
@@ -171,7 +211,15 @@ export function useReviewPublication(
   };
   return {
     viewModel,
-    report: payload?.reviewMd,
+    saved: currentDetail?.run ? savedReviewView(currentDetail.run) : null,
+    savedLoading: Boolean(savedCandidate && (!currentDetail || currentDetail.loading)),
+    savedError: currentDetail?.error,
+    readSaved: () => {
+      void readSaved();
+    },
+    context,
+    viewIdentity: identity,
+    report: payload?.reviewMd ?? currentDetail?.run?.reviewResult?.reviewMd,
     curation: payload && curation ? reviewCurationView(payload, curation) : null,
     selectionData: curation
       ? { ...curation, includedIndices: [...curation.includedIndices] }

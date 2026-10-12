@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Keep saved reviews readable on the phone after publication closes, with the original verdict, reviewed SHA and full report. Requested choices stay separate from confirmed publication.
+
 - Share plain run titles across clients, deriving HTML and Markdown headings with bounded display text.
 - Add an opt-in selected-package metadata projection to the existing run recipe-artifact query (ADR-062).
 - Share the five-round review budget and its gate display independently of passing-review counts.

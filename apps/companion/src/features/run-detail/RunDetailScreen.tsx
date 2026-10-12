@@ -16,7 +16,6 @@ import {
   Methods,
   type RecipeRunArtifactGroup,
   type Run,
-  type RunGetResult,
   type RunRecipeRunsForRunResult,
   type RunRecordedEvidenceReview,
   type RunReplayStepResult,
@@ -78,6 +77,7 @@ import { GateReviewEntryCard } from '../gate-review/components/gate-review-panel
 import { NativeWorkerLinks } from '../native-conversation/components/NativeWorkerLinks';
 import { formatDuration } from '../workspace-shared/format';
 import { useReviewPackageTab } from '../workspace-shared/review-package-tabs';
+import { readReviewRun } from '../workspace-shared/review-publication-action';
 import { ReviewPublication } from '../workspace-shared/ReviewPublication';
 
 import { InteractiveOperatorPacketsPanel } from './components/InteractiveOperatorPacketsPanel';
@@ -127,7 +127,23 @@ export default function RunDetailScreen() {
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
   const storeRun = useRunStore((s) => s.runs.find((r) => r.id === resolvedRunId));
   const upsertRun = useRunStore((s) => s.upsertRun);
-  const [run, setRun] = useState<Run | null>(storeRun ?? null);
+  const profileId = useConnectionStore((s) => s.activeProfileId);
+  const authorityEpoch = useConnectionStore((s) => s.authorityEpoch);
+  const readIdentity = `${resolvedRunId}:${profileId}:${authorityEpoch}:${connection}`;
+  const readScope = useRef({ client, identity: readIdentity });
+  if (readScope.current.client !== client || readScope.current.identity !== readIdentity)
+    readScope.current = { client, identity: readIdentity };
+  const readRequest = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const [loadedRun, setLoadedRun] = useState<{ scope: object; run: Run }>();
+  const run = loadedRun?.scope === readScope.current ? loadedRun.run : (storeRun ?? null);
+  const setRun = (value: Run) => setLoadedRun({ scope: readScope.current, run: value });
   const [recipeRuns, setRecipeRuns] = useState<RecipeRunArtifactGroup[]>([]);
   const [recordedEvidence, setRecordedEvidence] = useState<RunRecordedEvidenceReview | null>(null);
   const [recipeRunsLoaded, setRecipeRunsLoaded] = useState(false);
@@ -229,21 +245,28 @@ export default function RunDetailScreen() {
   );
 
   const loadRun = useCallback(() => {
-    if (!client || !resolvedRunId) return Promise.resolve();
+    if (!client || !resolvedRunId || connection === null) return Promise.resolve();
+    const scope = readScope.current;
+    const request = ++readRequest.current;
+    const connectionCurrent = currentFarmConnection(client, useConnectionStore.getState);
+    const current = () =>
+      mounted.current &&
+      readScope.current === scope &&
+      readRequest.current === request &&
+      connectionCurrent();
     setError(null);
-    return client
-      .request<RunGetResult>('run.get', { runId: resolvedRunId })
-      .then((r) => setRun(r.run))
-      .catch((err: Error) => {
-        if (isGatewayBackgroundPauseError(err)) {
-          // Android route screenshots and app transitions can briefly pause the
-          // gateway while cached run data is still usable; keep review visible.
-          console.warn(`Run refresh paused: ${err.message}`);
-          return;
-        }
-        setError(`Failed to load run: ${err.message}`);
-      });
-  }, [client, resolvedRunId]);
+    return readReviewRun(client, resolvedRunId, current, (value) => {
+      setLoadedRun({ scope, run: value });
+    }).catch((err: Error) => {
+      if (!current()) return;
+      if (isGatewayBackgroundPauseError(err)) {
+        // Reconnect retries a paused read while cached run data stays visible.
+        console.warn(`Run refresh paused: ${err.message}`);
+        return;
+      }
+      setError(`Failed to load run: ${err.message}`);
+    });
+  }, [client, resolvedRunId, connection, profileId, authorityEpoch]);
 
   useEffect(() => {
     // Each reconnect re-reads: the operator packets' publish guard judges this run.
@@ -266,12 +289,16 @@ export default function RunDetailScreen() {
   }, [loadRecipeRuns, noteRecipeRunsUnavailable, requestedRecipeRunId]);
 
   useEffect(() => {
-    if (!client || !resolvedRunId) return;
+    if (!client || !resolvedRunId || connection === null) return;
+    const scope = readScope.current;
+    const connectionCurrent = currentFarmConnection(client, useConnectionStore.getState);
     const handleRunEvent = (payload: unknown, _reason: string) => {
+      if (!mounted.current || readScope.current !== scope || !connectionCurrent()) return;
       const event = payload as { run?: Run; runId?: string };
       if (!runRefreshEventMatches(resolvedRunId, event)) return;
       if (event.run?.id === resolvedRunId) {
-        setRun(event.run);
+        ++readRequest.current; // A complete event supersedes any earlier run.get reply.
+        setLoadedRun({ scope, run: event.run });
         upsertRun(event.run);
       } else {
         void loadRun();
@@ -297,7 +324,7 @@ export default function RunDetailScreen() {
     return () => {
       unsubscribers.forEach((unsubscribe) => unsubscribe());
     };
-  }, [client, loadRecipeRuns, loadRun, resolvedRunId, upsertRun]);
+  }, [client, connection, loadRecipeRuns, loadRun, resolvedRunId, upsertRun]);
 
   const fetchTaskProgress = useCallback(() => {
     const params = taskProgressRequestForRun(run);
@@ -629,7 +656,7 @@ export default function RunDetailScreen() {
         ) : null}
 
         <RunPosturePanel state={runPosture} gatePark={liveGateParkView(run)} />
-        <ReviewPublication run={run} />
+        <ReviewPublication run={run} context="saved" />
 
         {reviewPackageActiveTab === 'evidence' && focusedArtifactPath ? (
           <RunFocusedArtifactCard

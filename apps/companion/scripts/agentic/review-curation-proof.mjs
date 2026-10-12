@@ -8,10 +8,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { proofRPC, stopProofGateway, waitForProof } from './proof-gateway.mjs';
+import { proofRPC, startProofReadProxy, stopProofGateway, waitForProof } from './proof-gateway.mjs';
 import { seedAndroidGatewayProfile, seedIOSGatewayProfile } from './seed-ios-gateway-profile.mjs';
 import {
   openAndroidDevClient,
+  openAndroidUrl,
   openSimulatorDevClient,
   waitForSimulatorRecipeBridge,
 } from './simulator-dev-client.mjs';
@@ -41,7 +42,12 @@ const stop = () => {
     fs.rmSync(owned.farm, { recursive: true, force: true });
   }
 };
-const report = 'Recommendation: REQUEST_CHANGES\n\n## Summary\nOriginal saved review report.';
+const savedContext = process.env.REVIEW_PROOF_CONTEXT === 'saved';
+const report =
+  'Recommendation: REQUEST_CHANGES\n\n## Summary\nOriginal saved review report.' +
+  (savedContext
+    ? '\n' + 'Complete retained report.\n'.repeat(120) + 'FINAL SAVED REPORT LINE'
+    : '');
 const findings = [
   { path: 'src/example.ts', line: 2, body: 'First exact finding', severity: 'must_fix' },
   { path: 'src/example.ts', line: 3, body: 'Second exact finding', severity: 'suggestion' },
@@ -72,6 +78,8 @@ if (phase === 'serve') {
   setEngineDecisionRuntime({ broadcast: broadcastEvent, stepToStatus: {} });
   setReviewGateBroadcast(broadcastEvent);
   const s = state();
+  if (savedContext)
+    startProofReadProxy({ port: s.port + 1, gatewayPort: s.port, directory: proof });
   const snapshot = {
     source: 'github-pr',
     headSha: s.head,
@@ -184,6 +192,50 @@ if (phase === 'serve') {
     );
     await persistRunNow(getRun(run.id));
     runs.push({ kind, runId: run.id, decisionId: decision.id, task });
+  }
+  if (savedContext) {
+    for (const kind of ['auto', 'historical', 'legacy']) {
+      const run = createRun(
+        {
+          flowType: 'review-pr',
+          project: 'review-curation',
+          ticketOrPr: 'example/app#42',
+          transport: 'native',
+        },
+        { nativeOwnerPrincipalId: 'local-admin' },
+      );
+      const payload = { kind: 'review', ...result, recommendation: 'HISTORICAL REQUEST_CHANGES' };
+      updateRun(run.id, {
+        status: kind === 'auto' ? 'blocked' : 'done',
+        reviewAutoFinish: kind === 'auto',
+        reviewResult:
+          kind === 'auto'
+            ? { ...structuredClone(result), recommendation: 'AUTO REQUEST_CHANGES' }
+            : undefined,
+        decisions:
+          kind === 'historical'
+            ? [
+                {
+                  id: 'history-' + run.id,
+                  type: 'engine_review_posting',
+                  title: 'Saved historical review',
+                  description: '',
+                  createdAt: snapshot.capturedAt,
+                  resolvedAt: snapshot.capturedAt,
+                  resolvedAction: 'dismiss',
+                  actions: [],
+                  payload,
+                },
+              ]
+            : [],
+      });
+      if (kind === 'auto') {
+        assert.equal((await holdWorkspaceReview(run.id)).reason, 'explicit-auto-finish');
+        updateRun(run.id, { status: 'done' });
+      }
+      await persistRunNow(getRun(run.id));
+      runs.push({ kind, runId: run.id });
+    }
   }
   write(stateFile, { ...state(), runs });
 } else if (phase === 'setup') {
@@ -346,7 +398,7 @@ if (phase === 'serve') {
     await waitForProof(() => {
       if (child.exitCode !== null)
         throw new Error(`Private gateway exited ${child.exitCode}; inspect gateway.log`);
-      return state().runs?.length === 3;
+      return state().runs?.length === (savedContext ? 6 : 3);
     }, 90_000);
     const seedProfile = platform === 'android' ? seedAndroidGatewayProfile : seedIOSGatewayProfile;
     seedProfile({
@@ -359,7 +411,7 @@ if (phase === 'serve') {
       profile: {
         id: 'review-curation',
         name: 'Review curation proof',
-        url: `ws://127.0.0.1:${port}`,
+        url: `ws://127.0.0.1:${port + (savedContext ? 1 : 0)}`,
         kind: 'lan',
         authMode: 'none',
       },
@@ -368,7 +420,89 @@ if (phase === 'serve') {
     stopProofGateway(child.pid);
     throw error;
   }
+  if (savedContext) {
+    for (const entry of state().runs.filter((item) => item.decisionId)) {
+      const decision = rpc('run.get', { runId: entry.runId }).run.decisions.find(
+        (item) => item.id === entry.decisionId,
+      );
+      const { reviewPostingFingerprint } = await import('@farmslot/protocol');
+      rpc('run.resolveDecision', {
+        runId: entry.runId,
+        decisionId: entry.decisionId,
+        actionId: entry.kind === 'workspace' ? 'post' : 'dismiss',
+        selectionData: {
+          recommendation: 'APPROVE',
+          includedIndices: [],
+          includeEvidence: false,
+          reviewFingerprint: reviewPostingFingerprint(decision.payload),
+        },
+      });
+      await waitForProof(() => rpc('run.get', { runId: entry.runId }).run.status === 'done');
+    }
+    const listed = rpc('run.list', { limit: 20 }).runs;
+    const historical = listed.find(
+      (run) => run.id === state().runs.find((entry) => entry.kind === 'historical').runId,
+    );
+    assert(historical.decisions[0].payloadTrimmed.includes('reviewMd'));
+    const baseline = state().runs.map((entry) => ({
+      ...entry,
+      run: rpc('run.get', { runId: entry.runId }).run,
+    }));
+    write(path.join(proof, 'saved-baseline.json'), {
+      baseline,
+      provider: JSON.parse(fs.readFileSync(provider, 'utf8')),
+    });
+    evidence('saved-baseline', { baseline, historicalList: historical });
+    for (const value of [port, port + 1])
+      execFileSync('adb', ['-s', serial, 'reverse', `tcp:${value}`, `tcp:${value}`]);
+  }
   evidence('reviewed-source', { head, checkout: git('status', '--porcelain') });
+} else if (phase === 'saved-arm') {
+  const entry = state().runs.find((item) => item.kind === 'historical');
+  write(path.join(proof, 'read-delay.json'), { runId: entry.runId });
+} else if (phase === 'saved-held') {
+  await waitForProof(
+    () =>
+      fs.existsSync(path.join(proof, 'held-reads.jsonl')) &&
+      fs.readFileSync(path.join(proof, 'held-reads.jsonl'), 'utf8').trim(),
+  );
+} else if (phase === 'saved-release') {
+  write(path.join(proof, 'read-delay.json'), {});
+} else if (phase === 'saved-verify') {
+  const before = JSON.parse(fs.readFileSync(path.join(proof, 'saved-baseline.json'), 'utf8'));
+  for (const { runId, run } of before.baseline) {
+    const after = rpc('run.get', { runId }).run;
+    for (const field of ['reviewResult', 'decisions', 'reviewPublication', 'status', 'updatedAt'])
+      assert.deepEqual(after[field], run[field], `Reading changed ${runId}.${field}`);
+  }
+  assert.deepEqual(JSON.parse(fs.readFileSync(state().provider, 'utf8')), before.provider);
+  const requests = fs
+    .readFileSync(path.join(proof, 'phone-rpc.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  assert(requests.some((request) => request.method === 'run.get'));
+  assert(
+    !requests.some((request) =>
+      [
+        'run.resolveDecision',
+        'run.refreshReviewGate',
+        'prReview.publish',
+        'decision.resolve',
+      ].includes(request.method),
+    ),
+  );
+  evidence('saved-read-only', {
+    unchanged: true,
+    methods: [...new Set(requests.map((request) => request.method))],
+    held: fs.existsSync(path.join(proof, 'held-reads.jsonl')),
+  });
+  console.log('PASS saved reader, full hydration, unchanged store and provider');
+} else if (phase.startsWith('saved-open-')) {
+  await waitForSimulatorRecipeBridge({ platform: 'android' });
+  const entry = state().runs.find((item) => item.kind === phase.slice(11));
+  assert(entry, 'Unknown saved review case');
+  openAndroidUrl(serial, bundle, `farmslot-development://run/${entry.runId}`);
 } else if (phase === 'relaunch') {
   if (platform === 'android') await openAndroidDevClient(serial, bundle);
   else await openSimulatorDevClient(simulator);
