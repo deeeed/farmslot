@@ -27,6 +27,7 @@ import {
 } from '@farmslot/protocol';
 
 import { RunPipelineFull } from '../../components/RunPipeline';
+import { RunTitle } from '../../components/RunTitle';
 import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
 import { TaskProgressFallbackPanel, TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { useConnectedTransport } from '../../hooks/useConnectedTransport';
@@ -594,7 +595,7 @@ export default function RunDetailScreen() {
             </View>
           </View>
           <Text style={styles.ticketText}>{run.ticketOrPr}</Text>
-          {run.summary && <Text style={baseStyles.textSecondary}>{run.summary}</Text>}
+          {run.summary && <RunTitle style={baseStyles.textSecondary} title={run.summary} />}
           <View style={[styles.row, { marginTop: spacing.lg }]}>
             {run.slotId && (
               <Text style={baseStyles.textMuted} testID="companion-run-detail-slot">

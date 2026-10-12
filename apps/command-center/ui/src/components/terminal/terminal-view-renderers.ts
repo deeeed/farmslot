@@ -4,6 +4,8 @@ import { Methods } from '@farmslot/protocol';
 
 import '../shared/workspace-pin.js';
 
+import { renderRunTitle } from '../shared/run-title.js';
+
 import {
   terminalAttachOverlay,
   type TerminalAttachPhase,
@@ -272,7 +274,7 @@ export function renderTerminalChrome(ctx: TerminalChromeContext) {
       ${ctx.agent && ctx.agent !== ctx.lifecycle
         ? html`<span class="agent-state">${ctx.agent}</span>`
         : ''}
-      ${ctx.summary ? html`<span class="task-summary">${ctx.summary}</span>` : ''}
+      ${ctx.summary ? html`${renderRunTitle({ summary: ctx.summary }, 'task-summary')}` : ''}
       <span style="flex:1"></span>
       ${!ctx.isWorkerTarget && (ctx.slotId || ctx.runId)
         ? html`

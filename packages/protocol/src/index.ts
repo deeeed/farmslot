@@ -28,6 +28,7 @@ export * from './runs/review-curation.js';
 export * from './runs/review-policy.js';
 export * from './runs/review-retries.js';
 export * from './runs/run-mode.js';
+export * from './runs/run-title.js';
 export * from './runs/slot-resolution.js';
 export * from './runs/step-timing.js';
 export * from './slots/dispatch-scoring.js';

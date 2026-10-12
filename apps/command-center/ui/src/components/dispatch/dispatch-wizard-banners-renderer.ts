@@ -16,6 +16,7 @@ import {
   runDisplayLabel,
   runStatusColor,
 } from '../runs/run-utils.js';
+import { renderRunTitle } from '../shared/run-title.js';
 
 import {
   comparePickerFamilyChipLabel,
@@ -198,7 +199,7 @@ function renderCompareRunPickerRow(ctx: CompareRunPickerModalContext, run: Run) 
       </div>
       <div class="compare-run-title">${run.ticketOrPr}</div>
       ${run.summary && run.summary !== run.ticketOrPr
-        ? html`<div class="compare-run-summary">${run.summary}</div>`
+        ? html`${renderRunTitle(run, 'compare-run-summary')}`
         : nothing}
       <div class="compare-run-meta">
         run ${run.id.slice(0, 8)} · ${run.project} · ${engine.runner ?? '?'} /

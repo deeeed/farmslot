@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -536,4 +536,34 @@ test('snapshot keeps the newest eval manifest for duplicate eval keys', async ()
     snapshot.experiments?.[0]?.trials.map((trial) => trial.trialId),
     ['trial-1', 'trial-2'],
   );
+});
+
+test('legacy HTML and Markdown report summaries use plain headings without changing reports', async (t) => {
+  const base = await mkdtemp(path.join(os.tmpdir(), 'family-report-titles-'));
+  t.after(() => rm(base, { recursive: true, force: true }));
+  const reports = [
+    '<!doctype html><html><head><title>EchoBridge Android native QA</title></head><body><h1>Results</h1><p>PASS</p></body></html>',
+    '# PR #112 native dispatch proof\n\nFull report',
+  ];
+  const runs = await Promise.all(
+    reports.map(async (report, index) => {
+      const dir = path.join(base, String(index));
+      await writeArtifact(dir, 'TASK.md', '# Task');
+      await writeArtifact(dir, 'artifacts/report.md', report);
+      return makeRun({
+        id: `title-${index}`,
+        summary: undefined,
+        taskFile: path.join(dir, 'TASK.md'),
+      });
+    }),
+  );
+  const snapshot = await buildFamilyObservabilitySnapshotFromRuns(runs);
+  for (const [index, title] of [
+    'EchoBridge Android native QA',
+    'PR #112 native dispatch proof',
+  ].entries()) {
+    const run = snapshot.runs.find((item) => item.runId === `title-${index}`)!;
+    assert.equal(run.summary, title);
+    assert.equal(run.workerReport, reports[index]);
+  }
 });

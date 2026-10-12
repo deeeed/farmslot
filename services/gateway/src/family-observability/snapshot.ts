@@ -17,6 +17,7 @@ import {
   type RelatedRunSummary,
   type Run,
   summarizeAcceptanceStatus,
+  taskTitleText,
 } from '@farmslot/protocol';
 
 import { refreshRetrospectiveFeedback } from '../intelligence/feedback-candidates.js';
@@ -761,7 +762,7 @@ async function buildRunSummary(
     ticketOrPr: run.ticketOrPr,
     branch: run.branch,
     prNumber: prNumberFromRunInput(run),
-    summary: run.summary ?? workerReport?.trim().split('\n')[0] ?? null,
+    summary: run.summary ?? (workerReport ? taskTitleText(workerReport) || null : null),
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
     completedAt: run.completedAt,
