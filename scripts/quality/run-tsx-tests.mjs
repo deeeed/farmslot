@@ -76,6 +76,7 @@ export function parseArgs(argv) {
   let tsconfig;
   let nodeTest = false;
   let workers;
+  let shard;
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -98,10 +99,29 @@ export function parseArgs(argv) {
       nodeTest = true;
       continue;
     }
+    if (arg === '--shard') {
+      shard = parseShard(requireFlagValue(argv, index, '--shard'));
+      index += 1;
+      continue;
+    }
     roots.push(arg);
   }
 
-  return { roots, cwd, tsconfig, nodeTest, workers };
+  return { roots, cwd, tsconfig, nodeTest, workers, shard };
+}
+
+export function parseShard(value) {
+  const parts = /^([1-9]\d*)\/([1-9]\d*)$/.exec(value);
+  const [index, total] = parts ? parts.slice(1).map(Number) : [];
+  if (!Number.isSafeInteger(index) || !Number.isSafeInteger(total) || index > total) {
+    throw new Error(`Shard must be index/total with 1 <= index <= total, received: ${value}`);
+  }
+  return { index, total };
+}
+
+/** Shard the sorted discovery before assigning mock, serial and parallel lanes. */
+export function selectShard(tests, shard) {
+  return shard ? tests.filter((_file, index) => index % shard.total === shard.index - 1) : tests;
 }
 
 export function resolveWorkers(rawValue, env = process.env) {
@@ -647,6 +667,7 @@ export function buildArtifact({
   failures,
   totalMs,
   toLabel,
+  shard,
 }) {
   const byFile = new Map(records.filter((record) => record.file).map((r) => [r.file, r]));
   const check = verifyAssignment(discovered, partition);
@@ -655,6 +676,7 @@ export function buildArtifact({
     workspace,
     invocation: invocation ?? null,
     workers,
+    ...(shard ? { shard } : {}),
     discoveredCount: check.discoveredCount,
     assignedCount: check.assignedUniqueCount,
     assignment: {
@@ -699,12 +721,12 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  const { roots, cwd: cwdArg, tsconfig, nodeTest, workers: workersArg } = parsed;
+  const { roots, cwd: cwdArg, tsconfig, nodeTest, workers: workersArg, shard } = parsed;
   const cwd = cwdArg ? resolve(cwdArg) : process.cwd();
 
   if (roots.length === 0) {
     console.error(
-      'Usage: run-tsx-tests.mjs [--cwd <dir>] [--tsconfig <file>] [--node-test] [--workers <n>] <dir-or-test-file> [...]',
+      'Usage: run-tsx-tests.mjs [--cwd <dir>] [--tsconfig <file>] [--node-test] [--workers <n>] [--shard <index/total>] <dir-or-test-file> [...]',
     );
     process.exitCode = 1;
     return;
@@ -712,9 +734,9 @@ async function main() {
 
   normalizeTimingsDir();
   const workers = resolveWorkers(workersArg);
-  const tests = discoverTests(roots, cwd);
+  const tests = selectShard(discoverTests(roots, cwd), shard);
   if (tests.length === 0) {
-    console.error(`No .test.ts files found under: ${roots.join(', ')}`);
+    console.error(`No .test.ts files selected under: ${roots.join(', ')}`);
     process.exitCode = 1;
     return;
   }
@@ -809,6 +831,7 @@ async function main() {
     failures,
     totalMs,
     toLabel,
+    shard,
   };
 
   for (const line of summaryLines(report)) console.log(line);
