@@ -196,3 +196,23 @@ test('resource-free retained and fix preparation skips later template drift', as
   await prepareRetainedRunCapabilities(run.id, deps);
   assert.equal(prepared.length, 0);
 });
+
+test('retained lightweight interactive dev prepares TASK declarations after an operator wait', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'lightweight-resource-snapshot-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const { run, deps, prepared } = fixture([requirement]);
+  run.flowType = 'dev';
+  run.mode = 'interactive';
+  run.devInteractiveProfile = 'lightweight';
+  run.taskFile = path.join(directory, 'TASK.md');
+  await writeFile(
+    run.taskFile,
+    '---\nruntime_capabilities: [device-client]\n---\n# Authored lightweight template\n',
+  );
+  await writeFile(
+    path.join(directory, 'CHECKLIST.md'),
+    '# Operator plan\n- [ ] Validate the agreed work.\n',
+  );
+  await prepareRetainedRunCapabilities(run.id, deps);
+  assert.deepEqual(prepared, [[requirement]]);
+});

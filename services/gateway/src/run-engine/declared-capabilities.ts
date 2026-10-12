@@ -3,7 +3,9 @@ import path from 'node:path';
 
 import { parseMarkdownDocument } from '@farmslot/agent-runtime';
 import {
+  EXECUTION_CHECKLIST_DOCUMENT,
   type ExecutionTemplateRunMode,
+  isLightweightInteractiveDevRun,
   isRuntimeCapabilityProofMode,
   isTerminalRunStatus,
   recipeFlowRequirements,
@@ -218,7 +220,10 @@ export async function prepareRetainedRunCapabilities(
     throw new BlockedRunError(
       'Retained capability preparation requires the authored task snapshot.',
     );
-  const snapshot = await readFile(path.join(path.dirname(run.taskFile), 'CHECKLIST.md'), 'utf8');
+  const document = isLightweightInteractiveDevRun(run)
+    ? run.taskFile
+    : path.join(path.dirname(run.taskFile), EXECUTION_CHECKLIST_DOCUMENT);
+  const snapshot = await readFile(document, 'utf8');
   const resources = recipeFlowRequirements(parseMarkdownDocument(snapshot).frontmatter).resources;
   assertDeclaredCapabilityPreparation(await prepareDeclaredRunCapabilities(runId, resources, deps));
 }

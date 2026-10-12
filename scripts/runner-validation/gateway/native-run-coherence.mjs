@@ -608,6 +608,7 @@ try {
       runId: emptyRunId,
       slotId: emptySlot,
       missingMode: process.argv.includes('--missing-proof-mode'),
+      lightweight: process.argv.includes('--lightweight-declarations'),
       writeJson,
     });
     mode({ mode: 'complete' });

@@ -4,9 +4,15 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { FLOW_STEPS, type Run, type RuntimeCapabilityStatusResult } from '@farmslot/protocol';
+import {
+  FLOW_STEPS,
+  type Run,
+  type RuntimeCapabilityStatusResult,
+  type WorkerTerminalContractDocument,
+} from '@farmslot/protocol';
 
 import { taskInit } from '../packages/agent-runtime/src/task-init/index.js';
+import { writeTaskDir } from '../packages/agent-runtime/src/task-init/write.js';
 import { alive } from '../packages/agent-runtime/src/native/storage.js';
 
 interface Fixture {
@@ -16,6 +22,7 @@ interface Fixture {
   runId: string;
   slotId: string;
   missingMode: boolean;
+  lightweight?: boolean;
 }
 type WriteJson = (file: string, value: unknown) => void;
 type Rpc = <T>(method: string, params: unknown) => T;
@@ -125,6 +132,23 @@ export async function prepareDeclaredCapabilityProof(input: Fixture & { writeJso
     task: { title: 'Declared service acquisition', sourceKind: 'text', ticket: 'COHERENCE-23' },
     handoff: { surface: 'fixture', project, repo },
   });
+  if (input.lightweight) {
+    const template = readFileSync(path.join(taskDir, 'CHECKLIST.md'), 'utf8');
+    const taskDocument = readFileSync(path.join(taskDir, 'TASK.md'), 'utf8');
+    await writeTaskDir({
+      taskDir,
+      taskMarkdown: `${template}\n${taskDocument}`,
+      checklistMarkdown: null,
+      handoff: initialized.handoffMetadata,
+      terminalContract: JSON.parse(
+        readFileSync(initialized.terminalContract, 'utf8'),
+      ) as WorkerTerminalContractDocument,
+    });
+    writeFileSync(
+      path.join(taskDir, 'CHECKLIST.md'),
+      '# Operator plan\n- [ ] Inspect the owned service.\n',
+    );
+  }
   const now = new Date().toISOString();
   writeJson(path.join(root, '.runs', `${runId}.json`), {
     id: runId,
@@ -132,6 +156,7 @@ export async function prepareDeclaredCapabilityProof(input: Fixture & { writeJso
     ticketOrPr: 'COHERENCE-23',
     flowType: 'dev',
     mode: 'interactive',
+    devInteractiveProfile: input.lightweight ? 'lightweight' : 'reviewed',
     transport: 'native',
     nativeOwnerPrincipalId: 'legacy-env',
     safetyTier: 'full-auto',
@@ -308,13 +333,19 @@ export async function proveDeclaredCapabilityAcquisition(
           'failed',
           'Retained dispatch must ignore later live-template drift',
         );
-        if (run.steps.find((step) => step.name === 'dispatch')?.status === 'done')
+        if (run.steps.find((step) => step.name === 'dispatch')?.status === 'done') {
+          if (input.lightweight)
+            writeJson(path.join(outDir, 'lightweight-replay-state.json'), {
+              run,
+              capabilities: value,
+            });
           assert.ok(
             value.leases.some(
               (lease) => lease.capabilityId === 'owned-server' && lease.state === 'acquired',
             ),
             'Retained native replay must reacquire its declared provider before completing dispatch',
           );
+        }
         return value;
       },
       (value) =>
@@ -330,6 +361,10 @@ export async function proveDeclaredCapabilityAcquisition(
     const reacquiredPid = Number(readFileSync(path.join(repo, 'owned-server.pid'), 'utf8'));
     assert.equal(await (await fetch(url())).text(), 'coherence-server');
     check('replayed dispatch reacquires the same declared provider through existing posture');
+    if (input.lightweight)
+      check(
+        'lightweight interactive dev reacquires TASK-declared resources after an operator wait',
+      );
     check('retained dispatch uses the authored task snapshot after a live template edit');
     await restartGateway();
     const recovered = status().leases.find((lease) => lease.id === reacquired.id);
@@ -406,6 +441,7 @@ export async function proveDeclaredCapabilityAcquisition(
     runId,
     slotId,
     missingMode,
+    lightweight: Boolean(input.lightweight),
     scope:
       'Real gateway, provider hooks, kernel ownership and HTTP service; synthetic native protocol peer. No application or model execution claim. Authored existing proof plan, no operator lease. Headless service has no visual/HUD claim.',
     hashes: Object.fromEntries(
