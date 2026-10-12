@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -31,6 +30,7 @@ import {
   selectedEvidenceKeysForPublication,
   shouldMarkReadyAfterCompletion,
 } from './orchestrator.js';
+import { readCurrentPackageEvidence } from './package-evidence-manifest.js';
 import { makeRun } from './test-fixtures.js';
 
 test('monitor repair completion preserves draft publication state', () => {
@@ -694,8 +694,6 @@ test('assertReadyGatePackageInputsCurrent publishes an edited body instead of re
       ticketOrPr: 'PROJ-1',
       taskFile,
     });
-    const sha256 = createHash('sha256').update(imageBytes).digest('hex');
-    const videoSha256 = createHash('sha256').update(videoBytes).digest('hex');
     const draftBody = await buildDraftPrBody(run, null, [
       { path: 'artifacts/after-ac1.png', purpose: 'screenshot', sizeBytes: imageBytes.length },
       { path: 'artifacts/after.mp4', purpose: 'video', sizeBytes: videoBytes.length },
@@ -720,20 +718,7 @@ test('assertReadyGatePackageInputsCurrent publishes an edited body instead of re
       diffStat: { files: 1, additions: 1, deletions: 0 },
       draftTitle: 'feat: implement PROJ-1',
       draftBody,
-      evidenceManifest: [
-        {
-          path: 'artifacts/after-ac1.png',
-          purpose: 'screenshot',
-          sizeBytes: imageBytes.length,
-          sha256,
-        },
-        {
-          path: 'artifacts/after.mp4',
-          purpose: 'video-after',
-          sizeBytes: videoBytes.length,
-          sha256: videoSha256,
-        },
-      ],
+      evidenceManifest: (await readCurrentPackageEvidence(run)).inventory,
       selectedEvidenceKeys: ['artifacts/after-ac1.png'],
       validationSummaryPath: null,
       validationSummaryHash: null,
