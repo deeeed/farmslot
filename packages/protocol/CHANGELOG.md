@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+## 0.40.0 - 2026-10-12
+
 - Validate bounded `watch_logs` windows and require explicit file scope for output-derived log paths.
 
 - Share gate prerequisite reasons and presentation for fixing, reviewer failure and reconciliation states.

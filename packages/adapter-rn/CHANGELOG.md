@@ -4,6 +4,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## Unreleased
 
+## 0.20.1 - 2026-10-12
+
+- Update shared runtime dependencies for bounded recipe log observations.
+
 - Record the explicitly selected Android device in native recipe proofs.
 
 ## 0.20.0 - 2026-10-12
