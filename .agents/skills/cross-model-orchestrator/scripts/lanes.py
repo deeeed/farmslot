@@ -162,6 +162,7 @@ def observe(config, lane_id, *, read_only=False):
               if read_only else _record(config, lane_id))
     item = {"id": lane_id, "runner": lane["runner"], "session": _session(lane),
             "goal": lane["goal"], "report": lane["report"],
+            "session_id": record.get("session_id") or lane.get("resume_id"),
             "reservations": record["reservations"]}
     pane = _pane(config, lane, record)
     if pane is None:
@@ -172,6 +173,7 @@ def observe(config, lane_id, *, read_only=False):
         phase = observation.get("phase", "unknown")
         state = observation.get("state", "unknown")
         item.update(pane_id=pane, state=state, phase=phase,
+                    session_id=observation.get("session_id") or item["session_id"],
                     status=phase if state == lane["runner"] else state,
                     observation=observation)
     return item
@@ -250,7 +252,7 @@ def _goal_prompt(lane, reservations, prefix):
 
 def _runner_adapter(config, lane, record):
     runtime = record.get("runtime_dir", str(Path(config["state_dir"]) / "lanes" / lane["id"] / "runtime"))
-    resume_id = record.get("session_id", lane.get("resume_id"))
+    resume_id = lane.get("resume_id") or record.get("session_id")
     request = {**lane, "runtime_dir": runtime, "resume_id": resume_id}
     result = run(["node", "--import", "tsx", str(DRIVER_DIR / "runner-launch.mjs")],
                  cwd=str(DRIVER_DIR.parents[3]), input=json.dumps(request))
@@ -290,27 +292,53 @@ def launch(config, lane_id, *, restoring=False, submit_goal=True):
         return _launch(config, lane_id, restoring=restoring, submit_goal=submit_goal)
 
 
+def _pane_owner(observation):
+    fields = ("pane_id", "pane_pid", "pane_started_at", "socket_path")
+    return ({key: observation[key] for key in fields}
+            if all(observation.get(key) for key in fields) else None)
+
+
 def _launch(config, lane_id, *, restoring, submit_goal):
     lane = lane_by_id(config, lane_id)
     record = _record(config, lane_id)
     pane = _pane(config, lane, record)
+    created = pane is None
     if pane is not None:
         observation = _observe(config, lane, pane, record)
         record = _record(config, lane_id)
-        if (submit_goal and not record.get("goal_submitted") and
-                observation.get("state") == lane["runner"] and observation.get("phase") == "idle"):
-            return _submit_goal(config, lane, pane, _record(config, lane_id))
-        return {"lane": lane_id, "status": "existing", "pane_id": pane, "observation": observation}
+        if observation.get("state") != "shell":
+            if (submit_goal and not record.get("goal_submitted") and
+                    observation.get("state") == lane["runner"] and observation.get("phase") == "idle"):
+                return _submit_goal(config, lane, pane, _record(config, lane_id))
+            return {"lane": lane_id, "status": "existing", "pane_id": pane, "observation": observation}
+        owned = _pane_owner(observation)
+        if not (lane.get("resume_id") or record.get("session_id") or
+                owned and record.get("launch_pane_owner") == owned):
+            raise ValueError(f"lane {lane_id} has a shell but no recorded session; configure resume_id")
     if not Path(lane["cwd"]).is_dir():
         raise ValueError(f"lane {lane_id} needs an existing cwd")
     adapter = _runner_adapter(config, lane, record)
     if submit_goal:
         _require_goal(lane, adapter)
-    resume_id = record.get("session_id", lane.get("resume_id"))
-    pane = run(tmux_argv(config, "new-session", "-d", "-P", "-F", "#{pane_id}",
-                         "-s", _session(lane), "-c", lane["cwd"], adapter["command"])).stdout.strip()
+    resume_id = lane.get("resume_id") or record.get("session_id")
+    if pane is None:
+        pane = run(tmux_argv(config, "new-session", "-d", "-P", "-F", "#{pane_id}",
+                             "-s", _session(lane), "-c", lane["cwd"], adapter["command"])).stdout.strip()
+    else:
+        # The shell transport rechecks ownership and proves staged-script execution.
+        staged = run(["bash", str(DRIVER_DIR / "send-shell-script.sh"), pane, lane["cwd"],
+                      str(Path(config["state_dir"]) / "transport.jsonl")],
+                     cwd=str(DRIVER_DIR.parents[3]), env=_env(config, lane, record),
+                     input=adapter["command"], timeout=lane.get("send_timeout", 30), check=False)
+        if not staged.stdout.strip():
+            raise RuntimeError(f"lane {lane_id} shell launcher returned no receipt (exit {staged.returncode})")
+        delivery = json.loads(staged.stdout)
+        if staged.returncode or not delivery.get("submitted"):
+            raise RuntimeError(f"lane {lane_id} shell launch refused: {delivery.get('verification', 'unverified')}")
     if not pane.startswith("%") or not pane[1:].isdigit():
         raise RuntimeError(f"tmux did not return a pane id for lane {lane_id}")
+    if resume_id != record.get("session_id"):
+        record["goal_submitted"] = False
     record.update(pane_id=pane, runtime_dir=adapter["runtime_dir"],
                   observability_dir=adapter["observability_dir"], session_id=resume_id,
                   goal_supported=adapter.get("goal_supported", False), goal_prefix=adapter.get("goal_prefix", "/goal"))
@@ -320,8 +348,19 @@ def _launch(config, lane_id, *, restoring, submit_goal):
     deadline = time.monotonic() + lane.get("launch_timeout", 120)
     while True:
         observation = _observe(config, lane, pane, record)
+        owner = _pane_owner(observation)
+        if created and owner:
+            record["launch_pane_owner"] = owner
+            _update(config, lane_id, {"launch_pane_owner": record["launch_pane_owner"]})
+            created = False
         phase = observation.get("phase", "unknown")
         if observation.get("state") == lane["runner"]:
+            if observation.get("auto_action") == "codex-skip-update":
+                remaining = max(1, int(deadline - time.monotonic()))
+                run(["bash", str(DRIVER_DIR / "resolve-launch-blockers.sh"), pane,
+                     lane["runner"], str(remaining)], cwd=str(DRIVER_DIR.parents[3]),
+                    env=_env(config, lane, record), timeout=remaining + 5)
+                continue
             if phase == "idle":
                 break
             if phase in {"question", "queued", "pending-question", "launch-blocker"} or (phase == "busy" and not adapter.get("bootstrap_pending")):
@@ -331,7 +370,7 @@ def _launch(config, lane_id, *, restoring, submit_goal):
         if time.monotonic() >= deadline:
             raise TimeoutError(f"lane {lane_id} did not become ready; last state: {json.dumps(observation)}")
         time.sleep(0.05)
-    if not submit_goal or restoring and resume_id and record.get("goal_submitted"):
+    if not submit_goal or resume_id and record.get("goal_submitted"):
         return {"lane": lane_id, "status": "restored" if restoring else "launched", "pane_id": pane,
                 "resume_id": resume_id, "observation": observation}
     output = _submit_goal(config, lane, pane, _record(config, lane_id), adapter)

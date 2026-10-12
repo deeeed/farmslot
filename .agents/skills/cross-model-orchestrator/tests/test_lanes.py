@@ -124,6 +124,106 @@ class LaneTests(unittest.TestCase):
         with patch.dict('os.environ', {'TMUX_MODEL_DRIVER_READ_ONLY': '1'}):
             self.assertNotIn('TMUX_MODEL_DRIVER_READ_ONLY', lanes._env(self.config, self.config['lanes'][0], {}))
 
+    def test_status_retains_session_after_exit_without_writing(self):
+        lanes._update(self.config, "one", {"session_id": "recorded-session"})
+        before = lanes.registry_path(self.config).read_bytes()
+        for present in (False, True):
+            def command(argv, **kwargs):
+                if "list-panes" in argv:
+                    return result("%1\n" if present and "=one" in argv else "", 0 if present else 1)
+                return result(json.dumps({"state": "shell", "phase": "idle", "session_id": None}))
+            with patch.object(lanes, "run", side_effect=command):
+                item = lanes.status(self.config)[0]
+            self.assertEqual(item["session_id"], "recorded-session")
+            self.assertEqual(item["status"], "shell" if present else "missing")
+        self.assertEqual(lanes.registry_path(self.config).read_bytes(), before)
+
+    def test_launch_resumes_preserved_shell_through_guard_without_resubmitting_goal(self):
+        lane = self.config["lanes"][0]
+        lane["resume_id"] = "chosen-session"
+        lanes._update(self.config, "one", {"session_id": "chosen-session", "goal_submitted": True})
+        calls = []
+        reads = 0
+        def command(argv, **kwargs):
+            nonlocal reads
+            calls.append(argv)
+            if argv[0] == "node":
+                request = json.loads(kwargs["input"])
+                self.assertEqual(request["resume_id"], "chosen-session")
+                return result(json.dumps({"command": "resumed-runner", "goal_supported": True,
+                    "runtime_dir": request["runtime_dir"], "observability_dir": request["runtime_dir"] + "/.observability"}))
+            if Path(argv[1]).name == "pane-state.sh":
+                reads += 1
+                return result(json.dumps({"state": "shell" if reads == 1 else "codex", "phase": "idle",
+                    "session_id": None if reads == 1 else "chosen-session"}))
+            self.assertEqual(Path(argv[1]).name, "send-shell-script.sh")
+            self.assertEqual(kwargs["input"], "resumed-runner")
+            return result(json.dumps({"submitted": True}))
+        with patch.object(lanes, "_pane", return_value="%1"), patch.object(lanes, "run", side_effect=command):
+            output = lanes.launch(self.config, "one")
+        self.assertEqual(output["pane_id"], "%1")
+        self.assertEqual(output["resume_id"], "chosen-session")
+        self.assertEqual(lanes._record(self.config, "one")["session_id"], "chosen-session")
+        self.assertFalse(any("new-session" in call or "send-and-verify.sh" in str(call) for call in calls))
+
+    def test_launch_shell_requires_known_resume_id(self):
+        with patch.object(lanes, "_pane", return_value="%1"), patch.object(lanes, "_observe", return_value={"state": "shell"}):
+            with self.assertRaisesRegex(ValueError, "resume_id"):
+                lanes.launch(self.config, "one")
+
+    def test_launch_retries_owned_startup_failure_without_inventing_session(self):
+        owner = {"pane_id": "%1", "pane_pid": "42", "pane_started_at": 7, "socket_path": "fixture"}
+        lanes._update(self.config, "one", {"launch_pane_owner": owner, "goal_submitted": True})
+        runtime = str(Path(self.config["state_dir"]) / "runtime")
+        adapter = {"command": "fresh-runner", "runtime_dir": runtime, "observability_dir": runtime + "/.observability"}
+        def command(argv, **kwargs):
+            self.assertEqual(Path(argv[1]).name, "send-shell-script.sh")
+            self.assertEqual(kwargs["input"], "fresh-runner")
+            return result('{"submitted":true}')
+        states = [{**owner, "state": "shell", "phase": "idle"}, {**owner, "state": "codex", "phase": "idle"}]
+        with patch.object(lanes, "_pane", return_value="%1"), patch.object(lanes, "_observe", side_effect=states), \
+             patch.object(lanes, "_runner_adapter", return_value=adapter) as built, patch.object(lanes, "run", side_effect=command):
+            output = lanes.launch(self.config, "one", submit_goal=False)
+        self.assertIsNone(output['resume_id'])
+        self.assertIsNone(built.call_args.args[2].get('session_id'))
+        replacement = {**owner, "pane_pid": "99", "state": "shell"}
+        with patch.object(lanes, "_pane", return_value="%1"), patch.object(lanes, "_observe", return_value=replacement), \
+             patch.object(lanes, "_runner_adapter") as blocked:
+            with self.assertRaisesRegex(ValueError, "resume_id"):
+                lanes.launch(self.config, "one", submit_goal=False)
+        blocked.assert_not_called()
+
+    def test_startup_owner_uses_pane_birth_when_child_starts_later_then_exits(self):
+        owner = {"pane_id": "%1", "pane_pid": "42", "pane_started_at": 7, "socket_path": "fixture"}
+        runtime = str(Path(self.config["state_dir"]) / "runtime")
+        adapter = {"command": "runner", "runtime_dir": runtime, "observability_dir": runtime + "/.observability"}
+        def command(argv, **kwargs):
+            self.assertIn('new-session', argv)
+            return result('%1\n')
+        running = {**owner, 'state': 'codex', 'phase': 'question', 'process_started_at': 20}
+        with patch.object(lanes, '_pane', return_value=None), patch.object(lanes, '_runner_adapter', return_value=adapter), \
+             patch.object(lanes, '_observe', return_value=running), patch.object(lanes, 'run', side_effect=command):
+            self.assertEqual(lanes.launch(self.config, 'one', submit_goal=False)['status'], 'question')
+        self.assertEqual(lanes._record(self.config, 'one')['launch_pane_owner'], owner)
+        shell = {**owner, 'state': 'shell', 'phase': 'idle', 'process_started_at': 7}
+        with patch.object(lanes, '_pane', return_value='%1'), patch.object(lanes, '_observe', side_effect=[shell, running]), \
+             patch.object(lanes, '_runner_adapter', return_value=adapter), patch.object(lanes, 'run', return_value=result('{"submitted":true}')):
+            self.assertEqual(lanes.launch(self.config, 'one', submit_goal=False)['status'], 'question')
+
+    def test_launch_resolves_shared_update_gate_before_native_readiness(self):
+        runtime = str(Path(self.config["state_dir"]) / "runtime")
+        adapter = {"command": "runner", "runtime_dir": runtime, "observability_dir": runtime + "/.observability"}
+        def command(argv, **kwargs):
+            if "new-session" in argv: return result("%9\n")
+            self.assertEqual(Path(argv[1]).name, "resolve-launch-blockers.sh")
+            return result('{}')
+        states = [{"state": "codex", "phase": "launch-blocker", "auto_action": "codex-skip-update"},
+                  {"state": "codex", "phase": "idle"}]
+        with patch.object(lanes, "_pane", return_value=None), patch.object(lanes, "_runner_adapter", return_value=adapter), \
+             patch.object(lanes, "_observe", side_effect=states), patch.object(lanes, "run", side_effect=command) as mocked:
+            self.assertEqual(lanes.launch(self.config, "one", submit_goal=False)["status"], "launched")
+        self.assertEqual(sum("resolve-launch-blockers.sh" in str(call) for call in mocked.call_args_list), 1)
+
     def test_lane_model_and_effort_reach_shared_launch_and_resume_adapter(self):
         lane = self.config['lanes'][0]
         lane.update(model='chosen-model', effort='xhigh')
@@ -134,6 +234,10 @@ class LaneTests(unittest.TestCase):
         with patch.object(lanes, 'run', side_effect=adapter):
             lanes._runner_adapter(self.config, lane, {})
             lanes._runner_adapter(self.config, lane, {'session_id': 'retained-session'})
+            lane['resume_id'] = 'explicit-session'
+            with patch.object(lanes, 'run', return_value=result('{}')) as explicit:
+                lanes._runner_adapter(self.config, lane, {'session_id': 'older-session'})
+            self.assertEqual(json.loads(explicit.call_args.kwargs['input'])['resume_id'], 'explicit-session')
 
     def test_send_refuses_shell_and_never_uses_raw_tmux_send(self):
         def command(argv, **kwargs):

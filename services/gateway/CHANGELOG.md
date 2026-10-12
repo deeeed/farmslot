@@ -55,6 +55,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+- Allow managed runner resumes to suppress startup update checks.
+
 ## 0.21.0 - 2026-10-10
 
 - The accompanying private CLI/node revision includes stored-secret error redaction, a separate browser-open status line, and matching environment-root handling for deployment checks and services.

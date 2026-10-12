@@ -6,6 +6,8 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+- Keep lane terminals after runner exit, show retained session IDs and support guarded resume with skip-only startup updates.
+
 ## 0.6.4 - 2026-10-10
 
 - Publish with agent-runtime 0.17.4 so consumers share one dependency copy. No code change.
