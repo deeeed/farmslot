@@ -261,8 +261,19 @@ if (phase === 'serve') {
         },
       ],
     });
-    writeJson(path.join(root, 'pool/status-local.json'), {
-      slots: [{ slot: slotId, lifecycle: 'held', phase: 'occupied', current_run_id: runId }],
+    writeJson(path.join(root, '.farm-status.json'), {
+      checked_at: new Date().toISOString(),
+      slots: [
+        {
+          slot: slotId,
+          machine: hostname(),
+          project,
+          platform: 'cli',
+          lifecycle: 'busy',
+          phase: 'review-gate',
+          current_run_id: runId,
+        },
+      ],
     });
     const now = new Date().toISOString();
     const prepared: ReadyGatePrPackage = {
