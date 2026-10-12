@@ -50,6 +50,9 @@ native session, not evidence of an active runner. To recover, set that lane's `r
 this ID in the private config, then run `launch <lane>`. Launch resumes in the retained shell
 through the guarded shell driver, or creates a pane if the session disappeared. A running
 runner remains untouched. Recovery preserves an already-submitted goal.
+If startup failed before a native session existed, `launch` can retry fresh in its own
+retained pane after the startup cause is fixed. It checks the saved process identity and
+refuses an unrelated or replaced shell.
 
 Fresh launches and resumes suppress startup update checks. If an update menu still appears,
 the driver rechecks the runner and pane and submits the shared skip choice once. It never

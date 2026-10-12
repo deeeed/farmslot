@@ -171,6 +171,28 @@ class LaneTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "resume_id"):
                 lanes.launch(self.config, "one")
 
+    def test_launch_retries_owned_startup_failure_without_inventing_session(self):
+        owner = {"pane_id": "%1", "pane_pid": "42", "process_started_at": 7, "socket_path": "fixture"}
+        lanes._update(self.config, "one", {"launch_pane_owner": owner, "goal_submitted": True})
+        runtime = str(Path(self.config["state_dir"]) / "runtime")
+        adapter = {"command": "fresh-runner", "runtime_dir": runtime, "observability_dir": runtime + "/.observability"}
+        def command(argv, **kwargs):
+            self.assertEqual(Path(argv[1]).name, "send-shell-script.sh")
+            self.assertEqual(kwargs["input"], "fresh-runner")
+            return result('{"submitted":true}')
+        states = [{**owner, "state": "shell", "phase": "idle"}, {**owner, "state": "codex", "phase": "idle"}]
+        with patch.object(lanes, "_pane", return_value="%1"), patch.object(lanes, "_observe", side_effect=states), \
+             patch.object(lanes, "_runner_adapter", return_value=adapter) as built, patch.object(lanes, "run", side_effect=command):
+            output = lanes.launch(self.config, "one", submit_goal=False)
+        self.assertIsNone(output['resume_id'])
+        self.assertIsNone(built.call_args.args[2].get('session_id'))
+        replacement = {**owner, "pane_pid": "99", "state": "shell"}
+        with patch.object(lanes, "_pane", return_value="%1"), patch.object(lanes, "_observe", return_value=replacement), \
+             patch.object(lanes, "_runner_adapter") as blocked:
+            with self.assertRaisesRegex(ValueError, "resume_id"):
+                lanes.launch(self.config, "one", submit_goal=False)
+        blocked.assert_not_called()
+
     def test_launch_resolves_shared_update_gate_before_native_readiness(self):
         runtime = str(Path(self.config["state_dir"]) / "runtime")
         adapter = {"command": "runner", "runtime_dir": runtime, "observability_dir": runtime + "/.observability"}

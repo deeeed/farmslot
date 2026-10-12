@@ -292,10 +292,17 @@ def launch(config, lane_id, *, restoring=False, submit_goal=True):
         return _launch(config, lane_id, restoring=restoring, submit_goal=submit_goal)
 
 
+def _pane_owner(observation):
+    fields = ("pane_id", "pane_pid", "process_started_at", "socket_path")
+    return ({key: observation[key] for key in fields}
+            if all(observation.get(key) for key in fields) else None)
+
+
 def _launch(config, lane_id, *, restoring, submit_goal):
     lane = lane_by_id(config, lane_id)
     record = _record(config, lane_id)
     pane = _pane(config, lane, record)
+    created = pane is None
     if pane is not None:
         observation = _observe(config, lane, pane, record)
         record = _record(config, lane_id)
@@ -304,7 +311,9 @@ def _launch(config, lane_id, *, restoring, submit_goal):
                     observation.get("state") == lane["runner"] and observation.get("phase") == "idle"):
                 return _submit_goal(config, lane, pane, _record(config, lane_id))
             return {"lane": lane_id, "status": "existing", "pane_id": pane, "observation": observation}
-        if not (lane.get("resume_id") or record.get("session_id")):
+        owned = _pane_owner(observation)
+        if not (lane.get("resume_id") or record.get("session_id") or
+                owned and record.get("launch_pane_owner") == owned):
             raise ValueError(f"lane {lane_id} has a shell but no recorded session; configure resume_id")
     if not Path(lane["cwd"]).is_dir():
         raise ValueError(f"lane {lane_id} needs an existing cwd")
@@ -339,6 +348,11 @@ def _launch(config, lane_id, *, restoring, submit_goal):
     deadline = time.monotonic() + lane.get("launch_timeout", 120)
     while True:
         observation = _observe(config, lane, pane, record)
+        owner = _pane_owner(observation)
+        if created and owner:
+            record["launch_pane_owner"] = owner
+            _update(config, lane_id, {"launch_pane_owner": record["launch_pane_owner"]})
+            created = False
         phase = observation.get("phase", "unknown")
         if observation.get("state") == lane["runner"]:
             if observation.get("auto_action") == "codex-skip-update":
