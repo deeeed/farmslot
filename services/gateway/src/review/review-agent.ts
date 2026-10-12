@@ -60,7 +60,6 @@ import {
 } from '../runners/registry.js';
 import {
   captureRunnerSessionMetadata,
-  isRunnerAliveUnderPane,
   probeRunnerDescendantPid,
   resumableSessionProbeCommand,
 } from '../runners/session-process.js';
@@ -1692,15 +1691,8 @@ export async function waitForReviewCompletion(
       }
     }
   };
-  let reviewerWasObservedActive = false;
-
-  while (true) {
-    const remainingMs = Math.max(0, timeoutMs - (Date.now() - start));
-    await new Promise((r) => setTimeout(r, Math.min(pollInterval, remainingMs)));
-    let reviewerActive = false;
-
-    // Successful terminal signals require every configured feedback artifact.
-    // Failed/blocked signals take the existing failed-review path immediately.
+  // Only the reviewer-owned terminal mark can establish successful completion.
+  const completeFromTerminalSignal = async (): Promise<boolean> => {
     const signalRaw = (
       await execOnSlot(
         vars,
@@ -1715,29 +1707,37 @@ export async function waitForReviewCompletion(
         `[review] ignoring invalid ${signalBasename} during poll: ${(err as Error).message}`,
       );
     }
-    if (terminalSignal) {
-      if (!isSuccessfulTerminalReviewSignal(terminalSignal)) {
-        await markAgentContextStatus(
-          runId,
-          'review',
-          terminalSignal.status === 'blocked' ? 'blocked' : 'failed',
-          {
-            id: reviewContextId,
-            lastSignalAt: new Date().toISOString(),
-          },
-        );
-        return true;
-      }
-      await validateCompletedOutput();
-      debugReviewLog(
-        `[review] terminal ${signalBasename} (status=${terminalSignal.status}) + feedback — agent completed`,
+    if (!terminalSignal) return false;
+    if (!isSuccessfulTerminalReviewSignal(terminalSignal)) {
+      await markAgentContextStatus(
+        runId,
+        'review',
+        terminalSignal.status === 'blocked' ? 'blocked' : 'failed',
+        {
+          id: reviewContextId,
+          lastSignalAt: new Date().toISOString(),
+        },
       );
-      await markAgentContextStatus(runId, 'review', 'complete', {
-        id: reviewContextId,
-        lastSignalAt: new Date().toISOString(),
-      });
       return true;
     }
+    await validateCompletedOutput();
+    debugReviewLog(
+      `[review] terminal ${signalBasename} (status=${terminalSignal.status}) + feedback — agent completed`,
+    );
+    await markAgentContextStatus(runId, 'review', 'complete', {
+      id: reviewContextId,
+      lastSignalAt: new Date().toISOString(),
+    });
+    return true;
+  };
+  let reviewerWasObservedActive = false;
+
+  while (true) {
+    const remainingMs = Math.max(0, timeoutMs - (Date.now() - start));
+    await new Promise((r) => setTimeout(r, Math.min(pollInterval, remainingMs)));
+    let reviewerActive = false;
+
+    if (await completeFromTerminalSignal()) return true;
 
     // Check the immutable reviewer target. Window names are not unique in tmux
     // and must never be used for lifecycle or completion decisions.
@@ -1750,6 +1750,7 @@ export async function waitForReviewCompletion(
       ).exitCode === 0;
 
     if (!hasWindow) {
+      if (await completeFromTerminalSignal()) return true;
       return terminalInvalid(`${signalBasename} is missing after the reviewer window closed`);
     }
 
@@ -1764,12 +1765,13 @@ export async function waitForReviewCompletion(
     ).stdout.trim();
 
     if (panePid) {
-      const agentAlive = await isRunnerAliveUnderPane(vars, panePid, runner);
-      reviewerActive = agentAlive;
-      reviewerWasObservedActive ||= agentAlive;
+      const runnerProbe = await probeRunnerDescendantPid(vars, panePid, runner);
+      reviewerActive = runnerProbe.state === 'present';
+      reviewerWasObservedActive ||= reviewerActive;
 
-      if (!agentAlive && reviewerWasObservedActive) {
-        debugReviewLog(`[review] runner stopped without its terminal mark; continuing signal wait`);
+      if (runnerProbe.state === 'absent' && reviewerWasObservedActive) {
+        if (await completeFromTerminalSignal()) return true;
+        return terminalInvalid(`${signalBasename} is missing after the reviewer runner exited`);
       }
     }
 

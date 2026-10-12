@@ -19,6 +19,8 @@ import { fileURLToPath } from 'node:url';
 
 import type { ReadyGatePayload, Run } from '@farmslot/protocol';
 
+const scenario = process.env.FARMSLOT_TERMINAL_PROOF_SCENARIO ?? 'completion';
+assert.ok(['completion', 'runner-exit'].includes(scenario), 'known terminal proof scenario');
 const source = fileURLToPath(new URL('../../../', import.meta.url));
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
@@ -63,13 +65,21 @@ if (process.argv[2] === 'serve') {
     ),
     'request-review',
   );
-  const result = await executePublishGateReviewPlan(
-    runId,
-    getRun(runId)!.slotId!,
-    [{ runner: 'claude', model: 'sonnet', effort: null, mode: 'cold' }],
-    'dispatch',
-  );
-  json(path.join(out, 'review-finished.json'), { result, run: getRun(runId) });
+  try {
+    const result = await executePublishGateReviewPlan(
+      runId,
+      getRun(runId)!.slotId!,
+      [{ runner: 'claude', model: 'sonnet', effort: null, mode: 'cold' }],
+      'dispatch',
+    );
+    json(path.join(out, 'review-finished.json'), { result, run: getRun(runId) });
+  } catch (error) {
+    if (scenario !== 'runner-exit') throw error;
+    json(path.join(out, 'review-exited.json'), {
+      error: error instanceof Error ? { name: error.name, message: error.message } : error,
+      run: getRun(runId),
+    });
+  }
 } else {
   execFileSync('tmux', ['-N', 'has-session']);
   const temporary = mkdtempSync(path.join(tmpdir(), 'review-terminal-proof-'));
@@ -312,9 +322,12 @@ if (process.argv[2] === 'serve') {
     // Observe the real completion loop without changing its decision. This marker
     // proves a result-first turn has crossed the production polling boundary.
     const loader = path.join(temporary, 'observe.mjs');
+    const signalObservation = `if (await import('node:fs').then(fs => fs.existsSync(${JSON.stringify(path.join(out, 'result-written'))}))) { const fs = await import('node:fs'); fs.writeFileSync(${JSON.stringify(path.join(out, 'result-first-polled'))}, 'observed'); }\nconst signalRaw = (`;
+    // Only the shared provider's observed PID is eligible for the crash control.
+    const processObservation = `reviewerWasObservedActive ||= reviewerActive; if (runnerProbe.state === 'present') { const fs = await import('node:fs'); fs.writeFileSync(${JSON.stringify(path.join(out, 'runner-observed.json'))}, JSON.stringify(runnerProbe)); }`;
     writeFileSync(
       loader,
-      `import {registerHooks} from 'node:module'; import {writeFileSync,existsSync} from 'node:fs'; import assert from 'node:assert/strict'; registerHooks({load(url,context,nextLoad){const result=nextLoad(url,context);if(!url.endsWith('/services/gateway/src/review/review-agent.ts'))return result;const before=String(result.source);const after=before.replace('const signalRaw = (', ${JSON.stringify(`if (await import('node:fs').then(fs => fs.existsSync(${JSON.stringify(path.join(out, 'result-written'))}))) { const fs = await import('node:fs'); fs.writeFileSync(${JSON.stringify(path.join(out, 'result-first-polled'))}, 'observed'); }\nconst signalRaw = (`)}); assert.notEqual(after,before);return {...result,source:after};}});`,
+      `import {registerHooks} from 'node:module'; import assert from 'node:assert/strict'; registerHooks({load(url,context,nextLoad){const result=nextLoad(url,context);if(!url.endsWith('/services/gateway/src/review/review-agent.ts'))return result;const before=String(result.source);const observed=before.replace('const signalRaw = (', ${JSON.stringify(signalObservation)}); assert.notEqual(observed,before);const after=observed.replace('reviewerWasObservedActive ||= reviewerActive;', ${JSON.stringify(processObservation)}); assert.notEqual(after,observed);return {...result,source:after};}});`,
     );
     env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ''} --import ${loader}`;
     gateway = spawn(
@@ -365,21 +378,66 @@ if (process.argv[2] === 'serve') {
     const target = JSON.parse(readFileSync(path.join(task, 'checklist-target.json'), 'utf8'));
     assert.equal(target.checklist, path.basename(reviewer.taskFile!));
     json(path.join(out, 'result-first.json'), { run: active, target });
-    writeFileSync(path.join(out, 'allow-terminal'), 'continue');
-    await wait(
-      () => existsSync(path.join(out, 'review-finished.json')),
-      'reviewer own terminal finishes',
-    );
-    const finished = JSON.parse(readFileSync(path.join(out, 'review-finished.json'), 'utf8'));
-    assert.equal(finished.run.engineState.publishGate.reviews[0].verdict, 'pass');
-    const archivedSignal = finished.run.engineState.publishGate.reviews[0].artifactPaths.find(
-      (file: string) => file.endsWith('/review-signal.json'),
-    );
-    assert.ok(archivedSignal, 'completed review archives its own terminal signal');
-    const archived = JSON.parse(
-      readFileSync(path.join(repo, '.task/control', archivedSignal), 'utf8'),
-    );
-    assert.equal(archived.status, 'complete');
+    const checks = [
+      'public harness honors explicit CI-FIX despite complete worker',
+      'blocked start resumes through same host',
+      'actual tmux reviewer result-first waits with own checklist target',
+    ];
+    if (scenario === 'runner-exit') {
+      await wait(() => existsSync(path.join(out, 'runner-observed.json')), 'own runner observed');
+      const observed = JSON.parse(readFileSync(path.join(out, 'runner-observed.json'), 'utf8'));
+      assert.equal(observed.state, 'present');
+      assert.ok(Number.isSafeInteger(Number(observed.pid)) && Number(observed.pid) > 1);
+      const exitStartedAt = Date.now();
+      process.kill(Number(observed.pid), 'SIGTERM');
+      await wait(
+        () => existsSync(path.join(out, 'review-exited.json')),
+        'prompt crash refusal',
+        25_000,
+      );
+      const exited = JSON.parse(readFileSync(path.join(out, 'review-exited.json'), 'utf8'));
+      assert.equal(exited.error.name, 'TerminalReviewArtifactError');
+      assert.match(
+        exited.error.message,
+        /terminal mark|signal.*missing after the reviewer runner exited/i,
+      );
+      assert.equal(
+        exited.run.agentContexts.find((context: { id: string }) => context.id === reviewer.id)
+          .status,
+        'blocked',
+      );
+      assert.equal(existsSync(path.join(out, 'review-finished.json')), false);
+      assert.ok(
+        !(exited.run.engineState.publishGate?.reviews ?? []).some(
+          (review: { verdict: string }) => review.verdict === 'pass',
+        ),
+      );
+      json(path.join(out, 'runner-exit.json'), {
+        elapsedMs: Date.now() - exitStartedAt,
+        observed,
+        exited,
+      });
+      checks.push(
+        'observed runner crash refuses promptly with blocked context and no passing archive',
+      );
+    } else {
+      writeFileSync(path.join(out, 'allow-terminal'), 'continue');
+      await wait(
+        () => existsSync(path.join(out, 'review-finished.json')),
+        'reviewer own terminal finishes',
+      );
+      const finished = JSON.parse(readFileSync(path.join(out, 'review-finished.json'), 'utf8'));
+      assert.equal(finished.run.engineState.publishGate.reviews[0].verdict, 'pass');
+      const archivedSignal = finished.run.engineState.publishGate.reviews[0].artifactPaths.find(
+        (file: string) => file.endsWith('/review-signal.json'),
+      );
+      assert.ok(archivedSignal, 'completed review archives its own terminal signal');
+      const archived = JSON.parse(
+        readFileSync(path.join(repo, '.task/control', archivedSignal), 'utf8'),
+      );
+      assert.equal(archived.status, 'complete');
+      checks.push('own terminal mark completes and archives signal');
+    }
     const hashes = Object.fromEntries(
       [
         'services/gateway/src/review/review-agent.ts',
@@ -394,13 +452,9 @@ if (process.argv[2] === 'serve') {
     );
     json(path.join(out, 'receipt.json'), {
       runId,
+      scenario,
       hashes,
-      checks: [
-        'public harness honors explicit CI-FIX despite complete worker',
-        'blocked start resumes through same host',
-        'actual tmux reviewer result-first waits with own checklist target',
-        'own terminal mark completes and archives signal',
-      ],
+      checks,
       limits: [
         'Existing tmux server only; -N refuses server startup. Disposable detached session only; no UI target, HUD not applicable.',
       ],
