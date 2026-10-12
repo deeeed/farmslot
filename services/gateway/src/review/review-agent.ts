@@ -89,6 +89,7 @@ import { terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 import { finishReviewCleanup } from './cleanup.js';
 import { readReviewFeedback } from './feedback.js';
 import { broadcastReviewRun, startProgressWatcher } from './progress.js';
+import { admitReviewRound, reviewRoundAdmissionId } from './review-round-budget.js';
 import { noteReviewInputsAtLaunch } from './reviewed-inputs.js';
 import {
   claimWarmReviewerSession,
@@ -1052,6 +1053,7 @@ export async function runReviewAgent(
     )
       throw new WarmReviewRefusal('session-busy', 'the reviewer session is owned by an active run');
   }
+  await admitReviewRound(_runId, reviewRoundAdmissionId(lineage, loopNumber, startedAt));
   const reviewSnapshot = await captureReviewSnapshot(vars, taskDir, loopNumber, artifactScope, {
     mode,
     baseRef: parentRunForAlloc

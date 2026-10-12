@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Share the five-round review budget and its gate display independently of passing-review counts.
+
 ## 0.40.0 - 2026-10-12
 
 - Validate bounded `watch_logs` windows and require explicit file scope for output-derived log paths.

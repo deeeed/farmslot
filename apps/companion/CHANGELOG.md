@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Show review rounds as N/5 and disable another review when the budget is spent.
+
 - Group delivered roadmap work separately with PR links and delivery outcome filters.
 
 - Show shared gate prerequisite reasons and run lifecycle labels for correction, review failure and reconciliation.
