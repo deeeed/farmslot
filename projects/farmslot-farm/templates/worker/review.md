@@ -3,8 +3,8 @@
 > Operator-requested publication review for a completed Farmslot run.
 > Execute the checklist directly. Do not use shortcut review commands.
 
-> Checklist marker: run `{{TASK_DIR}}/mark start` once, then `{{TASK_DIR}}/mark N`
-> after each checklist item. Finish with `{{TASK_DIR}}/mark complete --mark-last`.
+> Checklist marker: run `{{TASK_DIR}}/mark --checklist {{REVIEW_CHECKLIST}} --signal {{REVIEW_SIGNAL}} start` once, then `{{TASK_DIR}}/mark --checklist {{REVIEW_CHECKLIST}} --signal {{REVIEW_SIGNAL}} N`
+> after each checklist item. Finish with `{{TASK_DIR}}/mark --checklist {{REVIEW_CHECKLIST}} --signal {{REVIEW_SIGNAL}} complete --mark-last`.
 
 ## Task
 
@@ -22,7 +22,7 @@ VALIDATION_DEPTH: {{VALIDATION_DEPTH}}
 
 ## Checklist
 
-- [ ] **1. Start** — run `{{TASK_DIR}}/mark start` and `{{TASK_DIR}}/mark 1`.
+- [ ] **1. Start** — run `{{TASK_DIR}}/mark --checklist {{REVIEW_CHECKLIST}} --signal {{REVIEW_SIGNAL}} start` and `{{TASK_DIR}}/mark --checklist {{REVIEW_CHECKLIST}} --signal {{REVIEW_SIGNAL}} 1`.
 - [ ] **2. Read quality rules**:
   ```bash
   cd {{REPO}}
@@ -49,7 +49,7 @@ VALIDATION_DEPTH: {{VALIDATION_DEPTH}}
   ```
   If screenshots are present, inspect whether the claimed UI state is actually visible.
 - [ ] **6. Judge the change** - check correctness, minimality, test coverage, recipe quality, evidence quality, and whether any introduced issue should block publishing.
-- [ ] **7. Write `{{TASK_DIR}}/artifacts/review-feedback.md`**:
+- [ ] **7. Write `{{TASK_DIR}}/{{REVIEW_FEEDBACK}}`**:
   ```markdown
   # Review: {{TICKET}}
 
@@ -70,5 +70,5 @@ VALIDATION_DEPTH: {{VALIDATION_DEPTH}}
   Use `## Verdict: ISSUES` when any blocking issue or cheap introduced nit remains.
 - [ ] **8. Complete** - run:
   ```bash
-  {{TASK_DIR}}/mark complete --mark-last
+  {{TASK_DIR}}/mark --checklist {{REVIEW_CHECKLIST}} --signal {{REVIEW_SIGNAL}} complete --mark-last
   ```
