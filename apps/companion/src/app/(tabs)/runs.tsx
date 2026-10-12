@@ -10,6 +10,7 @@ import { FLOW_COLORS, FLOW_LABELS, projectColor, RUNNER_COLORS } from '@farmslot
 import { BeforeAfterPreview } from '../../components/BeforeAfterPreview';
 import { FilterEmptyState } from '../../components/FilterEmptyState';
 import { RunPipelineMini } from '../../components/RunPipeline';
+import { RunTitle } from '../../components/RunTitle';
 import {
   type ArtifactHttpHeaders,
   artifactUrlForEntry,
@@ -211,7 +212,7 @@ function RunCard({
           </View>
         </View>
         <Text style={styles.ticketText}>{run.ticketOrPr}</Text>
-        {run.summary ? <Text style={styles.runSummary}>{run.summary}</Text> : null}
+        {run.summary ? <RunTitle style={styles.runSummary} title={run.summary} /> : null}
         {normalizeRunTags(run.tags).length > 0 ? (
           <View style={styles.tagRow}>
             {normalizeRunTags(run.tags).map((tag) => (

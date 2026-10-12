@@ -1,5 +1,6 @@
 import { html, nothing } from 'lit';
 
+import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import type {
   AcceptanceCriterionRef,
   AcceptanceEvidenceLink,
@@ -36,7 +37,8 @@ import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import type { AcceptanceEvidenceOpen } from '../progress-tracker/acceptance-panel.js';
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
-import type { LightboxItem } from '../shared/media-lightbox-types.js';
+import type { LightboxItem, LightboxSelection } from '../shared/media-lightbox-types.js';
+import { renderRunTitle } from '../shared/run-title.js';
 
 import { isRecoverableBlockedWorkerRun } from './blocked-run-recovery-model.js';
 import { ticketUrlForRun } from './family-observability-link-model.js';
@@ -81,6 +83,7 @@ export interface RunDetailViewContext {
   siblings: Run[];
   taskProgress: TaskProgressStructured | null;
   /** The run's acceptance ledger (ADR-060), rendered beside the pipeline progress. */
+  evidenceModel?: EvidenceReviewModel | null;
   acceptanceStatus: AcceptanceStatusLedger | null;
   /** Registered criteria from the task dir, including any still without a verdict. */
   acceptanceCriteria: AcceptanceCriterionRef[] | null;
@@ -93,6 +96,7 @@ export interface RunDetailViewContext {
   /** Link builder for a task-dir relative evidence path in the ledger panel. */
   acceptanceEvidenceHref: (evidencePath: string) => string;
   /** Opens a clicked acceptance evidence file in the evidence lightbox. */
+  openRecipeProof?: (traceIndex: number) => void;
   acceptanceEvidenceOpen: (open: AcceptanceEvidenceOpen) => void;
   selectedStep: Run['steps'][number] | null;
   selectedStepProgress: TaskProgressStructured | null;
@@ -217,6 +221,7 @@ export interface RunEvidenceRenderContext {
   ) => void;
   closeEvidenceLightbox: () => void;
   navigateEvidenceLightbox: (index: number) => void;
+  replaceEvidenceLightbox: (selection: LightboxSelection) => void;
   refreshOutput?: () => void;
   refreshingOutput?: boolean;
   outputError?: string;
@@ -375,6 +380,8 @@ function renderEvidenceLightbox(ctx: RunEvidenceRenderContext) {
       scopeLabel=${ctx.evidenceLightboxScope ?? RUN_OUTPUT_SCOPE}
       @lightbox-close=${() => ctx.closeEvidenceLightbox()}
       @lightbox-navigate=${(event: CustomEvent) => ctx.navigateEvidenceLightbox(event.detail.index)}
+      @lightbox-items-change=${(event: CustomEvent<LightboxSelection>) =>
+        ctx.replaceEvidenceLightbox(event.detail)}
     ></media-lightbox>`;
 }
 
@@ -701,7 +708,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           `
         : nothing}
     </div>
-    ${r.summary ? html`<div class="header-summary">${r.summary}</div>` : nothing}
+    ${r.summary ? html`${renderRunTitle(r, 'header-summary')}` : nothing}
     ${r.slotTeardownSkipped
       ? html`<p role="status" data-testid="run-slot-cleanup-hint">
           Workspace cleanup deferred: ${r.slotTeardownSkipped}
@@ -1155,6 +1162,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
       <run-pipeline
         .run=${r}
         .taskProgress=${ctx.taskProgress}
+        .evidenceModel=${ctx.evidenceModel}
         .acceptanceStatus=${ctx.acceptanceStatus}
         .acceptanceCriteria=${ctx.acceptanceCriteria}
         .acceptanceStatusError=${ctx.acceptanceStatusError}
@@ -1163,6 +1171,8 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         .acceptanceEvidenceHref=${ctx.acceptanceEvidenceHref}
         .acceptanceEvidenceOpen=${ctx.acceptanceEvidenceOpen}
         .selectedStepName=${ctx.selectedStep?.name}
+        @recipe-proof=${(event: CustomEvent<{ traceIndex: number }>) =>
+          ctx.openRecipeProof?.(event.detail.traceIndex)}
         @step-select=${(e: CustomEvent) => ctx.onStepSelect(e.detail.step)}
       >
       </run-pipeline>

@@ -1,5 +1,5 @@
 import { FlashList } from '@shopify/flash-list';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   type LayoutChangeEvent,
@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { createEvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import {
   Events,
   Methods,
@@ -17,6 +18,7 @@ import {
   type Run,
   type RunGetResult,
   type RunRecipeRunsForRunResult,
+  type RunRecordedEvidenceReview,
   type RunRefreshMirrorResult,
 } from '@farmslot/protocol';
 
@@ -24,6 +26,7 @@ import { ArtifactCard } from '../../components/ArtifactCard';
 import { DocumentViewer } from '../../components/DocumentViewer';
 import { MediaViewer } from '../../components/MediaViewer';
 import { RecipeRunControls } from '../../components/RecipeRunControls';
+import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
 import {
   type ArtifactStickyChromeLayout,
   artifactStickyChromeThreshold,
@@ -47,6 +50,7 @@ import {
   isArtifactWorkspaceFilter,
 } from '../../lib/artifact-workspace';
 import { diffArtifactCandidate } from '../../lib/diff';
+import { evidenceMediaItems } from '../../lib/evidence-media-items';
 import { gatewayFetch } from '../../lib/gateway-http-auth';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
 import { runRefreshEventMatches } from '../../lib/run-refresh';
@@ -84,20 +88,31 @@ const ARTIFACT_STICKY_NAV_MAX_THRESHOLD = 32;
 const RECIPE_COMPLETION_REFRESH_DELAY_MS = 5500;
 
 export default function ArtifactViewerScreen() {
-  const { runId, recipeRun, artifact, filter, workspace, decisionKind, ac, evidence } =
-    useLocalSearchParams<{
-      runId: string;
-      recipeRun?: string;
-      artifact?: string | string[];
-      filter?: string | string[];
-      workspace?: string | string[];
-      decisionKind?: string | string[];
-      /** Acceptance criterion whose evidence the viewer opens on (with `evidence`). */
-      ac?: string | string[];
-      evidence?: string | string[];
-    }>();
+  const {
+    runId,
+    recipeRun,
+    artifact,
+    filter,
+    workspace,
+    decisionKind,
+    ac,
+    evidence,
+    evidenceDecision,
+  } = useLocalSearchParams<{
+    runId: string;
+    recipeRun?: string;
+    artifact?: string | string[];
+    filter?: string | string[];
+    workspace?: string | string[];
+    decisionKind?: string | string[];
+    /** Acceptance criterion whose evidence the viewer opens on (with `evidence`). */
+    ac?: string | string[];
+    evidence?: string | string[];
+    evidenceDecision?: string | string[];
+  }>();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const isFocused = useIsFocused();
   const client = useConnectionStore((s) => s.client);
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
@@ -110,6 +125,7 @@ export default function ArtifactViewerScreen() {
   const [selectedRecipeRunId, setSelectedRecipeRunId] = useState<string | null>(null);
   const [recipeRunGroupsLoaded, setRecipeRunGroupsLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [recordedEvidence, setRecordedEvidence] = useState<RunRecordedEvidenceReview | null>(null);
   const [viewerUri, setViewerUri] = useState<string | null>(null);
   const [documentViewer, setDocumentViewer] = useState<{ title: string; body: string } | null>(
     null,
@@ -132,7 +148,12 @@ export default function ArtifactViewerScreen() {
   const acceptanceViewer = useAcceptanceEvidenceViewer({
     client,
     run,
+    recipeRunId:
+      typeof recipeRun === 'string' && recipeRun !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
+        ? recipeRun
+        : undefined,
     criterionId: routeParamString(ac).trim(),
+    decisionId: routeParamString(evidenceDecision).trim() || undefined,
     evidencePath: routeParamString(evidence).trim(),
     gatewayUrl,
     authHeaders: artifactAuthHeaders,
@@ -199,12 +220,20 @@ export default function ArtifactViewerScreen() {
         setRecipeRunGroupsLoaded(false);
         return;
       }
-      if (reset) setRecipeRunGroupsLoaded(false);
+      if (reset) {
+        setRecipeRunGroupsLoaded(false);
+        setRecordedEvidence(null);
+      }
       try {
         const result = await client.request<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
           runId,
+          includeRecordedEvidence: true,
+          ...(requestedRecipeRunId && requestedRecipeRunId !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
+            ? { recipeRunId: requestedRecipeRunId }
+            : {}),
         });
         if (recipeRunRefreshRequestRef.current !== requestId) return;
+        setRecordedEvidence(result.recordedEvidence ?? null);
         setRecipeRunSelection({
           recipeRuns: result.recipeRuns,
           gatewaySelectedRecipeRunId: result.selectedRecipeRunId,
@@ -222,7 +251,7 @@ export default function ArtifactViewerScreen() {
         setError(`Failed to refresh recipe runs after ${reason}: ${(err as Error).message}`);
       }
     },
-    [client, runId],
+    [client, requestedRecipeRunId, runId],
   );
 
   useEffect(() => {
@@ -434,29 +463,28 @@ export default function ArtifactViewerScreen() {
     return () => clearTimeout(timer);
   }, [artifactMirrorFeedback]);
 
-  const visualViewerItems = useMemo(() => {
-    const items = manifest
-      .filter((artifact) => ['image', 'video'].includes(classifyArtifact(artifact)))
-      .map((artifact) => ({
-        uri: artifactUrlForEntry(gatewayUrl, runId ?? '', artifact, artifactMirrorEpoch),
-        title: artifact.label ?? artifact.path,
-        mediaType: classifyArtifact(artifact),
-        authHeaders: artifactAuthHeaders,
-      }));
-
-    const seen = new Set<string>();
-    return items.filter((item) => {
-      if (seen.has(item.uri)) return false;
-      seen.add(item.uri);
-      return true;
-    });
-  }, [artifactAuthHeaders, artifactMirrorEpoch, gatewayUrl, manifest, runId]);
-  const viewerIndex = viewerUri
-    ? Math.max(
-        0,
-        visualViewerItems.findIndex((item) => item.uri === viewerUri),
-      )
-    : 0;
+  const evidenceModel = useMemo(
+    () =>
+      createEvidenceReviewModel({
+        context: 'artifact',
+        package: recordedEvidence?.input,
+        readErrors: recordedEvidence?.errors,
+        artifactPrefix: recordedEvidence?.artifactPrefix,
+      }),
+    [recordedEvidence],
+  );
+  const openVisualArtifact = useCallback(
+    (uri: string) => {
+      evidenceModel.clearSelection();
+      setViewerUri(uri);
+    },
+    [evidenceModel],
+  );
+  const visualViewerItems = useMemo(
+    () => evidenceMediaItems(manifest, artifactUrlFor, artifactAuthHeaders, evidenceModel),
+    [artifactAuthHeaders, artifactUrlFor, evidenceModel, manifest],
+  );
+  const viewerIndex = viewerUri ? visualViewerItems.findIndex((item) => item.uri === viewerUri) : 0;
 
   const openDocument = useCallback(
     (url: string, path: string) => {
@@ -483,6 +511,19 @@ export default function ArtifactViewerScreen() {
       openDocument(artifactUrlForEntry(gatewayUrl, runId, entry, artifactMirrorEpoch), entry.path);
     },
     [artifactMirrorEpoch, gatewayUrl, openDocument, runId],
+  );
+
+  const openProofArtifact = useCallback(
+    (entry: ArtifactManifestEntry) => {
+      const retained = manifest.find((file) => file.path === entry.path) ?? entry;
+      if (classifyArtifact(retained) === 'document') {
+        setViewerUri(null);
+        openReviewDocument(retained);
+      } else {
+        setViewerUri(artifactUrlFor(retained));
+      }
+    },
+    [artifactUrlFor, manifest, openReviewDocument],
   );
 
   const handleSelectRecipeRun = useCallback(
@@ -546,8 +587,8 @@ export default function ArtifactViewerScreen() {
             mimeType={item.mimeType}
             sizeBytes={item.sizeBytes}
             authHeaders={artifactAuthHeaders}
-            onPressImage={mediaType === 'image' ? () => setViewerUri(url) : undefined}
-            onPressVideo={mediaType === 'video' ? () => setViewerUri(url) : undefined}
+            onPressImage={mediaType === 'image' ? () => openVisualArtifact(url) : undefined}
+            onPressVideo={mediaType === 'video' ? () => openVisualArtifact(url) : undefined}
             onPressDocument={
               mediaType === 'document'
                 ? isDiffArtifact
@@ -561,7 +602,7 @@ export default function ArtifactViewerScreen() {
         </View>
       );
     },
-    [artifactAuthHeaders, artifactUrlFor, openDiffPath, openDocument, runId],
+    [artifactAuthHeaders, artifactUrlFor, openDiffPath, openDocument, openVisualArtifact, runId],
   );
 
   if (!run) {
@@ -628,7 +669,7 @@ export default function ArtifactViewerScreen() {
                 router.setParams({ artifact: undefined });
               }}
               onSelectRecipeRun={handleSelectRecipeRun}
-              onOpenVisual={setViewerUri}
+              onOpenVisual={openVisualArtifact}
               onOpenDocument={openReviewDocument}
               onOpenDiff={openDiffPath}
               onFilterLayout={rememberFilterOffset}
@@ -639,6 +680,30 @@ export default function ArtifactViewerScreen() {
                   filter: undefined,
                   recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
                 });
+              }}
+            />
+            <TaskAcceptancePanel
+              acceptanceStatus={recordedEvidence?.input?.claims ?? null}
+              evidenceModel={evidenceModel}
+              showOccurrences
+              onOpenEvidence={(id, path) => {
+                evidenceModel.selectClaim(id, path);
+                openProofArtifact({
+                  path,
+                  purpose: 'evidence',
+                  recipeRunId: selectedRecipeRunId ?? undefined,
+                });
+              }}
+              onOpenOccurrence={(index) => {
+                const selected = evidenceModel.selectOccurrence(index);
+                const path = selected?.clips[0]?.videoPath ?? selected?.artifacts[0]?.path;
+                if (path)
+                  openProofArtifact({
+                    path: evidenceModel.artifactPath(path),
+                    purpose: 'evidence',
+                    recipeRunId: selectedRecipeRunId ?? undefined,
+                  });
+                else setError(selected?.message ?? 'This recipe step has no proof artifact.');
               }}
             />
             {recipeRuns.length > 0 ? (
@@ -670,7 +735,7 @@ export default function ArtifactViewerScreen() {
       )}
       <MediaViewer
         testID="companion-artifact-media-viewer"
-        visible={!!viewerUri}
+        visible={isFocused && !!viewerUri && viewerIndex >= 0}
         uri={viewerUri}
         items={visualViewerItems}
         authHeaders={artifactAuthHeaders}
@@ -679,7 +744,7 @@ export default function ArtifactViewerScreen() {
       />
       <MediaViewer
         testID="companion-ac-evidence-viewer"
-        visible={acceptanceViewer.visible}
+        visible={isFocused && acceptanceViewer.visible}
         uri={null}
         items={acceptanceViewer.items}
         authHeaders={artifactAuthHeaders}
@@ -687,7 +752,7 @@ export default function ArtifactViewerScreen() {
         onClose={acceptanceViewer.close}
       />
       <DocumentViewer
-        visible={!!documentViewer}
+        visible={isFocused && !!documentViewer}
         title={documentViewer?.title ?? ''}
         body={documentViewer?.body ?? ''}
         onClose={() => setDocumentViewer(null)}

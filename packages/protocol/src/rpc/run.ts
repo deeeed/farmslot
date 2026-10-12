@@ -540,9 +540,28 @@ export interface RunRecipeRunsForSlotResult {
 
 export interface RunRecipeRunsForRunParams {
   runId: string;
+  /** Load validated metadata for only this displayed recipe group. No media bytes. */
+  includeRecordedEvidence?: boolean;
+  recipeRunId?: string;
+  /** Bind gate/PR-preview metadata to the decision's captured package, never latest artifacts. */
+  decisionId?: string;
+  evidenceSnapshotHash?: string;
+}
+
+export interface RunRecordedEvidenceReview {
+  /** Full retained report inventory; run-list projections deliberately omit it. */
+  report?: Pick<
+    import('../contracts/runs.js').RunOutput,
+    'reportPath' | 'manifestDigest' | 'artifactManifest'
+  >;
+  input?: import('../recipe/index.js').RecordedEvidencePackageInput;
+  /** Package-relative refs map to the existing selected-root artifact endpoint. */
+  artifactPrefix: string;
+  errors: string[];
 }
 
 export interface RunRecipeRunsForRunResult {
+  recordedEvidence?: RunRecordedEvidenceReview;
   recipeRuns: RecipeRunArtifactGroup[];
   selectedRecipeRunId: string | null;
 }

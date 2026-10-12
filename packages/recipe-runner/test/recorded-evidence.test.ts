@@ -215,7 +215,7 @@ test('measured proof outside the captured span is weak and never linked as a val
     ...base,
     declarations: [{ ...base.declarations[0]!, proofMode: 'visual' }],
     segments: [segment],
-    timelines: new Map([[segment.videoDigest, timeline]]),
+    timelines: new Map([[segment.videoPath, timeline]]),
   })[0]!;
   assert.equal(claim.verdict, 'weak');
   assert.equal(claim.timing, 'outside-recording');

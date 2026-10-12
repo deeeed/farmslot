@@ -7,6 +7,7 @@ import type {
 import { buildFamilyIterationLedgerPresentation } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
+import { renderRunTitle } from '../shared/run-title.js';
 
 import { familyLedgerEntry } from './family-observability-diff-model.js';
 import {
@@ -105,7 +106,7 @@ function renderFamilyRunSelectorItem(
         ${usageMissing ? html`<span class="badge warn">Usage missing</span>` : nothing}
         ${modelDrift ? html`<span class="badge warn">Model drift</span>` : nothing}
       </div>
-      <div class="run-item-title">${run.summary ?? run.ticketOrPr}</div>
+      ${renderRunTitle(run, 'run-item-title')}
       ${reason ? html`<div class="run-item-reason">${reason}</div>` : nothing}
       <div class="run-item-meta">
         ${run.runId.slice(0, 8)} · ${formatCreatedAt(run.createdAt)} ·

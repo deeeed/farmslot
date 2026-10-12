@@ -32,6 +32,7 @@ import {
 } from '../runs/family-observability-retrospective-renderers.js';
 import { flowColor, flowLabel } from '../runs/run-utils.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
+import { renderRunTitle } from '../shared/run-title.js';
 
 import { decisionInboxStyles } from './decision-inbox-styles.js';
 
@@ -786,7 +787,7 @@ export class DecisionInbox extends LitElement {
                   </div>
                   ${d.runMeta ? this._renderMeta(d.runMeta) : nothing}
                   ${d.runMeta?.summary
-                    ? html`<div class="decision-summary">${d.runMeta.summary}</div>`
+                    ? html`${renderRunTitle(d.runMeta, 'decision-summary')}`
                     : nothing}
                   <div class="decision-desc">${d.description}</div>
                   ${this._renderChecks(d)}

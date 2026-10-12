@@ -65,3 +65,26 @@ See [ADR-062](../../docs/adr/062-recorded-run-evidence.md) and its
 ```sh
 yarn workspace @farmslot/adapter-sdk quality
 ```
+
+### Evidence review
+
+The experimental `@farmslot/adapter-sdk/evidence` entry exports
+`createEvidenceReviewModel`, `loadRecordingEvidenceReview` and
+`readEvidenceReviewReport`, with their request/result types. Web and native review
+clients use this model for claims, recipe occurrences, captions, original-media
+clips, stills and bounded playback effects. They implement only transport and
+rendering. `selectClaim` and `selectOccurrence` preserve missing or untimed proof;
+they never write a verdict. Original `videoPath` identifies playback independently
+of its digest, so equal-byte segments retain their own clocks.
+
+The existing Node entry exports `readRecordedEvidencePackage` and its read types.
+Its optional `RecordedEvidencePackageReadIO` lets a trusted host supply contained
+JSON reads, a file inventory and actual-byte digests for one retained root. The
+default filesystem reader and its diagnostics remain the same. Always reject
+failed read checks and run `validateRecordedEvidencePackage`; a metadata snapshot
+alone is not approval or publication authority.
+
+A report model takes the existing output manifest and `OutputReviewPayload`.
+`readEvidenceReviewReport` verifies the selected report bytes against that manifest
+before returning text. Reviewers can open its case/check claims through the same
+model. No separate QA verdict reducer or player is needed.
