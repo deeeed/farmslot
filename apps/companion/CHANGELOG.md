@@ -6,6 +6,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 - Use the shared evidence review model for claim/step navigation and bounded clips; initialize only the selected video player (ADR-062).
 
+- Group delivered roadmap work separately with PR links and delivery outcome filters.
+
 - Show shared gate prerequisite reasons and run lifecycle labels for correction, review failure and reconciliation.
 
 - Inspect each review finding at its reviewed revision and select which finding comments to publish. Android report dialogs retain the shared recipe HUD.

@@ -17,6 +17,7 @@ import {
   validateRecipeActionManifestDocument,
 } from './manifest.js';
 import { validateRecipeParams, validateRecipeParamsSchema } from './params.js';
+import { hasRecipeTemplate, replaceRecipeTemplates } from './template.js';
 import {
   extractWorkflow,
   getRecipeActionParams,
@@ -46,7 +47,7 @@ export interface RecipeDocumentValidationOptions {
 export function validateResolvedRecipeActionNode(
   node: unknown,
   manifest: unknown,
-  options?: Pick<RecipeDocumentValidationOptions, 'adapter'>,
+  options?: Pick<RecipeDocumentValidationOptions, 'adapter'> & { allowTemplates?: boolean },
 ): RecipeValidationResult {
   const ctx = createContext();
   if (!isRecord(node) || !isNonEmptyString(node.action)) {
@@ -71,11 +72,13 @@ export function validateResolvedRecipeActionNode(
     );
     return finishResult(ctx);
   }
-  ctx.findings.push(...validateRecipeParams(getRecipeActionParams(node), contract.schema).findings);
+  ctx.findings.push(
+    ...validateRecipeParams(getRecipeActionParams(node), contract.schema, options).findings,
+  );
   const adapter = options?.adapter;
   const adapterSchema = adapter ? contract.adapterSchemas?.[adapter] : undefined;
   if (adapterSchema) {
-    const paramsResult = validateRecipeParams(getRecipeActionParams(node), adapterSchema);
+    const paramsResult = validateRecipeParams(getRecipeActionParams(node), adapterSchema, options);
     ctx.findings.push(
       ...paramsResult.findings.map((finding) => ({
         ...rebaseFinding(finding, 'node'),
@@ -181,6 +184,52 @@ function validateOfficialActionRelationships(
   node: Record<string, unknown>,
   path: string,
 ): void {
+  if (action === 'watch_logs') {
+    const timeout = node.timeout_ms;
+    if (
+      timeout !== undefined &&
+      !(typeof timeout === 'string' && hasRecipeTemplate(timeout)) &&
+      (typeof timeout !== 'number' || !Number.isInteger(timeout) || timeout < 0 || timeout > 60_000)
+    ) {
+      addFinding(
+        ctx,
+        'error',
+        'recipe.invalid_log_window',
+        `${path}.timeout_ms`,
+        'watch_logs.timeout_ms must be an integer from 0 through 60000.',
+      );
+    }
+    if (
+      typeof timeout === 'number' &&
+      timeout > 0 &&
+      (typeof node.contains !== 'string' || node.contains.length === 0)
+    ) {
+      addFinding(
+        ctx,
+        'error',
+        'recipe.missing_log_condition',
+        `${path}.contains`,
+        'A positive watch_logs.timeout_ms requires nonempty contains.',
+      );
+    }
+    if (node.scope !== 'file' && typeof node.path === 'string') {
+      let outputDependent = false;
+      replaceRecipeTemplates(node.path, (reference, template) => {
+        if (reference.source === 'outputs') outputDependent = true;
+        return template;
+      });
+      if (outputDependent) {
+        addFinding(
+          ctx,
+          'error',
+          'recipe.unbound_run_log_path',
+          `${path}.path`,
+          'Output-derived watch_logs paths require explicit scope=file; run paths must resolve before producers execute.',
+        );
+      }
+    }
+    return;
+  }
   if (action !== 'ui.pan' && action !== 'ui.drag') return;
   const hasPath = hasOwn(node, 'path');
   const hasDelta = hasOwn(node, 'delta');

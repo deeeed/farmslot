@@ -35,9 +35,10 @@ import { colors } from '../../styles/theme-tokens.js';
 import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
 import {
+  focusWorkInventoryRow,
   inventoryShowsDetail,
   inventoryShowsList,
-  renderWorkInventoryBackButton,
+  renderWorkInventoryDetailClose,
   renderWorkInventoryLayout,
   renderWorkInventoryRow,
   renderWorkInventoryTable,
@@ -339,8 +340,10 @@ export class RunList extends RunListState {
   }
 
   private backToRunList() {
+    const id = this.selectedRunId;
     this.selectedRunId = '';
     this._persistHashState();
+    void this.updateComplete.then(() => focusWorkInventoryRow(this.renderRoot, id));
   }
 
   private clearSelection() {
@@ -675,10 +678,11 @@ export class RunList extends RunListState {
               const showDetail = inventoryShowsDetail(layout);
               const detail = showDetail
                 ? html`<div class="run-detail-actions">
-                      ${renderWorkInventoryBackButton({
-                        label: this.narrowViewport ? '← Back to list' : '× Close details',
+                      ${renderWorkInventoryDetailClose({
+                        layout,
                         testId: 'runs-back-to-list',
                         onBack: () => this.backToRunList(),
+                        onClose: () => this.backToRunList(),
                       })}
                       <a
                         class="run-detail-full-link"
@@ -904,6 +908,7 @@ export class RunList extends RunListState {
         onActivate: () => {
           this.manageMode ? this.toggleSelectId(run.id) : this.selectRun(run);
         },
+        onDeselect: this.manageMode ? undefined : () => this.backToRunList(),
       },
       cells,
     });
