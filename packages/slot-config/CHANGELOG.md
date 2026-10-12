@@ -4,6 +4,8 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- Render watcher ports from the configured Metro port, with the general port as fallback, consistently in worker and reviewer instructions.
+
 - Validate exclusive recording-target claim declarations and preserve their binding and provider parameter schemas in the capability catalog.
 
 - Use WARM/COLD review defaults and minimum review counts without runner-diversity configuration.

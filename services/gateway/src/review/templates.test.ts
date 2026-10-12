@@ -94,7 +94,7 @@ test('a farm review template can use {{DEFAULT_BRANCH}}', async (t) => {
   await mkdir(path.join(root, 'templates/worker'), { recursive: true });
   await writeFile(
     path.join(root, 'templates/worker/review.md'),
-    '# Review\n\n- [ ] git diff origin/{{DEFAULT_BRANCH}}...HEAD in {{REPO}}\n',
+    '# Review\n\n- [ ] git diff origin/{{DEFAULT_BRANCH}}...HEAD in {{REPO}}\nWatcher: {{WATCHER_PORT}}\n',
   );
   const save = async (config: Record<string, unknown>) => {
     await writeFile(path.join(root, 'project.json'), JSON.stringify({ name: project, ...config }));
@@ -132,6 +132,18 @@ test('a farm review template can use {{DEFAULT_BRANCH}}', async (t) => {
     await expandReviewTemplate(vars, 'temp/tasks/review', run.id, 'static-code'),
     /git diff origin\/main\.\.\.HEAD/,
   );
+  for (const [resourceVars, port] of [
+    [{ port: '7606', metro_port: '7706' }, '7706'],
+    [{ port: '7606' }, '7606'],
+  ] as const) {
+    const rendered = await expandReviewTemplate(
+      { ...(vars as object), resourceVars } as never,
+      'temp/tasks/review',
+      run.id,
+      'static-code',
+    );
+    assert.match(rendered, new RegExp(`Watcher: ${port}`));
+  }
 });
 
 test('expandReviewTemplate resolves farmslot_dir placeholders', async (t) => {

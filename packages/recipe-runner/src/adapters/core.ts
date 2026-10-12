@@ -13,6 +13,7 @@ import {
   asOptionalString,
   asString,
   getJsonPathValue,
+  isRecord,
   normalizeRelativePath,
 } from '../core/json.js';
 import { copyFileWithinRoots, readFileWithinRoot, statFileWithinRoot } from '../core/path.js';
@@ -236,25 +237,52 @@ function defineWatchLogsAdapter(): ActionAdapter {
       if (rawScope !== 'run' && rawScope !== 'file') {
         throw new Error('watch_logs.scope must be "run" or "file".');
       }
-      const contentBuffer = await readFileWithinRoot(context.projectRoot, filePath);
-      const baseline = rawScope === 'file' ? 0 : (context.getRunFileOffset(filePath) ?? 0);
-      const start = baseline > contentBuffer.length ? 0 : baseline;
-      const content = contentBuffer.subarray(start).toString('utf-8');
-      if (contains && !content.includes(contains)) {
-        throw new RecipeExecutionError(
-          'subject',
-          `Log ${filePath} does not contain ${JSON.stringify(contains)} in ${rawScope} scope.`,
-        );
+      const timeoutMs =
+        node.timeout_ms === undefined ? 0 : asNumber(node.timeout_ms, 'watch_logs.timeout_ms');
+      const baseline = rawScope === 'file' ? 0 : context.getRunFileOffset(filePath);
+      if (baseline === undefined) {
+        throw new Error(`Run-scoped log ${filePath} has no captured baseline.`);
       }
-      return {
-        output: {
-          path: filePath,
-          matched: contains ?? null,
-          scope: rawScope,
-          offset: start,
-          bytesScanned: contentBuffer.length - start,
-        },
-      };
+      let start = baseline;
+      const deadline = performance.now() + timeoutMs;
+      do {
+        assertRecipeActive(context.signal);
+        let contentBuffer: Buffer | undefined;
+        try {
+          contentBuffer = await readFileWithinRoot(context.projectRoot, filePath);
+        } catch (error) {
+          // A producer may create its log during the declared observation window.
+          if (timeoutMs === 0 || !isRecord(error) || error.code !== 'ENOENT') throw error;
+        }
+        assertRecipeActive(context.signal);
+        if (contentBuffer) {
+          if (start > contentBuffer.length) start = 0;
+          const content = contentBuffer.subarray(start).toString('utf-8');
+          if (!contains || content.includes(contains)) {
+            return {
+              output: {
+                path: filePath,
+                matched: contains ?? null,
+                scope: rawScope,
+                offset: start,
+                bytesScanned: contentBuffer.length - start,
+              },
+            };
+          }
+        }
+        const remaining = deadline - performance.now();
+        if (remaining <= 0) break;
+        try {
+          await delay(Math.min(100, remaining), undefined, { signal: context.signal });
+        } catch (error) {
+          assertRecipeActive(context.signal);
+          throw error;
+        }
+      } while (performance.now() < deadline);
+      throw new RecipeExecutionError(
+        'subject',
+        `Log ${filePath} does not contain ${JSON.stringify(contains)} in ${rawScope} scope.`,
+      );
     },
   };
 }

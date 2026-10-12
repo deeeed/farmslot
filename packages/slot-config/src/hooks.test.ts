@@ -51,6 +51,18 @@ test('expandTemplate exposes the full slot id for configured actions', () => {
     expandTemplate('{{slot_id}} {{SLOT_ID}} {{session}} {{cdp_port}}', slotVars),
     'runner-browser-1 runner-browser-1 browser-1 9222',
   );
+  for (const [resourceVars, expected] of [
+    [{ port: '7606', metro_port: '7706' }, '7706'],
+    [{ port: '7606' }, '7606'],
+    [{ port: '7606', metro_port: ' ' }, '7606'],
+    [{ metro_port: '7706' }, '7706'],
+    [{}, ''],
+  ] as const) {
+    assert.equal(
+      expandTemplate('{{WATCHER_PORT}}/{{watcher_port}}', { ...slotVars, resourceVars }),
+      `${expected}/${expected}`,
+    );
+  }
 });
 
 test('expandTemplate uses configured session when machine ids contain hyphens', () => {

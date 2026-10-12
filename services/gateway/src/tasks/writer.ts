@@ -996,7 +996,7 @@ export async function writeTaskFile(
     PLATFORM: slotVars.platform,
     ADB_SERIAL: slotVars.resourceVars.adb_serial ?? '',
     IOS_SIMULATOR: slotVars.resourceVars.simulator ?? '',
-    WATCHER_PORT: slotVars.resourceVars.port ?? '',
+    WATCHER_PORT: expandTemplate('{{WATCHER_PORT}}', slotVars, projectVars),
     CDP_PORT: slotVars.resourceVars.cdp_port ?? '',
     RUNTIME_DIR: projectVars.runtimeDir || '.agent',
     RECIPE_DIR: projectVars.recipeDir || `${projectVars.runtimeDir || '.agent'}/recipes`,

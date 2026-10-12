@@ -130,6 +130,7 @@ interface ResolvedRecipeRun {
   recipes: ReadonlyMap<string, ResolvedLibraryRecipe>;
   dependencyResolution: ResolvedRecipeDependencies;
   executionPlan: RecipeExecutionPlan;
+  runLogPaths: ReadonlySet<string>;
   evidencePlan: RecipeEvidencePlan;
   recordingRequired: boolean;
   videoOptions: RecipeVideoRecordingOptions & { mode: 'off' | 'full-run' };
@@ -175,29 +176,11 @@ export function createRecipeRunner(options: CreateRecipeRunnerOptions): RecipeRu
   );
 }
 
-function collectWatchLogPaths(paths: Set<string>, nodes: Record<string, unknown>): void {
-  for (const node of Object.values(nodes)) {
-    if (!isRecord(node) || node.action !== 'watch_logs' || typeof node.path !== 'string') continue;
-    paths.add(normalizeRelativePath(node.path).split(path.sep).join('/'));
-  }
-}
-
-async function collectRunFileOffsets({
-  graph,
-  recipes,
-  projectRoot,
-}: {
-  graph: WorkflowGraph;
-  recipes: ReadonlyMap<string, ResolvedLibraryRecipe>;
-  projectRoot: string;
-}): Promise<Map<string, number>> {
+async function collectRunFileOffsets(
+  paths: ReadonlySet<string>,
+  projectRoot: string,
+): Promise<Map<string, number>> {
   const offsets = new Map<string, number>();
-  const paths = new Set<string>();
-  collectWatchLogPaths(paths, graph.nodes);
-  for (const recipe of recipes.values()) {
-    if (recipe.aliasFor) continue;
-    collectWatchLogPaths(paths, extractWorkflowGraph(recipe.document).nodes);
-  }
   for (const relativePath of paths) {
     try {
       const info = await statFileWithinRoot(projectRoot, relativePath);
@@ -328,10 +311,11 @@ class DefaultRecipeRunner implements RecipeRunner {
       });
     }
     const params = resolveRecipeParams(rootRef, recipe, request.params ?? {});
-    validateRecipeDependencyParams({
+    const runLogPaths = validateRecipeDependencyParams({
       root: recipe,
       params,
       recipes: dependencyResolution.recipes,
+      actionManifest: this.#actionManifest,
     });
     const evidencePlan = planRecipeEvidence(
       proofDocument(recipe),
@@ -377,6 +361,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       recipes: dependencyResolution.recipes,
       dependencyResolution,
       executionPlan,
+      runLogPaths,
       evidencePlan,
       recordingRequired: needsUi,
       videoOptions,
@@ -392,10 +377,10 @@ class DefaultRecipeRunner implements RecipeRunner {
       params,
       env,
       libraryResolution,
-      graph,
       recipes,
       dependencyResolution,
       executionPlan,
+      runLogPaths,
       evidencePlan,
       recordingRequired,
       videoOptions,
@@ -404,11 +389,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     const startedAt = new Date();
     const recipeRunId = randomUUID();
     await mkdir(artifactsDir, { recursive: true });
-    const runFileOffsets = await collectRunFileOffsets({
-      graph,
-      recipes,
-      projectRoot,
-    });
+    const runFileOffsets = await collectRunFileOffsets(runLogPaths, projectRoot);
 
     const artifactWriter = new JsonArtifactWriter(artifactsDir);
     const traceWriter = new JsonTraceWriter(artifactsDir, this.#runnerProvenance);

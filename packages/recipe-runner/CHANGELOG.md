@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- Add bounded `watch_logs` observation with cancellation. Breaking correction: run-scoped logs now require paths resolved before producers execute; output-derived paths must declare `scope=file`, and stale content no longer passes parameterized observations.
+
 - Send browser virtual key codes for common control keys, function keys and ASCII letters/digits so `ui.key_press` reaches keyboard handlers; input clearing uses the same key dispatch.
 
 - Honor nested `all`/`any`/`none` output assertions and reject invalid static assertion JSON paths during preflight, including parameterized and called recipes.

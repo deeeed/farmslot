@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Render watcher ports from the configured Metro port, with the general port as fallback, consistently in worker and reviewer instructions.
+
 - Publish the exact selected review findings and report, preserving accepted choices across refresh races.
 
 - Declare mid-turn prompt support and verify complete Enter-submitted queue messages for guarded lane steering.

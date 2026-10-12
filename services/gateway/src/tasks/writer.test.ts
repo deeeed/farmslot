@@ -776,7 +776,7 @@ test('writeTaskFile renders selected template variant and leaves source template
   const sourcePath = path.join(workerDir, 'dev.md');
   const variantPath = path.join(workerDir, 'dev-template-test.md');
   const source = await readFile(sourcePath, 'utf-8');
-  const variantSource = `${source}\n\nTemplate version marker: {{TICKET}}\n`;
+  const variantSource = `${source}\n\nTemplate version marker: {{TICKET}}\nWatcher port: {{WATCHER_PORT}}\n`;
   await writeFile(variantPath, variantSource, 'utf-8');
   let taskPath = '';
   t.after(async () => {
@@ -797,6 +797,7 @@ test('writeTaskFile renders selected template variant and leaves source template
   };
   // The template renders into CHECKLIST.md; TASK.md is the generated task document.
   assert.match(checklist, /Template version marker: PROJ-/);
+  assert.match(checklist, /Watcher port: 7847/);
   assert.match(checklist, new RegExp(`"ownerFamilyId":"${run.familyId}"`));
   assert.match(rendered, new RegExp(`FAMILY_ID: ${run.familyId}`));
   assert.doesNotMatch(rendered, /Template version marker/);
