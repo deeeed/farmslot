@@ -120,7 +120,7 @@ try {
             kind,
             runId,
             path: item.path,
-            verifiedBytes: item.verifiedText.length,
+            verifiedCharacters: item.verifiedText.length,
             manifestDigest: await p.evaluate(`${detail}.evidenceModel.report.manifestDigest`),
           });
         }

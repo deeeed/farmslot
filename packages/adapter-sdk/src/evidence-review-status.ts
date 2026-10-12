@@ -26,7 +26,13 @@ export function evidenceReviewPackageStatus(
   messages: readonly string[],
 ): EvidenceReviewPackageStatus | null {
   if (!pkg && !messages.length) return null;
-  const missing = pkg ? requiredFiles.filter((file) => !pkg.artifactPaths?.includes(file)) : [];
+  const missingCore = pkg ? requiredFiles.filter((file) => !pkg.artifactPaths?.includes(file)) : [];
+  const missing = [
+    ...missingCore,
+    ...(pkg?.recipe && !pkg.artifactPaths?.includes('recipe-resolution.json')
+      ? ['recipe-resolution.json']
+      : []),
+  ];
   const grouped = new Map<string, EvidenceReviewIssue>();
   for (const message of messages) {
     const file = missing.find(
@@ -53,13 +59,13 @@ export function evidenceReviewPackageStatus(
     tone: status === 'Invalid' && current ? 'error' : status === 'Valid' ? 'success' : 'info',
     path: (packagePath ?? '.').replace(/^artifacts\//u, '').replace(/\/$/u, '') || '.',
     summary: legacy
-      ? missing.length
-        ? `Recorded before Recipe v1: not machine-checkable (missing ${missing.join(', ')}); media untimed`
-        : 'Legacy evidence has no automatic claim identity; media untimed'
+      ? `Recorded before Recipe v1: not machine-checkable (missing ${missing.join(', ')}); media untimed`
       : status === 'Invalid'
         ? `${grouped.size} evidence issue${grouped.size === 1 ? '' : 's'}; measured proof unavailable`
         : 'Recipe evidence is machine-checkable',
-    ...(status === 'Invalid' ? { action: 'Refresh the gate package or re-run the recipe.' } : {}),
+    ...(status === 'Invalid' && current
+      ? { action: 'Refresh the gate package or re-run the recipe.' }
+      : {}),
     issues: [...grouped.values()],
   };
 }
