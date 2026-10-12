@@ -1,6 +1,7 @@
 import {
   type FlowType,
   type LinkedTicket,
+  parseGitHubRef,
   type PrIntegrationStatus,
   type Run,
   type RunTicketData,
@@ -199,7 +200,7 @@ export async function fetchTicketData(run: Run): Promise<RunTicketData | null> {
 
   // Determine source: Jira key (PROJ-1234) or GitHub ref (owner/repo#123)
   const isJira = /^[A-Z]+-\d+$/i.test(ticket);
-  const isGitHub = ticket.includes('#');
+  const isGitHub = parseGitHubRef(ticket) !== null;
 
   let jiraData: Partial<RunTicketData> = {};
   let githubData: Partial<RunTicketData> = {};
@@ -258,7 +259,7 @@ export async function fetchTicketData(run: Run): Promise<RunTicketData | null> {
   // If nothing was fetched, return minimal data
   if (merged.source === 'manual') {
     merged.title = taskTitleText(ticket);
-    merged.description = ticket;
+    if (!isJira && !isGitHub) merged.description = ticket;
   }
 
   return merged;

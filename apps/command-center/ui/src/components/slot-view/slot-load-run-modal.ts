@@ -455,6 +455,7 @@ export class SlotLoadRunModal extends LitElement {
         <span class="slrm-run-info">
           ${renderRunTitle(run, 'slrm-run-title')}
           <span class="slrm-run-meta">
+            <span>${run.flowType}</span>
             <span class="slrm-meta-strong">${run.ticketOrPr}</span>
             <span>${run.project}</span>
             <span>${run.branch ?? 'no branch'}</span>

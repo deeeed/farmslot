@@ -1,5 +1,5 @@
 import type { Run, RunStatus, RunStep } from '@farmslot/protocol';
-import { runDisplayTitle } from '@farmslot/protocol';
+import { taskTitleText } from '@farmslot/protocol';
 
 export const SIDEBAR_WIDTH_PREF_KEY = 'farmslot:sidebar-expanded-width';
 export const DEFAULT_SIDEBAR_WIDTH = 260;
@@ -50,7 +50,7 @@ export function sidebarRunSummary(
 ): string {
   const running = run.steps.find((step) => step.status === 'running');
   return (
-    (run.summary ? runDisplayTitle(run).title : '') ||
+    (run.summary ? taskTitleText(run.summary) : '') ||
     running?.detail?.trim() ||
     (running ? `Running ${running.name}` : '') ||
     run.branch?.trim() ||

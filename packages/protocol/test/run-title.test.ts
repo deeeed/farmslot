@@ -25,10 +25,7 @@ test('HTML uses title before h1, then h1 text when title is absent', () => {
 
 test('plain tasks use their first line and normalized whitespace', () => {
   assert.equal(taskTitleText('  Fix   selection\nDetailed instructions\n'), 'Fix selection');
-  assert.equal(
-    taskTitleText('Intro\n## Validate published head on iOS\nDetails'),
-    'Validate published head on iOS',
-  );
+  assert.equal(taskTitleText('Intro\n## Validate published head on iOS\nDetails'), 'Intro');
 });
 
 test('bounded cards retain the full normalized title for hover', () => {
@@ -37,4 +34,22 @@ test('bounded cards retain the full normalized title for hover', () => {
   assert.equal(runDisplayTitle(run).title.length, 120);
   assert.ok(runDisplayTitle(run).title.endsWith('…'));
   assert.equal(runDisplayTitle(run, Infinity).title, full);
+});
+
+test('later acceptance headings and code comments never replace a free-text first-line title', () => {
+  assert.equal(
+    taskTitleText('Make the run list sortable\n\n## Acceptance Criteria\n- Sort by date'),
+    'Make the run list sortable',
+  );
+  assert.equal(taskTitleText('Deploy node\n```\n# build\nyarn build\n```'), 'Deploy node');
+});
+
+test('shared display retains each client title source priority', () => {
+  const run = {
+    summary: 'Generated run summary',
+    ticketData: { title: 'Fetched issue title' },
+    ticketOrPr: 'TAT-78001',
+  };
+  assert.equal(runDisplayTitle(run).title, 'Fetched issue title');
+  assert.equal(runDisplayTitle(run, 120, 'summary').title, 'Generated run summary');
 });

@@ -13,7 +13,7 @@ import type {
   SlotResource,
   SlotStatus,
 } from '@farmslot/protocol';
-import { runDisplayTitle } from '@farmslot/protocol';
+import { taskTitleText } from '@farmslot/protocol';
 import { Events, Methods } from '@farmslot/protocol';
 
 import '../stream-feed/stream-feed.js';
@@ -502,7 +502,7 @@ export class DeviceGrid extends LitElement {
 
   private _summaryForSlot(slot: SlotStatus): string {
     const run = getRunForSlot(slot.slot);
-    return (run?.summary ? runDisplayTitle(run).title : null) || slot.taskId || slot.branch || '';
+    return (run?.summary ? taskTitleText(run.summary) : null) || slot.taskId || slot.branch || '';
   }
 
   private _syncResourceSummaries() {

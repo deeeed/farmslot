@@ -593,7 +593,8 @@ export class SlotCard extends LitElement {
     return html`
       <div
         class="run-badge"
-        title=${runDisplayTitle(run, Infinity).title}
+        title=${runDisplayTitle({ summary: run.summary, ticketOrPr: run.ticketOrPr }, Infinity)
+          .title}
         @click=${(e: Event) => {
           e.stopPropagation();
           location.hash = ['done', 'failed', 'cancelled'].includes(run.status)

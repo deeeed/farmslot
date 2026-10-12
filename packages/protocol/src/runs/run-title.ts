@@ -12,12 +12,19 @@ export interface RunDisplayTitle {
   subtitle: string | null;
 }
 
-export function runDisplayTitle(run: DisplayRun, maxLength = 120): RunDisplayTitle {
+export function runDisplayTitle(
+  run: DisplayRun,
+  maxLength = 120,
+  source: 'task' | 'summary' = 'task',
+): RunDisplayTitle {
   const taskTitle = cleanDisplayText(run.ticketData?.title, maxLength);
   const summary = cleanDisplayText(run.summary, maxLength);
   const ticket = cleanDisplayText(run.ticketOrPr, maxLength);
   const branch = cleanDisplayText(run.branch, maxLength);
-  const title = taskTitle ?? summary ?? ticket ?? branch ?? 'Untitled run';
+  const title =
+    (source === 'summary'
+      ? (summary ?? ticket ?? branch)
+      : (taskTitle ?? summary ?? ticket ?? branch)) ?? 'Untitled run';
   const subtitle = [ticket, branch].find((value) => value && value !== title) ?? null;
   return { title, subtitle };
 }
@@ -50,9 +57,9 @@ export function taskTitleText(value: string, maxLength = 120): string {
   const htmlHeading =
     value.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i) ??
     value.match(/<h1\b[^>]*>([\s\S]*?)<\/h1\s*>/i);
-  const markdownHeading = value.match(/^[ \t]{0,3}#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$/m);
-  const candidate =
-    htmlHeading?.[1] ?? markdownHeading?.[1] ?? value.trim().split(/\r?\n/)[0] ?? '';
+  const firstLine = value.trim().split(/\r?\n/)[0] ?? '';
+  const markdownHeading = firstLine.match(/^[ \t]{0,3}#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$/);
+  const candidate = htmlHeading?.[1] ?? markdownHeading?.[1] ?? firstLine;
   const text = candidate
     .replace(/<[^>]*>/g, ' ')
     .replace(/&(?:amp|lt|gt|quot|apos|nbsp);|&#(?:x[0-9a-f]+|[0-9]+);/gi, (entity) => {

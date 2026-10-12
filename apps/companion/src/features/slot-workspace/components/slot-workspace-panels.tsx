@@ -3369,11 +3369,7 @@ export function HistoryRunCard({
         </View>
         <Text style={[styles.historyRunStatus, { color: statusColor }]}>{entry.status}</Text>
       </View>
-      {entry.summary ? (
-        <Text style={baseStyles.textSecondary} numberOfLines={2}>
-          {entry.summary}
-        </Text>
-      ) : null}
+      {entry.summary ? <RunTitle style={baseStyles.textSecondary} title={entry.summary} /> : null}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
