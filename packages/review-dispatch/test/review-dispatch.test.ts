@@ -510,3 +510,36 @@ test('stored selection overrides inherit undefined fields and preserve explicit 
     fallback,
   );
 });
+
+test('project review defaults contain only selection fields and preserve precedence', () => {
+  const project = {
+    name: 'app',
+    defaults: {
+      'review-pr': { runner: 'claude', model: 'sonnet', effort: 'high' },
+      dev: { runner: 'codex', model: 'gpt-6.1-sol', effort: 'high' },
+    },
+    review: { enabled: true, max_retries: 2, review_timeout_min: 15, ...warm },
+  };
+  const fallback = { runner: 'pi', model: 'provider/model', effort: 'max', mode: 'cold' as const };
+  const defaults = resolveReviewDispatchDefaults(project, 'review-pr', fallback);
+  assert.deepEqual(defaults, warm);
+  assertReviewSelection(defaults);
+  assert.throws(() => assertReviewSelection(project.review), /unsupported property: enabled/);
+  assert.deepEqual(resolveReviewDispatchDefaults(project, 'dev', fallback), cold);
+  const partialProject = { ...project, review: { enabled: true, model: null, effort: null } };
+  assert.deepEqual(resolveReviewDispatchDefaults(partialProject, 'review-pr', fallback), {
+    runner: 'claude',
+    model: null,
+    effort: null,
+    mode: 'cold',
+  });
+  assert.deepEqual(
+    resolveReviewDispatchDefaults(project, 'review-pr', fallback, {
+      runner: 'claude',
+      model: null,
+      effort: null,
+      mode: 'cold',
+    }),
+    { runner: 'claude', model: null, effort: null, mode: 'cold' },
+  );
+});
