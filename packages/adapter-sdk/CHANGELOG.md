@@ -4,6 +4,9 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
+- Expose one retained evidence-package reader for CLI and gateway validation, with contained file reads, actual byte digests and read diagnostics.
+
+- Expose optional device-recorder readiness to shared project doctor commands.
 - **BREAKING:** Move the default recipe engine factory into the public SDK; providers inherit recording, automatic claims and shared validation. Recorder results return original segments; the separate framed recorder contract is removed (ADR-062).
 
 ## 0.8.6 - 2026-10-11

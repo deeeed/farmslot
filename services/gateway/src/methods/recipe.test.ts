@@ -1551,6 +1551,33 @@ test('hosted recipe paths preserve node-support remapping and reject artifact es
   })!;
   assert.match(command, /farmslot-recipe ~\/farmslot-node recipe run/);
   assert.match(command, /--artifacts-dir '\.task\/artifacts'/);
+  const doctor = buildHostedRecipeCommand('recipe_doctor', project, slot)!;
+  assert.match(doctor, /farmslot-recipe ~\/farmslot-node doctor --target/);
+  assert.match(doctor, /--project 'demo-project' --slot/);
+  assert.doesNotMatch(doctor, /--conformance|--fix|--live/);
+  const conformance = buildHostedRecipeCommand('recipe_doctor', project, slot, {
+    conformance: { recipes: ['domain/smoke'], domain: 'domain', reportName: 'dispatch-check.json' },
+  })!;
+  assert.match(
+    conformance,
+    /doctor --target .* --conformance --recipe 'domain\/smoke' --domain 'domain' --report-name 'dispatch-check.json'/,
+  );
+  assert.doesNotMatch(conformance, /--fix|--live/);
+  assert.throws(
+    () =>
+      buildHostedRecipeCommand('recipe_doctor', project, slot, {
+        conformance: { recipes: ['smoke'], checkReport: '../other/report.json' },
+      }),
+    /inside the selected slot checkout/,
+  );
+  assert.equal(
+    buildHostedRecipeCommand(
+      'recipe_doctor',
+      { ...project, projectJson: { name: 'legacy' } },
+      slot,
+    ),
+    undefined,
+  );
   assert.throws(
     () =>
       buildHostedRecipeCommand('recipe_run', project, slot, {

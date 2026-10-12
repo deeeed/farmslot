@@ -92,6 +92,7 @@ export {
   type CommandJournalRecord,
   isSensitiveKey,
   readCommandJournal,
+  readLatestProofJournal,
   recordCommandEvidence,
   recordCommandOutput,
   recordCommandStage,
@@ -111,11 +112,21 @@ export {
   type DoctorCommandOptions,
   doctorFixNextActions,
   type DoctorFixOptions,
+  type DoctorFixResult,
+  doctorReady,
   handleDoctor,
+  renderDoctorRecorder,
 } from './commands/doctor.js';
 export { handleExecutionTemplate } from './commands/execution-template.js';
 export { handleLast } from './commands/last.js';
-export { handleLaunch } from './commands/launch.js';
+export { handleLaunch, type LaunchCommandOptions } from './commands/launch.js';
+export {
+  handleLogs,
+  type LogsCommandOptions,
+  type LogsViewRequest,
+  type LogsWindowRequest,
+  type LogsWindowResult,
+} from './commands/logs.js';
 export {
   handlePrepare,
   type PrepareCommandOptions,
@@ -300,6 +311,7 @@ export {
   DEFAULT_RECIPE_HARNESS_ROOT,
   DEFAULT_RECIPE_RUNTIME_DIR,
   harnessExecutable,
+  isPathWithin,
   PREPARE_PROGRESS_ARTIFACT,
   recipeHarnessPath,
   recipeHarnessRoot,

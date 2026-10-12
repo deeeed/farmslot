@@ -6,6 +6,8 @@ import type { Command } from 'commander';
 
 import type { WorkerSignal } from '@farmslot/protocol';
 
+import { repoRoot } from '../onboarding/workspace.js';
+
 export interface ScriptedRunnerOptions {
   taskDir: string;
   mode: 'scenario' | 'command';
@@ -131,9 +133,10 @@ async function runCommand(
   command: string,
   cwd: string,
   timeoutMs?: number,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, { cwd, shell: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command, { cwd, env, shell: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     let timedOut = false;
@@ -191,8 +194,9 @@ export async function runScriptedRunner(options: ScriptedRunnerOptions): Promise
     kind: 'farmslot-scripted-runner',
     cliEntrypoint: process.argv[1] ?? null,
     farmslotRoot,
-    packageVersion: await packageVersion(farmslotRoot),
-    gitSha: await gitSha(farmslotRoot),
+    cliRoot: repoRoot,
+    packageVersion: await packageVersion(repoRoot),
+    gitSha: await gitSha(repoRoot),
     mode: options.mode,
     scenario: options.scenario ?? null,
     project: options.project ?? null,
@@ -234,7 +238,10 @@ export async function runScriptedRunner(options: ScriptedRunnerOptions): Promise
   } else if (options.mode === 'command') {
     if (!scriptedCommand) throw new Error('scripted command mode requires a project commandRef');
     const timeoutMs = parsePositiveInt(options.timeoutMs) ?? scriptedCommand.timeoutMs;
-    const result = await runCommand(scriptedCommand.command, commandCwd, timeoutMs);
+    const result = await runCommand(scriptedCommand.command, commandCwd, timeoutMs, {
+      ...process.env,
+      FARMSLOT_TASK_DIR: taskDir,
+    });
     await writeTextFile(path.join(artifactsDir, 'scripted-command.stdout.txt'), result.stdout);
     await writeTextFile(path.join(artifactsDir, 'scripted-command.stderr.txt'), result.stderr);
     await writeTextFile(

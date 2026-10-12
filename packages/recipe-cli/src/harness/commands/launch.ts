@@ -21,6 +21,7 @@ import {
   checkoutBusyOut,
   EXIT,
   flag,
+  type ParsedFlags,
   parseFlags,
   resolveFlagsAdapter,
   str,
@@ -32,17 +33,27 @@ function launchBooleans(): Set<string> {
   return new Set(['json', 'jsonStream', ...adapterFlags('launch')]);
 }
 
-export async function handleLaunch(argv: string[]): Promise<number> {
-  const { options } = parseFlags(argv, launchBooleans());
+export interface LaunchCommandOptions {
+  parsed?: ParsedFlags;
+  stream?: JsonStreamWriter;
+}
+
+export async function handleLaunch(
+  argv: string[],
+  commandOptions: LaunchCommandOptions = {},
+): Promise<number> {
+  const parsed = commandOptions.parsed ?? parseFlags(argv, launchBooleans());
+  const { options } = parsed;
   const json = flag(options, 'json');
-  const stream = new JsonStreamWriter('launch', flag(options, 'jsonStream'));
+  const stream =
+    commandOptions.stream ?? new JsonStreamWriter('launch', flag(options, 'jsonStream'));
   const jsonOutput = json && !stream.enabled;
   const restoreStdout = stream.isolateStdout();
   const target = targetOf(options);
   try {
     let exitCode: number;
     if (!fs.existsSync(target)) {
-      exitCode = await handleLaunchLocked(argv, stream);
+      exitCode = await handleLaunchLocked(parsed, stream);
     } else {
       const lock = acquireCheckoutLock(target, 'launch');
       if ('message' in lock) {
@@ -51,7 +62,7 @@ export async function handleLaunch(argv: string[]): Promise<number> {
         exitCode = checkoutBusyOut(jsonOutput, 'launch', lock.message, lock.path);
       } else {
         try {
-          exitCode = await handleLaunchLocked(argv, stream);
+          exitCode = await handleLaunchLocked(parsed, stream);
         } finally {
           lock.release();
         }
@@ -79,8 +90,10 @@ export async function handleLaunch(argv: string[]): Promise<number> {
   }
 }
 
-async function handleLaunchLocked(argv: string[], stream: JsonStreamWriter): Promise<number> {
-  const { positional, options } = parseFlags(argv, launchBooleans());
+async function handleLaunchLocked(
+  { positional, options }: ParsedFlags,
+  stream: JsonStreamWriter,
+): Promise<number> {
   const json = flag(options, 'json');
   const jsonOutput = json && !stream.enabled;
   const machine = json || stream.enabled;

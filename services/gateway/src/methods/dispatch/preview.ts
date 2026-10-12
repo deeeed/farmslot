@@ -49,6 +49,7 @@ import {
   projectUsesExecutionTemplateCatalog,
   resolveConfiguredExecutionTemplateForSlot,
 } from '../../tasks/execution-template-catalog.js';
+import { checkRecipeDispatchRequirements } from '../../tasks/recipe-dispatch-check.js';
 import { gitHeadProbeCommand, parseGitHeadProbe, slotHeadRefreshUpdate } from '../fleet.js';
 import { normalizeRunCreateMode } from '../run-create-mode.js';
 import { configuredPrepareProfileNames, resolvePrepareProfile } from '../slot/prepare-profile.js';
@@ -1174,8 +1175,25 @@ export async function dispatchPreview(
       ...(params.executionTemplateId ? { explicitId: params.executionTemplateId } : {}),
     });
     result.preview.executionTemplate = selected.reference;
+    result.preview.recipeCompatibility = await checkRecipeDispatchRequirements(
+      projectVars,
+      slotVars,
+      selected.entry,
+      { app: params.app, domain: selected.effectiveDomain },
+    );
     if (selected.effectiveDomain) result.preview.domain = selected.effectiveDomain;
     else delete result.preview.domain;
+  } else if (slotInfo) {
+    const [projectVars, slotVars] = await Promise.all([
+      loadProjectVars(params.project),
+      loadSlotVars(slotInfo.slot),
+    ]);
+    result.preview.recipeCompatibility = await checkRecipeDispatchRequirements(
+      projectVars,
+      slotVars,
+      undefined,
+      { app: params.app, domain: params.domain ?? slotVars.domain },
+    );
   }
   let profileFit: ReturnType<typeof detectProfileFit> = null;
   if (

@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import type { PlatformAdapter } from '@farmslot/adapter-sdk';
 import { portableRepoIdentity } from '@farmslot/agent-runtime';
@@ -586,6 +586,13 @@ export interface ResolveProjectContextOptions extends ResolveHarnessContextOptio
 export interface ProjectProvider {
   runtime: PlatformAdapter;
   engine?: RecipeEngine;
+  /** Project presentation and owned companions consumed by the shared lifecycle handlers. */
+  commandOptions?: {
+    doctor?: Partial<import('./commands/doctor.js').DoctorCommandOptions>;
+    status?: import('./commands/status.js').StatusCommandOptions;
+    stop?: import('./commands/stop.js').StopCommandOptions;
+    logs?: import('./commands/logs.js').LogsCommandOptions;
+  };
   cancel?(): void | Promise<void>;
   finalize?(): void | Promise<void>;
 }
@@ -594,7 +601,10 @@ export interface LoadProjectProviderOptions {
   /** Exact module paths or declared refs authorized by this invocation's operator. */
   authorizedProviders?: readonly string[];
   host?: HarnessHostConfig;
-  hostHints?: Pick<HarnessHostConfig, 'doctorHint' | 'supportsLast'>;
+  hostHints?: Pick<
+    HarnessHostConfig,
+    'doctorHint' | 'doctorCommand' | 'supportsLast' | 'journaledCommands'
+  >;
   command?: string;
   options?: CliOptions;
   /** Target and paths already resolved by the shared host, authoritative over raw input. */
@@ -928,6 +938,7 @@ export async function resolveProjectContext(
     ...(app ? { app } : {}),
     domain: recipe.domain,
     template: recipe.template,
+    checks: recipe.checks?.map((check) => ({ ...check, recipe: check.recipe.trim() })),
     ...(recipe.manifest ? { manifest: path.resolve(root, recipe.manifest) } : {}),
     provider,
     libraries,
@@ -1104,6 +1115,8 @@ function stringField(value: RuntimeContext | undefined, key: string): string | u
 }
 
 function repositoryIdentity(value: string): string {
+  if (path.isAbsolute(value)) return pathToFileURL(value).href;
+  if (value.startsWith('file:')) return pathToFileURL(fileURLToPath(value)).href;
   const repository = portableRepoIdentity(value);
   if (!repository) return value;
   const sshHost = (host: string): string => {

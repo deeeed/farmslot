@@ -4,6 +4,11 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Preserve project log viewers and declared default check invocations in the resolved binding.
+
+- Match local checkout origins written as file URLs or absolute paths during project binding, while refusing a different repository.
+- Share validated lifecycle options, cancellation and runtime log access with project hosts; preserve named application-log defaults, the `app` selector, full raw follow and missing-console failures, and retain the latest proof after subsequent lifecycle commands.
+- Require executed smoke and cleanup assertions for live conformance, with complete observed HUD intent when capture requires it.
 - Forward host recording admission into the shared engine factory while keeping discovery and preflight read-only.
 
 - **BREAKING:** Use the SDK engine and runner-owned capture lifecycle; task ledgers receive derived claims rather than action-success verdicts. Move only the engine factory/options exports and remove replaced framed-recording exports from `/harness` (ADR-062).

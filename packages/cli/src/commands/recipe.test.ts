@@ -11,6 +11,7 @@ import { Command } from 'commander';
 import { shellQuote } from '@farmslot/recipe-cli/harness';
 
 import { registerDoctorCommand } from './doctor.js';
+import { projectRecipeHostOptions } from './recipe-project.js';
 
 const packageRoot = fileURLToPath(new URL('../..', import.meta.url));
 const driver = `
@@ -20,6 +21,43 @@ const driver = `
   registerRecipeCommand(program);
   await program.parseAsync(process.argv.slice(1), {from:'user'});
 `;
+
+test('recipe commands resolve registry and pool from the selected root before the workspace', async (t) => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'recipe-registry-')));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const selected = path.join(root, 'selected');
+  const workspace = path.join(root, 'workspace');
+  const explicit = path.join(root, 'explicit-projects');
+  for (const directory of [
+    path.join(selected, 'projects'),
+    path.join(workspace, 'farmslot/projects'),
+    explicit,
+  ]) {
+    fs.mkdirSync(directory, { recursive: true });
+  }
+  const keys = ['FARMSLOT_ROOT', 'FARMSLOT_WORKSPACE', 'FARMSLOT_POOL_DIR'] as const;
+  const previous = keys.map((key) => [key, process.env[key]] as const);
+  t.after(() => {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  process.env.FARMSLOT_ROOT = selected;
+  process.env.FARMSLOT_WORKSPACE = workspace;
+  delete process.env.FARMSLOT_POOL_DIR;
+  for (const command of ['actions', 'doctor']) {
+    const resolved = await projectRecipeHostOptions(command, undefined, {});
+    assert.equal(resolved.projectsDir, path.join(selected, 'projects'));
+    assert.equal(resolved.slotPoolDir, path.join(selected, 'pool'));
+    const override = await projectRecipeHostOptions(command, undefined, { projectsDir: explicit });
+    assert.equal(override.projectsDir, explicit);
+  }
+  process.env.FARMSLOT_ROOT = '  ';
+  const fallback = await projectRecipeHostOptions('actions', undefined, {});
+  assert.equal(fallback.projectsDir, path.join(workspace, 'farmslot/projects'));
+  assert.equal(fallback.slotPoolDir, path.join(workspace, 'farmslot/pool'));
+});
 
 function discovery(t: TestContext, flags: string[]) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'recipe-actions-')));
@@ -155,7 +193,11 @@ function callFixture(t: TestContext, cleanup = true) {
   return root;
 }
 
-function publicCall(root: string, args: string[], operation: 'call' | 'run' = 'call') {
+function publicCall(
+  root: string,
+  args: string[],
+  operation: 'call' | 'run' | 'status' | 'launch' | 'reload' | 'stop' | 'logs' = 'call',
+) {
   const env = {
     ...process.env,
     FARMSLOT_HOME: root,
@@ -204,7 +246,7 @@ function standaloneRun(root: string, file: string) {
 function callPublic(
   root: string,
   args: string[],
-  operation: 'call' | 'run' = 'call',
+  operation: 'call' | 'run' | 'status' | 'launch' | 'reload' | 'stop' | 'logs' = 'call',
   entry: 'command' | 'bin' = 'command',
 ) {
   const command = publicCall(root, args, operation);
@@ -414,6 +456,7 @@ test('public project run plans without executing a command', (t) => {
   const plan = JSON.parse(result.stdout);
   assert.equal(plan.status, 'pass');
   assert.equal(fs.existsSync(path.join(root, 'artifacts/effect')), false);
+  assert.equal(fs.existsSync(path.join(root, 'runtime/operations')), false);
 });
 
 for (const operation of ['run', 'call'] as const) {
@@ -501,7 +544,7 @@ for (const failure of ['runtime', 'closeout', 'usage']) {
     assert.ok(diagnostic, result.stderr);
     if (failure === 'usage') assert.equal(diagnostic.code, 'CLI_USAGE_ERROR');
     assert.equal(fs.existsSync(path.join(root, 'artifacts/effect')), false);
-    assert.match(diagnostic.userAction, /^farmslot doctor --conformance /u);
+    assert.match(diagnostic.userAction, /^farmslot doctor /u);
     const program = new Command('farmslot').option('--json');
     registerDoctorCommand(program);
     const doctor = program.commands.find((command) => command.name() === 'doctor');
@@ -539,7 +582,7 @@ for (const operation of ['run', 'call'] as const) {
     assert.notEqual(result.status, 0);
     const output = JSON.parse(result.stdout);
     assert.equal(output.error.code, 'OVERLAY_INSTALL_FAILED');
-    assert.match(output.error.userAction, /^farmslot doctor --conformance /u);
+    assert.match(output.error.userAction, /^farmslot doctor /u);
     assert.ok(output.error.userAction.includes('--project example'));
     assert.equal(fs.existsSync(path.join(root, 'artifacts/effect')), false);
   });
@@ -828,3 +871,169 @@ for (const stream of [false, true]) {
     }
   });
 }
+
+for (const operation of ['status', 'launch', 'reload', 'stop', 'logs'] as const) {
+  test(`public recipe ${operation} uses the bound provider and finalizes it`, (t) => {
+    const root = callFixture(t);
+    const file = path.join(root, 'projects/example/provider.mjs');
+    const logFile = path.join(root, 'runtime.log');
+    fs.writeFileSync(logFile, 'runtime ready\n');
+    fs.writeFileSync(
+      file,
+      fs
+        .readFileSync(file, 'utf8')
+        .replace("['call','run']", "['call','run','launch']")
+        .replace('headless: true', 'headless: false')
+        .replace(
+          'runtime: {',
+          `commandOptions: {
+          status: {checkoutView: target => ({json:{source:'project',target},text:'project readiness'})},
+          stop: {companions: async () => [{label:'owned companion', pid:12345}]}
+        }, runtime: {`,
+        )
+        .replace(
+          'logSources: () => []',
+          `logSources: () => [{label:'runtime', path:${JSON.stringify(logFile)}}]`,
+        )
+        .replace(
+          'devServer: {}',
+          `devServer: {stop: () => ({kind:'stopped', status:0, summary:'owned server stopped', signalled:0})}`,
+        )
+        .replace(
+          'launch: async () => 0',
+          `
+        launch: async ({options, target, adapter}) => {
+          console.log(JSON.stringify({command:'launch', target, adapter, verify:options.verify, sandbox:options.sandbox}));
+          return 0;
+        },
+        reload: async target => { console.log(JSON.stringify({command:'reload', target})); return 0; }
+      `,
+        ),
+    );
+    const result = callPublic(
+      root,
+      operation === 'launch' ? ['--verify', '--sandbox'] : operation === 'logs' ? ['--full'] : [],
+      operation,
+    );
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.command, operation);
+    assert.equal(output.target, root);
+    assert.equal(fs.readFileSync(path.join(root, 'artifacts/hooks.log'), 'utf8'), 'finalize\n');
+    if (operation === 'launch') {
+      assert.equal(output.verify, true);
+      assert.equal(output.sandbox, true);
+    }
+    if (operation === 'logs') assert.equal(output.logFile, logFile);
+    if (operation === 'status') assert.deepEqual(output.view, { source: 'project', target: root });
+    if (operation === 'stop') assert.equal(output.signalled, 1);
+  });
+}
+
+test('public launch rejects a provider flag typo before construction', (t) => {
+  const root = callFixture(t);
+  const result = callPublic(root, ['--verfiy'], 'launch');
+  assert.notEqual(result.status, 0);
+  assert.equal(JSON.parse(result.stdout).error.code, 'CLI_UNKNOWN_OPTION');
+  assert.equal(fs.existsSync(path.join(root, 'artifacts/factory.json')), false);
+});
+
+for (const [label, flags, expected] of [
+  ['omitted lines', [], 'compact'],
+  ['explicit events', ['--events', '7'], 'compact'],
+  ['explicit lines', ['--lines', '1'], 'raw'],
+  ['JSON inspection', ['--json'], 'metadata'],
+  ['raw/event conflict', ['--events', '2', '--lines', '1'], 'refusal'],
+  ['owned window JSON', ['--window', '--json'], 'window'],
+] as const) {
+  test(`public log grammar preserves ${label}`, (t) => {
+    const root = callFixture(t);
+    const file = path.join(root, 'projects/example/provider.mjs');
+    const logFile = path.join(root, 'runtime.log');
+    const marker = path.join(root, 'artifacts/log-view.json');
+    fs.writeFileSync(logFile, 'older line\nnewest line\n');
+    fs.writeFileSync(
+      file,
+      fs
+        .readFileSync(file, 'utf8')
+        .replace(
+          'runtime: {',
+          `commandOptions: { logs: {
+        compact: async request => { fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify(request)); return 0; },
+        window: async request => ({ window: 'owned', logFile: request.logFile, exitCode: 0 })
+      } }, runtime: {`,
+        )
+        .replace(
+          'logSources: () => []',
+          `logSources: () => [{label:'runtime',path:${JSON.stringify(logFile)}}]`,
+        ),
+    );
+    const command = publicCall(root, [...flags], 'logs');
+    command.args.splice(command.args.indexOf('--json'), 1);
+    command.args[command.args.indexOf('-e') + 1] =
+      `Object.defineProperty(process.stdout, 'isTTY', {value:true});\n${driver}`;
+    const result = spawnSync(process.execPath, command.args, { ...command.options, timeout: 4900 });
+    assert.ifError(result.error);
+    assert.equal(result.status, expected === 'refusal' ? 1 : 0, result.stdout + result.stderr);
+    assert.equal(fs.existsSync(marker), expected === 'compact');
+    if (expected === 'compact') {
+      const request = JSON.parse(fs.readFileSync(marker, 'utf8'));
+      assert.equal(request.logFile, logFile);
+      assert.equal(
+        request.events,
+        label === 'explicit events' ? '7' : (process.env.RECIPE_LOG_EVENTS ?? '20'),
+      );
+    }
+    if (expected === 'raw') {
+      assert.match(result.stdout, /newest line/);
+      assert.doesNotMatch(result.stdout, /older line/);
+    }
+    if (expected === 'metadata') assert.equal(JSON.parse(result.stdout).logFile, logFile);
+    if (expected === 'window') assert.equal(JSON.parse(result.stdout).window, 'owned');
+  });
+}
+
+test('public logs without a compact hook defaults to 20 bounded raw lines', (t) => {
+  const root = callFixture(t);
+  const file = path.join(root, 'projects/example/provider.mjs');
+  const logFile = path.join(root, 'runtime.log');
+  fs.writeFileSync(
+    logFile,
+    Array.from({ length: 30 }, (_, index) => `line-${index + 1}`).join('\n') + '\n',
+  );
+  fs.writeFileSync(
+    file,
+    fs
+      .readFileSync(file, 'utf8')
+      .replace(
+        'logSources: () => []',
+        `logSources: () => [{label:'runtime',path:${JSON.stringify(logFile)}}]`,
+      ),
+  );
+  const command = publicCall(root, [], 'logs');
+  command.args.splice(command.args.indexOf('--json'), 1);
+  command.args[command.args.indexOf('-e') + 1] =
+    `Object.defineProperty(process.stdout, 'isTTY', {value:true});\n${driver}`;
+  const result = spawnSync(process.execPath, command.args, { ...command.options, timeout: 4900 });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(
+    result.stdout.trim().split('\n'),
+    Array.from({ length: 20 }, (_, index) => `line-${index + 11}`),
+  );
+});
+
+test('public checkout commands forward an explicit recording opt-out reason', (t) => {
+  const root = callFixture(t);
+  const result = callPublic(root, [
+    'command',
+    'cmd=printf inspected',
+    '--record-video=off',
+    '--recording-reason',
+    'performance baseline',
+  ]);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const options = JSON.parse(fs.readFileSync(path.join(root, 'artifacts/factory.json'), 'utf8'));
+  assert.equal(options.recordVideo, false);
+  assert.equal(options.recordingReason, 'performance baseline');
+});

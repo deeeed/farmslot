@@ -4,7 +4,7 @@
 // plugin loader.
 import path from 'node:path';
 
-import type { RecipeConformanceSource } from '@farmslot/protocol';
+import type { ProjectRecipeCheck, RecipeConformanceSource } from '@farmslot/protocol';
 import type { RecipeLibrarySource } from '@farmslot/recipe-runner';
 
 import { CliError } from './cli-error.js';
@@ -117,6 +117,7 @@ export interface ResolvedProjectBinding {
     authority: 'configured' | 'installed' | 'discovered';
   };
   libraries: ResolvedProjectLibrary[];
+  checks?: ProjectRecipeCheck[];
 }
 
 export class ProjectBindingError extends CliError {

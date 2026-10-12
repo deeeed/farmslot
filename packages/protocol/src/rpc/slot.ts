@@ -359,6 +359,7 @@ export interface RecipeProjectHookRunResult {
   stdout: string;
   stderr: string;
   validation: RecipeProjectHookValidationResult;
+  conformance?: import('../contracts/recipe-conformance.js').RecipeConformanceReport;
 }
 
 export interface SlotActionListParams {

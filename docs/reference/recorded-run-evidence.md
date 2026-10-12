@@ -208,6 +208,17 @@ interface to implement.
 | `materializeEvidenceClip(package, moment, outputDir): Promise<ArtifactRef>`                                                       | Proposed `@farmslot/recipe-runner`; artifact CLI/publication                              | Bounded on-demand derivative from validated references                                                                                        |
 | `refreshPublishedEvidence(client, params): Promise<RunRefreshPublishedEvidenceResult>`                                            | Proposed SDK client entry; authorized artifact CLI/integrations                           | Existing typed gateway RPC remains sole publication authority                                                                                 |
 
+`readRecordedEvidencePackage(artifactDir)` is the single Node filesystem reader
+exported from the Node entry `@farmslot/adapter-sdk`. CLI artifact validation and gateway
+gate evaluation use its `{ input: RecordedEvidencePackageInput, checks }` result.
+Consumers reject any failed read check and pass `input` to
+`validateRecordedEvidencePackage`; callers may bind the expected `recipeRunId`
+without replacing retained identity. The reader hashes actual contained bytes and
+loads the retained invocation, claims, dependency recipes and declared timelines.
+It does not select a publication, derive a second verdict, or replace a missing
+retained recipe. The portable `@farmslot/adapter-sdk/evidence` entry exports the validator without filesystem code. This
+experimental export ships with the coordinated ADR-062 package release.
+
 Existing supported exports are not internal merely because a path contains
 `/harness`. Remove only replaced exports/imports and implementation-file access.
 New entries remain proposed/experimental until conformance and a documented

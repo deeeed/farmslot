@@ -72,3 +72,4 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [063](063-review-modes-warm-cold.md)                     | Review modes WARM and COLD with one shared review-and-dispatch picker   | Accepted |
 | [064](064-deterministic-checklist-checks.md)             | Deterministic checklist checks before publication                       | Accepted |
 | [065](065-fail-closed-run-lifecycle.md)                  | Fail-closed run lifecycle                                               | Accepted |
+| [068](068-project-recipe-binding-and-conformance.md)     | Project recipe binding and conformance                                  | Accepted |

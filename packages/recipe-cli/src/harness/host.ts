@@ -40,6 +40,8 @@ export interface HarnessHost {
   journaledCommands: readonly string[];
   /** A complete diagnostic command when the host exposes different doctor syntax. */
   doctorHint?: string;
+  /** Readiness/repair command when doctor lives outside the recipe namespace. */
+  doctorCommand?: string;
   /** False when failures should point to evidence instead of a journal `last` command. */
   supportsLast?: boolean;
 }

@@ -94,3 +94,10 @@ export type {
   RecordingAdmissionContext,
   RecordingAdmissionLease,
 } from '@farmslot/recipe-runner';
+
+/** Node-only retained package reader; portable validation lives at ./evidence. */
+export {
+  readRecordedEvidencePackage,
+  type RecordedEvidencePackageReadCheck,
+  type RecordedEvidencePackageReadResult,
+} from '@farmslot/recipe-runner';

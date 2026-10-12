@@ -74,7 +74,12 @@ export function withProjectRecipeHost<T>(
   invoke: (host: ProjectRecipeHost) => Promise<T>,
 ): Promise<T> {
   return withHarnessInvocation(async () => {
-    const executes = isRecipeExecution(options.command, options.options);
+    // Lifecycle and log followers share owned-child cancellation, without granting
+    // recipe execution or funding authority to a readiness/log query.
+    const needsSignals =
+      isRecipeExecution(options.command, options.options) ||
+      (options.command === 'doctor' && options.options?.fix === true) ||
+      ['launch', 'reload', 'stop', 'logs'].includes(options.command ?? '');
     const execute = async (signal?: AbortSignal): Promise<T> => {
       const previousHost = harnessHost();
       const previousContext = harnessContext();
@@ -249,7 +254,7 @@ export function withProjectRecipeHost<T>(
     const finishOutput = options.deferOutput ? deferCommandOutput() : undefined;
     let succeeded = false;
     try {
-      const result = await (executes
+      const result = await (needsSignals
         ? withRecipeSignals(execute, options.signal)
         : execute(options.signal));
       succeeded = true;

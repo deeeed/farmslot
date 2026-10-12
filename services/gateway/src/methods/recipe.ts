@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 import {
+  conformanceChecksPass,
   Events,
   formatRuntimeCapabilityTarget,
   isRecord,
@@ -15,6 +16,7 @@ import {
   type RecipeCancelResult,
   type RecipeCommandParams,
   type RecipeCommandResult,
+  type RecipeConformanceReport,
   type RecipeProjectHookCommandParams,
   type RecipeProjectHookCommandResult,
   type RecipeProjectHookName,
@@ -607,21 +609,54 @@ export function validateRecipeProjectHookOutput(
   };
 }
 
+export interface HostedRecipeConformanceOptions {
+  recipes: readonly string[];
+  params?: Readonly<Record<string, unknown>>;
+  app?: string;
+  domain?: string;
+  checkReport?: string;
+  reportName?: string;
+}
+
 /** A declared provider uses the same CLI and binding as a checkout invocation. */
 export function buildHostedRecipeCommand(
   hook: RecipeProjectHookName,
   projectVars: ProjectVars,
   slotVars: SlotVars,
-  params: { recipePath?: string; artifactsDir?: string; target?: RuntimeCapabilityTarget } = {},
+  params: {
+    recipePath?: string;
+    artifactsDir?: string;
+    target?: RuntimeCapabilityTarget;
+    conformance?: HostedRecipeConformanceOptions;
+  } = {},
 ): string | undefined {
-  // Readiness is not whole-library conformance; its lifecycle migration belongs to Phase 2.
-  if (hook === 'recipe_doctor') return undefined;
   const declaration = getProjectFieldRaw(projectVars.projectJson, 'recipe');
   if (declaration === undefined) return undefined;
   validateProjectRecipeConfig(declaration);
   assertSlotProjectMatchesRequestedProject(slotVars, projectVars.projectName);
   const target = shellExpressionForRemotePath(slotVars.remoteRepo);
-  const args = ['recipe', hook === 'recipe_run' ? 'run' : 'actions', '--target', target];
+  const command =
+    hook === 'recipe_doctor' ? ['doctor'] : ['recipe', hook === 'recipe_run' ? 'run' : 'actions'];
+  const args = [...command, '--target', target];
+  if (params.conformance) {
+    if (hook !== 'recipe_doctor') throw new Error('Conformance requires the doctor command.');
+    const check = params.conformance;
+    args.push('--conformance');
+    for (const recipe of check.recipes) args.push('--recipe', shellQuote(recipe));
+    for (const [name, value] of Object.entries(check.params ?? {}))
+      args.push('--param', shellQuote(`${name}=${JSON.stringify(value)}`));
+    if (check.app) args.push('--app', shellQuote(check.app));
+    if (check.domain) args.push('--domain', shellQuote(check.domain));
+    if (check.checkReport) {
+      if (!resolvePathWithinRemoteBase(slotVars.remoteRepo, check.checkReport))
+        throw new Error('--check-report must be inside the selected slot checkout.');
+      args.push(
+        '--check-report',
+        shellExpressionForRemotePath(path.posix.join(slotVars.remoteRepo, check.checkReport)),
+      );
+    }
+    if (check.reportName) args.push('--report-name', shellQuote(check.reportName));
+  }
   if (hook === 'recipe_action_manifest') args.push('--raw');
   if (hook === 'recipe_run') {
     if (!params.recipePath) throw new Error('hooks.recipe_run execution requires recipePath.');
@@ -674,10 +709,15 @@ export function expandRecipeProjectHookTemplate(
   hook: RecipeProjectHookName,
   projectVars: ProjectVars,
   slotVars: SlotVars,
-  params: { recipePath?: string; artifactsDir?: string } = {},
+  params: {
+    recipePath?: string;
+    artifactsDir?: string;
+    conformance?: HostedRecipeConformanceOptions;
+  } = {},
 ): RecipeProjectHookCommandResult {
   const hosted = buildHostedRecipeCommand(hook, projectVars, slotVars, params);
   if (hosted) return { hook, command: hosted };
+  if (params.conformance) throw new Error('Conformance requires a declared project provider.');
   const template = projectVars.projectJson.hooks?.[hook];
   if (!template || typeof template !== 'string') {
     throw new Error(`No ${hook} hook configured in project.json for ${projectVars.projectName}.`);
@@ -1216,6 +1256,7 @@ export async function recipeProjectHookCommand(
 
 async function buildRecipeProjectHookCommand(
   params: RecipeProjectHookCommandParams,
+  conformance?: HostedRecipeConformanceOptions,
 ): Promise<{ built: RecipeProjectHookCommandResult; slotVars: SlotVars }> {
   assertRecipeProjectHookName(params.hook);
   const slotVars = await loadSlotVars(params.slotId);
@@ -1225,6 +1266,7 @@ async function buildRecipeProjectHookCommand(
     built: expandRecipeProjectHookTemplate(params.hook, projectVars, slotVars, {
       recipePath: params.recipePath,
       artifactsDir: params.artifactsDir,
+      conformance,
     }),
     slotVars,
   };
@@ -1232,8 +1274,9 @@ async function buildRecipeProjectHookCommand(
 
 export async function recipeProjectHookRun(
   params: RecipeProjectHookRunParams,
+  conformance?: HostedRecipeConformanceOptions,
 ): Promise<RecipeProjectHookRunResult> {
-  const { built, slotVars } = await buildRecipeProjectHookCommand(params);
+  const { built, slotVars } = await buildRecipeProjectHookCommand(params, conformance);
   const owner = await readSlotRow(params.slotId);
   if (
     typeof owner?.held_reason === 'string' &&
@@ -1268,7 +1311,37 @@ export async function recipeProjectHookRun(
       `hooks.${params.hook} failed with exit code ${result.exitCode}: ${result.stderr || result.stdout}`,
     );
   }
-  let validation = validateRecipeProjectHookOutput(params.hook, result.stdout);
+  let checkedReport: RecipeConformanceReport | undefined;
+  if (conformance) {
+    const envelope = parseProjectHookJson(params.hook, result.stdout);
+    const data = isRecord(envelope) && isRecord(envelope.data) ? envelope.data : undefined;
+    const report = data?.report as RecipeConformanceReport | undefined;
+    if (
+      report?.schemaVersion !== 1 ||
+      report.status !== 'pass' ||
+      !['static', 'live'].includes(report.mode) ||
+      !Array.isArray(report.checks) ||
+      !conformanceChecksPass(report.checks, report.mode) ||
+      report.identity?.project !== params.project ||
+      report.identity.selection?.poolSlot !== params.slotId
+    )
+      throw new Error(
+        'Hosted conformance did not return passing evidence for the selected project and slot.',
+      );
+    checkedReport = report;
+  }
+  let validation: RecipeProjectHookValidationResult = checkedReport
+    ? {
+        status: 'pass',
+        checks: [
+          {
+            id: 'conformance',
+            status: 'pass',
+            message: 'Selected project and slot conformance passed.',
+          },
+        ],
+      }
+    : validateRecipeProjectHookOutput(params.hook, result.stdout);
   if (params.hook === 'recipe_run') {
     const artifactsDir = params.artifactsDir;
     // buildRecipeProjectHookCommand enforces this before execution; keep a local guard for TS and tests.
@@ -1289,6 +1362,7 @@ export async function recipeProjectHookRun(
     stdout: result.stdout,
     stderr: result.stderr,
     validation,
+    ...(checkedReport ? { conformance: checkedReport } : {}),
   };
 }
 

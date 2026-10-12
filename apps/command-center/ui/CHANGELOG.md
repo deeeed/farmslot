@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show selected-flow recipe requirements, registration and scoped live verification in Dispatch, including the checked revision and target; clear results when the selection or gateway changes.
 - Use the protocol timeline-binding validator when opening recipe video evidence (ADR-062).
 
 - Show retained check metadata in CI decisions without changing timeout auto-resume.
