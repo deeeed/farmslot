@@ -141,7 +141,7 @@ class LaneTests(unittest.TestCase):
     def test_launch_resumes_preserved_shell_through_guard_without_resubmitting_goal(self):
         lane = self.config["lanes"][0]
         lane["resume_id"] = "chosen-session"
-        lanes._update(self.config, "one", {"session_id": "older-session", "goal_submitted": True})
+        lanes._update(self.config, "one", {"session_id": "chosen-session", "goal_submitted": True})
         calls = []
         reads = 0
         def command(argv, **kwargs):
@@ -195,6 +195,10 @@ class LaneTests(unittest.TestCase):
         with patch.object(lanes, 'run', side_effect=adapter):
             lanes._runner_adapter(self.config, lane, {})
             lanes._runner_adapter(self.config, lane, {'session_id': 'retained-session'})
+            lane['resume_id'] = 'explicit-session'
+            with patch.object(lanes, 'run', return_value=result('{}')) as explicit:
+                lanes._runner_adapter(self.config, lane, {'session_id': 'older-session'})
+            self.assertEqual(json.loads(explicit.call_args.kwargs['input'])['resume_id'], 'explicit-session')
 
     def test_send_refuses_shell_and_never_uses_raw_tmux_send(self):
         def command(argv, **kwargs):

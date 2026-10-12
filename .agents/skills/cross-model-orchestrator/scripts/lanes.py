@@ -328,6 +328,8 @@ def _launch(config, lane_id, *, restoring, submit_goal):
             raise RuntimeError(f"lane {lane_id} shell launch refused: {delivery.get('verification', 'unverified')}")
     if not pane.startswith("%") or not pane[1:].isdigit():
         raise RuntimeError(f"tmux did not return a pane id for lane {lane_id}")
+    if resume_id != record.get("session_id"):
+        record["goal_submitted"] = False
     record.update(pane_id=pane, runtime_dir=adapter["runtime_dir"],
                   observability_dir=adapter["observability_dir"], session_id=resume_id,
                   goal_supported=adapter.get("goal_supported", False), goal_prefix=adapter.get("goal_prefix", "/goal"))
