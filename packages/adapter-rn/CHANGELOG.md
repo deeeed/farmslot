@@ -6,6 +6,8 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Record the explicitly selected Android device in native recipe proofs.
 
+## 0.20.0 - 2026-10-12
+
 - **BREAKING:** Return original native recording segments and measured/untimed results through the shared contract. Keep one simulator recorder and replace string-prefixed target sentinels with typed targets (ADR-062).
 - Keep recipe HUD intent on two bounded lines through the shared display policy, with authoring warnings above 80 characters and errors above 120.
 

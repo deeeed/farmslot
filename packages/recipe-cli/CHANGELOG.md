@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+## 0.14.0 - 2026-10-12
+
 - Preserve project log viewers and declared default check invocations in the resolved binding.
 
 - Match local checkout origins written as file URLs or absolute paths during project binding, while refusing a different repository.

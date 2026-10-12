@@ -4,6 +4,8 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
+## 0.9.0 - 2026-10-12
+
 - Expose one retained evidence-package reader for CLI and gateway validation, with contained file reads, actual byte digests and read diagnostics.
 
 - Expose optional device-recorder readiness to shared project doctor commands.
