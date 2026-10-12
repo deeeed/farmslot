@@ -1242,7 +1242,10 @@ export class RoadmapPanel extends LitElement {
     if (!this._promptPreviews[promptPath]) void this._loadPromptPreview(promptPath);
   }
 
-  private async _refresh(selectId = this._selectedId) {
+  private async _refresh(
+    selectId = this._selectedId,
+    selectionGeneration = this._selectionGeneration,
+  ) {
     if (this.items) {
       this._syncState(getState());
       return;
@@ -1254,7 +1257,6 @@ export class RoadmapPanel extends LitElement {
     // generation orders summary writes against `_reloadDelivery`, which carries fresher
     // summaries but no items — so it may win the summaries without discarding the list.
     const listGeneration = ++this._listGeneration;
-    const selectionGeneration = this._selectionGeneration;
     const deliveryGeneration = ++this._deliveryGeneration;
     try {
       const result = await gateway.request<RoadmapListResult>(Methods.ROADMAP_LIST, {
@@ -1292,6 +1294,7 @@ export class RoadmapPanel extends LitElement {
 
   private async _create(event: Event) {
     event.preventDefault();
+    const selectionGeneration = this._selectionGeneration;
     this._busy = 'create';
     this._error = '';
     this._message = '';
@@ -1317,7 +1320,7 @@ export class RoadmapPanel extends LitElement {
       });
       this._newTargetProjectsTouched = false;
       this._message = 'Roadmap item captured';
-      await this._refresh(result.item.id);
+      await this._refresh(result.item.id, selectionGeneration);
     } catch (err) {
       this._error = (err as Error).message;
     } finally {
@@ -1327,6 +1330,7 @@ export class RoadmapPanel extends LitElement {
 
   private async _saveSelected() {
     if (!this._selected) return;
+    const selectionGeneration = this._selectionGeneration;
     this._busy = 'save';
     this._error = '';
     this._message = '';
@@ -1346,7 +1350,7 @@ export class RoadmapPanel extends LitElement {
         },
       });
       this._message = 'Roadmap item saved';
-      await this._refresh(result.item.id);
+      await this._refresh(result.item.id, selectionGeneration);
     } catch (err) {
       this._error = (err as Error).message;
     } finally {
@@ -1356,6 +1360,7 @@ export class RoadmapPanel extends LitElement {
 
   private async _refineSelected(launch: boolean) {
     if (!this._selected) return;
+    const selectionGeneration = this._selectionGeneration;
     this._busy = launch ? 'refine-launch' : 'refine';
     this._error = '';
     this._message = '';
@@ -1380,7 +1385,7 @@ export class RoadmapPanel extends LitElement {
           : `Refinement terminal reopened${runnerSuffix}: ${result.attachCommand}`
         : `Refinement prompt ready${runnerSuffix}: ${result.promptPath}`;
       if (launch) this._setRunnerPickerOpen(false);
-      await this._refresh(result.item.id);
+      await this._refresh(result.item.id, selectionGeneration);
       if (launch && result.tmuxWorker) this._navigateToWorkerTerminal(result.tmuxWorker);
     } catch (err) {
       this._error = (err as Error).message;
@@ -1566,6 +1571,7 @@ export class RoadmapPanel extends LitElement {
 
   private async _promoteSelected() {
     if (!this._selected) return;
+    const selectionGeneration = this._selectionGeneration;
     this._busy = 'promote';
     this._error = '';
     this._message = '';
@@ -1581,7 +1587,7 @@ export class RoadmapPanel extends LitElement {
         })),
       });
       this._message = `Promoted ${result.backlogItems.length} backlog spec${result.backlogItems.length === 1 ? '' : 's'}`;
-      await this._refresh(result.roadmapItem.id);
+      await this._refresh(result.roadmapItem.id, selectionGeneration);
     } catch (err) {
       this._error = (err as Error).message;
     } finally {
