@@ -614,7 +614,7 @@ export interface GateSummary {
   headline?: string;
   worker: {
     model: string | null;
-    turns: number;
+    turns: number | null;
     outcome?: 'success' | 'failure' | 'partial' | 'cancelled';
   };
   review: ReviewSummary;
@@ -1472,6 +1472,8 @@ export interface RunMetrics {
   // Session-truth fields populated from the worker's transcript via session-usage.sh.
   // Help diagnose cost anomalies (e.g. dispatched sonnet but fast-mode forced opus).
   sessionTurns?: number;
+  /** Native usage capture failure, retained rather than displayed as observed zero. */
+  sessionUsageError?: string;
   sessionInputTokens?: number;
   sessionOutputTokens?: number;
   sessionCacheCreation?: number;

@@ -1,8 +1,10 @@
 import type { Run, RunnerSessionUsage } from '@farmslot/protocol';
-import { runSessionUsage } from '@farmslot/slot-config';
+import { expandTemplate, runSessionUsage } from '@farmslot/slot-config';
 
 import type { SlotVars } from '../core/config.js';
-import { isLocal } from '../core/exec.js';
+import { execOnSlot, isLocal } from '../core/exec.js';
+import { shellQuote } from '../core/tmux.js';
+import { verifiedRunnerSessionArchivePath } from '../runners/session-archive.js';
 
 function parseNumberLine(lines: string[], prefix: string): number | null {
   const line = lines.find((candidate) => candidate.startsWith(prefix));
@@ -88,15 +90,18 @@ export async function extractRunnerSessionUsage({
       error: 'runner did not expose a session transcript path',
     });
   }
-  if (vars && !isLocal(vars.host, vars.machine)) {
-    return unavailableRunnerSessionUsage({
-      runner,
-      runnerSessionId,
-      runnerSessionPath,
-      error: 'runner transcript usage extraction for remote slots is not implemented',
-    });
-  }
   try {
+    if (vars && !isLocal(vars.host, vars.machine)) {
+      const farmslotDir = expandTemplate('{{farmslot_dir}}', vars);
+      const result = await execOnSlot(
+        vars,
+        `RUNNER_SESSION_PATH=${shellQuote(runnerSessionPath)} RUNNER_SESSION_RUNNER=${shellQuote(runner ?? '')} bash ${farmslotDir}/scripts/session-usage.sh ${shellQuote(slotId)} total`,
+        { timeout: 30_000, maxBuffer: 64 * 1024, selectNodeSupport: false },
+      );
+      if (result.exitCode !== 0)
+        throw new Error(result.stderr.trim() || `Usage extraction exited ${result.exitCode}`);
+      return parseSessionUsageOutput(result.stdout, { runner, runnerSessionId, runnerSessionPath });
+    }
     const output = await runSessionUsage({
       // repo is unused when forcedPath is set; pass empty string.
       repo: '',
@@ -117,5 +122,49 @@ export async function extractRunnerSessionUsage({
       runnerSessionPath,
       error: (err as Error).message,
     });
+  }
+}
+
+/** The same metric mapping feeds completion capture and historical read projection. */
+export function runnerUsageMetrics(usage: RunnerSessionUsage): Partial<Run['metrics']> {
+  return {
+    ...(usage.turns != null ? { sessionTurns: usage.turns } : {}),
+    ...(usage.inputTokens != null ? { sessionInputTokens: usage.inputTokens } : {}),
+    ...(usage.outputTokens != null ? { sessionOutputTokens: usage.outputTokens } : {}),
+    ...(usage.totalTokens != null ? { sessionTotalTokens: usage.totalTokens } : {}),
+    ...(usage.cacheCreation != null ? { sessionCacheCreation: usage.cacheCreation } : {}),
+    ...(usage.cacheRead != null ? { sessionCacheRead: usage.cacheRead } : {}),
+    ...(usage.costUsd != null ? { costEstimate: usage.costUsd } : {}),
+  };
+}
+
+/** Recover only verified retained native usage, without rewriting stored runs. */
+export async function projectArchivedRunnerUsage(run: Run): Promise<Run> {
+  if (run.metrics.sessionTotalTokens != null && run.metrics.sessionTurns != null) return run;
+  try {
+    const archived = await verifiedRunnerSessionArchivePath(run);
+    if (!archived) {
+      const reason =
+        run.metrics.sessionUsageError ??
+        run.metrics.runnerSessionArchive?.reason ??
+        'runner did not report usage and no verified transcript was retained';
+      return { ...run, metrics: { ...run.metrics, sessionUsageError: reason } };
+    }
+    const output = await runSessionUsage({
+      repo: '',
+      slotId: run.slotId ?? run.id,
+      action: 'total',
+      forcedPath: archived,
+      forcedRunner: run.metrics.runner,
+    });
+    const usage = parseSessionUsageOutput(output);
+    // A resumed review transcript is a chain total, not this generation's usage.
+    if (usesReviewChainSessionTotal(run)) return run;
+    return {
+      ...run,
+      metrics: { ...runnerUsageMetrics(usage), ...run.metrics, sessionUsageError: usage.error },
+    };
+  } catch (error) {
+    return { ...run, metrics: { ...run.metrics, sessionUsageError: (error as Error).message } };
   }
 }

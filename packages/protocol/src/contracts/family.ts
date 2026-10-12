@@ -98,6 +98,8 @@ export interface FamilyObservabilityRunSummary {
    * registered, so a consumer needs no second read of the task directory.
    */
   acceptanceSummary?: AcceptanceStatusSummary | null;
+  /** ADR-062 shared model projection; report presence is not proof of a claim. */
+  evidenceReview?: { reportAvailable: boolean; errors: string[]; warnings: string[] };
   ciChecks: Array<{ name: string; status: string; conclusion: string | null }>;
   review: {
     verdict: string | null;

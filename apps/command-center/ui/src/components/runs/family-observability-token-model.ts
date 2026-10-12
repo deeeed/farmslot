@@ -8,6 +8,7 @@ import type {
 } from '@farmslot/protocol';
 
 import { familyRunLabel } from './family-observability-compare-model.js';
+import { hasTokenMetrics } from './family-observability-display-model.js';
 import { runGateSummary } from './family-observability-gate-model.js';
 
 export type FamilyTokenScope = 'family' | 'run';
@@ -63,12 +64,7 @@ function runTokenParts(run: FamilyObservabilityRunSummary): {
     metrics.sessionTotalTokens != null && metrics.sessionTotalTokens > 0
       ? metrics.sessionTotalTokens
       : derivedTotal;
-  const hasMetrics =
-    total > 0 ||
-    metrics.costEstimate != null ||
-    metrics.sessionTurns != null ||
-    metrics.sessionInputTokens != null ||
-    metrics.sessionOutputTokens != null;
+  const hasMetrics = hasTokenMetrics(run);
   return { input, output, cacheRead, cacheCreation, total, hasMetrics };
 }
 
@@ -218,7 +214,10 @@ function byModelFromGate(tokens: GateSummary['tokens']): FamilyObservabilityToke
   }));
 }
 
-function rolesFromGate(tokens: GateSummary['tokens']): RunTokenRoleBreakdown[] {
+function rolesFromGate(
+  tokens: GateSummary['tokens'],
+  workerObserved: boolean,
+): RunTokenRoleBreakdown[] {
   const roles: RunTokenRoleBreakdown[] = [
     {
       role: 'worker',
@@ -255,7 +254,7 @@ function rolesFromGate(tokens: GateSummary['tokens']): RunTokenRoleBreakdown[] {
       total: loop.tokens.total,
     });
   }
-  return roles.filter((role) => role.total > 0);
+  return roles.filter((role) => role.total > 0 || role.role !== 'worker' || workerObserved);
 }
 
 export function buildRunTokenSummary(run: FamilyObservabilityRunSummary): RunTokenSummary {
@@ -264,7 +263,7 @@ export function buildRunTokenSummary(run: FamilyObservabilityRunSummary): RunTok
   const label = familyRunLabel(run);
 
   if (gateSummary) {
-    const roles = rolesFromGate(gateSummary.tokens);
+    const roles = rolesFromGate(gateSummary.tokens, parts.hasMetrics);
     return {
       runId: run.runId,
       label,
@@ -274,7 +273,7 @@ export function buildRunTokenSummary(run: FamilyObservabilityRunSummary): RunTok
       byModel: byModelFromGate(gateSummary.tokens),
       roles,
       usesGateSummary: true,
-      hasData: gateSummary.tokens.familyTotalTokens > 0 || roles.length > 0,
+      hasData: parts.hasMetrics || gateSummary.tokens.familyTotalTokens > 0 || roles.length > 0,
     };
   }
 

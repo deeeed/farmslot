@@ -212,3 +212,70 @@ test('buildRunTokenSummary prefers gate summary roles and byModel', () => {
   assert.equal(summary.usesGateSummary, true);
   assert.equal(summary.roles.length, 2);
 });
+
+test('recorded zero worker usage survives a gate summary while absent counters stay unavailable', () => {
+  const gateSummary: GateSummary = {
+    kind: 'review',
+    worker: { model: 'test', turns: null },
+    review: {
+      reviews: [],
+      passingReviews: 0,
+      totalUnresolved: 0,
+      didAnyReviewTriggerReWork: false,
+    },
+    tokens: {
+      mainWorker: {
+        model: 'test',
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheCreation: 0,
+        total: 0,
+        turns: 0,
+      },
+      reviews: [],
+      byModel: [],
+      familyTotalTokens: 0,
+      perTurnDetailsAvailable: false,
+    },
+  };
+  const decisions: FamilyObservabilityRunSummary['decisions'] = [
+    {
+      id: 'zero-gate',
+      type: 'retrospective',
+      title: 'Ready',
+      description: 'Review',
+      createdAt: '2026-10-10',
+      actions: [],
+      payload: {
+        kind: 'retrospective',
+        outcome: 'partial',
+        whatThisIs: 'Review',
+        actionEffects: [],
+        gateSummary,
+      },
+    },
+  ];
+  const observed = buildRunTokenSummary(
+    run(
+      'zero',
+      '2026-10-10',
+      { model: 'test', runner: 'codex', nudgeCount: 0, sessionTotalTokens: 0 },
+      { decisions },
+    ),
+  );
+  assert.equal(observed.hasData, true);
+  assert.equal(observed.totalTokens, 0);
+  assert.equal(observed.roles.length, 1);
+  assert.equal(observed.roles[0].total, 0);
+  const absent = buildRunTokenSummary(
+    run(
+      'absent',
+      '2026-10-10',
+      { model: 'test', runner: 'codex', actualModel: 'test', nudgeCount: 0 },
+      { decisions },
+    ),
+  );
+  assert.equal(absent.hasData, false);
+  assert.deepEqual(absent.roles, []);
+});
