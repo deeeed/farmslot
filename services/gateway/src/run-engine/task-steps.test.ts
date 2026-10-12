@@ -354,3 +354,25 @@ test('tracker fetch fallback still gains the attached spec', () => {
   assert.match(merged.description, /Backlog markdown spec/);
   assert.deepEqual(merged.acceptanceCriteria, ['Spec AC']);
 });
+
+test('cached tracker and manual data recover explicitly authored criteria before handoff', () => {
+  const description =
+    'Scope.\n\nAC1: Current amount is shown.\n\nAC2: Invalid input is handled.\n\nRelease notes stay prose.';
+  for (const source of ['jira', 'manual'] as const) {
+    const ticket = { ...trackerTicket, source, description, acceptanceCriteria: [] };
+    const normalized = mergeInitialContextIntoTicketData(ticket, undefined);
+    assert.deepEqual(normalized.acceptanceCriteria, [
+      'Current amount is shown.',
+      'Invalid input is handled.',
+    ]);
+    assert.equal(normalized.description, description);
+    assert.deepEqual(ticket.acceptanceCriteria, []);
+    assert.strictEqual(mergeInitialContextIntoTicketData(normalized, undefined), normalized);
+  }
+});
+
+test('declared criteria remain authoritative when the source has other AC labels', () => {
+  const ticket = { ...trackerTicket, description: 'AC1: Historical example.' };
+  assert.strictEqual(mergeInitialContextIntoTicketData(ticket, undefined), ticket);
+  assert.deepEqual(ticket.acceptanceCriteria, ['Tracker AC']);
+});

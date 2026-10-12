@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Resolve declared source refs into immutable admission locks and refuse source drift.
+- Preserve explicitly labeled acceptance criteria from ticket intake through cached task data and the worker handoff.
 - Derive plain free-text task and report titles while preserving the complete task and report bodies.
 - Return checked recorded-evidence metadata for the selected recipe package using the public retained reader, without transferring original media to review clients.
 - Wait for the reviewer-owned terminal mark before archiving its checklist and result.

@@ -1,0 +1,154 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion fresh client, watching lease and literal deep links",
+  "description": "Android live tier only. Requires an installed dev client, explicitly selected owned emulator ADB_SERIAL, two unused GATEWAY_PORT/METRO_PORT values, fresh COMPANION_DEV_LINKS_PROOF_DIR, COMPANION_DEV_LINKS_CLEAR_APP=1 and an existing tmux server. Clears only the selected emulator app. No farm runs or external publication. Teardown stops owned services and restores the source marker on every exit. Preparation may precede Gateway pairing; this proof waits for its authorized farm bridge after preparing. The same launcher uses the configured device-facing packager host.",
+  "proofTargets": [
+    {
+      "id": "automatic-watch",
+      "claim": "A dev lease applies a source edit to the live Android client without restarting Metro."
+    },
+    {
+      "id": "literal-link",
+      "claim": "The phone deep link and real Gateway attachment preserve a literal percent-prefixed tmux pane ID."
+    }
+  ],
+  "workflow": {
+    "entry": "setup",
+    "teardown": "stop",
+    "nodes": {
+      "setup": {
+        "action": "command",
+        "intent": "Prepare a fresh owned Android client on a private Gateway.",
+        "cmd": "node scripts/agentic/dev-links-proof.mjs setup",
+        "timeout_ms": 180000,
+        "next": "ready"
+      },
+      "ready": {
+        "action": "ui.wait_for",
+        "intent": "The fresh client reaches Companion without first-run prompts.",
+        "test_id": "companion-tab-settings",
+        "timeout_ms": 60000,
+        "next": "fresh-hud"
+      },
+      "fresh-hud": {
+        "action": "app.hud",
+        "intent": "Fresh prepare leaves Companion ready for phone review.",
+        "status": "running",
+        "next": "fresh-still"
+      },
+      "fresh-still": {
+        "action": "ui.screenshot",
+        "intent": "Record the prepared client without onboarding or error banners.",
+        "path": "screenshots/fresh-prepare.png",
+        "next": "watch"
+      },
+      "watch": {
+        "action": "command",
+        "intent": "An edited source marker reaches Android without restarting Metro.",
+        "cmd": "node scripts/agentic/dev-links-proof.mjs watch",
+        "timeout_ms": 40000,
+        "next": "watch-assert"
+      },
+      "watch-assert": {
+        "action": "assert_output",
+        "intent": "The running Metro applies the edit automatically.",
+        "source": "watch",
+        "stream": "stdout",
+        "contains": "\"automaticRefresh\":true",
+        "proves": ["automatic-watch"],
+        "next": "bridge"
+      },
+      "bridge": {
+        "action": "command",
+        "intent": "The refreshed client reconnects its recipe bridge.",
+        "cmd": "node scripts/agentic/dev-links-proof.mjs bridge",
+        "timeout_ms": 70000,
+        "next": "watch-hud"
+      },
+      "watch-hud": {
+        "action": "app.hud",
+        "intent": "Source edits reach the phone without an operator restart.",
+        "status": "running",
+        "next": "watch-still"
+      },
+      "watch-still": {
+        "action": "ui.screenshot",
+        "intent": "Record the refreshed client with its recipe HUD.",
+        "path": "screenshots/automatic-watch.png",
+        "next": "open"
+      },
+      "open": {
+        "action": "command",
+        "intent": "Open the owned terminal using its literal percent-encoded pane ID.",
+        "cmd": "node scripts/agentic/dev-links-proof.mjs open",
+        "timeout_ms": 70000,
+        "next": "terminal"
+      },
+      "terminal": {
+        "action": "ui.wait_for",
+        "intent": "The deep link reaches the existing worker terminal screen.",
+        "test_id": "companion-screen-worker-terminal",
+        "timeout_ms": 30000,
+        "next": "pane"
+      },
+      "pane": {
+        "action": "ui.wait_for",
+        "intent": "The terminal header preserves the requested literal pane ID.",
+        "text_contains": ["{{outputs.open.stdout}}"],
+        "timeout_ms": 30000,
+        "next": "verify"
+      },
+      "verify": {
+        "action": "command",
+        "intent": "The real Gateway attaches the same pane requested by the phone.",
+        "cmd": "node scripts/agentic/dev-links-proof.mjs verify",
+        "timeout_ms": 40000,
+        "next": "verify-assert"
+      },
+      "verify-assert": {
+        "action": "assert_output",
+        "intent": "The Gateway request keeps the pane value unchanged.",
+        "source": "verify",
+        "stream": "stdout",
+        "contains": "{{outputs.open.stdout}}",
+        "proves": ["literal-link"],
+        "next": "link-hud"
+      },
+      "link-hud": {
+        "action": "app.hud",
+        "intent": "The literal pane ID survives phone navigation and Gateway attachment.",
+        "status": "running",
+        "next": "no-error"
+      },
+      "no-error": {
+        "action": "ui.wait_for",
+        "intent": "The selected terminal has no connection error banner.",
+        "text": "Not connected",
+        "expected": "absent",
+        "timeout_ms": 5000,
+        "next": "link-still"
+      },
+      "link-still": {
+        "action": "ui.screenshot",
+        "intent": "Record the exact pane header and healthy terminal with HUD.",
+        "path": "screenshots/literal-pane-link.png",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "stop": {
+        "action": "command",
+        "intent": "Stop proof services, restore source and release the owned shell.",
+        "cmd": "node scripts/agentic/dev-links-proof.mjs stop",
+        "timeout_ms": 30000,
+        "next": "stopped"
+      },
+      "stopped": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}
