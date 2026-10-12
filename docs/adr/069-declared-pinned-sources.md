@@ -1,9 +1,10 @@
 # ADR-069: Declared and pinned farm sources
 
-**Status:** Proposed
+**Status:** Accepted
+**Approved by:** Arthur, 2026-10-12
 **Date:** 2026-10-12
 **Owner:** Arthur / Farmslot
-**Scope:** Decision and [normative specification](../reference/declared-pinned-sources.md) only. Implementation requires acceptance and a separately approved implementation PR.
+**Scope:** Decision and [normative specification](../reference/declared-pinned-sources.md) only. Implementation is approved in three staged PRs and remains separate from this docs change.
 
 ## Context
 
@@ -72,7 +73,7 @@ Harnesses declare source dependencies and repository-relative entry points.
 They inherit resolution, materialization, drift checks and provenance rather
 than implementing independent synchronization or version selection. Source
 availability does not authorize executing a provider or grant resource leases.
-These additions are proposed, versioned surfaces, not claims of shipped APIs.
+These additions are accepted, versioned surfaces, not claims of shipped APIs.
 
 ## Alternatives considered
 
@@ -105,5 +106,6 @@ nodes before enabling fail-closed admission. Preserve active runs until their
 owned work finishes. Validate the migration matrix in the spec, then delete all
 superseded copies and source-sync mechanisms in the implementation cut-over.
 
-Arthur's acceptance of this ADR is required before implementation. This docs PR
-neither deploys the source manager nor converts any live checkout.
+Arthur accepted this ADR and its specification on 2026-10-12 and approved
+implementation in three staged PRs. This docs PR neither deploys the source
+manager nor converts any live checkout.

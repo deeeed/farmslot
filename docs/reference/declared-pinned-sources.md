@@ -1,10 +1,11 @@
 # Declared and pinned sources
 
-**Status:** Proposed normative specification for [ADR-069](../adr/069-declared-pinned-sources.md).
+**Status:** Accepted normative specification for [ADR-069](../adr/069-declared-pinned-sources.md).
+**Approved by:** Arthur, 2026-10-12
 **Owner:** Arthur / Farmslot
-**Lifecycle:** Maintain with the accepted contract; implementation requires separate approval.
+**Lifecycle:** Maintain with the accepted contract; implementation is approved in three staged PRs.
 
-MUST, MUST NOT and MAY are normative. All surfaces below are proposed.
+MUST, MUST NOT and MAY are normative. The contracts below are accepted; release requires reviewed implementation.
 
 ## Authority and records
 
@@ -196,7 +197,7 @@ scope ownership, operation identity and expected revisions. Sync may fetch and
 materialize; it MUST NOT restart services, execute project hooks or grant leases.
 Read-only status MUST NOT fetch, acknowledge or repair sources.
 
-`@farmslot/protocol` owns proposed exports `SourceDeclaration`, `SourcePin`,
+`@farmslot/protocol` owns accepted exports `SourceDeclaration`, `SourcePin`,
 `SourceResolution`, `SourceLock`, `SourceMaterializationReceipt`, `RunSourceProvenance`, typed
 `SourcesStatusParams/Result`, `SourcesSyncParams/Result`,
 `SourcesPinParams/Result`, `SourcesUnpinParams/Result`, `SourceStatusViewModel`,
@@ -206,7 +207,7 @@ Run-creation DTOs gain `sourceSelections`, consumed by dispatch clients for atom
 run-scoped selection before immediate admission. No SDK may
 resolve refs or approve drift independently of the gateway.
 
-`@farmslot/slot-config` owns proposed `SourceBinding` and `resolveSourceBinding`,
+`@farmslot/slot-config` owns accepted `SourceBinding` and `resolveSourceBinding`,
 consumed by gateway pack loading, node hook expansion, recipe-library resolution
 and helper/provider loading. Bindings contain execution-local roots derived from
 verified materializations; callers cannot supply arbitrary filesystem roots.
@@ -220,8 +221,8 @@ Neither platform duplicates validation, pin precedence or drift derivation.
 Locks/receipts use schema version 1 when implemented. Additive compatible DTO
 fields require coordinated protocol/client releases; incompatible semantics
 require a schema transition and a breaking package release under repository
-version policy. Unsupported peers MUST refuse admission. Proposed exports are
-not stable APIs until Arthur accepts the ADR and the reviewed release ships.
+version policy. Unsupported peers MUST refuse admission. Accepted exports are
+not stable APIs until the reviewed implementation release ships.
 
 ## Migration and acceptance
 
@@ -250,4 +251,4 @@ force-push provenance and missing-object refusal; auth/private-source handling;
 offline and partial-fetch refusal; real write protection; undeclared drift;
 source-complete replay; shared client projections; and consumer-by-consumer
 migration parity. Regression tests MUST be bounded; live fleet proofs remain
-separate. This docs-only proposal performs none of the migration or deletion.
+separate. This docs-only acceptance performs none of the migration or deletion.
