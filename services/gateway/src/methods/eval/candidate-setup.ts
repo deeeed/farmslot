@@ -1,19 +1,31 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type {
-  EvalExperimentCreateParams,
-  EvalPackageAxes,
-  EvalPackageAxisRef,
-  EvalTrialStartParams,
-  TaskTemplateSelection,
-  TemplateProvenance,
+import {
+  executionTemplateReference,
+  listExecutionTemplates,
+  projectWorkerTemplateSource,
+} from '@farmslot/agent-runtime';
+import {
+  type EvalExperimentCreateParams,
+  type EvalPackageAxes,
+  type EvalPackageAxisRef,
+  type EvalTrialStartParams,
+  type ExecutionTemplateReference,
+  type ExecutionTemplateRunMode,
+  resolveRunCreateMode,
+  type TaskTemplateSelection,
+  type TemplateProvenance,
 } from '@farmslot/protocol';
 
 import { loadProjectVars } from '../../core/config.js';
 import { fileExists } from '../../evals/package-store.js';
 import { harnessRoot } from '../../projects/harness-root.js';
 import { assertFetchableHarnessRef } from '../../run-engine/eval-harness-lifecycle.js';
+import {
+  projectUsesExecutionTemplateCatalog,
+  readConfiguredExecutionTemplateSnapshot,
+} from '../../tasks/execution-template-catalog.js';
 import {
   parseWorkerTemplateFileName,
   resolveWorkerTemplateSelection,
@@ -96,20 +108,43 @@ export async function resolveCandidateTemplateProvenance(
   provenance?: TemplateProvenance;
   templateContent?: string;
   taskTemplate?: TaskTemplateSelection;
+  executionTemplate?: ExecutionTemplateReference;
+  mode?: ExecutionTemplateRunMode;
   missingData: string[];
 }> {
   const missingData: string[] = [];
-  if (axes.template?.hash?.trim()) {
+  const projectVars = await loadProjectVars(project);
+  const catalog = projectUsesExecutionTemplateCatalog(projectVars);
+  if (axes.template?.hash?.trim() && !catalog) {
     return { axes, missingData };
   }
   const fileName = resolveTemplateFileName(taskProfile, axes.template);
-  const projectVars = await loadProjectVars(project);
   const parsedProjectOwnedTemplate = parseWorkerTemplateFileName(taskProfile, fileName);
   let templatePath = path.join(projectVars.projectTemplatesDir, 'worker', fileName);
   let templateContent: string;
-  let provenance: TemplateProvenance;
+  let templateVariant: string | null = null;
+  let templateIsDefault = false;
+  let executionTemplate: ExecutionTemplateReference | undefined;
   let taskTemplate: TaskTemplateSelection | undefined;
-  if (parsedProjectOwnedTemplate) {
+  if (catalog) {
+    const entry = listExecutionTemplates({
+      sources: [projectWorkerTemplateSource(project, projectVars.projectTemplatesDir)],
+      flow: taskProfile,
+    }).find((candidate) => candidate.relativePath === fileName);
+    if (!entry)
+      throw new Error(`Candidate template is unavailable in the project catalog: ${fileName}`);
+    const snapshot = readConfiguredExecutionTemplateSnapshot(projectVars, {
+      flow: taskProfile,
+      id: entry.id,
+      sourceId: entry.sourceId,
+      sha256: entry.sha256,
+    });
+    templatePath = snapshot.entry.path;
+    templateContent = snapshot.markdown;
+    executionTemplate = executionTemplateReference(snapshot.entry);
+    templateVariant = parsedProjectOwnedTemplate?.variant ?? null;
+    templateIsDefault = fileName === FLOW_TO_TEMPLATE[taskProfile];
+  } else if (parsedProjectOwnedTemplate) {
     if (!(await fileExists(templatePath))) {
       missingData.push('template-provenance-missing');
       return { axes, missingData };
@@ -120,47 +155,49 @@ export async function resolveCandidateTemplateProvenance(
     templatePath = selectedTemplate.templatePath;
     templateContent = selectedTemplate.content;
     taskTemplate = { fileName: selectedTemplate.fileName, variant: selectedTemplate.variant };
-    provenance = await buildTemplateProvenance({
-      flowType: taskProfile,
-      project,
-      templatePath,
-      templateName: selectedTemplate.fileName,
-      templateContent,
-      templateVariant: selectedTemplate.variant,
-      templateIsDefault: selectedTemplate.isDefault,
-      role: 'eval-candidate',
-    });
+    templateVariant = selectedTemplate.variant ?? null;
+    templateIsDefault = selectedTemplate.isDefault;
   } else {
     if (!(await fileExists(templatePath))) {
       missingData.push('template-provenance-missing');
       return { axes, missingData };
     }
     templateContent = await readFile(templatePath, 'utf-8');
-    provenance = await buildTemplateProvenance({
-      flowType: taskProfile,
-      project,
-      templatePath,
-      templateName: fileName,
-      templateContent,
-      templateVariant: null,
-      templateIsDefault: false,
-      role: 'eval-candidate',
-    });
   }
+  const provenance = await buildTemplateProvenance({
+    flowType: taskProfile,
+    project,
+    templatePath,
+    templateName: fileName,
+    templateContent,
+    templateVariant,
+    templateIsDefault,
+    role: 'eval-candidate',
+  });
   return {
     provenance,
+    executionTemplate,
+    mode: executionTemplate
+      ? resolveRunCreateMode({
+          flowType: taskProfile,
+          taskTemplateFileName: fileName,
+          templateOptions: [],
+        })
+      : undefined,
     templateContent,
     taskTemplate,
     missingData,
-    axes: {
-      ...axes,
-      template: {
-        ...axes.template,
-        path: axes.template?.path ?? `templates/worker/${fileName}`,
-        name: axes.template?.name ?? fileName.replace(/\.md$/, ''),
-        hash: provenance.contentHash,
-        ref: provenance.projectRepoHeadSha ?? axes.template?.ref,
-      },
-    },
+    axes: axes.template?.hash?.trim()
+      ? axes
+      : {
+          ...axes,
+          template: {
+            ...axes.template,
+            path: axes.template?.path ?? `templates/worker/${fileName}`,
+            name: axes.template?.name ?? fileName.replace(/\.md$/, ''),
+            hash: axes.template?.hash ?? provenance.contentHash,
+            ref: provenance.projectRepoHeadSha ?? axes.template?.ref,
+          },
+        },
   };
 }
