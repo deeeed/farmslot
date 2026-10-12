@@ -17,8 +17,9 @@ import {
   mergeEvidenceManifestArtifactRefs,
 } from './draft-pr.js';
 import { type EvidenceManifest, evidenceManifestArtifactPaths } from './evidence-manifest.js';
-import { exactEvidenceKeys } from './evidence-paths.js';
+import { exactEvidenceKeys, isUploadableMediaPath } from './evidence-paths.js';
 import { sha256File, sortArtifactRefsForComparison } from './ready-gate-package.js';
+import { recordedPublicationDependencies } from './recorded-publication-evidence.js';
 
 const PACKAGE_OUTPUT_ARTIFACT_PATHS = new Set([
   'artifacts/pr-package.json',
@@ -76,7 +77,17 @@ export async function buildPackageEvidenceManifest(
       ...(digest ? { sha256: digest } : {}),
     });
   }
-  return sortArtifactRefsForComparison(entries);
+  const dependencies = taskDir
+    ? await recordedPublicationDependencies(
+        taskDir,
+        artifacts,
+        entries.filter((entry) => isUploadableMediaPath(entry.path)),
+        evidenceManifest,
+      )
+    : [];
+  return sortArtifactRefsForComparison([
+    ...new Map([...entries, ...dependencies].map((entry) => [entry.path, entry])).values(),
+  ]);
 }
 
 export interface CurrentPackageEvidence {

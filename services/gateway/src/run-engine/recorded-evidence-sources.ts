@@ -19,6 +19,34 @@ export interface RecordedEvidenceSource {
   artifactPrefix: string;
 }
 
+/** Media belongs to its nearest retained execution root, not an unrelated prior attempt. */
+export function recordedEvidenceRoots(
+  inventory: readonly ArtifactRef[],
+  selectedEvidenceKeys: readonly string[] = [],
+): string[] {
+  const roots = [
+    ...new Set(
+      inventory
+        .filter((file) => path.posix.basename(file.path) === 'summary.json')
+        .map((file) => path.posix.dirname(file.path)),
+    ),
+  ];
+  if (!selectedEvidenceKeys.length) return roots;
+  return [
+    ...new Set(
+      selectedEvidenceKeys.flatMap((key) => {
+        const selected = resolveSelectedEvidenceRef(key, [...inventory]);
+        const root =
+          selected &&
+          roots
+            .filter((root) => selected.path.startsWith(`${root}/`))
+            .sort((a, b) => b.length - a.length)[0];
+        return root ? [root] : [];
+      }),
+    ),
+  ];
+}
+
 /** The existing package inventory selects and binds the closure; no latest-path fallback. */
 export async function readGateRecordedEvidenceSources(
   run: Run,
@@ -43,9 +71,7 @@ export async function readFrozenRecordedEvidenceSources(
   if (!run.taskFile) throw new Error('The frozen evidence has no retained task directory.');
   const taskDir = await realpath(path.dirname(run.taskFile));
   const inventory = new Map(evidenceManifest.map((artifact) => [artifact.path, artifact.sha256]));
-  const roots = [...inventory.keys()]
-    .filter((file) => path.posix.basename(file) === 'summary.json')
-    .map((file) => path.posix.dirname(file));
+  const roots = recordedEvidenceRoots(evidenceManifest, selectedEvidenceKeys);
   if (!roots.length) throw new Error('The gate package has no retained recipe evidence closure.');
   for (const key of selectedEvidenceKeys) {
     const selected = resolveSelectedEvidenceRef(key, [...evidenceManifest]);

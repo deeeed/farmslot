@@ -1,4 +1,8 @@
-import { type ArtifactRef, isPublishEvidenceArtifact } from '@farmslot/protocol';
+import {
+  type ArtifactRef,
+  isPublicationEvidenceDependency,
+  isPublishEvidenceArtifact,
+} from '@farmslot/protocol';
 
 import {
   EVIDENCE_VIDEO_EXT,
@@ -31,8 +35,9 @@ export function isPackageSelectableEvidenceArtifact(
   manifest: EvidenceManifest | null | undefined,
 ): boolean {
   return (
-    isPublishEvidenceArtifact(artifact) ||
-    isEvidenceManifestReferencedArtifact(artifact.path, manifest)
+    !isPublicationEvidenceDependency(artifact) &&
+    (isPublishEvidenceArtifact(artifact) ||
+      isEvidenceManifestReferencedArtifact(artifact.path, manifest))
   );
 }
 
@@ -43,6 +48,7 @@ function isEligibleEvidence(
 ): boolean {
   return (
     isUploadableMediaPath(artifact.path) &&
+    !isPublicationEvidenceDependency(artifact) &&
     // Approval checks an immutable, already-filtered inventory without a live manifest.
     (manifest === undefined || isPackageSelectableEvidenceArtifact(artifact, manifest))
   );
@@ -51,7 +57,7 @@ function isEligibleEvidence(
 /** Ungated completion has no operator selector, so retain every selectable recording. */
 export function allSelectedEvidenceKeysForPublication(inventory: ArtifactRef[]): string[] {
   return inventory
-    .filter((artifact) => isUploadableMediaPath(artifact.path))
+    .filter((artifact) => isEligibleEvidence(artifact, undefined))
     .map((artifact) => artifact.path)
     .sort();
 }

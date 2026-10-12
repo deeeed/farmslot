@@ -135,12 +135,18 @@ export function isInternalRunArtifactPath(artifactPath: string): boolean {
   return typeof topLevel === 'string' && isInternalRunArtifactTopLevel(topLevel);
 }
 
+/** Frozen validation input is retained but never selectable public evidence. */
+export function isPublicationEvidenceDependency(artifact: Pick<ArtifactRef, 'purpose'>): boolean {
+  return artifact.purpose === 'evidence-dependency';
+}
+
 export function isPublishEvidenceArtifact(
   artifact: Pick<ArtifactRef, 'path' | 'purpose'>,
 ): boolean {
   const normalizedPath = artifact.path.replace(/\\/g, '/').toLowerCase();
   return (
     PUBLISH_EVIDENCE_MEDIA_EXTS.test(artifact.path) &&
+    !isPublicationEvidenceDependency(artifact) &&
     artifact.purpose?.toLowerCase() !== 'debug-screenshot' &&
     !isInternalRunArtifactPath(normalizedPath) &&
     !/(^|\/)screenshots\//.test(normalizedPath)

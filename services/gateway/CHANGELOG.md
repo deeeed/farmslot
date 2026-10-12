@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Freeze selected recorded evidence with its execution dependencies and publication manifest; refresh verifies the approved selection and refuses replaced media or metadata.
 - Acquire declared run capabilities before dispatch and fix delivery, reusing frozen proof plans and rolling back only new leases on preparation failure.
 - Render reviewer checklist, signal and feedback paths for the allocated lane in local and catalog templates, and give fix workers every matching lane feedback file.
 
