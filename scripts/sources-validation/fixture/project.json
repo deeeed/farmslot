@@ -1,0 +1,33 @@
+{
+  "name": "source-proof",
+  "type": "monorepo",
+  "paths": { "runtime_dir": ".agent", "artifact_dir": ".task" },
+  "slot_actions": {
+    "probe": {
+      "label": "Source probe",
+      "command": "node '{{source:proof-pack}}/scripts/sources-validation/fixture/probe.mjs' action",
+      "refresh": ["none"]
+    },
+    "copy": {
+      "label": "Copy source probe",
+      "mode": "copy",
+      "command": "node '{{source:proof-pack}}/scripts/sources-validation/fixture/probe.mjs' copy"
+    }
+  },
+  "resources": {
+    "probe": {
+      "type": "dev-server",
+      "label": "Source probe",
+      "controllable": true,
+      "hooks": {
+        "health": "node '{{source:proof-pack}}/scripts/sources-validation/fixture/probe.mjs' health",
+        "boot": "node '{{source:proof-pack}}/scripts/sources-validation/fixture/probe.mjs' control"
+      },
+      "watch": {
+        "type": "process-poll",
+        "cmd": "node '{{source:proof-pack}}/scripts/sources-validation/fixture/probe.mjs' watch",
+        "intervalMs": 200
+      }
+    }
+  }
+}

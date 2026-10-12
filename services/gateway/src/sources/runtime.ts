@@ -17,7 +17,11 @@ import {
   withLegacyProjectSources,
   withProjectSources,
 } from '@farmslot/slot-config';
-import { assertSourceAttestation, SourceMaterializer } from '@farmslot/slot-config/sources';
+import {
+  assertSourceAttestation,
+  sourceDigest,
+  SourceMaterializer,
+} from '@farmslot/slot-config/sources';
 
 import { getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
@@ -137,11 +141,21 @@ export async function withRunSources<T>(run: Run, operation: () => Promise<T>): 
     throw new SourceAdmissionRefusal('Locked run cannot execute without the source authority');
   let materialization: SourceMaterialization;
   let execution: SourceMaterialization | undefined;
+  let workerExecution: SourceMaterialization;
   let nodeId = run.reviewWorkspaceTarget?.machine;
   try {
+    if (
+      sourceDigest(provenance.lock.entries) !== sourceDigest(provenance.workerLock.entries) ||
+      sourceDigest(provenance.lock.packBindings) !==
+        sourceDigest(provenance.workerLock.packBindings)
+    )
+      throw new Error('Worker inputs do not match the admitted run lock');
     materialization = await gateway.materialize(provenance.lock);
     if (run.slotId) nodeId = (await loadSlotVars(run.slotId)).machine;
     execution = nodeId ? await nodeMaterialization(nodeId, provenance.lock) : undefined;
+    workerExecution = nodeId
+      ? await nodeMaterialization(nodeId, provenance.workerLock)
+      : await gateway.materialize(provenance.workerLock);
   } catch (error) {
     throw new SourceAdmissionRefusal((error as Error).message, { cause: error });
   }
@@ -157,6 +171,7 @@ export async function withRunSources<T>(run: Run, operation: () => Promise<T>): 
       ...provenance.receiptIds,
       materialization.receipt.id,
       ...(execution ? [execution.receipt.id] : []),
+      workerExecution.receipt.id,
     ]),
   ];
   const attemptId = run.recoveryAttempts?.at(-1)?.id ?? `${run.id}:1`;
@@ -169,6 +184,7 @@ export async function withRunSources<T>(run: Run, operation: () => Promise<T>): 
         ...(attempts[existingAttempt]?.receiptIds ?? []),
         materialization.receipt.id,
         ...(execution ? [execution.receipt.id] : []),
+        workerExecution.receipt.id,
       ]),
     ],
   };
@@ -182,10 +198,23 @@ export async function withRunSources<T>(run: Run, operation: () => Promise<T>): 
       pack: provenance.bindings[0],
       materialization,
       execution,
+      workerExecution,
       packs: provenance.lock.packBindings,
     },
     operation,
   );
+}
+
+/** A live retained process cannot adopt another run's changed or unknown source inputs. */
+export function assertRetainedSourceInputs(
+  prior: Pick<Run, 'sourceProvenance'> | null | undefined,
+  next: Pick<Run, 'sourceProvenance'>,
+): void {
+  const before = prior?.sourceProvenance;
+  const after = next.sourceProvenance;
+  if (!before && !after) return;
+  if (!before || !after || before.workerLock.digest !== after.workerLock.digest)
+    throw new SourceAdmissionRefusal('Retained worker source inputs changed or are unknown');
 }
 
 export async function verifyExecutionSources(

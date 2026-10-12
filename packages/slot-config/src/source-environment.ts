@@ -16,6 +16,20 @@ export function sourceExecutionEnvironment(sources: ProjectSourceContext): Recor
   };
 }
 
+/** A retained process keeps its immutable inputs while run ownership changes. */
+export function sourceWorkerEnvironment(sources: ProjectSourceContext): Record<string, string> {
+  const execution = sources.workerExecution ?? sources.execution ?? sources.materialization;
+  return sourceExecutionEnvironment({ ...sources, execution });
+}
+
+export function withSourceEnvironment(command: string, sources = currentProjectSources()): string {
+  if (!sources) return command;
+  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+  return `${Object.entries(sourceExecutionEnvironment(sources))
+    .map(([key, value]) => `export ${key}=${quote(value)};`)
+    .join(' ')} ${command}`;
+}
+
 /** CLI/harness invocations inherit an exact node receipt, never a branch or arbitrary source root. */
 export async function executionSourceContext(
   env: NodeJS.ProcessEnv = process.env,

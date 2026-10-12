@@ -1,3 +1,5 @@
+import { withSourceEnvironment } from '@farmslot/slot-config';
+
 import { getNode } from '../fleet/machine-registry.js';
 
 import type { ProjectVars, RawProjectJson, SlotVars } from './config.js';
@@ -142,16 +144,18 @@ export function withProjectMachineEnv(
   projectVars?: ProjectVars,
   domain = vars.domain,
 ): string {
-  return applyProjectCommandEnv(
-    projectJson,
-    withMachineEnv(command, {
-      ...vars,
-      machineEnv: { ...vars.machineEnv, FARMSLOT_MACHINE: vars.machine },
-    }),
-    {
-      ...(domain ? { domain } : {}),
-      expandDomainValue: (value) =>
-        expandTemplate(value, vars, projectVars, { domain: domain ?? '' }),
-    },
+  return withSourceEnvironment(
+    applyProjectCommandEnv(
+      projectJson,
+      withMachineEnv(command, {
+        ...vars,
+        machineEnv: { ...vars.machineEnv, FARMSLOT_MACHINE: vars.machine },
+      }),
+      {
+        ...(domain ? { domain } : {}),
+        expandDomainValue: (value) =>
+          expandTemplate(value, vars, projectVars, { domain: domain ?? '' }),
+      },
+    ),
   );
 }

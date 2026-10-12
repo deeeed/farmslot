@@ -92,6 +92,8 @@ export interface RunSourceProvenance {
   state: 'locked';
   attemptId: string;
   lock: SourceLock;
+  /** Stable execution-input lock retained across tasks with identical source inputs. */
+  workerLock: SourceLock;
   receiptIds: string[];
   bindings: SourceEntryRef[];
   attempts: SourceExecutionAttemptReceipt[];

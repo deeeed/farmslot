@@ -25,6 +25,7 @@ interface ProofNode {
 interface ProofConfiguration {
   sources: SourceConfiguration;
   nodes: ProofNode[];
+  consumerProject?: string;
 }
 
 const execute = promisify(execFile);
@@ -141,6 +142,7 @@ const client = new GatewayClient({
   credential: { token: credential.secret },
 });
 const localBundle = path.join(output, 'node-bundle');
+const proofRuns: string[] = [];
 try {
   for (const entry of [
     'services/node/src',
@@ -199,6 +201,12 @@ try {
     const script =
       [
         `mkdir -p ${quote(node.home)} ${quote(path.join(node.bundle, 'node_modules/@farmslot'))}`,
+        ...(configuration.consumerProject
+          ? [
+              `mkdir -p ${quote(path.join(node.home, 'source-proof-worktree'))}`,
+              `git -C ${quote(path.join(node.home, 'source-proof-worktree'))} init -q -b main`,
+            ]
+          : []),
         ...links.map(
           ([name, target]) =>
             `ln -s ${quote(target)} ${quote(path.join(node.bundle, 'node_modules', name))}`,
@@ -233,6 +241,48 @@ try {
     child.stdin.end(script);
     children.push(child);
     logs.push(log);
+  }
+  if (configuration.consumerProject) {
+    const project = configuration.consumerProject;
+    if (project !== 'source-proof' || !configuration.sources.packs[project])
+      throw new Error('Consumer proof requires the committed source-proof fixture pack');
+    for (const node of configuration.nodes) {
+      const slotId = `${node.id}-consumer`;
+      await writeFile(
+        path.join(output, 'pool', `${node.id}.json`),
+        JSON.stringify({
+          machine: node.id,
+          host: node.id,
+          ssh_user: 'proof',
+          os: 'darwin',
+          platform: 'cli',
+          project,
+          slots: [
+            {
+              id: slotId,
+              repo: path.join(node.home, 'source-proof-worktree'),
+              session: slotId,
+              mode: 'dispatch',
+              resources: { probe: {} },
+            },
+          ],
+        }),
+      );
+    }
+    await writeFile(
+      path.join(output, '.farm-status.json'),
+      JSON.stringify({
+        slots: configuration.nodes.map((node) => ({
+          slot: `${node.id}-consumer`,
+          machine: node.id,
+          project,
+          lifecycle: 'ready',
+          agent: 'idle',
+          current_run_id: null,
+          resources: { probe: {} },
+        })),
+      }),
+    );
   }
   await runtime.initializeSources();
   const deadline = Date.now() + 90_000;
@@ -281,6 +331,68 @@ try {
       protections.push({ node: node.id, ...JSON.parse(result.stdout) });
     }
   evidence.protection = protections;
+  if (configuration.consumerProject) {
+    const consumers = [];
+    for (const node of configuration.nodes) {
+      const slotId = `${node.id}-consumer`;
+      const connection = getNode(node.id)!;
+      const action = await client.call<{ ok: boolean; detail: string }>('slot.action.run', {
+        slotId,
+        actionId: 'slot:probe',
+      });
+      assert.equal(action.ok, true, action.detail);
+      const copied = await client.call<{ ok: boolean; command: string }>('slot.action.run', {
+        slotId,
+        actionId: 'slot:copy',
+      });
+      assert.equal(copied.ok, true);
+      const copy = (await sendNodeRequest(connection, 'exec', {
+        cmd: copied.command,
+        cwd: path.join(node.home, 'source-proof-worktree'),
+        timeout: 10_000,
+      })) as { exitCode: number };
+      assert.equal(copy.exitCode, 0);
+      const health = await client.call<{ ok: boolean }>('resource.health', {
+        slotId,
+        resourceId: 'probe',
+      });
+      assert.equal(health.ok, true);
+      const control = await client.call<{ ok: boolean }>('resource.control', {
+        slotId,
+        resourceId: 'probe',
+        action: 'boot',
+      });
+      assert.equal(control.ok, true);
+      const { sendWatchInstructions } =
+        await import('../../services/gateway/src/fleet/resource-manager.js');
+      await sendWatchInstructions(node.id);
+      const read = () =>
+        sendNodeRequest(connection, 'exec', {
+          argv: [
+            'node',
+            '-e',
+            "const fs=require('node:fs');console.log(JSON.stringify(['action','copy','health','control','watch'].map(kind=>JSON.parse(fs.readFileSync('source-'+kind+'.json','utf8')))))",
+          ],
+          cwd: path.join(node.home, 'source-proof-worktree'),
+          timeout: 5_000,
+        }) as Promise<{ exitCode: number; stdout: string }>;
+      const deadline = Date.now() + 15_000;
+      let result = await read();
+      while (result.exitCode !== 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        result = await read();
+      }
+      assert.equal(result.exitCode, 0);
+      const records = JSON.parse(result.stdout) as Array<{ nodeId: string; lockDigest: string }>;
+      assert.ok(
+        records.every(
+          (record) => record.nodeId === node.id && record.lockDigest === synced.locks[0].digest,
+        ),
+      );
+      consumers.push({ nodeId: node.id, records });
+    }
+    evidence.consumers = consumers;
+  }
   const created = await client.call<{ run: import('@farmslot/protocol').Run }>('run.create', {
     flowType: 'dev',
     project: Object.keys(configuration.sources.packs)[0],

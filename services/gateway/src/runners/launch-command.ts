@@ -12,6 +12,7 @@ import {
   type SafetyTier,
   type ScriptedRunnerConfig,
 } from '@farmslot/protocol';
+import { currentProjectSources, sourceWorkerEnvironment } from '@farmslot/slot-config';
 
 import type { loadSlotVars, ProjectVars, RawPoolJson, RawProjectJson } from '../core/config.js';
 import {
@@ -798,10 +799,18 @@ export function buildLaunchCommand(
   const launchPrompt =
     opts.initialPromptOnLaunch || !runnerNeedsPostLaunchPrompt(runner) ? prompt : '';
 
+  const withSourceInputs = (command: string): string => {
+    const sources = currentProjectSources();
+    if (!sources) return command;
+    const env = sourceWorkerEnvironment(sources);
+    return `${Object.entries(env)
+      .map(([key, value]) => `export ${key}=${shellQuote(value)};`)
+      .join(' ')} ${command}`;
+  };
   const withRecipeTrust = (command: string): string =>
     withMachineEnv(
       withTaskRecipeTrustEnvironment(
-        command,
+        withSourceInputs(command),
         repo,
         opts.taskDir ?? (opts.taskFile ? path.posix.dirname(opts.taskFile) : undefined),
       ),

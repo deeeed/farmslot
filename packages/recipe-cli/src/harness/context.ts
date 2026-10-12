@@ -920,7 +920,7 @@ export async function resolveProjectContext(
     const attestedCommit = attestedCommits.get(libraryRoot);
     if (attestedCommit)
       Object.assign(identity, { head: attestedCommit, status: '', dirtyDigest: null });
-    if (identity.head && !entry.revision) {
+    if (identity.head && !entry.revision && !attestedCommit) {
       throw new ProjectBindingError(
         'SOURCE_REVISION_MISSING',
         `Library ${entry.name} is a repository source without a pinned revision.`,

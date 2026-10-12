@@ -25,6 +25,7 @@ export interface ProjectSourceContext {
   pack: SourceEntryRef;
   materialization: SourceMaterialization;
   execution?: SourceMaterialization;
+  workerExecution?: SourceMaterialization;
   packs?: Record<string, SourceEntryRef>;
 }
 
@@ -135,6 +136,7 @@ export function freezePlannedRunSources(runId: string): RunSourceProvenance | un
     state: 'locked',
     attemptId: `${runId}:1`,
     lock: { ...lock, digest: sourceLockDigest(lock) },
+    workerLock: sources.materialization.lock,
     receiptIds: [],
     attempts: [{ id: `${runId}:1`, receiptIds: [] }],
     bindings: [

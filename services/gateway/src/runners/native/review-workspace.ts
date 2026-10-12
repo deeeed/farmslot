@@ -25,7 +25,7 @@ import {
   type NativeWorkerSessionBinding,
   type Run,
 } from '@farmslot/protocol';
-import { currentProjectSources, sourceExecutionEnvironment } from '@farmslot/slot-config';
+import { currentProjectSources, sourceWorkerEnvironment } from '@farmslot/slot-config';
 
 import { upsertAgentContext } from '../../agents/contexts.js';
 import type { RawProjectJson } from '../../core/config.js';
@@ -304,7 +304,7 @@ export async function launchReviewWorkspaceWorker(input: {
   });
   environment.set = { ...environment.set, ...input.machineEnv };
   const sources = currentProjectSources();
-  if (sources) environment.set = { ...environment.set, ...sourceExecutionEnvironment(sources) };
+  if (sources) environment.set = { ...environment.set, ...sourceWorkerEnvironment(sources) };
   environment.unset = environment.unset.filter(
     (name) => !Object.hasOwn(input.machineEnv ?? {}, name),
   );

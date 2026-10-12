@@ -1027,3 +1027,18 @@ test('a bare CR does not terminate a frontmatter fence', () => {
   const parsed = parseMarkdownDocument('---\nrunMode: autonomous\n---\rnot-a-fence\n\n# T\n');
   assert.equal(parsed.frontmatter, null);
 });
+
+test('locked template resolution refuses an environment checkout even when it exists', () => {
+  const result = resolveConfiguredExecutionTemplateSources(
+    { sources: [{ id: 'loose', kind: 'workspace', root: { env: 'SOURCE_ROOT' } }] },
+    {
+      projectPackRoot: process.cwd(),
+      env: { SOURCE_ROOT: process.cwd() },
+      resolveSourceBinding: () => {
+        throw new Error('must not resolve an undeclared environment root');
+      },
+    },
+  );
+  assert.deepEqual(result.sources, []);
+  assert.deepEqual(result.unavailable, [{ id: 'loose', reason: 'invalid-root' }]);
+});

@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 
 import type { SourceConfiguration, SourceDeclaration } from '@farmslot/protocol';
 import { type FetchedSource, sourceDigest, SourceGitStore } from '@farmslot/slot-config/sources';
@@ -13,7 +14,9 @@ class FixtureSources extends SourceGitStore {
   commits = new Map<string, string>();
   manifests = new Map<string, unknown>();
   denied = new Set<string>();
+  held?: { id: string; completion: Promise<void> };
   async resolve(source: SourceDeclaration): Promise<FetchedSource> {
+    if (this.held?.id === source.id) await this.held.completion;
     if (this.denied.has(source.id)) throw new Error('fixture source unavailable');
     return {
       commit: this.commits.get(source.id) ?? 'a'.repeat(40),
@@ -113,6 +116,43 @@ test('selected dependencies, missing entries, undeclared sources and cycles refu
       /undeclared/,
     );
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a slow unrelated fetch cannot prevent healthy source publication or admission', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'source-independent-test-'));
+  let finishFetch!: () => void;
+  const held = new Promise<void>((resolve) => {
+    finishFetch = resolve;
+  });
+  let reconciliation: Promise<void> | undefined;
+  try {
+    let now = Date.now();
+    const git = new FixtureSources(root);
+    const authority = await SourceAuthority.open(config, root, git, () => now);
+    await authority.reconcile();
+    now += 2_001;
+    git.held = { id: 'unrelated', completion: held };
+    git.commits.set('demo', 'd'.repeat(40));
+    reconciliation = authority.reconcile();
+    const deadline = Date.now() + 500;
+    while (
+      authority.resolutions().find((record) => record.sourceId === 'demo')?.commit !==
+      'd'.repeat(40)
+    ) {
+      assert.ok(Date.now() < deadline, 'healthy publication must not wait for the unrelated fetch');
+      await setImmediate();
+    }
+    const lock = await authority.lock({ project: 'demo' });
+    assert.equal(lock.entries[0].commit, 'd'.repeat(40));
+    assert.equal(
+      authority.resolutions().find((record) => record.sourceId === 'unrelated')?.status,
+      'stale',
+    );
+  } finally {
+    finishFetch();
+    await reconciliation;
     await rm(root, { recursive: true, force: true });
   }
 });

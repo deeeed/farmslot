@@ -14,6 +14,7 @@ import {
   withLegacyProjectSources,
   withProjectSources,
 } from '../source-binding.js';
+import { sourceWorkerEnvironment } from '../source-environment.js';
 
 import { assertSourceAttestation } from './attestation.js';
 import { type FetchedSource, SourceGitStore } from './git.js';
@@ -171,6 +172,36 @@ test('legacy work retains original input routing while new runs freeze their own
       await withProjectSources(sources, async () => {
         const frozen = freezePlannedRunSources('new-run')!;
         assert.equal(frozen.lock.context.runId, 'new-run');
+        assert.deepEqual(frozen.workerLock, lock);
+        const next = freezePlannedRunSources('next-run')!;
+        assert.notEqual(frozen.lock.digest, next.lock.digest);
+        assert.equal(frozen.workerLock.digest, next.workerLock.digest);
+        const perRun = { ...materialization, lock: frozen.lock, receiptPath: '/run-receipt.json' };
+        const perNextRun = {
+          ...materialization,
+          lock: next.lock,
+          receiptPath: '/next-receipt.json',
+        };
+        assert.deepEqual(
+          sourceWorkerEnvironment({
+            ...sources,
+            execution: perRun,
+            workerExecution: materialization,
+          }),
+          sourceWorkerEnvironment({
+            ...sources,
+            execution: perNextRun,
+            workerExecution: materialization,
+          }),
+        );
+        assert.equal(
+          sourceWorkerEnvironment({
+            ...sources,
+            execution: perRun,
+            workerExecution: materialization,
+          }).FARMSLOT_SOURCE_LOCK_DIGEST,
+          lock.digest,
+        );
         assert.notEqual(frozen.lock.digest, lock.digest);
         assert.deepEqual(frozen.lock.entries, lock.entries);
         assert.deepEqual(frozen.lock.packBindings, lock.packBindings);

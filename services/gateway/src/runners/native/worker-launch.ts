@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import type { NativeWorkerLaunch } from '@farmslot/agent-runtime/native';
 import type { NativeProfileReference, SafetyTier } from '@farmslot/protocol';
-import { currentProjectSources, sourceExecutionEnvironment } from '@farmslot/slot-config';
+import { currentProjectSources, sourceWorkerEnvironment } from '@farmslot/slot-config';
 
 import { execOnSlot } from '../../core/exec.js';
 import {
@@ -70,7 +70,7 @@ export async function prepareNativeWorkerLaunch(input: {
   environment.unset = environment.unset.filter((name) => !Object.hasOwn(machineEnv, name));
   const sources = currentProjectSources();
   if (sources) {
-    const sourceEnv = sourceExecutionEnvironment(sources);
+    const sourceEnv = sourceWorkerEnvironment(sources);
     environment.set = { ...environment.set, ...sourceEnv };
     environment.unset = environment.unset.filter((name) => !Object.hasOwn(sourceEnv, name));
   }
