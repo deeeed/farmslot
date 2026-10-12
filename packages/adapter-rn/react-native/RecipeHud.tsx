@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import {
   type StyleProp,
   StyleSheet,
@@ -8,6 +8,7 @@ import {
   type ViewProps,
   type ViewStyle,
 } from 'react-native';
+import { initialWindowMetrics, SafeAreaInsetsContext } from 'react-native-safe-area-context';
 
 import {
   hudIntentDisplay,
@@ -31,25 +32,45 @@ export type RecipeHudStateController = readonly [
   (state: FarmslotRecipeHudState | null) => Promise<void>,
 ];
 
+interface HudAcknowledgement {
+  resolve(): void;
+  reject(error: unknown): void;
+}
+
 /** Bridge acknowledgement follows the committed HUD rather than the state setter. */
 export function useRecipeHudState(): RecipeHudStateController {
   const [state, setState] = useState<FarmslotRecipeHudState | null>(null);
   const current = useRef(state);
   current.current = state;
-  const pending = useRef<(() => void)[]>([]);
+  const pending = useRef<HudAcknowledgement[]>([]);
+  const lifecycle = useRef<AbortController | null>(null);
   const update = useCallback((next: FarmslotRecipeHudState | null) => {
     if (next === current.current) return Promise.resolve();
-    return new Promise<void>((resolve) => {
-      pending.current.push(resolve);
+    return new Promise<void>((resolve, reject) => {
+      pending.current.push({ resolve, reject });
       setState(next);
     });
   }, []);
   useEffect(() => {
+    const controller = new AbortController();
+    lifecycle.current = controller;
+    return () => {
+      const error = new Error('HUD provider unmounted.');
+      controller.abort(error);
+      for (const acknowledgement of pending.current.splice(0)) acknowledgement.reject(error);
+    };
+  }, []);
+  useEffect(() => {
     const acknowledgements = pending.current.splice(0);
     if (acknowledgements.length)
-      void waitForHudPaint(requestAnimationFrame).then(() => {
-        for (const acknowledge of acknowledgements) acknowledge();
-      });
+      void waitForHudPaint(requestAnimationFrame, lifecycle.current?.signal).then(
+        () => {
+          for (const acknowledgement of acknowledgements) acknowledgement.resolve();
+        },
+        (error: unknown) => {
+          for (const acknowledgement of acknowledgements) acknowledgement.reject(error);
+        },
+      );
   }, [state]);
   return [state, update];
 }
@@ -94,6 +115,7 @@ export function RecipeHud({
   overlay: Overlay,
   onLayout,
 }: Readonly<RecipeHudProps>): React.ReactElement | null {
+  const insets = useContext(SafeAreaInsetsContext) ?? initialWindowMetrics?.insets;
   if (!state || state.status === 'idle') return null;
   const badge = text?.badge?.(state) ?? formatBadge(state);
   const intent = hudIntentDisplay(text?.intent?.(state) ?? state.intent, 'native');
@@ -108,7 +130,7 @@ export function RecipeHud({
       pointerEvents="none"
       style={[
         styles.container,
-        state.position === 'top' ? { top: 16, bottom: undefined } : undefined,
+        state.position === 'top' ? { top: (insets?.top ?? 0) + 16, bottom: undefined } : undefined,
         customStyles?.container,
         state.position === 'top'
           ? { bottom: undefined }

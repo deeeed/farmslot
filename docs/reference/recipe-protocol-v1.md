@@ -105,9 +105,16 @@ forward this setting to the shared renderer rather than provide another one.
 HUD acknowledgement MUST wait for the updated caption to paint before a
 subsequent capture or recorder stop. The shared `waitForHudPaint` helper uses
 render frames, not a fixed sleep; this adds no clock or timing-precision contract.
+An unavailable paint MUST reject within a bounded deadline; cancellation or
+provider teardown MUST release the pending acknowledgement. A renderer's caller
+MUST await the returned promise. Legacy file-polled HUD delivery requires explicit
+adoption of this acknowledgement before it conforms.
 Native bridge providers MUST await the committed state through shared
 `useRecipeHudState`, exported from `@farmslot/adapter-rn/recipe-hud`, before
 acknowledging the command. Companion and scaffold providers are its consumers.
+Native HUD consumers install the optional `react-native-safe-area-context` peer;
+the shared renderer reads host insets, and the generated provider supplies their
+context. CLI-only consumers do not need that peer.
 
 SDK callers configure existing `RecipeHudOptions.display.position`; recipe
 authors use the existing `app.hud` action. `hudPlacement` and its

@@ -256,7 +256,7 @@ test('authored HUD placement survives automatic capture and completion without l
     position: {
       action: 'app.hud',
       intent: 'Move the HUD away from the footer.',
-      display: { position: 'top' },
+      display: { position: 'top', showDebug: true },
       next: 'capture',
     },
     capture: { action: 'ui.screenshot', intent: 'Check the visible footer.', next: 'done' },

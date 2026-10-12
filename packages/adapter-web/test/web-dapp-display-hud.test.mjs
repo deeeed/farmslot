@@ -308,6 +308,8 @@ function fakeDocument(origin) {
     document: { documentElement: html, body, createElement: (tag) => new Element(tag) },
     location: { origin },
     requestAnimationFrame: (callback) => callback(),
+    setTimeout,
+    clearTimeout,
     text,
     html,
   };

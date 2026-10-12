@@ -22,8 +22,32 @@ export function hudPlacement(display: unknown): RecipeHudPlacement | undefined {
 }
 
 /** Let the updated caption paint before the next capture or recorder stop. */
-export function waitForHudPaint(nextFrame: (callback: () => void) => unknown): Promise<void> {
-  return new Promise((resolve) => nextFrame(() => nextFrame(() => resolve())));
+export function waitForHudPaint(
+  nextFrame: (callback: () => void) => unknown,
+  signal?: AbortSignal,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    // Anonymous callbacks keep the function self-contained when embedded in a page.
+    const [finish, abort] = [
+      (error?: unknown) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', abort);
+        if (error) reject(error);
+        else resolve();
+      },
+      () => finish(signal?.reason ?? new Error('HUD paint cancelled.')),
+    ] as const;
+    const timer = setTimeout(() => finish(new Error('HUD did not paint within 500ms.')), 500);
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
+    signal?.addEventListener('abort', abort, { once: true });
+    nextFrame(() => nextFrame(() => finish()));
+  });
 }
 
 export function hudIntentDisplay(

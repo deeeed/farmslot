@@ -481,8 +481,14 @@ class DefaultRecipeRunner implements RecipeRunner {
             for (const artifact of artifacts) artifactWriter.register(artifact);
           },
           publishHudProgress: (hudStatus, event) => {
-            if (runHud && isRecord(event.node.display)) {
-              runHud.display = mergeHudDisplay(runHud, event.node);
+            if (
+              runHud &&
+              isRecord(event.node.display) &&
+              event.node.display.position !== undefined
+            ) {
+              runHud.display = mergeHudDisplay(runHud, {
+                display: { position: event.node.display.position },
+              });
             }
             return this.#publishHudProgressOrRecord(traceWriter, hudStatus, event, runHud);
           },

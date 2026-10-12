@@ -19,6 +19,32 @@ test('HUD acknowledgement waits for a paint without a fixed timer', async () => 
   assert.equal(completed, true);
 });
 
+test('HUD acknowledgement rejects a suspended renderer within its deadline', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const result = assert.rejects(
+    waitForHudPaint(() => {}),
+    /HUD did not paint within 500ms/,
+  );
+  t.mock.timers.tick(500);
+  await result;
+});
+
+test('HUD acknowledgement cancels pending and already-aborted paints', async () => {
+  const controller = new AbortController();
+  const reason = new Error('HUD provider unmounted.');
+  const pending = waitForHudPaint(() => {}, controller.signal);
+  controller.abort(reason);
+  await assert.rejects(pending, (error) => error === reason);
+  let requested = false;
+  await assert.rejects(
+    waitForHudPaint(() => {
+      requested = true;
+    }, controller.signal),
+    (error) => error === reason,
+  );
+  assert.equal(requested, false);
+});
+
 test('HUD placement retains the vertical edge of supported display positions', () => {
   for (const position of ['top', 'top-left', 'top-right'])
     assert.equal(hudPlacement({ position }), 'top');
