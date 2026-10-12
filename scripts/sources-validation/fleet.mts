@@ -1,4 +1,4 @@
-/** Manual ADR-069 fleet proof. Runs isolated services; never deploys or leases a slot. */
+/** Manual ADR-069 fleet proof through isolated services and owned proof slots. */
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -7,6 +7,8 @@ import { cp, mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promi
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+
+import { isTerminalRunStatus } from '@farmslot/protocol';
 
 import type {
   SourceConfiguration,
@@ -25,6 +27,7 @@ interface ProofNode {
   forwardPort?: number;
   codexPath?: string;
   platform?: string;
+  resources?: Record<string, Record<string, string | number | boolean>>;
 }
 interface ProofConfiguration {
   sources: SourceConfiguration;
@@ -209,10 +212,12 @@ try {
       GATEWAY_URL: `ws://127.0.0.1:${node.ssh ? node.forwardPort : port}`,
       TSX_TSCONFIG_PATH: path.join(node.bundle, 'tsconfig.json'),
       SCREEN_CONTROL_SOCKET: path.join(node.home, 'screen.sock'),
+      TMUX_TMPDIR: path.join(node.home, 'no-tmux'),
     };
     const script =
       [
         `mkdir -p ${quote(node.home)} ${quote(path.join(node.bundle, 'node_modules/@farmslot'))}`,
+        `mkdir -p ${quote(path.join(node.home, 'no-tmux'))}`,
         ...(configuration.consumerProject || configuration.workerModel
           ? [
               `mkdir -p ${quote(path.join(node.home, 'source-proof-worktree'))}`,
@@ -284,7 +289,7 @@ try {
               repo: path.join(node.home, 'source-proof-worktree'),
               session: slotId,
               mode: 'dispatch',
-              resources: configuration.consumerProject ? { probe: {} } : {},
+              resources: node.resources ?? (configuration.consumerProject ? { probe: {} } : {}),
             },
           ],
         }),
@@ -300,7 +305,7 @@ try {
           lifecycle: 'ready',
           agent: 'idle',
           current_run_id: null,
-          resources: configuration.consumerProject ? { probe: {} } : {},
+          resources: node.resources ?? (configuration.consumerProject ? { probe: {} } : {}),
         })),
       }),
     );
@@ -535,6 +540,8 @@ try {
         first.run.sourceProvenance!.workerLock.digest,
       );
       workers.push({ nodeId: node.id, first, second });
+      evidence.workers = workers;
+      await writeFile(path.join(output, 'progress.json'), JSON.stringify(evidence, null, 2) + '\n');
       await client.call('run.cancel', { runId: second.run.id });
     }
     evidence.workers = workers;
@@ -576,7 +583,8 @@ try {
   try {
     for (const runId of proofRuns) {
       try {
-        await client.call('run.cancel', { runId });
+        const current = (await client.call<{ run: Run }>('run.get', { runId })).run;
+        if (!isTerminalRunStatus(current.status)) await client.call('run.cancel', { runId });
       } catch (error) {
         teardownErrors.push(`${runId}: ${(error as Error).message}`);
       }
