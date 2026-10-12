@@ -83,6 +83,9 @@ const evidence: Record<string, unknown> = { result: 'INCOMPLETE' };
 // Do not inherit an operator gateway profile or node credential into the isolated realm.
 for (const key of Object.keys(process.env))
   if (/^(FARMSLOT_|GATEWAY_|SCREEN_CONTROL_)/.test(key)) delete process.env[key];
+await mkdir(path.join(output, 'no-tmux'));
+process.env.TMUX_TMPDIR = path.join(output, 'no-tmux');
+delete process.env.TMUX;
 for (const dir of ['pool', 'projects', 'runs', 'home']) await mkdir(path.join(output, dir));
 for (const name of [
   'scripts',
@@ -283,8 +286,7 @@ try {
     project: Object.keys(configuration.sources.packs)[0],
     ticketOrPr: 'MANUAL-000001',
     mode: 'interactive',
-    runner: 'scripted',
-    safetyTier: 'safe',
+    runner: 'codex',
   });
   assert.ok(created.run.sourceProvenance);
   assert.equal(created.run.sourceProvenance.lock.context.runId, created.run.id);
