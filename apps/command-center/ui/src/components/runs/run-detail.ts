@@ -1,6 +1,11 @@
 import { html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
+import {
+  createEvidenceReviewModel,
+  type EvidenceReviewModel,
+  readEvidenceReviewReport,
+} from '@farmslot/adapter-sdk/evidence';
 import type {
   CiCheckUpdatedPayload,
   DevInteractiveCompletionAction,
@@ -13,6 +18,7 @@ import type {
   RunDecision,
   RunGetResult,
   RunListResult,
+  RunRecipeRunsForRunResult,
   RunRereviewLatestHeadResult,
   RunResolveDecisionResult,
   RunSessionCommandResult,
@@ -47,6 +53,7 @@ import '../interactive/interactive-operator-packets.js';
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
 import { copyTextToClipboard } from '../../utils/clipboard.js';
+import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 import {
   type AcceptanceEvidenceOpen,
   runAcceptanceCriterionEvidence,
@@ -54,7 +61,7 @@ import {
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { selectedRecipeRun } from '../shared/recipe-run-selection-model.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
-import { runArtifactUrl } from '../workspace/workspace-artifacts.js';
+import { recipeRunArtifactUrl, runArtifactUrl } from '../workspace/workspace-artifacts.js';
 
 import { CIWatchPokeController } from './ci-watch-actions.js';
 import {
@@ -147,6 +154,7 @@ import { collectRunInteractivePacketArtifacts, sortRunsForFamilyView } from './r
 
 @customElement('run-detail')
 export class RunDetail extends RunDetailState {
+  @state() evidenceModel: EvidenceReviewModel | null = null;
   static styles = runDetailStyles;
 
   private readonly _ciPoke = new CIWatchPokeController((state) => {
@@ -747,6 +755,7 @@ export class RunDetail extends RunDetailState {
     if (this._recipeRunsDelayedRefreshTimer) clearTimeout(this._recipeRunsDelayedRefreshTimer);
     this._recipeRunsDelayedRefreshTimer = undefined;
     this._recipeRuns = [];
+    this.evidenceModel = null;
     this._selectedRecipeRunId = '';
   }
 
@@ -782,12 +791,35 @@ export class RunDetail extends RunDetailState {
     const refreshToken = Symbol('run-detail-recipe-runs');
     this._recipeRunsRefreshToken = refreshToken;
     try {
-      const result = await gateway.request<{
-        recipeRuns: RecipeRunArtifactGroup[];
-        selectedRecipeRunId: string | null;
-      }>(Methods.RUN_RECIPE_RUNS_FOR_RUN, { runId: run.id });
+      const outputDecision = run.decisions.find(
+        (decision) => !decision.resolvedAt && decision.payload?.kind === 'output-review',
+      );
+      const result = await gateway.request<RunRecipeRunsForRunResult>(
+        Methods.RUN_RECIPE_RUNS_FOR_RUN,
+        {
+          runId: run.id,
+          includeRecordedEvidence: true,
+          ...(outputDecision?.payload?.kind === 'output-review'
+            ? {
+                decisionId: outputDecision.id,
+                evidenceSnapshotHash: outputDecision.payload.manifestDigest,
+              }
+            : {}),
+        },
+      );
       if (refreshToken !== this._recipeRunsRefreshToken || this.run?.id !== run.id) return;
       this._recipeRuns = result.recipeRuns;
+      this.evidenceModel = createEvidenceReviewModel({
+        context: 'run-detail',
+        package: result.recordedEvidence?.input,
+        readErrors: result.recordedEvidence?.errors,
+        artifactPrefix: result.recordedEvidence?.artifactPrefix,
+        criteria: this.acceptanceCriteria ?? undefined,
+        ledger: this.acceptanceStatus,
+        report: result.recordedEvidence?.report,
+        reportSnapshot:
+          outputDecision?.payload?.kind === 'output-review' ? outputDecision.payload : undefined,
+      });
       const pendingRecipeRunId = this._pendingRecipeRunSelectionId;
       const desiredId = runDetailDesiredRecipeRunId({
         recipeRuns: result.recipeRuns,
@@ -804,6 +836,7 @@ export class RunDetail extends RunDetailState {
       // Recipe-run evidence is optional in run-detail. Keep the gate usable if
       // an older run has no recipe artifact index or the mirror is temporarily unavailable.
       this._recipeRuns = [];
+      this.evidenceModel = null;
       this._selectedRecipeRunId = '';
       console.warn('Failed to load run recipe evidence:', err);
     }
@@ -1115,14 +1148,22 @@ export class RunDetail extends RunDetailState {
    * paths, which is exactly what the run-artifact endpoint serves.
    */
   private _acceptanceEvidenceHref = (evidencePath: string): string => {
-    return runArtifactUrl(this.runId, { path: evidencePath });
+    const group = this._selectedRecipeRun();
+    return this.evidenceModel && group
+      ? recipeRunArtifactUrl(this.runId, group, { path: evidencePath })
+      : runArtifactUrl(this.runId, { path: evidencePath });
   };
 
   /**
    * An acceptance criterion's evidence file opens in the run's evidence lightbox,
    * stepping through that criterion's files, not a new browser window.
    */
-  private _openAcceptanceEvidence = ({ criterion, evidence, index }: AcceptanceEvidenceOpen) => {
+  private _openAcceptanceEvidence = ({
+    criterion,
+    evidence,
+    index,
+    evidenceModel,
+  }: AcceptanceEvidenceOpen) => {
     if (!this.run) return;
     this._openEvidenceLightbox(
       acceptanceEvidenceSelection({
@@ -1132,9 +1173,86 @@ export class RunDetail extends RunDetailState {
         evidence,
         index,
         runArtifacts: this._linkableRunArtifacts(this.run),
-        artifactUrl: this._artifactUrl,
+        artifactUrl: (artifact) => this._acceptanceEvidenceHref(artifact.path),
+        evidenceModel,
       }),
     );
+  };
+
+  private _openOutputReport = async (): Promise<void> => {
+    const run = this.run;
+    const model = this.evidenceModel;
+    if (!run || !model) return;
+    const group = this._selectedRecipeRun();
+    try {
+      const report = await readEvidenceReviewReport(model, async (path) => {
+        const response = await gatewayHttpFetch(runArtifactUrl(run.id, { path }));
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return new Uint8Array(await response.arrayBuffer());
+      });
+      if (this.run?.id !== run.id || this.evidenceModel !== model) return;
+      const resolveArtifactUrl = (path: string) =>
+        group ? recipeRunArtifactUrl(run.id, group, { path }) : runArtifactUrl(run.id, { path });
+      this._openEvidenceLightbox({
+        items: [
+          {
+            path: report.path,
+            purpose: 'report',
+            url: runArtifactUrl(run.id, {
+              path: report.path,
+              sha256: model.report?.artifactManifest.find((file) => file.path === report.path)
+                ?.sha256,
+            }),
+            verifiedText: report.body,
+            caption: report.caption,
+            evidenceModel: model,
+            resolveArtifactUrl,
+          },
+        ],
+        index: 0,
+        scope: report.caption,
+        criterionId: null,
+      });
+    } catch (error) {
+      if (this.run?.id === run.id)
+        this._evidenceArtifactUnavailable = {
+          path: model.report?.reportPath ?? 'report',
+          reason: error instanceof Error ? error.message : String(error),
+        };
+    }
+  };
+
+  private _openRecipeProof = (traceIndex: number): void => {
+    const model = this.evidenceModel;
+    const selected = model?.selectOccurrence(traceIndex);
+    if (!model || !selected) return;
+    const path = selected.clips[0]
+      ? model.artifactPath(selected.clips[0].videoPath)
+      : selected.artifacts[0]?.artifactPath;
+    if (!selected.artifacts.length) {
+      this._evidenceArtifactUnavailable = {
+        path: selected.caption,
+        reason: selected.message ?? 'This step has no proof artifact.',
+      };
+      return;
+    }
+    const items = selected.artifacts.map((file) => ({
+      path: file.artifactPath,
+      purpose: 'evidence',
+      url: this._acceptanceEvidenceHref(file.artifactPath),
+      caption: selected.caption,
+      evidenceModel: model,
+      resolveArtifactUrl: this._acceptanceEvidenceHref,
+    }));
+    this._openEvidenceLightbox({
+      items,
+      index: Math.max(
+        0,
+        items.findIndex((item) => item.path === path),
+      ),
+      scope: selected.caption,
+      criterionId: null,
+    });
   };
 
   private _updateEvidenceArtifactHash(item: LightboxItem | null): void {
@@ -1255,6 +1373,7 @@ export class RunDetail extends RunDetailState {
       prStatus: this.prStatus,
       siblings: this.siblings,
       taskProgress: this.taskProgress,
+      evidenceModel: this.evidenceModel,
       acceptanceStatus: this.acceptanceStatus,
       acceptanceCriteria: this.acceptanceCriteria,
       acceptanceStatusError: this.acceptanceStatusError,
@@ -1262,6 +1381,7 @@ export class RunDetail extends RunDetailState {
       acceptanceEvidenceLinksError: this.acceptanceEvidenceLinksError,
       acceptanceEvidenceHref: this._acceptanceEvidenceHref,
       acceptanceEvidenceOpen: this._openAcceptanceEvidence,
+      openRecipeProof: this._openRecipeProof,
       selectedStep: this.selectedStep,
       selectedStepProgress: this.selectedStepProgress,
       _hydrating: this._hydrating,
@@ -1555,6 +1675,9 @@ export class RunDetail extends RunDetailState {
       setBranchNudgeShowPicker: (show) => {
         this._branchNudgeShowPicker = show;
       },
+      openOutputReport: () => void this._openOutputReport(),
+      evidenceModel: this.evidenceModel,
+      openEvidence: this._openAcceptanceEvidence,
       confirmResolve: (runId, decision, actionId) =>
         this._confirmResolve(runId, decision, actionId),
       posture: this._postureGateStateForRender(),

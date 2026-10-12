@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Use the shared evidence review model for claim/step navigation, verified video markers and bounded playback (ADR-062).
+
 - Invalidate review posting confirmation when the reviewed content changes.
 - Show selected-flow recipe requirements, registration and scoped live verification in Dispatch, including the checked revision and target; clear results when the selection or gateway changes.
 - Show gateway prerequisite reasons and distinguish fixing, reviewer failure and reconciliation in run views.

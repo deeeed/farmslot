@@ -1,5 +1,6 @@
 import { html, nothing } from 'lit';
 
+import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import type {
   AcceptanceCriterionRef,
   AcceptanceEvidenceLink,
@@ -81,6 +82,7 @@ export interface RunDetailViewContext {
   siblings: Run[];
   taskProgress: TaskProgressStructured | null;
   /** The run's acceptance ledger (ADR-060), rendered beside the pipeline progress. */
+  evidenceModel?: EvidenceReviewModel | null;
   acceptanceStatus: AcceptanceStatusLedger | null;
   /** Registered criteria from the task dir, including any still without a verdict. */
   acceptanceCriteria: AcceptanceCriterionRef[] | null;
@@ -93,6 +95,7 @@ export interface RunDetailViewContext {
   /** Link builder for a task-dir relative evidence path in the ledger panel. */
   acceptanceEvidenceHref: (evidencePath: string) => string;
   /** Opens a clicked acceptance evidence file in the evidence lightbox. */
+  openRecipeProof?: (traceIndex: number) => void;
   acceptanceEvidenceOpen: (open: AcceptanceEvidenceOpen) => void;
   selectedStep: Run['steps'][number] | null;
   selectedStepProgress: TaskProgressStructured | null;
@@ -1155,6 +1158,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
       <run-pipeline
         .run=${r}
         .taskProgress=${ctx.taskProgress}
+        .evidenceModel=${ctx.evidenceModel}
         .acceptanceStatus=${ctx.acceptanceStatus}
         .acceptanceCriteria=${ctx.acceptanceCriteria}
         .acceptanceStatusError=${ctx.acceptanceStatusError}
@@ -1163,6 +1167,8 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         .acceptanceEvidenceHref=${ctx.acceptanceEvidenceHref}
         .acceptanceEvidenceOpen=${ctx.acceptanceEvidenceOpen}
         .selectedStepName=${ctx.selectedStep?.name}
+        @recipe-proof=${(event: CustomEvent<{ traceIndex: number }>) =>
+          ctx.openRecipeProof?.(event.detail.traceIndex)}
         @step-select=${(e: CustomEvent) => ctx.onStepSelect(e.detail.step)}
       >
       </run-pipeline>

@@ -23,6 +23,12 @@ import Animated, {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
+  type EvidenceReviewModel,
+  type EvidenceReviewPlaybackEffect,
+  loadRecordingEvidenceReview,
+} from '@farmslot/adapter-sdk/evidence';
+
+import {
   type ArtifactHttpHeaders,
   type ArtifactMediaType,
   artifactSource,
@@ -45,6 +51,12 @@ export interface MediaViewerItem {
   /** `document` renders the file as text. */
   mediaType?: ArtifactMediaType;
   authHeaders?: ArtifactHttpHeaders;
+  path?: string;
+  sha256?: string;
+  timelinePath?: string;
+  resolveArtifactUrl?: (path: string) => string;
+  evidenceModel?: EvidenceReviewModel;
+  initialTraceIndex?: number;
 }
 
 interface MediaViewerProps {
@@ -74,7 +86,17 @@ export function MediaViewer({
   );
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'ios' ? 10 : 0);
   const scrollRef = useRef<ScrollView>(null);
-  const viewerItems = items?.length ? items : uri ? [{ uri, authHeaders }] : [];
+  const suppliedItems: MediaViewerItem[] = items?.length
+    ? items
+    : uri
+      ? [{ uri, authHeaders }]
+      : [];
+  const session = useRef({ visible: false, uri, items: suppliedItems });
+  // Background metadata refreshes cannot replace the package being reviewed.
+  if (visible && (!session.current.visible || session.current.uri !== uri))
+    session.current = { visible, uri, items: suppliedItems };
+  session.current.visible = visible;
+  const viewerItems = visible ? session.current.items : suppliedItems;
   const clampedInitialIndex = Math.max(0, Math.min(initialIndex, viewerItems.length - 1));
   const [currentIndex, setCurrentIndex] = useState(clampedInitialIndex);
   const [zoomedUri, setZoomedUri] = useState<string | null>(null);
@@ -88,7 +110,7 @@ export function MediaViewer({
     });
   }, [clampedInitialIndex, visible, viewerItems.length, width]);
 
-  if (viewerItems.length === 0) return null;
+  if (!visible || viewerItems.length === 0) return null;
 
   const goToIndex = (nextIndex: number) => {
     const next = Math.max(0, Math.min(nextIndex, viewerItems.length - 1));
@@ -211,14 +233,8 @@ function MediaSlide({
     );
   }
   if (mediaType === 'video') {
-    return (
-      <FullscreenVideo
-        uri={item.uri}
-        width={width}
-        height={height}
-        authHeaders={item.authHeaders}
-      />
-    );
+    if (!isActive) return <View style={[styles.media, { width, height }]} />;
+    return <FullscreenVideo item={item} width={width} height={height} />;
   }
   return (
     <ZoomableImage
@@ -359,27 +375,187 @@ function ZoomableImage({
 }
 
 function FullscreenVideo({
-  uri,
+  item,
   width,
   height,
-  authHeaders,
 }: {
-  uri: string;
+  item: MediaViewerItem;
   width: number;
   height: number;
-  authHeaders?: ArtifactHttpHeaders;
 }) {
-  const source = React.useMemo(() => artifactSource(uri, authHeaders), [authHeaders, uri]);
-  const player = useVideoPlayer(source);
+  const [model, setModel] = useState<EvidenceReviewModel | null>(item.evidenceModel ?? null);
+  const [error, setError] = useState<string | null>(null);
+  const [uri, setUri] = useState(item.uri);
+  const resumePlayback = useRef(Boolean(item.evidenceModel?.selection?.clips.length));
+  const [videoPath, setVideoPath] = useState('');
+  const [, updateSelection] = useState(0);
+  const source = useMemo(() => artifactSource(uri, item.authHeaders), [item.authHeaders, uri]);
+  const player = useVideoPlayer(source, (value) => {
+    value.timeUpdateEventInterval = 0.1;
+    value.bufferOptions = { preferredForwardBufferDuration: 2, maxBufferBytes: 4 * 1024 * 1024 };
+  });
+
+  useEffect(() => {
+    const abort = new AbortController();
+    let active = true;
+    setError(null);
+    setUri(item.uri);
+    const load = async () => {
+      const read =
+        item.evidenceModel ??
+        (item.path && item.sha256 && item.timelinePath && item.resolveArtifactUrl
+          ? await loadRecordingEvidenceReview({
+              videoPath: item.path,
+              videoDigest: item.sha256,
+              timelinePath: item.timelinePath,
+              readJson: async (path) => {
+                const response = await gatewayFetch(
+                  item.resolveArtifactUrl!(path),
+                  item.authHeaders,
+                  { signal: abort.signal },
+                );
+                if (!response.ok)
+                  throw new Error(`Recording evidence could not be read (${response.status}).`);
+                return response.json();
+              },
+            })
+          : null);
+      if (!active) return;
+      if (read && item.initialTraceIndex !== undefined && !read.selection?.claimId)
+        read.selectOccurrence(item.initialTraceIndex);
+      const recording = read?.recordings.find(
+        (recording) =>
+          item.path === recording.videoPath || item.path?.endsWith(`/${recording.videoPath}`),
+      );
+      setVideoPath(recording?.videoPath ?? '');
+      setModel(read);
+    };
+    void load().catch((failure: unknown) => {
+      // Unmount cancels owned metadata reads; active failures remain visible in the viewer.
+      if (active) setError(failure instanceof Error ? failure.message : String(failure));
+    });
+    return () => {
+      active = false;
+      abort.abort();
+    };
+  }, [
+    item.uri,
+    item.path,
+    item.sha256,
+    item.timelinePath,
+    item.evidenceModel,
+    item.initialTraceIndex,
+    item.resolveArtifactUrl,
+    item.authHeaders,
+  ]);
+
+  const applyPlayback = useCallback(
+    (effect: EvidenceReviewPlaybackEffect) => {
+      if (effect.sourceChanged && effect.clip && effect.clip.videoPath !== videoPath) {
+        if (!item.resolveArtifactUrl || !model) {
+          setError('The recording source has no artifact URL resolver.');
+          player.pause();
+          return;
+        }
+        resumePlayback.current = resumePlayback.current || player.playing;
+        setUri(item.resolveArtifactUrl(model.artifactPath(effect.clip.videoPath)));
+        setVideoPath(effect.clip.videoPath);
+        return;
+      }
+      if (effect.pause) {
+        resumePlayback.current = false;
+        player.pause();
+      }
+      if (effect.seekMs !== null && player.status === 'readyToPlay')
+        player.currentTime = effect.seekMs / 1000;
+    },
+    [item.resolveArtifactUrl, model, player, videoPath],
+  );
+
+  useEffect(() => {
+    let active = true;
+    const cue = () => {
+      if (!active || !model?.selection?.clips.length) return;
+      const clip = model.playback.clip;
+      if (clip?.videoPath !== videoPath) return;
+      applyPlayback({ ...model.playback, seekMs: clip.startMs });
+      if (resumePlayback.current) {
+        resumePlayback.current = false;
+        player.play();
+      }
+    };
+    if (player.status === 'readyToPlay') cue();
+    const ready = player.addListener('sourceLoad', ({ videoSource }) => {
+      if (typeof videoSource === 'object' && videoSource?.uri === uri) cue();
+    });
+    const ended = player.addListener('playToEnd', () => {
+      if (!active || !model || !videoPath) return;
+      const effect = model.playbackAt(videoPath, player.currentTime * 1000, player.duration * 1000);
+      if (effect.sourceChanged) resumePlayback.current = true;
+      applyPlayback(effect);
+    });
+    const updates = player.addListener('timeUpdate', ({ currentTime }) => {
+      if (active && model && videoPath)
+        applyPlayback(model.playbackAt(videoPath, currentTime * 1000, player.duration * 1000));
+    });
+    return () => {
+      active = false;
+      ready.remove();
+      ended.remove();
+      updates.remove();
+    };
+  }, [applyPlayback, model, player, uri, videoPath]);
+
+  const timeline = model?.recordings.find((recording) => recording.videoPath === videoPath);
   return (
-    <VideoView
-      player={player}
-      style={[styles.media, { width, height }]}
-      nativeControls
-      fullscreenOptions={{ enable: true }}
-      allowsPictureInPicture={false}
-      contentFit="contain"
-    />
+    <View style={[styles.media, { width, height }]}>
+      <VideoView
+        player={player}
+        style={[styles.media, { width, height }]}
+        nativeControls
+        fullscreenOptions={{ enable: true }}
+        allowsPictureInPicture={false}
+        contentFit="contain"
+      />
+      <View style={{ position: 'absolute', bottom: 16, left: 12, right: 12 }}>
+        {error ? <Text style={styles.detailText}>{error}</Text> : null}
+        {model?.selection?.caption ? (
+          <Text style={styles.detailText}>{model.selection.caption}</Text>
+        ) : null}
+        {model?.selection?.message ? (
+          <Text style={styles.detailText}>{model.selection.message}</Text>
+        ) : null}
+        {timeline ? (
+          <ScrollView horizontal contentContainerStyle={{ gap: 8 }}>
+            {timeline.markers.map((marker) => {
+              const seek = model?.markerSeekMs(
+                videoPath,
+                marker.traceIndex,
+                'start',
+                player.duration * 1000,
+              );
+              return (
+                <Pressable
+                  key={marker.traceIndex}
+                  style={styles.navButton}
+                  disabled={seek === null || seek === undefined}
+                  testID={`evidence-marker-${marker.traceIndex}`}
+                  onPress={() => {
+                    resumePlayback.current = true;
+                    model?.selectOccurrence(marker.traceIndex);
+                    if (model) applyPlayback(model.cueClip(0));
+                    updateSelection((value) => value + 1);
+                    player.play();
+                  }}
+                >
+                  <Text style={styles.detailText}>{marker.intent ?? marker.nodeId}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        ) : null}
+      </View>
+    </View>
   );
 }
 

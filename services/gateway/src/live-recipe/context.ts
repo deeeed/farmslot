@@ -349,7 +349,7 @@ async function scanSlotArtifactRoot(
   }
 }
 
-async function scanSlotArtifactRootDetailed(
+export async function scanSlotArtifactRootDetailed(
   artifactRoot: string,
   run: Run,
   options: ArtifactScanOptions = {},

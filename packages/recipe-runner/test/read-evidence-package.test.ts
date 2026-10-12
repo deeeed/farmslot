@@ -86,3 +86,19 @@ test('reader refuses linked files outside the retained package', async (t) => {
     assert.ok(loaded.checks.some((check) => check.id === id && check.status === 'fail'));
   }
 });
+
+test('host IO consumes the same closure and diagnostics without transferring original media', async (t) => {
+  const root = await fixture(t);
+  const original = await readRecordedEvidencePackage(root);
+  const readPaths: string[] = [];
+  const transported = await readRecordedEvidencePackage(root, {
+    listPaths: async () => [...original.input.artifactPaths!],
+    readJson: async (file) => {
+      readPaths.push(file);
+      return JSON.parse(await readFile(path.join(root, file), 'utf8'));
+    },
+    digestFile: async (file) => original.input.artifactDigests[file]!,
+  });
+  assert.deepEqual(transported, original);
+  assert(readPaths.every((file) => file.endsWith('.json')));
+});

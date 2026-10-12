@@ -1,8 +1,12 @@
+import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
+
 export interface LightboxItem {
   url: string;
   path: string;
   purpose: string;
   caption?: string;
+  /** Exact report bytes verified against the retained output snapshot before opening. */
+  verifiedText?: string;
   /** Capture provenance, e.g. "baseline @ main · abc123" or "fix @ feat/x · def456". */
   provenance?: string;
   sha256?: string;
@@ -12,6 +16,8 @@ export interface LightboxItem {
   viewUrl?: string;
   initialTraceIndex?: number;
   initialTracePhase?: 'start' | 'end';
+  /** The same model selected by the claim/step panel that opened the player. */
+  evidenceModel?: EvidenceReviewModel;
 }
 
 export interface LightboxPair {

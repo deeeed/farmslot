@@ -3,6 +3,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import type { ReadyGatePayload } from '@farmslot/protocol';
 
+import { acceptancePanelStyles } from '../progress-tracker/acceptance-panel.js';
 import type { LightboxItem, LightboxPair } from '../shared/media-lightbox-types.js';
 
 import { renderReadyWorkspaceMarkdown } from './ready-workspace-markdown.js';
@@ -67,6 +68,7 @@ export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
   return html`
     <style>
       ${readyWorkspaceLightStyles()}
+      ${acceptancePanelStyles.cssText}
     </style>
     ${input.renderTopBar()} ${input.renderResolvedBanner()}
     <div class="rdy-split">

@@ -1,9 +1,7 @@
-import { realpath } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
-import { readRecordedEvidencePackage } from '@farmslot/adapter-sdk';
 import {
   type RecordedEvidencePackageInput,
   validateRecordedEvidencePackage,
@@ -31,8 +29,6 @@ import { parseStructuredReviewFeedback } from '../review/feedback.js';
 import { readReviewWorkspaceCompletion } from '../review-workspaces/task.js';
 import {
   readReadyGatePreparedPackage,
-  resolveSelectedEvidenceRef,
-  verifyReadyGatePackageHash,
   verifyReadyGateSelectedEvidenceFiles,
 } from '../run-completion/ready-gate-package.js';
 import {
@@ -60,6 +56,7 @@ import {
   assertPublicationReviewPolicySatisfied,
   isPublishApprovalAction,
 } from './gate-policy.js';
+import { readGateRecordedEvidenceSources } from './recorded-evidence-sources.js';
 import {
   readReviewArtifacts,
   reviewCommitFromMarkdown,
@@ -171,50 +168,12 @@ export async function readGateAcceptance(
   }
 }
 
-/** The existing package inventory selects and binds the closure; no latest-path fallback. */
+/** Preserve the prerequisite consumer's canonical input array. */
 async function readGateRecordedEvidence(
   run: Run,
   preparedPackage: ReadyGatePrPackage | null,
 ): Promise<RecordedEvidencePackageInput[]> {
-  if (!run.taskFile || !preparedPackage)
-    throw new Error('A prepared evidence package is required. Refresh the gate package.');
-  verifyReadyGatePackageHash(preparedPackage);
-  const taskDir = await realpath(path.dirname(run.taskFile));
-  const inventory = new Map(
-    (preparedPackage.evidenceManifest ?? []).map((artifact) => [artifact.path, artifact.sha256]),
-  );
-  const roots = [...inventory.keys()]
-    .filter((file) => path.posix.basename(file) === 'summary.json')
-    .map((file) => path.posix.dirname(file));
-  if (!roots.length) throw new Error('The gate package has no retained recipe evidence closure.');
-  for (const key of preparedPackage.selectedEvidenceKeys ?? []) {
-    const selected = resolveSelectedEvidenceRef(key, preparedPackage.evidenceManifest ?? []);
-    if (!selected || !roots.some((root) => selected.path.startsWith(`${root}/`)))
-      throw new Error(`Selected evidence has no retained recipe closure: ${key}`);
-  }
-
-  const inputs: RecordedEvidencePackageInput[] = [];
-  for (const root of roots) {
-    const directory = await realpath(path.resolve(taskDir, root));
-    const relative = path.relative(taskDir, directory);
-    if (relative.startsWith('..') || path.isAbsolute(relative))
-      throw new Error('The retained evidence closure escapes the task directory.');
-    const result = await readRecordedEvidencePackage(directory);
-    const failed = result.checks.filter((check) => check.status === 'fail');
-    if (failed.length) throw new Error(failed.map((check) => check.message).join(' '));
-    // Every file the owner reader consumed must match the inventory frozen at
-    // preparation. A changed invocation, trace or judgment needs a package refresh.
-    for (const file of result.input.artifactPaths ?? []) {
-      const expected = inventory.get(path.posix.join(root, file));
-      const actual = result.input.artifactDigests[file];
-      if (!expected || expected.replace(/^sha256:/u, '') !== actual?.replace(/^sha256:/u, ''))
-        throw new Error(
-          `Evidence closure is missing or changed in the gate package: ${root}/${file}`,
-        );
-    }
-    inputs.push(result.input);
-  }
-  return inputs;
+  return (await readGateRecordedEvidenceSources(run, preparedPackage)).map(({ input }) => input);
 }
 
 const readers: GatePrerequisiteReaders = {

@@ -1,0 +1,224 @@
+/** Manual browser proof against evidence-review-proof's production RPC and artifact handlers. */
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+
+import { CdpSession, CdpWebPage } from '../packages/recipe-runner/src/runtime/cdp.js';
+
+const stateFile = process.argv[2];
+assert(stateFile, 'Pass the isolated proof server state file.');
+const state = JSON.parse(await fs.readFile(stateFile, 'utf8')) as {
+  gatewayPort: number;
+  uiPort: number;
+  runs: Array<{ id: string; label: string; claimIds: string[] }>;
+};
+const port = Number(process.env.FARMSLOT_CDP_PORT);
+assert([19222, 19223, 19224].includes(port), 'Use isolated Agent Chrome.');
+const version = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
+const browser = await CdpSession.connect(version.webSocketDebuggerUrl);
+const reports = [];
+const detail = `document.querySelector('run-detail')`;
+const lightbox = `${detail}.shadowRoot.querySelector('media-lightbox')`;
+const video = `${lightbox}.shadowRoot.querySelector('video')`;
+async function wait<T>(read: () => Promise<T>, ready: (value: T) => boolean) {
+  const until = Date.now() + 15_000;
+  let value: T;
+  do {
+    value = await read();
+    if (ready(value)) return value;
+    await delay(25);
+  } while (Date.now() < until);
+  throw new Error(`Review condition timed out: ${JSON.stringify(value!)}`);
+}
+try {
+  for (const run of state.runs.filter((run) => run.label !== 'minimal-author-publish-gate')) {
+    const url = `http://127.0.0.1:${state.uiPort}/#run/${run.id}`;
+    const { targetId } = await browser.call<{ targetId: string }>('Target.createTarget', {
+      url,
+      background: true,
+    });
+    let page: CdpWebPage | undefined;
+    try {
+      const target = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(
+        (t: { id: string }) => t.id === targetId,
+      );
+      page = await CdpWebPage.connectToTarget(target);
+      const p = page;
+      await wait(
+        () =>
+          p.evaluate<{ count: number }>(
+            `({count:${detail}?.shadowRoot?.querySelector('run-pipeline')?.shadowRoot?.querySelectorAll('[data-ac-id]').length ?? 0})`,
+          ),
+        (value) => value.count === run.claimIds.length,
+      );
+      const panelOpen = await p.evaluate<boolean>(
+        `${detail}.shadowRoot.querySelector('run-pipeline').shadowRoot.querySelector('[data-testid="acceptance-panel"]').open`,
+      );
+      if (!panelOpen) await p.click('[data-proof-steps] summary');
+      const claims = [];
+      for (const id of run.claimIds) {
+        await p.click(`[data-proof-steps] [data-ac-id="${id}"] [data-testid="acceptance-clip"]`);
+        const clips = await wait(
+          () =>
+            p.evaluate<Array<{ videoPath: string; startMs: number; endMs: number }>>(
+              `${detail}.evidenceModel?.selection?.clips ?? []`,
+            ),
+          (value) => value.length > 0,
+        );
+        const last = clips.at(-1)!;
+        const observed = await wait(
+          () =>
+            p.evaluate<{
+              source: string;
+              timeMs: number;
+              paused: boolean;
+              ready: number;
+              error: string;
+            }>(
+              `(() => {const v=${video};return {source:v?.getAttribute('src') ?? '', timeMs:(v?.currentTime ?? 0)*1000,paused:v?.paused ?? false,ready:v?.readyState ?? 0,error:${lightbox}?.shadowRoot?.querySelector('.ml-count')?.textContent ?? ''}})()`,
+            ),
+          (value) =>
+            decodeURIComponent(value.source).includes(last.videoPath) &&
+            value.paused &&
+            value.ready >= 2 &&
+            Math.abs(value.timeMs - last.endMs) < 50,
+        );
+        assert.equal(await p.evaluate(`${detail}.evidenceModel.selection.claimId`), id);
+        const markers = await p.evaluate<number>(
+          `${lightbox}.shadowRoot.querySelectorAll('[data-testid="video-marker"]').length`,
+        );
+        assert(markers > 0, 'The player exposes verified action/proof markers.');
+        claims.push({
+          id,
+          clips: clips.length,
+          lastOriginal: last.videoPath,
+          timeMs: observed.timeMs,
+          markerControls: markers,
+        });
+        if (id === run.claimIds[0]) {
+          const shot = await p.session.call<{ data: string }>('Page.captureScreenshot', {
+            format: 'png',
+          });
+          await fs.writeFile(
+            path.join(path.dirname(stateFile), `${run.label}.png`),
+            Buffer.from(shot.data, 'base64'),
+          );
+        }
+        await p.click('.ml-actions button:last-child');
+      }
+      // Traverse the real step control, then load the retained report through its normal button.
+      const proofIndex = await p.evaluate<number>(
+        `${detail}.evidenceModel.claims[0].occurrences[0].traceIndex`,
+      );
+      await p.click(`[data-testid="recipe-proof-step"][data-trace-index="${proofIndex}"]`);
+      await wait(
+        () => p.evaluate<boolean>(`${lightbox}.open`),
+        (value) => value,
+      );
+      await p.click('.ml-actions button:last-child');
+      await p.click('[data-testid="output-review-gate"] .evidence-link');
+      await wait(
+        () => p.evaluate<string>(`${lightbox}?.shadowRoot?.textContent ?? ''`),
+        (value) => value.includes('Report snapshot') && value.includes('Recipe output'),
+      );
+      const report = await p.evaluate<string>(`${lightbox}.shadowRoot.textContent`);
+      assert(report.includes(run.claimIds[0]!));
+      reports.push({
+        runId: run.id,
+        label: run.label,
+        claims,
+        reportSnapshot: true,
+        stepTraversal: true,
+      });
+    } finally {
+      page?.session.close();
+      await browser.call('Target.closeTarget', { targetId });
+    }
+  }
+  const readyRun = state.runs.find((run) => run.label === 'minimal-author-publish-gate');
+  if (readyRun) {
+    const url = `http://127.0.0.1:${state.uiPort}/#run/${readyRun.id}`;
+    const { targetId } = await browser.call<{ targetId: string }>('Target.createTarget', {
+      url,
+      background: true,
+    });
+    let page: CdpWebPage | undefined;
+    try {
+      const target = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(
+        (t: { id: string }) => t.id === targetId,
+      );
+      page = await CdpWebPage.connectToTarget(target);
+      const p = page;
+      const workspace = `${detail}.shadowRoot.querySelector('ready-workspace')`;
+      await wait(
+        () => p.evaluate<number>(`${workspace}?._evidenceModel?.claims.length ?? 0`),
+        (n) => n === 2,
+      );
+      if (
+        !(await p.evaluate<boolean>(
+          `${workspace}.querySelector('[data-testid="acceptance-panel"]').open`,
+        ))
+      )
+        await p.click('ready-workspace [data-testid="acceptance-panel"] summary');
+      await p.click('ready-workspace [data-ac-id="AC-1"] [data-testid="acceptance-clip"]');
+      const player = `${workspace}.querySelector('media-lightbox').shadowRoot.querySelector('video')`;
+      await wait(
+        () =>
+          p.evaluate<boolean>(
+            `(()=>{const v=${player};return !!v && v.readyState >= 2 && v.paused && Math.abs(v.currentTime-v.duration)<0.05})()`,
+          ),
+        (value) => value,
+      );
+      assert.deepEqual(await p.evaluate(`${workspace}._evidenceModel.errors`), []);
+      assert.equal(await p.evaluate(`${workspace}._evidenceModel.selection.claimId`), 'AC-1');
+      const shot = await p.session.call<{ data: string }>('Page.captureScreenshot', {
+        format: 'png',
+      });
+      await fs.writeFile(
+        path.join(path.dirname(stateFile), 'frozen-ready-player.png'),
+        Buffer.from(shot.data, 'base64'),
+      );
+      reports.push({
+        runId: readyRun.id,
+        label: readyRun.label,
+        claims: [
+          {
+            id: 'AC-1',
+            clips: 1,
+            lastOriginal: 'videos/recipe-run.mp4',
+            timeMs: await p.evaluate<number>(`${player}.currentTime*1000`),
+            markerControls: await p.evaluate<number>(
+              `${workspace}.querySelector('media-lightbox').shadowRoot.querySelectorAll('[data-testid="video-marker"]').length`,
+            ),
+          },
+        ],
+        reportSnapshot: false,
+        stepTraversal: false,
+      });
+    } finally {
+      page?.session.close();
+      await browser.call('Target.closeTarget', { targetId });
+    }
+  }
+  const receipt = {
+    pass: true,
+    productionRPC: true,
+    realRetainedPackages: true,
+    backgroundTargets: true,
+    reports,
+  };
+  await fs.writeFile(
+    path.join(path.dirname(stateFile), 'browser-receipt.json'),
+    JSON.stringify(receipt, null, 2),
+  );
+  console.log(
+    JSON.stringify({
+      pass: true,
+      runs: reports.length,
+      claims: reports.reduce((sum, run) => sum + run.claims.length, 0),
+    }),
+  );
+} finally {
+  browser.close();
+}

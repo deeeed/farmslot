@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add an opt-in selected-package metadata projection to the existing run recipe-artifact query (ADR-062).
+
 - Share gate prerequisite reasons and presentation for fixing, reviewer failure and reconciliation states.
 - Share review finding curation and bind publication choices to the reviewed content.
 

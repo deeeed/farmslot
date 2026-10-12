@@ -30,7 +30,8 @@
   },
   "dependencies": {
     "@farmslot/protocol": "workspace:*",
-    "@farmslot/recipe-runner": "workspace:*"
+    "@farmslot/recipe-runner": "workspace:*",
+    "@noble/hashes": "^1.8.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

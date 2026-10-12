@@ -1,6 +1,7 @@
 import { html, LitElement, nothing, type PropertyValues, svg } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
+import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import type {
   AcceptanceCriterionRef,
   AcceptanceEvidenceLink,
@@ -75,6 +76,7 @@ export class RunPipeline extends LitElement {
   @property({ attribute: false }) run!: Run;
   @property({ attribute: false }) taskProgress?: TaskProgressStructured;
   /** The run's acceptance ledger (ADR-060); the panel is hidden without one. */
+  @property({ attribute: false }) evidenceModel?: EvidenceReviewModel | null;
   @property({ attribute: false }) acceptanceStatus?: AcceptanceStatusLedger | null;
   /** Registered criteria, so one still awaiting a verdict gets a row of its own. */
   @property({ attribute: false }) acceptanceCriteria?: AcceptanceCriterionRef[] | null;
@@ -316,6 +318,15 @@ export class RunPipeline extends LitElement {
     const { ledger, ...options } = inputs;
     return renderAcceptancePanel(ledger, {
       ...options,
+      showOccurrences: true,
+      openOccurrence: (traceIndex) =>
+        this.dispatchEvent(
+          new CustomEvent('recipe-proof', {
+            detail: { traceIndex },
+            bubbles: true,
+            composed: true,
+          }),
+        ),
       ...(this.acceptanceEvidenceHref ? { evidenceHref: this.acceptanceEvidenceHref } : {}),
       ...(this.acceptanceEvidenceOpen ? { openEvidence: this.acceptanceEvidenceOpen } : {}),
     });

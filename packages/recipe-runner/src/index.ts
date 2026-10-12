@@ -126,6 +126,7 @@ export { validateRecordedEvidencePackage } from './evidence/package.js';
 export {
   readRecordedEvidencePackage,
   type RecordedEvidencePackageReadCheck,
+  type RecordedEvidencePackageReadIO,
   type RecordedEvidencePackageReadResult,
 } from './evidence/read-package.js';
 export { digestFileWithinRoot } from './file-digest.js';

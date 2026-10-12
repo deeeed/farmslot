@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- Expose the existing occurrence recording-coverage helper and trusted-host reader transport to the shared review model; equal-byte originals retain their distinct clocks (ADR-062).
+
 ## 0.30.0 - 2026-10-12
 
 - Expose one retained evidence-package reader for CLI and gateway validation, with contained file reads, actual byte digests and read diagnostics.
