@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import type { SourceMaterialization } from '@farmslot/protocol';
+
 import type { ProjectVars } from '../core/config.js';
 
 import {
@@ -356,5 +358,62 @@ test('slot resolution uses explicit domain before the slot or pool default', () 
     assert.equal(fromSlotDefault.effectiveDomain, 'perps');
     assert.equal(fromExplicitDomain.effectiveDomain, 'perps');
     assert.equal(fromExplicitDomain.reference.sha256, fromSlotDefault.reference.sha256);
+  });
+});
+
+test('catalog read uses verified project vars without an async source context', () => {
+  withProject((vars) => {
+    const sourceRoot = path.dirname(vars.projectConfig);
+    const lock: SourceMaterialization['lock'] = {
+      schemaVersion: 1,
+      context: { project: vars.projectName },
+      generation: 1,
+      declarationRevision: 1,
+      pinRevision: 0,
+      resolvedAt: '2026-10-12T00:00:00.000Z',
+      packBindings: { [vars.projectName]: { sourceId: 'team', entry: '.' } },
+      digest: 'a'.repeat(64),
+      entries: [
+        {
+          sourceId: 'team',
+          commit: 'b'.repeat(40),
+          kind: 'pack',
+          repo: 'https://example.test/owner/team',
+          declaredRef: 'main',
+          effectiveRef: 'main',
+          treeDigest: 'c'.repeat(64),
+          objectFormat: 'sha1',
+          resolutionGeneration: 1,
+          scope: 'farm',
+          dependencies: [],
+        },
+      ],
+    };
+    vars.sourceContext = {
+      project: vars.projectName,
+      pack: { sourceId: 'team', entry: '.' },
+      materialization: {
+        receiptPath: path.join(sourceRoot, 'receipt.json'),
+        lock,
+        roots: { team: sourceRoot },
+        receipt: {
+          schemaVersion: 1,
+          id: 'receipt',
+          nodeId: 'gateway',
+          lockDigest: lock.digest,
+          verifiedAt: lock.resolvedAt,
+          sources: [],
+        },
+      },
+    };
+    vars.projectJson.execution_templates!.sources![0].root = { sourceId: 'team', entry: 'team' };
+    const options = configuredExecutionTemplateOptions(vars, {
+      flow: 'fix-bug',
+      platform: 'ios',
+      runMode: 'autonomous',
+      domain: 'perps',
+    });
+    assert.ok(options.options.some((entry) => entry.id === 'fix-bug/perps-mobile'));
+    assert.ok(!options.unavailableSources.some((entry) => entry.id === 'team:perps'));
   });
 });

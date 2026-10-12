@@ -1,6 +1,5 @@
 // methods/config.ts — config.pools, config.pool, config.projects, config.project,
 // config.templates, config.templatePreview, config.templateOptions, config.slot.update, config.pool.update
-
 import { existsSync } from 'node:fs';
 import { copyFile, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -31,6 +30,12 @@ import type {
   FlowType,
   TemplatePreview,
 } from '@farmslot/protocol';
+import {
+  projectPackRoot,
+  projectSourceContext,
+  readSourceRuntimeSettings,
+  writeSourceRuntimeSettings,
+} from '@farmslot/slot-config';
 
 import {
   invalidateProjectVarsCache,
@@ -137,12 +142,17 @@ function normalizeBacklogUpdate(
 export async function configProjectBacklogUpdate(
   params: ConfigProjectBacklogUpdateParams,
 ): Promise<ConfigProjectBacklogUpdateResult> {
-  const projectFilePath = path.join(projectsDir, params.project, 'project.json');
+  const sources = await projectSourceContext(params.project);
+  const projectFilePath = path.join(
+    await projectPackRoot(params.project, path.join(projectsDir, params.project)),
+    'project.json',
+  );
   if (!existsSync(projectFilePath)) throw new Error(`Project file not found: ${params.project}`);
 
   let raw: Record<string, unknown>;
   try {
     raw = JSON.parse(await readFile(projectFilePath, 'utf-8'));
+    if (sources) Object.assign(raw, await readSourceRuntimeSettings(params.project));
   } catch {
     throw new Error(`Invalid project JSON: ${params.project}`);
   }
@@ -177,10 +187,15 @@ export async function configProjectBacklogUpdate(
 
   validateBacklogConfig(raw, projectFilePath);
 
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '').slice(0, 15);
-  const backupPath = `${projectFilePath}.bak.${timestamp}`;
-  await copyFile(projectFilePath, backupPath);
-  await writeFile(projectFilePath, JSON.stringify(raw, null, 2) + '\n', 'utf-8');
+  let backupPath: string;
+  if (sources)
+    backupPath = await writeSourceRuntimeSettings(params.project, { backlog: raw.backlog });
+  else {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '').slice(0, 15);
+    backupPath = `${projectFilePath}.bak.${timestamp}`;
+    await copyFile(projectFilePath, backupPath);
+    await writeFile(projectFilePath, JSON.stringify(raw, null, 2) + '\n', 'utf-8');
+  }
 
   invalidateProjectVarsCache(params.project);
   const project = await loadProjectConfig(params.project);
@@ -495,12 +510,17 @@ function normalizeAutoRecoveryUpdate(
 export async function configProjectAutoRecoveryUpdate(
   params: ConfigProjectAutoRecoveryUpdateParams,
 ): Promise<ConfigProjectAutoRecoveryUpdateResult> {
-  const projectFilePath = path.join(projectsDir, params.project, 'project.json');
+  const sources = await projectSourceContext(params.project);
+  const projectFilePath = path.join(
+    await projectPackRoot(params.project, path.join(projectsDir, params.project)),
+    'project.json',
+  );
   if (!existsSync(projectFilePath)) throw new Error(`Project file not found: ${params.project}`);
 
   let raw: Record<string, unknown>;
   try {
     raw = JSON.parse(await readFile(projectFilePath, 'utf-8'));
+    if (sources) Object.assign(raw, await readSourceRuntimeSettings(params.project));
   } catch {
     throw new Error(`Invalid project JSON: ${params.project}`);
   }
@@ -535,10 +555,17 @@ export async function configProjectAutoRecoveryUpdate(
 
   validateAutoRecoveryConfig(raw, projectFilePath);
 
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '').slice(0, 15);
-  const backupPath = `${projectFilePath}.bak.${timestamp}`;
-  await copyFile(projectFilePath, backupPath);
-  await writeFile(projectFilePath, JSON.stringify(raw, null, 2) + '\n', 'utf-8');
+  let backupPath: string;
+  if (sources)
+    backupPath = await writeSourceRuntimeSettings(params.project, {
+      auto_recovery: raw.auto_recovery,
+    });
+  else {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '').slice(0, 15);
+    backupPath = `${projectFilePath}.bak.${timestamp}`;
+    await copyFile(projectFilePath, backupPath);
+    await writeFile(projectFilePath, JSON.stringify(raw, null, 2) + '\n', 'utf-8');
+  }
 
   invalidateProjectVarsCache(params.project);
   const project = await loadProjectConfig(params.project);

@@ -9,6 +9,7 @@ import {
   type Run,
   type WorkerSignal,
 } from '@farmslot/protocol';
+import { projectSourceContext } from '@farmslot/slot-config';
 
 import {
   markAgentContextStatus,
@@ -26,6 +27,7 @@ import {
 import { execOnSlot } from '../core/exec.js';
 import {
   assertNoUnknownPlaceholders,
+  expandSourceBindings,
   expandTemplateWithReservedLast,
   knownTemplatePlaceholders,
 } from '../core/hooks.js';
@@ -36,6 +38,7 @@ import {
   TMUX_WINDOW_RESPAWN_SETTLE_MS,
   tmuxShellSnippet,
 } from '../core/tmux.js';
+import { projectWorkerTemplatePath } from '../core/worker-templates.js';
 import { ghRequest } from '../integrations/github-client.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
@@ -479,22 +482,26 @@ const CI_FIX_TEMPLATE_NAME = 'ci-fix.md';
 
 /** Project-owned ci-fix template, then Farmslot default at `templates/worker/ci-fix.md`. */
 export async function resolveCiFixTemplatePath(project: string): Promise<string | null> {
-  const projectPath = path.join(
-    farmslotRoot,
-    'projects',
-    project,
+  const sources = await projectSourceContext(project);
+  const projectPath = await projectWorkerTemplatePath(project, CI_FIX_TEMPLATE_NAME);
+  try {
+    await readFile(projectPath, 'utf-8');
+    return projectPath;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    // The default also belongs to the locked closure. Legacy work retains its service copy.
+  }
+
+  const framework = sources?.materialization.lock.packBindings['farmslot-farm'];
+  const lockedDefaultRoot = framework && sources?.materialization.roots[framework.sourceId];
+  if (sources && !lockedDefaultRoot)
+    throw new Error(`Locked pack ${project} has no declared CI fix default`);
+  const defaultPath = path.join(
+    lockedDefaultRoot ?? farmslotRoot,
     'templates',
     'worker',
     CI_FIX_TEMPLATE_NAME,
   );
-  try {
-    await readFile(projectPath, 'utf-8');
-    return projectPath;
-  } catch {
-    // fall through
-  }
-
-  const defaultPath = path.join(farmslotRoot, 'templates', 'worker', CI_FIX_TEMPLATE_NAME);
   try {
     await readFile(defaultPath, 'utf-8');
     console.warn(
@@ -576,6 +583,7 @@ async function writeCIFixTask(
     CI_ISSUE_TYPE: ciIssueType,
   };
 
+  template = expandSourceBindings(template, pv.sourceContext);
   assertNoUnknownPlaceholders(
     template,
     [...Object.keys(ciReplacements), ...knownTemplatePlaceholders(vars, pv)],

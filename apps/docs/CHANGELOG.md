@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document declared source status and exact-commit synchronization in the gateway API.
 - Document reviewer lane path variables and the all-lane review-fix feedback list.
 
 - Document required farm-owned QA presets at project pack admission and gateway support sync.

@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { Command, Option } from 'commander';
@@ -11,6 +12,7 @@ import type {
   ProjectCommandInvocation,
   ProjectRecipeHostOptions,
 } from '@farmslot/recipe-cli/harness';
+import { executionSourceContext, resolveSourceBinding } from '@farmslot/slot-config';
 
 import { createEmitter, errorEnvelope, isMachineMode } from '../envelope.js';
 import { repoRoot, resolveWorkspace } from '../onboarding/workspace.js';
@@ -256,6 +258,7 @@ export async function projectRecipeHostOptions(
   options: CliOptions,
 ): Promise<ProjectRecipeHostOptions> {
   const shared = await import('@farmslot/recipe-cli/harness');
+  const sources = await executionSourceContext();
   const target = checkout ?? shared.optionString(options, 'target');
   const tokens: string[] = [];
   if (target) tokens.push('--target', path.resolve(target));
@@ -302,7 +305,26 @@ export async function projectRecipeHostOptions(
   const doctorArgs = projectCommandInvocation(diagnosis, {}).argv;
   return {
     tokens,
-    projectsDir: existsSync(registry) ? registry : undefined,
+    ...(sources
+      ? {
+          projects: [
+            {
+              config: JSON.parse(
+                await readFile(
+                  path.join(
+                    resolveSourceBinding(sources.pack, sources.materialization).root,
+                    'project.json',
+                  ),
+                  'utf8',
+                ),
+              ),
+              root: resolveSourceBinding(sources.pack, sources.materialization).root,
+            },
+          ],
+          resolveSourceBinding: (selection: import('@farmslot/protocol').SourceEntryRef) =>
+            resolveSourceBinding(selection, sources.materialization),
+        }
+      : { projectsDir: existsSync(registry) ? registry : undefined }),
     slotPoolDir,
     command,
     options,

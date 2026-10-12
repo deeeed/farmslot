@@ -183,6 +183,12 @@ export async function warmSessionHandoffDispatch(
     };
   }
   const parentRun = params.parentRunId ? (getRun(params.parentRunId) ?? null) : null;
+  try {
+    const { assertRetainedSourceInputs } = await import('../../sources/runtime.js');
+    assertRetainedSourceInputs(parentRun, requestingRun);
+  } catch (error) {
+    return { handedOff: false, disposition: 'hold', reason: (error as Error).message };
+  }
   if (requestingRun.transport === 'native') {
     const destination = selectAgentContext(requestingRun, {
       role: primaryRoleForFlow(requestingRun.flowType),

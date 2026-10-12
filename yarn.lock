@@ -5055,6 +5055,7 @@ __metadata:
     "@farmslot/agent-runtime": "workspace:*"
     "@farmslot/capabilities": "workspace:*"
     "@farmslot/protocol": "workspace:*"
+    "@farmslot/slot-config": "workspace:*"
     "@types/node": "npm:^22.0.0"
     "@types/ws": "npm:^8.5.0"
     tsx: "npm:^4.19.0"

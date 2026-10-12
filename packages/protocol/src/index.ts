@@ -33,6 +33,8 @@ export * from './runs/slot-resolution.js';
 export * from './runs/step-timing.js';
 export * from './slots/dispatch-scoring.js';
 export * from './slots/tracking-branch.js';
+export * from './sources/contracts.js';
+export * from './sources/validation.js';
 export * from './surfaces/command-center.js';
 export * from './transport/events.js';
 export * from './transport/frames.js';

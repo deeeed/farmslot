@@ -11,6 +11,7 @@ import {
   type ReviewValidationDepth,
   type Run,
 } from '@farmslot/protocol';
+import { expandSourceBindings } from '@farmslot/slot-config';
 
 import {
   getOrchestratorTaskRoot,
@@ -29,6 +30,7 @@ import {
   knownTemplatePlaceholders,
 } from '../core/hooks.js';
 import { shellQuote } from '../core/tmux.js';
+import { projectWorkerTemplatePath } from '../core/worker-templates.js';
 import { remoteBranchRefspec } from '../methods/slot/slot-tracking.js';
 import { buildReviewPlanningBrief } from '../run-engine/review-artifacts.js';
 import { stackPrBase } from '../run-engine/stack-base.js';
@@ -208,10 +210,11 @@ Use the task's mark wrapper for this reviewer checklist. Preserve the parent wor
 `;
   } else {
     try {
-      const { farmslotRoot } = await import('../fleet/state.js');
-      const templateDir = path.join(farmslotRoot, 'projects', project, 'templates', 'worker');
-      const depthTemplatePath = path.join(templateDir, `review.${validationDepth}.md`);
-      const fallbackTemplatePath = path.join(templateDir, 'review.md');
+      const depthTemplatePath = await projectWorkerTemplatePath(
+        project,
+        `review.${validationDepth}.md`,
+      );
+      const fallbackTemplatePath = await projectWorkerTemplatePath(project, 'review.md');
       try {
         template = await readFile(depthTemplatePath, 'utf-8');
       } catch (err) {
@@ -227,6 +230,8 @@ Use the task's mark wrapper for this reviewer checklist. Preserve the parent wor
       );
     }
   }
+
+  template = expandSourceBindings(template, configured.sourceContext);
 
   // Resolve runtimeDir and mobile reference repo path from project vars
   template = renderReviewTemplatePaths(template, lanePaths);
@@ -299,7 +304,6 @@ export async function expandReviewFixTemplate(
   run: Run,
   issues: ReviewIssue[],
 ): Promise<string> {
-  const { farmslotRoot } = await import('../fleet/state.js');
   // Format issues as bullet list for template insertion
   const issueLines = issues
     .map((i) => {
@@ -311,14 +315,7 @@ export async function expandReviewFixTemplate(
   // Read and expand the review-fix template
   let template: string;
   try {
-    const templatePath = path.join(
-      farmslotRoot,
-      'projects',
-      run.project,
-      'templates',
-      'worker',
-      'review-fix.md',
-    );
+    const templatePath = await projectWorkerTemplatePath(run.project, 'review-fix.md');
     template = await readFile(templatePath, 'utf-8');
   } catch (err) {
     throw new Error(
@@ -340,6 +337,7 @@ export async function expandReviewFixTemplate(
     DEFAULT_BRANCH: getProjectField(pv.projectJson, 'default_branch') || DEFAULT_BRANCH,
   };
 
+  template = expandSourceBindings(template, pv.sourceContext);
   assertNoUnknownPlaceholders(
     template,
     [...Object.keys(replacements), ...knownTemplatePlaceholders(vars, pv)],

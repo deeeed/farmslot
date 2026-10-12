@@ -49,6 +49,7 @@ import {
   stopCapture,
 } from './commands/screen.js';
 import { startScreenControlServer, stopScreenControlServer } from './commands/screen-control.js';
+import { NodeSources } from './commands/sources.js';
 import {
   collectMetrics,
   startMetricsSubscription,
@@ -68,6 +69,7 @@ const GATEWAY_URL = process.env.GATEWAY_URL ?? 'ws://localhost:7777';
 const MACHINE_NAME = process.env.MACHINE_NAME ?? hostname();
 const MAX_BACKOFF = 30_000;
 const nativeSessions = new NativeNodeSessions(MACHINE_NAME);
+const sources = new NodeSources(MACHINE_NAME);
 
 const execConnections = new Map<WebSocket, ExecRequests>();
 let ws: WebSocket | null = null;
@@ -345,6 +347,22 @@ async function handleRequest(
 
   try {
     switch (frame.method) {
+      case 'sources.materialize': {
+        const result = await sources.materialize(
+          params.lock as import('@farmslot/protocol').SourceLock,
+        );
+        sendResponse(frame.id, true, result, undefined, undefined, socket);
+        break;
+      }
+      case 'sources.verify': {
+        const result = await sources.verify(params.lock as import('@farmslot/protocol').SourceLock);
+        sendResponse(frame.id, true, result, undefined, undefined, socket);
+        break;
+      }
+      case 'sources.status': {
+        sendResponse(frame.id, true, await sources.status(), undefined, undefined, socket);
+        break;
+      }
       case 'native.session': {
         sendResponse(frame.id, true, await nativeSessions.route(params));
         break;

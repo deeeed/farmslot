@@ -2,6 +2,7 @@ import path from 'node:path';
 
 import type { NativeWorkerLaunch } from '@farmslot/agent-runtime/native';
 import type { NativeProfileReference, SafetyTier } from '@farmslot/protocol';
+import { currentProjectSources, sourceWorkerEnvironment } from '@farmslot/slot-config';
 
 import { execOnSlot } from '../../core/exec.js';
 import {
@@ -67,6 +68,12 @@ export async function prepareNativeWorkerLaunch(input: {
   const machineEnv = machineShellEnv(vars);
   environment.set = { ...environment.set, ...machineEnv };
   environment.unset = environment.unset.filter((name) => !Object.hasOwn(machineEnv, name));
+  const sources = currentProjectSources();
+  if (sources) {
+    const sourceEnv = sourceWorkerEnvironment(sources);
+    environment.set = { ...environment.set, ...sourceEnv };
+    environment.unset = environment.unset.filter((name) => !Object.hasOwn(sourceEnv, name));
+  }
   const taskRoot = path.posix.isAbsolute(input.taskDir)
     ? input.taskDir
     : path.posix.join(vars.remoteRepo, input.taskDir);

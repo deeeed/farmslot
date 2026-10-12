@@ -3,7 +3,6 @@
 //
 // A verified retained lineage is required before replacing the parent. A live
 // slot takes a chained WARM run; otherwise the same lineage goes through intake.
-
 import {
   DEFAULT_PR_REVIEW_OPTIONS,
   isTerminalRunStatus,
@@ -36,6 +35,7 @@ import {
   assertWarmReviewRequestAvailable,
 } from '../../run-engine/review-plan.js';
 import { createRun, getAllRuns, getRun, updateRun } from '../../runs/store.js';
+import { withSourcePlanning } from '../../sources/runtime.js';
 import { submitRereviewRequest } from '../pr-rules.js';
 
 /** Mark a review that could not be posted as superseded so it stops owning the PR. */
@@ -53,6 +53,13 @@ export async function runRereviewLatestHead(
 ): Promise<RunRereviewLatestHeadResult> {
   const run = getRun(params.runId);
   if (!run) throw new Error(`Run not found: ${params.runId}`);
+  return withSourcePlanning(run.project, () => rereviewWithSources(params));
+}
+
+async function rereviewWithSources(
+  params: RunRereviewLatestHeadParams,
+): Promise<RunRereviewLatestHeadResult> {
+  const run = getRun(params.runId)!;
   assertRereviewable(run);
   const fallbackRepo = (await loadProjectConfig(run.project))?.ci?.repo;
   const target = rereviewTarget(run, fallbackRepo);

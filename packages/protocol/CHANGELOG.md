@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Declare versioned source locks, exact source receipts and run input provenance.
 - Honor HUD top/bottom placement through automatic progress and capture the painted final outcome.
 
 - Keep frozen recording dependencies out of selectable publication media.

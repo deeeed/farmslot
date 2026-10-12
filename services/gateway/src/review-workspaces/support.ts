@@ -14,6 +14,7 @@ import {
   type ReviewWorkspaceSupportConfig,
   type Run,
 } from '@farmslot/protocol';
+import { currentProjectSources, resolveSourceBinding } from '@farmslot/slot-config';
 
 import {
   loadProjectVars,
@@ -187,7 +188,13 @@ function sourceFingerprint(
         ...(source.subpath ? { subpath: source.subpath } : {}),
       })),
     },
-    { projectPackRoot: path.dirname(projectConfig), env },
+    {
+      resolveSourceBinding: currentProjectSources()
+        ? (selection) => resolveSourceBinding(selection, currentProjectSources()!.materialization)
+        : undefined,
+      projectPackRoot: path.dirname(projectConfig),
+      env,
+    },
   );
   if (resolution.unavailable.length)
     throw new Error(

@@ -18,6 +18,7 @@ import {
   validatePackBytesPortability,
   validatePackPortability,
 } from '@farmslot/protocol/node/pack-portability';
+import { currentProjectSources } from '@farmslot/slot-config';
 
 import { execOnSlot } from '../core/exec.js';
 import {
@@ -196,6 +197,15 @@ export async function ensureNodeSupportBundle(
     collected?: Awaited<ReturnType<typeof collectNodeSupportBundle>>;
   } = {},
 ): Promise<NodeSupportBundleState | null> {
+  if (currentProjectSources() ?? options.projectVars?.sourceContext) {
+    // No copied pack bundle is admitted. The service deployment still owns framework scripts.
+    return {
+      supportDir: isLocal(vars.host, vars.machine) ? farmslotRoot : '~/farmslot-node',
+      hash: null,
+      published: false,
+      paths: ['scripts'],
+    };
+  }
   const step = options.step ?? (() => {});
   const io = options.io ?? defaultIo;
   const verifyMode = options.verify ?? 'presence';

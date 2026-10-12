@@ -1,5 +1,6 @@
 import { isRecord } from '../recipe/common.js';
 import { normalizeRecipeRef } from '../recipe/workflow.js';
+import { isContainedSourceEntry } from '../sources/validation.js';
 
 import type { SafetyTier } from './agents.js';
 import type { ProjectBacklogConfig } from './backlog.js';
@@ -215,7 +216,11 @@ export function validateProjectRecipeConfig(value: unknown): asserts value is Pr
     ((typeof entry.env === 'string' &&
       /^[A-Za-z_][A-Za-z0-9_]*$/u.test(entry.env) &&
       entry.projectPath === undefined) ||
-      (string(entry.projectPath) && entry.env === undefined));
+      (string(entry.projectPath) && entry.env === undefined) ||
+      (string(entry.sourceId) &&
+        string(entry.entry) &&
+        isContainedSourceEntry(entry.entry) &&
+        Object.keys(entry).every((key) => key === 'sourceId' || key === 'entry')));
   if (!record(value)) return fail('declaration');
   if (!record(value.provider) || !string(value.provider.module)) return fail('provider.module');
   if (value.provider.root !== undefined && !root(value.provider.root)) fail('provider.root');
