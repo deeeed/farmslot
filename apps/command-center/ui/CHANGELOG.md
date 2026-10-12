@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Display readable run titles in lists, retrospectives, detail and decisions with two-line cards and full title on hover.
+
 - Move delivered roadmap work into a collapsed group with PR links and prominent delivery status.
 
 - Make inventory selection visible and close details when the selected row is activated again.

@@ -1,9 +1,10 @@
-import type {
-  FlowType,
-  LinkedTicket,
-  PrIntegrationStatus,
-  Run,
-  RunTicketData,
+import {
+  type FlowType,
+  type LinkedTicket,
+  type PrIntegrationStatus,
+  type Run,
+  type RunTicketData,
+  taskTitleText,
 } from '@farmslot/protocol';
 
 import type { RawProjectJson } from '../core/config.js';
@@ -256,7 +257,8 @@ export async function fetchTicketData(run: Run): Promise<RunTicketData | null> {
 
   // If nothing was fetched, return minimal data
   if (merged.source === 'manual') {
-    merged.title = ticket;
+    merged.title = taskTitleText(ticket);
+    merged.description = ticket;
   }
 
   return merged;

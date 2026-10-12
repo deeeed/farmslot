@@ -17,6 +17,7 @@ import {
 import { ArtifactCard, ComparisonCard } from '../../../components/ArtifactCard';
 import { BeforeAfterPreview } from '../../../components/BeforeAfterPreview';
 import { PairNavigation } from '../../../components/EvidenceReviewWorkspace';
+import { RunTitle } from '../../../components/RunTitle';
 import {
   TaskProgressFallbackPanel,
   TaskProgressPanel,
@@ -1521,11 +1522,7 @@ export function FamilyRunWorkspaceCard({
         {run.flowType} · {run.lane}
         {run.slotId ? ` · ${run.slotId}` : ''}
       </Text>
-      {run.summary ? (
-        <Text style={baseStyles.textSecondary} numberOfLines={3}>
-          {run.summary}
-        </Text>
-      ) : null}
+      {run.summary ? <RunTitle style={baseStyles.textSecondary} title={run.summary} /> : null}
 
       <View style={styles.runMetaGrid}>
         <Metric
@@ -1928,11 +1925,7 @@ export function RunCard({
           <Text style={[styles.runStatusText, { color: statusColor }]}>{run.status}</Text>
         </View>
       </View>
-      {run.summary ? (
-        <Text style={baseStyles.textSecondary} numberOfLines={2}>
-          {run.summary}
-        </Text>
-      ) : null}
+      {run.summary ? <RunTitle style={baseStyles.textSecondary} title={run.summary} /> : null}
       <View style={styles.runMetaGrid}>
         <Metric
           label="Evidence files"

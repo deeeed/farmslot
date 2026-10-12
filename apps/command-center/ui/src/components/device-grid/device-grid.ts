@@ -1,5 +1,4 @@
 // <device-grid> — fleet-wide device stream viewer with picker + controls
-
 import { css, html, LitElement, unsafeCSS } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
@@ -14,6 +13,7 @@ import type {
   SlotResource,
   SlotStatus,
 } from '@farmslot/protocol';
+import { runDisplayTitle } from '@farmslot/protocol';
 import { Events, Methods } from '@farmslot/protocol';
 
 import '../stream-feed/stream-feed.js';
@@ -502,7 +502,7 @@ export class DeviceGrid extends LitElement {
 
   private _summaryForSlot(slot: SlotStatus): string {
     const run = getRunForSlot(slot.slot);
-    return run?.summary || slot.taskId || slot.branch || '';
+    return (run?.summary ? runDisplayTitle(run).title : null) || slot.taskId || slot.branch || '';
   }
 
   private _syncResourceSummaries() {

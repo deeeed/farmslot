@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Use shared plain run titles with two-line display and full accessible text across run and decision views.
+
 - Group delivered roadmap work separately with PR links and delivery outcome filters.
 
 - Show shared gate prerequisite reasons and run lifecycle labels for correction, review failure and reconciliation.

@@ -11,6 +11,7 @@ import type {
 } from '@farmslot/protocol';
 
 import { BeforeAfterPreview } from '../../../components/BeforeAfterPreview';
+import { RunTitle } from '../../../components/RunTitle';
 import {
   TaskProgressFallbackPanel,
   TaskProgressPanel,
@@ -1286,11 +1287,7 @@ export function ActiveRunWorkspaceCard({
       <Text style={styles.workspaceTitle} numberOfLines={2}>
         {run.ticketOrPr}
       </Text>
-      {run.summary ? (
-        <Text style={baseStyles.textSecondary} numberOfLines={3}>
-          {run.summary}
-        </Text>
-      ) : null}
+      {run.summary ? <RunTitle style={baseStyles.textSecondary} title={run.summary} /> : null}
       {priorityVisualPair && routeWorkspace !== 'compare' ? (
         <SlotBeforeAfterPriorityPanel
           pair={priorityVisualPair}

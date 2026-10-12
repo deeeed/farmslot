@@ -5,6 +5,7 @@ import type {
   Run,
   SlotStatus,
 } from '@farmslot/protocol';
+import { runDisplayTitle } from '@farmslot/protocol';
 
 export type DispatchCandidate = DispatchCandidatesResult['candidates'][number];
 export type NudgeIntent = 'nudge' | 'fresh';
@@ -143,5 +144,5 @@ export function slotSummaryLabel(input: {
         slot.taskFile &&
         candidate.taskFile.includes(slot.taskFile)),
   );
-  return run?.summary || slot.taskId || slot.taskFile || '';
+  return (run?.summary ? runDisplayTitle(run).title : null) || slot.taskId || slot.taskFile || '';
 }

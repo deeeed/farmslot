@@ -11,6 +11,7 @@ import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { formatCreatedAt, routeForRun, runStatusColor } from '../runs/run-utils.js';
 import type { PrepareProgressState } from '../shared/prepare-progress-model.js';
+import { renderRunTitle } from '../shared/run-title.js';
 import {
   navigateToPreparedSlot,
   runSlotPrepareForRun,
@@ -452,9 +453,7 @@ export class SlotLoadRunModal extends LitElement {
           >
         </span>
         <span class="slrm-run-info">
-          <span class="slrm-run-title" title=${run.summary ?? run.ticketOrPr}
-            >${run.flowType} · ${run.summary ?? run.ticketOrPr}</span
-          >
+          ${renderRunTitle(run, 'slrm-run-title')}
           <span class="slrm-run-meta">
             <span class="slrm-meta-strong">${run.ticketOrPr}</span>
             <span>${run.project}</span>

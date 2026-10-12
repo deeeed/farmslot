@@ -37,6 +37,7 @@ import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import type { AcceptanceEvidenceOpen } from '../progress-tracker/acceptance-panel.js';
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
+import { renderRunTitle } from '../shared/run-title.js';
 
 import { isRecoverableBlockedWorkerRun } from './blocked-run-recovery-model.js';
 import { ticketUrlForRun } from './family-observability-link-model.js';
@@ -701,7 +702,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           `
         : nothing}
     </div>
-    ${r.summary ? html`<div class="header-summary">${r.summary}</div>` : nothing}
+    ${r.summary ? html`${renderRunTitle(r, 'header-summary')}` : nothing}
     ${r.slotTeardownSkipped
       ? html`<p role="status" data-testid="run-slot-cleanup-hint">
           Workspace cleanup deferred: ${r.slotTeardownSkipped}

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Derive plain free-text task and report titles while preserving the complete task and report bodies.
+
 - Publish the exact selected review findings and report, preserving accepted choices across refresh races.
 
 - Declare mid-turn prompt support and verify complete Enter-submitted queue messages for guarded lane steering.

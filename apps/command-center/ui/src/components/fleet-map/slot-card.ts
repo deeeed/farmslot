@@ -2,6 +2,7 @@ import { css, html, LitElement, unsafeCSS } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
 import type { Run, SlotStatus, TaskProgressStructured } from '@farmslot/protocol';
+import { runDisplayTitle } from '@farmslot/protocol';
 
 import '../shared/status-badge.js';
 import './slot-headroom-dot.js';
@@ -16,6 +17,7 @@ import {
   spacing,
 } from '../../styles/theme-tokens.js';
 import { runStatusColor } from '../runs/run-utils.js';
+import { renderRunTitle } from '../shared/run-title.js';
 import type { SlotPendingWork } from '../work-graph/work-graph-execution-overlay.js';
 
 import { slotBranchDisplay } from './slot-branch-display.js';
@@ -591,7 +593,7 @@ export class SlotCard extends LitElement {
     return html`
       <div
         class="run-badge"
-        title="${run.summary ?? 'Click to view run'}"
+        title=${runDisplayTitle(run, Infinity).title}
         @click=${(e: Event) => {
           e.stopPropagation();
           location.hash = ['done', 'failed', 'cancelled'].includes(run.status)
@@ -612,7 +614,7 @@ export class SlotCard extends LitElement {
           family ${run.familyId.slice(0, 8)}
         </a>
       </div>
-      ${run.summary ? html`<div class="run-summary">${run.summary}</div>` : ''}
+      ${run.summary ? html`${renderRunTitle(run, 'run-summary')}` : ''}
     `;
   }
 
