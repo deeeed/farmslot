@@ -5,6 +5,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 ## Unreleased
 
 - Carry exact source receipts into project recipe execution.
+- Read a forced native session transcript without requiring a private slot pool in the installed CLI.
 
 - Use the configured project registry for recipe commands and conformance when `--projects-dir` is omitted.
 

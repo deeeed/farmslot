@@ -99,7 +99,15 @@ export const STEPS = [
   ],
   ['step timing lib tests', ['node', '--test', 'scripts/quality/step-timing.test.mjs']],
   ['pre-push path filter tests', ['node', '--test', 'scripts/quality/prepush-quality.test.mjs']],
-  ['tsx test partition tests', ['node', '--test', 'scripts/quality/run-tsx-tests.test.mjs']],
+  [
+    'tsx test partition tests',
+    [
+      'node',
+      '--test',
+      'scripts/quality/run-tsx-tests.test.mjs',
+      'scripts/quality/gateway-ci-shards.test.mjs',
+    ],
+  ],
   ['worker template lint', ['node', 'scripts/quality/check-worker-template-contract.mjs']],
   ['template variable docs', ['node', 'scripts/quality/check-template-variables-docs.mjs']],
   ['generated gateway API docs', ['node', 'scripts/quality/check-gateway-api-docs.mjs']],

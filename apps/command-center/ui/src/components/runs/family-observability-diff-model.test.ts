@@ -165,7 +165,10 @@ test('ledgerDiffLabel follows review input contribution input legacy fallback or
     ),
     'legacy diff +5 -4',
   );
-  assert.equal(ledgerDiffLabel(ledgerEntry({ contributionDiff: emptyDiff() })), 'no code delta');
+  assert.equal(
+    ledgerDiffLabel(ledgerEntry({ contributionDiff: emptyDiff() })),
+    'code delta not captured: base or diff was not recorded',
+  );
 });
 
 test('ledgerDiffScopeLabel distinguishes reviewed input snapshots from produced deltas', () => {
@@ -241,7 +244,7 @@ test('runDiffLabel uses ledger label before run diff stat fallback', () => {
   );
   assert.equal(
     runDiffLabel(snapshot(), run({ diffStat: stat({ available: false }) })),
-    'no code delta',
+    'code delta not captured: no persisted diff summary',
   );
 });
 

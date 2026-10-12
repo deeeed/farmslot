@@ -10,6 +10,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 - Include the retained package display path in evidence review snapshots.
 
 - Share plain run titles across clients, deriving HTML and Markdown headings with bounded display text.
+- Distinguish missing retrospective turn and code-delta capture from observed zero.
+
 - Keep saved reviews readable on the phone after publication closes, with the original verdict, reviewed SHA and full report. Requested choices stay separate from confirmed publication.
 - Add an opt-in selected-package metadata projection to the existing run recipe-artifact query (ADR-062).
 - Share the five-round review budget and its gate display independently of passing-review counts.

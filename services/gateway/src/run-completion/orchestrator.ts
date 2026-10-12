@@ -41,6 +41,7 @@ import { resolveRunnerSessionForRun } from '../runners/session-process.js';
 import { getRun, updateRun } from '../runs/store.js';
 import {
   extractRunnerSessionUsage,
+  runnerUsageMetrics,
   usesReviewChainSessionTotal,
 } from '../runtime/session-usage.js';
 import {
@@ -290,7 +291,7 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
     const cacheRead = usage.cacheRead ?? null;
     const actualModel = usage.actualModel ?? null;
     const chainSessionTotal = usesReviewChainSessionTotal(run);
-    const metricsPatch: Partial<typeof run.metrics> = {};
+    const metricsPatch: Partial<typeof run.metrics> = { sessionUsageError: usage.error };
     let accounted = {
       costUsd,
       turns,
@@ -321,23 +322,7 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
       metricsPatch.sessionUsageScope = 'session-total';
     }
     if (!chainSessionTotal || metricsPatch.sessionUsageScope === 'review-generation-delta') {
-      const {
-        costUsd: accountedCost,
-        turns: accountedTurns,
-        inputTokens: accountedInput,
-        outputTokens: accountedOutput,
-        cacheCreation: accountedCacheCreation,
-        cacheRead: accountedCacheRead,
-        totalTokens: accountedTotal,
-      } = accounted;
-      if (accountedCost !== null) metricsPatch.costEstimate = accountedCost;
-      if (accountedTurns !== null) metricsPatch.sessionTurns = accountedTurns;
-      if (accountedInput !== null) metricsPatch.sessionInputTokens = accountedInput;
-      if (accountedOutput !== null) metricsPatch.sessionOutputTokens = accountedOutput;
-      if (accountedCacheCreation !== null)
-        metricsPatch.sessionCacheCreation = accountedCacheCreation;
-      if (accountedCacheRead !== null) metricsPatch.sessionCacheRead = accountedCacheRead;
-      if (accountedTotal !== null) metricsPatch.sessionTotalTokens = accountedTotal;
+      Object.assign(metricsPatch, runnerUsageMetrics({ ...usage, ...accounted }));
     }
     if (actualModel) metricsPatch.actualModel = actualModel;
     if (actualModel && run.metrics.model && !modelsMatch(run.metrics.model, actualModel)) {
@@ -366,6 +351,7 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
       actualModel,
     };
   } catch (err) {
+    updateRun(runId, { metrics: { ...run.metrics, sessionUsageError: (err as Error).message } });
     console.warn(`[run-completion] cost extraction failed (non-fatal): ${(err as Error).message}`);
     return empty;
   }

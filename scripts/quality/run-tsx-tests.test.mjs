@@ -24,8 +24,10 @@ import {
   finish,
   knownLeakerNotice,
   parseArgs,
+  parseShard,
   partitionTests,
   resolveWorkers,
+  selectShard,
   SERIAL_PRAGMA,
   summaryLines,
   TEST_STATUS_ENV,
@@ -56,7 +58,14 @@ function partitionOf(files, workers, laneFor = () => 'parallel') {
 test('parseArgs separates flags from test roots', () => {
   assert.deepEqual(
     parseArgs(['--cwd', '.', '--tsconfig', 'tsconfig.json', '--workers', '4', 'src', 'other']),
-    { roots: ['src', 'other'], cwd: '.', tsconfig: 'tsconfig.json', nodeTest: false, workers: '4' },
+    {
+      roots: ['src', 'other'],
+      cwd: '.',
+      tsconfig: 'tsconfig.json',
+      nodeTest: false,
+      workers: '4',
+      shard: undefined,
+    },
   );
   assert.deepEqual(parseArgs(['--node-test', 'src']), {
     roots: ['src'],
@@ -64,6 +73,7 @@ test('parseArgs separates flags from test roots', () => {
     tsconfig: undefined,
     nodeTest: true,
     workers: undefined,
+    shard: undefined,
   });
 });
 
@@ -99,6 +109,7 @@ test('every value-taking flag rejects a missing or flag-like value', () => {
       tsconfig: 'tsconfig.json',
       nodeTest: false,
       workers: '4',
+      shard: undefined,
     },
   );
 });
@@ -120,6 +131,39 @@ test('the CLI surfaces a missing --workers value rather than running serial', ()
     !/\[tsx-tests\] summary/.test(out),
     'the run must abort before executing anything, not report a serial summary',
   );
+});
+
+test('shard flags reject invalid selections before starting tests', () => {
+  assert.deepEqual(parseArgs(['src', '--shard', '2/4']).shard, { index: 2, total: 4 });
+  assert.throws(() => parseArgs(['src', '--shard']), /requires a value/);
+  assert.throws(() => parseArgs(['--shard', '--node-test', 'src']), /followed by the flag/);
+  for (const value of ['0/4', '5/4', '1/0', '-1/4', '1.5/4', '1', '1/4/2']) {
+    assert.throws(() => parseShard(value), /Shard must be/);
+  }
+});
+
+test('shards cover discovery exactly once while retaining the local lane rules', () => {
+  const discovered = Array.from({ length: 13 }, (_, index) => `file-${index}.test.ts`);
+  const shards = [1, 2, 3, 4].map((index) => selectShard(discovered, parseShard(`${index}/4`)));
+  assert.deepEqual(
+    shards.map((files) => files.length),
+    [4, 3, 3, 3],
+  );
+  assert.deepEqual(shards.flat().sort(), [...discovered].sort());
+  assert.equal(new Set(shards.flat()).size, discovered.length);
+  assert.equal(selectShard(discovered, undefined), discovered);
+  for (const files of shards) {
+    const partition = partitionTests(files, {
+      workers: 4,
+      classify: (file) =>
+        file === 'file-0.test.ts'
+          ? 'module-mock'
+          : file === 'file-1.test.ts'
+            ? 'serial'
+            : 'parallel',
+    });
+    assert.equal(verifyAssignment(files, partition).ok, true);
+  }
 });
 
 test('worker count defaults to serial and rejects invalid values', () => {

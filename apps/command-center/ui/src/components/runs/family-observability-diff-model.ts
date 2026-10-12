@@ -4,6 +4,7 @@ import type {
   FamilyObservabilityRunSummary,
   FamilyObservabilitySnapshot,
 } from '@farmslot/protocol';
+import { unavailableContributionLabel } from '@farmslot/protocol';
 
 type FamilyDiffProvenance = FamilyChangeLedgerEntry['contributionDiff'];
 
@@ -35,7 +36,7 @@ export function ledgerDiffScopeLabel(entry: FamilyChangeLedgerEntry): string {
   if (entry.contributionDiff.available) return 'produced code delta';
   if (entry.inputDiff?.available) return 'reviewed input snapshot';
   if (entry.legacyDiffFallback?.available) return 'legacy diff fallback';
-  return 'no code delta';
+  return unavailableContributionLabel(entry);
 }
 
 export function ledgerDiffLabel(entry: FamilyChangeLedgerEntry): string {
@@ -54,7 +55,7 @@ export function ledgerDiffLabel(entry: FamilyChangeLedgerEntry): string {
   if (entry.legacyDiffFallback?.available) {
     return `legacy diff +${entry.legacyDiffFallback.additions} -${entry.legacyDiffFallback.deletions}`;
   }
-  return 'no code delta';
+  return unavailableContributionLabel(entry);
 }
 
 export function familyDiffLabel(snapshot: Pick<FamilyDiffSnapshot, 'diffStat'>): string {
@@ -92,7 +93,9 @@ export function runDiffLabel(
   }
   return run.diffStat.available
     ? `produced code delta +${run.diffStat.additions} -${run.diffStat.deletions}`
-    : 'no code delta';
+    : entry
+      ? unavailableContributionLabel(entry)
+      : 'code delta not captured: no persisted diff summary';
 }
 
 export function artifactFromPath(

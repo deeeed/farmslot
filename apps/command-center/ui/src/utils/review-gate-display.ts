@@ -530,7 +530,7 @@ export function gateSummaryDisplay(summary: GateSummary): GateSummaryDisplay {
     policyLabel: summary.gatePolicy
       ? `${summary.gatePolicy.owner}-owned${summary.gatePolicy.reason ? ` · ${summary.gatePolicy.reason}` : ''}`
       : null,
-    worker: `${summary.worker.model ?? 'unknown model'} · ${summary.worker.turns} turns${summary.worker.outcome ? ` · ${summary.worker.outcome}` : ''}`,
+    worker: `${summary.worker.model ?? 'unknown model'} · ${summary.worker.turns == null ? 'turns not captured' : `${summary.worker.turns} turns`}${summary.worker.outcome ? ` · ${summary.worker.outcome}` : ''}`,
     review: review.review
       ? {
           status: review.review.status,

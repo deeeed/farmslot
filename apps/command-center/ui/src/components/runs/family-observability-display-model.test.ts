@@ -16,6 +16,7 @@ import {
   runBadgeColor,
   semanticColor,
   terminalRunEmphasisClass,
+  usageCaptureReason,
 } from './family-observability-display-model.js';
 
 function run(
@@ -94,4 +95,13 @@ test('usage and model drift detection are derived from run metrics', () => {
     ),
     true,
   );
+});
+
+test('usage caption exposes the recorded capture failure', () => {
+  const observed = run('usage-reason');
+  observed.metrics = {
+    ...observed.metrics!,
+    sessionUsageError: 'remote transcript changed during transfer',
+  };
+  assert.equal(usageCaptureReason(observed), 'remote transcript changed during transfer');
 });

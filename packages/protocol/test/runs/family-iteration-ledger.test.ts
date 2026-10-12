@@ -6,7 +6,10 @@ import type {
   FamilyObservabilityRunSummary,
   FamilyObservabilitySnapshot,
 } from '../../src/contracts/index.js';
-import { buildFamilyIterationLedgerPresentation } from '../../src/runs/family-iteration-ledger.js';
+import {
+  buildFamilyIterationLedgerPresentation,
+  unavailableContributionLabel,
+} from '../../src/runs/family-iteration-ledger.js';
 
 function makeRun(overrides: Partial<FamilyObservabilityRunSummary>): FamilyObservabilityRunSummary {
   return {
@@ -237,4 +240,25 @@ test('iteration cards retain plain report titles for the native shared ledger', 
   });
   const presentation = buildFamilyIterationLedgerPresentation(makeSnapshot([run], []));
   assert.equal(presentation.cards[0].title, 'EchoBridge Android native QA');
+});
+
+test('missing contribution capture never counts as a produced delta', () => {
+  const run = makeRun({ diffStat: { available: false, files: 0, additions: 0, deletions: 0 } });
+  const view = buildFamilyIterationLedgerPresentation({ runs: [run] });
+  assert.equal(view.summary.producedDiffRuns, 0);
+  assert.match(view.cards[0].diffLabel, /not captured/);
+  assert.equal(
+    unavailableContributionLabel({
+      flowType: 'qa',
+      contributionDiff: {
+        source: 'unavailable',
+        available: false,
+        files: 0,
+        additions: 0,
+        deletions: 0,
+        missingReason: 'no-source-diff',
+      },
+    }),
+    'no source-code delta recorded',
+  );
 });

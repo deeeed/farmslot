@@ -9,6 +9,7 @@ import { colors } from '../../styles/theme-tokens.js';
 import { formatTokenCount } from '../../utils/review-gate-display.js';
 
 import { formatCompactNumber } from './family-observability-compare-model.js';
+import { usageCaptureReason } from './family-observability-display-model.js';
 import {
   buildRunTokenSummary,
   type FamilyObservabilityTokenModelBreakdown,
@@ -193,7 +194,11 @@ function renderRunContributionBars(
               <div class="token-seg output" style="width:${outputPct}%"></div>
               <div class="token-seg cache" style="width:${cachePct}%"></div>
             </div>
-            <span class="token-run-value">+${formatCompactNumber(point.deltaTokens)}</span>
+            <span class="token-run-value"
+              >${point.hasMetrics
+                ? `+${formatCompactNumber(point.deltaTokens)}`
+                : 'not captured'}</span
+            >
           </button>
         `;
       })}
@@ -208,12 +213,15 @@ function renderMissingRuns(
   if (missingRunIds.length === 0) return nothing;
   const labels = missingRunIds.map((runId) => {
     const run = runs.find((entry) => entry.runId === runId);
-    return run ? `${run.flowType} · ${runId.slice(0, 8)}` : runId.slice(0, 8);
+    return run
+      ? `${run.flowType} · ${runId.slice(0, 8)}: ${usageCaptureReason(run)}`
+      : runId.slice(0, 8);
   });
   return html`
-    <div class="token-missing-runs">
+    <div class="token-missing-runs" title=${labels.join('; ')}>
       Missing metrics for ${missingRunIds.length} run${missingRunIds.length === 1 ? '' : 's'}:
-      ${labels.join(', ')}
+      ${missingRunIds.map((id) => id.slice(0, 8)).join(', ')} · not captured; select a run for its
+      capture reason
     </div>
   `;
 }
@@ -411,9 +419,11 @@ export function renderFamilyTokenPanel(options: FamilyTokenPanelOptions): Templa
           <div>
             <span class="token-total-label">${showingRun ? 'Run tokens' : 'Family tokens'}</span>
             <strong
-              >${formatTokenCount(
-                showingRun ? (runSummary?.totalTokens ?? 0) : summary.familyTotalTokens,
-              )}</strong
+              >${showingRun && !runSummary?.hasData
+                ? 'not captured'
+                : formatTokenCount(
+                    showingRun ? (runSummary?.totalTokens ?? 0) : summary.familyTotalTokens,
+                  )}</strong
             >
           </div>
           <div>
@@ -454,7 +464,9 @@ export function renderFamilyTokenPanel(options: FamilyTokenPanelOptions): Templa
         ? options.selectedRun && runSummary
           ? runSummary.hasData
             ? renderRunTokenBody(runSummary, options.selectedRun)
-            : html`<div class="token-empty">No token metrics captured for this run yet.</div>`
+            : html`<div class="token-empty">
+                Usage not captured: ${usageCaptureReason(options.selectedRun)}
+              </div>`
           : html`<div class="token-empty">
               Select a run in the selector to inspect its token model.
             </div>`
