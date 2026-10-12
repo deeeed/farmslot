@@ -87,7 +87,7 @@ const { createRun, updateRun, persistRunNow } =
   await import('../services/gateway/src/runs/store.js');
 const { createGatewayAuthRuntime, initializeGatewayIdentity } =
   await import('../services/gateway/src/security/auth.js');
-const rollovers = new Map<string, () => Promise<ScriptCompletePayload>>();
+const rollovers = new Map<string, () => Promise<Omit<ScriptCompletePayload, 'duration'>>>();
 const recipeMethods = await import('../services/gateway/src/methods/recipe.js');
 // Display-only fixture host replays genuine retained executions. The production
 // gateway reader and the UI's rerun request/completion path remain intact.
@@ -100,8 +100,9 @@ mock.module('../services/gateway/src/methods/recipe.js', {
     ) => {
       const replay = rollovers.get(params.runId);
       if (!replay) return recipeMethods.recipeRerun(params, emit);
+      const startedAt = performance.now();
       const next = await replay();
-      emit('script.complete', next);
+      emit('script.complete', { ...next, duration: performance.now() - startedAt });
       return { requestId: next.requestId };
     },
   },
