@@ -59,6 +59,8 @@ globalThis.fetch=async(url,options)=>{
     `#!/usr/bin/env node
 const fs=require('node:fs');const args=process.argv.slice(2);
 fs.appendFileSync(process.env.RELEASE_TEST_LOG,JSON.stringify({args})+'\\n');
+const yarnArgs=args.slice(0,args.findIndex(arg=>arg.startsWith('eas-cli@')));
+if(args[0]==='dlx'&&!yarnArgs.includes('-q')&&!yarnArgs.includes('--quiet'))console.log('➤ YN0000: · Yarn 4.5.3 install report');
 if(args.includes('build')||args.includes('build:list'))console.log(JSON.stringify([{id:'returned-build-id',status:'FINISHED',platform:'ANDROID',buildProfile:'production',distribution:'STORE',appBuildVersion:'15'}]));
 if(args.includes('submit')){if(process.env.RELEASE_TEST_SUBMIT_FAIL)process.exit(9);const s=JSON.parse(fs.readFileSync(process.env.RELEASE_TEST_STORE));s.internal={releases:[{status:'completed',versionCodes:['15']}]};fs.writeFileSync(process.env.RELEASE_TEST_STORE,JSON.stringify(s));}
 `,
@@ -132,6 +134,22 @@ test('submission failure stops before alpha promotion', (t) => {
   const result = f.run(['--execute', '--skip-update'], { RELEASE_TEST_SUBMIT_FAIL: '1' });
   assert.equal(result.status, 9, result.stderr);
   assert.ok(!f.calls().some((entry) => entry.method === 'PUT'));
+});
+
+test('skip-build captures clean EAS list JSON and promotes its returned build', (t) => {
+  const f = fixture(t);
+  const result = f.run(['--execute', '--skip-build', '--skip-update']);
+  assert.equal(result.status, 0, result.stderr);
+  const commands = f
+    .calls()
+    .filter((entry) => entry.args)
+    .map((entry) => entry.args);
+  assert.ok(commands.some((args) => args.includes('build:list')));
+  assert.ok(!commands.some((args) => args.includes('build')));
+  assert.equal(commands.filter((args) => args.includes('submit')).length, 1);
+  assert.ok(commands.find((args) => args.includes('submit')).includes('returned-build-id'));
+  for (const track of ['internal', 'alpha'])
+    assert.deepEqual(f.store()[track].releases[0].versionCodes, ['15']);
 });
 
 test('iOS requires the explicit platform and does not call Play', (t) => {

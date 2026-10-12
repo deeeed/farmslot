@@ -144,7 +144,7 @@ fi
 
 for target_platform in "${platforms[@]}"; do
   if [[ "${SKIP_BUILD}" -eq 0 ]]; then
-    build_args=(env APP_VARIANT="${VARIANT}" NODE_ENV="${VARIANT}" yarn dlx eas-cli@"${EAS_CLI_VERSION}" build --platform "${target_platform}" --profile "${VARIANT}" --non-interactive)
+    build_args=(env APP_VARIANT="${VARIANT}" NODE_ENV="${VARIANT}" yarn dlx --quiet eas-cli@"${EAS_CLI_VERSION}" build --platform "${target_platform}" --profile "${VARIANT}" --non-interactive)
     if [[ "${VARIANT}" == "development" && "${LOCAL_BUILD}" -eq 1 ]]; then
       build_args+=(--local)
     fi
@@ -157,7 +157,7 @@ for target_platform in "${platforms[@]}"; do
 done
 
 if [[ "${PLAY_RELEASE}" -eq 1 && "${SKIP_BUILD}" -eq 1 ]]; then
-  capture_cmd "$BUILD_JSON" env APP_VARIANT=production NODE_ENV=production yarn dlx eas-cli@"${EAS_CLI_VERSION}" build:list --platform android --build-profile production --distribution store --status finished --limit 1 --json --non-interactive
+  capture_cmd "$BUILD_JSON" env APP_VARIANT=production NODE_ENV=production yarn dlx --quiet eas-cli@"${EAS_CLI_VERSION}" build:list --platform android --build-profile production --distribution store --status finished --limit 1 --json --non-interactive
 fi
 
 if [[ "${SKIP_UPDATE}" -eq 0 ]]; then
