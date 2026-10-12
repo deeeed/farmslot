@@ -476,7 +476,7 @@
       ]
     },
     "watch_logs": {
-      "description": "watch_logs action.",
+      "description": "Observe log text immediately or within a declared timeout_ms window.",
       "schema": {
         "type": "object",
         "properties": {
@@ -489,6 +489,11 @@
           "scope": {
             "type": "string",
             "enum": ["run", "file"]
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Observation window from 0 through 60000 ms; a positive window requires nonempty contains."
           }
         },
         "required": ["path"],

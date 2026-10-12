@@ -250,19 +250,16 @@ export async function validateRecipeCliInput({
     adapter,
     lintIntent: !artifactDir && !artifactManifestPath,
   };
-  if (actionManifestPath) {
-    const actionManifest = await readRecipeCliJsonFile(actionManifestPath, baseDir);
+  const actionManifest = actionManifestPath
+    ? await readRecipeCliJsonFile(actionManifestPath, baseDir)
+    : undefined;
+  if (actionManifest) {
     results.push(validateRecipeWithManifest(recipe, actionManifest, validationOptions));
   } else {
     results.push(validateRecipeDocument(recipe, validationOptions));
   }
 
-  if (
-    !artifactDir &&
-    libraryResolution &&
-    isRecord(recipe) &&
-    results.every((result) => result.status === 'valid')
-  ) {
+  if (!artifactDir && isRecord(recipe) && results.every((result) => result.status === 'valid')) {
     try {
       const rootDigest = digestRecipeDocument(recipe);
       resolveRecipeDependencies({
@@ -274,12 +271,13 @@ export async function validateRecipeCliInput({
           path: resolveRecipeCliPath(recipePath, baseDir),
           digest: rootDigest,
         },
-        recipes: libraryResolution.recipes,
+        recipes: libraryResolution?.recipes ?? new Map(),
       });
       validateRecipeDependencyParams({
         root: recipe,
         params: effectiveParams,
-        recipes: libraryResolution.recipes,
+        recipes: libraryResolution?.recipes ?? new Map(),
+        actionManifest,
       });
     } catch (error) {
       results.push({
