@@ -227,7 +227,13 @@ export function defaultsForFlow(
     ...(selected?.runner ? { runner: selected.runner } : {}),
     ...(selected?.model ? { model: selected.model } : {}),
     ...(selected?.effort ? { effort: selected.effort } : {}),
-    ...(flow === 'review-pr' && config?.review ? config.review : {}),
+    ...(flow === 'review-pr' && config?.review
+      ? Object.fromEntries(
+          Object.entries(config.review).filter(([key]) =>
+            ['runner', 'model', 'effort', 'mode'].includes(key),
+          ),
+        )
+      : {}),
   };
 }
 

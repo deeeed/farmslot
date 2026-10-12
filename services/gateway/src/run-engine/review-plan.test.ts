@@ -7,6 +7,7 @@ import {
   type ReviewStatus,
   type RunDecision,
 } from '@farmslot/protocol';
+import { resolveReviewDispatchDefaults } from '@farmslot/review-dispatch';
 
 import {
   automaticPublicationReviewPlan,
@@ -64,6 +65,29 @@ test('pipeline review satisfies the policy regardless of worker runner', () => {
   const policy = { minimumReviews: 1, requestedBy: 'dispatch' as const };
   assert.equal(reviewPolicySatisfied(policy, [review]), true);
   assert.deepEqual(automaticPublicationReviewPlan(policy, [review]), []);
+});
+
+test('automatic publication review accepts pack policy fields without an explicit plan', () => {
+  const project = {
+    name: 'app',
+    defaults: { 'review-pr': { runner: 'codex', model: 'gpt-6-astra' } },
+    review: {
+      enabled: true,
+      max_retries: 2,
+      review_timeout_min: 15,
+      runner: 'claude',
+      model: 'sonnet',
+      mode: 'cold' as const,
+    },
+  };
+  assert.deepEqual(
+    automaticPublicationReviewPlan(
+      { minimumReviews: 2, requestedBy: 'dispatch' },
+      [passing('one', 'session-1')],
+      resolveReviewDispatchDefaults(project, 'review-pr'),
+    ),
+    [{ runner: 'claude', model: 'sonnet', effort: null, mode: 'cold' }],
+  );
 });
 
 test('rechecks of one session consume one required reviewer', () => {
