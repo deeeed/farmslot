@@ -18,7 +18,7 @@ path.
 Prepared dev leases remove inherited `CI`, watch source edits, and set
 `EXPO_PUBLIC_FARMSLOT_PREPARED=1` to acknowledge What's new only on those leases.
 Prepare disables the selected client's dev-menu onboarding and floating button.
-Normal launch scripts keep their release-note behavior.
+Normal launch scripts keep their release-note behavior. The iOS build warms Metro with `COMPANION_PREPARE_CLIENT=0`, then prepares the installed client. First launch can precede Gateway pairing; live proofs wait for the authorized farm bridge separately.
 
 `yarn recipe` uses the installed provider's idle lifecycle: a closed simulator
 runner stops after 100ms, and a sessionless daemon exits after 10s. Open sessions

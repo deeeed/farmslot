@@ -9,7 +9,12 @@ import { createAgentDeviceClient } from 'agent-device';
 
 import { runExpoRecipeDocument } from '@farmslot/adapter-rn';
 
-import { stopProofGateway, waitForProof } from './proof-gateway.mjs';
+import {
+  processAlive,
+  providerDaemonPid,
+  stopProofGateway,
+  waitForProof,
+} from './proof-gateway.mjs';
 
 if (process.argv[3] === 'execute') {
   const result = await runExpoRecipeDocument(
@@ -69,16 +74,8 @@ try {
       for (const session of await client.sessions.list()) {
         await client.sessions.close({ session: session.name, shutdown: false });
       }
-      const { pid } = JSON.parse(fs.readFileSync(infoFile, 'utf8'));
-      await waitForProof(() => {
-        try {
-          process.kill(pid, 0);
-          return false;
-        } catch (error) {
-          if (error.code === 'ESRCH') return true;
-          throw error;
-        }
-      }, 20000);
+      const pid = providerDaemonPid(stateDir);
+      await waitForProof(() => !processAlive(pid), 20000);
     }
   } finally {
     execFileSync(process.execPath, ['scripts/agentic/dev-links-proof.mjs', 'stop'], {

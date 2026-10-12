@@ -5,9 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { proofRPC, stopProofGateway, waitForProof } from './proof-gateway.mjs';
+import { groupAlive, proofRPC, stopProofGateway, waitForProof } from './proof-gateway.mjs';
 import { seedAndroidGatewayProfile } from './seed-ios-gateway-profile.mjs';
-import { waitForSimulatorRecipeBridge } from './simulator-dev-client.mjs';
+import { openAndroidUrl, waitForSimulatorRecipeBridge } from './simulator-dev-client.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const app = path.join(root, 'apps/companion');
@@ -43,19 +43,7 @@ async function stop() {
       execFileSync('tmux', ['kill-session', '-t', `=${session}`]);
     }
   }
-  await waitForProof(
-    () =>
-      groups.every((pid) => {
-        try {
-          process.kill(-pid, 0);
-          return false;
-        } catch (error) {
-          if (error.code === 'ESRCH') return true;
-          throw error;
-        }
-      }),
-    10000,
-  );
+  await waitForProof(() => groups.every((pid) => !groupAlive(pid)), 10000);
   if (fs.existsSync(sourceBackup)) fs.copyFileSync(sourceBackup, source);
   fs.rmSync(owned.farm, { recursive: true, force: true });
   fs.rmSync(proof, { recursive: true, force: true });
@@ -224,13 +212,13 @@ if (phase === 'setup') {
         APP_VARIANT: 'development',
         PLATFORM: 'android',
         DEVICE_MODE: 'emulator',
-        METRO_CONNECTION: 'localhost',
-        FARMSLOT_RECIPE_METRO_HOST: '127.0.0.1',
+        METRO_CONNECTION: process.env.METRO_CONNECTION ?? 'localhost',
         EXPO_PUBLIC_GATEWAY_URL: `ws://127.0.0.1:${owned.port}`,
       },
       stdio: 'pipe',
       timeout: 150000,
     });
+    await waitForSimulatorRecipeBridge({ platform: 'android' });
     console.log('PASS fresh emulator prepared');
   } catch (error) {
     await stop();
@@ -277,18 +265,7 @@ if (phase === 'setup') {
     paneId: owned.pane,
   }))
     url.searchParams.set(key, value);
-  adb(
-    'shell',
-    'am',
-    'start',
-    '-W',
-    '-a',
-    'android.intent.action.VIEW',
-    '-d',
-    `'${url}'`,
-    '-p',
-    'net.siteed.farmslot.development',
-  );
+  openAndroidUrl(owned.serial, 'net.siteed.farmslot.development', url);
   process.stdout.write(owned.pane);
 } else if (phase === 'verify') {
   const owned = state();

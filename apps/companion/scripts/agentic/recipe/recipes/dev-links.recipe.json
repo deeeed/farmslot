@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Companion fresh client, watching lease and literal deep links",
-  "description": "Android live tier only. Requires an installed dev client, explicitly selected owned emulator ADB_SERIAL, two unused GATEWAY_PORT/METRO_PORT values, fresh COMPANION_DEV_LINKS_PROOF_DIR, COMPANION_DEV_LINKS_CLEAR_APP=1 and an existing tmux server. Clears only the selected emulator app. No farm runs or external publication. Teardown stops owned services and restores the source marker on every exit.",
+  "description": "Android live tier only. Requires an installed dev client, explicitly selected owned emulator ADB_SERIAL, two unused GATEWAY_PORT/METRO_PORT values, fresh COMPANION_DEV_LINKS_PROOF_DIR, COMPANION_DEV_LINKS_CLEAR_APP=1 and an existing tmux server. Clears only the selected emulator app. No farm runs or external publication. Teardown stops owned services and restores the source marker on every exit. Preparation may precede Gateway pairing; this proof waits for its authorized farm bridge after preparing. The same launcher uses the configured device-facing packager host.",
   "proofTargets": [
     {
       "id": "automatic-watch",

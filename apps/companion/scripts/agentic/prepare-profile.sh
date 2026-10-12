@@ -163,10 +163,12 @@ else
   start_metro_background
 fi
 
-if [[ -n "$SIM_NAME" ]]; then
-  node "${SCRIPT_DIR}/prepare-dev-client.mjs" ios "${SIM_NAME}" "${BUNDLE_ID}"
-elif [[ -n "$ADB_TARGET" ]]; then
-  node "${SCRIPT_DIR}/prepare-dev-client.mjs" android "${ADB_TARGET}" "${BUNDLE_ID}"
+if [[ "${COMPANION_PREPARE_CLIENT:-1}" == "1" ]]; then
+  if [[ -n "$SIM_NAME" ]]; then
+    node "${SCRIPT_DIR}/prepare-dev-client.mjs" ios "${SIM_NAME}" "${BUNDLE_ID}"
+  elif [[ -n "$ADB_TARGET" ]]; then
+    node "${SCRIPT_DIR}/prepare-dev-client.mjs" android "${ADB_TARGET}" "${BUNDLE_ID}"
+  fi
 fi
 
 check_gateway || true

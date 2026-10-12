@@ -45,7 +45,7 @@ export async function prepareDevClient(platform, target, bundleId) {
       ]);
     }
     execFileSync('xcrun', ['simctl', 'launch', '--terminate-running-process', target, bundleId]);
-    await openSimulatorDevClient(target);
+    await openSimulatorDevClient(target, { waitForBridge: false });
     return;
   }
   execFileSync('adb', ['-s', target, 'shell', 'am', 'force-stop', bundleId]);
@@ -76,7 +76,9 @@ export async function prepareDevClient(platform, target, bundleId) {
       stdio: ['pipe', 'pipe', 'pipe'],
     },
   );
-  await openAndroidDevClient(target, bundleId);
+  // A fresh installation can be prepared before its Gateway is paired. The
+  // farm recipe bridge mounts only after a farm connection is authorized.
+  await openAndroidDevClient(target, bundleId, { waitForBridge: false });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
