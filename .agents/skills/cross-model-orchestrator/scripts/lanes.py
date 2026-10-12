@@ -293,7 +293,7 @@ def launch(config, lane_id, *, restoring=False, submit_goal=True):
 
 
 def _pane_owner(observation):
-    fields = ("pane_id", "pane_pid", "process_started_at", "socket_path")
+    fields = ("pane_id", "pane_pid", "pane_started_at", "socket_path")
     return ({key: observation[key] for key in fields}
             if all(observation.get(key) for key in fields) else None)
 

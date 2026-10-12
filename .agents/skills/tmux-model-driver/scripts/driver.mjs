@@ -54,6 +54,11 @@ function metadata(pane) {
       current_path: process.env.TMUX_PANE_STATE_CURRENT_PATH,
       pane_title: process.env.TMUX_PANE_STATE_PANE_TITLE,
       pane_pid: process.env.TMUX_PANE_STATE_PANE_PID,
+      pane_started_at: Number(
+        process.env.TMUX_PANE_STATE_PANE_STARTED_AT ||
+          process.env.TMUX_PANE_STATE_PROCESS_STARTED_AT ||
+          0,
+      ),
       process_started_at: Number(process.env.TMUX_PANE_STATE_PROCESS_STARTED_AT || 0),
       foreground_commands: (process.env.TMUX_PANE_STATE_FOREGROUND_COMMANDS || '')
         .split('\n')
@@ -75,13 +80,15 @@ function metadata(pane) {
   const pid = override('PANE_PID', pane_pid);
   let foreground = '';
   let started = 0;
+  let paneStarted = 0;
   const runnerPids = [];
   if (pid) {
     const row = execFileSync('ps', ['-o', 'tpgid=,lstart=', '-p', pid], {
       encoding: 'utf8',
     }).trim();
     const [pgid, ...birth] = row.split(/\s+/);
-    started = Date.parse(birth.join(' ')) || Date.now();
+    paneStarted = Date.parse(birth.join(' ')) || 0;
+    started = paneStarted || Date.now();
     if (/^\d+$/.test(pgid)) {
       const processes = execFileSync('ps', ['-o', 'pid=,lstart=,args=', '-g', pgid], {
         encoding: 'utf8',
@@ -109,6 +116,7 @@ function metadata(pane) {
     current_path: override('CURRENT_PATH', current_path),
     pane_title: override('PANE_TITLE', pane_title),
     pane_pid: pid,
+    pane_started_at: Number(process.env.TMUX_PANE_STATE_PANE_STARTED_AT ?? paneStarted),
     process_started_at: Number(process.env.TMUX_PANE_STATE_PROCESS_STARTED_AT ?? started),
     foreground_commands: override('FOREGROUND_COMMANDS', foreground).split('\n').filter(Boolean),
     runner_pids: runnerPids,

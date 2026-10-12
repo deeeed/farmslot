@@ -172,7 +172,7 @@ class LaneTests(unittest.TestCase):
                 lanes.launch(self.config, "one")
 
     def test_launch_retries_owned_startup_failure_without_inventing_session(self):
-        owner = {"pane_id": "%1", "pane_pid": "42", "process_started_at": 7, "socket_path": "fixture"}
+        owner = {"pane_id": "%1", "pane_pid": "42", "pane_started_at": 7, "socket_path": "fixture"}
         lanes._update(self.config, "one", {"launch_pane_owner": owner, "goal_submitted": True})
         runtime = str(Path(self.config["state_dir"]) / "runtime")
         adapter = {"command": "fresh-runner", "runtime_dir": runtime, "observability_dir": runtime + "/.observability"}
@@ -192,6 +192,23 @@ class LaneTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "resume_id"):
                 lanes.launch(self.config, "one", submit_goal=False)
         blocked.assert_not_called()
+
+    def test_startup_owner_uses_pane_birth_when_child_starts_later_then_exits(self):
+        owner = {"pane_id": "%1", "pane_pid": "42", "pane_started_at": 7, "socket_path": "fixture"}
+        runtime = str(Path(self.config["state_dir"]) / "runtime")
+        adapter = {"command": "runner", "runtime_dir": runtime, "observability_dir": runtime + "/.observability"}
+        def command(argv, **kwargs):
+            self.assertIn('new-session', argv)
+            return result('%1\n')
+        running = {**owner, 'state': 'codex', 'phase': 'question', 'process_started_at': 20}
+        with patch.object(lanes, '_pane', return_value=None), patch.object(lanes, '_runner_adapter', return_value=adapter), \
+             patch.object(lanes, '_observe', return_value=running), patch.object(lanes, 'run', side_effect=command):
+            self.assertEqual(lanes.launch(self.config, 'one', submit_goal=False)['status'], 'question')
+        self.assertEqual(lanes._record(self.config, 'one')['launch_pane_owner'], owner)
+        shell = {**owner, 'state': 'shell', 'phase': 'idle', 'process_started_at': 7}
+        with patch.object(lanes, '_pane', return_value='%1'), patch.object(lanes, '_observe', side_effect=[shell, running]), \
+             patch.object(lanes, '_runner_adapter', return_value=adapter), patch.object(lanes, 'run', return_value=result('{"submitted":true}')):
+            self.assertEqual(lanes.launch(self.config, 'one', submit_goal=False)['status'], 'question')
 
     def test_launch_resolves_shared_update_gate_before_native_readiness(self):
         runtime = str(Path(self.config["state_dir"]) / "runtime")
