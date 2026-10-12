@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Require a valid farm-owned QA preset during project pack admission and gateway support sync, with a missing-flow error and configuration hint.
+
 - Include the retained package display path in evidence review snapshots.
 
 - Share plain run titles across clients, deriving HTML and Markdown headings with bounded display text.

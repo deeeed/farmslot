@@ -34,13 +34,29 @@ Use these folders for everything else:
 
 | Folder             | Use for                                                                  | Rules                                                                                                                                                                                                                             |
 | ------------------ | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `docs/adr/`        | Architecture/product decisions                                           | ADRs are historical records. Do not rewrite old ADRs just to match current naming; add a new ADR or update governance and approved planning records.                                                                              |
+| `docs/adr/`        | Architecture/product decisions                                           | Amend the owning ADR for bounded changes. New ADRs require a distinct architectural decision with lasting trade-offs. Preserve accepted decisions and separate proposed amendments from them.                                     |
 | `docs/reference/`  | Stable technical reference, protocols, harness details, quality policies | Lowercase kebab-case filenames. Keep evergreen; avoid one-run evidence.                                                                                                                                                           |
 | `docs/plans/`      | Active approved supporting plans                                         | Must state status/scope at the top and link to the canonical PRD or approved roadmap/backlog item it supports. Delete stale/shipped plans instead of retaining raw implementation history.                                        |
 | `docs/operations/` | Publishing, deployment, Sonar/quality, local operator procedures         | Must be actionable and public-safe. No private tokens, account-specific credentials, or local machine assumptions.                                                                                                                |
 | `docs/examples/`   | Small public examples                                                    | Must be generic and reproducible. No private project names or real tickets.                                                                                                                                                       |
 | `docs/archive/`    | Sanitized public-safe historical summaries                               | Archive is not a junk drawer. Do not put private planning dumps here; remove them from the public tree instead.                                                                                                                   |
 | `apps/docs/docs/`  | Public website content                                                   | Use for reader-facing website pages. Website pages may be more concise than repo-native canonical docs, but public claims must stay consistent with the PRDs, ADRs, and reference docs. Do not bulk-copy root docs into the site. |
+
+## ADRs: amend first
+
+A new ADR is for a new architectural decision or capability with lasting
+trade-offs, such as a subsystem, inter-component contract or farm policy.
+Bounded UI changes, optional parameters, display corrections and bug fixes amend
+the owning ADR or need no ADR. Before drafting, ask the lead whether to create a
+new ADR or amend the named owner, and wait for that decision. An explicit routing
+decision already supplied by the lead satisfies this step.
+
+Amendments use dated `Amendment N` sections with decision, rationale and
+consequences, and update the owning normative specification. Keep Proposed until
+approved, then Accepted; record implementation PRs separately from package
+publication or rollout. Preserve the status of each amendment independently of
+the base ADR. Approved consolidation may remove folded records outright once
+their decisions, specification content, index entries and callers have new homes.
 
 ## Naming Rules
 
