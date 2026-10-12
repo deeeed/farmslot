@@ -96,7 +96,7 @@ function outputWorkerFinished(run: Run, workerFinished: boolean): boolean {
   return (
     workerFinished ||
     (Boolean(run.output?.workerFinished) &&
-      ['monitoring', 'paused', 'blocked', 'human-gating'].includes(run.status)) ||
+      ['monitoring', 'paused', 'blocked', 'human-gating', 'completing'].includes(run.status)) ||
     Boolean(run.completedAt) ||
     ['done', 'failed', 'cancelled'].includes(run.status)
   );

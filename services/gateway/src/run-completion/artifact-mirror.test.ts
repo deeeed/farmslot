@@ -1,5 +1,6 @@
 // @farmslot:serial — creates and removes real JSON under the shared repo `pool/`.
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import {
   chmod,
@@ -112,6 +113,94 @@ test('refreshArtifactMirror preserves gateway-owned review artifacts while clear
   );
   assert.equal(existsSync(path.join(taskDir, 'artifacts/publication-gate-hold-abc.md')), true);
   assert.equal(existsSync(path.join(taskDir, 'artifacts/stale-worker-owned.png')), false);
+
+  execFileSync('git', ['init', '--quiet', '--initial-branch=fixture', workerRepo]);
+  execFileSync(
+    'git',
+    [
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.test',
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '--quiet',
+      '--allow-empty',
+      '--no-verify',
+      '-m',
+      'test: seed QA source',
+    ],
+    { cwd: workerRepo },
+  );
+  const headSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: workerRepo,
+    encoding: 'utf8',
+  }).trim();
+  const qa = {
+    profile: { id: 'smoke', title: 'Smoke', template_id: 'qa/shared' },
+    inputs: { scope: 'ref' },
+  };
+  const files = [
+    'declared/suite/suite-result.json',
+    'declared/scope.json',
+    'aux/qa/live/current/summary.json',
+    'discovery/binding.json',
+  ];
+  for (const file of files) {
+    const full = path.join(workerTaskDir, 'artifacts', file);
+    await mkdir(path.dirname(full), { recursive: true });
+    await writeFile(full, JSON.stringify({ file }));
+  }
+  await writeFile(
+    path.join(workerTaskDir, 'artifacts/qa-result.json'),
+    JSON.stringify({
+      version: 1,
+      runId: testId,
+      qa,
+      source: { baseSha: headSha, headSha },
+      suitePath: 'declared/suite',
+      scope: {
+        path: 'declared/scope.json',
+        digest: 'sha256:' + 'a'.repeat(64),
+        suiteDigest: 'sha256:' + 'b'.repeat(64),
+      },
+      packages: { smoke: 'aux/qa/live/current' },
+      smoke: { caseId: 'smoke', proofTarget: 'behavior' },
+    }),
+  );
+  await writeFile(
+    path.join(workerTaskDir, 'artifacts/acceptance-status.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      criteria: [
+        {
+          id: 'AC-1',
+          text: 'Discovery identifies the configured provider.',
+          verdict: 'proven',
+          proofMode: 'state',
+          evidence: ['artifacts/discovery/binding.json'],
+          recipeNodes: [],
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    }),
+  );
+  await refreshArtifactMirror({
+    ...makeRun({ id: testId, project: 'farmslot-farm', slotId, taskFile }),
+    flowType: 'qa',
+    completionPolicy: 'artifact-only',
+    qa,
+  });
+  for (const file of files)
+    assert.equal(
+      await readFile(path.join(taskDir, 'artifacts', file), 'utf8'),
+      JSON.stringify({ file }),
+    );
+  assert.equal(
+    await readFile(path.join(taskDir, 'artifacts/pr-package.json'), 'utf8'),
+    '{"gateway":true}\n',
+  );
 });
 
 // Local-branch integrity for refreshArtifactMirror (fs.copyFile). Remote multi-chunk

@@ -26,6 +26,37 @@ const idle = async () => ({ kind: 'idle' as const });
 const emptyAcceptance = async () => ({ criteria: [], ledger: null, issues: [] });
 const passed = async () => {};
 
+test('artifact-only comparison and reportless output retain their digest fence without a review decision', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'gate-output-no-decision-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, 'artifacts'));
+  await writeFile(path.join(root, 'artifacts/result.json'), JSON.stringify({ complete: true }));
+  const { captureRunOutput, failRunOutputCapture } = await import('../run-completion/output.js');
+  for (const lane of ['comparison', 'production'] as const) {
+    const run = createRun({ flowType: 'dev', project: 'generic-project', ticketOrPr: 'OUTPUT-1' });
+    t.after(() => deleteTestRunIfPresent(run.id));
+    updateRun(run.id, {
+      lane,
+      completionPolicy: 'artifact-only',
+      status: 'completing',
+      taskFile: path.join(root, 'TASK.md'),
+    });
+    await captureRunOutput(run.id, false, true);
+    assert.equal(getRun(run.id)?.decisions.length, 0);
+    const sources = { deterministic: passed, acceptance: emptyAcceptance, progress: idle };
+    assert.equal((await collectRunGateReadiness(getRun(run.id)!, null, sources)).state, 'ready');
+    const refused = await collectRunGateReadiness(getRun(run.id)!, null, {
+      ...sources,
+      progress: async () => {
+        failRunOutputCapture(run.id, new Error('Transfer failed'), true);
+        return { kind: 'idle' };
+      },
+    });
+    assert.equal(refused.state, 'not-ready');
+    assert.ok(refused.reasons.some((reason) => reason.code === 'run-gate-superseded'));
+  }
+});
+
 test('unassessed criteria cannot offer a ready action even when deterministic steps passed', async () => {
   const criteria = Array.from({ length: 11 }, (_, index) => ({
     id: `AC-${index + 1}`,
@@ -475,6 +506,154 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
     }),
   });
   assert.ok(foreign.reasons.some((reason) => reason.code === 'evidence-invalid'));
+
+  const qaRun = createRun({ flowType: 'dev', project: 'generic-project', ticketOrPr: 'QA-OUTPUT' });
+  t.after(() => deleteTestRunIfPresent(qaRun.id));
+  const qaCriterion = {
+    id: 'AC-1',
+    text: 'The task discovery output identifies the configured provider.',
+  };
+  const qaLedger = {
+    schemaVersion: 1 as const,
+    criteria: [
+      {
+        ...qaCriterion,
+        verdict: 'proven' as const,
+        proofMode: 'state' as const,
+        evidence: ['artifacts/discovery.json'],
+        recipeNodes: [],
+        updatedAt: invocation.startedAt,
+      },
+    ],
+  };
+  await writeFile(path.join(root, 'artifacts/acceptance-status.json'), JSON.stringify(qaLedger));
+  await writeFile(
+    path.join(root, 'artifacts/discovery.json'),
+    JSON.stringify({ provider: 'configured' }),
+  );
+  await writeFile(path.join(root, 'artifacts/qa-report.md'), '# Retained QA output\n');
+  updateRun(qaRun.id, {
+    flowType: 'qa',
+    status: 'completing',
+    completionPolicy: 'artifact-only',
+    taskFile: run.taskFile,
+  });
+  const { captureRunOutput, failRunOutputCapture } = await import('../run-completion/output.js');
+  await captureRunOutput(qaRun.id, false, true);
+  const qaSources = {
+    deterministic: passed,
+    progress: idle,
+    qaCompletion: async () => ({
+      packages: [{ path: 'proof', digest: digestRecipeDocument(recipe) }],
+      headSha: 'a'.repeat(40),
+    }),
+    acceptance: async () => ({ criteria: [qaCriterion], ledger: qaLedger, issues: [] }),
+  };
+  const qaCheck = () => collectRunGateReadiness(getRun(qaRun.id)!, null, qaSources);
+  const qaReady = await qaCheck();
+  assert.equal(qaReady.state, 'ready', JSON.stringify(qaReady.reasons));
+  assert.equal(getRun(qaRun.id)?.decisions.at(-1)?.payload?.kind, 'output-review');
+  const untestableLedger = {
+    ...qaLedger,
+    criteria: [
+      {
+        ...qaLedger.criteria[0],
+        verdict: 'untestable' as const,
+        evidence: [],
+        note: 'Launching would replace the borrowed runtime.',
+      },
+    ],
+  };
+  await writeFile(
+    path.join(root, 'artifacts/acceptance-status.json'),
+    JSON.stringify(untestableLedger),
+  );
+  await captureRunOutput(qaRun.id, false, true);
+  const untestable = await collectRunGateReadiness(getRun(qaRun.id)!, null, {
+    ...qaSources,
+    acceptance: async () => ({ criteria: [qaCriterion], ledger: untestableLedger, issues: [] }),
+  });
+  assert.equal(untestable.state, 'ready', JSON.stringify(untestable.reasons));
+  const mixedLedger = {
+    ...qaLedger,
+    criteria: [{ ...qaLedger.criteria[0], proofMode: 'mixed' as const }],
+  };
+  await writeFile(path.join(root, 'artifacts/acceptance-status.json'), JSON.stringify(mixedLedger));
+  await captureRunOutput(qaRun.id, false, true);
+  const missingVisual = await collectRunGateReadiness(getRun(qaRun.id)!, null, {
+    ...qaSources,
+    acceptance: async () => ({ criteria: [qaCriterion], ledger: mixedLedger, issues: [] }),
+  });
+  assert.ok(missingVisual.reasons.some((reason) => reason.code === 'evidence-invalid'));
+  await writeFile(path.join(root, 'artifacts/acceptance-status.json'), JSON.stringify(qaLedger));
+  await captureRunOutput(qaRun.id, false, true);
+  const refreshedDuringProgress = await collectRunGateReadiness(getRun(qaRun.id)!, null, {
+    ...qaSources,
+    progress: async () => {
+      await writeFile(
+        path.join(root, 'artifacts/late-output.json'),
+        JSON.stringify({ arrived: true }),
+      );
+      await captureRunOutput(qaRun.id, false, true);
+      return { kind: 'idle' };
+    },
+  });
+  assert.ok(
+    refreshedDuringProgress.reasons.some((reason) => reason.code === 'run-gate-superseded'),
+  );
+  assert.equal((await qaCheck()).state, 'ready');
+  const failedRefresh = await collectRunGateReadiness(getRun(qaRun.id)!, null, {
+    ...qaSources,
+    progress: async () => {
+      failRunOutputCapture(qaRun.id, new Error('Artifact transfer failed'), true);
+      return { kind: 'idle' };
+    },
+  });
+  assert.equal(failedRefresh.state, 'not-ready');
+  assert.ok(failedRefresh.reasons.some((reason) => reason.code === 'run-gate-superseded'));
+  await captureRunOutput(qaRun.id, false, true);
+  assert.equal((await qaCheck()).state, 'ready');
+  const absentCase = await collectRunGateReadiness(getRun(qaRun.id)!, null, {
+    ...qaSources,
+    qaCompletion: async () => ({
+      packages: [{ path: 'missing', digest: digestRecipeDocument(recipe) }],
+      headSha: 'a'.repeat(40),
+    }),
+  });
+  assert.ok(absentCase.reasons.some((reason) => reason.message.includes('required QA case')));
+  const failedCase = await collectRunGateReadiness(getRun(qaRun.id)!, null, {
+    ...qaSources,
+    qaCompletion: async () => {
+      throw new Error('QA suite has a failing case');
+    },
+  });
+  assert.ok(failedCase.reasons.some((reason) => reason.message.includes('failing case')));
+  await writeFile(
+    path.join(root, 'artifacts/discovery.json'),
+    JSON.stringify({ provider: 'changed' }),
+  );
+  assert.ok(
+    (await qaCheck()).reasons.some((reason) => reason.message.includes('Run output changed')),
+  );
+  await captureRunOutput(qaRun.id, false, true);
+  assert.equal((await qaCheck()).state, 'ready');
+  const missingStateEvidence = {
+    ...qaLedger,
+    criteria: [{ ...qaLedger.criteria[0], evidence: ['artifacts/not-captured.json'] }],
+  };
+  await writeFile(
+    path.join(root, 'artifacts/acceptance-status.json'),
+    JSON.stringify(missingStateEvidence),
+  );
+  await captureRunOutput(qaRun.id, false, true);
+  const uncaptured = await collectRunGateReadiness(getRun(qaRun.id)!, null, {
+    ...qaSources,
+    acceptance: async () => ({ criteria: [qaCriterion], ledger: missingStateEvidence, issues: [] }),
+  });
+  assert.ok(uncaptured.reasons.some((reason) => reason.code === 'evidence-invalid'));
+  const changedLedger = await qaCheck();
+  assert.ok(changedLedger.reasons.some((reason) => reason.code === 'evidence-invalid'));
+
   await writeFile(
     path.join(directory, 'recipe-invocation.json'),
     JSON.stringify({ ...invocation, params: { substituted: true } }),

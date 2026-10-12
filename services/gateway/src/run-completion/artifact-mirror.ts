@@ -18,6 +18,7 @@ import {
   resolveProjectTaskDirName,
   resolveTaskRelDir,
 } from '../core/config.js';
+import { execArgvOnSlot } from '../core/exec.js';
 import {
   type LatestValidRecipeRunPointer,
   sanitizeLatestValidRecipeRunPointer,
@@ -37,11 +38,14 @@ import {
   invalidateArtifactTextCache,
   invalidateLiveRecipeContextMemo,
 } from '../live-recipe/context.js';
+import { parseQaResult } from '../qa/completion.js';
+import { readAcceptanceStatusLedger } from '../tasks/acceptance-status.js';
 import { WORKER_MIRROR_SUFFIX } from '../tasks/sidecars.js';
 
 import {
   type EvidenceManifest,
   evidenceManifestArtifactPaths,
+  normalizeEvidenceManifestArtifactPath,
   validateEvidenceManifest,
 } from './evidence-manifest.js';
 import { PR_BODY_ARTIFACT, PR_PROSE_ARTIFACT } from './pr-body-render.js';
@@ -297,10 +301,38 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
   const citedPaths = workerArtifactsExist
     ? await workerPrBodyCitedPaths(vars, workerArtifactsDir)
     : [];
+  // Artifact-only QA can declare packages deeper than publication discovery,
+  // plus state AC files outside recipe roots. Copy the existing contracts'
+  // named closure so output recapture does not prune its own required proof.
+  const outputPaths: string[] = [];
+  const qaResultPath = path.join(workerArtifactsDir, 'qa-result.json');
+  if (
+    run.flowType === 'qa' &&
+    run.completionPolicy === 'artifact-only' &&
+    (await slotFileExists(vars, qaResultPath))
+  ) {
+    const head = await execArgvOnSlot(vars, ['git', 'rev-parse', 'HEAD']);
+    if (head.exitCode !== 0) throw new Error('QA output source HEAD is unavailable');
+    const qa = parseQaResult(
+      JSON.parse(await slotReadFile(vars, qaResultPath)),
+      run,
+      head.stdout.trim(),
+    );
+    outputPaths.push(qa.suitePath, qa.scope.path, ...Object.values(qa.packages));
+    const acceptance = await readAcceptanceStatusLedger(vars, workerTaskDir);
+    for (const row of acceptance?.criteria ?? []) {
+      for (const evidence of row.evidence) {
+        const normalized = normalizeEvidenceManifestArtifactPath(evidence, { mediaOnly: false });
+        if (!normalized) throw new Error('QA state evidence must stay inside task artifacts');
+        outputPaths.push(normalized.replace(/^artifacts\//, ''));
+      }
+    }
+  }
+  const namedPaths = [...manifestPaths, ...citedPaths, ...outputPaths];
   const snapshotRoot = promotedPointer?.relativeArtifactRoot ?? null;
   const scan = workerArtifactsExist
     ? await scanPublishPackage(vars, workerArtifactsDir, {
-        namedPaths: [...manifestPaths, ...citedPaths],
+        namedPaths,
         snapshotRoot,
       })
     : { entries: [], links: [], truncated: false };
@@ -316,7 +348,7 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
     });
   const packaged = selectPublishPackageEntries(
     scan.entries.filter((entry) => !inSnapshot(entry.path)),
-    [...manifestPaths, ...citedPaths],
+    namedPaths,
   );
   // A cited media symlink is copied as its target, like a manifest-named one,
   // when the target stays inside artifacts/.
