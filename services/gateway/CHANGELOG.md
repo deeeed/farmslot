@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Wait for the reviewer-owned terminal mark before archiving its checklist and result.
+
 - Enforce five review rounds per PR, including retries and publication requests, with durable admission before launch and a design or scope refusal at the limit.
 
 - Publish the exact selected review findings and report, preserving accepted choices across refresh races.
