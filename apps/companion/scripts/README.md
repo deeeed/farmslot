@@ -29,7 +29,8 @@ The live `dev-links.recipe.json` requires an owned Android emulator, two unused
 `GATEWAY_PORT`/`METRO_PORT` values, a fresh `COMPANION_DEV_LINKS_PROOF_DIR` and
 `COMPANION_DEV_LINKS_CLEAR_APP=1`. It clears that emulator app and starts its own
 Gateway, node and Metro on an existing tmux server. Teardown restores the source
-marker and stops its owned services. Run it through `yarn recipe run`.
+marker and stops its owned services. Use the signal-safe live entrypoint:
+`COMPANION_ADAPTER_RN_BIN=node bash scripts/agentic/run-recipe.sh scripts/agentic/dev-links-live.mjs <fresh-evidence-dir>`.
 
 The live provider handover check uses two fresh provider workspaces on an idle
 simulator. Set `IOS_SIMULATOR` to its UDID and

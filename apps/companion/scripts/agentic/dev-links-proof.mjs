@@ -20,12 +20,20 @@ const source = path.join(app, 'src/components/WhatsNewMonitor.tsx');
 const sourceBackup = path.join(proof, 'source-backup.tsx');
 const adb = (...args) => execFileSync('adb', ['-s', state().serial, ...args], { encoding: 'utf8' });
 const phase = process.argv[2];
+const commandGroup = Number(
+  execFileSync('ps', ['-o', 'pgid=', '-p', String(process.pid)], { encoding: 'utf8' }).trim(),
+);
+if (phase !== 'setup' && phase !== 'stop' && fs.existsSync(stateFile)) {
+  const owned = state();
+  owned.commandGroups.push(commandGroup);
+  writeState(owned);
+}
 
 async function stop() {
   if (!fs.existsSync(stateFile)) return;
   const owned = state();
-  if (fs.existsSync(sourceBackup)) fs.copyFileSync(sourceBackup, source);
-  for (const pid of owned.pids.reverse()) stopProofGateway(pid);
+  const groups = [...owned.pids, ...owned.commandGroups].filter((pid) => pid !== commandGroup);
+  for (const pid of groups.reverse()) stopProofGateway(pid);
   for (const session of [owned.metroSession, owned.session]) {
     if (
       execFileSync('tmux', ['list-sessions', '-F', '#{session_name}'], { encoding: 'utf8' })
@@ -37,7 +45,7 @@ async function stop() {
   }
   await waitForProof(
     () =>
-      owned.pids.every((pid) => {
+      groups.every((pid) => {
         try {
           process.kill(-pid, 0);
           return false;
@@ -48,6 +56,7 @@ async function stop() {
       }),
     10000,
   );
+  if (fs.existsSync(sourceBackup)) fs.copyFileSync(sourceBackup, source);
   fs.rmSync(owned.farm, { recursive: true, force: true });
   fs.rmSync(proof, { recursive: true, force: true });
 }
@@ -86,6 +95,7 @@ if (phase === 'setup') {
     session: `companion-links-${process.pid}`,
     metroSession: `farmslot-companion-metro-${process.env.METRO_PORT}`,
     pids: [],
+    commandGroups: [commandGroup],
   };
   writeState(owned);
   process.once('SIGTERM', async () => {
