@@ -53,6 +53,7 @@ for (const outcome of [
       outcome === 'product-failed-hud-closed';
     const runner = createRecipeRunner({
       actionManifest: manifest,
+      hud: { display: { position: 'top' } },
       defaultSource: { kind: 'project', trust: 'trusted', name: 'test' },
       adapters: [
         ...createStandardCoreAdapters({ actions: ['end'] }),
@@ -61,6 +62,7 @@ for (const outcome of [
           transport: {
             async execute(_action, node) {
               if (node.phase === 'complete') {
+                assert.deepEqual(node.display, { position: 'top' });
                 events.push(`hud:${node.status}`);
                 if (outcome === 'hud-failed') throw new Error('HUD unavailable');
                 if (outcome === 'interrupted-hud-failed')
@@ -206,6 +208,81 @@ for (const outcome of [
     }
   });
 }
+
+test('authored HUD placement survives automatic capture and completion without leaking to the next run', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'hud-position-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const hudNodes: Record<string, unknown>[] = [];
+  const captures: unknown[] = [];
+  const runner = createRecipeRunner({
+    actionManifest: {
+      ...manifest,
+      actions: {
+        ...manifest.actions,
+        'app.hud': {
+          ...manifest.actions['app.hud'],
+          schema: {
+            type: 'object',
+            properties: { display: { type: 'object', additionalProperties: true } },
+            additionalProperties: false,
+          },
+        },
+        'ui.screenshot': {
+          description: 'Capture the visible application.',
+          schema: { type: 'object', properties: {}, additionalProperties: false },
+          examples: [
+            { action: 'ui.screenshot', intent: 'Check the visible footer.', next: 'done' },
+          ],
+        },
+      },
+    },
+    hud: { display: { position: 'bottom', showTitle: true } },
+    defaultSource: { kind: 'project', trust: 'trusted', name: 'test' },
+    adapters: [
+      ...createStandardCoreAdapters({ actions: ['end'] }),
+      ...createStandardUiAdapters({
+        actions: ['app.hud', 'ui.screenshot'],
+        transport: {
+          async execute(action, node) {
+            if (action === 'app.hud') hudNodes.push(node);
+            else captures.push(hudNodes.at(-1)?.display);
+            return {};
+          },
+        },
+      }),
+    ],
+  });
+  const nodes = {
+    position: {
+      action: 'app.hud',
+      intent: 'Move the HUD away from the footer.',
+      display: { position: 'top', showDebug: true },
+      next: 'capture',
+    },
+    capture: { action: 'ui.screenshot', intent: 'Check the visible footer.', next: 'done' },
+    done: { action: 'end', status: 'pass' },
+  };
+  for (const entry of ['position', 'capture']) {
+    const result = await runner.run({
+      recipeDocument: {
+        ...recipe,
+        workflow: {
+          entry,
+          nodes: entry === 'position' ? nodes : { capture: nodes.capture, done: nodes.done },
+        },
+      },
+      projectRoot: root,
+      artifactsDir: path.join(root, entry),
+      recordVideo: false,
+      recordingReason: 'Transport-only regression; no proof media is claimed.',
+    });
+    assert.equal(result.status, 'pass');
+    const expected = entry === 'position' ? 'top' : 'bottom';
+    assert.deepEqual(captures.at(-1), { position: expected, showTitle: true });
+    assert.deepEqual(hudNodes.at(-1)?.display, { position: expected, showTitle: true });
+    assert.equal(hudNodes.at(-1)?.phase, 'complete');
+  }
+});
 
 for (const outcome of ['start-failed', 'cancelled', 'headless'] as const) {
   test(`recording admission cleanup follows execution ownership: ${outcome}`, async (t) => {

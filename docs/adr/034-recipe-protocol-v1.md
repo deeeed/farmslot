@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-04-29
-- Updated: 2026-10-12
+- Updated: 2026-10-13
 
 ## Context
 
@@ -160,3 +160,45 @@ record package publication or provider rollout.
 `farmslot recipe call watch_logs` consume the optional parameter through project
 catalogs, whose provider/runner dependencies declare support. No SDK export,
 CLI flag, new action or project lifecycle hook is added.
+
+## Amendment 3 (2026-10-13): Shared HUD placement
+
+**Status:** Accepted, authorized 2026-10-12.
+
+### Decision
+
+Honor existing `app.hud` `display.position` values `top` and `bottom` across
+browser and native adapters. Placement persists through automatic progress,
+screenshots and the final outcome within one execution. A later execution starts
+with its configured defaults. Existing corner positions retain their vertical
+edge on native targets. Omitted placement preserves each adapter's default.
+HUD updates acknowledge after the caption paints, before capture or recorder
+stop. One shared paint wait serves browser and native renderers; recording clocks
+and marker contracts remain unchanged.
+
+### Rationale and consequences
+
+A required HUD can cover the application control being checked. Moving it to the
+opposite edge preserves visible proof without clearing the HUD. Native rendering
+clears the opposite anchor and respects safe areas; existing panel bounds,
+isolation and required evidence rules remain. Harnesses forward placement to the
+shared renderer and add no renderer of their own.
+
+### Public surface
+
+Recipes use `app.hud` with `display.position`; SDK runner callers use existing
+`RecipeHudOptions.display.position`. The additive `hudPlacement` helper in
+`@farmslot/protocol/recipe` normalizes the vertical edge for the shared native
+bridge and web adapter. There is no new CLI flag or command. Supporting package
+versions and consumers' action catalogs move together.
+`waitForHudPaint` in the same package lets native bridges and thin browser
+renderers acknowledge painted captions without a fixed sleep.
+Native bridges use `useRecipeHudState` from `@farmslot/adapter-rn/recipe-hud`
+to await the React commit before that paint wait. Companion and scaffold providers
+consume the same hook; CLI users need no native peer.
+
+### Verification
+
+One recipe moves the HUD from bottom to top, checks that application footers
+remain visible, captures both placements, and records the final HUD before stop.
+Automatic updates preserve placement; a second execution restores its default.

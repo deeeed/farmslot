@@ -1,7 +1,15 @@
-import React, { createContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useEffect, useMemo } from 'react';
 import { Platform, View } from 'react-native';
+import { initialWindowMetrics, SafeAreaProvider } from 'react-native-safe-area-context';
 
-import { type FarmslotRecipeHudState, RecipeHud, type RecipeHudOptions } from './RecipeHud';
+import { hudPlacement } from '@farmslot/protocol/recipe';
+
+import {
+  type FarmslotRecipeHudState,
+  RecipeHud,
+  type RecipeHudOptions,
+  useRecipeHudState,
+} from './RecipeHud';
 
 export interface FarmslotRecipeBridgeCommand {
   command: string;
@@ -38,7 +46,7 @@ export function RecipeBridgeProvider({
   renderHud,
 }: Readonly<RecipeBridgeProviderProps>): React.ReactElement {
   const enabled = isEnabled();
-  const [hud, setHud] = useState<FarmslotRecipeHudState | null>(null);
+  const [hud, setHud] = useRecipeHudState();
 
   const bridge = useMemo<FarmslotRecipeBridgeApi>(
     () => ({
@@ -50,7 +58,7 @@ export function RecipeBridgeProvider({
           return { ok: true, bridge: bridgeName, platform: Platform.OS, hud: true };
         }
         if (command.command === 'hud') {
-          setHud(normalizeHudState(command.payload));
+          await setHud(normalizeHudState(command.payload));
           return { ok: true };
         }
         if (command.command === 'trace') {
@@ -59,7 +67,7 @@ export function RecipeBridgeProvider({
         return { ok: false, error: `Unsupported Farmslot bridge command: ${command.command}` };
       },
     }),
-    [bridgeName, enabled],
+    [bridgeName, enabled, setHud],
   );
 
   useEffect(() => {
@@ -76,10 +84,12 @@ export function RecipeBridgeProvider({
 
   return (
     <FarmslotRecipeBridgeContext.Provider value={bridge}>
-      <View style={{ flex: 1 }}>
-        {children}
-        {renderHud ? renderHud(hud) : <RecipeHud state={hud} {...hudOptions} />}
-      </View>
+      <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+        <View style={{ flex: 1 }}>
+          {children}
+          {renderHud ? renderHud(hud) : <RecipeHud state={hud} {...hudOptions} />}
+        </View>
+      </SafeAreaProvider>
     </FarmslotRecipeBridgeContext.Provider>
   );
 }
@@ -102,6 +112,7 @@ function normalizeHudState(payload: Record<string, unknown> | undefined): Farmsl
     ),
     totalSteps: asOptionalNumber(payload?.totalSteps ?? payload?.total_steps ?? progress?.total),
     error: asOptionalString(payload?.error),
+    position: hudPlacement(payload?.display),
   };
 }
 
