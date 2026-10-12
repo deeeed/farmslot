@@ -832,21 +832,33 @@ export class RunDetail extends RunDetailState {
       const outputDecision = run.decisions.find(
         (decision) => !decision.resolvedAt && decision.payload?.kind === 'output-review',
       );
-      const result = await gateway.request<RunRecipeRunsForRunResult>(
+      const params = {
+        runId: run.id,
+        includeRecordedEvidence: true,
+        ...(outputDecision?.payload?.kind === 'output-review'
+          ? {
+              decisionId: outputDecision.id,
+              evidenceSnapshotHash: outputDecision.payload.manifestDigest,
+            }
+          : recipeRunId
+            ? { recipeRunId }
+            : {}),
+      };
+      let result = await gateway.request<RunRecipeRunsForRunResult>(
         Methods.RUN_RECIPE_RUNS_FOR_RUN,
-        {
-          runId: run.id,
-          includeRecordedEvidence: true,
-          ...(outputDecision?.payload?.kind === 'output-review'
-            ? {
-                decisionId: outputDecision.id,
-                evidenceSnapshotHash: outputDecision.payload.manifestDigest,
-              }
-            : recipeRunId
-              ? { recipeRunId }
-              : {}),
-        },
+        params,
       );
+      // A completion can fail before publishing a group. A missing preference
+      // must not replace the last available package with its hint refusal.
+      const missingHint = Boolean(
+        !outputDecision && recipeRunId && recipeRunId !== result.selectedRecipeRunId,
+      );
+      if (missingHint && result.selectedRecipeRunId) {
+        result = await gateway.request<RunRecipeRunsForRunResult>(Methods.RUN_RECIPE_RUNS_FOR_RUN, {
+          ...params,
+          recipeRunId: result.selectedRecipeRunId,
+        });
+      }
       if (refreshToken !== this._recipeRunsRefreshToken || this.run?.id !== run.id) return;
       this._recipeRuns = result.recipeRuns;
       this._recordedEvidence = result.recordedEvidence;
@@ -860,7 +872,10 @@ export class RunDetail extends RunDetailState {
         gatewaySelectedRecipeRunId: result.selectedRecipeRunId,
       });
       this._selectedRecipeRunId = desiredId;
-      if (pendingRecipeRunId && desiredId === pendingRecipeRunId) {
+      if (
+        pendingRecipeRunId &&
+        (desiredId === pendingRecipeRunId || (pendingRecipeRunId === recipeRunId && missingHint))
+      ) {
         this._pendingRecipeRunSelectionId = '';
       }
     } catch (err) {

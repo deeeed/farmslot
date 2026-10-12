@@ -1,6 +1,6 @@
 /** Manual review-client proof server backed by retained real recipe packages. */
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import fs from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -13,6 +13,7 @@ import type {
   LiveRecipeContext,
   RecordedEvidencePackageInput,
   RecipeRerunParams,
+  ScriptCompletePayload,
 } from '@farmslot/protocol';
 
 const code = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -28,6 +29,7 @@ const config = JSON.parse(await fs.readFile(configFile, 'utf8')) as {
     mode?: 'ready' | 'legacy';
     nested?: boolean;
     rolloverDirectory?: string;
+    failRerun?: boolean;
   }>;
 };
 assert(config.sources.length, 'At least one retained real recipe package is required.');
@@ -85,7 +87,7 @@ const { createRun, updateRun, persistRunNow } =
   await import('../services/gateway/src/runs/store.js');
 const { createGatewayAuthRuntime, initializeGatewayIdentity } =
   await import('../services/gateway/src/security/auth.js');
-const rollovers = new Map<string, () => Promise<{ requestId: string; artifactRoot: string }>>();
+const rollovers = new Map<string, () => Promise<ScriptCompletePayload>>();
 const recipeMethods = await import('../services/gateway/src/methods/recipe.js');
 // Display-only fixture host replays genuine retained executions. The production
 // gateway reader and the UI's rerun request/completion path remain intact.
@@ -99,8 +101,8 @@ mock.module('../services/gateway/src/methods/recipe.js', {
       const replay = rollovers.get(params.runId);
       if (!replay) return recipeMethods.recipeRerun(params, emit);
       const next = await replay();
-      emit('script.complete', { ...next, exitCode: 0 });
-      return next;
+      emit('script.complete', next);
+      return { requestId: next.requestId };
     },
   },
 });
@@ -297,9 +299,15 @@ for (const source of config.sources) {
         liveRecipeContext: recipeContext(next.input, artifactRoot),
       });
       await persistRunNow(moved);
-      return { requestId, artifactRoot };
+      return { requestId, artifactRoot, exitCode: 0 };
     });
   }
+  if (source.failRerun)
+    rollovers.set(run.id, async () => ({
+      requestId: randomUUID(),
+      exitCode: 1,
+      error: 'Fixture preflight failed before recipe publication.',
+    }));
   runs.push({
     id: run.id,
     label: source.label,

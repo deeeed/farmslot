@@ -131,6 +131,7 @@ try {
   );
   const receipt = {
     pass: true,
+    head: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     runId: run.id,
     decisionId: decision.id,
     manifestDigest: decision.payload.manifestDigest,

@@ -71,6 +71,34 @@ try {
       );
       page = await CdpWebPage.connectToTarget(target);
       const p = page;
+      if (run.label === 'failed-recipe-preflight') {
+        await wait(
+          () => p.evaluate<string>(`${detail}?._selectedRecipeRunId ?? ''`),
+          (id) => id === `live-run:${run.recipeRunId}`,
+        );
+        await p.clickText('Recipe');
+        await p.click('[data-testid="recipe-replay-run"]');
+        await wait(
+          () =>
+            p.evaluate<string>(
+              `${detail}.shadowRoot.querySelector('ready-workspace')?.querySelector('recipe-output-panel')?.textContent ?? ''`,
+            ),
+          (text) => text.includes('Fixture preflight failed'),
+        );
+        await wait(
+          () =>
+            p.evaluate<{ claims: number; errors: string[]; pending: string }>(
+              `({claims:${detail}.evidenceModel?.claims.length ?? 0,errors:${detail}.evidenceModel?.errors ?? [],pending:${detail}._pendingRecipeRunSelectionId})`,
+            ),
+          (value) => value.claims === run.claimIds.length && !value.errors.length && !value.pending,
+        );
+        assert.equal(
+          await p.evaluate<string>(`${detail}._recordedEvidence.input.claims.recipeRunId`),
+          run.recipeRunId,
+        );
+        reports.push({ runId: run.id, label: run.label, failedPreflightRetainsEvidence: true });
+        continue;
+      }
       if (run.label === 'live-recipe-rollover') {
         await wait(
           () => p.evaluate<string>(`${detail}?._selectedRecipeRunId ?? ''`),
@@ -331,6 +359,7 @@ try {
   }
   const receipt = {
     pass: true,
+    head: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     productionRPC: true,
     realRetainedPackages: true,
     backgroundTargets: true,
