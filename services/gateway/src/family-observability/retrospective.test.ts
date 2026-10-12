@@ -305,3 +305,59 @@ test('createRetrospective emits terminal update-branch family retro with review-
   assert.equal(payload.commentsTriageSummary?.outOfScope, 1);
   assert.equal(payload.ciWatch?.result, 'passed');
 });
+
+test('family projects recorded outcome, report availability and explicit usage capture failure', async (t) => {
+  const { rm } = await import('node:fs/promises');
+  const base = await mkdtemp(path.join(os.tmpdir(), 'family-retro-recorded-'));
+  t.after(() => rm(base, { recursive: true, force: true }));
+  await writeArtifact(base, 'TASK.md', '# task');
+  await writeArtifact(base, 'artifacts/report.md', '# Report');
+  const run = makeRun({
+    id: 'recorded-retro',
+    flowType: 'dev',
+    taskFile: path.join(base, 'TASK.md'),
+    metrics: {
+      nudgeCount: 0,
+      runner: 'codex',
+      model: 'gpt-test',
+      runnerSessionId: null,
+      runnerSessionPath: null,
+      outcome: 'success',
+      sessionUsageError: 'node offline',
+    },
+  });
+  run.output = {
+    workerFinished: true,
+    capturedAt: '2026-10-10',
+    reportPath: 'artifacts/report.md',
+    artifactManifest: [
+      { path: 'artifacts/report.md', purpose: 'report', sizeBytes: 8, sha256: 'a'.repeat(64) },
+    ],
+    manifestDigest: 'b'.repeat(64),
+  };
+  run.decisions = [
+    {
+      id: 'retro',
+      type: 'retrospective',
+      title: 'Review',
+      description: 'Recorded run review',
+      createdAt: '2026-10-10',
+      actions: [],
+      payload: {
+        kind: 'retrospective',
+        outcome: 'partial',
+        whatThisIs: 'Review',
+        actionEffects: [],
+      },
+    },
+  ];
+  const snapshot = await buildFamilyObservabilitySnapshotFromRuns([run]);
+  const projected = snapshot.runs[0];
+  assert.equal(projected.evidenceReview?.reportAvailable, true);
+  assert.deepEqual(projected.evidenceReview?.errors, []);
+  assert.equal(projected.metrics?.sessionUsageError, 'node offline');
+  assert.equal(projected.metrics?.sessionTurns, undefined);
+  const payload = projected.decisions?.[0].payload;
+  assert.equal(payload?.kind === 'retrospective' && payload.outcome, 'success');
+  assert.equal(payload?.kind === 'retrospective' && payload.gateSummary?.worker.turns, null);
+});

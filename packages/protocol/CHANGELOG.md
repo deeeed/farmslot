@@ -5,6 +5,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Share plain run titles across clients, deriving HTML and Markdown headings with bounded display text.
+- Distinguish missing retrospective turn and code-delta capture from observed zero.
+
 - Add an opt-in selected-package metadata projection to the existing run recipe-artifact query (ADR-062).
 - Share the five-round review budget and its gate display independently of passing-review counts.
 

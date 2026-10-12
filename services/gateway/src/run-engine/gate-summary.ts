@@ -283,7 +283,11 @@ function buildReviewSummaryText(
   if (reviews.length) {
     parts.push(`${passingReviews}/${reviews.length} reviews passing`);
   } else {
-    parts.push('no reviews');
+    parts.push(
+      review?.status === 'skipped'
+        ? 'independent reviews not requested'
+        : 'independent review results not captured',
+    );
   }
   const reWork = reviews.filter((r) => r.triggeredReWork).length;
   parts.push(reWork ? `${reWork} triggered re-work` : 'no re-work triggered');
@@ -421,7 +425,7 @@ export function buildGateSummary(
   const checklist = buildChecklist(run);
   const worker = {
     model: workerModel(run),
-    turns: num(run.metrics.sessionTurns),
+    turns: run.metrics.sessionTurns ?? null,
     ...(run.metrics.outcome ? { outcome: run.metrics.outcome } : {}),
   };
 
@@ -439,7 +443,7 @@ export function buildGateSummary(
 }
 
 function buildHeadline(worker: GateSummary['worker'], review: ReviewSummary): string {
-  return `Worker ${worker.outcome ?? 'done'} in ${worker.turns} turns; ${review.summaryText ?? 'no review data'}`;
+  return `Worker ${worker.outcome ?? 'done'}${worker.turns == null ? '; turns not captured' : ` in ${worker.turns} turns`}; ${review.summaryText ?? 'no review data'}`;
 }
 
 /**
@@ -467,10 +471,17 @@ export function enrichDecisionsWithGateSummary(run: Run): Run {
       });
       return { ...decision, payload: { ...payload, gateSummary } };
     }
-    if (payload?.kind === 'retrospective' && !payload.gateSummary) {
+    if (payload?.kind === 'retrospective') {
       mutated = true;
       const gateSummary = buildGateSummary(run, GATE_SUMMARY_KINDS.review);
-      return { ...decision, payload: { ...payload, gateSummary } };
+      return {
+        ...decision,
+        payload: {
+          ...payload,
+          ...(run.metrics.outcome ? { outcome: run.metrics.outcome } : {}),
+          gateSummary,
+        },
+      };
     }
     return decision;
   });

@@ -15,6 +15,7 @@ import {
   hasUsageMetrics,
   runBadgeColor,
   terminalRunEmphasisClass,
+  usageCaptureReason,
 } from './family-observability-display-model.js';
 import { familyRunBadgeLabel } from './family-observability-evidence.js';
 import {
@@ -100,10 +101,22 @@ function renderFamilyRunSelectorItem(
             >`
           : nothing}
         ${entry ? html`<span class="badge ledger">${familyLedgerTurnLabel(entry)}</span>` : nothing}
-        ${entry?.missingData.length
-          ? html`<span class="badge warn">Evidence missing</span>`
+        ${run.evidenceReview?.errors.length
+          ? html`<span class="badge warn" title=${run.evidenceReview.errors.join('; ')}
+              >Evidence unavailable</span
+            >`
+          : run.evidenceReview?.reportAvailable
+            ? html`<span
+                class="badge"
+                title="Retained report available; claim assessment is separate"
+                >Report retained</span
+              >`
+            : nothing}
+        ${usageMissing
+          ? html`<span class="badge warn" title=${usageCaptureReason(run)}
+              >Usage not captured</span
+            >`
           : nothing}
-        ${usageMissing ? html`<span class="badge warn">Usage missing</span>` : nothing}
         ${modelDrift ? html`<span class="badge warn">Model drift</span>` : nothing}
       </div>
       ${renderRunTitle(run, 'run-item-title')}

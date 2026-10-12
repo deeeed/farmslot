@@ -6,6 +6,7 @@ import type {
   FamilyObservabilityRunSummary,
   FamilyObservabilitySnapshot,
 } from '@farmslot/protocol';
+import { unavailableContributionLabel } from '@farmslot/protocol';
 
 import { formatBytes } from '../../utils/format.js';
 
@@ -98,7 +99,7 @@ export function renderFamilyLedgerDiffDetail(
                 +${entry.contributionDiff.partialStat.additions}
                 -${entry.contributionDiff.partialStat.deletions} partial
               </div>`
-            : html`<div class="muted">No code change produced by this run.</div>`}
+            : html`<div class="muted">${unavailableContributionLabel(entry)}</div>`}
         <div class="detail-actions">
           ${context.renderDiffModalLink('Open produced diff', producedArtifact)}
         </div>

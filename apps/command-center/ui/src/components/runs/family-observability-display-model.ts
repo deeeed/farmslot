@@ -68,3 +68,7 @@ export function prStateColor(state: 'OPEN' | 'CLOSED' | 'MERGED'): string {
   if (state === 'CLOSED') return colors.statusFail;
   return colors.accent;
 }
+
+export function usageCaptureReason(run: Pick<FamilyObservabilityRunSummary, 'metrics'>): string {
+  return run.metrics?.sessionUsageError ?? 'runner did not report usage';
+}

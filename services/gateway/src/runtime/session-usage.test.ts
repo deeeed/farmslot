@@ -54,18 +54,3 @@ test('extractRunnerSessionUsage returns unavailable when runner has no transcrip
   assert.equal(usage.runner, 'cursor');
   assert.match(usage.error ?? '', /did not expose/);
 });
-
-test('extractRunnerSessionUsage does not read remote transcript paths locally', async () => {
-  const { extractRunnerSessionUsage } = await import('./session-usage.js');
-  const usage = await extractRunnerSessionUsage({
-    slotId: 'remote-slot',
-    vars: { host: 'remote.example', machine: 'remote-machine' } as any,
-    runner: 'claude',
-    runnerSessionId: 'abc123',
-    runnerSessionPath: '/home/runner/.claude/projects/repo/abc123.jsonl',
-  });
-
-  assert.equal(usage.source, 'unavailable');
-  assert.equal(usage.runnerSessionId, 'abc123');
-  assert.match(usage.error ?? '', /remote slots/);
-});

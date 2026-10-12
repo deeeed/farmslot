@@ -1,6 +1,7 @@
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 
+import { createEvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import {
   buildFamilySummary,
   type FamilyLearningEntry,
@@ -16,7 +17,6 @@ import {
   type RecipeQualitySignal,
   type RelatedRunSummary,
   type Run,
-  summarizeAcceptanceStatus,
   taskTitleText,
 } from '@farmslot/protocol';
 
@@ -24,9 +24,11 @@ import { refreshRetrospectiveFeedback } from '../intelligence/feedback-candidate
 import { readPortableTextIfExists } from '../live-recipe/context.js';
 import { loadRecipeQualityEvaluation } from '../quality/recipe-quality.js';
 import { buildRetrospectivePayload } from '../run-completion/orchestrator.js';
+import { inferRetrospectiveOutcome } from '../run-completion/retrospective.js';
 import { buildGateSummary } from '../run-engine/gate-summary.js';
 import { runDurationMs } from '../runs/run-duration.js';
 import { getAllRuns } from '../runs/store.js';
+import { projectArchivedRunnerUsage } from '../runtime/session-usage.js';
 import {
   ACCEPTANCE_STATUS_FILENAME,
   acceptanceCoverageMarkdown,
@@ -637,9 +639,13 @@ async function buildRunSummary(
     ? handoffCriteriaFromText(await readTextIfExists(path.join(taskDir, 'inputs', 'handoff.json')))
         .criteria
     : [];
-  const acceptanceSummary = acceptanceStatus
-    ? summarizeAcceptanceStatus(acceptanceStatus, acceptanceCriteria)
-    : null;
+  const evidenceReview = createEvidenceReviewModel({
+    context: 'run-detail',
+    criteria: acceptanceCriteria,
+    ledger: acceptanceStatus,
+    report: run.output,
+  });
+  const acceptanceSummary = evidenceReview.summary;
   const currentRecipeQualityEvaluation = await loadRecipeQualityEvaluation({
     run,
     workerReport: effectiveWorkerReport,
@@ -694,7 +700,11 @@ async function buildRunSummary(
         // Same rebuild for feedback consumption: the ledger, not the frozen
         // payload, says which candidates a landed rule already absorbed.
         payload = await refreshRetrospectiveFeedback(
-          { ...payload, gateSummary: buildGateSummary(run, GATE_SUMMARY_KINDS.review) },
+          {
+            ...payload,
+            outcome: inferRetrospectiveOutcome(run),
+            gateSummary: buildGateSummary(run, GATE_SUMMARY_KINDS.review),
+          },
           run,
         );
       }
@@ -780,6 +790,13 @@ async function buildRunSummary(
     acceptanceCriteria: run.ticketData?.acceptanceCriteria?.filter(Boolean) ?? [],
     acceptanceStatus,
     acceptanceSummary,
+    evidenceReview: {
+      reportAvailable: Boolean(
+        evidenceReview.report?.reportPath && evidenceReview.report?.artifactManifest?.length,
+      ),
+      errors: [...evidenceReview.errors],
+      warnings: [...evidenceReview.warnings],
+    },
     ciChecks: buildCiChecks(run),
     review,
     familyScope: familyScope
@@ -877,7 +894,7 @@ export async function buildFamilyObservabilitySnapshotFromRuns(
   runs: Run[],
   allRuns: Run[] = [],
 ): Promise<FamilyObservabilitySnapshot> {
-  const familyRuns = sortRunsByFreshness(runs);
+  const familyRuns = await Promise.all(sortRunsByFreshness(runs).map(projectArchivedRunnerUsage));
   if (familyRuns.length === 0) {
     throw new Error('No runs found for family snapshot');
   }

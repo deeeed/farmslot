@@ -25,6 +25,7 @@ import {
   parseGitHubRef,
   runStepExecutionMs,
   runStepQueuedMs,
+  unavailableContributionLabel,
 } from '@farmslot/protocol';
 import { flowColor as _flowColor, flowLabel as _flowLabel } from '@farmslot/theme';
 
@@ -347,10 +348,12 @@ export function familyLedgerTurnLabel(entry: FamilyChangeLedgerEntry): string {
     return 'Review turn';
   }
   if (entry.flowType === 'pr-complete')
-    return entry.contributionDiff.available ? 'Follow-up code delta' : 'No code change';
+    return entry.contributionDiff.available
+      ? 'Follow-up code delta'
+      : unavailableContributionLabel(entry);
   if (entry.contributionDiff.available) return 'Produced code delta';
   if (entry.changeKind === 'legacy') return 'Legacy diff';
-  return 'No code change';
+  return unavailableContributionLabel(entry);
 }
 
 const PR_RECOMMENDATION_LABEL: Record<string, string> = {

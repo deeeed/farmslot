@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -261,4 +262,66 @@ test('does not copy transcripts for runners that declare sessionArchive none', a
   const result = await archiveRunnerSessionsForSlotRelease({ vars: localVars, runId: run.id });
   assert.equal(result.captured, 0);
   assert.equal(getRun(run.id)?.metrics.runnerSessionArchive?.status, 'unsupported');
+});
+
+test('historical usage projects verified native counters without mutating the run', async (t) => {
+  const { projectArchivedRunnerUsage } = await import('../runtime/session-usage.js');
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'interactive',
+    project: 'example-browser-farm',
+    ticketOrPr: 'usage-proof',
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done' });
+    await deleteRun(run.id);
+  });
+  const dir = runnerSessionArchiveContextDir(run.id, 'dev');
+  await mkdir(dir, { recursive: true });
+  const raw =
+    [
+      { type: 'response_item', payload: { type: 'message', role: 'assistant' } },
+      {
+        type: 'event_msg',
+        payload: {
+          type: 'token_count',
+          info: { total_token_usage: { input_tokens: 100, output_tokens: 12, total_tokens: 112 } },
+        },
+      },
+    ]
+      .map((line) => JSON.stringify(line))
+      .join('\n') + '\n';
+  const transcript = path.join(dir, 'transcript.jsonl');
+  await writeFile(transcript, raw);
+  const ref = {
+    status: 'captured' as const,
+    kind: 'jsonl' as const,
+    runner: 'codex',
+    originalPath: '/tmp/retained-native.jsonl',
+    sha256: createHash('sha256').update(raw).digest('hex'),
+  };
+  const current = {
+    ...run,
+    metrics: { ...run.metrics, runner: 'codex', runnerSessionArchive: ref },
+    agentContexts: [
+      {
+        id: 'dev',
+        label: 'Dev',
+        slotId: null,
+        runId: run.id,
+        role: 'dev' as const,
+        status: 'complete' as const,
+        runner: 'codex',
+        runnerSessionArchive: ref,
+      },
+    ],
+  };
+  const projected = await projectArchivedRunnerUsage(current);
+  assert.equal(projected.metrics.sessionTurns, 1);
+  assert.equal(projected.metrics.sessionTotalTokens, 112);
+  assert.equal(current.metrics.sessionTurns, undefined);
+  await writeFile(transcript, raw + '{}\n');
+  const changed = await projectArchivedRunnerUsage(current);
+  assert.equal(changed.metrics.sessionTurns, undefined);
+  assert.match(changed.metrics.sessionUsageError ?? '', /SHA256/);
 });
