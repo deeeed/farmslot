@@ -181,8 +181,7 @@
         "intent": "Verify exact outgoing workspace findings in the local sink.",
         "cmd": "node scripts/agentic/review-curation-proof.mjs verify-workspace",
         "timeout_ms": 120000,
-        "next": "open-slot",
-        "proves": ["finding-context"]
+        "next": "assert-workspace"
       },
       "open-slot": {
         "action": "command",
@@ -263,8 +262,7 @@
         "intent": "Verify exact outgoing slot findings in the local sink.",
         "cmd": "node scripts/agentic/review-curation-proof.mjs verify-slot",
         "timeout_ms": 120000,
-        "next": "open-empty",
-        "proves": ["finding-context"]
+        "next": "assert-slot"
       },
       "open-empty": {
         "action": "command",
@@ -345,8 +343,7 @@
         "intent": "Verify exact outgoing empty findings in the local sink.",
         "cmd": "node scripts/agentic/review-curation-proof.mjs verify-empty",
         "timeout_ms": 120000,
-        "next": "no-error",
-        "proves": ["finding-context"]
+        "next": "assert-empty"
       },
       "no-error": {
         "action": "ui.wait_for",
@@ -637,6 +634,33 @@
         "intent": "The accepted report and selection survive an in-flight refresh.",
         "timeout_ms": 70000,
         "next": "verify-slot"
+      },
+      "assert-workspace": {
+        "action": "assert_output",
+        "source": "verify-workspace",
+        "stream": "stdout",
+        "contains": "**Suggestion.** Second exact finding",
+        "proves": ["finding-context"],
+        "intent": "Observed workspace publication matches the accepted finding selection.",
+        "next": "open-slot"
+      },
+      "assert-slot": {
+        "action": "assert_output",
+        "source": "verify-slot",
+        "stream": "stdout",
+        "contains": "**must fix** \u2014 First exact finding",
+        "proves": ["finding-context"],
+        "intent": "Observed slot publication matches the accepted finding selection.",
+        "next": "open-empty"
+      },
+      "assert-empty": {
+        "action": "assert_output",
+        "source": "verify-empty",
+        "stream": "stdout",
+        "contains": "\"outgoing\":[]",
+        "proves": ["finding-context"],
+        "intent": "Observed empty publication matches the accepted finding selection.",
+        "next": "no-error"
       }
     }
   }

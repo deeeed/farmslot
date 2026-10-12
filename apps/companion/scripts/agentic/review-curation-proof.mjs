@@ -553,5 +553,14 @@ const poll=setInterval(()=>{if(fs.existsSync(control)){fs.writeSync(fd,fs.readFi
     assert.equal(sink.slotCommit, state().head);
   } else assert.equal(sink.payload.commit_id, state().head);
   evidence(`${kind}-publication`, { run, sink });
+  console.log(
+    JSON.stringify({
+      kind,
+      reviewedSha: state().head,
+      selectedIndices: decision.selectionData.includedIndices,
+      outgoing: comments ?? [],
+      formalEvent: kind === 'slot' ? sink.slotEvent : sink.payload.event,
+    }),
+  );
 } else if (phase === 'stop') stop();
 else throw new Error(`Unknown curation proof phase ${phase}`);
