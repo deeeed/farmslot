@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Show review rounds as N/5 and disable another review when the budget is spent.
+
 - Show shared gate prerequisite reasons and run lifecycle labels for correction, review failure and reconciliation.
 
 - Inspect each review finding at its reviewed revision and select which finding comments to publish. Android report dialogs retain the shared recipe HUD.

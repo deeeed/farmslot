@@ -57,6 +57,65 @@ test('assertExpectedExecutionTemplate rejects a changed queued snapshot', () => 
   );
 });
 
+test('a sixth gate review is refused before decision consumption, restore or launch checks', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'interactive',
+    project: 'review-round-budget',
+    ticketOrPr: 'MANUAL-REVIEW-ROUND-LIMIT',
+    runner: 'scripted',
+    transport: 'tmux',
+  });
+  const decision: RunDecision = {
+    id: 'sixth-review',
+    type: 'engine_human_gate',
+    title: 'Publication gate',
+    description: 'Review budget spent',
+    actions: [{ id: 'request-review', label: 'Review', style: 'secondary' }],
+    createdAt: new Date().toISOString(),
+  };
+  updateRun(run.id, {
+    status: 'human-gating',
+    decisions: [decision],
+    reviewRoundAdmissions: ['one', 'two', 'three', 'four', 'five'],
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'failed' });
+    await deleteRun(run.id);
+  });
+  const effects: string[] = [];
+  await assert.rejects(
+    runResolveDecision(
+      {
+        runId: run.id,
+        decisionId: decision.id,
+        actionId: 'request-review',
+        selectionData: {
+          reviewRequest: { runner: 'codex', model: null, effort: null, mode: 'cold' },
+        },
+      },
+      () => effects.push('broadcast'),
+      {
+        restoreGatePark: async () => {
+          throw new Error('restore must not run');
+        },
+        assertReviewLaunchAllowed: async () => {
+          effects.push('launch');
+        },
+      },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof GatewayMethodError);
+      assert.equal(error.code, 'REVIEW_ROUND_LIMIT_REACHED');
+      assert.match(error.message, /design problem or scope creep/);
+      return true;
+    },
+  );
+  assert.deepEqual(effects, []);
+  assert.equal(getRun(run.id)!.decisions[0].resolvedAt, undefined);
+  assert.equal(getRun(run.id)!.status, 'human-gating');
+});
+
 test('runResolveDecision keeps a review request unresolved when launch validation refuses it', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',

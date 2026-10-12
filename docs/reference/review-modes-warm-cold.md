@@ -16,7 +16,26 @@ diversity. Every review MUST run in a separate review session.
 serializer emits the first row as the `request-review` action payload and any
 remaining rows in its optional `sequence` field. Backlog, dispatch and queue
 records use the same selection model in `reviewSequence`. Rechecks update the
-existing review result; retry attempts do not increase the review count.
+existing review result; retry attempts do not increase the qualifying-review count.
+
+## Round budget
+
+The gateway MUST admit at most five reviewer rounds for a repository/PR. Before
+a PR identity exists, admission is scoped to its canonical run. Initial, retry,
+WARM/COLD, pipeline, standalone and publish-gate reviewer attempts MUST spend
+this same budget, including failed and interrupted attempts. A worker fix is
+not a reviewer round. Reattaching to an admitted attempt MUST reuse its receipt.
+
+Admission receipts MUST persist in the existing run snapshots before a runner
+can start. Replay, restart and a different gate or run MUST NOT refund rounds.
+Copied review histories MUST NOT count the same admitted attempt twice. The
+round budget is separate from the number of qualifying passing reviewer sessions.
+
+The gate MUST show `N/5` and refuse a sixth round before consuming its request
+or starting a reviewer. The refusal MUST tell the operator to stop and diagnose
+a design problem or scope creep, then narrow the scope or redesign. Spending all
+five rounds MUST NOT prevent publication when all existing approval conditions
+are satisfied.
 
 ## Session and range
 
@@ -57,6 +76,11 @@ The duplicate units listed in ADR-063 MUST be removed after their callers move.
 - `@farmslot/protocol` owns `ReviewMode`, `ReviewSelection`, `ReviewSequence`,
   `ReviewStatus`, `ReviewAttempt` and `ReviewPolicy`. Run creation, PR options,
   gate resolution, backlog and dispatch queue RPCs consume these types.
+- `@farmslot/protocol` also owns `ReviewRoundBudget`, `MAX_REVIEW_ROUNDS` and
+  `reviewRoundBudget`. Gateway admission and both gate renderers consume the
+  shared projection. `Run.reviewRoundAdmissions` contains gateway-owned opaque
+  receipts; `ReadyGatePayload.reviewRoundBudget` carries the display snapshot.
+  No CLI flag or client-written receipt is added.
 - The shared package exports the view-model and selection/sequence validators
   for Command Center, Companion, CLI and gateway consumers.
 - Gate action `request-review` replaces both old review-request action IDs.

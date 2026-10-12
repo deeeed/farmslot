@@ -57,6 +57,7 @@ import {
   reviewerResultRelPath,
   scopeReviewFeedbackPath,
 } from './review-agent.js';
+import { admitReviewRound, reviewRoundAdmissionId } from './review-round-budget.js';
 import { noteReviewInputsAtLaunch } from './reviewed-inputs.js';
 import {
   claimWarmReviewerSession,
@@ -212,6 +213,7 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
   const startedAt = recovering
     ? (context!.attemptStartedAt ?? context!.startedAt ?? new Date().toISOString())
     : new Date().toISOString();
+  await admitReviewRound(runId, reviewRoundAdmissionId(lineage, loopNumber, startedAt));
   let progress: { stop(): void | Promise<void> } | undefined;
   let activeTaskSet = false;
   let primaryFailure: unknown;

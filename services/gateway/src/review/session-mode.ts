@@ -1,4 +1,5 @@
 import {
+  parseGitHubPullUrl,
   parseGitHubRef,
   type ReviewGatePayload,
   type ReviewMode,
@@ -53,9 +54,9 @@ export function reviewPRIdentity(
   if (!run) return null;
   const pr = run.prWork?.pr;
   if (pr) return { repository: pr.repo, prNumber: pr.number };
-  const ref = parseGitHubRef(
-    run.links?.find((link) => link.label.toLowerCase() === 'pr')?.url ?? run.ticketOrPr,
-  );
+  const source =
+    run.links?.find((link) => link.label.toLowerCase() === 'pr')?.url ?? run.ticketOrPr;
+  const ref = parseGitHubRef(source) ?? parseGitHubPullUrl(source);
   return ref ? { repository: ref.repo, prNumber: ref.number } : null;
 }
 

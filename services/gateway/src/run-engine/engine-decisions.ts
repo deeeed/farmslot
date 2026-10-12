@@ -22,6 +22,7 @@ import {
 } from '@farmslot/protocol';
 
 import { isGitHubAncestor } from '../external/github.js';
+import { runReviewRoundBudget } from '../review/review-round-budget.js';
 import {
   readRunProgress,
   runDecisionWaitingStatus,
@@ -680,6 +681,9 @@ export async function createEngineDecision(
   // All ready/review decisions, including workspace reviews, share this guard.
   // Replay also revalidates current inputs instead of inheriting an old ready label.
   const gateDefinitions = actions;
+  if (payload?.kind === 'ready') {
+    payload = { ...payload, reviewRoundBudget: await runReviewRoundBudget(run) };
+  }
   if (isPrerequisiteGatePayload(payload)) {
     const readiness = await collectRunGateReadiness(
       run,

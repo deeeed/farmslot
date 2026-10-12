@@ -20,7 +20,8 @@ function isRecoverableReviewLaunchCode(
 ): code is PublicationReviewLaunchRejection['code'] {
   return (
     code === PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.launchRejected ||
-    code === PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.gitProbeFailed
+    code === PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.gitProbeFailed ||
+    code === PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.roundLimitReached
   );
 }
 

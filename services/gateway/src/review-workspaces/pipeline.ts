@@ -13,6 +13,7 @@ import { loadProjectVars } from '../core/config.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { fetchGitHubPR } from '../external/github.js';
 import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
+import { admitReviewRound, reviewRoundAdmissionId } from '../review/review-round-budget.js';
 import {
   buildRepeatReviewContext,
   confirmIncrementalAncestry,
@@ -400,6 +401,10 @@ export async function executeReviewWorkspaceStep(
       const started =
         run.steps.find((entry) => entry.name === PipelineSteps.DISPATCH)?.startedAt ??
         new Date().toISOString();
+      await admitReviewRound(
+        runId,
+        reviewRoundAdmissionId(`workspace-review-${runId}`, 1, run.createdAt),
+      );
       if (run.transport === 'tmux') {
         const started = await launchReviewTmux(runId, task.prompt, () =>
           admittedRun(runId, generation),

@@ -79,6 +79,7 @@ import { readTriagePolicy } from '../intelligence/triage/policy.js';
 import { admittedFailureSnapshot } from '../intelligence/triage/snapshot.js';
 import type { MachineParkGateRestoreResult } from '../machine-parking/service.js';
 import { assertStartRefSkipPrepareEligible } from '../projects/start-ref-policy.js';
+import { assertReviewRoundAvailable } from '../review/review-round-budget.js';
 import { captureDirectReviewPublication } from '../review-publication/direct.js';
 import {
   assertReviewWorkspaceAdmitted,
@@ -1710,6 +1711,7 @@ export async function resolveRunDecision(
   if (decision.type === 'engine_human_gate' && isHumanGateReviewRequestAction(params.actionId)) {
     const reviewRequest = params.selectionData?.reviewRequest;
     assertReviewRequestPayload(reviewRequest, { maxRows: 5 });
+    await assertReviewRoundAvailable(getRun(params.runId)!);
     assertWarmReviewRequestAvailable(existing, reviewRequest, getAllRuns());
   }
   if (params.actionId === 'post' && decision.payload?.kind === 'review')
