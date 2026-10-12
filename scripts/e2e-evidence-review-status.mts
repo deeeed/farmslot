@@ -13,6 +13,8 @@ const config = JSON.parse(await fs.readFile(process.argv[2]!, 'utf8')) as {
   reportRunId: string;
   outputDir: string;
   mode: 'before' | 'after';
+  /** Run-detail pipeline before completion, output-review gate after completion. */
+  legacyPanelSelector?: string;
 };
 const port = Number(process.env.FARMSLOT_CDP_PORT);
 assert([19222, 19223, 19224].includes(port), 'Use isolated Agent Chrome.');
@@ -20,7 +22,11 @@ await fs.mkdir(config.outputDir, { recursive: true });
 const version = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
 const browser = await CdpSession.connect(version.webSocketDebuggerUrl);
 const detail = `document.querySelector('run-detail')`;
-const panel = `${detail}.shadowRoot.querySelector('run-pipeline').shadowRoot`;
+const panel = config.legacyPanelSelector
+  ? `${detail}.shadowRoot.querySelector(${JSON.stringify(config.legacyPanelSelector)})`
+  : `${detail}.shadowRoot.querySelector('run-pipeline').shadowRoot`;
+const detailsSelector =
+  `${config.legacyPanelSelector ?? ''} [data-testid="evidence-package-details"] summary`.trim();
 const receipts = [];
 async function wait<T>(read: () => Promise<T>, ready: (value: T) => boolean): Promise<T> {
   const until = Date.now() + 10_000;
@@ -77,14 +83,14 @@ try {
             ),
             false,
           );
-          await p.click('[data-testid="evidence-package-details"] summary');
+          await p.click(detailsSelector);
           assert.equal(
             await p.evaluate(
               `${panel}.querySelector('[data-testid="evidence-package-details"]').open`,
             ),
             true,
           );
-          await p.click('[data-testid="evidence-package-details"] summary');
+          await p.click(detailsSelector);
           receipts.push({ kind, runId, status, detailsToggle: true });
         } else {
           const errors = await p.evaluate<string[]>(`${detail}.evidenceModel.errors`);

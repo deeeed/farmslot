@@ -47,19 +47,21 @@ export function evidenceReviewPackageStatus(
     else grouped.set(label, { message: label, count: 1 });
   }
   const current = Boolean(
-    requiredFiles.some((file) => pkg?.artifactPaths?.includes(file)) ||
+    (isRecord(pkg?.summary) && pkg.summary.version === 1) ||
+    (isRecord(pkg?.manifest) && pkg.manifest.version === 1) ||
+    (isRecord(pkg?.invocation) && pkg.invocation.version === 1) ||
     pkg?.claims?.schemaVersion === 2 ||
     (isRecord(pkg?.summary) && pkg.summary.recipeRunId) ||
     pkg?.artifactPaths?.includes('recipe-invocation.json'),
   );
-  const legacy = Boolean(pkg && !current && missingCore.length === requiredFiles.length);
+  const legacy = Boolean(pkg && !current);
   const status = legacy ? 'Legacy' : messages.length ? 'Invalid' : 'Valid';
   return {
     status,
     tone: status === 'Invalid' && current ? 'error' : status === 'Valid' ? 'success' : 'info',
     path: (packagePath ?? '.').replace(/^artifacts\//u, '').replace(/\/$/u, '') || '.',
     summary: legacy
-      ? `Recorded before Recipe v1: not machine-checkable (missing ${missing.join(', ')}); media untimed`
+      ? `Recorded before Recipe v1: not machine-checkable${missing.length ? ` (missing ${missing.join(', ')})` : ''}; media untimed`
       : status === 'Invalid'
         ? `${grouped.size} evidence issue${grouped.size === 1 ? '' : 's'}; measured proof unavailable`
         : 'Recipe evidence is machine-checkable',

@@ -722,3 +722,20 @@ test('an authored recipe beside legacy media does not identify an executed Recip
     model.packageStatus!.issues.some((issue) => issue.message === 'Missing recipe-resolution.json'),
   );
 });
+
+test('historical filenames alone never mark an older artifact format as a current contract failure', () => {
+  const model = createEvidenceReviewModel({
+    package: {
+      summary: { version: 0 },
+      trace: [],
+      manifest: { version: 0, artifacts: [] },
+      artifactPaths: ['summary.json', 'trace.json', 'artifact-manifest.json'],
+      artifactDigests: {},
+      timelines: {},
+    },
+  });
+  assert(model.errors.length);
+  assert.equal(model.packageStatus?.status, 'Legacy');
+  assert.equal(model.packageStatus?.tone, 'info');
+  assert.equal(model.packageStatus?.action, undefined);
+});
