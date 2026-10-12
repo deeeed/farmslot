@@ -4,7 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
-- Preserve literal query values in phone deep links. Prepared dev leases watch source edits and clear first-run chrome; recipe sessions promptly release idle simulator runners through the provider lifecycle.
+- Use shared plain run titles with two-line display and full accessible text across run and decision views.
 - Use the shared evidence review model for claim/step navigation and bounded clips; initialize only the selected video player (ADR-062).
 - Show review rounds as N/5 and disable another review when the budget is spent.
 
@@ -15,6 +15,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 - Inspect each review finding at its reviewed revision and select which finding comments to publish. Android report dialogs retain the shared recipe HUD.
 - Active-development baseline; add user-facing changes here before release or package publication.
 - Release cuts ship production Android to Play internal and closed testing, verify both tracks, and require an explicit iOS platform.
+
+- Preserve literal query values in phone deep links. Prepared dev leases watch source edits and clear first-run chrome; recipe sessions promptly release idle simulator runners through the provider lifecycle.
 
 ## 0.8.1 - 2026-10-11
 
