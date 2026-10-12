@@ -12,6 +12,8 @@ import type {
   SourceConfiguration,
   SourceMaterialization,
   SourcesSyncResult,
+  Run,
+  NativeSessionReadResult,
 } from '@farmslot/protocol';
 
 interface ProofNode {
@@ -26,6 +28,7 @@ interface ProofConfiguration {
   sources: SourceConfiguration;
   nodes: ProofNode[];
   consumerProject?: string;
+  workerModel?: string;
 }
 
 const execute = promisify(execFile);
@@ -205,6 +208,11 @@ try {
           ? [
               `mkdir -p ${quote(path.join(node.home, 'source-proof-worktree'))}`,
               `git -C ${quote(path.join(node.home, 'source-proof-worktree'))} init -q -b main`,
+              ...(configuration.workerModel
+                ? [
+                    `git -C ${quote(path.join(node.home, 'source-proof-worktree'))} -c core.hooksPath=/dev/null commit --allow-empty -S -m 'test: initialize source proof'`,
+                  ]
+                : []),
             ]
           : []),
         ...links.map(
@@ -352,11 +360,15 @@ try {
         timeout: 10_000,
       })) as { exitCode: number };
       assert.equal(copy.exitCode, 0);
-      const health = await client.call<{ ok: boolean }>('resource.health', {
-        slotId,
-        resourceId: 'probe',
-      });
-      assert.equal(health.ok, true);
+      const health = await client.call<{ resources: Array<{ id: string; status: string }> }>(
+        'resource.health',
+        { slotId },
+      );
+      assert.ok(
+        health.resources.some(
+          (resource) => resource.id === 'probe' && resource.status === 'running',
+        ),
+      );
       const control = await client.call<{ ok: boolean }>('resource.control', {
         slotId,
         resourceId: 'probe',
@@ -365,6 +377,7 @@ try {
       assert.equal(control.ok, true);
       const { sendWatchInstructions } =
         await import('../../services/gateway/src/fleet/resource-manager.js');
+      await client.call('resource.watch.setEnabled', { enabled: true });
       await sendWatchInstructions(node.id);
       const read = () =>
         sendNodeRequest(connection, 'exec', {
@@ -392,6 +405,123 @@ try {
       consumers.push({ nodeId: node.id, records });
     }
     evidence.consumers = consumers;
+    if (configuration.workerModel) {
+      const workers = [];
+      const { writeNativeFixtureTask } = await import('../runner-validation/lib/native-task.mjs');
+      for (const node of configuration.nodes) {
+        const slotId = `${node.id}-consumer`;
+        const connection = getNode(node.id)!;
+        const inputs = (await sendNodeRequest(connection, 'sources.materialize', {
+          lock: synced.locks[0],
+        })) as SourceMaterialization;
+        const task = async (suffix: string) => {
+          const taskFile = path.join(output, 'tasks', 'dev', `${node.id}-${suffix}`, 'TASK.md');
+          await mkdir(path.dirname(taskFile), { recursive: true });
+          await writeNativeFixtureTask(
+            taskFile,
+            '# Worker: dev\n\n## Checklist\n\n' +
+              `- [ ] Run exactly: node ${quote(path.join(inputs.roots['proof-pack'], 'scripts/sources-validation/fixture/probe.mjs'))} worker\n` +
+              '- [ ] Check both checklist boxes, then end this turn. Do not write a terminal signal, commit, publish, or contact another service.\n',
+            configuration.consumerProject,
+          );
+          return taskFile;
+        };
+        const make = async (suffix: string, parent?: Run) => {
+          const created = await client.call<{ run: Run }>('run.createNative', {
+            flowType: 'dev',
+            project: configuration.consumerProject,
+            ticketOrPr: `MANUAL-${Date.now()}`,
+            slotId,
+            allowedSlots: [slotId],
+            taskFile: await task(suffix),
+            runner: 'codex',
+            model: configuration.workerModel,
+            effort: 'medium',
+            mode: 'interactive',
+            skipPrepare: true,
+            safetyTier: 'full-auto',
+            ...(parent
+              ? {
+                  parentRunId: parent.id,
+                  familyId: parent.familyId,
+                  engineState: { flags: { warmSessionReuse: true } },
+                }
+              : {}),
+          });
+          proofRuns.push(created.run.id);
+          evidence.workerRunIds = [...proofRuns];
+          return created.run;
+        };
+        const awaitWorker = async (run: Run) => {
+          const deadline = Date.now() + 240_000;
+          while (true) {
+            const current = (await client.call<{ run: Run }>('run.get', { runId: run.id })).run;
+            assert.ok(
+              !['blocked', 'failed', 'cancelled'].includes(current.status),
+              `${current.status}: ${current.error}`,
+            );
+            const context = current.agentContexts?.find(
+              (context) => context.nativeSession && context.role === 'dev',
+            );
+            const binding = context?.nativeSession;
+            if (binding?.generation && binding.acceptedAt) {
+              const read = await client.call<NativeSessionReadResult>('native.session.read', {
+                sessionId: binding.sessionId,
+                executionNodeId: binding.executionNodeId,
+                worker: {
+                  runId: run.id,
+                  contextId: context!.id,
+                  leaseId: binding.leaseId,
+                  generation: binding.generation,
+                },
+              });
+              if (read.session.state === 'idle') {
+                const marker = (await sendNodeRequest(connection, 'exec', {
+                  argv: [
+                    'node',
+                    '-e',
+                    "console.log(require('node:fs').readFileSync('source-worker.json','utf8'))",
+                  ],
+                  cwd: path.join(node.home, 'source-proof-worktree'),
+                  timeout: 5_000,
+                })) as { exitCode: number; stdout: string };
+                if (marker.exitCode === 0) {
+                  const record = JSON.parse(marker.stdout);
+                  assert.equal(record.nodeId, node.id);
+                  assert.equal(record.lockDigest, current.sourceProvenance!.workerLock.digest);
+                  return { run: current, binding, session: read.session, record };
+                }
+              }
+            }
+            if (Date.now() > deadline) throw new Error(`Worker proof timed out: ${run.id}`);
+            await new Promise((resolve) => setTimeout(resolve, 200));
+          }
+        };
+        const first = await awaitWorker(await make('first'));
+        const cleared = (await sendNodeRequest(connection, 'exec', {
+          argv: ['node', '-e', "require('node:fs').unlinkSync('source-worker.json')"],
+          cwd: path.join(node.home, 'source-proof-worktree'),
+          timeout: 5_000,
+        })) as { exitCode: number };
+        assert.equal(cleared.exitCode, 0);
+        const second = await awaitWorker(await make('retained', first.run));
+        assert.equal(second.binding.sessionId, first.binding.sessionId);
+        assert.equal(second.session.nativeSessionId, first.session.nativeSessionId);
+        assert.equal(second.binding.launchDigest, first.binding.launchDigest);
+        assert.notEqual(second.binding.leaseId, first.binding.leaseId);
+        assert.notEqual(
+          second.run.sourceProvenance!.lock.digest,
+          first.run.sourceProvenance!.lock.digest,
+        );
+        assert.equal(
+          second.run.sourceProvenance!.workerLock.digest,
+          first.run.sourceProvenance!.workerLock.digest,
+        );
+        workers.push({ nodeId: node.id, first, second });
+        await client.call('run.cancel', { runId: second.run.id });
+      }
+      evidence.workers = workers;
+    }
   }
   const created = await client.call<{ run: import('@farmslot/protocol').Run }>('run.create', {
     flowType: 'dev',
@@ -428,6 +558,13 @@ try {
   runtime.stopSourceReconciliation();
   const teardownErrors: string[] = [];
   try {
+    for (const runId of proofRuns) {
+      try {
+        await client.call('run.cancel', { runId });
+      } catch (error) {
+        teardownErrors.push(`${runId}: ${(error as Error).message}`);
+      }
+    }
     for (const node of configuration.nodes) {
       try {
         const detach = `python3 - <<'PY'\nimport json,subprocess\nfrom pathlib import Path\nreceipts=Path(${JSON.stringify(path.join(node.home, 'sources/node/receipts'))})\nmounts={str(Path(root).parent) for record in receipts.glob('*.json') for root in json.loads(record.read_text())['roots'].values()}\nfor mount in mounts:\n subprocess.run(['hdiutil','detach','-quiet',mount],check=True)\nPY\n`;

@@ -144,18 +144,16 @@ export function withProjectMachineEnv(
   projectVars?: ProjectVars,
   domain = vars.domain,
 ): string {
-  return withSourceEnvironment(
-    applyProjectCommandEnv(
-      projectJson,
-      withMachineEnv(command, {
-        ...vars,
-        machineEnv: { ...vars.machineEnv, FARMSLOT_MACHINE: vars.machine },
-      }),
-      {
-        ...(domain ? { domain } : {}),
-        expandDomainValue: (value) =>
-          expandTemplate(value, vars, projectVars, { domain: domain ?? '' }),
-      },
-    ),
+  return applyProjectCommandEnv(
+    projectJson,
+    withMachineEnv(withSourceEnvironment(command), {
+      ...vars,
+      machineEnv: { ...vars.machineEnv, FARMSLOT_MACHINE: vars.machine },
+    }),
+    {
+      ...(domain ? { domain } : {}),
+      expandDomainValue: (value) =>
+        expandTemplate(value, vars, projectVars, { domain: domain ?? '' }),
+    },
   );
 }

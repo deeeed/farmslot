@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 
 import { nativeWorkerLaunchDigest } from '@farmslot/agent-runtime/native/worker-launch';
@@ -10,6 +11,7 @@ import {
 } from '@farmslot/slot-config';
 import { sourceLockDigest } from '@farmslot/slot-config/sources';
 
+import { withProjectMachineEnv } from '../core/project-env.js';
 import { buildLaunchCommand } from '../runners/launch-command.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
@@ -77,6 +79,18 @@ test('terminal runner command exports the admitted worker inputs inside the laun
     command.indexOf('export FARMSLOT_SOURCE_RECEIPT=') < command.indexOf('/usr/local/bin/claude'),
   );
   assert.ok(command.includes(`export FARMSLOT_SOURCE_LOCK_DIGEST='${value.lock.digest}'`));
+});
+
+test('direct command routing keeps runtime source receipts after project and pool overrides', () => {
+  const value = materialization();
+  const command = withProjectSources(inputs(value), () =>
+    withProjectMachineEnv(
+      `printf '%s' "$FARMSLOT_SOURCE_RECEIPT"`,
+      makeVars({ machineEnv: { FARMSLOT_SOURCE_RECEIPT: '/loose/pool' } }),
+      { command_env: { unset: ['FARMSLOT_SOURCE_RECEIPT'] } },
+    ),
+  );
+  assert.equal(execFileSync('/bin/sh', ['-c', command], { encoding: 'utf8' }), value.receiptPath);
 });
 
 test('run ownership changes preserve native launch identity; changed source inputs refuse retained reuse', () => {

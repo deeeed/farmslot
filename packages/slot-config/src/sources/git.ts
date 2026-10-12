@@ -13,15 +13,17 @@ import {
 
 const execute = promisify(execFile);
 
-export type SourceCommand = (program: string, args: string[]) => Promise<Buffer>;
+export type SourceCommand = (program: string, args: string[], input?: Buffer) => Promise<Buffer>;
 
-export const sourceCommand: SourceCommand = async (program, args) => {
-  const result = await execute(program, args, {
+export const sourceCommand: SourceCommand = async (program, args, input) => {
+  const operation = execute(program, args, {
     encoding: 'buffer',
     timeout: 120_000,
     maxBuffer: 64 * 1024 * 1024,
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ALLOW_PROTOCOL: 'https:ssh' },
   });
+  if (input) operation.child.stdin!.end(input);
+  const result = await operation;
   return result.stdout;
 };
 
@@ -55,18 +57,22 @@ export class SourceGitStore {
     return path.join(this.cacheRoot, 'objects', sourceDigest(canonicalSourceRepo(repo)));
   }
 
-  async git(repo: string, args: string[]): Promise<Buffer> {
-    return this.command('git', [
-      '-c',
-      'core.hooksPath=/dev/null',
-      '-c',
-      'submodule.recurse=false',
-      '-c',
-      'fetch.recurseSubmodules=false',
-      '--git-dir',
-      this.repository(repo),
-      ...args,
-    ]);
+  async git(repo: string, args: string[], input?: Buffer): Promise<Buffer> {
+    return this.command(
+      'git',
+      [
+        '-c',
+        'core.hooksPath=/dev/null',
+        '-c',
+        'submodule.recurse=false',
+        '-c',
+        'fetch.recurseSubmodules=false',
+        '--git-dir',
+        this.repository(repo),
+        ...args,
+      ],
+      input,
+    );
   }
 
   private async initialize(repo: string, objectFormat: string): Promise<void> {
@@ -155,7 +161,14 @@ export class SourceGitStore {
       .filter(Boolean)
       .map((record) => {
         const match = /^(100644|100755|120000) blob ([0-9a-f]+)\t(.+)$/.exec(record);
-        if (!match || !isContainedSourceEntry(match[3]) || match[3].split('/').includes('.git'))
+        if (
+          !match ||
+          path.posix.isAbsolute(match[3]) ||
+          /[\x00-\x1f\x7f\\]/u.test(match[3]) ||
+          match[3]
+            .split('/')
+            .some((part) => !part || part === '.' || part === '..' || part.toLowerCase() === '.git')
+        )
           throw new Error('Unsupported submodule, external object or unsafe source tree entry');
         return { mode: match[1] as SourceTreeFile['mode'], object: match[2], path: match[3] };
       });
@@ -182,21 +195,45 @@ export class SourceGitStore {
   }
 
   async export(repo: string, tree: FetchedSource, root: string): Promise<void> {
-    for (const file of tree.files) {
-      const target = path.join(root, file.path);
-      await mkdir(path.dirname(target), { recursive: true });
-      const content = await this.blob(repo, file.object);
-      if (file.mode === '120000') {
-        const link = content.toString();
-        const relative = path.relative(root, path.resolve(path.dirname(target), link));
-        if (path.isAbsolute(link) || relative === '..' || relative.startsWith('../'))
-          throw new Error(`Source symlink escapes its tree: ${file.path}`);
-        await symlink(link, target);
-      } else
-        await writeFile(target, content, {
-          flag: 'wx',
-          mode: file.mode === '100755' ? 0o755 : 0o644,
-        });
+    for (let offset = 0; offset < tree.files.length; offset += 128) {
+      const batch = tree.files.slice(offset, offset + 128);
+      const data = await this.git(
+        repo,
+        ['cat-file', '--batch'],
+        Buffer.from(batch.map((file) => file.object).join('\n') + '\n'),
+      );
+      let cursor = 0;
+      for (const file of batch) {
+        const end = data.indexOf(10, cursor);
+        const header = data.subarray(cursor, end).toString().split(' ');
+        const size = Number(header[2]);
+        if (
+          end < cursor ||
+          header[0] !== file.object ||
+          header[1] !== 'blob' ||
+          !Number.isSafeInteger(size) ||
+          size < 0 ||
+          end + size + 1 >= data.length ||
+          data[end + size + 1] !== 10
+        )
+          throw new Error('Git batch returned an incomplete or substituted source object');
+        const content = data.subarray(end + 1, end + size + 1);
+        cursor = end + size + 2;
+        const target = path.join(root, file.path);
+        await mkdir(path.dirname(target), { recursive: true });
+        if (file.mode === '120000') {
+          const link = content.toString();
+          const relative = path.relative(root, path.resolve(path.dirname(target), link));
+          if (path.isAbsolute(link) || relative === '..' || relative.startsWith('../'))
+            throw new Error(`Source symlink escapes its tree: ${file.path}`);
+          await symlink(link, target);
+        } else
+          await writeFile(target, content, {
+            flag: 'wx',
+            mode: file.mode === '100755' ? 0o755 : 0o644,
+          });
+      }
+      if (cursor !== data.length) throw new Error('Git batch returned unexpected source objects');
     }
   }
 }
