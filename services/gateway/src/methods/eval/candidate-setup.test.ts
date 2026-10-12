@@ -31,3 +31,16 @@ test('catalog eval keeps a selected local variant and its exact template snapsho
   assert.equal(result.axes.model?.name, 'comparison-model');
   assert.equal(result.axes.template?.path, 'templates/worker/dev-treatment.md');
 });
+
+test('model-only dev comparison preserves autonomous mode and the interactive axis remains interactive', async () => {
+  const automatic = await resolveCandidateTemplateProvenance('farmslot-farm', 'dev', {
+    model: { name: 'comparison-model' },
+  });
+  assert.equal(automatic.executionTemplate?.id, 'dev/default');
+  assert.equal(automatic.mode, 'autonomous');
+  const interactive = await resolveCandidateTemplateProvenance('farmslot-farm', 'dev', {
+    template: { path: 'templates/worker/dev-interactive.md' },
+  });
+  assert.equal(interactive.executionTemplate?.id, 'dev/interactive');
+  assert.equal(interactive.mode, 'interactive');
+});

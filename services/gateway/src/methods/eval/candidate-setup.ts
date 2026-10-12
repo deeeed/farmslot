@@ -27,6 +27,7 @@ import {
   readConfiguredExecutionTemplateSnapshot,
 } from '../../tasks/execution-template-catalog.js';
 import {
+  listWorkerTemplateOptions,
   parseWorkerTemplateFileName,
   resolveWorkerTemplateSelection,
 } from '../../tasks/worker-template-options.js';
@@ -181,7 +182,7 @@ export async function resolveCandidateTemplateProvenance(
       ? resolveRunCreateMode({
           flowType: taskProfile,
           taskTemplateFileName: fileName,
-          templateOptions: [],
+          templateOptions: await listWorkerTemplateOptions(projectVars, taskProfile),
         })
       : undefined,
     templateContent,
