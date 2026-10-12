@@ -63,12 +63,11 @@ import {
 import {
   applyWorkInventorySort,
   focusWorkInventoryRow,
-  inventoryShowsBackAffordance,
   inventoryShowsDetail,
   inventoryShowsList,
   nextSortState,
   parseWorkInventorySort,
-  renderWorkInventoryBackButton,
+  renderWorkInventoryDetailClose,
   renderWorkInventoryLayout,
   renderWorkInventoryRow,
   renderWorkInventoryTable,
@@ -524,7 +523,6 @@ export class RoadmapPanel extends LitElement {
       }
       .row.selected {
         border-color: ${unsafeCSS(colors.accent)}99;
-        background: ${unsafeCSS(colors.accent)}11;
       }
       .title {
         font-weight: 700;
@@ -1276,7 +1274,10 @@ export class RoadmapPanel extends LitElement {
       // the cached one for the same item id.
       this._deliveryDetail = null;
       const visibleItems = this._items;
-      const selected = this._resolveSelectedItem(visibleItems, selectId);
+      const selected = this._resolveSelectedItem(
+        visibleItems,
+        this._selectionDismissed ? this._selectedId : selectId,
+      );
       this._syncEditor(selected);
       this._writeUrlState();
     } catch (err) {
@@ -1696,7 +1697,6 @@ export class RoadmapPanel extends LitElement {
 
   private _deselectItem() {
     const id = this._selectedId;
-    this._listGeneration++;
     this._selectionDismissed = true;
     this._syncEditor(null);
     this._writeUrlState();
@@ -2741,15 +2741,12 @@ export class RoadmapPanel extends LitElement {
             })}
           </div>
         </div>`;
-        const detail = html`${inventoryShowsBackAffordance(layout) ||
-          (!this._narrowViewport && this._selected)
-            ? renderWorkInventoryBackButton({
-                label: this._narrowViewport ? '← Back to list' : '× Close details',
-                testId: 'work-inventory-back',
-                onBack: () =>
-                  this._narrowViewport ? this._backToInventoryList() : this._deselectItem(),
-              })
-            : nothing}
+        const detail = html`${renderWorkInventoryDetailClose({
+            layout,
+            testId: 'work-inventory-back',
+            onBack: () => this._backToInventoryList(),
+            onClose: () => this._deselectItem(),
+          })}
           <div class="shell">${this._renderEditor()}</div>`;
         return renderWorkInventoryLayout({
           list,

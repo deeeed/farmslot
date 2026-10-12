@@ -1270,7 +1270,6 @@ export class WorkGraphPanel extends LitElement {
         selected,
         testId: `work-graph-row-${graph.graph.id}`,
         onActivate: () => this.selectGraph(graph.graph.id),
-        onDeselect: () => this.backToInventory(),
       },
       cells: [
         html`<span class=${`badge ${graph.graph.status}`}>${graph.graph.status}</span>`,

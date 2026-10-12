@@ -3,10 +3,12 @@ import { html, nothing, type TemplateResult } from 'lit';
 import {
   activateInventoryRow,
   inventoryGridTemplateColumns,
+  inventoryShowsDetail,
   isInventoryActivationKey,
 } from './work-inventory-table-model.js';
 import type {
   WorkInventoryColumnDef,
+  WorkInventoryLayoutState,
   WorkInventoryRowRenderOptions,
   WorkInventorySortDirection,
   WorkInventorySortState,
@@ -181,6 +183,20 @@ export function renderWorkInventoryBackButton(options: {
   >
     ${options.label ?? '← Back to list'}
   </button>`;
+}
+
+export function renderWorkInventoryDetailClose(options: {
+  layout: WorkInventoryLayoutState;
+  testId?: string;
+  onBack: () => void;
+  onClose: () => void;
+}): TemplateResult | typeof nothing {
+  if (!inventoryShowsDetail(options.layout)) return nothing;
+  return renderWorkInventoryBackButton({
+    label: options.layout.narrowViewport ? '← Back to list' : '× Close details',
+    testId: options.testId,
+    onBack: options.layout.narrowViewport ? options.onBack : options.onClose,
+  });
 }
 
 export function renderWorkInventoryLayout(options: {

@@ -98,12 +98,11 @@ import type { SlotSelectorChangeDetail } from '../shared/slot-selector-modal.js'
 import {
   applyWorkInventorySort,
   focusWorkInventoryRow,
-  inventoryShowsBackAffordance,
   inventoryShowsDetail,
   inventoryShowsList,
   nextSortState,
   parseWorkInventorySort,
-  renderWorkInventoryBackButton,
+  renderWorkInventoryDetailClose,
   renderWorkInventoryLayout,
   renderWorkInventoryRow,
   renderWorkInventoryTable,
@@ -3648,14 +3647,12 @@ export class BacklogPanel extends LitElement {
         })}
       </div>
     </section>`;
-    const detail = html`${inventoryShowsBackAffordance(layout) ||
-    (!this._narrowViewport && this._selectedItem)
-      ? renderWorkInventoryBackButton({
-          label: this._narrowViewport ? '← Back to list' : '× Close details',
-          testId: 'work-inventory-back',
-          onBack: () => (this._narrowViewport ? this._backToInventoryList() : this._deselectItem()),
-        })
-      : nothing}${this._renderSelectedItemPanel()}`;
+    const detail = html`${renderWorkInventoryDetailClose({
+      layout,
+      testId: 'work-inventory-back',
+      onBack: () => this._backToInventoryList(),
+      onClose: () => this._deselectItem(),
+    })}${this._renderSelectedItemPanel()}`;
     return html`<section class="shell">
       <div class="header header-compact">
         <h1>Backlog</h1>

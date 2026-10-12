@@ -38,7 +38,7 @@ import {
   focusWorkInventoryRow,
   inventoryShowsDetail,
   inventoryShowsList,
-  renderWorkInventoryBackButton,
+  renderWorkInventoryDetailClose,
   renderWorkInventoryLayout,
   renderWorkInventoryRow,
   renderWorkInventoryTable,
@@ -678,10 +678,11 @@ export class RunList extends RunListState {
               const showDetail = inventoryShowsDetail(layout);
               const detail = showDetail
                 ? html`<div class="run-detail-actions">
-                      ${renderWorkInventoryBackButton({
-                        label: this.narrowViewport ? '← Back to list' : '× Close details',
+                      ${renderWorkInventoryDetailClose({
+                        layout,
                         testId: 'runs-back-to-list',
                         onBack: () => this.backToRunList(),
+                        onClose: () => this.backToRunList(),
                       })}
                       <a
                         class="run-detail-full-link"
