@@ -146,6 +146,9 @@
             "review-pr": {
               "includes": ["CLAUDE.local.agent.review-pr.md", "CLAUDE.local.base.md"]
             },
+            "qa": {
+              "includes": ["CLAUDE.local.agent.qa.md", "CLAUDE.local.base.md"]
+            },
             "companion-mobile": {
               "includes": ["CLAUDE.local.agent.companion-mobile.md", "CLAUDE.local.base.md"]
             }
@@ -167,6 +170,27 @@
     "enabled": true,
     "local_check": "yarn ci:local",
     "repo": "deeeed/farmslot"
+  },
+  "execution_templates": {
+    "sources": [],
+    "defaults": [
+      { "when": { "flow": "dev", "runMode": "autonomous" }, "templateId": "dev/default" },
+      { "when": { "flow": "dev", "runMode": "interactive" }, "templateId": "dev/interactive" }
+    ]
+  },
+  "qa": {
+    "default_profile": "pr",
+    "profiles": [
+      {
+        "id": "pr",
+        "title": "PR validation",
+        "description": "Validate frozen changes through the assigned slot, recipe evidence and local CI parity.",
+        "template_id": "qa/default",
+        "inputs": {
+          "scope": { "kind": "pr" }
+        }
+      }
+    ]
   },
   "publication_review": {
     "fix-bug": {

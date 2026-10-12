@@ -48,8 +48,9 @@ function stateWith(packs: WorkspaceState['packs']): WorkspaceState {
   };
 }
 
-test('assertProjectOwnership guards cross-pack and unowned project dirs (pre-claim state)', () => {
+test('assertProjectOwnership guards cross-pack and unowned project dirs (pre-claim state)', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'fs-own-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   const dest = join(root, 'projects', 'app-farm');
 
   // Owned by another pack → always rejected, even before the dir exists.
@@ -85,8 +86,9 @@ test('assertProjectOwnership guards cross-pack and unowned project dirs (pre-cla
   );
 });
 
-test('findMissingState: complete state is a true no-op, missing pieces escalate', () => {
+test('findMissingState: complete state is a true no-op, missing pieces escalate', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'fs-noop-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   const ws = { farmslotDir: join(root, 'farmslot'), reposDir: join(root, 'repos') };
   const pack: PackJson = {
     name: 'p',
@@ -109,8 +111,9 @@ test('findMissingState: complete state is a true no-op, missing pieces escalate'
   assert.equal(findMissingState(pack, { machine: 'm', slots: [] }, ws).length, 2);
 });
 
-test('findMissingState escalates platform slots missing their device/browser resource', () => {
+test('findMissingState escalates platform slots missing their device/browser resource', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'fs-res-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   const ws = { farmslotDir: join(root, 'farmslot'), reposDir: join(root, 'repos') };
   const pack: PackJson = {
     name: 'p',
@@ -289,6 +292,10 @@ printf '{}\\n' > "$repo/$runtime_dir/agentic-runtime.json"
           name,
           repo_url: repo,
           default_branch: 'master',
+          qa: {
+            default_profile: 'smoke',
+            profiles: [{ id: 'smoke', title: 'Smoke', template_id: 'qa/default' }],
+          },
           paths: { runtime_dir: 'temp/recipe/runtime' },
         },
         null,
@@ -449,7 +456,15 @@ test('projectAdd refuses an existing single-branch slot clone that cannot check 
   mkdirSync(join(projectDir, 'setup'), { recursive: true });
   writeFileSync(
     join(projectDir, 'project.json'),
-    JSON.stringify({ name: 'app-farm', repo_url: repo, default_branch: 'main' }),
+    JSON.stringify({
+      name: 'app-farm',
+      repo_url: repo,
+      default_branch: 'main',
+      qa: {
+        default_profile: 'smoke',
+        profiles: [{ id: 'smoke', title: 'Smoke', template_id: 'qa/default' }],
+      },
+    }),
   );
   writeFileSync(join(projectDir, 'setup', 'cli.sh'), '#!/usr/bin/env bash\n');
   writeFileSync(

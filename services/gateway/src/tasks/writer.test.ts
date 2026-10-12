@@ -2,10 +2,10 @@
 // `projects/<project>/templates/worker/` directory.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { access, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { after, before } from 'node:test';
 
 import {
   DEFAULT_DEV_INTERACTIVE_PROFILE,
@@ -20,6 +20,20 @@ import { farmslotRoot } from '../projects/repo-root.js';
 // These tests exercise runs on the committed demo pool's slots (demo-ff-1),
 // which the loaders hide unless explicitly opted in.
 process.env.FARMSLOT_DEMO_POOL = '1';
+
+// Legacy template-selection regressions use a legacy project independently of
+// farmslot-farm's configured QA catalog.
+const legacyProject = `writer-legacy-${process.pid}-farm`;
+const legacyPack = path.join(farmslotRoot, 'projects', legacyProject);
+before(async () => {
+  await cp(path.join(farmslotRoot, 'projects/farmslot-farm'), legacyPack, { recursive: true });
+  const configFile = path.join(legacyPack, 'project.json');
+  const config = JSON.parse(await readFile(configFile, 'utf8'));
+  config.name = legacyProject;
+  delete config.execution_templates;
+  await writeFile(configFile, JSON.stringify(config));
+});
+after(() => rm(legacyPack, { recursive: true, force: true }));
 
 import { assertArtifactOnlyTaskGuard } from './artifact-only-guard.js';
 import { buildPlanningContextSection } from './planning-context.js';
@@ -643,6 +657,7 @@ test('mark shim records the slot-synced engine and honours FARMSLOT_MARK_CMD', a
   assert.doesNotMatch(marker, /FARMSLOT_AGENT_BIN|command -v farmslot-agent|exit 127/);
 
   const dir = await mkdtemp(path.join(os.tmpdir(), 'markwrap-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
   const stub = path.join(dir, 'stub.sh');
   // "$3" is the task dir: the override is the whole command line, so
   // `checklist mark` precede the shim's own "$DIR" "$@".
@@ -772,7 +787,7 @@ test('formatPrTitleSuffix normalizes the configured human gate suffix', () => {
 });
 
 test('writeTaskFile renders selected template variant and leaves source template unchanged', async (t) => {
-  const workerDir = path.join(farmslotRoot, 'projects', 'farmslot-farm', 'templates', 'worker');
+  const workerDir = path.join(legacyPack, 'templates', 'worker');
   const sourcePath = path.join(workerDir, 'dev.md');
   const variantPath = path.join(workerDir, 'dev-template-test.md');
   const source = await readFile(sourcePath, 'utf-8');
@@ -785,6 +800,7 @@ test('writeTaskFile renders selected template variant and leaves source template
   });
 
   const run = makeRun(`PROJ-${Date.now()}`, 'variant');
+  run.project = legacyProject;
   run.taskTemplate = { fileName: 'dev-template-test.md', variant: 'template-test' };
   taskPath = await writeTaskFile(run, { skipCollisionCheck: true });
 
@@ -808,6 +824,7 @@ test('writeTaskFile renders selected template variant and leaves source template
 
 test('writeTaskFile implicitly renders dev-interactive template for interactive dev', async (t) => {
   const run = makeRun(`PROJ-${Date.now()}`, 'interactive-template');
+  run.project = legacyProject;
   let taskPath = '';
   t.after(async () => {
     if (taskPath) await rm(path.dirname(taskPath), { recursive: true, force: true });
@@ -834,7 +851,7 @@ test('writeTaskFile implicitly renders dev-interactive template for interactive 
 });
 
 test('writeTaskFile implicitly renders pr-complete-interactive template for interactive pr-complete', async (t) => {
-  const workerDir = path.join(farmslotRoot, 'projects', 'farmslot-farm', 'templates', 'worker');
+  const workerDir = path.join(legacyPack, 'templates', 'worker');
   const variantPath = path.join(workerDir, 'pr-complete-interactive.md');
   await writeFile(
     variantPath,
@@ -851,6 +868,7 @@ test('writeTaskFile implicitly renders pr-complete-interactive template for inte
     'utf-8',
   );
   const run = makeRun('123', 'interactive-pr-complete');
+  run.project = legacyProject;
   run.flowType = 'pr-complete';
   run.familyRootTicketOrPr = '123';
   run.branch = 'feature/pr-123';
@@ -879,11 +897,12 @@ test('writeTaskFile implicitly renders pr-complete-interactive template for inte
 });
 
 test('writeTaskFile appends interactive PR-complete handoff to default template when variant is absent', async (t) => {
-  const workerDir = path.join(farmslotRoot, 'projects', 'farmslot-farm', 'templates', 'worker');
+  const workerDir = path.join(legacyPack, 'templates', 'worker');
   const variantPath = path.join(workerDir, 'pr-complete-interactive.md');
   const previousVariant = await readFile(variantPath, 'utf-8').catch(() => null);
   await rm(variantPath, { force: true });
   const run = makeRun('456', 'interactive-pr-complete-default');
+  run.project = legacyProject;
   run.flowType = 'pr-complete';
   run.mode = 'interactive';
   run.familyRootTicketOrPr = '456';
@@ -912,6 +931,7 @@ test('writeTaskFile appends interactive PR-complete handoff to default template 
 
 test('writeTaskFile fails loudly when explicit selected template disappears', async () => {
   const run = makeRun(`PROJ-${Date.now()}`, 'missing-template');
+  run.project = legacyProject;
   run.taskTemplate = { fileName: 'dev-definitely-missing.md', variant: 'definitely-missing' };
   await assert.rejects(
     () => writeTaskFile(run, { skipCollisionCheck: true }),

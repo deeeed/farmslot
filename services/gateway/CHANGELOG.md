@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Add a portable Farmslot QA preset and validation checklist with recipe evidence and required local CI parity.
+
 - Count review diff files from numstat rows instead of patch text while retaining untracked source identities.
 - Return artifact-relative package paths for retained evidence review.
 
