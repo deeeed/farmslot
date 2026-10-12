@@ -131,3 +131,47 @@ test('run ownership changes preserve native launch identity; changed source inpu
   assert.doesNotThrow(() => assertRetainedSourceInputs(undefined, {}));
   assert.equal(before.workerLock.entries[0].commit, 'a'.repeat(40));
 });
+
+test('worker prompts use the inherited pack in the admitted closure and never resolve a floating fallback', async (t) => {
+  const { mkdir, mkdtemp, rm, writeFile } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const path = await import('node:path');
+  const { configureProjectSources } = await import('@farmslot/slot-config');
+  const { resolveWorkerDispatchPrompt } = await import('../runners/worker-prompt.js');
+  const root = await mkdtemp(path.join(tmpdir(), 'source-prompt-test-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, 'demo'), { recursive: true });
+  await mkdir(path.join(root, 'shared/templates/prompts'), { recursive: true });
+  await writeFile(
+    path.join(root, 'shared/templates/prompts/worker-dispatch.md'),
+    'Locked dispatch: {{TASK_FILE}}',
+  );
+  const value = materialization();
+  value.roots.pack = root;
+  value.lock.packBindings = {
+    demo: { sourceId: 'pack', entry: 'demo' },
+    'farmslot-farm': { sourceId: 'pack', entry: 'shared' },
+  };
+  const { digest: _, ...content } = value.lock;
+  value.lock.digest = sourceLockDigest(content);
+  value.receipt.lockDigest = value.lock.digest;
+  const sources = { ...inputs(value), pack: value.lock.packBindings.demo };
+  let floatingReads = 0;
+  configureProjectSources(
+    async () => {
+      floatingReads++;
+      throw new Error('floating source read');
+    },
+    () => ['demo'],
+  );
+  const prompt = await withProjectSources(sources, () =>
+    resolveWorkerDispatchPrompt('demo', { taskFile: 'TASK.md' }),
+  );
+  assert.equal(prompt, 'Locked dispatch: TASK.md');
+  delete value.lock.packBindings['farmslot-farm'];
+  await assert.rejects(
+    withProjectSources(sources, () => resolveWorkerDispatchPrompt('demo', { taskFile: 'TASK.md' })),
+    /outside the admitted source closure/,
+  );
+  assert.equal(floatingReads, 0);
+});

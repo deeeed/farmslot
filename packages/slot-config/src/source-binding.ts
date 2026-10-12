@@ -65,16 +65,22 @@ export async function projectSourceContext(
 ): Promise<ProjectSourceContext | undefined> {
   if (legacy.getStore()) return undefined;
   const current = context.getStore();
-  if (current?.project === project) return current;
+  if (current) return lockedProjectContext(current, project);
   if (projectProvider) return projectProvider(project);
   if (process.env.FARMSLOT_SOURCE_RECEIPT || process.env.FARMSLOT_SOURCE_LOCK_DIGEST) {
     const { executionSourceContext } = await import('./source-environment.js');
     const execution = await executionSourceContext();
-    if (!execution || execution.project !== project)
-      throw new Error('Project does not belong to the admitted source closure');
-    return execution;
+    if (!execution) throw new Error('Project does not belong to the admitted source closure');
+    return lockedProjectContext(execution, project);
   }
   return undefined;
+}
+
+function lockedProjectContext(value: ProjectSourceContext, project: string): ProjectSourceContext {
+  if (value.project === project) return value;
+  const pack = value.materialization.lock.packBindings[project];
+  if (!pack) throw new Error(`Pack is outside the admitted source closure: ${project}`);
+  return { ...value, project, pack };
 }
 
 export function resolveSourceBinding(

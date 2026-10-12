@@ -59,6 +59,7 @@ import {
   assertWarmReviewContext,
   parseReviewRequestContext,
 } from '@farmslot/review-dispatch';
+import { currentProjectSources } from '@farmslot/slot-config';
 
 import { selectAgentContext } from '../agents/contexts.js';
 import { digest, RUBRIC_VERSION } from '../assessment/failure-triage/packet.js';
@@ -169,7 +170,7 @@ import {
   resolveReviewWorkspaceOwner,
 } from '../security/native-worker-owner.js';
 import { currentSessionOriginator } from '../security/work-originator.js';
-import { withSourcePlanning } from '../sources/runtime.js';
+import { SourceAdmissionRefusal, withSourcePlanning } from '../sources/runtime.js';
 import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-template-catalog.js';
 import { resolveWorkerTemplateSelectionForRun } from '../tasks/worker-template-options.js';
 
@@ -429,6 +430,14 @@ async function runCreateWithSources(
 
   // Load project config once — used for PR-ref resolution and safety-tier default.
   const projectConfig = await loadProjectConfig(params.project);
+  if (currentProjectSources() && params.runner !== 'none') {
+    const { resolveWorkerDispatchPrompt } = await import('../runners/worker-prompt.js');
+    try {
+      await resolveWorkerDispatchPrompt(params.project, { taskFile: params.taskFile ?? 'TASK.md' });
+    } catch (error) {
+      throw new SourceAdmissionRefusal((error as Error).message, { cause: error });
+    }
+  }
   // Resolve PR references before selecting static workspace placement.
   if (PR_BOUND_FLOW_TYPES.has(params.flowType)) {
     if (projectConfig?.ci?.repo)

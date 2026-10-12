@@ -156,3 +156,28 @@ test('a slow unrelated fetch cannot prevent healthy source publication or admiss
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('inherited dispatch prompts include the configured shared pack in the same lock', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'source-shared-prompts-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const declarations: SourceConfiguration = {
+    ...config,
+    sources: [
+      ...config.sources,
+      { id: 'framework', kind: 'pack', repo: 'https://example.test/owner/framework' },
+    ],
+    packs: { ...config.packs, 'farmslot-farm': { sourceId: 'framework', entry: '.' } },
+  };
+  const git = new FixtureSources(root);
+  const authority = await SourceAuthority.open(declarations, root, git);
+  await authority.reconcile();
+  const lock = await authority.lock({ project: 'demo' });
+  assert.deepEqual(
+    lock.entries.map((entry) => entry.sourceId),
+    ['demo', 'framework'],
+  );
+  assert.deepEqual(lock.packBindings['farmslot-farm'], declarations.packs['farmslot-farm']);
+  git.denied.add('framework');
+  await authority.reconcile(['framework']);
+  await assert.rejects(authority.lock({ project: 'demo' }), /unavailable/);
+});

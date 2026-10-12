@@ -5,6 +5,8 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { projectPackRoot } from '@farmslot/slot-config';
+
 import { farmslotRoot } from './config.js';
 import { assertNoUnknownPlaceholders } from './hooks.js';
 
@@ -14,9 +16,7 @@ export async function loadPromptTemplate(
   vars: Record<string, string>,
 ): Promise<string | null> {
   const templatePath = path.join(
-    farmslotRoot,
-    'projects',
-    project,
+    await projectPackRoot(project, path.join(farmslotRoot, 'projects', project)),
     'templates',
     'prompts',
     templateName,

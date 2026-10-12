@@ -202,6 +202,20 @@ export class SourceAuthority {
           if (!project)
             throw new Error(`Declared pack has no project.json: ${id}/${binding.entry}`);
           dependencies.push(...sourceDependencies(project));
+          // These inherited prompts are pack inputs too. They must share this
+          // closure instead of resolving another pack when dispatch starts.
+          const sharedPack = this.configuration.packs['farmslot-farm'];
+          if (
+            sharedPack &&
+            sharedPack.sourceId !== id &&
+            ['worker-dispatch.md', 'worker-nudge.md'].some(
+              (name) =>
+                !tree.files.some(
+                  (file) => file.path === path.posix.join(binding.entry, 'templates/prompts', name),
+                ),
+            )
+          )
+            dependencies.push(sharedPack);
           const texts: string[] = [];
           const collect = (value: unknown): void => {
             if (typeof value === 'string') texts.push(value);
