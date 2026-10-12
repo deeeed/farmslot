@@ -63,6 +63,8 @@ Each artifact package belongs to one execution attempt. Preflight and execution
 refuse a directory containing an existing recipe package, including failed or
 partial attempts. Rerun with a fresh `artifactsDir` or `--artifacts-dir`; keep the
 old directory so published evidence and manifests still reference the same bytes.
+The task-mode CLI defaults each run to its own `artifacts/runs/` child directory,
+so task-level authored inputs and the acceptance ledger stay separate.
 
 ## CLI
 

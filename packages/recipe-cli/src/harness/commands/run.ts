@@ -762,7 +762,7 @@ export function resolveRecipeExecutionArtifacts(
       explicit !== undefined
         ? path.resolve(explicit)
         : taskDir
-          ? path.join(taskDir, 'artifacts', layout.taskSubdir ?? '')
+          ? path.join(taskDir, 'artifacts', layout.taskSubdir ?? layout.fresh)
           : path.join(target, 'temp', 'recipe', layout.fresh),
     taskDir,
     claims: registeredTaskClaims(taskDir),
