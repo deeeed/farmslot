@@ -118,15 +118,20 @@ if (phase === 'serve') {
   const repo = path.join(root, 'checkout');
   const project = 'review-round-proof';
   const runId = randomUUID();
+  const raceRunId = randomUUID();
+  const raceSlotId = `budget-${raceRunId}`;
+  const raceRepo = path.join(root, 'waiting-checkout');
   const slotId = `budget-${runId}`;
   const out = path.resolve(
     process.env.FARMSLOT_REVIEW_BUDGET_OUT ?? 'temp/review-round-proof',
     randomUUID(),
   );
   const logs: string[] = [];
+  let primaryFailure: unknown;
   let gateway: ChildProcess | undefined;
   let ui: ChildProcess | undefined;
   let metro: ChildProcess | undefined;
+  let waitingRequest: ChildProcess | undefined;
   let route: string | undefined;
   let env: NodeJS.ProcessEnv;
   const helper = (...args: string[]): unknown => {
@@ -209,6 +214,7 @@ if (phase === 'serve') {
     );
     git('add', 'example.js');
     git('commit', '-S', '-m', 'test: add review budget control');
+    execFileSync('git', ['clone', '--quiet', '--local', repo, raceRepo]);
     const taskDir = path.join(repo, 'tasks/control');
     mkdirSync(taskDir, { recursive: true });
     writeFileSync(path.join(repo, '.git/info/exclude'), 'tasks/\n');
@@ -259,6 +265,15 @@ if (phase === 'serve') {
           enabled: true,
           mode: 'dispatch',
         },
+        {
+          id: raceSlotId,
+          project,
+          platform: 'cli',
+          repo: raceRepo,
+          session: raceSlotId,
+          enabled: true,
+          mode: 'dispatch',
+        },
       ],
     });
     writeJson(path.join(root, '.farm-status.json'), {
@@ -272,6 +287,15 @@ if (phase === 'serve') {
           lifecycle: 'busy',
           phase: 'review-gate',
           current_run_id: runId,
+        },
+        {
+          slot: raceSlotId,
+          machine: hostname(),
+          project,
+          platform: 'cli',
+          lifecycle: 'busy',
+          phase: 'review-gate',
+          current_run_id: raceRunId,
         },
       ],
     });
@@ -306,6 +330,7 @@ if (phase === 'serve') {
       status: 'human-gating',
       project,
       ticketOrPr: 'MANUAL-REVIEW-BUDGET',
+      links: [{ label: 'PR', url: 'https://github.com/example/review-budget/pull/42' }],
       slotId,
       branch: 'budget-change',
       taskFile: path.join(retained, 'TASK.md'),
@@ -330,6 +355,32 @@ if (phase === 'serve') {
       engineState: { generation: 0 },
     };
     writeJson(path.join(root, '.runs', `${runId}.json`), run);
+    const raceDecision = {
+      id: 'waiting-review-request',
+      type: 'engine_human_gate',
+      title: 'Waiting review',
+      description: '',
+      actions: [{ id: 'request-review', label: 'Review', style: 'secondary' }],
+      createdAt: now,
+      payload,
+    };
+    writeJson(path.join(root, '.runs', `${raceRunId}.json`), {
+      ...run,
+      id: raceRunId,
+      slotId: raceSlotId,
+      decisions: [raceDecision],
+    });
+    const issueIds = [randomUUID(), randomUUID()];
+    for (const [index, id] of issueIds.entries())
+      writeJson(path.join(root, '.runs', `${id}.json`), {
+        ...run,
+        id,
+        slotId: null,
+        ticketOrPr: 'example/issue-scope#42',
+        links: [],
+        decisions: [{ ...raceDecision, id: `issue-gate-${index}` }],
+        reviewRoundAdmissions: index ? [] : ['issue-one', 'issue-two', 'issue-three'],
+      });
     const gatewayPort = await port();
     const uiPort = await port();
     env = {
@@ -360,25 +411,48 @@ if (phase === 'serve') {
     const control = process.argv
       .find((arg) => arg.startsWith('--negative-control='))
       ?.split('=')[1];
-    if (control) {
-      assert.equal(control, 'rpc', 'unknown negative control');
-      const loader = path.join(temporary, 'control.mjs');
-      writeFileSync(
-        loader,
-        `import assert from 'node:assert/strict';
+    assert.ok(
+      !control || ['rpc', 'consumption', 'scope'].includes(control),
+      'unknown negative control',
+    );
+    const loader = path.join(temporary, 'schedule.mjs');
+    const waitingMarker = path.join(out, 'request-waiting');
+    const releaseMarker = path.join(out, 'request-release');
+    const delaySource = `
+if (params.runId === ${JSON.stringify(raceRunId)}) {
+  const {existsSync, writeFileSync} = await import('node:fs');
+  writeFileSync(${JSON.stringify(waitingMarker)}, 'validated');
+  const deadline = Date.now() + 30000;
+  while (!existsSync(${JSON.stringify(releaseMarker)})) {
+    if (Date.now() >= deadline) throw new Error('Review budget schedule timed out');
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+}`;
+    writeFileSync(
+      loader,
+      `import assert from 'node:assert/strict';
 import {writeFileSync} from 'node:fs'; import {registerHooks} from 'node:module';
+const control = ${JSON.stringify(control ?? null)};
 registerHooks({load(url, context, nextLoad) {
   const result = nextLoad(url, context);
-  if (!url.endsWith('/services/gateway/src/methods/run.ts')) return result;
   const before = String(result.source);
-  const after = before.replace(/await assertReviewRoundAvailable\\(getRun\\(params\\.runId\\)!?\\);/, 'void params.runId;');
-  assert.notEqual(after, before, 'negative control must change its target');
-  writeFileSync(${JSON.stringify(path.join(out, 'negative-control-applied.json'))}, JSON.stringify({control: 'rpc'}));
+  let after = before;
+  if (control === 'scope' && url.endsWith('/services/gateway/src/review/review-round-budget.ts')) {
+    after = before.replace(/requirePRContext:\\s*true/g, 'requirePRContext: false');
+    assert.notEqual(after, before, 'scope control must change its target');
+  } else if (url.endsWith('/services/gateway/src/methods/run.ts')) {
+    if (control === 'rpc') after = after.replace(/await assertReviewRoundAvailable\\(getRun\\(params\\.runId\\)!?\\);/, 'void params.runId;');
+    if (control === 'rpc' || control === 'consumption') after = after.replace(/assertReviewBudgetAtConsumption\\?\\.\\(\\);/, 'void params.runId;');
+    if (control && control !== 'scope') assert.notEqual(after, before, 'RPC control must change its target');
+    const delayed = after.replace(/(const currentDescription = await assertReadyPublishResolveIsFresh\\(existing, decision, params\\);)/, '$1' + ${JSON.stringify(delaySource)});
+    assert.notEqual(delayed, after, 'schedule must delay the real awaited probe boundary');
+    after = delayed;
+  } else return result;
+  if (control) writeFileSync(${JSON.stringify(path.join(out, 'negative-control-applied.json'))}, JSON.stringify({control}));
   return {...result, source: after};
 }});`,
-      );
-      env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ''} --import ${loader}`;
-    }
+    );
+    env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ''} --import ${loader}`;
     gateway = spawn(
       process.execPath,
       ['--import', 'tsx', fileURLToPath(import.meta.url), 'serve', out, runId],
@@ -402,6 +476,12 @@ registerHooks({load(url, context, nextLoad) {
     const firstGate = initial.decisions.find((decision) => !decision.resolvedAt)!;
     assert.equal(firstGate.payload?.kind, 'ready');
     assert.equal((firstGate.payload as ReadyGatePayload).reviewRoundBudget?.used, 4);
+    const issueBudgets = issueIds.map((id) => {
+      const observed = (rpc('run.get', { runId: id }) as { run: Run }).run;
+      return (observed.decisions[0].payload as ReadyGatePayload).reviewRoundBudget!.used;
+    });
+    assert.deepEqual(issueBudgets, [3, 0], 'separate issue runs keep canonical budgets');
+    writeJson(path.join(out, 'issue-scope.json'), { issueIds, issueBudgets });
     if (process.argv.includes('--ui')) {
       assert.ok(env.FARMSLOT_CDP_PORT, 'FARMSLOT_CDP_PORT must select the owned browser');
       ui = spawn(
@@ -444,11 +524,53 @@ registerHooks({load(url, context, nextLoad) {
       );
       writeJson(path.join(out, 'browser-four-round.json'), browserBudget());
     }
+    let waitingOutput = '';
+    let waitingError = '';
+    waitingRequest = spawn(
+      process.execPath,
+      [
+        path.join(source, 'apps/command-center/scripts/cdp.mjs'),
+        'gateway',
+        'run.resolveDecision',
+        JSON.stringify({
+          runId: raceRunId,
+          decisionId: raceDecision.id,
+          actionId: 'request-review',
+          selectionData: { reviewRequest: selection },
+        }),
+      ],
+      { cwd: source, env, stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    waitingRequest.stdout?.on('data', (data) => (waitingOutput += String(data)));
+    waitingRequest.stderr?.on('data', (data) => (waitingError += String(data)));
+    const waitingExit = once(waitingRequest, 'exit');
+    await waitFor(() => existsSync(waitingMarker), 'request passed its early budget check');
     rpc('run.resolveDecision', {
       runId,
       decisionId: firstGate.id,
       actionId: 'request-review',
       selectionData: { reviewRequest: selection },
+    });
+    await waitFor(
+      () => readRun().reviewRoundAdmissions?.length === 5,
+      'sibling spends fifth during awaited validation',
+    );
+    writeFileSync(releaseMarker, 'continue');
+    const [waitingCode] = await waitingExit;
+    assert.notEqual(
+      waitingCode,
+      0,
+      'the delayed request must refuse before consuming its decision',
+    );
+    assert.match(waitingError, /REVIEW_ROUND_LIMIT_REACHED/);
+    const waitingRun = (rpc('run.get', { runId: raceRunId }) as { run: Run }).run;
+    assert.equal(waitingRun.decisions[0].resolvedAt, undefined);
+    assert.equal(waitingRun.decisions[0].selectionData, undefined);
+    writeJson(path.join(out, 'concurrent-request.json'), {
+      waitingCode,
+      waitingOutput,
+      waitingError,
+      waitingRun,
     });
     await waitFor(() => {
       const context = readRun().agentContexts?.find((entry) => entry.role === 'review');
@@ -706,6 +828,7 @@ registerHooks({load(url, context, nextLoad) {
     const hashes = Object.fromEntries(
       [
         'services/gateway/src/review/review-round-budget.ts',
+        'services/gateway/src/review/session-mode.ts',
         'services/gateway/src/review/native-review-agent.ts',
         'services/gateway/src/methods/run.ts',
         'services/gateway/src/run-engine/engine-decisions.ts',
@@ -724,6 +847,8 @@ registerHooks({load(url, context, nextLoad) {
       hashes,
       checks: [
         'four recovery receipts seeded before startup',
+        'normalized issue runs retain separate pre-PR budgets',
+        'concurrent fifth during awaited validation preserves the waiting gate',
         'public RPC starts actual native fifth reviewer',
         'sixth refusal preserves pending decision',
         'gateway restart retains five-round budget',
@@ -734,17 +859,64 @@ registerHooks({load(url, context, nextLoad) {
       browser: Boolean(route),
       nativeUi: Boolean(simulator),
     });
-    console.log(JSON.stringify({ pass: true, runId, out }));
+    if (process.argv.includes('--cleanup-disconnect')) env.FARMSLOT_CDP_PORT = String(await port());
+    console.log(JSON.stringify({ pass: true, runId, raceRunId, out }));
+  } catch (error) {
+    primaryFailure = error;
+    throw error;
   } finally {
-    if (route) helper('close', route);
-    await Promise.all([stop(metro), stop(ui), stop(gateway)]);
-    const native = new NativeSessionClient(path.join(temporary, 'native'));
-    const hostFile = path.join(native.root, 'host.json');
-    if (existsSync(hostFile)) {
-      const host = JSON.parse(readFileSync(hostFile, 'utf8'));
-      if (matchesProcess(host.pid, native.root)) process.kill(host.pid, 'SIGTERM');
-    }
-    writeJson(path.join(out, 'logs.json'), logs);
-    rmSync(temporary, { recursive: true, force: true });
+    const failures: unknown[] = [];
+    let nativeHostStopped = true;
+    const cleanup = async (action: () => unknown) => {
+      try {
+        await action();
+      } catch (error) {
+        failures.push(error);
+      }
+    };
+    await cleanup(() => {
+      if (route) helper('close', route);
+    });
+    const stopped = await Promise.allSettled([
+      stop(waitingRequest),
+      stop(metro),
+      stop(ui),
+      stop(gateway),
+    ]);
+    failures.push(
+      ...stopped.flatMap((result) => (result.status === 'rejected' ? [result.reason] : [])),
+    );
+    await cleanup(async () => {
+      const native = new NativeSessionClient(path.join(temporary, 'native'));
+      const hostFile = path.join(native.root, 'host.json');
+      if (existsSync(hostFile)) {
+        const host = JSON.parse(readFileSync(hostFile, 'utf8'));
+        if (matchesProcess(host.pid, native.root)) {
+          process.kill(host.pid, 'SIGTERM');
+          const deadline = Date.now() + 5_000;
+          while (matchesProcess(host.pid, native.root) && Date.now() < deadline) await pause(20);
+          nativeHostStopped = !matchesProcess(host.pid, native.root);
+          assert.equal(nativeHostStopped, true, 'owned native proof host stops during teardown');
+        }
+      }
+    });
+    await cleanup(() => writeJson(path.join(out, 'logs.json'), logs));
+    await cleanup(() => rmSync(temporary, { recursive: true, force: true }));
+    await cleanup(() =>
+      writeJson(path.join(out, 'cleanup.json'), {
+        fixtureRemoved: !existsSync(temporary),
+        nativeHostStopped,
+        processesStopped: [gateway, ui, metro].every(
+          (child) => !child || child.exitCode !== null || child.signalCode !== null,
+        ),
+        failures: failures.length,
+      }),
+    );
+    if (failures.length)
+      throw new AggregateError(
+        primaryFailure ? [primaryFailure, ...failures] : failures,
+        'Review proof cleanup failed',
+        { cause: primaryFailure },
+      );
   }
 }

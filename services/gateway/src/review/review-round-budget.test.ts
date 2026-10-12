@@ -6,6 +6,8 @@ import test, { type TestContext } from 'node:test';
 
 import type { ReadyGatePayload, ReviewStatus, RunDecision } from '@farmslot/protocol';
 
+import '../runtime/mock-pty.test-support.js';
+
 import { GatewayMethodError } from '../core/method-error.js';
 import {
   archiveRun,
@@ -32,13 +34,30 @@ function fixture(t: TestContext, ref = `example/budget-${randomUUID()}#42`) {
     ticketOrPr: ref,
     runner: 'scripted',
   });
+  updateRun(run.id, {
+    links: [{ label: 'PR', url: `https://github.com/${ref.replace('#', '/pull/')}` }],
+  });
   t.after(async () => {
     if (!getRun(run.id)) return;
     updateRun(run.id, { status: 'failed' });
     await deleteRun(run.id);
   });
-  return run;
+  return getRun(run.id)!;
 }
+
+test('normalized issue references do not pool pre-PR rounds or contaminate a later PR', async (t) => {
+  const ref = `example/issue-${randomUUID()}#42`;
+  const first = fixture(t, ref);
+  const second = fixture(t, ref);
+  for (const run of [first, second]) updateRun(run.id, { links: [] });
+  for (let index = 0; index < 3; index++) await admitReviewRound(first.id, `pre-pr-${index}`);
+  assert.equal((await runReviewRoundBudget(getRun(second.id)!)).used, 0);
+  updateRun(second.id, {
+    links: [{ label: 'PR', url: `https://github.com/${ref.replace('#42', '/pull/99')}` }],
+  });
+  assert.equal((await runReviewRoundBudget(getRun(second.id)!)).used, 0);
+  assert.equal((await runReviewRoundBudget(getRun(first.id)!)).used, 3);
+});
 
 test('pipeline and gate chains share five admissions persisted before launch', async (t) => {
   const run = fixture(t);

@@ -95,10 +95,10 @@ function scopedRuns(run: Run, stored: readonly Run[]): Run[] {
   for (const current of getAllRuns()) byId.set(current.id, current);
   byId.set(run.id, getRun(run.id) ?? run);
   const current = byId.get(run.id)!;
-  const identity = reviewPRIdentity(current);
+  const identity = reviewPRIdentity(current, { requirePRContext: true });
   return identity
     ? [...byId.values()].filter((candidate) => {
-        const other = reviewPRIdentity(candidate);
+        const other = reviewPRIdentity(candidate, { requirePRContext: true });
         return (
           candidate.id === current.id ||
           Boolean(
@@ -148,6 +148,16 @@ export async function attachReviewRoundBudget(run: Run): Promise<Run> {
 
 export async function assertReviewRoundAvailable(run: Run): Promise<void> {
   refuseSpentBudget(await runReviewRoundBudget(run));
+}
+
+/** Load history first, then check fresh live state synchronously at consumption. */
+export async function prepareReviewRoundAvailabilityCheck(runId: string): Promise<() => void> {
+  const stored = await getAllRunsWithArchived();
+  return () => {
+    const run = getRun(runId);
+    if (!run) throw new Error(`Run not found: ${runId}`);
+    refuseSpentBudget(reviewRoundBudget(admissionsFor(scopedRuns(run, stored)).length));
+  };
 }
 
 /** Reserve synchronously from fresh state, then persist before any runner launch. */

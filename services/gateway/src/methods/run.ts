@@ -79,7 +79,10 @@ import { readTriagePolicy } from '../intelligence/triage/policy.js';
 import { admittedFailureSnapshot } from '../intelligence/triage/snapshot.js';
 import type { MachineParkGateRestoreResult } from '../machine-parking/service.js';
 import { assertStartRefSkipPrepareEligible } from '../projects/start-ref-policy.js';
-import { assertReviewRoundAvailable } from '../review/review-round-budget.js';
+import {
+  assertReviewRoundAvailable,
+  prepareReviewRoundAvailabilityCheck,
+} from '../review/review-round-budget.js';
 import { captureDirectReviewPublication } from '../review-publication/direct.js';
 import {
   assertReviewWorkspaceAdmitted,
@@ -1814,11 +1817,17 @@ export async function resolveRunDecision(
           'The run or gate package changed during validation. Refresh the gate.',
         );
     }
+    const assertReviewBudgetAtConsumption =
+      decision.type === 'engine_human_gate' && isHumanGateReviewRequestAction(params.actionId)
+        ? await prepareReviewRoundAvailabilityCheck(params.runId)
+        : undefined;
     assertDecisionStillUnresolved(params.runId, params.decisionId);
     assertNotGateParked(params.runId, getRun(params.runId)!);
     decision = getRun(params.runId)!.decisions.find(
       (candidate) => candidate.id === params.decisionId,
     )!;
+    // No review-request await separates this fresh check from decision consumption.
+    assertReviewBudgetAtConsumption?.();
     // Past every refusal now, so the normalization may persist.
     if (normalizedReviews) normalizeExhaustedReviewContinuationsForRun(params.runId);
     if (decision.type === 'engine_human_gate' && isHumanGateReviewRequestAction(params.actionId)) {

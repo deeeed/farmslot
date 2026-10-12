@@ -1,6 +1,7 @@
 import {
   parseGitHubPullUrl,
   parseGitHubRef,
+  prNumberFromRunInput,
   type ReviewGatePayload,
   type ReviewMode,
   type ReviewSessionRefusalReason,
@@ -49,14 +50,26 @@ const sessionKey = (scope: Pick<WarmReviewerScope, 'repository' | 'prNumber' | '
   `${scope.repository.toLowerCase()}#${scope.prNumber}::${scope.reviewId}`;
 
 export function reviewPRIdentity(
-  run: Pick<Run, 'ticketOrPr' | 'links' | 'prWork'> | null | undefined,
+  run:
+    | (Pick<Run, 'ticketOrPr' | 'links' | 'prWork'> & Partial<Pick<Run, 'flowType' | 'prNumber'>>)
+    | null
+    | undefined,
+  options: { requirePRContext?: boolean } = {},
 ): { repository: string; prNumber: number } | null {
   if (!run) return null;
   const pr = run.prWork?.pr;
   if (pr) return { repository: pr.repo, prNumber: pr.number };
-  const source =
-    run.links?.find((link) => link.label.toLowerCase() === 'pr')?.url ?? run.ticketOrPr;
-  const ref = parseGitHubRef(source) ?? parseGitHubPullUrl(source);
+  const prLink = run.links?.find((link) => link.label.toLowerCase() === 'pr');
+  const source = prLink?.url ?? run.ticketOrPr;
+  const pull = parseGitHubPullUrl(source);
+  if (
+    options.requirePRContext &&
+    !prLink &&
+    !pull &&
+    (!run.flowType || prNumberFromRunInput({ ...run, flowType: run.flowType }) === null)
+  )
+    return null;
+  const ref = parseGitHubRef(source) ?? pull;
   return ref ? { repository: ref.repo, prNumber: ref.number } : null;
 }
 

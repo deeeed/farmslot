@@ -25,6 +25,8 @@ a PR identity exists, admission is scoped to its canonical run. Initial, retry,
 WARM/COLD, pipeline, standalone and publish-gate reviewer attempts MUST spend
 this same budget, including failed and interrupted attempts. A worker fix is
 not a reviewer round. Reattaching to an admitted attempt MUST reuse its receipt.
+An ambiguous qualified GitHub reference alone MUST NOT establish PR scope for a
+ticket flow. Existing PR linkage, a pull URL or a PR-bound flow supplies that context.
 
 Admission receipts MUST persist in the existing run snapshots before a runner
 can start. Replay, restart and a different gate or run MUST NOT refund rounds.
