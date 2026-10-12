@@ -3,8 +3,8 @@
 > Operator-requested publication review for a completed Farmslot run.
 > Execute the checklist directly. Do not use shortcut review commands.
 
-> Checklist marker: run `temp/tasks/golden/review/mark start` once, then `temp/tasks/golden/review/mark N`
-> after each checklist item. Finish with `temp/tasks/golden/review/mark complete --mark-last`.
+> Checklist marker: run `temp/tasks/golden/review/mark --checklist REVIEW.md --signal REVIEW-SIGNAL.json start` once, then `temp/tasks/golden/review/mark --checklist REVIEW.md --signal REVIEW-SIGNAL.json N`
+> after each checklist item. Finish with `temp/tasks/golden/review/mark --checklist REVIEW.md --signal REVIEW-SIGNAL.json complete --mark-last`.
 
 ## Task
 
@@ -22,7 +22,7 @@ VALIDATION_DEPTH: full-live
 
 ## Checklist
 
-- [ ] **1. Start** — run `temp/tasks/golden/review/mark start` and `temp/tasks/golden/review/mark 1`.
+- [ ] **1. Start** — run `temp/tasks/golden/review/mark --checklist REVIEW.md --signal REVIEW-SIGNAL.json start` and `temp/tasks/golden/review/mark --checklist REVIEW.md --signal REVIEW-SIGNAL.json 1`.
 - [ ] **2. Read quality rules**:
   ```bash
   cd /nonexistent/golden-repo
@@ -70,7 +70,7 @@ VALIDATION_DEPTH: full-live
   Use `## Verdict: ISSUES` when any blocking issue or cheap introduced nit remains.
 - [ ] **8. Complete** - run:
   ```bash
-  temp/tasks/golden/review/mark complete --mark-last
+  temp/tasks/golden/review/mark --checklist REVIEW.md --signal REVIEW-SIGNAL.json complete --mark-last
   ```
 
 ---

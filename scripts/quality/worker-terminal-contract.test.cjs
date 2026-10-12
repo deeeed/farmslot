@@ -51,6 +51,21 @@ const templateOk = [
 ].join('\n');
 assert.deepEqual(lintWorkerTemplateAgainstContract(templateOk, devContract), []);
 
+const reviewPathBindingContract = resolveWorkerTerminalContract(null, 'review');
+assert.deepEqual(
+  lintWorkerTemplateAgainstContract(
+    '- [ ] Write `{{TASK_DIR}}/{{REVIEW_FEEDBACK}}`\n- [ ] Run `{{TASK_DIR}}/mark complete`',
+    reviewPathBindingContract,
+  ),
+  [],
+);
+assert.ok(
+  lintWorkerTemplateAgainstContract(
+    '- [ ] Run `{{TASK_DIR}}/mark complete`',
+    reviewPathBindingContract,
+  ).some((issue) => issue.includes('artifacts/review-feedback.md')),
+);
+
 const checklistOverrideTemplate = [
   '# Worker: CI Fix Pass',
   '- [ ] Write `artifacts/learnings.md`',

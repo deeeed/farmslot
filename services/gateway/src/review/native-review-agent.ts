@@ -266,7 +266,10 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
           resultRelPath,
         );
         let template = scopeReviewFeedbackPath(
-          await expandReviewTemplate(vars, taskDir, runId, validationDepth),
+          await expandReviewTemplate(vars, taskDir, runId, validationDepth, {
+            ...target,
+            feedback: feedbackRelPath,
+          }),
           feedbackRelPath,
           resultRelPath,
         );
