@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.18.1 - 2026-10-12
+
+- Update shared runtime dependencies for bounded recipe log observations.
+
 ## 0.18.0 - 2026-10-12
 
 - Consume the shared acceptance contract and engine-derived claims; automatic ledgers permit only audited untestable overrides (ADR-062).

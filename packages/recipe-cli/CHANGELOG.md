@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+## 0.14.2 - 2026-10-12
+
 - Validate called log-observation parameters before execution using the shared invocation checks.
 
 ## 0.14.1 - 2026-10-12

@@ -38,10 +38,14 @@ export default function RoadmapDetailScreen({ screen }: { screen: RoadmapDetailS
         <View style={styles.badges}>
           <Text style={styles.stage}>{item.stage}</Text>
           <Text style={styles.project}>{item.project}</Text>
-          {delivery ? <Text style={styles.delivery}>{delivery.status}</Text> : null}
         </View>
         <Text style={styles.ref}>{item.id}</Text>
         <Text style={styles.title}>{item.title}</Text>
+        <Text
+          style={[styles.delivery, delivery?.status === 'delivered' && { color: colors.statusOk }]}
+        >
+          Delivery: {delivery?.status ?? 'unknown'}
+        </Text>
         {item.targetProjects?.length ? (
           <Text style={styles.muted}>Targets: {item.targetProjects.join(', ')}</Text>
         ) : null}
@@ -158,7 +162,7 @@ const styles = StyleSheet.create({
   },
   project: { color: colors.textSecondary, fontFamily: fonts.mono, fontSize: fonts.sizeXs },
   delivery: {
-    color: colors.statusWarn,
+    color: colors.textPrimary,
     fontFamily: fonts.mono,
     fontSize: fonts.sizeXs,
     fontWeight: '900',
