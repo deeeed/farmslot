@@ -433,6 +433,20 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
   assert.equal(owner.status, 'valid', JSON.stringify(owner.findings));
   const valid = await check();
   assert.equal(valid.state, 'ready', JSON.stringify(valid.reasons));
+  const retained = (await readRecordedEvidencePackage(directory)).input;
+  const partial = {
+    ...retained,
+    summary: { ...documents['summary.json'], total: 2, passed: 2, stopAfterNode: 'assert' },
+    trace: { entries: documents['trace.json'].entries.slice(0, 2) },
+  };
+  const partialValidation = validateRecordedEvidencePackage(partial);
+  assert.equal(partialValidation.status, 'valid', JSON.stringify(partialValidation.findings));
+  const partialGate = await collectRunGateReadiness(run, prepared, {
+    ...sources,
+    recordedEvidence: async () => [partial],
+  });
+  assert.ok(partialGate.reasons.some((reason) => reason.code === 'evidence-invalid'));
+
   await writeFile(path.join(root, prepared.artifactPath), JSON.stringify(prepared));
   const recoveredRun = {
     ...run,

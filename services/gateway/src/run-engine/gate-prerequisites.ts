@@ -11,6 +11,7 @@ import {
 import {
   type DecisionAction,
   isPrerequisiteGatePayload,
+  isRecord,
   isTerminalRunStatus,
   qualifyingPassingReviews,
   type ReadyGatePrPackage,
@@ -352,6 +353,9 @@ export async function collectRunGateReadiness(
           inputs.every((input) => validateRecordedEvidencePackage(input).status === 'valid');
         const satisfied = inputs.every(
           (input) =>
+            isRecord(input.summary) &&
+            input.summary.status === 'pass' &&
+            input.summary.stopAfterNode === undefined &&
             input.claims &&
             ['complete', 'not-required'].includes(input.claims.recording.status) &&
             input.claims.criteria.every(

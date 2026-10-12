@@ -18,6 +18,8 @@ import { hostname, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { centerOfRect } from 'agent-device';
+
 import { NativeSessionClient } from '@farmslot/agent-runtime/native';
 import { matchesProcess } from '@farmslot/agent-runtime/native/storage';
 import {
@@ -48,7 +50,6 @@ const criteria = Array.from({ length: 11 }, (_, index) => `Registered requiremen
 let gateway: ChildProcess | undefined;
 let ui: ChildProcess | undefined;
 let metro: ChildProcess | undefined;
-let closeDevice: (() => Promise<unknown>) | undefined;
 let env: NodeJS.ProcessEnv;
 let route: string | undefined;
 const checks: string[] = [];
@@ -535,6 +536,16 @@ try {
         pattern: String.raw`if \(progress\.kind === ['"]unproven['"]\) return ['"]reconciling['"]`,
         replacement: 'if (progress.kind === "unproven") return "blocked"',
       },
+      restart: {
+        file: 'services/gateway/src/methods/run.ts',
+        pattern: String.raw`!\[['"]blocked['"],\s*['"]human-gating['"]\]\.includes\(afterResolve\.status\)`,
+        replacement: '![' + '"blocked"' + '].includes(afterResolve.status)',
+      },
+      'stopped-native': {
+        file: 'services/gateway/src/runners/run-progress.ts',
+        pattern: String.raw`state === ['"]idle['"] \|\| nativeWorkerLiveStatus\(snapshot\) === ['"]idle['"]`,
+        replacement: 'state === "idle"',
+      },
       resolve: {
         file: 'services/gateway/src/methods/run.ts',
         pattern:
@@ -613,6 +624,7 @@ try {
     metro = spawn(
       process.execPath,
       [
+        '--dns-result-order=ipv4first',
         path.join(source, 'node_modules/expo/bin/cli'),
         'start',
         '--dev-client',
@@ -654,26 +666,32 @@ try {
       'isolated Companion Metro',
       90_000,
     );
-    const { createAgentDeviceClient } = await import('agent-device');
-    const device = createAgentDeviceClient({
-      session: `gate-${runId}`,
-      stateDir: path.join(temporary, 'device'),
-      lockPolicy: 'reject',
-      lockPlatform: 'ios',
-    });
-    const selection = {
-      platform: 'ios' as const,
-      target: 'mobile' as const,
-      udid: simulator,
-      session: `gate-${runId}`,
+    interface NativeUiNode {
+      AXLabel?: string;
+      frame: { x: number; y: number; width: number; height: number };
+    }
+    const nativeTree = (): NativeUiNode[] =>
+      JSON.parse(
+        execFileSync('idb', ['ui', 'describe-all', '--udid', simulator, '--json'], {
+          encoding: 'utf8',
+          timeout: 15_000,
+          maxBuffer: 8 * 1024 * 1024,
+        }),
+      );
+    const press = (node: NativeUiNode) => {
+      const point = centerOfRect(node.frame);
+      execFileSync('idb', ['ui', 'tap', String(point.x), String(point.y), '--udid', simulator], {
+        timeout: 15_000,
+      });
     };
-    await device.apps.open({
-      ...selection,
-      app: 'net.siteed.farmslot.development',
-      relaunch: false,
-      noRecord: true,
-    });
-    closeDevice = () => device.sessions.close({ ...selection });
+    const acceptOpenLink = () => {
+      const nodes = nativeTree();
+      if (nodes.some((node) => node.AXLabel?.startsWith('Open in'))) {
+        const button = nodes.find((node) => node.AXLabel === 'Open');
+        assert.ok(button, 'native link confirmation must offer Open');
+        press(button);
+      }
+    };
     execFileSync('xcrun', ['simctl', 'launch', simulator, 'net.siteed.farmslot.development']);
     execFileSync('xcrun', [
       'simctl',
@@ -681,6 +699,7 @@ try {
       simulator,
       `farmslot-development://expo-development-client/?url=${encodeURIComponent(origin)}`,
     ]);
+    await acceptOpenLink();
     await waitFor(
       async () => {
         const targets = await (await fetch(`${origin}/json/list`)).json();
@@ -707,26 +726,55 @@ try {
       status: 'running',
     });
     execFileSync('xcrun', ['simctl', 'openurl', simulator, `farmslot-development:///run/${runId}`]);
-    let snapshot;
-    await waitFor(async () => {
-      snapshot = await device.capture.snapshot({
-        ...selection,
-        forceFull: true,
-        timeoutMs: 15_000,
-      });
-      return snapshot.nodes.some((node) => String(node.label).includes('Reconciling'));
+    await acceptOpenLink();
+    let snapshot: NativeUiNode[] = [];
+    await waitFor(() => {
+      snapshot = nativeTree();
+      const dismiss = snapshot.find((node) => node.AXLabel === 'Got it');
+      if (dismiss) {
+        press(dismiss);
+        return false;
+      }
+      writeJson(path.join(out, 'companion-tree.json'), snapshot);
+      execFileSync('xcrun', [
+        'simctl',
+        'io',
+        simulator,
+        'screenshot',
+        path.join(out, 'companion-gate.png'),
+      ]);
+      return snapshot.some((node) => node.AXLabel?.includes('Reconciling'));
     }, 'native run renders gateway state');
-    writeJson(path.join(out, 'companion-tree.json'), snapshot);
-    execFileSync('xcrun', [
-      'simctl',
-      'io',
-      simulator,
-      'screenshot',
-      path.join(out, 'companion-gate.png'),
-    ]);
     checks.push(
       'connected iOS Companion renders Reconciling from the disposable gateway, with the evidence HUD',
     );
+    const gateTab = snapshot.find((node) => node.AXLabel === 'Run Detail: Gate tab');
+    assert.ok(gateTab, 'native run detail must offer its Gate tab');
+    press(gateTab);
+    await bridge('hud', {
+      intent: 'Show the gateway prerequisite refusal in the native Gate tab.',
+      status: 'running',
+    });
+    await waitFor(() => {
+      const report = nativeTree().find((node) => node.AXLabel === 'Open Prerequisites incomplete');
+      if (!report) return false;
+      press(report);
+      return true;
+    }, 'native prerequisite report opened');
+
+    await waitFor(() => {
+      const tree = nativeTree();
+      writeJson(path.join(out, 'companion-gate-tree.json'), tree);
+      execFileSync('xcrun', [
+        'simctl',
+        'io',
+        simulator,
+        'screenshot',
+        path.join(out, 'companion-gate-reasons.png'),
+      ]);
+      return tree.some((node) => node.AXLabel?.includes('registered acceptance criteria'));
+    }, 'native gate renders prerequisite reasons');
+    checks.push('native Gate tab shows the gateway prerequisite refusal through real navigation');
   }
   if (process.argv.includes('--ui')) {
     ui = spawn(
@@ -822,6 +870,36 @@ try {
       'real recipe required claim plus frozen closure and idle native worker restore Ready',
     );
     writeJson(path.join(out, 'required-ready.json'), ready);
+    await native.closeWorker('legacy-env', {
+      sessionId: worker.sessionId,
+      generation: worker.generation!,
+      leaseId: worker.leaseId,
+    });
+    const stopped = helper(
+      'gateway',
+      'native.session.read',
+      JSON.stringify({
+        sessionId: worker.sessionId,
+        executionNodeId: worker.executionNodeId,
+        worker: {
+          runId: requiredRunId,
+          contextId: 'primary',
+          generation: worker.generation,
+          leaseId: worker.leaseId,
+        },
+      }),
+    ) as { session: { state: string; processStopped: boolean } };
+    assert.equal(stopped.session.state, 'closed');
+    assert.equal(stopped.session.processStopped, true);
+    assert.equal(
+      readRequired().status,
+      'human-gating',
+      'confirmed stopped native worker is idle at a ready gate',
+    );
+    checks.push(
+      'confirmed stopped native worker remains idle at its ready gate through real SDK/RPC state',
+    );
+
     // A gateway restart drops its in-memory engine resolver. The retained ready
     // gate must still resolve through the real RPC and resume its gate step.
     await stop(gateway);
@@ -904,14 +982,16 @@ try {
         });
       }
     } finally {
-      await closeDevice?.();
-      await stop(metro);
-      await stop(ui);
-      await stop(gateway);
+      const cleanup = await Promise.allSettled([stop(metro), stop(ui), stop(gateway)]);
+      const failed = cleanup.find((result) => result.status === 'rejected');
       const hostFile = path.join(native.root, 'host.json');
       if (existsSync(hostFile)) {
         const host = JSON.parse(readFileSync(hostFile, 'utf8'));
         if (matchesProcess(host.pid, native.root)) process.kill(host.pid, 'SIGTERM');
+      }
+      if (failed?.status === 'rejected') {
+        writeFileSync(path.join(out, 'gateway.log'), logs.join(''));
+        throw failed.reason;
       }
     }
     writeFileSync(path.join(out, 'gateway.log'), logs.join(''));
