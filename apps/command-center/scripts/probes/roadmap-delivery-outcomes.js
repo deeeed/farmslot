@@ -48,5 +48,12 @@ const active = [...root.querySelectorAll('[data-row-id]')];
 if (active.some((row) => delivered.includes(row.dataset.rowId))) {
   throw new Error('Delivered work remains in the active list');
 }
+// Regression: hiding the expanded group, refreshing, then reopening must reload links.
+const refresh = root.querySelector('[data-testid="roadmap-refresh"]');
+refresh.click();
+await document.querySelector('roadmap-panel').updateComplete;
+await waitFor(() => !refresh.disabled);
+await choose('delivered');
+await waitFor(() => root.querySelector('[data-testid="roadmap-delivered-pr-link"]'));
 await choose('all');
 return { delivered, undelivered: active.length, projectionAndFilters: 'PASS' };

@@ -1627,6 +1627,11 @@ export class RoadmapPanel extends LitElement {
       });
       if (generation === this._deliveryGeneration) {
         this._deliverySummaries = result.delivery ?? [];
+        const selected = this._selected;
+        if (selected?.id !== this._selectedId) {
+          this._syncEditor(selected);
+          this._writeUrlState();
+        }
         if (this._deliveredExpanded) void this._loadDeliveredDetails();
       }
     } catch (err) {
@@ -2284,6 +2289,7 @@ export class RoadmapPanel extends LitElement {
           labels: { all: 'All outcomes', undelivered: 'Undelivered', delivered: 'Delivered' },
           onSelect: (filter) => {
             this._filterDelivery = filter;
+            if (filter === 'undelivered') this._setDeliveredExpanded(false);
             if (filter === 'delivered') this._setDeliveredExpanded(true);
             this._syncEditor(this._selected);
           },
@@ -2768,6 +2774,7 @@ export class RoadmapPanel extends LitElement {
         </div>
         <button
           class="secondary"
+          data-testid="roadmap-refresh"
           ?disabled=${this._busy === 'refresh'}
           @click=${() => this._refresh()}
         >
