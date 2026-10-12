@@ -33,7 +33,6 @@ import { slotFileExists, slotReadFile } from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
 import { resolveRemoteFarmCommand } from '../node-support/remote-command.js';
 import { farmslotRoot } from '../projects/repo-root.js';
-import { withSlotSources } from '../sources/runtime.js';
 
 import { deviceControlVerdict } from './device-inventory.js';
 import { getAllNodes, getNode } from './machine-registry.js';
@@ -449,6 +448,7 @@ export async function executeResourceHealth(
   /** See `executeResourceControl`: the leased device identity wins over slot resources. */
   extraVars?: Record<string, string>,
 ): Promise<{ ok: boolean; detail?: string }> {
+  const { withSlotSources } = await import('../sources/runtime.js');
   return withSlotSources(slotId, () =>
     executeResourceHealthWithSources(slotId, resourceId, extraVars),
   );
@@ -991,6 +991,7 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
     let totalWatches = 0;
     for (const slot of machineSlots) {
       try {
+        const { withSlotSources } = await import('../sources/runtime.js');
         await withSlotSources(slot.slot, async () => {
           const { pool, slot: slotCfg } = await resolveSlot(slot.slot);
           const projectName = slotCfg.project ?? pool.project;
@@ -1326,6 +1327,7 @@ export async function executeResourceControl(
   extraVars?: Record<string, string>,
   ownerRunId?: string,
 ): Promise<ResourceControlResult> {
+  const { withSlotSources } = await import('../sources/runtime.js');
   return withSlotSources(slotId, () =>
     executeResourceControlWithSources(slotId, resourceId, action, extraVars, ownerRunId),
   );
