@@ -3,24 +3,24 @@ import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
+  type RecordedEvidencePackageInput,
+  validateRecordedEvidencePackage,
+} from '@farmslot/adapter-sdk/evidence';
+import {
   type DecisionAction,
+  isPrerequisiteGatePayload,
   isTerminalRunStatus,
-  type NoChangeGatePayload,
   qualifyingPassingReviews,
-  type ReadyGatePayload,
   type ReadyGatePrPackage,
-  type RecipeValidationResult,
-  type ReviewGatePayload,
   type ReviewStatus,
   type Run,
   type RunDecision,
-  type RunDecisionPayload,
   type RunGatePrerequisiteReason,
   type RunGateReadiness,
 } from '@farmslot/protocol';
 
 import { selectAgentContext } from '../agents/contexts.js';
-import { loadSlotVars, resolveRemoteRepo } from '../core/config.js';
+import { loadSlotVars } from '../core/config.js';
 import { execOnSlot, isLocal } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { shellQuote } from '../core/tmux.js';
@@ -37,6 +37,7 @@ import {
   type AcceptanceStatusRead,
   readAcceptanceStatusForDisplay,
 } from '../tasks/acceptance-status.js';
+import { agentRuntimeScriptForSlot } from '../tasks/agent-runtime-script.js';
 import { resolveContextFilePath } from '../tasks/watcher.js';
 import {
   loadTerminalContractForRun,
@@ -67,7 +68,7 @@ export interface GatePrerequisiteReaders {
   recordedEvidence?: (
     run: Run,
     preparedPackage: ReadyGatePrPackage | null,
-  ) => Promise<RecipeValidationResult>;
+  ) => Promise<RecordedEvidencePackageInput>;
   reviewResult(run: Run, relativePath: string): Promise<string | undefined>;
   selectedEvidence(run: Run, preparedPackage: ReadyGatePrPackage): Promise<void>;
   reviewDocument(run: Run): Promise<boolean>;
@@ -138,8 +139,7 @@ export async function readGateAcceptance(
     const options = { allowWeak: contract.acceptance?.allowWeak === true };
     if (isLocal(vars.host, vars.machine))
       return { ...acceptance, issues: acceptanceContractIssues(taskDir, options) };
-    const agentRoot = resolveRemoteRepo('~/farmslot-node', vars.osType, vars.sshUser);
-    const guard = `${agentRoot}/packages/agent-runtime/scripts/acceptance-ledger.cjs`;
+    const guard = agentRuntimeScriptForSlot(vars, 'acceptance-ledger.cjs');
     const script =
       'const { acceptanceContractIssues } = require(process.argv[1]); process.stdout.write(JSON.stringify(acceptanceContractIssues(process.argv[2], JSON.parse(process.argv[3]))));';
     const result = await execOnSlot(
@@ -272,14 +272,25 @@ export async function collectRunGateReadiness(
         actionId: 'hold',
       });
     } else {
-      const result = await source.recordedEvidence(run, preparedPackage);
-      if (result.status !== 'valid')
+      try {
+        const input = await source.recordedEvidence(run, preparedPackage);
+        const result = validateRecordedEvidencePackage(input);
+        if (result.status !== 'valid')
+          reasons.push({
+            code: 'evidence-invalid',
+            prerequisite: 'evidence',
+            message: 'Required claim evidence is incomplete or invalid.',
+            actionId: 'hold',
+          });
+      } catch {
+        // An unreadable frozen closure remains an explicit refusal.
         reasons.push({
-          code: 'evidence-invalid',
+          code: 'evidence-validation-unavailable',
           prerequisite: 'evidence',
-          message: 'Required claim evidence is incomplete or invalid.',
+          message: 'The selected frozen evidence package could not be read or validated.',
           actionId: 'hold',
         });
+      }
     }
   }
   if (preparedPackage) {
@@ -367,12 +378,6 @@ export async function collectRunGateReadiness(
     },
     reasons,
   };
-}
-
-export function isPrerequisiteGatePayload(
-  payload?: RunDecisionPayload,
-): payload is ReadyGatePayload | ReviewGatePayload | NoChangeGatePayload {
-  return payload?.kind === 'ready' || payload?.kind === 'review' || payload?.kind === 'no-change';
 }
 
 export function advancingGateAction(actionId: string): boolean {

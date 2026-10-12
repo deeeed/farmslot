@@ -4942,6 +4942,7 @@ __metadata:
   resolution: "@farmslot/gateway@workspace:services/gateway"
   dependencies:
     "@earendil-works/pi-ai": "npm:0.82.1"
+    "@farmslot/adapter-sdk": "workspace:*"
     "@farmslot/agent-runtime": "workspace:*"
     "@farmslot/capabilities": "workspace:*"
     "@farmslot/credential-store": "workspace:*"

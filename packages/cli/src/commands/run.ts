@@ -14,6 +14,7 @@ import {
   failedRunCancelEffects,
   type HumanGrade,
   isAllowedRunDecisionAction,
+  isPrerequisiteGatePayload,
   isReviewMode,
   Methods,
   observedReviewSessionContinuity,
@@ -802,12 +803,9 @@ export function registerRunCommand(program: Command): void {
           } else {
             for (const d of listed) {
               output.write(`${d.id}  ${d.title ?? ''}\n`);
-              const readiness =
-                d.payload?.kind === 'ready' ||
-                d.payload?.kind === 'review' ||
-                d.payload?.kind === 'no-change'
-                  ? d.payload.gateReadiness
-                  : undefined;
+              const readiness = isPrerequisiteGatePayload(d.payload)
+                ? d.payload.gateReadiness
+                : undefined;
               const view = deriveRunLifecycleView({
                 status: current.status,
                 gateReadiness: readiness,

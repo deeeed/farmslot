@@ -14,7 +14,10 @@ import type { ReadyGatePayload, Run } from '@farmslot/protocol';
 const source = fileURLToPath(new URL('../../../', import.meta.url));
 const temporary = mkdtempSync(path.join(tmpdir(), 'run-gate-proof-'));
 const root = path.join(temporary, 'root');
-const out = path.resolve(process.env.FARMSLOT_GATE_PROOF_OUT ?? 'temp/run-gate-proof');
+const out = path.resolve(
+  process.env.FARMSLOT_GATE_PROOF_OUT ?? 'temp/run-gate-proof',
+  randomUUID(),
+);
 const project = 'run-gate-proof';
 const runId = randomUUID();
 const slotId = `gate-${runId}`;

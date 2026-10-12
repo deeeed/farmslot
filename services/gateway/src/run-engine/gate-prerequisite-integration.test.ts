@@ -113,11 +113,6 @@ test('a foreign criterion replacing a registered row cannot pass the completion 
     deterministic: async () => {},
     progress: async () => ({ kind: 'idle' }),
     acceptance: (run) => readGateAcceptance(run, f.sources),
-    recordedEvidence: async () => ({
-      status: 'valid',
-      findings: [],
-      summary: { errors: 0, warnings: 0 },
-    }),
   });
   assert.equal(readiness.state, 'not-ready');
   assert.ok(readiness.reasons.some((reason) => reason.code === 'acceptance-incomplete'));
