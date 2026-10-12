@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import type {
@@ -8,8 +11,11 @@ import type {
 } from '@farmslot/protocol';
 
 await import('../runtime/mock-pty.test-support.js');
-const { prepareDeclaredRunCapabilities, assertDeclaredCapabilityPreparation } =
-  await import('./declared-capabilities.js');
+const {
+  prepareDeclaredRunCapabilities,
+  assertDeclaredCapabilityPreparation,
+  prepareRetainedRunCapabilities,
+} = await import('./declared-capabilities.js');
 const { makeRun } = await import('./test-fixtures.js');
 
 function fixture(requirements: RuntimeCapabilityProofRequirement[] = []) {
@@ -150,5 +156,43 @@ test('a declaration without resources needs no invented proof mode or acquisitio
     }),
     { ok: true },
   );
+  assert.equal(prepared.length, 0);
+});
+
+test('retained preparation consumes authored task resources despite a later template edit', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'retained-resource-snapshot-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const { run, deps, prepared } = fixture([
+    requirement,
+    { capabilityId: 'old-refused-attempt', mode: 'state', reason: 'Earlier attempt' },
+  ]);
+  run.taskFile = path.join(directory, 'TASK.md');
+  await writeFile(run.taskFile, 'Authored task');
+  await writeFile(
+    path.join(directory, 'CHECKLIST.md'),
+    '---\nruntime_capabilities: [device-client]\n---\n- [x] Completed checkpoint\n',
+  );
+  const source = path.join(directory, 'template.md');
+  await writeFile(source, '---\nruntime_capabilities: [device-client]\n---\nOriginal source');
+  await writeFile(
+    source,
+    '---\nruntime_capabilities: [unrelated-provider]\n---\nNew source after pack update',
+  );
+  await prepareRetainedRunCapabilities(run.id, deps);
+  assert.deepEqual(prepared, [[requirement]]);
+});
+
+test('resource-free retained and fix preparation skips later template drift', async () => {
+  const { run, deps, prepared } = fixture();
+  run.executionTemplate = {
+    id: 'dev/old-template',
+    sourceId: 'source',
+    flow: 'dev',
+    relativePath: 'removed.md',
+    platforms: ['cli'],
+    labels: [],
+    sha256: 'old-source-sha',
+  };
+  await prepareRetainedRunCapabilities(run.id, deps);
   assert.equal(prepared.length, 0);
 });

@@ -119,7 +119,13 @@ const rpc = (method, params = {}) =>
         method,
         JSON.stringify(params),
       ],
-      { cwd: sourceRoot, env, encoding: 'utf8', timeout: 105000, maxBuffer: 8 * 1024 * 1024 },
+      {
+        cwd: sourceRoot,
+        env: declaredCapabilities ? { ...env, NODE_OPTIONS: '' } : env,
+        encoding: 'utf8',
+        timeout: 105000,
+        maxBuffer: 8 * 1024 * 1024,
+      },
     ),
   );
 const cdp = (...args) => {
@@ -637,7 +643,10 @@ try {
     FARMSLOT_COHERENCE_FAULTS: JSON.stringify(cleanupGuards.filter((fixture) => fixture.fault)),
     FARMSLOT_COHERENCE_GENERATION_RUN_ID: generationGuard ? realFixture?.runId : '',
     NODE_OPTIONS: `--import ${path.join(sourceRoot, 'scripts/runner-validation/gateway/native-cleanup-faults.mjs')}`,
+    ...(declaredCapabilities ? { FARMSLOT_DECLARED_RACE_DIR: temporary } : {}),
   };
+  if (declaredCapabilities)
+    env.NODE_OPTIONS = `--import ${fileURLToPath(import.meta.resolve('tsx'))} --import ${path.join(sourceRoot, 'scripts/e2e-declared-capabilities.mts')}`;
   delete env.CODEX_LB_API_KEY;
   if (control)
     Object.assign(env, {
@@ -671,6 +680,7 @@ try {
     runId = declaredFixture.runId;
     await proveDeclaredCapabilityAcquisition({
       ...declaredFixture,
+      raceDir: temporary,
       rpc,
       wait,
       restartGateway,

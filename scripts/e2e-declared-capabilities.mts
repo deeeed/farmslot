@@ -20,6 +20,48 @@ interface Fixture {
 type WriteJson = (file: string, value: unknown) => void;
 type Rpc = <T>(method: string, params: unknown) => T;
 
+// Disposable barrier at a real status read, before the explicit target changes.
+if (
+  process.env.FARMSLOT_DECLARED_RACE_DIR &&
+  process.argv.some((arg) => arg.endsWith(path.join('services', 'gateway', 'src', 'index.ts')))
+) {
+  const directory = process.env.FARMSLOT_DECLARED_RACE_DIR;
+  assert.ok(existsSync(path.join(directory, '.coherence-fixture')));
+  writeFileSync(path.join(directory, 'declared-barrier-installed'), String(process.pid));
+  const { getRuntimeCapabilityRegistry } =
+    await import('../services/gateway/src/methods/runtime-capabilities.js');
+  const { getRun } = await import('../services/gateway/src/runs/store.js');
+  const registry = getRuntimeCapabilityRegistry();
+  const original = registry.status.bind(registry);
+  let armedReads = 0;
+  registry.status = async (params) => {
+    const snapshot = await original(params);
+    const configFile = path.join(directory, 'declared-race.json');
+    if (!existsSync(configFile)) return snapshot;
+    const config = JSON.parse(readFileSync(configFile, 'utf8'));
+    const ready = path.join(directory, 'declared-race-ready');
+    if (
+      config.armed &&
+      params.slotId === config.slotId &&
+      getRun(config.runId)?.status === 'dispatching' &&
+      !existsSync(ready)
+    ) {
+      // Retained preparation first locates its plan; the second read freezes
+      // the parameters the automatic posture request will carry into its queue.
+      if (++armedReads === 1) return snapshot;
+      writeFileSync(ready, 'snapshot captured\n');
+      const deadline = Date.now() + 60_000;
+      while (!existsSync(path.join(directory, 'declared-race-release'))) {
+        assert.ok(Date.now() < deadline, 'Retarget proof barrier must be released');
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+    return snapshot;
+  };
+  // The barrier belongs to this gateway, never its provider or runner children.
+  delete process.env.NODE_OPTIONS;
+}
+
 export async function prepareDeclaredCapabilityProof(input: Fixture & { writeJson: WriteJson }) {
   const { root, project, repo, runId, slotId, missingMode, writeJson } = input;
   const projectDir = path.join(root, 'projects', project);
@@ -28,6 +70,11 @@ export async function prepareDeclaredCapabilityProof(input: Fixture & { writeJso
   // The existing minimize policy sheds high-cost providers at an operator wait.
   config.runtime_capabilities.providers['owned-server'].cost.class = 'high';
   config.runtime_capabilities.providers['owned-server'].keep_warm_ms = 0;
+  config.runtime_capabilities.providers['owned-server'].parameters = {
+    type: 'object',
+    properties: { label: { type: 'string' } },
+    additionalProperties: false,
+  };
   config.runtime_capabilities.providers['refused-service'] = {
     label: 'Refused proof service',
     version: '1',
@@ -139,6 +186,7 @@ export async function proveDeclaredCapabilityAcquisition(
     check: (description: string) => void;
     outDir: string;
     sourceRoot: string;
+    raceDir: string;
     writeJson: WriteJson;
   },
 ) {
@@ -154,8 +202,13 @@ export async function proveDeclaredCapabilityAcquisition(
     missingMode,
     outDir,
     sourceRoot,
+    raceDir,
     writeJson,
   } = input;
+  assert.ok(
+    existsSync(path.join(raceDir, 'declared-barrier-installed')),
+    'Gateway retarget barrier must be installed',
+  );
   const get = () => rpc<{ run: Run }>('run.get', { runId }).run;
   const status = () => rpc<RuntimeCapabilityStatusResult>('runtime.capability.status', { slotId });
   const before = status();
@@ -186,6 +239,7 @@ export async function proveDeclaredCapabilityAcquisition(
     const launched = await wait(
       get,
       (run) => {
+        assert.equal(run.error ?? null, null, run.error ?? 'Declared preparation must pass');
         assert.notEqual(run.status, 'failed', run.error);
         assert.notEqual(run.status, 'blocked', run.error);
         return Boolean(run.agentContexts?.some((context) => context.nativeSession?.acceptedAt));
@@ -204,6 +258,10 @@ export async function proveDeclaredCapabilityAcquisition(
       `http://127.0.0.1:${readFileSync(path.join(repo, 'owned-server.pid.port'), 'utf8')}`;
     assert.equal(await (await fetch(url())).text(), 'coherence-server');
     check('real owned HTTP provider is healthy at declared worker delivery');
+    writeFileSync(
+      path.join(root, 'projects', input.project, 'declared-templates/dev/declared-runtime.md'),
+      '---\nid: dev/declared-runtime\nflow: dev\nplatforms: [cli]\nruntime_capabilities: [refused-service]\n---\nUpdated pack template\n',
+    );
     const stopped = rpc<{ ok: boolean }>('runtime.posture.apply', {
       runId,
       posture: 'operator-wait',
@@ -244,7 +302,13 @@ export async function proveDeclaredCapabilityAcquisition(
     await wait(
       () => {
         const value = status();
-        if (get().steps.find((step) => step.name === 'dispatch')?.status === 'done')
+        const run = get();
+        assert.notEqual(
+          run.status,
+          'failed',
+          'Retained dispatch must ignore later live-template drift',
+        );
+        if (run.steps.find((step) => step.name === 'dispatch')?.status === 'done')
           assert.ok(
             value.leases.some(
               (lease) => lease.capabilityId === 'owned-server' && lease.state === 'acquired',
@@ -266,6 +330,7 @@ export async function proveDeclaredCapabilityAcquisition(
     const reacquiredPid = Number(readFileSync(path.join(repo, 'owned-server.pid'), 'utf8'));
     assert.equal(await (await fetch(url())).text(), 'coherence-server');
     check('replayed dispatch reacquires the same declared provider through existing posture');
+    check('retained dispatch uses the authored task snapshot after a live template edit');
     await restartGateway();
     const recovered = status().leases.find((lease) => lease.id === reacquired.id);
     assert.equal(recovered?.state, 'acquired');
@@ -273,6 +338,55 @@ export async function proveDeclaredCapabilityAcquisition(
     assert.equal(Number(readFileSync(path.join(repo, 'owned-server.pid'), 'utf8')), reacquiredPid);
     assert.equal(await (await fetch(url())).text(), 'coherence-server');
     check('gateway restart reconciles the same owned provider without a second acquisition');
+    writeJson(path.join(raceDir, 'declared-race.json'), { armed: true, runId, slotId });
+    rpc('run.replayStep', { runId, stepName: 'dispatch' });
+    await wait(
+      () => existsSync(path.join(raceDir, 'declared-race-ready')),
+      Boolean,
+      'automatic preparation captured its starting parameters',
+    );
+    writeJson(path.join(raceDir, 'declared-race.json'), { armed: false, runId, slotId });
+    assert.equal(
+      rpc<{ ok: boolean }>('runtime.posture.apply', {
+        runId,
+        posture: 'active',
+        proofRequirements: [
+          {
+            capabilityId: 'owned-server',
+            mode: 'state',
+            reason: 'Explicit retarget',
+            parameters: { label: 'target-b' },
+          },
+        ],
+      }).ok,
+      true,
+    );
+    const target = status().leases.find(
+      (lease) => lease.capabilityId === 'owned-server' && lease.state === 'acquired',
+    )!;
+    const targetPid = Number(readFileSync(path.join(repo, 'owned-server.pid'), 'utf8'));
+    writeFileSync(path.join(raceDir, 'declared-race-release'), 'explicit retarget completed\n');
+    await wait(
+      get,
+      (run) => {
+        if (run.steps.find((step) => step.name === 'dispatch')?.status === 'done')
+          assert.equal(
+            status().leases.find(
+              (lease) => lease.capabilityId === 'owned-server' && lease.state === 'acquired',
+            )?.id,
+            target.id,
+            'A concurrent explicit retarget must survive stale automatic delivery',
+          );
+        return Boolean(run.error?.includes('different frozen acquire parameters'));
+      },
+      'stale automatic delivery refuses after explicit retarget',
+    );
+    assert.equal(status().leases.find((lease) => lease.id === target.id)?.state, 'acquired');
+    assert.equal(Number(readFileSync(path.join(repo, 'owned-server.pid'), 'utf8')), targetPid);
+    assert.equal(await (await fetch(url())).text(), 'coherence-server');
+    check(
+      'stale automatic delivery refuses while the explicit target lease and real provider survive',
+    );
     writeJson(path.join(outDir, 'declared-run.json'), launched);
   }
   const files = [
@@ -281,6 +395,7 @@ export async function proveDeclaredCapabilityAcquisition(
     'services/gateway/src/runtime-capabilities/registry.ts',
     'services/gateway/src/runtime-capabilities/posture.ts',
     'services/gateway/src/methods/runtime-posture.ts',
+    'services/gateway/src/run-engine/resource-posture.ts',
     'services/gateway/src/run-engine/dispatch-lifecycle-steps.ts',
     'services/gateway/src/review/orchestrator.ts',
     'scripts/runner-validation/gateway/native-run-coherence.mjs',

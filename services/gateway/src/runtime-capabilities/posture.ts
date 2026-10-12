@@ -394,7 +394,7 @@ export interface ResourcePostureRequest {
    * behind another one executes later, by which time a park may have landed.
    * Throw from here to refuse. Engine-internal boundaries omit it.
    */
-  assertAdmissible?: () => void;
+  assertAdmissible?: () => void | Promise<void>;
 }
 
 /**
@@ -648,10 +648,10 @@ export class RunResourcePostureReconciler {
   }
 
   async apply(request: ResourcePostureRequest): Promise<RuntimePostureApplyResult> {
-    return this.serialize(request.runId, () => {
+    return this.serialize(request.runId, async () => {
       // Inside the queue, not before it. This is the only point where the check
       // and the effect are not separated by another request's execution.
-      request.assertAdmissible?.();
+      await request.assertAdmissible?.();
       // Always called so the one-shot suppression is consumed even when an
       // explicit choice is present; that explicit choice then wins over what it
       // returns.

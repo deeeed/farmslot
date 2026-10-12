@@ -54,7 +54,7 @@ import {
 } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
-import { prepareConfiguredRunCapabilities } from '../run-engine/declared-capabilities.js';
+import { prepareRetainedRunCapabilities } from '../run-engine/declared-capabilities.js';
 import { runSupersededSince } from '../run-engine/run-generation.js';
 import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
 import { resumeNativeWorker } from '../runners/native/worker-recovery.js';
@@ -1318,7 +1318,7 @@ interface FixPromptRecoveryDeps {
 
 const FIX_PROMPT_RECOVERY_DEPS: FixPromptRecoveryDeps = {
   getRun,
-  prepareCapabilities: prepareConfiguredRunCapabilities,
+  prepareCapabilities: prepareRetainedRunCapabilities,
   resolvePrompt: resolveWorkerDispatchPrompt,
   resolveRuntimeDir: resolveProjectRuntimeDir,
   readLaunchAck: readLaunchAckSignalSnapshot,
@@ -2168,7 +2168,7 @@ async function sendOwnedFeedbackToWorker(
   const run = getRun(runId);
   const project = run?.project;
   if (!project) throw new Error(`Cannot send review feedback without a project for run ${runId}`);
-  await prepareConfiguredRunCapabilities(runId);
+  await prepareRetainedRunCapabilities(runId);
   assertNativeReviewOperationCurrent();
 
   // Format issues as bullet list for template insertion
@@ -2671,7 +2671,7 @@ async function relaunchWorkerForFix(
   runId: string,
 ): Promise<boolean> {
   assertNativeReviewOperationCurrent();
-  await prepareConfiguredRunCapabilities(runId);
+  await prepareRetainedRunCapabilities(runId);
   assertNativeReviewOperationCurrent();
   if (getRun(runId)?.transport === 'native') {
     await resumeNativeWorker(runId, {

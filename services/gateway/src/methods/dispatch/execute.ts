@@ -16,7 +16,6 @@ import {
   type PressureAdmissionRejected,
   type PressureOverrideAudit,
   primaryRoleForFlow,
-  recipeFlowRequirements,
   type ReviewSessionTrace,
 } from '@farmslot/protocol';
 import { resolveEffectiveDomain } from '@farmslot/slot-config';
@@ -57,8 +56,9 @@ import {
   invalidateLiveRecipeContextMemo,
 } from '../../live-recipe/context.js';
 import {
-  assertDeclaredCapabilityPreparation,
-  prepareDeclaredRunCapabilities,
+  dispatchAppFromTask,
+  prepareDispatchRunCapabilities,
+  prepareRetainedRunCapabilities,
 } from '../../run-engine/declared-capabilities.js';
 import {
   attemptRepeatReviewResume,
@@ -111,15 +111,6 @@ import { resolveRunnerAccountForDispatch } from '../../runners/status-provider.j
 import { createProviderUsageLimitError } from '../../runners/usage-limit-error.js';
 import { resolveWorkerDispatchPrompt } from '../../runners/worker-prompt.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
-import {
-  projectUsesExecutionTemplateCatalog,
-  readConfiguredExecutionTemplateSnapshot,
-  resolveConfiguredExecutionTemplateForSlot,
-} from '../../tasks/execution-template-catalog.js';
-import {
-  assertRecipeDispatchRequirements,
-  checkRecipeDispatchRequirements,
-} from '../../tasks/recipe-dispatch-check.js';
 import { copyPreparedTaskRootSidecars, copyTaskDirSubdirectories } from '../../tasks/sidecars.js';
 import { watchContext, watchSlot } from '../../tasks/watcher.js';
 import { killAgentInSession, slotPrepare } from '../slot.js';
@@ -1151,46 +1142,21 @@ export async function dispatchExecute(
       ?.toLowerCase()
       .replace(/\s+/g, '-') || '';
   const flowType = currentRun?.flowType || taskProfileFlowType || workerHeadingFlowType;
-  const runRecipeGate = async (): Promise<void> => {
-    if (
-      !projectVars ||
-      !projectUsesExecutionTemplateCatalog(projectVars) ||
-      flowType === 'review-pr'
-    )
-      return;
-    const selected = currentRun?.executionTemplate
-      ? readConfiguredExecutionTemplateSnapshot(projectVars, {
-          ...currentRun.executionTemplate,
-          flow: flowType,
-        })
-      : resolveConfiguredExecutionTemplateForSlot(projectVars, {
-          flow: flowType,
-          platform: vars.platform,
-          runMode: params.mode ?? 'autonomous',
-          explicitDomain: currentRun?.domain,
-          slotDomain: vars.domain,
-        });
-    assertRecipeDispatchRequirements(
-      await checkRecipeDispatchRequirements(projectVars, vars, selected.entry, {
-        app: selectedApp || undefined,
-        domain: currentRun?.domain ?? vars.domain,
-      }),
-    );
-    options.assertCurrent?.();
-    const resources = recipeFlowRequirements(selected.entry.frontmatter).resources;
-    if (resources.length > 0) {
-      if (!currentRun) throw new Error('Declared resources require a persisted run owner.');
-      assertDeclaredCapabilityPreparation(
-        await prepareDeclaredRunCapabilities(currentRun.id, resources),
-      );
-      options.assertCurrent?.();
-    }
-  };
+  const runRecipeGate = () =>
+    prepareDispatchRunCapabilities({
+      run: currentRun ?? undefined,
+      project: projectVars,
+      slot: vars,
+      flow: flowType,
+      mode: params.mode ?? 'autonomous',
+      app: selectedApp || undefined,
+      assertCurrent: options.assertCurrent,
+    });
   const defaultFlowKey =
     flowTypeToKey(taskProfileFlowType) ||
     flowTypeToKey(flowType) ||
     flowTypeToKey(workerHeadingFlowType);
-  const selectedApp = params.app || extractField(taskContent, /^APP:\s*(\S+)/m) || '';
+  const selectedApp = dispatchAppFromTask(params.app, taskContent);
   const requestedRunner =
     params.runner ||
     extractField(taskContent, /^\*\*Runner:\*\*\s*`?([^`\n]+)/m) ||
@@ -1337,7 +1303,7 @@ export async function dispatchExecute(
   ) {
     // Reconcile the existing reservation before preparation, slot claims or task copies.
     // Re-copying TASK.md here would erase progress written while the gateway was away.
-    await runRecipeGate();
+    await prepareRetainedRunCapabilities(currentRun.id);
     try {
       return await launchNative();
     } catch (error) {
