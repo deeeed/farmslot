@@ -4,6 +4,8 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
+- Share claim/step evidence selection, captions, source clips/stills and verified playback ranges across review clients (ADR-062).
+
 ## 0.9.1 - 2026-10-12
 
 - Update shared runtime dependencies for bounded recipe log observations.

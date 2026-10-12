@@ -4,7 +4,10 @@ import { buildBeforeAfterPairs } from '../../utils/artifact-pairs.js';
 
 import type { LightboxItem, LightboxPair } from './media-lightbox-types.js';
 
-type LightboxArtifact = Pick<ArtifactRef, 'path' | 'purpose'>;
+type LightboxArtifact = Pick<
+  ArtifactRef,
+  'path' | 'purpose' | 'sha256' | 'timelinePath' | 'timelineUnavailableReason'
+>;
 
 export function artifactLightboxItem<T extends LightboxArtifact>(
   artifact: T,
@@ -14,6 +17,17 @@ export function artifactLightboxItem<T extends LightboxArtifact>(
     url: artifactUrl(artifact),
     path: artifact.path,
     purpose: artifact.purpose,
+    ...(artifact.timelinePath
+      ? {
+          sha256: artifact.sha256,
+          timelinePath: artifact.timelinePath,
+          resolveArtifactUrl: (path: string) =>
+            artifactUrl({ ...artifact, path, sha256: undefined }),
+        }
+      : {}),
+    ...(artifact.timelineUnavailableReason
+      ? { timelineUnavailableReason: artifact.timelineUnavailableReason }
+      : {}),
   };
 }
 
@@ -22,11 +36,9 @@ export function artifactLightboxItems<T extends LightboxArtifact>(
   artifactUrl: (artifact: T) => string,
   opensInLightbox: (artifact: T) => boolean,
 ): LightboxItem[] {
-  return sourceArtifacts.filter(opensInLightbox).map((artifact) => ({
-    url: artifactUrl(artifact),
-    path: artifact.path,
-    purpose: artifact.purpose,
-  }));
+  return sourceArtifacts
+    .filter(opensInLightbox)
+    .map((artifact) => artifactLightboxItem(artifact, artifactUrl));
 }
 
 export function artifactLightboxPairs<T extends LightboxArtifact>(

@@ -176,9 +176,9 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
       reviews: gate.reviews,
       acceptance,
       evidence: acceptance.view
-        ? acceptanceEvidenceStrip(acceptance.view).map((item) => ({
+        ? acceptanceEvidenceStrip(acceptance.view, acceptance.evidenceModel).map((item) => ({
             ...item,
-            uri: artifactUrl(gatewayUrl, run.id, item.path),
+            uri: artifactUrl(gatewayUrl, run.id, item.path, acceptance.recipeRunId ?? undefined),
           }))
         : [],
       guard: gate.guard,
@@ -189,9 +189,17 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
 
   const openEvidence = useCallback(
     (criterionId: string, path: string) => {
-      router.push(acceptanceEvidenceHref(runId, criterionId, path));
+      router.push(
+        acceptanceEvidenceHref(
+          runId,
+          criterionId,
+          path,
+          gate?.acceptance.recipeRunId,
+          decision?.id,
+        ),
+      );
     },
-    [router, runId],
+    [decision?.id, gate?.acceptance.recipeRunId, router, runId],
   );
 
   const openLog = useCallback(

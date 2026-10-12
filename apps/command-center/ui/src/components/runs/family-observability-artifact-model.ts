@@ -6,6 +6,7 @@ import type {
 
 import { artifactKind } from '../../utils/artifact-kind.js';
 import { formatBytes } from '../../utils/format.js';
+import { artifactLightboxItem } from '../shared/artifact-lightbox-model.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { runArtifactFetchUrl, runArtifactUrl } from '../workspace/workspace-artifacts.js';
 
@@ -61,22 +62,9 @@ export function familyLightboxItem(
   run: Pick<FamilyObservabilityRunSummary, 'branch'> | null,
 ): LightboxItem {
   return {
-    url: familyArtifactUrl(artifact),
-    path: artifact.path,
-    purpose: artifact.purpose,
+    ...artifactLightboxItem(artifact, familyArtifactUrl),
     viewUrl: `#run/${artifact.runId}?artifactRun=${encodeURIComponent(artifact.runId)}&artifact=${encodeURIComponent(artifact.path)}`,
     caption: familyArtifactCaption(artifact),
     provenance: familyArtifactProvenance(artifact, run),
-    ...(artifact.timelinePath
-      ? {
-          sha256: artifact.sha256,
-          timelinePath: artifact.timelinePath,
-          resolveArtifactUrl: (path: string) =>
-            familyArtifactUrl({ ...artifact, path, sha256: undefined }),
-        }
-      : {}),
-    ...(artifact.timelineUnavailableReason
-      ? { timelineUnavailableReason: artifact.timelineUnavailableReason }
-      : {}),
   };
 }

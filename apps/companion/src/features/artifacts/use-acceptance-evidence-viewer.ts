@@ -16,6 +16,8 @@ export interface AcceptanceEvidenceViewerInput {
   criterionId: string;
   /** Route `evidence`: the task-relative file to open on. */
   evidencePath: string;
+  recipeRunId?: string;
+  decisionId?: string;
   gatewayUrl: string;
   authHeaders: ArtifactHttpHeaders;
 }
@@ -30,7 +32,10 @@ export function useAcceptanceEvidenceViewer(input: AcceptanceEvidenceViewerInput
   const { client, run, criterionId, evidencePath, gatewayUrl, authHeaders } = input;
   const router = useRouter();
   const active = Boolean(criterionId && evidencePath);
-  const acceptance = useRunAcceptance(client, active ? run : null);
+  const acceptance = useRunAcceptance(client, active ? run : null, {
+    recipeRunId: input.recipeRunId,
+    decisionId: input.decisionId,
+  });
   const [open, setOpen] = useState(active);
 
   useEffect(() => {
@@ -42,11 +47,14 @@ export function useAcceptanceEvidenceViewer(input: AcceptanceEvidenceViewerInput
   const viewer = useMemo(
     () =>
       row && runId
-        ? acceptanceEvidenceViewer(row, evidencePath, (path) =>
-            artifactUrl(gatewayUrl, runId, path),
+        ? acceptanceEvidenceViewer(
+            row,
+            evidencePath,
+            (path) => artifactUrl(gatewayUrl, runId, path, acceptance.recipeRunId ?? undefined),
+            acceptance.evidenceModel ?? undefined,
           )
         : null,
-    [evidencePath, gatewayUrl, row, runId],
+    [acceptance.evidenceModel, acceptance.recipeRunId, evidencePath, gatewayUrl, row, runId],
   );
   const items = useMemo<MediaViewerItem[]>(
     () =>
@@ -56,8 +64,12 @@ export function useAcceptanceEvidenceViewer(input: AcceptanceEvidenceViewerInput
         detail: item.detail,
         mediaType: item.mediaType,
         authHeaders,
+        path: item.path,
+        evidenceModel: acceptance.evidenceModel ?? undefined,
+        resolveArtifactUrl: (path) =>
+          artifactUrl(gatewayUrl, runId, path, acceptance.recipeRunId ?? undefined),
       })),
-    [authHeaders, viewer],
+    [acceptance.evidenceModel, acceptance.recipeRunId, authHeaders, gatewayUrl, runId, viewer],
   );
 
   const error = !active

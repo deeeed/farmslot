@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Use the configured project registry for recipe commands and conformance when `--projects-dir` is omitted.
+
 - Show roadmap delivery status and filter lists by delivered or undelivered outcomes.
 
 - Forward the declared recording opt-out reason through checkout recipe commands.

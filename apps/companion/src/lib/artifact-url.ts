@@ -1,4 +1,5 @@
 import {
+  type ArtifactRef,
   isRunEvidenceVideoArtifact,
   type RecipeRunArtifactGroup,
   type Run,
@@ -33,7 +34,10 @@ export type ArtifactManifestType =
   | 'other'
   | (string & {});
 
-export interface ArtifactManifestEntry {
+export interface ArtifactManifestEntry extends Pick<
+  ArtifactRef,
+  'sha256' | 'timelinePath' | 'timelineUnavailableReason'
+> {
   path: string;
   purpose: string;
   sizeBytes?: number;
@@ -237,6 +241,11 @@ function collectArtifactManifestEntries(value: unknown, entries: ArtifactManifes
       ...(typeof record.type === 'string' ? { type: record.type as ArtifactManifestType } : {}),
       ...(typeof record.label === 'string' ? { label: record.label } : {}),
       ...(typeof record.mimeType === 'string' ? { mimeType: record.mimeType } : {}),
+      ...(typeof record.sha256 === 'string' ? { sha256: record.sha256 } : {}),
+      ...(typeof record.timelinePath === 'string' ? { timelinePath: record.timelinePath } : {}),
+      ...(typeof record.timelineUnavailableReason === 'string'
+        ? { timelineUnavailableReason: record.timelineUnavailableReason }
+        : {}),
     });
   }
 
@@ -287,6 +296,9 @@ function mergeArtifactMetadata(
   incoming: ArtifactManifestEntry,
 ): ArtifactManifestEntry {
   const merged = { ...existing };
+  for (const key of ['sha256', 'timelinePath', 'timelineUnavailableReason'] as const) {
+    if (incoming[key] !== undefined) merged[key] = incoming[key];
+  }
   const incomingPurposeSpecificity = artifactPurposeSpecificity(incoming.purpose);
   const existingPurposeSpecificity = artifactPurposeSpecificity(existing.purpose);
   const incomingIsMoreSpecific = incomingPurposeSpecificity > existingPurposeSpecificity;
