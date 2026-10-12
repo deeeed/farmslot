@@ -25,6 +25,7 @@ import {
   spacing,
 } from '../../styles/theme-tokens.js';
 import { flowColor, flowLabel, formatElapsed, runStatusColor } from '../runs/run-utils.js';
+import { renderRunTitle } from '../shared/run-title.js';
 import { renderRunnerAccountInventory } from '../shared/runner-account-inventory.js';
 import type { SlotPendingWork } from '../work-graph/work-graph-execution-overlay.js';
 
@@ -1004,7 +1005,7 @@ ${deployHint}"
             : html`<span class="muted">-</span>`}
         </td>
         <td>${run?.ticketOrPr ?? s.taskId ?? html`<span class="muted">-</span>`}</td>
-        <td class="summary-cell">${run?.summary ?? ''}</td>
+        <td class="summary-cell">${run ? renderRunTitle(run) : ''}</td>
         <td class="muted">
           ${run?.lane ?? s.currentLane ?? '-'}${run?.variant
             ? `/${run.variant}`
@@ -1129,12 +1130,7 @@ ${deployHint}"
           ${run.ticketOrPr
             ? html`<span class="run-panel-ticket">${run.ticketOrPr}</span>`
             : nothing}
-          ${run.summary
-            ? html`<span
-                style="color:${colors.textMuted}; font-size:10px; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap"
-                >${run.summary}</span
-              >`
-            : nothing}
+          ${run.summary ? html`${renderRunTitle(run)}` : nothing}
           ${elapsed ? html`<span class="run-panel-elapsed">${elapsed}</span>` : nothing}
           <div class="run-panel-nav">
             <button

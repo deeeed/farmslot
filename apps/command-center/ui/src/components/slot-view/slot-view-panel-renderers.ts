@@ -13,6 +13,7 @@ import {
   isRunWorking,
 } from '../runs/run-detail-model.js';
 import { isTerminalRunStatus, routeForRun, runStatusColor } from '../runs/run-utils.js';
+import { renderRunTitle } from '../shared/run-title.js';
 
 import type { SlotView } from './slot-view.js';
 import { slotViewAgentContextChipLabel } from './slot-view-agent-contexts.js';
@@ -598,7 +599,7 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                   >
                   <span
                     style="color:${colors.textMuted};flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-                    >${view._linkedRun.summary || view._linkedRun.ticketOrPr}</span
+                    >${renderRunTitle(view._linkedRun)}</span
                   >
                   ${view._linkedRun.metrics.durationMs
                     ? html`<span style="color:${colors.textMuted}"

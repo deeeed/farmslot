@@ -95,6 +95,7 @@ import { hashParams } from '../utils/url-state.js';
 
 import type { ChatPanel } from './chat/chat-panel.js';
 import { runStatusColor } from './runs/run-utils.js';
+import { renderRunTitle } from './shared/run-title.js';
 import {
   activeSidebarRuns,
   clampSidebarWidth,
@@ -1321,10 +1322,9 @@ export class FarmApp extends LitElement {
               : nothing}
           </div>
           <div class="fa-active-run-summary">
-            ${run?.summary ||
-            run?.ticketOrPr ||
-            slot?.branch ||
-            (runId ? 'Saved review workspace' : 'Slot not in current fleet')}
+            ${run
+              ? renderRunTitle(run)
+              : slot?.branch || (runId ? 'Saved review workspace' : 'Slot not in current fleet')}
           </div>
           <div class="fa-active-run-meta">
             <span

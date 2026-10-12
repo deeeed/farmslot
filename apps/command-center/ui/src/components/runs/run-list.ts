@@ -34,6 +34,7 @@ import { getState, isHydrating, isPrLinkageMissing, subscribe } from '../../stat
 import { colors } from '../../styles/theme-tokens.js';
 import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
+import { renderRunTitle } from '../shared/run-title.js';
 import {
   focusWorkInventoryRow,
   inventoryShowsDetail,
@@ -836,9 +837,7 @@ export class RunList extends RunListState {
         >${run.updatedAt.slice(0, 10)}</span
       >`,
       html`<div class="run-pipeline-cell" data-testid="runs-pipeline" title=${pipelineLabel}>
-        ${run.summary
-          ? html`<span class="run-title" title=${run.summary}>${run.summary}</span>`
-          : nothing}
+        ${run.summary ? html`${renderRunTitle(run, 'run-title')}` : nothing}
         <run-pipeline-mini
           .run=${run}
           .steps=${run.steps}

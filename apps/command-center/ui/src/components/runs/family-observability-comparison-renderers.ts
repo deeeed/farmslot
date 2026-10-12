@@ -8,6 +8,8 @@ import type {
 
 import '../reviews/gate-summary-panel.js';
 
+import { renderRunTitle } from '../shared/run-title.js';
+
 import {
   buildComparisonLeaderboard,
   COMPARE_SORT_SCORE,
@@ -414,7 +416,7 @@ function renderFamilyComparisonCard(
           : html`slot unknown`}
         · ${run.runId.slice(0, 8)}
       </div>
-      <div class="comparison-output">${run.summary ?? run.ticketOrPr}</div>
+      ${renderRunTitle(run, 'comparison-output')}
       <div class="comparison-facts">
         ${renderFamilyComparisonPrLink(run, options.snapshot.runs)}
         <span>${options.renderRunDiffLink(options.snapshot, run, true)}</span>
