@@ -28,6 +28,11 @@ import {
   validateRecordedEvidencePackage,
 } from '@farmslot/recipe-runner/evidence';
 
+import {
+  type EvidenceReviewPackageStatus,
+  evidenceReviewPackageStatus,
+} from './evidence-review-status.js';
+
 export type EvidenceReviewContext = 'gate' | 'pr-preview' | 'run-detail' | 'artifact';
 export type EvidenceReviewTiming = 'measured' | 'untimed' | 'outside-recording';
 export type EvidenceReviewMediaType = 'image' | 'video' | 'document';
@@ -43,6 +48,8 @@ export interface EvidenceReviewInput {
   readErrors?: readonly string[];
   /** Transport namespace; contract references stay relative to their recipe package. */
   artifactPrefix?: string;
+  /** Display path relative to the run's artifacts; never used to resolve media. */
+  packagePath?: string;
   package?: RecordedEvidencePackageInput;
   criteria?: readonly AcceptanceCriterionRef[];
   ledger?: AcceptanceStatusLedger | null;
@@ -120,9 +127,12 @@ export interface EvidenceReviewModel {
   readonly recordings: readonly RecipeRecordingTimelineDocument[];
   readonly errors: readonly string[];
   readonly warnings: readonly string[];
+  readonly displayWarnings: readonly string[];
   readonly selection: EvidenceReviewSelection | null;
   readonly playback: EvidenceReviewPlaybackEffect;
   readonly report: EvidenceReviewInput['report'];
+  readonly reportError?: string;
+  readonly packageStatus: EvidenceReviewPackageStatus | null;
   selectClaim(id: string, artifactPath?: string): EvidenceReviewSelection | null;
   selectOccurrence(traceIndex: number): EvidenceReviewSelection | null;
   selectReport(): EvidenceReviewSelection | null;
@@ -162,13 +172,13 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
   const warnings = findings
     .filter((finding) => finding.severity === 'warning')
     .map((finding) => finding.message);
-  if (
+  const reportError =
     input.reportSnapshot &&
     (input.report?.manifestDigest !== input.reportSnapshot.manifestDigest ||
       input.report?.reportPath !== input.reportSnapshot.reportPath)
-  ) {
-    errors.push('The output report no longer matches the reviewed snapshot.');
-  }
+      ? 'The output report no longer matches the reviewed snapshot.'
+      : undefined;
+  if (reportError) errors.push(reportError);
   if (pkg?.claims && ['incomplete', 'failed', 'explicit-off'].includes(pkg.claims.recording.status))
     warnings.push(
       `Recording ${pkg.claims.recording.status}: ${pkg.claims.recording.reason ?? 'see retained capture status'}`,
@@ -418,6 +428,11 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     clipIndex = 0;
     return selection;
   };
+  const packageStatus = evidenceReviewPackageStatus(
+    pkg,
+    input.packagePath ?? input.artifactPrefix,
+    errors,
+  );
   return {
     context: input.context ?? 'artifact',
     summary: summarizeAcceptanceStatus(
@@ -432,7 +447,12 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     recordings: recordings.map((recording) => recording.timeline),
     errors,
     warnings,
+    displayWarnings: [...new Set(warnings)].filter(
+      (warning) => packageStatus?.status !== 'Legacy' || !warning.startsWith('Legacy package'),
+    ),
     report: input.report,
+    reportError,
+    packageStatus,
     get selection() {
       return selection;
     },
@@ -497,7 +517,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     selectReport() {
       const path = input.report?.reportPath;
       if (
-        errors.length ||
+        reportError ||
         !path ||
         !input.report?.artifactManifest.some((artifact) => artifact.path === path)
       )

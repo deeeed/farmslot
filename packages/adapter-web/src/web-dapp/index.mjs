@@ -17,7 +17,9 @@ import { fileURLToPath } from 'node:url';
 
 import { recipeRuntimePath, shellQuote } from './lib/paths.mjs';
 import { POLICY_ENV, webDappAdapterId, webDappPolicy } from './lib/policy.mjs';
+import { cdpListenerPids, ownsProcess } from './lib/processes.mjs';
 import { check, webDappReadiness } from './lib/readiness.mjs';
+import { cdpPort, readBrowserState, webDappRuntimeDir } from './lib/runtime.mjs';
 import { defaultSigner, loadSigners, SIGNER_MODULE_ENV } from './lib/signers.mjs';
 import { resolveBrowser } from './launch.mjs';
 
@@ -323,6 +325,26 @@ export function createWebDappAdapter(factoryOptions = {}) {
     id,
     sdkVersion: 1,
     headless: false,
+
+    recording: {
+      async target(context) {
+        const port = cdpPort(context, context.env);
+        const state = await readBrowserState(context.projectRoot);
+        const pid = state?.browserPid;
+        if (
+          !Number.isInteger(pid) ||
+          pid <= 0 ||
+          state.cdpPort !== port ||
+          !ownsProcess('browser', pid, webDappRuntimeDir(context.projectRoot)) ||
+          !cdpListenerPids(port).includes(pid)
+        ) {
+          throw new Error(
+            `Could not resolve the owned ${webDappAdapterId()} browser for recording on CDP ${port}. Next: launch and verify the selected slot browser.`,
+          );
+        }
+        return { kind: 'pid', pid };
+      },
+    },
 
     resolveSlotPorts() {
       // Ports come from the slot (Farmslot {{port}} / {{cdp_port}}) through
