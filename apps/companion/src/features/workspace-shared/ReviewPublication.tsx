@@ -8,7 +8,7 @@ import { MobileDiffViewer } from '../../components/MobileDiffViewer';
 import { PRButton, PRToggle } from '../pr-automation/components/PRControls';
 import { styles } from '../pr-automation/styles/pr-automation-styles';
 
-import { useReviewPublication } from './use-review-publication';
+import { type ReviewPublicationContext, useReviewPublication } from './use-review-publication';
 
 export function ReviewPublicationPanel({
   viewModel: vm,
@@ -26,18 +26,80 @@ export function ReviewPublicationPanel({
   inspect,
   refresh,
   report,
+  saved,
+  savedLoading,
+  savedOffline,
+  savedError,
+  readSaved,
+  context,
+  viewIdentity,
 }: ReturnType<typeof useReviewPublication>) {
-  const [reportOpen, setReportOpen] = useState(false);
-  if (!vm && !curation) return null;
+  const [reportOpen, setReportOpen] = useState<string | null>(null);
+  if (!vm && !curation && !saved && !savedLoading && !savedOffline && !savedError) return null;
   return (
-    <View style={styles.card} testID={curation ? 'companion-review-curation' : undefined}>
-      <Text style={styles.title}>{curation ? 'Review findings before posting' : vm?.label}</Text>
+    <View
+      style={styles.card}
+      testID={curation ? 'companion-review-curation' : 'companion-saved-review'}
+    >
+      <Text style={styles.title}>
+        {curation
+          ? 'Review findings before posting'
+          : saved || savedLoading || savedOffline || savedError
+            ? 'Saved review'
+            : vm?.label}
+      </Text>
       {vm && (
         <Text style={styles.muted}>
           {[vm.account, vm.source, vm.state].filter(Boolean).join(' · ')}
         </Text>
       )}
       {(error || vm?.error) && <Text style={styles.error}>{error || vm?.error}</Text>}
+      {savedLoading && <Text style={styles.muted}>Loading full saved review…</Text>}
+      {savedOffline && <Text style={styles.muted}>Connect to load the saved review.</Text>}
+      {savedError && <Text style={styles.muted}>Saved review unavailable: {savedError}</Text>}
+      {saved && (
+        <>
+          <Text selectable style={styles.text} testID="companion-saved-review-verdict">
+            Saved verdict: {saved.verdict ?? 'Not recorded in this legacy review'}
+          </Text>
+          <Text selectable style={styles.muted} testID="companion-saved-review-sha">
+            Reviewed SHA: {saved.reviewedSha ?? 'Not recorded in this legacy review'}
+          </Text>
+          <Text style={styles.text} testID="companion-saved-review-receipt">
+            {saved.confirmedEvent
+              ? `Confirmed publication event: ${saved.confirmedEvent}`
+              : 'No confirmed publication receipt'}
+          </Text>
+          {saved.requestedRecommendation !== null && (
+            <Text style={styles.muted}>
+              Requested publication recommendation: {saved.requestedRecommendation}
+            </Text>
+          )}
+          {saved.requestedFindingCount !== null && (
+            <Text style={styles.muted}>
+              Requested findings: {saved.requestedFindingCount}. Provider acceptance count is not
+              recorded.
+            </Text>
+          )}
+          {saved.report ? (
+            <PRButton
+              label="Read saved report"
+              testID="companion-saved-review-report"
+              onPress={() => setReportOpen(viewIdentity)}
+            />
+          ) : (
+            <Text style={styles.muted}>Report not recorded in this legacy review.</Text>
+          )}
+        </>
+      )}
+      {(saved || savedError) && (
+        <PRButton
+          label="Refresh saved review"
+          testID="companion-saved-review-refresh"
+          onPress={readSaved}
+          disabled={disabled || savedLoading}
+        />
+      )}
       {curation && (
         <>
           <Text style={styles.muted}>Reviewed SHA: {curation.reviewedSha ?? 'Unavailable'}</Text>
@@ -126,7 +188,7 @@ export function ReviewPublicationPanel({
           <PRButton
             label="Read original report"
             testID="companion-review-report"
-            onPress={() => setReportOpen(true)}
+            onPress={() => setReportOpen(viewIdentity)}
           />
           <PRButton
             label={busy ? 'Refreshing review…' : 'Refresh review'}
@@ -134,29 +196,35 @@ export function ReviewPublicationPanel({
             onPress={refresh}
             disabled={busy || disabled}
           />
-          <DocumentViewer
-            visible={reportOpen}
-            title="Original review report"
-            body={report ?? ''}
-            onClose={() => setReportOpen(false)}
-          />
         </>
       )}
       {vm?.url && (
         <PRButton label="Open published review" onPress={open} disabled={busy || disabled} />
       )}
-      {vm?.canRetry && (
+      {context === 'publication' && vm?.canRetry && (
         <PRButton
           label={busy ? 'Publishing…' : 'Retry publication'}
           onPress={retry}
           disabled={busy || disabled}
         />
       )}
+      <DocumentViewer
+        visible={reportOpen === viewIdentity && Boolean(curation || saved?.report)}
+        title={curation ? 'Original review report' : 'Saved review report'}
+        body={curation ? (report ?? '') : (saved?.report ?? '')}
+        onClose={() => setReportOpen(null)}
+      />
     </View>
   );
 }
 
-export function ReviewPublication({ run }: { run: Run }) {
-  const controller = useReviewPublication(run);
+export function ReviewPublication({
+  run,
+  context = 'publication',
+}: {
+  run: Run;
+  context?: ReviewPublicationContext;
+}) {
+  const controller = useReviewPublication(run, undefined, undefined, context);
   return <ReviewPublicationPanel {...controller} />;
 }

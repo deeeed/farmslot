@@ -5,6 +5,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Resolve declared source refs into immutable admission locks and refuse source drift.
+- Validate artifact-only QA completion from retained output and declared cases, preserving pending visual review and recovery across refreshes and restarts.
+- Count review diff files from numstat rows instead of patch text while retaining untracked source identities.
 - Return artifact-relative package paths for retained evidence review.
 
 - Preserve explicitly labeled acceptance criteria from ticket intake through cached task data and the worker handoff.
