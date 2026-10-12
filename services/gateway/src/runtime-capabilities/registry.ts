@@ -72,6 +72,17 @@ export interface WarmSweepSummary {
   effects: string[];
 }
 
+/** Internal posture consumer; no new RPC or persisted format. */
+export type RuntimeCapabilityBatchAcquireResult =
+  | { ok: true; completed: number }
+  | {
+      ok: false;
+      completed: number;
+      capabilityId: string;
+      conflict: RuntimeCapabilityAcquireConflict;
+      cleanupFailures: Array<{ capabilityId: string; leaseId: string; reason: string }>;
+    };
+
 export interface RuntimeCapabilityActionResult {
   ok: boolean;
   /** Newly started identities retained when ownership metadata cannot be written. */
@@ -799,6 +810,77 @@ export class RuntimeCapabilityRegistry {
       const result = await this.acquireInternal(snapshot, catalog, params, true);
       await this.persist(snapshot);
       return result;
+    });
+  }
+
+  /** Acquire one posture plan under the existing lock, rolling back only this pass. */
+  async acquireBatch(
+    requests: readonly RuntimeCapabilityAcquireParams[],
+  ): Promise<RuntimeCapabilityBatchAcquireResult> {
+    if (requests.length === 0) return { ok: true, completed: 0 };
+    const first = requests[0]!;
+    if (
+      requests.some(
+        (request) => request.slotId !== first.slotId || request.ownerRunId !== first.ownerRunId,
+      )
+    )
+      throw new Error('A posture acquisition batch must have one slot and run owner');
+    return this.mutate(async () => {
+      const snapshot = this.options.store.snapshot();
+      const catalog = await this.options.catalogForSlot(first.slotId);
+      const held = new Set(
+        snapshot.leases
+          .filter(
+            (lease) =>
+              lease.state === 'acquired' ||
+              (lease.state === 'acquiring' && lease.wait?.kind === 'scoped-claim'),
+          )
+          .map((lease) => lease.id),
+      );
+      let completed = 0;
+      for (const request of requests) {
+        const result = await this.acquireInternal(snapshot, catalog, request, true);
+        if (!result.ok) {
+          // The registry lock excludes concurrent acquisitions from this set. A
+          // granted reservation already belongs to this run, so its provider
+          // remains held if a later request fails. New leases alone roll back;
+          // pre-held leases and every foreign owner's lease remain outside it.
+          const acquired = snapshot.leases
+            .filter(
+              (lease) =>
+                lease.slotId === first.slotId &&
+                lease.owner.runId === first.ownerRunId &&
+                lease.state === 'acquired' &&
+                !held.has(lease.id),
+            )
+            .map((lease) => lease.id);
+          await this.rollbackLeases(snapshot, catalog, acquired);
+          const cleanupFailures = snapshot.leases
+            .filter(
+              (lease) =>
+                lease.slotId === first.slotId &&
+                lease.owner.runId === first.ownerRunId &&
+                !held.has(lease.id) &&
+                lease.cleanupFailure,
+            )
+            .map((lease) => ({
+              capabilityId: lease.capabilityId,
+              leaseId: lease.id,
+              reason: lease.cleanupFailure!,
+            }));
+          await this.persist(snapshot);
+          return {
+            ok: false,
+            completed,
+            capabilityId: request.capabilityId,
+            conflict: result.conflict,
+            cleanupFailures,
+          };
+        }
+        completed += 1;
+      }
+      await this.persist(snapshot);
+      return { ok: true, completed };
     });
   }
 
