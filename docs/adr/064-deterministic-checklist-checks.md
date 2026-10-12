@@ -38,3 +38,41 @@ Receipts identify checklist, step, command, source inputs, timestamps, exit code
 Local checks and CI call the same script. Remote-only checks remain in CI. Undeclared steps retain existing behavior.
 
 The implementation PR adds normative rules to the existing [task directory contract](../reference/task-directory-contract.md).
+
+## Amendment 1 (2026-10-12): CI decision check context
+
+**Status:** Accepted
+**Implementation:** Merged in [#951](https://github.com/deeeed/farmslot/pull/951).
+**Specification:** [CI decision check context](../reference/ci-decision-check-context.md).
+
+### Decision
+
+Add an optional read-only `PRStatus.checkSnapshot` to existing `pr.status` reads.
+The gateway retains PR/repository identity, fetch time and provider check rows
+with every newly raised `ci_*` decision. Keep gate-time and current data separate;
+missing historical metadata remains unknown. The existing CLI and GraphQL check
+queries share normalization, without another endpoint or request.
+
+`@farmslot/protocol` owns the pure comparison model consumed by the existing
+Command Center and Companion decision renderers. Companion refresh uses
+`pr.status` with `force: true`, bound to the selected decision and connection.
+It retains the frozen gate snapshot and never resolves the decision or changes
+its actions. Desktop consumes its existing reads only.
+
+### Rationale
+
+Gate-time prose and current coarse check groups cannot explain CI drift.
+Retaining the check snapshot lets operators compare what raised the decision
+with current provider facts without reconstructing history.
+
+### Consequences
+
+The snapshot/row types and `RunDecision.context.checkSnapshot` are additive.
+Legacy records remain readable without backfill. Existing watched groups,
+recommendations, caching, backoff, broadcasts, timeout auto-resume and timers
+retain their behavior. Harnesses inherit the response and decision context;
+no RPC, public command/flag, harness hook, policy, gate-resolution rule or
+schema-version change is added. Successful empty reads differ from failed or
+truncated reads. List trimming is explicit and detail hydration retains the
+snapshot. The specification owns transport normalization, all six CI types,
+refresh races, availability states and verification requirements.

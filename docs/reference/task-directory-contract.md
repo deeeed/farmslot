@@ -121,6 +121,12 @@ The selected checklist travels inside `inputs/handoff.json` as `executionTemplat
 
 [ADR-064](../adr/064-deterministic-checklist-checks.md) defines task-owned command receipts before publication.
 
+Its [CI decision check context amendment](../adr/064-deterministic-checklist-checks.md#amendment-1-2026-10-12-ci-decision-check-context)
+owns the read-only gate/current comparison. The linked
+[CI decision specification](ci-decision-check-context.md) defines retained provider
+snapshots and refresh availability; those reads do not replace command receipts
+or resolve publication gates.
+
 ### Public surface
 
 `project.json` may set `ci.local_check` to a nonempty portable shell command. The built-in project uses `yarn ci:local`; the repository quality job calls the same script. Its guard list is shared, formatting is scoped to changed files when Git supplies a base, and tests requiring a tmux server remain CI-only.

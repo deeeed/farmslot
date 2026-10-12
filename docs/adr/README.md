@@ -6,6 +6,10 @@
 
 ADRs for Farmslot. Some are Command Center-specific, while newer records may apply to the whole Farmslot product.
 
+Bounded changes are dated amendments to the owning ADR. Each amendment retains
+its own approval and delivery status; an Accepted base does not accept a Proposed
+amendment or establish package publication. ADR numbers are unique.
+
 Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../reference/adr-implementation-status.md) | [Command Center PRD](../PRD-command-center-canonical.md)
 
 | #                                                        | Decision                                                                | Status   |
@@ -43,7 +47,7 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [031](031-deterministic-first-auto-recovery.md)          | Deterministic-First Auto-Recovery                                       | Accepted |
 | [032](032-runner-observability-via-hooks.md)             | Event-Driven Runner Observability via Hooks and Signal Files            | Accepted |
 | [033](033-mobile-tmux-worker-control.md)                 | Mobile Control of General Tmux Workers                                  | Accepted |
-| [034](034-recipe-protocol-v1.md)                         | Recipe Protocol v1                                                      | Accepted |
+| [034](034-recipe-protocol-v1.md)                         | Recipe Protocol v1, bounded HUD intent and log observations             | Accepted |
 | [035](035-node-support-bundles.md)                       | Node Support Bundles                                                    | Accepted |
 | [036](036-cli-gateway-profiles.md)                       | CLI Gateway Profiles and Auth                                           | Accepted |
 | [037](037-prepare-profiles.md)                           | Prepare Profiles — Project-Defined Slot Entry Points                    | Accepted |
@@ -70,7 +74,7 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [061](061-structured-assessment-providers.md)            | Structured assessment providers                                         | Accepted |
 | [062](062-recorded-run-evidence.md)                      | Recorded run evidence                                                   | Accepted |
 | [063](063-review-modes-warm-cold.md)                     | Review modes WARM and COLD with one shared review-and-dispatch picker   | Accepted |
-| [064](064-deterministic-checklist-checks.md)             | Deterministic checklist checks before publication                       | Accepted |
+| [064](064-deterministic-checklist-checks.md)             | Deterministic checklist checks and CI decision check context            | Accepted |
 | [065](065-fail-closed-run-lifecycle.md)                  | Fail-closed run lifecycle                                               | Accepted |
 | [068](068-project-recipe-binding-and-conformance.md)     | Project recipe binding and conformance                                  | Accepted |
 | [069](069-declared-pinned-sources.md)                    | Declared and pinned farm sources                                        | Accepted |

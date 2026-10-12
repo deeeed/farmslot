@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-04-29
-- Updated: 2026-07-22
+- Updated: 2026-10-12
 
 ## Context
 
@@ -70,3 +70,78 @@ Recipes are directed graphs, not linear scripts. Setup, start state, branching, 
 - Evidence remains reviewable without access to the original library.
 - Project runners stay thin and domain-owned.
 - Simple recipes remain valid without composition or visual evidence.
+
+## Amendment 1 (2026-10-12): Bounded shared HUD intent
+
+**Status:** Accepted
+**Implementation:** Merged in [#944](https://github.com/deeeed/farmslot/pull/944).
+**Specification:** [Intent and HUD policy](../reference/recipe-protocol-v1.md#intent).
+
+### Decision
+
+`@farmslot/protocol/recipe` owns one intent display model and authoring policy.
+Native and thin DOM renderers consume that model, preserve the normalized intent,
+and let platform layout wrap within two lines and bounded panels. One shared
+native component lives in `@farmslot/adapter-rn/recipe-hud`, re-exported by
+Companion and scaffold templates. The runner passes the complete normalized
+intent to adapters. Existing placement, isolation, pointer pass-through,
+status/progress and renderer extension points remain supported.
+
+The existing CLI lint/conformance path opts into authoring checks: warn above
+80 Unicode code points and fail above 120, counted after trimming. One plain
+sentence is guidance, not a new grammar parser. Ordinary graph validation,
+execution and retained-artifact verification retain their v1 behavior.
+
+### Rationale
+
+Different one-line and character-slicing policies cut useful intent and allow
+HUD panels to obscure the checked application. One shared model and native
+renderer prevent project-specific formatting drift.
+
+### Consequences
+
+Mandatory panel and line bounds apply after styling. Existing text/style,
+overlay and custom `renderHud` options remain, with custom renderers adopting
+the shared helper. CLI consumers need no native peers. The helper/authoring
+option are additive package APIs; the recipe wire/schema version stays v1.
+Framework examples adopt the authoring rule. Farm recipes are not rewritten;
+copied project HUDs adopt the shared renderer through deliberate scaffold
+updates rather than deployment overwrites. The specification retains exact
+layout bounds, extension behavior and verification requirements.
+
+## Amendment 2 (2026-10-12): Bounded log observations
+
+**Status:** Accepted
+**Implementation:** Merged in [#969](https://github.com/deeeed/farmslot/pull/969).
+**Specification:** [Recipe log observations](../reference/recipe-log-observations.md).
+
+### Decision
+
+Extend the existing `watch_logs` action with optional `timeout_ms`. Omission or
+zero keeps one immediate read. A positive bounded window polls read-only for the
+authored condition; it never starts or repairs the producer. Preserve contained
+reads, cancellation, run/file scope, output fields and failure classification.
+
+The protocol owns input relationships. The shared runner owns resolved-invocation
+preflight, pre-producer file offsets and polling. Run-scoped paths resolve from
+inputs before producers execute; output-derived paths require explicit file
+scope. Existing project lifecycle callbacks remain unchanged.
+
+### Rationale
+
+One immediate read misses asynchronous output that arrives just afterward.
+Observing for a declared window proves the condition without confusing an
+observation with a producer retry or accepting stale run content.
+
+### Consequences
+
+The optional window is a backward-compatible action extension that requires
+supporting runtime dependencies. Refusing output-derived run-scoped paths is a
+breaking correction to stale-content false passes. Project manifests and
+protocol/runner dependency pins move together. MetaMask Core, Mobile, Extension
+and web-dapp catalogs are the first consumers; Terminal inherits the web-dapp
+catalog and adds domain actions. Recipes and `farmslot recipe call watch_logs`
+use existing parameters; `@farmslot/recipe-runner` owns execution. No SDK export
+or CLI flag is added. The specification owns timeout/poll bounds, preflight and
+real-producer acceptance requirements. A merged implementation does not record
+package publication or provider rollout.
