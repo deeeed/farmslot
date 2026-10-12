@@ -30,6 +30,10 @@ export async function readRunRecordedEvidence(
   frozen?: { decisionId: string; packageHash?: string },
 ): Promise<RunRecordedEvidenceReview> {
   const artifactPrefix = 'artifacts/';
+  const rootParts = group?.artifactRoot?.split(path.sep) ?? [];
+  const artifactsIndex = rootParts.lastIndexOf('artifacts');
+  const packagePath =
+    artifactsIndex >= 0 ? rootParts.slice(artifactsIndex + 1).join('/') || '.' : undefined;
   if (!frozen && !group?.artifactRoot) return { artifactPrefix, errors: [] };
   try {
     if (frozen) {
@@ -62,7 +66,11 @@ export async function readRunRecordedEvidence(
           retainedRunId ? input.claims?.recipeRunId === retainedRunId : artifactPrefix === prefix,
         ) ?? (!retainedRunId && sources.length === 1 ? sources[0] : undefined);
       if (!source) throw new Error('Select a retained recipe execution from the gate package.');
-      return { ...source, errors: reviewValidationErrors(source.input) };
+      return {
+        ...source,
+        packagePath: source.artifactPrefix.replace(/^artifacts\//u, '').replace(/\/$/u, '') || '.',
+        errors: reviewValidationErrors(source.input),
+      };
     }
     if (!group?.artifactRoot) return { artifactPrefix, errors: [] };
     const locality = run.slotId ? await getSlotLocality(run.slotId) : null;
@@ -103,10 +111,14 @@ export async function readRunRecordedEvidence(
       .filter((check) => check.status === 'fail')
       .map((check) => check.message);
     errors.push(...reviewValidationErrors(result.input));
-    return { input: result.input, artifactPrefix, errors };
+    return { input: result.input, artifactPrefix, packagePath, errors };
   } catch (error) {
     // An unavailable/corrupt retained package stays visible; it never becomes timed proof.
-    return { artifactPrefix, errors: [error instanceof Error ? error.message : String(error)] };
+    return {
+      artifactPrefix,
+      packagePath,
+      errors: [error instanceof Error ? error.message : String(error)],
+    };
   }
 }
 

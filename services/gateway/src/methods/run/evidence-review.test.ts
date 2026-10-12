@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { cp, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
@@ -183,4 +183,25 @@ test('QA output display uses the same frozen closure and refuses a changed repor
   );
   assert.equal(changed.input, undefined);
   assert.match(changed.errors.join(' '), /QA output snapshot changed/);
+});
+
+test('package display paths use the selected artifact root even when the run task is an operator mirror', async (t) => {
+  const group = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const original = root;
+  const nested = path.join(root, 'artifacts', 'recipe-run');
+  await mkdir(nested, { recursive: true });
+  for (const file of await readdir(original)) {
+    if (file !== 'artifacts')
+      await cp(path.join(original, file), path.join(nested, file), { recursive: true });
+  }
+  root = nested;
+  remote = false;
+  const source = await readRunRecordedEvidence(
+    { ...run, taskFile: '/operator/tasks/TASK.md' } as Run,
+    { ...group, artifactRoot: nested },
+  );
+  root = original;
+  assert.equal(source.packagePath, 'recipe-run');
+  assert.deepEqual(source.errors, []);
 });

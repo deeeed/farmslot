@@ -470,6 +470,7 @@ export default function ArtifactViewerScreen() {
         package: recordedEvidence?.input,
         readErrors: recordedEvidence?.errors,
         artifactPrefix: recordedEvidence?.artifactPrefix,
+        packagePath: recordedEvidence?.packagePath,
       }),
     [recordedEvidence],
   );
