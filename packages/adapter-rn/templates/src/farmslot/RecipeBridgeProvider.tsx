@@ -1,6 +1,6 @@
 import React, { createContext, useEffect, useMemo } from 'react';
 import { Platform, View } from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { initialWindowMetrics, SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { hudPlacement } from '@farmslot/protocol/recipe';
 
@@ -84,7 +84,7 @@ export function RecipeBridgeProvider({
 
   return (
     <FarmslotRecipeBridgeContext.Provider value={bridge}>
-      <SafeAreaProvider>
+      <SafeAreaProvider initialMetrics={initialWindowMetrics}>
         <View style={{ flex: 1 }}>
           {children}
           {renderHud ? renderHud(hud) : <RecipeHud state={hud} {...hudOptions} />}

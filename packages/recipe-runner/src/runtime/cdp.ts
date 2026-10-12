@@ -1809,7 +1809,8 @@ async function renderCdpHud(
       return (${waitForHudPaint.toString()})(requestAnimationFrame).then(() =>
         ({ hud: true, status: payload.status, nodeId: payload.nodeId, flow: payload.flow }));
     })()`,
-    { timeoutMs: 750, signal: context.signal },
+    // Navigation/hydration may occupy the main thread before the paint wait starts.
+    { timeoutMs: 10_000, signal: context.signal },
   );
 }
 
