@@ -3,6 +3,7 @@ import { html, nothing } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { marked } from 'marked';
 
+import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import {
   type BranchAffinityNudgePayload,
   ciDecisionCheckView,
@@ -21,6 +22,10 @@ import {
 } from '@farmslot/protocol';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
+import {
+  type AcceptanceEvidenceOpen,
+  renderAcceptancePanel,
+} from '../progress-tracker/acceptance-panel.js';
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
 import { readyReviewRequestProgress } from '../workspace/ready-workspace-review-request-model.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
@@ -99,6 +104,9 @@ function withGraftedGateSummary(
 }
 
 export interface RunDecisionRenderContext {
+  evidenceModel?: EvidenceReviewModel | null;
+  openOutputReport?: () => void;
+  openEvidence?: (open: AcceptanceEvidenceOpen) => void;
   allRuns: Run[];
   /** Enriched `decision.list` snapshot (state.decisions) — source of lazy-backfilled gateSummary. */
   pendingDecisions: readonly PendingDecision[];
@@ -170,10 +178,27 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
         Read the report, then close execution when no more work is planned. The recorded
         ${run.metrics.outcome ?? 'unknown'} result and any gaps remain unchanged.
       </p>
+      <p>Report snapshot ${pending.payload.manifestDigest}</p>
+      ${context.evidenceModel
+        ? renderAcceptancePanel(
+            { schemaVersion: 1, criteria: [] },
+            {
+              evidenceModel: context.evidenceModel,
+              openEvidence: context.openEvidence,
+              evidenceHref: (path) => `#run/${run.id}?artifact=${encodeURIComponent(path)}`,
+            },
+          )
+        : nothing}
       <div class="evidence-actions">
         <a
           class="evidence-link"
           href=${`#run/${run.id}?artifactRun=${encodeURIComponent(run.id)}&artifact=${encodeURIComponent(pending.payload.reportPath)}`}
+          @click=${(event: MouseEvent) => {
+            if (context.openOutputReport) {
+              event.preventDefault();
+              context.openOutputReport();
+            }
+          }}
           >Read report</a
         >
         <button

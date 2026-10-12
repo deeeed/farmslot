@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Use the shared evidence review model for claim/step navigation and bounded clips; initialize only the selected video player (ADR-062).
 - Show review rounds as N/5 and disable another review when the budget is spent.
 
 - Group delivered roadmap work separately with PR links and delivery outcome filters.

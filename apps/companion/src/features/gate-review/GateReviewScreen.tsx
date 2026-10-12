@@ -58,6 +58,7 @@ export function GateReviewScreen({
         <Text style={styles.sectionTitle}>Acceptance criteria</Text>
         {acceptance.view || acceptance.error ? (
           <TaskAcceptancePanel
+            evidenceModel={acceptance.evidenceModel}
             acceptanceStatus={acceptance.acceptanceStatus}
             acceptanceCriteria={acceptance.acceptanceCriteria}
             acceptanceEvidenceLinks={acceptance.acceptanceEvidenceLinks}
