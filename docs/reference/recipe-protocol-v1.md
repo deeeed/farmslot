@@ -7,6 +7,11 @@ Recipe Protocol v1 has two public concepts:
 
 The authoritative schema is `https://farmslot.io/schemas/recipe-v1.schema.json`.
 
+The owning decision is [ADR-034](../adr/034-recipe-protocol-v1.md). Its accepted
+amendments cover the bounded HUD policy, implemented in
+[#944](https://github.com/deeeed/farmslot/pull/944), and bounded log observations,
+implemented in [#969](https://github.com/deeeed/farmslot/pull/969).
+
 ## Minimal recipe
 
 ```json
@@ -82,6 +87,13 @@ CDP bottom-bar and docked-bottom modes have fixed maximums of 960 by 144 CSS
 pixels while retaining their existing position/space-reservation behavior. Auxiliary
 HUD copy cannot enlarge the panel across the application.
 
+Display whitespace MUST be normalized without shortening the authored intent.
+Renderers MUST NOT slice it by character count. Native HUD text has fixed font
+scaling; mandatory line, width and height limits MUST apply after custom styling.
+Existing HUD isolation, pointer pass-through, status/progress and placement modes
+remain supported. The automatic runner HUD passes the complete normalized intent
+to adapters.
+
 #### Public surface
 
 The existing `farmslot recipe validate` and recipe conformance path emit these
@@ -94,6 +106,22 @@ adapter, retaining `app.hud` as the extension point. Custom app-owned renderers
 must adopt the shared helper explicitly. Existing copied HUDs can adopt the
 shared native export through a deliberate scaffold update; no farm files are
 overwritten by this change. Recipe schema version stays v1.
+
+Companion and scaffold templates re-export the same native HUD component. Preserve
+`RecipeHudOptions`, including text/style overrides and custom `renderHud` callbacks.
+Companion supplies its installed iOS FullWindowOverlay through
+`RecipeHudOptions.overlay`; the scaffold has no screens dependency. Companion
+uses `RecipeHudProps.onLayout` for safe-area footer placement when the measured
+panel fits, otherwise placing it above the default tab controls. Custom callbacks
+MUST consume the shared helper to conform. Native peers remain optional for CLI
+consumers.
+
+Framework examples and validation recipes adopt the 120-character authoring
+limit; farm recipes MUST NOT be rewritten by this correction. Verification covers
+full intent preservation, Unicode/whitespace, two-line ellipsis, panel bounds and
+80/81/120/121 boundaries, plus real native/web screenshots with the app visible and
+existing HUD isolation/lifecycle checks. This bounded policy alone does not
+establish complete [recorded-evidence conformance](recorded-run-evidence.md#hud-requirements).
 
 For UI actions, prefer `"Open the purchase path for the selected asset."` over `"Press buy"` or a selector name. Selectors, routes, keys, and test IDs stay in action parameters.
 
@@ -192,6 +220,11 @@ selectors and actions needed to reproduce the proof. Domain harnesses may add se
 and setup actions, but project routes and screen names are not part of Recipe v1.
 
 ## Actions and manifests
+
+The existing `watch_logs` action's optional bounded observation window, run/file
+scope and pre-producer offsets are specified in
+[Recipe log observations](recipe-log-observations.md). That contract is owned by
+[ADR-034 Amendment 2](../adr/034-recipe-protocol-v1.md#amendment-2-2026-10-12-bounded-log-observations).
 
 The protocol owns graph execution, validation, trace, and evidence contracts. Runners own action implementations and platform behavior.
 
