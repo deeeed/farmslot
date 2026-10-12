@@ -1453,10 +1453,14 @@ export async function getArchivedRuns(): Promise<Run[]> {
  * Concatenating without dedup double-counts run families and clears `archivedOnly`.
  */
 export async function getAllRunsWithArchived(): Promise<Run[]> {
-  const byId = new Map<string, Run>();
-  for (const run of await getArchivedRuns()) byId.set(run.id, run);
-  for (const run of getAllRuns()) byId.set(run.id, run);
-  return [...byId.values()];
+  for (;;) {
+    const generation = archivedRunsGeneration;
+    const byId = new Map<string, Run>();
+    for (const run of await getArchivedRuns()) byId.set(run.id, run);
+    for (const run of getAllRuns()) byId.set(run.id, run);
+    if (generation !== archivedRunsGeneration) continue;
+    return [...byId.values()];
+  }
 }
 
 /** Synchronous admission checks fail closed until an archived record has been loaded. */

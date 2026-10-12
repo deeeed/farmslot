@@ -5,6 +5,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Display readable run titles in lists, retrospectives, detail and decisions with two-line cards and full title on hover.
+- Show review rounds as N/5 and disable another review when the budget is spent.
 
 - Move delivered roadmap work into a collapsed group with PR links and prominent delivery status.
 

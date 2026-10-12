@@ -1,4 +1,23 @@
-import type { ReviewStatus } from '../contracts/runs.js';
+import type { ReviewRoundBudget, ReviewStatus } from '../contracts/runs.js';
+
+export const MAX_REVIEW_ROUNDS = 5;
+
+/** Round budget is separate from the number of qualifying passing reviewers. */
+export function reviewRoundBudget(used: number): ReviewRoundBudget {
+  const count = Number.isFinite(used) ? Math.max(0, Math.floor(used)) : 0;
+  return {
+    used: count,
+    limit: MAX_REVIEW_ROUNDS,
+    remaining: Math.max(0, MAX_REVIEW_ROUNDS - count),
+    label: `Review rounds ${count}/${MAX_REVIEW_ROUNDS}`,
+    ...(count >= MAX_REVIEW_ROUNDS
+      ? {
+          diagnosis:
+            'The five review rounds are spent. A design problem or scope creep has exhausted the review budget; stop and narrow the change or redesign it.',
+        }
+      : {}),
+  };
+}
 
 export const APPROVE_PUBLISH_UNRESOLVED_ACTION = 'approve-publish-unresolved';
 

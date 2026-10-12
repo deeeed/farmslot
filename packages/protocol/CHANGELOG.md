@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Share plain run titles across clients, deriving HTML and Markdown headings with bounded display text.
+- Share the five-round review budget and its gate display independently of passing-review counts.
 
 ## 0.40.0 - 2026-10-12
 

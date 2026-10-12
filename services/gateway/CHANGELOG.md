@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Derive plain free-text task and report titles while preserving the complete task and report bodies.
+- Enforce five review rounds per PR, including retries and publication requests, with durable admission before launch and a design or scope refusal at the limit.
 
 - Publish the exact selected review findings and report, preserving accepted choices across refresh races.
 
