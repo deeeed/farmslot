@@ -67,6 +67,10 @@ async function fixture(): Promise<RecipeRunArtifactGroup> {
     { recursive: true },
   );
   await writeFile(path.join(root, 'original.mp4'), new Uint8Array([1, 2, 3]));
+  const manifestPath = path.join(root, 'artifact-manifest.json');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  manifest.artifacts.push({ path: 'original.mp4', type: 'video', label: 'Untimed recording' });
+  await writeFile(manifestPath, JSON.stringify(manifest));
   hashes = await Promise.all(
     (await readdir(root)).map(async (file) => ({
       path: `artifacts/${file}`,

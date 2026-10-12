@@ -150,6 +150,7 @@ export async function verifyFrozenPublicationEvidence(
   inventory: readonly ArtifactRef[],
   selectedEvidenceKeys: readonly string[],
 ): Promise<void> {
+  if (!inventory.length && !selectedEvidenceKeys.length) return;
   await verifyReadyGateSelectedEvidenceFiles(run, { evidenceManifest: [...inventory] }, [
     ...selectedEvidenceKeys,
   ]);

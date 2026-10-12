@@ -20,6 +20,18 @@ const { expandPublicationEvidenceSelection, readEvidenceManifest } =
 
 const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 
+test('a publication with no retained evidence needs no invented artifact directory', async () => {
+  await verifyFrozenPublicationEvidence({ id: 'no-evidence' } as Run, [], []);
+  await assert.rejects(
+    verifyFrozenPublicationEvidence(
+      { id: 'missing-evidence' } as Run,
+      [{ path: 'artifacts/proof.png', purpose: 'screenshot' }],
+      ['artifacts/proof.png'],
+    ),
+    /requires a task directory/,
+  );
+});
+
 async function indexMedia(root: string, filename: string) {
   const manifestPath = path.join(root, 'artifact-manifest.json');
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
