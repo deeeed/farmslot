@@ -37,7 +37,7 @@ import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import type { AcceptanceEvidenceOpen } from '../progress-tracker/acceptance-panel.js';
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
-import type { LightboxItem } from '../shared/media-lightbox-types.js';
+import type { LightboxItem, LightboxSelection } from '../shared/media-lightbox-types.js';
 
 import { isRecoverableBlockedWorkerRun } from './blocked-run-recovery-model.js';
 import { ticketUrlForRun } from './family-observability-link-model.js';
@@ -220,6 +220,7 @@ export interface RunEvidenceRenderContext {
   ) => void;
   closeEvidenceLightbox: () => void;
   navigateEvidenceLightbox: (index: number) => void;
+  replaceEvidenceLightbox: (selection: LightboxSelection) => void;
   refreshOutput?: () => void;
   refreshingOutput?: boolean;
   outputError?: string;
@@ -378,6 +379,8 @@ function renderEvidenceLightbox(ctx: RunEvidenceRenderContext) {
       scopeLabel=${ctx.evidenceLightboxScope ?? RUN_OUTPUT_SCOPE}
       @lightbox-close=${() => ctx.closeEvidenceLightbox()}
       @lightbox-navigate=${(event: CustomEvent) => ctx.navigateEvidenceLightbox(event.detail.index)}
+      @lightbox-items-change=${(event: CustomEvent<LightboxSelection>) =>
+        ctx.replaceEvidenceLightbox(event.detail)}
     ></media-lightbox>`;
 }
 

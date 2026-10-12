@@ -1,5 +1,11 @@
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 
+/** A child proof traversal replaces the gallery and its selected file together. */
+export interface LightboxSelection {
+  items: LightboxItem[];
+  index: number;
+}
+
 export interface LightboxItem {
   url: string;
   path: string;

@@ -91,13 +91,22 @@ export function MediaViewer({
     : uri
       ? [{ uri, authHeaders }]
       : [];
-  const session = useRef({ visible: false, uri, items: suppliedItems });
+  const proof = suppliedItems.find((item) => item.uri === uri)?.evidenceModel?.selection;
+  const proofPaths = proof ? new Set(proof.artifacts.map((file) => file.artifactPath)) : null;
+  const openingItems = proofPaths
+    ? suppliedItems.filter((item) => item.path && proofPaths.has(item.path))
+    : suppliedItems;
+  const session = useRef({ visible: false, uri, items: openingItems });
   // Background metadata refreshes cannot replace the package being reviewed.
   if (visible && (!session.current.visible || session.current.uri !== uri))
-    session.current = { visible, uri, items: suppliedItems };
+    session.current = { visible, uri, items: openingItems };
   session.current.visible = visible;
   const viewerItems = visible ? session.current.items : suppliedItems;
-  const clampedInitialIndex = Math.max(0, Math.min(initialIndex, viewerItems.length - 1));
+  const requestedIndex = uri ? viewerItems.findIndex((item) => item.uri === uri) : initialIndex;
+  const clampedInitialIndex = Math.max(
+    0,
+    Math.min(requestedIndex >= 0 ? requestedIndex : initialIndex, viewerItems.length - 1),
+  );
   const [currentIndex, setCurrentIndex] = useState(clampedInitialIndex);
   const [zoomedUri, setZoomedUri] = useState<string | null>(null);
 
@@ -388,6 +397,7 @@ function FullscreenVideo({
   const [uri, setUri] = useState(item.uri);
   const resumePlayback = useRef(Boolean(item.evidenceModel?.selection?.clips.length));
   const [videoPath, setVideoPath] = useState('');
+  const [durationMs, setDurationMs] = useState(0);
   const [, updateSelection] = useState(0);
   const source = useMemo(() => artifactSource(uri, item.authHeaders), [item.authHeaders, uri]);
   const player = useVideoPlayer(source, (value) => {
@@ -427,6 +437,14 @@ function FullscreenVideo({
         (recording) =>
           item.path === recording.videoPath || item.path?.endsWith(`/${recording.videoPath}`),
       );
+      if (read?.selection?.clips.length && recording) {
+        const index = read.selection.clips.findIndex(
+          (clip) => clip.videoPath === recording.videoPath,
+        );
+        if (index >= 0 && read.playback.clip?.videoPath !== recording.videoPath)
+          read.cueClip(index);
+      }
+      setDurationMs(0);
       setVideoPath(recording?.videoPath ?? '');
       setModel(read);
     };
@@ -484,9 +502,15 @@ function FullscreenVideo({
         player.play();
       }
     };
-    if (player.status === 'readyToPlay') cue();
+    if (player.status === 'readyToPlay') {
+      setDurationMs(player.duration * 1000);
+      cue();
+    }
     const ready = player.addListener('sourceLoad', ({ videoSource }) => {
-      if (typeof videoSource === 'object' && videoSource?.uri === uri) cue();
+      if (typeof videoSource === 'object' && videoSource?.uri === uri) {
+        setDurationMs(player.duration * 1000);
+        cue();
+      }
     });
     const ended = player.addListener('playToEnd', () => {
       if (!active || !model || !videoPath) return;
@@ -528,12 +552,7 @@ function FullscreenVideo({
         {timeline ? (
           <ScrollView horizontal contentContainerStyle={{ gap: 8 }}>
             {timeline.markers.map((marker) => {
-              const seek = model?.markerSeekMs(
-                videoPath,
-                marker.traceIndex,
-                'start',
-                player.duration * 1000,
-              );
+              const seek = model?.markerSeekMs(videoPath, marker.traceIndex, 'start', durationMs);
               return (
                 <Pressable
                   key={marker.traceIndex}

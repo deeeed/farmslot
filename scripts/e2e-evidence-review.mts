@@ -1,5 +1,6 @@
 /** Manual browser proof against evidence-review-proof's production RPC and artifact handlers. */
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -31,8 +32,33 @@ async function wait<T>(read: () => Promise<T>, ready: (value: T) => boolean) {
   } while (Date.now() < until);
   throw new Error(`Review condition timed out: ${JSON.stringify(value!)}`);
 }
+function requestGateway(method: string, params: Record<string, unknown>) {
+  return JSON.parse(
+    execFileSync(
+      process.execPath,
+      ['apps/command-center/scripts/cdp.mjs', 'gateway', method, JSON.stringify(params)],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, FARMSLOT_GATEWAY: `ws://127.0.0.1:${state.gatewayPort}` },
+      },
+    ),
+  );
+}
 try {
   for (const run of state.runs.filter((run) => run.label !== 'minimal-author-publish-gate')) {
+    const legacyTask =
+      run.label === 'legacy-live-ledger'
+        ? path.dirname(requestGateway('run.get', { runId: run.id }).run.taskFile)
+        : null;
+    if (legacyTask)
+      execFileSync(process.execPath, [
+        'packages/agent-runtime/scripts/acceptance-cli.cjs',
+        'set',
+        'AC-1',
+        'weak',
+        '--task-dir',
+        legacyTask,
+      ]);
     const url = `http://127.0.0.1:${state.uiPort}/#run/${run.id}`;
     const { targetId } = await browser.call<{ targetId: string }>('Target.createTarget', {
       url,
@@ -45,6 +71,47 @@ try {
       );
       page = await CdpWebPage.connectToTarget(target);
       const p = page;
+      if (run.label === 'qa-multi-case-proof') {
+        const result = requestGateway('run.recipeRunsForRun', {
+          runId: run.id,
+          recipeRunId: 'live-run:previous',
+          includeRecordedEvidence: true,
+        });
+        assert(result.recipeRuns.length > 0);
+        assert(result.selectedRecipeRunId);
+        assert.equal(result.recordedEvidence.input, undefined);
+        assert(result.recordedEvidence.errors.length);
+      }
+      if (run.label === 'legacy-live-ledger') {
+        await wait(
+          () => p.evaluate<string>(`${detail}?.evidenceModel?.claims[0]?.status?.verdict ?? ''`),
+          (value) => value === 'weak',
+        );
+        execFileSync(process.execPath, [
+          'packages/agent-runtime/scripts/acceptance-cli.cjs',
+          'set',
+          'AC-1',
+          'proven',
+          '--task-dir',
+          legacyTask!,
+          '--proof-mode',
+          'state',
+          '--recipe-node',
+          'check_one',
+          '--evidence',
+          'artifacts/stills/check_one-1.png',
+        ]);
+        await wait(
+          () => p.evaluate<string>(`${detail}?.evidenceModel?.claims[0]?.status?.verdict ?? ''`),
+          (value) => value === 'proven',
+        );
+        const row = await p.evaluate<string>(
+          `${detail}.shadowRoot.querySelector('run-pipeline').shadowRoot.querySelector('[data-ac-id="AC-1"]').textContent`,
+        );
+        assert(row.includes('proven'));
+        reports.push({ runId: run.id, label: run.label, ledgerLiveUpdate: true });
+        continue;
+      }
       await wait(
         () =>
           p.evaluate<{ count: number }>(
@@ -85,6 +152,15 @@ try {
             Math.abs(value.timeMs - last.endMs) < 50,
         );
         assert.equal(await p.evaluate(`${detail}.evidenceModel.selection.claimId`), id);
+        assert.deepEqual(
+          await p.evaluate(`${detail}._evidenceLightboxItems.map(i=>i.path)`),
+          await p.evaluate(`${lightbox}.items.map(i=>i.path)`),
+          'segment transitions keep the parent gallery',
+        );
+        assert.equal(
+          await p.evaluate(`${detail}._evidenceLightboxIndex`),
+          await p.evaluate(`${lightbox}.selectedIndex`),
+        );
         const markers = await p.evaluate<number>(
           `${lightbox}.shadowRoot.querySelectorAll('[data-testid="video-marker"]').length`,
         );
@@ -124,12 +200,46 @@ try {
       );
       const report = await p.evaluate<string>(`${lightbox}.shadowRoot.textContent`);
       assert(report.includes(run.claimIds[0]!));
+      // Scope to the open player; the page also contains acceptance panels.
+      const clickPlayer = async (selector: string) => {
+        const point = await p.evaluate<{ x: number; y: number }>(
+          `(()=>{const el=${lightbox}.shadowRoot.querySelector(${JSON.stringify(selector)});el.scrollIntoView({block:'center'});const r=el.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`,
+        );
+        await p.clickPoint(point.x, point.y);
+      };
+      const panelOpenInReport = await p.evaluate<boolean>(
+        `${lightbox}.shadowRoot.querySelector('[data-testid="acceptance-panel"]').open`,
+      );
+      if (!panelOpenInReport) await clickPlayer('[data-testid="acceptance-panel"] summary');
+      await wait(
+        () =>
+          p.evaluate<boolean>(
+            `${lightbox}.shadowRoot.querySelector('[data-testid="acceptance-panel"]').open`,
+          ),
+        (value) => value,
+      );
+      await clickPlayer(`[data-ac-id="${run.claimIds[0]}"] [data-testid="acceptance-clip"]`);
+      await wait(
+        () => p.evaluate<number>(`${lightbox}.selectedIndex`),
+        (value) => value > 0,
+      );
+      assert.equal(
+        await p.evaluate(`${detail}._evidenceLightboxIndex`),
+        await p.evaluate(`${lightbox}.selectedIndex`),
+      );
+      await p.click('.ml-film-item:first-child');
+      await wait(
+        () => p.evaluate<string>(`${lightbox}.shadowRoot.textContent`),
+        (value) => value.includes('Recipe output'),
+      );
+      assert.equal(await p.evaluate(`${lightbox}.selectedIndex`), 0);
       reports.push({
         runId: run.id,
         label: run.label,
         claims,
         reportSnapshot: true,
         stepTraversal: true,
+        reportClipReturn: true,
       });
     } finally {
       page?.session.close();
@@ -216,7 +326,7 @@ try {
     JSON.stringify({
       pass: true,
       runs: reports.length,
-      claims: reports.reduce((sum, run) => sum + run.claims.length, 0),
+      claims: reports.reduce((sum, run) => sum + (run.claims?.length ?? 0), 0),
     }),
   );
 } finally {

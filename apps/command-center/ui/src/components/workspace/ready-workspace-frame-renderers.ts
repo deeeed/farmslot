@@ -4,7 +4,11 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import type { ReadyGatePayload } from '@farmslot/protocol';
 
 import { acceptancePanelStyles } from '../progress-tracker/acceptance-panel.js';
-import type { LightboxItem, LightboxPair } from '../shared/media-lightbox-types.js';
+import type {
+  LightboxItem,
+  LightboxPair,
+  LightboxSelection,
+} from '../shared/media-lightbox-types.js';
 
 import { renderReadyWorkspaceMarkdown } from './ready-workspace-markdown.js';
 import { readyWorkspaceLightStyles } from './ready-workspace-renderers.js';
@@ -45,6 +49,7 @@ export interface ReadyWorkspaceFrameInput {
     totalItems: number;
     close: () => void;
     navigate: (index: number) => void;
+    replace: (selection: LightboxSelection) => void;
     changeMode: (mode: 'single' | 'compare') => void;
     navigatePair: (index: number) => void;
     clearScope: (path?: string | null) => void;
@@ -107,6 +112,8 @@ export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
       @lightbox-close=${input.lightbox.close}
       @lightbox-navigate=${(event: CustomEvent<{ index: number }>) =>
         input.lightbox.navigate(event.detail.index)}
+      @lightbox-items-change=${(event: CustomEvent<LightboxSelection>) =>
+        input.lightbox.replace(event.detail)}
       @lightbox-mode-change=${(event: CustomEvent<{ mode: 'single' | 'compare' }>) =>
         input.lightbox.changeMode(event.detail.mode)}
       @lightbox-pair-navigate=${(event: CustomEvent<{ index: number }>) =>

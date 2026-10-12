@@ -50,6 +50,20 @@ const context = {
 } as ActionExecutionContext;
 try {
   await transport.open();
+  const { createAgentDeviceClient } = await import('agent-device');
+  const client = createAgentDeviceClient({
+    session: 'recorded-evidence-review-proof',
+    stateDir: artifactsDir,
+  });
+  const initial = await client.capture.snapshot({
+    platform: 'ios',
+    target: 'mobile',
+    udid: simulator,
+    session: 'recorded-evidence-review-proof',
+    forceFull: true,
+  });
+  if (initial.nodes.some((node) => node.label === 'Close document'))
+    await transport.execute('ui.press', { text: 'Close document' }, context);
   execFileSync('xcrun', [
     'simctl',
     'openurl',
@@ -93,6 +107,28 @@ try {
     { path: 'verified-report.png', label: 'Captured QA report and case evidence.' },
     context,
   );
+  await transport.execute(
+    'ui.press',
+    { test_id: 'companion-ac-clip-case-1', timeout_ms: 10_000 },
+    context,
+  );
+  await transport.execute('ui.press', { text: 'Next', timeout_ms: 10_000 }, context);
+  await transport.execute(
+    'ui.screenshot',
+    { path: 'next-original.png', label: 'Next original retains proof playback bounds.' },
+    context,
+  );
+  // Pressing a loaded marker must succeed; a zero decoder duration disables it.
+  await transport.execute(
+    'ui.press',
+    { test_id: 'evidence-marker-1', timeout_ms: 10_000 },
+    context,
+  );
+  await transport.execute(
+    'ui.screenshot',
+    { path: 'loaded-marker.png', label: 'Loaded proof marker on the native player.' },
+    context,
+  );
   const receipt = {
     pass: true,
     runId: run.id,
@@ -100,6 +136,8 @@ try {
     manifestDigest: decision.payload.manifestDigest,
     realNativeControls: true,
     copiedReader: false,
+    loadedMarkerPressed: true,
+    nextOriginal: true,
   };
   await fs.writeFile(path.join(artifactsDir, 'receipt.json'), JSON.stringify(receipt, null, 2));
   console.log(JSON.stringify(receipt));

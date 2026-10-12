@@ -15,7 +15,7 @@ const config = JSON.parse(await fs.readFile(configFile, 'utf8')) as {
   stateFile: string;
   uiPort: number;
   gatewayPort?: number;
-  sources: Array<{ label: string; directory: string; mode?: 'ready' }>;
+  sources: Array<{ label: string; directory: string; mode?: 'ready' | 'legacy'; nested?: boolean }>;
 };
 assert(config.sources.length, 'At least one retained real recipe package is required.');
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'evidence-review-proof-'));
@@ -72,7 +72,12 @@ const { createRun, updateRun, persistRunNow } =
   await import('../services/gateway/src/runs/store.js');
 const { createGatewayAuthRuntime, initializeGatewayIdentity } =
   await import('../services/gateway/src/security/auth.js');
-const { createWebSocketServer } = await import('../services/gateway/src/server.js');
+const { createWebSocketServer, broadcastEvent } = await import('../services/gateway/src/server.js');
+const { watchSlot, unwatchSlot, onTaskProgress } =
+  await import('../services/gateway/src/tasks/watcher.js');
+onTaskProgress((slotId, progress, role, contextId, runId) =>
+  broadcastEvent('task.progress.updated', { slotId, progress, role, contextId, runId }),
+);
 const { serveRunArtifact } = await import('../services/gateway/src/methods/filesystem.js');
 const { computeReadyGatePackageHash } =
   await import('../services/gateway/src/run-completion/ready-gate-package.js');
@@ -107,7 +112,34 @@ for (const source of config.sources) {
   const task = path.join(getOrchestratorTaskRoot('evidence'), 'dev', run.id);
   const artifacts = path.join(task, 'artifacts');
   await fs.mkdir(task, { recursive: true });
-  await fs.cp(source.directory, artifacts, { recursive: true });
+  const retainedDir = source.nested
+    ? path.join(artifacts, 'recipe-runs', claims.recipeRunId)
+    : artifacts;
+  await fs.cp(source.directory, retainedDir, { recursive: true });
+  if (source.mode === 'legacy') {
+    await fs.rm(path.join(artifacts, 'summary.json'));
+    await fs.mkdir(path.join(task, 'inputs'), { recursive: true });
+    await write(path.join(task, 'inputs/handoff.json'), {
+      schemaVersion: 1,
+      task: {
+        title: 'Legacy acceptance review',
+        acceptanceCriteria: ['The updated ledger is visible.'],
+      },
+    });
+    await write(path.join(artifacts, 'acceptance-status.json'), {
+      schemaVersion: 1,
+      criteria: [
+        {
+          id: 'AC-1',
+          text: 'The updated ledger is visible.',
+          verdict: 'weak',
+          recipeNodes: [],
+          evidence: [],
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    });
+  }
   await fs.writeFile(path.join(task, 'TASK.md'), '# Retained recipe proof\n');
   await fs.writeFile(
     path.join(task, 'CHECKLIST.md'),
@@ -187,19 +219,51 @@ for (const source of config.sources) {
         })()
       : outputReviewDecisions(run, output);
   const updated = updateRun(run.id, {
-    status: source.mode === 'ready' ? 'blocked' : 'done',
+    status: source.mode === 'legacy' ? 'monitoring' : source.mode === 'ready' ? 'blocked' : 'done',
     taskFile: path.join(task, 'TASK.md'),
     nativeOwnerPrincipalId: 'local-admin',
-    output,
-    decisions: decision,
+    ...(source.nested
+      ? {
+          liveRecipeContext: {
+            source: 'recipe-run-live' as const,
+            recipeRunId: claims.recipeRunId,
+            artifactRoot: retainedDir,
+            recipeJson: JSON.stringify(retained.input.recipe),
+            selectionReason: 'latest-run' as const,
+            isStale: false,
+            artifactManifest: null,
+            workerLearnings: null,
+            recipeQualityArtifact: null,
+            qualityReport: null,
+          },
+        }
+      : {}),
+    output: source.mode === 'legacy' ? null : output,
+    decisions: source.mode === 'legacy' ? [] : decision,
   });
   await persistRunNow(updated);
   runs.push({
     id: run.id,
     label: source.label,
     recipeRunId: claims.recipeRunId,
-    claimIds: claims.criteria.map((claim) => claim.id),
+    claimIds: source.mode === 'legacy' ? ['AC-1'] : claims.criteria.map((claim) => claim.id),
   });
+  if (source.mode === 'legacy') {
+    await fs.mkdir(path.join(root, 'repo/.task/dev'), { recursive: true });
+    await fs.symlink(task, path.join(root, 'repo/.task/dev', run.id));
+    await write(path.join(root, '.farm-status.json'), {
+      updatedAt: new Date().toISOString(),
+      slots: [
+        {
+          slot: 'evidence-proof',
+          currentRunId: run.id,
+          taskFile: `dev/${run.id}`,
+          status: 'working',
+          project: 'evidence',
+        },
+      ],
+    });
+  }
 }
 const auth = createGatewayAuthRuntime();
 initializeGatewayIdentity(auth, { host: '127.0.0.1' });
@@ -225,6 +289,8 @@ try {
     server: { host: '127.0.0.1' },
   });
   await vite.listen();
+  if (config.sources.some((source) => source.mode === 'legacy'))
+    await watchSlot('evidence-proof', { contexts: [] });
   await write(config.stateFile, {
     root,
     pid: process.pid,
@@ -242,6 +308,7 @@ try {
     process.once('SIGINT', resolve);
   });
 } finally {
+  await unwatchSlot('evidence-proof');
   await vite?.close();
   for (const client of sockets.clients) client.terminate();
   await new Promise<void>((resolve) => sockets.close(() => resolve()));

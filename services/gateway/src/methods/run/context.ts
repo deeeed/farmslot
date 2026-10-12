@@ -158,20 +158,28 @@ export async function runRecipeRunsForRun(
   if (!run) throw new Error(`Run not found: ${params.runId}`);
   const enrichedRun = await attachLiveRecipeContext(run);
   const recipeRuns = await listRecipeRunArtifactGroupsForRun(enrichedRun);
-  const selectedRecipeRunId =
-    params.recipeRunId ?? selectRecipeRunId(recipeRuns, enrichedRun.liveRecipeContext ?? null);
-  const selected = recipeRuns.find((group) => group.id === selectedRecipeRunId);
-  if (params.recipeRunId && !selected)
-    throw new Error(`Recipe group not found: ${params.recipeRunId}`);
-  const recordedEvidence = params.includeRecordedEvidence
-    ? await readRunRecordedEvidence(
-        enrichedRun,
-        selected,
-        params.decisionId
-          ? { decisionId: params.decisionId, packageHash: params.evidenceSnapshotHash }
-          : undefined,
-      )
+  const requested = params.recipeRunId
+    ? recipeRuns.find((group) => group.id === params.recipeRunId)
     : undefined;
+  const missingHint = Boolean(params.recipeRunId && !requested);
+  const selectedRecipeRunId =
+    requested?.id ?? selectRecipeRunId(recipeRuns, enrichedRun.liveRecipeContext ?? null);
+  const selected = recipeRuns.find((group) => group.id === selectedRecipeRunId);
+  const recordedEvidence: RunRecipeRunsForRunResult['recordedEvidence'] =
+    params.includeRecordedEvidence
+      ? missingHint
+        ? {
+            artifactPrefix: 'artifacts/',
+            errors: [`Recipe group is no longer available: ${params.recipeRunId}`],
+          }
+        : await readRunRecordedEvidence(
+            enrichedRun,
+            selected,
+            params.decisionId
+              ? { decisionId: params.decisionId, packageHash: params.evidenceSnapshotHash }
+              : undefined,
+          )
+      : undefined;
   if (recordedEvidence && run.output)
     recordedEvidence.report = {
       reportPath: run.output.reportPath,

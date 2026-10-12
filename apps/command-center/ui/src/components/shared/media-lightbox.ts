@@ -42,7 +42,7 @@ import {
 } from './media-lightbox-preview-model.js';
 import { MD_CACHE_LIMIT, MediaLightboxState } from './media-lightbox-state.js';
 import { mediaLightboxStyles } from './media-lightbox-styles.js';
-import type { LightboxItem, LightboxPair } from './media-lightbox-types.js';
+import type { LightboxItem, LightboxPair, LightboxSelection } from './media-lightbox-types.js';
 
 interface LightboxEvidenceState {
   data?: RecipeRecordingTimelineDocument;
@@ -209,6 +209,14 @@ export class MediaLightbox extends MediaLightboxState {
     const nextPos = (here + dir + visible.length) % visible.length;
     const next = visible[nextPos];
     this.dispatchEvent(new CustomEvent('lightbox-navigate', { detail: { index: next } }));
+  }
+
+  private _replaceGallery(items: LightboxItem[], index: number): void {
+    this.items = items;
+    this.selectedIndex = index;
+    this.dispatchEvent(
+      new CustomEvent<LightboxSelection>('lightbox-items-change', { detail: { items, index } }),
+    );
   }
 
   private _toggleMode() {
@@ -426,12 +434,12 @@ export class MediaLightbox extends MediaLightboxState {
         initialTraceIndex: undefined,
         initialTracePhase: undefined,
       };
-      this.items =
+      const items =
         index < 0
           ? [...this.items, next]
           : this.items.map((candidate, i) => (i === index ? next : candidate));
-      if (index < 0) index = this.items.length - 1;
-      this.selectedIndex = index;
+      if (index < 0) index = items.length - 1;
+      this._replaceGallery(items, index);
       this._appliedVideoMarker = '';
       this.requestUpdate();
       return;
@@ -1307,17 +1315,19 @@ export class MediaLightbox extends MediaLightboxState {
         openEvidence: ({ criterion, evidence, index }) => {
           if (!item.resolveArtifactUrl) return;
           model.selectClaim(criterion.id, evidence[index]);
-          this.items = [
-            item,
-            ...evidence.map((path) => ({
-              path,
-              purpose: 'evidence',
-              url: item.resolveArtifactUrl!(path),
-              evidenceModel: model,
-              resolveArtifactUrl: item.resolveArtifactUrl,
-            })),
-          ];
-          this.selectedIndex = index + 1;
+          this._replaceGallery(
+            [
+              item,
+              ...evidence.map((path) => ({
+                path,
+                purpose: 'evidence',
+                url: item.resolveArtifactUrl!(path),
+                evidenceModel: model,
+                resolveArtifactUrl: item.resolveArtifactUrl,
+              })),
+            ],
+            index + 1,
+          );
         },
       },
     );

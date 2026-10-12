@@ -198,6 +198,11 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
           this._lightboxIndex = index;
           this._syncViewStateToHash();
         },
+        replace: ({ items, index }) => {
+          this._evidenceItems = items;
+          this._lightboxIndex = index;
+          this._syncViewStateToHash();
+        },
         changeMode: (mode) => {
           this._lightboxMode = mode;
         },
