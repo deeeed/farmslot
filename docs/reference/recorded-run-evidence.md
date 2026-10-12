@@ -279,3 +279,107 @@ successful test results:
 - **Frozen refresh:** Replace approved media bytes or request an unapproved artifact and observe refusal; valid approved refresh preserves selection, dependencies, approval and PR identity, and renders hosted media with HTTP 200.
 - **Clean cutover:** One normal ledger writer, no replaced recorder/linking/mapper copies or shim imports; unrecorded headless control and explicitly untimed legacy viewing remain honest.
 - **HUD:** Intent lint accepts 80 characters without a length warning, warns at 81–120 and fails at 121; multi-sentence intents fail. Across supported viewports the shared HUD displays the complete sentence in at most two lines inside its bounded panel, without hiding the checked app content. A harness inherits that HUD without supplying a renderer.
+
+## Proposed amendment: historical review, chapters and footprint
+
+Status: Proposed, 2026-10-12. The requirements below become normative when this
+amendment is accepted. They add no capture clock or accuracy contract.
+
+### Completed review binding
+
+The default detail view for completed, failed and retrospective runs MUST show
+final evidence and result through the existing gate review component in read-only
+`as-decided` context. Bind it to the final applicable decision's existing frozen
+package identity, closure, selected artifacts and recorded disposition. An output
+acknowledgment binds its existing report/manifest snapshot and is not publication
+approval. The selected snapshot, execution and claim IDs MUST remain visible.
+
+Only selection, playback, navigation and authorized export are available. The
+context MUST expose no gate-resolution, publication, rerun or verdict-writing
+controls, and those operations MUST remain guarded at the authority boundary.
+Diff, observability and analytics are one tab away. Refresh or current task edits
+MUST NOT replace the snapshot on screen.
+
+Without a frozen decision package, show `unreviewed evidence` or `legacy: no
+frozen review`, plus available final artifacts. Never infer approval. Missing
+recording, interruption, missing timeline and pruned media are distinct visible
+states. Frozen claims and measured ranges remain unchanged when media is pruned;
+seeking/export is disabled only for unavailable or incompletely covered sources.
+Keep history metadata for the run's history lifetime. Dependency pins still
+protect unresolved gates and required published references.
+
+### Player and chapters
+
+Where recorded claim markers exist, the shared player MUST be the main element
+with a visible chapter list beside it, or directly below it on a narrow screen.
+Use the existing claim hierarchy, verdicts, intents, expectations and moment refs.
+Do not introduce chapter timestamps, another QA reducer or a chapter store.
+
+Each chapter shows verdict and measured range(s). One selection opens its ordered
+virtual clips using the existing padding and gap rules. Untimed or partly covered
+claims remain listed and disabled for seek. Complete claims in a partial run may
+still play. Selecting an unavailable claim shows its limitation rather than
+silently selecting another chapter.
+
+During selected-claim playback, that claim stays active through its ordered clips.
+During free original playback, choose the deepest measured claim containing the
+position, then latest measured start, then stable claim ID to resolve overlap;
+show its ancestors without changing verdicts. Use the unpadded measured range for
+this lookup. Padding overlaps do not create competing active chapters. The shared
+model owns this rule and both renderers consume the same active ID. Initialize
+only selected media and retain the existing transfer/seek budgets.
+
+### Footprint contract and lifecycle
+
+Proposed protocol-owned `RunDiskFootprint` is a storage projection on `Run`:
+
+- `status`: `complete`, `stale`, `partial`, `unavailable` or `legacy-unknown`;
+- `measuredAt` and the storage retention revision used;
+- known byte totals for recording, stills/materialized clips, logs/transcripts and other retained artifacts;
+- `totalBytes` only for a complete measurement, with unavailable-location count/reason otherwise.
+
+The category sum is the known owned-byte count. A partial count is a labeled lower
+bound; an unavailable or legacy total is not zero. Count regular-file lengths,
+excluding directory/block overhead, sparse allocation and shared extents. Count
+run-owned files in all retained locations, including cache/mirror copies and
+managed execution logs/transcripts; exclude the application checkout and dependency
+caches. Virtual clips add zero bytes. Storage assigns each shared object one
+owner, and exposes referenced shared bytes separately from owned bytes. Per-project
+history totals deduplicate storage objects, include all retained history rather
+than just the listed page, and report unknown coverage.
+
+Storage MUST publish a measurement at completion. Before a retention mutation it
+marks the current projection stale; after the mutation it recomputes against the
+new retention revision. Readers MUST label stale/partial data. Keep completion
+measurement separate from current retained usage so pruning does not rewrite the
+historical review. An offline location or failed stat produces an explicit
+incomplete measurement and retry through storage, without changing the run verdict.
+
+### Public surface and adoption
+
+The existing run detail/list RPCs and SDK client methods expose footprint and final
+review references, using additive `@farmslot/protocol` DTOs. `farmslot run get <id>`
+is the existing detail/show operation and prints both; `run list` adds retained
+bytes and its completeness state. Project-filtered history shows totals and
+unknown coverage. `farmslot recipe artifacts` resolves completed task/run context
+to its final snapshot for validation, claim selection and requested clip export;
+it never silently falls back to current files.
+
+The experimental SDK review model accepts completed/read-only context, frozen
+snapshot identity and storage availability. Its existing claims and selection
+methods drive chapters; active-claim lookup and availability are shared extensions.
+Clients render the same claims/ranges, with platform-specific layout only. Runtime
+providers inherit default UI capture, retention reporting and footprint projection;
+authors add no recording, timestamp, linking or filesystem code. Generate CLI
+reference entries with the implementation. Unavailable legacy coverage stays
+explicit during migration; do not backfill fabricated review identities.
+
+### Testable amendment requirements
+
+- **H1:** Both clients reopen a completed approved run on the same final package, verdicts, expectations and evidence; current task edits and refresh cannot change it. Failed/rejected and report-acknowledged runs preserve their different dispositions.
+- **H2:** All historical review actions are read-only. Attempts to resolve/publish/edit a historical snapshot through a client or SDK are refused by the authority boundary. Other tabs remain one action away.
+- **H3:** A multi-case, segmented QA package shows every case/check chapter and exact range. Selection, playback transitions and overlapping ranges produce identical active IDs in both clients; untimed/outside/pruned entries remain visible without invented seeks.
+- **H4:** UI recipes in development, bug-fix and QA inherit capture without author recording steps. Headless/no-UI and reasoned operator opt-out are explicit controls; target or capture failure is not silently omitted.
+- **H5:** Completion and retention measurements equal known fixture file sizes by category; virtual clips add zero, physical copies count once, and shared references do not double project totals. Offline, stale and legacy measurements never appear as zero or complete.
+- **H6:** CLI/SDK and both clients show the same current and completion footprint, final snapshot reference and project-history coverage. Pruning changes availability/current bytes while preserving the review's verdicts, timing metadata and original completion measurement.
+- **H7:** A legacy run without frozen review metadata opens with its limitation and available artifacts. Migration creates no inferred approval, alternate player, selector or byte-sum implementation.

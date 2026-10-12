@@ -1,6 +1,7 @@
 # ADR-062: Recorded run evidence
 
 **Status:** Accepted
+**Amendment status:** Proposed, 2026-10-12
 **Date:** 2026-10-12
 **Owner:** Farmslot maintainers
 **Scope:** Recipe execution, claim evidence, review gates, and public CLI/SDK
@@ -137,3 +138,101 @@ contracts, concepts and declarative-adoption guidance with implementation.
 
 Specific repositories, files and rollout coordination belong in separate adoption
 records, not these public framework documents.
+
+## Proposed amendment: completed evidence review and run footprint
+
+This amendment is Proposed. The accepted decision above remains in force.
+Implementation of this section requires approval; its shared-model extension
+points inform the current client integration.
+
+### Context
+
+An engineer should validate an application in Farmslot through recorded evidence.
+A completed run should reopen what was reviewed, rather than the latest mutable
+files or an analytics page. The same review needs a prominent player, useful
+chapters and an honest account of retained storage. Images embedded in a PR are a
+secondary distribution channel.
+
+### Decision
+
+Keep P1 through P8 and the existing recording/timeline/claim contracts. Default UI recording
+applies equally to development, bug-fix and QA recipes. Headless state-only runs
+retain their non-video evidence; an operator opt-out remains explicit and reasoned.
+A run with no executed UI recipe must not acquire a fictitious recording.
+
+Completed, failed and retrospective views default to evidence and the final
+result. They reuse the gate review component in read-only `as-decided` context.
+The gateway selects the final decision's frozen package identity and closure,
+including its verdicts, reviewer outcome, expectations and selected media. The
+view never reads a mutable latest pointer as that historical authority. Evidence
+navigation, replay and export remain available; publish, rerun, judgment editing
+and gate resolution are absent. Diff, observability and analytics remain one tab
+away. A final rejected or report-acknowledged snapshot retains that disposition;
+it is never labeled approved.
+
+The player is the primary element. Its visible chapter list uses the same claims
+and required occurrences as the gate, with verdict and measured range. Selecting
+a chapter opens its ordered bounded clips. The active claim follows playback;
+there is one shared selection/active-claim rule, not a second chapter model.
+Untimed or partly covered claims stay visible without seeking. A fully covered
+claim in an interrupted recording remains playable. Existing measured ranges,
+1 s padding, segment/gap rules and lazy transfer apply unchanged.
+
+Storage owns footprint measurement and retention. It measures retained regular
+file sizes in run-owned artifact, log and transcript locations at completion and
+after retention changes. It does not crawl repository dependencies. `Run` carries
+the resulting projection, with category totals, measurement time and completeness.
+These are logical retained file bytes, not filesystem allocation/free-space
+measurements. Virtual clips occupy no additional bytes. Each physical copy counts
+once; shared storage objects have one owner so project totals do not double-count
+references. A referenced shared object is identified separately from owned bytes.
+
+| Fact                                        | Owner                                       | Shared review consumption                                                   |
+| ------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------- |
+| Final review identity and disposition       | Existing gateway decision/package authority | Bind the historical context to that snapshot                                |
+| Claims, marker ranges and source digests    | Existing ledger/timeline/artifact contracts | Project chapters and bounded playback                                       |
+| Current media availability                  | Storage                                     | Show available, pruned or unavailable without changing the recorded verdict |
+| Retained byte counts and retention revision | Storage                                     | Project into `Run`, CLI/SDK and both clients                                |
+
+After media pruning, retain the lightweight frozen review metadata for the run's
+history lifetime. Timing and the recorded verdict remain historical facts; media
+availability is a separate fact. Unresolved gates and required published
+references retain their existing dependency pins. This changes the base rule that
+all completed package dependencies expire together: media may expire after its
+pins are released, while history metadata remains.
+
+### Public surface
+
+`@farmslot/protocol` owns additive run-footprint and review-reference DTOs. Existing
+run detail/list RPCs and SDK client methods expose them; no separate statistics
+store or API family is introduced. The existing CLI detail operation,
+`farmslot run get <id>`, shows footprint and final snapshot, and `run list` adds a
+retained-bytes column. Project history exposes totals and unknown coverage beyond
+the current result page. `farmslot recipe artifacts` resolves completed task/run
+review context to the final frozen package and keeps the existing claim selector
+and clip export. Command Center and Companion use the same SDK review model.
+
+Extend that model with completed/read-only context, supplied snapshot identity and
+availability, and active-claim projection. Reuse `claims`, `selectClaim`,
+`selectOccurrence` and playback effects for chapters. Runtime bindings inherit
+capture and storage reporting; authors implement neither a recorder nor a disk
+scanner. New DTOs are proposed additive protocol changes; model extensions remain
+experimental until documented conformance and release.
+
+### Alternatives considered
+
+- A separate historical screen/player would duplicate gate selection and validation.
+- Rebuilding history from current files would change what was reviewed.
+- PR images alone would omit exact claim navigation and partial/missing states.
+- Client filesystem scans or summing paginated manifests would disagree and miss retained files.
+
+### Consequences and migration
+
+One review component serves live gates and history. More snapshot metadata must be
+retained, while media remains subject to storage policy and existing pins.
+Unavailable measurements stay unknown, never zero. A legacy run with no frozen
+package shows that limitation and its available unreviewed artifacts; it cannot
+claim `as decided`. Backfill footprint only from reachable owned locations. Reuse
+verified historical package identities where present, and never manufacture an
+approval or recording. Delete replaced completed-view selectors and byte-sum
+copies when adoption lands; no compatibility renderer or parallel model remains.
