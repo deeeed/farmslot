@@ -361,3 +361,29 @@ test('family projects recorded outcome, report availability and explicit usage c
   assert.equal(payload?.kind === 'retrospective' && payload.outcome, 'success');
   assert.equal(payload?.kind === 'retrospective' && payload.gateSummary?.worker.turns, null);
 });
+
+test('recorded claim metadata without its retained inventory stays explicitly unavailable', async (t) => {
+  const { rm } = await import('node:fs/promises');
+  const base = await mkdtemp(path.join(os.tmpdir(), 'family-retro-claims-'));
+  t.after(() => rm(base, { recursive: true, force: true }));
+  await writeArtifact(base, 'TASK.md', '# task');
+  await writeArtifact(
+    base,
+    'artifacts/acceptance-status.json',
+    JSON.stringify({ schemaVersion: 2, recipeRunId: 'retained-execution', criteria: [] }),
+  );
+  const run = makeRun({ taskFile: path.join(base, 'TASK.md') });
+  run.output = {
+    workerFinished: true,
+    capturedAt: '2026-10-10',
+    reportPath: 'artifacts/report.md',
+    artifactManifest: [],
+    manifestDigest: 'b'.repeat(64),
+  };
+  const snapshot = await buildFamilyObservabilitySnapshotFromRuns([run]);
+  assert(
+    snapshot.runs[0].evidenceReview?.errors.some((error) =>
+      /retained recipe evidence closure|retained execution package/.test(error),
+    ),
+  );
+});

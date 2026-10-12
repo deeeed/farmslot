@@ -1,7 +1,10 @@
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 
-import { createEvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
+import {
+  createEvidenceReviewModel,
+  type EvidenceReviewInput,
+} from '@farmslot/adapter-sdk/evidence';
 import {
   buildFamilySummary,
   type FamilyLearningEntry,
@@ -26,6 +29,7 @@ import { loadRecipeQualityEvaluation } from '../quality/recipe-quality.js';
 import { buildRetrospectivePayload } from '../run-completion/orchestrator.js';
 import { inferRetrospectiveOutcome } from '../run-completion/retrospective.js';
 import { buildGateSummary } from '../run-engine/gate-summary.js';
+import { readFrozenRecordedEvidenceSources } from '../run-engine/recorded-evidence-sources.js';
 import { runDurationMs } from '../runs/run-duration.js';
 import { getAllRuns } from '../runs/store.js';
 import { projectArchivedRunnerUsage } from '../runtime/session-usage.js';
@@ -639,7 +643,22 @@ async function buildRunSummary(
     ? handoffCriteriaFromText(await readTextIfExists(path.join(taskDir, 'inputs', 'handoff.json')))
         .criteria
     : [];
+  let recorded: Pick<EvidenceReviewInput, 'package' | 'artifactPrefix' | 'readErrors'> = {};
+  if (acceptanceStatus?.schemaVersion === 2 && run.output) {
+    try {
+      const sources = await readFrozenRecordedEvidenceSources(run, run.output.artifactManifest);
+      const selected = sources.find(
+        ({ input }) => input.claims?.recipeRunId === acceptanceStatus.recipeRunId,
+      );
+      if (!selected)
+        throw new Error('The retained claim execution is not in the output inventory.');
+      recorded = { package: selected.input, artifactPrefix: selected.artifactPrefix };
+    } catch (error) {
+      recorded = { readErrors: [(error as Error).message] };
+    }
+  }
   const evidenceReview = createEvidenceReviewModel({
+    ...recorded,
     context: 'run-detail',
     criteria: acceptanceCriteria,
     ledger: acceptanceStatus,
