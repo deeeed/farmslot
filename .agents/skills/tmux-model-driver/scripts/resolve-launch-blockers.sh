@@ -14,6 +14,7 @@ pane_state_script="${TMUX_MODEL_DRIVER_PANE_STATE_SCRIPT:-$skill_dir/scripts/pan
 deadline=$((SECONDS + timeout_seconds))
 trust_answered=false
 project_selected=false
+update_skip_sent=false
 
 while [ "$SECONDS" -lt "$deadline" ]; do
   state_json="$("$pane_state_script" "$pane_id" "$runner_id")"
@@ -47,6 +48,15 @@ PY
   if [ "$auto_action" = "grok-select-current-project" ] && [ "$project_selected" = false ]; then
     "$skill_dir/scripts/tmux.sh" send-keys -t "$pane_id" Enter
     project_selected=true
+    sleep 0.05
+    continue
+  fi
+
+  if [ "$auto_action" = "codex-skip-update" ]; then
+    if [ "$update_skip_sent" = false ]; then
+      "$skill_dir/scripts/run-driver.sh" resolve-launch-blocker "$pane_id" "$runner_id" >/dev/null
+      update_skip_sent=true
+    fi
     sleep 0.05
     continue
   fi

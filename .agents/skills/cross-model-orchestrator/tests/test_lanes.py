@@ -124,6 +124,67 @@ class LaneTests(unittest.TestCase):
         with patch.dict('os.environ', {'TMUX_MODEL_DRIVER_READ_ONLY': '1'}):
             self.assertNotIn('TMUX_MODEL_DRIVER_READ_ONLY', lanes._env(self.config, self.config['lanes'][0], {}))
 
+    def test_status_retains_session_after_exit_without_writing(self):
+        lanes._update(self.config, "one", {"session_id": "recorded-session"})
+        before = lanes.registry_path(self.config).read_bytes()
+        for present in (False, True):
+            def command(argv, **kwargs):
+                if "list-panes" in argv:
+                    return result("%1\n" if present and "=one" in argv else "", 0 if present else 1)
+                return result(json.dumps({"state": "shell", "phase": "idle", "session_id": None}))
+            with patch.object(lanes, "run", side_effect=command):
+                item = lanes.status(self.config)[0]
+            self.assertEqual(item["session_id"], "recorded-session")
+            self.assertEqual(item["status"], "shell" if present else "missing")
+        self.assertEqual(lanes.registry_path(self.config).read_bytes(), before)
+
+    def test_launch_resumes_preserved_shell_through_guard_without_resubmitting_goal(self):
+        lane = self.config["lanes"][0]
+        lane["resume_id"] = "chosen-session"
+        lanes._update(self.config, "one", {"session_id": "older-session", "goal_submitted": True})
+        calls = []
+        reads = 0
+        def command(argv, **kwargs):
+            nonlocal reads
+            calls.append(argv)
+            if argv[0] == "node":
+                request = json.loads(kwargs["input"])
+                self.assertEqual(request["resume_id"], "chosen-session")
+                return result(json.dumps({"command": "resumed-runner", "goal_supported": True,
+                    "runtime_dir": request["runtime_dir"], "observability_dir": request["runtime_dir"] + "/.observability"}))
+            if Path(argv[1]).name == "pane-state.sh":
+                reads += 1
+                return result(json.dumps({"state": "shell" if reads == 1 else "codex", "phase": "idle",
+                    "session_id": None if reads == 1 else "chosen-session"}))
+            self.assertEqual(Path(argv[1]).name, "send-shell-script.sh")
+            self.assertEqual(kwargs["input"], "resumed-runner")
+            return result(json.dumps({"submitted": True}))
+        with patch.object(lanes, "_pane", return_value="%1"), patch.object(lanes, "run", side_effect=command):
+            output = lanes.launch(self.config, "one")
+        self.assertEqual(output["pane_id"], "%1")
+        self.assertEqual(output["resume_id"], "chosen-session")
+        self.assertEqual(lanes._record(self.config, "one")["session_id"], "chosen-session")
+        self.assertFalse(any("new-session" in call or "send-and-verify.sh" in str(call) for call in calls))
+
+    def test_launch_shell_requires_known_resume_id(self):
+        with patch.object(lanes, "_pane", return_value="%1"), patch.object(lanes, "_observe", return_value={"state": "shell"}):
+            with self.assertRaisesRegex(ValueError, "resume_id"):
+                lanes.launch(self.config, "one")
+
+    def test_launch_resolves_shared_update_gate_before_native_readiness(self):
+        runtime = str(Path(self.config["state_dir"]) / "runtime")
+        adapter = {"command": "runner", "runtime_dir": runtime, "observability_dir": runtime + "/.observability"}
+        def command(argv, **kwargs):
+            if "new-session" in argv: return result("%9\n")
+            self.assertEqual(Path(argv[1]).name, "resolve-launch-blockers.sh")
+            return result('{}')
+        states = [{"state": "codex", "phase": "launch-blocker", "auto_action": "codex-skip-update"},
+                  {"state": "codex", "phase": "idle"}]
+        with patch.object(lanes, "_pane", return_value=None), patch.object(lanes, "_runner_adapter", return_value=adapter), \
+             patch.object(lanes, "_observe", side_effect=states), patch.object(lanes, "run", side_effect=command) as mocked:
+            self.assertEqual(lanes.launch(self.config, "one", submit_goal=False)["status"], "launched")
+        self.assertEqual(sum("resolve-launch-blockers.sh" in str(call) for call in mocked.call_args_list), 1)
+
     def test_lane_model_and_effort_reach_shared_launch_and_resume_adapter(self):
         lane = self.config['lanes'][0]
         lane.update(model='chosen-model', effort='xhigh')

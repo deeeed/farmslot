@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { durableWrite } from '../../../../packages/agent-runtime/src/native/storage.ts';
 import { readPaneStateFromCapture } from '../../../../services/gateway/src/runners/pane-state-script.ts';
+import { runnerLaunchBlockerAutoActionKey } from '../../../../services/gateway/src/runners/registry.ts';
 import { runnerPaneBufferedInstruction } from '../../../../services/gateway/src/runners/runner-pane-input.ts';
 
 import {
@@ -318,7 +319,9 @@ export function paneState(pane, expectedRunner, selection) {
     : null;
   const buffered = supportsMidTurnPrompt(state) && Boolean(runnerPaneBufferedInstruction(tail));
   const ownedBuffer = buffered && bufferedPrompt({ ...meta, tail }, state, receipt);
-  const pendingOtherRunner = !supportsMidTurnPrompt(state) && Boolean(receipt && !accepted);
+  // A model receipt stays intact after exit, but cannot be a live shell composer.
+  const pendingOtherRunner =
+    runners.has(state) && !supportsMidTurnPrompt(state) && Boolean(receipt && !accepted);
   const queued = safety.queued || buffered || pendingOtherRunner;
   const phase = safety.launch_blocker
     ? 'launch-blocker'
@@ -498,6 +501,30 @@ export function refusal(before, runner, flush = false) {
   }
   if (flush) return before.queue_kind === 'driver-buffer' ? null : 'queue_not_owned';
   return before.queued ? 'queued_input' : null;
+}
+
+export function resolveLaunchBlocker(pane, runner, inspect = paneState) {
+  const before = inspect(pane, runner);
+  const refused = { action_sent: false, verification: 'startup_action_refused' };
+  if (before.state !== runner || before.auto_action !== 'codex-skip-update') return refused;
+  const files = paths(before);
+  if (!acquireLock(files)) return { ...refused, verification: 'driver_busy' };
+  try {
+    const fresh = inspect(pane, runner);
+    if (
+      fresh.state !== runner ||
+      paneIdentity(fresh) !== paneIdentity(before) ||
+      fresh.auto_action !== before.auto_action
+    )
+      return refused;
+    const key = runnerLaunchBlockerAutoActionKey(fresh.auto_action);
+    if (!key) return refused;
+    tmux(['send-keys', '-t', pane, key, 'Enter']);
+    // This acknowledges a startup choice, never model readiness or prompt acceptance.
+    return { action_sent: true, action: fresh.auto_action, verification: 'startup_action_sent' };
+  } finally {
+    fs.rmdirSync(files.lock);
+  }
 }
 
 export async function send(pane, runner, payload, tracePath, flush = false) {
@@ -728,25 +755,33 @@ async function main() {
   const result =
     operation === 'state'
       ? paneState(pane, runner)
-      : operation === 'ack'
-        ? acknowledgeAcceptance(pane, runner, tracePath)
-        : operation === 'answer'
-          ? await answerQuestion(
-              pane,
-              runner,
-              tracePath,
-              JSON.parse(fs.readFileSync(0, 'utf8')),
-              answerTrace,
-            )
-          : await send(
-              pane,
-              runner,
-              fs.readFileSync(0, 'utf8').replace(/\n$/, ''),
-              tracePath,
-              operation === 'flush',
-            );
+      : operation === 'resolve-launch-blocker'
+        ? resolveLaunchBlocker(pane, runner)
+        : operation === 'ack'
+          ? acknowledgeAcceptance(pane, runner, tracePath)
+          : operation === 'answer'
+            ? await answerQuestion(
+                pane,
+                runner,
+                tracePath,
+                JSON.parse(fs.readFileSync(0, 'utf8')),
+                answerTrace,
+              )
+            : await send(
+                pane,
+                runner,
+                fs.readFileSync(0, 'utf8').replace(/\n$/, ''),
+                tracePath,
+                operation === 'flush',
+              );
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  if (operation !== 'state' && !result.submitted && !result.queued && !result.acknowledged)
+  if (
+    operation !== 'state' &&
+    !result.submitted &&
+    !result.queued &&
+    !result.acknowledged &&
+    !result.action_sent
+  )
     process.exitCode = 2;
 }
 

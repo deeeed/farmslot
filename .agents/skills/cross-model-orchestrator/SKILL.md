@@ -44,6 +44,17 @@ Launch Codex with its native `/goal`. For Claude, install the supplied
 Optional lane `model` and `effort` select the runner model and reasoning effort at launch and
 resume. Omit them to use the runner's defaults. The shared runner adapter receives both unchanged.
 
+Launched panes keep an interactive shell after the runner exits, including `/quit` or a failed
+turn. `lanes-status` shows `session_id`; when the runner is absent this is the last recorded
+native session, not evidence of an active runner. To recover, set that lane's `resume_id` to
+this ID in the private config, then run `launch <lane>`. Launch resumes in the retained shell
+through the guarded shell driver, or creates a pane if the session disappeared. A running
+runner remains untouched. Recovery preserves an already-submitted goal.
+
+Fresh launches and resumes suppress startup update checks. If an update menu still appears,
+the driver rechecks the runner and pane and submits the shared skip choice once. It never
+updates the runner or answers a model question. Native readiness is still required afterward.
+
 `lanes-status` observes without persisting bindings or acknowledging receipts. Existing lanes
 may configure `pane_id` and `observability_dir`. Unhooked native sessions held open by a foreground
 process can supply observational state; status observation does not authorize recovery. Codex transport rechecks process-owned
