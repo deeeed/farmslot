@@ -19,6 +19,11 @@ case "${PLATFORM:-}" in
     ;;
 esac
 export FARMSLOT_RECIPE_APP_ID="${FARMSLOT_RECIPE_APP_ID:-${BUNDLE_ID}}"
+# Recipe close must release its simulator runner before another workspace opens it.
+# The provider reaps only after all sessions and in-flight requests have closed.
+export AGENT_DEVICE_IOS_RUNNER_IDLE_STOP_MS=100
+# Leave time for the provider's runner teardown before its idle daemon exits.
+export AGENT_DEVICE_DAEMON_IDLE_TIMEOUT_MS=10000
 
 RECIPE_BIN="${COMPANION_ADAPTER_RN_BIN:-farmslot-adapter-rn}"
 exec "${RECIPE_BIN}" "$@"
