@@ -1,14 +1,17 @@
-import type {
-  FlowType,
-  LinkedTicket,
-  PrIntegrationStatus,
-  Run,
-  RunTicketData,
+import {
+  type FlowType,
+  type LinkedTicket,
+  parseGitHubRef,
+  type PrIntegrationStatus,
+  type Run,
+  type RunTicketData,
+  taskTitleText,
 } from '@farmslot/protocol';
 
 import type { RawProjectJson } from '../core/config.js';
 import { fetchGitHubIssue, fetchGitHubPR } from '../external/github.js';
 import { fetchJiraIssue } from '../external/jira.js';
+import { JIRA_KEY_RE } from '../methods/dispatch/ticket-ref.js';
 import { getRun, updateRun } from '../runs/store.js';
 
 import { loadProjectVarsOrNull } from './project-vars.js';
@@ -197,8 +200,8 @@ export async function fetchTicketData(run: Run): Promise<RunTicketData | null> {
   if (!ticket) return null;
 
   // Determine source: Jira key (PROJ-1234) or GitHub ref (owner/repo#123)
-  const isJira = /^[A-Z]+-\d+$/i.test(ticket);
-  const isGitHub = ticket.includes('#');
+  const isJira = JIRA_KEY_RE.test(ticket.toUpperCase());
+  const isGitHub = parseGitHubRef(ticket) !== null;
 
   let jiraData: Partial<RunTicketData> = {};
   let githubData: Partial<RunTicketData> = {};
@@ -256,7 +259,8 @@ export async function fetchTicketData(run: Run): Promise<RunTicketData | null> {
 
   // If nothing was fetched, return minimal data
   if (merged.source === 'manual') {
-    merged.title = ticket;
+    merged.title = taskTitleText(ticket);
+    if (!isJira && !isGitHub) merged.description = ticket;
   }
 
   return merged;
