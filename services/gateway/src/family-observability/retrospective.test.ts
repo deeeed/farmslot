@@ -370,7 +370,12 @@ test('recorded claim metadata without its retained inventory stays explicitly un
   await writeArtifact(
     base,
     'artifacts/acceptance-status.json',
-    JSON.stringify({ schemaVersion: 2, recipeRunId: 'retained-execution', criteria: [] }),
+    JSON.stringify({
+      schemaVersion: 2,
+      recipeRunId: 'retained-execution',
+      recording: { status: 'not-required', segments: [] },
+      criteria: [],
+    }),
   );
   const run = makeRun({ taskFile: path.join(base, 'TASK.md') });
   run.output = {
