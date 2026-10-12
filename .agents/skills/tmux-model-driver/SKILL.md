@@ -68,6 +68,12 @@ are accepted. A changed question is refused. `response_sent` acknowledges the
 input attempt; it does not claim the runner started a turn. Read native state
 again before continuing. Historical screen questions never authorize a response.
 
+Only the bottom composer above the status footer supplies live buffered input.
+Its empty placeholder and historical submitted prompts never count as a buffer.
+Retained uncertain receipts do not block a different fresh handoff into an empty composer;
+the new handoff gets its own receipt. Retrying an uncertain original with no live buffer
+returns `unverified` without typing or Enter. The original receipt remains intact.
+
 An unverified send retains a private receipt. A retry of the same owned Codex prompt
 returns existing delivery evidence without typing, or submits only Enter when the exact
 original remains in the composer. It never pastes that prompt again. A synchronously

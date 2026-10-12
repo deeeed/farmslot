@@ -6,20 +6,34 @@ export function runnerPaneContainsInstruction(pane: string, message: string): bo
   return normalizeInstructionText(pane).includes(needle);
 }
 
-export function runnerPaneHasBufferedInstruction(pane: string, message: string): boolean {
+export function runnerPaneBufferedInstruction(pane: string): string {
   const lines = pane
     .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
     .trimEnd()
     .split('\n');
-  const composer = lines.map((line) => /^\s*[›❯](?:\s|$)/.test(line)).lastIndexOf(true);
-  if (composer === -1) return false;
-  const body = lines.slice(composer);
-  // The composer ends at its blank separator, before the runner's status/footer.
-  const end = body.map((line) => !line.trim()).lastIndexOf(true);
-  const buffered = (end === -1 ? body : body.slice(0, end))
+  const footer = lines
+    .map((line) =>
+      /\? for shortcuts|\bcontext(?:\s+\d+%)?\s+left\b|\btab to queue message\b|← for agents|⚠\s+\d+\s+warnings?\b/i.test(
+        line,
+      ),
+    )
+    .lastIndexOf(true);
+  const content = footer === -1 ? lines : lines.slice(0, footer);
+  const composer = content.map((line) => /^\s*[›❯](?:\s|$)/.test(line)).lastIndexOf(true);
+  if (composer === -1 || (footer === -1 && composer !== lines.length - 1)) return '';
+  const body = content.slice(composer);
+  // Only the bottom composer above the status footer is live input. Transcript prompts are history.
+  const separator = body.map((line) => !line.trim()).lastIndexOf(true);
+  const buffered = (separator === -1 ? body : body.slice(0, separator))
     .map((line, index) => (index === 0 ? line.replace(/^\s*[›❯]\s?/, '') : line))
     .join('\n');
-  return normalizeInstructionText(buffered) === normalizeInstructionText(message);
+  const text = normalizeInstructionText(buffered);
+  return text === 'Ask Codex to do anything' ? '' : text;
+}
+
+export function runnerPaneHasBufferedInstruction(pane: string, message: string): boolean {
+  const buffered = runnerPaneBufferedInstruction(pane);
+  return Boolean(buffered) && buffered === normalizeInstructionText(message);
 }
 
 export function runnerPaneHasQueuedInstruction(

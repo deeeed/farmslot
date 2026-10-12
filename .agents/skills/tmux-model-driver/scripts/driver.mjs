@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { durableWrite } from '../../../../packages/agent-runtime/src/native/storage.ts';
 import { readPaneStateFromCapture } from '../../../../services/gateway/src/runners/pane-state-script.ts';
+import { runnerPaneBufferedInstruction } from '../../../../services/gateway/src/runners/runner-pane-input.ts';
 
 import {
   acceptedPrompt,
@@ -315,7 +316,10 @@ export function paneState(pane, expectedRunner, selection) {
         }),
       )
     : null;
-  const queued = safety.queued || Boolean(receipt && !accepted);
+  const buffered = supportsMidTurnPrompt(state) && Boolean(runnerPaneBufferedInstruction(tail));
+  const ownedBuffer = buffered && bufferedPrompt({ ...meta, tail }, state, receipt);
+  const pendingOtherRunner = !supportsMidTurnPrompt(state) && Boolean(receipt && !accepted);
+  const queued = safety.queued || buffered || pendingOtherRunner;
   const phase = safety.launch_blocker
     ? 'launch-blocker'
     : question
@@ -334,7 +338,13 @@ export function paneState(pane, expectedRunner, selection) {
     question,
     question_fingerprint: questionFingerprint,
     queued,
-    queue_kind: safety.queued ? 'runner-queue' : receipt && !accepted ? 'driver-buffer' : null,
+    queue_kind: safety.queued
+      ? 'runner-queue'
+      : ownedBuffer || pendingOtherRunner
+        ? 'driver-buffer'
+        : buffered
+          ? 'unowned-buffer'
+          : null,
     delivery_phase: native.phase,
     evidence_source: native.source,
     session_id: native.session_id || null,
@@ -352,7 +362,7 @@ export function paneState(pane, expectedRunner, selection) {
         : 'Runner identity comes from process metadata',
       `Readiness evidence: ${native.source}`,
     ],
-    buffered_digest: receipt && !accepted ? receipt.payload_hash : null,
+    buffered_digest: ownedBuffer || pendingOtherRunner ? receipt.payload_hash : null,
   };
 }
 
@@ -528,6 +538,15 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
         ownedRetry(before)
       )
         verification = null;
+      const pending = readReceipt(files);
+      // Keep uncertain delivery evidence, but never replay that same payload into an empty composer.
+      if (
+        !verification &&
+        !flush &&
+        pending?.payload_hash === selection.payloadHash &&
+        !ownedRetry(before)
+      )
+        verification = 'unverified';
     }
     if (!verification) {
       let receipt = readReceipt(files);
@@ -567,6 +586,12 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
             queue_was_empty: !before.queued,
             typed: false,
           };
+          // A fresh handoff must not overwrite an older unverified receipt discovered by alias lookup.
+          if (readReceipt(files))
+            files.receipt = path.join(
+              path.dirname(files.receipt),
+              `${hash(receipt.receipt_id)}.json`,
+            );
           durableWrite(files.receipt, receipt);
         }
       }

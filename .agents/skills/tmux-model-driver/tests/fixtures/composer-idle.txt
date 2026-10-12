@@ -1,0 +1,24 @@
+› Lead: #957 (deliver owned queues without duplicate handoffs) now CONFLICTS w…
+    5 -FROZEN R2, 2026-10-12. [PR #957](https://github.com/deeeed/farmslot/pull/
+       957), signed merge `aa35a7740421cc42f92a8fdf36129bcfcff16042`; both indep
+       endent reviewers APPROVE, conflict-only. Main `8e88fcda`, saved AUTO_MERG
+    + Show details
+
+• Ran python3 - <<'PY' …
+  └ {"head": "aa35a7740421cc42f92a8fdf36129bcfcff16042", "success": 7, "skipped…
+    + 1 line (⌃t to expand)
+
+• #957 (https://github.com/deeeed/farmslot/pull/957) is MERGE-READY at aa35a774.
+
+  Signed merge of origin/main, both entries preserved, no force push. Both
+  reviewers approved conflict-only R2; CI is green and readiness passed.
+
+  REPORT.md (REPORT.md) updated. Head frozen.
+
+  Worked for 1h 4m 19s • 7:26 AM
+
+
+› Ask Codex to do anything
+
+  GPT-6.1-Sol xhigh · <path> Goal stalled (/goal resume)
+  ← for agents · ? for shortcuts                       ⚠ 1 warning · f2 to view

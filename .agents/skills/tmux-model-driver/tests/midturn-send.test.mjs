@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { runnerPaneBufferedInstruction } from '../../../../services/gateway/src/runners/runner-pane-input.ts';
 import { acknowledgeAcceptance, paneState, send } from '../scripts/driver.mjs';
 
 function fixture(t) {
@@ -213,18 +214,137 @@ test('old transcript text, edited composer and a foreign queue cannot authorize 
   f.setDrop(true);
   await send('%1', 'codex', f.payload);
   const count = f.keys.length;
-  for (const tail of [
-    `Old transcript: ${f.payload}\n›`,
-    `› ${f.payload} edited\n\ncontext left`,
-    `• Messages to be submitted after next tool call\n↳ foreign\n› ${f.payload}\n\ncontext left`,
+  for (const [tail, expected] of [
+    [`Old transcript: ${f.payload}\n›`, 'unverified'],
+    [`› ${f.payload} edited\n\ncontext left`, 'queued_input'],
+    [
+      `• Messages to be submitted after next tool call\n↳ foreign\n› ${f.payload}\n\ncontext left`,
+      'queued_input',
+    ],
   ]) {
     process.env.TMUX_PANE_STATE_TAIL_CAPTURE = tail;
-    assert.equal((await send('%1', 'codex', f.payload)).verification, 'queued_input');
+    assert.equal((await send('%1', 'codex', f.payload)).verification, expected);
     assert.equal(f.keys.length, count);
   }
   process.env.TMUX_PANE_STATE_TAIL_CAPTURE = `› ${f.payload}\n\ncontext left`;
   process.env.TMUX_PANE_STATE_PROCESS_STARTED_AT = '2';
   assert.equal(paneState('%1', 'codex').accepted, null);
+});
+
+for (const [name, phase] of [
+  ['composer-idle.txt', 'idle'],
+  ['composer-midturn.txt', 'busy'],
+]) {
+  test(`${phase} reported tail ignores historical prompts and preserves an uncertain receipt during a fresh send`, async (t) => {
+    const f = fixture(t);
+    const tail = fs.readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
+    const oldPayload = tail
+      .split('\n')
+      .find((line) => line.startsWith('› '))
+      .slice(2);
+    f.setDrop(true);
+    assert.equal((await send('%1', 'codex', oldPayload)).verification, 'unverified');
+    const file = path.join(
+      f.dir,
+      fs.readdirSync(f.dir).find((name) => /^[a-f0-9]{64}\.json$/.test(name)),
+    );
+    const original = fs.readFileSync(file);
+    const panes = path.join(f.dir, 'obs', 'panes');
+    fs.mkdirSync(panes, { recursive: true });
+    fs.writeFileSync(
+      path.join(panes, '%251.json'),
+      JSON.stringify({
+        runner: 'codex',
+        tmuxPane: '%1',
+        session_id: 'fixture',
+        rootSessionId: 'fixture',
+        hook_event_name: 'SessionStart',
+        observedAt: Date.now(),
+        turnActive: phase === 'busy',
+      }),
+    );
+    process.env.TMUX_PANE_STATE_TAIL_CAPTURE = tail;
+    assert.equal(runnerPaneBufferedInstruction(tail), '');
+    const state = paneState('%1', 'codex');
+    assert.equal(state.delivery_phase, phase);
+    assert.equal(state.queued, false);
+    assert.equal(state.queue_kind, null);
+    assert.equal(state.buffered_digest, null);
+    const keys = f.keys.length;
+    assert.equal((await send('%1', 'codex', oldPayload)).verification, 'unverified');
+    assert.equal(f.keys.length, keys, 'the uncertain original is never retyped or submitted');
+    const fresh = 'Fresh coordination after the active-composer fix';
+    f.setDrop(false);
+    f.setQueuedPayload(fresh);
+    const delivered = await send('%1', 'codex', fresh);
+    assert.equal(delivered.submitted, true);
+    assert.equal(delivered.typed, true);
+    assert.deepEqual(
+      fs.readFileSync(file),
+      original,
+      'fresh receipt creation preserves old evidence byte for byte',
+    );
+    assert.equal(f.keys.filter((args) => args[0] === 'paste-buffer').length, 2);
+    assert.equal(
+      acknowledgeAcceptance('%1', 'codex', delivered.evidence.receipt_id).acknowledged,
+      true,
+    );
+    assert.deepEqual(
+      fs.readFileSync(file),
+      original,
+      'acknowledging the fresh handoff cannot consume the old receipt',
+    );
+  });
+
+  test(`${phase} reported footer protects a foreign draft when shortcut and context hints are absent`, async (t) => {
+    const f = fixture(t);
+    const tail = fs.readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
+    const draft = 'Foreign current draft';
+    process.env.TMUX_PANE_STATE_TAIL_CAPTURE = tail
+      .replace('› Ask Codex to do anything', `› ${draft}`)
+      .replace('← for agents · ? for shortcuts', phase === 'busy' ? 'tab to queue message' : '');
+    assert.equal(runnerPaneBufferedInstruction(process.env.TMUX_PANE_STATE_TAIL_CAPTURE), draft);
+    const state = paneState('%1', 'codex');
+    assert.equal(state.queued, true);
+    assert.equal(state.queue_kind, 'unowned-buffer');
+    assert.equal((await send('%1', 'codex', f.payload)).verification, 'queued_input');
+    assert.equal(f.keys.length, 0, 'a foreign draft must remain untouched');
+    assert.equal(
+      fs.readdirSync(f.dir).some((name) => name.endsWith('.json')),
+      false,
+    );
+  });
+}
+
+test('a populated composer honours the Context percent left footer', async (t) => {
+  const f = fixture(t);
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE =
+    '› foreign draft\n\n  GPT-6.1-Sol xhigh · Context 85% left\n  ← for agents';
+  assert.equal(
+    runnerPaneBufferedInstruction(process.env.TMUX_PANE_STATE_TAIL_CAPTURE),
+    'foreign draft',
+  );
+  assert.equal((await send('%1', 'codex', f.payload)).verification, 'queued_input');
+  assert.equal(f.keys.length, 0);
+});
+
+test('only current composer text may block or authorize an owned retry', async (t) => {
+  const f = fixture(t);
+  f.setDrop(true);
+  await send('%1', 'codex', f.payload);
+  for (const tail of [
+    `› ${f.payload}\n\nA historical assistant reply`,
+    `› ${f.payload}\n\n› Ask Codex to do anything\n\nGPT-6 high\n? for shortcuts`,
+  ]) {
+    assert.equal(runnerPaneBufferedInstruction(tail), '');
+  }
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = `› foreign current draft\n\ncontext left`;
+  const count = f.keys.length;
+  assert.equal((await send('%1', 'codex', 'another message')).verification, 'queued_input');
+  assert.equal(paneState('%1', 'codex').queue_kind, 'unowned-buffer');
+  assert.equal(f.keys.length, count);
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = `› ${f.payload}\n\ncontext left`;
+  assert.equal(paneState('%1', 'codex').queue_kind, 'driver-buffer');
 });
 
 test('a queued /goal still requires native objective and new-turn evidence', async (t) => {
