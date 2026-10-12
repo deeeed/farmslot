@@ -666,3 +666,18 @@ test('fenced and unlabeled prose cannot introduce acceptance criteria', () => {
     ['Current criterion.'],
   );
 });
+
+test('an explicitly empty heading or label suppresses retired AC paragraphs', () => {
+  assert.deepEqual(
+    acceptanceCriteriaFromMarkdown(
+      '## Acceptance Criteria\n\n## Previous requirements\nAC1: Keep retired behavior.',
+    ),
+    [],
+  );
+  assert.deepEqual(
+    acceptanceCriteriaFromMarkdown(
+      'Acceptance criteria:\n\nPrevious requirements:\nAC1: Keep retired behavior.',
+    ),
+    [],
+  );
+});

@@ -12,7 +12,7 @@ blocker, run `checklist mark <task-dir> start`, then continue numbered marks. Th
 uses the existing runtime start verb, preserves checked boxes and resumes signal
 progress under the launcher's attempt identity. Successful terminal verdicts remain protected.
 
-Ticket intake preserves an explicit acceptance section. When none is supplied,
+Ticket intake preserves an explicit acceptance section, including an empty one. When none is supplied,
 authored `AC1:` or `AC-1:` paragraphs outside fenced code populate the same
 acceptance array in source order. Paragraph boundaries exclude unrelated prose.
 Existing structured criteria remain authoritative. Generated TASK.md and

@@ -59,6 +59,25 @@ if (process.argv[2] === 'serve') {
   let gateway: ChildProcess | undefined;
   let sessionCreated = false;
   const logs: string[] = [];
+  const retired = 'A retired criterion.';
+  const emptyHeading = {
+    type: 'doc',
+    version: 1,
+    content: [
+      {
+        type: 'heading',
+        attrs: { level: 2 },
+        content: [{ type: 'text', text: 'Acceptance Criteria' }],
+      },
+      {
+        type: 'heading',
+        attrs: { level: 2 },
+        content: [{ type: 'text', text: 'Previous requirements' }],
+      },
+      { type: 'paragraph', content: [{ type: 'text', text: 'AC1: ' + retired }] },
+    ],
+  };
+  const emptyLabel = 'Acceptance criteria:\n\nPrevious requirements:\nAC1: ' + retired;
   const jira = createServer((request, response) => {
     response.setHeader('Content-Type', 'application/json');
     response.end(
@@ -68,7 +87,11 @@ if (process.argv[2] === 'serve') {
           : {
               fields: {
                 summary: 'Acceptance handoff proof',
-                description: expected.description,
+                description: request.url?.includes('HANDOFF-103')
+                  ? emptyHeading
+                  : request.url?.includes('HANDOFF-104')
+                    ? emptyLabel
+                    : expected.description,
                 issuetype: { name: 'Task' },
                 labels: [],
                 components: [],
@@ -154,6 +177,8 @@ if (process.argv[2] === 'serve') {
     const runs = [
       { id: randomUUID(), ticket: 'HANDOFF-101', cached: false },
       { id: randomUUID(), ticket: 'HANDOFF-102', cached: true },
+      { id: randomUUID(), ticket: 'HANDOFF-103', cached: false },
+      { id: randomUUID(), ticket: 'HANDOFF-104', cached: false },
     ];
     const now = new Date().toISOString();
     for (const run of runs)
@@ -284,6 +309,9 @@ if (process.argv[2] === 'serve') {
     }, 'gateway');
     const cases = [];
     for (const entry of runs) {
+      const criteria = ['HANDOFF-103', 'HANDOFF-104'].includes(entry.ticket)
+        ? []
+        : expected.acceptanceCriteria;
       rpc('run.replayStep', { runId: entry.id, stepName: 'write-task', triggeredBy: 'operator' });
       await wait(() => {
         const run = readRun(entry.id);
@@ -298,20 +326,20 @@ if (process.argv[2] === 'serve') {
           'checkpoint precedes preparation and worker launch',
         );
       }
-      assert.deepEqual(run.ticketData?.acceptanceCriteria, expected.acceptanceCriteria);
+      assert.deepEqual(run.ticketData?.acceptanceCriteria, criteria);
       assert.ok(run.taskFile);
       const task = readFileSync(run.taskFile, 'utf8');
       const handoff = JSON.parse(
         readFileSync(path.join(path.dirname(run.taskFile), 'inputs/handoff.json'), 'utf8'),
       );
-      assert.deepEqual(handoff.task.acceptanceCriteria, expected.acceptanceCriteria);
+      assert.deepEqual(handoff.task.acceptanceCriteria ?? [], criteria);
       const formal = task.split('## Acceptance Criteria')[1]?.split('\n## ')[0] ?? '';
-      for (const criterion of expected.acceptanceCriteria) assert.ok(formal.includes(criterion));
+      for (const criterion of criteria) assert.ok(formal.includes(criterion));
       json(path.join(out, entry.id + '.json'), { cached: entry.cached, run, handoff, task });
       cases.push({
         runId: entry.id,
         cached: entry.cached,
-        count: expected.acceptanceCriteria.length,
+        count: criteria.length,
       });
       rpc('run.cancel', { runId: entry.id });
       writeFileSync(path.join(out, entry.id + '.release'), 'cancelled');
@@ -338,6 +366,7 @@ if (process.argv[2] === 'serve') {
         'public replay fetches labeled Jira criteria',
         'cached empty criteria are recovered by production write-task',
         'stored run, formal task and handoff match authored criteria',
+        'explicit empty heading and label suppress retired criteria',
         'public cancel precedes preparation/worker launch',
       ],
       limits: [

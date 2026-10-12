@@ -412,7 +412,7 @@ function normalizeTitle(title: string): string {
  * `Acceptance criteria:` line when the ticket has no headings. Lines inside
  * fenced code never start or end a section.
  */
-export function extractSection(markdown: string, names: string[]): string {
+function matchingSection(markdown: string, names: string[]): string | undefined {
   const lines = markdown.split('\n');
   const fenced = fencedLines(lines);
   const wanted = names.map((name) => name.toLowerCase());
@@ -443,7 +443,12 @@ export function extractSection(markdown: string, names: string[]): string {
       return trimBlankLines(lines.slice(label + 1, next >= 0 ? next : lines.length));
     }
   }
-  return '';
+  return undefined;
+}
+
+/** The existing string-only API preserves absent-section behavior for callers. */
+export function extractSection(markdown: string, names: string[]): string {
+  return matchingSection(markdown, names) ?? '';
 }
 
 // Drop blank lines at both ends but keep indentation: an indented list stays indented.
@@ -520,8 +525,8 @@ export function acceptanceCriteriaFromMarkdown(
   markdown: string,
   names = ['acceptance criteria', 'expected behavior', 'expected result'],
 ): string[] {
-  const section = sectionItems(extractSection(markdown, names));
-  if (section.length) return section;
+  const section = matchingSection(markdown, names);
+  if (section !== undefined) return sectionItems(section);
 
   const lines = markdown.split(/\r?\n/);
   const fenced = fencedLines(lines);
