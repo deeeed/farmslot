@@ -7,7 +7,7 @@ import {
   RuntimePostureMethods,
   type RuntimePostureStatusResult,
 } from '@farmslot/protocol';
-import type { CliOptions, HarnessContext } from '@farmslot/recipe-cli/harness';
+import { type CliOptions, contextPorts, type HarnessContext } from '@farmslot/recipe-cli/harness';
 
 import { GatewayClient, type GatewayConnection } from '../gateway-client.js';
 import { resolveGatewayTarget } from '../gateway-profiles.js';
@@ -56,6 +56,20 @@ export async function withLiveRecipeAuthority<T>(
     throw new Error(
       'Pooled live checks use the allocated slot ports; configure a separate slot for different ports.',
     );
+  }
+  const allocatedPorts = contextPorts(
+    context,
+    [],
+    { '--cdp-port': true, '--watcher-port': true },
+    {},
+  ).ports;
+  for (const name of ['cdp', 'watcher'] as const) {
+    const effective = context.ports?.[name];
+    if (effective && effective.value !== allocatedPorts?.[name]?.value) {
+      throw new Error(
+        `Pooled live check ${name} port differs from its allocated slot; remove the transport override.`,
+      );
+    }
   }
   const controller = new AbortController();
   const signal = AbortSignal.any([request.signal, controller.signal]);

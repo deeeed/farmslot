@@ -7,10 +7,7 @@ import test, { type TestContext } from 'node:test';
 
 import type { RecordedEvidencePackageInput } from '@farmslot/protocol';
 
-import {
-  readRecordedEvidencePackage,
-  validateRecordedEvidencePackage,
-} from '../src/evidence/index.js';
+import { readRecordedEvidencePackage, validateRecordedEvidencePackage } from '../src/index.js';
 
 async function fixture(t: TestContext): Promise<string> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'evidence-reader-'));

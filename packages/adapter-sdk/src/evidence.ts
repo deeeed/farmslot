@@ -1,8 +1,3 @@
-/** The shared package-validation surface used by CLI, gateway and both review clients. */
+/** The portable package validator shared by CLI, gateway and review clients. */
 export type { RecipeValidationResult, RecordedEvidencePackageInput } from '@farmslot/protocol';
-export {
-  readRecordedEvidencePackage,
-  type RecordedEvidencePackageReadCheck,
-  type RecordedEvidencePackageReadResult,
-  validateRecordedEvidencePackage,
-} from '@farmslot/recipe-runner/evidence';
+export { validateRecordedEvidencePackage } from '@farmslot/recipe-runner/evidence';

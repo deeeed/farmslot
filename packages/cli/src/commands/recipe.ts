@@ -3,10 +3,8 @@ import path from 'node:path';
 
 import { type Command, Option } from 'commander';
 
-import {
-  readRecordedEvidencePackage,
-  validateRecordedEvidencePackage,
-} from '@farmslot/adapter-sdk/evidence';
+import { readRecordedEvidencePackage } from '@farmslot/adapter-sdk';
+import { validateRecordedEvidencePackage } from '@farmslot/adapter-sdk/evidence';
 import {
   digestRecipeDocument,
   getRecipeActionManifestActionNames,

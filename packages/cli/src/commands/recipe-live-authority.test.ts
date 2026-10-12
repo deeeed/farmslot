@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { type EventFrame, Events } from '@farmslot/protocol';
-import type { HarnessContext } from '@farmslot/recipe-cli/harness';
+import { contextPorts, type HarnessContext } from '@farmslot/recipe-cli/harness';
 
 import type { GatewayConnection } from '../gateway-client.js';
 
@@ -152,3 +152,35 @@ test('unallocated UI and missing disposable consent refuse before connecting or 
     /headless/u,
   );
 });
+
+for (const name of [
+  'RECIPE_CDP_PORT',
+  'CDP_PORT',
+  'TERMINAL_APP_PORT',
+  'RECIPE_WATCHER_PORT',
+  'WATCHER_PORT',
+  'METRO_PORT',
+]) {
+  test(`live proof checks inherited ${name} against allocated ports`, async () => {
+    const held = allocation();
+    assert.ok(held.context.slot?.value);
+    held.context.slot.ports = { cdpPort: 9323, watcherPort: 8081 };
+    const grammar = { '--cdp-port': true, '--watcher-port': true };
+    held.context.ports = contextPorts(held.context, [], grammar, { [name]: '9222' }).ports;
+    await assert.rejects(
+      withLiveRecipeAuthority(
+        held.request,
+        async () => assert.fail('provider must not run on another slot transport'),
+        async () => assert.fail('mismatched transport must refuse before connecting'),
+      ),
+      /port differs from its allocated slot/u,
+    );
+    held.context.ports = contextPorts(held.context, [], grammar, {
+      [name]: name.includes('CDP') ? '9323' : '8081',
+    }).ports;
+    assert.equal(
+      await withLiveRecipeAuthority(held.request, async () => 'checked', held.connect),
+      'checked',
+    );
+  });
+}

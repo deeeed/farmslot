@@ -78,6 +78,22 @@ test('public doctor fails for a missing declared handler', async (t) => {
   assert.match(result.envelope.data.report.checks[0].message, /no registered adapter/);
 });
 
+test('doctor binds an explicit domain and refuses a report for another domain', async (t) => {
+  const { root } = fixture(t);
+  const flags = ['--authorize-provider', path.join(root, 'provider.mjs')];
+  const checked = await run(t, root, [...flags, '--domain', 'payments']);
+  assert.equal(checked.status, 0, JSON.stringify(checked.envelope));
+  assert.equal(checked.envelope.data.report.identity.domain, 'payments');
+  const changed = await run(t, root, [
+    ...flags,
+    '--domain',
+    'other',
+    '--check-report',
+    checked.envelope.data.reportPath,
+  ]);
+  assert.equal(changed.status, 1, 'A report cannot authorize a different domain.');
+});
+
 test('conformance reads opaque HUD policy in the selected runtime environment and restores it', async (t) => {
   const { root, write } = fixture(t);
   const provider = fs.readFileSync(path.join(root, 'provider.mjs'), 'utf8');

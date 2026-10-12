@@ -471,6 +471,7 @@ Options:
   --all-devices                  Include all discovered devices in readiness output
   --json-stream                  Stream explicit repairs and their terminal result
   --action-manifest <path>       Select an action manifest
+  --domain <name>                Select the recipe domain for conformance
   --conformance                  Check provider, libraries, handlers and full recipe
                                  preflight
   --live                         Execute one bounded smoke after conformance preflight

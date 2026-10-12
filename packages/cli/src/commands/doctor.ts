@@ -49,6 +49,7 @@ export function registerDoctorCommand(program: Command): void {
     .option('--all-devices', 'Include all discovered devices in readiness output')
     .option('--json-stream', 'Stream explicit repairs and their terminal result')
     .option('--action-manifest <path>', 'Select an action manifest')
+    .option('--domain <name>', 'Select the recipe domain for conformance')
     .option('--conformance', 'Check provider, libraries, handlers and full recipe preflight')
     .option('--live', 'Execute one bounded smoke after conformance preflight')
     .option(
@@ -87,6 +88,7 @@ export function registerDoctorCommand(program: Command): void {
         return;
       }
       const conformanceOnly = [
+        'domain',
         'artifactsDir',
         'reportName',
         'live',
@@ -334,7 +336,7 @@ async function prepareProjectConformance(
       const checkOptions: RecipeConformanceOptions = {
         project: binding.name,
         app: binding.app,
-        domain: binding.domain,
+        domain: shared.optionString(options, 'domain') ?? binding.domain,
         context,
         providerRoot: binding.provider.root,
         configurationPaths: [

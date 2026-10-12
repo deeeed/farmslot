@@ -123,6 +123,11 @@ export {
 } from './evidence/assertions.js';
 export { deriveRecipeClaims, type DeriveRecipeClaimsInput } from './evidence/claims.js';
 export { validateRecordedEvidencePackage } from './evidence/package.js';
+export {
+  readRecordedEvidencePackage,
+  type RecordedEvidencePackageReadCheck,
+  type RecordedEvidencePackageReadResult,
+} from './evidence/read-package.js';
 export { digestFileWithinRoot } from './file-digest.js';
 export { createAndroidMirrorVideoRecorder } from './recording/android-mirror.js';
 export type { CaptureHelperVideoRecorderOptions } from './recording/capture-helper.js';
