@@ -826,6 +826,7 @@ export class RunDetail extends RunDetailState {
 
   private async _refreshRecipeRunsForRunUncoalesced(run: Run): Promise<void> {
     const refreshToken = Symbol('run-detail-recipe-runs');
+    const recipeRunId = this._pendingRecipeRunSelectionId || this._selectedRecipeRunId;
     this._recipeRunsRefreshToken = refreshToken;
     try {
       const outputDecision = run.decisions.find(
@@ -841,8 +842,8 @@ export class RunDetail extends RunDetailState {
                 decisionId: outputDecision.id,
                 evidenceSnapshotHash: outputDecision.payload.manifestDigest,
               }
-            : this._selectedRecipeRunId
-              ? { recipeRunId: this._selectedRecipeRunId }
+            : recipeRunId
+              ? { recipeRunId }
               : {}),
         },
       );

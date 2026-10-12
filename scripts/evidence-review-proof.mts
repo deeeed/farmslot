@@ -6,7 +6,14 @@ import fs from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { mock } from 'node:test';
 import { fileURLToPath } from 'node:url';
+
+import type {
+  LiveRecipeContext,
+  RecordedEvidencePackageInput,
+  RecipeRerunParams,
+} from '@farmslot/protocol';
 
 const code = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const configFile = process.argv[2];
@@ -15,7 +22,13 @@ const config = JSON.parse(await fs.readFile(configFile, 'utf8')) as {
   stateFile: string;
   uiPort: number;
   gatewayPort?: number;
-  sources: Array<{ label: string; directory: string; mode?: 'ready' | 'legacy'; nested?: boolean }>;
+  sources: Array<{
+    label: string;
+    directory: string;
+    mode?: 'ready' | 'legacy';
+    nested?: boolean;
+    rolloverDirectory?: string;
+  }>;
 };
 assert(config.sources.length, 'At least one retained real recipe package is required.');
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'evidence-review-proof-'));
@@ -72,6 +85,25 @@ const { createRun, updateRun, persistRunNow } =
   await import('../services/gateway/src/runs/store.js');
 const { createGatewayAuthRuntime, initializeGatewayIdentity } =
   await import('../services/gateway/src/security/auth.js');
+const rollovers = new Map<string, () => Promise<{ requestId: string; artifactRoot: string }>>();
+const recipeMethods = await import('../services/gateway/src/methods/recipe.js');
+// Display-only fixture host replays genuine retained executions. The production
+// gateway reader and the UI's rerun request/completion path remain intact.
+mock.module('../services/gateway/src/methods/recipe.js', {
+  namedExports: {
+    ...recipeMethods,
+    recipeRerun: async (
+      params: RecipeRerunParams,
+      emit: (event: string, payload: unknown) => void,
+    ) => {
+      const replay = rollovers.get(params.runId);
+      if (!replay) return recipeMethods.recipeRerun(params, emit);
+      const next = await replay();
+      emit('script.complete', { ...next, exitCode: 0 });
+      return next;
+    },
+  },
+});
 const { createWebSocketServer, broadcastEvent } = await import('../services/gateway/src/server.js');
 const { watchSlot, unwatchSlot, onTaskProgress } =
   await import('../services/gateway/src/tasks/watcher.js');
@@ -85,8 +117,8 @@ const { outputManifestDigest, outputReviewDecisions } =
   await import('../services/gateway/src/run-completion/output.js');
 const { createServer: createVite } = await import('vite');
 const runs: Array<{ id: string; label: string; recipeRunId: string; claimIds: string[] }> = [];
-for (const source of config.sources) {
-  const retained = await readRecordedEvidencePackage(source.directory);
+async function checkedSource(directory: string) {
+  const retained = await readRecordedEvidencePackage(directory);
   assert(
     retained.checks.every((check) => check.status !== 'fail'),
     JSON.stringify(retained.checks),
@@ -96,6 +128,27 @@ for (const source of config.sources) {
     !validation.findings.some((finding) => finding.severity === 'error'),
     JSON.stringify(validation),
   );
+  return retained;
+}
+function recipeContext(
+  input: RecordedEvidencePackageInput,
+  artifactRoot: string,
+): LiveRecipeContext {
+  return {
+    source: 'recipe-run-live',
+    recipeRunId: input.claims!.recipeRunId,
+    artifactRoot,
+    recipeJson: JSON.stringify(input.recipe),
+    selectionReason: 'latest-run',
+    isStale: false,
+    artifactManifest: null,
+    workerLearnings: null,
+    recipeQualityArtifact: null,
+    qualityReport: null,
+  };
+}
+for (const source of config.sources) {
+  const retained = await checkedSource(source.directory);
   const claims = retained.input.claims!;
   const run = createRun(
     {
@@ -213,6 +266,7 @@ for (const source of config.sources) {
                 prPackage,
                 acceptanceStatus: claims,
                 acceptanceCriteria: claims.criteria.map((claim) => claim.text),
+                recipeJson: JSON.stringify(retained.input.recipe),
               },
             },
           ];
@@ -224,24 +278,28 @@ for (const source of config.sources) {
     nativeOwnerPrincipalId: 'local-admin',
     ...(source.nested
       ? {
-          liveRecipeContext: {
-            source: 'recipe-run-live' as const,
-            recipeRunId: claims.recipeRunId,
-            artifactRoot: retainedDir,
-            recipeJson: JSON.stringify(retained.input.recipe),
-            selectionReason: 'latest-run' as const,
-            isStale: false,
-            artifactManifest: null,
-            workerLearnings: null,
-            recipeQualityArtifact: null,
-            qualityReport: null,
-          },
+          liveRecipeContext: recipeContext(retained.input, retainedDir),
         }
       : {}),
     output: source.mode === 'legacy' ? null : output,
     decisions: source.mode === 'legacy' ? [] : decision,
   });
   await persistRunNow(updated);
+  if (source.rolloverDirectory) {
+    const directory = source.rolloverDirectory;
+    rollovers.set(run.id, async () => {
+      const next = await checkedSource(directory);
+      const requestId = next.input.claims!.recipeRunId;
+      assert.notEqual(requestId, claims.recipeRunId);
+      const artifactRoot = path.join(artifacts, 'recipe-runs', requestId);
+      await fs.cp(directory, artifactRoot, { recursive: true });
+      const moved = updateRun(run.id, {
+        liveRecipeContext: recipeContext(next.input, artifactRoot),
+      });
+      await persistRunNow(moved);
+      return { requestId, artifactRoot };
+    });
+  }
   runs.push({
     id: run.id,
     label: source.label,

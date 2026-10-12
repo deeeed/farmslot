@@ -12,7 +12,7 @@ assert(stateFile, 'Pass the isolated proof server state file.');
 const state = JSON.parse(await fs.readFile(stateFile, 'utf8')) as {
   gatewayPort: number;
   uiPort: number;
-  runs: Array<{ id: string; label: string; claimIds: string[] }>;
+  runs: Array<{ id: string; label: string; recipeRunId: string; claimIds: string[] }>;
 };
 const port = Number(process.env.FARMSLOT_CDP_PORT);
 assert([19222, 19223, 19224].includes(port), 'Use isolated Agent Chrome.');
@@ -71,6 +71,24 @@ try {
       );
       page = await CdpWebPage.connectToTarget(target);
       const p = page;
+      if (run.label === 'live-recipe-rollover') {
+        await wait(
+          () => p.evaluate<string>(`${detail}?._selectedRecipeRunId ?? ''`),
+          (id) => id === `live-run:${run.recipeRunId}`,
+        );
+        const oldGroup = await p.evaluate<string>(`${detail}._selectedRecipeRunId`);
+        await p.clickText('Recipe');
+        await p.click('[data-testid="recipe-replay-run"]');
+        await wait(
+          () =>
+            p.evaluate<{ group: string; claims: number; errors: string[] }>(
+              `({group:${detail}._selectedRecipeRunId,claims:${detail}.evidenceModel?.claims.length ?? 0,errors:${detail}.evidenceModel?.errors ?? []})`,
+            ),
+          (value) => value.group !== oldGroup && value.claims > 0 && !value.errors.length,
+        );
+        reports.push({ runId: run.id, label: run.label, liveGroupRollover: true });
+        continue;
+      }
       if (run.label === 'qa-multi-case-proof') {
         const result = requestGateway('run.recipeRunsForRun', {
           runId: run.id,

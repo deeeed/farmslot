@@ -24,6 +24,9 @@ mock.module('../../run-engine/gate-prerequisites.js', {
 mock.module('../../run-engine/gate-summary.js', {
   namedExports: { enrichDecisionsWithGateSummary: (value: Run) => value },
 });
+mock.module('../../review/review-round-budget.js', {
+  namedExports: { attachReviewRoundBudget: async (value: Run) => value },
+});
 mock.module('./evidence-review.js', {
   namedExports: {
     readRunRecordedEvidence: async (_run: Run, group: RecipeRunArtifactGroup) => ({
