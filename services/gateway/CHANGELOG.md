@@ -6,6 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Add a portable Farmslot QA preset and validation checklist with recipe evidence and required local CI parity.
 
+- Validate artifact-only QA completion from retained output and declared cases, preserving pending visual review and recovery across refreshes and restarts.
 - Count review diff files from numstat rows instead of patch text while retaining untracked source identities.
 - Return artifact-relative package paths for retained evidence review.
 
