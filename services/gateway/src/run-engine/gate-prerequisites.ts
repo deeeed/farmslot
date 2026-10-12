@@ -287,6 +287,7 @@ export async function collectRunGateReadiness(
 ): Promise<RunGateReadiness> {
   const generation = run.engineState?.generation ?? 0;
   const outputDigest = isArtifactOnlyRun(run) ? run.output?.manifestDigest : undefined;
+  const outputDecision = outputDigest ? capturedOutputReviewDecision(run) : undefined;
   const source = { ...readers, ...overrides };
   const reasons: RunGatePrerequisiteReason[] = [];
   const retainedPackageHash = run.engineState?.publishGate?.packageHash;
@@ -510,11 +511,9 @@ export async function collectRunGateReadiness(
   }
   const progress = await source.progress(run);
   let outputInvalidated = false;
-  if (outputDigest) {
+  if (outputDigest && outputDecision) {
     try {
-      const decision = capturedOutputReviewDecision(run);
-      if (!decision) throw new Error('The captured output decision is missing.');
-      const current = await verifyRunOutputReview(run.id, decision.id, true);
+      const current = await verifyRunOutputReview(run.id, outputDecision.id, true);
       outputInvalidated =
         current.output?.manifestDigest !== outputDigest ||
         current.taskFile !== run.taskFile ||
@@ -526,6 +525,10 @@ export async function collectRunGateReadiness(
       // owning snapshot verifier must refuse it before completion can advance.
       outputInvalidated = true;
     }
+  } else if (outputDigest) {
+    const current = getRun(run.id);
+    outputInvalidated =
+      current?.output?.manifestDigest !== outputDigest || Boolean(current?.output?.captureError);
   }
   if (
     isTerminalRunStatus(run.status) ||

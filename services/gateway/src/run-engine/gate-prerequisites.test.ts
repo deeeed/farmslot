@@ -26,6 +26,37 @@ const idle = async () => ({ kind: 'idle' as const });
 const emptyAcceptance = async () => ({ criteria: [], ledger: null, issues: [] });
 const passed = async () => {};
 
+test('artifact-only comparison and reportless output retain their digest fence without a review decision', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'gate-output-no-decision-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, 'artifacts'));
+  await writeFile(path.join(root, 'artifacts/result.json'), JSON.stringify({ complete: true }));
+  const { captureRunOutput, failRunOutputCapture } = await import('../run-completion/output.js');
+  for (const lane of ['comparison', 'production'] as const) {
+    const run = createRun({ flowType: 'dev', project: 'generic-project', ticketOrPr: 'OUTPUT-1' });
+    t.after(() => deleteTestRunIfPresent(run.id));
+    updateRun(run.id, {
+      lane,
+      completionPolicy: 'artifact-only',
+      status: 'completing',
+      taskFile: path.join(root, 'TASK.md'),
+    });
+    await captureRunOutput(run.id, false, true);
+    assert.equal(getRun(run.id)?.decisions.length, 0);
+    const sources = { deterministic: passed, acceptance: emptyAcceptance, progress: idle };
+    assert.equal((await collectRunGateReadiness(getRun(run.id)!, null, sources)).state, 'ready');
+    const refused = await collectRunGateReadiness(getRun(run.id)!, null, {
+      ...sources,
+      progress: async () => {
+        failRunOutputCapture(run.id, new Error('Transfer failed'), true);
+        return { kind: 'idle' };
+      },
+    });
+    assert.equal(refused.state, 'not-ready');
+    assert.ok(refused.reasons.some((reason) => reason.code === 'run-gate-superseded'));
+  }
+});
+
 test('unassessed criteria cannot offer a ready action even when deterministic steps passed', async () => {
   const criteria = Array.from({ length: 11 }, (_, index) => ({
     id: `AC-${index + 1}`,
