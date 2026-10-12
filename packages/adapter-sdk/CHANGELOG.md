@@ -4,6 +4,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
+## 0.9.1 - 2026-10-12
+
+- Update shared runtime dependencies for bounded recipe log observations.
+
 ## 0.9.0 - 2026-10-12
 
 - Expose one retained evidence-package reader for CLI and gateway validation, with contained file reads, actual byte digests and read diagnostics.

@@ -30,7 +30,6 @@ import {
   type PostDispatchStepContext,
   readyGateReviewSubjectMatches,
   shouldSkipRetrospectiveAtComplete,
-  shouldWarnHumanGateReviewRequestRunaway,
 } from './post-dispatch-steps.js';
 import { shouldPrepareLocalFirstPackage } from './publication-policy.js';
 import {
@@ -93,13 +92,6 @@ test('interactive completion hold persists operator state without completing mon
   assert.equal(monitor.outputs?.workerTerminalSignalHeld, 'complete');
   assert.equal(monitor.outputs?.reason, 'interactive-completion-operator-owned');
   assert.ok((monitor.durationMs ?? 0) >= 1_000);
-});
-
-test('human-gate review requests warn once at the runaway threshold and never block', () => {
-  // Requests stay uncapped — the threshold only fires an observability warning.
-  assert.equal(shouldWarnHumanGateReviewRequestRunaway(9), false);
-  assert.equal(shouldWarnHumanGateReviewRequestRunaway(10), true);
-  assert.equal(shouldWarnHumanGateReviewRequestRunaway(11), false);
 });
 
 test('complete-step retrospective gating defers only CI-watch flows', () => {

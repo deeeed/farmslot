@@ -4,10 +4,19 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Wait for the reviewer-owned terminal mark before archiving its checklist and result.
+
+- Enforce five review rounds per PR, including retries and publication requests, with durable admission before launch and a design or scope refusal at the limit.
+
+- Publish the exact selected review findings and report, preserving accepted choices across refresh races.
+
+- Declare mid-turn prompt support and verify complete Enter-submitted queue messages for guarded lane steering.
 - Run declared scripted commands from ordinary product checkouts using verified project support and the installed CLI; retain checkout-local scenario execution.
 
 - Check selected-template recipe parameters and resource requirements through shared protocol validation without requiring runtime QA for static review, and retain the checked target and revision.
 - Run declared project readiness through the shared doctor command, preserving the selected checkout, slot and pool environment.
+- Recheck current task, source, evidence and review prerequisites at gates and completion; preserve live workers and report correction, review failure and uncertain operations explicitly.
+
 - Bind declared recording leases to validated backend/target identities and retain those claims through conflicts, waiters and recovery. Offline review tasks include the shared acceptance module.
 - Verify queued lane handoffs, use only live bottom-composer input, and retain uncertain receipts while fresh messages proceed without replaying old ones. Parent-session probes support subagents.
 
@@ -47,6 +56,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Publish packages match curated evidence and omissions by full path, so excluding an older screenshot cannot remove a newer same-named capture or select unrelated media.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+- Allow managed runner resumes to suppress startup update checks.
 
 ## 0.21.0 - 2026-10-10
 

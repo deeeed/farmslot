@@ -4,6 +4,12 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## Unreleased
 
+## 0.20.1 - 2026-10-12
+
+- Update shared runtime dependencies for bounded recipe log observations.
+
+- Record the explicitly selected Android device in native recipe proofs.
+
 ## 0.20.0 - 2026-10-12
 
 - **BREAKING:** Return original native recording segments and measured/untimed results through the shared contract. Keep one simulator recorder and replace string-prefixed target sentinels with typed targets (ADR-062).

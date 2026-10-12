@@ -66,7 +66,12 @@ const testActionProperties: Record<string, Record<string, unknown>> = {
   assert_file: { path: stringParam },
   assert_json: { path: stringParam, assert: openObjectParam },
   assert_output: { source: stringParam, stream: stringParam, contains: stringParam },
-  watch_logs: { path: stringParam, contains: stringParam, scope: stringParam },
+  watch_logs: {
+    path: stringParam,
+    contains: stringParam,
+    scope: stringParam,
+    timeout_ms: { type: 'integer', minimum: 0 },
+  },
   index_artifacts: { artifacts: objectArrayParam },
   wait: { ms: numberParam },
   switch: { value: stringParam, equals: stringParam },
@@ -222,7 +227,7 @@ test('tracked core action manifests match the bundled adapter contract', async (
     [
       'watch_logs',
       {
-        properties: ['contains', 'path', 'scope'],
+        properties: ['contains', 'path', 'scope', 'timeout_ms'],
         required: ['path'],
       },
     ],

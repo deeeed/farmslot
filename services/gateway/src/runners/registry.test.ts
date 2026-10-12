@@ -2306,6 +2306,16 @@ describe('buildLaunchCommand', () => {
 });
 
 describe('buildRunnerSessionReloadCommand', () => {
+  it('suppresses startup updates only when the resume caller requests it', () => {
+    const vars = makeVars({ dispatchCmd: '', codexPath: '/opt/bin/codex' });
+    const normal = buildRunnerSessionReloadCommand(vars, 'codex', 'gpt-5', 'session');
+    const managed = buildRunnerSessionReloadCommand(vars, 'codex', 'gpt-5', 'session', {
+      skipUpdateCheck: true,
+    });
+    assert.doesNotMatch(normal, /check_for_update_on_startup/);
+    assert.match(managed, /check_for_update_on_startup=false/);
+  });
+
   it('restores task recipe provenance before resuming a persisted runner', () => {
     const vars = makeVars({ dispatchCmd: '', grokPath: '/opt/bin/grok' });
     const cmd = buildRunnerSessionReloadCommand(vars, 'grok', 'grok-code-fast-1', 'session', {

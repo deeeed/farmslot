@@ -1,7 +1,13 @@
 import { css, html, LitElement, type PropertyValues, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import type { FlowType, Run, RunStep, TaskProgressStructured } from '@farmslot/protocol';
+import {
+  deriveRunLifecycleView,
+  type FlowType,
+  type Run,
+  type RunStep,
+  type TaskProgressStructured,
+} from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
 import {
@@ -144,6 +150,9 @@ export class RunPipelineMini extends LitElement {
 
   render() {
     const isCancelled = this.run?.status === 'cancelled';
+    const activityLabel = this.run
+      ? deriveRunLifecycleView({ status: this.run.status }).activityLabel
+      : undefined;
     const awaitingOperator = isInteractiveCompletionAwaitingOperator(this.run);
     const segments = this.buildSegments();
     if (isCancelled) {
@@ -189,15 +198,17 @@ export class RunPipelineMini extends LitElement {
         ? html`<span class="active-label" style="color:${unsafeCSS(colors.statusWarn)}"
             >cancelled</span
           >`
-        : awaitingOperator
-          ? html`<span class="active-label">awaiting operator action</span>`
-          : active
-            ? html`<span class="active-label" title=${taskLabel?.title ?? active.title}
-                >${taskLabel?.label ?? this.shortName(active.name)}${remaining
-                  ? ` +${remaining}`
-                  : ''}</span
-              >`
-            : null}
+        : activityLabel
+          ? html`<span class="active-label" role="status">${activityLabel}</span>`
+          : awaitingOperator
+            ? html`<span class="active-label">awaiting operator action</span>`
+            : active
+              ? html`<span class="active-label" title=${taskLabel?.title ?? active.title}
+                  >${taskLabel?.label ?? this.shortName(active.name)}${remaining
+                    ? ` +${remaining}`
+                    : ''}</span
+                >`
+              : null}
     `;
   }
 

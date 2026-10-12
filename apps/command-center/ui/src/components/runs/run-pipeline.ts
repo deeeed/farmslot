@@ -11,7 +11,7 @@ import type {
   RunStepStatus,
   TaskProgressStructured,
 } from '@farmslot/protocol';
-import { failedRunCancelEffects, Methods } from '@farmslot/protocol';
+import { deriveRunLifecycleView, failedRunCancelEffects, Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import {
@@ -157,12 +157,16 @@ export class RunPipeline extends LitElement {
   render() {
     if (!this.run) return nothing;
     const layout = computeLayout(this.run);
+    const activityLabel = deriveRunLifecycleView({ status: this.run.status }).activityLabel;
     const isActive = !['done', 'failed', 'cancelled'].includes(this.run.status);
     const recovery = this.run.engineState?.publishGate?.reviewRecovery;
     const showRecovery = Boolean(recovery && recovery.status !== 'recovered');
 
     return html`
       <div class="pipeline-wrap">
+        ${activityLabel
+          ? html`<div role="status" class="pipeline-status-row">${activityLabel}</div>`
+          : nothing}
         ${showRecovery
           ? html`
               <div class="pipeline-status-row">

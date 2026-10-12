@@ -20,6 +20,7 @@ import {
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/config.js';
 import { SLOT_PHASE_RELEASING, SLOT_RELEASING_SINCE } from '../core/state.js';
 import { activeRunSlotIds } from '../methods/dispatch/slot-scoring.js';
+import { runDecisionWaitingStatus, type RunProgressObservation } from '../runners/run-progress.js';
 import { isLeakedGatewayTestRun } from '../runs/test-run-leak.js';
 
 import { pendingDecisionForRun } from './decision-projection.js';
@@ -30,6 +31,7 @@ import {
 } from './recover-inflight-reviews.js';
 import { reviewPostingActions } from './review-gate.js';
 import { recoveryReviewPlanForActiveFix } from './review-plan.js';
+import { runSupersededSince } from './run-generation.js';
 
 const S = PipelineSteps;
 const RECONCILE_INTERVAL_MS = 60_000; // 60s
@@ -65,6 +67,7 @@ interface ReviewArtifactsSnapshot {
 }
 
 export interface RunRecoveryCollaborators {
+  observeRunProgress?: (run: Run) => Promise<RunProgressObservation>;
   listRuns: (params: { active: true }) => { runs: Run[] };
   loadFleetStatus: (force?: boolean) => Promise<FleetSnapshot>;
   /**
@@ -188,28 +191,35 @@ const STEP_TO_STATUS: Record<string, Run['status']> = {
   [S.CI_WATCH]: 'ci-watching',
 };
 
-export function markTerminalReviewArtifactOperatorRequired(
-  deps: Pick<RunRecoveryCollaborators, 'updateRun'>,
+export async function markTerminalReviewArtifactOperatorRequired(
+  deps: Pick<RunRecoveryCollaborators, 'updateRun' | 'getRun' | 'observeRunProgress'>,
   run: Run,
   message: string,
   recoveryForensics?: PublicationReviewRecoveryState,
-): void {
+): Promise<void> {
+  const generation = run.engineState?.generation ?? 0;
+  const progress = await (deps.observeRunProgress?.(run) ??
+    Promise.resolve({ kind: 'unproven' as const }));
+  const current = deps.getRun(run.id);
+  if (runSupersededSince(current, generation)) return;
   const now = new Date().toISOString();
-  const previous = recoveryForensics ?? run.engineState?.publishGate?.reviewRecovery;
-  deps.updateRun(run.id, {
-    engineState: {
-      ...run.engineState,
-      publishGate: {
-        ...run.engineState?.publishGate,
-        reviewRecovery: {
-          status: 'operator-required',
-          attempts: Math.max(1, previous?.attempts ?? 0),
-          startedAt: previous?.startedAt ?? now,
-          updatedAt: now,
-          lastError: message.slice(0, 200),
-        },
+  const previous = recoveryForensics ?? current!.engineState?.publishGate?.reviewRecovery;
+  const engineState = {
+    ...current!.engineState,
+    publishGate: {
+      ...current!.engineState?.publishGate,
+      reviewRecovery: {
+        status: 'operator-required' as const,
+        attempts: Math.max(1, previous?.attempts ?? 0),
+        startedAt: previous?.startedAt ?? now,
+        updatedAt: now,
+        lastError: message.slice(0, 200),
       },
     },
+  };
+  deps.updateRun(run.id, {
+    status: runDecisionWaitingStatus({ ...current!, engineState }, progress, 'review_artifact'),
+    engineState,
   });
 }
 
@@ -236,7 +246,12 @@ export function recoveryHealthIsReady(
 
 export function isPublicationReviewRecoveryHeld(run: Run): boolean {
   if (run.status === 'human-gating') return true;
-  if (run.status !== 'blocked') return false;
+  if (
+    !['blocked', 'review-failed', 'reconciling', 'fixing', 'reviewing', 'monitoring'].includes(
+      run.status,
+    )
+  )
+    return false;
   if (run.engineState?.publishGate?.reviewRecovery?.status === 'operator-required') return true;
   return run.decisions.some(
     (decision) => decision.type === 'engine_human_gate' && !decision.resolvedAt,
@@ -334,6 +349,30 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       console.log(`[run-engine] run ${run.id.slice(0, 8)} — paused, skipping recovery`);
       continue;
     }
+    // Restart never retries a dispatch whose owning transport has not confirmed
+    // delivery. Retain the marker and lease until explicit reconciliation.
+    if (
+      run.steps.some(
+        (step) =>
+          step.outputs?.promptDeliveryUncertain || step.outputs?.nativeWorkerOperationUncertain,
+      )
+    )
+      continue;
+    if (
+      run.engineState?.publishGate?.reviewRecovery?.status === 'operator-required' &&
+      !run.decisions.some((decision) => !decision.resolvedAt)
+    )
+      continue;
+
+    // A block can coexist with a progressing worker. Its pipeline is exhausted,
+    // but that does not grant restart permission to complete or redeliver it.
+    if (
+      ['monitoring', 'reviewing', 'fixing', 'reconciling'].includes(run.status) &&
+      run.metrics.outcome === 'partial' &&
+      run.error &&
+      run.steps.every((step) => step.status === 'done' || step.status === 'skipped')
+    )
+      continue;
     if (run.reviewWorkspaceTarget && run.flowType === 'review-pr') {
       if (run.status === 'blocked') continue;
       // Native command/lease identities and workspace manifests reconcile inside the
@@ -456,7 +495,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
           await deps.replayHumanGate(run.id);
         } catch (err) {
           if (recoveryResult.terminalErrors.length > 0) {
-            markTerminalReviewArtifactOperatorRequired(
+            await markTerminalReviewArtifactOperatorRequired(
               deps,
               deps.getRun(run.id) ?? run,
               `${terminalReviewRecoveryMessage(recoveryResult)}; gate replay failed: ${(err as Error).message}`,
@@ -470,7 +509,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
           deps.rearmPublicationReviewRecovery(run, { replayPending: true });
         }
         if (recoveryResult.terminalErrors.length > 0) {
-          markTerminalReviewArtifactOperatorRequired(
+          await markTerminalReviewArtifactOperatorRequired(
             deps,
             deps.getRun(run.id) ?? run,
             terminalReviewRecoveryMessage(recoveryResult),
@@ -481,7 +520,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       }
 
       if (recoveryResult.terminalErrors.length > 0) {
-        markTerminalReviewArtifactOperatorRequired(
+        await markTerminalReviewArtifactOperatorRequired(
           deps,
           deps.getRun(run.id) ?? run,
           terminalReviewRecoveryMessage(recoveryResult),
@@ -508,7 +547,9 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       }
     }
 
-    if (run.status === 'blocked') {
+    if (
+      ['blocked', 'fixing', 'review-failed', 'reconciling', 'human-gating'].includes(run.status)
+    ) {
       const unresolved = run.decisions.filter((d) => !d.resolvedAt);
       if (unresolved.length > 0) {
         for (const d of unresolved) {
@@ -601,7 +642,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
               // schedules is detached, so this stays bounded).
               await deps.replayHumanGate(run.id);
               if (recoveryResult.terminalErrors.length > 0) {
-                markTerminalReviewArtifactOperatorRequired(
+                await markTerminalReviewArtifactOperatorRequired(
                   deps,
                   deps.getRun(run.id) ?? run,
                   terminalReviewRecoveryMessage(recoveryResult),
@@ -611,7 +652,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
               continue;
             } catch (err) {
               if (recoveryResult.terminalErrors.length > 0) {
-                markTerminalReviewArtifactOperatorRequired(
+                await markTerminalReviewArtifactOperatorRequired(
                   deps,
                   deps.getRun(run.id) ?? run,
                   `${terminalReviewRecoveryMessage(recoveryResult)}; gate replay failed: ${(err as Error).message}`,
@@ -628,7 +669,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
             }
           }
           if (recoveryResult.terminalErrors.length > 0) {
-            markTerminalReviewArtifactOperatorRequired(
+            await markTerminalReviewArtifactOperatorRequired(
               deps,
               deps.getRun(run.id) ?? run,
               terminalReviewRecoveryMessage(recoveryResult),
@@ -716,7 +757,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         } catch (err) {
           const message = `Human-gate recovery needs an operator retry: ${(err as Error).message.slice(0, 160)}`;
           const current = deps.getRun(run.id) ?? run;
-          markTerminalReviewArtifactOperatorRequired(deps, current, message);
+          await markTerminalReviewArtifactOperatorRequired(deps, current, message);
           deps.updateRunStep(run.id, S.HUMAN_GATE, {
             detail: 'Review recovery failed — retry this gate to continue',
           });

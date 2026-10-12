@@ -64,6 +64,7 @@ import {
   stampPublishGateReviewStatusForPackage,
   supersedeStaleHumanGateDecisions,
 } from './gate-policy.js';
+import { assertRunGateReady } from './gate-prerequisites.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
 import {
   publicationReviewPolicyForRun,
@@ -89,6 +90,7 @@ import {
   resolveHumanGateReviewExecutionPlan,
 } from './review-plan.js';
 import { recordArtifactOnlyReviewResult } from './review-result.js';
+import { runSupersededSince } from './run-generation.js';
 import { type MonitorResult, monitorRun, probeWorkerSignalForRun } from './run-monitor.js';
 
 const S = PipelineSteps;
@@ -136,6 +138,7 @@ type MonitorTerminalErrorArgs = {
 };
 
 export interface PostDispatchStepContext {
+  assertGatePrerequisites?: typeof assertRunGateReady;
   activeMonitors: Map<string, AbortController>;
   blockedRunError: (message: string, reason: string) => Error;
   broadcastFn: BroadcastFn;
@@ -198,17 +201,6 @@ export function shouldSkipRetrospectiveAtComplete(run: Pick<Run, 'flowType'>): b
   return FLOW_STEPS[run.flowType].includes(S.CI_WATCH);
 }
 const MAX_PUBLISH_GATE_REVIEW_LOOPS = 5;
-/**
- * Operator review requests are deliberately uncapped — a long incremental review
- * loop may legitimately need many, and rejecting an accepted decision terminally
- * blocks the run. Past this count the gate is more likely stuck in a runaway
- * review/fix cycle than doing deliberate work, so log it once for triage.
- */
-const HUMAN_GATE_REVIEW_REQUEST_WARN_THRESHOLD = 10;
-
-export function shouldWarnHumanGateReviewRequestRunaway(requestCount: number): boolean {
-  return requestCount === HUMAN_GATE_REVIEW_REQUEST_WARN_THRESHOLD;
-}
 
 function stampFreshReviewsForPreparedPackage(
   runId: string,
@@ -1170,7 +1162,6 @@ export async function executeHumanGateStep(
       return executeReadyGate(runId);
     };
     let gateAction = await presentReadyGate();
-    let reviewRequestLoops = 0;
     while (
       publicationApprovalGate &&
       !isPublishApprovalAction(gateAction) &&
@@ -1201,12 +1192,6 @@ export async function executeHumanGateStep(
         continue;
       }
       if (gateAction === 'request-review') {
-        reviewRequestLoops += 1;
-        if (shouldWarnHumanGateReviewRequestRunaway(reviewRequestLoops)) {
-          console.warn(
-            `[run-engine] run ${runId.slice(0, 8)} — ${reviewRequestLoops} human-gate review requests on this gate; check for a runaway review/fix cycle`,
-          );
-        }
         const beforeReviewPlan = getRun(runId)!;
         const reviewedPackage = await readReadyGatePreparedPackage(beforeReviewPlan);
         // Prefer the latest request-review
@@ -1284,9 +1269,14 @@ export async function executeCompleteStep(
 ): Promise<StepIO> {
   const { broadcastFn, getDiffStat, refreshRunLinks } = context;
   const current = getRun(runId)!;
+  const generation = current.engineState?.generation ?? 0;
   if (!current.slotId) throw new Error('No slot assigned');
+  if (!shouldPrepareLocalFirstPackage(current))
+    await (context.assertGatePrerequisites ?? assertRunGateReady)(current, null);
   // Revalidate on completion/replay so a checklist or force-skipped monitor cannot supply QA proof.
   if (current.flowType === 'qa') await assertQaCompletion(current);
+  if (runSupersededSince(getRun(runId), generation))
+    throw new Error('Completion was superseded during gate validation');
   const noCodeDisposition = isNoCodeTerminalDisposition(current.metrics.disposition);
   const artifactOnly = isArtifactOnlyRun(current);
   const inputs: Record<string, unknown> = {

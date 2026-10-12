@@ -13,6 +13,7 @@ import {
   type RecipeSourceProvenance,
 } from '@farmslot/protocol';
 
+import { validateAssertionPaths } from './assertions.js';
 import { extractWorkflowGraph } from './graph.js';
 import { isRecord } from './json.js';
 import type { ResolvedLibraryRecipe } from './library.js';
@@ -137,6 +138,14 @@ export function buildRecipeExecutionPlan({
         );
       }
       const planNodeId = `${prefix}${nodeId}`;
+      if (
+        resolvedNode.action === 'assert_json' ||
+        (resolvedNode.action === 'assert_output' &&
+          resolvedNode.contains == null &&
+          resolvedNode.match == null)
+      ) {
+        validateAssertionPaths(resolvedNode.assert, `Node ${planNodeId}.assert`);
+      }
       addNode(planNodeId, resolvedNode, origin, invocationOrigin);
       if (resolvedNode.action !== 'call' || typeof resolvedNode.ref !== 'string') continue;
       const ref = normalizeRecipeRef(resolvedNode.ref);

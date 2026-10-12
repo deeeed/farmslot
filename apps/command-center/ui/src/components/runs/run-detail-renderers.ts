@@ -15,6 +15,7 @@ import type {
 } from '@farmslot/protocol';
 import {
   canActivateRunOnSlot,
+  deriveRunLifecycleView,
   isSettledBlockedRun,
   isSlotFreedByPark,
   modeForFlow,
@@ -552,7 +553,9 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             >`
           : r.ticketOrPr}
       </h2>
-      <span class="status-badge" style="border:1px solid ${sc}; color:${sc}">${r.status}</span>
+      <span class="status-badge" style="border:1px solid ${sc}; color:${sc}"
+        >${deriveRunLifecycleView({ status: r.status }).activityLabel ?? r.status}</span
+      >
       ${disposition
         ? html`<span
             class="status-badge"

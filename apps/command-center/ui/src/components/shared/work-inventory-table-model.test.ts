@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  activateInventoryRow,
   compareInventoryValues,
   inventoryGridTemplateColumns,
   inventoryShowsBackAffordance,
@@ -12,6 +13,37 @@ import {
   resolveSelectedRowId,
   sortInventoryRows,
 } from './work-inventory-table-model.js';
+
+test('activation selects another row and closes an already-selected detail', () => {
+  let selectedId = 'a';
+  const activate = (id: string) =>
+    activateInventoryRow({
+      selected: selectedId === id,
+      onActivate: () => {
+        selectedId = id;
+      },
+      onDeselect: () => {
+        selectedId = '';
+      },
+    });
+  assert.equal(activate('b'), false);
+  assert.equal(selectedId, 'b');
+  assert.equal(activate('b'), true);
+  assert.equal(selectedId, '');
+  assert.equal(activate('b'), false);
+  assert.equal(selectedId, 'b');
+});
+
+test('disabled activation preserves selection; selection-only rows retain their own toggle', () => {
+  let selected = true;
+  const onActivate = () => {
+    selected = !selected;
+  };
+  assert.equal(activateInventoryRow({ selected, disabled: true, onActivate }), false);
+  assert.equal(selected, true);
+  assert.equal(activateInventoryRow({ selected, onActivate }), false);
+  assert.equal(selected, false);
+});
 
 test('compareInventoryValues orders numbers and strings with numeric sensitivity', () => {
   assert.ok(compareInventoryValues(2, 10) < 0);

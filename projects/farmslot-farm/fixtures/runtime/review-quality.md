@@ -93,6 +93,7 @@ If the author omitted a recipe for a UI change, flag it — do not invent proof.
 |---------|----------|--------|
 | Inline protocol types instead of `@farmslot/protocol` | suggestion | cite import path |
 | Empty `catch {}` or log-and-continue | **must_fix** | root cause or explicit recovery |
+| Test fixture hand-built in the consumer's expected shape | **must_fix** | build it from the producer function or a live isolated gateway |
 | UI/store/DOM injection for “validation” | **must_fix** | require real user flow |
 | Typecheck-only claim for UI change | **must_fix** | require CDP/recipe proof |
 | `tsc -b` / emitting `.js` into source trees | **must_fix** | use `yarn typecheck` |

@@ -284,12 +284,15 @@ export async function projectRecipeHostOptions(
       : workspace
         ? path.join(workspace.farmslotDir, 'pool')
         : undefined;
+  const configuredProjectsDir = process.env.FARMSLOT_PROJECTS_DIR?.trim();
   const registry =
     shared.optionString(options, 'projectsDir') ??
-    path.resolve(
-      process.env.FARMSLOT_ROOT?.trim() || workspace?.farmslotDir || repoRoot,
-      'projects',
-    );
+    (configuredProjectsDir
+      ? path.resolve(configuredProjectsDir)
+      : path.resolve(
+          process.env.FARMSLOT_ROOT?.trim() || workspace?.farmslotDir || repoRoot,
+          'projects',
+        ));
   const diagnosis = recipeProjectOptions(new Command());
   for (const option of diagnosis.options)
     diagnosis.setOptionValue(option.attributeName(), options[option.attributeName()]);

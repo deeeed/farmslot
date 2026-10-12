@@ -11,7 +11,12 @@ import {
   View,
 } from 'react-native';
 
-import { ROADMAP_ITEM_STAGES, type RoadmapDeliverySummary } from '@farmslot/protocol';
+import {
+  ROADMAP_DELIVERY_FILTERS,
+  ROADMAP_ITEM_STAGES,
+  type RoadmapDeliverySummary,
+  type RoadmapItem,
+} from '@farmslot/protocol';
 
 import { colors, floatingCopilotGutter, fonts, radii, spacing } from '../../lib/theme';
 
@@ -21,13 +26,51 @@ type RoadmapScreenModel = ReturnType<typeof useRoadmapController>;
 
 export default function RoadmapScreen({ screen }: { screen: RoadmapScreenModel }) {
   const { actions, state } = screen;
+  const renderCard = (item: RoadmapItem) => {
+    const summary = state.delivery.find((entry) => entry.roadmapItemId === item.id);
+    return (
+      <Pressable key={item.id} style={styles.card} onPress={() => actions.openItem(item.id)}>
+        <View style={styles.metaRow}>
+          <Text style={styles.stage}>{item.stage}</Text>
+          <Text style={styles.project}>{item.project}</Text>
+          {summary ? (
+            <Text style={[styles.delivery, deliveryStyle(summary.status)]}>{summary.status}</Text>
+          ) : null}
+        </View>
+        <Text style={styles.ref}>{item.id}</Text>
+        <Text style={styles.itemTitle} numberOfLines={3}>
+          {item.title}
+        </Text>
+        {state.deliveredDetails
+          .find((entry) => entry.roadmapItemId === item.id)
+          ?.prs.map((pr) => (
+            <Pressable
+              key={pr.ref}
+              disabled={!pr.url}
+              onPress={() => pr.url && void actions.openPr(pr.url)}
+            >
+              <Text style={styles.stage}>{pr.ref}</Text>
+            </Pressable>
+          ))}
+        <View style={styles.footer}>
+          <Text style={styles.muted}>{item.promotion?.length ?? 0} backlog links</Text>
+          {summary ? (
+            <Text style={styles.muted}>
+              {summary.runFamilyCount} runs · {summary.prCount} PRs
+            </Text>
+          ) : null}
+          <Ionicons name="chevron-forward" size={17} color={colors.textMuted} />
+        </View>
+      </Pressable>
+    );
+  };
 
   return (
     <View style={styles.container}>
       <View style={styles.toolbar}>
         <View>
           <Text style={styles.title}>Roadmap</Text>
-          <Text style={styles.count}>{state.visibleItems.length} planning items</Text>
+          <Text style={styles.count}>{state.deliveryView.items.length} planning items</Text>
         </View>
         <Ionicons name="map-outline" size={23} color={colors.accent} style={styles.toolbarIcon} />
       </View>
@@ -58,10 +101,31 @@ export default function RoadmapScreen({ screen }: { screen: RoadmapScreenModel }
             </Pressable>
           )}
         />
+        <View style={styles.metaRow}>
+          {ROADMAP_DELIVERY_FILTERS.map((option) => (
+            <Pressable
+              key={option}
+              style={[
+                styles.stageChip,
+                state.deliveryFilter === option && styles.stageChipSelected,
+              ]}
+              onPress={() => actions.setDeliveryFilter(option)}
+            >
+              <Text
+                style={[
+                  styles.stageText,
+                  state.deliveryFilter === option && styles.stageTextSelected,
+                ]}
+              >
+                {option === 'all' ? 'All outcomes' : option}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
       </View>
       {state.error ? <Text style={styles.error}>{state.error}</Text> : null}
       <FlatList
-        data={state.visibleItems}
+        data={state.deliveryView.undelivered}
         keyExtractor={(item) => item.id}
         contentContainerStyle={[styles.list, { paddingBottom: state.bottomPadding }]}
         refreshControl={
@@ -70,39 +134,39 @@ export default function RoadmapScreen({ screen }: { screen: RoadmapScreenModel }
         ListEmptyComponent={
           state.loading ? (
             <ActivityIndicator color={colors.accent} />
-          ) : (
+          ) : state.deliveryView.items.length === 0 ? (
             <Text style={styles.empty}>No roadmap items in this scope.</Text>
-          )
+          ) : null
         }
-        renderItem={({ item }) => {
-          const summary = state.delivery.find((entry) => entry.roadmapItemId === item.id);
-          return (
-            <Pressable style={styles.card} onPress={() => actions.openItem(item.id)}>
-              <View style={styles.metaRow}>
-                <Text style={styles.stage}>{item.stage}</Text>
-                <Text style={styles.project}>{item.project}</Text>
-                {summary ? (
-                  <Text style={[styles.delivery, deliveryStyle(summary.status)]}>
-                    {summary.status}
-                  </Text>
-                ) : null}
-              </View>
-              <Text style={styles.ref}>{item.id}</Text>
-              <Text style={styles.itemTitle} numberOfLines={3}>
-                {item.title}
-              </Text>
-              <View style={styles.footer}>
-                <Text style={styles.muted}>{item.promotion?.length ?? 0} backlog links</Text>
-                {summary ? (
-                  <Text style={styles.muted}>
-                    {summary.runFamilyCount} runs · {summary.prCount} PRs
-                  </Text>
-                ) : null}
-                <Ionicons name="chevron-forward" size={17} color={colors.textMuted} />
-              </View>
-            </Pressable>
-          );
-        }}
+        renderItem={({ item }) => renderCard(item)}
+        ListFooterComponent={
+          state.deliveryFilter !== 'undelivered' ? (
+            <View style={styles.deliveredGroup}>
+              <Pressable
+                onPress={() => actions.setDeliveredExpanded(!state.deliveredExpanded)}
+                style={styles.metaRow}
+              >
+                <Ionicons
+                  name={state.deliveredExpanded ? 'chevron-down' : 'chevron-forward'}
+                  size={17}
+                  color={colors.textMuted}
+                />
+                <Text style={styles.itemTitle}>
+                  Delivered ({state.deliveryView.delivered.length})
+                </Text>
+              </Pressable>
+              {state.deliveredExpanded ? (
+                <>
+                  {state.deliveredLoading ? <ActivityIndicator color={colors.accent} /> : null}
+                  {state.deliveredError ? (
+                    <Text style={styles.error}>{state.deliveredError}</Text>
+                  ) : null}
+                  {state.deliveryView.delivered.map(renderCard)}
+                </>
+              ) : null}
+            </View>
+          ) : null
+        }
       />
     </View>
   );
@@ -152,6 +216,7 @@ const styles = StyleSheet.create({
   error: { color: colors.statusFail, fontSize: fonts.sizeSm, paddingHorizontal: spacing.lg },
   list: { gap: spacing.md, padding: spacing.lg },
   empty: { color: colors.textMuted, fontSize: fonts.sizeSm, paddingVertical: spacing.xl },
+  deliveredGroup: { gap: spacing.md, paddingVertical: spacing.md },
   card: {
     backgroundColor: colors.bgSurface,
     borderColor: colors.bgCardHover,

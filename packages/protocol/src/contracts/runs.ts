@@ -20,6 +20,7 @@ import type { EvidenceQualityReport, RecipeQualityArtifact } from './recipes.js'
 import type { ResourcePostureWaitPolicy, RunResourcePostureState } from './resource-posture.js';
 import type { ResourceType } from './resources.js';
 import type { RunImportProvenance } from './run-bundles.js';
+import type { RunGateReadiness } from './run-gate-readiness.js';
 import type { RuntimeCapabilityProofRequirement } from './runtime-capabilities.js';
 import type { SlotHealth } from './slots.js';
 import type { SubtaskSource } from './task.js';
@@ -37,6 +38,9 @@ export type RunStatus =
   | 'dispatching'
   | 'monitoring'
   | 'reviewing'
+  | 'fixing'
+  | 'review-failed'
+  | 'reconciling'
   | 'completing'
   | 'human-gating'
   | 'ci-watching'
@@ -56,6 +60,8 @@ export const ACTIVE_RUN_STATUSES: readonly RunStatus[] = [
   'dispatching',
   'monitoring',
   'reviewing',
+  'fixing',
+  'reconciling',
   'completing',
   'ci-watching',
 ];
@@ -227,6 +233,7 @@ export interface EvidenceManifestStandalone {
 
 export interface ReviewGatePayload {
   kind: 'review';
+  gateReadiness?: RunGateReadiness;
   session?: ReviewSessionTrace;
   prNumber: number | null;
   repo: string | null;
@@ -549,6 +556,7 @@ export interface ReviewStatus {
 export const PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES = {
   launchRejected: 'PUBLICATION_REVIEW_LAUNCH_REJECTED',
   gitProbeFailed: 'PUBLICATION_REVIEW_GIT_PROBE_FAILED',
+  roundLimitReached: 'REVIEW_ROUND_LIMIT_REACHED',
 } as const;
 
 export type PublicationReviewLaunchRejectionCode =
@@ -790,8 +798,18 @@ export interface ReadyGateInputSnapshot {
   templateProvenance?: TemplateProvenance | null;
 }
 
+export interface ReviewRoundBudget {
+  used: number;
+  limit: number;
+  remaining: number;
+  label: string;
+  diagnosis?: string;
+}
+
 export interface ReadyGatePayload {
   kind: 'ready';
+  gateReadiness?: RunGateReadiness;
+  reviewRoundBudget?: ReviewRoundBudget;
   prNumber: number | null;
   repo: string | null;
   diffStat: DiffStat;
@@ -882,6 +900,7 @@ export interface EvidenceRefreshOverrideRecord {
 
 export interface NoChangeGatePayload {
   kind: 'no-change';
+  gateReadiness?: RunGateReadiness;
   disposition: WorkerTerminalDisposition;
   reason?: string;
   evidence?: WorkerTerminalEvidence;
@@ -2355,6 +2374,8 @@ export interface MachineParkRecord {
 }
 
 export interface Run {
+  /** Gateway-owned, opaque reviewer admission receipts. Replay must retain these. */
+  reviewRoundAdmissions?: string[];
   /** Run cleanup preserved resources whose ownership could not be proven. */
   slotTeardownSkipped?: string;
   /** Gateway-owned automatic QA opt-in and durable follow-up status. */

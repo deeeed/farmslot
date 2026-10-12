@@ -1,4 +1,10 @@
-import type { FlowType, Run, RunLane, RunStatus } from '@farmslot/protocol';
+import {
+  deriveRunLifecycleView,
+  type FlowType,
+  type Run,
+  type RunLane,
+  type RunStatus,
+} from '@farmslot/protocol';
 import { isSettledBlockedRun, resolveRunSlotId, TERMINAL_RUN_STATUSES } from '@farmslot/protocol';
 
 import type { GlobalFilters } from '../../state.js';
@@ -96,6 +102,8 @@ export function runProgressSummary(
     text,
   });
   const pending = run.decisions.find((decision) => !decision.resolvedAt);
+  const activity = deriveRunLifecycleView({ status: run.status }).activityLabel;
+  if (activity) return summary(run.status === 'fixing' ? 'step' : 'gate', activity);
   if (pending) {
     const action = pending.actions.find((item) => item.style === 'primary') ?? pending.actions[0];
     return summary('gate', action ? `${pending.title} → ${action.label}` : pending.title);

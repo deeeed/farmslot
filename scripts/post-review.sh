@@ -33,6 +33,7 @@ OVERRIDE_MODEL=""
 OVERRIDE_COST=""
 OVERRIDE_TOTAL_TOKENS=""
 EVIDENCE_MD_FILE=""
+REVIEW_INPUT_FILE=""
 RUN_ID=""
 SKIP_SESSION_USAGE=false
 SKIP_ARTIFACT_UPLOAD=false
@@ -52,6 +53,7 @@ while [[ $# -gt 0 ]]; do
     --model)             OVERRIDE_MODEL="$2"; shift 2 ;;
     --cost)              OVERRIDE_COST="$2"; shift 2 ;;
     --total-tokens)      OVERRIDE_TOTAL_TOKENS="$2"; shift 2 ;;
+    --review-input-file) REVIEW_INPUT_FILE="$2"; shift 2 ;;
     --evidence-md-file)  EVIDENCE_MD_FILE="$2"; shift 2 ;;
     --skip-session-usage) SKIP_SESSION_USAGE=true; shift ;;
     --skip-artifact-upload) SKIP_ARTIFACT_UPLOAD=true; shift ;;
@@ -103,13 +105,18 @@ read_artifact() {
   fi
 }
 
-REVIEW_MD=$(read_artifact "${ARTIFACT_BASE}/review.md")
+if [ -n "$REVIEW_INPUT_FILE" ]; then
+  REVIEW_MD=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["reviewMd"],end="")' "$REVIEW_INPUT_FILE")
+  LINE_COMMENTS_JSON=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(json.dumps({"recommendation":d["recommendation"],"comments":d["comments"]}))' "$REVIEW_INPUT_FILE")
+else
+  REVIEW_MD=$(read_artifact "${ARTIFACT_BASE}/review.md")
+  LINE_COMMENTS_JSON=$(read_artifact "${ARTIFACT_BASE}/line-comments.json")
+fi
 if [ -z "$REVIEW_MD" ]; then
   echo "ERROR: review.md not found at ${ARTIFACT_BASE}/review.md"
   exit 1
 fi
 
-LINE_COMMENTS_JSON=$(read_artifact "${ARTIFACT_BASE}/line-comments.json")
 RECIPE_JSON=$(read_artifact "${ARTIFACT_BASE}/recipe.json")
 
 # Check for video

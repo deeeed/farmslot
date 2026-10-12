@@ -19,6 +19,7 @@ export function pendingDecisionForRun(
     description: decision.description,
     context: {
       runId: run.id,
+      runStatus: run.status,
       project: run.project,
       flowType: run.flowType,
       ticketOrPr: run.ticketOrPr,

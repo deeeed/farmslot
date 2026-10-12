@@ -53,6 +53,7 @@ import {
   executeReview as executeReviewDefault,
   type ReviewResult,
 } from '../review/orchestrator.js';
+import { assertReviewRoundAvailable } from '../review/review-round-budget.js';
 import { reviewedInputsAwaitingReview, reviewedInputsChanged } from '../review/reviewed-inputs.js';
 import { reviewPRIdentity } from '../review/session-mode.js';
 import { isTerminalReviewArtifactError } from '../review/terminal-result.js';
@@ -302,6 +303,29 @@ function clearPublicationReviewLaunchRejection(runId: string, rejectedAt?: strin
   });
 }
 
+function recordPublicationReviewLaunchRejection(
+  runId: string,
+  rejection: PublicationReviewLaunchRejection,
+): void {
+  const latest = getRun(runId)!;
+  updateRun(runId, {
+    engineState: {
+      ...latest.engineState,
+      publishGate: {
+        ...latest.engineState?.publishGate,
+        reviewLaunchRejection: rejection,
+      },
+    },
+  });
+  updateRunStep(runId, S.HUMAN_GATE, {
+    detail: `${rejection.message} ${rejection.userAction}`,
+    outputs: {
+      ...latest.steps.find((step) => step.name === S.HUMAN_GATE)?.outputs,
+      reviewLaunchRejection: rejection,
+    },
+  });
+}
+
 export function reconcileReviewLaunchRejectionForCurrentHead(
   runId: string,
   headSha: string | undefined,
@@ -315,6 +339,7 @@ export function reconcileReviewLaunchRejectionForCurrentHead(
       ? rejection.details.currentHeadSha
       : undefined;
   if (!rejection || !headSha) return rejection;
+  if (rejection.code === 'REVIEW_ROUND_LIMIT_REACHED') return rejection;
   if (
     rejection.code === 'PUBLICATION_REVIEW_LAUNCH_REJECTED' &&
     (!rejectedHeadSha || rejectedHeadSha === headSha)
@@ -350,27 +375,12 @@ export async function executePublishGateReviewPlan(
   for (const planStep of boundedPlan) {
     const launchSnapshot = getRun(runId)!;
     try {
+      await assertReviewRoundAvailable(launchSnapshot);
       await assertLaunchAllowed(launchSnapshot.engineState?.publishGate?.reviews ?? [], slotId);
     } catch (error) {
       const rejection = publicationReviewLaunchRejectionFromError(error);
       if (!rejection) throw error;
-      const latestAfterGuard = getRun(runId)!;
-      updateRun(runId, {
-        engineState: {
-          ...latestAfterGuard.engineState,
-          publishGate: {
-            ...latestAfterGuard.engineState?.publishGate,
-            reviewLaunchRejection: rejection,
-          },
-        },
-      });
-      updateRunStep(runId, S.HUMAN_GATE, {
-        detail: `${rejection.message} ${rejection.userAction}`,
-        outputs: {
-          ...latestAfterGuard.steps.find((step) => step.name === S.HUMAN_GATE)?.outputs,
-          reviewLaunchRejection: rejection,
-        },
-      });
+      recordPublicationReviewLaunchRejection(runId, rejection);
       return { reviewIds, rejection };
     }
     const latestBeforeReview = clearPublicationReviewLaunchRejection(runId);
@@ -431,6 +441,11 @@ export async function executePublishGateReviewPlan(
       });
     } catch (err) {
       if (isTerminalReviewArtifactError(err)) throw err;
+      const rejection = publicationReviewLaunchRejectionFromError(err);
+      if (rejection) {
+        recordPublicationReviewLaunchRejection(runId, rejection);
+        return { reviewIds, rejection };
+      }
       reviewRecoveryPending = true;
       const message = err instanceof Error ? err.message : String(err);
       console.warn(

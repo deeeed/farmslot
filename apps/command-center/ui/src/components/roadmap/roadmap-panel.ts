@@ -4,6 +4,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import type {
   BacklogItem,
+  RoadmapDeliveryFilter,
   RoadmapDeliveryProjection,
   RoadmapDeliverySummary,
   RoadmapGetResult,
@@ -27,9 +28,11 @@ import {
   DEFAULT_ROADMAP_REFINEMENT_RUNNER,
   isConcreteRoadmapProject,
   Methods,
+  ROADMAP_DELIVERY_FILTERS,
   ROADMAP_GLOBAL_PROJECT,
   ROADMAP_ITEM_STAGES,
   ROADMAP_UNASSIGNED_PROJECT,
+  roadmapDeliveryView,
 } from '@farmslot/protocol';
 import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
@@ -62,12 +65,12 @@ import {
 } from '../shared/planning-projects.js';
 import {
   applyWorkInventorySort,
-  inventoryShowsBackAffordance,
+  focusWorkInventoryRow,
   inventoryShowsDetail,
   inventoryShowsList,
   nextSortState,
   parseWorkInventorySort,
-  renderWorkInventoryBackButton,
+  renderWorkInventoryDetailClose,
   renderWorkInventoryLayout,
   renderWorkInventoryRow,
   renderWorkInventoryTable,
@@ -196,6 +199,7 @@ export class RoadmapPanel extends LitElement {
    * filter/search change that was already in flight.
    */
   private _listGeneration = 0;
+  private _selectionGeneration = 0;
   private _deliveryReloadInFlight = false;
   private _deliveryReloadQueued = false;
   /**
@@ -213,6 +217,7 @@ export class RoadmapPanel extends LitElement {
   @state() private _workGraphs: WorkGraphProjection[] = [];
   @state() private _globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private _selectedId = '';
+  private _selectionDismissed = false;
   @state() private _narrowViewport = false;
   @state() private _forceInventoryList = false;
   private _narrowMedia?: MediaQueryList;
@@ -225,6 +230,11 @@ export class RoadmapPanel extends LitElement {
   @state() private _createPanelOpen = false;
   @state() private _filterProject = 'all';
   @state() private _filterStage: RoadmapItemStage | 'all' = 'all';
+  @state() private _filterDelivery: RoadmapDeliveryFilter = 'all';
+  @state() private _deliveredExpanded = false;
+  @state() private _deliveredDetails: RoadmapDeliveryProjection[] = [];
+  @state() private _deliveredLoading = false;
+  private _deliveredGeneration = 0;
   @state() private _filterTags = '';
   @state() private _filterSearch = '';
   @state() private _includeArchived = false;
@@ -522,7 +532,6 @@ export class RoadmapPanel extends LitElement {
       }
       .row.selected {
         border-color: ${unsafeCSS(colors.accent)}99;
-        background: ${unsafeCSS(colors.accent)}11;
       }
       .title {
         font-weight: 700;
@@ -832,6 +841,7 @@ export class RoadmapPanel extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    ++this._deliveredGeneration;
     this._unsubscribeConnection?.();
     this._unsubscribeVisibleModels?.();
     this._unsubscribeState?.();
@@ -845,6 +855,7 @@ export class RoadmapPanel extends LitElement {
   protected updated(changed: Map<string, unknown>) {
     if (changed.has('items') || changed.has('slots') || changed.has('delivery')) {
       this._syncState(getState());
+      if (this._deliveredExpanded) void this._loadDeliveredDetails();
     }
   }
 
@@ -853,7 +864,11 @@ export class RoadmapPanel extends LitElement {
     const { route, params } = parseHashRoute();
     if (!isRoadmapRoute(route)) return;
     const selectedParam = params.get(ROADMAP_ITEM_PARAM)?.trim() ?? '';
-    this._selectedId = selectedParam || this._selectedId || this.items?.[0]?.id || '';
+    this._selectedId =
+      selectedParam ||
+      this._selectedId ||
+      (!this._selectionDismissed ? this.items?.[0]?.id : '') ||
+      '';
     this._editorMode =
       this._selectedId && params.get(ROADMAP_MODE_PARAM) === 'edit' ? 'edit' : 'view';
     this._runnerPickerOpen = params.get(ROADMAP_RUNNER_PICKER_PARAM) === '1';
@@ -932,8 +947,7 @@ export class RoadmapPanel extends LitElement {
     if (this.items) {
       this._allItems = this.items;
       const visibleItems = this._items;
-      const selected =
-        visibleItems.find((item) => item.id === this._selectedId) ?? visibleItems[0] ?? null;
+      const selected = this._resolveSelectedItem(visibleItems);
       if (!selected || this._editHash !== selected.fileHash) {
         this._syncEditor(selected);
         this._writeUrlState();
@@ -946,6 +960,7 @@ export class RoadmapPanel extends LitElement {
       void this._reloadDelivery();
     }
     if (previousProjects !== this._globalFilters.projects.join('\0')) {
+      if (this._deliveredExpanded) void this._loadDeliveredDetails();
       const globalProjects = concretePlanningProjects(state.globalFilters.projects);
       // Multi-project filters set owner to `global` for coordination but do NOT
       // pre-fill every filtered farm as targetProjects — silent multi-target
@@ -971,7 +986,7 @@ export class RoadmapPanel extends LitElement {
       if (this._allItems.length > 0) {
         const visibleItems = this._items;
         if (!visibleItems.some((item) => item.id === this._selectedId)) {
-          this._syncEditor(visibleItems[0] ?? null);
+          this._syncEditor(this._resolveSelectedItem(visibleItems));
           this._writeUrlState();
         }
       }
@@ -1054,7 +1069,7 @@ export class RoadmapPanel extends LitElement {
     </div>`;
   }
 
-  private get _items(): RoadmapItem[] {
+  private get _deliveryView() {
     const visible =
       this._filterProject === 'all'
         ? filterRoadmapItemsByGlobalProjects(
@@ -1062,11 +1077,29 @@ export class RoadmapPanel extends LitElement {
             concretePlanningProjects(this._globalFilters.projects),
           )
         : this._allItems;
-    return sortRoadmapItems(visible, this._sortKey, this._sortDirection);
+    return roadmapDeliveryView(
+      sortRoadmapItems(visible, this._sortKey, this._sortDirection),
+      [...this._deliverySummaries, ...(this.delivery ?? [])],
+      this._filterDelivery,
+    );
+  }
+
+  private get _items(): RoadmapItem[] {
+    return this._deliveryView.items;
+  }
+
+  private _resolveSelectedItem(
+    items: RoadmapItem[],
+    selectedId = this._selectedId,
+  ): RoadmapItem | null {
+    return (
+      items.find((item) => item.id === selectedId) ??
+      (this._selectionDismissed ? null : (items[0] ?? null))
+    );
   }
 
   private get _selected(): RoadmapItem | null {
-    return this._items.find((item) => item.id === this._selectedId) ?? this._items[0] ?? null;
+    return this._resolveSelectedItem(this._items);
   }
 
   private _openRunnerPicker() {
@@ -1228,7 +1261,10 @@ export class RoadmapPanel extends LitElement {
     if (!this._promptPreviews[promptPath]) void this._loadPromptPreview(promptPath);
   }
 
-  private async _refresh(selectId = this._selectedId) {
+  private async _refresh(
+    selectId = this._selectedId,
+    selectionGeneration = this._selectionGeneration,
+  ) {
     if (this.items) {
       this._syncState(getState());
       return;
@@ -1261,9 +1297,13 @@ export class RoadmapPanel extends LitElement {
       // the cached one for the same item id.
       this._deliveryDetail = null;
       const visibleItems = this._items;
-      const selected = visibleItems.find((item) => item.id === selectId) ?? visibleItems[0] ?? null;
+      const selected = this._resolveSelectedItem(
+        visibleItems,
+        selectionGeneration === this._selectionGeneration ? selectId : this._selectedId,
+      );
       this._syncEditor(selected);
       this._writeUrlState();
+      if (this._deliveredExpanded) void this._loadDeliveredDetails();
     } catch (err) {
       // A superseded refresh's failure must not report over the newer one's data.
       if (listGeneration === this._listGeneration) this._error = (err as Error).message;
@@ -1274,6 +1314,7 @@ export class RoadmapPanel extends LitElement {
 
   private async _create(event: Event) {
     event.preventDefault();
+    const selectionGeneration = this._selectionGeneration;
     this._busy = 'create';
     this._error = '';
     this._message = '';
@@ -1299,7 +1340,7 @@ export class RoadmapPanel extends LitElement {
       });
       this._newTargetProjectsTouched = false;
       this._message = 'Roadmap item captured';
-      await this._refresh(result.item.id);
+      await this._refresh(result.item.id, selectionGeneration);
     } catch (err) {
       this._error = (err as Error).message;
     } finally {
@@ -1309,6 +1350,7 @@ export class RoadmapPanel extends LitElement {
 
   private async _saveSelected() {
     if (!this._selected) return;
+    const selectionGeneration = this._selectionGeneration;
     this._busy = 'save';
     this._error = '';
     this._message = '';
@@ -1328,7 +1370,7 @@ export class RoadmapPanel extends LitElement {
         },
       });
       this._message = 'Roadmap item saved';
-      await this._refresh(result.item.id);
+      await this._refresh(result.item.id, selectionGeneration);
     } catch (err) {
       this._error = (err as Error).message;
     } finally {
@@ -1338,6 +1380,7 @@ export class RoadmapPanel extends LitElement {
 
   private async _refineSelected(launch: boolean) {
     if (!this._selected) return;
+    const selectionGeneration = this._selectionGeneration;
     this._busy = launch ? 'refine-launch' : 'refine';
     this._error = '';
     this._message = '';
@@ -1362,7 +1405,7 @@ export class RoadmapPanel extends LitElement {
           : `Refinement terminal reopened${runnerSuffix}: ${result.attachCommand}`
         : `Refinement prompt ready${runnerSuffix}: ${result.promptPath}`;
       if (launch) this._setRunnerPickerOpen(false);
-      await this._refresh(result.item.id);
+      await this._refresh(result.item.id, selectionGeneration);
       if (launch && result.tmuxWorker) this._navigateToWorkerTerminal(result.tmuxWorker);
     } catch (err) {
       this._error = (err as Error).message;
@@ -1548,6 +1591,7 @@ export class RoadmapPanel extends LitElement {
 
   private async _promoteSelected() {
     if (!this._selected) return;
+    const selectionGeneration = this._selectionGeneration;
     this._busy = 'promote';
     this._error = '';
     this._message = '';
@@ -1563,7 +1607,7 @@ export class RoadmapPanel extends LitElement {
         })),
       });
       this._message = `Promoted ${result.backlogItems.length} backlog spec${result.backlogItems.length === 1 ? '' : 's'}`;
-      await this._refresh(result.roadmapItem.id);
+      await this._refresh(result.roadmapItem.id, selectionGeneration);
     } catch (err) {
       this._error = (err as Error).message;
     } finally {
@@ -1605,7 +1649,15 @@ export class RoadmapPanel extends LitElement {
         ...(this._filterStage !== 'all' ? { stage: this._filterStage } : {}),
         includeArchived: this._includeArchived,
       });
-      if (generation === this._deliveryGeneration) this._deliverySummaries = result.delivery ?? [];
+      if (generation === this._deliveryGeneration) {
+        this._deliverySummaries = result.delivery ?? [];
+        const selected = this._selected;
+        if (selected?.id !== this._selectedId) {
+          this._syncEditor(selected);
+          this._writeUrlState();
+        }
+        if (this._deliveredExpanded) void this._loadDeliveredDetails();
+      }
     } catch (err) {
       // Same generation guard as the success path. A superseded request failing after
       // a newer `_refresh` already succeeded would otherwise report "unavailable" over
@@ -1653,6 +1705,38 @@ export class RoadmapPanel extends LitElement {
     return deliverySummaryFor(itemId, this._deliverySummaries, this.delivery ?? []);
   }
 
+  private _setDeliveredExpanded(open: boolean) {
+    if (this._deliveredExpanded === open) return;
+    this._deliveredExpanded = open;
+    if (open) void this._loadDeliveredDetails();
+    else ++this._deliveredGeneration;
+  }
+
+  private async _loadDeliveredDetails() {
+    const generation = ++this._deliveredGeneration;
+    this._deliveredLoading = true;
+    this._deliveredDetails = [];
+    try {
+      const results = await Promise.all(
+        this._deliveryView.delivered.map(async (item) => {
+          if (this.delivery) return this.delivery.find((entry) => entry.roadmapItemId === item.id);
+          return (await gateway.request<RoadmapGetResult>(Methods.ROADMAP_GET, { itemId: item.id }))
+            .delivery;
+        }),
+      );
+      if (generation === this._deliveredGeneration) {
+        this._deliveredDetails = results.filter((entry): entry is RoadmapDeliveryProjection =>
+          Boolean(entry),
+        );
+      }
+    } catch (err) {
+      if (generation === this._deliveredGeneration)
+        this._error = `Delivered PR links unavailable: ${(err as Error).message}`;
+    } finally {
+      if (generation === this._deliveredGeneration) this._deliveredLoading = false;
+    }
+  }
+
   /** `testId` separates the per-row list badge from the selected item's detail badge. */
   private _renderDeliveryBadge(itemId: string, testId: string) {
     const summary = this._deliverySummaryFor(itemId);
@@ -1668,6 +1752,8 @@ export class RoadmapPanel extends LitElement {
   }
 
   private _selectItem(item: RoadmapItem, mode: RoadmapEditorMode = 'view') {
+    this._selectionGeneration++;
+    this._selectionDismissed = false;
     this._syncEditor(item);
     this._editorMode = mode;
     this._forceInventoryList = false;
@@ -1676,6 +1762,15 @@ export class RoadmapPanel extends LitElement {
 
   private _backToInventoryList() {
     this._forceInventoryList = true;
+  }
+
+  private _deselectItem() {
+    const id = this._selectedId;
+    this._selectionGeneration++;
+    this._selectionDismissed = true;
+    this._syncEditor(null);
+    this._writeUrlState();
+    void this.updateComplete.then(() => focusWorkInventoryRow(this.renderRoot, id));
   }
 
   private _setEditorMode(mode: RoadmapEditorMode) {
@@ -2221,6 +2316,21 @@ export class RoadmapPanel extends LitElement {
           }}
         />
       </label>
+      <div class="field full">
+        Delivery
+        ${renderChoiceButtons({
+          options: ROADMAP_DELIVERY_FILTERS,
+          value: this._filterDelivery,
+          labels: { all: 'All outcomes', undelivered: 'Undelivered', delivered: 'Delivered' },
+          onSelect: (filter) => {
+            this._filterDelivery = filter;
+            if (filter === 'undelivered') this._setDeliveredExpanded(false);
+            if (filter === 'delivered') this._setDeliveredExpanded(true);
+            this._syncEditor(this._selected);
+          },
+          testId: 'roadmap-filter-delivery',
+        })}
+      </div>
       <label
         >Search
         <input
@@ -2252,10 +2362,11 @@ export class RoadmapPanel extends LitElement {
     return renderWorkInventoryRow({
       row: {
         id: item.id,
-        selected: this._selectedId === item.id,
+        selected: this._selectedId === item.id && !this._forceInventoryList,
         className: 'row',
         testId: `roadmap-row-${item.id}`,
         onActivate: () => this._selectItem(item),
+        onDeselect: () => this._deselectItem(),
       },
       cells: [
         renderPlanningBadge(item.stage, statusTone(item.stage)),
@@ -2267,6 +2378,21 @@ export class RoadmapPanel extends LitElement {
             ? renderPlanningBadge(`${item.promotion.length} promoted`, 'positive')
             : nothing}
           ${this._renderDeliveryBadge(item.id, 'roadmap-delivery-row-badge')}
+          ${this._deliveredDetails
+            .find((entry) => entry.roadmapItemId === item.id)
+            ?.prs.map((pr) =>
+              pr.url
+                ? html`<a
+                    data-testid="roadmap-delivered-pr-link"
+                    href=${pr.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    @click=${(event: Event) => event.stopPropagation()}
+                    @keydown=${(event: Event) => event.stopPropagation()}
+                    >${pr.ref}</a
+                  >`
+                : renderPlanningBadge(pr.ref),
+            )}
         </div>`,
         html`<span class="updated-cell" title=${item.updatedAt}
           >${item.updatedAt.slice(0, 10)}</span
@@ -2507,12 +2633,12 @@ export class RoadmapPanel extends LitElement {
               : nothing}
           </div>
         </div>
+        ${this._renderDeliveryStatus(item)}
         <div class="badges">
           ${renderPlanningBadge(
             item.stage,
             item.stage === 'refined' || item.stage === 'promoted' ? 'positive' : 'default',
           )}
-          ${this._renderDeliveryBadge(item.id, 'roadmap-delivery-badge')}
           ${renderPlanningBadge(item.project)}
           ${(item.targetProjects ?? []).map((project) => renderPlanningBadge(project, 'positive'))}
           ${renderTagChips(item.tags)}
@@ -2598,6 +2724,7 @@ export class RoadmapPanel extends LitElement {
             </button>
           </div>
         </div>
+        ${this._renderDeliveryStatus(item)}
         <div class="grid">
           <div class="full">
             ${this._renderProjectPicker(
@@ -2664,6 +2791,13 @@ export class RoadmapPanel extends LitElement {
       ${this._renderGraphComposer(item)}`;
   }
 
+  private _renderDeliveryStatus(item: RoadmapItem) {
+    return html`<section class="path-panel" data-testid="roadmap-delivery-status">
+      <h3>Delivery</h3>
+      ${this._renderDeliveryBadge(item.id, 'roadmap-delivery-badge')}
+    </section>`;
+  }
+
   render() {
     return html`<section class="shell">
       <div class="header">
@@ -2676,6 +2810,7 @@ export class RoadmapPanel extends LitElement {
         </div>
         <button
           class="secondary"
+          data-testid="roadmap-refresh"
           ?disabled=${this._busy === 'refresh'}
           @click=${() => this._refresh()}
         >
@@ -2701,26 +2836,57 @@ export class RoadmapPanel extends LitElement {
           narrowViewport: this._narrowViewport,
           forceList: this._forceInventoryList,
         };
+        const groups = this._deliveryView;
         const list = html`<div class="card">
-          <h2>Items (${this._items.length})</h2>
-          <div class="rows">
-            ${renderWorkInventoryTable({
-              columns: ROADMAP_INVENTORY_COLUMNS,
-              head: this._renderTableHead(),
-              rows: this._items.map((item) => this._renderRow(item)),
-              isEmpty: this._items.length === 0,
-              empty: html`<div class="empty">No roadmap items match this view.</div>`,
-              testId: 'work-inventory-table',
-              minWidth: '820px',
-            })}
-          </div>
-        </div>`;
-        const detail = html`${inventoryShowsBackAffordance(layout)
-            ? renderWorkInventoryBackButton({
-                testId: 'work-inventory-back',
-                onBack: () => this._backToInventoryList(),
-              })
+          ${this._filterDelivery !== 'delivered'
+            ? html`<h2>Undelivered (${groups.undelivered.length})</h2>
+                <div class="rows" data-testid="roadmap-undelivered-group">
+                  ${renderWorkInventoryTable({
+                    columns: ROADMAP_INVENTORY_COLUMNS,
+                    head: this._renderTableHead(),
+                    rows: groups.undelivered.map((item) => this._renderRow(item)),
+                    isEmpty: groups.undelivered.length === 0,
+                    empty: html`<div class="empty">
+                      No undelivered roadmap items match this view.
+                    </div>`,
+                    testId: 'work-inventory-table',
+                    minWidth: '820px',
+                  })}
+                </div>`
             : nothing}
+          ${this._filterDelivery !== 'undelivered'
+            ? html`<details
+                data-testid="roadmap-delivered-group"
+                .open=${this._deliveredExpanded}
+                @toggle=${(event: Event) =>
+                  this._setDeliveredExpanded((event.target as HTMLDetailsElement).open)}
+              >
+                <summary>Delivered (${groups.delivered.length})</summary>
+                ${this._deliveredExpanded
+                  ? html` ${this._deliveredLoading
+                      ? html`<p class="muted">Loading PR links…</p>`
+                      : nothing}
+                    ${renderWorkInventoryTable({
+                      columns: ROADMAP_INVENTORY_COLUMNS,
+                      head: this._renderTableHead(),
+                      rows: groups.delivered.map((item) => this._renderRow(item)),
+                      isEmpty: groups.delivered.length === 0,
+                      empty: html`<div class="empty">
+                        No delivered roadmap items match this view.
+                      </div>`,
+                      testId: 'roadmap-delivered-table',
+                      minWidth: '820px',
+                    })}`
+                  : nothing}
+              </details>`
+            : nothing}
+        </div>`;
+        const detail = html`${renderWorkInventoryDetailClose({
+            layout,
+            testId: 'work-inventory-back',
+            onBack: () => this._backToInventoryList(),
+            onClose: () => this._deselectItem(),
+          })}
           <div class="shell">${this._renderEditor()}</div>`;
         return renderWorkInventoryLayout({
           list,

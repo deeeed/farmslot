@@ -160,6 +160,7 @@ export async function validateRecipeAdapterAware(
           root: recipe,
           params,
           recipes: dependencies.recipes,
+          actionManifest: manifest,
         });
       }
       for (const dependency of dependencies.recipes.values()) {

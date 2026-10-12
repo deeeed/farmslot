@@ -1,11 +1,16 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Linking } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   isUnscopedGlobalRoadmapItem,
   Methods,
+  type RoadmapDeliveryFilter,
+  type RoadmapDeliveryProjection,
   type RoadmapDeliverySummary,
+  roadmapDeliveryView,
+  type RoadmapGetResult,
   type RoadmapItem,
   type RoadmapItemStage,
   type RoadmapListResult,
@@ -26,6 +31,11 @@ export function useRoadmapController() {
   const [items, setItems] = useState<RoadmapItem[]>([]);
   const [delivery, setDelivery] = useState<RoadmapDeliverySummary[]>([]);
   const [stage, setStage] = useState<StageFilter>('all');
+  const [deliveryFilter, setDeliveryFilter] = useState<RoadmapDeliveryFilter>('all');
+  const [deliveredExpanded, setDeliveredExpanded] = useState(false);
+  const [deliveredDetails, setDeliveredDetails] = useState<RoadmapDeliveryProjection[]>([]);
+  const [deliveredLoading, setDeliveredLoading] = useState(false);
+  const [deliveredError, setDeliveredError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -77,10 +87,55 @@ export function useRoadmapController() {
       .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
   }, [items, search, selectedProjects, stage]);
 
+  const deliveryView = useMemo(
+    () => roadmapDeliveryView(visibleItems, delivery, deliveryFilter),
+    [visibleItems, delivery, deliveryFilter],
+  );
+
+  useEffect(() => {
+    let current = true;
+    setDeliveredDetails([]);
+    setDeliveredError(null);
+    setDeliveredLoading(false);
+    if (!deliveredExpanded) return;
+    if (!client || connectionStatus !== 'connected') {
+      setDeliveredError('Connect to the gateway to load delivered PR links.');
+      return;
+    }
+    setDeliveredLoading(true);
+    void Promise.all(
+      deliveryView.delivered.map((item) =>
+        client.request<RoadmapGetResult>(Methods.ROADMAP_GET, { itemId: item.id }),
+      ),
+    ).then(
+      (results) => {
+        if (!current) return;
+        setDeliveredDetails(
+          results.flatMap((result) => (result.delivery ? [result.delivery] : [])),
+        );
+        setDeliveredLoading(false);
+      },
+      (loadError: unknown) => {
+        if (!current) return;
+        setDeliveredError(loadError instanceof Error ? loadError.message : String(loadError));
+        setDeliveredLoading(false);
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [client, connectionStatus, deliveredExpanded, deliveryView]);
+
   return {
     state: {
       bottomPadding: insets.bottom + spacing.xl,
       delivery,
+      deliveryView,
+      deliveryFilter,
+      deliveredExpanded,
+      deliveredDetails,
+      deliveredLoading,
+      deliveredError,
       error,
       loading,
       search,
@@ -91,6 +146,12 @@ export function useRoadmapController() {
       openItem: (itemId: string) =>
         router.push({ pathname: '/roadmap/[id]', params: { id: itemId } }),
       refresh,
+      openPr: (url: string) => Linking.openURL(url),
+      setDeliveredExpanded,
+      setDeliveryFilter: (filter: RoadmapDeliveryFilter) => {
+        setDeliveryFilter(filter);
+        if (filter === 'delivered') setDeliveredExpanded(true);
+      },
       setSearch,
       setStage,
     },

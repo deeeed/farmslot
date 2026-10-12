@@ -44,6 +44,7 @@ import {
 import { createRedactingCoreAdapters } from './redaction.js';
 import { createIosSimulatorVideoRecorder } from './simctl-video-recorder.js';
 import { ADAPTER_RN_PACKAGE_VERSIONS } from './version.js';
+import { createAndroidVideoRecorder } from './video-recorder.js';
 
 export interface ExpoRecipeRunOptions {
   projectRoot?: string;
@@ -233,11 +234,18 @@ export function resolveExpoRecordingTarget(
   if (env.FARMSLOT_RECORD_WINDOW_ID) {
     return { kind: 'window-id', windowId: env.FARMSLOT_RECORD_WINDOW_ID };
   }
+  const appWindow: RecordingTarget = {
+    kind: 'app-window',
+    appName: env.FARMSLOT_RECORD_APP_NAME ?? 'Simulator',
+    windowName: env.FARMSLOT_RECORD_WINDOW_NAME ?? 'Simulator',
+  };
+  if (env.FARMSLOT_RECORD_APP_NAME || env.FARMSLOT_RECORD_WINDOW_NAME) return appWindow;
+  const android = env.ADB_SERIAL ?? env.ANDROID_SERIAL ?? env.ANDROID_DEVICE;
+  if (normalizeNativePlatform(env.PLATFORM) === 'android' && android)
+    return { kind: 'android-device', serial: android };
   const simulator = env.SIMULATOR ?? env.IOS_SIMULATOR;
   if (simulator) return { kind: 'simulator', device: simulator };
-  const appName = env.FARMSLOT_RECORD_APP_NAME ?? 'Simulator';
-  const windowName = env.FARMSLOT_RECORD_WINDOW_NAME ?? 'Simulator';
-  return { kind: 'app-window', appName, windowName };
+  return appWindow;
 }
 
 export function resolveExpoVideoRecorder(env: Record<string, string | undefined>): VideoRecorder {
@@ -250,6 +258,7 @@ export function resolveExpoVideoRecorder(env: Record<string, string | undefined>
     return createCaptureHelperVideoRecorder();
   }
   const target = resolveExpoRecordingTarget(env);
+  if (target.kind === 'android-device') return createAndroidVideoRecorder(target.serial);
   if (target.kind === 'simulator') return createIosSimulatorVideoRecorder(target.device);
   return createCaptureHelperVideoRecorder();
 }

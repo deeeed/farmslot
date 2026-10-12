@@ -75,6 +75,9 @@ WORK.md
 !projects/farmslot-farm/
 projects/farmslot-farm/*
 !projects/farmslot-farm/project.json
+!projects/farmslot-farm/learnings/
+projects/farmslot-farm/learnings/*
+!projects/farmslot-farm/learnings/LEARNINGS.md
 !projects/farmslot-farm/templates/
 projects/farmslot-farm/templates/*
 !projects/farmslot-farm/templates/task-document.md

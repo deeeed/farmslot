@@ -13,6 +13,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import type { ReviewedFindingContext } from '@farmslot/protocol';
+
 import type { ArtifactHttpHeaders } from '../lib/artifact-url';
 import {
   type DiffFileEntry,
@@ -25,6 +27,7 @@ import { gatewayFetch } from '../lib/gateway-http-auth';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 
 interface MobileDiffViewerProps {
+  reviewedSource?: ReviewedFindingContext;
   title?: string;
   diffUrl?: string | null;
   diffText?: string;
@@ -47,6 +50,7 @@ const FILTERS: Array<{ id: DiffFileFilter; label: string }> = [
 const EMPTY_FETCH_HEADERS: ArtifactHttpHeaders = {};
 
 export function MobileDiffViewer({
+  reviewedSource,
   title = 'Diff',
   diffUrl,
   diffText,
@@ -161,6 +165,29 @@ export function MobileDiffViewer({
     const nextIndex = (currentIndex + offset + filteredFiles.length) % filteredFiles.length;
     setSelectedPath(filteredFiles[nextIndex].path);
   };
+
+  if (reviewedSource) {
+    return (
+      <View style={styles.container} testID="companion-reviewed-source">
+        <Text style={styles.title}>{title}</Text>
+        {!reviewedSource.available ? (
+          <Text style={styles.emptyText}>{reviewedSource.note}</Text>
+        ) : (
+          <ScrollView horizontal nestedScrollEnabled>
+            <View>
+              {reviewedSource.lines.map((line) => (
+                <DiffLineRow
+                  key={line.number}
+                  line={{ type: 'context', oldLine: null, newLine: line.number, text: line.text }}
+                  target={line.target}
+                />
+              ))}
+            </View>
+          </ScrollView>
+        )}
+      </View>
+    );
+  }
 
   if (!diffUrl && !diffText) return null;
 
@@ -488,7 +515,7 @@ function DiffFileView({
   );
 }
 
-function DiffLineRow({ line }: { line: DiffLine }) {
+function DiffLineRow({ line, target = false }: { line: DiffLine; target?: boolean }) {
   const toneStyle =
     line.type === 'add'
       ? styles.lineAdd
@@ -500,7 +527,7 @@ function DiffLineRow({ line }: { line: DiffLine }) {
   const marker =
     line.type === 'add' ? '+' : line.type === 'del' ? '-' : line.type === 'meta' ? '·' : ' ';
   return (
-    <View style={[styles.lineRow, toneStyle]}>
+    <View style={[styles.lineRow, toneStyle, target && styles.lineTarget]}>
       <Text style={styles.lineNumber}>{line.oldLine ?? ''}</Text>
       <Text style={styles.lineNumber}>{line.newLine ?? ''}</Text>
       <Text style={styles.lineMarker}>{marker}</Text>
@@ -734,6 +761,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
   },
   lineContext: { backgroundColor: colors.bgSurface },
+  lineTarget: { backgroundColor: colors.accent + '33' },
   lineAdd: { backgroundColor: 'rgba(0, 255, 136, 0.10)' },
   lineDel: { backgroundColor: 'rgba(255, 68, 68, 0.12)' },
   lineMeta: { backgroundColor: colors.bgInput },

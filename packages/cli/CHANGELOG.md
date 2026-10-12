@@ -4,6 +4,10 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Use the configured project registry for recipe commands and conformance when `--projects-dir` is omitted.
+
+- Show roadmap delivery status and filter lists by delivered or undelivered outcomes.
+
 - Forward the declared recording opt-out reason through checkout recipe commands.
 
 - Validate retained recipe claims, invocations and video timelines through the shared evidence SDK; legacy media remains explicitly untimed.
@@ -17,6 +21,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 - Use shared protocol outcomes for artifact validation; retain partial-run warnings without certifying partial results as live proof.
 
 - Run project lifecycle commands through the declared provider and inspect retained recipe evidence with journal-backed status. Logs preserve application-source selection and `--full` raw follow. Recipe commands and conformance use the explicitly selected Farmslot root's registry before an inherited workspace, keeping project and pool resolution together.
+- Show gateway prerequisite reasons when listing run gates.
+
 - Expose WARM/COLD review mode and ordered review selections through the shared request contract; preserve model, effort and retained lineage across run, dispatch and gate review requests.
 
 - Run the public CLI in its invoking process so signals sent to its PID reach recipe cancellation and teardown. Preserve checkout TypeScript mappings and the scripted-runner entry.

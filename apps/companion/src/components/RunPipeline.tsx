@@ -1,7 +1,12 @@
 import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import type { RunStatus, RunStep, RunStepStatus } from '@farmslot/protocol';
+import {
+  deriveRunLifecycleView,
+  type RunStatus,
+  type RunStep,
+  type RunStepStatus,
+} from '@farmslot/protocol';
 
 import { colors, fonts, spacing } from '../lib/theme';
 
@@ -63,13 +68,14 @@ export function RunPipelineMini({ steps, runStatus }: { steps: RunStep[]; runSta
   const duration = active ? stepDuration(active) : null;
   const label = isCancelled
     ? 'cancelled'
-    : allDone
-      ? 'done'
-      : hasFailed
-        ? 'failed'
-        : active
-          ? `${shortName(active.name)}${duration ? ` · ${duration}` : ''}${remaining > 0 ? ` · +${remaining}` : ''}`
-          : '';
+    : ((runStatus ? deriveRunLifecycleView({ status: runStatus }).activityLabel : undefined) ??
+      (allDone
+        ? 'done'
+        : hasFailed
+          ? 'failed'
+          : active
+            ? `${shortName(active.name)}${duration ? ` · ${duration}` : ''}${remaining > 0 ? ` · +${remaining}` : ''}`
+            : ''));
 
   return (
     <View style={miniStyles.container}>
