@@ -544,6 +544,13 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `slot.action.list`    | typed-command | `farmslot slot` |     |                                                                                                |
 | `slot.action.run`     | typed-command | `farmslot slot` |     |                                                                                                |
 
+## sources.\*
+
+| Method           | Surface  | CLI command | TUI | Note                                                                              |
+| ---------------- | -------- | ----------- | --- | --------------------------------------------------------------------------------- |
+| `sources.status` | rpc-only |             |     | ADR-069 source authority; dedicated sources CLI lands in the next approved stage. |
+| `sources.sync`   | rpc-only |             |     | ADR-069 source authority; dedicated sources CLI lands in the next approved stage. |
+
 ## stream.\*
 
 | Method               | Surface | CLI command | TUI | Note                                |
