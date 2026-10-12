@@ -150,7 +150,7 @@ try {
       );
       page = await CdpWebPage.connectToTarget(target);
       const p = page;
-      const workspace = `${detail}.shadowRoot.querySelector('ready-workspace')`;
+      const workspace = `${detail}?.shadowRoot?.querySelector('ready-workspace')`;
       await wait(
         () => p.evaluate<number>(`${workspace}?._evidenceModel?.claims.length ?? 0`),
         (n) => n === 2,
