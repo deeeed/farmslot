@@ -1,6 +1,5 @@
 import {
   agentRoleWindow,
-  type DiffStat,
   isReviewerWindowName,
   type ReviewAttempt,
   type ReviewDiffSnapshot,
@@ -19,6 +18,7 @@ import {
 import { refreshRemoteBaseRef } from '../methods/git.js';
 import {
   cappedRunSourceDiffCommand,
+  parseGitNumstat,
   projectSourceDiffPathspecs,
   runSourceDiffNumstatCommand,
   runSourceDiffUntrackedManifestCommand,
@@ -38,20 +38,6 @@ export type ReviewSessionMeta = {
   runnerSessionId: string | null;
   error?: string;
 };
-
-function parseReviewNumstat(text: string): DiffStat {
-  const stat = { files: 0, additions: 0, deletions: 0 };
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    const [addRaw, delRaw] = line.split('\t');
-    stat.files += 1;
-    const additions = Number(addRaw);
-    const deletions = Number(delRaw);
-    if (Number.isFinite(additions)) stat.additions += additions;
-    if (Number.isFinite(deletions)) stat.deletions += deletions;
-  }
-  return stat;
-}
 
 type UntrackedReviewFile = NonNullable<ReviewDiffSnapshot['untrackedFiles']>[number];
 
@@ -338,7 +324,7 @@ export async function captureCurrentReviewSnapshot(
         headRef: branchResult.stdout.trim() || null,
         headSha: headResult.stdout.trim(),
         diffHash: reviewDiffHash(reviewDiffIdentity),
-        diffStat: parseReviewNumstat(numstat.stdout),
+        diffStat: parseGitNumstat(numstat.stdout),
         ...(untrackedFiles.length > 0 ? { untrackedFiles } : {}),
         capturedAt: new Date().toISOString(),
       },
@@ -484,7 +470,7 @@ export async function captureFixDeltaSnapshot(
       fixHeadSha,
       diffPath: diffRel,
       diffHash: reviewDiffHash(fixDiffIdentity),
-      diffStat: parseReviewNumstat(numstat.stdout),
+      diffStat: parseGitNumstat(numstat.stdout),
       ...(untrackedFiles.length > 0 ? { untrackedFiles } : {}),
       capturedAt: new Date().toISOString(),
     };

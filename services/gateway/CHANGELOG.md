@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Count review diff files from numstat rows instead of patch text while retaining untracked source identities.
 - Return artifact-relative package paths for retained evidence review.
 
 - Preserve explicitly labeled acceptance criteria from ticket intake through cached task data and the worker handoff.
