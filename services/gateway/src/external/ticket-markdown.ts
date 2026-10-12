@@ -514,3 +514,35 @@ export function sectionItems(section: string): string[] {
   });
   return items.map((item) => item.join('\n')).filter(Boolean);
 }
+
+/** Explicit sections win; otherwise accept authored AC-number paragraphs. */
+export function acceptanceCriteriaFromMarkdown(
+  markdown: string,
+  names = ['acceptance criteria', 'expected behavior', 'expected result'],
+): string[] {
+  const section = sectionItems(extractSection(markdown, names));
+  if (section.length) return section;
+
+  const lines = markdown.split(/\r?\n/);
+  const fenced = fencedLines(lines);
+  const criteria: string[][] = [];
+  let current: string[] | null = null;
+  lines.forEach((line, index) => {
+    const label = !fenced[index] && line.match(/^\s{0,3}AC-?\d+:\s*(\S.*)$/i);
+    if (label) {
+      current = [label[1]];
+      criteria.push(current);
+    } else if (
+      current &&
+      line.trim() &&
+      !fenced[index] &&
+      !headingAt(line, index) &&
+      !isLabel(line)
+    ) {
+      current.push(line.trim());
+    } else {
+      current = null;
+    }
+  });
+  return criteria.map((criterion) => criterion.join('\n'));
+}

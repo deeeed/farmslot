@@ -4,7 +4,7 @@ import type { RunTicketData } from '@farmslot/protocol';
 
 import { ghRequest, type GhRequestOpts } from '../integrations/github-client.js';
 
-import { extractSection, sectionItems } from './ticket-markdown.js';
+import { acceptanceCriteriaFromMarkdown, extractSection, sectionItems } from './ticket-markdown.js';
 
 interface GitHubIssue {
   title: string;
@@ -38,7 +38,7 @@ export async function fetchGitHubIssue(issueRef: string): Promise<Partial<RunTic
   const result = await ghRequest(['api', `repos/${repo}/issues/${number}`]);
   const issue = JSON.parse(result.stdout) as GitHubIssue;
   const body = issue.body || '';
-  const ac = extractSection(body, ['acceptance criteria', 'expected behavior']);
+  const ac = acceptanceCriteriaFromMarkdown(body, ['acceptance criteria', 'expected behavior']);
   const area = extractSection(body, ['affected area', 'component']);
   const steps = extractSection(body, ['steps to reproduce', 'repro steps']);
 
@@ -54,7 +54,7 @@ export async function fetchGitHubIssue(issueRef: string): Promise<Partial<RunTic
     source: 'github',
     title: issue.title,
     description: body,
-    acceptanceCriteria: sectionItems(ac),
+    acceptanceCriteria: ac,
     affectedArea: area || '',
     stepsToReproduce: sectionItems(steps),
     screenshots,
