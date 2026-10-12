@@ -1,16 +1,40 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { PlanningContextProjection, RoadmapDeliveryProjection } from '@farmslot/protocol';
+import type {
+  PlanningContextProjection,
+  RoadmapDeliveryProjection,
+  RoadmapDeliverySummary,
+  RoadmapItem,
+} from '@farmslot/protocol';
 
 import type { CommandContext } from '../context.js';
 
 import {
   renderDeliveryLineage,
   renderPlanningContext,
+  renderRoadmapItems,
   resolveRoadmapGetResult,
   resolveRoadmapItem,
 } from './roadmap.js';
+
+test('roadmap list prints projected delivery separately from promoted planning stage', () => {
+  const output = renderRoadmapItems(
+    [
+      { id: 'ri_done', title: 'Shipped work', stage: 'promoted', project: 'project' },
+    ] as RoadmapItem[],
+    [{ roadmapItemId: 'ri_done', status: 'delivered' }] as RoadmapDeliverySummary[],
+  );
+  assert.match(output, /DELIVERY/);
+  assert.match(output, /promoted/);
+  assert.match(output, /delivered/);
+  assert.match(
+    renderRoadmapItems([
+      { id: 'ri_unknown', title: 'Unknown', stage: 'promoted', project: 'project' },
+    ] as RoadmapItem[]),
+    /unknown/,
+  );
+});
 
 function ctxWith(
   items: Array<{ id: string; title?: string; stage?: string }>,

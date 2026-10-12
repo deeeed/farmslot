@@ -9,9 +9,13 @@ import type { Command } from 'commander';
 import {
   parsePromotionDraftAttachment,
   type PlanningContextProjection,
+  ROADMAP_DELIVERY_FILTERS,
   ROADMAP_ITEM_STAGES,
   type RoadmapDeleteResult,
+  type RoadmapDeliveryFilter,
   type RoadmapDeliveryProjection,
+  type RoadmapDeliverySummary,
+  roadmapDeliveryView,
   type RoadmapGetResult,
   type RoadmapItem,
   type RoadmapItemSaveInput,
@@ -124,21 +128,33 @@ export async function resolveRoadmapItem(ctx: CommandContext, ref: string): Prom
   return (await resolveRoadmapGetResult(ctx, ref)).item;
 }
 
-function renderItems(items: RoadmapItem[]): string {
+export function renderRoadmapItems(
+  items: RoadmapItem[],
+  delivery: RoadmapDeliverySummary[] = [],
+): string {
   const table = new TableRenderer();
+  const { statuses } = roadmapDeliveryView(items, delivery);
   table
     .addColumn('ID')
     .addColumn('STATUS')
+    .addColumn('DELIVERY')
     .addColumn('PROJECT', { shrinkable: true, minWidth: 8 })
     .addColumn('TITLE', { shrinkable: true, minWidth: 16 });
   for (const item of items) {
     // Protocol field is `stage`; operator-facing column is STATUS (ticket AC wording).
-    const plain = [item.id, item.stage, item.project, item.title];
+    const plain = [
+      item.id,
+      item.stage,
+      statuses.get(item.id) ?? 'unknown',
+      item.project,
+      item.title,
+    ];
     table.addRow(plain, [
       cyan(plain[0]),
       item.stage === 'promoted' || item.stage === 'refined' ? green(plain[1]) : yellow(plain[1]),
       plain[2],
       plain[3],
+      plain[4],
     ]);
   }
   return table.render();
@@ -348,6 +364,7 @@ export function registerRoadmapCommand(program: Command): void {
     .option('--project <name>', 'Filter by project or target project')
     .option('--stage <stage>', `Filter by stage (${ROADMAP_ITEM_STAGES.join('|')})`)
     .option('--status <stage>', 'Alias for --stage (status ≡ stage)')
+    .option('--delivery <outcome>', 'Filter delivery (all|delivered|undelivered)')
     .option(
       '--tag <tag>',
       'Require tag (repeatable)',
@@ -365,6 +382,7 @@ export function registerRoadmapCommand(program: Command): void {
           project?: string;
           stage?: string;
           status?: string;
+          delivery?: string;
           tag?: string[];
           search?: string;
           includeArchived?: boolean;
@@ -375,6 +393,12 @@ export function registerRoadmapCommand(program: Command): void {
         const emit = createEmitter(ctx.output, cmd);
         try {
           const stage = parseStage(opts.stage ?? opts.status);
+          if (
+            opts.delivery &&
+            !(ROADMAP_DELIVERY_FILTERS as readonly string[]).includes(opts.delivery)
+          ) {
+            throw new Error('Delivery must be all, delivered or undelivered.');
+          }
           const result = await withProgress(
             'Loading roadmap',
             () =>
@@ -387,14 +411,26 @@ export function registerRoadmapCommand(program: Command): void {
               }),
             !emit.machine,
           );
+          const view = roadmapDeliveryView(
+            result.items,
+            result.delivery ?? [],
+            opts.delivery as RoadmapDeliveryFilter | undefined,
+          );
+          const filtered = {
+            ...result,
+            items: view.items,
+            delivery: result.delivery?.filter((entry) =>
+              view.items.some((item) => item.id === entry.roadmapItemId),
+            ),
+          };
           if (emit.machine) {
             // Surface status as stage for machine consumers matching AC wording.
             emit.ok({
-              ...result,
-              items: result.items.map((item) => ({ ...item, status: item.stage })),
+              ...filtered,
+              items: filtered.items.map((item) => ({ ...item, status: item.stage })),
             });
           } else {
-            ctx.output.write(`${renderItems(result.items)}\n`);
+            ctx.output.write(`${renderRoadmapItems(filtered.items, filtered.delivery)}\n`);
           }
         } catch (err) {
           emit.fail(err);

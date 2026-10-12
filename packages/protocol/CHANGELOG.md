@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Share roadmap delivery grouping and outcome filters across clients.
+
 ## 0.39.0 - 2026-10-12
 
 - Allow project packs to declare default static recipe check invocations.

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Show roadmap delivery status and filter lists by delivered or undelivered outcomes.
+
 - Forward the declared recording opt-out reason through checkout recipe commands.
 
 - Validate retained recipe claims, invocations and video timelines through the shared evidence SDK; legacy media remains explicitly untimed.

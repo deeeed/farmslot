@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Group delivered roadmap work separately with PR links and delivery outcome filters.
+
 - Release cuts ship production Android to Play internal and closed testing, verify both tracks, and require an explicit iOS platform.
 
 ## 0.8.1 - 2026-10-11
