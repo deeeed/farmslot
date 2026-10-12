@@ -218,6 +218,8 @@ jobs:
               - 'packages/theme/**'
             gateway:
               - '.github/workflows/farmslot-quality.yml'
+              - 'scripts/quality/run-tsx-tests*.mjs'
+              - 'scripts/quality/gateway-ci-shards*.mjs'
               - 'package.json'
               - 'yarn.lock'
               - '.yarnrc.yml'
@@ -761,12 +763,16 @@ jobs:
       - name: Theme quality
         run: yarn workspace @farmslot/theme quality
 
-  gateway:
-    name: Gateway service quality
+  gateway-shards:
+    name: Gateway service shard ${{ matrix.shard }}
     needs: changes
     if: needs.changes.outputs.gateway == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     defaults:
       run:
         shell: bash
@@ -782,7 +788,39 @@ jobs:
       - name: Install workspace dependencies
         run: yarn install --immutable
       - name: Gateway quality
-        run: yarn workspace @farmslot/gateway quality
+        env:
+          FARMSLOT_QUALITY_TIMINGS_DIR: ${{ runner.temp }}/gateway-quality
+        run: yarn workspace @farmslot/gateway quality --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+      - name: Retain Gateway shard timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gateway-test-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/gateway-quality/tsx-tests-gateway.json
+          if-no-files-found: error
+
+  gateway:
+    name: Gateway service quality
+    needs: [changes, gateway-shards]
+    if: always() && needs.changes.outputs.gateway == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Download Gateway shard timings
+        uses: actions/download-artifact@v4
+        with:
+          pattern: gateway-test-shard-*
+          path: ${{ runner.temp }}/gateway-quality
+      - name: Require all Gateway shards and complete coverage
+        env:
+          GATEWAY_SHARDS_RESULT: ${{ needs.gateway-shards.result }}
+        run: node scripts/quality/gateway-ci-shards.mjs "${{ runner.temp }}/gateway-quality"
 
   node:
     name: Node service quality
