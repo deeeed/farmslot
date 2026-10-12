@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Validate artifact-only QA gates from their captured output inventory and canonical QA cases, preserving retained attempts and separate state acceptance evidence.
+- Validate artifact-only QA completion from retained output and declared cases, preserving pending visual review and recovery across refreshes and restarts.
 - Preserve explicitly labeled acceptance criteria from ticket intake through cached task data and the worker handoff.
 - Derive plain free-text task and report titles while preserving the complete task and report bodies.
 - Return checked recorded-evidence metadata for the selected recipe package using the public retained reader, without transferring original media to review clients.

@@ -179,6 +179,13 @@ export async function readGateAcceptance(
 }
 
 /** Preserve the prerequisite consumer's canonical input array. */
+function capturedOutputReviewDecision(run: Run): RunDecision | undefined {
+  return run.decisions
+    .slice()
+    .reverse()
+    .find((candidate) => candidate.payload?.kind === 'output-review');
+}
+
 async function readGateRecordedEvidence(
   run: Run,
   preparedPackage: ReadyGatePrPackage | null,
@@ -186,17 +193,20 @@ async function readGateRecordedEvidence(
 ): Promise<RecordedEvidencePackageInput[]> {
   if (preparedPackage || !isArtifactOnlyRun(run))
     return (await readGateRecordedEvidenceSources(run, preparedPackage)).map(({ input }) => input);
-  const decision = run.decisions
-    .slice()
-    .reverse()
-    .find((candidate) => candidate.payload?.kind === 'output-review');
+  const decision = capturedOutputReviewDecision(run);
   if (!decision)
     throw new Error('A captured output review is required. Refresh the artifact mirror.');
   const captured = await verifyRunOutputReview(run.id, decision.id, true);
-  const sources = await readFrozenRecordedEvidenceSources(
-    captured,
-    captured.output!.artifactManifest,
-  );
+  const inventory = qa
+    ? captured.output!.artifactManifest.filter((file) =>
+        qa.packages.some((selected) => file.path.startsWith(`artifacts/${selected.path}/`)),
+      )
+    : captured.output!.artifactManifest;
+  if (qa && !inventory.length)
+    throw new Error(
+      'A required QA case is absent from the captured output. Refresh the artifact mirror.',
+    );
+  const sources = await readFrozenRecordedEvidenceSources(captured, inventory);
   let applicable = sources;
   if (run.flowType === 'qa') {
     // QA owns case selection and revision checks. Retained failed attempts are
@@ -343,6 +353,7 @@ export async function collectRunGateReadiness(
   }
 
   const hasSelectedMedia = preparedPackage?.selectedEvidenceKeys?.length;
+  const qaOutput = run.flowType === 'qa' && isArtifactOnlyRun(run) && !preparedPackage;
   if (acceptance.criteria.length || hasSelectedMedia) {
     if (!source.recordedEvidence) {
       reasons.push({
@@ -353,10 +364,7 @@ export async function collectRunGateReadiness(
       });
     } else {
       try {
-        const qa =
-          run.flowType === 'qa' && isArtifactOnlyRun(run) && !preparedPackage
-            ? await source.qaCompletion(run)
-            : undefined;
+        const qa = qaOutput ? await source.qaCompletion(run) : undefined;
         const inputs = await source.recordedEvidence(run, preparedPackage, qa);
         const valid =
           inputs.length > 0 &&
@@ -371,6 +379,11 @@ export async function collectRunGateReadiness(
             input.claims.criteria.every(
               (claim) =>
                 claim.verdict === 'proven' ||
+                // An output review retains unreviewed visual claims for its
+                // reviewer. Completing execution never approves those claims.
+                (qaOutput &&
+                  claim.verdict === 'awaiting-review' &&
+                  ['visual', 'mixed'].includes(claim.proofMode)) ||
                 acceptance.criteria.some(
                   (criterion) =>
                     criterion.id === claim.id &&
@@ -391,14 +404,9 @@ export async function collectRunGateReadiness(
             ),
           ),
         );
-        if (
-          run.flowType === 'qa' &&
-          isArtifactOnlyRun(run) &&
-          !preparedPackage &&
-          acceptance.ledger?.schemaVersion === 1
-        ) {
+        if (qaOutput && acceptance.ledger?.schemaVersion === 1) {
           // Task AC ids and QA recipe proof-target ids are separate contracts.
-          // State ACs retain their owner's verdicts and exact captured files;
+          // Task ACs retain their owner's verdicts and exact captured files;
           // applicable QA cases still require canonical complete recipe proof.
           const retained = await readTaskArtifactText(run.taskFile, 'acceptance-status.json');
           const inventory = new Set(
@@ -409,11 +417,28 @@ export async function collectRunGateReadiness(
             isDeepStrictEqual(parseAcceptanceStatusLedger(retained!), acceptance.ledger) &&
             acceptance.criteria.every((criterion) => {
               const row = acceptance.ledger?.criteria.find((entry) => entry.id === criterion.id);
+              if (
+                !row ||
+                row.text.trim() !== criterion.text.trim() ||
+                !row.evidence.every((file) => inventory.has(file))
+              )
+                return false;
+              if (row.verdict === 'untestable') return Boolean(row.note?.trim());
               return (
-                row?.proofMode === 'state' &&
-                row.text.trim() === criterion.text.trim() &&
                 row.evidence.length > 0 &&
-                row.evidence.every((file) => inventory.has(file))
+                (row.proofMode === 'state' ||
+                  (row.proofMode &&
+                    ['visual', 'mixed'].includes(row.proofMode) &&
+                    inputs.some((input, index) =>
+                      input.claims?.criteria.some(
+                        (claim) =>
+                          ['visual', 'mixed'].includes(claim.proofMode) &&
+                          ['proven', 'awaiting-review'].includes(claim.verdict) &&
+                          row.evidence.some((file) =>
+                            file.startsWith(`artifacts/${qa?.packages[index]?.path}/`),
+                          ),
+                      ),
+                    )))
               );
             });
         }
@@ -484,11 +509,29 @@ export async function collectRunGateReadiness(
     }
   }
   const progress = await source.progress(run);
+  let outputInvalidated = false;
+  if (outputDigest) {
+    try {
+      const decision = capturedOutputReviewDecision(run);
+      if (!decision) throw new Error('The captured output decision is missing.');
+      const current = await verifyRunOutputReview(run.id, decision.id, true);
+      outputInvalidated =
+        current.output?.manifestDigest !== outputDigest ||
+        current.taskFile !== run.taskFile ||
+        (current.engineState?.generation ?? 0) !== generation ||
+        isTerminalRunStatus(current.status) ||
+        current.status === 'paused';
+    } catch {
+      // Failed recapture preserves the digest but retires its decision. The
+      // owning snapshot verifier must refuse it before completion can advance.
+      outputInvalidated = true;
+    }
+  }
   if (
     isTerminalRunStatus(run.status) ||
     run.status === 'paused' ||
     (run.engineState?.generation ?? 0) !== generation ||
-    (outputDigest && getRun(run.id)?.output?.manifestDigest !== outputDigest) ||
+    outputInvalidated ||
     run.engineState?.publishGate?.packageHash !== retainedPackageHash
   )
     reasons.push({

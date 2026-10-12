@@ -507,7 +507,7 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
     completionPolicy: 'artifact-only',
     taskFile: run.taskFile,
   });
-  const { captureRunOutput } = await import('../run-completion/output.js');
+  const { captureRunOutput, failRunOutputCapture } = await import('../run-completion/output.js');
   await captureRunOutput(qaRun.id, false, true);
   const qaSources = {
     deterministic: passed,
@@ -522,6 +522,40 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
   const qaReady = await qaCheck();
   assert.equal(qaReady.state, 'ready', JSON.stringify(qaReady.reasons));
   assert.equal(getRun(qaRun.id)?.decisions.at(-1)?.payload?.kind, 'output-review');
+  const untestableLedger = {
+    ...qaLedger,
+    criteria: [
+      {
+        ...qaLedger.criteria[0],
+        verdict: 'untestable' as const,
+        evidence: [],
+        note: 'Launching would replace the borrowed runtime.',
+      },
+    ],
+  };
+  await writeFile(
+    path.join(root, 'artifacts/acceptance-status.json'),
+    JSON.stringify(untestableLedger),
+  );
+  await captureRunOutput(qaRun.id, false, true);
+  const untestable = await collectRunGateReadiness(getRun(qaRun.id)!, null, {
+    ...qaSources,
+    acceptance: async () => ({ criteria: [qaCriterion], ledger: untestableLedger, issues: [] }),
+  });
+  assert.equal(untestable.state, 'ready', JSON.stringify(untestable.reasons));
+  const mixedLedger = {
+    ...qaLedger,
+    criteria: [{ ...qaLedger.criteria[0], proofMode: 'mixed' as const }],
+  };
+  await writeFile(path.join(root, 'artifacts/acceptance-status.json'), JSON.stringify(mixedLedger));
+  await captureRunOutput(qaRun.id, false, true);
+  const missingVisual = await collectRunGateReadiness(getRun(qaRun.id)!, null, {
+    ...qaSources,
+    acceptance: async () => ({ criteria: [qaCriterion], ledger: mixedLedger, issues: [] }),
+  });
+  assert.ok(missingVisual.reasons.some((reason) => reason.code === 'evidence-invalid'));
+  await writeFile(path.join(root, 'artifacts/acceptance-status.json'), JSON.stringify(qaLedger));
+  await captureRunOutput(qaRun.id, false, true);
   const refreshedDuringProgress = await collectRunGateReadiness(getRun(qaRun.id)!, null, {
     ...qaSources,
     progress: async () => {
@@ -536,6 +570,17 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
   assert.ok(
     refreshedDuringProgress.reasons.some((reason) => reason.code === 'run-gate-superseded'),
   );
+  assert.equal((await qaCheck()).state, 'ready');
+  const failedRefresh = await collectRunGateReadiness(getRun(qaRun.id)!, null, {
+    ...qaSources,
+    progress: async () => {
+      failRunOutputCapture(qaRun.id, new Error('Artifact transfer failed'), true);
+      return { kind: 'idle' };
+    },
+  });
+  assert.equal(failedRefresh.state, 'not-ready');
+  assert.ok(failedRefresh.reasons.some((reason) => reason.code === 'run-gate-superseded'));
+  await captureRunOutput(qaRun.id, false, true);
   assert.equal((await qaCheck()).state, 'ready');
   const absentCase = await collectRunGateReadiness(getRun(qaRun.id)!, null, {
     ...qaSources,
