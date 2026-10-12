@@ -664,6 +664,27 @@ test('CLI rejects missing option values before treating the next flag as a path'
 });
 
 test('resolves Expo recipe recording targets from flags or simulator defaults', () => {
+  assert.deepEqual(
+    resolveExpoRecordingTarget({
+      PLATFORM: 'android',
+      ADB_SERIAL: 'emulator-1',
+      IOS_SIMULATOR: 'other',
+    }),
+    { kind: 'android-device', serial: 'emulator-1' },
+  );
+  assert.deepEqual(
+    resolveExpoRecordingTarget({ PLATFORM: 'android', ANDROID_SERIAL: 'emulator-2' }),
+    { kind: 'android-device', serial: 'emulator-2' },
+  );
+  assert.deepEqual(
+    resolveExpoRecordingTarget({
+      PLATFORM: 'android',
+      ADB_SERIAL: 'emulator-1',
+      FARMSLOT_RECORD_APP_NAME: 'Mirror',
+      FARMSLOT_RECORD_WINDOW_NAME: 'Owned',
+    }),
+    { kind: 'app-window', appName: 'Mirror', windowName: 'Owned' },
+  );
   assert.deepEqual(resolveExpoRecordingTarget({ FARMSLOT_RECORD_PID: '123' }), {
     kind: 'pid',
     pid: 123,

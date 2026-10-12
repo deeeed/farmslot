@@ -7,8 +7,10 @@ import test from 'node:test';
 
 import {
   buildRunResolveDecisionParams,
+  createReviewCuration,
   DEFAULT_CURSOR_MODEL,
   type ReadyGatePrPackage,
+  type ReviewGatePayload,
   type RunDecision,
 } from '@farmslot/protocol';
 
@@ -1987,6 +1989,79 @@ function gateParkedRun(
   return { run, decision, slotId };
 }
 
+test('review curation freshness rejects before restore and after an awaited restore', async (t) => {
+  const { run, decision, slotId } = gateParkedRun(
+    t,
+    'curation',
+    gateParkRecord('x', 's', { slotFreedAt: '2026-09-05T00:00:10.000Z' }),
+  );
+  const payload: ReviewGatePayload = {
+    kind: 'review',
+    repo: 'example/app',
+    prNumber: 42,
+    reviewMd: 'Original',
+    lineComments: [],
+    recommendation: 'COMMENT',
+  };
+  decision.type = 'engine_review_posting';
+  decision.actions = [{ id: 'post', label: 'Post', style: 'primary' }];
+  decision.payload = payload;
+  updateRun(run.id, { decisions: [decision] });
+  let restores = 0;
+  const dependencies = {
+    restoreGatePark: async (runId: string) => {
+      restores++;
+      const fresh = getRun(runId)!;
+      updateRun(runId, {
+        park: { ...fresh.park!, phase: 'restored' as const, slotFreedAt: undefined },
+        decisions: fresh.decisions.map((entry) => ({
+          ...entry,
+          payload: { ...payload, reviewMd: 'Refreshed' },
+        })),
+      });
+      return {
+        ok: true as const,
+        runId,
+        slotId,
+        restoredGeneration: 1,
+        reloadedSessionId: 'test',
+        gateReplayed: false,
+        record: getRun(runId)!.park!,
+      };
+    },
+  };
+  await assert.rejects(
+    runResolveDecision(
+      {
+        runId: run.id,
+        decisionId: decision.id,
+        actionId: 'post',
+        selectionData: { reviewFingerprint: 'stale', includedIndices: [] },
+      },
+      () => {},
+      dependencies,
+    ),
+    /Review changed/,
+  );
+  assert.equal(restores, 0);
+  assert.equal(getRun(run.id)!.decisions[0].resolvedAt, undefined);
+  await assert.rejects(
+    runResolveDecision(
+      {
+        runId: run.id,
+        decisionId: decision.id,
+        actionId: 'post',
+        selectionData: { ...createReviewCuration(payload) },
+      },
+      () => {},
+      dependencies,
+    ),
+    /Review changed/,
+  );
+  assert.equal(restores, 1);
+  assert.equal(getRun(run.id)!.decisions[0].resolvedAt, undefined);
+});
+
 test('runResolveDecision refuses and leaves the gate pending while a park is in flight', async (t) => {
   // Still stopping its resources: there is no coherent state to restore into
   // yet, and the effects are landing right now.
@@ -2637,4 +2712,144 @@ test('runResolveDecision binds only an owned completed triage of the current fai
     }),
     { runId: run.id, decisionId: decision.id, actionId: 'continue', triageAssessmentId: own },
   );
+});
+
+for (const interruption of ['cancelled', 'paused', 'replay', 'package-refresh'] as const) {
+  test(`gate advancement preserves its pending decision after ${interruption} during validation`, async (t) => {
+    const run = createRun({
+      flowType: 'dev',
+      mode: 'interactive',
+      project: 'gate-fence',
+      ticketOrPr: 'GATE-CONSUMPTION-FENCE',
+      runner: 'scripted',
+    });
+    const decision: RunDecision = {
+      id: 'no-change-fence',
+      type: 'engine_no_change',
+      title: 'No change',
+      description: '',
+      actions: [{ id: 'accept-no-change', label: 'Accept', style: 'primary' }],
+      createdAt: new Date().toISOString(),
+      payload: { kind: 'no-change', disposition: 'already_fixed' },
+    };
+    updateRun(run.id, {
+      status: 'human-gating',
+      decisions: [decision],
+      engineState: { generation: 2 },
+    });
+    t.after(async () => {
+      updateRun(run.id, { status: 'failed' });
+      await deleteRun(run.id);
+    });
+    await assert.rejects(
+      runResolveDecision(
+        { runId: run.id, decisionId: decision.id, actionId: 'accept-no-change' },
+        () => {},
+        {
+          assertGatePrerequisites: async () => {
+            if (interruption === 'replay') updateRun(run.id, { engineState: { generation: 3 } });
+            else if (interruption === 'package-refresh')
+              updateRun(run.id, {
+                decisions: [{ ...decision, payload: { ...decision.payload! } }],
+              });
+            else updateRun(run.id, { status: interruption });
+          },
+        },
+      ),
+      /changed during validation/,
+    );
+    assert.equal(getRun(run.id)!.decisions[0].resolvedAt, undefined);
+  });
+}
+
+test('resolver-less human-gating approval re-enters its persisted gate after restart', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'interactive',
+    project: 'gate-restart',
+    ticketOrPr: 'GATE-RESTART',
+  });
+  const decision: RunDecision = {
+    id: 'restart-gate',
+    type: 'engine_human_gate',
+    title: 'Recovered gate',
+    description: '',
+    createdAt: new Date().toISOString(),
+    actions: [{ id: 'ready', label: 'Ready', style: 'primary' }],
+    payload: { kind: 'no-change', disposition: 'already_fixed' },
+  };
+  updateRun(run.id, {
+    status: 'human-gating',
+    decisions: [decision],
+    steps: [{ name: 'human-gate', status: 'running' }],
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done' });
+    await deleteRun(run.id);
+  });
+  let resumed!: () => void;
+  const continuation = new Promise<void>((resolve) => {
+    resumed = resolve;
+  });
+  await runResolveDecision(
+    { runId: run.id, decisionId: decision.id, actionId: 'ready' },
+    () => {},
+    {
+      assertGatePrerequisites: async () => {},
+      resumeRun: async () => {
+        resumed();
+      },
+    },
+  );
+  await continuation;
+  assert.equal(getRun(run.id)!.status, 'created');
+  assert.equal(getRun(run.id)!.steps[0].status, 'pending');
+});
+
+test('a live gate resolver retains its continuation without starting a second loop', async (t) => {
+  const { createEngineDecision, setEngineDecisionRuntime } =
+    await import('../run-engine/engine-decisions.js');
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'interactive',
+    project: 'gate-live',
+    ticketOrPr: 'GATE-LIVE',
+  });
+  updateRun(run.id, { status: 'human-gating', steps: [{ name: 'human-gate', status: 'running' }] });
+  let published!: () => void;
+  const publication = new Promise<void>((resolve) => {
+    published = resolve;
+  });
+  setEngineDecisionRuntime({
+    broadcast: (event) => {
+      if (event === 'run.decision.new') published();
+    },
+    stepToStatus: { 'human-gate': 'human-gating' },
+  });
+  t.after(async () => {
+    setEngineDecisionRuntime({ broadcast: () => {}, stepToStatus: {} });
+    updateRun(run.id, { status: 'done' });
+    await deleteRun(run.id);
+  });
+  const waiting = createEngineDecision(
+    run.id,
+    'human_gate',
+    'Live gate',
+    [{ id: 'hold', label: 'Hold', style: 'secondary' }],
+    undefined,
+    { readProgress: async () => ({ kind: 'idle' }) },
+  );
+  await publication;
+  let resumes = 0;
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const decision = getRun(run.id)!.decisions[0];
+  await runResolveDecision({ runId: run.id, decisionId: decision.id, actionId: 'hold' }, () => {}, {
+    resumeRun: async () => {
+      resumes++;
+    },
+  });
+  assert.equal(await waiting, 'hold');
+  t.mock.timers.tick(1);
+  assert.equal(resumes, 0);
+  assert.equal(getRun(run.id)!.steps[0].status, 'running');
 });

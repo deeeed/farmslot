@@ -6,6 +6,7 @@ import type { Run, RunStep, SubStepRecord } from '@farmslot/protocol';
 import {
   hasPendingPublicationReviewContinuation,
   hasRecoverablePublicationReviewer,
+  isPublicationReviewRecoveryHeld,
   prepareSubstepsShowCompletion,
   reconcileOrphanedSlots,
   recoverActiveRuns,
@@ -13,6 +14,20 @@ import {
   type RunRecoveryCollaborators,
   STALE_RELEASE_RECLAIM_MS,
 } from './recovery.js';
+
+test('truthful pending-gate states retain publication review recovery ownership', () => {
+  for (const status of [
+    'fixing',
+    'review-failed',
+    'reconciling',
+    'reviewing',
+    'monitoring',
+  ] as const) {
+    const run = minimalActiveRun({ status, decisions: [humanGateDecision('held-review')] });
+    assert.equal(isPublicationReviewRecoveryHeld(run), true, status);
+    assert.equal(isPublicationReviewRecoveryHeld({ ...run, status: 'done' }), false);
+  }
+});
 
 test('recoveryHealthIsReady requires configured ready indicator to match', () => {
   assert.equal(recoveryHealthIsReady({ exitCode: 0, stdout: 'OK\n' }, 'OK'), true);
@@ -556,59 +571,65 @@ test('recoverActiveRuns keeps a worker-signal blocked run blocked after restart'
   );
 });
 
-test('recoverActiveRuns keeps an uncertain-prompt-delivery blocked run blocked after restart', async () => {
-  // Shape left by PromptDeliveryUncertainError: dispatch failed, the rest
-  // skipped, run blocked WITHOUT completedAt because the prompt may be running.
-  const run = minimalActiveRun({
-    ticketOrPr: 'RECOVERY-BLOCKED-UNCERTAIN',
-    familyRootTicketOrPr: 'RECOVERY-BLOCKED-UNCERTAIN',
-    taskFile: '/tmp/farmslot-recovery-blocked-uncertain/TASK.md',
-    status: 'blocked',
-    error: 'prompt delivery uncertain',
-    steps: [
-      { name: 'dispatch', status: 'failed', outputs: { promptDeliveryUncertain: true } },
-      { name: 'monitor', status: 'skipped' },
-      { name: 'review', status: 'skipped' },
-    ],
-    decisions: [
-      {
-        id: 'handoff-0',
-        type: 'monitor_interactive_handoff',
-        title: 'interactive handoff',
-        description: 'interactive handoff',
-        actions: [{ id: 'signal-written', label: 'Check SIGNAL.json & resume', style: 'primary' }],
-        createdAt: '2026-09-18T08:50:10.167Z',
-        resolvedAt: '2026-09-18T09:00:00.000Z',
-        resolvedAction: 'continue',
-      },
-    ],
-  });
-  const updates: Array<Partial<Run>> = [];
-  let started = false;
-  const deps = {
-    listRuns: () => ({ runs: [run] }),
-    loadFleetStatus: async () => ({
-      slots: [{ slot: run.slotId!, lifecycle: 'busy', agent: 'working' }],
-    }),
-    updateRun: (_id: string, fields: Partial<Run>) => updates.push(fields),
-    updateRunStep: () => {},
-    broadcast: () => {},
-    setPrHealthOverlay: () => {},
-    quarantineLeakedRun: async () => {},
-    reconstructStepOutputs: () => null,
-    startRun: async () => {
-      started = true;
-    },
-  } as unknown as RunRecoveryCollaborators;
+test('recoverActiveRuns keeps an uncertain-prompt-delivery run held after restart across truthful states', async () => {
+  for (const status of ['blocked', 'reconciling'] as const) {
+    for (const marker of ['promptDeliveryUncertain', 'nativeWorkerOperationUncertain']) {
+      // Shape left by PromptDeliveryUncertainError: dispatch failed, the rest
+      // skipped, run blocked WITHOUT completedAt because the prompt may be running.
+      const run = minimalActiveRun({
+        ticketOrPr: 'RECOVERY-BLOCKED-UNCERTAIN',
+        familyRootTicketOrPr: 'RECOVERY-BLOCKED-UNCERTAIN',
+        taskFile: '/tmp/farmslot-recovery-blocked-uncertain/TASK.md',
+        status,
+        error: 'prompt delivery uncertain',
+        steps: [
+          { name: 'dispatch', status: 'failed', outputs: { [marker]: true } },
+          { name: 'monitor', status: 'skipped' },
+          { name: 'review', status: 'skipped' },
+        ],
+        decisions: [
+          {
+            id: 'handoff-0',
+            type: 'monitor_interactive_handoff',
+            title: 'interactive handoff',
+            description: 'interactive handoff',
+            actions: [
+              { id: 'signal-written', label: 'Check SIGNAL.json & resume', style: 'primary' },
+            ],
+            createdAt: '2026-09-18T08:50:10.167Z',
+            resolvedAt: '2026-09-18T09:00:00.000Z',
+            resolvedAction: 'continue',
+          },
+        ],
+      });
+      const updates: Array<Partial<Run>> = [];
+      let started = false;
+      const deps = {
+        listRuns: () => ({ runs: [run] }),
+        loadFleetStatus: async () => ({
+          slots: [{ slot: run.slotId!, lifecycle: 'busy', agent: 'working' }],
+        }),
+        updateRun: (_id: string, fields: Partial<Run>) => updates.push(fields),
+        updateRunStep: () => {},
+        broadcast: () => {},
+        setPrHealthOverlay: () => {},
+        quarantineLeakedRun: async () => {},
+        reconstructStepOutputs: () => null,
+        startRun: async () => {
+          started = true;
+        },
+      } as unknown as RunRecoveryCollaborators;
 
-  await recoverActiveRuns(deps);
+      await recoverActiveRuns(deps);
 
-  assert.equal(started, false, 'an uncertain-delivery run must not re-enter the engine');
-  assert.equal(
-    updates.some((fields) => 'status' in fields),
-    false,
-    'an uncertain-delivery run keeps its blocked status',
-  );
+      assert.equal(started, false, 'an uncertain-delivery run must not re-enter the engine');
+      assert.equal(
+        updates.some((fields) => 'status' in fields),
+        false,
+        'an uncertain-delivery run keeps its waiting status',
+      );
+    }
+  }
 });
 
 test('recoverActiveRuns re-arms handoff auto-recovery for a blocked interactive handoff', async () => {
@@ -2101,4 +2122,48 @@ test('orphan reconcile leaves a busy slot its live occupant still holds', async 
   await reconcileOrphanedSlots(deps);
 
   assert.deepEqual(reset, []);
+});
+
+test('restart does not complete a blocked pipeline that still had progressing or uncertain work', async () => {
+  for (const status of ['monitoring', 'reviewing', 'fixing', 'reconciling'] as const) {
+    const run = minimalActiveRun({
+      status,
+      error: 'Gate step blocked',
+      ticketOrPr: 'RECOVERY-PROGRESSING-BLOCK',
+      familyRootTicketOrPr: 'RECOVERY-PROGRESSING-BLOCK',
+      metrics: {
+        nudgeCount: 0,
+        model: null,
+        runner: 'codex',
+        runnerSessionId: null,
+        runnerSessionPath: null,
+        outcome: 'partial',
+      },
+      steps: [
+        { name: 'dispatch', status: 'done' },
+        { name: 'monitor', status: 'done' },
+        { name: 'review', status: 'skipped' },
+        { name: 'complete', status: 'skipped' },
+        { name: 'human-gate', status: 'skipped' },
+        { name: 'finalize', status: 'skipped' },
+      ],
+    });
+    const calls: string[] = [];
+    await recoverActiveRuns({
+      listRuns: () => ({ runs: [run] }),
+      loadFleetStatus: async () => ({
+        slots: [{ slot: run.slotId!, lifecycle: 'busy', agent: 'working' }],
+      }),
+      updateRun: (_id: string, fields: Partial<Run>) => Object.assign(run, fields),
+      updateRunStep: () => calls.push('step'),
+      broadcast: () => {},
+      quarantineLeakedRun: async () => {},
+      reconstructStepOutputs: () => null,
+      startRun: async () => {
+        calls.push('start');
+      },
+    } as unknown as RunRecoveryCollaborators);
+    assert.deepEqual(calls, []);
+    assert.equal(run.status, status);
+  }
 });

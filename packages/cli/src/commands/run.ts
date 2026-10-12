@@ -8,11 +8,13 @@ import {
   type AgentRole,
   assertPRReviewOptions,
   buildRunResolveDecisionParams,
+  deriveRunLifecycleView,
   DISPATCHABLE_AGENT_ROLES,
   type EventFrame,
   failedRunCancelEffects,
   type HumanGrade,
   isAllowedRunDecisionAction,
+  isPrerequisiteGatePayload,
   isReviewMode,
   Methods,
   observedReviewSessionContinuity,
@@ -801,6 +803,15 @@ export function registerRunCommand(program: Command): void {
           } else {
             for (const d of listed) {
               output.write(`${d.id}  ${d.title ?? ''}\n`);
+              const readiness = isPrerequisiteGatePayload(d.payload)
+                ? d.payload.gateReadiness
+                : undefined;
+              const view = deriveRunLifecycleView({
+                status: current.status,
+                gateReadiness: readiness,
+              });
+              if (view.gateLabel) output.write(`  ${view.gateLabel}\n`);
+              for (const reason of view.reasons) output.write(`  ${reason.message}\n`);
               for (const a of d.actions ?? []) output.write(`  - ${a.id}  ${a.label}\n`);
             }
           }

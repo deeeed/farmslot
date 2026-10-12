@@ -9,24 +9,14 @@ import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 
 import { getRunnerObservability } from './registry.js';
 
-/** Reuse the runner protocol used by slot delivery, with the exact review cwd. */
-export async function observeReviewPromptAcceptance(
-  run: Run,
-): Promise<RunnerPromptAcceptance | null> {
+/** The admitted workspace's runner context, shared by startup and progress reads. */
+export async function reviewWorkspaceRunnerVars(run: Run): Promise<SlotVars | null> {
   assertNativeRunOwner(run);
   const workspace = run.reviewWorkspace;
   const context = run.agentContexts?.find((entry) => entry.id === 'review');
-  const deliveryStartedAt = context?.promptDeliveryStartedAt;
-  if (!workspace || !deliveryStartedAt || !context.target?.session) return null;
-  if (
-    context.promptAcceptance?.deliveryStartedAt === deliveryStartedAt &&
-    context.promptAcceptance.runner === run.metrics.runner
-  )
-    return context.promptAcceptance;
-  const observability = getRunnerObservability(run.metrics.runner);
-  if (!observability?.getSessionBinding || !observability.promptAcceptedInSession) return null;
+  if (!workspace || !context?.target?.session) return null;
   const pool = await loadMachinePool(workspace.machine);
-  const vars: SlotVars = {
+  return {
     slotId: `review-${workspace.workspaceId}`,
     machine: workspace.machine,
     platform: pool.platform,
@@ -50,6 +40,26 @@ export async function observeReviewPromptAcceptance(
     projectName: run.project,
     resourceVars: {},
   };
+}
+
+/** Reuse the runner protocol used by slot delivery, with the exact review cwd. */
+export async function observeReviewPromptAcceptance(
+  run: Run,
+): Promise<RunnerPromptAcceptance | null> {
+  assertNativeRunOwner(run);
+  const workspace = run.reviewWorkspace;
+  const context = run.agentContexts?.find((entry) => entry.id === 'review');
+  const deliveryStartedAt = context?.promptDeliveryStartedAt;
+  if (!workspace || !deliveryStartedAt || !context.target?.session) return null;
+  if (
+    context.promptAcceptance?.deliveryStartedAt === deliveryStartedAt &&
+    context.promptAcceptance.runner === run.metrics.runner
+  )
+    return context.promptAcceptance;
+  const observability = getRunnerObservability(run.metrics.runner);
+  if (!observability?.getSessionBinding || !observability.promptAcceptedInSession) return null;
+  const vars = await reviewWorkspaceRunnerVars(run);
+  if (!vars) return null;
   const since = Date.parse(deliveryStartedAt);
   if (!Number.isFinite(since)) return null;
   const binding = await observability.getSessionBinding(vars, vars.session, since);

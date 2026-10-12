@@ -34,6 +34,8 @@ export * from './review-workspace.js';
 export * from './reviews.js';
 export * from './roadmap.js';
 export * from './run-bundles.js';
+export * from './run-gate-readiness.js';
+export * from './run-lifecycle-view.js';
 export * from './runner-ids.js';
 export * from './runner-mobile-keys.js';
 export * from './runs.js';

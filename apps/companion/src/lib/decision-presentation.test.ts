@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 
+import type { RunGateReadiness } from '@farmslot/protocol';
+
 import {
   artifactsForRecipeRun,
   artifactSource,
@@ -570,3 +572,31 @@ const ciArtifacts = extractRunArtifactManifest({
 assert.equal(ciArtifacts.find((artifact) => artifact.path === ciLog)?.type, 'log');
 assert.equal(classifyArtifact(ciLog), 'document');
 assert.equal(classifyArtifact(ciArtifacts[0]), 'document');
+
+const pendingReadiness: RunGateReadiness = {
+  state: 'not-ready',
+  identity: { runId: 'gate-run', generation: 2 },
+  reasons: [
+    {
+      code: 'acceptance-incomplete',
+      prerequisite: 'acceptance',
+      message: '11 registered criteria need verdicts.',
+    },
+  ],
+};
+for (const status of ['fixing', 'review-failed', 'reconciling']) {
+  const decision = reviewDecision('APPROVE');
+  decision.context = { runStatus: status };
+  if (decision.payload?.kind !== 'review') throw new Error('Expected review fixture');
+  decision.payload = { ...decision.payload, gateReadiness: pendingReadiness };
+  decision.actions = [{ id: 'hold', label: 'Hold', style: 'secondary' }];
+  const view = presentDecision(decision);
+  assert.deepEqual(view.textSections[0], {
+    title: 'Prerequisites incomplete',
+    body: '11 registered criteria need verdicts.',
+  });
+  assert.deepEqual(
+    view.actions.map((action) => action.id),
+    ['hold'],
+  );
+}
