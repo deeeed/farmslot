@@ -93,6 +93,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
         context: 'pr-preview',
         package: source.recordedEvidence?.input,
         artifactPrefix: source.recordedEvidence?.artifactPrefix,
+        packagePath: source.recordedEvidence?.packagePath,
         readErrors: source.recordedEvidence?.errors,
       });
       this._evidenceRecipeRunId = source.selectedRecipeRunId;

@@ -5,6 +5,7 @@ import { renderAcceptanceCriteria } from '../tasks/task-document.js';
 
 import { fetchJiraIssue } from './jira.js';
 import {
+  acceptanceCriteriaFromMarkdown,
   adfToInlineText,
   extractSection,
   sectionItems,
@@ -613,4 +614,70 @@ test('a bold label right before a list groups it; a bold line on its own stays a
     '**Preview equals the charge.**',
     '**Points match.**',
   ]);
+});
+
+test('labeled AC paragraphs preserve authored order and stop before unrelated prose', () => {
+  assert.deepEqual(
+    acceptanceCriteriaFromMarkdown(
+      [
+        'The preview changes after editing its amount.',
+        '',
+        'AC1: A new amount shows a loading placeholder.',
+        '',
+        'AC2: The quote belongs to the amount on screen.',
+        'Changing the amount while loading is covered.',
+        '',
+        'AC3: Invalid amount text is handled explicitly.',
+        '',
+        'AC4: Capture the loading and resolved states.',
+        '',
+        'Release note: no change to the current release.',
+      ].join('\n'),
+    ),
+    [
+      'A new amount shows a loading placeholder.',
+      'The quote belongs to the amount on screen.\nChanging the amount while loading is covered.',
+      'Invalid amount text is handled explicitly.',
+      'Capture the loading and resolved states.',
+    ],
+  );
+});
+
+test('an explicit acceptance section wins over other labeled paragraphs', () => {
+  assert.deepEqual(
+    acceptanceCriteriaFromMarkdown(
+      'AC1: Historical example.\n\n## Acceptance Criteria\n- Current criterion.\n\n## Notes\nAC2: Another example.',
+    ),
+    ['Current criterion.'],
+  );
+});
+
+test('fenced and unlabeled prose cannot introduce acceptance criteria', () => {
+  assert.deepEqual(
+    acceptanceCriteriaFromMarkdown(
+      '```text\nAC1: A code example.\n```\n\nThe result should look ready.',
+    ),
+    [],
+  );
+  assert.deepEqual(
+    acceptanceCriteriaFromMarkdown(
+      'AC1: Current criterion.\n\n~~~text\nAC2: A code example.\n~~~\n\nNotes:',
+    ),
+    ['Current criterion.'],
+  );
+});
+
+test('an explicitly empty heading or label suppresses retired AC paragraphs', () => {
+  assert.deepEqual(
+    acceptanceCriteriaFromMarkdown(
+      '## Acceptance Criteria\n\n## Previous requirements\nAC1: Keep retired behavior.',
+    ),
+    [],
+  );
+  assert.deepEqual(
+    acceptanceCriteriaFromMarkdown(
+      'Acceptance criteria:\n\nPrevious requirements:\nAC1: Keep retired behavior.',
+    ),
+    [],
+  );
 });

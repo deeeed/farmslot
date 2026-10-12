@@ -4,6 +4,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Return artifact-relative package paths for retained evidence review.
+
+- Preserve explicitly labeled acceptance criteria from ticket intake through cached task data and the worker handoff.
 - Derive plain free-text task and report titles while preserving the complete task and report bodies.
 - Recover verified native session usage and show recorded retrospective outcomes, review skips, and capture failures.
 

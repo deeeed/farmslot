@@ -136,7 +136,7 @@ companion_run_ios_simulator() {
   metro_url="http://${COMPANION_PACKAGER_HOSTNAME}:${METRO_PORT}"
   # `expo run:ios` started a bundler; this path uses the managed Metro session instead.
   if ! companion_metro_answers; then
-    METRO_PORT="${METRO_PORT}" GATEWAY_PORT="${GATEWAY_PORT}" IOS_SIMULATOR="${udid}" \
+    COMPANION_PREPARE_CLIENT=0 METRO_PORT="${METRO_PORT}" GATEWAY_PORT="${GATEWAY_PORT}" IOS_SIMULATOR="${udid}" \
       bash "${SCRIPT_DIR}/prepare-profile.sh" warm
     if ! companion_metro_answers; then
       echo "ERROR: Metro is not answering on :${METRO_PORT} after prepare-profile.sh warm." >&2
@@ -152,8 +152,8 @@ companion_run_ios_simulator() {
     COMPILER_INDEX_STORE_ENABLE=NO build
   app_path="${derived}/Build/Products/Debug-iphonesimulator/${scheme}.app"
   xcrun simctl install "${udid}" "${app_path}"
-  xcrun simctl openurl "${udid}" \
-    "${SCHEME}://expo-development-client/?url=$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "${metro_url}")"
+  SCHEME="${SCHEME}" METRO_PORT="${METRO_PORT}" \
+    node "${SCRIPT_DIR}/prepare-dev-client.mjs" ios "${udid}" "${BUNDLE_ID}"
   echo "[run-ios] Installed ${BUNDLE_ID} on ${udid}; dev client opened on ${metro_url}"
 }
 

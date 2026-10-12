@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show compact evidence package status and collapsed diagnostics, with neutral legacy evidence and read-only retained reports.
+
 - Display readable run titles in lists, retrospectives, detail and decisions with two-line cards and full title on hover.
 - Show retained retrospective reports and specific usage/code-delta capture reasons.
 

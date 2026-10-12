@@ -268,10 +268,7 @@ export const runDetailStyles = css`
     padding: 4px 0;
   }
   .evidence-unavailable {
-    position: fixed;
-    right: ${unsafeCSS(spacing.lg)};
-    bottom: ${unsafeCSS(spacing.lg)};
-    z-index: 20;
+    margin-top: ${unsafeCSS(spacing.sm)};
     display: flex;
     gap: ${unsafeCSS(spacing.md)};
     align-items: center;

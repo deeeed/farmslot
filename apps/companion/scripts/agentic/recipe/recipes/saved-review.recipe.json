@@ -1,0 +1,520 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion saved review reader",
+  "description": "Private production Gateway with real Post, Dismiss and auto-finish, historical list trimming and a transparent delayed-read transport. Requires REVIEW_PROOF_CONTEXT=saved, an owned Android emulator and isolated Metro/Gateway ports. No external publication. Teardown stops the owned services.",
+  "workflow": {
+    "entry": "setup",
+    "teardown": "stop",
+    "nodes": {
+      "setup": {
+        "action": "command",
+        "intent": "Close real publication gates and retain review results.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs setup",
+        "timeout_ms": 120000,
+        "next": "relaunch"
+      },
+      "relaunch": {
+        "action": "command",
+        "intent": "Connect Android to the private production Gateway.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs relaunch",
+        "timeout_ms": 120000,
+        "next": "app-ready"
+      },
+      "app-ready": {
+        "action": "ui.wait_for",
+        "intent": "The connected phone is ready for saved review links.",
+        "test_id": "companion-tab-settings",
+        "timeout_ms": 60000,
+        "next": "open-workspace"
+      },
+      "open-workspace": {
+        "action": "command",
+        "intent": "Reopen the saved workspace review after gate closure.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs saved-open-workspace",
+        "timeout_ms": 120000,
+        "next": "ready-workspace"
+      },
+      "ready-workspace": {
+        "action": "ui.wait_for",
+        "intent": "Read the original saved verdict and full reviewed SHA.",
+        "test_id": "companion-saved-review-verdict",
+        "text_contains": ["REQUEST_CHANGES"],
+        "timeout_ms": 30000,
+        "next": "receipt-workspace"
+      },
+      "receipt-workspace": {
+        "action": "ui.wait_for",
+        "intent": "Requested choices stay separate from the publication receipt.",
+        "test_id": "companion-saved-review-receipt",
+        "text_contains": ["Confirmed publication event: APPROVE"],
+        "next": "no-post-workspace"
+      },
+      "no-post-workspace": {
+        "action": "ui.wait_for",
+        "intent": "Reading a saved review offers no publication control.",
+        "text": "Retry publication",
+        "expected": "absent",
+        "timeout_ms": 1000,
+        "next": "hud-workspace"
+      },
+      "hud-workspace": {
+        "action": "app.hud",
+        "intent": "Read the saved workspace verdict, SHA and publication state.",
+        "status": "running",
+        "next": "still-workspace"
+      },
+      "still-workspace": {
+        "action": "ui.screenshot",
+        "intent": "Read the saved workspace verdict, SHA and publication state.",
+        "path": "screenshots/saved-workspace.png",
+        "next": "report-workspace"
+      },
+      "report-workspace": {
+        "action": "ui.press",
+        "intent": "Open the complete original report through the shared viewer.",
+        "test_id": "companion-saved-review-report",
+        "next": "report-hud-workspace"
+      },
+      "full-workspace": {
+        "action": "ui.wait_for",
+        "intent": "The complete report includes its final retained line.",
+        "text_contains": ["FINAL SAVED REPORT LINE"],
+        "timeout_ms": 10000,
+        "next": "report-still-workspace"
+      },
+      "report-hud-workspace": {
+        "action": "app.hud",
+        "intent": "Read the complete saved workspace report.",
+        "status": "running",
+        "next": "capture-workspace"
+      },
+      "report-still-workspace": {
+        "action": "ui.screenshot",
+        "intent": "Read the complete saved workspace report.",
+        "path": "screenshots/report-workspace.png",
+        "next": "close-workspace"
+      },
+      "close-workspace": {
+        "action": "ui.press",
+        "intent": "Return from the original report without changing the review.",
+        "text": "Close",
+        "next": "open-slot"
+      },
+      "open-slot": {
+        "action": "command",
+        "intent": "Reopen the saved slot review after gate closure.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs saved-open-slot",
+        "timeout_ms": 120000,
+        "next": "ready-slot"
+      },
+      "ready-slot": {
+        "action": "ui.wait_for",
+        "intent": "Read the original saved verdict and full reviewed SHA.",
+        "test_id": "companion-saved-review-verdict",
+        "text_contains": ["REQUEST_CHANGES"],
+        "timeout_ms": 30000,
+        "next": "receipt-slot"
+      },
+      "receipt-slot": {
+        "action": "ui.wait_for",
+        "intent": "Requested choices stay separate from the publication receipt.",
+        "test_id": "companion-saved-review-receipt",
+        "text_contains": ["No confirmed publication receipt"],
+        "next": "no-post-slot"
+      },
+      "no-post-slot": {
+        "action": "ui.wait_for",
+        "intent": "Reading a saved review offers no publication control.",
+        "text": "Retry publication",
+        "expected": "absent",
+        "timeout_ms": 1000,
+        "next": "hud-slot"
+      },
+      "hud-slot": {
+        "action": "app.hud",
+        "intent": "Read the saved slot verdict, SHA and publication state.",
+        "status": "running",
+        "next": "still-slot"
+      },
+      "still-slot": {
+        "action": "ui.screenshot",
+        "intent": "Read the saved slot verdict, SHA and publication state.",
+        "path": "screenshots/saved-slot.png",
+        "next": "report-slot"
+      },
+      "report-slot": {
+        "action": "ui.press",
+        "intent": "Open the complete original report through the shared viewer.",
+        "test_id": "companion-saved-review-report",
+        "next": "report-hud-slot"
+      },
+      "full-slot": {
+        "action": "ui.wait_for",
+        "intent": "The complete report includes its final retained line.",
+        "text_contains": ["FINAL SAVED REPORT LINE"],
+        "timeout_ms": 10000,
+        "next": "report-still-slot"
+      },
+      "report-hud-slot": {
+        "action": "app.hud",
+        "intent": "Read the complete saved slot report.",
+        "status": "running",
+        "next": "capture-slot"
+      },
+      "report-still-slot": {
+        "action": "ui.screenshot",
+        "intent": "Read the complete saved slot report.",
+        "path": "screenshots/report-slot.png",
+        "next": "close-slot"
+      },
+      "close-slot": {
+        "action": "ui.press",
+        "intent": "Return from the original report without changing the review.",
+        "text": "Close",
+        "next": "open-auto"
+      },
+      "open-auto": {
+        "action": "command",
+        "intent": "Reopen the saved auto review after gate closure.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs saved-open-auto",
+        "timeout_ms": 120000,
+        "next": "ready-auto"
+      },
+      "ready-auto": {
+        "action": "ui.wait_for",
+        "intent": "Read the original saved verdict and full reviewed SHA.",
+        "test_id": "companion-saved-review-verdict",
+        "text_contains": ["AUTO REQUEST_CHANGES"],
+        "timeout_ms": 30000,
+        "next": "receipt-auto"
+      },
+      "receipt-auto": {
+        "action": "ui.wait_for",
+        "intent": "Requested choices stay separate from the publication receipt.",
+        "test_id": "companion-saved-review-receipt",
+        "text_contains": ["No confirmed publication receipt"],
+        "next": "no-post-auto"
+      },
+      "no-post-auto": {
+        "action": "ui.wait_for",
+        "intent": "Reading a saved review offers no publication control.",
+        "text": "Retry publication",
+        "expected": "absent",
+        "timeout_ms": 1000,
+        "next": "hud-auto"
+      },
+      "hud-auto": {
+        "action": "app.hud",
+        "intent": "Read the saved auto verdict, SHA and publication state.",
+        "status": "running",
+        "next": "still-auto"
+      },
+      "still-auto": {
+        "action": "ui.screenshot",
+        "intent": "Read the saved auto verdict, SHA and publication state.",
+        "path": "screenshots/saved-auto.png",
+        "next": "report-auto"
+      },
+      "report-auto": {
+        "action": "ui.press",
+        "intent": "Open the complete original report through the shared viewer.",
+        "test_id": "companion-saved-review-report",
+        "next": "report-hud-auto"
+      },
+      "full-auto": {
+        "action": "ui.wait_for",
+        "intent": "The complete report includes its final retained line.",
+        "text_contains": ["FINAL SAVED REPORT LINE"],
+        "timeout_ms": 10000,
+        "next": "report-still-auto"
+      },
+      "report-hud-auto": {
+        "action": "app.hud",
+        "intent": "Read the complete saved auto report.",
+        "status": "running",
+        "next": "capture-auto"
+      },
+      "report-still-auto": {
+        "action": "ui.screenshot",
+        "intent": "Read the complete saved auto report.",
+        "path": "screenshots/report-auto.png",
+        "next": "close-auto"
+      },
+      "close-auto": {
+        "action": "ui.press",
+        "intent": "Return from the original report without changing the review.",
+        "text": "Close",
+        "next": "open-historical"
+      },
+      "open-historical": {
+        "action": "command",
+        "intent": "Reopen the saved historical review after gate closure.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs saved-open-historical",
+        "timeout_ms": 120000,
+        "next": "ready-historical"
+      },
+      "ready-historical": {
+        "action": "ui.wait_for",
+        "intent": "Read the original saved verdict and full reviewed SHA.",
+        "test_id": "companion-saved-review-verdict",
+        "text_contains": ["HISTORICAL REQUEST_CHANGES"],
+        "timeout_ms": 30000,
+        "next": "receipt-historical"
+      },
+      "receipt-historical": {
+        "action": "ui.wait_for",
+        "intent": "Requested choices stay separate from the publication receipt.",
+        "test_id": "companion-saved-review-receipt",
+        "text_contains": ["No confirmed publication receipt"],
+        "next": "no-post-historical"
+      },
+      "no-post-historical": {
+        "action": "ui.wait_for",
+        "intent": "Reading a saved review offers no publication control.",
+        "text": "Retry publication",
+        "expected": "absent",
+        "timeout_ms": 1000,
+        "next": "hud-historical"
+      },
+      "hud-historical": {
+        "action": "app.hud",
+        "intent": "Read the saved historical verdict, SHA and publication state.",
+        "status": "running",
+        "next": "still-historical"
+      },
+      "still-historical": {
+        "action": "ui.screenshot",
+        "intent": "Read the saved historical verdict, SHA and publication state.",
+        "path": "screenshots/saved-historical.png",
+        "next": "report-historical"
+      },
+      "report-historical": {
+        "action": "ui.press",
+        "intent": "Open the complete original report through the shared viewer.",
+        "test_id": "companion-saved-review-report",
+        "next": "report-hud-historical"
+      },
+      "full-historical": {
+        "action": "ui.wait_for",
+        "intent": "The complete report includes its final retained line.",
+        "text_contains": ["FINAL SAVED REPORT LINE"],
+        "timeout_ms": 10000,
+        "next": "report-still-historical"
+      },
+      "report-hud-historical": {
+        "action": "app.hud",
+        "intent": "Read the complete saved historical report.",
+        "status": "running",
+        "next": "capture-historical"
+      },
+      "report-still-historical": {
+        "action": "ui.screenshot",
+        "intent": "Read the complete saved historical report.",
+        "path": "screenshots/report-historical.png",
+        "next": "background-report"
+      },
+      "close-historical": {
+        "action": "ui.press",
+        "intent": "Return from the original report without changing the review.",
+        "text": "Close",
+        "next": "open-legacy"
+      },
+      "open-legacy": {
+        "action": "command",
+        "intent": "Open a historical review that lacks retained fields.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs saved-open-legacy",
+        "timeout_ms": 120000,
+        "next": "legacy-ready"
+      },
+      "legacy-ready": {
+        "action": "ui.wait_for",
+        "intent": "Missing legacy fields are explained after a full read.",
+        "text_contains": [
+          "Not recorded in this legacy review",
+          "Report not recorded in this legacy review."
+        ],
+        "timeout_ms": 30000,
+        "next": "legacy-hud"
+      },
+      "legacy-hud": {
+        "action": "app.hud",
+        "intent": "Read explicit legacy gaps instead of invented review data.",
+        "status": "running",
+        "next": "legacy-still"
+      },
+      "legacy-still": {
+        "action": "ui.screenshot",
+        "intent": "Read explicit legacy gaps instead of invented review data.",
+        "path": "screenshots/legacy-fields.png",
+        "next": "arm-delay"
+      },
+      "arm-delay": {
+        "action": "command",
+        "intent": "Delay actual historical run.get replies in the transport.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs saved-arm",
+        "timeout_ms": 120000,
+        "next": "open-delayed"
+      },
+      "open-delayed": {
+        "action": "command",
+        "intent": "Open the older saved review while its full read is delayed.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs saved-open-historical",
+        "timeout_ms": 120000,
+        "next": "held"
+      },
+      "held": {
+        "action": "command",
+        "intent": "Verify a real Gateway reply is held before changing the run.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs saved-held",
+        "timeout_ms": 120000,
+        "next": "open-current"
+      },
+      "open-current": {
+        "action": "command",
+        "intent": "Switch to another review before the old full reply arrives.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs saved-open-auto",
+        "timeout_ms": 120000,
+        "next": "current-ready"
+      },
+      "current-ready": {
+        "action": "ui.wait_for",
+        "intent": "The newly selected review is readable.",
+        "test_id": "companion-saved-review-verdict",
+        "text_contains": ["AUTO REQUEST_CHANGES"],
+        "timeout_ms": 30000,
+        "next": "release-delay"
+      },
+      "release-delay": {
+        "action": "command",
+        "intent": "Release the old read after the selected run changed.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs saved-release",
+        "timeout_ms": 120000,
+        "next": "refresh-current"
+      },
+      "refresh-current": {
+        "action": "ui.press",
+        "intent": "Refresh current saved evidence without publishing anything.",
+        "test_id": "companion-saved-review-refresh",
+        "next": "current-refreshed"
+      },
+      "current-refreshed": {
+        "action": "ui.wait_for",
+        "intent": "The selected review survives the old response and refresh.",
+        "test_id": "companion-saved-review-verdict",
+        "text_contains": ["AUTO REQUEST_CHANGES"],
+        "timeout_ms": 30000,
+        "next": "no-error"
+      },
+      "no-error": {
+        "action": "ui.wait_for",
+        "intent": "Saved review reading has no connection error banner.",
+        "text": "Not connected",
+        "expected": "absent",
+        "timeout_ms": 1000,
+        "next": "verify"
+      },
+      "verify": {
+        "action": "command",
+        "intent": "Verify full reads preserved results, decisions and provider state.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs saved-verify",
+        "timeout_ms": 120000,
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "stop": {
+        "action": "command",
+        "intent": "Stop only the private proof Gateway and transport.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs stop",
+        "timeout_ms": 120000,
+        "next": "stopped"
+      },
+      "stopped": {
+        "action": "end",
+        "status": "pass"
+      },
+      "capture-workspace": {
+        "action": "ui.capture_surface",
+        "intent": "Read the entire saved workspace report with its HUD.",
+        "path": "screenshots/full-report-workspace.png",
+        "surface_test_id": "companion-document-body",
+        "until_test_id": "companion-document-end",
+        "max_scrolls": 8,
+        "restore_position": false,
+        "next": "full-workspace"
+      },
+      "capture-slot": {
+        "action": "ui.capture_surface",
+        "intent": "Read the entire saved slot report with its HUD.",
+        "path": "screenshots/full-report-slot.png",
+        "surface_test_id": "companion-document-body",
+        "until_test_id": "companion-document-end",
+        "max_scrolls": 8,
+        "restore_position": false,
+        "next": "full-slot"
+      },
+      "capture-auto": {
+        "action": "ui.capture_surface",
+        "intent": "Read the entire saved auto report with its HUD.",
+        "path": "screenshots/full-report-auto.png",
+        "surface_test_id": "companion-document-body",
+        "until_test_id": "companion-document-end",
+        "max_scrolls": 8,
+        "restore_position": false,
+        "next": "full-auto"
+      },
+      "capture-historical": {
+        "action": "ui.capture_surface",
+        "intent": "Read the entire saved historical report with its HUD.",
+        "path": "screenshots/full-report-historical.png",
+        "surface_test_id": "companion-document-body",
+        "until_test_id": "companion-document-end",
+        "max_scrolls": 8,
+        "restore_position": false,
+        "next": "full-historical"
+      },
+      "background-report": {
+        "action": "command",
+        "intent": "Background Android with an out-of-list saved report open.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs saved-background",
+        "timeout_ms": 60000,
+        "next": "foreground-report"
+      },
+      "foreground-report": {
+        "action": "command",
+        "intent": "Resume the same Android activity without reopening its route.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs saved-foreground",
+        "timeout_ms": 70000,
+        "next": "report-survived"
+      },
+      "report-survived": {
+        "action": "ui.wait_for",
+        "intent": "The open saved report survives a transport pause and reconnect.",
+        "text": "Saved review report",
+        "timeout_ms": 10000,
+        "next": "report-end-survived"
+      },
+      "report-end-survived": {
+        "action": "ui.wait_for",
+        "intent": "The full cached report and scroll position remain readable.",
+        "text_contains": ["FINAL SAVED REPORT LINE"],
+        "timeout_ms": 10000,
+        "next": "resumed-report-hud"
+      },
+      "resumed-report-hud": {
+        "action": "app.hud",
+        "intent": "Read the same saved report after Android resumes.",
+        "status": "running",
+        "next": "resumed-report-still"
+      },
+      "resumed-report-still": {
+        "action": "ui.screenshot",
+        "intent": "Read the same saved report after Android resumes.",
+        "path": "screenshots/resumed-saved-report.png",
+        "next": "close-historical"
+      }
+    }
+  }
+}

@@ -578,3 +578,164 @@ test('package originals and legacy task refs keep their distinct transport names
   });
   assert.equal(legacy.selectClaim('AC-1')?.stills[0]?.artifactPath, 'artifacts/legacy.png');
 });
+
+test('legacy root diagnostics merge reader/type/include repeats per missing file', () => {
+  const pkg: RecordedEvidencePackageInput = {
+    summary: undefined,
+    trace: undefined,
+    manifest: undefined,
+    artifactPaths: ['report.html'],
+    artifactDigests: {},
+    timelines: {},
+  };
+  const model = createEvidenceReviewModel({
+    package: pkg,
+    packagePath: 'artifacts/previous/',
+    readErrors: [
+      'Missing required Recipe v1 artifact summary.json.',
+      'summary.json must be an object.',
+      'Recipe artifact package must include summary.json.',
+      'Missing required Recipe v1 artifact trace.json.',
+      'Recipe artifact package must include artifact-manifest.json.',
+    ],
+  });
+  assert.equal(model.packageStatus?.status, 'Legacy');
+  assert.equal(model.packageStatus?.path, 'previous');
+  assert.match(
+    model.packageStatus!.summary,
+    /Recorded before Recipe v1: not machine-checkable.*media untimed/,
+  );
+  assert.deepEqual(
+    model.packageStatus!.issues.map((issue) => issue.message),
+    ['Missing summary.json', 'Missing trace.json', 'Missing artifact-manifest.json'],
+  );
+  assert.equal(model.packageStatus!.issues[0]!.count, 5);
+  assert.equal(model.packageStatus!.action, undefined);
+  assert.deepEqual(model.displayWarnings, []);
+  assert(model.errors.length > model.packageStatus!.issues.length);
+  assert.equal(model.markerSeekMs('video.mp4', 0, 'start'), null);
+});
+
+test('current packages are valid or invalid with recovery guidance, never downgraded to legacy', () => {
+  const pkg = qaPackage(1);
+  assert.equal(createEvidenceReviewModel({ package: pkg }).packageStatus?.status, 'Valid');
+  pkg.artifactPaths = pkg.artifactPaths!.filter((file) => file !== 'summary.json');
+  pkg.summary = undefined;
+  const model = createEvidenceReviewModel({ package: pkg });
+  assert.equal(model.packageStatus?.status, 'Invalid');
+  assert.match(model.packageStatus!.action!, /Refresh the gate package or re-run the recipe/);
+  assert(model.packageStatus!.issues.some((issue) => issue.message === 'Missing summary.json'));
+  assert.deepEqual(model.selectClaim('check-1')?.clips, []);
+});
+
+test('present malformed files remain shape errors rather than missing-file diagnostics', () => {
+  const pkg = qaPackage(1);
+  pkg.summary = 'not an object';
+  const model = createEvidenceReviewModel({
+    package: pkg,
+    readErrors: ['Unreadable retained file', 'Unreadable retained file'],
+  });
+  assert.equal(model.packageStatus?.status, 'Invalid');
+  assert(
+    model.packageStatus!.issues.some(
+      (issue) => issue.message === 'summary.json must be an object.',
+    ),
+  );
+  assert(!model.packageStatus!.issues.some((issue) => issue.message === 'Missing summary.json'));
+  assert.equal(
+    model.packageStatus!.issues.find((issue) => issue.message === 'Unreadable retained file')
+      ?.count,
+    2,
+  );
+});
+
+test('artifact-only reports open read-only despite recipe selection errors and still verify their own snapshot', async () => {
+  const body = '<h1>Retained QA report</h1>';
+  const report = {
+    reportPath: 'artifacts/report.html',
+    manifestDigest: 'captured-output',
+    artifactManifest: [{ path: 'artifacts/report.html', purpose: 'report', sha256: digest(body) }],
+  };
+  const model = createEvidenceReviewModel({
+    context: 'gate',
+    report,
+    reportSnapshot: {
+      kind: 'output-review',
+      manifestDigest: report.manifestDigest,
+      reportPath: report.reportPath,
+    },
+    readErrors: ['Select a retained recipe execution from the gate package.'],
+  });
+  assert.equal(
+    (await readEvidenceReviewReport(model, async () => new TextEncoder().encode(body))).body,
+    body,
+  );
+  assert.equal(model.selection?.timing, 'untimed');
+  assert.deepEqual(model.selection?.clips, []);
+  assert.equal(model.errors.length, 1);
+  await assert.rejects(
+    readEvidenceReviewReport(model, async () => new TextEncoder().encode('changed')),
+    /bytes no longer match/,
+  );
+  const stale = createEvidenceReviewModel({
+    report,
+    reportSnapshot: {
+      kind: 'output-review',
+      reportPath: report.reportPath,
+      manifestDigest: 'another-output',
+    },
+    readErrors: model.errors,
+  });
+  assert.equal(stale.selectReport(), null);
+  await assert.rejects(
+    readEvidenceReviewReport(stale, async () => new TextEncoder().encode(body)),
+    /no longer matches/,
+  );
+});
+
+test('unknown reads stay informational while identified current-contract failures are red', () => {
+  const unknown = createEvidenceReviewModel({
+    readErrors: ['Select a retained recipe execution from the gate package.'],
+  });
+  assert.equal(unknown.packageStatus?.status, 'Invalid');
+  assert.equal(unknown.packageStatus?.tone, 'info');
+  const pkg = qaPackage(1);
+  pkg.summary = undefined;
+  assert.equal(createEvidenceReviewModel({ package: pkg }).packageStatus?.tone, 'error');
+});
+
+test('an authored recipe beside legacy media does not identify an executed Recipe v1 package', () => {
+  const model = createEvidenceReviewModel({
+    package: {
+      recipe: { $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json' },
+      summary: undefined,
+      trace: undefined,
+      manifest: undefined,
+      artifactPaths: ['recipe.json'],
+      artifactDigests: {},
+      timelines: {},
+    },
+  });
+  assert.equal(model.packageStatus?.status, 'Legacy');
+  assert.equal(model.packageStatus?.tone, 'info');
+  assert(
+    model.packageStatus!.issues.some((issue) => issue.message === 'Missing recipe-resolution.json'),
+  );
+});
+
+test('historical filenames alone never mark an older artifact format as a current contract failure', () => {
+  const model = createEvidenceReviewModel({
+    package: {
+      summary: { version: 0 },
+      trace: [],
+      manifest: { version: 0, artifacts: [] },
+      artifactPaths: ['summary.json', 'trace.json', 'artifact-manifest.json'],
+      artifactDigests: {},
+      timelines: {},
+    },
+  });
+  assert(model.errors.length);
+  assert.equal(model.packageStatus?.status, 'Legacy');
+  assert.equal(model.packageStatus?.tone, 'info');
+  assert.equal(model.packageStatus?.action, undefined);
+});
