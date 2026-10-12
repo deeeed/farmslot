@@ -73,3 +73,4 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [064](064-deterministic-checklist-checks.md)             | Deterministic checklist checks before publication                       | Accepted |
 | [065](065-fail-closed-run-lifecycle.md)                  | Fail-closed run lifecycle                                               | Accepted |
 | [068](068-project-recipe-binding-and-conformance.md)     | Project recipe binding and conformance                                  | Accepted |
+| [069](069-declared-pinned-sources.md)                    | Declared and pinned farm sources                                        | Proposed |
