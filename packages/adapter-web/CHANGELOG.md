@@ -4,6 +4,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## Unreleased
 
+## 0.7.1 - 2026-10-12
+
+- Update shared runtime dependencies for corrected keyboard events and bounded log observations.
+
 ## 0.7.0 - 2026-10-12
 
 - Collect opt-in rendered HUD observations around screenshot capture for live conformance.

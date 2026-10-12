@@ -47,6 +47,7 @@ export const STEPS = [
       '.agents/skills/tmux-model-driver/tests/midturn-send.test.mjs',
       '.agents/skills/tmux-model-driver/tests/wrappers.test.mjs',
       '.agents/skills/tmux-model-driver/tests/runner-launch.test.mjs',
+      '.agents/skills/tmux-model-driver/tests/launch-blocker-action.test.mjs',
     ],
   ],
   [

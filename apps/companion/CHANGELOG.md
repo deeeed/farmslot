@@ -5,6 +5,9 @@ All notable changes to `@farmslot/mobile` are tracked here.
 ## Unreleased
 
 - Preserve literal query values in phone deep links. Prepared dev leases watch source edits and clear first-run chrome; recipe sessions promptly release idle simulator runners through the provider lifecycle.
+- Show review rounds as N/5 and disable another review when the budget is spent.
+
+- Group delivered roadmap work separately with PR links and delivery outcome filters.
 
 - Show shared gate prerequisite reasons and run lifecycle labels for correction, review failure and reconciliation.
 

@@ -7,6 +7,7 @@ import {
   reviewFixRetriesExhausted,
   reviewRetryCapReason,
   reviewRetryCount,
+  reviewRoundBudget,
   stampReviewRetryCap,
 } from '../../src/runs/review-retries.js';
 
@@ -185,4 +186,12 @@ test('cap copy names the remaining findings and the two unblock paths', () => {
     ])?.unresolvedCount,
     1,
   );
+});
+
+test('round budget shows spent rounds independently of passing-review counts', () => {
+  assert.equal(reviewRoundBudget(4).label, 'Review rounds 4/5');
+  assert.equal(reviewRoundBudget(4).remaining, 1);
+  assert.equal(reviewRoundBudget(5).remaining, 0);
+  assert.match(reviewRoundBudget(5).diagnosis!, /design problem or scope creep/);
+  assert.equal(reviewRoundBudget(8).label, 'Review rounds 8/5');
 });

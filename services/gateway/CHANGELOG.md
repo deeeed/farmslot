@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Enforce five review rounds per PR, including retries and publication requests, with durable admission before launch and a design or scope refusal at the limit.
+
 - Publish the exact selected review findings and report, preserving accepted choices across refresh races.
 
 - Declare mid-turn prompt support and verify complete Enter-submitted queue messages for guarded lane steering.
@@ -52,6 +54,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Publish packages match curated evidence and omissions by full path, so excluding an older screenshot cannot remove a newer same-named capture or select unrelated media.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+- Allow managed runner resumes to suppress startup update checks.
 
 ## 0.21.0 - 2026-10-10
 
