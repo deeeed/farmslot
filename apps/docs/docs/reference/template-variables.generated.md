@@ -36,6 +36,6 @@ Headings=phases; checkboxes=steps; pre-heading checkboxes=Checklist phase; skip 
 ## Secondary in-run templates (double-brace VAR)
 
 - **ci-fix.md:** `CI_ISSUES, CI_ISSUE_TYPE + worker/hook vars`
-- **review-fix.md:** `ISSUES + worker/hook vars`
-- **review.static-code.md:** `VALIDATION_DEPTH + worker/hook vars`
+- **review-fix.md:** `ISSUES, REVIEW_FEEDBACK_FILES + worker/hook vars` (REVIEW_FEEDBACK_FILES is a Markdown list of matching completed reviewer lane feedback paths under TASK_DIR; legacy runs use their retained single feedback path.)
+- **review templates, all depths and transports:** `REVIEW_CHECKLIST, REVIEW_SIGNAL, REVIEW_FEEDBACK, VALIDATION_DEPTH + worker/hook vars` (Checklist/signal filenames and feedback path are relative to TASK_DIR and bound to the allocated reviewer context. Use them in explicit mark --checklist/--signal commands. Configured catalog and local templates use the same renderer; original template bytes remain the provenance source. Legacy REVIEW/SELF-REVIEW checklist and signal names are scoped to that lane.)
 - **worker-dispatch nudge:** `TASK_FILE, TASK_DIR`

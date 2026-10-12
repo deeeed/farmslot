@@ -18,7 +18,7 @@ test('configured review depth selects canonical bytes and records provenance wit
   const contents = Object.fromEntries(
     ['static-code', 'full-live'].map((depth) => [
       depth,
-      `---\nplatforms: [cli]\nlabels: [review-depth:${depth}]\n---\n\n# ${depth}\n\n- [ ] Follow the shared ${depth} review.\n`,
+      `---\nplatforms: [cli]\nlabels: [review-depth:${depth}]\n---\n\n# ${depth}\n\n- [ ] Follow the shared ${depth} review.\n\nChecklist={{REVIEW_CHECKLIST}} signal={{REVIEW_SIGNAL}} feedback={{TASK_DIR}}/{{REVIEW_FEEDBACK}}\n`,
     ]),
   );
   for (const [depth, content] of Object.entries(contents))
@@ -67,17 +67,29 @@ test('configured review depth selects canonical bytes and records provenance wit
     resourceVars: {},
   } as never;
   for (const depth of ['static-code', 'full-live'] as const) {
-    const rendered = await expandReviewTemplate(vars, 'temp/tasks/review', run.id, depth);
-    assert(rendered.startsWith(contents[depth]));
+    const lane = {
+      checklist: 'REVIEW.rev-test.md',
+      signal: 'REVIEW.rev-test-SIGNAL.json',
+      feedback: 'artifacts/review-feedback.rev-test.md',
+    };
+    const rendered = await expandReviewTemplate(vars, 'temp/tasks/review', run.id, depth, lane);
+    assert.match(
+      rendered,
+      /Checklist=REVIEW.rev-test.md signal=REVIEW.rev-test-SIGNAL.json feedback=temp\/tasks\/review\/artifacts\/review-feedback.rev-test.md/,
+    );
+    assert.doesNotMatch(rendered, /\{\{[^}]+\}\}/);
     assert(rendered.includes(createHash('sha256').update(contents[depth]).digest('hex')));
     assert(rendered.includes('workspace:canonical'));
-    assert(rendered.includes('REVIEW-SIGNAL.json'));
+    assert(rendered.includes('REVIEW.rev-test-SIGNAL.json'));
     const bindings = JSON.parse(rendered.split('```json\n')[1].split('\n```')[0]);
     const saved = JSON.parse(
       await readFile(path.join(taskRoot, bindings.retainedProvenanceArtifact), 'utf8'),
     );
     assert.deepEqual(saved.executionTemplate, bindings.executionTemplate);
-    assert.equal(await expandReviewTemplate(vars, 'temp/tasks/review', run.id, depth), rendered);
+    assert.equal(
+      await expandReviewTemplate(vars, 'temp/tasks/review', run.id, depth, lane),
+      rendered,
+    );
   }
   config.review.execution_templates['full-live'] = 'review/static-code';
   await save();

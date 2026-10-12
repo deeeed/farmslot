@@ -2,12 +2,10 @@
 // Spawns a second runner session in a new tmux window on the same slot.
 // The review agent has full codebase access — can read files, run tsc, execute recipe.
 // Writes review-feedback.md; if issues found, feeds back to worker for a fix pass.
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
   type AgentContext,
-  DEFAULT_BRANCH,
   isTerminalRunStatus,
   PipelineSteps,
   primaryRoleForFlow,
@@ -32,18 +30,8 @@ import {
   selectAgentContext,
   upsertAgentContext,
 } from '../agents/contexts.js';
-import {
-  getProjectField,
-  loadProjectVars,
-  loadSlotVars,
-  resolveProjectRuntimeDir,
-} from '../core/config.js';
+import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
-import {
-  assertNoUnknownPlaceholders,
-  expandTemplateWithReservedLast,
-  knownTemplatePlaceholders,
-} from '../core/hooks.js';
 import { onSlotReset } from '../core/state.js';
 import {
   resolveExactTmuxWindowPane,
@@ -120,7 +108,7 @@ import {
   removeSlotFiles,
   reviewAttemptFromResult,
 } from './snapshots.js';
-import { getReviewConfig, resolveWorkerTaskDir } from './templates.js';
+import { expandReviewFixTemplate, getReviewConfig, resolveWorkerTaskDir } from './templates.js';
 import {
   ensureTmuxTargetReadyForRelaunch,
   isWorkerAlive,
@@ -2163,55 +2151,8 @@ async function sendOwnedFeedbackToWorker(
   const project = run?.project;
   if (!project) throw new Error(`Cannot send review feedback without a project for run ${runId}`);
 
-  // Format issues as bullet list for template insertion
-  const issueLines = issues
-    .map((i) => {
-      const loc = i.line ? `${i.file}:${i.line}` : i.file;
-      return `- **${loc}** — ${i.description}`;
-    })
-    .join('\n');
-
-  // Read and expand the review-fix template
-  let template: string;
-  try {
-    const { farmslotRoot } = await import('../fleet/state.js');
-    const templatePath = path.join(
-      farmslotRoot,
-      'projects',
-      project,
-      'templates',
-      'worker',
-      'review-fix.md',
-    );
-    template = await readFile(templatePath, 'utf-8');
-  } catch (err) {
-    throw new Error(
-      `Review fix template not found for project ${project}: ${(err as Error).message}`,
-    );
-  }
-
   const runtimeDir = await resolveProjectRuntimeDir(project);
-  const pv = await loadProjectVars(project);
-
-  const replacements: Record<string, string> = {
-    CI_PARITY_CHECKLIST: REVIEW_FIX_CHECKLIST_TARGET.checklist,
-    TASK_DIR: taskDir,
-    REPO: vars.remoteRepo,
-    TICKET: run?.ticketOrPr ?? '',
-    ISSUES: issueLines,
-    RUNTIME_DIR: runtimeDir,
-    DEFAULT_BRANCH: getProjectField(pv.projectJson, 'default_branch') || DEFAULT_BRANCH,
-  };
-
-  assertNoUnknownPlaceholders(
-    template,
-    [...Object.keys(replacements), ...knownTemplatePlaceholders(vars, pv)],
-    `Review fix template for ${project}`,
-  );
-  // Hooks pass covers {{farmslot_dir}}, {{SLOT_ID}}, {{recipe_*}} beyond the
-  // explicit set; explicit values land last so reviewer-authored ISSUES text
-  // is never re-expanded and a colliding var cannot consume the placeholder.
-  const expanded = expandTemplateWithReservedLast(template, vars, pv, replacements);
+  const expanded = await expandReviewFixTemplate(vars, taskDir, run, issues);
 
   // Clear any stale fix-pass signal before sending new feedback.
   const fixSignalPath = slotTaskRelPath(vars, taskDir, REVIEW_FIX_CHECKLIST_TARGET.signal);
