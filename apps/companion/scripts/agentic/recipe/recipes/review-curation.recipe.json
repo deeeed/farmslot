@@ -64,7 +64,7 @@
         "action": "ui.press",
         "intent": "Read the finding from the exact reviewed SHA.",
         "test_id": "companion-review-inspect-0",
-        "next": "reviewed-value"
+        "next": "bridge-ready-hud-reviewed-source"
       },
       "reviewed-value": {
         "action": "ui.wait_for",
@@ -81,13 +81,13 @@
         "text": "MUTABLE CHECKOUT VALUE",
         "expected": "absent",
         "timeout_ms": 1000,
-        "next": "bridge-ready-hud-reviewed-source"
+        "next": "still-reviewed-source"
       },
       "hud-reviewed-source": {
         "action": "app.hud",
         "intent": "Inspect the finding beside its numbered reviewed source.",
         "status": "running",
-        "next": "still-reviewed-source"
+        "next": "reviewed-value"
       },
       "still-reviewed-source": {
         "action": "ui.screenshot",
@@ -181,7 +181,7 @@
         "intent": "Verify exact outgoing workspace findings in the local sink.",
         "cmd": "node scripts/agentic/review-curation-proof.mjs verify-workspace",
         "timeout_ms": 120000,
-        "next": "assert-workspace"
+        "next": "bridge-ready-hud-assert-workspace"
       },
       "open-slot": {
         "action": "command",
@@ -262,7 +262,7 @@
         "intent": "Verify exact outgoing slot findings in the local sink.",
         "cmd": "node scripts/agentic/review-curation-proof.mjs verify-slot",
         "timeout_ms": 120000,
-        "next": "assert-slot"
+        "next": "bridge-ready-hud-assert-slot"
       },
       "open-empty": {
         "action": "command",
@@ -343,7 +343,7 @@
         "intent": "Verify exact outgoing empty findings in the local sink.",
         "cmd": "node scripts/agentic/review-curation-proof.mjs verify-empty",
         "timeout_ms": 120000,
-        "next": "assert-empty"
+        "next": "bridge-ready-hud-assert-empty"
       },
       "no-error": {
         "action": "ui.wait_for",
@@ -409,7 +409,7 @@
       "scroll-post-empty": {
         "action": "ui.scroll",
         "direction": "down",
-        "pixels": 1200,
+        "pixels": 1800,
         "intent": "The publication choice preserves an empty finding selection.",
         "next": "post-empty"
       },
@@ -661,6 +661,45 @@
         "proves": ["finding-context"],
         "intent": "Observed empty publication matches the accepted finding selection.",
         "next": "no-error"
+      },
+      "bridge-ready-hud-assert-workspace": {
+        "action": "command",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs bridge-ready",
+        "timeout_ms": 70000,
+        "intent": "The active mobile client can render this step in its HUD.",
+        "next": "hud-assert-workspace"
+      },
+      "hud-assert-workspace": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Observed workspace publication matches the accepted finding selection.",
+        "next": "assert-workspace"
+      },
+      "bridge-ready-hud-assert-slot": {
+        "action": "command",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs bridge-ready",
+        "timeout_ms": 70000,
+        "intent": "The active mobile client can render this step in its HUD.",
+        "next": "hud-assert-slot"
+      },
+      "hud-assert-slot": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Observed slot publication matches the accepted finding selection.",
+        "next": "assert-slot"
+      },
+      "bridge-ready-hud-assert-empty": {
+        "action": "command",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs bridge-ready",
+        "timeout_ms": 70000,
+        "intent": "The active mobile client can render this step in its HUD.",
+        "next": "hud-assert-empty"
+      },
+      "hud-assert-empty": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Observed empty publication matches the accepted finding selection.",
+        "next": "assert-empty"
       }
     }
   }
