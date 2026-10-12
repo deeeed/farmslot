@@ -196,6 +196,7 @@ export class RoadmapPanel extends LitElement {
    * filter/search change that was already in flight.
    */
   private _listGeneration = 0;
+  private _selectionGeneration = 0;
   private _deliveryReloadInFlight = false;
   private _deliveryReloadQueued = false;
   /**
@@ -1253,6 +1254,7 @@ export class RoadmapPanel extends LitElement {
     // generation orders summary writes against `_reloadDelivery`, which carries fresher
     // summaries but no items — so it may win the summaries without discarding the list.
     const listGeneration = ++this._listGeneration;
+    const selectionGeneration = this._selectionGeneration;
     const deliveryGeneration = ++this._deliveryGeneration;
     try {
       const result = await gateway.request<RoadmapListResult>(Methods.ROADMAP_LIST, {
@@ -1276,7 +1278,7 @@ export class RoadmapPanel extends LitElement {
       const visibleItems = this._items;
       const selected = this._resolveSelectedItem(
         visibleItems,
-        this._selectionDismissed ? this._selectedId : selectId,
+        selectionGeneration === this._selectionGeneration ? selectId : this._selectedId,
       );
       this._syncEditor(selected);
       this._writeUrlState();
@@ -1684,6 +1686,7 @@ export class RoadmapPanel extends LitElement {
   }
 
   private _selectItem(item: RoadmapItem, mode: RoadmapEditorMode = 'view') {
+    this._selectionGeneration++;
     this._selectionDismissed = false;
     this._syncEditor(item);
     this._editorMode = mode;
@@ -1697,6 +1700,7 @@ export class RoadmapPanel extends LitElement {
 
   private _deselectItem() {
     const id = this._selectedId;
+    this._selectionGeneration++;
     this._selectionDismissed = true;
     this._syncEditor(null);
     this._writeUrlState();
