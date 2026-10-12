@@ -1412,10 +1412,14 @@ test('runCreate defaults omitted dev mode to autonomous when interactive templat
 test('runCreate permits explicit fresh replacement for a non-PR flow', async (t) => {
   const previousNodeTestContext = process.env.NODE_TEST_CONTEXT;
   const previousDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+  const previousDemoPool = process.env.FARMSLOT_DEMO_POOL;
+  process.env.FARMSLOT_DEMO_POOL = '1';
   process.env.NODE_TEST_CONTEXT = '1';
   process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
   let runId = '';
   t.after(async () => {
+    if (previousDemoPool === undefined) delete process.env.FARMSLOT_DEMO_POOL;
+    else process.env.FARMSLOT_DEMO_POOL = previousDemoPool;
     if (previousNodeTestContext === undefined) delete process.env.NODE_TEST_CONTEXT;
     else process.env.NODE_TEST_CONTEXT = previousNodeTestContext;
     if (previousDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
@@ -1431,7 +1435,7 @@ test('runCreate permits explicit fresh replacement for a non-PR flow', async (t)
       flowType: 'fix-bug',
       project: 'farmslot-farm',
       ticketOrPr: `TAT-${Date.now()}`,
-      slotId: 'replaceable-warm-slot',
+      slotId: 'demo-ff-1',
       freshReuse: true,
     },
     () => {},
@@ -1441,13 +1445,17 @@ test('runCreate permits explicit fresh replacement for a non-PR flow', async (t)
   assert.equal(result.run.engineState?.flags?.freshReuse, true);
 });
 
-test('runCreate persists implicit dev-interactive template selection for interactive dev', async (t) => {
+test('runCreate persists the configured dev-interactive template for interactive dev', async (t) => {
   const previousNodeTestContext = process.env.NODE_TEST_CONTEXT;
   const previousDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+  const previousDemoPool = process.env.FARMSLOT_DEMO_POOL;
+  process.env.FARMSLOT_DEMO_POOL = '1';
   process.env.NODE_TEST_CONTEXT = '1';
   process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
   const created: string[] = [];
   t.after(async () => {
+    if (previousDemoPool === undefined) delete process.env.FARMSLOT_DEMO_POOL;
+    else process.env.FARMSLOT_DEMO_POOL = previousDemoPool;
     if (previousNodeTestContext === undefined) delete process.env.NODE_TEST_CONTEXT;
     else process.env.NODE_TEST_CONTEXT = previousNodeTestContext;
     if (previousDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
@@ -1464,6 +1472,7 @@ test('runCreate persists implicit dev-interactive template selection for interac
     {
       flowType: 'dev',
       mode: 'interactive',
+      slotId: 'demo-ff-1',
       project: 'farmslot-farm',
       ticketOrPr: `interactive dev spike ${Date.now()}`,
     },
@@ -1471,10 +1480,8 @@ test('runCreate persists implicit dev-interactive template selection for interac
   );
   created.push(result.run.id);
 
-  assert.deepEqual(result.run.taskTemplate, {
-    fileName: 'dev-interactive.md',
-    variant: 'interactive',
-  });
+  assert.equal(result.run.executionTemplate?.id, 'dev/interactive');
+  assert.equal(result.run.taskTemplate, undefined);
 });
 
 test('runCreate persists implicit pr-complete-interactive template and branch-based lineage', async (t) => {

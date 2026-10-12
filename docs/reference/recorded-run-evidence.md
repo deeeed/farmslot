@@ -301,3 +301,14 @@ Report review reuses `OutputReviewPayload` and `RunOutput` identity.
 The existing document viewers render that checked text and the same case/check
 controls used at the gate. Publication, visual-judgment persistence and resource
 qualification remain separate completion gates for this feature.
+
+## Shared review curation and saved results
+
+[ADR-062 Amendment 2](../adr/062-recorded-run-evidence.md#amendment-2-2026-10-12-shared-review-curation-and-saved-results)
+owns the delivered finding-publication and retained-review presentation contract.
+Its normative [review curation specification](review-curation-and-results.md)
+defines reviewed-source reads, payload fingerprints, immutable accepted payloads,
+selected finding publication and read-only saved results. Existing protocol
+projections and native viewers are shared. This contract retains its own accepted
+status and shipping PRs; it does not accept or implement the Proposed
+completed-evidence/storage proposal in [#967](https://github.com/deeeed/farmslot/pull/967).

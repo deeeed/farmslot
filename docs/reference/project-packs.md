@@ -57,6 +57,14 @@ Note: a project.json `$schema` like `../../schemas/project.schema.json`
 resolves once the dir is registered into the farmslot clone, not in the pack
 source — editor validation works after `project add`.
 
+Every project must declare a `qa` flow using the existing farm-owned preset
+contract: `qa.default_profile` must name one of the nonempty `qa.profiles`, and
+each profile selects a QA checklist with `template_id`. The same pack validator
+checks this declaration before `project add` registers anything and before the
+gateway syncs node support. Missing or invalid QA reports the project's
+`project.json` and a configuration hint. QA presets and their selected templates
+remain separate from prepare profiles and runner/model defaults.
+
 ## Hooks
 
 All hooks run with cwd = the pack directory and env:
