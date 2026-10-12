@@ -156,6 +156,7 @@ if (process.argv[2] === 'serve') {
     return settleReplay();
   };
   const barrier = 'QA_OUTPUT_GATE_PROOF_PASSED';
+  let proofFailure: unknown;
   try {
     mkdirSync(out, { recursive: true });
     execFileSync('git', ['clone', '--quiet', '--shared', '--sparse', source, root]);
@@ -289,7 +290,7 @@ if (process.argv[2] === 'serve') {
         const text = String(result.source);
         const target = "if (current.flowType === 'qa') await assertQaCompletion(current);";
         if (!text.includes(target)) throw new Error('Completion proof barrier target changed');
-        return {...result, source: text.replace(target, target + " throw new Error('${barrier}');")};
+        return {...result, source: text.replace(target, target + " throw new (await import('../core/method-error.js')).GatewayMethodError('RUN_GATE_NOT_READY','${barrier}');")};
       }
       if (url.endsWith('/run-engine/gate-prerequisites.ts')) {
         const text = String(result.source);
@@ -475,6 +476,12 @@ if (process.argv[2] === 'serve') {
       ],
     });
     process.stdout.write(JSON.stringify({ pass: true, out }) + '\n');
+  } catch (error) {
+    proofFailure = error;
+    json(path.join(out, 'failure.json'), {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
   } finally {
     const failures: unknown[] = [];
     const bounded = async (operation: Promise<unknown>, label: string) => {
@@ -554,6 +561,10 @@ if (process.argv[2] === 'serve') {
     }
     process.removeListener('SIGINT', interrupt);
     process.removeListener('SIGTERM', interrupt);
-    if (failures.length) throw new AggregateError(failures, 'QA output proof cleanup failed');
+    if (failures.length)
+      throw new AggregateError(
+        proofFailure ? [proofFailure, ...failures] : failures,
+        'QA output proof cleanup failed',
+      );
   }
 }
