@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
-import type { ReviewStatus, RunDecision } from '@farmslot/protocol';
+import { readRecordedEvidencePackage } from '@farmslot/adapter-sdk';
+import { validateRecordedEvidencePackage } from '@farmslot/adapter-sdk/evidence';
+import {
+  digestRecipeDocument,
+  type RecipeClaimLedger,
+  type ReviewStatus,
+  type RunDecision,
+} from '@farmslot/protocol';
 
 await import('../runtime/mock-pty.test-support.js');
 const { collectRunGateReadiness, gateActionsForReadiness, refreshRunGateReadiness } =
@@ -9,6 +20,7 @@ const { collectRunGateReadiness, gateActionsForReadiness, refreshRunGateReadines
 const { makeRun, makeReadyGatePackage, deleteTestRunIfPresent } =
   await import('./test-fixtures.js');
 const { createRun, getRun, updateRun } = await import('../runs/store.js');
+const { computeReadyGatePackageHash } = await import('../run-completion/ready-gate-package.js');
 
 const idle = async () => ({ kind: 'idle' as const });
 const emptyAcceptance = async () => ({ criteria: [], ledger: null, issues: [] });
@@ -262,7 +274,7 @@ test('the owner input is validated canonically and unreadable closure stays a ty
   };
   const invalid = await collectRunGateReadiness(makeRun(), null, {
     ...sources,
-    recordedEvidence: async () => ({ summary: null, artifactDigests: {}, timelines: {} }),
+    recordedEvidence: async () => [{ summary: null, artifactDigests: {}, timelines: {} }],
   });
   assert.ok(invalid.reasons.some((reason) => reason.code === 'evidence-invalid'));
   const unavailable = await collectRunGateReadiness(makeRun(), null, {
@@ -273,5 +285,195 @@ test('the owner input is validated canonically and unreadable closure stays a ty
   });
   assert.ok(
     unavailable.reasons.some((reason) => reason.code === 'evidence-validation-unavailable'),
+  );
+});
+
+test('the shared reader accepts a frozen required claim and refuses changed or unreadable inputs', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'gate-evidence-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const directory = path.join(root, 'artifacts/proof');
+  await mkdir(directory, { recursive: true });
+  const declaration = { id: 'AC-1', claim: 'The counter is one.', proofMode: 'state' as const };
+  const recipe = {
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    title: 'Counter proof',
+    description: 'Observe the counter and verify its value.',
+    proofTargets: [declaration],
+    workflow: {
+      entry: 'read',
+      nodes: {
+        read: { action: 'state_read', intent: 'Read counter', next: 'assert' },
+        assert: {
+          action: 'assert_output',
+          source: 'read',
+          assert: { path: '$.count', operator: 'eq', value: 1 },
+          proves: ['AC-1'],
+          intent: 'Verify counter',
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
+      },
+    },
+  };
+  const invocation = {
+    version: 1,
+    recipeDigest: digestRecipeDocument(recipe),
+    recipeRunId: 'counter-proof',
+    startedAt: '2026-10-12T00:00:00Z',
+    params: {},
+    redactedPaths: [],
+  };
+  const claims: RecipeClaimLedger = {
+    schemaVersion: 2,
+    recipeRunId: invocation.recipeRunId,
+    criteria: [
+      {
+        id: declaration.id,
+        text: declaration.claim,
+        kind: 'acceptance',
+        proofMode: 'state',
+        verdict: 'proven',
+        recipeNodes: ['assert'],
+        assertionIndices: [1],
+        moments: [],
+        evidence: [],
+      },
+    ],
+    recording: { status: 'not-required', segments: [] },
+  };
+  const documents = {
+    'recipe.json': recipe,
+    'recipe-invocation.json': invocation,
+    'acceptance-status.json': claims,
+    'recipe-resolution.json': {
+      schema_version: 1,
+      root: { ref: '$root', digest: digestRecipeDocument(recipe) },
+      dependencies: [],
+      edges: [],
+    },
+    'trace.json': {
+      entries: [
+        {
+          nodeId: 'read',
+          action: 'state_read',
+          intent: 'Read counter',
+          ok: true,
+          output: { count: 1 },
+        },
+        {
+          nodeId: 'assert',
+          action: 'assert_output',
+          intent: 'Verify counter',
+          ok: true,
+          output: { matched: true },
+        },
+        { nodeId: 'done', action: 'end', ok: true, status: 'pass' },
+      ].map((entry) => ({
+        ...entry,
+        startedAt: invocation.startedAt,
+        endedAt: invocation.startedAt,
+        durationMs: 0,
+      })),
+    },
+    'summary.json': {
+      recipeRunId: invocation.recipeRunId,
+      status: 'pass',
+      total: 3,
+      passed: 3,
+      failed: 0,
+      cause_counts: { subject: 0, harness: 0, environment: 0, unknown: 0 },
+      invocationDigest: digestRecipeDocument(invocation),
+    },
+    'artifact-manifest.json': {
+      version: 1,
+      runStatus: 'pass',
+      artifacts: [
+        { path: 'recipe.json', type: 'recipe' },
+        { path: 'trace.json', type: 'trace' },
+        { path: 'summary.json', type: 'summary' },
+        { path: 'acceptance-status.json', type: 'json' },
+      ],
+    },
+  };
+  const evidenceManifest = [];
+  for (const [file, document] of Object.entries(documents)) {
+    const bytes = JSON.stringify(document);
+    await writeFile(path.join(directory, file), bytes);
+    evidenceManifest.push({
+      path: `artifacts/proof/${file}`,
+      purpose: 'json',
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    });
+  }
+  const prepared: ReturnType<typeof makeReadyGatePackage> = JSON.parse(
+    JSON.stringify(
+      makeReadyGatePackage({
+        evidenceManifest,
+        selectedEvidenceKeys: [],
+        reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+      }),
+    ),
+  );
+  prepared.packageHash = computeReadyGatePackageHash(prepared);
+  const run = makeRun({ taskFile: path.join(root, 'TASK.md') });
+  const sources = {
+    deterministic: passed,
+    progress: idle,
+    selectedEvidence: passed,
+    acceptance: async () => ({
+      criteria: [{ id: declaration.id, text: declaration.claim }],
+      ledger: claims,
+      issues: [],
+    }),
+  };
+  const check = () => collectRunGateReadiness(run, prepared, sources);
+  const owner = validateRecordedEvidencePackage(
+    (await readRecordedEvidencePackage(directory)).input,
+  );
+  assert.equal(owner.status, 'valid', JSON.stringify(owner.findings));
+  const valid = await check();
+  assert.equal(valid.state, 'ready', JSON.stringify(valid.reasons));
+  await writeFile(path.join(root, prepared.artifactPath), JSON.stringify(prepared));
+  const recoveredRun = {
+    ...run,
+    engineState: { publishGate: { packageId: prepared.id, packageHash: prepared.packageHash } },
+  };
+  const recovered = await collectRunGateReadiness(recoveredRun, null, sources);
+  assert.equal(recovered.state, 'ready', JSON.stringify(recovered.reasons));
+  assert.equal(recovered.identity.packageHash, prepared.packageHash);
+  const stale = await collectRunGateReadiness(
+    {
+      ...recoveredRun,
+      engineState: { publishGate: { packageId: prepared.id, packageHash: 'substituted-package' } },
+    },
+    null,
+    sources,
+  );
+  assert.equal(stale.state, 'not-ready');
+  assert.ok(stale.reasons.some((reason) => reason.message.includes('gate identity')));
+
+  const foreign = await collectRunGateReadiness(run, prepared, {
+    ...sources,
+    acceptance: async () => ({
+      criteria: [{ id: declaration.id, text: 'A different task requirement' }],
+      ledger: claims,
+      issues: [],
+    }),
+  });
+  assert.ok(foreign.reasons.some((reason) => reason.code === 'evidence-invalid'));
+  await writeFile(
+    path.join(directory, 'recipe-invocation.json'),
+    JSON.stringify({ ...invocation, params: { substituted: true } }),
+  );
+  assert.ok(
+    (await check()).reasons.some((reason) => reason.message.includes('missing or changed')),
+  );
+  await writeFile(path.join(directory, 'recipe-invocation.json'), '{');
+  const unreadable = await check();
+  assert.ok(unreadable.reasons.some((reason) => reason.code === 'evidence-validation-unavailable'));
+  assert.ok(unreadable.reasons.some((reason) => reason.message.includes('recipe-invocation.json')));
+  const unavailable = await collectRunGateReadiness(run, null, sources);
+  assert.ok(
+    unavailable.reasons.some((reason) => reason.message.includes('prepared evidence package')),
   );
 });

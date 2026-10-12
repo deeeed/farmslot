@@ -1,18 +1,28 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
-  "title": "Run gate refuses incomplete prerequisites",
-  "description": "A disposable production gateway reads a current incomplete task despite a complete retained display copy. Direct RPC approval remains pending and the browser renders gateway reasons. Worker-turn and recorded-evidence positive controls remain separate acceptance requirements.",
+  "title": "Run gate prerequisites and truthful recovery",
+  "description": "Production gateway checks current task authority, required frozen evidence, a real accepted native fix turn and gate restart resumption. Stopped-native recovery uses the existing authority proof.",
   "workflow": {
     "entry": "gateway",
     "nodes": {
       "gateway": {
         "action": "command",
-        "cmd": "node --import tsx scripts/runner-validation/gateway/run-gate-prerequisites.mts --ui",
-        "timeout_ms": 120000,
-        "intent": "Gateway refuses incomplete task prerequisites and clients show the reasons.",
-        "next": "done"
+        "cmd": "node --import tsx scripts/runner-validation/gateway/run-gate-prerequisites.mts --ui --required-evidence",
+        "timeout_ms": 300000,
+        "intent": "Prove prerequisite refusal, real fix progress, required-evidence readiness and gateway-restart resumption.",
+        "next": "native-recovery"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "native-recovery": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/runner-validation/gateway/native-run-coherence.mjs",
+        "timeout_ms": 300000,
+        "intent": "Prove stopped failed native worker recovery through the existing gateway/native authority.",
+        "next": "done"
+      }
     }
   }
 }

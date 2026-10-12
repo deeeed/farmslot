@@ -14,7 +14,7 @@ import { nativeFixTurnIsActive } from '../review/native-fix.js';
 import { runnerTurnLeaseIsActive } from '../review/worker-lifecycle.js';
 
 import { readReviewWorkspaceWorker } from './native/review-workspace.js';
-import { readNativeWorkerSnapshot } from './native/worker-control.js';
+import { nativeWorkerLiveStatus, readNativeWorkerSnapshot } from './native/worker-control.js';
 import { classifyMonitorProgress, type MonitorProgressKind } from './observability-progress.js';
 import type { ObservabilityReading } from './observability-types.js';
 import { readRunnerActivityFromObservability, readRunnerTurnState } from './registry.js';
@@ -114,8 +114,7 @@ async function observeContext(
       kind:
         state === 'running'
           ? 'making-progress'
-          : state === 'idle' ||
-              (['closed', 'failed'].includes(state) && snapshot.session.processStopped)
+          : state === 'idle' || nativeWorkerLiveStatus(snapshot) === 'idle'
             ? 'idle'
             : state === 'waiting'
               ? 'awaiting-input'

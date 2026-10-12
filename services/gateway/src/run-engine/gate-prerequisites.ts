@@ -1,7 +1,9 @@
+import { realpath } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
+import { readRecordedEvidencePackage } from '@farmslot/adapter-sdk';
 import {
   type RecordedEvidencePackageInput,
   validateRecordedEvidencePackage,
@@ -26,7 +28,12 @@ import { GatewayMethodError } from '../core/method-error.js';
 import { shellQuote } from '../core/tmux.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
 import { readReviewWorkspaceCompletion } from '../review-workspaces/task.js';
-import { verifyReadyGateSelectedEvidenceFiles } from '../run-completion/ready-gate-package.js';
+import {
+  readReadyGatePreparedPackage,
+  resolveSelectedEvidenceRef,
+  verifyReadyGatePackageHash,
+  verifyReadyGateSelectedEvidenceFiles,
+} from '../run-completion/ready-gate-package.js';
 import {
   readRunProgress,
   runDecisionWaitingStatus,
@@ -64,11 +71,11 @@ export interface GatePrerequisiteReaders {
   deterministic(run: Run): Promise<unknown>;
   acceptance(run: Run): Promise<GateAcceptanceRead>;
   progress(run: Run): Promise<RunProgressObservation>;
-  /** The ADR-062 producer supplies its canonical validation result. */
+  /** Retained ADR-062 inputs, bound to the existing gate package inventory. */
   recordedEvidence?: (
     run: Run,
     preparedPackage: ReadyGatePrPackage | null,
-  ) => Promise<RecordedEvidencePackageInput>;
+  ) => Promise<RecordedEvidencePackageInput[]>;
   reviewResult(run: Run, relativePath: string): Promise<string | undefined>;
   selectedEvidence(run: Run, preparedPackage: ReadyGatePrPackage): Promise<void>;
   reviewDocument(run: Run): Promise<boolean>;
@@ -163,10 +170,57 @@ export async function readGateAcceptance(
   }
 }
 
+/** The existing package inventory selects and binds the closure; no latest-path fallback. */
+async function readGateRecordedEvidence(
+  run: Run,
+  preparedPackage: ReadyGatePrPackage | null,
+): Promise<RecordedEvidencePackageInput[]> {
+  if (!run.taskFile || !preparedPackage)
+    throw new Error('A prepared evidence package is required. Refresh the gate package.');
+  verifyReadyGatePackageHash(preparedPackage);
+  const taskDir = await realpath(path.dirname(run.taskFile));
+  const inventory = new Map(
+    (preparedPackage.evidenceManifest ?? []).map((artifact) => [artifact.path, artifact.sha256]),
+  );
+  const roots = [...inventory.keys()]
+    .filter((file) => path.posix.basename(file) === 'summary.json')
+    .map((file) => path.posix.dirname(file));
+  if (!roots.length) throw new Error('The gate package has no retained recipe evidence closure.');
+  for (const key of preparedPackage.selectedEvidenceKeys ?? []) {
+    const selected = resolveSelectedEvidenceRef(key, preparedPackage.evidenceManifest ?? []);
+    if (!selected || !roots.some((root) => selected.path.startsWith(`${root}/`)))
+      throw new Error(`Selected evidence has no retained recipe closure: ${key}`);
+  }
+
+  const inputs: RecordedEvidencePackageInput[] = [];
+  for (const root of roots) {
+    const directory = await realpath(path.resolve(taskDir, root));
+    const relative = path.relative(taskDir, directory);
+    if (relative.startsWith('..') || path.isAbsolute(relative))
+      throw new Error('The retained evidence closure escapes the task directory.');
+    const result = await readRecordedEvidencePackage(directory);
+    const failed = result.checks.filter((check) => check.status === 'fail');
+    if (failed.length) throw new Error(failed.map((check) => check.message).join(' '));
+    // Every file the owner reader consumed must match the inventory frozen at
+    // preparation. A changed invocation, trace or judgment needs a package refresh.
+    for (const file of result.input.artifactPaths ?? []) {
+      const expected = inventory.get(path.posix.join(root, file));
+      const actual = result.input.artifactDigests[file];
+      if (!expected || expected.replace(/^sha256:/u, '') !== actual?.replace(/^sha256:/u, ''))
+        throw new Error(
+          `Evidence closure is missing or changed in the gate package: ${root}/${file}`,
+        );
+    }
+    inputs.push(result.input);
+  }
+  return inputs;
+}
+
 const readers: GatePrerequisiteReaders = {
   deterministic: validateDeterministicChecksForRun,
   acceptance: readGateAcceptance,
   progress: readRunProgress,
+  recordedEvidence: readGateRecordedEvidence,
   reviewDocument: async (run) => {
     if (run.reviewWorkspace)
       return Boolean(
@@ -218,6 +272,25 @@ export async function collectRunGateReadiness(
   const generation = run.engineState?.generation ?? 0;
   const source = { ...readers, ...overrides };
   const reasons: RunGatePrerequisiteReason[] = [];
+  const retainedPackageHash = run.engineState?.publishGate?.packageHash;
+  if (!preparedPackage && retainedPackageHash) {
+    try {
+      const retained = await readReadyGatePreparedPackage(run);
+      if (
+        retained?.id !== run.engineState?.publishGate?.packageId ||
+        retained?.packageHash !== retainedPackageHash
+      )
+        throw new Error('The retained package differs from the current gate identity.');
+      preparedPackage = retained;
+    } catch (error) {
+      reasons.push({
+        code: 'evidence-validation-unavailable',
+        prerequisite: 'evidence',
+        actionId: 'hold',
+        message: `The retained gate package could not be read: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
+  }
   if (run.flowType === 'review-pr') {
     let valid = false;
     try {
@@ -273,21 +346,50 @@ export async function collectRunGateReadiness(
       });
     } else {
       try {
-        const input = await source.recordedEvidence(run, preparedPackage);
-        const result = validateRecordedEvidencePackage(input);
-        if (result.status !== 'valid')
+        const inputs = await source.recordedEvidence(run, preparedPackage);
+        const valid =
+          inputs.length > 0 &&
+          inputs.every((input) => validateRecordedEvidencePackage(input).status === 'valid');
+        const satisfied = inputs.every(
+          (input) =>
+            input.claims &&
+            ['complete', 'not-required'].includes(input.claims.recording.status) &&
+            input.claims.criteria.every(
+              (claim) =>
+                claim.verdict === 'proven' ||
+                acceptance.criteria.some(
+                  (criterion) =>
+                    criterion.id === claim.id &&
+                    acceptance.ledger?.criteria.find((row) => row.id === criterion.id)?.verdict ===
+                      claim.verdict &&
+                    acceptance.issues.length === 0,
+                ),
+            ),
+        );
+        const bound = acceptance.criteria.every((criterion) =>
+          inputs.some((input) =>
+            input.claims?.criteria.some(
+              (claim) =>
+                claim.id === criterion.id &&
+                claim.text.trim() === criterion.text.trim() &&
+                claim.verdict ===
+                  acceptance.ledger?.criteria.find((row) => row.id === criterion.id)?.verdict,
+            ),
+          ),
+        );
+        if (!valid || !satisfied || !bound)
           reasons.push({
             code: 'evidence-invalid',
             prerequisite: 'evidence',
             message: 'Required claim evidence is incomplete or invalid.',
             actionId: 'hold',
           });
-      } catch {
+      } catch (error) {
         // An unreadable frozen closure remains an explicit refusal.
         reasons.push({
           code: 'evidence-validation-unavailable',
           prerequisite: 'evidence',
-          message: 'The selected frozen evidence package could not be read or validated.',
+          message: `The selected frozen evidence package could not be read or validated: ${error instanceof Error ? error.message : String(error)}`,
           actionId: 'hold',
         });
       }
@@ -345,7 +447,8 @@ export async function collectRunGateReadiness(
   if (
     isTerminalRunStatus(run.status) ||
     run.status === 'paused' ||
-    (run.engineState?.generation ?? 0) !== generation
+    (run.engineState?.generation ?? 0) !== generation ||
+    run.engineState?.publishGate?.packageHash !== retainedPackageHash
   )
     reasons.push({
       code: 'run-gate-superseded',

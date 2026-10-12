@@ -1881,7 +1881,7 @@ export async function resolveRunDecision(
     const engineResumed = resolveEngineDecision(params.decisionId, params.actionId);
     resolveCIDecision(params.decisionId, params.actionId);
 
-    // If run is still blocked after all resolvers fired (engine loop was lost on gateway restart),
+    // If the run still waits at its gate after all resolvers fired (engine lost on gateway restart),
     // clean up stale running steps and kick startRun to resume the pipeline.
     // Delay check to let the engine's promise resolver update status first (microtask ordering).
     setTimeout(() => {
