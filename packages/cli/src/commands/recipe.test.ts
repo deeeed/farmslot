@@ -27,15 +27,22 @@ test('recipe commands resolve registry and pool from the selected root before th
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const selected = path.join(root, 'selected');
   const workspace = path.join(root, 'workspace');
+  const configured = path.join(root, 'configured-projects');
   const explicit = path.join(root, 'explicit-projects');
   for (const directory of [
     path.join(selected, 'projects'),
     path.join(workspace, 'farmslot/projects'),
+    configured,
     explicit,
   ]) {
     fs.mkdirSync(directory, { recursive: true });
   }
-  const keys = ['FARMSLOT_ROOT', 'FARMSLOT_WORKSPACE', 'FARMSLOT_POOL_DIR'] as const;
+  const keys = [
+    'FARMSLOT_ROOT',
+    'FARMSLOT_WORKSPACE',
+    'FARMSLOT_POOL_DIR',
+    'FARMSLOT_PROJECTS_DIR',
+  ] as const;
   const previous = keys.map((key) => [key, process.env[key]] as const);
   t.after(() => {
     for (const [key, value] of previous) {
@@ -46,12 +53,19 @@ test('recipe commands resolve registry and pool from the selected root before th
   process.env.FARMSLOT_ROOT = selected;
   process.env.FARMSLOT_WORKSPACE = workspace;
   delete process.env.FARMSLOT_POOL_DIR;
+  delete process.env.FARMSLOT_PROJECTS_DIR;
   for (const command of ['actions', 'doctor']) {
     const resolved = await projectRecipeHostOptions(command, undefined, {});
     assert.equal(resolved.projectsDir, path.join(selected, 'projects'));
     assert.equal(resolved.slotPoolDir, path.join(selected, 'pool'));
+    process.env.FARMSLOT_PROJECTS_DIR = path.relative(process.cwd(), configured);
+    const environment = await projectRecipeHostOptions(command, undefined, {});
+    assert.equal(environment.projectsDir, configured);
     const override = await projectRecipeHostOptions(command, undefined, { projectsDir: explicit });
     assert.equal(override.projectsDir, explicit);
+    process.env.FARMSLOT_PROJECTS_DIR = '  ';
+    const empty = await projectRecipeHostOptions(command, undefined, {});
+    assert.equal(empty.projectsDir, path.join(selected, 'projects'));
   }
   process.env.FARMSLOT_ROOT = '  ';
   const fallback = await projectRecipeHostOptions('actions', undefined, {});
