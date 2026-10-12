@@ -1,0 +1,809 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion review finding curation",
+  "description": "Private production gateway, real Git commits, dirty current checkout and an isolated provider sink. Drives workspace and slot gates and select-none on an owned Android emulator. Requires explicit ADB_SERIAL, METRO_PORT and the dev client. Workflow teardown stops owned processes on every exit. No external publication.",
+  "proofTargets": [
+    {
+      "id": "finding-context",
+      "claim": "The shared panel reads exact reviewed source and publishes only the selected finding identities."
+    }
+  ],
+  "workflow": {
+    "entry": "setup",
+    "teardown": "stop",
+    "nodes": {
+      "setup": {
+        "action": "command",
+        "intent": "Raise real review gates on a private production gateway.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs setup",
+        "timeout_ms": 120000,
+        "next": "relaunch"
+      },
+      "relaunch": {
+        "action": "command",
+        "intent": "Connect Companion to the private review gateway.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs relaunch",
+        "timeout_ms": 120000,
+        "next": "app-ready"
+      },
+      "app-ready": {
+        "action": "ui.wait_for",
+        "intent": "Companion is ready for review links.",
+        "test_id": "companion-tab-settings",
+        "timeout_ms": 60000,
+        "next": "open-workspace"
+      },
+      "open-workspace": {
+        "action": "command",
+        "intent": "Open the workspace review decision.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs open-workspace",
+        "timeout_ms": 120000,
+        "next": "opened-workspace"
+      },
+      "actions-workspace": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 600
+        },
+        "delta": {
+          "x": 0,
+          "y": -150
+        },
+        "duration_ms": 700,
+        "intent": "The finding controls are reachable beside reviewed source.",
+        "next": "curation-workspace"
+      },
+      "curation-workspace": {
+        "action": "ui.wait_for",
+        "intent": "The shared panel shows the pending review findings.",
+        "timeout_ms": 30000,
+        "next": "inspect-visible",
+        "test_id": "companion-review-include-0"
+      },
+      "inspect-workspace": {
+        "action": "ui.press",
+        "intent": "Read the finding from the exact reviewed SHA.",
+        "test_id": "companion-review-inspect-0",
+        "next": "bridge-ready-hud-reviewed-source"
+      },
+      "reviewed-value": {
+        "action": "ui.wait_for",
+        "intent": "Reviewed source differs from the current dirty checkout.",
+        "test_id": "companion-reviewed-source",
+        "text_contains": ["REVIEWED VALUE"],
+        "timeout_ms": 30000,
+        "next": "no-mutable",
+        "proves": ["finding-context"]
+      },
+      "no-mutable": {
+        "action": "ui.wait_for",
+        "intent": "Current checkout content never appears as reviewed source.",
+        "text": "MUTABLE CHECKOUT VALUE",
+        "expected": "absent",
+        "timeout_ms": 1000,
+        "next": "still-reviewed-source"
+      },
+      "hud-reviewed-source": {
+        "action": "app.hud",
+        "intent": "Inspect the finding beside its numbered reviewed source.",
+        "status": "running",
+        "next": "reviewed-value"
+      },
+      "still-reviewed-source": {
+        "action": "ui.screenshot",
+        "intent": "Inspect the finding beside its numbered reviewed source.",
+        "path": "screenshots/reviewed-source.png",
+        "label": "Inspect the finding beside its numbered reviewed source.",
+        "covers": ["finding-context"],
+        "next": "scroll-report"
+      },
+      "original-report": {
+        "action": "ui.press",
+        "intent": "Open the complete saved review report.",
+        "test_id": "companion-review-report",
+        "next": "report-ready"
+      },
+      "report-ready": {
+        "action": "ui.wait_for",
+        "intent": "The original report is readable.",
+        "text": "Original saved review report.",
+        "timeout_ms": 10000,
+        "next": "bridge-ready-hud-original-report"
+      },
+      "hud-original-report": {
+        "action": "app.hud",
+        "intent": "Read the original report before choosing findings.",
+        "status": "running",
+        "next": "still-original-report"
+      },
+      "still-original-report": {
+        "action": "ui.screenshot",
+        "intent": "Read the original report before choosing findings.",
+        "path": "screenshots/original-report.png",
+        "label": "Read the original report before choosing findings.",
+        "covers": ["finding-context"],
+        "next": "close-report"
+      },
+      "close-report": {
+        "action": "ui.press",
+        "intent": "Return to the finding selection.",
+        "text": "Close document",
+        "next": "report-closed"
+      },
+      "deselect-workspace": {
+        "action": "ui.press",
+        "intent": "Exclude the first finding from publication.",
+        "test_id": "companion-review-include-0",
+        "next": "selection-workspace"
+      },
+      "selection-workspace": {
+        "action": "ui.wait_for",
+        "intent": "Only the second finding is included.",
+        "timeout_ms": 10000,
+        "next": "bridge-ready-hud-selection-workspace",
+        "test_id": "companion-review-include-0"
+      },
+      "hud-selection-workspace": {
+        "action": "app.hud",
+        "intent": "Check the workspace selection before publication.",
+        "status": "running",
+        "next": "still-selection-workspace"
+      },
+      "still-selection-workspace": {
+        "action": "ui.screenshot",
+        "intent": "Check the workspace selection before publication.",
+        "path": "screenshots/selection-workspace.png",
+        "label": "Check the workspace selection before publication.",
+        "covers": ["finding-context"],
+        "next": "scroll-post-workspace"
+      },
+      "post-workspace": {
+        "action": "ui.press",
+        "intent": "Post the selected findings through the run resolver.",
+        "test_id": "companion-decision-action-post",
+        "next": "confirm-workspace"
+      },
+      "confirm-workspace": {
+        "action": "ui.wait_for",
+        "intent": "Posting asks for confirmation.",
+        "text": "Confirm action",
+        "timeout_ms": 10000,
+        "next": "send-workspace"
+      },
+      "send-workspace": {
+        "action": "ui.press",
+        "intent": "Confirm the captured review selection.",
+        "text": "Send",
+        "next": "verify-workspace"
+      },
+      "verify-workspace": {
+        "action": "command",
+        "intent": "Verify exact outgoing workspace findings in the local sink.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs verify-workspace",
+        "timeout_ms": 120000,
+        "next": "bridge-ready-hud-assert-workspace"
+      },
+      "open-slot": {
+        "action": "command",
+        "intent": "Open the slot review decision.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs open-slot",
+        "timeout_ms": 120000,
+        "next": "opened-slot"
+      },
+      "actions-slot": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 600
+        },
+        "delta": {
+          "x": 0,
+          "y": -150
+        },
+        "duration_ms": 700,
+        "intent": "The finding controls are reachable beside reviewed source.",
+        "next": "curation-slot"
+      },
+      "curation-slot": {
+        "action": "ui.wait_for",
+        "intent": "The shared panel shows the pending review findings.",
+        "timeout_ms": 30000,
+        "next": "revise-slot",
+        "test_id": "companion-review-include-0"
+      },
+      "deselect-slot": {
+        "action": "ui.press",
+        "intent": "Exclude the first finding from publication.",
+        "test_id": "companion-review-include-0",
+        "next": "selection-slot"
+      },
+      "selection-slot": {
+        "action": "ui.wait_for",
+        "intent": "Only the second finding is included.",
+        "timeout_ms": 10000,
+        "next": "bridge-ready-hud-selection-slot",
+        "test_id": "companion-review-include-0"
+      },
+      "hud-selection-slot": {
+        "action": "app.hud",
+        "intent": "Check the slot selection before publication.",
+        "status": "running",
+        "next": "still-selection-slot"
+      },
+      "still-selection-slot": {
+        "action": "ui.screenshot",
+        "intent": "Check the slot selection before publication.",
+        "path": "screenshots/selection-slot.png",
+        "label": "Check the slot selection before publication.",
+        "covers": ["finding-context"],
+        "next": "scroll-post-slot"
+      },
+      "post-slot": {
+        "action": "ui.press",
+        "intent": "Post the selected findings through the run resolver.",
+        "test_id": "companion-decision-action-post",
+        "next": "confirm-slot"
+      },
+      "confirm-slot": {
+        "action": "ui.wait_for",
+        "intent": "Posting asks for confirmation.",
+        "text": "Confirm action",
+        "timeout_ms": 10000,
+        "next": "send-slot"
+      },
+      "send-slot": {
+        "action": "ui.press",
+        "intent": "Confirm the captured review selection.",
+        "text": "Send",
+        "next": "release-slot-race"
+      },
+      "verify-slot": {
+        "action": "command",
+        "intent": "Verify exact outgoing slot findings in the local sink.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs verify-slot",
+        "timeout_ms": 120000,
+        "next": "bridge-ready-hud-assert-slot"
+      },
+      "open-empty": {
+        "action": "command",
+        "intent": "Open the empty review decision.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs open-empty",
+        "timeout_ms": 120000,
+        "next": "opened-empty"
+      },
+      "actions-empty": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 600
+        },
+        "delta": {
+          "x": 0,
+          "y": -150
+        },
+        "duration_ms": 700,
+        "intent": "The finding controls are reachable beside reviewed source.",
+        "next": "curation-empty"
+      },
+      "curation-empty": {
+        "action": "ui.wait_for",
+        "intent": "The shared panel shows the pending review findings.",
+        "timeout_ms": 30000,
+        "next": "scroll-empty",
+        "test_id": "companion-review-include-0"
+      },
+      "empty-selection": {
+        "action": "ui.press",
+        "intent": "Select no inline finding comments.",
+        "test_id": "companion-review-select-none",
+        "next": "empty-ready"
+      },
+      "empty-ready": {
+        "action": "ui.wait_for",
+        "intent": "An explicit empty selection is visible.",
+        "text": "0/2 findings selected",
+        "timeout_ms": 10000,
+        "next": "bridge-ready-hud-selection-empty"
+      },
+      "hud-selection-empty": {
+        "action": "app.hud",
+        "intent": "Check the empty selection before publication.",
+        "status": "running",
+        "next": "still-selection-empty"
+      },
+      "still-selection-empty": {
+        "action": "ui.screenshot",
+        "intent": "Check the empty selection before publication.",
+        "path": "screenshots/selection-empty.png",
+        "label": "Check the empty selection before publication.",
+        "covers": ["finding-context"],
+        "next": "scroll-post-empty"
+      },
+      "post-empty": {
+        "action": "ui.press",
+        "intent": "Post the selected findings through the run resolver.",
+        "test_id": "companion-decision-action-post",
+        "next": "confirm-empty"
+      },
+      "confirm-empty": {
+        "action": "ui.wait_for",
+        "intent": "Posting asks for confirmation.",
+        "text": "Confirm action",
+        "timeout_ms": 10000,
+        "next": "send-empty"
+      },
+      "send-empty": {
+        "action": "ui.press",
+        "intent": "Confirm the captured review selection.",
+        "text": "Send",
+        "next": "verify-empty"
+      },
+      "verify-empty": {
+        "action": "command",
+        "intent": "Verify exact outgoing empty findings in the local sink.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs verify-empty",
+        "timeout_ms": 120000,
+        "next": "bridge-ready-hud-assert-empty"
+      },
+      "no-error": {
+        "action": "ui.wait_for",
+        "intent": "The connected flow has no error banner.",
+        "text": "Failed to resolve",
+        "expected": "absent",
+        "timeout_ms": 1000,
+        "next": "done"
+      },
+      "stop": {
+        "action": "command",
+        "intent": "Stop the owned private proof gateway.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs stop",
+        "timeout_ms": 120000,
+        "next": "cleanup-done"
+      },
+      "cleanup-done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "scroll-report": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 1800
+        },
+        "delta": {
+          "x": 0,
+          "y": -1200
+        },
+        "duration_ms": 700,
+        "intent": "The full report is available beneath the finding list.",
+        "next": "original-report"
+      },
+      "scroll-first": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 500
+        },
+        "delta": {
+          "x": 0,
+          "y": 450
+        },
+        "duration_ms": 700,
+        "intent": "The reviewed finding remains reachable after reading the report.",
+        "next": "return-to-first-1"
+      },
+      "scroll-post-workspace": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 1800
+        },
+        "delta": {
+          "x": 0,
+          "y": -1400
+        },
+        "duration_ms": 700,
+        "intent": "The publication choice follows the curated finding list.",
+        "next": "scroll-post-workspace-end"
+      },
+      "scroll-post-slot": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 1800
+        },
+        "delta": {
+          "x": 0,
+          "y": -1400
+        },
+        "duration_ms": 700,
+        "intent": "The publication choice follows the curated finding list.",
+        "next": "scroll-post-slot-end"
+      },
+      "scroll-empty": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 600
+        },
+        "delta": {
+          "x": 0,
+          "y": 400
+        },
+        "duration_ms": 700,
+        "intent": "An empty selection remains an explicit publication choice.",
+        "next": "empty-selection"
+      },
+      "scroll-post-empty": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 2200
+        },
+        "delta": {
+          "x": 0,
+          "y": -1800
+        },
+        "duration_ms": 700,
+        "intent": "The publication choice preserves an empty finding selection.",
+        "next": "scroll-post-empty-end"
+      },
+      "inspect-visible": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 600
+        },
+        "delta": {
+          "x": 0,
+          "y": -100
+        },
+        "duration_ms": 700,
+        "intent": "Reviewed-line inspection is reachable beneath its finding.",
+        "next": "inspect-workspace"
+      },
+      "opened-workspace": {
+        "action": "ui.wait_for",
+        "text": "Review findings before posting",
+        "timeout_ms": 30000,
+        "intent": "The requested decision has loaded its review controls.",
+        "next": "actions-workspace"
+      },
+      "opened-slot": {
+        "action": "ui.wait_for",
+        "text": "Review findings before posting",
+        "timeout_ms": 30000,
+        "intent": "The requested decision has loaded its review controls.",
+        "next": "actions-slot"
+      },
+      "opened-empty": {
+        "action": "ui.wait_for",
+        "text": "Review findings before posting",
+        "timeout_ms": 30000,
+        "intent": "The requested decision has loaded its review controls.",
+        "next": "actions-empty"
+      },
+      "bridge-ready-hud-reviewed-source": {
+        "action": "command",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs bridge-ready",
+        "timeout_ms": 70000,
+        "intent": "The active mobile client can render this step in its HUD.",
+        "next": "hud-reviewed-source"
+      },
+      "bridge-ready-hud-original-report": {
+        "action": "command",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs bridge-ready",
+        "timeout_ms": 70000,
+        "intent": "The active mobile client can render this step in its HUD.",
+        "next": "hud-original-report"
+      },
+      "bridge-ready-hud-selection-workspace": {
+        "action": "command",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs bridge-ready",
+        "timeout_ms": 70000,
+        "intent": "The active mobile client can render this step in its HUD.",
+        "next": "hud-selection-workspace"
+      },
+      "bridge-ready-hud-selection-slot": {
+        "action": "command",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs bridge-ready",
+        "timeout_ms": 70000,
+        "intent": "The active mobile client can render this step in its HUD.",
+        "next": "hud-selection-slot"
+      },
+      "bridge-ready-hud-selection-empty": {
+        "action": "command",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs bridge-ready",
+        "timeout_ms": 70000,
+        "intent": "The active mobile client can render this step in its HUD.",
+        "next": "hud-selection-empty"
+      },
+      "selection-visible": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 600
+        },
+        "delta": {
+          "x": 0,
+          "y": -150
+        },
+        "duration_ms": 700,
+        "intent": "The inspected finding can now be excluded from publication.",
+        "next": "deselect-workspace"
+      },
+      "report-closed": {
+        "action": "ui.wait_for",
+        "text": "Original review report",
+        "expected": "absent",
+        "timeout_ms": 10000,
+        "intent": "The report reader has closed before finding selection resumes.",
+        "next": "scroll-first"
+      },
+      "return-to-first-1": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 500
+        },
+        "delta": {
+          "x": 0,
+          "y": 450
+        },
+        "duration_ms": 700,
+        "intent": "The reviewed finding remains reachable after reading the report.",
+        "next": "return-to-first-2"
+      },
+      "return-to-first-2": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 500
+        },
+        "delta": {
+          "x": 0,
+          "y": 450
+        },
+        "duration_ms": 700,
+        "intent": "The reviewed finding remains reachable after reading the report.",
+        "next": "selection-visible"
+      },
+      "revise-slot": {
+        "action": "command",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs revise-slot",
+        "intent": "A worker revises the finding order while the gate is open.",
+        "timeout_ms": 70000,
+        "next": "stale-post-visible"
+      },
+      "stale-post-visible": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 1800
+        },
+        "delta": {
+          "x": 0,
+          "y": -1400
+        },
+        "duration_ms": 700,
+        "intent": "The old review is available for a captured confirmation.",
+        "next": "stale-post-visible-end"
+      },
+      "stale-post": {
+        "action": "ui.press",
+        "test_id": "companion-decision-action-post",
+        "intent": "The confirmation captures the review currently on screen.",
+        "next": "stale-confirm"
+      },
+      "stale-confirm": {
+        "action": "ui.wait_for",
+        "text": "Confirm action",
+        "timeout_ms": 10000,
+        "intent": "An earlier review is armed before the worker refresh completes.",
+        "next": "refresh-slot"
+      },
+      "refresh-slot": {
+        "action": "command",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs refresh-slot",
+        "intent": "Refresh installs the reordered worker findings through the gateway.",
+        "timeout_ms": 70000,
+        "next": "stale-send"
+      },
+      "stale-send": {
+        "action": "ui.press",
+        "text": "Send",
+        "intent": "A replaced review cannot use the earlier confirmation.",
+        "next": "stale-message"
+      },
+      "stale-message": {
+        "action": "ui.wait_for",
+        "text": "Review changed",
+        "timeout_ms": 10000,
+        "intent": "The phone withholds the outdated publication request.",
+        "next": "stale-ok"
+      },
+      "stale-ok": {
+        "action": "ui.press",
+        "text": "OK",
+        "intent": "The operator returns to the refreshed pending review.",
+        "next": "slot-still-pending"
+      },
+      "slot-still-pending": {
+        "action": "command",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs slot-still-pending",
+        "intent": "The stale confirmation did not resolve or publish the gate.",
+        "timeout_ms": 70000,
+        "next": "slot-reset-top"
+      },
+      "slot-reset-top": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 500
+        },
+        "delta": {
+          "x": 0,
+          "y": 1200
+        },
+        "duration_ms": 700,
+        "intent": "The refreshed first finding is available for a new selection.",
+        "next": "slot-reset-top-2"
+      },
+      "slot-reset-top-2": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 500
+        },
+        "delta": {
+          "x": 0,
+          "y": 800
+        },
+        "duration_ms": 700,
+        "intent": "The refreshed finding choices remain fully visible.",
+        "next": "deselect-slot"
+      },
+      "arm-slot-race": {
+        "action": "command",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs arm-slot-race",
+        "intent": "A second client is reading a worker report during publication.",
+        "timeout_ms": 70000,
+        "next": "post-slot"
+      },
+      "release-slot-race": {
+        "action": "command",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs release-slot-race",
+        "intent": "The accepted report and selection survive an in-flight refresh.",
+        "timeout_ms": 70000,
+        "next": "verify-slot"
+      },
+      "assert-workspace": {
+        "action": "assert_output",
+        "source": "verify-workspace",
+        "stream": "stdout",
+        "contains": "**Suggestion.** Second exact finding",
+        "proves": ["finding-context"],
+        "intent": "Observed workspace publication matches the accepted finding selection.",
+        "next": "open-slot"
+      },
+      "assert-slot": {
+        "action": "assert_output",
+        "source": "verify-slot",
+        "stream": "stdout",
+        "contains": "**must fix** \u2014 First exact finding",
+        "proves": ["finding-context"],
+        "intent": "Observed slot publication matches the accepted finding selection.",
+        "next": "open-empty"
+      },
+      "assert-empty": {
+        "action": "assert_output",
+        "source": "verify-empty",
+        "stream": "stdout",
+        "contains": "\"outgoing\":[]",
+        "proves": ["finding-context"],
+        "intent": "Observed empty publication matches the accepted finding selection.",
+        "next": "no-error"
+      },
+      "bridge-ready-hud-assert-workspace": {
+        "action": "command",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs bridge-ready",
+        "timeout_ms": 70000,
+        "intent": "The active mobile client can render this step in its HUD.",
+        "next": "hud-assert-workspace"
+      },
+      "hud-assert-workspace": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Observed workspace publication matches the accepted finding selection.",
+        "next": "assert-workspace"
+      },
+      "bridge-ready-hud-assert-slot": {
+        "action": "command",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs bridge-ready",
+        "timeout_ms": 70000,
+        "intent": "The active mobile client can render this step in its HUD.",
+        "next": "hud-assert-slot"
+      },
+      "hud-assert-slot": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Observed slot publication matches the accepted finding selection.",
+        "next": "assert-slot"
+      },
+      "bridge-ready-hud-assert-empty": {
+        "action": "command",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs bridge-ready",
+        "timeout_ms": 70000,
+        "intent": "The active mobile client can render this step in its HUD.",
+        "next": "hud-assert-empty"
+      },
+      "hud-assert-empty": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Observed empty publication matches the accepted finding selection.",
+        "next": "assert-empty"
+      },
+      "scroll-post-workspace-end": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 1800
+        },
+        "delta": {
+          "x": 0,
+          "y": -1400
+        },
+        "duration_ms": 700,
+        "intent": "The publication actions are fully visible below the findings.",
+        "next": "post-workspace"
+      },
+      "scroll-post-slot-end": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 1800
+        },
+        "delta": {
+          "x": 0,
+          "y": -1400
+        },
+        "duration_ms": 700,
+        "intent": "The publication actions are fully visible below the findings.",
+        "next": "arm-slot-race"
+      },
+      "scroll-post-empty-end": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 1800
+        },
+        "delta": {
+          "x": 0,
+          "y": -1400
+        },
+        "duration_ms": 700,
+        "intent": "The publication actions are fully visible below the findings.",
+        "next": "post-empty"
+      },
+      "stale-post-visible-end": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 1800
+        },
+        "delta": {
+          "x": 0,
+          "y": -1400
+        },
+        "duration_ms": 700,
+        "intent": "The publication actions are fully visible below the findings.",
+        "next": "stale-post"
+      }
+    }
+  }
+}

@@ -72,8 +72,10 @@ export async function holdWorkspaceReview(runId: string) {
       },
     );
     run = getRun(runId)!;
+    // Freeze the accepted report and finding identities before follow-up reads.
+    const acceptedRun = structuredClone(run);
     try {
-      const decision = findLatestResolvedDecision(run.decisions, 'review_posting');
+      const decision = findLatestResolvedDecision(acceptedRun.decisions, 'review_posting');
       if (!decision || !['post', 'dismiss'].includes(action))
         throw new Error('Review gate has no publication decision');
       if (action === 'post' && !run.reviewWorkspace?.cleanedAt) {
@@ -105,7 +107,7 @@ export async function holdWorkspaceReview(runId: string) {
           continue;
         }
       }
-      if (action === 'post') selectedReviewResult(run);
+      if (action === 'post') selectedReviewResult(acceptedRun);
       const selected = captureDirectReviewPublication(
         {
           flowType: 'review-pr',

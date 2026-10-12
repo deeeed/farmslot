@@ -53,9 +53,10 @@ test('decision advice gateway RPC gates on admission and refuses stale snapshots
   updateRun(prior.id, { status: 'done', taskFile: `/synthetic/${dir}/TASK.md` });
   // Exercise the same engine function that creates a pending collision in a live run.
   const collision = handleCollisionDecision(run.id, run, [dir], dir);
-  const decision = run.decisions.find((item) => item.type === 'engine_collision');
+  let decision = run.decisions.find((item) => item.type === 'engine_collision');
   try {
     await new Promise<void>((resolve) => setImmediate(resolve));
+    decision = run.decisions.find((item) => item.type === 'engine_collision');
     assert.ok(decision);
     assert.equal(decision.description, `Task dir collision for ${dir}: ${dir}`);
     assert.deepEqual(decision.actions, collisionDecisionActions(run));
@@ -245,9 +246,10 @@ test('decision advice gateway RPC gates on admission and refuses stale snapshots
   } finally {
     for (const client of wss.clients) client.terminate();
     await new Promise<void>((resolve) => wss.close(() => resolve()));
-    await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve())),
-    );
+    if (server.listening)
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
     if (decision && !run.decisions[0]?.resolvedAt) {
       resolveEngineDecision(decision.id, 'abort');
       await assert.rejects(collision, /Aborted: task dir collision/);

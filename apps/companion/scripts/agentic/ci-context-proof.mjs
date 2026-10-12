@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { proofRPC, stopProofGateway, waitForProof as waitFor } from './proof-gateway.mjs';
 import { seedIOSGatewayProfile } from './seed-ios-gateway-profile.mjs';
 import { openSimulatorDevClient } from './simulator-dev-client.mjs';
 
@@ -25,46 +26,12 @@ const write = (file, value) => {
 const state = () => JSON.parse(fs.readFileSync(statePath, 'utf8'));
 const evidence = (name, value) =>
   write(path.join(process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR ?? proofDir, `${name}.json`), value);
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-async function waitFor(read, timeout = 60_000) {
-  const until = Date.now() + timeout;
-  while (Date.now() < until) {
-    const value = await read();
-    if (value) return value;
-    await sleep(100);
-  }
-  throw new Error('CI proof condition timed out');
-}
 function stop() {
   if (!fs.existsSync(statePath)) return;
-  try {
-    process.kill(-state().pid, 'SIGTERM');
-  } catch (error) {
-    if (error.code !== 'ESRCH') throw error;
-  }
+  stopProofGateway(state().pid);
 }
 function rpc(method, params = {}) {
-  return JSON.parse(
-    execFileSync(
-      process.execPath,
-      [
-        path.join(root, 'apps/command-center/scripts/cdp.mjs'),
-        'gateway',
-        method,
-        JSON.stringify(params),
-      ],
-      {
-        cwd: root,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: {
-          ...process.env,
-          FARMSLOT_GATEWAY: `ws://127.0.0.1:${state().port}`,
-          FARMSLOT_RPC_TIMEOUT_MS: '45000',
-        },
-      },
-    ),
-  );
+  return proofRPC(root, state().port, method, params);
 }
 function gate() {
   return rpc('run.get', { runId: state().runId }).run.decisions.find(

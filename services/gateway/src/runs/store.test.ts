@@ -39,6 +39,18 @@ async function cleanupRun(runId: string): Promise<void> {
   await deleteRun(runId);
 }
 
+for (const status of ['fixing', 'review-failed', 'reconciling'] as const) {
+  test(`${status} runs remain active and cannot leave the store through archive or delete`, async (t) => {
+    const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: `GUARD-${status}` });
+    t.after(() => cleanupRun(run.id));
+    updateRun(run.id, { status });
+    assert.ok(listRuns({ active: true }).runs.some((entry) => entry.id === run.id));
+    await assert.rejects(() => archiveRun(run.id), /Cannot archive active run/);
+    await assert.rejects(() => deleteRun(run.id), /Cannot delete active run/);
+    assert.equal(getRun(run.id)?.status, status);
+  });
+}
+
 test('shouldUseIsolatedRunsDir detects node --test and direct tsx test entrypoints', () => {
   assert.equal(
     shouldUseIsolatedRunsDir({ NODE_TEST_CONTEXT: '1' }, ['node', 'src/index.ts']),

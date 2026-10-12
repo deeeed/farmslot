@@ -5,6 +5,7 @@ import {
   type DecisionAction,
   Events,
   type EvidenceManifestEntry,
+  isPrerequisiteGatePayload,
   isTerminalRunStatus,
   type PRReviewOptions,
   prReviewWorkflow,
@@ -21,6 +22,11 @@ import {
 } from '@farmslot/protocol';
 
 import { isGitHubAncestor } from '../external/github.js';
+import {
+  readRunProgress,
+  runDecisionWaitingStatus,
+  type RunProgressObservation,
+} from '../runners/run-progress.js';
 import { getRun, listRuns, updateRun } from '../runs/store.js';
 
 import { pendingDecisionForRun } from './decision-projection.js';
@@ -31,6 +37,7 @@ import {
   latestResolvedHumanGateDecision,
 } from './decision-replay.js';
 import { hasValidPrNumber } from './gate-policy.js';
+import { collectRunGateReadiness, gateActionsForReadiness } from './gate-prerequisites.js';
 import { assertPrimaryReviewContext } from './review-plan.js';
 import { runSupersededSince } from './run-generation.js';
 
@@ -67,12 +74,14 @@ export class RedirectedError extends Error {
 
 const engineDecisionResolvers = new Map<string, (actionId: string) => void>();
 
-export function resolveEngineDecision(decisionId: string, actionId: string): void {
+export function resolveEngineDecision(decisionId: string, actionId: string): boolean {
   const resolver = engineDecisionResolvers.get(decisionId);
   if (resolver) {
     resolver(actionId);
     engineDecisionResolvers.delete(decisionId);
+    return true;
   }
+  return false;
 }
 
 export function collisionAutoResolveAction(run: Run): 'create-new' | null {
@@ -658,10 +667,29 @@ export async function createEngineDecision(
      * between precheck and WRITE_TASK). Without this hook, dedup keys on
      * reason+resolvedAt only and silently replays the prior action against new data. */
     canReplay?: (existing: RunDecision) => boolean;
+    readProgress?: (run: Run) => Promise<RunProgressObservation>;
   },
 ): Promise<string> {
   const run = getRun(runId);
   if (!run) throw new Error('Run not found');
+
+  const generation = run.engineState?.generation ?? 0;
+  if (runSupersededSince(run, generation) || isTerminalRunStatus(run.status))
+    throw new Error(`Run ${runId.slice(0, 8)} no longer owns this decision`);
+
+  // All ready/review decisions, including workspace reviews, share this guard.
+  // Replay also revalidates current inputs instead of inheriting an old ready label.
+  const gateDefinitions = actions;
+  if (isPrerequisiteGatePayload(payload)) {
+    const readiness = await collectRunGateReadiness(
+      run,
+      payload.kind === 'ready' ? (payload.prPackage ?? null) : null,
+    );
+    payload = { ...payload, gateReadiness: readiness };
+    actions = gateActionsForReadiness(actions, readiness);
+    if (runSupersededSince(getRun(runId), generation))
+      throw new Error(`Run ${runId.slice(0, 8)} changed during gate evaluation`);
+  }
 
   // Dedup: if a resolved decision matching `engine_${reason}` exists, return its
   // action instead of re-prompting. findLatestResolvedDecision walks newest-first
@@ -687,6 +715,11 @@ export async function createEngineDecision(
     }
   }
 
+  const progress = await (options?.readProgress ?? readRunProgress)(run);
+  const current = getRun(runId);
+  if (runSupersededSince(current, generation) || isTerminalRunStatus(current!.status))
+    throw new Error(`Run ${runId.slice(0, 8)} changed during the progress observation`);
+
   const decision: RunDecision = {
     id: randomUUID(),
     type: `engine_${reason}`,
@@ -695,13 +728,21 @@ export async function createEngineDecision(
     actions,
     createdAt: new Date().toISOString(),
     ...(payload ? { payload } : {}),
+    ...(isPrerequisiteGatePayload(payload) ? { context: { gateActions: gateDefinitions } } : {}),
   };
 
-  run.decisions.push(decision);
-  updateRun(runId, { status: 'blocked', decisions: run.decisions });
+  updateRun(runId, {
+    status: runDecisionWaitingStatus(
+      current!,
+      progress,
+      reason,
+      isPrerequisiteGatePayload(payload) ? payload.gateReadiness : undefined,
+    ),
+    decisions: [...current!.decisions, decision],
+  });
   broadcastFn(Events.RUN_DECISION_NEW, {
     runId,
-    decision: pendingDecisionForRun(run, decision),
+    decision: pendingDecisionForRun(getRun(runId)!, decision),
     slotId: run.slotId,
   });
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
@@ -718,12 +759,15 @@ export async function createEngineDecision(
       engineDecisionResolvers.set(decision.id, resolve);
     }));
 
+  const resolvedRun = getRun(runId);
+  if (runSupersededSince(resolvedRun, generation) || isTerminalRunStatus(resolvedRun!.status))
+    return 'abort';
   decision.resolvedAt = new Date().toISOString();
   decision.resolvedAction = actionId;
   // Restore the pre-blocked status based on current step
-  const currentStep = run.steps.find((s) => s.status === 'running');
+  const currentStep = resolvedRun!.steps.find((s) => s.status === 'running');
   const restoredStatus = currentStep ? (stepToStatus[currentStep.name] ?? 'created') : 'created';
-  updateRun(runId, { status: restoredStatus, decisions: run.decisions });
+  updateRun(runId, { status: restoredStatus, decisions: resolvedRun!.decisions });
   broadcastFn(Events.RUN_DECISION_RESOLVED, { runId, decisionId: decision.id, actionId });
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
 

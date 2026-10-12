@@ -38,6 +38,7 @@ import {
   reviewFinalSnapshotMatchesPreparedPackage,
   stampPublishGateReviewStatusForPackage,
 } from './gate-policy.js';
+import { refreshRunGateReadiness } from './gate-prerequisites.js';
 import { buildGateSummary } from './gate-summary.js';
 import { readyGateReviewSubjectMatches } from './post-dispatch-steps.js';
 import { publicationReviewPolicyForRun } from './publication-policy.js';
@@ -337,6 +338,7 @@ export async function refreshPublishPackage(params: {
   const nextDecision: RunDecision = {
     ...decision,
     actions,
+    context: { ...decision.context, gateActions: actions },
     payload: nextPayload,
     description: `**Package:** ${prPackage.id}\n**Target:** ${prPackage.publicationTarget}\n**Branch:** ${prPackage.branch || refreshedRun.branch || 'unknown'}\n**Files:** ${prPackage.diffStat.files} (+${prPackage.diffStat.additions} -${prPackage.diffStat.deletions})${freshnessLine}${exhaustedReview ? `\n**Review retries exhausted:** ${reviewRetryCapReason(exhaustedReview)}` : ''}\n\nPackage refreshed. Review the local package before public PR publication.`,
   };
@@ -346,6 +348,7 @@ export async function refreshPublishPackage(params: {
       entry.id === nextDecision.id ? nextDecision : entry,
     ),
   });
+  await refreshRunGateReadiness(getRun(params.runId)!);
   broadcastFn(Events.RUN_UPDATED, { run: getRun(params.runId) });
   console.log(
     `[run-engine] run ${params.runId.slice(0, 8)} — publish package refreshed (${prPackage.id}/${prPackage.packageHash.slice(0, 12)})`,

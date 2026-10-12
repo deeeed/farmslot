@@ -39,6 +39,7 @@ declare global {
 }
 
 export const FarmslotRecipeBridgeContext = createContext<FarmslotRecipeBridgeApi | null>(null);
+export const RecipeHudContext = createContext<FarmslotRecipeHudState | null>(null);
 
 interface RecipeBridgeProviderProps extends RecipeBridgeProviderOptions {
   children: React.ReactNode;
@@ -105,10 +106,12 @@ export function RecipeBridgeProvider({
 
   return (
     <FarmslotRecipeBridgeContext.Provider value={bridge}>
-      <View style={{ flex: 1 }}>
-        {children}
-        {renderHud ? renderHud(hud) : <RecipeHud state={hud} overlay={FullWindowOverlay} />}
-      </View>
+      <RecipeHudContext.Provider value={hud}>
+        <View style={{ flex: 1 }}>
+          {children}
+          {renderHud ? renderHud(hud) : <RecipeHud state={hud} overlay={FullWindowOverlay} />}
+        </View>
+      </RecipeHudContext.Provider>
     </FarmslotRecipeBridgeContext.Provider>
   );
 }

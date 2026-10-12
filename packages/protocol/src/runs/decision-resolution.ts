@@ -9,6 +9,8 @@ import type { ImprovementApplyParams, ImprovementApplyResult } from '../rpc/inte
 import { Methods } from '../rpc/registry.js';
 import type { RunResolveDecisionParams } from '../rpc/run.js';
 
+import { reviewPostingFingerprint } from './review-curation.js';
+
 /** Candidate selection shared by the desktop and native decision renderers. */
 export function slotPickerViewModel(payload: SlotPickerPayload, selectedSlotId?: string | null) {
   const candidates = payload.candidates.filter((candidate) => candidate.score >= 0);
@@ -112,12 +114,18 @@ export function buildRunResolveDecisionParams(input: {
     input.decision.payload?.kind === 'ready'
       ? (input.decision.payload as ReadyGatePayload)
       : undefined;
-  const selectionData = readyResolveSelectionData({
+  let selectionData = readyResolveSelectionData({
     payload,
     publicationTarget: input.publicationTarget,
     selectedEvidenceKeys: input.selectedEvidenceKeys,
     extraSelectionData: input.selectionData,
   });
+  if (input.actionId === 'post' && input.decision.payload?.kind === 'review') {
+    selectionData = {
+      reviewFingerprint: reviewPostingFingerprint(input.decision.payload),
+      ...selectionData,
+    };
+  }
   return {
     runId: input.runId,
     decisionId: input.decision.id,

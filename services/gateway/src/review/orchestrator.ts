@@ -21,6 +21,7 @@ import {
   type ReviewValidationDepth,
   type Run,
   type RunnerSessionUsage,
+  type RunStatus,
   type WorkerSignal,
 } from '@farmslot/protocol';
 import { executionModelFromSelection } from '@farmslot/review-dispatch';
@@ -53,6 +54,7 @@ import {
 } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
+import { runSupersededSince } from '../run-engine/run-generation.js';
 import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
 import { resumeNativeWorker } from '../runners/native/worker-recovery.js';
 import { readLaunchAckSignalSnapshot } from '../runners/prompt-delivery-evidence.js';
@@ -609,6 +611,8 @@ export interface ReviewRetryDeps {
     terminal?: { flowType: string; mode?: string | null },
   ) => Promise<void>;
   setProgressDetail?: (runId: string, detail: string) => void;
+  setRunStatus?: (runId: string, status: RunStatus) => void;
+  fixTurnIsActive?: typeof reviewFixTurnIsActive;
   getRun: typeof getRun;
 }
 
@@ -662,6 +666,10 @@ const PRODUCTION_DEPS: ReviewRetryDeps = {
   getWorkerContextPct: readWorkerContextPct,
   restoreWorkerChecklistTargetFromSlot,
   setProgressDetail: setReviewProgressDetail,
+  setRunStatus: (runId, status) => {
+    updateRun(runId, { status });
+  },
+  fixTurnIsActive: reviewFixTurnIsActive,
   getRun,
 };
 
@@ -746,6 +754,7 @@ export async function runReviewRetryLoop({
   priorAttempts?: ReviewAttempt[];
   deps?: ReviewRetryDeps;
 }): Promise<ReviewResult> {
+  const reviewGeneration = deps.getRun(runId)?.engineState?.generation ?? 0;
   let result = reviewResult;
   let feedbackSent = feedbackAlreadySent;
   const attempts: ReviewAttempt[] =
@@ -922,6 +931,23 @@ export async function runReviewRetryLoop({
     const fixStartedAt = new Date().toISOString();
     retryCount += 1;
     feedbackSent = true;
+    // A pane reaction or signal baseline cannot establish fix acceptance.
+    // Only this delivery's exact structured turn may report fixing.
+    const statusGeneration = reviewGeneration;
+    const fixActive = Boolean(
+      fixTurnToken &&
+      (await (deps.fixTurnIsActive ?? reviewFixTurnIsActive)(
+        vars,
+        runId,
+        workerRunner,
+        fixTurnToken,
+      )),
+    );
+    if (deps.setRunStatus) {
+      if (runSupersededSince(deps.getRun(runId), statusGeneration))
+        throw new Error('Review fix was superseded before its state update');
+      deps.setRunStatus(runId, fixActive ? 'fixing' : 'reconciling');
+    }
     const nextLoopNumber = (attempts.at(-1)?.loopNumber ?? retryCount) + 1;
     deps.setProgressDetail?.(
       runId,
@@ -1044,6 +1070,11 @@ export async function runReviewRetryLoop({
       };
       const priorResult = result;
       debugReviewLog(`[review] run ${runId.slice(0, 8)} — re-reviewing after worker fix`);
+      if (deps.setRunStatus) {
+        if (runSupersededSince(deps.getRun(runId), reviewGeneration))
+          throw new Error('Review fix was superseded before re-review');
+        deps.setRunStatus(runId, 'reviewing');
+      }
       deps.setProgressDetail?.(
         runId,
         `${workerBlockReason ? 'Worker made partial fixes before blocking' : 'Worker fix complete'}; running ${reviewRunner} re-review (${nextLoopNumber})...`,
@@ -1264,6 +1295,13 @@ interface FixPromptRecoveryDeps {
     target: AgentContext['target'],
   ) => Promise<void>;
   deliver: typeof deliverPromptToLiveRunner;
+  recordDeliveryBoundary?: (
+    runId: string,
+    context: FixPromptRecoveryContext,
+    startedAt: string,
+    generation: number,
+  ) => Promise<void>;
+  rememberAcceptedTurn?: typeof rememberReviewFixTurn;
 }
 
 const FIX_PROMPT_RECOVERY_DEPS: FixPromptRecoveryDeps = {
@@ -1282,6 +1320,26 @@ const FIX_PROMPT_RECOVERY_DEPS: FixPromptRecoveryDeps = {
     }
   },
   deliver: deliverPromptToLiveRunner,
+  recordDeliveryBoundary: async (runId, expected, startedAt, generation) => {
+    const context = await upsertAgentContext(
+      runId,
+      'review-fix',
+      { id: expected.id },
+      {
+        guard: async () => !runSupersededSince(getRun(runId), generation),
+        resolvePatch: (current) =>
+          current &&
+          current.attemptStartedAt === expected.attemptStartedAt &&
+          current.taskFile === expected.taskFile &&
+          current.signalFile === expected.signalFile
+            ? { promptDeliveryStartedAt: startedAt, promptAcceptance: undefined }
+            : null,
+        mirrorIf: (slot) => slot.current_run_id === runId,
+      },
+    );
+    if (!context) throw new Error('Review fix attempt changed before delivery');
+  },
+  rememberAcceptedTurn: rememberReviewFixTurn,
 };
 
 function reviewFixProgressContract(taskDir: string, taskFile: string): string {
@@ -1338,6 +1396,7 @@ export async function resumeReviewFixPromptDelivery(
 
   const run = deps.getRun(runId);
   if (!run) return { status: 'unsupported' };
+  const deliveryGeneration = run.engineState?.generation ?? 0;
   const taskDir = path.posix.dirname(taskFile);
   // A gateway restart can leave the shared mark helper pointed back at TASK.md
   // even though the durable fix context still owns REVIEW-FIX.md. Restore
@@ -1377,6 +1436,11 @@ export async function resumeReviewFixPromptDelivery(
   const priorPromptSendAttempted =
     options.priorPromptSendAttempted ?? Boolean(context.promptDeliveryStartedAt);
   if (priorPromptSendAttempted && !targetHostsRunner) return { status: 'blocked' };
+  const deliveryStartedAt = priorPromptSendAttempted
+    ? context.promptDeliveryStartedAt
+    : new Date().toISOString();
+  if (!priorPromptSendAttempted && deliveryStartedAt)
+    await deps.recordDeliveryBoundary?.(runId, context, deliveryStartedAt, deliveryGeneration);
   const result = await deps.deliver({
     vars,
     target,
@@ -1403,6 +1467,14 @@ export async function resumeReviewFixPromptDelivery(
     forceBusyPoll: true,
   });
   if (result.delivered) {
+    if (result.acknowledgement === 'structured' && result.turnToken && deliveryStartedAt)
+      await deps.rememberAcceptedTurn?.(
+        runId,
+        runner,
+        result.turnToken,
+        deliveryStartedAt,
+        deliveryGeneration,
+      );
     return {
       status: 'delivered',
       ...(result.turnToken ? { turnToken: result.turnToken } : {}),
@@ -1513,6 +1585,7 @@ async function recoverReviewFixPass({
 }): Promise<ReviewResult | null> {
   assertNativeReviewOperationCurrent();
   const run = getRun(runId);
+  const recoveryGeneration = run?.engineState?.generation ?? 0;
   const fixContext = run?.agentContexts?.find((ctx) =>
     canRecoverReviewFixPass(ctx, taskDir, findingsArtifactScope),
   );
@@ -1738,6 +1811,12 @@ async function recoverReviewFixPass({
         }
       }
       if (!fixSignal) {
+        const fixActive =
+          delivery.status === 'delivered' &&
+          delivery.turnToken &&
+          (await reviewFixTurnIsActive(vars, runId, workerRunner, delivery.turnToken));
+        if (runSupersededSince(getRun(runId), recoveryGeneration)) return null;
+        updateRun(runId, { status: fixActive ? 'fixing' : 'reconciling' });
         const fixTaskPath = slotTaskRelPath(vars, taskDir, REVIEW_FIX_CHECKLIST_TARGET.checklist);
         const fixWatcher = startProgressWatcher(vars, fixTaskPath, runId, 'Fix', {
           isCurrent: captureNativeReviewOperationCheck(),
@@ -1844,6 +1923,7 @@ async function recoverReviewFixPass({
     const fixDelta = await withNativeReviewMutation(() =>
       captureFixDeltaSnapshot(vars, taskDir, 2, fixBaseSha, artifactScope),
     );
+    if (runSupersededSince(getRun(runId), recoveryGeneration)) return null;
     const initialAttempt: ReviewAttempt = {
       mode,
       loopNumber: 1,
@@ -1883,6 +1963,7 @@ async function recoverReviewFixPass({
       runId,
       `${workerBlockReason ? 'Worker made partial fixes before blocking' : 'Worker fix complete'}; running ${reviewRunner} re-review (2)...`,
     );
+    updateRun(runId, { status: 'reviewing' });
     const retryResult = await runReviewAgent(
       vars,
       reviewRunner,
@@ -2203,6 +2284,7 @@ async function sendOwnedFeedbackToWorker(
       artifactScope: findingsArtifactScope,
       signalAttemptId: undefined,
       promptDeliveryStartedAt: undefined,
+      promptAcceptance: undefined,
       deliveryBaselineRef: fixBaseSha ?? undefined,
       taskFile: taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.checklist),
       signalFile: taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.signal),
@@ -2224,6 +2306,8 @@ async function sendOwnedFeedbackToWorker(
     let terminalRetainedHoldReason: string | null = null;
     let structuredDeliveryAccepted = false;
     let acceptedTurnToken: string | undefined;
+    let acceptedDeliveryStartedAt: string | undefined;
+    let acceptedGeneration: number | undefined;
     let promptSendAttempted = false;
     const loggedRetainedHoldReasons = new Set<string>();
     const deliverFixPrompt = async (target: string, forceBusyPoll = false): Promise<boolean> => {
@@ -2261,6 +2345,10 @@ async function sendOwnedFeedbackToWorker(
         sendLogPrefix: 'review',
         forceBusyPoll,
       };
+      const deliveryStartedAt = latestRun?.agentContexts?.find(
+        (entry) => entry.id === fixContext?.id,
+      )?.promptDeliveryStartedAt;
+      const deliveryGeneration = latestRun?.engineState?.generation ?? 0;
       const retained = await deliverPromptToLiveRunner({
         ...deliveryOptions,
         promptMarker: REVIEW_FIX_CHECKLIST_TARGET.checklist,
@@ -2270,6 +2358,8 @@ async function sendOwnedFeedbackToWorker(
       if (retained.delivered) {
         structuredDeliveryAccepted = retained.acknowledgement === 'structured';
         acceptedTurnToken = retained.turnToken;
+        acceptedDeliveryStartedAt = deliveryStartedAt;
+        acceptedGeneration = deliveryGeneration;
         return true;
       }
       if (retained.disposition === 'hold') {
@@ -2344,6 +2434,14 @@ async function sendOwnedFeedbackToWorker(
     }
     await recordReviewFixRunnerSession(vars, runId, runner, workerTarget);
     if (structuredDeliveryAccepted) {
+      if (acceptedTurnToken && acceptedDeliveryStartedAt && acceptedGeneration !== undefined)
+        await rememberReviewFixTurn(
+          runId,
+          runner,
+          acceptedTurnToken,
+          acceptedDeliveryStartedAt,
+          acceptedGeneration,
+        );
       return {
         signalBaseline: fixSignalBaseline,
         ...(acceptedTurnToken ? { turnToken: acceptedTurnToken } : {}),
@@ -2390,6 +2488,43 @@ async function sendOwnedFeedbackToWorker(
 }
 
 // ─── Helpers ───
+
+/** Retain the existing delivery receipt so later gate reads can bind the same turn. */
+async function rememberReviewFixTurn(
+  runId: string,
+  runner: string,
+  turnToken: string,
+  deliveryStartedAt: string,
+  generation: number,
+): Promise<void> {
+  const run = getRun(runId);
+  const fix = run && selectAgentContext(run, { role: 'review-fix' });
+  if (!run || !fix?.runnerSessionId || !fix.runnerSessionPath) return;
+  if (runSupersededSince(run, generation)) return;
+  const promptAcceptance = {
+    runner,
+    deliveryStartedAt,
+    turnToken,
+    observedAt: Date.now(),
+    sessionId: fix.runnerSessionId,
+    sessionPath: fix.runnerSessionPath,
+  };
+  await upsertAgentContext(
+    runId,
+    'review-fix',
+    { id: fix.id },
+    {
+      guard: async () => !runSupersededSince(getRun(runId), generation),
+      resolvePatch: (current) =>
+        current?.promptDeliveryStartedAt === deliveryStartedAt &&
+        current.runnerSessionId === fix.runnerSessionId &&
+        current.runnerSessionPath === fix.runnerSessionPath
+          ? { promptAcceptance }
+          : null,
+      mirrorIf: (slot) => slot.current_run_id === runId,
+    },
+  );
+}
 
 const REVIEW_DELIVERY_PROBE_TIMEOUT_MS = 60_000;
 // Fix-task delivery retry: a worker mid-task is busy for minutes, not seconds.
