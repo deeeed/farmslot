@@ -405,3 +405,14 @@ explicit during migration; do not backfill fabricated review identities.
 - **H5:** Completion and retention measurements equal known fixture file sizes by category; virtual clips add zero, physical copies count once, and shared references do not double project totals. Offline, stale and legacy measurements never appear as zero or complete.
 - **H6:** CLI/SDK and both clients show the same current and completion footprint, final snapshot reference and project-history coverage. Pruning changes availability/current bytes while preserving the review's verdicts, timing metadata and original completion measurement.
 - **H7:** A legacy run without frozen review metadata opens with its limitation and available artifacts. Migration creates no inferred approval, alternate player, selector or byte-sum implementation.
+
+## Shared review curation and saved results
+
+[ADR-062 Amendment 2](../adr/062-recorded-run-evidence.md#amendment-2-2026-10-12-shared-review-curation-and-saved-results)
+owns the delivered finding-publication and retained-review presentation contract.
+Its normative [review curation specification](review-curation-and-results.md)
+defines reviewed-source reads, payload fingerprints, immutable accepted payloads,
+selected finding publication and read-only saved results. Existing protocol
+projections and native viewers are shared. This contract retains its own accepted
+status and shipping PRs; it does not accept or implement the Proposed
+completed-evidence/storage proposal in [#967](https://github.com/deeeed/farmslot/pull/967).

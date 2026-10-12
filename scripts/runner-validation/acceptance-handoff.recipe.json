@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Acceptance handoff intake",
+  "description": "Manual production gateway source-to-handoff proof; requires an existing tmux server.",
+  "workflow": {
+    "entry": "handoff",
+    "nodes": {
+      "handoff": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/acceptance-handoff.mts",
+        "timeout_ms": 300000,
+        "intent": "Authored labeled criteria survive fresh and cached ticket intake into stored run, task and handoff.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

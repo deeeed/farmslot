@@ -65,7 +65,11 @@ export function DocumentViewer({
             <Text style={styles.closeText}>Close</Text>
           </Pressable>
         </View>
-        <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
+        <ScrollView
+          testID="companion-document-body"
+          style={styles.body}
+          contentContainerStyle={styles.bodyContent}
+        >
           {formatted.length > 0 ? (
             formatted.map((block, index) =>
               block.kind === 'separator' ? (
@@ -98,7 +102,11 @@ export function DocumentViewer({
           ) : (
             <Text style={styles.documentText}>No document content</Text>
           )}
-          <Pressable style={styles.footerCloseButton} onPress={onClose}>
+          <Pressable
+            testID="companion-document-end"
+            style={styles.footerCloseButton}
+            onPress={onClose}
+          >
             <Text style={styles.closeText}>Close document</Text>
           </Pressable>
           {children}

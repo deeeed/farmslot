@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Retained QA output admission",
+  "description": "Manual copied-regression proof. FARMSLOT_QA_OUTPUT_PROOF_INPUT supplies a retained run snapshot, immutable task copy and source repository.",
+  "workflow": {
+    "entry": "gate",
+    "nodes": {
+      "gate": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/qa-output-evidence-gate.mts",
+        "timeout_ms": 300000,
+        "intent": "Refuse stale QA output, recapture through public RPC, validate applicable headless proof and reject changed report bytes.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

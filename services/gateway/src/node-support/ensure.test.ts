@@ -16,7 +16,15 @@ import { fakeSupportHomeResult, isSupportHomeCommand } from './support-test-fixt
 const projectRoot = path.join(farmslotRoot, 'projects', 'ensure-test');
 test.before(() => {
   mkdirSync(projectRoot, { recursive: true });
-  writeFileSync(path.join(projectRoot, 'project.json'), '{}');
+  writeFileSync(
+    path.join(projectRoot, 'project.json'),
+    JSON.stringify({
+      qa: {
+        default_profile: 'smoke',
+        profiles: [{ id: 'smoke', title: 'Smoke', template_id: 'qa/default' }],
+      },
+    }),
+  );
 });
 test.after(() => rmSync(projectRoot, { recursive: true, force: true }));
 

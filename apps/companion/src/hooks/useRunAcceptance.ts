@@ -195,6 +195,7 @@ export function useRunAcceptance(
           package: evidence?.recordedEvidence?.input,
           readErrors: evidence?.recordedEvidence?.errors,
           artifactPrefix: evidence?.recordedEvidence?.artifactPrefix,
+          packagePath: evidence?.recordedEvidence?.packagePath,
           report: evidence?.recordedEvidence?.report,
           reportSnapshot: options.reportSnapshot,
         })

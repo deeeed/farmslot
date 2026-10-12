@@ -215,3 +215,44 @@ test('immutable review ranges include committed text and docs excluded by source
     await rm(repo, { recursive: true, force: true });
   }
 });
+
+test('working-tree review counts tracked and real untracked identities without patch rows', async (t) => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'review-numstat-'));
+  t.after(() => rm(repo, { recursive: true, force: true }));
+  const git = (...args: string[]) =>
+    execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  git('init', '-q');
+  await writeFile(path.join(repo, 'tracked.ts'), 'export const value = 1;\n');
+  git('add', '.');
+  git(
+    '-c',
+    'commit.gpgsign=false',
+    '-c',
+    'user.name=Fixture',
+    '-c',
+    'user.email=fixture@example.invalid',
+    'commit',
+    '-qm',
+    'test: seed',
+  );
+  const base = git('rev-parse', 'HEAD');
+  await writeFile(path.join(repo, 'tracked.ts'), 'export const value = 2;\n');
+  await writeFile(path.join(repo, 'new file.ts'), 'export const added = true;\n');
+  await writeFile(path.join(repo, 'empty.ts'), '');
+  const deps: NonNullable<Parameters<typeof captureCurrentReviewSnapshot>[2]> = {
+    resolveContext: async () => ({ baseRef: base, pathspecs: [] }),
+    exec: async (_vars, command) => ({
+      exitCode: 0,
+      stdout: execFileSync('bash', ['-c', command], { cwd: repo, encoding: 'utf8' }),
+      stderr: '',
+    }),
+  };
+  const captured = await captureCurrentReviewSnapshot(makeVars(), undefined, deps);
+  assert.deepEqual(captured.snapshot.diffStat, { files: 3, additions: 2, deletions: 1 });
+  assert.deepEqual(
+    captured.snapshot.untrackedFiles?.map(({ path }) => path),
+    ['empty.ts', 'new file.ts'],
+  );
+  assert.match(captured.diffText ?? '', /diff --git/);
+  assert(captured.snapshot.diffHash);
+});

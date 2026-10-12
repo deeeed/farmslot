@@ -139,7 +139,7 @@ contracts, concepts and declarative-adoption guidance with implementation.
 Specific repositories, files and rollout coordination belong in separate adoption
 records, not these public framework documents.
 
-## Proposed amendment: completed evidence review and run footprint
+## Amendment 1 (2026-10-12): Completed evidence review and run footprint
 
 This amendment is Proposed. The accepted decision above remains in force.
 Implementation of this section requires approval; its shared-model extension
@@ -236,3 +236,62 @@ claim `as decided`. Backfill footprint only from reachable owned locations. Reus
 verified historical package identities where present, and never manufacture an
 approval or recording. Delete replaced completed-view selectors and byte-sum
 copies when adoption lands; no compatibility renderer or parallel model remains.
+
+## Amendment 2 (2026-10-12): Shared review curation and saved results
+
+**Status:** Accepted
+**Implementation:** Curation and reviewed-line inspection merged in [#963](https://github.com/deeeed/farmslot/pull/963). The saved-result reader merged separately in [#985](https://github.com/deeeed/farmslot/pull/985).
+**Specification:** [Review curation and saved results](../reference/review-curation-and-results.md).
+
+### Decision
+
+Extend the existing native review-publication component and controller for
+finding curation and a read-only saved-result context. Reuse the existing
+source/diff and document viewers; one renderer serves each job. Protocol owns
+shared comment identity/grouping, curation, recommendation normalization,
+serialization and the portable review fingerprint. ADR-063's existing dispatch
+picker remains the owner of review-request choices.
+
+Bind selected findings, recommendation and evidence choices to the exact reviewed
+payload. Retain reviewed source identity and the original report. The existing
+run resolver validates an optional fingerprint before restoration and at final
+consumption; payload changes invalidate confirmations and stale source reads.
+Both publication paths synchronously capture the accepted payload before further
+awaits, and refresh refuses writes after resolution or payload replacement.
+Legacy callers without fingerprints retain their behavior.
+
+The saved reader consumes existing retained results, falling back to historical
+review payloads. It displays raw saved verdict, reviewed SHA and report after
+Post, Dismiss or automatic finish. Publication disposition and requested
+recommendation/selection are separate facts. Missing receipts, counts and
+historical data remain explicit; the view offers no curation or publication.
+
+### Rationale
+
+Phone review gates lacked finding selection and reviewed-line inspection, and
+closed reviews showed publication status without the retained result. Sharing
+pure projections and the existing native renderer provides parity without
+copying viewers or reconstructing reviewed facts from mutable workspace files.
+
+### Public surface
+
+Existing `git.show`, `git.diff`, `run.get` and `run.resolveDecision` remain the
+public RPCs. The optional review fingerprint and protocol presentation exports
+are additive; no public CLI flag, harness hook, result-store schema or review
+policy changes. Harnesses inherit retained results and optional selection data.
+The internal `post-review.sh --review-input-file` is consumed only by the gateway
+slot publisher.
+
+### Consequences
+
+Native selection resets on payload replacement; desktop retains
+its identity-based refresh selections and evidence overrides. Exact selection,
+source freshness, immutable report/recommendation, publication-race behavior and
+connected acceptance proofs remain in the specification.
+
+This amendment records the delivered review curation/result contract. The
+separate completed-evidence/storage proposal remains Proposed in
+[#967](https://github.com/deeeed/farmslot/pull/967). Its contract is not included
+here; accepting this amendment neither accepts nor implements that proposal. Evidence
+engine changes, WARM/COLD dispatch policy, review generation/reruns, account
+policy, gate approvals and HTML report rendering remain outside this amendment.

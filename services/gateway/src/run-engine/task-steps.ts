@@ -26,6 +26,7 @@ import {
 import { farmslotRoot, getOrchestratorTaskRoot, getProjectField } from '../core/config.js';
 import { updateSlotStatus } from '../core/state.js';
 import { fetchPRDiffFiles } from '../external/github.js';
+import { acceptanceCriteriaFromMarkdown } from '../external/ticket-markdown.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import {
   buildSmartBranch,
@@ -89,6 +90,12 @@ export function mergeInitialContextIntoTicketData(
   ticketData: RunTicketData,
   initialContext: string | undefined,
 ): RunTicketData {
+  // Cached tracker and manual inputs can predate the ticket extractor fix.
+  // Preserve declared arrays; recover only explicitly authored source criteria.
+  if (ticketData.acceptanceCriteria.length === 0) {
+    const acceptanceCriteria = acceptanceCriteriaFromMarkdown(ticketData.description);
+    if (acceptanceCriteria.length) ticketData = { ...ticketData, acceptanceCriteria };
+  }
   const context = initialContext?.trim();
   const manualTicketAlreadyCarriesContext =
     ticketData.source === 'manual' &&

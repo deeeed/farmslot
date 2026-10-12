@@ -73,8 +73,14 @@ export function parseGitNumstat(
   for (const line of lines) {
     // numstat is tab-separated; using \s+ would split paths containing spaces.
     const parts = line.split('\t');
-    if (parts.length < 3) continue;
+    if (
+      parts.length < 3 ||
+      !/^(?:\d+|-)$/.test(parts[0] ?? '') ||
+      !/^(?:\d+|-)$/.test(parts[1] ?? '')
+    )
+      continue;
     const filePath = parts.slice(2).join('\t');
+    if (!filePath) continue;
     if (options.sourceOnly && !isSourceCodePath(filePath, options.sourceFilter)) continue;
     const a = parseInt(parts[0], 10);
     const d = parseInt(parts[1], 10);
@@ -365,7 +371,7 @@ export function runSourceDiffNumstatCommand(
     'set -euo pipefail',
     'export LC_ALL=C',
     `tracked_base=${shellQuote(trackedDiffBase)}`,
-    `${GIT_DIFF_NO_QUOTE_PATH} --numstat "$tracked_base" ${pathspecClause}`,
+    `git -c core.quotePath=false diff --no-ext-diff --no-textconv --numstat "$tracked_base" ${pathspecClause}`,
     'untracked=$(mktemp "${TMPDIR:-/tmp}/farmslot-untracked.XXXXXX")',
     'trap \'rm -f "$untracked"\' EXIT',
     `git -c core.quotePath=false ls-files --others --exclude-standard -z ${pathspecClause} > "$untracked"`,

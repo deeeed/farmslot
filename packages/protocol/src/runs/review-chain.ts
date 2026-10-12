@@ -6,6 +6,7 @@ import type {
   Run,
   RunReviewResult,
 } from '../contracts/index.js';
+import { isTerminalRunStatus } from '../contracts/runs.js';
 
 export function reviewResultForRun(
   run: Pick<Run, 'decisions' | 'reviewResult'>,
@@ -16,6 +17,31 @@ export function reviewResultForRun(
     if (payload?.kind === 'review') return payload;
   }
   return null;
+}
+
+/** Saved choices are requests; only a published receipt confirms the provider event. */
+export function savedReviewView(
+  run: Pick<Run, 'flowType' | 'status' | 'decisions' | 'reviewResult' | 'reviewPublication'>,
+) {
+  const latestGate = [...run.decisions]
+    .reverse()
+    .find((item) => item.type === 'engine_review_posting');
+  if (latestGate && !latestGate.resolvedAt) return null;
+  const result = reviewResultForRun(run);
+  if (!result && (run.flowType !== 'review-pr' || !isTerminalRunStatus(run.status))) return null;
+  const selection = latestGate?.selectionData;
+  const receipt = run.reviewPublication?.receipt;
+  return {
+    verdict: result?.recommendation?.trim() ? result.recommendation : null,
+    reviewedSha: result?.reviewSnapshot?.headSha || null,
+    report: result?.reviewMd?.trim() ? result.reviewMd : null,
+    requestedRecommendation:
+      typeof selection?.recommendation === 'string' ? selection.recommendation : null,
+    requestedFindingCount: Array.isArray(selection?.includedIndices)
+      ? selection.includedIndices.length
+      : null,
+    confirmedEvent: receipt?.state === 'published' ? receipt.event : null,
+  };
 }
 
 export function currentReviewChainEntry(
