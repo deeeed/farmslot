@@ -4,9 +4,12 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Share roadmap delivery grouping and outcome filters across clients.
+- Validate bounded `watch_logs` windows and require explicit file scope for output-derived log paths.
+
 - Share gate prerequisite reasons and presentation for fixing, reviewer failure and reconciliation states.
 - Share review finding curation and bind publication choices to the reviewed content.
+
+- Share roadmap delivery grouping and outcome filters across clients.
 
 ## 0.39.0 - 2026-10-12
 

@@ -50,17 +50,16 @@ export function normalizeRelativePath(relativePath: string): string {
   return normalized;
 }
 
-export function getJsonPathValue(value: unknown, jsonPath: string): unknown {
-  if (jsonPath === '$') return value;
-  if (!jsonPath.startsWith('$.')) {
+export function getJsonPathParts(jsonPath: string): string[] {
+  if (jsonPath === '$') return [];
+  if (!/^\$\.(?:[^.[\]]+|\[\d+\])(?:\.[^.[\]]+|\[\d+\])*$/u.test(jsonPath)) {
     throw new Error(`Only simple $.path JSON paths are supported, received ${jsonPath}.`);
   }
-  const parts = jsonPath
-    .slice(2)
-    .replaceAll('[', '.')
-    .replaceAll(']', '')
-    .split('.')
-    .filter(Boolean);
+  return jsonPath.slice(2).replaceAll('[', '.').replaceAll(']', '').split('.').filter(Boolean);
+}
+
+export function getJsonPathValue(value: unknown, jsonPath: string): unknown {
+  const parts = getJsonPathParts(jsonPath);
   let current = value;
   for (const part of parts) {
     if (Array.isArray(current)) {
