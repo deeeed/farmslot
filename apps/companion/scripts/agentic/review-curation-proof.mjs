@@ -237,6 +237,22 @@ if (phase === 'serve') {
       runs.push({ kind, runId: run.id });
     }
   }
+  if (savedContext) {
+    // A notification/deep link can name a review older than the mobile history window.
+    for (let index = 0; index < 81; index++) {
+      const padding = createRun(
+        {
+          flowType: 'dev',
+          project: 'review-curation',
+          ticketOrPr: `history-padding-${index}`,
+          transport: 'native',
+        },
+        { nativeOwnerPrincipalId: 'local-admin' },
+      );
+      updateRun(padding.id, { status: 'done' });
+      await persistRunNow(getRun(padding.id));
+    }
+  }
   write(stateFile, { ...state(), runs });
 } else if (phase === 'setup') {
   stop();
@@ -444,11 +460,15 @@ if (phase === 'serve') {
       });
       await waitForProof(() => rpc('run.get', { runId: entry.runId }).run.status === 'done');
     }
-    const listed = rpc('run.list', { limit: 20 }).runs;
+    const listed = rpc('run.list', { limit: 200 }).runs;
     const historical = listed.find(
       (run) => run.id === state().runs.find((entry) => entry.kind === 'historical').runId,
     );
     assert(historical.decisions[0].payloadTrimmed.includes('reviewMd'));
+    assert(
+      !rpc('run.list', { limit: 80, sort: 'newest' }).runs.some((run) => run.id === historical.id),
+      'Saved review must be outside the mobile history window',
+    );
     const baseline = state().runs.map((entry) => ({
       ...entry,
       run: rpc('run.get', { runId: entry.runId }).run,
@@ -462,6 +482,36 @@ if (phase === 'serve') {
       execFileSync('adb', ['-s', serial, 'reverse', `tcp:${value}`, `tcp:${value}`]);
   }
   evidence('reviewed-source', { head, checkout: git('status', '--porcelain') });
+} else if (phase === 'saved-background') {
+  write(path.join(proof, 'phone-disconnected.json'), { runIds: [] });
+  execFileSync('adb', ['-s', serial, 'shell', 'input', 'keyevent', 'KEYCODE_HOME']);
+  const runId = state().runs.find((entry) => entry.kind === 'historical').runId;
+  await waitForProof(() =>
+    JSON.parse(
+      fs.readFileSync(path.join(proof, 'phone-disconnected.json'), 'utf8'),
+    ).runIds.includes(runId),
+  );
+  evidence('saved-background-disconnect', {
+    runId,
+    outsideHistory: true,
+    transportDisconnected: true,
+  });
+} else if (phase === 'saved-foreground') {
+  execFileSync('adb', [
+    '-s',
+    serial,
+    'shell',
+    'am',
+    'start',
+    '-W',
+    '-a',
+    'android.intent.action.MAIN',
+    '-c',
+    'android.intent.category.LAUNCHER',
+    '-n',
+    `${bundle}/.MainActivity`,
+  ]);
+  await waitForSimulatorRecipeBridge({ platform: 'android' });
 } else if (phase === 'saved-arm') {
   const entry = state().runs.find((item) => item.kind === 'historical');
   write(path.join(proof, 'read-delay.json'), { runId: entry.runId });

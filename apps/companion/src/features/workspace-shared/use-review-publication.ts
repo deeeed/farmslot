@@ -45,6 +45,7 @@ export function useReviewPublication(
       : null;
   const fingerprint = payload ? reviewPostingFingerprint(payload) : '';
   const identity = `${run?.id}:${decision?.id}:${fingerprint}:${profileId}:${epoch}:${client?.connectionGeneration}:${context}`;
+  const savedIdentity = `${run?.id}:${profileId}:${epoch}:${context}`;
   const scope = useRef({ client, identity });
   if (scope.current.client !== client || scope.current.identity !== identity)
     scope.current = { client, identity };
@@ -79,17 +80,14 @@ export function useReviewPublication(
   const effectiveRun = reviewRunForDisplay(run, storedRun);
   const savedCandidate = !payload && effectiveRun ? savedReviewView(effectiveRun) : null;
   const [detail, setDetail] = useState<{
-    scope: object;
+    identity: string;
     run?: Run;
     loading: boolean;
     error?: string;
   }>();
   const detailRequest = useRef<object | undefined>(undefined);
-  const currentDetail =
-    detail?.scope === scope.current &&
-    (!detail.run || !effectiveRun || detail.run.updatedAt >= effectiveRun.updatedAt)
-      ? detail
-      : undefined;
+  // Keep read evidence and its open document through transport-only pauses.
+  const currentDetail = detail?.identity === savedIdentity ? detail : undefined;
   const viewModel = effectiveRun ? reviewPublicationView(effectiveRun) : null;
   const captureCurrent = (bindSelection = true) => {
     const capturedScope = scope.current;
@@ -106,20 +104,21 @@ export function useReviewPublication(
   curationRef.current = curation;
   const readSaved = async () => {
     if (!client || !run || status !== 'connected') return;
-    const capturedScope = scope.current;
     const request = {};
     detailRequest.current = request;
     const connectionCurrent = captureCurrent(false);
     const current = () => connectionCurrent() && detailRequest.current === request;
-    setDetail({ scope: capturedScope, loading: true });
+    const retained = currentDetail?.run;
+    setDetail({ identity: savedIdentity, run: retained, loading: true });
     try {
       await readReviewRun(client, run.id, current, (fullRun) => {
-        setDetail({ scope: capturedScope, run: fullRun, loading: false });
+        setDetail({ identity: savedIdentity, run: fullRun, loading: false });
       });
     } catch (error) {
       if (current())
         setDetail({
-          scope: capturedScope,
+          identity: savedIdentity,
+          run: retained,
           loading: false,
           error: error instanceof Error ? error.message : String(error),
         });
@@ -211,14 +210,17 @@ export function useReviewPublication(
   };
   return {
     viewModel,
-    saved: currentDetail?.run ? savedReviewView(currentDetail.run) : null,
-    savedLoading: Boolean(savedCandidate && (!currentDetail || currentDetail.loading)),
+    saved: savedCandidate && currentDetail?.run ? savedReviewView(currentDetail.run) : null,
+    savedLoading: Boolean(
+      savedCandidate && status === 'connected' && (!currentDetail || currentDetail.loading),
+    ),
+    savedOffline: Boolean(savedCandidate && !currentDetail?.run && status !== 'connected'),
     savedError: currentDetail?.error,
     readSaved: () => {
       void readSaved();
     },
     context,
-    viewIdentity: identity,
+    viewIdentity: payload ? identity : savedIdentity,
     report: payload?.reviewMd ?? currentDetail?.run?.reviewResult?.reviewMd,
     curation: payload && curation ? reviewCurationView(payload, curation) : null,
     selectionData: curation

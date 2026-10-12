@@ -28,13 +28,14 @@ export function ReviewPublicationPanel({
   report,
   saved,
   savedLoading,
+  savedOffline,
   savedError,
   readSaved,
   context,
   viewIdentity,
 }: ReturnType<typeof useReviewPublication>) {
   const [reportOpen, setReportOpen] = useState<string | null>(null);
-  if (!vm && !curation && !saved && !savedLoading && !savedError) return null;
+  if (!vm && !curation && !saved && !savedLoading && !savedOffline && !savedError) return null;
   return (
     <View
       style={styles.card}
@@ -43,7 +44,7 @@ export function ReviewPublicationPanel({
       <Text style={styles.title}>
         {curation
           ? 'Review findings before posting'
-          : saved || savedLoading || savedError
+          : saved || savedLoading || savedOffline || savedError
             ? 'Saved review'
             : vm?.label}
       </Text>
@@ -54,6 +55,7 @@ export function ReviewPublicationPanel({
       )}
       {(error || vm?.error) && <Text style={styles.error}>{error || vm?.error}</Text>}
       {savedLoading && <Text style={styles.muted}>Loading full saved review…</Text>}
+      {savedOffline && <Text style={styles.muted}>Connect to load the saved review.</Text>}
       {savedError && <Text style={styles.muted}>Saved review unavailable: {savedError}</Text>}
       {saved && (
         <>

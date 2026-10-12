@@ -129,7 +129,8 @@ export default function RunDetailScreen() {
   const upsertRun = useRunStore((s) => s.upsertRun);
   const profileId = useConnectionStore((s) => s.activeProfileId);
   const authorityEpoch = useConnectionStore((s) => s.authorityEpoch);
-  const readIdentity = `${resolvedRunId}:${profileId}:${authorityEpoch}:${connection}`;
+  // A transport pause invalidates pending reads, not already-authorized evidence.
+  const readIdentity = `${resolvedRunId}:${profileId}:${authorityEpoch}`;
   const readScope = useRef({ client, identity: readIdentity });
   if (readScope.current.client !== client || readScope.current.identity !== readIdentity)
     readScope.current = { client, identity: readIdentity };

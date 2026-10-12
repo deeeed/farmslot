@@ -7,7 +7,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 - Show shared package status and collapsed diagnostics, with neutral legacy evidence and independent retained report access.
 
 - Use shared plain run titles with two-line display and full accessible text across run and decision views.
-- Keep saved reviews readable on the phone after publication closes, with the original verdict, reviewed SHA and full report. Requested choices stay separate from confirmed publication.
+- Keep saved reviews readable on the phone after publication closes and across app switches, with the original verdict, reviewed SHA and full report. Requested choices stay separate from confirmed publication.
 - Use the shared evidence review model for claim/step navigation and bounded clips; initialize only the selected video player (ADR-062).
 - Show review rounds as N/5 and disable another review when the budget is spent.
 

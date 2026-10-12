@@ -311,7 +311,7 @@
         "action": "ui.screenshot",
         "intent": "Read the complete saved historical report.",
         "path": "screenshots/report-historical.png",
-        "next": "close-historical"
+        "next": "background-report"
       },
       "close-historical": {
         "action": "ui.press",
@@ -474,6 +474,46 @@
         "max_scrolls": 8,
         "restore_position": false,
         "next": "full-historical"
+      },
+      "background-report": {
+        "action": "command",
+        "intent": "Background Android with an out-of-list saved report open.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs saved-background",
+        "timeout_ms": 60000,
+        "next": "foreground-report"
+      },
+      "foreground-report": {
+        "action": "command",
+        "intent": "Resume the same Android activity without reopening its route.",
+        "cmd": "node scripts/agentic/review-curation-proof.mjs saved-foreground",
+        "timeout_ms": 70000,
+        "next": "report-survived"
+      },
+      "report-survived": {
+        "action": "ui.wait_for",
+        "intent": "The open saved report survives a transport pause and reconnect.",
+        "text": "Saved review report",
+        "timeout_ms": 10000,
+        "next": "report-end-survived"
+      },
+      "report-end-survived": {
+        "action": "ui.wait_for",
+        "intent": "The full cached report and scroll position remain readable.",
+        "text_contains": ["FINAL SAVED REPORT LINE"],
+        "timeout_ms": 10000,
+        "next": "resumed-report-hud"
+      },
+      "resumed-report-hud": {
+        "action": "app.hud",
+        "intent": "Read the same saved report after Android resumes.",
+        "status": "running",
+        "next": "resumed-report-still"
+      },
+      "resumed-report-still": {
+        "action": "ui.screenshot",
+        "intent": "Read the same saved report after Android resumes.",
+        "path": "screenshots/resumed-saved-report.png",
+        "next": "close-historical"
       }
     }
   }

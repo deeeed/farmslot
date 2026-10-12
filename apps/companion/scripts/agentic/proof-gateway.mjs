@@ -44,6 +44,18 @@ export function startProofReadProxy({ port, gatewayPort, directory }) {
       } else if (phone.readyState === WebSocket.OPEN) phone.send(frame, { binary: false });
     });
     phone.on('close', () => {
+      const runIds = [
+        ...new Set(
+          [...requests.values()]
+            .filter((request) => request.method === 'run.get')
+            .map((request) => request.params.runId),
+        ),
+      ];
+      if (runIds.length)
+        fs.writeFileSync(
+          path.join(directory, 'phone-disconnected.json'),
+          JSON.stringify({ runIds }),
+        );
       clearInterval(timer);
       gateway.close();
     });
