@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- Send browser virtual key codes for common control keys, function keys and ASCII letters/digits so `ui.key_press` reaches keyboard handlers; input clearing uses the same key dispatch.
+
 - Honor nested `all`/`any`/`none` output assertions and reject invalid static assertion JSON paths during preflight, including parameterized and called recipes.
 
 ## 0.30.0 - 2026-10-12

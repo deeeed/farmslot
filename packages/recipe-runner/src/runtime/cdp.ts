@@ -805,16 +805,7 @@ export class CdpWebPage {
     }>(
       `(() => { ${deepQueryHelpersExpression()} const root = querySelectorDeep(${JSON.stringify(selector)}); if (!root) throw new Error('Selector not found: ${escapeForJsMessage(selector)}'); const el = root.matches('input, textarea, [contenteditable="true"], [contenteditable=""]') ? root : querySelectorDeep('input, textarea, [contenteditable="true"], [contenteditable=""]', root); if (!el) throw new Error('Input target not found inside selector: ${escapeForJsMessage(selector)}'); if (el.disabled || el.getAttribute('aria-disabled') === 'true') throw new Error('Input target is disabled: ${escapeForJsMessage(selector)}'); el.scrollIntoView({ block: 'center', inline: 'nearest' }); el.focus(); if (typeof el.select === 'function') { el.select(); } else { const range = document.createRange(); range.selectNodeContents(el); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); } return { selector: ${JSON.stringify(selector)}, tagName: el.tagName, previousValue: el.value ?? el.textContent ?? '' }; })()`,
     );
-    await this.session.call('Input.dispatchKeyEvent', {
-      type: 'keyDown',
-      key: 'Backspace',
-      windowsVirtualKeyCode: 8,
-    });
-    await this.session.call('Input.dispatchKeyEvent', {
-      type: 'keyUp',
-      key: 'Backspace',
-      windowsVirtualKeyCode: 8,
-    });
+    await this.keyPress('Backspace');
     if (value) await this.session.call('Input.insertText', { text: value });
     const after = await this.evaluate<{ value: string }>(
       `(() => { ${deepQueryHelpersExpression()} const root = querySelectorDeep(${JSON.stringify(selector)}); const el = root && (root.matches('input, textarea, [contenteditable="true"], [contenteditable=""]') ? root : querySelectorDeep('input, textarea, [contenteditable="true"], [contenteditable=""]', root)); if (!el) throw new Error('Input target disappeared after typing: ${escapeForJsMessage(selector)}'); el.dispatchEvent(new Event('change', { bubbles: true })); return { value: el.value ?? el.textContent ?? '' }; })()`,
@@ -833,8 +824,40 @@ export class CdpWebPage {
   }
 
   async keyPress(key: string): Promise<unknown> {
-    await this.session.call('Input.dispatchKeyEvent', { type: 'keyDown', key });
-    await this.session.call('Input.dispatchKeyEvent', { type: 'keyUp', key });
+    // CDP needs virtual codes for handlers that observe keyCode or which.
+    const codes: Readonly<Record<string, number>> = {
+      Backspace: 8,
+      Tab: 9,
+      Enter: 13,
+      Shift: 16,
+      Control: 17,
+      Alt: 18,
+      Pause: 19,
+      CapsLock: 20,
+      Escape: 27,
+      ' ': 32,
+      PageUp: 33,
+      PageDown: 34,
+      End: 35,
+      Home: 36,
+      ArrowLeft: 37,
+      ArrowUp: 38,
+      ArrowRight: 39,
+      ArrowDown: 40,
+      Insert: 45,
+      Delete: 46,
+      Meta: 91,
+    };
+    const code =
+      codes[key] ??
+      (/^[a-z0-9]$/iu.test(key)
+        ? key.toUpperCase().charCodeAt(0)
+        : /^F(?:[1-9]|1[0-9]|2[0-4])$/u.test(key)
+          ? 111 + Number(key.slice(1))
+          : undefined);
+    const event = { key, ...(code === undefined ? {} : { windowsVirtualKeyCode: code }) };
+    await this.session.call('Input.dispatchKeyEvent', { type: 'keyDown', ...event });
+    await this.session.call('Input.dispatchKeyEvent', { type: 'keyUp', ...event });
     return { key };
   }
 
