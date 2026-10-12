@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+## 0.30.0 - 2026-10-12
+
 - Expose one retained evidence-package reader for CLI and gateway validation, with contained file reads, actual byte digests and read diagnostics.
 
 - Collect opt-in rendered HUD observations around screenshot capture for live conformance.

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## Unreleased
 
+## 0.7.0 - 2026-10-12
+
 - Collect opt-in rendered HUD observations around screenshot capture for live conformance.
 - Keep recipe HUD intent on two bounded lines through the shared display policy, with authoring warnings above 80 characters and errors above 120.
 

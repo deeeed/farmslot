@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+## 0.39.0 - 2026-10-12
+
 - Allow project packs to declare default static recipe check invocations.
 
 - Share selected-flow requirement validation and scoped compatibility across gateway and clients, including template parameters and positive evidence for static and live checks.
