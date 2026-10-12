@@ -12,6 +12,7 @@ export type {
   RecipeHudOverlayProps,
   RecipeHudProps,
 } from '@farmslot/adapter-rn/recipe-hud';
+export { useRecipeHudState } from '@farmslot/adapter-rn/recipe-hud';
 
 // Companion uses the default 49-point bottom tab bar, excluding the inset.
 const TAB_BAR_HEIGHT = 49;
@@ -26,10 +27,11 @@ export function RecipeHud(props: Readonly<RecipeHudProps>): React.ReactElement |
     height <= insets.bottom - HUD_MARGIN * 2
       ? Math.max(HUD_MARGIN, (insets.bottom - height) / 2)
       : insets.bottom + TAB_BAR_HEIGHT + HUD_MARGIN;
+  const placement = props.state?.position === 'top' ? { top: insets.top + HUD_MARGIN } : { bottom };
   return (
     <SharedRecipeHud
       {...props}
-      styles={{ ...props.styles, container: [{ bottom }, props.styles?.container] }}
+      styles={{ ...props.styles, container: [placement, props.styles?.container] }}
       onLayout={(event) => {
         setHeight(event.nativeEvent.layout.height);
         props.onLayout?.(event);

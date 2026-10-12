@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   type StyleProp,
   StyleSheet,
@@ -9,7 +9,11 @@ import {
   type ViewStyle,
 } from 'react-native';
 
-import { hudIntentDisplay } from '@farmslot/protocol/recipe';
+import {
+  hudIntentDisplay,
+  type RecipeHudPlacement,
+  waitForHudPaint,
+} from '@farmslot/protocol/recipe';
 
 export type FarmslotRecipeHudStatus = 'idle' | 'running' | 'pass' | 'fail';
 
@@ -19,6 +23,35 @@ export interface FarmslotRecipeHudState {
   currentStep?: number;
   totalSteps?: number;
   error?: string;
+  position?: RecipeHudPlacement;
+}
+
+export type RecipeHudStateController = readonly [
+  FarmslotRecipeHudState | null,
+  (state: FarmslotRecipeHudState | null) => Promise<void>,
+];
+
+/** Bridge acknowledgement follows the committed HUD rather than the state setter. */
+export function useRecipeHudState(): RecipeHudStateController {
+  const [state, setState] = useState<FarmslotRecipeHudState | null>(null);
+  const current = useRef(state);
+  current.current = state;
+  const pending = useRef<(() => void)[]>([]);
+  const update = useCallback((next: FarmslotRecipeHudState | null) => {
+    if (next === current.current) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      pending.current.push(resolve);
+      setState(next);
+    });
+  }, []);
+  useEffect(() => {
+    const acknowledgements = pending.current.splice(0);
+    if (acknowledgements.length)
+      void waitForHudPaint(requestAnimationFrame).then(() => {
+        for (const acknowledge of acknowledgements) acknowledge();
+      });
+  }, [state]);
+  return [state, update];
 }
 
 export interface FarmslotRecipeHudText {
@@ -75,7 +108,13 @@ export function RecipeHud({
       pointerEvents="none"
       style={[
         styles.container,
+        state.position === 'top' ? { top: 16, bottom: undefined } : undefined,
         customStyles?.container,
+        state.position === 'top'
+          ? { bottom: undefined }
+          : state.position === 'bottom'
+            ? { top: undefined }
+            : undefined,
         intent.panel,
         { overflow: 'hidden', flexDirection: 'row' },
       ]}

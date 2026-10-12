@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Honor HUD top/bottom placement through automatic progress and capture the painted final outcome.
+
 - Show shared package status and collapsed diagnostics, with neutral legacy evidence and independent retained report access.
 
 - Use shared plain run titles with two-line display and full accessible text across run and decision views.

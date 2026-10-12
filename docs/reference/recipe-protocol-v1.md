@@ -94,6 +94,28 @@ Existing HUD isolation, pointer pass-through, status/progress and placement mode
 remain supported. The automatic runner HUD passes the complete normalized intent
 to adapters.
 
+`app.hud` accepts `display.position: "top" | "bottom"`. Every adapter MUST honor
+the selected edge and clear the opposite anchor. Native renderers use the same
+vertical edge for existing corner values and respect the host's safe-area
+insets. Omitted placement retains the adapter's existing default. The selection
+MUST persist through subsequent automatic progress, screenshot repaint and the
+final outcome of that execution; a new execution starts with its configured
+default. HUD evidence remains required at either edge. Custom harnesses MUST
+forward this setting to the shared renderer rather than provide another one.
+HUD acknowledgement MUST wait for the updated caption to paint before a
+subsequent capture or recorder stop. The shared `waitForHudPaint` helper uses
+render frames, not a fixed sleep; this adds no clock or timing-precision contract.
+Native bridge providers MUST await the committed state through shared
+`useRecipeHudState`, exported from `@farmslot/adapter-rn/recipe-hud`, before
+acknowledging the command. Companion and scaffold providers are its consumers.
+
+SDK callers configure existing `RecipeHudOptions.display.position`; recipe
+authors use the existing `app.hud` action. `hudPlacement` and its
+`RecipeHudPlacement` return type are additive exports from
+`@farmslot/protocol/recipe`, consumed by the native bridge and web adapter. Verify
+both placements on real native/web targets, preservation through capture and
+completion, and reset on a second execution. No additional CLI flag is needed.
+
 #### Public surface
 
 The existing `farmslot recipe validate` and recipe conformance path emit these

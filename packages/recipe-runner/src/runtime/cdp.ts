@@ -3,7 +3,12 @@ import path from 'node:path';
 import WebSocket from 'ws';
 
 import type { UiObserverRef } from '@farmslot/protocol';
-import { HUD_PANEL_BOUNDS, hudIntentDisplay, hudSecondaryText } from '@farmslot/protocol/recipe';
+import {
+  HUD_PANEL_BOUNDS,
+  hudIntentDisplay,
+  hudSecondaryText,
+  waitForHudPaint,
+} from '@farmslot/protocol/recipe';
 
 import {
   type GestureAction,
@@ -1790,7 +1795,8 @@ async function renderCdpHud(
         document.documentElement.style.removeProperty('--farmslot-recipe-hud-height');
         document.body?.style.removeProperty('padding-bottom');
       }
-      return { hud: true, status: payload.status, nodeId: payload.nodeId, flow: payload.flow };
+      return (${waitForHudPaint.toString()})(requestAnimationFrame).then(() =>
+        ({ hud: true, status: payload.status, nodeId: payload.nodeId, flow: payload.flow }));
     })()`,
   );
 }

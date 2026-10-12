@@ -4,6 +4,8 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## Unreleased
 
+- Honor HUD top/bottom placement through automatic progress and capture the painted final outcome.
+
 ## 0.20.1 - 2026-10-12
 
 - Update shared runtime dependencies for bounded recipe log observations.

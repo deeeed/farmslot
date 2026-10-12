@@ -66,6 +66,16 @@
         "properties": {
           "clear": {
             "type": "boolean"
+          },
+          "display": {
+            "type": "object",
+            "properties": {
+              "position": {
+                "type": "string",
+                "enum": ["top", "bottom", "top-left", "top-right", "bottom-left", "bottom-right"]
+              }
+            },
+            "additionalProperties": true
           }
         },
         "additionalProperties": false

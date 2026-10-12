@@ -13,7 +13,13 @@
 import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { HUD_PANEL_BOUNDS, hudIntentDisplay, hudSecondaryText } from '@farmslot/protocol/recipe';
+import {
+  HUD_PANEL_BOUNDS,
+  hudIntentDisplay,
+  hudPlacement,
+  hudSecondaryText,
+  waitForHudPaint,
+} from '@farmslot/protocol/recipe';
 
 export const HUD_ELEMENT = 'mm-harness-hud';
 export const HUD_FILE = 'hud.json';
@@ -37,12 +43,14 @@ export function nextHudState(prior, node = {}, nodeId = '') {
   const intent =
     hudIntentDisplay(node.intent ?? node.text ?? node.detail).text || hudIntentDisplay(nodeId).text;
   const id = hudSecondaryText(node.node_id ?? node.nodeId ?? nodeId, 80);
+  const position = hudPlacement(node.display) ?? previous?.position;
   const state = {
     seq: (previous?.seq ?? 0) + 1,
     title: hudSecondaryText(node.title, 80) || previous?.title || 'Recipe run',
     current: previous?.current ?? null,
     last: previous?.last ?? null,
     finished: null,
+    ...(position ? { position } : {}),
   };
   if (status === 'running') {
     state.current = {
@@ -117,7 +125,7 @@ export function hudRenderExpression(state, appOrigin) {
     if (location.origin !== ${JSON.stringify(String(appOrigin).replace(/\/$/u, ''))}) return { hud: false, reason: 'not-app-origin' };
     const existing = document.documentElement.querySelector(':scope > ${HUD_ELEMENT}');
     if (!state) { existing?.remove(); return { hud: false, cleared: true }; }
-    if (existing && existing.dataset.seq === String(state.seq)) return { hud: true, seq: state.seq, unchanged: true };
+    if (existing && existing.dataset.seq === String(state.seq)) return (${waitForHudPaint.toString()})(requestAnimationFrame).then(() => ({ hud: true, seq: state.seq, unchanged: true }));
     existing?.remove();
     const host = document.createElement('${HUD_ELEMENT}');
     host.dataset.seq = String(state.seq);
@@ -129,6 +137,10 @@ export function hudRenderExpression(state, appOrigin) {
     const el = (tag, cls, value) => { const node = document.createElement(tag); if (cls) node.className = cls; if (value != null) node.textContent = value; return node; };
     const style = el('style', null, ${JSON.stringify(STYLE)});
     const box = el('div', 'hud');
+    if (state.position) {
+      box.style.top = state.position === 'top' ? '12px' : 'auto';
+      box.style.bottom = state.position === 'bottom' ? '12px' : 'auto';
+    }
     const intentStyle = ${JSON.stringify(hudIntentDisplay('').webStyle)};
     const head = el('div', 'row');
     head.append(el('span', 'title', state.title));
@@ -153,6 +165,6 @@ export function hudRenderExpression(state, appOrigin) {
     if (state.last && state.last.error) box.append(el('div', 'last error', state.last.error));
     root.append(style, box);
     document.documentElement.append(host);
-    return { hud: true, seq: state.seq };
+    return (${waitForHudPaint.toString()})(requestAnimationFrame).then(() => ({ hud: true, seq: state.seq }));
   })()`;
 }
