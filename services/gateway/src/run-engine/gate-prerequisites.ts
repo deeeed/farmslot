@@ -8,6 +8,7 @@ import {
 } from '@farmslot/adapter-sdk/evidence';
 import {
   type DecisionAction,
+  digestRecipeDocument,
   isPrerequisiteGatePayload,
   isRecord,
   isTerminalRunStatus,
@@ -25,8 +26,11 @@ import { loadSlotVars } from '../core/config.js';
 import { execOnSlot, isLocal } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { shellQuote } from '../core/tmux.js';
+import { assertQaCompletion } from '../qa/completion.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
 import { readReviewWorkspaceCompletion } from '../review-workspaces/task.js';
+import { isArtifactOnlyRun } from '../run-completion/orchestrator.js';
+import { verifyRunOutputReview } from '../run-completion/output.js';
 import {
   readReadyGatePreparedPackage,
   verifyReadyGateSelectedEvidenceFiles,
@@ -39,6 +43,7 @@ import {
 import { getRun, updateRun } from '../runs/store.js';
 import {
   type AcceptanceStatusRead,
+  parseAcceptanceStatusLedger,
   readAcceptanceStatusForDisplay,
 } from '../tasks/acceptance-status.js';
 import { agentRuntimeScriptForSlot } from '../tasks/agent-runtime-script.js';
@@ -56,7 +61,10 @@ import {
   assertPublicationReviewPolicySatisfied,
   isPublishApprovalAction,
 } from './gate-policy.js';
-import { readGateRecordedEvidenceSources } from './recorded-evidence-sources.js';
+import {
+  readFrozenRecordedEvidenceSources,
+  readGateRecordedEvidenceSources,
+} from './recorded-evidence-sources.js';
 import {
   readReviewArtifacts,
   reviewCommitFromMarkdown,
@@ -69,10 +77,12 @@ export interface GatePrerequisiteReaders {
   deterministic(run: Run): Promise<unknown>;
   acceptance(run: Run): Promise<GateAcceptanceRead>;
   progress(run: Run): Promise<RunProgressObservation>;
-  /** Retained ADR-062 inputs, bound to the existing gate package inventory. */
+  qaCompletion(run: Run): ReturnType<typeof assertQaCompletion>;
+  /** Retained ADR-062 inputs, bound to the publication or output inventory. */
   recordedEvidence?: (
     run: Run,
     preparedPackage: ReadyGatePrPackage | null,
+    qa?: Awaited<ReturnType<typeof assertQaCompletion>>,
   ) => Promise<RecordedEvidencePackageInput[]>;
   reviewResult(run: Run, relativePath: string): Promise<string | undefined>;
   selectedEvidence(run: Run, preparedPackage: ReadyGatePrPackage): Promise<void>;
@@ -172,14 +182,50 @@ export async function readGateAcceptance(
 async function readGateRecordedEvidence(
   run: Run,
   preparedPackage: ReadyGatePrPackage | null,
+  qa?: Awaited<ReturnType<typeof assertQaCompletion>>,
 ): Promise<RecordedEvidencePackageInput[]> {
-  return (await readGateRecordedEvidenceSources(run, preparedPackage)).map(({ input }) => input);
+  if (preparedPackage || !isArtifactOnlyRun(run))
+    return (await readGateRecordedEvidenceSources(run, preparedPackage)).map(({ input }) => input);
+  const decision = run.decisions
+    .slice()
+    .reverse()
+    .find((candidate) => candidate.payload?.kind === 'output-review');
+  if (!decision)
+    throw new Error('A captured output review is required. Refresh the artifact mirror.');
+  const captured = await verifyRunOutputReview(run.id, decision.id, true);
+  const sources = await readFrozenRecordedEvidenceSources(
+    captured,
+    captured.output!.artifactManifest,
+  );
+  let applicable = sources;
+  if (run.flowType === 'qa') {
+    // QA owns case selection and revision checks. Retained failed attempts are
+    // inspectable history, not additional cases that this execution must pass.
+    if (!qa) throw new Error('Current QA case validation is unavailable.');
+    applicable = qa.packages.map((selected) => {
+      const source = sources.find(
+        ({ artifactPrefix }) => artifactPrefix === `artifacts/${selected.path}/`,
+      );
+      if (!source || digestRecipeDocument(source.input.recipe) !== selected.digest)
+        throw new Error(
+          'A required QA case is absent or different in the captured output. Refresh the artifact mirror.',
+        );
+      return source;
+    });
+  }
+  // The reader and QA validation await I/O. Keep the same captured decision and
+  // bytes authoritative through their completion, including refresh races.
+  const current = await verifyRunOutputReview(run.id, decision.id, true);
+  if (current.output?.manifestDigest !== captured.output?.manifestDigest)
+    throw new Error('Output review changed while evidence was being checked.');
+  return applicable.map(({ input }) => input);
 }
 
 const readers: GatePrerequisiteReaders = {
   deterministic: validateDeterministicChecksForRun,
   acceptance: readGateAcceptance,
   progress: readRunProgress,
+  qaCompletion: assertQaCompletion,
   recordedEvidence: readGateRecordedEvidence,
   reviewDocument: async (run) => {
     if (run.reviewWorkspace)
@@ -230,6 +276,7 @@ export async function collectRunGateReadiness(
   overrides: Partial<GatePrerequisiteReaders> = {},
 ): Promise<RunGateReadiness> {
   const generation = run.engineState?.generation ?? 0;
+  const outputDigest = isArtifactOnlyRun(run) ? run.output?.manifestDigest : undefined;
   const source = { ...readers, ...overrides };
   const reasons: RunGatePrerequisiteReason[] = [];
   const retainedPackageHash = run.engineState?.publishGate?.packageHash;
@@ -306,7 +353,11 @@ export async function collectRunGateReadiness(
       });
     } else {
       try {
-        const inputs = await source.recordedEvidence(run, preparedPackage);
+        const qa =
+          run.flowType === 'qa' && isArtifactOnlyRun(run) && !preparedPackage
+            ? await source.qaCompletion(run)
+            : undefined;
+        const inputs = await source.recordedEvidence(run, preparedPackage, qa);
         const valid =
           inputs.length > 0 &&
           inputs.every((input) => validateRecordedEvidencePackage(input).status === 'valid');
@@ -329,7 +380,7 @@ export async function collectRunGateReadiness(
                 ),
             ),
         );
-        const bound = acceptance.criteria.every((criterion) =>
+        let bound = acceptance.criteria.every((criterion) =>
           inputs.some((input) =>
             input.claims?.criteria.some(
               (claim) =>
@@ -340,6 +391,32 @@ export async function collectRunGateReadiness(
             ),
           ),
         );
+        if (
+          run.flowType === 'qa' &&
+          isArtifactOnlyRun(run) &&
+          !preparedPackage &&
+          acceptance.ledger?.schemaVersion === 1
+        ) {
+          // Task AC ids and QA recipe proof-target ids are separate contracts.
+          // State ACs retain their owner's verdicts and exact captured files;
+          // applicable QA cases still require canonical complete recipe proof.
+          const retained = await readTaskArtifactText(run.taskFile, 'acceptance-status.json');
+          const inventory = new Set(
+            run.output?.artifactManifest.filter((file) => file.sha256).map((file) => file.path),
+          );
+          bound =
+            Boolean(retained) &&
+            isDeepStrictEqual(parseAcceptanceStatusLedger(retained!), acceptance.ledger) &&
+            acceptance.criteria.every((criterion) => {
+              const row = acceptance.ledger?.criteria.find((entry) => entry.id === criterion.id);
+              return (
+                row?.proofMode === 'state' &&
+                row.text.trim() === criterion.text.trim() &&
+                row.evidence.length > 0 &&
+                row.evidence.every((file) => inventory.has(file))
+              );
+            });
+        }
         if (!valid || !satisfied || !bound)
           reasons.push({
             code: 'evidence-invalid',
@@ -411,6 +488,7 @@ export async function collectRunGateReadiness(
     isTerminalRunStatus(run.status) ||
     run.status === 'paused' ||
     (run.engineState?.generation ?? 0) !== generation ||
+    (outputDigest && getRun(run.id)?.output?.manifestDigest !== outputDigest) ||
     run.engineState?.publishGate?.packageHash !== retainedPackageHash
   )
     reasons.push({
