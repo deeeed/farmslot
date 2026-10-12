@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useContext } from 'react';
 import {
   Modal,
   Platform,
@@ -12,6 +12,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { RecipeHudContext } from '../farmslot/RecipeBridgeProvider';
+import { RecipeHud } from '../farmslot/RecipeHud';
 import { formatDocument } from '../lib/document-format';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 
@@ -27,6 +29,7 @@ export function DocumentViewer({
   onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const recipeHud = useContext(RecipeHudContext);
   const { width } = useWindowDimensions();
   const topInset = Math.max(
     insets.top,
@@ -96,6 +99,8 @@ export function DocumentViewer({
             <Text style={styles.closeText}>Close document</Text>
           </Pressable>
         </ScrollView>
+        {/* Android dialogs are separate windows; the root HUD cannot cover them. */}
+        {Platform.OS === 'android' && <RecipeHud state={recipeHud} />}
       </View>
     </Modal>
   );

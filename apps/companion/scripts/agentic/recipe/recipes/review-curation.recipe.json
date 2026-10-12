@@ -365,9 +365,16 @@
         "status": "pass"
       },
       "scroll-report": {
-        "action": "ui.scroll",
-        "direction": "down",
-        "pixels": 1200,
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 1800
+        },
+        "delta": {
+          "x": 0,
+          "y": -1200
+        },
+        "duration_ms": 700,
         "intent": "The full report is available beneath the finding list.",
         "next": "original-report"
       },
@@ -386,32 +393,60 @@
         "next": "return-to-first-1"
       },
       "scroll-post-workspace": {
-        "action": "ui.scroll",
-        "direction": "down",
-        "pixels": 1400,
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 1800
+        },
+        "delta": {
+          "x": 0,
+          "y": -1400
+        },
+        "duration_ms": 700,
         "intent": "The publication choice follows the curated finding list.",
-        "next": "post-workspace"
+        "next": "scroll-post-workspace-end"
       },
       "scroll-post-slot": {
-        "action": "ui.scroll",
-        "direction": "down",
-        "pixels": 1400,
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 1800
+        },
+        "delta": {
+          "x": 0,
+          "y": -1400
+        },
+        "duration_ms": 700,
         "intent": "The publication choice follows the curated finding list.",
-        "next": "arm-slot-race"
+        "next": "scroll-post-slot-end"
       },
       "scroll-empty": {
-        "action": "ui.scroll",
-        "direction": "up",
-        "pixels": 400,
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 600
+        },
+        "delta": {
+          "x": 0,
+          "y": 400
+        },
+        "duration_ms": 700,
         "intent": "An empty selection remains an explicit publication choice.",
         "next": "empty-selection"
       },
       "scroll-post-empty": {
-        "action": "ui.scroll",
-        "direction": "down",
-        "pixels": 1800,
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 2200
+        },
+        "delta": {
+          "x": 0,
+          "y": -1800
+        },
+        "duration_ms": 700,
         "intent": "The publication choice preserves an empty finding selection.",
-        "next": "post-empty"
+        "next": "scroll-post-empty-end"
       },
       "inspect-visible": {
         "action": "ui.pan",
@@ -541,11 +576,18 @@
         "next": "stale-post-visible"
       },
       "stale-post-visible": {
-        "action": "ui.scroll",
-        "direction": "down",
-        "pixels": 1400,
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 1800
+        },
+        "delta": {
+          "x": 0,
+          "y": -1400
+        },
+        "duration_ms": 700,
         "intent": "The old review is available for a captured confirmation.",
-        "next": "stale-post"
+        "next": "stale-post-visible-end"
       },
       "stale-post": {
         "action": "ui.press",
@@ -700,6 +742,62 @@
         "status": "running",
         "intent": "Observed empty publication matches the accepted finding selection.",
         "next": "assert-empty"
+      },
+      "scroll-post-workspace-end": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 1800
+        },
+        "delta": {
+          "x": 0,
+          "y": -1400
+        },
+        "duration_ms": 700,
+        "intent": "The publication actions are fully visible below the findings.",
+        "next": "post-workspace"
+      },
+      "scroll-post-slot-end": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 1800
+        },
+        "delta": {
+          "x": 0,
+          "y": -1400
+        },
+        "duration_ms": 700,
+        "intent": "The publication actions are fully visible below the findings.",
+        "next": "arm-slot-race"
+      },
+      "scroll-post-empty-end": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 1800
+        },
+        "delta": {
+          "x": 0,
+          "y": -1400
+        },
+        "duration_ms": 700,
+        "intent": "The publication actions are fully visible below the findings.",
+        "next": "post-empty"
+      },
+      "stale-post-visible-end": {
+        "action": "ui.pan",
+        "target": {
+          "x": 24,
+          "y": 1800
+        },
+        "delta": {
+          "x": 0,
+          "y": -1400
+        },
+        "duration_ms": 700,
+        "intent": "The publication actions are fully visible below the findings.",
+        "next": "stale-post"
       }
     }
   }

@@ -4,7 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
-- Inspect each review finding at its reviewed revision and select which finding comments to publish.
+- Inspect each review finding at its reviewed revision and select which finding comments to publish. Android report dialogs retain the shared recipe HUD.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.8.1 - 2026-10-11
