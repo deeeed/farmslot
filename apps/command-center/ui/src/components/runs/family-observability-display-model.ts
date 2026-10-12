@@ -43,7 +43,7 @@ export function semanticColor(value: string): string {
   }
 }
 
-export function hasUsageMetrics(run: Pick<FamilyObservabilityRunSummary, 'metrics'>): boolean {
+export function hasTokenMetrics(run: Pick<FamilyObservabilityRunSummary, 'metrics'>): boolean {
   const metrics = run.metrics;
   if (!metrics) return false;
   return (
@@ -53,9 +53,12 @@ export function hasUsageMetrics(run: Pick<FamilyObservabilityRunSummary, 'metric
     metrics.sessionInputTokens != null ||
     metrics.sessionOutputTokens != null ||
     metrics.sessionCacheCreation != null ||
-    metrics.sessionCacheRead != null ||
-    metrics.actualModel != null
+    metrics.sessionCacheRead != null
   );
+}
+
+export function hasUsageMetrics(run: Pick<FamilyObservabilityRunSummary, 'metrics'>): boolean {
+  return hasTokenMetrics(run) || run.metrics?.actualModel != null;
 }
 
 export function hasModelDrift(run: Pick<FamilyObservabilityRunSummary, 'metrics'>): boolean {
