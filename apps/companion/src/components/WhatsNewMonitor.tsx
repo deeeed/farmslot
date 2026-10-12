@@ -19,6 +19,10 @@ export const WhatsNewMonitor = React.memo(function WhatsNewMonitor() {
       const seenVersion = await AsyncStorage.getItem(WHATS_NEW_SEEN_VERSION_KEY);
       const { appVersion } = getCompanionEnvironment();
       const targetVersion = notes.version || appVersion;
+      if (__DEV__ && process.env.EXPO_PUBLIC_FARMSLOT_PREPARED === '1') {
+        await AsyncStorage.setItem(WHATS_NEW_SEEN_VERSION_KEY, targetVersion);
+        return;
+      }
       if (!isVersionNewer(targetVersion, seenVersion)) return;
       if (!disposed) setVisible(true);
     };

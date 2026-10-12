@@ -43,7 +43,8 @@ projects/*/runs/
 # No trailing slash — must ignore symlinks named node_modules (worktree shortcut mistake).
 /node_modules
 **/node_modules
-/.yarn
+/.yarn/*
+!/.yarn/patches/
 /.cache/eslint/
 
 **.DS_Store
