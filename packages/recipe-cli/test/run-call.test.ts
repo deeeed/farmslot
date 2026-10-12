@@ -69,6 +69,7 @@ import {
   parseArgs,
   ProvenanceDriftError,
   type RecipeEngine,
+  recipeRunOptionsFromCli,
   recipeRuntimePath,
   resolveHarnessContext,
   resolveLibrarySources,
@@ -2864,6 +2865,17 @@ describe('--record-video', () => {
         },
       },
     }));
+  });
+
+  test('parsed recording opt-out keeps its value and reason at the runtime boundary', () => {
+    const parsed = parseArgs([
+      '--record-video=off',
+      '--recording-reason',
+      'Inspect native locators without video',
+    ]);
+    const runtime = recipeRunOptionsFromCli('web', parsed.options);
+    assert.equal(runtime.recordVideo, false);
+    assert.equal(runtime.recordingReason, 'Inspect native locators without video');
   });
 
   test('run refuses it before execution on an adapter that cannot record', async () => {

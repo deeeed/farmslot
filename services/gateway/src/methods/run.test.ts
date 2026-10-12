@@ -7,8 +7,10 @@ import test from 'node:test';
 
 import {
   buildRunResolveDecisionParams,
+  createReviewCuration,
   DEFAULT_CURSOR_MODEL,
   type ReadyGatePrPackage,
+  type ReviewGatePayload,
   type RunDecision,
 } from '@farmslot/protocol';
 
@@ -1986,6 +1988,79 @@ function gateParkedRun(
   });
   return { run, decision, slotId };
 }
+
+test('review curation freshness rejects before restore and after an awaited restore', async (t) => {
+  const { run, decision, slotId } = gateParkedRun(
+    t,
+    'curation',
+    gateParkRecord('x', 's', { slotFreedAt: '2026-09-05T00:00:10.000Z' }),
+  );
+  const payload: ReviewGatePayload = {
+    kind: 'review',
+    repo: 'example/app',
+    prNumber: 42,
+    reviewMd: 'Original',
+    lineComments: [],
+    recommendation: 'COMMENT',
+  };
+  decision.type = 'engine_review_posting';
+  decision.actions = [{ id: 'post', label: 'Post', style: 'primary' }];
+  decision.payload = payload;
+  updateRun(run.id, { decisions: [decision] });
+  let restores = 0;
+  const dependencies = {
+    restoreGatePark: async (runId: string) => {
+      restores++;
+      const fresh = getRun(runId)!;
+      updateRun(runId, {
+        park: { ...fresh.park!, phase: 'restored' as const, slotFreedAt: undefined },
+        decisions: fresh.decisions.map((entry) => ({
+          ...entry,
+          payload: { ...payload, reviewMd: 'Refreshed' },
+        })),
+      });
+      return {
+        ok: true as const,
+        runId,
+        slotId,
+        restoredGeneration: 1,
+        reloadedSessionId: 'test',
+        gateReplayed: false,
+        record: getRun(runId)!.park!,
+      };
+    },
+  };
+  await assert.rejects(
+    runResolveDecision(
+      {
+        runId: run.id,
+        decisionId: decision.id,
+        actionId: 'post',
+        selectionData: { reviewFingerprint: 'stale', includedIndices: [] },
+      },
+      () => {},
+      dependencies,
+    ),
+    /Review changed/,
+  );
+  assert.equal(restores, 0);
+  assert.equal(getRun(run.id)!.decisions[0].resolvedAt, undefined);
+  await assert.rejects(
+    runResolveDecision(
+      {
+        runId: run.id,
+        decisionId: decision.id,
+        actionId: 'post',
+        selectionData: { ...createReviewCuration(payload) },
+      },
+      () => {},
+      dependencies,
+    ),
+    /Review changed/,
+  );
+  assert.equal(restores, 1);
+  assert.equal(getRun(run.id)!.decisions[0].resolvedAt, undefined);
+});
 
 test('runResolveDecision refuses and leaves the gate pending while a park is in flight', async (t) => {
   // Still stopping its resources: there is no coherent state to restore into

@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Share gate prerequisite reasons and presentation for fixing, reviewer failure and reconciliation states.
+- Share review finding curation and bind publication choices to the reviewed content.
 
 ## 0.39.0 - 2026-10-12
 

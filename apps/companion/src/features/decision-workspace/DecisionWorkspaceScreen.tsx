@@ -110,6 +110,8 @@ import { PlanningChoices } from '../planning/PlanningControls';
 import { ReviewDispatchPicker } from '../review-dispatch/ReviewDispatchPicker';
 import { ReviewHistoryPanel } from '../run-detail/components/ReviewHistoryPanel';
 import { VisualReviewEntryCard } from '../visual-review/components/VisualReviewEntryCard';
+import { ReviewPublicationPanel } from '../workspace-shared/ReviewPublication';
+import { useReviewPublication } from '../workspace-shared/use-review-publication';
 
 import {
   DecisionBeforeAfterPriorityPanel,
@@ -269,6 +271,11 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     () => enrichDecisionWithRunContext(decision, sourceRun),
     [decision, sourceRun],
   );
+  const reviewPublication = useReviewPublication(sourceRun, decision, (run) => {
+    setSourceRun(run);
+    const refreshed = run.decisions.find((item) => item.id === decision?.id);
+    if (refreshed) setDecision(decisionDetailFromRun(run, refreshed));
+  });
   const presentation = useMemo(
     () => (decisionWithRunContext ? presentDecision(decisionWithRunContext) : null),
     [decisionWithRunContext],
@@ -605,11 +612,21 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
         return;
       }
       const resourcePosture = postureChoiceForResolve(gate, postureAvailability);
+      const curatedPost = decision.type === 'engine_review_posting' && actionId === 'post';
+      if (curatedPost && (!reviewPublication.curation || !decisionWithRunContext?.runMeta)) {
+        Alert.alert('Review unavailable', 'Load the review run before posting selected findings.');
+        return;
+      }
+      const reviewStillCurrent = curatedPost ? reviewPublication.captureCurrent() : null;
       const { method, params } = decisionResolveRequest(
-        decision,
+        curatedPost ? decisionWithRunContext! : decision,
         actionId,
         resourcePosture,
-        slotPicker && actionId === 'pick' ? { slotId: slotPicker.selectedSlotId } : selectionData,
+        curatedPost
+          ? reviewPublication.selectionData
+          : slotPicker && actionId === 'pick'
+            ? { slotId: slotPicker.selectedSlotId }
+            : selectionData,
       );
 
       // Transition ids already on screen. `run.resolveDecision` returns before
@@ -626,6 +643,10 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
         {
           text: 'Send',
           onPress: () => {
+            if (reviewStillCurrent && !reviewStillCurrent()) {
+              Alert.alert('Review changed', 'Inspect the current review before posting.');
+              return;
+            }
             // The guard may have changed while the confirmation was open.
             const withheldNow = withheldActionsRef.current.get(actionId);
             if (withheldNow) {
@@ -692,11 +713,13 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
       applyPostureGate,
       client,
       decision,
+      decisionWithRunContext,
       embedded,
       gateKey,
       postureAvailability,
       postureGate,
       removeDecision,
+      reviewPublication,
       router,
       runPostureStatus.state,
       sourceRunId,
@@ -1585,6 +1608,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
 
         <View style={styles.section} onLayout={rememberSection('actions')}>
           <Text style={styles.sectionTitle}>Evidence-reviewed actions</Text>
+          {reviewPublication.curation && <ReviewPublicationPanel {...reviewPublication} />}
           <View style={styles.safetyCard}>
             <Text style={styles.safetyTitle}>Resolve only from full context</Text>
             <Text style={styles.safetyText}>
@@ -1651,6 +1675,12 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
               {presentation.actions.map((action) => {
                 const disabled =
                   withheldActions.has(action.id) ||
+                  (decision.type === 'engine_review_posting' &&
+                    action.id === 'post' &&
+                    (!reviewPublication.curation ||
+                      reviewPublication.disabled ||
+                      reviewPublication.busy ||
+                      !decisionWithRunContext?.runMeta)) ||
                   (!!slotPicker && action.id === 'pick' && !slotPicker.selectedSlotId);
                 if (action.id === 'request-review') {
                   return (

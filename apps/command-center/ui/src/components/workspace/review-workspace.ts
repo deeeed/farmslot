@@ -16,7 +16,13 @@ import type {
   ReviewLineComment,
   RunDecision,
 } from '@farmslot/protocol';
-import { buildRunResolveDecisionParams, Events, Methods } from '@farmslot/protocol';
+import {
+  buildRunResolveDecisionParams,
+  Events,
+  Methods,
+  reviewPostingFingerprint,
+  reviewPostRecommendation,
+} from '@farmslot/protocol';
 
 import '../diff-viewer/diff-review.js';
 import '../diff-viewer/code-viewer.js';
@@ -69,19 +75,6 @@ import {
   renderWorkspaceEvidencePreview,
 } from './workspace-evidence-preview.js';
 import type { ReviewWorkspaceTab } from './workspace-url-state.js';
-
-function reviewRecommendation(
-  payload: ReviewGatePayload,
-): 'COMMENT' | 'REQUEST_CHANGES' | 'APPROVE' {
-  switch (payload.recommendation?.trim().toUpperCase()) {
-    case 'REQUEST_CHANGES':
-      return 'REQUEST_CHANGES';
-    case 'APPROVE':
-      return 'APPROVE';
-    default:
-      return 'COMMENT';
-  }
-}
 
 @customElement('review-workspace')
 export class ReviewWorkspace extends ReviewWorkspaceState {
@@ -213,10 +206,18 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     this._proposing = false;
   }
 
+  private _lastCurationFingerprint = '';
+
   willUpdate() {
+    if (this.decision) {
+      const next = reviewPostingFingerprint(this._payload);
+      if (this._lastCurationFingerprint && this._lastCurationFingerprint !== next)
+        this._confirmTimer.clear();
+      this._lastCurationFingerprint = next;
+    }
     if (!this._initialized && this.decision) {
       this._includedComments = new Set(this._comments.map((_, i) => i));
-      this._selectedRecommendation = reviewRecommendation(this._payload);
+      this._selectedRecommendation = reviewPostRecommendation(this._payload);
       this._initialized = true;
       this._readTabFromHash();
       this._normalizeActiveTab();
@@ -246,7 +247,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       } else {
         this._includeEvidence = true;
       }
-      this._selectedRecommendation = reviewRecommendation(this._payload);
+      this._selectedRecommendation = reviewPostRecommendation(this._payload);
       this._normalizeActiveTab();
     }
     // Re-check if slotId changes
@@ -473,6 +474,16 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     // A posture choice the Gateway already refused must not ride along with a
     // resolution: the decision would be consumed and the refusal repeated.
     if (this.postureBlockedReason) return;
+    const decision = this.decision;
+    const selectionData = {
+      reviewFingerprint: reviewPostingFingerprint(this._payload),
+      includedIndices: [...this._includedComments],
+      recommendation: this._selectedRecommendation,
+      includeEvidence: this._includeEvidence,
+      ...(this._evidenceOverrides.size > 0
+        ? { evidenceOverrides: Object.fromEntries(this._evidenceOverrides) }
+        : {}),
+    };
     this._confirmAction('post', async () => {
       this._posting = true;
       try {
@@ -480,17 +491,10 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
           Methods.RUN_RESOLVE_DECISION,
           buildRunResolveDecisionParams({
             runId: this.runId,
-            decision: this.decision,
+            decision,
             actionId: 'post',
             ...(this.resourcePosture ? { resourcePosture: this.resourcePosture } : {}),
-            selectionData: {
-              includedIndices: [...this._includedComments],
-              recommendation: this._selectedRecommendation,
-              includeEvidence: this._includeEvidence,
-              ...(this._evidenceOverrides.size > 0
-                ? { evidenceOverrides: Object.fromEntries(this._evidenceOverrides) }
-                : {}),
-            },
+            selectionData,
           }),
         );
       } catch (err) {

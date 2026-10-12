@@ -4,6 +4,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+## 0.14.1 - 2026-10-12
+
+- Preserve an explicit CLI recording opt-out and its reason when passing options to the runtime.
+
 ## 0.14.0 - 2026-10-12
 
 - Preserve project log viewers and declared default check invocations in the resolved binding.

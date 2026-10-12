@@ -5,6 +5,7 @@ import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
+  assertReviewCurationFresh,
   type AssessmentRecord,
   captureQaAfterReview,
   DEFAULT_DEV_INTERACTIVE_PROFILE,
@@ -1711,6 +1712,8 @@ export async function resolveRunDecision(
     assertReviewRequestPayload(reviewRequest, { maxRows: 5 });
     assertWarmReviewRequestAvailable(existing, reviewRequest, getAllRuns());
   }
+  if (params.actionId === 'post' && decision.payload?.kind === 'review')
+    assertReviewCurationFresh(decision.payload, params.selectionData);
   // A park that LANDED and freed the slot is restored rather than refused — the
   // operator answering the gate is what asks for the run back. Still before
   // anything READS or consumes the decision, so a refusal leaves it pending.
@@ -1786,6 +1789,11 @@ export async function resolveRunDecision(
       assertDecisionStillUnresolved(params.runId, params.decisionId);
       assertNotGateParked(params.runId, getRun(params.runId)!);
     }
+    decision = getRun(params.runId)!.decisions.find(
+      (candidate) => candidate.id === params.decisionId,
+    )!;
+    if (params.actionId === 'post' && decision.payload?.kind === 'review')
+      assertReviewCurationFresh(decision.payload, params.selectionData);
     if (guardedAdvance) {
       await (dependencies.assertGatePrerequisites ?? assertRunGateReady)(
         getRun(existing.id)!,

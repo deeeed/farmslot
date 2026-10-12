@@ -26,6 +26,8 @@ export function decisionResolveRequest(
   selectionData?: Record<string, unknown>,
 ): DecisionResolveRequest {
   if (!decision.runMeta) {
+    if (decision.payload?.kind === 'review' && actionId === 'post')
+      throw new Error('Load the review run before posting selected findings.');
     return { method: Methods.DECISION_RESOLVE, params: { decisionId: decision.id, actionId } };
   }
   return buildRunDecisionActionRequest({

@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { Methods, type ReadyGatePayload } from '@farmslot/protocol';
+import {
+  createReviewCuration,
+  Methods,
+  type ReadyGatePayload,
+  type ReviewGatePayload,
+} from '@farmslot/protocol';
 
 import { decisionResolveRequest } from './decision-resolve';
 
@@ -16,6 +21,30 @@ const payload = {
     selectedEvidenceKeys: ['after.png'],
   },
 } as unknown as ReadyGatePayload;
+
+test('curated review posting requires its run and forwards an explicit empty selection', () => {
+  const review: ReviewGatePayload = {
+    kind: 'review',
+    repo: 'example/app',
+    prNumber: 42,
+    reviewMd: 'Saved report',
+    recommendation: 'COMMENT',
+    lineComments: [],
+  };
+  assert.throws(
+    () => decisionResolveRequest({ id: 'review', payload: review }, 'post'),
+    /Load the review run/,
+  );
+  const curation = createReviewCuration(review);
+  const request = decisionResolveRequest(
+    { id: 'review', payload: review, runMeta: { runId: 'run' } as never },
+    'post',
+    null,
+    { ...curation },
+  );
+  assert.equal(request.method, Methods.RUN_RESOLVE_DECISION);
+  assert.deepEqual((request.params as { selectionData: unknown }).selectionData, curation);
+});
 
 test('a run decision resolves through run.resolveDecision bound to the reviewed package', () => {
   assert.deepEqual(
