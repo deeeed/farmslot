@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Inspect each review finding at its reviewed revision and select which finding comments to publish.
+
 - Compare CI decision snapshots with current PR checks and refresh without leaving the decision.
 - Show local CI commands, exit codes and execution logs in gate review using the existing file viewer.
 

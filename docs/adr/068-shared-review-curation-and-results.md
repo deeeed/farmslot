@@ -79,7 +79,7 @@ report rendering. No duplicated viewer, picker or report component.
 
 First PR adds finding curation and reviewed-line inspection. After its closeout,
 a second PR enables the saved-result context on the same native component.
-Each has unit checks and a connected iOS recipe with HUD stills. Private gateway
+Each has unit checks and a connected recipe on the operator's phone platform with HUD stills. Private gateway
 proof must exercise the production resolver and verify persisted selection plus
 outgoing payload on both workspace and slot paths using an isolated provider
 sink with stubbed reads and writes, without GitHub mutations. Assert report/recommendation, finding reorder, and

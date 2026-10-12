@@ -88,6 +88,6 @@ internal post-review snapshot flag is owned by the gateway slot publisher.
 5. Saved published, unpublished and auto-finished reviews remain readable after
    gate closure, with exact verdict/SHA/report and no write action from reading.
 6. Unit checks cover shared projections, empty selection, freshness and legacy
-   data. Each PR has a connected iOS recipe proving RPC/store effects and HUD
+   data. Each PR has a connected recipe on the operator's phone platform proving RPC/store effects and HUD
    stills with intents shorter than 80 characters. Browser proof validates any
    changed desktop rendering. Proof uses no external review posting.

@@ -1,5 +1,6 @@
 // review-gate.ts — Review-posting gate orchestration and refresh
-import { rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 import {
@@ -11,7 +12,9 @@ import {
   PipelineSteps,
   type ReviewDiffSnapshot,
   type ReviewGatePayload,
+  reviewPostingFingerprint,
   type Run,
+  selectReviewFindings,
 } from '@farmslot/protocol';
 
 import { farmslotRoot, getProjectField, resolveProjectTaskDirName } from '../core/config.js';
@@ -291,6 +294,16 @@ export async function executeReviewGate(runId: string): Promise<void> {
     reviewPayload,
   );
   const resolvedDecision = findLatestResolvedDecision(getRun(runId)!.decisions, 'review_posting');
+  // Capture fingerprinted fields before subsequent awaits or worker artifact reads.
+  const acceptedPayload = structuredClone(
+    (resolvedDecision?.payload ?? reviewPayload) as ReviewGatePayload,
+  );
+  const acceptedSelection = structuredClone(resolvedDecision?.selectionData ?? {});
+  const acceptedReview =
+    actionId === 'post'
+      ? selectReviewFindings(acceptedPayload, acceptedSelection)
+      : acceptedPayload;
+  const acceptedSnapshot = acceptedPayload.reviewSnapshot;
 
   // 5b. Persist evidence overrides from selectionData (if any)
   if (qualityReport) {
@@ -325,7 +338,7 @@ export async function executeReviewGate(runId: string): Promise<void> {
     console.log(`[run-engine] run ${runId.slice(0, 8)} — posting review to PR #${prNumber}`);
     const livePr = await fetchGitHubPR(`${ciRepo}#${prNumber}`);
     try {
-      assertReviewSnapshotMatchesPullRequest(reviewSnapshot, livePr.headSha);
+      assertReviewSnapshotMatchesPullRequest(acceptedSnapshot, livePr.headSha);
     } catch (err) {
       if (err instanceof BlockedRunError) {
         const latest = getRun(runId)!;
@@ -351,7 +364,7 @@ export async function executeReviewGate(runId: string): Promise<void> {
     const taskDirName = pv?.projectJson
       ? resolveProjectTaskDirName(pv.projectJson)
       : DEFAULT_TASK_DIR;
-    const overrideRec = resolvedDecision?.selectionData?.recommendation as string | undefined;
+    const overrideRec = acceptedReview.recommendation;
 
     const includeInternalMetrics =
       pv?.projectJson.ci?.include_internal_metrics_in_pr_comments === true;
@@ -372,133 +385,145 @@ export async function executeReviewGate(runId: string): Promise<void> {
       await writeF(evidenceTmpFile, evidenceMarkdown, 'utf-8');
     }
 
-    const includedIndices = resolvedDecision?.selectionData?.includedIndices as
-      | number[]
-      | undefined;
-    const allComments = review.lineComments ?? [];
-    const commentsToPost = includedIndices
-      ? allComments.filter((_: unknown, i: number) => includedIndices.includes(i))
-      : allComments;
-
-    await publishPinnedReview({
-      reviewedHeadSha: reviewSnapshot.headSha,
-      postFormalReview: async (commitId) => {
-        // The gateway owns session metrics, artifact upload, and archival. Use
-        // argv so run metadata cannot break out of shell quoting.
-        const postReviewArgs: string[] = [
-          `${farmslotRoot}/scripts/post-review.sh`,
-          '--run-id',
-          runId,
-          '--pr',
-          String(prNumber),
-          '--repo',
-          ciRepo,
-          '--commit-id',
-          commitId,
-          '--slot',
-          current.slotId!,
-          '--skip-session-usage',
-          '--skip-artifact-upload',
-          '--skip-archive',
-        ];
-        if (taskRelDir) postReviewArgs.push('--task-dir', `${taskDirName}/${taskRelDir}`);
-        if (overrideRec) postReviewArgs.push('--recommendation', overrideRec);
-        if (runner) postReviewArgs.push('--runner', runner);
-        if (model) postReviewArgs.push('--model', model);
-        if (typeof costSnapshot.costUsd === 'number')
-          postReviewArgs.push('--cost', costSnapshot.costUsd.toFixed(4));
-        if (typeof costSnapshot.totalTokens === 'number')
-          postReviewArgs.push('--total-tokens', String(costSnapshot.totalTokens));
-        if (includeInternalMetrics) postReviewArgs.push('--include-internal-metrics');
-        postReviewArgs.push(
-          ...reviewEvidencePostArgs(resolvedDecision?.selectionData, evidenceTmpFile),
-        );
-
-        try {
-          const { execFile } = await import('node:child_process');
-          await new Promise<void>((resolve, reject) => {
-            execFile(
-              'bash',
-              postReviewArgs,
-              { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 },
-              (err, stdout, stderr) => {
-                if (err) reject(Object.assign(err, { stdout, stderr }));
-                else resolve();
-              },
-            );
-          });
-        } catch (err) {
-          if (!isOwnPrApprovalError(err)) throw err;
-          console.warn(
-            `[run-engine] run ${runId.slice(0, 8)} — formal approval skipped: ${(err as Error).message.split('\n')[0]}`,
+    const commentsToPost = acceptedReview.lineComments;
+    const reviewInputDir = await mkdtemp(path.join(os.tmpdir(), 'farmslot-accepted-review-'));
+    const reviewInputFile = path.join(reviewInputDir, 'review.json');
+    try {
+      await writeFile(
+        reviewInputFile,
+        JSON.stringify({
+          reviewMd: acceptedReview.reviewMd,
+          recommendation: acceptedReview.recommendation,
+          comments: commentsToPost,
+        }),
+        { mode: 0o600 },
+      );
+      await publishPinnedReview({
+        reviewedHeadSha: acceptedSnapshot.headSha,
+        postFormalReview: async (commitId) => {
+          // The gateway owns session metrics, artifact upload, and archival. Use
+          // argv so run metadata cannot break out of shell quoting.
+          const postReviewArgs: string[] = [
+            `${farmslotRoot}/scripts/post-review.sh`,
+            '--run-id',
+            runId,
+            '--pr',
+            String(prNumber),
+            '--repo',
+            ciRepo,
+            '--commit-id',
+            commitId,
+            '--slot',
+            current.slotId!,
+            '--review-input-file',
+            reviewInputFile,
+            '--skip-session-usage',
+            '--skip-artifact-upload',
+            '--skip-archive',
+          ];
+          if (taskRelDir) postReviewArgs.push('--task-dir', `${taskDirName}/${taskRelDir}`);
+          if (overrideRec) postReviewArgs.push('--recommendation', overrideRec);
+          if (runner) postReviewArgs.push('--runner', runner);
+          if (model) postReviewArgs.push('--model', model);
+          if (typeof costSnapshot.costUsd === 'number')
+            postReviewArgs.push('--cost', costSnapshot.costUsd.toFixed(4));
+          if (typeof costSnapshot.totalTokens === 'number')
+            postReviewArgs.push('--total-tokens', String(costSnapshot.totalTokens));
+          if (includeInternalMetrics) postReviewArgs.push('--include-internal-metrics');
+          postReviewArgs.push(
+            ...reviewEvidencePostArgs(resolvedDecision?.selectionData, evidenceTmpFile),
           );
-          updateRunStep(runId, S.HUMAN_GATE, {
-            detail: 'Review comment posted; formal approval skipped (author cannot approve own PR)',
-          });
-          broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
-        } finally {
-          if (evidenceTmpFile) await rm(evidenceTmpFile, { force: true });
-        }
-      },
-      postInlineComments: async (commitId) => {
-        if (commentsToPost.length === 0) return;
-        updateRunStep(runId, S.HUMAN_GATE, {
-          detail: `Posting comments 0/${commentsToPost.length}...`,
-        });
-        broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
-        let posted = 0;
-        for (const c of commentsToPost) {
-          const sev = c.severity ?? 'comment';
-          const prefix: Record<string, string> = {
-            must_fix: '**must fix** — ',
-            suggestion: '**suggestion** — ',
-            nitpick: '*nitpick* — ',
-          };
-          const body = (prefix[sev] ?? '') + (c.body ?? '');
+
           try {
-            await ghRequest(
-              [
-                'api',
-                `repos/${ciRepo}/pulls/${prNumber}/comments`,
-                '-X',
-                'POST',
-                '-f',
-                `body=${body}`,
-                '-f',
-                `commit_id=${commitId}`,
-                '-f',
-                `path=${c.path}`,
-                '-F',
-                `line=${c.line}`,
-                '-f',
-                'side=RIGHT',
-              ],
-              { force: true },
+            const { execFile } = await import('node:child_process');
+            await new Promise<void>((resolve, reject) => {
+              execFile(
+                'bash',
+                postReviewArgs,
+                { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 },
+                (err, stdout, stderr) => {
+                  if (err) reject(Object.assign(err, { stdout, stderr }));
+                  else resolve();
+                },
+              );
+            });
+          } catch (err) {
+            if (!isOwnPrApprovalError(err)) throw err;
+            console.warn(
+              `[run-engine] run ${runId.slice(0, 8)} — formal approval skipped: ${(err as Error).message.split('\n')[0]}`,
             );
-            posted++;
             updateRunStep(runId, S.HUMAN_GATE, {
-              detail: `Posting comments ${posted}/${commentsToPost.length}...`,
+              detail:
+                'Review comment posted; formal approval skipped (author cannot approve own PR)',
             });
             broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
-          } catch (err) {
-            console.warn(
-              `[run-engine] line comment failed: ${c.path}:${c.line} — ${(err as Error).message.slice(0, 120)}`,
-            );
+          } finally {
+            if (evidenceTmpFile) await rm(evidenceTmpFile, { force: true });
           }
-        }
-        console.log(
-          `[run-engine] run ${runId.slice(0, 8)} — posted ${posted}/${commentsToPost.length} line comments`,
-        );
-        updateRunStep(runId, S.HUMAN_GATE, { detail: `Posted ${posted} comments` });
-        broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
-      },
-      fetchCurrentHeadSha: async () => (await fetchGitHubPR(`${ciRepo}#${prNumber}`)).headSha,
-      onHeadAdvanced: (currentHeadSha) => {
-        console.warn(
-          `[run-engine] run ${runId.slice(0, 8)} — review posted for ${reviewSnapshot.headSha.slice(0, 7)}, but PR advanced to ${currentHeadSha?.slice(0, 7) ?? 'unknown'}`,
-        );
-      },
-    });
+        },
+        postInlineComments: async (commitId) => {
+          if (commentsToPost.length === 0) return;
+          updateRunStep(runId, S.HUMAN_GATE, {
+            detail: `Posting comments 0/${commentsToPost.length}...`,
+          });
+          broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+          let posted = 0;
+          for (const c of commentsToPost) {
+            const sev = c.severity ?? 'comment';
+            const prefix: Record<string, string> = {
+              must_fix: '**must fix** — ',
+              suggestion: '**suggestion** — ',
+              nitpick: '*nitpick* — ',
+            };
+            const body = (prefix[sev] ?? '') + (c.body ?? '');
+            try {
+              await ghRequest(
+                [
+                  'api',
+                  `repos/${ciRepo}/pulls/${prNumber}/comments`,
+                  '-X',
+                  'POST',
+                  '-f',
+                  `body=${body}`,
+                  '-f',
+                  `commit_id=${commitId}`,
+                  '-f',
+                  `path=${c.path}`,
+                  '-F',
+                  `line=${c.line}`,
+                  '-f',
+                  'side=RIGHT',
+                ],
+                { force: true },
+              );
+              posted++;
+              updateRunStep(runId, S.HUMAN_GATE, {
+                detail: `Posting comments ${posted}/${commentsToPost.length}...`,
+              });
+              broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+            } catch (err) {
+              console.warn(
+                `[run-engine] line comment failed: ${c.path}:${c.line} — ${(err as Error).message.slice(0, 120)}`,
+              );
+            }
+          }
+          console.log(
+            `[run-engine] run ${runId.slice(0, 8)} — posted ${posted}/${commentsToPost.length} line comments`,
+          );
+          updateRunStep(runId, S.HUMAN_GATE, { detail: `Posted ${posted} comments` });
+          broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+        },
+        fetchCurrentHeadSha: async () => (await fetchGitHubPR(`${ciRepo}#${prNumber}`)).headSha,
+        onHeadAdvanced: (currentHeadSha) => {
+          console.warn(
+            `[run-engine] run ${runId.slice(0, 8)} — review posted for ${acceptedSnapshot.headSha.slice(0, 7)}, but PR advanced to ${currentHeadSha?.slice(0, 7) ?? 'unknown'}`,
+          );
+        },
+      });
+    } finally {
+      await rm(reviewInputDir, { recursive: true, force: true });
+      if (evidenceTmpFile) await rm(evidenceTmpFile, { force: true });
+    }
 
     console.log(`[run-engine] run ${runId.slice(0, 8)} — review posted`);
   } else {
@@ -526,14 +551,29 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
     throw new Error('No pending review_posting decision to refresh');
   }
 
+  const startingFingerprint = reviewPostingFingerprint(decision.payload as ReviewGatePayload);
+  const freshTarget = () => {
+    const fresh = getRun(runId);
+    const current = fresh?.decisions.find((item) => item.id === decision.id);
+    if (
+      !fresh ||
+      !current ||
+      current.resolvedAt ||
+      current.payload?.kind !== 'review' ||
+      reviewPostingFingerprint(current.payload) !== startingFingerprint
+    )
+      throw Object.assign(new Error('Review changed during refresh.'), { code: 'REVIEW_CHANGED' });
+    return { run: fresh, decision: current };
+  };
   if (run.reviewWorkspace) {
     if (run.reviewWorkspace.cleanedAt) return run;
     const completion = await readReviewWorkspaceCompletion(runId);
     if (!completion?.result || completion.signal.outcome !== 'success')
       throw new Error('Reviewer has not finished its updated result');
+    const target = freshTarget();
     const refreshed = updateRun(runId, {
       reviewResult: completion.result,
-      decisions: run.decisions.map((entry) =>
+      decisions: target.run.decisions.map((entry) =>
         entry.id === decision.id
           ? { ...entry, payload: { ...(entry.payload as ReviewGatePayload), ...completion.result } }
           : entry,
@@ -567,8 +607,9 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
     }
   }
 
+  const target = freshTarget();
   const nextPayload: ReviewGatePayload = {
-    ...((decision.payload ?? {}) as ReviewGatePayload),
+    ...((target.decision.payload ?? {}) as ReviewGatePayload),
     reviewMd: review.reviewMd,
     lineComments: review.lineComments,
     recommendation: review.recommendation,
@@ -577,14 +618,14 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
   };
   const nextDescription = review.summary
     ? `**Recommendation:** ${review.recommendation}\n**Line comments:** ${review.lineCommentSummary}\n\n${review.summary}`
-    : decision.description;
+    : target.decision.description;
   const nextDecision = {
-    ...decision,
+    ...target.decision,
     payload: nextPayload,
     description: nextDescription,
     actions: reviewPostingActions(review.reviewMd),
   };
-  const nextDecisions = run.decisions.map((d) => (d.id === decision.id ? nextDecision : d));
+  const nextDecisions = target.run.decisions.map((d) => (d.id === decision.id ? nextDecision : d));
 
   updateRun(runId, { decisions: nextDecisions });
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });

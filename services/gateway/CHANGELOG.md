@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Publish the exact selected review findings and report, preserving accepted choices across refresh races.
+
 - Declare mid-turn prompt support and verify complete Enter-submitted queue messages for guarded lane steering.
 
 - Retain CI check metadata at decisions and return current details through pr.status.
