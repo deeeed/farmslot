@@ -5,6 +5,7 @@ import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
+  assertReviewCurationFresh,
   type AssessmentRecord,
   captureQaAfterReview,
   DEFAULT_DEV_INTERACTIVE_PROFILE,
@@ -1698,6 +1699,8 @@ export async function resolveRunDecision(
     assertReviewRequestPayload(reviewRequest, { maxRows: 5 });
     assertWarmReviewRequestAvailable(existing, reviewRequest, getAllRuns());
   }
+  if (params.actionId === 'post' && decision.payload?.kind === 'review')
+    assertReviewCurationFresh(decision.payload, params.selectionData);
   // A park that LANDED and freed the slot is restored rather than refused — the
   // operator answering the gate is what asks for the run back. Still before
   // anything READS or consumes the decision, so a refusal leaves it pending.
@@ -1771,6 +1774,8 @@ export async function resolveRunDecision(
   decision = getRun(params.runId)!.decisions.find(
     (candidate) => candidate.id === params.decisionId,
   )!;
+  if (params.actionId === 'post' && decision.payload?.kind === 'review')
+    assertReviewCurationFresh(decision.payload, params.selectionData);
   // Past every refusal now, so the normalization may persist.
   if (normalizedReviews) normalizeExhaustedReviewContinuationsForRun(params.runId);
   if (decision.type === 'engine_human_gate' && isHumanGateReviewRequestAction(params.actionId)) {

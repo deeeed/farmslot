@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Share review finding curation and bind publication choices to the reviewed content.
+
 ## 0.39.0 - 2026-10-12
 
 - Allow project packs to declare default static recipe check invocations.
