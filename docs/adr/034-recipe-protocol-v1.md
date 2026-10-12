@@ -102,12 +102,21 @@ renderer prevent project-specific formatting drift.
 
 Mandatory panel and line bounds apply after styling. Existing text/style,
 overlay and custom `renderHud` options remain, with custom renderers adopting
-the shared helper. CLI consumers need no native peers. The helper/authoring
-option are additive package APIs; the recipe wire/schema version stays v1.
+the shared helper. CLI consumers need no native peers.
 Framework examples adopt the authoring rule. Farm recipes are not rewritten;
 copied project HUDs adopt the shared renderer through deliberate scaffold
 updates rather than deployment overwrites. The specification retains exact
 layout bounds, extension behavior and verification requirements.
+
+### Public surface
+
+Existing `farmslot recipe validate` and conformance validation consume the
+explicit authoring option. `@farmslot/protocol/recipe` exports the shared display
+helper/policy, consumed by the runner, web adapter and native renderer.
+`@farmslot/adapter-rn/recipe-hud` supplies the native component to Companion and
+scaffold re-exports. Harnesses including mm-harness inherit runner/adapter policy
+and retain `app.hud` and custom rendering extension points. These are additive
+package APIs; no command/flag or recipe wire/schema version changes.
 
 ## Amendment 2 (2026-10-12): Bounded log observations
 
@@ -141,7 +150,13 @@ breaking correction to stale-content false passes. Project manifests and
 protocol/runner dependency pins move together. MetaMask Core, Mobile, Extension
 and web-dapp catalogs are the first consumers; Terminal inherits the web-dapp
 catalog and adds domain actions. Recipes and `farmslot recipe call watch_logs`
-use existing parameters; `@farmslot/recipe-runner` owns execution. No SDK export
-or CLI flag is added. The specification owns timeout/poll bounds, preflight and
-real-producer acceptance requirements. A merged implementation does not record
-package publication or provider rollout.
+use existing parameters. The specification owns timeout/poll bounds, preflight
+and real-producer acceptance requirements. A merged implementation does not
+record package publication or provider rollout.
+
+### Public surface
+
+`@farmslot/recipe-runner` owns action execution. Recipes and the existing
+`farmslot recipe call watch_logs` consume the optional parameter through project
+catalogs, whose provider/runner dependencies declare support. No SDK export,
+CLI flag, new action or project lifecycle hook is added.

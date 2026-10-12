@@ -76,3 +76,12 @@ schema-version change is added. Successful empty reads differ from failed or
 truncated reads. List trimming is explicit and detail hydration retains the
 snapshot. The specification owns transport normalization, all six CI types,
 refresh races, availability states and verification requirements.
+
+### Public surface
+
+The existing `pr.status` RPC exposes optional `PRStatus.checkSnapshot`, and
+`RunDecision.context.checkSnapshot` retains it. `@farmslot/protocol` owns the
+additive named check snapshot/row types and pure view-model for the gateway and
+both operator clients. Companion uses the existing `force` flag for read-only
+refresh. Harnesses inherit the existing response and context; no RPC, command,
+CLI flag, hook, policy or schema version is added.
