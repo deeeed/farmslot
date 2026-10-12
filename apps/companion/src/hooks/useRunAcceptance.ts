@@ -10,12 +10,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
+  createEvidenceReviewModel,
+  type EvidenceReviewModel,
+} from '@farmslot/adapter-sdk/evidence';
+import {
   type AcceptanceCriterionRef,
   type AcceptanceEvidenceLink,
   type AcceptanceStatusLedger,
   Events,
   Methods,
+  type OutputReviewPayload,
   type Run,
+  type RunRecipeRunsForRunResult,
   type TaskProgressResult,
   type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
@@ -29,6 +35,8 @@ import { useConnectionStore } from '../store/connection';
 import { useConnectedTransport } from './useConnectedTransport';
 
 export interface RunAcceptance {
+  evidenceModel: EvidenceReviewModel | null;
+  recipeRunId: string | null;
   acceptanceStatus: AcceptanceStatusLedger | null;
   acceptanceCriteria: AcceptanceCriterionRef[] | null;
   acceptanceEvidenceLinks: AcceptanceEvidenceLink[] | null;
@@ -37,7 +45,8 @@ export interface RunAcceptance {
   error: string | null;
 }
 
-export type RunAcceptanceSource = Pick<Run, 'id' | 'slotId' | 'reviewWorkspace' | 'updatedAt'>;
+export type RunAcceptanceSource = Pick<Run, 'id' | 'slotId' | 'reviewWorkspace' | 'updatedAt'> &
+  Partial<Pick<Run, 'output' | 'decisions'>>;
 
 type AcceptanceData = Pick<
   TaskProgressResult,
@@ -53,7 +62,9 @@ const NO_PROGRESS_SURFACE = 'the run has no slot or review workspace to read the
 export function useRunAcceptance(
   client: GatewayClient | null,
   run: RunAcceptanceSource | null,
+  options: { recipeRunId?: string; reportSnapshot?: OutputReviewPayload; decisionId?: string } = {},
 ): RunAcceptance {
+  const [evidence, setEvidence] = useState<RunRecipeRunsForRunResult | null>(null);
   const [data, setData] = useState<AcceptanceData | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
   const [broadcasts, setBroadcasts] = useState(0);
@@ -62,6 +73,15 @@ export function useRunAcceptance(
   const slotId = run?.slotId;
   const workspaceId = run?.reviewWorkspace?.workspaceId;
   const updatedAt = run?.updatedAt;
+  const gate = options.decisionId
+    ? run?.decisions?.find(({ id }) => id === options.decisionId)
+    : undefined;
+  const evidenceSnapshotHash =
+    gate?.payload?.kind === 'ready'
+      ? gate.payload.prPackage?.packageHash
+      : gate?.payload?.kind === 'output-review'
+        ? gate.payload.manifestDigest
+        : undefined;
   const target = taskProgressRequestForRun(run);
   const noSurface = Boolean(run) && !target;
   const authorityEpoch = useConnectionStore((s) => s.authorityEpoch);
@@ -71,8 +91,17 @@ export function useRunAcceptance(
   useEffect(() => {
     requestRef.current += 1;
     setData(null);
+    setEvidence(null);
     setRequestError(null);
-  }, [authorityEpoch, runId, slotId, workspaceId]);
+  }, [
+    authorityEpoch,
+    runId,
+    slotId,
+    workspaceId,
+    options.recipeRunId,
+    options.decisionId,
+    evidenceSnapshotHash,
+  ]);
 
   useEffect(() => {
     if (!client || !target) return;
@@ -85,10 +114,35 @@ export function useRunAcceptance(
     requestRef.current = requestId;
     client
       .request<TaskProgressResult>(Methods.TASK_PROGRESS, target)
-      .then((result) => {
+      .then(async (result) => {
         if (requestRef.current !== requestId) return;
         setData(result);
         setRequestError(null);
+        try {
+          const source = await client.request<RunRecipeRunsForRunResult>(
+            Methods.RUN_RECIPE_RUNS_FOR_RUN,
+            {
+              runId,
+              includeRecordedEvidence: true,
+              ...(options.decisionId
+                ? { decisionId: options.decisionId, evidenceSnapshotHash }
+                : options.recipeRunId
+                  ? { recipeRunId: options.recipeRunId }
+                  : {}),
+            },
+          );
+          if (requestRef.current === requestId) setEvidence(source);
+        } catch (error) {
+          if (requestRef.current === requestId)
+            setEvidence({
+              recipeRuns: [],
+              selectedRecipeRunId: null,
+              recordedEvidence: {
+                artifactPrefix: '',
+                errors: [error instanceof Error ? error.message : String(error)],
+              },
+            });
+        }
       })
       .catch((err: Error) => {
         if (requestRef.current !== requestId) return;
@@ -101,7 +155,18 @@ export function useRunAcceptance(
         setRequestError(`Acceptance criteria unavailable: ${err.message}`);
       });
     // `target` is derived from the run fields listed here.
-  }, [broadcasts, client, connection, runId, slotId, workspaceId, updatedAt]);
+  }, [
+    broadcasts,
+    client,
+    connection,
+    runId,
+    slotId,
+    workspaceId,
+    updatedAt,
+    options.recipeRunId,
+    options.decisionId,
+    evidenceSnapshotHash,
+  ]);
 
   useEffect(() => {
     if (!client || !run) return;
@@ -121,7 +186,22 @@ export function useRunAcceptance(
       data?.acceptanceStatusError ??
       (!acceptanceStatus ? (data?.acceptanceEvidenceLinksError ?? null) : null);
     const ledger = acceptanceStatus ?? { schemaVersion: 1 as const, criteria: [] };
+    const evidenceModel = data
+      ? createEvidenceReviewModel({
+          context: 'gate',
+          ledger: acceptanceStatus,
+          criteria: acceptanceCriteria ?? undefined,
+          evidenceLinks: acceptanceEvidenceLinks ?? undefined,
+          package: evidence?.recordedEvidence?.input,
+          readErrors: evidence?.recordedEvidence?.errors,
+          artifactPrefix: evidence?.recordedEvidence?.artifactPrefix,
+          report: evidence?.recordedEvidence?.report,
+          reportSnapshot: options.reportSnapshot,
+        })
+      : null;
     return {
+      evidenceModel,
+      recipeRunId: evidence?.selectedRecipeRunId ?? null,
       acceptanceStatus,
       acceptanceCriteria,
       acceptanceEvidenceLinks,
@@ -130,9 +210,10 @@ export function useRunAcceptance(
             ledger,
             acceptanceCriteria ?? ledger.criteria,
             acceptanceEvidenceLinks ?? [],
+            evidenceModel ?? undefined,
           )
         : null,
       error,
     };
-  }, [data, noSurface, requestError]);
+  }, [data, evidence, noSurface, requestError, run?.output, options.reportSnapshot]);
 }

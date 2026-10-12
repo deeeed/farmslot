@@ -5,6 +5,8 @@
     "resolveJsonModule": true,
     "types": ["node"],
     "paths": {
+      "@farmslot/adapter-sdk/evidence": ["../../packages/adapter-sdk/src/evidence.ts"],
+      "@farmslot/recipe-runner/evidence": ["../../packages/recipe-runner/src/evidence/index.ts"],
       "@/*": ["./src/*"],
       "@farmslot/theme": ["../../packages/theme/src/index.ts"],
       "@farmslot/theme/*": ["../../packages/theme/src/*"],

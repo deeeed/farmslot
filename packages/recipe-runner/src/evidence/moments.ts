@@ -5,6 +5,13 @@ export interface OccurrenceRecordingCoverage {
   segments: RecordingSegmentRef[];
 }
 
+/** Equal video bytes can have different original-segment clocks. Paths identify those originals. */
+export function indexRecordingTimelines(
+  timelines: Iterable<RecipeRecordingTimelineDocument>,
+): ReadonlyMap<string, RecipeRecordingTimelineDocument> {
+  return new Map([...timelines].map((timeline) => [timeline.videoPath, timeline]));
+}
+
 /** Reuse measured ranges and ordered originals. A gap never becomes seekable proof. */
 export function occurrenceRecordingCoverage(
   traceIndex: number,
@@ -12,7 +19,7 @@ export function occurrenceRecordingCoverage(
   timelines?: ReadonlyMap<string, RecipeRecordingTimelineDocument>,
 ): OccurrenceRecordingCoverage {
   const spans = segments.flatMap((segment, index) => {
-    const timeline = timelines?.get(segment.videoDigest);
+    const timeline = timelines?.get(segment.videoPath);
     const marker = timeline?.markers.find((entry) => entry.traceIndex === traceIndex);
     return timeline &&
       marker &&
@@ -34,7 +41,7 @@ export function occurrenceRecordingCoverage(
     )
   )
     return { timing: 'measured', segments: spans.map((span) => span.segment) };
-  const untimed = segments.filter((segment) => !timelines?.has(segment.videoDigest));
+  const untimed = segments.filter((segment) => !timelines?.has(segment.videoPath));
   return untimed.length
     ? { timing: 'untimed', segments: untimed }
     : { timing: 'outside-recording', segments: [] };

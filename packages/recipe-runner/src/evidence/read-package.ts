@@ -31,16 +31,19 @@ function addReadCheck(
   checks.push({ id, status, message });
 }
 
-async function readArtifactJson(artifactDir: string, relativePath: string): Promise<unknown> {
-  return readRecipeCliJsonFileWithinRoot(artifactDir, relativePath);
+/** Trusted host transport; names and digests must describe the same retained root. */
+export interface RecordedEvidencePackageReadIO {
+  listPaths(): Promise<string[]>;
+  readJson(relativePath: string): Promise<unknown>;
+  digestFile(relativePath: string): Promise<string>;
 }
 
 async function readArtifactJsonIfPresent(
-  artifactDir: string,
+  io: RecordedEvidencePackageReadIO,
   relativePath: string,
 ): Promise<{ value?: unknown; error?: string }> {
   try {
-    return { value: await readArtifactJson(artifactDir, relativePath) };
+    return { value: await io.readJson(relativePath) };
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
   }
@@ -68,25 +71,30 @@ async function listRelativeArtifactFiles(root: string): Promise<string[]> {
 /** Read retained files and hash actual bytes before canonical package validation. */
 export async function readRecordedEvidencePackage(
   artifactDir: string,
+  io: RecordedEvidencePackageReadIO = {
+    listPaths: () => listRelativeArtifactFiles(artifactDir),
+    readJson: (relativePath) => readRecipeCliJsonFileWithinRoot(artifactDir, relativePath),
+    digestFile: (relativePath) => digestFileWithinRoot(artifactDir, relativePath),
+  },
 ): Promise<RecordedEvidencePackageReadResult> {
   const checks: RecordedEvidencePackageReadCheck[] = [];
-  const artifactPaths = await listRelativeArtifactFiles(artifactDir);
+  const artifactPaths = await io.listPaths();
   const artifactPathSet = new Set(artifactPaths);
   const reads = {
-    summary: await readArtifactJsonIfPresent(artifactDir, 'summary.json'),
-    trace: await readArtifactJsonIfPresent(artifactDir, 'trace.json'),
-    manifest: await readArtifactJsonIfPresent(artifactDir, 'artifact-manifest.json'),
+    summary: await readArtifactJsonIfPresent(io, 'summary.json'),
+    trace: await readArtifactJsonIfPresent(io, 'trace.json'),
+    manifest: await readArtifactJsonIfPresent(io, 'artifact-manifest.json'),
     recipe: artifactPathSet.has('recipe.json')
-      ? await readArtifactJsonIfPresent(artifactDir, 'recipe.json')
+      ? await readArtifactJsonIfPresent(io, 'recipe.json')
       : { value: undefined },
     invocation: artifactPathSet.has('recipe-invocation.json')
-      ? await readArtifactJsonIfPresent(artifactDir, 'recipe-invocation.json')
+      ? await readArtifactJsonIfPresent(io, 'recipe-invocation.json')
       : { value: undefined },
     claims: artifactPathSet.has('acceptance-status.json')
-      ? await readArtifactJsonIfPresent(artifactDir, 'acceptance-status.json')
+      ? await readArtifactJsonIfPresent(io, 'acceptance-status.json')
       : { value: undefined },
     recipeResolution: artifactPathSet.has('recipe-resolution.json')
-      ? await readArtifactJsonIfPresent(artifactDir, 'recipe-resolution.json')
+      ? await readArtifactJsonIfPresent(io, 'recipe-resolution.json')
       : { value: undefined },
   };
 
@@ -144,7 +152,7 @@ export async function readRecordedEvidencePackage(
       if (!isRecord(dependency)) continue;
       const artifact = resolvedRecipeArtifactPath(dependency.digest);
       if (!artifact) continue;
-      const read = await readArtifactJsonIfPresent(artifactDir, artifact);
+      const read = await readArtifactJsonIfPresent(io, artifact);
       if (read.value !== undefined) resolvedRecipes[String(dependency.digest)] = read.value;
       if (read.error) {
         addReadCheck(checks, `file.${artifact}`, 'fail', read.error);
@@ -155,7 +163,7 @@ export async function readRecordedEvidencePackage(
   await Promise.all(
     artifactPaths.map(async (file) => {
       try {
-        artifactDigests[file] = await digestFileWithinRoot(artifactDir, file);
+        artifactDigests[file] = await io.digestFile(file);
       } catch (error) {
         addReadCheck(
           checks,
@@ -187,7 +195,7 @@ export async function readRecordedEvidencePackage(
       declaredTimelines.add(entry.timelinePath);
   }
   for (const file of declaredTimelines) {
-    const read = await readArtifactJsonIfPresent(artifactDir, file);
+    const read = await readArtifactJsonIfPresent(io, file);
     if (read.value !== undefined) timelines[file] = read.value;
     addReadCheck(
       checks,
