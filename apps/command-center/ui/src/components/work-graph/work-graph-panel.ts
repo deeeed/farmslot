@@ -39,6 +39,7 @@ import { labelWithRef } from '../shared/item-ref.js';
 import type { SlotChoiceChangeDetail } from '../shared/slot-choice-list.js';
 import {
   applyWorkInventorySort,
+  focusWorkInventoryRow,
   nextSortState,
   parseWorkInventorySort,
   renderWorkInventoryBackButton,
@@ -323,6 +324,9 @@ export class WorkGraphPanel extends LitElement {
 
   private backToInventory() {
     this.showInventoryList = true;
+    void this.updateComplete.then(() =>
+      focusWorkInventoryRow(this.renderRoot, this.selectedGraphId),
+    );
   }
 
   private activeGraphs(): WorkGraphProjection[] {
@@ -1266,6 +1270,7 @@ export class WorkGraphPanel extends LitElement {
         selected,
         testId: `work-graph-row-${graph.graph.id}`,
         onActivate: () => this.selectGraph(graph.graph.id),
+        onDeselect: () => this.backToInventory(),
       },
       cells: [
         html`<span class=${`badge ${graph.graph.status}`}>${graph.graph.status}</span>`,

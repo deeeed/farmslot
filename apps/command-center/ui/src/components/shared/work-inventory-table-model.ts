@@ -1,6 +1,7 @@
 import type {
   WorkInventoryColumnDef,
   WorkInventoryLayoutState,
+  WorkInventoryRowRenderOptions,
   WorkInventorySortDirection,
   WorkInventorySortState,
 } from './work-inventory-types.js';
@@ -80,6 +81,19 @@ export function resolveSelectedRowId(
 /** Enter/Space activate a focused inventory row (not pointer-only). */
 export function isInventoryActivationKey(key: string): boolean {
   return key === 'Enter' || key === ' ';
+}
+
+/** Returns true when activation closes the selected row's detail. */
+export function activateInventoryRow(
+  row: Pick<WorkInventoryRowRenderOptions, 'selected' | 'disabled' | 'onActivate' | 'onDeselect'>,
+): boolean {
+  if (row.disabled) return false;
+  if (row.selected && row.onDeselect) {
+    row.onDeselect();
+    return true;
+  }
+  row.onActivate();
+  return false;
 }
 
 /**

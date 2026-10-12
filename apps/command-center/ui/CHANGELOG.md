@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Make inventory selection visible and close details when the selected row is activated again.
+
 - Show selected-flow recipe requirements, registration and scoped live verification in Dispatch, including the checked revision and target; clear results when the selection or gateway changes.
 - Use the protocol timeline-binding validator when opening recipe video evidence (ADR-062).
 

@@ -29,6 +29,8 @@ import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { safeLsGet, safeLsSet } from '../../utils/storage.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 import {
+  activateWorkInventoryRow,
+  focusWorkInventoryRow,
   renderWorkInventoryBackButton,
   workInventoryTableStyles,
 } from '../shared/work-inventory-table.js';
@@ -1033,6 +1035,11 @@ export class PRBoard extends LitElement {
       pane: 'overview',
     });
   }
+  private _closeSelectedPr() {
+    const id = this._selectedPr ? prWorkspaceKey(this._selectedPr) : '';
+    this._navigate({ selected: null });
+    void this.updateComplete.then(() => focusWorkInventoryRow(this.renderRoot, id));
+  }
   private _navigate(patch: {
     section?: PRSection;
     scope?: PRScope;
@@ -1267,13 +1274,23 @@ export class PRBoard extends LitElement {
             ? colors.accentHover
             : recommendationColor(entry.status?.recommendation);
     return html`<button
-      class="list-row ${selected ? 'selected' : ''}"
+      class="list-row work-inventory-row ${selected ? 'selected' : ''}"
       data-testid="pr-workspace-row"
       data-pr-key=${prWorkspaceKey(entry.key)}
+      data-row-id=${prWorkspaceKey(entry.key)}
       data-monitor-ids=${entry.monitors.map((monitor) => monitor.id).join(' ')}
       data-review-ids=${entry.reviews.map((review) => review.id).join(' ')}
       aria-pressed=${String(selected)}
-      @click=${() => this._navigate({ selected: selected ? null : entry.key })}
+      @click=${(event: MouseEvent) => {
+        activateWorkInventoryRow(
+          {
+            selected,
+            onActivate: () => this._navigate({ selected: entry.key }),
+            onDeselect: () => this._closeSelectedPr(),
+          },
+          event.currentTarget as HTMLElement,
+        );
+      }}
     >
       <span class="list-row-main"
         ><span class="pr-num">${entry.key.repo}#${entry.key.pr}</span
@@ -1655,7 +1672,7 @@ export class PRBoard extends LitElement {
                 ${renderWorkInventoryBackButton({
                   label: 'Close details · Back to PR list',
                   testId: 'pr-workspace-back',
-                  onBack: () => this._navigate({ selected: null }),
+                  onBack: () => this._closeSelectedPr(),
                 })}
                 ${selected
                   ? html`<h2 title=${selected.title}>${selected.title}</h2>

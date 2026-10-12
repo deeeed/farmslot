@@ -35,6 +35,7 @@ import { colors } from '../../styles/theme-tokens.js';
 import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
 import {
+  focusWorkInventoryRow,
   inventoryShowsDetail,
   inventoryShowsList,
   renderWorkInventoryBackButton,
@@ -339,8 +340,10 @@ export class RunList extends RunListState {
   }
 
   private backToRunList() {
+    const id = this.selectedRunId;
     this.selectedRunId = '';
     this._persistHashState();
+    void this.updateComplete.then(() => focusWorkInventoryRow(this.renderRoot, id));
   }
 
   private clearSelection() {
@@ -904,6 +907,7 @@ export class RunList extends RunListState {
         onActivate: () => {
           this.manageMode ? this.toggleSelectId(run.id) : this.selectRun(run);
         },
+        onDeselect: this.manageMode ? undefined : () => this.backToRunList(),
       },
       cells,
     });
