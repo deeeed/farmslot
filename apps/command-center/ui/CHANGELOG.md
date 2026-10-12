@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show compact evidence package status and collapsed diagnostics, with neutral legacy evidence and read-only retained reports.
+
 - Use the shared evidence review model for claim/step navigation, verified video markers and bounded playback (ADR-062).
 - Show review rounds as N/5 and disable another review when the budget is spent.
 

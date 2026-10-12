@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Return artifact-relative package paths for retained evidence review.
+
 - Return checked recorded-evidence metadata for the selected recipe package using the public retained reader, without transferring original media to review clients.
 - Wait for the reviewer-owned terminal mark before archiving its checklist and result.
 

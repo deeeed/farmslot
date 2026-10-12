@@ -48,6 +48,9 @@ export function TaskAcceptancePanel({
     acceptanceEvidenceLinks ?? [],
     evidenceModel ?? undefined,
   );
+  const [showDetails, setShowDetails] = React.useState(false);
+  React.useEffect(() => setShowDetails(false), [evidenceModel]);
+  const packageStatus = evidenceModel?.packageStatus;
   const [expanded, setExpanded] = React.useState(view.hasOpenCriteria || Boolean(error));
   React.useEffect(() => {
     if (
@@ -57,12 +60,7 @@ export function TaskAcceptancePanel({
     )
       setExpanded(true);
   }, [error, evidenceModel]);
-  if (
-    view.rows.length === 0 &&
-    !error &&
-    !evidenceModel?.errors.length &&
-    !evidenceModel?.occurrences.length
-  )
+  if (view.rows.length === 0 && !error && !packageStatus && !evidenceModel?.occurrences.length)
     return null;
   return (
     <View style={styles.panel} testID="companion-ac-panel">
@@ -84,17 +82,57 @@ export function TaskAcceptancePanel({
         </Text>
       </Pressable>
       {expanded && error ? <Text style={styles.error}>ledger unreadable: {error}</Text> : null}
-      {expanded
-        ? evidenceModel?.warnings.map((warning, index) => (
-            <Text key={index} style={baseStyles.textMuted}>
-              {warning}
+      {expanded && packageStatus ? (
+        <View testID="companion-evidence-package-status" style={styles.row}>
+          <View style={styles.rowHeader}>
+            <Text
+              style={[
+                styles.pill,
+                {
+                  color:
+                    packageStatus.tone === 'error'
+                      ? colors.statusFail
+                      : packageStatus.status === 'Valid'
+                        ? colors.statusOk
+                        : colors.textSecondary,
+                },
+              ]}
+            >
+              {packageStatus.status}
             </Text>
-          ))
-        : null}
+            <Text style={baseStyles.textMuted}>{packageStatus.path}</Text>
+          </View>
+          <Text style={packageStatus.tone === 'error' ? styles.error : styles.text}>
+            {packageStatus.summary}
+          </Text>
+          {packageStatus.action ? <Text style={styles.error}>{packageStatus.action}</Text> : null}
+          {packageStatus.issues.length ? (
+            <Pressable
+              accessibilityRole="button"
+              testID="companion-evidence-package-details"
+              onPress={() => setShowDetails((value) => !value)}
+            >
+              <Text style={styles.evidence}>
+                {showDetails ? 'Hide' : 'Show'} details ({packageStatus.issues.length} issues)
+              </Text>
+            </Pressable>
+          ) : null}
+          {showDetails
+            ? packageStatus.issues.map((issue) => (
+                <Text
+                  key={issue.message}
+                  style={packageStatus.tone === 'error' ? styles.error : styles.text}
+                >
+                  {issue.message} ({issue.count} messages)
+                </Text>
+              ))
+            : null}
+        </View>
+      ) : null}
       {expanded
-        ? evidenceModel?.errors.map((message, index) => (
-            <Text key={index} style={styles.error}>
-              {message}
+        ? evidenceModel?.displayWarnings.map((warning) => (
+            <Text key={warning} style={baseStyles.textMuted}>
+              {warning}
             </Text>
           ))
         : null}

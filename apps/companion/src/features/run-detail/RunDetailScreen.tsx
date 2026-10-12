@@ -179,6 +179,7 @@ export default function RunDetailScreen() {
         package: recordedEvidence?.input,
         readErrors: recordedEvidence?.errors,
         artifactPrefix: recordedEvidence?.artifactPrefix,
+        packagePath: recordedEvidence?.packagePath,
         ledger: acceptanceStatus,
         criteria: acceptanceCriteria ?? undefined,
         report: recordedEvidence?.report,
