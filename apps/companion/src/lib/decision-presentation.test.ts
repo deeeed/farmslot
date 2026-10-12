@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 
+import type { RunGateReadiness } from '@farmslot/protocol';
+
 import {
   artifactsForRecipeRun,
   artifactSource,
@@ -571,7 +573,7 @@ assert.equal(ciArtifacts.find((artifact) => artifact.path === ciLog)?.type, 'log
 assert.equal(classifyArtifact(ciLog), 'document');
 assert.equal(classifyArtifact(ciArtifacts[0]), 'document');
 
-const pendingReadiness = {
+const pendingReadiness: RunGateReadiness = {
   state: 'not-ready',
   identity: { runId: 'gate-run', generation: 2 },
   reasons: [
@@ -585,7 +587,8 @@ const pendingReadiness = {
 for (const status of ['fixing', 'review-failed', 'reconciling']) {
   const decision = reviewDecision('APPROVE');
   decision.context = { runStatus: status };
-  decision.payload = { ...(decision.payload as object), gateReadiness: pendingReadiness };
+  if (decision.payload?.kind !== 'review') throw new Error('Expected review fixture');
+  decision.payload = { ...decision.payload, gateReadiness: pendingReadiness };
   decision.actions = [{ id: 'hold', label: 'Hold', style: 'secondary' }];
   const view = presentDecision(decision);
   assert.deepEqual(view.textSections[0], {

@@ -16,22 +16,21 @@ import {
 } from '@farmslot/protocol';
 
 import {
-  farmslotRoot,
   getOrchestratorTaskRoot,
   getProjectField,
   loadProjectVars,
   loadSlotVars,
   resolveProjectTaskDirName,
-  resolveRemoteRepo,
   resolveTaskRelDir,
   SlotConfigError,
 } from '../core/config.js';
-import { execOnSlot, isLocal } from '../core/exec.js';
+import { execOnSlot } from '../core/exec.js';
 import { slotFileExists, type SlotLocality, slotReadFile } from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 
 import { AcceptanceReadError, handoffListsAcceptanceCriteria } from './acceptance-status.js';
+import { agentRuntimeScriptForSlot } from './agent-runtime-script.js';
 import { subtaskTerminalRefusal } from './subtasks.js';
 
 const require = createRequire(import.meta.url);
@@ -186,10 +185,7 @@ export async function validateTerminalSignalArtifacts(
     }
   }
 
-  const agentRoot = isLocal(vars.host, vars.machine)
-    ? farmslotRoot
-    : resolveRemoteRepo('~/farmslot-node', vars.osType, vars.sshUser);
-  const checker = `${agentRoot}/packages/agent-runtime/scripts/check-task-artifact-contract.mjs`;
+  const checker = agentRuntimeScriptForSlot(vars, 'check-task-artifact-contract.mjs');
   const prerequisites = await execOnSlot(
     vars,
     `test -f ${shellQuote(checker)} && test -f ${shellQuote(contractPath)}`,

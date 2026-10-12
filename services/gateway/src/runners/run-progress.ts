@@ -114,7 +114,8 @@ async function observeContext(
       kind:
         state === 'running'
           ? 'making-progress'
-          : state === 'idle' || (state === 'closed' && snapshot.session.processStopped)
+          : state === 'idle' ||
+              (['closed', 'failed'].includes(state) && snapshot.session.processStopped)
             ? 'idle'
             : state === 'waiting'
               ? 'awaiting-input'

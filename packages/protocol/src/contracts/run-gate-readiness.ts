@@ -1,3 +1,10 @@
+import type {
+  NoChangeGatePayload,
+  ReadyGatePayload,
+  ReviewGatePayload,
+  RunDecisionPayload,
+} from './runs.js';
+
 export type RunGatePrerequisite =
   | 'deterministic'
   | 'acceptance'
@@ -27,4 +34,11 @@ export interface RunGateReadiness {
   state: 'collecting' | 'not-ready' | 'ready';
   identity: RunGateInputIdentity;
   reasons: RunGatePrerequisiteReason[];
+}
+
+/** Gate payloads whose advancing actions require the shared prerequisite evaluation. */
+export function isPrerequisiteGatePayload(
+  payload?: RunDecisionPayload,
+): payload is ReadyGatePayload | ReviewGatePayload | NoChangeGatePayload {
+  return payload?.kind === 'ready' || payload?.kind === 'review' || payload?.kind === 'no-change';
 }

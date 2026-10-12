@@ -249,3 +249,29 @@ test('cancellation while readiness refresh awaits leaves the decision and termin
   assert.equal(getRun(run.id)!.status, 'cancelled');
   assert.deepEqual(getRun(run.id)!.decisions, [original]);
 });
+
+test('the owner input is validated canonically and unreadable closure stays a typed refusal', async () => {
+  const sources = {
+    deterministic: passed,
+    progress: idle,
+    acceptance: async () => ({
+      criteria: [{ id: 'AC-1', text: 'Required proof' }],
+      ledger: null,
+      issues: [],
+    }),
+  };
+  const invalid = await collectRunGateReadiness(makeRun(), null, {
+    ...sources,
+    recordedEvidence: async () => ({ summary: null, artifactDigests: {}, timelines: {} }),
+  });
+  assert.ok(invalid.reasons.some((reason) => reason.code === 'evidence-invalid'));
+  const unavailable = await collectRunGateReadiness(makeRun(), null, {
+    ...sources,
+    recordedEvidence: async () => {
+      throw new Error('Frozen artifact is unreadable');
+    },
+  });
+  assert.ok(
+    unavailable.reasons.some((reason) => reason.code === 'evidence-validation-unavailable'),
+  );
+});

@@ -20,6 +20,7 @@ import {
   isAllowedRunDecisionAction,
   isGateParkInFlightOrFreed,
   isInteractiveDevRun,
+  isPrerequisiteGatePayload,
   isSlotFreedByPark,
   isTerminalRunStatus,
   MachineParkEligibilityCodes,
@@ -116,7 +117,6 @@ import {
 import {
   advancingGateAction,
   assertRunGateReady,
-  isPrerequisiteGatePayload,
   runGateDefinitionActions,
 } from '../run-engine/gate-prerequisites.js';
 import {
@@ -1878,7 +1878,7 @@ export async function resolveRunDecision(
 
     // Unblock whichever resolver owns this decision
     resolveMonitorDecision(params.decisionId, params.actionId);
-    resolveEngineDecision(params.decisionId, params.actionId);
+    const engineResumed = resolveEngineDecision(params.decisionId, params.actionId);
     resolveCIDecision(params.decisionId, params.actionId);
 
     // If run is still blocked after all resolvers fired (engine loop was lost on gateway restart),
@@ -1887,7 +1887,13 @@ export async function resolveRunDecision(
     setTimeout(() => {
       void (async () => {
         const afterResolve = getRun(params.runId);
-        if (!afterResolve || afterResolve.status !== 'blocked') return;
+        if (
+          !afterResolve ||
+          engineResumed ||
+          runSupersededSince(afterResolve, gateGeneration) ||
+          !['blocked', 'human-gating'].includes(afterResolve.status)
+        )
+          return;
         // ADR-054 `free-slot`: this timer exists to resume a run whose engine loop
         // was lost. A gate-parked run is not that — a park can land while the
         // engine holds the resolved decision, and the gate blocker then leaves the

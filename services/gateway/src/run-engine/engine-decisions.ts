@@ -5,6 +5,7 @@ import {
   type DecisionAction,
   Events,
   type EvidenceManifestEntry,
+  isPrerequisiteGatePayload,
   isTerminalRunStatus,
   type PRReviewOptions,
   prReviewWorkflow,
@@ -36,11 +37,7 @@ import {
   latestResolvedHumanGateDecision,
 } from './decision-replay.js';
 import { hasValidPrNumber } from './gate-policy.js';
-import {
-  collectRunGateReadiness,
-  gateActionsForReadiness,
-  isPrerequisiteGatePayload,
-} from './gate-prerequisites.js';
+import { collectRunGateReadiness, gateActionsForReadiness } from './gate-prerequisites.js';
 import { assertPrimaryReviewContext } from './review-plan.js';
 import { runSupersededSince } from './run-generation.js';
 
@@ -77,12 +74,14 @@ export class RedirectedError extends Error {
 
 const engineDecisionResolvers = new Map<string, (actionId: string) => void>();
 
-export function resolveEngineDecision(decisionId: string, actionId: string): void {
+export function resolveEngineDecision(decisionId: string, actionId: string): boolean {
   const resolver = engineDecisionResolvers.get(decisionId);
   if (resolver) {
     resolver(actionId);
     engineDecisionResolvers.delete(decisionId);
+    return true;
   }
+  return false;
 }
 
 export function collisionAutoResolveAction(run: Run): 'create-new' | null {

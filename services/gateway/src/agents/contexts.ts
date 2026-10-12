@@ -2,6 +2,7 @@ import {
   type AgentContext,
   type AgentContextSelector,
   type AgentContextStatus,
+  agentContextStatusFromRunStatus,
   type AgentContextSummary,
   agentContextTaskFile,
   type AgentRole,
@@ -105,7 +106,7 @@ export function synthesizePrimaryContext(run: Run): AgentContext | null {
     id: contextIdFor(role),
     role,
     label: agentRoleLabel(role),
-    status: statusFromRun(run.status),
+    status: agentContextStatusFromRunStatus(run.status),
     slotId: run.slotId,
     runId: run.id,
     taskFile,
@@ -475,15 +476,6 @@ export async function markAgentContextStatus(
     ...(completedAt ? { completedAt } : {}),
     ...patch,
   });
-}
-
-function statusFromRun(status: Run['status']): AgentContextStatus {
-  if (status === 'done') return 'complete';
-  if (status === 'failed') return 'failed';
-  if (status === 'blocked') return 'blocked';
-  if (status === 'cancelled') return 'failed';
-  if (['paused', 'human-gating', 'review-failed', 'reconciling'].includes(status)) return 'waiting';
-  return 'working';
 }
 
 async function findActiveRunForSlot(slotId: string): Promise<Run | null> {

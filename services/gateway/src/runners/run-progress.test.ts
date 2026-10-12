@@ -125,3 +125,18 @@ test('a ready idle no-change gate waits for its operator', () => {
     'human-gating',
   );
 });
+
+test('confirmed stopped native failure permits recovery; uncertain shutdown does not', async () => {
+  const run = fixRun('native');
+  for (const stopped of [false, true]) {
+    const progress = await readRunProgress(run, {
+      native: async () =>
+        ({ session: { state: 'failed', processStopped: stopped } }) as NativeSessionReadResult,
+    });
+    assert.equal(progress.kind, stopped ? 'idle' : 'unproven');
+    assert.equal(
+      runDecisionWaitingStatus(run, progress, 'native-worker-recovery'),
+      stopped ? 'blocked' : 'reconciling',
+    );
+  }
+});

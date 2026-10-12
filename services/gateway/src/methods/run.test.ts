@@ -2686,3 +2686,95 @@ for (const interruption of ['cancelled', 'paused', 'replay', 'package-refresh'] 
     assert.equal(getRun(run.id)!.decisions[0].resolvedAt, undefined);
   });
 }
+
+test('resolver-less human-gating approval re-enters its persisted gate after restart', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'interactive',
+    project: 'gate-restart',
+    ticketOrPr: 'GATE-RESTART',
+  });
+  const decision: RunDecision = {
+    id: 'restart-gate',
+    type: 'engine_human_gate',
+    title: 'Recovered gate',
+    description: '',
+    createdAt: new Date().toISOString(),
+    actions: [{ id: 'ready', label: 'Ready', style: 'primary' }],
+    payload: { kind: 'no-change', disposition: 'already_fixed' },
+  };
+  updateRun(run.id, {
+    status: 'human-gating',
+    decisions: [decision],
+    steps: [{ name: 'human-gate', status: 'running' }],
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done' });
+    await deleteRun(run.id);
+  });
+  let resumed!: () => void;
+  const continuation = new Promise<void>((resolve) => {
+    resumed = resolve;
+  });
+  await runResolveDecision(
+    { runId: run.id, decisionId: decision.id, actionId: 'ready' },
+    () => {},
+    {
+      assertGatePrerequisites: async () => {},
+      resumeRun: async () => {
+        resumed();
+      },
+    },
+  );
+  await continuation;
+  assert.equal(getRun(run.id)!.status, 'created');
+  assert.equal(getRun(run.id)!.steps[0].status, 'pending');
+});
+
+test('a live gate resolver retains its continuation without starting a second loop', async (t) => {
+  const { createEngineDecision, setEngineDecisionRuntime } =
+    await import('../run-engine/engine-decisions.js');
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'interactive',
+    project: 'gate-live',
+    ticketOrPr: 'GATE-LIVE',
+  });
+  updateRun(run.id, { status: 'human-gating', steps: [{ name: 'human-gate', status: 'running' }] });
+  let published!: () => void;
+  const publication = new Promise<void>((resolve) => {
+    published = resolve;
+  });
+  setEngineDecisionRuntime({
+    broadcast: (event) => {
+      if (event === 'run.decision.new') published();
+    },
+    stepToStatus: { 'human-gate': 'human-gating' },
+  });
+  t.after(async () => {
+    setEngineDecisionRuntime({ broadcast: () => {}, stepToStatus: {} });
+    updateRun(run.id, { status: 'done' });
+    await deleteRun(run.id);
+  });
+  const waiting = createEngineDecision(
+    run.id,
+    'human_gate',
+    'Live gate',
+    [{ id: 'hold', label: 'Hold', style: 'secondary' }],
+    undefined,
+    { readProgress: async () => ({ kind: 'idle' }) },
+  );
+  await publication;
+  let resumes = 0;
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const decision = getRun(run.id)!.decisions[0];
+  await runResolveDecision({ runId: run.id, decisionId: decision.id, actionId: 'hold' }, () => {}, {
+    resumeRun: async () => {
+      resumes++;
+    },
+  });
+  assert.equal(await waiting, 'hold');
+  t.mock.timers.tick(1);
+  assert.equal(resumes, 0);
+  assert.equal(getRun(run.id)!.steps[0].status, 'running');
+});

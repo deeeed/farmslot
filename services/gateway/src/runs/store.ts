@@ -19,6 +19,7 @@ import {
   ACTIVE_RUN_STATUSES,
   type AgentContext,
   type AgentContextStatus,
+  agentContextStatusFromRunStatus,
   agentContextTaskFile,
   agentRoleLabel,
   closeStepWait,
@@ -222,16 +223,6 @@ function initialAgentContextsForRun(
       updatedAt: run.updatedAt,
     },
   ];
-}
-
-function agentContextStatusFromRunStatus(status: Run['status']): AgentContextStatus {
-  if (status === 'done') return 'complete';
-  if (status === 'failed' || status === 'cancelled') return 'failed';
-  if (status === 'blocked') return 'blocked';
-  if (status === 'paused') return 'waiting';
-  if (status === 'human-gating' || status === 'review-failed' || status === 'reconciling')
-    return 'waiting';
-  return 'working';
 }
 
 function syncPrimaryAgentContextStatus(
