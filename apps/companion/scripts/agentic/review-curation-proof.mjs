@@ -242,6 +242,11 @@ if (phase === 'serve') {
   stop();
   const farm = fs.mkdtempSync(path.join(os.tmpdir(), 'curation-farm-'));
   fs.mkdirSync(proof, { recursive: true });
+  if (savedContext) {
+    for (const name of ['phone-rpc.jsonl', 'held-reads.jsonl'])
+      fs.writeFileSync(path.join(proof, name), '', { mode: 0o600 });
+    write(path.join(proof, 'read-delay.json'), {});
+  }
   execFileSync('git', ['clone', '--shared', '--no-checkout', root, farm], { stdio: 'pipe' });
   for (const name of ['scripts', 'services', 'packages', 'node_modules'])
     fs.symlinkSync(path.join(root, name), path.join(farm, name));
@@ -492,10 +497,21 @@ if (phase === 'serve') {
       ].includes(request.method),
     ),
   );
+  const heldReplies = fs
+    .readFileSync(path.join(proof, 'held-reads.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+  assert(
+    heldReplies.some(
+      (reply) => reply.runId === state().runs.find((entry) => entry.kind === 'historical').runId,
+    ),
+  );
   evidence('saved-read-only', {
     unchanged: true,
     methods: [...new Set(requests.map((request) => request.method))],
-    held: fs.existsSync(path.join(proof, 'held-reads.jsonl')),
+    heldReplies,
   });
   console.log('PASS saved reader, full hydration, unchanged store and provider');
 } else if (phase.startsWith('saved-open-')) {
