@@ -1,11 +1,14 @@
 import { html, nothing, type TemplateResult } from 'lit';
 
 import {
+  activateInventoryRow,
   inventoryGridTemplateColumns,
+  inventoryShowsDetail,
   isInventoryActivationKey,
 } from './work-inventory-table-model.js';
 import type {
   WorkInventoryColumnDef,
+  WorkInventoryLayoutState,
   WorkInventoryRowRenderOptions,
   WorkInventorySortDirection,
   WorkInventorySortState,
@@ -18,6 +21,18 @@ export * from './work-inventory-url-state.js';
 
 function sortArrow(direction: WorkInventorySortDirection): string {
   return direction === 'asc' ? ' ↑' : ' ↓';
+}
+
+/** Native button rows and table rows share activation and focus return. */
+export function activateWorkInventoryRow(
+  row: Parameters<typeof activateInventoryRow>[0],
+  target: HTMLElement,
+): void {
+  if (activateInventoryRow(row)) target.focus();
+}
+
+export function focusWorkInventoryRow(root: ParentNode, id: string): void {
+  root.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(id)}"]`)?.focus();
 }
 
 export function renderWorkInventorySortHeader<TSortKey extends string>(options: {
@@ -103,8 +118,8 @@ export function renderWorkInventoryRow(options: {
     data-testid=${row.testId ?? `work-inventory-row-${row.id}`}
     data-row-id=${row.id}
     aria-selected=${row.selected ? 'true' : 'false'}
-    @click=${() => {
-      if (!row.disabled) row.onActivate();
+    @click=${(event: MouseEvent) => {
+      activateWorkInventoryRow(row, event.currentTarget as HTMLElement);
     }}
     @keydown=${(event: KeyboardEvent) => {
       if (row.disabled) return;
@@ -114,7 +129,7 @@ export function renderWorkInventoryRow(options: {
       if (origin !== event.currentTarget) return;
       if (isInventoryActivationKey(event.key)) {
         event.preventDefault();
-        row.onActivate();
+        activateWorkInventoryRow(row, event.currentTarget as HTMLElement);
       }
     }}
   >
@@ -168,6 +183,20 @@ export function renderWorkInventoryBackButton(options: {
   >
     ${options.label ?? '← Back to list'}
   </button>`;
+}
+
+export function renderWorkInventoryDetailClose(options: {
+  layout: WorkInventoryLayoutState;
+  testId?: string;
+  onBack: () => void;
+  onClose: () => void;
+}): TemplateResult | typeof nothing {
+  if (!inventoryShowsDetail(options.layout)) return nothing;
+  return renderWorkInventoryBackButton({
+    label: options.layout.narrowViewport ? '← Back to list' : '× Close details',
+    testId: options.testId,
+    onBack: options.layout.narrowViewport ? options.onBack : options.onClose,
+  });
 }
 
 export function renderWorkInventoryLayout(options: {

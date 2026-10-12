@@ -128,8 +128,6 @@ export const prWorkspaceStyles = css`
     background: ${unsafeCSS(colors.bgCardHover)};
   }
   .list-row.selected {
-    background: ${unsafeCSS(colors.accent)}14;
-    color: ${unsafeCSS(colors.textPrimary)};
     border-left-color: ${unsafeCSS(colors.accentHover)};
   }
   .list-row-main {

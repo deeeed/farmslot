@@ -10,6 +10,33 @@ import {
 } from './work-inventory-table-model.js';
 import type { WorkInventoryColumnDef, WorkInventorySortState } from './work-inventory-types.js';
 
+test('detail close chooses the current layout action and omits hidden detail controls', async () => {
+  const { renderWorkInventoryDetailClose } = await import('./work-inventory-table.js');
+  const { nothing } = await import('lit');
+  const calls: string[] = [];
+  const actions = { onBack: () => calls.push('back'), onClose: () => calls.push('close') };
+  for (const [narrowViewport, label, action] of [
+    [true, 'Back to list', 'back'],
+    [false, 'Close details', 'close'],
+  ] as const) {
+    const rendered = renderWorkInventoryDetailClose({
+      layout: { hasSelection: true, narrowViewport },
+      ...actions,
+    });
+    if (typeof rendered === 'symbol') assert.fail('Visible detail needs its close control');
+    assert.match(JSON.stringify(rendered), new RegExp(label));
+    const activate = rendered.values.find((value) => typeof value === 'function');
+    if (typeof activate !== 'function') assert.fail('Close control needs its action');
+    activate();
+    assert.equal(calls.at(-1), action);
+  }
+  for (const layout of [
+    { hasSelection: false, narrowViewport: false },
+    { hasSelection: true, narrowViewport: true, forceList: true },
+  ])
+    assert.equal(renderWorkInventoryDetailClose({ layout, ...actions }), nothing);
+});
+
 const COLUMNS: WorkInventoryColumnDef<'status' | 'title' | 'updated'>[] = [
   { key: 'status', label: 'Status', width: '92px' },
   { key: 'title', label: 'Title', width: 'minmax(220px, 1fr)' },
