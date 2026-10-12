@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show review rounds as N/5 and disable another review when the budget is spent.
+
 - Move delivered roadmap work into a collapsed group with PR links and prominent delivery status.
 
 - Make inventory selection visible and close details when the selected row is activated again.

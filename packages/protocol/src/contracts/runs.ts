@@ -556,6 +556,7 @@ export interface ReviewStatus {
 export const PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES = {
   launchRejected: 'PUBLICATION_REVIEW_LAUNCH_REJECTED',
   gitProbeFailed: 'PUBLICATION_REVIEW_GIT_PROBE_FAILED',
+  roundLimitReached: 'REVIEW_ROUND_LIMIT_REACHED',
 } as const;
 
 export type PublicationReviewLaunchRejectionCode =
@@ -797,9 +798,18 @@ export interface ReadyGateInputSnapshot {
   templateProvenance?: TemplateProvenance | null;
 }
 
+export interface ReviewRoundBudget {
+  used: number;
+  limit: number;
+  remaining: number;
+  label: string;
+  diagnosis?: string;
+}
+
 export interface ReadyGatePayload {
   kind: 'ready';
   gateReadiness?: RunGateReadiness;
+  reviewRoundBudget?: ReviewRoundBudget;
   prNumber: number | null;
   repo: string | null;
   diffStat: DiffStat;
@@ -2364,6 +2374,8 @@ export interface MachineParkRecord {
 }
 
 export interface Run {
+  /** Gateway-owned, opaque reviewer admission receipts. Replay must retain these. */
+  reviewRoundAdmissions?: string[];
   /** Run cleanup preserved resources whose ownership could not be proven. */
   slotTeardownSkipped?: string;
   /** Gateway-owned automatic QA opt-in and durable follow-up status. */

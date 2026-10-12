@@ -12,6 +12,7 @@ import type {
 
 import { refreshRetrospectiveFeedback } from '../intelligence/feedback-candidates.js';
 import { loadPendingDecisions } from '../observability/fleet-monitor.js';
+import { attachReviewRoundBudget } from '../review/review-round-budget.js';
 import { buildRetrospectivePayload } from '../run-completion/orchestrator.js';
 import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
 import { refreshRunGateReadiness } from '../run-engine/gate-prerequisites.js';
@@ -44,7 +45,9 @@ export async function decisionList(): Promise<DecisionListResult> {
   for (const run of runs) {
     // Lazy gate-summary backfill so historical gate/retrospective decisions
     // carry the consolidated narrative without a migration.
-    const enrichedRun = enrichDecisionsWithGateSummary(await refreshRunGateReadiness(run));
+    const enrichedRun = enrichDecisionsWithGateSummary(
+      await attachReviewRoundBudget(await refreshRunGateReadiness(run)),
+    );
     for (const d of enrichedRun.decisions) {
       if (d.resolvedAt) continue;
       let payload =

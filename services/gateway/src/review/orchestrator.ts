@@ -104,6 +104,7 @@ import {
 } from './native-review-operation.js';
 import { initReviewProgress, startProgressWatcher } from './progress.js';
 import { type ReviewAgentResult, runReviewAgent } from './review-agent.js';
+import { runReviewRoundBudget } from './review-round-budget.js';
 import { recordReviewedInputs } from './reviewed-inputs.js';
 import {
   invalidateWarmReviewerSessions,
@@ -762,8 +763,15 @@ export async function runReviewRetryLoop({
       ? [...priorAttempts]
       : [reviewAttemptFromResult(result, retryCount + 1)];
 
+  let roundLimitReason: string | undefined;
   while (result.verdict === 'issues' && result.issues.length > 0 && retryCount < maxRetries) {
     assertNativeReviewOperationCurrent();
+    const budgetRun = getRun(runId);
+    const budget = budgetRun ? await runReviewRoundBudget(budgetRun) : undefined;
+    if (budget?.remaining === 0) {
+      roundLimitReason = budget.diagnosis;
+      break;
+    }
     console.log(
       `[review] run ${runId.slice(0, 8)} — ${result.issues.length} issue(s) found (retry ${retryCount + 1}/${maxRetries})`,
     );
@@ -1187,7 +1195,8 @@ export async function runReviewRetryLoop({
   // true from an earlier generation, but persisting that historical value
   // makes recovery believe there is nothing left to deliver.
   const latestFindingsPendingDelivery = result.verdict === 'issues' && result.issues.length > 0;
-  const retriesExhausted = maxRetries > 0 && retryCount >= maxRetries;
+  const retriesExhausted =
+    Boolean(roundLimitReason) || (maxRetries > 0 && retryCount >= maxRetries);
   return {
     verdict: result.verdict,
     issues: result.issues,
@@ -1205,6 +1214,7 @@ export async function runReviewRetryLoop({
     maxRetries,
     feedbackSent: latestFindingsPendingDelivery ? false : feedbackSent,
     recoveryContinuationPending: latestFindingsPendingDelivery && !retriesExhausted,
+    ...(roundLimitReason ? { reason: roundLimitReason, maxRetriesExhausted: true } : {}),
     durationMs: Date.now() - start,
   };
 }
