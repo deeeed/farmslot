@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Declare versioned source locks, exact source receipts and run input provenance.
+- Include the retained package display path in evidence review snapshots.
 
 - Share plain run titles across clients, deriving HTML and Markdown headings with bounded display text.
 - Add an opt-in selected-package metadata projection to the existing run recipe-artifact query (ADR-062).
