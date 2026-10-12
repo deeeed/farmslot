@@ -25,6 +25,7 @@ import {
   attachLiveRecipeContext,
   listRecipeRunArtifactGroupsForRun,
 } from '../../live-recipe/context.js';
+import { attachReviewRoundBudget } from '../../review/review-round-budget.js';
 import { refreshRunGateReadiness } from '../../run-engine/gate-prerequisites.js';
 import { enrichDecisionsWithGateSummary } from '../../run-engine/gate-summary.js';
 import { trimRunForList } from '../../runs/list-trim.js';
@@ -35,7 +36,9 @@ import { readRunRecordedEvidence } from './evidence-review.js';
 /** Serve a run to the UI with live-recipe context + lazy gate-summary backfill. */
 async function presentRun(run: Run): Promise<Run> {
   return enrichDecisionsWithGateSummary(
-    await attachLiveRecipeContext(await refreshRunGateReadiness(run)),
+    await attachLiveRecipeContext(
+      await attachReviewRoundBudget(await refreshRunGateReadiness(run)),
+    ),
   );
 }
 

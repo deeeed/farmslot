@@ -67,6 +67,11 @@ export function renderReadyTopBar(input: {
   return html`
     <div class="rdy-top-bar">
       <span class="rdy-branch">${branch}</span>
+      ${input.payload.reviewRoundBudget
+        ? html`<span role="status" data-testid="rdy-review-round-budget"
+            >${input.payload.reviewRoundBudget.label}</span
+          >`
+        : nothing}
       ${lifecycle.gateLabel ? html`<span role="status">${lifecycle.gateLabel}</span>` : nothing}
       ${prUrl
         ? html`
@@ -120,8 +125,12 @@ export function renderReadyTopBar(input: {
                       ? 'rdy-btn-primary'
                       : 'rdy-btn-secondary'}"
                     data-testid="rdy-request-review"
-                    title=${extraReviewAction.description ?? ''}
-                    ?disabled=${input.acting || input.recovering}
+                    title=${input.payload.reviewRoundBudget?.diagnosis ??
+                    extraReviewAction.description ??
+                    ''}
+                    ?disabled=${input.acting ||
+                    input.recovering ||
+                    input.payload.reviewRoundBudget?.remaining === 0}
                     @click=${input.openReviewRequestModal}
                   >
                     Review

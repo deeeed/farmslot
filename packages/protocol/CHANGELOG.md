@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Add an opt-in selected-package metadata projection to the existing run recipe-artifact query (ADR-062).
+- Share the five-round review budget and its gate display independently of passing-review counts.
 
 ## 0.40.0 - 2026-10-12
 

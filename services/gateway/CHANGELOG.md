@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Return checked recorded-evidence metadata for the selected recipe package using the public retained reader, without transferring original media to review clients.
+- Enforce five review rounds per PR, including retries and publication requests, with durable admission before launch and a design or scope refusal at the limit.
 
 - Publish the exact selected review findings and report, preserving accepted choices across refresh races.
 

@@ -327,6 +327,8 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     reportSnapshot: outputReviewPayload,
     decisionId: outputReviewPayload ? decision?.id : undefined,
   });
+  const reviewBudget =
+    decision?.payload?.kind === 'ready' ? decision.payload.reviewRoundBudget : null;
   const withheldActions = useMemo(
     () =>
       new Map(
@@ -1694,6 +1696,12 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
 
         <View style={styles.section} onLayout={rememberSection('actions')}>
           <Text style={styles.sectionTitle}>Evidence-reviewed actions</Text>
+          {reviewBudget ? (
+            <Text style={styles.safetyText} testID="companion-review-round-budget">
+              {reviewBudget.label}
+              {reviewBudget.diagnosis ? `\n${reviewBudget.diagnosis}` : ''}
+            </Text>
+          ) : null}
           {reviewPublication.curation && <ReviewPublicationPanel {...reviewPublication} />}
           <View style={styles.safetyCard}>
             <Text style={styles.safetyTitle}>Resolve only from full context</Text>
@@ -1774,7 +1782,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
                       key={action.id}
                       model={reviewPicker}
                       testID="companion-gate-review"
-                      disabled={!client || disabled}
+                      disabled={!client || disabled || reviewBudget?.remaining === 0}
                       action="request-review"
                       actionLabel={action.label}
                       onInvoke={(actionId, payload) =>
