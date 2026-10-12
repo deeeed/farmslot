@@ -549,6 +549,8 @@ export interface RunRecipeRunsForRunParams {
 }
 
 export interface RunRecordedEvidenceReview {
+  /** Display path relative to run artifacts, independent of media transport. */
+  packagePath?: string;
   /** Full retained report inventory; run-list projections deliberately omit it. */
   report?: Pick<
     import('../contracts/runs.js').RunOutput,

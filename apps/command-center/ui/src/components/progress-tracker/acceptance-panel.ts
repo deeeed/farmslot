@@ -215,6 +215,36 @@ export const acceptancePanelStyles = css`
     font-family: ${unsafeCSS(fonts.mono)};
   }
 
+  .ac-package {
+    color: ${unsafeCSS(colors.textSecondary)};
+    margin-top: ${unsafeCSS(spacing.sm)};
+  }
+  .ac-package-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: ${unsafeCSS(spacing.sm)};
+  }
+  .ac-package[data-tone='error'] {
+    color: ${unsafeCSS(colors.statusFail)};
+  }
+  .ac-package[data-tone='error'] .ac-verdict {
+    border-color: currentColor;
+    color: inherit;
+  }
+  .ac-package[data-status='Legacy'] .ac-verdict {
+    color: inherit;
+    border-color: currentColor;
+  }
+  .ac-package[data-status='Valid'] .ac-verdict {
+    color: ${unsafeCSS(colors.statusOk)};
+    border-color: currentColor;
+  }
+  .ac-package details > summary {
+    cursor: pointer;
+    margin-top: 4px;
+  }
+
   .ac-note {
     padding-left: 3.2em;
     color: ${unsafeCSS(colors.textSecondary)};
@@ -471,7 +501,7 @@ export function renderAcceptancePanel(
   if (
     rows.length === 0 &&
     !options.error &&
-    !model?.errors.length &&
+    !model?.packageStatus &&
     !(options.showOccurrences && model?.occurrences.length)
   )
     return nothing;
@@ -516,8 +546,33 @@ export function renderAcceptancePanel(
             </div>`
           : nothing}
         ${rows.map((row) => renderRow(row, options.evidenceHref, options.openEvidence, model))}
-        ${model?.warnings.map((warning) => html`<p class="ac-note">${warning}</p>`)}
-        ${model?.errors.map((error) => html`<p class="ac-error">${error}</p>`)}
+        ${model.packageStatus
+          ? html`<div
+              class="ac-package"
+              data-testid="evidence-package-status"
+              data-status=${model.packageStatus.status}
+              data-tone=${model.packageStatus.tone}
+            >
+              <div class="ac-package-heading">
+                <span class="ac-verdict">${model.packageStatus.status}</span>
+                <code>${model.packageStatus.path}</code>
+                <span>${model.packageStatus.summary}</span>
+              </div>
+              ${model.packageStatus.action ? html`<p>${model.packageStatus.action}</p>` : nothing}
+              ${model.packageStatus.issues.length
+                ? html`<details data-testid="evidence-package-details">
+                    <summary>Show details (${model.packageStatus.issues.length} issues)</summary>
+                    <ul>
+                      ${model.packageStatus.issues.map(
+                        (issue) =>
+                          html`<li>${issue.message} <span>(${issue.count} messages)</span></li>`,
+                      )}
+                    </ul>
+                  </details>`
+                : nothing}
+            </div>`
+          : nothing}
+        ${model.displayWarnings.map((warning) => html`<p class="ac-note">${warning}</p>`)}
         ${options.showOccurrences
           ? model?.occurrences.map(
               (occurrence) =>
