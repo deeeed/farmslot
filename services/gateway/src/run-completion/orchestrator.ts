@@ -96,6 +96,10 @@ import {
   sortArtifactRefsForComparison,
   stableJson,
 } from './ready-gate-package.js';
+import {
+  readFrozenPublicationManifest,
+  verifyFrozenPublicationEvidence,
+} from './recorded-publication-evidence.js';
 import { augmentReviewAttemptsFromArtifacts, materializeReviewArtifacts } from './reviews.js';
 
 export {
@@ -1198,7 +1202,10 @@ export async function publishCompletionPackage(
 
     const approvedSelectedEvidenceKeys =
       options?.selectedEvidenceKeys ?? approvedPackage.selectedEvidenceKeys ?? [];
-    const evidenceManifest = run.taskFile ? await readEvidenceManifest(run) : null;
+    const evidenceManifest = await readFrozenPublicationManifest(
+      run,
+      approvedPackage.evidenceManifest ?? [],
+    );
     const publishableSelectedEvidenceKeys = assertPublicationEvidenceSelection({
       selectedEvidenceKeys: approvedSelectedEvidenceKeys,
       evidenceManifest: approvedPackage.evidenceManifest ?? [],
@@ -1274,9 +1281,14 @@ export async function publishCompletionPackage(
         failOnError: true,
         baseBody: approvedPackage.draftBody,
         evidenceManifest,
-        validateBody: prTemplate
-          ? (body) => reportTemplateDrift(body, 'published body')
-          : undefined,
+        validateBody: async (body) => {
+          await verifyFrozenPublicationEvidence(
+            latestRun,
+            approvedPackage.evidenceManifest ?? [],
+            selectedEvidenceKeys,
+          );
+          if (prTemplate) reportTemplateDrift(body, 'published body');
+        },
       },
     );
     flags.bodyPostProcessed = true;

@@ -1,5 +1,6 @@
 import {
   Events,
+  type ReadyGatePayload,
   type RunRefreshPublishedEvidenceParams,
   type RunRefreshPublishedEvidenceResult,
   TERMINAL_RUN_STATUSES,
@@ -12,13 +13,20 @@ import { recordPublishedDescription } from '../run-engine/finalize-step.js';
 import { getRun } from '../runs/store.js';
 
 import { isPublishedStatus, publicationStatusForRun } from './orchestrator.js';
-import { readCurrentPackageEvidence } from './package-evidence-manifest.js';
-import { postProcessPRBody, publishSelectedEvidence } from './publication-artifacts.js';
 import {
-  allSelectedEvidenceKeysForPublication,
-  publicationEvidenceChangedError,
-} from './publication-evidence-policy.js';
-import { sha256Text, verifyReadyGateSelectedEvidenceFiles } from './ready-gate-package.js';
+  expandEvidenceSelectionForManifest,
+  postProcessPRBody,
+  publishSelectedEvidence,
+} from './publication-artifacts.js';
+import {
+  resolveSelectedEvidenceRef,
+  sha256Text,
+  verifyReadyGatePackageHash,
+} from './ready-gate-package.js';
+import {
+  readFrozenPublicationManifest,
+  verifyFrozenPublicationEvidence,
+} from './recorded-publication-evidence.js';
 
 interface PublishedPrDescription {
   body: string;
@@ -44,15 +52,25 @@ export async function refreshPublishedEvidence(
   }
   if (!run.taskFile) throw new Error('Published evidence requires the run artifact mirror');
   const decision = latestResolvedHumanGateDecision(run.decisions);
-  const payload = decision?.payload as { kind?: string; prPackage?: unknown } | undefined;
+  const payload = decision?.payload as ReadyGatePayload | undefined;
   if (payload?.kind !== 'ready' || !payload.prPackage) {
     throw new Error('Published evidence refresh requires the recorded publication package');
   }
-  const { manifest, inventory } = await readCurrentPackageEvidence(run);
-  if (!manifest) throw new Error('Published evidence refresh requires a valid evidence manifest');
+  const prepared = payload.prPackage;
+  verifyReadyGatePackageHash(prepared);
+  const inventory = prepared.evidenceManifest ?? [];
+  const manifest = await readFrozenPublicationManifest(run, inventory);
+  const approved =
+    expandEvidenceSelectionForManifest(manifest, prepared.selectedEvidenceKeys ?? []) ?? [];
+  const selectedEvidenceKeys = params.selectedEvidenceKeys ?? approved;
+  const allowed = new Set(approved.map((key) => resolveSelectedEvidenceRef(key, inventory)?.path));
+  for (const key of selectedEvidenceKeys) {
+    const ref = resolveSelectedEvidenceRef(key, inventory);
+    if (!ref || !allowed.has(ref.path))
+      throw new Error(`Evidence refresh refused: selection was not approved (${key}).`);
+  }
   const selection = {
-    selectedEvidenceKeys:
-      params.selectedEvidenceKeys ?? allSelectedEvidenceKeysForPublication(inventory),
+    selectedEvidenceKeys,
     evidenceManifest: inventory,
     trustedEvidenceManifest: manifest,
   };
@@ -92,12 +110,7 @@ export async function refreshPublishedEvidence(
     checkAuthorChecklist: false,
     evidenceManifest: manifest,
     validateBody: async () => {
-      await verifyReadyGateSelectedEvidenceFiles(
-        run,
-        { evidenceManifest: inventory },
-        expanded,
-        publicationEvidenceChangedError,
-      );
+      await verifyFrozenPublicationEvidence(run, inventory, expanded);
       const current = await readPr();
       if (current.headRefOid !== before.headRefOid || current.body !== before.body) {
         throw new Error(

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Freeze selected recorded evidence with its execution dependencies and publication manifest; refresh verifies the approved selection and refuses replaced media or metadata.
+
 - Validate artifact-only QA completion from retained output and declared cases, preserving pending visual review and recovery across refreshes and restarts.
 - Count review diff files from numstat rows instead of patch text while retaining untracked source identities.
 - Return artifact-relative package paths for retained evidence review.

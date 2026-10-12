@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Keep frozen recording dependencies out of selectable publication media.
+
 - Include the retained package display path in evidence review snapshots.
 
 - Share plain run titles across clients, deriving HTML and Markdown headings with bounded display text.

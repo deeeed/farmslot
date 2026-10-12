@@ -3,7 +3,8 @@ import test from 'node:test';
 
 import type { ArtifactRef } from '@farmslot/protocol';
 
-import { buildPackageEvidenceManifest } from './package-evidence-manifest.js';
+await import('../runtime/mock-pty.test-support.js');
+const { buildPackageEvidenceManifest } = await import('./package-evidence-manifest.js');
 
 test('buildPackageEvidenceManifest honors curated explicit publish set and omissions', async () => {
   const artifacts: ArtifactRef[] = [

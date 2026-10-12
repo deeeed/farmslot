@@ -30,10 +30,9 @@ import {
 } from './evidence-paths.js';
 import {
   assertPublicationEvidenceSelection,
-  publicationEvidenceChangedError,
   type PublicationEvidenceSelection,
 } from './publication-evidence-policy.js';
-import { verifyReadyGateSelectedEvidenceFiles } from './ready-gate-package.js';
+import { verifyFrozenPublicationEvidence } from './recorded-publication-evidence.js';
 
 // ─── LLM PR body rewrite ───
 
@@ -432,12 +431,7 @@ export async function publishSelectedEvidence(
   const selectedEvidenceKeys =
     expandEvidenceSelectionForManifest(selection.trustedEvidenceManifest, selected) ?? [];
   if (selectedEvidenceKeys.length) {
-    await verifyReadyGateSelectedEvidenceFiles(
-      run,
-      { evidenceManifest: selection.evidenceManifest },
-      selectedEvidenceKeys,
-      publicationEvidenceChangedError,
-    );
+    await verifyFrozenPublicationEvidence(run, selection.evidenceManifest, selectedEvidenceKeys);
   }
   const artifactUrls = await uploadArtifacts(run, prNumber, selectedEvidenceKeys, {
     failOnError: true,
