@@ -4,6 +4,8 @@ import type {
   FamilyObservabilitySnapshot,
 } from '../contracts/index.js';
 
+import { taskTitleText } from './run-title.js';
+
 export interface FamilyIterationLedgerCard {
   index: number;
   runId: string;
@@ -79,7 +81,10 @@ function buildFamilyIterationCard(
     flowType: entry.flowType,
     flowLabel: flowTypeLabel(entry.flowType),
     reason: iterationReason(entry, run),
-    title: run?.summary?.trim() || entry.ticketOrPr || entry.familyRootTicketOrPr,
+    title: taskTitleText(
+      run?.summary?.trim() || entry.ticketOrPr || entry.familyRootTicketOrPr,
+      Infinity,
+    ),
     diffLabel: contributionDiffLabel(entry),
     reviewedInputLabel: reviewedInputLabel(entry),
     evidenceLabel: evidenceLabel(entry, run),

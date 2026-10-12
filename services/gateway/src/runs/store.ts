@@ -46,6 +46,7 @@ import {
   type RunStep,
   type RunStepStatus,
   signalFileForTask,
+  taskTitleText,
 } from '@farmslot/protocol';
 import { parseReviewRequestContext } from '@farmslot/review-dispatch';
 import { parseRunRecordFile } from '@farmslot/run-bundle';
@@ -896,7 +897,10 @@ export function createRun(
         : undefined,
     safetyTier: resolvedTier,
     engineState,
-    ticketData: params.ticketData,
+    ticketData:
+      params.ticketData?.source === 'manual'
+        ? { ...params.ticketData, title: taskTitleText(params.ticketData.title) }
+        : params.ticketData,
     ...(normalizeRunTags(params.tags).length > 0 ? { tags: normalizeRunTags(params.tags) } : {}),
     createdAt: now,
     startedAt: now,

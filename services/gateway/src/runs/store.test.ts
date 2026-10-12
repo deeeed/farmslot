@@ -87,6 +87,29 @@ test('createRun assigns canonical family defaults for root runs', async (t) => {
   assert.equal(run.familyRootTicketOrPr, run.ticketOrPr);
 });
 
+test('free-text creation derives a bounded title and preserves the task body', async (t) => {
+  const body = '# PR #112 native dispatch proof\n\nVerify the published product.';
+  const run = createRun({
+    flowType: 'dev',
+    project: 'demo',
+    ticketOrPr: body,
+    ticketData: {
+      source: 'manual',
+      title: body,
+      description: body,
+      acceptanceCriteria: [],
+      affectedArea: '',
+      stepsToReproduce: [],
+      screenshots: [],
+      labels: [],
+    },
+  });
+  t.after(() => cleanupRun(run.id));
+  assert.equal(run.ticketData?.title, 'PR #112 native dispatch proof');
+  assert.equal(run.ticketData?.description, body);
+  assert.equal(run.ticketOrPr, body);
+});
+
 test('createRun records lifecycle startedAt for run detail telemetry', async (t) => {
   const run = createRun({
     flowType: 'dev',
