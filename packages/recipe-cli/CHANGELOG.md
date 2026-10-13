@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Put each task-mode recipe run in its own artifact directory, retaining prior attempts and task-level inputs and ledgers.
+
 - Require an attested source binding for declared providers and recipe libraries.
 - Honor explicit checklist targets and resume cleared blockers with the existing start command.
 

@@ -95,6 +95,10 @@ export {
   validateRecipeRecordingTimelineDocument,
 } from './recording.js';
 export {
+  type LatestValidRecipeRunPointer,
+  sanitizeLatestValidRecipeRunPointer,
+} from './run-pointer.js';
+export {
   CAPTURE_EVIDENCE_INCOMPLETE,
   CAPTURE_INTERRUPTED_REASON,
   digestRecipeSuiteScope,

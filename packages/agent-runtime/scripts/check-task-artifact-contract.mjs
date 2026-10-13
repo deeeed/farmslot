@@ -324,14 +324,28 @@ function validateRecipeDocumentArtifact() {
   if (authoredRecipe === undefined) return;
   validateRecipeDocumentValue(authoredRecipe, 'recipe.json', { skipRecipeCallResolution: true });
 
-  const packageRoot = 'artifacts/recipe-run';
+  let packageRoot = 'artifacts/recipe-run';
+  const pointerValue = readJsonArtifact(
+    'artifacts/latest-valid-recipe-run.json',
+    'latest-valid-recipe-run.json',
+  );
+  if (pointerValue !== undefined) {
+    const pointer = recipeProtocol?.sanitizeLatestValidRecipeRunPointer?.(pointerValue);
+    if (!pointer) {
+      issues.push(
+        'latest-valid-recipe-run.json: invalid pointer or current @farmslot/protocol is unavailable',
+      );
+      return;
+    }
+    packageRoot = `artifacts/${pointer.relativeArtifactRoot}`;
+  }
   const recipe = readJsonArtifact(`${packageRoot}/recipe.json`, 'recipe-run/recipe.json');
   if (recipe === undefined) {
-    issues.push('artifacts/recipe-run/recipe.json is missing');
+    issues.push(`${packageRoot}/recipe.json is missing`);
     return;
   }
   if (canonicalJson(authoredRecipe) !== canonicalJson(recipe)) {
-    issues.push('artifacts/recipe-run/recipe.json does not match artifacts/recipe.json');
+    issues.push(`${packageRoot}/recipe.json does not match artifacts/recipe.json`);
   }
   const manifest = readJsonArtifact(
     `${packageRoot}/artifact-manifest.json`,

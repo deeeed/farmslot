@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Preserve typed media and timeline references when task recipe attempts live in nested artifact directories.
 - Name the upstream PR in stacked publication bodies and previews, including follow-ups, while preserving authored prose.
 - Keep recovered worker sessions bound to their exact pane and repair reviewer-session contamination only with original-process provenance, preserving foreign-worker parking guards.
 - Prepare stacked publication packages and review previews against the same parent branch used for PR creation.

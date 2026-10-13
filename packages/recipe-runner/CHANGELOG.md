@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- Refuse reruns into retained recipe artifact packages before recording or execution; use a fresh artifact directory to keep prior evidence intact.
+
 - Honor HUD top/bottom placement through automatic progress and capture the painted final outcome.
 
 - Bind recorded evidence to execution-indexed files and consumed metadata, excluding unrelated task artifacts.

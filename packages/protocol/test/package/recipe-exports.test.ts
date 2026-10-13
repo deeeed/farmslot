@@ -60,6 +60,7 @@ test('recipe module exposes only the public recipe protocol surface', async () =
     'recordingTargetClaimKey',
     'replaceRecipeTemplates',
     'resolvedRecipeArtifactPath',
+    'sanitizeLatestValidRecipeRunPointer',
     'validateArtifactManifestDocument',
     'validateRecipeActionManifestDocument',
     'validateRecipeArtifactPackage',

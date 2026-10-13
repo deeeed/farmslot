@@ -59,6 +59,15 @@ if (result.status !== 'pass') process.exitCode = 1;
 
 Runner construction and preflight fail when a required action, adapter, precondition, dependency recipe, digest, or approval is missing.
 
+Each artifact package belongs to one execution attempt. Preflight and execution
+refuse a directory containing an existing recipe package, including failed or
+partial attempts. Rerun with a fresh `artifactsDir` or `--artifacts-dir`; keep the
+old directory so published evidence and manifests still reference the same bytes.
+The task-mode CLI defaults each run to its own `artifacts/recipe-runs/` child directory,
+so task-level authored inputs and the acceptance ledger stay separate.
+For an explicit task-bound destination, use `artifacts/recipe-runs/<attempt>` so
+task selection follows the retained package.
+
 ## CLI
 
 The `farmslot-recipe` command ships in [`@farmslot/recipe-cli`](https://farmslot.io/docs/reference/recipe-discovery), which also adds library-wide discovery (`actions`, `list`, `describe`, `explain`, `search`, `template`). This package keeps the programmatic `run`/`validate` program at `@farmslot/recipe-runner/cli`.

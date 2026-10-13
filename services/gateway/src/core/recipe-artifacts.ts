@@ -2,12 +2,10 @@ import path from 'node:path';
 
 import type { RecipeArtifactType } from '@farmslot/protocol';
 
-export interface LatestValidRecipeRunPointer {
-  version: number;
-  runId: string;
-  relativeArtifactRoot: string;
-  updatedAt?: string;
-}
+export {
+  type LatestValidRecipeRunPointer,
+  sanitizeLatestValidRecipeRunPointer,
+} from '@farmslot/protocol';
 
 const EXACT_ARTIFACT_PURPOSES = new Map<string, string>([
   ['report.md', 'report'],
@@ -66,20 +64,4 @@ export function inferArtifactPurpose(relativePath: string): string {
   if (/\.(jsonl)$/i.test(filename)) return 'log';
   if (/\.(js|ts)$/i.test(filename)) return 'script';
   return 'other';
-}
-
-export function sanitizeLatestValidRecipeRunPointer(
-  pointer: LatestValidRecipeRunPointer | null | undefined,
-): LatestValidRecipeRunPointer | null {
-  if (!pointer?.relativeArtifactRoot || pointer.version !== 1) return null;
-  const cleaned = path.posix.normalize(pointer.relativeArtifactRoot.replaceAll('\\', '/'));
-  if (cleaned === '..' || cleaned.startsWith('../') || path.posix.isAbsolute(cleaned)) return null;
-  if (!cleaned.startsWith('recipe-runs/')) return null;
-  const runId = cleaned.slice('recipe-runs/'.length).split('/')[0];
-  if (!runId) return null;
-  return {
-    ...pointer,
-    runId,
-    relativeArtifactRoot: cleaned,
-  };
 }
