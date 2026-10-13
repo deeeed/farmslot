@@ -15,7 +15,7 @@ import {
   optionalValueOption,
   valueOption,
 } from '../src/harness/command-contract.js';
-import { handleRun } from '../src/harness/commands/run.js';
+import { handleRun, resolveRecipeExecutionArtifacts } from '../src/harness/commands/run.js';
 import { recipeConformanceIdentity } from '../src/harness/conformance.js';
 import { harnessContext } from '../src/harness/context-state.js';
 import { sourceSnapshot } from '../src/harness/execution-provenance.js';
@@ -73,6 +73,43 @@ const invocationContract: CommandContract = {
   positionals: [{ label: 'recipe' }],
   minimumPositionals: 1,
 };
+
+test('project execution leaves task attempt allocation to run/call and keeps other defaults', async (t) => {
+  const options = fixture(t);
+  const previousTask = process.env.RECIPE_TASK_DIR;
+  const task = path.join(options.cwd, 'temp/tasks/validation');
+  fs.mkdirSync(path.join(task, 'artifacts'), { recursive: true });
+  process.env.RECIPE_TASK_DIR = task;
+  t.after(() => {
+    if (previousTask === undefined) delete process.env.RECIPE_TASK_DIR;
+    else process.env.RECIPE_TASK_DIR = previousTask;
+  });
+  for (const command of ['run', 'call']) {
+    await withProjectRecipeHost({ ...options, command }, async ({ cli }) => {
+      assert.equal(cli.artifactsDir, undefined);
+      const destination = resolveRecipeExecutionArtifacts(options.cwd, undefined, {
+        fresh: 'runs/one',
+        taskSubdir: 'recipe-runs/one',
+      });
+      assert.equal(destination.taskDir, task);
+      assert.equal(destination.artifactsDir, path.join(task, 'artifacts/recipe-runs/one'));
+    });
+    await withProjectRecipeHost(
+      {
+        ...options,
+        command,
+        tokens: ['--artifacts-dir', 'explicit'],
+        options: { artifactsDir: 'explicit' },
+      },
+      async ({ cli }) => assert.equal(cli.artifactsDir, path.join(options.cwd, 'explicit')),
+    );
+  }
+  for (const command of ['doctor', 'launch', 'stop']) {
+    await withProjectRecipeHost({ ...options, command }, async ({ cli }) => {
+      assert.equal(cli.artifactsDir, path.join(options.cwd, 'artifacts'));
+    });
+  }
+});
 
 test('project host matches file URLs and absolute local repository origins', async (t) => {
   const options = fixture(t);

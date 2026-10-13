@@ -146,7 +146,10 @@ export function withProjectRecipeHost<T>(
           const resolvedOptions: CliOptions = {
             target: context.target.value,
             runtimeDir: binding.runtimeDir,
-            artifactsDir: path.join(binding.checkoutRoot, binding.artifactDir),
+            ...((options.command !== 'run' && options.command !== 'call') ||
+            options.options?.artifactsDir !== undefined
+              ? { artifactsDir: path.join(binding.checkoutRoot, binding.artifactDir) }
+              : {}),
             ...(binding.manifest && !options.options?.actionManifest
               ? { actionManifest: binding.manifest }
               : {}),
