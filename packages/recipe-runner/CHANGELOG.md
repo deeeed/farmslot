@@ -6,6 +6,14 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Harness proof consumers apply the shared intent contract during recipe-cli planning as well as doctor conformance.
 
+- Refuse reruns into retained recipe artifact packages before recording or execution; use a fresh artifact directory to keep prior evidence intact.
+
+- Honor HUD top/bottom placement through automatic progress and capture the painted final outcome.
+
+- Bind recorded evidence to execution-indexed files and consumed metadata, excluding unrelated task artifacts.
+
+- Expose the existing occurrence recording-coverage helper and trusted-host reader transport to the shared review model; equal-byte originals retain their distinct clocks (ADR-062).
+
 ## 0.31.0 - 2026-10-12
 
 - Add bounded `watch_logs` observation with cancellation. Breaking correction: run-scoped logs now require paths resolved before producers execute; output-derived paths must declare `scope=file`, and stale content no longer passes parameterized observations.
