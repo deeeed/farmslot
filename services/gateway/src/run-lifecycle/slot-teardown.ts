@@ -35,6 +35,8 @@ import { contextPaneId } from '../runners/session-record.js';
 import { getRun, getRunWithArchived, listRuns, updateRun } from '../runs/store.js';
 import { unwatchSlot } from '../tasks/watcher.js';
 
+import { isCompletionPrerequisiteFailure } from './step-status.js';
+
 export interface RunSlotCleanupFence {
   before: Readonly<Record<string, unknown>> | null;
   token?: string;
@@ -57,7 +59,13 @@ export async function retryOccupiedRunSlot(slotId: string): Promise<boolean> {
   const runId = before.current_run_id || before.cleanup_run_id;
   if (typeof runId !== 'string') return false; // An unidentified foreign hold grants no cleanup authority.
   const run = await getRunWithArchived(runId);
-  if (!run || run.slotId !== slotId || !isTerminalRunStatus(run.status) || isActiveSlotHolder(run))
+  if (
+    !run ||
+    run.slotId !== slotId ||
+    !isTerminalRunStatus(run.status) ||
+    isCompletionPrerequisiteFailure(run) ||
+    isActiveSlotHolder(run)
+  )
     return false;
   if (isTerminalTeardownInFlight(slotId)) return false;
   beginTerminalTeardown(slotId);

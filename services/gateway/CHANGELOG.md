@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Preserve completion-prerequisite workspace holds during occupied-slot cleanup retries, retaining their worker, slot and capability ownership for explicit recovery.
+
 - Run fixture sync directly on the gateway for remote slots so tmux setup cannot terminate it before its configured deadline; retain sync logs and cancellation.
 - Keep browser health within its existing budget by proving the recorded PID owns the CDP listener; check global listener uniqueness only when recovering a stale or missing PID.
 
