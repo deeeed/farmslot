@@ -1,17 +1,27 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { Events, type Run } from '@farmslot/protocol';
+import {
+  type BranchAffinityNudgePayload,
+  Events,
+  type Run,
+  type RunDecision,
+} from '@farmslot/protocol';
 
 import type { RunProgressObservation } from '../runners/run-progress.js';
+
+import { canReplayBranchAffinityDecision } from './decision-replay.js';
 
 await import('../runtime/mock-pty.test-support.js');
 const store = await import('../runs/store.js');
 const progressReader = await import('../runners/run-progress.js');
 const { makeRun } = await import('./test-fixtures.js');
 
-function createObservedRun(t: { after(callback: () => Promise<void>): void }): Run {
-  const run = store.createRun({ flowType: 'dev', project: 'demo', ticketOrPr: 'PROGRESS-FENCE' });
+function createObservedRun(
+  t: { after(callback: () => Promise<void>): void },
+  ticketOrPr = 'PROGRESS-FENCE',
+): Run {
+  const run = store.createRun({ flowType: 'dev', project: 'demo', ticketOrPr });
   store.updateRun(run.id, { status: 'monitoring', engineState: { generation: 1 } });
   t.after(async () => {
     store.updateRun(run.id, { status: 'done' });
@@ -23,6 +33,88 @@ function createObservedRun(t: { after(callback: () => Promise<void>): void }): R
 let observe: () => Promise<RunProgressObservation> = async () => ({ kind: 'idle' });
 const { createEngineDecision, resolveEngineDecision, setEngineDecisionRuntime } =
   await import('./engine-decisions.js');
+
+test('Fresh approval for A re-prompts when source restart ranks worker B first', async (t) => {
+  const run = createObservedRun(t);
+  const workerA = createObservedRun(t, 'TASK-A');
+  const workerB = createObservedRun(t, 'TASK-B');
+  const payload = (worker: Run, slotId: string): BranchAffinityNudgePayload => ({
+    kind: 'branch_affinity_nudge',
+    project: run.project,
+    ticketOrPr: run.ticketOrPr,
+    candidate: {
+      slotId,
+      machine: 'node',
+      branch: 'shared-pr-branch',
+      runner: null,
+      model: null,
+      nudgeCount: 0,
+      ctxPct: null,
+      agentStatus: 'working',
+      dispatchedAt: worker.createdAt,
+      currentRunId: worker.id,
+      currentFlowType: worker.flowType,
+      uncommittedCount: 0,
+      uncommittedFiles: [],
+      prMatchKind: 'branch-slug',
+      canNudge: false,
+    },
+    freeSlotCandidates: [],
+    riskFlags: [],
+  });
+  const actions = [
+    { id: 'fresh', label: 'Fresh', style: 'primary' as const },
+    { id: 'abort', label: 'Abort', style: 'secondary' as const },
+  ];
+  const approved: RunDecision = {
+    id: 'approved-worker-a',
+    type: 'engine_branch_affinity_nudge',
+    title: 'Fresh A',
+    description: 'Approved original worker',
+    actions,
+    createdAt: run.createdAt,
+    resolvedAt: run.createdAt,
+    resolvedAction: 'fresh',
+    payload: payload(workerA, 'slot-a'),
+  };
+  store.updateRun(run.id, { decisions: [approved] });
+  const receipt = structuredClone(approved);
+  const beforeA = structuredClone(store.getRun(workerA.id));
+  const beforeB = structuredClone(store.getRun(workerB.id));
+  const current = payload(workerB, 'slot-b');
+  assert.equal(canReplayBranchAffinityDecision(approved, payload(workerA, 'slot-a')), true);
+  setEngineDecisionRuntime({ broadcast: () => {}, stepToStatus: {} });
+  let resumed = false;
+  const waiter = createEngineDecision(
+    run.id,
+    'branch_affinity_nudge',
+    'Fresh B',
+    actions,
+    current,
+    {
+      canReplay: (prior) => canReplayBranchAffinityDecision(prior, current),
+      readProgress: async () => ({ kind: 'idle' }),
+    },
+  ).then((action) => {
+    resumed = true;
+    return action;
+  });
+  t.after(async () => {
+    for (const decision of store.getRun(run.id)?.decisions ?? [])
+      if (!decision.resolvedAt) resolveEngineDecision(decision.id, 'abort');
+    await waiter;
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(resumed, false, 'A must not authorize Fresh against B');
+  const decisions = store.getRun(run.id)!.decisions;
+  assert.equal(decisions.length, 2);
+  assert.deepEqual(decisions[0], receipt, 'the original approval remains recorded');
+  assert.deepEqual(decisions[1].payload, current);
+  assert.deepEqual(store.getRun(workerA.id), beforeA);
+  assert.deepEqual(store.getRun(workerB.id), beforeB, 'worker B remains untouched');
+  resolveEngineDecision(decisions[1].id, 'abort');
+  assert.equal(await waiter, 'abort');
+});
 
 for (const [label, interrupt] of [
   ['cancel', { status: 'cancelled' }],

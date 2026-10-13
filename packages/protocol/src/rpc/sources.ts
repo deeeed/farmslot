@@ -3,8 +3,10 @@ import type {
   SourceDeclaration,
   SourceLock,
   SourceNodeStatus,
+  SourcePin,
   SourceResolution,
 } from '../sources/contracts.js';
+import type { SourceEffectiveSelection, SourcePinTarget } from '../sources/pins.js';
 
 export interface SourcesStatusParams {
   sourceId?: string;
@@ -16,6 +18,9 @@ export interface SourcesStatusResult {
   runSource?: RunSourceStatus;
   configured: boolean;
   declarationRevision?: number;
+  pinRevision?: number;
+  pins?: SourcePin[];
+  effectiveSelections?: SourceEffectiveSelection[];
   declarations: SourceDeclaration[];
   resolutions: SourceResolution[];
   locks: SourceLock[];
@@ -33,3 +38,22 @@ export interface SourcesSyncParams {
 export interface SourcesSyncResult extends SourcesStatusResult {
   operationId: string;
 }
+
+export interface SourcesPinParams extends SourcePinTarget {
+  sourceId: string;
+  ref: string;
+  operationId: string;
+  expectedDeclarationRevision: number;
+  expectedPinRevision: number;
+}
+
+export type SourcesUnpinParams = Omit<SourcesPinParams, 'ref'>;
+
+export interface SourcesPinResult {
+  operationId: string;
+  declarationRevision: number;
+  pinRevision: number;
+  pin: SourcePin;
+}
+
+export type SourcesUnpinResult = SourcesPinResult;

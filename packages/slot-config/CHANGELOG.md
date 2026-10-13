@@ -5,6 +5,7 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 ## Unreleased
 
 - Refuse fixture planning when required template, selected compose, include or directory sources are missing, preserving explicit optional skips and reporting the source and project configuration.
+- Distinguish provisional source plans from admitted execution inputs and compare retained worker bytes across scoped locks.
 - Resolve source bindings from verified, read-only Git commit materializations.
 
 - Validate exclusive recording-target claim declarations and preserve their binding and provider parameter schemas in the capability catalog.

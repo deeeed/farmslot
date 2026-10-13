@@ -17,7 +17,7 @@ const SOURCE = readFileSync(
 );
 
 test('every Fresh teardown in FIND_SLOT refuses a blocked slot repo first', () => {
-  const teardown = 'await prepareSlotForFreshReuse(';
+  const teardown = 'prepareSlotForFreshReuse(';
   const teardowns: number[] = [];
   for (let at = SOURCE.indexOf(teardown); at >= 0; at = SOURCE.indexOf(teardown, at + 1)) {
     teardowns.push(at);

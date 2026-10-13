@@ -1,5 +1,5 @@
 import { html, nothing } from 'lit';
-import { customElement } from 'lit/decorators.js';
+import { customElement, state } from 'lit/decorators.js';
 import { keyed } from 'lit/directives/keyed.js';
 
 import type {
@@ -13,6 +13,7 @@ import type {
   QaInput,
   Run,
   RunCancelResult,
+  SourceSelection,
 } from '@farmslot/protocol';
 import {
   failedRunCancelEffects,
@@ -30,6 +31,7 @@ import {
 
 import './execution-template-preview-modal.js';
 import '../shared/choice-picker.js';
+import '../shared/source-status-panel.js';
 import './dispatch-native-profiles.js';
 import './recipe-compatibility-panel.js';
 
@@ -125,6 +127,8 @@ import { renderDispatchWizardView } from './dispatch-wizard-view-renderer.js';
 
 @customElement('dispatch-wizard')
 export class DispatchWizard extends DispatchWizardState {
+  @state() private _sourceSelections: SourceSelection[] = [];
+  @state() private _sourceSelectionRefusal = '';
   private readonly _templateOptionsCache = new Map<string, ConfigTemplateOptionsResult>();
 
   updated(changed: Map<string, unknown>) {
@@ -580,6 +584,7 @@ export class DispatchWizard extends DispatchWizardState {
       autoProject && project === this._project && this._slotOverrideExplicit,
     );
     this._project = project;
+    this._sourceSelections = [];
     this._autoProject = autoProject;
     if (!preservePin) {
       this._slotOverride = '';
@@ -1206,7 +1211,7 @@ export class DispatchWizard extends DispatchWizardState {
       comparisonParentRunId: this._comparisonParentRunId,
       pressureOverrideReady: this._pressureOverrideReady(),
     });
-    const workflowReason = this._workflowSelectionError();
+    const workflowReason = this._sourceSelectionRefusal || this._workflowSelectionError();
     if (this._flowType === 'review-pr') {
       return {
         ...base,
@@ -1344,6 +1349,7 @@ export class DispatchWizard extends DispatchWizardState {
           }
         : undefined;
     return buildDispatchWizardPayloadDraft({
+      sourceSelections: this._sourceSelections,
       transport: this._transport,
       nativeProfile:
         this._transport === 'native' ? this._nativeProfileSelection?.profile : undefined,
@@ -2009,6 +2015,17 @@ export class DispatchWizard extends DispatchWizardState {
       cancelConflictingRun: () => this._cancelConflictingRun(),
     });
     return html`
+      ${this._project && !this.mockMode
+        ? html`<source-status-panel
+            @source-selection-state=${(event: CustomEvent<{ refusal?: string }>) => {
+              this._sourceSelectionRefusal = event.detail.refusal ?? '';
+            }}
+            .context=${{ actions: [], selections: this._sourceSelections }}
+            @source-selections-change=${(event: CustomEvent<{ selections: SourceSelection[] }>) => {
+              this._sourceSelections = event.detail.selections;
+            }}
+          ></source-status-panel>`
+        : nothing}
       ${view}
       <execution-template-preview-modal
         .open=${this._executionTemplatePreviewOption !== null}

@@ -24,6 +24,8 @@ export function stripRunnerSessionArchives<T extends Pick<Run, 'metrics' | 'agen
 /** Strip volatile monitor/engine fields for reference-profile export. */
 export function sanitizeRunForBundleExport(run: Run, profile: RunBundleProfile): Run {
   const cloned = stripRunnerSessionArchives(structuredClone(run));
+  // Replays use frozen provenance; a local admission request is never executable bundle input.
+  delete cloned.dispatchRequest;
   if (profile === 'reference' || profile === 'family') {
     delete cloned.monitorState;
     if (cloned.engineState) {

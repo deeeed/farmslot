@@ -134,7 +134,7 @@ const { loadProjectConfig } = await import('../fleet/state.js');
 const { createRun, deleteRun } = await import('../runs/store.js');
 const { dispatchPreview } = await import('../methods/dispatch/preview.js');
 const { dispatchQueueAdd } = await import('../methods/dispatch/queue.js');
-const { runCreate } = await import('../methods/run.js');
+const { runCreate, planRunCreation } = await import('../methods/run.js');
 const { runWithSessionOriginator } = await import('../security/work-originator.js');
 const queue = await import('../backlog/dispatch-queue.js');
 const asOwner = <T>(operation: () => T) =>
@@ -572,4 +572,43 @@ test('direct admission resolves null defaults and retains them in the saved exec
   assert.deepEqual(resolved.execution, defaults);
   assert.equal(resolved.execution!.models[0].model, null);
   assert.equal(resolved.execution!.models[0].effort, null);
+});
+
+test('source replanning excludes its own provisional review but keeps foreign capacity', async (t) => {
+  const same = createRun(
+    { ...request, ticketOrPr: 'example/app#70', reviewWorkspaceTarget: { machine: 'one' } },
+    { deferBackgroundPersist: true },
+  );
+  let foreign: typeof same | undefined;
+  t.after(async () => {
+    for (const run of [same, foreign])
+      if (run) {
+        run.status = 'cancelled';
+        await deleteRun(run.id);
+      }
+  });
+  const params = {
+    ...request,
+    ticketOrPr: same.ticketOrPr,
+    reviewWorkspaceTarget: { machine: 'one' },
+    runner: 'codex',
+    model: 'gpt-6-astra',
+    effort: 'high',
+    transport: 'native' as const,
+  };
+  await assert.rejects(
+    asOwner(() => planRunCreation({ ...params })),
+    { code: 'REVIEW_WORKSPACE_CAPACITY' },
+  );
+  const planned = await asOwner(() => planRunCreation({ ...params }, { replanningRunId: same.id }));
+  assert.equal(planned.workspaceAdmission?.active, 0);
+  assert.equal(planned.params.reviewWorkspaceTarget?.machine, 'one');
+  foreign = createRun(
+    { ...request, ticketOrPr: 'example/app#71', reviewWorkspaceTarget: { machine: 'one' } },
+    { deferBackgroundPersist: true },
+  );
+  await assert.rejects(
+    asOwner(() => planRunCreation({ ...params }, { replanningRunId: same.id })),
+    { code: 'REVIEW_WORKSPACE_CAPACITY' },
+  );
 });

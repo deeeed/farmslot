@@ -2,6 +2,10 @@
   "name": "source-proof",
   "type": "monorepo",
   "paths": { "runtime_dir": ".agent", "artifact_dir": ".task" },
+  "qa": {
+    "default_profile": "source-smoke",
+    "profiles": [{ "id": "source-smoke", "title": "Source smoke", "template_id": "qa-checklist" }]
+  },
   "slot_actions": {
     "probe": {
       "label": "Source probe",

@@ -13,6 +13,7 @@ import {
   type Run,
   type SlotStatus,
 } from '@farmslot/protocol';
+import { currentProjectSources, withProjectSources } from '@farmslot/slot-config';
 
 import {
   execOnSlot,
@@ -46,6 +47,13 @@ import { getAllRuns } from '../../runs/store.js';
 import { resolveReviewWorkspaceOwner } from '../../security/native-worker-owner.js';
 import { currentSessionOriginator } from '../../security/work-originator.js';
 import {
+  planSourceRequestSlots,
+  sourceAuthority,
+  withSourcePlanning,
+  withSourceRequestPlanning,
+} from '../../sources/runtime.js';
+import type { SourceSlotPlans } from '../../sources/slot-planning.js';
+import {
   projectUsesExecutionTemplateCatalog,
   resolveConfiguredExecutionTemplateForSlot,
 } from '../../tasks/execution-template-catalog.js';
@@ -74,6 +82,9 @@ import {
   projectConfigsFromProjects,
   slotHasCompanionResource,
   slotScore,
+  type SlotSelectionOptions,
+  slotSelectionOptionsFor,
+  type SlotSelectionPlans,
   validateSlotForDispatch,
 } from './slot-scoring.js';
 import { resolveDispatchTargetBranch } from './target-branch.js';
@@ -170,42 +181,45 @@ export function findAffinitySlot(
   slots: SlotStatus[],
   project: string,
   ticketOrPr: string,
-  options?: {
-    familyId?: string | null;
-    lane?: string | null;
-    variant?: string | null;
-    allowedSlots?: string[] | null;
-  },
+  options?: SlotSelectionOptions,
 ): SlotStatus | null {
-  const allow =
-    options?.allowedSlots && options.allowedSlots.length > 0 ? new Set(options.allowedSlots) : null;
-  const ticketSlug = ticketOrPr.replace(/[#/]/g, '-').toLowerCase();
-  // Extract PR number from "owner/repo#1234" or "#1234"
-  const prMatch = ticketOrPr.match(/#(\d+)$/);
-  const prNumber = prMatch ? parseInt(prMatch[1], 10) : null;
-
-  const strictComparison = options?.lane === 'comparison';
   return (
-    slots.find(
-      (s) =>
+    slots.find((s) => {
+      const selected = slotSelectionOptionsFor(s, options);
+      if (!selected) return false;
+      if (
+        options?.plans &&
+        (selected.pressureRejectedMachines?.has(s.machine) ||
+          validateSlotForDispatch(s, slots, selected))
+      )
+        return false;
+      const plan = options?.plans?.get(s.slot);
+      const ticket = plan && 'params' in plan ? plan.params.ticketOrPr : ticketOrPr;
+      const ticketSlug = ticket.replace(/[#/]/g, '-').toLowerCase();
+      const prMatch = ticket.match(/#(\d+)$/);
+      const prNumber = prMatch ? parseInt(prMatch[1], 10) : null;
+      const strictComparison = selected.lane === 'comparison';
+      const allow = selected.allowedSlots?.length ? new Set(selected.allowedSlots) : null;
+      return (
         s.project === project &&
         !s.missingFromPool &&
         (!allow || allow.has(s.slot)) &&
         s.lifecycle === 'held' &&
         s.agent !== 'working' &&
         (strictComparison
-          ? s.currentFamilyId === options?.familyId &&
-            s.currentLane === options?.lane &&
-            (s.currentVariant ?? null) === (options?.variant ?? null)
-          : !options?.familyId || !s.currentFamilyId || s.currentFamilyId === options.familyId) &&
+          ? s.currentFamilyId === selected.familyId &&
+            s.currentLane === selected.lane &&
+            (s.currentVariant ?? null) === (selected.variant ?? null)
+          : !selected.familyId || !s.currentFamilyId || s.currentFamilyId === selected.familyId) &&
         (strictComparison
           ? true
-          : !options?.lane || !s.currentLane || s.currentLane === options.lane) &&
+          : !selected.lane || !s.currentLane || s.currentLane === selected.lane) &&
         (strictComparison
           ? true
-          : !options?.variant || !s.currentVariant || s.currentVariant === options.variant) &&
-        (s.branch.includes(ticketSlug) || (prNumber != null && s.prHealth?.pr === prNumber)),
-    ) ?? null
+          : !selected.variant || !s.currentVariant || s.currentVariant === selected.variant) &&
+        (s.branch.includes(ticketSlug) || (prNumber != null && s.prHealth?.pr === prNumber))
+      );
+    }) ?? null
   );
 }
 
@@ -401,34 +415,32 @@ async function captureBranchAffinityCandidateMeta(
  * `prMatchKind` and runner-derived `canNudge` capability flag. The full collector layers
  * meta capture (uncommitted-files count, ctxPct) on top of this.
  */
+export interface BranchAffinitySelectionOptions extends SlotSelectionOptions {
+  activeRunIds?: ReadonlySet<string>;
+}
+
 export function selectBranchAffinityEligibleSlots(
   slots: SlotStatus[],
   project: string,
   ticketOrPr: string,
-  options?: {
-    familyId?: string | null;
-    lane?: string | null;
-    variant?: string | null;
-    allowedSlots?: string[] | null;
-    targetBranch?: string | null;
-    requiredPrepareProfile?: string | null;
-    activeRunIds?: ReadonlySet<string>;
-  },
+  options?: BranchAffinitySelectionOptions,
 ): Array<{ slot: SlotStatus; prMatchKind: 'pr-number' | 'branch-slug'; canNudge: boolean }> {
   if (options?.lane === 'comparison') return [];
-  const allow =
-    options?.allowedSlots && options.allowedSlots.length > 0 ? new Set(options.allowedSlots) : null;
-  const ticketSlug = ticketOrPr.replace(/[#/]/g, '-').toLowerCase();
-  const prMatch = ticketOrPr.match(/#(\d+)$/);
-  const prNumber = prMatch ? parseInt(prMatch[1], 10) : null;
-  const targetBranch = options?.targetBranch ?? null;
-
   const eligible: Array<{
     slot: SlotStatus;
     prMatchKind: 'pr-number' | 'branch-slug';
     canNudge: boolean;
   }> = [];
   for (const s of slots) {
+    const selected = slotSelectionOptionsFor(s, options);
+    if (!selected || selected.lane === 'comparison') continue;
+    const plan = options?.plans?.get(s.slot);
+    const ticket = plan && 'params' in plan ? plan.params.ticketOrPr : ticketOrPr;
+    const allow = selected.allowedSlots?.length ? new Set(selected.allowedSlots) : null;
+    const ticketSlug = ticket.replace(/[#/]/g, '-').toLowerCase();
+    const prMatch = ticket.match(/#(\d+)$/);
+    const prNumber = prMatch ? parseInt(prMatch[1], 10) : null;
+    const targetBranch = selected.targetBranch ?? null;
     if (s.project !== project) continue;
     if (allow && !allow.has(s.slot)) continue;
     // Don't filter on `lifecycle === 'busy'` — that state only fires during prepare/dispatch
@@ -447,8 +459,8 @@ export function selectBranchAffinityEligibleSlots(
     // surface as branch-matched candidates so the operator sees "this slot is on the PR's
     // branch" — but `canNudge` gates only the Nudge action; Fresh dispatch works for any
     // runner because it tears down + relaunches.
-    if (!passesBranchAffinityLaneGate(s, options)) continue;
-    if (companionResourceBlocker(s, options?.requiredPrepareProfile)) continue;
+    if (!passesBranchAffinityLaneGate(s, selected)) continue;
+    if (companionResourceBlocker(s, selected.requiredPrepareProfile)) continue;
     const m = isBranchAffinityCandidateBranchMatch(s, ticketSlug, prNumber, targetBranch);
     if (!m.matched) continue;
     const primaryRole = s.currentFlowType
@@ -477,15 +489,7 @@ export async function collectBranchAffinityNudgeCandidates(
   slots: SlotStatus[],
   project: string,
   ticketOrPr: string,
-  options?: {
-    familyId?: string | null;
-    lane?: string | null;
-    variant?: string | null;
-    allowedSlots?: string[] | null;
-    targetBranch?: string | null;
-    requiredPrepareProfile?: string | null;
-    activeRunIds?: ReadonlySet<string>;
-  },
+  options?: BranchAffinitySelectionOptions,
 ): Promise<BranchAffinityNudgeCandidate[]> {
   const eligibleEntries = selectBranchAffinityEligibleSlots(slots, project, ticketOrPr, options);
   if (eligibleEntries.length === 0) return [];
@@ -543,15 +547,7 @@ export async function findBranchAffinityNudgeCandidate(
   slots: SlotStatus[],
   project: string,
   ticketOrPr: string,
-  options?: {
-    familyId?: string | null;
-    lane?: string | null;
-    variant?: string | null;
-    allowedSlots?: string[] | null;
-    targetBranch?: string | null;
-    requiredPrepareProfile?: string | null;
-    activeRunIds?: ReadonlySet<string>;
-  },
+  options?: BranchAffinitySelectionOptions,
 ): Promise<BranchAffinityNudgeCandidate | null> {
   const all = await collectBranchAffinityNudgeCandidates(slots, project, ticketOrPr, options);
   return all[0] ?? null;
@@ -600,17 +596,14 @@ export async function verifyBranchAffinityNudgeStillEligible(
   slot: SlotStatus | undefined,
   project: string,
   ticketOrPr: string,
-  options?: {
-    familyId?: string | null;
-    lane?: string | null;
-    variant?: string | null;
-    allowedSlots?: string[] | null;
-    targetBranch?: string | null;
-    requiredPrepareProfile?: string | null;
-    activeRunIds?: ReadonlySet<string>;
-  },
+  options?: BranchAffinitySelectionOptions,
 ): Promise<string | null> {
   if (!slot) return 'slot not found in fleet';
+  const selected = slotSelectionOptionsFor(slot, options);
+  if (!selected) {
+    const plan = options?.plans?.get(slot.slot);
+    return plan && 'refusal' in plan ? plan.refusal : 'source plan unavailable';
+  }
   // Re-run the same gate logic the collector uses, scoped to just this slot. If the slot
   // passes, the collector returns a 1-element array; otherwise we surface the most likely
   // user-readable reason inline rather than a generic empty-array failure.
@@ -620,7 +613,7 @@ export async function verifyBranchAffinityNudgeStillEligible(
     return `slot ${slot.slot} is no longer dispatchable (lifecycle=${slot.lifecycle})`;
   if (slot.agent !== 'working')
     return `slot ${slot.slot} has no active run to nudge (agent=${slot.agent}) — use Fresh dispatch instead`;
-  const resourceBlocker = companionResourceBlocker(slot, options?.requiredPrepareProfile);
+  const resourceBlocker = companionResourceBlocker(slot, selected.requiredPrepareProfile);
   if (resourceBlocker) return resourceBlocker;
   const launchCommand = await launchCommandForSlotCurrentRun(slot);
   if (
@@ -975,75 +968,119 @@ export async function dispatchPreview(
     overridePrincipalId?: string;
     /** FIND_SLOT does not present profile-fit advice; skip its config lookup. */
     includeProfileFit?: boolean;
+    /** Trusted gateway plans; never accepted from RPC parameters. */
+    sourcePlans?: SourceSlotPlans;
+    sourcePlanning?: import('../run.js').RunCreateInternalOptions;
+    sourcePlanningReady?: boolean;
   } = {},
 ): Promise<DispatchPreviewResult> {
+  if ('sourcePlans' in params) throw new Error('Source plans are gateway-owned');
+  if (
+    (sourceAuthority() || params.sourceSelections !== undefined) &&
+    !internalOptions.sourcePlans &&
+    !internalOptions.sourcePlanningReady
+  ) {
+    return withSourceRequestPlanning(
+      { ...params, ...(params.targetBranch ? { branch: params.targetBranch } : {}) },
+      'preview',
+      (_plan, planning) =>
+        dispatchPreview(params, {
+          ...internalOptions,
+          sourcePlanning: planning,
+          sourcePlanningReady: true,
+        }),
+    );
+  }
+  if (
+    sourceAuthority() &&
+    params.reviewWorkspaceTarget &&
+    currentProjectSources()?.materialization.lock.context.nodeId !==
+      params.reviewWorkspaceTarget.machine
+  )
+    return withSourcePlanning(params.project, () => dispatchPreview(params, internalOptions), {
+      nodeId: params.reviewWorkspaceTarget.machine,
+    });
+  const sourcePlans =
+    internalOptions.sourcePlans ??
+    (params.reviewWorkspaceTarget ||
+    (params.flowType === 'review-pr' && params.reviewValidationDepth !== 'full-live')
+      ? undefined
+      : await planSourceRequestSlots(
+          {
+            ...params,
+            ...(params.targetBranch ? { branch: params.targetBranch } : {}),
+          },
+          internalOptions.sourcePlanning,
+        ));
   if ('workflowExecution' in params)
     throw new Error('Workflow execution snapshots cannot be supplied in preview parameters');
-  const projectConfig = await loadProjectConfig(params.project);
-  if (params.flowType === 'review-pr') {
-    params = { ...params, ticketOrPr: normalizeTicketRef(params.ticketOrPr) };
-    if (projectConfig?.ci.repo)
-      params.ticketOrPr = await resolvePrRef(params.ticketOrPr, projectConfig.ci.repo);
-    validateTicketRef(params.ticketOrPr, 'review-pr');
-  }
-  const workflowDefaults = await resolveDirectWorkflowDefaults(params, projectConfig, {
-    purpose: 'preview',
-    ...(params.flowType === 'review-pr' && params.reviewValidationDepth !== 'full-live'
-      ? { ownerId: resolveReviewWorkspaceOwner() }
-      : {}),
-  });
-  params = workflowDefaults.params;
-  if (
-    (params.flowType === 'review-pr' && params.reviewValidationDepth !== 'full-live') ||
-    params.reviewWorkspaceTarget
-  ) {
-    assertReviewWorkspacePlacement(params);
-    if (!params.runner || !params.model)
-      throw new Error('Workspace Review requires an explicit runner and model');
-    const admission =
-      workflowDefaults.admission ??
-      (await inspectReviewWorkspaceTarget(
-        {
+  const projectConfig = sourcePlans ? null : await loadProjectConfig(params.project);
+  if (!sourcePlans) {
+    if (params.flowType === 'review-pr') {
+      params = { ...params, ticketOrPr: normalizeTicketRef(params.ticketOrPr) };
+      if (projectConfig?.ci.repo)
+        params.ticketOrPr = await resolvePrRef(params.ticketOrPr, projectConfig.ci.repo);
+      validateTicketRef(params.ticketOrPr, 'review-pr');
+    }
+    const workflowDefaults = await resolveDirectWorkflowDefaults(params, projectConfig, {
+      purpose: 'preview',
+      ...(params.flowType === 'review-pr' && params.reviewValidationDepth !== 'full-live'
+        ? { ownerId: resolveReviewWorkspaceOwner() }
+        : {}),
+    });
+    params = workflowDefaults.params;
+    if (
+      (params.flowType === 'review-pr' && params.reviewValidationDepth !== 'full-live') ||
+      params.reviewWorkspaceTarget
+    ) {
+      assertReviewWorkspacePlacement(params);
+      if (!params.runner || !params.model)
+        throw new Error('Workspace Review requires an explicit runner and model');
+      const admission =
+        workflowDefaults.admission ??
+        (await inspectReviewWorkspaceTarget(
+          {
+            project: params.project,
+            machine: params.reviewWorkspaceTarget!.machine,
+            runner: params.runner,
+            model: params.model,
+            effort: params.effort,
+            transport: params.transport,
+            nativeProfile: params.nativeProfile,
+          },
+          resolveReviewWorkspaceOwner(),
+        ));
+      const projectVars = await loadProjectVars(params.project);
+      const selected = resolveConfiguredExecutionTemplateForSlot(projectVars, {
+        flow: 'review-pr',
+        platform: admission.pool.platform,
+        runMode: params.mode ?? 'autonomous',
+        explicitDomain: params.domain,
+        explicitId: admission.project.staticReview!.templateId,
+      });
+      return {
+        preview: {
+          slotId: null,
           project: params.project,
-          machine: params.reviewWorkspaceTarget!.machine,
+          flowType: 'review-pr',
+          branch: params.targetBranch ?? null,
           runner: params.runner,
           model: params.model,
-          effort: params.effort,
-          transport: params.transport,
-          nativeProfile: params.nativeProfile,
+          taskId: params.ticketOrPr,
+          domain: params.domain,
+          executionTemplate: selected.reference,
+          reviewWorkspace: {
+            machine: admission.pool.machine,
+            executionNodeId: admission.executionNodeId,
+            active: admission.active,
+            limit: admission.limit,
+          },
         },
-        resolveReviewWorkspaceOwner(),
-      ));
-    const projectVars = await loadProjectVars(params.project);
-    const selected = resolveConfiguredExecutionTemplateForSlot(projectVars, {
-      flow: 'review-pr',
-      platform: admission.pool.platform,
-      runMode: params.mode ?? 'autonomous',
-      explicitDomain: params.domain,
-      explicitId: admission.project.staticReview!.templateId,
-    });
-    return {
-      preview: {
-        slotId: null,
-        project: params.project,
-        flowType: 'review-pr',
-        branch: params.targetBranch ?? null,
-        runner: params.runner,
-        model: params.model,
-        taskId: params.ticketOrPr,
-        domain: params.domain,
-        executionTemplate: selected.reference,
-        reviewWorkspace: {
-          machine: admission.pool.machine,
-          executionNodeId: admission.executionNodeId,
-          active: admission.active,
-          limit: admission.limit,
-        },
-      },
-      pressureAdmission: admission.pressure,
-    };
+        pressureAdmission: admission.pressure,
+      };
+    }
+    await normalizeRunCreateMode(params, projectConfig);
   }
-  await normalizeRunCreateMode(params, projectConfig);
   const fleet = await loadFleetStatus(true);
   const projectSlots = fleet.slots.filter(
     (s) => s.project === params.project && s.lifecycle !== 'disabled',
@@ -1060,7 +1097,7 @@ export async function dispatchPreview(
     resolvedTargetBranch,
     params.slotId ? [params.slotId] : params.allowedSlots,
   );
-  const projectConfigList = await loadProjectConfigs();
+  const projectConfigList = sourcePlans ? [] : await loadProjectConfigs();
   const projectConfigs = projectConfigsFromProjects(projectConfigList);
   const previewRun = {
     id: 'dispatch-preview',
@@ -1081,13 +1118,6 @@ export async function dispatchPreview(
     prepareProfile: params.prepareProfile,
     app: params.app,
   } as Run;
-  let ticketData: Awaited<ReturnType<typeof fetchTicketData>> | null = null;
-  try {
-    ticketData = await fetchTicketData(previewRun);
-  } catch {
-    // Ticket metadata is optional for preview. Without it, explicit app/profile inputs
-    // still drive resource filtering and profile-fit suggestions are simply omitted.
-  }
   // Explicit prepare only for resource eligibility; profileFit is attached later as non-binding advisory.
   const requiredPrepareProfile = params.prepareProfile || null;
   // One deduplicated pressure capture for every machine this preview can
@@ -1146,78 +1176,103 @@ export async function dispatchPreview(
       // ranking path that has run context passes it, so a park-preserved slot
       // cannot be stale to one picker and idle to another.
       parkPreservedSlotIds: parkPreservedSlotIds(getAllRuns()),
+      plans: sourcePlans,
       ...(params.pressureOverride
         ? { pressureOverrideMachine: params.pressureOverride.machine }
         : {}),
     },
   );
   const slotInfo = fleet.slots.find((s) => s.slot === result.preview.slotId);
-  const configuredProject = projectConfigList.find(
-    (project) => project.name === params.project,
-  )?.executionTemplates;
-  if (slotInfo && configuredProject) {
-    const projectVars = await loadProjectVars(params.project);
-    if (!projectUsesExecutionTemplateCatalog(projectVars)) {
-      throw new Error(
-        `Project "${params.project}" advertises execution templates but its validated configuration does not contain them.`,
+  const scopedPlan = slotInfo ? sourcePlans?.get(slotInfo.slot) : undefined;
+  if (sourcePlans && (!scopedPlan || 'refusal' in scopedPlan))
+    throw new Error('Selected slot has no verified source plan');
+  const completePreview = async (): Promise<DispatchPreviewResult> => {
+    let ticketData: Awaited<ReturnType<typeof fetchTicketData>> | null = null;
+    try {
+      ticketData = await fetchTicketData(
+        scopedPlan && 'params' in scopedPlan ? (scopedPlan.run ?? previewRun) : previewRun,
+      );
+    } catch {
+      // Ticket metadata is optional for preview. Without it, explicit app/profile inputs
+      // still drive resource filtering and profile-fit suggestions are simply omitted.
+    }
+    if (scopedPlan && 'params' in scopedPlan) params = scopedPlan.params;
+    const configuredProject = sourcePlans
+      ? (await loadProjectConfig(params.project))?.executionTemplates
+      : projectConfigList.find((project) => project.name === params.project)?.executionTemplates;
+    if (slotInfo && configuredProject) {
+      const projectVars = await loadProjectVars(params.project);
+      if (!projectUsesExecutionTemplateCatalog(projectVars)) {
+        throw new Error(
+          `Project "${params.project}" advertises execution templates but its validated configuration does not contain them.`,
+        );
+      }
+      if (!params.mode) {
+        throw new Error('Configured execution-template preview requires an explicit run mode.');
+      }
+      const slotVars = await loadSlotVars(slotInfo.slot);
+      const selected = resolveConfiguredExecutionTemplateForSlot(projectVars, {
+        flow: params.flowType,
+        platform: slotVars.platform,
+        runMode: params.mode,
+        ...(params.domain ? { explicitDomain: params.domain } : {}),
+        ...(slotVars.domain ? { slotDomain: slotVars.domain } : {}),
+        ...(params.executionTemplateId ? { explicitId: params.executionTemplateId } : {}),
+      });
+      result.preview.executionTemplate = selected.reference;
+      result.preview.recipeCompatibility = await checkRecipeDispatchRequirements(
+        projectVars,
+        slotVars,
+        selected.entry,
+        { app: params.app, domain: selected.effectiveDomain },
+      );
+      if (selected.effectiveDomain) result.preview.domain = selected.effectiveDomain;
+      else delete result.preview.domain;
+    } else if (slotInfo) {
+      const [projectVars, slotVars] = await Promise.all([
+        loadProjectVars(params.project),
+        loadSlotVars(slotInfo.slot),
+      ]);
+      result.preview.recipeCompatibility = await checkRecipeDispatchRequirements(
+        projectVars,
+        slotVars,
+        undefined,
+        { app: params.app, domain: params.domain ?? slotVars.domain },
       );
     }
-    if (!params.mode) {
-      throw new Error('Configured execution-template preview requires an explicit run mode.');
+    let profileFit: ReturnType<typeof detectProfileFit> = null;
+    if (
+      internalOptions.includeProfileFit !== false &&
+      params.project === FARMSLOT_PROJECT &&
+      !params.prepareProfile?.trim()
+    ) {
+      const profileProjectVars = await loadProjectVars(params.project);
+      const profileJson = profileProjectVars.projectJson;
+      profileFit = detectProfileFit(
+        scopedPlan && 'params' in scopedPlan ? (scopedPlan.run ?? previewRun) : previewRun,
+        ticketData,
+        {
+          app: params.app,
+          slotPlatform: slotInfo?.platform ?? null,
+          ...(slotInfo
+            ? { boundSlotHasCompanionResource: slotHasCompanionResource(slotInfo) }
+            : {}),
+          effectivePrepareProfile: resolvePrepareProfile(profileJson).name,
+          availablePrepareProfiles: configuredPrepareProfileNames(profileJson),
+        },
+      );
     }
-    const slotVars = await loadSlotVars(slotInfo.slot);
-    const selected = resolveConfiguredExecutionTemplateForSlot(projectVars, {
-      flow: params.flowType,
-      platform: slotVars.platform,
-      runMode: params.mode,
-      ...(params.domain ? { explicitDomain: params.domain } : {}),
-      ...(slotVars.domain ? { slotDomain: slotVars.domain } : {}),
-      ...(params.executionTemplateId ? { explicitId: params.executionTemplateId } : {}),
-    });
-    result.preview.executionTemplate = selected.reference;
-    result.preview.recipeCompatibility = await checkRecipeDispatchRequirements(
-      projectVars,
-      slotVars,
-      selected.entry,
-      { app: params.app, domain: selected.effectiveDomain },
-    );
-    if (selected.effectiveDomain) result.preview.domain = selected.effectiveDomain;
-    else delete result.preview.domain;
-  } else if (slotInfo) {
-    const [projectVars, slotVars] = await Promise.all([
-      loadProjectVars(params.project),
-      loadSlotVars(slotInfo.slot),
-    ]);
-    result.preview.recipeCompatibility = await checkRecipeDispatchRequirements(
-      projectVars,
-      slotVars,
-      undefined,
-      { app: params.app, domain: params.domain ?? slotVars.domain },
-    );
-  }
-  let profileFit: ReturnType<typeof detectProfileFit> = null;
-  if (
-    internalOptions.includeProfileFit !== false &&
-    params.project === FARMSLOT_PROJECT &&
-    !params.prepareProfile?.trim()
-  ) {
-    const profileProjectVars = await loadProjectVars(params.project);
-    const profileJson = profileProjectVars.projectJson;
-    profileFit = detectProfileFit(previewRun, ticketData, {
-      app: params.app,
-      slotPlatform: slotInfo?.platform ?? null,
-      ...(slotInfo ? { boundSlotHasCompanionResource: slotHasCompanionResource(slotInfo) } : {}),
-      effectivePrepareProfile: resolvePrepareProfile(profileJson).name,
-      availablePrepareProfiles: configuredPrepareProfileNames(profileJson),
-    });
-  }
-  if (profileFit) {
-    const blocker =
-      slotInfo && companionResourceBlocker(slotInfo, profileFit.suggestedPrepareProfile);
-    if (blocker) profileFit.slotResourceBlocker = blocker;
-    result.preview.profileFit = profileFit;
-  }
-  return result;
+    if (profileFit) {
+      const blocker =
+        slotInfo && companionResourceBlocker(slotInfo, profileFit.suggestedPrepareProfile);
+      if (blocker) profileFit.slotResourceBlocker = blocker;
+      result.preview.profileFit = profileFit;
+    }
+    return result;
+  };
+  return scopedPlan && 'params' in scopedPlan
+    ? withProjectSources(scopedPlan.sources, completePreview)
+    : completePreview();
 }
 
 export function resolveDispatchPreviewFromFleet(
@@ -1239,6 +1294,7 @@ export function resolveDispatchPreviewFromFleet(
     /** Slots whose detached HEAD a park record preserves. Passed in rather than
      * derived: this function is pure over the slots it is given. */
     parkPreservedSlotIds?: ReadonlyMap<string, ParkPreservedWorkspace[]>;
+    plans?: SlotSelectionPlans;
   },
 ): DispatchPreviewResult {
   let slotInfo: SlotStatus;
@@ -1249,6 +1305,23 @@ export function resolveDispatchPreviewFromFleet(
       .filter(([, decision]) => isPressureAdmissionRejected(decision))
       .map(([machine]) => machine),
   );
+  const selectionOptions: SlotSelectionOptions = {
+    ...params,
+    requiredPrepareProfile,
+    releasableBranchHolderIds: options?.releasableBranchHolderIds,
+    projectConfigs,
+    pressureRejectedMachines,
+    parkPreservedSlotIds: options?.parkPreservedSlotIds,
+    plans: options?.plans,
+  };
+  const selectedParams = (slot: SlotStatus): DispatchPreviewParams => {
+    const plan = options?.plans?.get(slot.slot);
+    if (options?.plans && (!plan || 'refusal' in plan))
+      throw new Error(
+        `Slot ${slot.slot}: ${plan && 'refusal' in plan ? plan.refusal : 'source plan unavailable'}`,
+      );
+    return plan && 'params' in plan ? plan.params : params;
+  };
   const withPressure = (result: DispatchPreviewResult, machine: string): DispatchPreviewResult => {
     let decision = pressureDecisions?.get(machine);
     // An override naming a DIFFERENT machine than the selected one is a
@@ -1278,11 +1351,9 @@ export function resolveDispatchPreviewFromFleet(
   if (params.slotId) {
     const found = slots.find((s) => s.slot === params.slotId);
     if (!found) throw new Error(`Slot ${params.slotId} not found`);
+    selectedParams(found);
     const err = validateSlotForDispatch(found, slots, {
-      targetBranch: params.targetBranch,
-      releasableBranchHolderIds: options?.releasableBranchHolderIds,
-      requiredPrepareProfile,
-      skipPrepare: params.skipPrepare,
+      ...slotSelectionOptionsFor(found, selectionOptions),
       allowWorking: options?.replaceableWarmSlotIds?.has(found.slot),
     });
     if (err) throw new Error(`Slot ${params.slotId}: ${err}`);
@@ -1295,31 +1366,32 @@ export function resolveDispatchPreviewFromFleet(
         lane: params.lane ?? null,
         variant: params.variant ?? null,
         allowedSlots: params.allowedSlots ?? null,
+        ...selectionOptions,
       });
       if (
         affinitySlot &&
         !pressureRejectedMachines.has(affinitySlot.machine) &&
-        !validateSlotForDispatch(affinitySlot, slots, {
-          targetBranch: params.targetBranch,
-          releasableBranchHolderIds: options?.releasableBranchHolderIds,
-          requiredPrepareProfile,
-          skipPrepare: params.skipPrepare,
-        })
+        !validateSlotForDispatch(
+          affinitySlot,
+          slots,
+          slotSelectionOptionsFor(affinitySlot, selectionOptions),
+        )
       ) {
         console.log(
           `[dispatch] ${params.flowType} affinity: reusing slot ${affinitySlot.slot} (lifecycle=${affinitySlot.lifecycle}, branch=${affinitySlot.branch})`,
         );
         slotInfo = affinitySlot;
+        const chosen = selectedParams(slotInfo);
         return withPressure(
           {
             preview: {
               slotId: slotInfo.slot,
-              project: params.project,
-              flowType: params.flowType as FlowType,
+              project: chosen.project,
+              flowType: chosen.flowType as FlowType,
               branch: slotInfo.branch || null,
-              ...resolvePreviewExecution(slotInfo, params),
-              taskId: params.ticketOrPr,
-              ...(params.domain ? { domain: params.domain } : {}),
+              ...resolvePreviewExecution(slotInfo, chosen),
+              taskId: chosen.ticketOrPr,
+              ...(chosen.domain ? { domain: chosen.domain } : {}),
             },
           },
           slotInfo.machine,
@@ -1327,19 +1399,7 @@ export function resolveDispatchPreviewFromFleet(
       }
     }
 
-    const best = findBestSlot(slots, params.project, {
-      allowedSlots: params.allowedSlots,
-      targetBranch: params.targetBranch,
-      releasableBranchHolderIds: options?.releasableBranchHolderIds,
-      familyId: params.familyId,
-      lane: params.lane,
-      variant: params.variant,
-      requiredPrepareProfile,
-      projectConfigs,
-      skipPrepare: params.skipPrepare,
-      pressureRejectedMachines,
-      parkPreservedSlotIds: options?.parkPreservedSlotIds,
-    });
+    const best = findBestSlot(slots, params.project, selectionOptions);
     if (!best) {
       const allow =
         params.allowedSlots && params.allowedSlots.length > 0 ? new Set(params.allowedSlots) : null;
@@ -1350,7 +1410,7 @@ export function resolveDispatchPreviewFromFleet(
         const filterHint = allow ? ` within allowed slots (${[...allow].join(',')})` : '';
         throw new Error(`No slots found for project ${params.project}${filterHint}`);
       }
-      if (prepareProfileNeedsCompanionResource(requiredPrepareProfile)) {
+      if (!options?.plans && prepareProfileNeedsCompanionResource(requiredPrepareProfile)) {
         const freeSlots = projectSlots.filter(isFreeSlot);
         const freeSlotsMissingCompanionResource = freeSlots.every((s) =>
           companionResourceBlocker(s, requiredPrepareProfile),
@@ -1376,15 +1436,16 @@ export function resolveDispatchPreviewFromFleet(
       }
       const reasons = projectSlots.map((s) => {
         const pressureDecision = pressureDecisions?.get(s.machine);
+        const scoped = slotSelectionOptionsFor(s, selectionOptions);
+        const plan = options?.plans?.get(s.slot);
         const blocker =
           pressureDecision && isPressureAdmissionRejected(pressureDecision)
             ? formatPressureRejection(pressureDecision)
-            : (validateSlotForDispatch(s, slots, {
-                targetBranch: params.targetBranch,
-                releasableBranchHolderIds: options?.releasableBranchHolderIds,
-                requiredPrepareProfile,
-                skipPrepare: params.skipPrepare,
-              }) ?? 'unknown blocker');
+            : !scoped
+              ? plan && 'refusal' in plan
+                ? plan.refusal
+                : 'source plan unavailable'
+              : (validateSlotForDispatch(s, slots, scoped) ?? 'unknown blocker');
         return `${s.slot}: ${blocker} (lifecycle=${s.lifecycle}, phase=${s.phase}, agent=${s.agent})`;
       });
       throw new Error(
@@ -1394,16 +1455,17 @@ export function resolveDispatchPreviewFromFleet(
     slotInfo = best;
   }
 
+  const chosen = selectedParams(slotInfo);
   return withPressure(
     {
       preview: {
         slotId: slotInfo.slot,
-        project: params.project,
-        flowType: params.flowType as FlowType,
+        project: chosen.project,
+        flowType: chosen.flowType as FlowType,
         branch: null,
-        ...resolvePreviewExecution(slotInfo, params),
-        taskId: params.ticketOrPr,
-        ...(params.domain ? { domain: params.domain } : {}),
+        ...resolvePreviewExecution(slotInfo, chosen),
+        taskId: chosen.ticketOrPr,
+        ...(chosen.domain ? { domain: chosen.domain } : {}),
       },
     },
     slotInfo.machine,

@@ -75,6 +75,7 @@ import { useConnectionStore } from '../../store/connection';
 import { useRunStore } from '../../store/runs';
 import { GateReviewEntryCard } from '../gate-review/components/gate-review-panels';
 import { NativeWorkerLinks } from '../native-conversation/components/NativeWorkerLinks';
+import { SourceStatusSection } from '../sources/SourceStatusSection';
 import { formatDuration } from '../workspace-shared/format';
 import { useReviewPackageTab } from '../workspace-shared/review-package-tabs';
 import { readReviewRun } from '../workspace-shared/review-publication-action';
@@ -1079,6 +1080,9 @@ export default function RunDetailScreen() {
                 compact
               />
             ) : null}
+            <SourceStatusSection
+              context={{ target: { scope: 'run', targetId: run.id }, actions: ['pin', 'unpin'] }}
+            />
             {(run.steps ?? []).length > 0 && (
               <RunPipelineFull
                 steps={run.steps}

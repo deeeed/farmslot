@@ -7,6 +7,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 - Validate enabled-state wait inputs through shared action relationships for recipe nodes and direct transports.
 
 - Treat file assertions as assertions for declared retry resolution; file-content proof still requires an executed non-blank expectation.
+- Expose scoped source selection contracts, shared status/picker state and a retry-safe source command client that retains partial-sync diagnostics.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

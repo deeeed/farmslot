@@ -37,6 +37,8 @@ import {
 import { resolveDirectWorkflowDefaults } from '../../review-workspaces/direct-defaults.js';
 import { resolveReviewWorkspaceOwner } from '../../security/native-worker-owner.js';
 import { currentSessionOriginator, workAuthorshipNotice } from '../../security/work-originator.js';
+import { captureRunCreationRequest } from '../../sources/creation-request.js';
+import { sourceAuthority, withSourceRequestPlanning } from '../../sources/runtime.js';
 import {
   projectUsesExecutionTemplateCatalog,
   resolveConfiguredExecutionTemplateForSlot,
@@ -51,7 +53,15 @@ import { normalizeTicketRef, resolvePrRef, validateTicketRef } from './ticket-re
 
 export async function dispatchQueueAdd(
   params: DispatchQueueAddParams,
+  sourcePlanningReady = false,
+  authorizeSourceSelections?: () => void,
 ): Promise<DispatchQueueAddResult> {
+  if ((sourceAuthority() || params.sourceSelections !== undefined) && !sourcePlanningReady)
+    return withSourceRequestPlanning(
+      { ...params, mode: params.mode === 'validation' ? 'autonomous' : params.mode },
+      'queue',
+      () => dispatchQueueAdd(params, true, authorizeSourceSelections),
+    );
   const rawParams = params as DispatchQueueAddParams & {
     prWork?: unknown;
     backlogItemId?: unknown;
@@ -179,6 +189,7 @@ export async function dispatchQueueAdd(
       ...(params.executionTemplateId ? { explicitId: params.executionTemplateId } : {}),
     }).reference;
   }
+  authorizeSourceSelections?.();
   const item = addItem(
     {
       ...params,
@@ -211,13 +222,39 @@ export async function dispatchQueueRemoveOrphan(
 
 export async function dispatchQueueUpdate(
   params: DispatchQueueUpdateParams,
+  authorizeSourceSelections?: () => void,
 ): Promise<DispatchQueueUpdateResult> {
   const previous = queueRecordOriginator(params.itemId);
   const originator = currentSessionOriginator();
-  const item = updateItem(params, originator);
-  if (params.reviewSequence !== undefined) await recheckRepairedReviewPlan();
-  const authorshipNotice = workAuthorshipNotice(previous, originator);
-  return { item, ...(authorshipNotice ? { authorshipNotice } : {}) };
+  const original = listItems().find((item) => item.id === params.itemId);
+  const publish = async (): Promise<DispatchQueueUpdateResult> => {
+    authorizeSourceSelections?.();
+    const current = listItems().find((item) => item.id === params.itemId);
+    if (original && JSON.stringify(current) !== JSON.stringify(original))
+      throw new Error('Queue item changed while validating source selections');
+    const item = updateItem(params, originator);
+    if (params.reviewSequence !== undefined) await recheckRepairedReviewPlan();
+    const authorshipNotice = workAuthorshipNotice(previous, originator);
+    return { item, ...(authorshipNotice ? { authorshipNotice } : {}) };
+  };
+  if (params.sourceSelections !== undefined && original) {
+    return withSourceRequestPlanning(
+      captureRunCreationRequest({
+        ...original,
+        sourceSelections: params.sourceSelections,
+        slotId: params.slotId ?? original.slotId,
+        allowedSlots: params.allowedSlots ?? original.allowedSlots ?? undefined,
+        parentRunId: original.parentRunId ?? undefined,
+        branch: original.branch ?? undefined,
+        mode: original.mode === 'validation' ? 'autonomous' : original.mode,
+        startRef: original.startRef?.requestedRef,
+        startRefSource: original.startRef?.source,
+      }),
+      'queue',
+      publish,
+    );
+  }
+  return publish();
 }
 
 export function dispatchQueueReorder(

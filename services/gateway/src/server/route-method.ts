@@ -486,7 +486,13 @@ import {
   slotSoftRefresh,
 } from '../methods/slot.js';
 import { slotActionList, slotActionRun } from '../methods/slot-actions.js';
-import { sourcesStatus, sourcesSync } from '../methods/sources.js';
+import {
+  type SourceMutationCaller,
+  sourcesPin,
+  sourcesStatus,
+  sourcesSync,
+  sourcesUnpin,
+} from '../methods/sources.js';
 import { streamSubscribe, streamUnsubscribe } from '../methods/stream-feed.js';
 import { taskProgress } from '../methods/task.js';
 import {
@@ -561,7 +567,7 @@ import { authorizeGatewayMethod } from '../security/authorization.js';
 import { authorizeEvidenceAttestation } from '../security/evidence-attestation.js';
 import { assertNativeMachineAssignment, nativeNodeDeclaration } from '../security/native-node.js';
 import { assertNativeWorkerRpcAccess } from '../security/native-worker-access.js';
-import { runWithSessionOriginator } from '../security/work-originator.js';
+import { currentSessionOriginator, runWithSessionOriginator } from '../security/work-originator.js';
 import { startWatchingActiveSlots } from '../tasks/watcher.js';
 
 import type { ClientState } from './client-state.js';
@@ -626,6 +632,27 @@ export async function routeMethod(
   });
 }
 
+function sourceRpcCaller(
+  runtime: GatewayAuthRuntime,
+  state: ClientState,
+  method: string,
+): SourceMutationCaller {
+  const originator = currentSessionOriginator();
+  if (originator.kind !== 'principal')
+    throw new GatewayMethodError(
+      'AUTH_REQUIRED',
+      'Source mutations require an authenticated actor',
+    );
+  return {
+    principalId: originator.principalId,
+    authorize: () => {
+      const current = authorizeGatewayMethod(runtime, state, method);
+      if (current.id !== originator.principalId)
+        throw new GatewayMethodError('AUTH_FORBIDDEN', 'Source request authority changed');
+    },
+  };
+}
+
 async function routeAuthorizedMethod(
   method: string,
   params: unknown,
@@ -635,6 +662,17 @@ async function routeAuthorizedMethod(
   // RPC dispatch boundary — params arrive untyped from the wire;
   // each handler receives its typed params via assertion.
   const p: unknown = params ?? {};
+  if (
+    [Methods.DISPATCH_PREVIEW, Methods.DISPATCH_QUEUE_ADD, Methods.DISPATCH_QUEUE_UPDATE].includes(
+      method as typeof Methods.DISPATCH_PREVIEW,
+    ) &&
+    p &&
+    typeof p === 'object' &&
+    'sourceSelections' in p &&
+    Array.isArray(p.sourceSelections) &&
+    p.sourceSelections.length
+  )
+    sourceRpcCaller(authRuntime, state, Methods.SOURCES_PIN).authorize();
   const attestationSession = {
     ...state,
     ...(state.authentication ? { authentication: { ...state.authentication } } : {}),
@@ -644,6 +682,8 @@ async function routeAuthorizedMethod(
     emit,
     authorizeEvidenceAttestation: () =>
       authorizeEvidenceAttestation(authRuntime, attestationSession),
+    authorizeSourceSelections: () =>
+      sourceRpcCaller(authRuntime, state, Methods.SOURCES_PIN).authorize(),
   });
   if (runRoute.handled) return runRoute.value;
 
@@ -764,7 +804,13 @@ async function routeAuthorizedMethod(
     case Methods.DISPATCH_CANDIDATES:
       return dispatchCandidates(p as DispatchCandidatesParams);
     case Methods.DISPATCH_QUEUE_ADD:
-      return dispatchQueueAdd(p as DispatchQueueAddParams);
+      return dispatchQueueAdd(
+        p as DispatchQueueAddParams,
+        false,
+        (p as DispatchQueueAddParams).sourceSelections?.length
+          ? sourceRpcCaller(authRuntime, state, Methods.SOURCES_PIN).authorize
+          : undefined,
+      );
     case Methods.DISPATCH_QUEUE_LIST:
       return dispatchQueueList();
     case Methods.DISPATCH_QUEUE_REMOVE:
@@ -772,7 +818,12 @@ async function routeAuthorizedMethod(
     case Methods.DISPATCH_QUEUE_REMOVE_ORPHAN:
       return dispatchQueueRemoveOrphan(p as DispatchQueueRemoveOrphanParams);
     case Methods.DISPATCH_QUEUE_UPDATE:
-      return dispatchQueueUpdate(p as DispatchQueueUpdateParams);
+      return dispatchQueueUpdate(
+        p as DispatchQueueUpdateParams,
+        (p as DispatchQueueUpdateParams).sourceSelections?.length
+          ? sourceRpcCaller(authRuntime, state, Methods.SOURCES_PIN).authorize
+          : undefined,
+      );
     case Methods.DISPATCH_QUEUE_REORDER:
       return dispatchQueueReorder(p as DispatchQueueReorderParams);
 
@@ -1258,10 +1309,24 @@ async function routeAuthorizedMethod(
       });
       return { registered: true };
     }
-    case Methods.SOURCES_STATUS:
-      return sourcesStatus(p as import('@farmslot/protocol').SourcesStatusParams);
+    case Methods.SOURCES_STATUS: {
+      const caller = sourceRpcCaller(authRuntime, state, method);
+      const result = await sourcesStatus(p as import('@farmslot/protocol').SourcesStatusParams);
+      caller.authorize();
+      return result;
+    }
     case Methods.SOURCES_SYNC:
-      return sourcesSync(p as import('@farmslot/protocol').SourcesSyncParams);
+      return sourcesSync(
+        p as import('@farmslot/protocol').SourcesSyncParams,
+        sourceRpcCaller(authRuntime, state, method),
+      );
+    case Methods.SOURCES_PIN:
+    case Methods.SOURCES_UNPIN: {
+      const caller = sourceRpcCaller(authRuntime, state, method);
+      return method === Methods.SOURCES_PIN
+        ? sourcesPin(p as import('@farmslot/protocol').SourcesPinParams, caller)
+        : sourcesUnpin(p as import('@farmslot/protocol').SourcesUnpinParams, caller);
+    }
     case Methods.NODES_LIST:
       return { nodes: getAllNodes(), gatewayProtocolVersion: PROTOCOL_VERSION };
 

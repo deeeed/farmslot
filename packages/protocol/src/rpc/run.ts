@@ -68,6 +68,8 @@ export type { DecisionListResult, DecisionResolveParams } from './decisions.js';
 // ─── Run param/result types ───
 
 export interface RunCreateParams {
+  /** Atomic run-scoped selections, resolved before executable source planning. */
+  sourceSelections?: import('../sources/pins.js').SourceSelection[];
   /** Farm preset and skill inputs, resolved and frozen at admission. */
   qaProfileId?: string;
   qaInputs?: Record<string, import('../contracts/qa.js').QaInput>;

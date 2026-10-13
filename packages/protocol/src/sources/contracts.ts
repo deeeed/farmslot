@@ -99,6 +99,16 @@ export interface RunSourceProvenance {
   attempts: SourceExecutionAttemptReceipt[];
 }
 
+/** Read-only planning is revalidated before a run owns any source-dependent effect. */
+export interface RunSourcePlan {
+  state: 'planned';
+  /** Slot used to validate configuration, separate from the caller's placement request. */
+  validatedSlotId?: string;
+  lock: SourceLock;
+  workerLock: SourceLock;
+  bindings: SourceEntryRef[];
+}
+
 export interface SourceExecutionAttemptReceipt {
   id: string;
   receiptIds: string[];
@@ -124,7 +134,9 @@ export interface SourceNodeStatus {
 
 export interface RunSourceStatus {
   runId: string;
-  state: 'locked' | 'unknown-legacy';
+  state: 'planned' | 'locked' | 'unknown-legacy';
   lockDigest?: string;
   attemptId?: string;
+  canSelectSources?: boolean;
+  selectionRefusal?: string;
 }

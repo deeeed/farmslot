@@ -12,6 +12,7 @@ import { runnerDefaultSafetyTier } from '../runners/registry.js';
 import {
   archiveRun,
   backfillLegacySafetyTier,
+  buildRunRecord,
   cleanupRuns,
   createRun,
   deleteRun,
@@ -21,12 +22,27 @@ import {
   listRuns,
   normalizeRunClassification,
   persistRunNow,
+  runRecordPath,
   shouldUseIsolatedRunsDir,
   updateRun,
 } from './store.js';
 import { isLeakedGatewayTestRun } from './test-run-leak.js';
 
 const execFileAsync = promisify(execFile);
+
+test('a provisional record keeps its identity without registering, persisting or replacing a run', async (t) => {
+  const params = { flowType: 'dev' as const, project: 'demo', ticketOrPr: 'PLAN-1' };
+  const candidate = buildRunRecord(params);
+  assert.equal(getRun(candidate.id), undefined);
+  await assert.rejects(readFile(runRecordPath(candidate.id)), { code: 'ENOENT' });
+  const run = createRun(params);
+  t.after(() => cleanupRun(run.id));
+  const replacement = buildRunRecord(params, { runId: run.id });
+  assert.equal(replacement.id, run.id);
+  assert.equal(replacement.familyId, run.familyId);
+  assert.equal(getRun(run.id), run);
+  assert.notEqual(replacement, run);
+});
 
 async function cleanupRun(runId: string): Promise<void> {
   if (!getRun(runId)) {

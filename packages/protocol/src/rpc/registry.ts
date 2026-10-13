@@ -200,6 +200,8 @@ export const Methods = {
   NODES_LIST: 'nodes.list',
   SOURCES_STATUS: 'sources.status',
   SOURCES_SYNC: 'sources.sync',
+  SOURCES_PIN: 'sources.pin',
+  SOURCES_UNPIN: 'sources.unpin',
   NODE_DEPLOY: 'nodes.deploy',
 
   // Task

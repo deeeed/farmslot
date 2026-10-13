@@ -7,18 +7,29 @@ import {
   assertSourceEntry,
   canonicalSourceRepo,
   isRecord,
+  selectEffectiveSource,
   type SourceConfiguration,
   type SourceEntryRef,
   type SourceLock,
   type SourceLockEntry,
+  type SourcePin,
+  type SourcePinTarget,
   type SourceResolution,
+  type SourceSelection,
+  type SourcesPinParams,
+  type SourcesPinResult,
+  type SourcesUnpinParams,
+  validateSourceSelections,
 } from '@farmslot/protocol';
+import { validatePackFilePortability } from '@farmslot/protocol/node/pack-portability';
 import {
   type FetchedSource,
   sourceDigest,
   SourceGitStore,
   sourceLockDigest,
 } from '@farmslot/slot-config/sources';
+
+import { GatewayMethodError } from '../core/method-error.js';
 
 interface ResolutionRecord {
   resolution: SourceResolution;
@@ -33,6 +44,19 @@ interface AuthorityState {
   declarationDigest: string;
   records: Record<string, ResolutionRecord>;
   locks: Record<string, SourceLock>;
+  pinRevision: number;
+  pins: Record<string, SourcePin>;
+  pinOperations: Record<string, { requestDigest: string; result: SourcesPinResult }>;
+  pendingRunCreations: string[];
+}
+
+/** Gateway-owned selections remain provisional until their complete plan is sealed. */
+export interface PreparedSourcePins {
+  creationRunId?: string;
+  declarationRevision: number;
+  previousPinRevision: number;
+  pins: SourcePin[];
+  operation?: { requestDigest: string; result: SourcesPinResult };
 }
 
 /** Pure data dependency discovery. No import, provider execution or install step. */
@@ -84,6 +108,10 @@ export class SourceAuthority {
       declarationDigest: sourceDigest(configuration),
       records: {},
       locks: {},
+      pinRevision: 0,
+      pins: {},
+      pinOperations: {},
+      pendingRunCreations: [],
     };
     try {
       state = JSON.parse(await readFile(path.join(root, 'authority.json'), 'utf8'));
@@ -98,6 +126,10 @@ export class SourceAuthority {
         state.declarationDigest !== sourceDigest(configuration))
     )
       throw new Error('Unsupported source state or declaration rollback');
+    state.pinRevision ??= 0;
+    state.pins ??= {};
+    state.pinOperations ??= {};
+    state.pendingRunCreations ??= [];
     return new SourceAuthority(structuredClone(configuration), root, git, state, now);
   }
 
@@ -121,7 +153,277 @@ export class SourceAuthority {
     return structuredClone(Object.values(this.state.locks));
   }
 
-  affectedProjects(sourceId?: string): string[] {
+  pinRevision(): number {
+    return this.state.pinRevision;
+  }
+
+  pins(): SourcePin[] {
+    return structuredClone(Object.values(this.state.pins));
+  }
+
+  effectiveSelections(context: SourceLock['context'] | { nodeId?: string; runId?: string } = {}) {
+    return this.configuration.sources.map((source) =>
+      selectEffectiveSource(source, this.pins(), context),
+    );
+  }
+
+  async mutatePin(
+    params: SourcesPinParams | SourcesUnpinParams,
+    actor: string,
+    selection: 'branch' | 'main',
+    assertTarget: () => void,
+  ): Promise<SourcesPinResult> {
+    const prepared = await this.preparePinMutation(params, actor, selection, assertTarget);
+    if (!('pins' in prepared)) return prepared;
+    return this.publishPins(prepared, [], assertTarget, () => prepared.operation!.result);
+  }
+
+  async preparePinMutation(
+    params: SourcesPinParams | SourcesUnpinParams,
+    actor: string,
+    selection: 'branch' | 'main',
+    assertTarget: () => void,
+  ): Promise<PreparedSourcePins | SourcesPinResult> {
+    const requestDigest = sourceDigest({ params, actor, selection });
+    const check = (): SourcesPinResult | undefined => {
+      const prior = this.state.pinOperations[params.operationId];
+      if (prior) {
+        if (prior.requestDigest !== requestDigest)
+          throw new Error('Source operation identity was reused with a different request');
+        return structuredClone(prior.result);
+      }
+      if (
+        typeof params.operationId !== 'string' ||
+        !params.operationId ||
+        params.operationId.length > 128 ||
+        !actor
+      )
+        throw new Error('Missing source mutation identity');
+      const fields = [
+        'sourceId',
+        'scope',
+        'targetId',
+        'operationId',
+        'expectedDeclarationRevision',
+        'expectedPinRevision',
+        ...(selection === 'branch' ? ['ref'] : []),
+      ];
+      if (Object.keys(params).some((key) => !fields.includes(key)))
+        throw new Error('Source mutations contain unsupported fields');
+      if (
+        params.expectedDeclarationRevision !== this.configuration.revision ||
+        params.expectedPinRevision !== this.state.pinRevision
+      )
+        throw new GatewayMethodError(
+          'SOURCE_STATE_STALE',
+          'Stale source declaration or pin revision',
+        );
+      if (
+        !['farm', 'node', 'run'].includes(params.scope) ||
+        !params.targetId ||
+        (params.scope === 'farm' && params.targetId !== 'farm')
+      )
+        throw new Error('Select one source pin scope and its target');
+      assertTarget();
+      return undefined;
+    };
+    const prior = await this.serialize(async () => check());
+    if (prior) return prior;
+    // Fetches happen outside the admission transaction. A stale mutation cannot
+    // change effective pins, and an unrelated closure can still admit work.
+    const selected: SourceSelection = {
+      sourceId: params.sourceId,
+      selection,
+      ...(selection === 'branch' ? { ref: (params as SourcesPinParams).ref } : {}),
+    };
+    await this.resolveSelections([selected]);
+    return this.serialize(async () => {
+      const retry = check();
+      if (retry) return retry;
+      const pin = this.pinForSelection(selected, params, actor);
+      const result = {
+        operationId: params.operationId,
+        declarationRevision: this.configuration.revision,
+        pinRevision: pin.revision!,
+        pin,
+      };
+      return {
+        declarationRevision: this.configuration.revision,
+        previousPinRevision: this.state.pinRevision,
+        pins: [pin],
+        operation: { requestDigest, result },
+      };
+    });
+  }
+
+  async prepareRunSelections(
+    runId: string,
+    selections: readonly SourceSelection[],
+    actor: string,
+  ): Promise<PreparedSourcePins> {
+    if (!runId || !actor) throw new Error('Missing source creation identity');
+    const declarationRevision = this.configuration.revision;
+    const previousPinRevision = this.state.pinRevision;
+    await this.resolveSelections(selections);
+    return this.serialize(async () => {
+      if (
+        declarationRevision !== this.configuration.revision ||
+        previousPinRevision !== this.state.pinRevision
+      )
+        throw new GatewayMethodError(
+          'SOURCE_STATE_STALE',
+          'Source selections changed during creation planning',
+        );
+      return {
+        creationRunId: runId,
+        declarationRevision,
+        previousPinRevision,
+        pins: selections.map((selection) =>
+          this.pinForSelection(selection, { scope: 'run', targetId: runId }, actor),
+        ),
+      };
+    });
+  }
+
+  private async resolveSelections(selections: readonly SourceSelection[]): Promise<void> {
+    const errors = validateSourceSelections(selections, this.configuration.sources);
+    if (!selections.length) errors.push('Select each declared source once.');
+    if (errors.length) throw new Error(errors.join(' '));
+    await Promise.all(
+      selections.flatMap((selection) =>
+        [...new Set([this.selectionRef(selection), 'main'])].map((ref) =>
+          this.reconcileSource(selection.sourceId, ref),
+        ),
+      ),
+    );
+  }
+
+  private selectionRef(selection: SourceSelection): string {
+    return selection.selection === 'main' ? 'main' : selection.ref!.replace(/^refs\/heads\//, '');
+  }
+
+  private pinForSelection(
+    selection: SourceSelection,
+    target: SourcePinTarget,
+    actor: string,
+  ): SourcePin {
+    const ref = this.selectionRef(selection);
+    const resolved = this.state.records[this.key(selection.sourceId, ref)];
+    const main = this.state.records[this.key(selection.sourceId, 'main')];
+    if (
+      resolved?.resolution.status !== 'resolved' ||
+      resolved.tree?.refKind !== 'branch' ||
+      main?.resolution.status !== 'resolved' ||
+      main.tree?.refKind !== 'branch'
+    )
+      throw new Error('Pins require a pushed branch and a resolved main branch');
+    return {
+      sourceId: selection.sourceId,
+      ...target,
+      selection: selection.selection,
+      ref,
+      actor,
+      declarationRevision: this.configuration.revision,
+      revision: this.state.pinRevision + 1,
+      baseMainCommit: main.tree.commit,
+      createdAt: new Date(this.now()).toISOString(),
+    };
+  }
+
+  private preparedPins(prepared: PreparedSourcePins): SourcePin[] {
+    if (
+      prepared.declarationRevision !== this.configuration.revision ||
+      prepared.previousPinRevision !== this.state.pinRevision
+    )
+      throw new GatewayMethodError(
+        'SOURCE_STATE_STALE',
+        'Stale source declaration or pin revision',
+      );
+    const pins = new Map(
+      this.pins().map((pin) => [JSON.stringify([pin.scope, pin.targetId, pin.sourceId]), pin]),
+    );
+    for (const pin of prepared.pins)
+      pins.set(JSON.stringify([pin.scope, pin.targetId, pin.sourceId]), pin);
+    return [...pins.values()];
+  }
+
+  /** The only callback is synchronous run registration or publication of an already validated plan. */
+  publishPins<T>(
+    prepared: PreparedSourcePins,
+    locks: readonly SourceLock[],
+    assertTarget: () => void,
+    publish: () => T,
+  ): Promise<T> {
+    return this.serialize(async () => {
+      if (prepared.operation) {
+        const prior = this.state.pinOperations[prepared.operation.result.operationId];
+        if (prior) {
+          if (prior.requestDigest !== prepared.operation.requestDigest)
+            throw new Error('Source operation identity was reused with a different request');
+          // Mutation publications always return their original SourcesPinResult on retry.
+          return structuredClone(prior.result) as T;
+        }
+      }
+      this.preparedPins(prepared);
+      assertTarget();
+      for (const lock of locks) this.assertCurrentLock(lock, prepared);
+      const previous = this.state;
+      const next = structuredClone(previous);
+      next.pinRevision++;
+      if (prepared.creationRunId) next.pendingRunCreations.push(prepared.creationRunId);
+      for (const pin of prepared.pins)
+        next.pins[JSON.stringify([pin.scope, pin.targetId, pin.sourceId])] = structuredClone(pin);
+      for (const lock of locks) next.locks[JSON.stringify(lock.context)] = structuredClone(lock);
+      if (prepared.operation)
+        next.pinOperations[prepared.operation.result.operationId] = structuredClone(
+          prepared.operation,
+        );
+      await this.persist(next, false);
+      try {
+        assertTarget();
+        const result = publish();
+        this.state = next;
+        return result;
+      } catch (error) {
+        await this.persist(previous);
+        throw error;
+      }
+    });
+  }
+
+  /** Run rows load before source startup. Unfinished creation journals cannot leave effective orphan pins. */
+  recoverRunCreations(hasRecordedRun: (runId: string) => boolean): Promise<void> {
+    return this.serialize(async () => {
+      if (!this.state.pendingRunCreations.length) return;
+      const abandoned = new Set(
+        this.state.pendingRunCreations.filter((runId) => !hasRecordedRun(runId)),
+      );
+      const next = structuredClone(this.state);
+      for (const [key, pin] of Object.entries(next.pins)) {
+        if (pin.scope === 'run' && abandoned.has(pin.targetId)) delete next.pins[key];
+      }
+      for (const [key, lock] of Object.entries(next.locks)) {
+        if (lock.context.runId && abandoned.has(lock.context.runId)) delete next.locks[key];
+      }
+      next.pendingRunCreations = [];
+      await this.persist(next);
+    });
+  }
+
+  completeRunCreation(runId: string): Promise<void> {
+    return this.serialize(async () => {
+      if (!this.state.pendingRunCreations.includes(runId)) return;
+      const next = structuredClone(this.state);
+      next.pendingRunCreations = next.pendingRunCreations.filter((id) => id !== runId);
+      await this.persist(next);
+    });
+  }
+
+  affectedProjects(
+    sourceId?: string,
+    context: Pick<SourceLock['context'], 'nodeId' | 'runId'> = {},
+    prepared?: PreparedSourcePins,
+  ): string[] {
     if (sourceId && !this.configuration.sources.some((source) => source.id === sourceId))
       throw new Error(`Undeclared source: ${sourceId}`);
     const includes = (id: string, seen: Set<string>): boolean => {
@@ -130,7 +432,12 @@ export class SourceAuthority {
       seen.add(id);
       const declaration = this.configuration.sources.find((source) => source.id === id);
       if (!declaration) return false;
-      const record = this.state.records[this.key(id, declaration.ref ?? 'main')];
+      const effective = selectEffectiveSource(
+        declaration,
+        prepared ? this.preparedPins(prepared) : this.pins(),
+        context,
+      );
+      const record = this.state.records[this.key(id, effective.effectiveRef)];
       return (
         record?.dependencies.some((dependency) => includes(dependency.sourceId, seen)) ?? false
       );
@@ -143,49 +450,74 @@ export class SourceAuthority {
     return this.state.activatedAt;
   }
 
-  private async persist(state: AuthorityState): Promise<void> {
+  private async persist(state: AuthorityState, publish = true): Promise<void> {
     await mkdir(this.root, { recursive: true });
     const temporary = path.join(this.root, `authority.${randomUUID()}.tmp`);
     await writeFile(temporary, JSON.stringify(state), { flag: 'wx', mode: 0o600 });
     await rename(temporary, path.join(this.root, 'authority.json'));
-    this.state = state;
+    if (publish) this.state = state;
   }
 
   /** Each selected source/ref resolves independently. One failure does not stale unrelated records. */
   async reconcile(
     sourceIds = this.configuration.sources.map((source) => source.id),
   ): Promise<void> {
-    await Promise.all(sourceIds.map((id) => this.reconcileSource(id)));
+    await Promise.all(
+      sourceIds.flatMap((id) => {
+        const source = this.configuration.sources.find((source) => source.id === id);
+        if (!source) throw new Error(`Undeclared source: ${id}`);
+        const refs = new Set([
+          source.ref ?? 'main',
+          ...this.pins()
+            .filter((pin) => pin.sourceId === id)
+            .map((pin) => pin.ref),
+        ]);
+        return [...refs].map((ref) => this.reconcileSource(id, ref));
+      }),
+    );
   }
 
-  /** Each source owns its next poll. A stalled repository never stops healthy polls. */
+  /** Each effective ref polls independently. A pending fetch never accumulates duplicate work. */
   startReconciliation(onError: (sourceId: string, error: unknown) => void): () => void {
     let stopped = false;
-    const timers = new Set<ReturnType<typeof setTimeout>>();
-    const poll = async (id: string): Promise<void> => {
-      try {
-        await this.reconcile([id]);
-      } catch (error) {
-        // Persistence failure remains visible; stale records refuse admission.
-        onError(id, error);
-      }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const pending = new Set<string>();
+    const poll = (): void => {
       if (stopped) return;
-      const timer = setTimeout(() => {
-        timers.delete(timer);
-        void poll(id);
-      }, this.configuration.pollIntervalMs);
+      for (const source of this.configuration.sources) {
+        const refs = new Set([
+          source.ref ?? 'main',
+          ...this.pins()
+            .filter((pin) => pin.sourceId === source.id)
+            .map((pin) => pin.ref),
+        ]);
+        for (const ref of refs) {
+          const key = this.key(source.id, ref);
+          if (pending.has(key)) continue;
+          pending.add(key);
+          void this.reconcileSource(source.id, ref).then(
+            () => {
+              pending.delete(key);
+            },
+            (error: unknown) => {
+              pending.delete(key);
+              // Persistence failure remains visible; stale records refuse admission.
+              onError(source.id, error);
+            },
+          );
+        }
+      }
+      timer = setTimeout(poll, this.configuration.pollIntervalMs);
       timer.unref();
-      timers.add(timer);
     };
-    for (const source of this.configuration.sources) void poll(source.id);
+    poll();
     return () => {
       stopped = true;
-      for (const timer of timers) clearTimeout(timer);
-      timers.clear();
+      if (timer) clearTimeout(timer);
     };
   }
 
-  private reconcileSource(id: string): Promise<void> {
+  private reconcileSource(id: string, selectedRef?: string): Promise<void> {
     const source = this.configuration.sources.find((value) => value.id === id);
     if (!source) throw new Error(`Undeclared source: ${id}`);
     const repository = canonicalSourceRepo(source.repo);
@@ -194,7 +526,7 @@ export class SourceAuthority {
       const next = structuredClone(this.state);
       const declaration = this.configuration.sources.find((source) => source.id === id);
       if (!declaration) throw new Error(`Undeclared source: ${id}`);
-      const ref = declaration.ref ?? 'main';
+      const ref = selectedRef ?? declaration.ref ?? 'main';
       const key = this.key(id, ref);
       const previous = next.records[key];
       const resolution: SourceResolution = {
@@ -226,8 +558,14 @@ export class SourceAuthority {
         for (const binding of bindings) {
           const entry = path.posix.join(binding.entry, 'project.json');
           const project = await this.git.readJson(declaration.repo, tree, entry);
-          if (!project)
+          if (!isRecord(project))
             throw new Error(`Declared pack has no project.json: ${id}/${binding.entry}`);
+          const portability = validatePackFilePortability(
+            `${id}/${entry}`,
+            JSON.stringify(project),
+          );
+          if (portability.length)
+            throw new Error(`Declared pack is not portable:\n${portability.join('\n')}`);
           dependencies.push(...sourceDependencies(project));
           // These inherited prompts are pack inputs too. They must share this
           // closure instead of resolving another pack when dispatch starts.
@@ -338,78 +676,129 @@ export class SourceAuthority {
     return work;
   }
 
-  lock(context: SourceLock['context']): Promise<SourceLock> {
+  /** Pin publication and admission share this boundary; preparation never seals stale inputs. */
+  withCurrentLock<T>(lock: SourceLock, commit: () => Promise<T>): Promise<T> {
     return this.serialize(async () => {
-      const pack = this.configuration.packs[context.project];
-      if (!pack) throw new Error(`No declared pack binding: ${context.project}`);
-      const entries = new Map<string, SourceLockEntry>();
-      const visit = (binding: SourceEntryRef, stack: string[]): void => {
-        if (stack.includes(binding.sourceId)) throw new Error('Cyclic source dependencies');
-        const declaration = this.configuration.sources.find(
-          (source) => source.id === binding.sourceId,
-        );
-        if (!declaration) throw new Error(`Undeclared source: ${binding.sourceId}`);
-        const ref = declaration.ref ?? 'main';
-        const record = this.state.records[this.key(declaration.id, ref)];
-        if (
-          !record?.tree ||
-          record.resolution.status !== 'resolved' ||
-          this.now() - Date.parse(record.resolution.resolvedAt ?? '') >
-            this.configuration.pollIntervalMs * 2
-        )
-          throw new Error(`Source is unavailable or stale: ${declaration.id}`);
-        const prefix = binding.entry === '.' ? '' : `${binding.entry}/`;
-        if (
-          !record.tree.files.some(
-            (file) => file.path === binding.entry || file.path.startsWith(prefix),
-          )
-        )
-          throw new Error(`Source entry is missing: ${binding.sourceId}/${binding.entry}`);
-        if (entries.has(declaration.id)) return;
-        const entry: SourceLockEntry = {
-          sourceId: declaration.id,
-          kind: declaration.kind,
-          repo: canonicalSourceRepo(declaration.repo),
-          declaredRef: ref,
-          effectiveRef: ref,
-          commit: record.tree.commit,
-          objectFormat: record.tree.objectFormat,
-          treeDigest: record.tree.treeDigest,
-          resolutionGeneration: record.resolution.generation,
-          scope: 'farm',
-          dependencies: record.dependencies,
-        };
-        entries.set(declaration.id, entry);
-        for (const dependency of record.dependencies) visit(dependency, [...stack, declaration.id]);
-      };
-      visit(pack, []);
-      const key = JSON.stringify(context);
-      const selected = [...entries.values()].sort((a, b) => a.sourceId.localeCompare(b.sourceId));
-      const previous = this.state.locks[key];
+      this.assertCurrentLock(lock);
+      return commit();
+    });
+  }
+
+  private assertCurrentLock(lock: SourceLock, prepared?: PreparedSourcePins): void {
+    const pins = prepared ? this.preparedPins(prepared) : this.pins();
+    const pinRevision = this.state.pinRevision + (prepared ? 1 : 0);
+    if (
+      lock.declarationRevision !== this.configuration.revision ||
+      lock.pinRevision !== pinRevision ||
+      (!prepared && this.state.locks[JSON.stringify(lock.context)]?.digest !== lock.digest)
+    )
+      throw new GatewayMethodError('SOURCE_STATE_STALE', 'Source plan changed before admission');
+    for (const entry of lock.entries) {
+      const declaration = this.configuration.sources.find((source) => source.id === entry.sourceId);
+      if (!declaration) throw new Error('Source declaration disappeared before admission');
+      const effective = selectEffectiveSource(declaration, pins, lock.context);
+      const record = this.state.records[this.key(entry.sourceId, effective.effectiveRef)];
       if (
-        previous?.declarationRevision === this.configuration.revision &&
-        sourceDigest(previous.entries) === sourceDigest(selected)
+        effective.effectiveRef !== entry.effectiveRef ||
+        sourceDigest(effective.pin ?? null) !== sourceDigest(entry.pin ?? null) ||
+        record?.resolution.status !== 'resolved' ||
+        record.resolution.generation !== entry.resolutionGeneration ||
+        record.tree?.commit !== entry.commit ||
+        this.now() - Date.parse(record.resolution.resolvedAt ?? '') >
+          this.configuration.pollIntervalMs * 2
       )
-        return structuredClone(previous);
-      const content: Omit<SourceLock, 'digest'> = {
-        schemaVersion: 1,
-        context,
-        generation: (this.state.locks[key]?.generation ?? 0) + 1,
-        declarationRevision: this.configuration.revision,
-        pinRevision: 0,
-        resolvedAt: new Date(this.now()).toISOString(),
-        entries: selected,
-        packBindings: Object.fromEntries(
-          Object.entries(this.configuration.packs).filter(([, binding]) =>
-            entries.has(binding.sourceId),
-          ),
-        ),
-      };
-      const lock = { ...content, digest: sourceLockDigest(content) };
-      const next = structuredClone(this.state);
-      next.locks[key] = lock;
-      await this.persist(next);
+        throw new GatewayMethodError(
+          'SOURCE_STATE_STALE',
+          `Source plan is unavailable, changed or stale: ${entry.sourceId}`,
+        );
+    }
+  }
+
+  lock(context: SourceLock['context'], prepared?: PreparedSourcePins): Promise<SourceLock> {
+    return this.serialize(async () => {
+      const lock = this.composeLock(context, prepared);
+      if (!prepared && this.state.locks[JSON.stringify(context)]?.digest !== lock.digest) {
+        const next = structuredClone(this.state);
+        next.locks[JSON.stringify(context)] = lock;
+        await this.persist(next);
+      }
       return structuredClone(lock);
     });
+  }
+
+  private composeLock(context: SourceLock['context'], prepared?: PreparedSourcePins): SourceLock {
+    const pins = prepared ? this.preparedPins(prepared) : this.pins();
+    const pinRevision = this.state.pinRevision + (prepared ? 1 : 0);
+    const pack = this.configuration.packs[context.project];
+    if (!pack) throw new Error(`No declared pack binding: ${context.project}`);
+    const entries = new Map<string, SourceLockEntry>();
+    const visit = (binding: SourceEntryRef, stack: string[]): void => {
+      if (stack.includes(binding.sourceId)) throw new Error('Cyclic source dependencies');
+      const declaration = this.configuration.sources.find(
+        (source) => source.id === binding.sourceId,
+      );
+      if (!declaration) throw new Error(`Undeclared source: ${binding.sourceId}`);
+      const effective = selectEffectiveSource(declaration, pins, context);
+      if (effective.pin && effective.pin.declarationRevision !== this.configuration.revision)
+        throw new Error(`Source pin belongs to a prior declaration: ${declaration.id}`);
+      const ref = effective.effectiveRef;
+      const record = this.state.records[this.key(declaration.id, ref)];
+      if (
+        !record?.tree ||
+        record.resolution.status !== 'resolved' ||
+        this.now() - Date.parse(record.resolution.resolvedAt ?? '') >
+          this.configuration.pollIntervalMs * 2
+      )
+        throw new Error(`Source is unavailable or stale: ${declaration.id}`);
+      const prefix = binding.entry === '.' ? '' : `${binding.entry}/`;
+      if (
+        !record.tree.files.some(
+          (file) => file.path === binding.entry || file.path.startsWith(prefix),
+        )
+      )
+        throw new Error(`Source entry is missing: ${binding.sourceId}/${binding.entry}`);
+      if (entries.has(declaration.id)) return;
+      const entry: SourceLockEntry = {
+        sourceId: declaration.id,
+        kind: declaration.kind,
+        repo: canonicalSourceRepo(declaration.repo),
+        declaredRef: effective.declaredRef,
+        effectiveRef: ref,
+        commit: record.tree.commit,
+        objectFormat: record.tree.objectFormat,
+        treeDigest: record.tree.treeDigest,
+        resolutionGeneration: record.resolution.generation,
+        scope: effective.scope,
+        ...(effective.pin ? { pin: effective.pin } : {}),
+        dependencies: record.dependencies,
+      };
+      entries.set(declaration.id, entry);
+      for (const dependency of record.dependencies) visit(dependency, [...stack, declaration.id]);
+    };
+    visit(pack, []);
+    const key = JSON.stringify(context);
+    const selected = [...entries.values()].sort((a, b) => a.sourceId.localeCompare(b.sourceId));
+    const previous = this.state.locks[key];
+    if (
+      previous?.declarationRevision === this.configuration.revision &&
+      previous.pinRevision === pinRevision &&
+      sourceDigest(previous.entries) === sourceDigest(selected)
+    )
+      return structuredClone(previous);
+    const content: Omit<SourceLock, 'digest'> = {
+      schemaVersion: 1,
+      context,
+      generation: (this.state.locks[key]?.generation ?? 0) + 1,
+      declarationRevision: this.configuration.revision,
+      pinRevision,
+      resolvedAt: new Date(this.now()).toISOString(),
+      entries: selected,
+      packBindings: Object.fromEntries(
+        Object.entries(this.configuration.packs).filter(([, binding]) =>
+          entries.has(binding.sourceId),
+        ),
+      ),
+    };
+    return { ...content, digest: sourceLockDigest(content) };
   }
 }

@@ -54,6 +54,7 @@ import {
   type SlotRunHistoryParams,
 } from '@farmslot/protocol';
 
+import { GatewayMethodError } from '../core/method-error.js';
 import {
   evalExperimentCreate,
   evalSuiteCapGet,
@@ -114,6 +115,7 @@ import { runBundleExport, runBundleImport, runBundleList } from '../methods/run-
 import { refreshPublishedEvidence } from '../run-completion/published-evidence-refresh.js';
 
 export interface RouteRunMethodContext {
+  authorizeSourceSelections?: () => void;
   /** Caller-only emitter retained in the routing context; shared run mutations use broadcast. */
   emit: (event: string, payload: unknown) => void;
   broadcast: (frame: EventFrame) => void;
@@ -164,12 +166,25 @@ export async function routeRunMethod(
           'run.create cannot accept backlog/work-graph launch metadata; use backlog.enqueue or workGraph.schedulerTick',
         );
       }
+      const selectsSources =
+        Array.isArray(runParams.sourceSelections) && runParams.sourceSelections.length > 0;
+      if (selectsSources) {
+        if (!context.authorizeSourceSelections)
+          throw new GatewayMethodError(
+            'AUTH_REQUIRED',
+            'Source selections require authenticated routing',
+          );
+        context.authorizeSourceSelections();
+      }
+      const options = selectsSources
+        ? { beforeCreate: context.authorizeSourceSelections }
+        : undefined;
       if (method === Methods.RUN_CREATE_NATIVE) {
         if (runParams.transport !== undefined && runParams.transport !== 'native')
           throw new Error('run.createNative requires native transport');
-        return handled(runCreate({ ...runParams, transport: 'native' }, emit));
+        return handled(runCreate({ ...runParams, transport: 'native' }, emit, options));
       }
-      return handled(runCreate(runParams, emit));
+      return handled(runCreate(runParams, emit, options));
     }
     case Methods.RUN_BUNDLE_EXPORT:
       return handled(runBundleExport(p as RunBundleExportParams));
