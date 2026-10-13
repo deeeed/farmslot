@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import type { RecipeConformanceReport } from '@farmslot/protocol';
+import type { RecipeConformanceReport, RuntimeCapabilityProofPlan } from '@farmslot/protocol';
 
 import type { ProjectVars, SlotVars } from '../core/config.js';
 import { NodeExecUnconfirmedError } from '../fleet/node-rpc.js';
@@ -159,4 +159,77 @@ test('lost closeout never starts a second check', async () => {
     NodeExecUnconfirmedError,
   );
   assert.equal(calls, 1);
+});
+
+test('IDs-only initial admission refuses before provider/report effects; retained run mode permits preflight', async () => {
+  const requirement = { capabilityId: 'browser', reason: 'Observe', mode: 'visual' as const };
+  const plan: RuntimeCapabilityProofPlan = {
+    version: 1,
+    ownerRunId: 'run',
+    slotId: slot.slotId,
+    createdAt: '2026-10-13T00:00:00Z',
+    requirements: [requirement],
+  };
+  const selectedResources = {
+    ...selected,
+    frontmatter: { ...selected.frontmatter, runtime_capabilities: ['browser'] },
+  };
+  const calls: string[] = [];
+  const deps = {
+    exists: async () => {
+      calls.push('exists');
+      return false;
+    },
+    report: async (options: unknown) => {
+      calls.push('report');
+      assert.equal((options as Record<string, unknown>).runId, undefined);
+      return report;
+    },
+    resources: async () => {
+      calls.push('catalog');
+      return [];
+    },
+    proofPlan: async (runId: string, slotId: string) => {
+      assert.equal(runId, 'run');
+      assert.equal(slotId, slot.slotId);
+      calls.push('stored-plan');
+      return plan;
+    },
+  };
+  const missing = await checkRecipeDispatchRequirements(project, slot, selectedResources, {}, deps);
+  assert.deepEqual(calls, ['catalog']);
+  assert.throws(() => assertRecipeDispatchRequirements(missing), /browser.*authored/);
+  calls.length = 0;
+  const retained = await checkRecipeDispatchRequirements(
+    project,
+    slot,
+    selectedResources,
+    { runId: 'run' },
+    deps,
+  );
+  assert.deepEqual(calls, ['stored-plan', 'exists', 'report', 'catalog']);
+  assert.ok(!retained.missingRequirements.includes('resource.browser.proof-mode'));
+  assert.ok(
+    retained.requirements.some(
+      (item) => item.name === 'resource.browser.proof-mode.visual' && item.status === 'declared',
+    ),
+  );
+  assert.deepEqual(plan.requirements, [requirement]);
+  calls.length = 0;
+  const conflicting = {
+    ...selectedResources,
+    frontmatter: {
+      ...selectedResources.frontmatter,
+      runtime_capability_requirements: JSON.stringify([{ ...requirement, mode: 'mixed' }]),
+    },
+  };
+  const refused = await checkRecipeDispatchRequirements(
+    project,
+    slot,
+    conflicting,
+    { runId: 'run' },
+    deps,
+  );
+  assert.deepEqual(calls, ['stored-plan', 'catalog']);
+  assert.throws(() => assertRecipeDispatchRequirements(refused), /conflicts.*stored visual/);
 });

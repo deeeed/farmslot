@@ -185,14 +185,15 @@ The gateway MUST use the existing template selector and QA preset resolver. It M
 
 Optional flat template metadata is:
 
-| Field                  | Meaning                                                                                                   |
-| ---------------------- | --------------------------------------------------------------------------------------------------------- |
-| `recipe_checks`        | Recipe refs whose complete preflight is required                                                          |
-| `recipe_actions`       | Action handlers that must occur in the successfully preflighted smoke plans                               |
-| `recipe_capture`       | Require capture action support in those plans                                                             |
-| `recipe_hud`           | Require HUD action support in those plans                                                                 |
-| `runtime_capabilities` | Existing resource-provider IDs required by the selected flow                                              |
-| `recipe_params`        | Proposed JSON object carried as a scalar in frontmatter and passed through the existing `--param` grammar |
+| Field                             | Meaning                                                                                                   |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `recipe_checks`                   | Recipe refs whose complete preflight is required                                                          |
+| `recipe_actions`                  | Action handlers that must occur in the successfully preflighted smoke plans                               |
+| `recipe_capture`                  | Require capture action support in those plans                                                             |
+| `recipe_hud`                      | Require HUD action support in those plans                                                                 |
+| `runtime_capabilities`            | Existing resource-provider IDs required by the selected flow                                              |
+| `runtime_capability_requirements` | Scalar JSON array of authored proof modes/reasons/acquire inputs; see Amendment 1 below                   |
+| `recipe_params`                   | Proposed JSON object carried as a scalar in frontmatter and passed through the existing `--param` grammar |
 
 Lists MUST contain nonempty names; capture/HUD fields MUST be booleans. Action/capture/HUD requirements MUST have an authored smoke in `recipe_checks`. They establish available handler support, not proof that a screenshot or HUD was produced at runtime.
 
@@ -308,6 +309,7 @@ The referenced grammar inventories exact selection/provider flags. This specific
 | `@farmslot/protocol`           | `ProjectRecipeConfig.checks` and its existing declaration validator/schema                                                                             | Project packs declare default static invocations; the resolved binding and root doctor consume them |
 | `@farmslot/protocol`           | `RecipeConformanceLiveEvidence`, report/check/scope types, `RecipeFlowRequirements`, `RecipeProjectCompatibility`, `conformanceChecksPass`             | CLI, gateway and compatibility consumers                                                            |
 | `@farmslot/protocol`           | Proposed shared `recipeFlowRequirements` and `recipeProjectCompatibility` validation/projection                                                        | Gateway selected-flow admission; thin clients consume the resulting model                           |
+| `@farmslot/protocol`           | `RecipeFlowRequirements.proofRequirements` and `resolveRecipeProofRequirements`                                                                        | Gateway admission and ADR-065 preparation share declaration/stored-plan precedence; clients consume required-mode diagnostics |
 
 Gateway preview carries optional `recipeCompatibility`. The existing hosted hook result may carry a validated conformance report during migration. Internal conformance options MUST NOT be supplied by untrusted wire fields or bypass project/slot matching, pool environment, cancellation and closeout tracking.
 

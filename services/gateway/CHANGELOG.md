@@ -15,6 +15,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Preserve the frozen run review policy in nested role contracts so valid pending visual claims reach their human gate without weakening evidence or CI checks.
 - Include the shared minimal-diff review policy and whole-contribution sensitive-path inventory in independent review packets.
+- Explain missing or conflicting initial resource proof modes before provider effects, preserving retained run requirements and explicit acquire inputs.
 
 - Wait up to two minutes for node reconnection during task writing, preparation and dispatch; reattach static-review monitors after gateway restarts, retaining the exact worker command and reservation when observation remains unavailable.
 - Keep publication gates open across review-fix recovery and retain workers, slots and evidence when finalization lacks approval or publication; completed step flags cannot bypass publication before DONE.
