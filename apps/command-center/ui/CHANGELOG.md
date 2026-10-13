@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Use the shared run evidence contract in package status and recovery guidance.
 - Review and record verified untestable exceptions without resolving the evidence gate.
 
 - Add reasoned evidence-policy attestation to the existing publish gate with confirmation and package binding.

@@ -93,6 +93,8 @@ function taskInitArgs(dir: string, title: string): string[] {
     '--var',
     'BRANCH=feat/subtask-observability-phase5',
     '--var',
+    'PUBLICATION_BASE=main',
+    '--var',
     'CI_ISSUE_TYPE=lint',
     '--var',
     'CI_ISSUES=- lint failed on one file',

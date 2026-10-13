@@ -118,6 +118,8 @@ export function descriptionCheckFindings(input: DescriptionCheckInput): Descript
 export interface DescriptionCheckSectionInput {
   repo: string;
   taskDir: string;
+  /** Selection resolved by the shared publication reader, not inferred from file names. */
+  manifestPath?: string | null;
   /** The PR's base branch: the stack base for a stacked run, else the default branch. */
   baseBranch: string;
   /** Pre-check findings, or the reason the pre-check could not run. */
@@ -127,7 +129,10 @@ export interface DescriptionCheckSectionInput {
 /** The gateway-owned review section. */
 export function buildDescriptionCheckSection(input: DescriptionCheckSectionInput): string {
   const description = `${input.taskDir}/artifacts/pr-description.md`;
-  const manifest = `${input.taskDir}/artifacts/evidence-manifest.json`;
+  const manifest =
+    input.manifestPath === null
+      ? null
+      : (input.manifestPath ?? `${input.taskDir}/artifacts/evidence-manifest.json`);
   const base = `origin/${input.baseBranch}`;
   const preCheck = Array.isArray(input.preCheck)
     ? input.preCheck.length > 0
@@ -145,10 +150,12 @@ export function buildDescriptionCheckSection(input: DescriptionCheckSectionInput
     `git diff ${base}...HEAD`,
     `git log --format=%s ${base}..HEAD`,
     `cat ${description}`,
-    `cat ${manifest}`,
+    ...(manifest
+      ? [`cat ${manifest}`]
+      : ['# Selected evidence is unavailable; refresh the gate package.']),
     '```',
     '',
-    `Report each mismatch as an issue on \`${description}\` (description and commit findings) or \`${manifest}\` (evidence findings), starting with its name:`,
+    `Report each mismatch as an issue on \`${description}\` (description and commit findings) or ${manifest ? `\`${manifest}\`` : 'the selected evidence package'} (evidence findings), starting with its name:`,
     '',
     '- `DESCRIPTION_CLAIM_NOT_IN_DIFF`: the description or a commit subject claims something the diff does not do. Saying "remove", "delete" or "strip" while the diff hides the surface behind a flag is this finding.',
     '- `DIFF_CHANGE_NOT_DESCRIBED`: a user-visible change in the diff is missing from the description.',

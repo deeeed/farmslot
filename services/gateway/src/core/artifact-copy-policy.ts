@@ -1,6 +1,11 @@
 import { INTERNAL_RUN_ARTIFACT_TOP_LEVELS } from '@farmslot/protocol';
 
-export const GATEWAY_OWNED_DIFF_ARTIFACTS = ['diff.txt', 'diff-stat.json'] as const;
+export const GATEWAY_OWNED_DIFF_ARTIFACTS = [
+  'diff.txt',
+  'diff-stat.json',
+  'iteration-diff.txt',
+  'iteration-diff-stat.json',
+] as const;
 export const GATEWAY_OWNED_RUN_ARTIFACTS = ['session-metrics.json'] as const;
 export const PUBLICATION_SELECTION_DIR = 'pr-package-evidence';
 export const GATEWAY_OWNED_EVAL_ARTIFACTS = [

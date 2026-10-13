@@ -824,6 +824,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       finalizing = false;
     }
     await summaryWriter.write(summary);
+    await artifactWriter.writeEvidenceManifest(claims);
     await artifactWriter.write(status, this.#runnerProvenance, manifestMetadata);
 
     const packageValidation = validateRecordedEvidencePackage({

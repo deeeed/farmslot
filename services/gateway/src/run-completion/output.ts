@@ -12,16 +12,24 @@ import {
   runOutputReviewEnabled,
 } from '@farmslot/protocol';
 
+import { GATEWAY_OWNED_DIFF_ARTIFACTS } from '../core/artifact-copy-policy.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 
 import { refreshArtifactMirror } from './artifact-mirror.js';
 import { scanArtifacts } from './publication-artifacts.js';
+
+// Completion writes these diagnostics after the worker output gate opens.
+// Keep them browsable without changing the report and evidence being reviewed.
+const OUTPUT_REVIEW_EXCLUDED_PATHS = new Set(
+  GATEWAY_OWNED_DIFF_ARTIFACTS.map((name) => `artifacts/${name}`),
+);
 
 export function outputManifestDigest(artifacts: ArtifactRef[]): string {
   return createHash('sha256')
     .update(
       JSON.stringify(
         [...artifacts]
+          .filter((artifact) => !OUTPUT_REVIEW_EXCLUDED_PATHS.has(artifact.path))
           .sort((a, b) => a.path.localeCompare(b.path))
           .map(({ path: file, sha256, sizeBytes }) => ({ path: file, sha256, sizeBytes })),
       ),
@@ -231,8 +239,8 @@ export async function verifyRunOutputReview(
     run.output.reportPath !== reportPath
   )
     throw new Error('Run output changed; refresh the report before reviewing');
-  // Verify the bytes, not just a previously stored manifest. New or removed files
-  // also change the digest; a changed snapshot requires another review.
+  // Verify worker bytes, not just a previously stored manifest. New or removed
+  // worker files also change the digest and require another review.
   const artifacts = await scanArtifacts(path.dirname(taskFile));
   if (outputManifestDigest(artifacts) !== expected)
     throw new Error('Run output changed; refresh the report before reviewing');

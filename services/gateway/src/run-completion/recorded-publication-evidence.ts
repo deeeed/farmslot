@@ -12,7 +12,7 @@ import {
   PUBLICATION_SELECTION_DIR,
 } from '../core/artifact-copy-policy.js';
 import {
-  readFrozenRecordedEvidenceSources,
+  readFrozenPublicationRecipeSources,
   recordedEvidenceRoots,
 } from '../run-engine/recorded-evidence-sources.js';
 
@@ -33,15 +33,27 @@ export async function recordedPublicationDependencies(
   artifacts: readonly ArtifactRef[],
   media: readonly ArtifactRef[],
   expectedManifest: EvidenceManifest | null | undefined,
+  contractVersion = 1,
 ): Promise<ArtifactRef[]> {
-  if (!media.length) return [];
+  const source = await resolvePublicationManifest(taskDir, undefined, undefined, contractVersion);
+  const sourceRoot = source ? path.posix.dirname(source.sourcePath) : undefined;
+  const selectedRoot = source?.selectedArtifactRoot
+    ? `artifacts/${source.selectedArtifactRoot}`
+    : sourceRoot &&
+        artifacts.some((artifact) => artifact.path === `${sourceRoot}/recipe-invocation.json`)
+      ? sourceRoot
+      : undefined;
+  if (!media.length && !selectedRoot) return [];
   const taskRoot = await realpath(taskDir);
   const entries = new Map<string, ArtifactRef>();
   const byPath = new Map(media.map((artifact) => [artifact.path, artifact]));
-  for (const root of recordedEvidenceRoots(
-    artifacts,
-    media.map((artifact) => artifact.path),
-  )) {
+  const roots = selectedRoot
+    ? [selectedRoot]
+    : recordedEvidenceRoots(
+        artifacts,
+        media.map((artifact) => artifact.path),
+      );
+  for (const root of roots) {
     const directory = await realpath(path.resolve(taskRoot, root));
     const relative = path.relative(taskRoot, directory);
     if (relative.startsWith('..') || path.isAbsolute(relative))
@@ -68,13 +80,15 @@ export async function recordedPublicationDependencies(
       });
     }
   }
-  const source = await resolvePublicationManifest(taskRoot);
   if (!source && expectedManifest)
     throw new Error('Publication selection changed while preparing its frozen package.');
   if (source) {
     if (!isDeepStrictEqual(source.manifest, expectedManifest))
       throw new Error('Publication selection changed while preparing its frozen package.');
-    const sourceFiles = [{ file: source.sourcePath, bytes: source.sourceBytes }];
+    const sourceFiles = [
+      { file: source.sourcePath, bytes: source.sourceBytes },
+      ...(source.declarationSources ?? []),
+    ];
     if (source.pointerPath && source.pointerBytes !== undefined)
       sourceFiles.push({ file: source.pointerPath, bytes: source.pointerBytes });
     for (const { file, bytes } of sourceFiles) {
@@ -159,13 +173,11 @@ export async function verifyFrozenPublicationEvidence(
     const selected = resolveSelectedEvidenceRef(key, [...inventory]);
     return selected ? [selected.path] : [];
   });
-  if (!media.length) return;
   const roots = recordedEvidenceRoots(inventory, media);
-  if (!roots.length) return; // Legacy media stays untimed, without invented execution identity.
   const selectedRecordedMedia = media.filter((key) =>
     roots.some((root) => key.startsWith(`${root}/`)),
   );
-  const sources = await readFrozenRecordedEvidenceSources(run, inventory, selectedRecordedMedia);
+  const sources = await readFrozenPublicationRecipeSources(run, inventory, selectedRecordedMedia);
   for (const source of sources) {
     const issues = validateRecordedEvidencePackage(source.input).findings.filter(
       (finding) => finding.severity === 'error',

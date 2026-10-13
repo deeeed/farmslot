@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   DEFAULT_BRANCH,
   DEFAULT_TASK_DIR,
+  type EvidenceManifest,
   type ReviewIssue,
   type ReviewMode,
   type ReviewValidationDepth,
@@ -33,7 +34,7 @@ import { shellQuote } from '../core/tmux.js';
 import { projectWorkerTemplatePath } from '../core/worker-templates.js';
 import { remoteBranchRefspec } from '../methods/slot/slot-tracking.js';
 import { buildReviewPlanningBrief } from '../run-engine/review-artifacts.js';
-import { stackPrBase } from '../run-engine/stack-base.js';
+import { publicationBaseForRun } from '../run-engine/stack-base.js';
 import { getRun } from '../runs/store.js';
 import { REVIEW_FIX_CHECKLIST_TARGET } from '../tasks/checklist-target.js';
 import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-template-catalog.js';
@@ -61,6 +62,21 @@ interface ReviewConfig {
   mode?: ReviewMode;
 }
 
+async function readReviewArtifact(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  file: string,
+): Promise<string | null> {
+  const quoted = shellQuote(file);
+  const result = await execOnSlot(
+    vars,
+    `if [ -f ${quoted} ]; then cat ${quoted}; else exit 66; fi`,
+    { cwd: '/', timeout: 30_000 },
+  );
+  if (result.exitCode === 66) return null;
+  if (result.exitCode !== 0) throw new Error(`Review artifact read failed: ${result.stderr}`);
+  return result.stdout;
+}
+
 const REMOTE_FARMSLOT_DIR = '~/farmslot-node';
 /** Diffs past this size are cut for the pre-check scan; the reviewer still reads them whole. */
 const PRE_CHECK_DIFF_BYTES = 5_000_000;
@@ -74,6 +90,7 @@ async function runDescriptionPreCheck(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   taskDir: string,
   baseBranch: string,
+  evidenceManifest: EvidenceManifest | null,
 ): Promise<DescriptionCheckFinding[] | { unavailable: string }> {
   const base = `origin/${baseBranch}`;
   const inRepo = (command: string) =>
@@ -89,17 +106,6 @@ async function runDescriptionPreCheck(
     if (diff.exitCode !== 0 || log.exitCode !== 0)
       return { unavailable: `could not read the diff against ${base}` };
     const description = await inRepo(`cat ${shellQuote(`${taskDir}/artifacts/pr-description.md`)}`);
-    const manifestText = await inRepo(
-      `cat ${shellQuote(`${taskDir}/artifacts/evidence-manifest.json`)}`,
-    );
-    let evidenceManifest: unknown = null;
-    if (manifestText.exitCode === 0) {
-      try {
-        evidenceManifest = JSON.parse(manifestText.stdout);
-      } catch {
-        evidenceManifest = null;
-      }
-    }
     return descriptionCheckFindings({
       description: description.exitCode === 0 ? description.stdout : null,
       commitSubjects: log.stdout.split('\n').filter((line) => line.trim()),
@@ -118,14 +124,38 @@ async function descriptionCheckSection(
   run: NonNullable<ReturnType<typeof getRun>>,
   projectJson: Awaited<ReturnType<typeof loadProjectVars>>['projectJson'] | undefined,
 ): Promise<string> {
-  const baseBranch =
-    (await stackPrBase(run)) ??
-    ((projectJson && getProjectField(projectJson, 'default_branch')) || DEFAULT_BRANCH);
+  const baseBranch = await publicationBaseForRun(
+    run,
+    projectJson ? getProjectField(projectJson, 'default_branch') : undefined,
+  );
+  const { resolvePublicationManifest } = await import('../run-completion/publication-artifacts.js');
+  let publication;
+  let selectionError: string | undefined;
+  try {
+    publication = await resolvePublicationManifest(
+      taskDir,
+      {
+        readText: (file) => readReviewArtifact(vars, file),
+      },
+      undefined,
+      run.recordedEvidenceContractVersion ?? 0,
+    );
+  } catch (error) {
+    // An unavailable pre-check still produces the review document with an explicit diagnostic.
+    selectionError = error instanceof Error ? error.message : String(error);
+  }
   return buildDescriptionCheckSection({
     repo: vars.remoteRepo,
     taskDir,
     baseBranch,
-    preCheck: await runDescriptionPreCheck(vars, taskDir, baseBranch),
+    manifestPath: publication
+      ? path.join(taskDir, publication.sourcePath)
+      : selectionError
+        ? null
+        : undefined,
+    preCheck: selectionError
+      ? { unavailable: selectionError }
+      : await runDescriptionPreCheck(vars, taskDir, baseBranch, publication?.manifest ?? null),
   });
 }
 

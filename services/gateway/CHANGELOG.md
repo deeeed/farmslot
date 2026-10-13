@@ -5,6 +5,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Keep exact worker identities after deferred interactive terminal cleanup and retry through the recorded cleanup owner, while preserving successor and session ownership guards.
+- Keep report and evidence reviews valid when completion adds or updates gateway-owned diff diagnostics; preserve strict checks on worker output.
+
+- Resolve worker rebase targets and review descriptions through the shared publication base while retaining default-branch freshness.
 
 - Preserve completion-prerequisite workspace holds during occupied-slot cleanup retries, retaining their worker, slot and capability ownership for explicit recovery.
 
@@ -15,6 +18,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Release settled-run capability leases independently of workspace holds, retry identified cleanup holds safely, and free preserved workspaces on release-mode parks while retaining orchestration-only pauses.
 
+- Freeze and review only the selected recorded attempt, including executions without published media, and refuse stale manifest fallbacks.
 - Return stopped work graphs to planning without resetting recorded work; keep planning/paused graphs non-dispatching under targeted ticks.
 - Route operator completion intents through lifecycle settlement, retain failed completion ownership across restart until explicit cleanup, and keep output close available after acknowledgement.
 

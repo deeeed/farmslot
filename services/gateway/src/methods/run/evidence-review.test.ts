@@ -83,6 +83,27 @@ async function fixture(): Promise<RecipeRunArtifactGroup> {
 }
 
 const run = { slotId: 'test-slot' } as Run;
+test('a finished current run with no execution returns a typed missing selection, without backfilling history', async () => {
+  const source = await readRunRecordedEvidence(
+    { ...run, status: 'done', recordedEvidenceContractVersion: 1 },
+    undefined,
+  );
+  assert.equal(source.failureCode, 'evidence-selection-missing');
+  assert.match(source.errors.join(' '), /Re-run the recipe/);
+  assert.equal(
+    (await readRunRecordedEvidence({ ...run, status: 'done' }, undefined)).contractVersion,
+    0,
+  );
+  assert.deepEqual(
+    (
+      await readRunRecordedEvidence(
+        { ...run, status: 'monitoring', recordedEvidenceContractVersion: 1 },
+        undefined,
+      )
+    ).errors,
+    [],
+  );
+});
 test('local and remote review transport share the canonical input without original-media transfer', async (t) => {
   const group = await fixture();
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -107,6 +128,7 @@ test('transport failures remain visible and never supply invented timed proof', 
   corrupt = false;
   assert.deepEqual(await readRunRecordedEvidence(run, undefined), {
     artifactPrefix: 'artifacts/',
+    contractVersion: 0,
     errors: [],
   });
 });
@@ -135,6 +157,14 @@ test('gate display reuses the frozen inventory and refuses changed bytes or a re
   assert.deepEqual(source.errors, []);
   assert.equal(source.artifactPrefix, prefix);
   assert(source.input);
+  decision.payload = {
+    ...decision.payload!,
+    acceptanceStatus: { schemaVersion: 2, recipeRunId: 'another-execution', criteria: [] },
+  } as RunDecision['payload'];
+  const mismatch = await readRunRecordedEvidence(sourceRun, group, binding);
+  assert.equal(mismatch.input, undefined);
+  assert.match(mismatch.errors.join(' '), /Select a retained recipe execution/);
+  decision.payload = { kind: 'ready', prPackage: prepared } as RunDecision['payload'];
   const changed = await readRunRecordedEvidence(sourceRun, group, {
     ...binding,
     packageHash: 'old-package',

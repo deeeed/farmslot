@@ -174,6 +174,7 @@ export class RunDetail extends RunDetailState {
       this.evidenceModel = createEvidenceReviewModel({
         context: 'run-detail',
         package: this._recordedEvidence?.input,
+        contractVersion: this._recordedEvidence?.contractVersion,
         claimOverrideAuthority: this._recordedEvidence?.claimOverrideAuthority,
         readErrors: this._recordedEvidence?.errors,
         artifactPrefix: this._recordedEvidence?.artifactPrefix,
@@ -888,6 +889,7 @@ export class RunDetail extends RunDetailState {
       this._recipeRuns = [];
       this._recordedEvidence = {
         artifactPrefix: 'artifacts/',
+        contractVersion: run.recordedEvidenceContractVersion ?? 0,
         errors: [err instanceof Error ? err.message : String(err)],
       };
       this._evidenceGroupId = null;

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document the resolved publication-base template variable and its separate freshness reference.
+
 - Document the verified human claim-override operation in the generated gateway reference.
 
 - Document observed enabled-state waits and file-content state proof, with command and assertion controls in the recipe guide.

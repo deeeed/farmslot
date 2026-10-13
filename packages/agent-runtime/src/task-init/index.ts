@@ -27,6 +27,7 @@ import type { ExecutionTemplateSource } from '../execution-template/types.js';
 
 import { installedTaskCommands } from './runtime-command.js';
 import {
+  buildBranchUpdateInstructions,
   buildHandoffMetadata,
   buildTaskDocument,
   HANDOFF_INPUT,
@@ -141,6 +142,9 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
       : {}),
     ...(spec.vars ?? {}),
   };
+  if (vars.PUBLICATION_BASE?.trim()) {
+    vars.BRANCH_UPDATE_INSTRUCTIONS = buildBranchUpdateInstructions(vars.PUBLICATION_BASE);
+  }
 
   const source = `Execution template ${selected.entry.id} (${selected.entry.sourceId})`;
   const checklistMarkdown = renderTemplatePlaceholders(

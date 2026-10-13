@@ -34,6 +34,8 @@ test('recipe module exposes only the public recipe protocol surface', async () =
     'RECIPE_SUITE_NON_EXECUTION_REASONS',
     'RECIPE_SUITE_RESULT_SCHEMA_URL',
     'RECIPE_SUITE_SCOPE_SCHEMA_URL',
+    'RECORDED_EVIDENCE_RUN_CONTRACT_VERSION',
+    'RecordedEvidenceReadError',
     'UI_SCROLL_TO_PARAMS_SCHEMA',
     'applyRecipeParamDefaults',
     'canonicalRecipeJson',

@@ -2,9 +2,8 @@
 
 **CRITICAL: Never pause or wait for user input. Complete ALL steps in a single uninterrupted run.**
 
-This is an **update-branch** run: bring this PR branch up to date against its base
-branch and continue CI/finalization. The intent is not "make a merge commit from
-main" — it is "update this branch, resolve any fallout, keep CI green."
+This is an **update-branch** run: rebase this PR branch onto its publication base,
+resolve conflicts, validate and push with a recorded remote-SHA lease.
 
 ## SCOPE BUDGET (hard rule)
 
@@ -24,25 +23,17 @@ not thoroughness.
 
 ## Strategy
 
-`BRANCH_UPDATE_STRATEGY` (in the TASK.md task block) selects how to update the branch:
-
-- `rebase` — rebase the PR branch onto the base branch. Preferred for agent-owned
-  PR branches. Push with `git push --force-with-lease` (never a bare `--force`).
-- `merge` — merge the base branch into the PR branch (merge commit). Use when the
-  project disallows force-push, the branch is shared/protected, or a merge commit
-  is explicitly safer for the conflict.
-- `project-default` — defer to the project's configured `merge_main_strategy`.
-
-If the resolved strategy is `project-default`, read the project policy and record
-the concrete strategy you actually used in the outcome artifact.
+Use a rebase with the exact remote PR-head lease described in TASK.md. If branch
+protection refuses that push, report the refusal and block; do not fall back to a
+merge commit.
 
 ## Checklist
 
 - [ ] **1. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md` to understand repo structure, conventions, and validation rules.
 - [ ] **2. Start** — `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
-- [ ] **3. Confirm target + strategy** — verify `PR_NUMBER` and `PR_BRANCH`; resolve `BRANCH_UPDATE_STRATEGY` (rebase | merge | project-default) to the concrete strategy you will use.
+- [ ] **3. Confirm target** — verify `PR_NUMBER`, `PR_BRANCH` and `PUBLICATION_BASE` in TASK.md.
 - [ ] **4. Checkout PR branch** — `git checkout {{PR_BRANCH}}`
-- [ ] **5. Update branch** — update from the base branch using the selected strategy and resolve any conflicts on `{{PR_BRANCH}}`.
+- [ ] **5. Update branch** — fetch `{{PUBLICATION_BASE}}` from origin and rebase onto `origin/{{PUBLICATION_BASE}}`. Follow TASK.md's recorded remote-SHA lease guard and resolve conflicts on `{{PR_BRANCH}}`. The default branch remains the separate freshness reference.
 - [ ] **6. Validate** — run typecheck and focused tests:
 
   ```bash
@@ -53,8 +44,8 @@ the concrete strategy you actually used in the outcome artifact.
   Replace the example test path with explicit affected suites. Confirm every requested suite ran; do not invoke a glob as a single tsx script.
   {{CI_PARITY_STEP}}
 
-- [ ] **7. Push** — publish the updated branch. For `rebase`, use `git push --force-with-lease`; for `merge`, a normal `git push`. Record the exact push command used.
-- [ ] **8. Write report** — create `{{TASK_DIR}}/artifacts/report.md` recording: **selected strategy** (rebase | merge), **validation notes** (typecheck + test results), **conflict resolution summary**, **push command used**, and **risk notes** (force-push impact, follow-up needed).
+- [ ] **7. Push** — publish the updated branch with an explicit lease against the recorded remote PR-head SHA. Record the exact push command used.
+- [ ] **8. Write report** — create `{{TASK_DIR}}/artifacts/report.md` recording: publication base, validation results, conflict resolution, exact push command and any remaining risks.
 - [ ] **9. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
 - [ ] **10. Signal completion** — run `{{TASK_DIR}}/mark complete --mark-last`
 

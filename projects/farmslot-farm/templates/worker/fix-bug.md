@@ -72,7 +72,7 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
   ```bash
   bash {{recipe_validate_wrapper}} ... --slow 2000 --record-video=full-run --task-dir {{TASK_DIR}}
   ```
-- [ ] **10. Evidence manifest** — when step 3 listed a UI/device surface, `evidence-manifest.json` must reference real screenshots/video (empty pairs are not proof). Gateway-cli-only may omit visual evidence.
+- [ ] **10. Evidence** — inspect the selected attempt’s engine-derived screenshots/video when step 3 listed a UI/device surface. Empty media is not visual proof.
       {{CI_PARITY_STEP}}
 
 - [ ] **11. Recipe proof + acceptance review** — follow TASK.md for task-bound recipe proof, registered criteria, coverage and completion commands. Retain recipe results and resolve refused checks before continuing.
@@ -86,7 +86,7 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
 - [ ] **15. Commit** — single commit following the repo's Lore commit protocol.
 - [ ] **16. Prepare local PR package** — keep the branch local; do not run `git push`, `gh pr create`, `gh pr edit`, or `gh pr comment`.
 - [ ] **17. Draft PR description artifact** — write the intended PR title/body to `{{TASK_DIR}}/artifacts/pr-description.md`; the gateway publishes it only after human approval.
-- [ ] **18. Optional visual evidence manifest** — if screenshots/videos prove the fix, write `{{TASK_DIR}}/artifacts/evidence-manifest.json` using the strict schema below. Use `before_after_pairs` for comparisons; unknown top-level keys are invalid. Omit this file when there is no visual evidence.
+- [ ] **18. Optional external evidence declarations** — recipe evidence is engine-derived. Only non-recipe captures and comparison labels need the task-root declaration below. Recipe references must point into the selected attempt.
   ```json
   {
     "version": 1,

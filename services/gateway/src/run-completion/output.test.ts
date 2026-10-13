@@ -11,9 +11,10 @@ await import('../runtime/mock-pty.test-support.js');
 const { runResolveDecision } = await import('../methods/run.js');
 const { makeRun } = await import('../methods/run/test-fixtures.js');
 const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
-const { captureRunOutput, failRunOutputCapture, outputReviewDecisions } =
+const { captureRunOutput, failRunOutputCapture, outputManifestDigest, outputReviewDecisions } =
   await import('./output.js');
 const { closeRunOutput } = await import('./output-close.js');
+const { createRetrospectiveForRun } = await import('./retrospective.js');
 
 const output: RunOutput = {
   workerFinished: true,
@@ -22,6 +23,111 @@ const output: RunOutput = {
   reportPath: 'artifacts/report.md',
   artifactManifest: [],
 };
+
+test('completion diagnostics and a pending retrospective preserve the captured QA review and close', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'output-retrospective-'));
+  await mkdir(path.join(dir, 'artifacts'));
+  await writeFile(path.join(dir, 'artifacts/report.html'), '<h1>Passed 17/17</h1>');
+  await writeFile(path.join(dir, 'artifacts/qa-result.json'), '{"passed":17}\n');
+  const run = createRun({ flowType: 'dev', project: 'generic-project', ticketOrPr: 'PROJ-123' });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed' });
+      await deleteRun(run.id);
+    }
+    await rm(dir, { recursive: true, force: true });
+  });
+  updateRun(run.id, {
+    flowType: 'qa',
+    status: 'done',
+    completedAt: new Date().toISOString(),
+    completionPolicy: 'artifact-only',
+    taskFile: path.join(dir, 'TASK.md'),
+    metrics: { ...run.metrics, outcome: 'success' },
+    steps: [{ name: 'complete', status: 'done' }],
+  });
+  await captureRunOutput(run.id, false);
+  const captured = getRun(run.id)!;
+  const review = captured.decisions.find((decision) => decision.payload?.kind === 'output-review')!;
+  const digest = captured.output!.manifestDigest;
+  const metrics = structuredClone(captured.metrics);
+  const steps = structuredClone(captured.steps);
+  await writeFile(path.join(dir, 'artifacts/diff-stat.json'), '{"files":0}\n');
+  await writeFile(path.join(dir, 'artifacts/iteration-diff-stat.json'), '{"files":0}\n');
+  await createRetrospectiveForRun(run.id);
+  const retrospective = getRun(run.id)!.decisions.find(
+    (decision) => decision.type === 'retrospective',
+  )!;
+  assert.ok(retrospective);
+  const acknowledged = await runResolveDecision(
+    { runId: run.id, decisionId: review.id, actionId: 'mark-reviewed' },
+    () => {},
+  );
+  assert.equal(acknowledged.run.output?.manifestDigest, digest);
+  assert.equal(
+    acknowledged.run.decisions.find((decision) => decision.id === retrospective.id)?.resolvedAt,
+    undefined,
+  );
+  const close = acknowledged.run.decisions.find(
+    (decision) => !decision.resolvedAt && decision.payload?.kind === 'output-review',
+  )!;
+  await writeFile(path.join(dir, 'artifacts/diff-stat.json'), '{"files":1}\n');
+  await captureRunOutput(run.id, false);
+  assert.equal(
+    getRun(run.id)!.decisions.find((decision) => decision.id === close.id)?.resolvedAt,
+    undefined,
+  );
+  assert.ok(
+    getRun(run.id)!.output!.artifactManifest.some(
+      (artifact) => artifact.path === 'artifacts/diff-stat.json',
+    ),
+  );
+  const closed = await closeRunOutput(run.id, close.id, {
+    publish: async (current) => current,
+    releaseSlot: async () => ({ released: true }),
+    slotOwner: async () => null,
+  });
+  assert.ok(closed.output?.closedAt);
+  assert.deepEqual(closed.metrics, metrics);
+  assert.deepEqual(closed.steps, steps);
+  assert.equal(
+    closed.decisions.find((decision) => decision.id === retrospective.id)?.resolvedAt,
+    undefined,
+  );
+});
+
+test('output digest excludes only top-level gateway diff diagnostics, retaining worker evidence', () => {
+  const report = {
+    path: 'artifacts/report.md',
+    purpose: 'report' as const,
+    sha256: 'report',
+    sizeBytes: 1,
+  };
+  const digest = outputManifestDigest([report]);
+  for (const name of [
+    'diff.txt',
+    'diff-stat.json',
+    'iteration-diff.txt',
+    'iteration-diff-stat.json',
+  ]) {
+    const diagnostic = { ...report, path: `artifacts/${name}` };
+    assert.equal(outputManifestDigest([report, diagnostic]), digest);
+    assert.equal(
+      outputManifestDigest([report, { ...diagnostic, sha256: 'changed', sizeBytes: 2 }]),
+      digest,
+    );
+    assert.notEqual(
+      outputManifestDigest([report, { ...diagnostic, path: `artifacts/attempt-3/${name}` }]),
+      digest,
+    );
+  }
+  assert.notEqual(outputManifestDigest([{ ...report, sha256: 'changed' }]), digest);
+  assert.notEqual(
+    outputManifestDigest([report, { ...report, path: 'artifacts/qa-result.json' }]),
+    digest,
+  );
+  assert.notEqual(outputManifestDigest([]), digest);
+});
 
 test('an override arriving during output verification invalidates both confirmation actions', async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'output-override-fence-'));

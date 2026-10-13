@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  DEFAULT_BRANCH,
   effectiveRequiredReviewCount,
   type EvidenceManifestEntry,
   type EvidenceRefreshOverrideRecord,
@@ -795,7 +796,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
   }
   // defaultBranch is shared by zero-ahead + branch-freshness (single slot probe).
   const defaultBranch =
-    (pv?.projectJson ? getProjectField(pv.projectJson, 'default_branch') : null) || 'main';
+    (pv?.projectJson ? getProjectField(pv.projectJson, 'default_branch') : null) || DEFAULT_BRANCH;
 
   // Soft branch-freshness probe (fetch + behind/ahead + merge-tree). headSha is
   // taken from the probe when present; fall back to a cheap local rev-parse so a

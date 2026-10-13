@@ -196,6 +196,7 @@ export default function RunDetailScreen() {
       createEvidenceReviewModel({
         context: 'run-detail',
         package: recordedEvidence?.input,
+        contractVersion: recordedEvidence?.contractVersion,
         readErrors: recordedEvidence?.errors,
         artifactPrefix: recordedEvidence?.artifactPrefix,
         packagePath: recordedEvidence?.packagePath,

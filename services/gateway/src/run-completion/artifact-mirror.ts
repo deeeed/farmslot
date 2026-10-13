@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   DEFAULT_TASK_DIR,
   isInternalRunArtifactPath,
+  RecordedEvidenceReadError,
   type Run,
   SUBTASKS_DIR,
 } from '@farmslot/protocol';
@@ -46,10 +47,13 @@ import {
   type EvidenceManifest,
   evidenceManifestArtifactPaths,
   normalizeEvidenceManifestArtifactPath,
-  validateEvidenceManifest,
 } from './evidence-manifest.js';
 import { PR_BODY_ARTIFACT, PR_PROSE_ARTIFACT } from './pr-body-render.js';
-import { readEvidenceManifest } from './publication-artifacts.js';
+import {
+  type PublicationManifestReadIO,
+  readSelectedPublicationManifest,
+  resolvePublicationManifest,
+} from './publication-artifacts.js';
 import {
   assertPublishPackageWithinCaps,
   prBodyCitedArtifactPaths,
@@ -170,18 +174,49 @@ async function workerEvidenceManifestPaths(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   workerArtifactsDir: string,
 ): Promise<string[]> {
-  const manifestPath = path.join(workerArtifactsDir, 'evidence-manifest.json');
-  if (!(await slotFileExists(vars, manifestPath))) return [];
-  let parsed: unknown;
+  const { extractEvidenceManifestReferencedPaths } =
+    await import('../live-recipe/artifact-filters.js');
+  const retainedDeclaration = path.join(workerArtifactsDir, 'evidence-manifest.json');
+  const retainedReferences = (await slotFileExists(vars, retainedDeclaration))
+    ? extractEvidenceManifestReferencedPaths(
+        await slotReadFile(vars, retainedDeclaration),
+        retainedDeclaration,
+      )
+    : [];
+  let manifest: EvidenceManifest | null;
   try {
-    parsed = JSON.parse(await slotReadFile(vars, manifestPath));
-  } catch {
-    return [];
+    manifest = await readSelectedPublicationManifest(path.dirname(workerArtifactsDir), {
+      readText: async (file) =>
+        (await slotFileExists(vars, file)) ? slotReadFile(vars, file) : null,
+    });
+  } catch (error) {
+    if (!(error instanceof RecordedEvidenceReadError)) throw error;
+    console.warn(`[artifact-mirror] ${error.code}: ${error.message}`);
+    manifest = null;
   }
-  if (validateEvidenceManifest(parsed).length > 0) return [];
-  return evidenceManifestArtifactPaths(parsed as EvidenceManifest, { mediaOnly: false }).map(
-    (artifactPath) => artifactPath.slice('artifacts/'.length),
-  );
+  // Retention includes explicitly referenced history; it does not select publication proof.
+  return [
+    ...new Set([
+      ...retainedReferences,
+      ...evidenceManifestArtifactPaths(manifest, { mediaOnly: false }).map((artifactPath) =>
+        artifactPath.slice('artifacts/'.length),
+      ),
+    ]),
+  ];
+}
+
+async function retainedEvidenceManifest(
+  taskDir: string,
+  io?: PublicationManifestReadIO,
+): Promise<EvidenceManifest | null> {
+  try {
+    return (await resolvePublicationManifest(taskDir, io))?.manifest ?? null;
+  } catch (error) {
+    if (!(error instanceof RecordedEvidenceReadError)) throw error;
+    // Retention keeps failed/old output readable. Publication still refuses this selection.
+    console.warn(`[artifact-mirror] ${error.code}: ${error.message}`);
+    return null;
+  }
 }
 
 // realpath codes for a link with no target: dangling, looping, or through a file.
@@ -212,10 +247,19 @@ async function copyEvidenceManifestReferencedArtifacts(
   localArtifactsDir: string,
   manifest: EvidenceManifest | null | undefined,
   progress?: { runId?: string; slotId?: string },
+  retainedPaths: readonly string[] = [],
 ): Promise<number> {
-  const mediaPaths = new Set(evidenceManifestArtifactPaths(manifest));
+  const paths = [
+    ...new Set([
+      ...evidenceManifestArtifactPaths(manifest, { mediaOnly: false }),
+      ...retainedPaths.map((file) => `artifacts/${file}`),
+    ]),
+  ];
+  const mediaPaths = new Set(
+    paths.filter((file) => /\.(png|jpe?g|gif|mp4|mov|webm)$/iu.test(file)),
+  );
   let copied = 0;
-  for (const artifactPath of evidenceManifestArtifactPaths(manifest, { mediaOnly: false })) {
+  for (const artifactPath of paths) {
     // Media is the PR evidence, so a bad media reference fails the mirror.
     // Other named files (logs, JSON) are linked, not published, and were never
     // checked; an internal or missing one is skipped with a warning.
@@ -439,8 +483,9 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
     vars,
     workerArtifactsDir,
     localArtifactsDir,
-    await readEvidenceManifest(run),
+    run.taskFile ? await retainedEvidenceManifest(path.dirname(run.taskFile)) : null,
     transferMeta,
+    manifestPaths,
   );
   if (copied > 0) {
     console.log(`[run-completion] copied ${copied} artifact(s) from worker`);

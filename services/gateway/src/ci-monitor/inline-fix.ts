@@ -1,10 +1,12 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { buildBranchUpdateInstructions } from '@farmslot/agent-runtime';
 import {
   type AgentContext,
   type BotComment,
   type CIWatchFixProgress,
+  DEFAULT_BRANCH,
   primaryRoleForFlow,
   type Run,
   type WorkerSignal,
@@ -47,6 +49,7 @@ import {
   ensureTmuxTargetReadyForRelaunch,
   rediscoverAcceptingWorkerPane,
 } from '../review/worker-lifecycle.js';
+import { publicationBaseForRun } from '../run-engine/stack-base.js';
 import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
 import { runnerActivityIsBusy } from '../runners/observability-files.js';
 import { isObservabilityReadingAuthoritative } from '../runners/observability-send-decision.js';
@@ -571,7 +574,8 @@ async function writeCIFixTask(
   const defaultBranch =
     typeof pv.projectJson.default_branch === 'string' && pv.projectJson.default_branch.trim()
       ? pv.projectJson.default_branch.trim()
-      : 'main';
+      : DEFAULT_BRANCH;
+  const publicationBase = await publicationBaseForRun(run, defaultBranch);
   const ciReplacements: Record<string, string> = {
     CI_PARITY_CHECKLIST: CI_FIX_CHECKLIST_TARGET.checklist,
     TASK_DIR: taskDir,
@@ -579,6 +583,8 @@ async function writeCIFixTask(
     GH_REPO: ciRepo,
     BRANCH: branch,
     DEFAULT_BRANCH: defaultBranch,
+    PUBLICATION_BASE: publicationBase,
+    BRANCH_UPDATE_INSTRUCTIONS: buildBranchUpdateInstructions(publicationBase),
     CI_ISSUES: ciIssues,
     CI_ISSUE_TYPE: ciIssueType,
   };
@@ -592,7 +598,14 @@ async function writeCIFixTask(
   // Explicit values land last so CI_ISSUES comment text (which may quote
   // {{...}} tokens verbatim) is never re-expanded and a colliding var cannot
   // consume the placeholder.
-  const expanded = expandTemplateWithReservedLast(template, vars, pv, ciReplacements);
+  // Inline fixes reuse TASK.md, which may predate stack binding or retargeting.
+  // Supply current branch instructions even for a project template without the new token.
+  const expanded = [
+    expandTemplateWithReservedLast(template, vars, pv, ciReplacements),
+    ...(template.includes('{{BRANCH_UPDATE_INSTRUCTIONS}}')
+      ? []
+      : ['', ciReplacements.BRANCH_UPDATE_INSTRUCTIONS]),
+  ].join('\n');
 
   // Write CI-FIX.md to slot using the shared safe text writer
   const taskPath = taskDirRelPath(taskDir, CI_FIX_CHECKLIST_TARGET.checklist);

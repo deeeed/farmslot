@@ -552,6 +552,9 @@ export interface RunRecipeRunsForRunParams {
 }
 
 export interface RunRecordedEvidenceReview {
+  /** 0 identifies retained pre-cutover runs; newer/unknown contracts cannot become Legacy. */
+  contractVersion: number;
+  failureCode?: import('../recipe/run-contract.js').RecordedEvidenceReadFailureCode;
   /** Checked gateway authority for display; never supplied by task/recipe files. */
   claimOverrideAuthority?: import('../recipe/index.js').ClaimOverrideAuthority;
   /** Display path relative to run artifacts, independent of media transport. */

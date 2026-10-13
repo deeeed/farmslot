@@ -47,6 +47,8 @@ export interface WorkerTerminalProjectConfig {
 export interface WorkerTerminalContractDocument {
   /** Gateway-derived completion destination; never a project/worker waiver. */
   claimReviewGate?: boolean;
+  /** Projection of the gateway-owned run contract, never a project/worker option. */
+  recordedEvidenceContractVersion?: number;
   schemaVersion: 1;
   flowType: string;
   mode?: string;

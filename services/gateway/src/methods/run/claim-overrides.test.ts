@@ -84,6 +84,7 @@ async function fixture(t: TestContext) {
     recording: { status: 'not-required', segments: [] },
   };
   const documents = {
+    'evidence-manifest.json': { version: 1, standalone: [] },
     'recipe.json': recipe,
     'recipe-invocation.json': invocation,
     'acceptance-status.json': claims,
@@ -136,7 +137,7 @@ async function fixture(t: TestContext) {
     await writeFile(path.join(directory, file), bytes);
     inventory.push({
       path: `artifacts/proof/${file}`,
-      purpose: 'json',
+      purpose: file === 'evidence-manifest.json' ? 'evidence-manifest-source' : 'json',
       sha256: createHash('sha256').update(bytes).digest('hex'),
     });
   }

@@ -4,13 +4,62 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import {
+await import('../runtime/mock-pty.test-support.js');
+const {
   assertSelectedEvidencePublished,
   collectUploadableMediaFiles,
   expandEvidenceSelectionForManifest,
   filterArtifactUrlsByEvidenceSelection,
   scanArtifacts,
-} from './publication-artifacts.js';
+  resolvePublicationManifest,
+} = await import('./publication-artifacts.js');
+
+test('the selected attempt preserves non-recipe declarations and missing selection never falls back', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'selected-publication-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, 'artifacts/recipe-runs/current'), { recursive: true });
+  await writeFile(
+    path.join(root, 'artifacts/latest-valid-recipe-run.json'),
+    JSON.stringify({
+      version: 1,
+      relativeArtifactRoot: 'recipe-runs/current',
+    }),
+  );
+  await writeFile(
+    path.join(root, 'artifacts/evidence-manifest.json'),
+    JSON.stringify({
+      version: 1,
+      standalone: [{ label: 'Old', file: 'old.png' }],
+    }),
+  );
+  const selected = path.join(root, 'artifacts/recipe-runs/current/evidence-manifest.json');
+  await writeFile(
+    selected,
+    JSON.stringify({
+      version: 1,
+      standalone: [{ label: 'Current', file: 'current.png' }],
+    }),
+  );
+  const resolved = await resolvePublicationManifest(root);
+  assert.equal(resolved?.sourcePath, 'artifacts/recipe-runs/current/evidence-manifest.json');
+  assert.deepEqual(
+    resolved?.manifest.standalone?.map((entry) => entry.file),
+    ['old.png', 'artifacts/recipe-runs/current/current.png'],
+  );
+  assert.equal(resolved?.declarationSources?.[0]?.file, 'artifacts/evidence-manifest.json');
+  await writeFile(selected, '{invalid');
+  await assert.rejects(
+    resolvePublicationManifest(root),
+    /selected recipe attempt evidence-manifest.json is invalid/,
+  );
+  await rm(selected);
+  await assert.rejects(resolvePublicationManifest(root), /selected recipe attempt has no/);
+  await writeFile(path.join(root, 'artifacts/latest-valid-recipe-run.json'), '{invalid');
+  await assert.rejects(
+    resolvePublicationManifest(root),
+    /selected recipe attempt pointer is invalid/,
+  );
+});
 
 test('qualified upload and render selections do not include same-named older captures', () => {
   const urls = new Map([
