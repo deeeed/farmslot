@@ -1074,6 +1074,7 @@ export async function executeFindSlotStep(
           requiredPrepareProfile,
           activeRunIds: activeRunIds(getAllRuns(), runId),
           plans: sourcePlans,
+          ...capabilitySelection,
         },
       );
       if (nudgeCandidates.length > 0) {
