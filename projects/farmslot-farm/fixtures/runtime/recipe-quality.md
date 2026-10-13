@@ -148,8 +148,8 @@ After the proof run, `artifacts/` must contain promotable media the gateway can 
 
 | File                                                    | Source                                                                               |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `artifacts/before-*.png`                                | recipe `screenshots/before-*`                                                        |
-| `artifacts/after-*.png`                                 | recipe `screenshots/after-*` or `demo-*`                                             |
+| `artifacts/recipe-runs/<attempt>/screenshots/before-*`  | recipe `screenshots/before-*`                                                        |
+| `artifacts/recipe-runs/<attempt>/screenshots/after-*`   | recipe `screenshots/after-*` or `demo-*`                                             |
 | `artifacts/recipe-runs/<attempt>/videos/recipe-run.mp4` | `recipe-runs/<attempt>/videos/recipe-run.mp4`, selected by `sync-recipe-evidence.sh` |
 
 Write `{{TASK_DIR}}/artifacts/evidence-manifest.json`:
@@ -178,9 +178,9 @@ Write `{{TASK_DIR}}/artifacts/evidence-manifest.json`:
 Rules:
 
 - Paths must resolve under `artifacts/` (gateway normalizes `artifacts/foo.png`).
-- Do not reference files that `sync-recipe-evidence.sh` did not promote.
+- Use the original paths selected by `sync-recipe-evidence.sh`; it does not create top-level media copies.
 - For UI features, `videos.after` is **required** unless capture-helper doctor fails (document the doctor error in `videos.note` and keep screenshots).
-- When capture-helper or CDP screencast fails and screenshots are promoted as the fallback
+- When capture-helper or CDP screencast fails and screenshots are selected as the fallback
   (e.g. taken via CDP `Page.captureScreenshot` rather than native capture-helper), set
   `preferred_mode: "screenshots"` and describe the fallback source in `videos.note`:
   `"CDP screencast unavailable in tmux/sandbox; screenshots sourced from CDP Page.captureScreenshot."`

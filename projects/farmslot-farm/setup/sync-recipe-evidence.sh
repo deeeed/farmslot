@@ -75,7 +75,7 @@ video = run / "videos" / "recipe-run.mp4"
 if video.is_file():
     if b"moov" not in video.read_bytes():
         raise SystemExit("recording is missing its moov atom")
-    manifest.setdefault("videos", {}).update({"after": video.relative_to(task).as_posix(), "preferred": "after"})
+    manifest.setdefault("videos", {}).update({"after": video.relative_to(task).as_posix(), "preferred": True})
 elif require_video:
     raise SystemExit("required recording is missing from the retained attempt")
 if standalone or manifest.get("videos"):

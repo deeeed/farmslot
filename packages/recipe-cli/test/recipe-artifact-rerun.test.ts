@@ -30,11 +30,18 @@ test('the task wrapper runs twice with fresh packages and never overwrites promo
   await writeFile(
     driver,
     `
-    import {mkdir,writeFile} from 'node:fs/promises';
+    import {mkdir,readFile,writeFile} from 'node:fs/promises';
+    import {createRequire} from 'node:module';
+    const {digestRecipeDocument}=createRequire(${JSON.stringify(path.join(root, 'packages/recipe-cli/package.json'))})('@farmslot/protocol/recipe');
     import path from 'node:path';
     const argv=process.argv.slice(2);const artifactsDir=argv[argv.indexOf('--artifacts-dir')+1];
     await mkdir(path.join(artifactsDir,'videos'),{recursive:true});
-    await writeFile(path.join(artifactsDir,'summary.json'),'{"status":"pass"}');
+    const recipe=JSON.parse(await readFile(argv[0],'utf8'));
+    await writeFile(path.join(artifactsDir,'recipe.json'),JSON.stringify(recipe));
+    await writeFile(path.join(artifactsDir,'recipe-resolution.json'),JSON.stringify({schema_version:1,root:{ref:'task',digest:digestRecipeDocument(recipe)},dependencies:[],edges:[]}));
+    await writeFile(path.join(artifactsDir,'artifact-manifest.json'),JSON.stringify({version:1,runStatus:'pass',artifacts:[]}));
+    await writeFile(path.join(artifactsDir,'trace.json'),'[{"nodeId":"done","action":"end","ok":true}]');
+    await writeFile(path.join(artifactsDir,'summary.json'),JSON.stringify({status:'pass',total:1,passed:1,failed:0,cause_counts:{subject:0,harness:0,environment:0,unknown:0}}));
     await writeFile(path.join(artifactsDir,'videos/recipe-run.mp4'),'unit moov media '+artifactsDir);
   `,
   );
@@ -84,19 +91,15 @@ test('the task wrapper runs twice with fresh packages and never overwrites promo
   assert.deepEqual(await readFile(path.join(firstRoot, 'summary.json')), firstSummary);
   assert.equal(await readFile(path.join(artifacts, 'after.mp4'), 'utf8'), 'old retained media');
   assert.equal(await readFile(recipe, 'utf8'), document);
-  execFileSync(
-    'bash',
-    [
-      path.join(root, 'projects/farmslot-farm/setup/sync-recipe-evidence.sh'),
-      '--task-dir',
-      task,
-      '--require-video',
-    ],
-    { env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` }, timeout: 5_000 },
-  );
   const manifest = JSON.parse(
     await readFile(path.join(artifacts, 'evidence-manifest.json'), 'utf8'),
   );
+  execFileSync(
+    process.execPath,
+    [path.join(root, 'packages/agent-runtime/scripts/check-task-artifact-contract.mjs'), task],
+    { encoding: 'utf8', timeout: 5_000 },
+  );
+  assert.equal(manifest.videos.preferred, true);
   assert.equal(
     manifest.videos.after,
     `artifacts/${second.relativeArtifactRoot}/videos/recipe-run.mp4`,

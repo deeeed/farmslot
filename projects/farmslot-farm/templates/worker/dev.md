@@ -123,9 +123,9 @@ Skip when step 1 is `gateway-cli` only (no Command Center UI and no Companion de
     --record-video=full-run \
     --task-dir {{TASK_DIR}}
   ```
-  (`validate-recipe.sh` auto-promotes screenshots + `after.mp4` into `artifacts/` when `--task-dir` is set.)
-- [ ] **13. Validate screenshots (HARD GATE)** — Read each promoted `artifacts/before-*.png` and `artifacts/after-*.png` via the Read tool. The claimed UI must be visible — not off-screen, wrong route, or generic shell. Re-run step 12 if not.
-- [ ] **14. Write `{{TASK_DIR}}/artifacts/evidence-manifest.json`** — gateway uses this to embed screenshots + `after.mp4` in the created PR. Follow `{{recipe_quality_path}}` (before/after pairs + `videos.after: artifacts/after.mp4`).
+  (`validate-recipe.sh` selects original attempt screenshots and video in `evidence-manifest.json` when `--task-dir` is set.)
+- [ ] **13. Validate screenshots (HARD GATE)** — Read each screenshot referenced by `evidence-manifest.json` via the Read tool. The claimed UI must be visible — not off-screen, wrong route, or generic shell. Re-run step 12 if not.
+- [ ] **14. Check `{{TASK_DIR}}/artifacts/evidence-manifest.json`** — validation generated the retained screenshot/video paths. Keep those original paths when arranging before/after evidence; gateway uploads the selected media.
 - [ ] **15. Recipe coverage** — `recipe-coverage.md` (gateway computes recipe-quality). Visual ACs cannot be `pass` without screenshot/video proof.
       {{CI_PARITY_STEP}}
 
@@ -144,7 +144,7 @@ Skip when step 1 is `gateway-cli` only (no Command Center UI and no Companion de
       needs a node proving its claim, then a full re-run. Act on the result: failing node means fix the code, or fix an
       assertion that over-claims. Prove each new node can fail before trusting it. Unit tests do not cover wiring.
 - [ ] **20. Commit** — atomic commit(s) following Conventional Commits.
-- [ ] **21. Write `{{TASK_DIR}}/artifacts/pr-description.md`** — include root cause, fix summary, test results, and evidence paths (screenshots + `after.mp4`). Include `## **Screenshots/Recordings**` placeholder (`_Evidence will be added after upload._`); gateway replaces from `evidence-manifest.json`. Append `## **Validation Recipe**` with `recipe.json` in a `<details>` block when present.
+- [ ] **21. Write `{{TASK_DIR}}/artifacts/pr-description.md`** — include root cause, fix summary, test results, and retained evidence paths from `evidence-manifest.json`. Include `## **Screenshots/Recordings**` placeholder (`_Evidence will be added after upload._`); gateway replaces from `evidence-manifest.json`. Append `## **Validation Recipe**` with `recipe.json` in a `<details>` block when present.
 - [ ] **22. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence for family retrospective and improvement. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
 - [ ] **23. Signal completion**:
   ```bash
