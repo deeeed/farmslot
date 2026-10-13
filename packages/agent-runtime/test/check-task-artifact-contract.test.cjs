@@ -80,7 +80,32 @@ try {
   assert.equal(recordRecipeAttemptSelection(selectedTask, selectedRoot), true);
   const selectedPointerPath = path.join(selectedTask, 'artifacts', 'latest-valid-recipe-run.json');
   const selectedPointer = readFileSync(selectedPointerPath);
-  let selectedResult = spawnSync(process.execPath, [checker, selectedTask], { encoding: 'utf8' });
+  writeFileSync(path.join(selectedRoot, 'proof.png'), 'selected captured image');
+  writeFileSync(
+    path.join(selectedRoot, 'evidence-manifest.json'),
+    JSON.stringify({
+      version: 1,
+      standalone: [{ label: 'Selected proof', file: 'proof.png' }],
+    }),
+  );
+  writeFileSync(
+    path.join(selectedTask, 'artifacts/evidence-manifest.json'),
+    '{invalid old manifest',
+  );
+  const manifestContract = path.join(selectedTask, 'manifest-contract.json');
+  writeFileSync(
+    manifestContract,
+    JSON.stringify({
+      schemaVersion: 1,
+      flowType: 'dev',
+      commands: { complete: { artifacts: ['artifacts/evidence-manifest.json'] } },
+    }),
+  );
+  let selectedResult = spawnSync(
+    process.execPath,
+    [checker, selectedTask, '--contract', manifestContract, '--terminal', 'complete'],
+    { encoding: 'utf8' },
+  );
   assert.equal(selectedResult.status, 0, selectedResult.stderr);
   writeFileSync(path.join(selectedRoot, 'summary.json'), '{"status":"fail"}');
   assert.equal(recordRecipeAttemptSelection(selectedTask, selectedRoot), false);

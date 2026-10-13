@@ -1,7 +1,7 @@
 # ADR-062: Recorded run evidence
 
 **Status:** Accepted
-**Revision:** Accepted amendments 1 and 2 consolidated on 2026-10-13; amendment 3 Accepted under #1011; amendment 4 Accepted under #1015. Historical/footprint implementation remains pending; curation delivery is recorded below.
+**Revision:** Accepted amendments 1 and 2 consolidated on 2026-10-13; amendment 3 Accepted under #1011; amendment 4 Accepted under #1015; amendment 5 accepted on 2026-10-14. Historical/footprint implementation remains pending; curation delivery is recorded below.
 **Date:** 2026-10-12
 **Owner:** Farmslot maintainers
 **Scope:** Recipe execution, claim evidence, review gates, and public CLI/SDK
@@ -389,3 +389,39 @@ verdict code. Replace schema-2 local `ac set` authority with this verified path
 after conformance, with no compatibility writer. The specification names the
 parameters, identity checks and refusal cases. Update completion/refusal guidance
 in the same cutover so workers request human review rather than writing overrides.
+
+## Amendment 5 (2026-10-14): Selected evidence and run contract version
+
+**Status:** Accepted, 2026-10-14
+**Specification:** [Selected evidence run contract](../reference/recorded-run-evidence.md#selected-evidence-run-contract).
+
+### Decision
+
+The gateway stamps new runs with `recordedEvidenceContractVersion: 1` at creation.
+Existing unversioned runs remain pre-cutover records; loading or replay never
+backfills the field. An unsupported version refuses evidence admission.
+
+The engine derives each attempt's publication manifest from its registered
+artifacts and claim results. Publication freezes only the selected execution and
+its complete input closure, including headless executions. Selection errors
+never fall back to the task ledger or another attempt.
+
+The shared review model shows Legacy only for pre-cutover data without a current
+contract. Unverifiable newer data is Invalid with a typed reason and recovery
+action. Retained reports and failed packages remain readable without granting
+admission or measured proof.
+
+### Rationale and consequences
+
+Missing metadata cannot establish age. A gateway-owned version supplies one
+durable boundary without dates, path guesses or retroactive evidence changes.
+Projects inherit the engine producer and delete their selection writers after
+consumer conformance. No compatibility writer or parallel evidence format is added.
+
+### Public surface and migration
+
+Protocol owns the run version, failure codes and existing publication-manifest
+types. The existing recipe artifact CLI, runner writer and SDK review model expose
+them with default execution behavior; no additional command family or flag is
+needed. Gateway reads, both clients and historical projections consume this one
+contract. Implementation and package publication are recorded separately.

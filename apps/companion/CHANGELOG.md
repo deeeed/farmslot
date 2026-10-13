@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Use the shared run evidence contract in package status and recovery guidance.
 - Use shared verified claim overrides in publish and output review while preserving engine verdicts.
 
 - Use the shared evidence-policy attestation action and reason input in the existing gate workspace.

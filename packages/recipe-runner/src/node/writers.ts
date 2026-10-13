@@ -1,5 +1,7 @@
 import {
+  type EvidenceManifest,
   type RecipeArtifactManifestEntry,
+  type RecipeClaimLedger,
   type RecipeResolutionDocument,
   resolvedRecipeArtifactPath,
 } from '@farmslot/protocol';
@@ -92,6 +94,36 @@ export class JsonArtifactWriter implements ArtifactWriter {
 
   list(): RecipeArtifactManifestEntry[] {
     return [...this.#entries];
+  }
+
+  /** Every engine consumer gets the same attempt-local publication candidate. */
+  async writeEvidenceManifest(claims: RecipeClaimLedger): Promise<string> {
+    if (this.#entries.some((artifact) => artifact.path === 'evidence-manifest.json'))
+      throw new Error('evidence-manifest.json is owned by the recipe engine.');
+    const manifest: EvidenceManifest = {
+      version: 1,
+      preferred_mode: 'screenshots',
+      summary: claims.criteria.map((claim) => `${claim.id}: ${claim.verdict}`).join('; '),
+      standalone: this.list()
+        .filter((artifact) => artifact.type === 'screenshot' || artifact.type === 'video')
+        .map((artifact) => ({
+          label: artifact.label ?? artifact.nodeId ?? artifact.path,
+          file: artifact.path,
+          note: `Recorded in recipe execution ${claims.recipeRunId}.`,
+        })),
+    };
+    const manifestPath = await writeJsonWithinRoot(
+      this.#artifactsDir,
+      'evidence-manifest.json',
+      manifest,
+    );
+    this.register({
+      path: 'evidence-manifest.json',
+      type: 'json',
+      category: 'system',
+      label: 'Engine-derived publication selection',
+    });
+    return manifestPath;
   }
 
   async write(

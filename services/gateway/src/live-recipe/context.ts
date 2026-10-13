@@ -662,13 +662,28 @@ async function loadContextFromArtifactRoot({
   scanOptions = {},
   allowUnavailableAsStale = false,
 }: LoadContextOptions): Promise<LiveRecipeContext | null> {
-  const evidenceManifestPath = path.join(artifactRoot, 'evidence-manifest.json');
+  const selectedPointer = await readLatestValidRecipeRunPointer(run, artifactRoot);
+  const evidenceManifestPath = selectedPointer
+    ? path.join(artifactRoot, selectedPointer.relativeArtifactRoot, 'evidence-manifest.json')
+    : path.join(artifactRoot, 'evidence-manifest.json');
   const evidenceManifestJson = await readPortableTextIfExists(run, evidenceManifestPath);
-  const evidenceManifestReferencedPaths = extractEvidenceManifestReferencedPaths(
+  const selectedReferences = extractEvidenceManifestReferencedPaths(
     evidenceManifestJson,
     evidenceManifestPath,
+  ).map((file) =>
+    selectedPointer ? path.posix.join(selectedPointer.relativeArtifactRoot, file) : file,
   );
-  const selectedPointer = await readLatestValidRecipeRunPointer(run, artifactRoot);
+  // Browsing retains external captures and historical references without admitting them.
+  const declarationPath = path.join(artifactRoot, 'evidence-manifest.json');
+  const declaredReferences = selectedPointer
+    ? extractEvidenceManifestReferencedPaths(
+        await readPortableTextIfExists(run, declarationPath),
+        declarationPath,
+      )
+    : [];
+  const evidenceManifestReferencedPaths = [
+    ...new Set([...selectedReferences, ...declaredReferences]),
+  ];
   const selectedManifestRelative = selectedPointer
     ? `${selectedPointer.relativeArtifactRoot}/artifact-manifest.json`
     : null;

@@ -83,6 +83,27 @@ async function fixture(): Promise<RecipeRunArtifactGroup> {
 }
 
 const run = { slotId: 'test-slot' } as Run;
+test('a finished current run with no execution returns a typed missing selection, without backfilling history', async () => {
+  const source = await readRunRecordedEvidence(
+    { ...run, status: 'done', recordedEvidenceContractVersion: 1 },
+    undefined,
+  );
+  assert.equal(source.failureCode, 'evidence-selection-missing');
+  assert.match(source.errors.join(' '), /Re-run the recipe/);
+  assert.equal(
+    (await readRunRecordedEvidence({ ...run, status: 'done' }, undefined)).contractVersion,
+    0,
+  );
+  assert.deepEqual(
+    (
+      await readRunRecordedEvidence(
+        { ...run, status: 'monitoring', recordedEvidenceContractVersion: 1 },
+        undefined,
+      )
+    ).errors,
+    [],
+  );
+});
 test('local and remote review transport share the canonical input without original-media transfer', async (t) => {
   const group = await fixture();
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -107,6 +128,7 @@ test('transport failures remain visible and never supply invented timed proof', 
   corrupt = false;
   assert.deepEqual(await readRunRecordedEvidence(run, undefined), {
     artifactPrefix: 'artifacts/',
+    contractVersion: 0,
     errors: [],
   });
 });

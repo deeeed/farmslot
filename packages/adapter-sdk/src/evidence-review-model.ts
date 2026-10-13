@@ -47,6 +47,8 @@ export interface EvidenceReviewRecordingInput extends RecipeRecordingTimelineBin
 }
 
 export interface EvidenceReviewInput {
+  /** Gateway run contract: 0 is retained pre-cutover data, 1 is selected-attempt evidence. */
+  contractVersion?: number;
   claimOverrideAuthority?: ClaimOverrideAuthority;
   context?: EvidenceReviewContext;
   readErrors?: readonly string[];
@@ -178,6 +180,12 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     ...(input.readErrors ?? []),
     ...findings.filter((finding) => finding.severity === 'error').map((finding) => finding.message),
   ];
+  if (
+    input.contractVersion !== undefined &&
+    input.contractVersion !== 0 &&
+    input.contractVersion !== 1
+  )
+    errors.push('The recorded run evidence contract is unsupported.');
   const warnings = findings
     .filter((finding) => finding.severity === 'warning')
     .map((finding) => finding.message);
@@ -461,6 +469,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     pkg,
     input.packagePath ?? input.artifactPrefix,
     errors,
+    input.contractVersion,
   );
   return {
     context: input.context ?? 'artifact',

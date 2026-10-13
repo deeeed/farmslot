@@ -155,12 +155,23 @@ function isMissingPathError(error) {
 
 function resolveTaskArtifactPath(rel) {
   const root = realpathSync(taskDir);
-  const candidate = realpathSync(path.resolve(taskDir, rel));
+  const candidate = realpathSync(path.resolve(taskDir, publicationArtifactPath(rel)));
   const relative = path.relative(root, candidate);
   if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     throw new Error(`${rel} resolves outside the task directory`);
   }
   return candidate;
+}
+
+function publicationArtifactPath(rel) {
+  if (rel !== 'artifacts/evidence-manifest.json') return rel;
+  const pointerPath = path.join(taskDir, 'artifacts/latest-valid-recipe-run.json');
+  if (!existsSync(pointerPath)) return rel;
+  const pointer = recipeProtocol?.sanitizeLatestValidRecipeRunPointer?.(
+    JSON.parse(readFileSync(pointerPath, 'utf8')),
+  );
+  if (!pointer) throw new Error('latest-valid-recipe-run.json: invalid pointer.');
+  return `artifacts/${pointer.relativeArtifactRoot}/evidence-manifest.json`;
 }
 
 function isRecord(value) {
@@ -289,8 +300,11 @@ function normalizeArtifactPath(value) {
   return `artifacts/${withoutArtifacts}`;
 }
 
-function addRef(refs, value) {
-  const normalized = normalizeArtifactPath(value);
+function addRef(refs, value, artifactRoot = 'artifacts') {
+  const relative = normalizeArtifactPath(value);
+  const normalized = relative
+    ? path.posix.join(artifactRoot, relative.slice('artifacts/'.length))
+    : null;
   if (!normalized) return;
   if (internalArtifactPath.test(normalized)) {
     issues.push(`evidence-manifest references internal artifact: ${normalized}`);
@@ -487,7 +501,7 @@ function listArtifactPaths(root) {
 }
 
 function parseManifest() {
-  const relPath = 'artifacts/evidence-manifest.json';
+  const relPath = publicationArtifactPath('artifacts/evidence-manifest.json');
   if (!fileExists(relPath)) return null;
   const text = readText(relPath) ?? '';
   let manifest;
@@ -585,13 +599,14 @@ function parseManifest() {
   }
 
   const refs = new Set();
+  const artifactRoot = path.posix.dirname(relPath);
   for (const pair of manifest.before_after_pairs ?? []) {
-    addRef(refs, pair?.before);
-    addRef(refs, pair?.after);
+    addRef(refs, pair?.before, artifactRoot);
+    addRef(refs, pair?.after, artifactRoot);
   }
-  for (const entry of manifest.standalone ?? []) addRef(refs, entry?.file);
-  addRef(refs, manifest.videos?.before);
-  addRef(refs, manifest.videos?.after);
+  for (const entry of manifest.standalone ?? []) addRef(refs, entry?.file, artifactRoot);
+  addRef(refs, manifest.videos?.before, artifactRoot);
+  addRef(refs, manifest.videos?.after, artifactRoot);
 
   for (const ref of [...refs].sort()) {
     if (!fileExists(ref)) issues.push(`evidence-manifest references missing artifact: ${ref}`);

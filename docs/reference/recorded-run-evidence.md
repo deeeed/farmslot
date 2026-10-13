@@ -702,3 +702,55 @@ provider extension or agent evidence instructions are required.
 - **G6:** CLI and both gate contexts use the shared descriptor and gateway
   classification. Artifact-only output review and legacy read-only viewing keep
   their existing authority; neither grants publication.
+
+## Selected evidence run contract
+
+The gateway MUST stamp `Run.recordedEvidenceContractVersion` with
+`RECORDED_EVIDENCE_RUN_CONTRACT_VERSION`, currently `1`, at creation. Clients and
+workers MUST NOT choose it. Absence identifies pre-cutover stored runs; load,
+replay and artifact refresh MUST NOT backfill it. Unsupported versions fail
+closed with `evidence-contract-unsupported`.
+
+The engine MUST write an attempt-local `evidence-manifest.json` using the existing
+publication format, derived from registered artifacts and claim verdicts before
+final artifact-manifest validation. This is a publication candidate, not another
+claim writer. Projects declare recipes and MUST NOT copy or rewrite that file.
+
+For version 1, publication and its gate MUST read only the frozen selected
+execution. Freeze its pointer or exact engine manifest source and every input
+consumed by the canonical reader. A headless attempt freezes the same closure
+without inventing or selecting media. An explicitly empty media selection MUST
+NOT publish historical captures. Refresh and consumption recheck the closure
+even when no media is uploaded. A missing, malformed or changed selection MUST
+NOT fall back to the task-root ledger, inherited selection or another attempt.
+
+`RunRecordedEvidenceReview.contractVersion` projects `0` for unversioned retained
+runs and otherwise preserves the stored version. Its typed `failureCode` uses
+`evidence-selection-missing`, `evidence-selection-invalid`,
+`evidence-package-unverifiable` or `evidence-contract-unsupported`. These display
+codes grant no waiver; existing integrity and gate policy still apply.
+
+The SDK model MUST default to the current contract for standalone callers. Legacy
+requires explicit pre-cutover context and absence of a recognized current
+package. Newer unverifiable packages are Invalid, with a recovery action, and
+cannot provide measured proof. Both renderers pass the gateway projection through
+the shared model. Retention and report opening remain read-only and do not
+require successful publication selection.
+
+Public consumers use `farmslot recipe run` and `farmslot recipe artifacts`, the
+existing runner/writer exports, protocol contracts and
+`createEvidenceReviewModel`. The contract adds no execution flag or alternative
+reader. Remove project selection writers only after their consumers use the
+engine candidate. Task-root declarations MAY supply comparison labels, pairs,
+omissions and non-recipe media. The shared resolver MUST reject a declared recipe
+artifact owned by another retained attempt, using artifact-manifest membership.
+It MUST freeze every contributing declaration's bytes alongside the engine
+manifest and selected pointer. It MUST preserve true-before external captures
+and existing presentation fields without inferring comparisons from filenames.
+
+Conformance MUST verify new-run stamping without historical backfill, unsupported
+version refusal, automatic manifests for UI and headless recipes, rejection of a
+second producer, selected-only reads despite corrupt unrelated packages, immutable
+headless consumption, no fallback after missing/corrupt selection, and identical
+Legacy/Invalid status in both clients. A minimal author supplies only a recipe;
+the publish gate receives the complete engine evidence package.

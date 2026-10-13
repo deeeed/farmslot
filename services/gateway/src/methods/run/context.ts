@@ -173,6 +173,8 @@ export async function runRecipeRunsForRun(
       ? missingHint
         ? {
             artifactPrefix: 'artifacts/',
+            contractVersion: run.recordedEvidenceContractVersion ?? 0,
+            failureCode: 'evidence-selection-missing' as const,
             errors: [`Recipe group is no longer available: ${params.recipeRunId}`],
           }
         : await readRunRecordedEvidence(

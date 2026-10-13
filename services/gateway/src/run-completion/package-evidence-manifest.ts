@@ -16,7 +16,7 @@ import {
   isEvidenceManifestReferencedArtifact,
   mergeEvidenceManifestArtifactRefs,
 } from './draft-pr.js';
-import { type EvidenceManifest, evidenceManifestArtifactPaths } from './evidence-manifest.js';
+import type { EvidenceManifest } from './evidence-manifest.js';
 import { exactEvidenceKeys, isUploadableMediaPath } from './evidence-paths.js';
 import { sha256File, sortArtifactRefsForComparison } from './ready-gate-package.js';
 import { recordedPublicationDependencies } from './recorded-publication-evidence.js';
@@ -46,7 +46,10 @@ export async function buildPackageEvidenceManifest(
   evidenceManifest: EvidenceManifest | null | undefined,
 ): Promise<ArtifactRef[]> {
   const omittedEvidenceKeys = evidenceManifestOmitSet(evidenceManifest);
-  const hasDeclaredEvidence = evidenceManifestArtifactPaths(evidenceManifest).length > 0;
+  const hasDeclaredEvidence =
+    evidenceManifest?.standalone !== undefined ||
+    evidenceManifest?.before_after_pairs !== undefined ||
+    evidenceManifest?.videos !== undefined;
   const trustedArtifacts = mergeEvidenceManifestArtifactRefs(artifacts, evidenceManifest);
   const entries: ArtifactRef[] = [];
   for (const artifact of trustedArtifacts) {

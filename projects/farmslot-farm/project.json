@@ -581,7 +581,6 @@
     "recipe_runner_resolve_cmd": "{{repo}}/apps/command-center/scripts/agentic/run-recipe.mjs",
     "recipe_manifest_path": "{{farmslot_dir}}/docs/examples/recipes/farmslot-v1.action-manifest.json",
     "recipe_validate_wrapper": "{{repo}}/projects/farmslot-farm/setup/validate-recipe.sh",
-    "recipe_sync_evidence_cmd": "bash {{repo}}/projects/farmslot-farm/setup/sync-recipe-evidence.sh",
     "recipe_quality_path": "{{runtime_dir}}/recipe-quality.md",
     "review_quality_path": "{{runtime_dir}}/review-quality.md",
     "recipe_example_banner": "{{farmslot_dir}}/docs/examples/recipes/farmslot/demo-red-banner.recipe.json"

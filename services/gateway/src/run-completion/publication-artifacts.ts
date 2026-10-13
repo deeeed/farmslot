@@ -3,7 +3,12 @@ import { existsSync } from 'node:fs';
 import { lstat, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { type ArtifactRef, type Run, validateArtifactManifestDocument } from '@farmslot/protocol';
+import {
+  type ArtifactRef,
+  RecordedEvidenceReadError,
+  type Run,
+  validateArtifactManifestDocument,
+} from '@farmslot/protocol';
 
 import { INTERNAL_ARTIFACT_COPY_EXCLUDES } from '../core/artifact-copy-policy.js';
 import { getProjectField, loadProjectVars } from '../core/config.js';
@@ -745,9 +750,9 @@ function prefixPromotedEvidenceManifest(
 async function readEvidenceManifestFile(
   manifestPath: string,
   artifactRoot: string | null,
+  sourceBytes: string,
 ): Promise<{ manifest: EvidenceManifest; sourceBytes: string } | null> {
   try {
-    const sourceBytes = await readFile(manifestPath, 'utf-8');
     const parsed = JSON.parse(sourceBytes);
     const issues = validateEvidenceManifest(parsed);
     if (issues.length > 0) {
@@ -772,8 +777,106 @@ export interface ResolvedPublicationManifest {
   manifest: EvidenceManifest;
   sourcePath: string;
   sourceBytes: string;
+  declarationSources?: Array<{ file: string; bytes: string }>;
   pointerPath?: string;
   pointerBytes?: string;
+}
+
+export interface PublicationManifestReadIO {
+  readText(file: string): Promise<string | null>;
+}
+
+const localPublicationManifestReadIO: PublicationManifestReadIO = {
+  async readText(file) {
+    try {
+      return await readFile(file, 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
+  },
+};
+
+/** Preserve presentation and non-recipe captures without selecting another execution. */
+async function includePublicationDeclarations(
+  selected: EvidenceManifest,
+  artifactRoot: string,
+  artifactsDir: string,
+  io: PublicationManifestReadIO,
+): Promise<{
+  manifest: EvidenceManifest;
+  declarationSources?: ResolvedPublicationManifest['declarationSources'];
+}> {
+  const declarationPath = path.join(artifactsDir, 'evidence-manifest.json');
+  const bytes = await io.readText(declarationPath);
+  if (bytes === null) return { manifest: selected };
+  const declaration = await readEvidenceManifestFile(declarationPath, null, bytes);
+  if (!declaration)
+    throw new RecordedEvidenceReadError(
+      'evidence-package-unverifiable',
+      'The publication declarations are invalid. Correct evidence-manifest.json.',
+    );
+
+  const retainedManifests = new Map<string, Promise<string | null>>();
+  for (const file of evidenceManifestArtifactPaths(declaration.manifest)) {
+    const relativeFile = file.slice('artifacts/'.length);
+    for (
+      let directory = path.posix.dirname(relativeFile);
+      ;
+      directory = path.posix.dirname(directory)
+    ) {
+      if (!retainedManifests.has(directory))
+        retainedManifests.set(
+          directory,
+          io.readText(path.join(artifactsDir, directory, 'artifact-manifest.json')),
+        );
+      const manifestBytes = await retainedManifests.get(directory);
+      if (manifestBytes !== null && manifestBytes !== undefined) {
+        let retained: unknown;
+        try {
+          retained = JSON.parse(manifestBytes);
+        } catch (cause) {
+          throw new RecordedEvidenceReadError(
+            'evidence-package-unverifiable',
+            `Cannot establish the owner of ${file}: invalid artifact-manifest.json.`,
+            { cause },
+          );
+        }
+        if (validateArtifactManifestDocument(retained).status !== 'valid')
+          throw new RecordedEvidenceReadError(
+            'evidence-package-unverifiable',
+            `Cannot establish the owner of ${file}: invalid artifact-manifest.json.`,
+          );
+        const entries = (retained as { artifacts: Array<{ path: string }> }).artifacts;
+        if (entries.some((entry) => entry.path === path.posix.relative(directory, relativeFile))) {
+          if (directory !== artifactRoot)
+            throw new RecordedEvidenceReadError(
+              'evidence-selection-invalid',
+              `Publication declaration ${file} belongs to another recipe attempt. Select evidence from the current attempt.`,
+            );
+          break;
+        }
+      }
+      if (directory === '.') break;
+    }
+  }
+  const declaredFiles = new Set(evidenceManifestArtifactPaths(declaration.manifest));
+  return {
+    manifest: {
+      ...selected,
+      ...declaration.manifest,
+      summary: selected.summary ?? declaration.manifest.summary,
+      standalone: [
+        ...(declaration.manifest.standalone ?? []),
+        ...(selected.standalone ?? []).filter((entry) => {
+          const file = normalizeEvidenceManifestArtifactPath(entry.file);
+          return !file || !declaredFiles.has(file);
+        }),
+      ],
+      omit: [...(selected.omit ?? []), ...(declaration.manifest.omit ?? [])],
+    },
+    declarationSources: [{ file: 'artifacts/evidence-manifest.json', bytes }],
+  };
 }
 
 interface EvidenceManifestCandidatePath {
@@ -784,32 +887,42 @@ interface EvidenceManifestCandidatePath {
 
 async function evidenceManifestCandidatePaths(
   taskDir: string,
+  io: PublicationManifestReadIO,
+  artifactsDir: string,
 ): Promise<EvidenceManifestCandidatePath[]> {
   let promotedArtifactRoot: string | null = null;
   let pointerBytes: string | undefined;
-  const pointerPath = path.join(taskDir, 'artifacts', 'latest-valid-recipe-run.json');
-  if (existsSync(pointerPath)) {
+  const pointerPath = path.join(artifactsDir, 'latest-valid-recipe-run.json');
+  const rawPointer = await io.readText(pointerPath);
+  if (rawPointer !== null) {
     try {
-      pointerBytes = await readFile(pointerPath, 'utf-8');
+      pointerBytes = rawPointer;
       const pointer = sanitizeLatestValidRecipeRunPointer(JSON.parse(pointerBytes));
       promotedArtifactRoot = pointer?.relativeArtifactRoot ?? null;
     } catch (err) {
-      console.warn(
-        `[run-completion] invalid latest-valid-recipe-run pointer ${pointerPath}: ${(err as Error).message}`,
+      throw new RecordedEvidenceReadError(
+        'evidence-selection-invalid',
+        'The selected recipe attempt pointer is invalid.',
+        { cause: err },
       );
     }
+    if (!promotedArtifactRoot)
+      throw new RecordedEvidenceReadError(
+        'evidence-selection-invalid',
+        'The selected recipe attempt pointer is invalid.',
+      );
+    return [
+      {
+        manifestPath: path.join(artifactsDir, promotedArtifactRoot, 'evidence-manifest.json'),
+        artifactRoot: promotedArtifactRoot,
+        pointerBytes,
+      },
+    ];
   }
 
   const candidates: EvidenceManifestCandidatePath[] = [
-    { manifestPath: path.join(taskDir, 'artifacts', 'evidence-manifest.json'), artifactRoot: null },
+    { manifestPath: path.join(artifactsDir, 'evidence-manifest.json'), artifactRoot: null },
   ];
-  if (promotedArtifactRoot) {
-    candidates.push({
-      manifestPath: path.join(taskDir, 'artifacts', promotedArtifactRoot, 'evidence-manifest.json'),
-      artifactRoot: promotedArtifactRoot,
-      pointerBytes,
-    });
-  }
   candidates.push({
     manifestPath: path.join(taskDir, 'inputs', 'inherited', 'evidence-manifest.json'),
     artifactRoot: promotedArtifactRoot,
@@ -827,15 +940,37 @@ async function evidenceManifestCandidatePaths(
 
 export async function resolvePublicationManifest(
   taskDir: string,
+  io: PublicationManifestReadIO = localPublicationManifestReadIO,
+  artifactsDir = path.join(taskDir, 'artifacts'),
 ): Promise<ResolvedPublicationManifest | null> {
   for (const { manifestPath, artifactRoot, pointerBytes } of await evidenceManifestCandidatePaths(
     taskDir,
+    io,
+    artifactsDir,
   )) {
-    if (!existsSync(manifestPath)) continue;
-    const resolved = await readEvidenceManifestFile(manifestPath, artifactRoot);
+    const sourceBytes = await io.readText(manifestPath);
+    if (sourceBytes === null) {
+      if (pointerBytes !== undefined)
+        throw new RecordedEvidenceReadError(
+          'evidence-selection-missing',
+          'The selected recipe attempt has no evidence-manifest.json. Re-run the recipe.',
+        );
+      continue;
+    }
+    const resolved = await readEvidenceManifestFile(manifestPath, artifactRoot, sourceBytes);
+    if (!resolved && pointerBytes !== undefined)
+      throw new RecordedEvidenceReadError(
+        'evidence-package-unverifiable',
+        'The selected recipe attempt evidence-manifest.json is invalid. Re-run the recipe.',
+      );
+    const declarations =
+      resolved && artifactRoot
+        ? await includePublicationDeclarations(resolved.manifest, artifactRoot, artifactsDir, io)
+        : null;
     return resolved
       ? {
           ...resolved,
+          ...declarations,
           sourcePath: path.relative(taskDir, manifestPath).split(path.sep).join('/'),
           ...(artifactRoot
             ? { pointerPath: 'artifacts/latest-valid-recipe-run.json', pointerBytes }

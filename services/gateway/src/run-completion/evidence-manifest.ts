@@ -1,39 +1,20 @@
 import path from 'node:path';
 
-import type { EvidenceManifestStandalone } from '@farmslot/protocol';
+import type {
+  EvidenceManifest,
+  EvidenceManifestPair,
+  EvidenceManifestStandalone,
+  EvidenceManifestVideo,
+} from '@farmslot/protocol';
 
 import { evidenceKeyVariants } from './evidence-paths.js';
 
-export interface EvidenceManifestPair {
-  label: string;
-  covers?: string[];
-  before?: string;
-  after?: string;
-  note?: string;
-}
-
-export interface EvidenceManifestVideo {
-  before?: string;
-  after?: string;
-  preferred?: boolean;
-  note?: string;
-}
-
-export interface EvidenceManifestOmit {
-  file: string;
-  reason?: string;
-}
-
-export interface EvidenceManifest {
-  version?: number;
-  preferred_mode?: 'screenshots' | 'video';
-  summary?: string;
-  before_after_pairs?: EvidenceManifestPair[];
-  standalone?: EvidenceManifestStandalone[];
-  omit?: Array<string | EvidenceManifestOmit>;
-  videos?: EvidenceManifestVideo;
-  before_state_capture?: JsonRecord;
-}
+export type {
+  EvidenceManifest,
+  EvidenceManifestOmit,
+  EvidenceManifestPair,
+  EvidenceManifestVideo,
+} from '@farmslot/protocol';
 
 type JsonRecord = Record<string, unknown>;
 

@@ -2393,6 +2393,8 @@ export interface MachineParkRecord {
 }
 
 export interface Run {
+  /** Gateway-stamped at creation. Absence identifies retained pre-cutover runs; never backfilled. */
+  recordedEvidenceContractVersion?: number;
   /** Append-only gateway-authorised human exceptions; engine evidence stays immutable. */
   claimOverrideReceipts?: import('../recipe/claim-overrides.js').ClaimUntestableOverrideReceipt[];
   /** ADR-069 provisional inputs. These never claim an execution receipt. */

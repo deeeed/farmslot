@@ -3,11 +3,13 @@ import path from 'node:path';
 
 import { readRecordedEvidencePackage } from '@farmslot/adapter-sdk';
 import { validateRecordedEvidencePackage } from '@farmslot/adapter-sdk/evidence';
-import type {
-  RecipeRunArtifactGroup,
-  RecordedEvidencePackageInput,
-  Run,
-  RunRecordedEvidenceReview,
+import {
+  type RecipeRunArtifactGroup,
+  type RecordedEvidencePackageInput,
+  RecordedEvidenceReadError,
+  type Run,
+  type RunRecordedEvidenceReview,
+  TERMINAL_RUN_STATUSES,
 } from '@farmslot/protocol';
 
 import { loadSlotVars } from '../../core/config.js';
@@ -31,11 +33,28 @@ export async function readRunRecordedEvidence(
   frozen?: { decisionId: string; packageHash?: string },
 ): Promise<RunRecordedEvidenceReview> {
   const artifactPrefix = 'artifacts/';
+  const contractVersion = run.recordedEvidenceContractVersion ?? 0;
   const rootParts = group?.artifactRoot?.split(path.sep) ?? [];
   const artifactsIndex = rootParts.lastIndexOf('artifacts');
   const packagePath =
     artifactsIndex >= 0 ? rootParts.slice(artifactsIndex + 1).join('/') || '.' : undefined;
-  if (!frozen && !group?.artifactRoot) return { artifactPrefix, errors: [] };
+  if (contractVersion !== 0 && contractVersion !== 1)
+    return {
+      artifactPrefix,
+      packagePath,
+      contractVersion,
+      failureCode: 'evidence-contract-unsupported',
+      errors: ['The recorded run evidence contract is unsupported.'],
+    };
+  if (!frozen && !group?.artifactRoot)
+    return contractVersion === 1 && TERMINAL_RUN_STATUSES.includes(run.status)
+      ? {
+          artifactPrefix,
+          contractVersion,
+          failureCode: 'evidence-selection-missing',
+          errors: ['No retained recipe execution is available. Re-run the recipe.'],
+        }
+      : { artifactPrefix, contractVersion, errors: [] };
   try {
     if (frozen) {
       const decision = run.decisions.find(({ id }) => id === frozen.decisionId);
@@ -63,12 +82,15 @@ export async function readRunRecordedEvidence(
           ? `${path.relative(path.dirname(run.taskFile), group.artifactRoot).split(path.sep).join('/')}/`
           : undefined;
       const source =
+        (payload.kind === 'ready' && sources.length === 1 ? sources[0] : undefined) ??
         sources.find(({ input, artifactPrefix }) =>
           retainedRunId ? input.claims?.recipeRunId === retainedRunId : artifactPrefix === prefix,
-        ) ?? (!retainedRunId && sources.length === 1 ? sources[0] : undefined);
+        ) ??
+        (!retainedRunId && sources.length === 1 ? sources[0] : undefined);
       if (!source) throw new Error('Select a retained recipe execution from the gate package.');
       return {
         ...source,
+        contractVersion,
         ...(source.input.claims
           ? { claimOverrideAuthority: claimOverrideAuthority(run, source.input) }
           : {}),
@@ -76,7 +98,7 @@ export async function readRunRecordedEvidence(
         errors: reviewValidationErrors(source.input),
       };
     }
-    if (!group?.artifactRoot) return { artifactPrefix, errors: [] };
+    if (!group?.artifactRoot) return { artifactPrefix, contractVersion, errors: [] };
     const locality = run.slotId ? await getSlotLocality(run.slotId) : null;
     const useLocal =
       !locality ||
@@ -117,9 +139,11 @@ export async function readRunRecordedEvidence(
     errors.push(...reviewValidationErrors(result.input));
     return {
       input: result.input,
+      contractVersion,
       artifactPrefix,
       packagePath,
       errors,
+      ...(errors.length ? { failureCode: 'evidence-package-unverifiable' as const } : {}),
       ...(errors.length === 0 && result.input.claims
         ? { claimOverrideAuthority: claimOverrideAuthority(run, result.input) }
         : {}),
@@ -128,7 +152,10 @@ export async function readRunRecordedEvidence(
     // An unavailable/corrupt retained package stays visible; it never becomes timed proof.
     return {
       artifactPrefix,
+      contractVersion,
       packagePath,
+      failureCode:
+        error instanceof RecordedEvidenceReadError ? error.code : 'evidence-package-unverifiable',
       errors: [error instanceof Error ? error.message : String(error)],
     };
   }

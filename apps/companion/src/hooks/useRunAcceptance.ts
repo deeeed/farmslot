@@ -46,7 +46,7 @@ export interface RunAcceptance {
 }
 
 export type RunAcceptanceSource = Pick<Run, 'id' | 'slotId' | 'reviewWorkspace' | 'updatedAt'> &
-  Partial<Pick<Run, 'output' | 'decisions'>>;
+  Partial<Pick<Run, 'output' | 'decisions' | 'recordedEvidenceContractVersion'>>;
 
 type AcceptanceData = Pick<
   TaskProgressResult,
@@ -139,6 +139,7 @@ export function useRunAcceptance(
               selectedRecipeRunId: null,
               recordedEvidence: {
                 artifactPrefix: '',
+                contractVersion: run?.recordedEvidenceContractVersion ?? 0,
                 errors: [error instanceof Error ? error.message : String(error)],
               },
             });
@@ -193,6 +194,7 @@ export function useRunAcceptance(
           criteria: acceptanceCriteria ?? undefined,
           evidenceLinks: acceptanceEvidenceLinks ?? undefined,
           package: evidence?.recordedEvidence?.input,
+          contractVersion: evidence?.recordedEvidence?.contractVersion,
           claimOverrideAuthority: evidence?.recordedEvidence?.claimOverrideAuthority,
           readErrors: evidence?.recordedEvidence?.errors,
           artifactPrefix: evidence?.recordedEvidence?.artifactPrefix,

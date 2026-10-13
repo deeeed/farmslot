@@ -675,6 +675,7 @@ test('legacy root diagnostics merge reader/type/include repeats per missing file
     timelines: {},
   };
   const model = createEvidenceReviewModel({
+    contractVersion: 0,
     package: pkg,
     packagePath: 'artifacts/previous/',
     readErrors: [
@@ -779,12 +780,12 @@ test('artifact-only reports open read-only despite recipe selection errors and s
   );
 });
 
-test('unknown reads stay informational while identified current-contract failures are red', () => {
+test('unverifiable current reads are invalid with recovery guidance', () => {
   const unknown = createEvidenceReviewModel({
     readErrors: ['Select a retained recipe execution from the gate package.'],
   });
   assert.equal(unknown.packageStatus?.status, 'Invalid');
-  assert.equal(unknown.packageStatus?.tone, 'info');
+  assert.equal(unknown.packageStatus?.tone, 'error');
   const pkg = qaPackage(1);
   pkg.summary = undefined;
   assert.equal(createEvidenceReviewModel({ package: pkg }).packageStatus?.tone, 'error');
@@ -792,6 +793,7 @@ test('unknown reads stay informational while identified current-contract failure
 
 test('an authored recipe beside legacy media does not identify an executed Recipe v1 package', () => {
   const model = createEvidenceReviewModel({
+    contractVersion: 0,
     package: {
       recipe: { $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json' },
       summary: undefined,
@@ -811,6 +813,7 @@ test('an authored recipe beside legacy media does not identify an executed Recip
 
 test('historical filenames alone never mark an older artifact format as a current contract failure', () => {
   const model = createEvidenceReviewModel({
+    contractVersion: 0,
     package: {
       summary: { version: 0 },
       trace: [],
@@ -824,4 +827,30 @@ test('historical filenames alone never mark an older artifact format as a curren
   assert.equal(model.packageStatus?.status, 'Legacy');
   assert.equal(model.packageStatus?.tone, 'info');
   assert.equal(model.packageStatus?.action, undefined);
+});
+
+test('new unverifiable packages never inherit a Legacy label and future run contracts fail closed', () => {
+  const pkg: RecordedEvidencePackageInput = {
+    summary: undefined,
+    trace: undefined,
+    manifest: undefined,
+    artifactPaths: ['report.html'],
+    artifactDigests: {},
+    timelines: {},
+  };
+  const current = createEvidenceReviewModel({ contractVersion: 1, package: pkg });
+  assert.equal(current.packageStatus?.status, 'Invalid');
+  assert.equal(current.packageStatus?.tone, 'error');
+  assert.equal(current.packageStatus?.reasonCode, 'evidence-package-unverifiable');
+  assert.match(current.packageStatus?.action ?? '', /Refresh the gate package/);
+  assert.equal(
+    createEvidenceReviewModel({ contractVersion: 0, package: pkg }).packageStatus?.status,
+    'Legacy',
+  );
+  const future = createEvidenceReviewModel({ contractVersion: 2, package: qaPackage(1) });
+  assert.equal(future.packageStatus?.status, 'Invalid');
+  assert.equal(future.packageStatus?.reasonCode, 'evidence-contract-unsupported');
+  assert.equal(future.markerSeekMs('video.mp4', 0, 'start'), null);
+  assert.equal(future.adjacentFrameMs('video.mp4', 100, 1), null);
+  assert.equal(future.displayedFrameRangeMs('video.mp4', 100), null);
 });

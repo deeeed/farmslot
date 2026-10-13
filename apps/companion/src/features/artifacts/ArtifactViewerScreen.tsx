@@ -468,6 +468,7 @@ export default function ArtifactViewerScreen() {
       createEvidenceReviewModel({
         context: 'artifact',
         package: recordedEvidence?.input,
+        contractVersion: recordedEvidence?.contractVersion,
         readErrors: recordedEvidence?.errors,
         artifactPrefix: recordedEvidence?.artifactPrefix,
         packagePath: recordedEvidence?.packagePath,

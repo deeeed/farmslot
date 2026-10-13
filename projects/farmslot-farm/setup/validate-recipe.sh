@@ -28,7 +28,6 @@ ADB_SERIAL_VALUE="${ADB_SERIAL:-${ANDROID_SERIAL:-${ANDROID_DEVICE:-}}}"
 SLOW_MS=""
 RECORD_VIDEO=0
 TASK_DIR=""
-SYNC_EVIDENCE=0
 SLOT_ID_VALUE="${SLOT_ID:-${FARMSLOT_SLOT_ID:-}}"
 RUN_ID_VALUE=""
 RECIPE_RUN_ID_VALUE=""
@@ -127,8 +126,6 @@ while [[ "$#" -gt 0 ]]; do
       TASK_DIR="$(require_value "$1" "${2:-}")"; shift 2 ;;
     --task-dir=*)
       TASK_DIR="$(value_from_equals "$1")"; shift ;;
-    --sync-evidence)
-      SYNC_EVIDENCE=1; shift ;;
     --dry-run)
       DRY_RUN=1; shift ;;
     *)
@@ -233,29 +230,12 @@ if [[ -z "${TASK_DIR}" && "${ARTIFACTS_DIR}" == */artifacts/recipe-run ]]; then
   TASK_DIR="${ARTIFACTS_DIR%/artifacts/recipe-run}"
 fi
 
-if [[ "${SYNC_EVIDENCE}" -eq 1 || "${RECORD_VIDEO}" -eq 1 ]]; then
-  SYNC_EVIDENCE=1
-fi
-
 if [[ -n "${TASK_DIR}" ]]; then
   export RECIPE_TASK_DIR="$(cd "${TASK_DIR}" && pwd)"
 fi
 
 "${ARGS[@]}"
 exit_code=$?
-
-
-if [[ "${exit_code}" -eq 0 && "${SYNC_EVIDENCE}" -eq 1 && -n "${TASK_DIR}" ]]; then
-  sync_args=(
-    bash "${PRIMARY_REPO}/projects/farmslot-farm/setup/sync-recipe-evidence.sh"
-    --task-dir "${TASK_DIR}"
-    --recipe-run-dir "${ARTIFACTS_DIR}"
-  )
-  if [[ "${RECORD_VIDEO}" -eq 1 ]]; then
-    sync_args+=(--require-video)
-  fi
-  "${sync_args[@]}"
-fi
 
 if [[ "${exit_code}" -eq 0 && -n "${TASK_DIR}" && "${ARTIFACTS_DIR}" == "${TASK_DIR}/artifacts/recipe-runs/"* ]]; then
   node "${PRIMARY_REPO}/packages/agent-runtime/scripts/retained-recipe-attempt.cjs" "${TASK_DIR}" "${ARTIFACTS_DIR}"
