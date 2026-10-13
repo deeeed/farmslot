@@ -936,6 +936,60 @@ describe('recipe validation', () => {
     assert.deepEqual(validateActionInputs({ workflow: {} }, 'web'), []);
   });
 
+  test('proof plans apply the same intent lint as conformance before engine effects', async () => {
+    const target = tempRoot('recipe-cli-proof-intent-');
+    const recipe = recipeFile(target, {
+      observe: { action: 'command', cmd: 'echo hello', intent: 'x'.repeat(124), next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const planned = await validateRunRecipeStatic(engine, recipe, 'web', {
+      target,
+      plan: true,
+      proof: true,
+    });
+    const conformance = await validateRunRecipeStatic(
+      engine,
+      recipe,
+      'web',
+      { target },
+      undefined,
+      undefined,
+      undefined,
+      true,
+    );
+    const intents = (result: typeof planned) =>
+      result.findings.filter((finding) => finding.code === 'workflow.intent_too_long');
+    assert.deepEqual(intents(planned), intents(conformance));
+    assert.equal(intents(planned)[0]?.severity, 'error');
+    assert.deepEqual(
+      intents(await validateRunRecipeStatic(engine, recipe, 'web', { target, plan: true })),
+      [],
+    );
+    assert.deepEqual(calls.members, []);
+
+    const childFile = path.join(library, 'recipes', 'hello.recipe.json');
+    const child = JSON.parse(fs.readFileSync(childFile, 'utf8'));
+    child.workflow.nodes.greet.intent = 'x'.repeat(124);
+    fs.writeFileSync(childFile, JSON.stringify(child));
+    const parent = recipeFile(target, {
+      child: {
+        action: 'call',
+        ref: 'hello',
+        params: { name: 'world' },
+        intent: 'Call the child.',
+        next: 'done',
+      },
+      done: { action: 'end', status: 'pass' },
+    });
+    const nested = await validateRunRecipeStatic(engine, parent, 'web', {
+      target,
+      plan: true,
+      proof: true,
+    });
+    assert.equal(intents(nested)[0]?.severity, 'error');
+    assert.deepEqual(calls.members, []);
+  });
+
   test('warns on command nodes whose exit code cannot prove the claim', async () => {
     const codes = (nodes: Record<string, unknown>) =>
       validateCommandNodes({ workflow: { nodes } }).map((finding) => [finding.code, finding.path]);

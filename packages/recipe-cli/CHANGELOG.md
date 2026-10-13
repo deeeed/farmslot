@@ -4,6 +4,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+## 0.14.3 - 2026-10-13
+
+- Apply static conformance intent lint to proof planning and execution, including called recipes, before provider effects.
+
 ## 0.14.2 - 2026-10-12
 
 - Validate called log-observation parameters before execution using the shared invocation checks.
