@@ -10,6 +10,7 @@ import {
   type RunnerPromptAcceptance,
   type WorkerSignal,
 } from '@farmslot/protocol';
+import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import { upsertAgentContext } from '../agents/contexts.js';
 import { loadMachinePool, loadProjectVars } from '../core/config.js';
@@ -122,7 +123,7 @@ async function reviewEnvironment(run: Run) {
 }
 
 export function verifiedWarmReviewSessionId(run: Run): string | undefined {
-  if (run.reviewMode !== 'warm' && run.repeatReviewContext?.mode !== 'warm') return undefined;
+  if (resolveReviewMode({ run }) !== 'warm') return undefined;
   const trace = run.repeatReviewContext?.session;
   const pr = run.prWork?.pr ?? parseGitHubRef(run.ticketOrPr);
   if (
@@ -295,7 +296,7 @@ export async function launchReviewTmux(
   const patch = {
     id: 'review',
     reviewId:
-      run.reviewMode === 'warm'
+      resolveReviewMode({ run }) === 'warm'
         ? run.repeatReviewContext?.session?.reviewId
         : (previous?.reviewId ?? randomUUID()),
     label: 'Review',

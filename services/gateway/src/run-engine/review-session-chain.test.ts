@@ -107,6 +107,34 @@ test('repeat review resumes only the exact prior reviewer binding', () => {
   });
 });
 
+test('explicit COLD cannot resume a retained WARM context and unbound WARM cannot start fresh', () => {
+  const { current, prior } = runs();
+  assert.deepEqual(
+    resolveRepeatReviewResumePlan({ ...current, reviewMode: 'cold' }, prior, 'codex'),
+    { kind: 'fresh' },
+  );
+  assert.deepEqual(
+    resolveRepeatReviewResumePlan(
+      { ...current, reviewMode: 'warm', repeatReviewContext: undefined },
+      prior,
+      'codex',
+    ),
+    { kind: 'refused', reason: 'missing-session' },
+  );
+  assert.equal(
+    resolveRepeatReviewResumePlan(
+      {
+        ...current,
+        reviewMode: 'warm',
+        repeatReviewContext: { ...current.repeatReviewContext!, mode: 'cold' },
+      },
+      prior,
+      'codex',
+    ).kind,
+    'resume',
+  );
+});
+
 test('an artifact-only primary review resumes from its immutable result without a posting gate', () => {
   const { current, prior } = runs();
   const payload = prior.decisions[0].payload;

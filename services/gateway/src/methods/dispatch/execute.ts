@@ -1286,7 +1286,7 @@ export async function dispatchExecute(
       const reviewer = selectAgentContext(latest, { role: primaryRoleForFlow(latest.flowType) });
       recordReviewSession({
         ...latest.repeatReviewContext.session,
-        mode: latest.repeatReviewContext.mode,
+        mode: resolveReviewMode({ run: latest }),
         continuity: reviewer?.nativeSession?.handoffCompletedAt ? 'resumed' : 'fresh',
         sessionId: reviewer?.runnerSessionId ?? undefined,
       });

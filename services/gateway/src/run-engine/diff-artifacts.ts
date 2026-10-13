@@ -1140,7 +1140,7 @@ async function readFreshReviewInputArtifacts(
     )
       return null;
     if (
-      run.reviewMode === 'warm' &&
+      resolveReviewMode({ run }) === 'warm' &&
       parsed.baseSha !== run.repeatReviewContext?.priorReviewedHeadSha
     )
       return null;
@@ -1285,8 +1285,10 @@ async function captureReviewInputArtifactsForRunUnlocked(
           );
         }
         const incrementalBase =
-          run.reviewMode === 'warm' ? run.repeatReviewContext?.priorReviewedHeadSha : undefined;
-        if (run.reviewMode === 'warm' && !incrementalBase)
+          resolveReviewMode({ run }) === 'warm'
+            ? run.repeatReviewContext?.priorReviewedHeadSha
+            : undefined;
+        if (resolveReviewMode({ run }) === 'warm' && !incrementalBase)
           throw new Error('WARM review unavailable: missing last reviewed head');
         const fetchedFiles = incrementalBase
           ? await (deps.fetchGitHubCompareFiles ?? fetchGitHubCompareFiles)(
@@ -1310,9 +1312,13 @@ async function captureReviewInputArtifactsForRunUnlocked(
       repository: prRef.repo,
       prNumber: prRef.prNumber,
       baseRef:
-        run.reviewMode === 'warm' ? run.repeatReviewContext?.priorReviewedHeadSha : pr.baseRef,
+        resolveReviewMode({ run }) === 'warm'
+          ? run.repeatReviewContext?.priorReviewedHeadSha
+          : pr.baseRef,
       baseSha:
-        run.reviewMode === 'warm' ? run.repeatReviewContext?.priorReviewedHeadSha : pr.baseSha,
+        resolveReviewMode({ run }) === 'warm'
+          ? run.repeatReviewContext?.priorReviewedHeadSha
+          : pr.baseSha,
       headRef: pr.branch,
       headSha: pr.headSha,
       reviewMode: resolveReviewMode({ run }),
@@ -1339,9 +1345,13 @@ async function captureReviewInputArtifactsForRunUnlocked(
       repository: prRef.repo,
       prNumber: prRef.prNumber,
       baseRef:
-        run.reviewMode === 'warm' ? run.repeatReviewContext?.priorReviewedHeadSha : pr.baseRef,
+        resolveReviewMode({ run }) === 'warm'
+          ? run.repeatReviewContext?.priorReviewedHeadSha
+          : pr.baseRef,
       baseSha:
-        run.reviewMode === 'warm' ? run.repeatReviewContext?.priorReviewedHeadSha : pr.baseSha,
+        resolveReviewMode({ run }) === 'warm'
+          ? run.repeatReviewContext?.priorReviewedHeadSha
+          : pr.baseSha,
       headRef: pr.branch,
       headSha: pr.headSha,
       reviewMode: resolveReviewMode({ run }),

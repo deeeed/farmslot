@@ -25,6 +25,7 @@ import {
   type WorkerSignal,
   type WorkerTerminalContractDocument,
 } from '@farmslot/protocol';
+import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import { farmslotRoot, loadProjectVars } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
@@ -317,7 +318,7 @@ export async function materializeReviewWorkspaceTask(
       ...(run.repeatReviewContext
         ? [
             'Read inputs/prior-review.json and recheck every unresolved finding. It records the prior head and the requested review scope.',
-            ...(run.repeatReviewContext.mode === 'warm' &&
+            ...(resolveReviewMode({ run }) === 'warm' &&
             run.repeatReviewContext.priorReviewedHeadSha
               ? [
                   `This is an incremental review. Inspect git -C ${shellQuote(run.reviewWorkspace.checkoutPath)} diff ${shellQuote(`${run.repeatReviewContext.priorReviewedHeadSha}..${subject.headSha}`)}, plus code needed to reassess prior findings. Avoid repeating the unchanged full review.`,

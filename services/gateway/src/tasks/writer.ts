@@ -196,9 +196,10 @@ ${evidence}
 
 export async function writePreviousReviewInputs(
   taskAbsDir: string,
-  context: RepeatReviewContext | undefined,
+  run: Pick<Run, 'reviewMode' | 'prWork' | 'repeatReviewContext'>,
 ): Promise<string[]> {
-  if (!context || context.mode !== 'warm') return [];
+  const context = run.repeatReviewContext;
+  if (!context || resolveReviewMode({ run }) !== 'warm') return [];
   await writeFile(
     path.join(taskAbsDir, PREVIOUS_REVIEW_JSON_INPUT),
     `${JSON.stringify(context, null, 2)}\n`,
@@ -929,7 +930,7 @@ export async function writeTaskFile(
 
   emit('substep', { name: 'planning-context', detail: 'Resolving related planning context' });
   const planningContext = await resolveRunPlanningContext(run);
-  const previousReviewPaths = await writePreviousReviewInputs(taskAbsDir, run.repeatReviewContext);
+  const previousReviewPaths = await writePreviousReviewInputs(taskAbsDir, run);
   const staticReviewInstructionPaths = await writeStaticReviewInstructionInputs(
     taskAbsDir,
     projectVars,

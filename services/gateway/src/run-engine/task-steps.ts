@@ -18,6 +18,7 @@ import {
   type RunTicketData,
   type TemplateProvenance,
 } from '@farmslot/protocol';
+import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import {
   extractBacklogAcceptanceCriteria,
@@ -748,7 +749,7 @@ export async function executeWriteTaskStep(
         includeChecklist: !isLightweightInteractiveDevRun(afterWrite),
       }),
     );
-    if (afterWrite.repeatReviewContext?.mode === 'warm') {
+    if (afterWrite.repeatReviewContext && resolveReviewMode({ run: afterWrite }) === 'warm') {
       artifacts.push(
         { path: PREVIOUS_REVIEW_JSON_INPUT, purpose: 'previous-review-context' },
         { path: PREVIOUS_REVIEW_MD_INPUT, purpose: 'previous-review-summary' },

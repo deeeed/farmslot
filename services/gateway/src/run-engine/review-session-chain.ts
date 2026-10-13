@@ -5,6 +5,7 @@ import {
   type ReviewSessionTrace,
   type Run,
 } from '@farmslot/protocol';
+import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import { primaryReviewedHeadForSession } from '../review/session-mode.js';
 import {
@@ -57,6 +58,7 @@ export function resolveRepeatReviewResumePlan(
     | 'project'
     | 'slotId'
     | 'repeatReviewContext'
+    | 'reviewMode'
     | 'prWork'
     | 'transport'
     | 'nativeOwnerPrincipalId'
@@ -68,7 +70,8 @@ export function resolveRepeatReviewResumePlan(
   effort?: string | null,
 ): RepeatReviewResumePlan {
   const context = current.repeatReviewContext;
-  if (context?.mode !== 'warm') return { kind: 'fresh' };
+  if (resolveReviewMode({ run: current }) !== 'warm') return { kind: 'fresh' };
+  if (!context) return { kind: 'refused', reason: 'missing-session' };
   const reviewId = context.session?.reviewId;
   if (!reviewId) return { kind: 'refused', reason: 'missing-session' };
   const native = current.transport === 'native';
