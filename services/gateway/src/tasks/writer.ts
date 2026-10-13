@@ -20,6 +20,7 @@ import {
   type ArtifactRef,
   checklistNumberingMismatches,
   checklistStepName,
+  DEFAULT_BRANCH,
   enumerateChecklistCheckboxes,
   EXECUTION_CHECKLIST_DOCUMENT,
   type FlowType,
@@ -44,7 +45,7 @@ import {
   loadSlotVars,
   resolveProjectTaskDirName,
 } from '../core/config.js';
-import { collectPlaceholderTokens, expandTemplate } from '../core/hooks.js';
+import { collectPlaceholderTokens, expandTemplateWithReservedLast } from '../core/hooks.js';
 import { execLocal, farmslotRoot, getOrchestratorTaskRoot } from '../core/index.js';
 import {
   buildFollowUpScopeContractSection,
@@ -58,6 +59,7 @@ import {
 import { getPRRawData, parseJsonLines } from '../methods/pr/raw-cache.js';
 import { harnessRoot } from '../projects/harness-root.js';
 import { extractRecipeFromPRBody, materializeExtractedRecipe } from '../quality/pr-body-recipe.js';
+import { publicationBaseForRun } from '../run-engine/stack-base.js';
 
 import { agentRuntimeCommandsForSlot } from './agent-runtime-script.js';
 import {
@@ -1027,11 +1029,24 @@ export async function writeTaskFile(
         : '_No comments_',
   };
 
+  const defaultBranch = projectVars.projectJson.default_branch || DEFAULT_BRANCH;
+  const publicationBase = ['pr-complete', 'update-branch'].includes(run.flowType)
+    ? await publicationBaseForRun(run, defaultBranch)
+    : undefined;
+  const branchReplacements: Record<string, string> = publicationBase
+    ? { PUBLICATION_BASE: publicationBase }
+    : {};
+
   // Project-level command snippets are part of the template contract. Keep them
   // in project.json so worker templates don't hardcode repo-local tool paths.
   if (projectVars.projectJson.vars) {
     for (const [key, rawValue] of Object.entries(projectVars.projectJson.vars)) {
-      const rendered = expandTemplate(String(rawValue), slotVars, projectVars);
+      const rendered = expandTemplateWithReservedLast(
+        String(rawValue),
+        slotVars,
+        projectVars,
+        branchReplacements,
+      );
       // A var value that does not fully resolve would smuggle raw {{...}}
       // into TASK.md past the template guard — fail the dispatch instead.
       const leftover = collectPlaceholderTokens(rendered);
@@ -1056,7 +1071,8 @@ export async function writeTaskFile(
   vars.PR_TITLE_SUFFIX = formatPrTitleSuffix((projectVars.projectJson as any)?.ci?.pr_title_suffix);
 
   // Default branch for --base flag in gh pr create
-  vars.DEFAULT_BRANCH = projectVars.projectJson.default_branch || 'main';
+  vars.DEFAULT_BRANCH = defaultBranch;
+  Object.assign(vars, branchReplacements);
 
   // farmslot_dir — local = repo root, remote = agent deployment dir.
   // Kept in sync with the same logic in core/hooks.ts expandTemplate.

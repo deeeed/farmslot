@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Stack-aware branch maintenance",
+  "description": "Manual isolated production-gateway proof through replay/get/cancel RPCs, followed by an upstream Git rebase and exact-lease push. Requires an existing tmux server; creates one owned detached session.",
+  "workflow": {
+    "entry": "maintenance",
+    "nodes": {
+      "maintenance": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/stack-base-consumers.mts",
+        "timeout_ms": 300000,
+        "intent": "Verify stacked and retargeted maintenance tasks use the publication base while preserving default-branch freshness, then rebase the child without dropping upstream commits.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

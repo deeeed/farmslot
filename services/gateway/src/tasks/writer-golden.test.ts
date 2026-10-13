@@ -133,3 +133,26 @@ test('a stacked dev run gets the golden document plus only a Stack section', asy
     await readFile(path.join(GOLDEN_DIR, 'dev.golden'), 'utf-8'),
   );
 });
+
+test('branch-maintenance task uses the publication base while the freshness probe keeps main', async (t) => {
+  const run = {
+    ...goldenRun('pr-complete'),
+    stack: {
+      upstreamNodeId: 'upstream',
+      upstreamRunId: 'upstream-run',
+      baseBranch: 'feat/upstream',
+      upstreamPrNumber: 41,
+      upstreamPrUrl: 'https://example.invalid/pull/41',
+      resolvedSha: 'a'.repeat(40),
+    },
+  };
+  const task = await writeTaskFile(run, { skipCollisionCheck: true });
+  t.after(() => rm(path.dirname(task), { recursive: true, force: true }));
+  const document = await readFile(task, 'utf8');
+  const checklist = await readFile(path.join(path.dirname(task), 'CHECKLIST.md'), 'utf8');
+  assert.match(document, /PUBLICATION_BASE: feat\/upstream/);
+  assert.match(document, /rebase onto `origin\/feat\/upstream`/);
+  assert.match(checklist, /git fetch origin main/);
+  assert.match(checklist, /rebase onto `origin\/feat\/upstream`/);
+  assert.doesNotMatch(checklist, /git rebase origin\/main/);
+});

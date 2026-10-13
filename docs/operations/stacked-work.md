@@ -6,7 +6,9 @@ Start a run on top of another run's PR, so B builds on A before A merges. Suppor
 ## The one rule
 
 A stacked run starts from the upstream PR's **pushed** branch on origin. Slots are separate
-checkouts, often on other nodes; local commits never reach them. The downstream node waits
+checkouts, often on other nodes; local commits never reach them. The
+[stacked-runs specification](../reference/stacked-runs.md) defines the base and
+maintenance contracts. The downstream node waits
 until the upstream run has published its PR.
 
 ## Set it up

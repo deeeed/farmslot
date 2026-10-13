@@ -1,5 +1,6 @@
 import {
   agentRoleWindow,
+  DEFAULT_BRANCH,
   isReviewerWindowName,
   type ReviewAttempt,
   type ReviewDiffSnapshot,
@@ -150,7 +151,7 @@ export async function readPersistedReviewSnapshot(
 }
 
 export function preferredRemoteReviewBaseRef(baseRef: string): string | null {
-  const normalized = baseRef.trim() || 'main';
+  const normalized = baseRef.trim() || DEFAULT_BRANCH;
   if (normalized.startsWith('refs/')) return null;
   if (normalized.startsWith('origin/')) return normalized;
   return `origin/${normalized}`;
@@ -159,15 +160,15 @@ export function preferredRemoteReviewBaseRef(baseRef: string): string | null {
 async function resolveReviewPathspecs(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
 ): Promise<{ configuredBaseRef: string; pathspecs: string[] }> {
-  let configuredBaseRef = 'main';
+  let configuredBaseRef: string = DEFAULT_BRANCH;
   let pathspecs = projectSourceDiffPathspecs(null);
   try {
     const pv = await loadProjectVars(vars.projectName);
-    configuredBaseRef = getProjectField(pv.projectJson, 'default_branch') || 'main';
+    configuredBaseRef = getProjectField(pv.projectJson, 'default_branch') || DEFAULT_BRANCH;
     pathspecs = projectSourceDiffPathspecs(pv.projectJson);
   } catch (err) {
     debugReviewLog(
-      `[review] defaulting review base ref to main after project lookup failed: ${(err as Error).message}`,
+      `[review] defaulting review base ref to ${DEFAULT_BRANCH} after project lookup failed: ${(err as Error).message}`,
     );
   }
   return { configuredBaseRef, pathspecs };

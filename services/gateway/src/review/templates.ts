@@ -34,7 +34,7 @@ import { shellQuote } from '../core/tmux.js';
 import { projectWorkerTemplatePath } from '../core/worker-templates.js';
 import { remoteBranchRefspec } from '../methods/slot/slot-tracking.js';
 import { buildReviewPlanningBrief } from '../run-engine/review-artifacts.js';
-import { stackPrBase } from '../run-engine/stack-base.js';
+import { publicationBaseForRun } from '../run-engine/stack-base.js';
 import { getRun } from '../runs/store.js';
 import { REVIEW_FIX_CHECKLIST_TARGET } from '../tasks/checklist-target.js';
 import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-template-catalog.js';
@@ -124,9 +124,10 @@ async function descriptionCheckSection(
   run: NonNullable<ReturnType<typeof getRun>>,
   projectJson: Awaited<ReturnType<typeof loadProjectVars>>['projectJson'] | undefined,
 ): Promise<string> {
-  const baseBranch =
-    (await stackPrBase(run)) ??
-    ((projectJson && getProjectField(projectJson, 'default_branch')) || DEFAULT_BRANCH);
+  const baseBranch = await publicationBaseForRun(
+    run,
+    projectJson ? getProjectField(projectJson, 'default_branch') : undefined,
+  );
   const { resolvePublicationManifest } = await import('../run-completion/publication-artifacts.js');
   let publication;
   let selectionError: string | undefined;

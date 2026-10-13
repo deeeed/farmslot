@@ -30,6 +30,11 @@ export const WORKER_TASK = {
       vars: 'COMMENT_SUMMARY, HAS_RECIPE, RECIPE_SOURCE',
     },
     {
+      scope: 'pr-complete, update-branch',
+      vars: 'PUBLICATION_BASE',
+      note: 'Resolved by publicationBaseForRun from contribution lineage and retargeting; worker rebase target, separate from DEFAULT_BRANCH freshness.',
+    },
+    {
       scope: 'update-branch',
       vars: 'BRANCH_UPDATE_STRATEGY',
       note: 'rebase | merge | project-default; project-default resolves against force-push policy at runtime.',
@@ -85,7 +90,11 @@ export const SECONDARY_TEMPLATES = {
   title: 'Secondary in-run templates',
   syntax: 'double-brace VAR',
   groups: [
-    { scope: 'ci-fix.md', vars: 'CI_ISSUES, CI_ISSUE_TYPE + worker/hook vars' },
+    {
+      scope: 'ci-fix.md',
+      vars: 'CI_ISSUES, CI_ISSUE_TYPE, PUBLICATION_BASE, BRANCH_UPDATE_INSTRUCTIONS + worker/hook vars',
+      note: 'The shared task-runtime renderer supplies current publication-base rebase and remote-SHA lease instructions, including when TASK.md predates retargeting.',
+    },
     {
       scope: 'review-fix.md',
       vars: 'ISSUES, REVIEW_FEEDBACK_FILES + worker/hook vars',

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { buildBranchUpdateInstructions } from '@farmslot/agent-runtime';
 import type { Run } from '@farmslot/protocol';
 
 import { farmslotRoot } from '../core/config.js';
@@ -297,6 +298,14 @@ test('default CI fix template uses explicit CI-FIX marker targeting', async () =
   assert.doesNotMatch(template, /mark start/);
   assert.doesNotMatch(template, /mark complete \|/);
   assert.doesNotMatch(template, /mark-checklist-step\.cjs .*CI-FIX\.md .*CI-FIX-SIGNAL\.json/);
+  assert.match(template, /\{\{BRANCH_UPDATE_INSTRUCTIONS\}\}/);
+  const rendered = template.replace(
+    '{{BRANCH_UPDATE_INSTRUCTIONS}}',
+    buildBranchUpdateInstructions('feat/upstream'),
+  );
+  assert.match(rendered, /rebase onto `origin\/feat\/upstream`/);
+  assert.match(rendered, /pre-rebase-remote-sha\.txt/);
+  assert.doesNotMatch(rendered, /TASK\.md's branch-update instructions/);
 });
 
 test('default CI fix template completion marker writes CI-FIX signal', async () => {

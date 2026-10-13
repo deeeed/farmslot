@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  buildBranchUpdateInstructions,
   buildHandoffMetadata,
   buildTaskDocument,
   builtinTerminalContract,
@@ -58,6 +59,29 @@ test('task instructions consume supplied helper commands and leave verdicts to r
         ' artifact-check',
     ),
   );
+});
+
+test('branch maintenance consumes the supplied publication base separately from freshness', () => {
+  for (const flowType of ['pr-complete', 'update-branch', 'ci-fix']) {
+    const document = buildTaskDocument({
+      flowType,
+      modePreamble: '',
+      vars: {
+        TASK_DIR: '.task/stack',
+        BRANCH: 'feat/child',
+        PUBLICATION_BASE: 'feat/upstream',
+        DEFAULT_BRANCH: 'trunk',
+      },
+      description: 'Maintain child work',
+      acceptanceCriteria: [],
+      hasTicketData: true,
+    });
+    assert.match(document, /PUBLICATION_BASE: feat\/upstream/);
+    assert.match(document, /rebase onto `origin\/feat\/upstream`/);
+    assert.match(document, /default-branch freshness checks separate/);
+    assert.ok(document.includes(buildBranchUpdateInstructions('feat/upstream')));
+    assert.doesNotMatch(document, /rebase onto `origin\/trunk`/);
+  }
 });
 
 test('existing tasks receive the shared runtime without replacing author data', async (t) => {

@@ -206,6 +206,34 @@ test('publication packages and previews share the publisher stack/default base',
   );
 });
 
+test('branch maintenance inherits the latest ancestor stack and its retarget', async () => {
+  const root = runs.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: 'BASE-ROOT',
+  });
+  runs.updateRun(root.id, { stack: STACK });
+  for (const flowType of ['pr-complete', 'update-branch'] as const) {
+    const child = runs.createRun({
+      flowType,
+      project: 'farmslot-farm',
+      ticketOrPr: 'fixture/repo#41',
+      familyId: root.familyId,
+      parentRunId: root.id,
+    });
+    assert.equal(await publicationBaseForRun(child, 'trunk'), 'feat/upstream');
+  }
+  runs.updateRun(root.id, { stack: { ...STACK, retargetedTo: 'trunk' } });
+  const continuation = runs.createRun({
+    flowType: 'pr-complete',
+    project: 'farmslot-farm',
+    ticketOrPr: 'fixture/repo#41',
+    familyId: root.familyId,
+    parentRunId: root.id,
+  });
+  assert.equal(await publicationBaseForRun(continuation, 'main'), 'trunk');
+});
+
 test('a stacked run diffs against the commit it branched from', () => {
   assert.deepEqual(contributionDiffBaseSpec({}, 'main'), {
     baseRef: 'origin/main',

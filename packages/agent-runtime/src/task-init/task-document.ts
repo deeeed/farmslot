@@ -24,6 +24,16 @@ export const BUG_INPUT = 'inputs/bug-input.json';
 /** Optional project-owned addendum rendered into TASK.md (relative to `templates/`). */
 export const TASK_DOCUMENT_ADDENDUM_TEMPLATE = 'task-document.md';
 
+/** Shared instructions for a maintenance task and an inline CI-fix checklist. */
+export function buildBranchUpdateInstructions(publicationBase: string): string {
+  return [
+    '## Branch update base',
+    '',
+    `The publication base is \`${publicationBase}\`. For a PR branch update, fetch that branch from origin and rebase onto \`origin/${publicationBase}\`. Follow-up runs use their contribution family's base; after retargeting they use the recorded retarget branch. Keep default-branch freshness checks separate.`,
+    'Before rebasing, fetch the PR head and record its exact remote SHA in `artifacts/pre-rebase-remote-sha.txt` under this task. Refuse an update if local HEAD omits remote commits. After conflict resolution and the required checks, push with an explicit lease against that recorded SHA. Never infer the update base from a PR body or replace it with the default branch while the upstream PR remains open.',
+  ].join('\n');
+}
+
 /**
  * Ordered keys of the `## Task` block. A key renders only when the caller set
  * it, except the four every surface knows. Farmslot sets its slot facts; a
@@ -46,6 +56,7 @@ const TASK_BLOCK_KEYS: ReadonlyArray<{ key: string; required?: boolean; label?: 
   { key: 'REVIEW_TIER' },
   { key: 'RECIPE_STRATEGY' },
   { key: 'BRANCH_UPDATE_STRATEGY' },
+  { key: 'PUBLICATION_BASE' },
   { key: 'HAS_RECIPE' },
   { key: 'RECIPE_SOURCE' },
   { key: 'TASK_DIR', required: true },
@@ -143,6 +154,9 @@ export function buildTaskDocument(input: TaskDocumentInput): string {
     '',
     renderAcceptanceCriteria(input.acceptanceCriteria),
   );
+  if (vars.PUBLICATION_BASE?.trim()) {
+    sections.push('', buildBranchUpdateInstructions(vars.PUBLICATION_BASE));
+  }
   if (normalizeAcceptanceCriteria(input.acceptanceCriteria).length > 0) {
     const defaults = installedTaskCommands();
     const acceptance = vars.AC_CMD?.trim() || defaults.AC_CMD;
