@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Find-slot replay retains device requirements",
+  "description": "Manual public replay and production selection proof in disposable pools, without starting workers or device providers.",
+  "workflow": {
+    "entry": "select",
+    "nodes": {
+      "select": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks scripts/runner-validation/gateway/find-slot-device-capability.mts",
+        "timeout_ms": 120000,
+        "intent": "Preserve Android placement through replay and reject an incompatible iOS slot",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

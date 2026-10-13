@@ -53,6 +53,7 @@ import {
   probeWorkerSignalForRun,
   signalMatchesMonitorContext,
 } from '../../run-engine/run-monitor.js';
+import { replaySlotCapabilityRequirements } from '../../run-engine/slot-capability-requirements.js';
 import { isTerminalTeardownInFlight } from '../../run-engine/terminal-teardown-registry.js';
 import {
   assertRunNotArchiving,
@@ -69,6 +70,7 @@ import {
 import { clearedRunnerSessionContextPatch } from '../../runners/session-record.js';
 import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
+import { withRunSources } from '../../sources/runtime.js';
 import { resolveContextFilePath } from '../../tasks/watcher.js';
 import { normalizeWorkerSignal, parseStrictIsoMs } from '../../tasks/worker-signals.js';
 import { isActiveSlotHolder, slotClaimBlockedByRelease } from '../dispatch/slot-scoring.js';
@@ -1125,9 +1127,21 @@ export async function runReplayStep(
   let reclaimedSlotEpoch: number | null = null;
   let priorOwnedSlotFields: Record<string, unknown> | null = null;
   const priorRunSlotId = existing.slotId ?? null;
+  const selectionGeneration = existing.engineState?.generation;
   let revived = false;
   let nativeReplayGeneration: number | undefined;
   try {
+    const slotCapabilities =
+      targetIdx >= 0 && targetIdx <= findSlotIdx
+        ? await withRunSources(existing, () => replaySlotCapabilityRequirements(existing), {
+            planning: true,
+          })
+        : undefined;
+    if (
+      getRun(params.runId)?.slotId !== priorRunSlotId ||
+      getRun(params.runId)?.engineState?.generation !== selectionGeneration
+    )
+      throw new Error('Run changed while reading replay device requirements');
     // Invalidate any in-flight engine loop so it bails instead of overwriting our state.
     // Do this only after replay entry validation so rejected replays do not leave a
     // synthetic in-progress recovery lane behind.
@@ -1228,7 +1242,18 @@ export async function runReplayStep(
     if (targetIdx >= 0 && targetIdx <= findSlotIdx) {
       replayTaskFile = null;
       effectiveSlotId = null;
-      updateRun(params.runId, { slotId: null, taskFile: null });
+      updateRun(params.runId, {
+        slotId: null,
+        taskFile: null,
+        ...(slotCapabilities
+          ? {
+              engineState: {
+                ...getRun(params.runId)!.engineState,
+                slotCapabilityRequirements: slotCapabilities,
+              },
+            }
+          : {}),
+      });
       console.log(
         `[run] replay from ${replayStepName} — cleared slotId + taskFile for re-selection`,
       );

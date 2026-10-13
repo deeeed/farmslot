@@ -106,6 +106,7 @@ import { canReplayBranchAffinityDecision, findLatestResolvedDecision } from './d
 import { BlockedRunError } from './errors.js';
 import { canReconcileReviewQaRun, reviewQaMigrationPatch } from './review-qa-migration.js';
 import { runSupersededSince } from './run-generation.js';
+import { slotCapabilityBlocker, slotCapabilityCatalogs } from './slot-capability-requirements.js';
 
 interface StepIO {
   inputs?: Record<string, unknown>;
@@ -224,9 +225,14 @@ async function claimSelectedSlot(
   }
   return withRunSources(
     getRun(runId)!,
-    () => {
+    async () => {
       const current = getRun(runId);
       if (runSupersededSince(current, generation)) throw runChangedError(runId, slotId);
+      const requiredCapabilities = current!.engineState?.slotCapabilityRequirements?.capabilityIds;
+      const catalogs = await slotCapabilityCatalogs([slotId], requiredCapabilities);
+      const capabilityRefusal = slotCapabilityBlocker(slotId, requiredCapabilities, catalogs);
+      if (capabilityRefusal) throw new Error(`Slot ${slotId}: ${capabilityRefusal}`);
+      if (runSupersededSince(getRun(runId), generation)) throw runChangedError(runId, slotId);
       // Record the binding only after source revalidation. Automatic replans keep their
       // original open request, while the claim and any teardown see this exact target.
       if (current?.slotId !== slotId) updateRun(runId, { slotId });
@@ -759,6 +765,15 @@ export async function executeFindSlotStep(
       : undefined;
   // Explicit prepare only — profile-fit suggestions never rewrite FIND_SLOT eligibility.
   const requiredPrepareProfile = run.prepareProfile || null;
+  const requiredCapabilities = run.engineState?.slotCapabilityRequirements?.capabilityIds;
+  // Shortcuts keep the retained node context. Scored candidates below use
+  // their individually planned node sources before reading the catalog.
+  const capabilityCatalogs = run.slotId
+    ? await withRunSources(run, () => slotCapabilityCatalogs([run.slotId!], requiredCapabilities), {
+        planning: true,
+      })
+    : undefined;
+  const capabilitySelection = { requiredCapabilities, capabilityCatalogs };
   const releasableBranchHolderIds = await inspectReleasableBranchHolders(
     (await loadFleetStatus()).slots,
     run.project,
@@ -835,6 +850,7 @@ export async function executeFindSlotStep(
         targetBranch: targetBranch ?? null,
         requiredPrepareProfile,
         activeRunIds: activeRunIds(allRuns, runId),
+        ...capabilitySelection,
       },
     );
     if (eligibilityFail) {
@@ -894,6 +910,7 @@ export async function executeFindSlotStep(
         requiredPrepareProfile,
         skipPrepare,
         allowWorking: replaceableWarm,
+        ...capabilitySelection,
       });
     } else if (activeWorkerFreshReuseAllowed(run.flowType)) {
       eligibilityFail = await verifyBranchAffinityNudgeStillEligible(
@@ -908,6 +925,7 @@ export async function executeFindSlotStep(
           targetBranch: targetBranch ?? null,
           requiredPrepareProfile,
           activeRunIds: activeRunIds(allRuns, runId),
+          ...capabilitySelection,
         },
       );
     } else {
@@ -951,7 +969,15 @@ export async function executeFindSlotStep(
   ]);
   const projectConfigs = projectConfigsFromProjects(projectConfigList);
   const sourcePlans = await planRunSourceSlots(run, fleet.slots);
+  capabilitySelection.capabilityCatalogs = await slotCapabilityCatalogs(
+    fleet.slots
+      .filter((slot) => slot.project === run.project && !slot.missingFromPool)
+      .map((slot) => slot.slot),
+    requiredCapabilities,
+    sourcePlans,
+  );
   const selectionOptions: SlotSelectionOptions = {
+    ...capabilitySelection,
     targetBranch,
     releasableBranchHolderIds,
     requiredPrepareProfile,
@@ -1057,6 +1083,7 @@ export async function executeFindSlotStep(
           requiredPrepareProfile,
           activeRunIds: activeRunIds(getAllRuns(), runId),
           plans: sourcePlans,
+          ...capabilitySelection,
         },
       );
       if (nudgeCandidates.length > 0) {
@@ -1439,6 +1466,7 @@ export async function executeFindSlotStep(
         ...(run.pressureOverride ? { overridePrincipalId: run.pressureOverride.principalId } : {}),
         includeProfileFit: false,
         sourcePlans,
+        ...capabilitySelection,
       },
     ),
   );

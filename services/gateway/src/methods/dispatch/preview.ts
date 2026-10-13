@@ -34,6 +34,10 @@ import {
 } from '../../review-workspaces/admission.js';
 import { resolveDirectWorkflowDefaults } from '../../review-workspaces/direct-defaults.js';
 import { detectProfileFit, FARMSLOT_PROJECT } from '../../run-engine/profile-fit-gate.js';
+import {
+  slotCapabilityBlocker,
+  type SlotCapabilityCatalogs,
+} from '../../run-engine/slot-capability-requirements.js';
 import { fetchTicketData } from '../../run-engine/ticket-data.js';
 import {
   normalizeRunner,
@@ -461,6 +465,8 @@ export function selectBranchAffinityEligibleSlots(
     // runner because it tears down + relaunches.
     if (!passesBranchAffinityLaneGate(s, selected)) continue;
     if (companionResourceBlocker(s, selected.requiredPrepareProfile)) continue;
+    if (slotCapabilityBlocker(s.slot, selected.requiredCapabilities, selected.capabilityCatalogs))
+      continue;
     const m = isBranchAffinityCandidateBranchMatch(s, ticketSlug, prNumber, targetBranch);
     if (!m.matched) continue;
     const primaryRole = s.currentFlowType
@@ -615,6 +621,12 @@ export async function verifyBranchAffinityNudgeStillEligible(
     return `slot ${slot.slot} has no active run to nudge (agent=${slot.agent}) — use Fresh dispatch instead`;
   const resourceBlocker = companionResourceBlocker(slot, selected.requiredPrepareProfile);
   if (resourceBlocker) return resourceBlocker;
+  const capabilityRefusal = slotCapabilityBlocker(
+    slot.slot,
+    selected.requiredCapabilities,
+    selected.capabilityCatalogs,
+  );
+  if (capabilityRefusal) return capabilityRefusal;
   const launchCommand = await launchCommandForSlotCurrentRun(slot);
   if (
     !runnerSupportsTmuxNudgesForLaunch(slot.runner, launchCommand, await loadSlotVars(slot.slot))
@@ -972,6 +984,8 @@ export async function dispatchPreview(
     sourcePlans?: SourceSlotPlans;
     sourcePlanning?: import('../run.js').RunCreateInternalOptions;
     sourcePlanningReady?: boolean;
+    requiredCapabilities?: readonly string[];
+    capabilityCatalogs?: SlotCapabilityCatalogs;
   } = {},
 ): Promise<DispatchPreviewResult> {
   if ('sourcePlans' in params) throw new Error('Source plans are gateway-owned');
@@ -1177,6 +1191,8 @@ export async function dispatchPreview(
       // cannot be stale to one picker and idle to another.
       parkPreservedSlotIds: parkPreservedSlotIds(getAllRuns()),
       plans: sourcePlans,
+      requiredCapabilities: internalOptions.requiredCapabilities,
+      capabilityCatalogs: internalOptions.capabilityCatalogs,
       ...(params.pressureOverride
         ? { pressureOverrideMachine: params.pressureOverride.machine }
         : {}),
@@ -1295,6 +1311,8 @@ export function resolveDispatchPreviewFromFleet(
      * derived: this function is pure over the slots it is given. */
     parkPreservedSlotIds?: ReadonlyMap<string, ParkPreservedWorkspace[]>;
     plans?: SlotSelectionPlans;
+    requiredCapabilities?: readonly string[];
+    capabilityCatalogs?: SlotCapabilityCatalogs;
   },
 ): DispatchPreviewResult {
   let slotInfo: SlotStatus;
@@ -1307,6 +1325,8 @@ export function resolveDispatchPreviewFromFleet(
   );
   const selectionOptions: SlotSelectionOptions = {
     ...params,
+    requiredCapabilities: options?.requiredCapabilities,
+    capabilityCatalogs: options?.capabilityCatalogs,
     requiredPrepareProfile,
     releasableBranchHolderIds: options?.releasableBranchHolderIds,
     projectConfigs,
