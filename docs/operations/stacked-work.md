@@ -53,7 +53,7 @@ If A merged before B started, B is an ordinary run from the default branch.
 
 [ADR-040 Amendment 3](../adr/040-work-graph-orchestration.md#amendment-3-retained-run-stack-attachment) proposes attachment without re-dispatching completed work. The command below is unavailable until the amendment is accepted and implemented.
 
-Reuse the existing graph and upstream node. Add the retained run's backlog node and the same `published`/completion edges shown above, then verify the retained child HEAD:
+Reuse the existing graph and upstream node. Node/edge authoring requires a planning graph. If the graph is already active, reuse a predeclared target and both required edges; do not add a runnable node before attachment. Verify the retained child HEAD, then use the Proposed operation:
 
 ```sh
 farmslot graph attach-run <graphId> <nodeId> <runId> --expected-head <headSha>
