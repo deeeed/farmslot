@@ -204,6 +204,7 @@ try {
     selected.run.engineState?.slotCapabilityRequirements,
     replayed.run.engineState?.slotCapabilityRequirements,
   );
+  await store.persistRunNow(store.getRun(run.id)!, 'isolated device selection proof');
   json(path.join(out, 'receipt.json'), {
     head: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     sourceHash: createHash('sha256')
