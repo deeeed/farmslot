@@ -125,7 +125,8 @@ This design is Accepted. Delivery is incremental; acceptance does not certify al
 
 ## Amendment 1: scripted command completion, 2026-10-14
 
-**Status:** Proposed
+**Status:** Accepted by the lead, 2026-10-14. Delivery is included in
+[PR #1035](https://github.com/deeeed/farmslot/pull/1035), with paired review required.
 
 The runner capability layer may establish idle for a project-owned scripted
 command from its current task's structured execution receipt. The command result,

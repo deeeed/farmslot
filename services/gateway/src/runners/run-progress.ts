@@ -17,7 +17,11 @@ import { readReviewWorkspaceWorker } from './native/review-workspace.js';
 import { nativeWorkerLiveStatus, readNativeWorkerSnapshot } from './native/worker-control.js';
 import { classifyMonitorProgress, type MonitorProgressKind } from './observability-progress.js';
 import type { ObservabilityReading } from './observability-types.js';
-import { readRunnerActivityFromObservability, readRunnerTurnState } from './registry.js';
+import {
+  readRunnerActivityFromObservability,
+  readRunnerTaskProgress,
+  readRunnerTurnState,
+} from './registry.js';
 import { reviewWorkspaceRunnerVars } from './review-startup.js';
 
 export interface RunProgressObservation {
@@ -73,6 +77,7 @@ interface RunProgressReaders {
   activity: typeof readRunnerActivityFromObservability;
   turn: typeof readRunnerTurnState;
   turnActive: typeof runnerTurnLeaseIsActive;
+  taskProgress: typeof readRunnerTaskProgress;
 }
 
 const progressReaders: RunProgressReaders = {
@@ -85,6 +90,7 @@ const progressReaders: RunProgressReaders = {
   activity: readRunnerActivityFromObservability,
   turn: readRunnerTurnState,
   turnActive: runnerTurnLeaseIsActive,
+  taskProgress: readRunnerTaskProgress,
 };
 
 async function observeContext(
@@ -128,6 +134,8 @@ async function observeContext(
     ? await source.workspaceVars(run)
     : await source.slot(run.slotId!);
   if (!vars) return { kind: 'unproven', activeRole };
+  const taskProgress = await source.taskProgress({ run, context, vars });
+  if (taskProgress !== null) return { kind: taskProgress, activeRole };
   const target = run.reviewWorkspace
     ? context?.target
     : await source.target(run.slotId!, {
