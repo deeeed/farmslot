@@ -8,6 +8,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Render remote-run PR bodies with the gateway host's declared provider root from its pool, refusing missing or conflicting roots instead of using a remote path or ambient harness selection.
 
+- Recognize current successful scripted command receipts at lifecycle gates while retaining uncertainty for missing or stale execution evidence.
+
 - Preserve the selected device capabilities across find-slot replay and refuse unsupported slots before selection or claim.
 
 - Keep exact worker identities after deferred interactive terminal cleanup and retry through the recorded cleanup owner, while preserving successor and session ownership guards.
