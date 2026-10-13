@@ -78,3 +78,5 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [065](065-fail-closed-run-lifecycle.md)                  | Fail-closed run lifecycle                                               | Accepted |
 | [068](068-project-recipe-binding-and-conformance.md)     | Project recipe binding and conformance                                  | Accepted |
 | [069](069-declared-pinned-sources.md)                    | Declared and pinned farm sources                                        | Accepted |
+
+ADR-062 has a [proposed amendment](062-recorded-run-evidence.md#proposed-amendment-completed-evidence-review-and-run-footprint) for completed review, chapters and retained storage. The base decision remains Accepted.
