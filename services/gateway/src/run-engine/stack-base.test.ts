@@ -190,10 +190,10 @@ test('a follow-up measures its diff from the stacked run it continues', async ()
   assert.equal(await contributionStack(unrelated), undefined);
 });
 
-test('stackPrBase targets the upstream branch until the run is retargeted', () => {
-  assert.equal(stackPrBase({}), undefined);
-  assert.equal(stackPrBase({ stack: STACK }), 'feat/upstream');
-  assert.equal(stackPrBase({ stack: { ...STACK, retargetedTo: 'main' } }), 'main');
+test('stackPrBase targets the upstream branch until the run is retargeted', async () => {
+  assert.equal(await stackPrBase({}), undefined);
+  assert.equal(await stackPrBase({ stack: STACK }), 'feat/upstream');
+  assert.equal(await stackPrBase({ stack: { ...STACK, retargetedTo: 'main' } }), 'main');
 });
 
 test('publication packages and previews share the publisher stack/default base', async () => {

@@ -119,7 +119,7 @@ async function descriptionCheckSection(
   projectJson: Awaited<ReturnType<typeof loadProjectVars>>['projectJson'] | undefined,
 ): Promise<string> {
   const baseBranch =
-    stackPrBase(run) ??
+    (await stackPrBase(run)) ??
     ((projectJson && getProjectField(projectJson, 'default_branch')) || DEFAULT_BRANCH);
   return buildDescriptionCheckSection({
     repo: vars.remoteRepo,
