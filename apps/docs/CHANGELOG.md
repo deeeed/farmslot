@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document observed enabled-state waits and file-content state proof, with command and assertion controls in the recipe guide.
+
 - Explain the run, gate and evidence responsibilities with truthful migration status; generate run-state/flow tables and shared references from their owning sources.
 
 - Document declared source status and exact-commit synchronization in the gateway API.

@@ -11,6 +11,7 @@ import {
 } from '@farmslot/protocol';
 
 import { createStandardCoreAdapters } from '../src/adapters/core.js';
+import { recipeFailureCause, recipeFailureTraceFields } from '../src/core/failure.js';
 import { getJsonPathValue } from '../src/core/json.js';
 import { createRecipeRunner } from '../src/core/runner.js';
 import type { ActionExecutionContext } from '../src/core/types.js';
@@ -33,6 +34,46 @@ const context: ActionExecutionContext = {
 };
 const adapter = createStandardCoreAdapters().find((entry) => entry.action === 'assert_output')!;
 const count = { path: '$.count', operator: 'eq', value: 2 };
+
+test('file content checks retain the resolved expectation and actual match on both outcomes', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-file-assertion-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const file = path.join(root, 'state.log');
+  await writeFile(file, 'service ready\n');
+  const check = createStandardCoreAdapters().find((entry) => entry.action === 'assert_file')!;
+  const fileContext = { ...context, projectRoot: root };
+  const result = await check.execute({ path: 'state.log', contains: 'ready' }, fileContext);
+  assert.deepEqual(result.output, {
+    path: 'state.log',
+    sizeBytes: 14,
+    contains: 'ready',
+    matched: true,
+  });
+  await writeFile(file, 'service stopped\n');
+  await assert.rejects(
+    check.execute({ path: 'state.log', contains: 'ready' }, fileContext),
+    (error) => {
+      assert.equal(recipeFailureCause(error), 'subject');
+      assert.deepEqual(recipeFailureTraceFields(error), {
+        error_code: 'FILE_CONTENT_MISMATCH',
+        error_details: { path: 'state.log', sizeBytes: 16, contains: 'ready', matched: false },
+      });
+      return true;
+    },
+  );
+  assert.deepEqual((await check.execute({ path: 'state.log' }, fileContext)).output, {
+    path: 'state.log',
+    sizeBytes: 16,
+  });
+  await assert.rejects(
+    check.execute({ path: 'missing.log', contains: 'ready' }, fileContext),
+    (error) => {
+      assert.notEqual(recipeFailureCause(error), 'subject');
+      assert.deepEqual(recipeFailureTraceFields(error), {});
+      return true;
+    },
+  );
+});
 
 for (const [name, assertion] of Object.entries({
   all: { all: [count, { path: '$', operator: 'eq', value: 'ready' }] },

@@ -4,6 +4,9 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- Validate resolved enabled waits before setup and observe them through the shared CDP target, disabled semantics and cancellable polling.
+- Derive file-content state claims from executed `assert_file` expectations, retaining the checked path and match outcome while keeping existence-only checks ineligible.
+
 - Keep the engine as the only summary and artifact-manifest writer; trusted hosts register closeout metadata and sidecars before package validation.
 
 ## 0.32.0 - 2026-10-13

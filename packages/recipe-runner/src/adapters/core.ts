@@ -99,12 +99,20 @@ function defineAssertFileAdapter(): ActionAdapter {
       if (node.contains != null) {
         const content = (await readFileWithinRoot(context.projectRoot, filePath)).toString('utf-8');
         const expected = asString(node.contains, 'assert_file.contains');
-        if (!content.includes(expected)) {
+        const observation = {
+          path: filePath,
+          sizeBytes: stats.size,
+          contains: expected,
+          matched: content.includes(expected),
+        };
+        if (!observation.matched) {
           throw new RecipeExecutionError(
             'subject',
             `File ${filePath} does not contain expected text ${JSON.stringify(expected)}.`,
+            { code: 'FILE_CONTENT_MISMATCH', details: observation },
           );
         }
+        return { output: observation };
       }
       return { output: { path: filePath, sizeBytes: stats.size } };
     },

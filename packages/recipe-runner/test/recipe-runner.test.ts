@@ -3121,6 +3121,109 @@ test('preserves raw action outputs that happen to contain phases', () => {
   assert.deepEqual(normalizeUiTransportResult(result), { output: result });
 });
 
+test('preflight rejects resolved enabled waits in roots and calls before setup', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const libraryRoot = path.join(tempRoot, 'library');
+    await mkdir(path.join(libraryRoot, 'recipes'), { recursive: true });
+    const nodes = {
+      setup: {
+        action: 'command',
+        cmd: 'printf setup',
+        intent: 'Set up only after preflight.',
+        next: 'observe',
+      },
+      observe: {
+        action: 'ui.wait_for',
+        selector: '#submit',
+        expected: '{{params.expected}}',
+        enabled: true,
+        intent: 'Observe the submit control.',
+        next: 'done',
+      },
+      done: { action: 'end', status: 'pass' },
+    };
+    const child = recipeDocument(nodes, {
+      paramsSchema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { expected: { type: 'string', default: 'hidden' } },
+      },
+    });
+    await writeJsonFile(path.join(libraryRoot, 'recipes', 'child.recipe.json'), child);
+    const manifest = testManifest([...Object.keys(coreActionManifest.actions), 'ui.wait_for']);
+    manifest.actions['ui.wait_for'] = testAction('ui.wait_for', {
+      schema: {
+        type: 'object',
+        properties: { selector: stringParam, expected: stringParam, enabled: { type: 'boolean' } },
+        additionalProperties: false,
+      },
+    });
+    let effects = 0;
+    const runner = createRecipeRunner({
+      actionManifest: manifest,
+      adapters: [
+        ...createStandardCoreAdapters().map((adapter) =>
+          adapter.action === 'command'
+            ? {
+                ...adapter,
+                async execute() {
+                  effects += 1;
+                  return { ok: true };
+                },
+              }
+            : adapter,
+        ),
+        ...createStandardUiAdapters({
+          async execute() {
+            effects += 1;
+            return { matched: true };
+          },
+        }).filter((adapter) => adapter.action === 'ui.wait_for'),
+      ],
+    });
+    const request = {
+      projectRoot: tempRoot,
+      artifactsDir: path.join(tempRoot, 'artifacts'),
+      librarySources: [{ root: libraryRoot }],
+    };
+    await assert.rejects(
+      runner.preflight({ ...request, recipeDocument: child }),
+      /Enabled waits require explicit expected/u,
+    );
+    await assert.rejects(
+      runner.run({ ...request, recipeDocument: child }),
+      /Enabled waits require explicit expected/u,
+    );
+    const parent = recipeDocument({
+      setup: { ...nodes.setup, next: 'call' },
+      call: {
+        action: 'call',
+        ref: 'child',
+        params: {},
+        intent: 'Call the parameterized observation.',
+        next: 'done',
+      },
+      done: nodes.done,
+    });
+    await assert.rejects(
+      runner.preflight({ ...request, recipeDocument: parent }),
+      /Enabled waits require explicit expected/u,
+    );
+    await runner.preflight({ ...request, recipeDocument: child, params: { expected: 'present' } });
+    await runner.preflight({
+      ...request,
+      recipeDocument: recipeDocument({
+        ...nodes,
+        observe: { ...nodes.observe, expected: '{{outputs.setup.expected}}' },
+      }),
+    });
+    assert.equal(effects, 0);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('rejects invalid nested call parameters during preflight', async () => {
   const tempRoot = await createTempRoot();
   try {
@@ -5373,6 +5476,7 @@ test('CDP visible waits use viewport visibility and presses validate hit targets
       if (method === 'Page.createIsolatedWorld') return { executionContextId: 1 };
       if (method === 'Runtime.evaluate') {
         expressions.push(String(params.expression));
+        if (expressions.length === 1) return { result: { value: true } };
         return { result: { value: { x: 10, y: 20, selector: '#submit', tagName: 'BUTTON' } } };
       }
       return {};

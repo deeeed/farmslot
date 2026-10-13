@@ -39,6 +39,53 @@ Every non-terminal node needs a short human-facing `intent`. UI intent describes
 
 Action parameters are sibling fields beside `action`, `intent`, and the transition. Only a `call` node uses `params` to pass values into another recipe.
 
+## Non-UI criteria
+
+Run the project's real test command, then assert its recorded exit code. Put
+`proves` on the assertion:
+
+```json
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "proofTargets": [{ "id": "AC-1", "claim": "The project tests pass." }],
+  "workflow": {
+    "entry": "tests",
+    "nodes": {
+      "tests": {
+        "action": "command",
+        "cmd": "npm test",
+        "allow_failure": true,
+        "intent": "Run the project tests.",
+        "next": "check"
+      },
+      "check": {
+        "action": "assert_output",
+        "source": "tests",
+        "assert": { "path": "$.exitCode", "operator": "eq", "value": 0 },
+        "intent": "Confirm the tests passed.",
+        "proves": ["AC-1"],
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
+```
+
+`allow_failure` retains non-zero results so the assertion can disprove the claim.
+Choose the actual project command; printing a success marker is not a test of the
+application.
+
+For a log criterion, read the application's log with `command` and follow it with
+`assert_output` using `source` and `contains`. Check the actual expected line,
+not the command's exit code alone. Navigation and screenshots cannot replace an
+assertion of non-UI state.
+
+File-content claim proof through `assert_file` with `contains` is defined in
+[Amendment 5](../reference/recipe-protocol-v1.md#amendment-5-file-content-proof-assertions).
+Until supporting packages ship, use the executed log-read and output-assertion
+pattern. A file's existence alone does not prove its contents.
+
 ## Validate
 
 ```sh
