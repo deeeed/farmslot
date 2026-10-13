@@ -92,7 +92,6 @@ mock.module('../../external/github.js', {
 // Load the rest only after the GitHub mock, so engine-decisions binds the mocked lookup.
 const fleet = await import('../../fleet/state.js');
 const store = await import('../../runs/store.js');
-const orchestrator = await import('../../run-engine/orchestrator.js');
 mock.module('../../fleet/state.js', {
   namedExports: {
     ...fleet,
@@ -127,6 +126,7 @@ mock.module('../../runs/store.js', {
     },
   },
 });
+const orchestrator = await import('../../run-engine/orchestrator.js');
 mock.module('../../run-engine/orchestrator.js', {
   namedExports: {
     ...orchestrator,
