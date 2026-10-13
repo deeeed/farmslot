@@ -145,7 +145,7 @@ Re-upload or fix when:
 Use the gateway's retained publication package. Refresh it through the public CLI:
 
 ```bash
-farmslot rpc run.refreshPublishPackage '{"runId":"<run-id>"}'
+farmslot rpc run.refreshPublishedEvidence '{"runId":"<run-id>"}'
 ```
 
 ## Review report contract

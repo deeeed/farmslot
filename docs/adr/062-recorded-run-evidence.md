@@ -394,6 +394,7 @@ in the same cutover so workers request human review rather than writing override
 
 **Status:** Accepted, 2026-10-14
 **Specification:** [Selected evidence run contract](../reference/recorded-run-evidence.md#selected-evidence-run-contract).
+**Implementation:** [#1030](https://github.com/deeeed/farmslot/pull/1030), pending review and delivery.
 
 ### Decision
 
