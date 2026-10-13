@@ -13,6 +13,7 @@ import * as realExec from '../core/exec.js';
 
 let taskDir = '';
 let execCalls: string[] = [];
+let checkerStdout = 'TASK_ARTIFACT_CONTRACT_PASS';
 
 mock.module('../core/config.js', {
   namedExports: {
@@ -39,7 +40,7 @@ mock.module('../core/exec.js', {
     // the one recorded. Its own exit is faked as success.
     execOnSlot: async (_vars: unknown, command: string) => {
       execCalls.push(command);
-      return { exitCode: 0, stdout: 'TASK_ARTIFACT_CONTRACT_PASS', stderr: '' };
+      return { exitCode: 0, stdout: checkerStdout, stderr: '' };
     },
   },
 });
@@ -85,6 +86,41 @@ async function validate(disposition?: string) {
     path.join(taskDir, 'CHECKLIST.md'),
   );
 }
+
+test('a checker PASS without declared CI results fails closed with the selected paths', async () => {
+  for (const projection of ['', '\nTASK_DETERMINISTIC_CHECKS []']) {
+    const root = writeTaskDir({ require: false });
+    const contract = path.join(taskDir, 'inputs/worker-terminal-contract.json');
+    writeFileSync(
+      contract,
+      JSON.stringify({
+        deterministicChecks: [
+          {
+            checklist: 'CHECKLIST.md',
+            stepNumber: 17,
+            reference: 'ci.local_check',
+            command: 'true',
+          },
+        ],
+      }),
+    );
+    checkerStdout = `TASK_ARTIFACT_CONTRACT_PASS${projection}`;
+    try {
+      const result = await validate();
+      assert.equal(result.ok, false);
+      if (!result.ok) {
+        assert.equal(result.kind, 'infrastructure');
+        assert.ok(result.message.includes(contract));
+        assert.match(result.message, /check-task-artifact-contract\.mjs returned/);
+        assert.match(result.message, /declares 1 check/);
+        assert.doesNotMatch(result.message, /Update the Farmslot runtime/);
+      }
+    } finally {
+      checkerStdout = 'TASK_ARTIFACT_CONTRACT_PASS';
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
 
 test('complete requires the acceptance ledger; no-change does not', async () => {
   const root = writeTaskDir({ require: true });

@@ -185,7 +185,7 @@ export async function validateTerminalSignalArtifacts(
     }
   }
 
-  const checker = agentRuntimeScriptForSlot(vars, 'check-task-artifact-contract.mjs');
+  const checker = await agentRuntimeScriptForSlot(vars, 'check-task-artifact-contract.mjs');
   const prerequisites = await execOnSlot(
     vars,
     `test -f ${shellQuote(checker)} && test -f ${shellQuote(contractPath)}`,
@@ -219,12 +219,29 @@ export async function validateTerminalSignalArtifacts(
     const resultLine = result.stdout
       .split(/\r?\n/)
       .find((line) => line.startsWith(deterministicChecks.outputPrefix));
-    if (!resultLine) return { ok: true };
-    const checks = JSON.parse(
-      resultLine.slice(deterministicChecks.outputPrefix.length),
-    ) as DeterministicChecklistCheck[];
+    const checks = resultLine
+      ? (JSON.parse(
+          resultLine.slice(deterministicChecks.outputPrefix.length),
+        ) as DeterministicChecklistCheck[])
+      : [];
     if (!Array.isArray(checks))
       throw new Error('Invalid deterministic-check projection from the artifact checker');
+    if (!checks.length) {
+      const contract = JSON.parse(
+        await slotReadFile(vars, contractPath),
+      ) as WorkerTerminalContractDocument;
+      if (contract.deterministicChecks?.length) {
+        return {
+          ok: false,
+          kind: 'infrastructure',
+          message:
+            `Artifact checker ${checker} returned ${resultLine ? 'an empty' : 'no'} deterministic-check projection, ` +
+            `but ${contractPath} declares ${contract.deterministicChecks.length} check(s). ` +
+            'Verify the connected node runtime and the selected task/checklist contract; the CI receipts have not been verified.',
+        };
+      }
+    }
+    if (!resultLine) return { ok: true };
     return { ok: true, deterministicChecks: checks };
   }
 
@@ -441,7 +458,8 @@ export async function validateDeterministicChecksForRun(
   if (!result.ok) throw new Error(`Deterministic CI gate blocked: ${result.message}`);
   if (!result.deterministicChecks?.length) {
     throw new Error(
-      'Deterministic CI gate blocked: the node checker cannot verify execution receipts. Update the Farmslot runtime.',
+      `Deterministic CI gate blocked: no verified receipts were returned for ${taskDir}/${input}, ` +
+        `which declares ${contract.deterministicChecks.length} check(s). Verify the selected task/checklist contract and rerun its CI mark step.`,
     );
   }
   return result.deterministicChecks;
