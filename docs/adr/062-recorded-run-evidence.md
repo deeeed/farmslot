@@ -1,7 +1,7 @@
 # ADR-062: Recorded run evidence
 
 **Status:** Accepted
-**Revision:** Accepted amendments 1 and 2 consolidated on 2026-10-13; amendment 3 Accepted under #1011. Historical/footprint implementation remains pending; curation delivery is recorded below.
+**Revision:** Accepted amendments 1 and 2 consolidated on 2026-10-13; amendment 3 Accepted under #1011; amendment 4 Proposed. Historical/footprint implementation remains pending; curation delivery is recorded below.
 **Date:** 2026-10-12
 **Owner:** Farmslot maintainers
 **Scope:** Recipe execution, claim evidence, review gates, and public CLI/SDK
@@ -338,3 +338,53 @@ consume them. Projects inherit the policy without template or recorder code.
 After design approval, ship attested approval first, then normal binding rules
 in a separate PR. Both use the existing frozen reader, validator and publication
 pipeline. No parallel format, store, reader or client policy mapping is added.
+
+## Amendment 4 (2026-10-13): Verified untestable overrides and selected execution
+
+**Status:** Proposed
+**Specification:** [Verified claim overrides](../reference/recorded-run-evidence.md#verified-claim-overrides).
+
+### Decision
+
+The engine remains the sole normal verdict writer. Project its task ledger only
+when the successful-attempt pointer advances. Gate policy MUST bind that
+projection to the selected package's `recipeRunId` before comparing verdicts.
+
+One gateway operation records a human `untestable` override for a registered
+claim at an unresolved evidence gate. Reuse the credential-backed person and
+global-admin authorizer from Amendment 3. Persist the receipt in the existing
+Run store, bound to the selected execution and its checked input closure. Client
+actor strings and worker-written overrides confer no authority.
+
+Derive the effective review row from immutable engine claims and gateway
+receipts. Keep the engine verdict, override chain and reason visible. One shared
+`isAuthorizedOverride` predicate checks the whole chain in both claim satisfaction
+and task binding. An override means untestable, never proven. It grants neither
+publication approval nor a waiver of integrity or unrelated prerequisites.
+
+The operation leaves the gate unresolved. Receipt changes invalidate prior
+policy evaluation and publication confirmation; refresh/review is required.
+Historical/completed runs stay read-only. Failed persistence leaves no effective
+override; retry cannot create an unsigned intermediate verdict.
+
+Completion MUST present a valid selected package with unresolved claim verdicts
+at its existing human gate. Those verdicts continue to block approval. Integrity
+and unrelated completion failures still refuse; reaching review is not admission.
+
+### Rationale and consequences
+
+The existing free-text actor cannot establish human authority. Changing engine
+claims would destroy reproducible derivation. Gateway receipts provide one
+auditable exception without a second normal writer or evidence rewrite.
+Unverified old chains remain blocking; migration never signs them retroactively.
+
+### Public surface and migration
+
+Extend `farmslot run gate` and the existing shared gate action/renderers with
+`mark-untestable`, routed to typed `run.overrideClaim` without resolving the gate.
+Protocol owns request/receipt types and the shared chain predicate. CLI, SDK and
+both clients consume this boundary; providers inherit it without recording or
+verdict code. Replace schema-2 local `ac set` authority with this verified path
+after conformance, with no compatibility writer. The specification names the
+parameters, identity checks and refusal cases. Update completion/refusal guidance
+in the same cutover so workers request human review rather than writing overrides.

@@ -93,7 +93,8 @@ untestable. Untimed media remains visible and its timing limitation is separate
 from the claim's semantic verdict. A passed action, screenshot or overall gate
 acknowledgment is never a substitute for the eligible assertion/visual judgment.
 Manual `ac set` becomes an untestable override only, with actor, reason and prior
-state; it cannot set a normal proven verdict.
+state; it cannot set a normal proven verdict. The proposed [verified override
+contract](#verified-claim-overrides) replaces local actor strings as authority.
 
 Examples the reducer MUST satisfy: failed then passed in one declared retry group
 uses the final result and retains both; a failed independent iteration still
@@ -435,6 +436,133 @@ projections and native viewers are shared. This contract retains its own accepte
 status and shipping PRs. The historical-review/footprint design in
 [#967](https://github.com/deeeed/farmslot/pull/967) has separate acceptance and
 pending implementation.
+
+## Verified claim overrides
+
+Status: Proposed, ADR-062 Amendment 4. These requirements add human override
+authority without changing recipe packages or Amendment 3 publication approval.
+
+### Selection and authority
+
+Task-ledger projection MUST occur only when the successful-attempt pointer
+advances. Failed or out-of-task attempts MUST preserve both pointer and projection.
+A schema-2 projection MUST match the selected package's `recipeRunId`; a mismatch
+is non-waivable `evidence-execution-mismatch`, before verdict comparison. Protocol
+owns that typed `RunGatePrerequisiteReason` code; clients do not parse messages.
+When publication also selects a baseline, the projection binds to the selected
+passing implementation attempt. Baseline identity/policy remains separate.
+
+Completion MUST allow a valid selected engine package with unresolved claim
+verdicts to reach its existing ready/output-review gate. `missing`, `weak`,
+`failed` and `awaiting-review` remain visible and blocking for approval; they
+are not successful proof. Verify package integrity, execution/registration and
+unrelated completion requirements before presenting it. This changes only the
+pre-gate verdict refusal, not publish/release admission. No worker request marker,
+`allowWeak` workaround or automatic untestable verdict is introduced.
+
+`run.overrideClaim` MUST accept only a registered claim in a canonically validated
+selected execution at an unresolved ready or output-review gate. Use that gate's
+existing frozen inventory, decision/digest identity and reader, never mutable
+latest files. Completed/cancelled/historical runs and non-gate calls are refused.
+Missing registration, invalid package or a different execution is not untestable
+evidence and MUST NOT be repaired by this operation.
+
+Authorize an active credential-backed person with current global-admin authority,
+using Amendment 3's trusted ingress rules. Recheck identity and the decision's
+snapshot after awaits and before storage. Service, node, worker, background,
+synthetic solo-mode and client-supplied actors MUST be refused.
+A solo operator provisions an active person credential and global-admin role
+through the existing authentication setup before using this operation.
+
+### Receipt and effective row
+
+The existing Run store owns append-only `ClaimUntestableOverrideReceipt` records.
+Each records receipt ID, run/decision/claim IDs, `recipeRunId`, checked closure
+identity, prior verdict, trusted approver, nonblank reason and server time. Record
+credential ID for audit only; never credential secrets. The closure identity is
+the shared canonical digest of execution ID and sorted package-relative paths
+with the actual byte digests consumed by the canonical reader. No new evidence
+store, format or client-provided digest authority is introduced.
+
+The engine package and task projection bytes MUST remain unchanged. Gateway review
+projection derives the effective row from the engine claim and matching stored
+receipts. Its verdict is `untestable`, with original verdict and ordered override
+history visible. Unverified local `overrides` remain visible as unauthorised data,
+MUST NOT grant admission, and MUST NOT be adopted into a verified chain.
+
+One `isAuthorizedOverride(row, engineClaim, authority)` predicate MUST govern both
+`satisfied` and `bound`. `authority` is the gateway's stored receipts and checked
+execution/closure context, never request or task-file metadata. It requires:
+
+- An untestable row and a nonempty chain whose every entry matches a stored receipt
+  for this run, claim, execution and closure, with trusted actor, reason and time.
+- The first prior verdict equals the immutable engine verdict; each later prior
+  verdict is `untestable`. Repeated overrides cannot hide an unsigned entry.
+- Registered claim identity/text matches the selected engine claim. Integrity,
+  execution binding and every unrelated gate prerequisite still pass.
+
+The predicate checks references; it does not authenticate callers. Clients consume
+the gateway projection and MUST NOT treat a locally constructed receipt as trusted.
+Untestable satisfies only the existing explicit-untestable policy, never proven or
+visual confirmation. Publication attestation remains a different operation.
+
+### Persistence and freshness
+
+Persist the receipt before returning an effective override. If storage fails,
+leave the gate unresolved with no effective change. After reauthentication, a
+retry returns the same committed receipt for the same person/run/claim/execution/
+closure/reason, even if refresh changed the decision identity. It writes nothing;
+require current decision/snapshot freshness for every new receipt. A new reason
+appends a new chain entry. No separate task-file write can succeed
+while receipt persistence fails. Readers derive the row after restart.
+
+The operation MUST NOT resolve or publish the gate. Receipt changes invalidate
+cached policy evaluation and publication confirmation. Existing refresh rebuilds
+the gate projection and package identity with the applied receipt IDs; policy and
+final publication recheck the same receipt set. Output review re-presents its
+unchanged captured inventory plus that projection. A changed closure or selection
+cannot reuse an old receipt, even if claim labels match.
+
+### Public surface and conformance
+
+`farmslot run gate <runId> --decision <id> --action mark-untestable --claim <id>
+--recipe-run <id> --reason <text>` routes to `run.overrideClaim`, not decision
+resolution. CLI and existing web/native gate renderers are the named consumers.
+SDK gateway clients expose that same typed RPC. `RunOverrideClaimParams` includes
+the displayed snapshot identity; actor, time and prior verdict are server-owned.
+
+`@farmslot/protocol` owns request/receipt and Run projection types;
+`@farmslot/protocol/recipe` owns the shared predicate and closure-identity helper.
+They are additive, experimental contracts versioned with that package. Generate
+CLI/API reference entries at implementation. Extend the existing shared action
+model and renderers; there is no second override form, reducer or player. Providers
+implement no override hook and inherit the gateway policy. After conformance,
+remove schema-2 local `ac set` override writing; unverified chains are never
+grandfathered. A task row with an unsigned chain blocks the operation until a
+canonical engine projection replaces it; the gateway does not silently discard
+or sign its history. Ship the pre-gate verdict transition and update task-contract,
+runtime documentation and completion refusal guidance with this cutover. Guidance
+MUST direct unresolved claims to human review, never local `ac set` or `allowWeak`.
+Normal-writer cutover retains the existing migration rules.
+
+- **O1:** Actual hosted recipe execution A passes and selects its ledger. Failed B
+  and an unselected passing attempt preserve A's bytes. A different ledger
+  `recipeRunId` blocks normal and attested publication.
+- **O2:** A verified human can mark one selected registered claim untestable. The
+  same receipt/original verdict appears in CLI, both clients and after restart;
+  both satisfaction and binding accept the authorised chain under existing policy.
+- **O3:** Repeated reasons preserve the chain; a lost-response retry is idempotent.
+  Blank reason, unsigned/imported entry, wrong actor/execution/closure or a bad
+  first/later prior verdict refuses. Storage failure changes no effective row.
+- **O4:** Revoked/service/worker/solo identity, stale/resolved decision and corrupt
+  evidence refuse. An override resolves no gate, grants no publication, changes no
+  evidence bytes and cannot survive selection changes or bypass unrelated failures.
+- **O5:** A successful selected recipe with a registered untestable/missing claim,
+  and a separate visual claim awaiting review, reaches the existing human gate
+  through ordinary worker completion. Approval remains blocked. A verified human
+  marks only the untestable claim; pending visual review and unrelated requirements
+  still block. Invalid integrity/identity refuses before presentation. The worker
+  writes no verdict or override marker; no `allowWeak` option is used.
 
 ## Evidence gate policy
 
