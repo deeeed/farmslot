@@ -3355,7 +3355,7 @@ export class RuntimeCapabilityRegistry {
             (candidate) =>
               candidate.slotId === slotId &&
               candidate.capabilityId === lease.capabilityId &&
-              runsProvider(candidate),
+              holdsClaim(candidate),
           );
           const ambiguous =
             entry?.sharePolicy === 'exclusive' &&

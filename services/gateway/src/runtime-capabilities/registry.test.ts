@@ -201,6 +201,7 @@ async function fixture(
   t: TestContext,
   capabilities: RuntimeCapabilityCatalogEntry[],
   options: {
+    catalogForSlot?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['catalogForSlot'];
     pressureFor?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['pressureFor'];
     familyForRun?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['familyForRun'];
     runAction?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['runAction'];
@@ -238,12 +239,14 @@ async function fixture(
     store,
     captureProviderProcesses: options.captureProviderProcesses,
     checkProviderCleanup: options.checkProviderCleanup,
-    catalogForSlot: async (slotId) => ({
-      slotId,
-      project: 'test-project',
-      ...(options.machineFor?.(slotId) ? { machine: options.machineFor(slotId)! } : {}),
-      capabilities,
-    }),
+    catalogForSlot:
+      options.catalogForSlot ??
+      (async (slotId) => ({
+        slotId,
+        project: 'test-project',
+        ...(options.machineFor?.(slotId) ? { machine: options.machineFor(slotId)! } : {}),
+        capabilities,
+      })),
     runAction: async (_slotId, action, parameters, declaredParameters) => {
       const name =
         action.kind === 'slot-action' ? action.actionId : `${action.resourceId}.${action.action}`;
@@ -4241,3 +4244,30 @@ for (const initiallyFails of [false, true]) {
     }
   });
 }
+
+test('catalog-error recovery preserves a shared provider claimed by a live sibling', async (t) => {
+  const capabilities = [entry('shared', 'shared')];
+  const terminal = new Set<string>();
+  let failCatalog = false;
+  const { registry, actions } = await fixture(t, capabilities, {
+    isTerminalOwner: (id) => terminal.has(id),
+    catalogForSlot: async (slotId) => {
+      if (failCatalog) throw new Error('project pack temporarily unavailable');
+      return { slotId, project: 'test-project', capabilities };
+    },
+  });
+  for (const owner of ['ending', 'live-sibling'])
+    assert.equal((await acquire(registry, 'shared', owner)).ok, true);
+  failCatalog = true;
+  await registry.recover();
+  failCatalog = false;
+  terminal.add('ending');
+  actions.length = 0;
+  await registry.recover();
+  assert.deepEqual(actions, [], 'a live error holder still protects the physical provider');
+  const leases = (await registry.status({ slotId: SLOT })).leases;
+  assert.equal(leases.find((lease) => lease.owner.runId === 'ending')?.state, 'released');
+  const live = leases.find((lease) => lease.owner.runId === 'live-sibling');
+  assert.equal(live?.state, 'error');
+  assert.match(live?.cleanupFailure ?? '', /catalog unavailable/);
+});
