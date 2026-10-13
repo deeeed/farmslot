@@ -7,9 +7,16 @@
     "nodes": {
       "maintenance": {
         "action": "command",
-        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/stack-base-consumers.mts",
+        "cmd": "FARMSLOT_STACK_BASE_PROOF_ONLY=maintenance TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/stack-base-consumers.mts",
         "timeout_ms": 300000,
         "intent": "Verify stacked and retargeted maintenance tasks use the publication base while preserving default-branch freshness, then rebase the child without dropping upstream commits.",
+        "next": "ci_watch"
+      },
+      "ci_watch": {
+        "action": "command",
+        "cmd": "FARMSLOT_STACK_BASE_PROOF_ONLY=inline TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/stack-base-consumers.mts",
+        "timeout_ms": 300000,
+        "intent": "Drive the native CI-fix writer through public CI-watch replay for default and token-less templates, both stacked and retargeted. Preserve retained TASK.md and require the current publication base and lease guard.",
         "next": "done"
       },
       "done": { "action": "end", "status": "pass" }

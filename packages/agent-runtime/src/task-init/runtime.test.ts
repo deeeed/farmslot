@@ -77,7 +77,7 @@ test('branch maintenance consumes the supplied publication base separately from 
       hasTicketData: true,
     });
     assert.match(document, /PUBLICATION_BASE: feat\/upstream/);
-    assert.match(document, /rebase onto `origin\/feat\/upstream`/);
+    assert.match(document, /Branch updates target `origin\/feat\/upstream`/);
     assert.match(document, /default-branch freshness checks separate/);
     assert.ok(document.includes(buildBranchUpdateInstructions('feat/upstream')));
     assert.doesNotMatch(document, /rebase onto `origin\/trunk`/);

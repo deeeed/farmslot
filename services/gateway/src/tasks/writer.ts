@@ -45,7 +45,11 @@ import {
   loadSlotVars,
   resolveProjectTaskDirName,
 } from '../core/config.js';
-import { collectPlaceholderTokens, expandTemplateWithReservedLast } from '../core/hooks.js';
+import {
+  collectPlaceholderTokens,
+  expandTemplate,
+  expandTemplateWithReservedLast,
+} from '../core/hooks.js';
 import { execLocal, farmslotRoot, getOrchestratorTaskRoot } from '../core/index.js';
 import {
   buildFollowUpScopeContractSection,
@@ -1041,12 +1045,14 @@ export async function writeTaskFile(
   // in project.json so worker templates don't hardcode repo-local tool paths.
   if (projectVars.projectJson.vars) {
     for (const [key, rawValue] of Object.entries(projectVars.projectJson.vars)) {
-      const rendered = expandTemplateWithReservedLast(
-        String(rawValue),
-        slotVars,
-        projectVars,
-        branchReplacements,
-      );
+      const rendered = publicationBase
+        ? expandTemplateWithReservedLast(
+            String(rawValue),
+            slotVars,
+            projectVars,
+            branchReplacements,
+          )
+        : expandTemplate(String(rawValue), slotVars, projectVars);
       // A var value that does not fully resolve would smuggle raw {{...}}
       // into TASK.md past the template guard — fail the dispatch instead.
       const leftover = collectPlaceholderTokens(rendered);

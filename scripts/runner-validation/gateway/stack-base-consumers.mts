@@ -16,6 +16,8 @@ import { hostname, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { shellQuote as shSingleQuote } from '../../../services/gateway/src/core/tmux.js';
+
 const source = fileURLToPath(new URL('../../../', import.meta.url));
 if (process.argv[2] === 'serve') {
   await import('../../../services/gateway/src/index.js');
@@ -67,6 +69,7 @@ if (process.argv[2] === 'serve') {
     mkdirSync(out, { recursive: true });
     symlinkSync(path.join(source, 'scripts'), path.join(root, 'scripts'), 'dir');
     symlinkSync(path.join(source, 'packages'), path.join(root, 'packages'), 'dir');
+    symlinkSync(path.join(source, 'templates'), path.join(root, 'templates'), 'dir');
     const git = (...args: string[]) =>
       execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
     git('init', '-b', 'trunk');
@@ -93,13 +96,15 @@ if (process.argv[2] === 'serve') {
     git('push', 'origin', 'feat/child');
     writeFileSync(path.join(root, 'CLAUDE.md'), '# Stack base proof\n');
     json(path.join(root, 'services/gateway/package.json'), { name: 'proof', version: '0.0.0' });
-    json(path.join(root, 'projects', project, 'project.json'), {
+    const projectConfig = {
       name: project,
       task_dir_name: '.task',
       runtime_dir: '.task',
       default_branch: 'trunk',
       hooks: {},
-    });
+      ci: { enabled: true, repo: 'fixture/missing', checkGroups: [] },
+    };
+    json(path.join(root, 'projects', project, 'project.json'), projectConfig);
     for (const flow of ['pr-complete', 'update-branch']) {
       const target = path.join(root, 'projects', project, 'templates/worker', flow + '.md');
       mkdirSync(path.dirname(target), { recursive: true });
@@ -203,6 +208,89 @@ if (process.argv[2] === 'serve') {
         ...baseRun(entry.id, entry.flow),
         parentRunId: entry.parentRunId,
       });
+    const projectWithoutToken = project + '-project-template';
+    json(path.join(root, 'projects', projectWithoutToken, 'project.json'), {
+      ...projectConfig,
+      name: projectWithoutToken,
+    });
+    const projectCiTemplate = path.join(
+      root,
+      'projects',
+      projectWithoutToken,
+      'templates/worker/ci-fix.md',
+    );
+    mkdirSync(path.dirname(projectCiTemplate), { recursive: true });
+    writeFileSync(projectCiTemplate, '# Project CI fix\n\n- [ ] Repair the check\n');
+    const inlineCases = [project, projectWithoutToken].flatMap((selectedProject) =>
+      [false, true].map((retargeted) => {
+        const parentRunId = randomUUID();
+        json(path.join(root, '.runs', parentRunId + '.json'), {
+          ...baseRun(parentRunId, 'dev'),
+          project: selectedProject,
+          status: 'done',
+          completedAt: now,
+          stack: { ...stack, ...(retargeted ? { retargetedTo: 'trunk' } : {}) },
+        });
+        const id = randomUUID();
+        const relativeTaskDir = 'fix/inline-' + id;
+        const taskFile = path.join(
+          root,
+          'projects',
+          selectedProject,
+          'tasks',
+          relativeTaskDir,
+          'TASK.md',
+        );
+        const slotTaskDir = path.join(repo, '.task', relativeTaskDir);
+        for (const taskDir of [path.dirname(taskFile), slotTaskDir]) {
+          mkdirSync(taskDir, { recursive: true });
+          writeFileSync(
+            path.join(taskDir, 'TASK.md'),
+            '# Retained task without a publication-base section\n',
+          );
+          writeFileSync(path.join(taskDir, 'CHECKLIST.md'), '- [ ] Original work\n');
+        }
+        const seeded = baseRun(id, 'update-branch');
+        json(path.join(root, '.runs', id + '.json'), {
+          ...seeded,
+          project: selectedProject,
+          parentRunId,
+          taskFile,
+          prNumber: 41,
+          agentContexts: [
+            {
+              id: 'primary',
+              label: 'Primary',
+              role: 'primary',
+              status: 'working',
+              runner: 'scripted',
+              runId: id,
+              slotId,
+              taskFile: path.join('.task', relativeTaskDir, 'TASK.md'),
+              target: { session, window: 'proof', pane: null, target: session + ':proof' },
+            },
+          ],
+          steps: seeded.steps.map((step) => ({
+            ...step,
+            status: step.name === 'ci-watch' ? 'failed' : 'done',
+          })),
+        });
+        return {
+          id,
+          project: selectedProject,
+          slotTaskDir,
+          expected: retargeted ? 'trunk' : 'feat/upstream',
+        };
+      }),
+    );
+    // Immutable upstream input at the existing CLI boundary; no CI-writer outputs are supplied.
+    const fixtureBin = path.join(scratch, 'bin');
+    mkdirSync(fixtureBin);
+    writeFileSync(
+      path.join(fixtureBin, 'gh'),
+      `#!${process.execPath}\nconst args=process.argv.slice(2);let body='';if(args[0]==='pr'&&args[1]==='checks')body='fixture\\tfail\\t\\t\\tFAILURE\\t\\n';else if(args[0]==='pr'&&args[1]==='view')body='OPEN\\tMERGEABLE\\tCLEAN\\t\\tfeat/child\\t\\t\\t\\t\\tFixture PR\\nfixture\\n';else if(args.some(arg=>arg.endsWith('/commits')))body=${JSON.stringify(now)};if(args.includes('--include'))process.stdout.write('HTTP/2.0 200 OK\\r\\n\\r\\n');process.stdout.write(body);\n`,
+      { mode: 0o755 },
+    );
     json(path.join(root, '.farm-status.json'), {
       checked_at: now,
       slots: [
@@ -216,7 +304,7 @@ if (process.argv[2] === 'serve') {
         },
       ],
     });
-    execFileSync('tmux', ['-N', 'new-session', '-d', '-s', session, '-c', repo]);
+    execFileSync('tmux', ['-N', 'new-session', '-d', '-s', session, '-n', 'proof', '-c', repo]);
     ownedSession = true;
     const port = createServer();
     port.listen(0, '127.0.0.1');
@@ -226,9 +314,10 @@ if (process.argv[2] === 'serve') {
     await new Promise<void>((resolve) => port.close(() => resolve()));
     const loader = path.join(scratch, 'checkpoint.mjs');
     const checkpoint = `{ const result = await executeWriteTaskStep(runId, run, {broadcastFn,stepPartialIO}); const fs=await import('node:fs');fs.writeFileSync(${JSON.stringify(out)}+'/'+runId+'.written','written');const until=Date.now()+90000;while(!fs.existsSync(${JSON.stringify(out)}+'/'+runId+'.release')){if(Date.now()>until)throw new Error('Proof checkpoint timed out');await new Promise(resolve=>setTimeout(resolve,50));}return result;}`;
+    const inlineCheckpoint = `{ const fs=await import('node:fs');fs.writeFileSync(${JSON.stringify(out)}+'/'+runId+'.inline-written','written');const until=Date.now()+90000;while(!signal.aborted){if(Date.now()>until)throw new Error('Inline proof checkpoint timed out');await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('Inline proof cancelled after native writer'); }`;
     writeFileSync(
       loader,
-      `import{registerHooks}from'node:module';import assert from'node:assert/strict';registerHooks({load(url,context,next){const result=next(url,context);const before=String(result.source);if(process.env.FARMSLOT_STACK_BASE_PROOF_BREAK==='writer'&&url.endsWith('/services/gateway/src/tasks/writer.ts')){const after=before.replace('? await publicationBaseForRun(run, defaultBranch)', '? defaultBranch');assert.notEqual(after,before);return{...result,source:after};}if(!url.endsWith('/services/gateway/src/run-engine/orchestrator.ts'))return result;const after=before.replace('return executeWriteTaskStep(runId, run, { broadcastFn, stepPartialIO });',${JSON.stringify(checkpoint)});assert.notEqual(after,before);return{...result,source:after};}});`,
+      `import{registerHooks}from'node:module';import assert from'node:assert/strict';registerHooks({load(url,context,next){const result=next(url,context);const before=String(result.source);if(process.env.FARMSLOT_STACK_BASE_PROOF_BREAK==='writer'&&url.endsWith('/services/gateway/src/tasks/writer.ts')){const after=before.replace('? await publicationBaseForRun(run, defaultBranch)', '? defaultBranch');assert.notEqual(after,before);return{...result,source:after};}if(url.endsWith('/services/gateway/src/ci-monitor/inline-fix.ts')){let after=before.replace('// Delete old CI-FIX-SIGNAL.json so we can detect fresh completion',${JSON.stringify(inlineCheckpoint)});assert.notEqual(after,before);if(process.env.FARMSLOT_STACK_BASE_PROOF_BREAK==='inline'){const fixed=after.replace('await publicationBaseForRun(run, defaultBranch)','defaultBranch');assert.notEqual(fixed,after);after=fixed;}return{...result,source:after};}if(!url.endsWith('/services/gateway/src/run-engine/orchestrator.ts'))return result;const after=before.replace('return executeWriteTaskStep(runId, run, { broadcastFn, stepPartialIO });',${JSON.stringify(checkpoint)});assert.notEqual(after,before);return{...result,source:after};}});`,
     );
     env = {
       ...env,
@@ -249,6 +338,7 @@ if (process.argv[2] === 'serve') {
       GATEWAY_PORT: String(address.port),
       FARMSLOT_GATEWAY: `ws://127.0.0.1:${address.port}`,
       NODE_OPTIONS: `${env.NODE_OPTIONS ?? ''} --import ${loader}`,
+      PATH: fixtureBin + path.delimiter + env.PATH,
     };
     gateway = spawn(
       process.execPath,
@@ -266,7 +356,7 @@ if (process.argv[2] === 'serve') {
       }
     }, 'gateway');
     const results = [];
-    for (const entry of cases) {
+    for (const entry of process.env.FARMSLOT_STACK_BASE_PROOF_ONLY === 'inline' ? [] : cases) {
       rpc('run.replayStep', { runId: entry.id, stepName: 'write-task', triggeredBy: 'operator' });
       await wait(() => {
         const run = rpc('run.get', { runId: entry.id }).run;
@@ -296,36 +386,98 @@ if (process.argv[2] === 'serve') {
       writeFileSync(path.join(out, entry.id + '.release'), 'cancelled');
       await wait(() => rpc('run.get', { runId: entry.id }).run.status === 'cancelled', 'cancel');
     }
-    git('fetch', 'origin', 'feat/child');
-    const remoteHead = git('rev-parse', 'origin/feat/child');
-    git('merge-base', '--is-ancestor', remoteHead, 'HEAD');
-    const rebaseBase = results[0].publicationBase;
-    git('checkout', 'feat/upstream');
-    writeFileSync(path.join(repo, 'upstream-new.txt'), 'advance\n');
-    git('add', '.');
-    git('commit', '-m', 'test: advance upstream');
-    git('push', 'origin', 'feat/upstream');
-    git('checkout', 'feat/child');
-    git('fetch', 'origin', rebaseBase);
-    git('rebase', 'origin/' + rebaseBase);
-    git(
-      'push',
-      'origin',
-      'HEAD:refs/heads/feat/child',
-      `--force-with-lease=refs/heads/feat/child:${remoteHead}`,
-    );
-    assert.equal(git('rev-list', '--count', 'origin/' + rebaseBase + '..HEAD'), '1');
-    assert.equal(readFileSync(path.join(repo, 'upstream-new.txt'), 'utf8'), 'advance\n');
+    const inlineResults = [];
+    if (process.env.FARMSLOT_STACK_BASE_PROOF_ONLY !== 'maintenance') {
+      const workerTaskDir = path.join(scratch, 'scripted-worker');
+      const command = [
+        'env',
+        'FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1',
+        `FARMSLOT_ROOT=${source}`,
+        `TSX_TSCONFIG_PATH=${path.join(source, 'services/gateway/tsconfig.json')}`,
+        process.execPath,
+        '--import',
+        'tsx',
+        path.join(source, 'packages/cli/src/scripted-runner-entry.ts'),
+        'scripted-runner',
+        '--task-dir',
+        workerTaskDir,
+        '--mode',
+        'scenario',
+        '--scenario',
+        'timeout',
+        '--step-delay-ms',
+        '600000',
+      ]
+        .map(shSingleQuote)
+        .join(' ');
+      execFileSync('tmux', [
+        '-N',
+        'respawn-pane',
+        '-k',
+        '-t',
+        `=${session}:proof`,
+        `cd ${shSingleQuote(source)} && exec ${command}`,
+      ]);
+      await wait(
+        () => existsSync(path.join(workerTaskDir, 'artifacts/scripted-runner-provenance.json')),
+        'scripted worker',
+      );
+      for (const entry of inlineCases) {
+        rpc('run.replayStep', { runId: entry.id, stepName: 'ci-watch', triggeredBy: 'operator' });
+        await wait(
+          () => existsSync(path.join(out, entry.id + '.inline-written')),
+          'native inline writer',
+        );
+        const checklist = readFileSync(path.join(entry.slotTaskDir, 'CI-FIX.md'), 'utf8');
+        assert.ok(checklist.includes('Branch updates target `origin/' + entry.expected + '`'));
+        assert.ok(checklist.includes('pre-rebase-remote-sha.txt'));
+        assert.equal(
+          readFileSync(path.join(entry.slotTaskDir, 'TASK.md'), 'utf8'),
+          '# Retained task without a publication-base section\n',
+        );
+        const run = rpc('run.get', { runId: entry.id }).run;
+        json(path.join(out, entry.id + '.json'), { run, checklist });
+        inlineResults.push({ project: entry.project, expected: entry.expected, runId: entry.id });
+        rpc('run.cancel', { runId: entry.id });
+        await wait(
+          () => rpc('run.get', { runId: entry.id }).run.status === 'cancelled',
+          'inline cancel',
+        );
+      }
+    }
+    if (results.length > 0) {
+      git('fetch', 'origin', 'feat/child');
+      const remoteHead = git('rev-parse', 'origin/feat/child');
+      git('merge-base', '--is-ancestor', remoteHead, 'HEAD');
+      const rebaseBase = results[0].publicationBase;
+      git('checkout', 'feat/upstream');
+      writeFileSync(path.join(repo, 'upstream-new.txt'), 'advance\n');
+      git('add', '.');
+      git('commit', '-m', 'test: advance upstream');
+      git('push', 'origin', 'feat/upstream');
+      git('checkout', 'feat/child');
+      git('fetch', 'origin', rebaseBase);
+      git('rebase', 'origin/' + rebaseBase);
+      git(
+        'push',
+        'origin',
+        'HEAD:refs/heads/feat/child',
+        `--force-with-lease=refs/heads/feat/child:${remoteHead}`,
+      );
+      assert.equal(git('rev-list', '--count', 'origin/' + rebaseBase + '..HEAD'), '1');
+      assert.equal(readFileSync(path.join(repo, 'upstream-new.txt'), 'utf8'), 'advance\n');
+    }
     json(path.join(out, 'receipt.json'), {
       pass: true,
       results,
-      rebaseBase,
-      childCommits: 1,
+      inlineResults,
+      rebaseBase: results[0]?.publicationBase ?? null,
+      childCommits: results.length > 0 ? 1 : null,
       originalRunsUntouched: true,
       limits: [
         'Seeded immutable fixture input before gateway start; production replay RPC and writer derive task values.',
         'Checkpoint holds only scheduling after the native writer; no computed task or run result is substituted.',
-        'No preparation, worker launch, UI or original run changes; existing server and one owned detached session only.',
+        'Native CI writer consumes fixture upstream reads and a real scripted-worker process; held before nudge delivery. No original run or UI changes; existing server and one owned detached session only.',
       ],
     });
     console.log(JSON.stringify({ pass: true, out }));

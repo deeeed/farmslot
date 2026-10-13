@@ -29,8 +29,8 @@ export function buildBranchUpdateInstructions(publicationBase: string): string {
   return [
     '## Branch update base',
     '',
-    `The publication base is \`${publicationBase}\`. For a PR branch update, fetch that branch from origin and rebase onto \`origin/${publicationBase}\`. Follow-up runs use their contribution family's base; after retargeting they use the recorded retarget branch. Keep default-branch freshness checks separate.`,
-    'Before rebasing, fetch the PR head and record its exact remote SHA in `artifacts/pre-rebase-remote-sha.txt` under this task. Refuse an update if local HEAD omits remote commits. After conflict resolution and the required checks, push with an explicit lease against that recorded SHA. Never infer the update base from a PR body or replace it with the default branch while the upstream PR remains open.',
+    `The publication base is \`${publicationBase}\`. Branch updates target \`origin/${publicationBase}\`; follow the update method in the selected checklist. Follow-up runs use their contribution family's base; after retargeting they use the recorded retarget branch. Keep default-branch freshness checks separate.`,
+    'For a rebase, first fetch the PR head and record its exact remote SHA in `artifacts/pre-rebase-remote-sha.txt` under this task. Refuse an update if local HEAD omits remote commits. After conflict resolution and the required checks, push the rebased branch with an explicit lease against that recorded SHA. Never infer the update base from a PR body or replace it with the default branch while the upstream PR remains open.',
   ].join('\n');
 }
 

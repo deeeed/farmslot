@@ -37,7 +37,7 @@ STATUS: pending
 - [ ] **1. Update Status** — `STATUS: working` in Task block, then `{{TASK_DIR}}/mark --checklist CI-FIX.md start`, then `{{TASK_DIR}}/mark --checklist CI-FIX.md 1`.
 - [ ] **2. Fetch full context:**
   - If review comments: `unset GH_TOKEN && gh api "repos/{{GH_REPO}}/pulls/{{PR_NUMBER}}/comments" --jq '.[] | select(.in_reply_to_id == null) | {id: .id, author: .user.login, body: .body, path: .path, line: .line}'`
-  - Before changing code, follow this checklist's branch-update instructions, retaining the remote PR-head SHA for the final leased push.
+  - Before changing code, fetch `{{PUBLICATION_BASE}}` and rebase onto `origin/{{PUBLICATION_BASE}}`. Follow the branch-update lease guard above, retaining the remote PR-head SHA for the final leased push.
   - If CI failures: `unset GH_TOKEN && gh pr checks {{PR_NUMBER}} --repo {{GH_REPO}} 2>&1 | grep -iE 'fail|error'`
 
 ### Fix (steps 3-4)

@@ -151,7 +151,7 @@ test('branch-maintenance task uses the publication base while the freshness prob
   const document = await readFile(task, 'utf8');
   const checklist = await readFile(path.join(path.dirname(task), 'CHECKLIST.md'), 'utf8');
   assert.match(document, /PUBLICATION_BASE: feat\/upstream/);
-  assert.match(document, /rebase onto `origin\/feat\/upstream`/);
+  assert.match(document, /Branch updates target `origin\/feat\/upstream`/);
   assert.match(checklist, /git fetch origin main/);
   assert.match(checklist, /rebase onto `origin\/feat\/upstream`/);
   assert.doesNotMatch(checklist, /git rebase origin\/main/);

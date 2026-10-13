@@ -303,7 +303,7 @@ test('default CI fix template uses explicit CI-FIX marker targeting', async () =
     '{{BRANCH_UPDATE_INSTRUCTIONS}}',
     buildBranchUpdateInstructions('feat/upstream'),
   );
-  assert.match(rendered, /rebase onto `origin\/feat\/upstream`/);
+  assert.match(rendered, /Branch updates target `origin\/feat\/upstream`/);
   assert.match(rendered, /pre-rebase-remote-sha\.txt/);
   assert.doesNotMatch(rendered, /TASK\.md's branch-update instructions/);
 });

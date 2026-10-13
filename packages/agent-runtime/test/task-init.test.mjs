@@ -5,7 +5,15 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -67,6 +75,33 @@ function init(taskDir, templateRoot, extra = [], { runMode = 'autonomous' } = {}
     ],
     { encoding: 'utf8' },
   );
+}
+
+// A standalone caller supplies the resolved base; the owner renders its shared instructions.
+{
+  const started = performance.now();
+  const work = mkdtempSync(path.join(tmpdir(), 'farmslot-task-init-base-'));
+  const templateRoot = catalog(PLAIN_TEMPLATE + '\n{{BRANCH_UPDATE_INSTRUCTIONS}}\n');
+  try {
+    const refused = init(path.join(work, 'missing'), templateRoot);
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /BRANCH_UPDATE_INSTRUCTIONS/);
+    const taskDir = path.join(work, 'resolved');
+    const result = init(taskDir, templateRoot, ['--var', 'PUBLICATION_BASE=feat/upstream']);
+    assert.equal(result.status, 0, result.stderr);
+    for (const document of ['TASK.md', 'CHECKLIST.md']) {
+      assert.match(
+        readFileSync(path.join(taskDir, document), 'utf8'),
+        /Branch updates target `origin\/feat\/upstream`/,
+      );
+    }
+    console.log(
+      `task-init publication-base controls: ${(performance.now() - started).toFixed(1)} ms`,
+    );
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+    rmSync(templateRoot, { recursive: true, force: true });
+  }
 }
 
 // 1. Full layout from a placeholder-free template.
