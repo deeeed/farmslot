@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -60,7 +60,6 @@ const composeTemplates: RawProjectJson['fixtures'] = {
               'required.md',
               { file: 'domains/{{domain}}/domain.md', optional: true },
               { file: 'domains/{{domain}}/absent.md', optional: true },
-              'missing-required.md',
             ],
           },
         },
@@ -107,7 +106,6 @@ test('computeFixturePlan composes overlay includes in order when the domain reso
 
     const messages = plan.logs.map((l) => `[${l.level}] ${l.message}`);
     assert.ok(messages.includes('[SKIP] optional include domains/blue/absent.md not present'));
-    assert.ok(messages.includes('[WARN] include missing-required.md not found'));
     assert.ok(messages.includes('[PLAN] COMPOSED.md (composed: base.md)'));
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -269,4 +267,90 @@ test('computeFixturePlan marks files to copy as PLAN, never OK (OK is emitted po
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('missing required sources refuse the complete plan with configuration context', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'required-fixtures-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const cases: RawProjectJson['fixtures'][] = [
+    { templates: [{ src: 'absent.md', dst: 'TASK.md' }] },
+    {
+      templates: [
+        { dst: 'TASK.md', compose: { var: 'FLOW_TYPE', variants: { dev: 'absent.md' } } },
+      ],
+    },
+    {
+      templates: [
+        {
+          dst: 'TASK.md',
+          compose: { var: 'FLOW_TYPE', variants: { dev: { includes: ['absent.md'] } } },
+        },
+      ],
+    },
+    { directories: [{ src: 'absent-directory', dst: '.agent' }] },
+  ];
+  for (const fixtures of cases) {
+    const pv = projectVars(root, { fixtures } as RawProjectJson);
+    await assert.rejects(
+      computeFixturePlan({
+        slotVars: slotVars(),
+        projectVars: pv,
+        selectionVars: { FLOW_TYPE: 'dev' },
+      }),
+      (error: Error & { code?: string; userAction?: string }) => {
+        assert.equal(error.code, 'REQUIRED_FIXTURE_MISSING');
+        assert.match(error.message, /absent/);
+        assert.ok(error.message.includes(pv.projectConfig));
+        assert.match(error.userAction ?? '', /Restore the source/);
+        return true;
+      },
+    );
+  }
+});
+
+test('an optional absent compose source skips without weakening required includes', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'optional-fixtures-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const pv = projectVars(root, {
+    fixtures: {
+      templates: [
+        {
+          dst: 'TASK.md',
+          optional: true,
+          compose: { var: 'FLOW_TYPE', variants: { dev: 'absent.md' } },
+        },
+      ],
+    },
+  } as RawProjectJson);
+  const plan = await computeFixturePlan({
+    slotVars: slotVars(),
+    projectVars: pv,
+    selectionVars: { FLOW_TYPE: 'dev' },
+  });
+  assert.equal(plan.files.length, 0);
+  assert.match(plan.logs[0].message, /optional src absent.md not present/);
+  pv.projectJson.fixtures!.templates![0].compose = {
+    var: 'FLOW_TYPE',
+    variants: { dev: { includes: ['absent.md'] } },
+  };
+  await assert.rejects(
+    computeFixturePlan({
+      slotVars: slotVars(),
+      projectVars: pv,
+      selectionVars: { FLOW_TYPE: 'dev' },
+    }),
+    /Required fixture absent.md/,
+  );
+});
+
+test('optional fixture probes propagate filesystem errors instead of treating them as absence', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'fixture-probe-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await symlink('loop.md', path.join(root, 'loop.md'));
+  const pv = projectVars(root, {
+    fixtures: { templates: [{ src: 'loop.md', dst: 'TASK.md', optional: true }] },
+  } as RawProjectJson);
+  await assert.rejects(computeFixturePlan({ slotVars: slotVars(), projectVars: pv }), {
+    code: 'ELOOP',
+  });
 });

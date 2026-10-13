@@ -65,6 +65,27 @@ gateway syncs node support. Missing or invalid QA reports the project's
 `project.json` and a configuration hint. QA presets and their selected templates
 remain separate from prepare profiles and runner/model defaults.
 
+## Required fixture sources
+
+Fixture planning is owned by `@farmslot/slot-config` and consumed by
+`farmslot internal fixture-plan` before `sync-fixtures.sh` copies anything.
+Prepare and fixture refresh fail when a required template source, selected
+compose variant, compose include or declared directory is absent. The error
+names the source, destination and project configuration; restore the pack input
+or correct its declaration before retrying prepare.
+
+Use `optional: true` on a template or compose include only for an input that
+the flow can operate without, such as an optional domain overlay or locally
+supplied secrets. A missing optional input keeps its explicit skip log. A
+compose entry whose selection variable is unset remains unselected and is
+skipped. Unselected variant files do not need to exist. Declared directory
+sources are required. Neither missing inputs nor copy failures count as a
+successful fixture phase.
+
+Private fixture sources may deliberately be untracked and supplied from a
+committed sample using the pack's setup instructions. Provision them before
+prepare; the sample file does not satisfy a different declared source path.
+
 ## Hooks
 
 All hooks run with cwd = the pack directory and env:
