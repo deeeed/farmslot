@@ -375,6 +375,44 @@ test('ten QA cases and their checks use the same verified claim and occurrence n
   }
 });
 
+test('a task ledger in package claims displays the schema finding without measured proof', () => {
+  const pkg = qaPackage();
+  pkg.claims = JSON.parse(
+    JSON.stringify({
+      schemaVersion: 1,
+      criteria: [
+        {
+          id: 'AC-1',
+          text: 'The task check passes.',
+          verdict: 'proven',
+          evidence: ['artifacts/check.log'],
+          recipeNodes: [],
+          updatedAt: at(0),
+        },
+      ],
+    }),
+  );
+  const model = createEvidenceReviewModel({ package: pkg });
+  assert(model.errors.some((message) => /require schema 2/.test(message)));
+  assert.equal(model.packageStatus?.status, 'Invalid');
+  assert.deepEqual(model.claims, []);
+  assert.equal(model.summary.proven, 0);
+  assert.equal(model.selectClaim('AC-1'), null);
+  assert.equal(model.selectOccurrence(1)?.timing, 'untimed');
+  assert.deepEqual(model.selectOccurrence(1)?.clips, []);
+});
+
+test('schema-2 claims still require moment arrays', () => {
+  const pkg = qaPackage();
+  assert(pkg.claims);
+  Reflect.deleteProperty(pkg.claims.criteria[0]!, 'moments');
+  const model = createEvidenceReviewModel({ package: pkg });
+  assert(model.errors.some((message) => /\.moments: invalid moment references/.test(message)));
+  assert.equal(model.packageStatus?.status, 'Invalid');
+  assert.equal(model.selectClaim(pkg.claims.criteria[0]!.id)?.timing, 'untimed');
+  assert.deepEqual(model.selectClaim(pkg.claims.criteria[0]!.id)?.clips, []);
+});
+
 test('recorded claims cannot borrow an unrelated task ledger or omit their source package', () => {
   const pkg = qaPackage(1);
   const ledger = { ...pkg.claims!, recipeRunId: 'another-attempt' };

@@ -74,6 +74,47 @@ test('malformed retained JSON remains a failed read check', async (t) => {
   );
 });
 
+test('a schema-1 task ledger in the package root is an explicit schema error', async (t) => {
+  const root = await fixture(t);
+  await writeFile(
+    path.join(root, 'acceptance-status.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      criteria: [
+        {
+          id: 'AC-1',
+          text: 'The task check passes.',
+          verdict: 'proven',
+          evidence: ['artifacts/check.log'],
+          recipeNodes: [],
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+      ],
+    }),
+  );
+  const loaded = await readRecordedEvidencePackage(root);
+  assert(loaded.checks.every((check) => check.status === 'pass'));
+  const result = validateRecordedEvidencePackage(loaded.input);
+  assert.equal(result.status, 'invalid');
+  assert.deepEqual(
+    result.findings.find((finding) => finding.path === 'acceptance-status.json.schemaVersion'),
+    {
+      severity: 'error',
+      code: 'recorded_evidence.invalid',
+      path: 'acceptance-status.json.schemaVersion',
+      message:
+        'Recipe claim packages require schema 2; a task acceptance ledger is not a recipe claim package.',
+    },
+  );
+  // Even an empty schema-1 ledger must not silently pass the general validator.
+  loaded.input.claims = JSON.parse('{"schemaVersion":1,"criteria":[]}');
+  assert(
+    validateRecordedEvidencePackage(loaded.input).findings.some(
+      (finding) => finding.path === 'acceptance-status.json.schemaVersion',
+    ),
+  );
+});
+
 test('reader refuses linked files outside the retained package', async (t) => {
   const root = await fixture(t);
   const outside = await fixture(t);

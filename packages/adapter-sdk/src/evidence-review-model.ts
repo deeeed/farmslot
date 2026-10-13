@@ -165,6 +165,8 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
   input = JSON.parse(JSON.stringify(input)) as EvidenceReviewInput;
   const pkg = input.package;
   const findings = pkg ? validateRecordedEvidencePackage(pkg).findings : [];
+  // Invalid task-ledger input keeps its finding, without becoming recipe claims.
+  const packageClaims = pkg?.claims?.schemaVersion === 2 ? pkg.claims : undefined;
   const errors = [
     ...(input.readErrors ?? []),
     ...findings.filter((finding) => finding.severity === 'error').map((finding) => finding.message),
@@ -179,17 +181,20 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       ? 'The output report no longer matches the reviewed snapshot.'
       : undefined;
   if (reportError) errors.push(reportError);
-  if (pkg?.claims && ['incomplete', 'failed', 'explicit-off'].includes(pkg.claims.recording.status))
+  if (
+    packageClaims &&
+    ['incomplete', 'failed', 'explicit-off'].includes(packageClaims.recording.status)
+  )
     warnings.push(
-      `Recording ${pkg.claims.recording.status}: ${pkg.claims.recording.reason ?? 'see retained capture status'}`,
+      `Recording ${packageClaims.recording.status}: ${packageClaims.recording.reason ?? 'see retained capture status'}`,
     );
-  const ledger = pkg?.claims ?? input.ledger ?? null;
+  const ledger = packageClaims ?? input.ledger ?? null;
   if (input.ledger?.schemaVersion === 2 && !pkg)
     errors.push('Recorded claim evidence requires its retained execution package.');
   if (
-    pkg?.claims &&
+    packageClaims &&
     input.ledger?.schemaVersion === 2 &&
-    pkg.claims.recipeRunId !== input.ledger.recipeRunId
+    packageClaims.recipeRunId !== input.ledger.recipeRunId
   )
     errors.push('The task ledger belongs to another recipe execution.');
   const trace = recipeTraceEntries(pkg?.trace ?? input.recordings?.[0]?.trace) ?? [];
@@ -211,7 +216,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
   }
   const timelines = indexRecordingTimelines(recordings.map(({ timeline }) => timeline));
   const segments: readonly RecordingSegmentRef[] =
-    pkg?.claims?.recording.segments ??
+    packageClaims?.recording.segments ??
     recordings.map((recording, index) => ({
       videoPath: recording.timeline.videoPath,
       videoDigest: recording.timeline.videoDigest,
@@ -227,17 +232,17 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       : [];
   const links = new Map((input.evidenceLinks ?? []).map((link) => [link.id, link.evidence]));
   const claims: EvidenceReviewClaim[] = acceptanceCriteriaView(
-    pkg?.claims?.criteria ?? input.criteria ?? ledger?.criteria ?? [],
+    packageClaims?.criteria ?? input.criteria ?? ledger?.criteria ?? [],
     ledger,
   ).map((claim) => ({
     ...claim,
     kind: claim.status?.kind ?? 'acceptance',
     ...(claim.status?.parentId ? { parentId: claim.status.parentId } : {}),
     caption: claimCaption(claim),
-    timing: pkg?.claims?.criteria.find((status) => status.id === claim.id)?.timing,
+    timing: packageClaims?.criteria.find((status) => status.id === claim.id)?.timing,
     evidence: artifacts(
       claim.status?.evidence ?? links.get(claim.id) ?? [],
-      pkg?.claims ? input.artifactPrefix : undefined,
+      packageClaims ? input.artifactPrefix : undefined,
     ),
     moments: claim.status?.moments ?? [],
     occurrences: [],

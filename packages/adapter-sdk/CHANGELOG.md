@@ -4,6 +4,8 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
+- Display rejected task-ledger package inputs without crashing or granting measured proof.
+
 - Group retained evidence diagnostics into package status rows and open digest-verified reports independently of recipe proof errors.
 
 - Share claim/step evidence selection, captions, source clips/stills and verified playback ranges across review clients (ADR-062).
