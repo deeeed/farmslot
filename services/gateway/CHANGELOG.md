@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Keep browser health probes within their existing budget by querying the recorded CDP owner instead of every host process; retain unique-listener recovery for stale PID files.
+
 - Release settled-run capability leases independently of workspace holds, retry identified cleanup holds safely, and free preserved workspaces on release-mode parks while retaining orchestration-only pauses.
 
 - Return stopped work graphs to planning without resetting recorded work; keep planning/paused graphs non-dispatching under targeted ticks.
