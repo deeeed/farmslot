@@ -2,8 +2,11 @@
 
 ## Unreleased
 
-- Validate the current retained recipe attempt selected by the task pointer while keeping earlier packages intact.
+- Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.19.0 - 2026-10-13
+
+- Validate the current retained recipe attempt selected by the task pointer while keeping earlier packages intact.
 - Resolve declared execution-template sources through an attested source binding.
 - Accept the reviewer feedback path binding in template lint while retaining the required feedback artifact check.
 

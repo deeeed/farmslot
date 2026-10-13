@@ -4,10 +4,12 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.10.0 - 2026-10-13
+
 - Display rejected task-ledger package inputs without crashing or granting measured proof.
-
 - Group retained evidence diagnostics into package status rows and open digest-verified reports independently of recipe proof errors.
-
 - Share claim/step evidence selection, captions, source clips/stills and verified playback ranges across review clients (ADR-062).
 
 ## 0.9.1 - 2026-10-12
