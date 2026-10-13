@@ -21,8 +21,13 @@ const queue = await import('../backlog/dispatch-queue.js');
 const runs = await import('../runs/store.js');
 const workGraph = await import('../work-graph/store.js');
 const { contributionDiffBaseSpec, contributionStack } = await import('./diff-artifacts.js');
-const { ensureRunStack, scheduledGraphOf, setUpstreamPrReaderForTests, stackPrBase } =
-  await import('./stack-base.js');
+const {
+  ensureRunStack,
+  scheduledGraphOf,
+  setUpstreamPrReaderForTests,
+  stackPrBase,
+  publicationBaseForRun,
+} = await import('./stack-base.js');
 const { stackSection } = await import('../tasks/stack-section.js');
 
 backlog.initBacklogStore(() => {});
@@ -189,6 +194,16 @@ test('stackPrBase targets the upstream branch until the run is retargeted', () =
   assert.equal(stackPrBase({}), undefined);
   assert.equal(stackPrBase({ stack: STACK }), 'feat/upstream');
   assert.equal(stackPrBase({ stack: { ...STACK, retargetedTo: 'main' } }), 'main');
+});
+
+test('publication packages and previews share the publisher stack/default base', () => {
+  assert.equal(publicationBaseForRun({}), 'main');
+  assert.equal(publicationBaseForRun({}, 'trunk'), 'trunk');
+  assert.equal(publicationBaseForRun({ stack: STACK }, 'trunk'), 'feat/upstream');
+  assert.equal(
+    publicationBaseForRun({ stack: { ...STACK, retargetedTo: 'trunk' } }, 'main'),
+    'trunk',
+  );
 });
 
 test('a stacked run diffs against the commit it branched from', () => {

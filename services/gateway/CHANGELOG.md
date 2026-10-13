@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Preserve typed media and timeline references when task recipe attempts live in nested artifact directories.
+- Prepare stacked publication packages and review previews against the same parent branch used for PR creation.
 
 - Allow gate-held runs to free their slot after review moves the worker pane, verifying live conversation identity before stopping it and preserving session recovery.
 - Accept project review configuration when planning automatic publication reviews after recovery.

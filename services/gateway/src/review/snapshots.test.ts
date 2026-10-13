@@ -256,3 +256,47 @@ test('working-tree review counts tracked and real untracked identities without p
   assert.match(captured.diffText ?? '', /diff --git/);
   assert(captured.snapshot.diffHash);
 });
+
+test('a base-only override preserves source pathspecs and untracked identities', async () => {
+  const commands: string[] = [];
+  const base = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const head = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const blob = 'cccccccccccccccccccccccccccccccccccccccc';
+  const result = await captureCurrentReviewSnapshot(
+    makeVars(),
+    { baseRef: 'feature/parent' },
+    {
+      resolveContext: async (_vars, requestedBase) => {
+        assert.equal(requestedBase, 'feature/parent');
+        return { baseRef: 'origin/feature/parent', pathspecs: ['src'] };
+      },
+      exec: async (_vars, command) => {
+        commands.push(command);
+        const stdout =
+          command === 'git rev-parse HEAD'
+            ? head
+            : command.startsWith('git merge-base')
+              ? base
+              : command.includes('--abbrev-ref')
+                ? 'fix/child'
+                : command.includes('--numstat')
+                  ? '1\t0\tsrc/changed.ts\n'
+                  : command.includes('ls-files')
+                    ? `100644\0${blob}\0src/new.ts\0`
+                    : 'diff --git a/src/changed.ts b/src/changed.ts\n';
+        return { exitCode: 0, stdout, stderr: '' };
+      },
+    },
+  );
+  assert.equal(result.snapshot.baseRef, 'origin/feature/parent');
+  assert.equal(result.snapshot.baseSha, base);
+  assert.deepEqual(result.snapshot.untrackedFiles, [
+    { path: 'src/new.ts', blobSha: blob, mode: '100644' },
+  ]);
+  assert.ok(commands.some((command) => command.includes('ls-files')));
+  assert.ok(
+    commands
+      .filter((command) => command.includes('--numstat') || command.includes('--full-index'))
+      .every((command) => command.includes("'src'")),
+  );
+});
