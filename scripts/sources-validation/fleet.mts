@@ -1,30 +1,33 @@
 /** Manual ADR-069 fleet proof through isolated services and owned proof slots. */
 import assert from 'node:assert/strict';
-import { spawn, execFile } from 'node:child_process';
-import { createServer } from 'node:http';
+import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { cp, mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { createSourceCommandClient, isTerminalRunStatus } from '@farmslot/protocol';
-
-import type {
-  SourceConfiguration,
-  SourceMaterialization,
-  SourcesSyncResult,
-  Run,
-  NativeSessionReadResult,
-  NativeWorkerSessionBinding,
+import {
+  createSourceCommandClient,
+  isTerminalRunStatus,
+  type NativeSessionReadResult,
+  type NativeWorkerSessionBinding,
+  type Run,
+  type SourceConfiguration,
+  type SourceMaterialization,
+  type SourcesSyncParams,
+  type SourcesSyncResult,
 } from '@farmslot/protocol';
 
+import { startSourceClientScenarios } from './client-scenarios.mjs';
 import { ProofSourceUpstream } from './upstream.js';
 
 interface ProofNode {
   id: string;
   ssh?: string;
+  host?: string;
   bundle: string;
   home: string;
   serviceNodeModules: string;
@@ -35,6 +38,8 @@ interface ProofNode {
 }
 interface ProofConfiguration {
   clientProof?: boolean;
+  reviewFixesOnly?: boolean;
+  selectionOnly?: boolean;
   localUpstream?: boolean;
   sources: SourceConfiguration;
   nodes: ProofNode[];
@@ -42,7 +47,7 @@ interface ProofConfiguration {
   workerModel?: string;
 }
 interface ProofWorkerResult {
-  second: { run: Run; binding: NativeWorkerSessionBinding };
+  active: { run: Run; binding: NativeWorkerSessionBinding };
 }
 
 const execute = promisify(execFile);
@@ -97,10 +102,18 @@ const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 const children: ReturnType<typeof spawn>[] = [];
 const ownedNodes: ProofNode[] = [];
 const logs: ReturnType<typeof createWriteStream>[] = [];
-const evidence: Record<string, unknown> = { result: 'INCOMPLETE' };
+const evidence: Record<string, unknown> = {
+  result: 'INCOMPLETE',
+  scope: configuration.selectionOnly
+    ? 'selection-delta'
+    : configuration.reviewFixesOnly
+      ? 'review-fixes-delta'
+      : 'full-fleet',
+};
 let upstream: ProofSourceUpstream | undefined;
 let proofFailure: unknown;
 let stopProofReconciliation: (() => void) | undefined;
+let clientScenarios: Awaited<ReturnType<typeof startSourceClientScenarios>> | undefined;
 
 // Do not inherit an operator gateway profile or node credential into the isolated realm.
 for (const key of Object.keys(process.env))
@@ -172,6 +185,27 @@ const client = new GatewayClient({
 const localBundle = path.join(output, 'node-bundle');
 const proofRuns: string[] = [];
 const sourceCommands = createSourceCommandClient((method, params) => client.call(method, params));
+const syncAttempts: SourcesSyncResult[] = [];
+evidence.syncAttempts = syncAttempts;
+async function syncWithFreshStatusRetry(params: SourcesSyncParams): Promise<SourcesSyncResult> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const result = await client.call<SourcesSyncResult>('sources.sync', {
+      ...params,
+      operationId: attempt ? `${params.operationId}-fresh-${attempt}` : params.operationId,
+    });
+    syncAttempts.push(result);
+    if (
+      !result.errors.length ||
+      !result.errors.every((error) => error.reason.includes('timeout after 15000ms'))
+    )
+      return result;
+    console.log(
+      `Owned source status timed out for ${result.operationId}; retain it and prepare a fresh operation`,
+    );
+  }
+  return syncAttempts.at(-1)!;
+}
+
 try {
   await mkdir(localBundle, { recursive: true });
   if (configuration.localUpstream) {
@@ -323,12 +357,13 @@ try {
         path.join(output, 'pool', `${node.id}.json`),
         JSON.stringify({
           machine: node.id,
-          host: node.ssh ? node.ssh.split('@').at(-1) : 'localhost',
+          host: node.host ?? (node.ssh ? node.ssh.split('@').at(-1) : 'localhost'),
           ssh_user: node.ssh?.split('@')[0] ?? process.env.USER,
           codex_path: node.codexPath,
           os: 'darwin',
           platform: node.platform ?? 'cli',
           project,
+          review_workspaces: { max_concurrent: 1 },
           slots: [
             {
               id: slotId,
@@ -380,7 +415,15 @@ try {
   assert.deepEqual(synced.errors, []);
   assert.deepEqual(await client.call('sources.sync', request), synced);
   evidence.sync = synced;
-  if (upstream) {
+  if (upstream && configuration.reviewFixesOnly) {
+    evidence.deltaNodeBaseline = await sourceCommands.execute(
+      await sourceCommands.prepareUnpin(
+        { sourceId: 'proof-pack', scope: 'node', targetId: configuration.nodes[0].id },
+        'proof-delta-node-main-bootstrap',
+      ),
+    );
+  }
+  if (upstream && !configuration.reviewFixesOnly) {
     const firstNode = configuration.nodes[0].id;
     const farmCommand = await sourceCommands.preparePin(
       { sourceId: 'proof-pack', ref: 'experiment/farm', scope: 'farm', targetId: 'farm' },
@@ -415,8 +458,8 @@ try {
     assert(
       mainStatus.effectiveSelections![0].shadowedPins.some((pin) => pin.ref === 'experiment/farm'),
     );
-    const scopedSync = await sourceCommands.execute(
-      await sourceCommands.prepareSync({}, 'proof-scoped-sync'),
+    const scopedSync = await syncWithFreshStatusRetry(
+      (await sourceCommands.prepareSync({}, 'proof-scoped-sync')).params,
     );
     assert.deepEqual(scopedSync.errors, []);
     const inputs = configuration.nodes.map((node) => {
@@ -469,13 +512,13 @@ try {
         baseMainPreserved: true,
       },
     };
-    synced = await sourceCommands.execute(
-      await sourceCommands.prepareSync({}, 'proof-current-main-sync'),
+    synced = await syncWithFreshStatusRetry(
+      (await sourceCommands.prepareSync({}, 'proof-current-main-sync')).params,
     );
     assert.deepEqual(synced.errors, []);
   }
   const protections = [];
-  for (const node of configuration.nodes)
+  for (const node of configuration.reviewFixesOnly ? [] : configuration.nodes)
     for (const lock of synced.locks.filter(
       (lock) => !lock.context.nodeId || lock.context.nodeId === node.id,
     )) {
@@ -515,7 +558,7 @@ try {
         ),
         /missing/,
       );
-      const recovery = await client.call<SourcesSyncResult>('sources.sync', {
+      const recovery = await syncWithFreshStatusRetry({
         ...request,
         operationId: `proof-remount-${node.id}-${lock.digest}`,
         nodeId: node.id,
@@ -540,7 +583,7 @@ try {
     }
   evidence.protection = protections;
   await writeFile(path.join(output, 'progress.json'), JSON.stringify(evidence, null, 2) + '\n');
-  if (configuration.consumerProject) {
+  if (configuration.consumerProject && !configuration.reviewFixesOnly) {
     const consumers = [];
     for (const node of configuration.nodes) {
       const slotId = `${node.id}-consumer`;
@@ -631,7 +674,9 @@ try {
     const program =
       "const fs=require('node:fs');const path=require('node:path');const assert=require('node:assert/strict');const receipt=JSON.parse(fs.readFileSync(process.env.FARMSLOT_SOURCE_RECEIPT,'utf8'));assert.equal(receipt.lock.digest,process.env.FARMSLOT_SOURCE_LOCK_DIGEST);const id=process.env.FARMSLOT_SOURCE_PACK_ID;const root=path.join(receipt.roots[id],process.env.FARMSLOT_SOURCE_PACK_ENTRY);assert.ok(JSON.parse(fs.readFileSync(path.join(root,'project.json'),'utf8')).name);fs.writeFileSync('source-worker.json',JSON.stringify({nodeId:receipt.receipt.nodeId,lockDigest:receipt.lock.digest,commits:receipt.receipt.sources.map(source=>source.commit)}))";
     const { writeNativeFixtureTask } = await import('../runner-validation/lib/native-task.mjs');
-    for (const node of configuration.nodes) {
+    for (const node of configuration.reviewFixesOnly
+      ? configuration.nodes.slice(0, 1)
+      : configuration.nodes) {
       const slotId = `${node.id}-consumer`;
       const connection = getNode(node.id)!;
       console.log(`Native worker proof starting on ${node.id}`);
@@ -730,26 +775,29 @@ try {
         }
       };
       const first = await awaitWorker(await make('first'));
-      const cleared = (await sendNodeRequest(connection, 'exec', {
-        argv: ['node', '-e', "require('node:fs').unlinkSync('source-worker.json')"],
-        cwd: path.join(node.home, 'source-proof-worktree'),
-        timeout: 5_000,
-      })) as { exitCode: number };
-      assert.equal(cleared.exitCode, 0);
-      const second = await awaitWorker(await make('retained', first.run));
-      assert.equal(second.binding.sessionId, first.binding.sessionId);
-      assert.equal(second.session.nativeSessionId, first.session.nativeSessionId);
-      assert.equal(second.binding.launchDigest, first.binding.launchDigest);
-      assert.notEqual(second.binding.leaseId, first.binding.leaseId);
-      assert.notEqual(
-        second.run.sourceProvenance!.lock.digest,
-        first.run.sourceProvenance!.lock.digest,
-      );
-      assert.equal(
-        second.run.sourceProvenance!.workerLock.digest,
-        first.run.sourceProvenance!.workerLock.digest,
-      );
-      const templates = await runtime.withRunSources(second.run, async () => {
+      let active = first;
+      if (!configuration.selectionOnly) {
+        const cleared = (await sendNodeRequest(connection, 'exec', {
+          argv: ['node', '-e', "require('node:fs').unlinkSync('source-worker.json')"],
+          cwd: path.join(node.home, 'source-proof-worktree'),
+          timeout: 5_000,
+        })) as { exitCode: number };
+        assert.equal(cleared.exitCode, 0);
+        active = await awaitWorker(await make('retained', first.run));
+        assert.equal(active.binding.sessionId, first.binding.sessionId);
+        assert.equal(active.session.nativeSessionId, first.session.nativeSessionId);
+        assert.equal(active.binding.launchDigest, first.binding.launchDigest);
+        assert.notEqual(active.binding.leaseId, first.binding.leaseId);
+        assert.notEqual(
+          active.run.sourceProvenance!.lock.digest,
+          first.run.sourceProvenance!.lock.digest,
+        );
+        assert.equal(
+          active.run.sourceProvenance!.workerLock.digest,
+          first.run.sourceProvenance!.workerLock.digest,
+        );
+      }
+      const templates = await runtime.withRunSources(active.run, async () => {
         const { loadSlotVars, loadProjectVars, currentProjectSources } =
           await import('@farmslot/slot-config');
         const { projectWorkerTemplatePath } =
@@ -779,7 +827,7 @@ try {
         const rendered = await expandReviewTemplate(
           vars,
           'source-proof-review',
-          second.run.id,
+          active.run.id,
           'static-code',
         );
         assert.ok(rendered.includes('Description and evidence check'));
@@ -796,19 +844,26 @@ try {
             .digest('hex'),
         });
         return {
-          runId: second.run.id,
-          lockDigest: second.run.sourceProvenance!.lock.digest,
+          runId: active.run.id,
+          lockDigest: active.run.sourceProvenance!.lock.digest,
           records,
           rendered: true,
         };
       });
-      workers.push({ nodeId: node.id, first, second, templates });
+      workers.push({
+        nodeId: node.id,
+        mode: configuration.selectionOnly ? 'ordinary-active-worker' : 'retained-worker',
+        first,
+        ...(configuration.selectionOnly ? {} : { second: active }),
+        active,
+        templates,
+      });
       evidence.workers = workers;
       await writeFile(path.join(output, 'progress.json'), JSON.stringify(evidence, null, 2) + '\n');
     }
     evidence.workers = workers;
   }
-  if (upstream) {
+  if (upstream && !configuration.selectionOnly) {
     const sourceSelections = [
       { sourceId: 'proof-pack', selection: 'branch' as const, ref: 'experiment/run' },
     ];
@@ -877,7 +932,7 @@ try {
     assert.equal(mainRun.sourcePlan!.lock.entries[0].effectiveRef, 'main');
     const queued = await client.call<{ item: { id: string; sourceSelections: unknown } }>(
       'dispatch.queue.add',
-      params,
+      { ...params, slotId: params.allowedSlots[0] },
     );
     assert.deepEqual(queued.item.sourceSelections, sourceSelections);
     const listed = await client.call<{ items: Array<{ id: string; sourceSelections: unknown }> }>(
@@ -934,6 +989,16 @@ try {
       },
     };
     await client.call('run.cancel', { runId: planned.id });
+    const { proveSourceReviewFixes } = await import('./review-fixes.mjs');
+    evidence.reviewFixes = await proveSourceReviewFixes({
+      client,
+      upstream,
+      nodeId: configuration.nodes[0].id,
+      principal: admin,
+      workerModel: configuration.workerModel!,
+      proofRuns,
+      output,
+    });
     runtime.stopSourceReconciliation();
     await runtime.sourceAuthority()!.reconcile();
     const actor = auth.writer.createPrincipal(
@@ -983,8 +1048,26 @@ try {
   }
   if (configuration.workerModel) {
     const workers = evidence.workers as ProofWorkerResult[];
-    for (const worker of workers) {
-      const { run, binding } = worker.second;
+    const { proveSelectionRestart } = await import('./selection-restart.mjs');
+    assert(upstream);
+    const selection = await proveSelectionRestart({
+      client,
+      node: configuration.nodes[0],
+      worker: workers[0].active,
+      upstream,
+      proofRuns,
+      output,
+      workerModel: configuration.workerModel,
+    });
+    evidence.selectionRestart = selection;
+    await writeFile(
+      path.join(output, 'selection-restart-evidence.json'),
+      JSON.stringify({ result: 'PASS', ...selection }, null, 2) + '\n',
+    );
+    for (const worker of workers.filter(
+      (item) => !selection.closedRunIds.includes(item.active.run.id),
+    )) {
+      const { run, binding } = worker.active;
       const context = run.agentContexts!.find(
         (context) => context.nativeSession?.sessionId === binding.sessionId,
       )!;
@@ -1075,10 +1158,52 @@ try {
   await client.call('run.cancel', { runId: created.run.id });
 
   if (configuration.clientProof) {
+    clientScenarios = await startSourceClientScenarios({
+      output,
+      gatewayPort: port,
+      racePin: async ({ sourceId, scope, targetId }) => {
+        await sourceCommands.execute(
+          await sourceCommands.prepareUnpin({ sourceId, scope, targetId }),
+        );
+      },
+      interruptSync: async () => {
+        const node = configuration.nodes[0];
+        const connection = getNode(node.id)!;
+        const signal = async (name: string) => {
+          if (node.ssh)
+            await execute('ssh', [
+              '-o',
+              'BatchMode=yes',
+              node.ssh,
+              `kill -${name} ${connection.pid}`,
+            ]);
+          else process.kill(connection.pid, name as NodeJS.Signals);
+        };
+        const restore = async () => {
+          await signal('SIGCONT');
+          const deadline = Date.now() + 30_000;
+          while (!getNode(node.id)) {
+            if (Date.now() > deadline) throw new Error('Owned node failed recovery');
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+        };
+        await signal('SIGSTOP');
+        connection.ws.terminate();
+        const deadline = Date.now() + 5_000;
+        while (getNode(node.id)) {
+          if (Date.now() > deadline) {
+            await restore();
+            throw new Error('Owned node failed disconnect');
+          }
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        return restore;
+      },
+    });
     await writeFile(
       path.join(output, 'client-connection.json'),
       JSON.stringify({
-        port,
+        port: clientScenarios.port,
         token: credential.secret,
         runId: admitted.id,
         nodeId: configuration.nodes[0].id,
@@ -1103,11 +1228,13 @@ try {
     }
   }
 
+  await clientScenarios?.close();
+  clientScenarios = undefined;
   const project = Object.keys(configuration.sources.packs)[0];
   const context = await runtime.projectContext(project);
   const mount = path.dirname(context.materialization.roots[context.pack.sourceId]);
   await sourceCommand('hdiutil', ['detach', '-quiet', mount]);
-  const remount = await client.call<SourcesSyncResult>('sources.sync', {
+  const remount = await syncWithFreshStatusRetry({
     ...request,
     operationId: 'proof-remount-gateway',
   });
@@ -1134,6 +1261,11 @@ try {
   stopProofReconciliation?.();
   runtime.stopSourceReconciliation();
   const teardownErrors: string[] = [];
+  try {
+    await clientScenarios?.close();
+  } catch (error) {
+    teardownErrors.push(String(error));
+  }
   try {
     for (const runId of proofRuns) {
       try {

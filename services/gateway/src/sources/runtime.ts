@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import type {
   QueueItem,
@@ -195,6 +196,15 @@ export async function replanSourceRun(run: Run, target: SourceAdmissionTarget): 
       reviewQaContract: run.reviewQaContract,
     },
   );
+  const originalQa = run.qaAfterReview;
+  const plannedQa = plan.qaAfterReview;
+  if (
+    originalQa?.version !== plannedQa?.version ||
+    !isDeepStrictEqual(originalQa?.selection, plannedQa?.selection) ||
+    !isDeepStrictEqual(originalQa?.execution, plannedQa?.execution) ||
+    !isDeepStrictEqual(originalQa?.review, plannedQa?.review)
+  )
+    throw new Error('Automatic QA admission contract changed during source revalidation');
   const next = buildRunRecord(plan.params, {
     runId: run.id,
     createdByPrincipalId: run.createdByPrincipalId,
@@ -202,7 +212,7 @@ export async function replanSourceRun(run: Run, target: SourceAdmissionTarget): 
     dispatchRequest: run.dispatchRequest,
     workflowExecution: plan.workflowExecution,
     reviewQa: plan.reviewQa,
-    qaAfterReview: plan.qaAfterReview,
+    qaAfterReview: originalQa,
     directReviewPublication: plan.directReviewPublication,
   });
   return {

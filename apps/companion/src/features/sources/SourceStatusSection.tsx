@@ -128,6 +128,11 @@ export function SourceStatusSection(props: SourceStatusSectionProps) {
           {snapshot.error}
         </Text>
       )}
+      {snapshot.operationError && (
+        <Text style={styles.error} accessibilityRole="alert" testID="sources-operation-error">
+          {snapshot.operationError}
+        </Text>
+      )}
       {snapshot.notice && <Text style={baseStyles.textPrimary}>{snapshot.notice}</Text>}
       {snapshot.pending && (
         <>

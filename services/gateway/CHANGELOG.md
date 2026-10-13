@@ -18,7 +18,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Allow gate-held runs to free their slot after review moves the worker pane, verifying live conversation identity before stopping it and preserving session recovery.
 - Accept project review configuration when planning automatic publication reviews after recovery.
-- Apply pushed branch pins at run, node and farm scopes, atomically plan run selections, and expose authenticated source status/sync/pin/unpin operations.
+- Apply pushed branch pins at run, node and farm scopes, preserve queued decisions and automatic QA across replanning, and expose authenticated source status/sync/pin/unpin operations.
 
 - Resolve declared source refs into immutable admission locks and refuse source drift.
 - Freeze selected recorded evidence with its execution dependencies and publication manifest; refresh verifies the approved selection and refuses replaced media or metadata.

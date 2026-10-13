@@ -120,6 +120,25 @@ test('cancellation during planning refuses the whole obsolete placement without 
   assert.equal(f.run.sourceProvenance, undefined);
 });
 
+for (const mutation of ['replay', 'plan', 'ownership'] as const) {
+  test(`in-place ${mutation} during candidate planning refuses obsolete placements`, async () => {
+    const f = fixture();
+    const materialize = f.deps.gatewayMaterialization;
+    f.deps.gatewayMaterialization = async (lock) => {
+      if (mutation === 'replay') f.run.engineState = { ...f.run.engineState, generation: 1 };
+      else if (mutation === 'plan') f.run.sourcePlan!.validatedSlotId = 'replayed-slot';
+      else f.run.createdByPrincipalId = 'different-owner';
+      return materialize(lock);
+    };
+    await assert.rejects(
+      planRunSlotSources(f.run, slots, f.deps),
+      /Run ownership or source plan changed/,
+    );
+    assert.equal(f.deps.getRun(f.run.id), f.run);
+    assert.equal(f.run.sourceProvenance, undefined);
+  });
+}
+
 test('a mismatched gateway receipt cannot supply candidate configuration', async () => {
   const f = fixture();
   f.deps.gatewayMaterialization = async (lock) => sourceTestMaterialization(lock, 'another-node');

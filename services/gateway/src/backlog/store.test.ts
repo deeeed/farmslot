@@ -2476,6 +2476,8 @@ test('loadBacklog keeps orphaned queue items until operator removes them', async
     { kind: 'system' },
   );
   const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  await queue.tryDispatchNext();
+  await backlog.flushBacklogForTests();
   await rm(process.env.FARMSLOT_BACKLOG_FILE!, { force: true });
   await backlog.loadBacklog();
   assert.equal(backlog.listBacklogItems().items.length, 0);

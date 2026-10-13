@@ -7,6 +7,9 @@ function panels(root) {
 }
 return panels(document).map((panel) => ({
   text: panel.shadowRoot?.textContent?.replace(/\s+/g, ' ').trim(),
+  operationErrors: [
+    ...(panel.shadowRoot?.querySelectorAll('[data-testid="sources-operation-error"]') ?? []),
+  ].map((element) => element.textContent.trim()),
   inputs: [...(panel.shadowRoot?.querySelectorAll('input') ?? [])].map((input) => ({
     value: input.value,
     disabled: input.disabled,

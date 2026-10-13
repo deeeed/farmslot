@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
+import type { QaAfterReview } from '@farmslot/protocol';
 import { withProjectSources } from '@farmslot/slot-config';
+
+import '../runtime/mock-pty.test-support.js';
 
 import { makeRun } from '../run-engine/test-fixtures.js';
 import { getAllRuns } from '../runs/store.js';
@@ -14,6 +17,7 @@ import {
 
 const methods = await import('../methods/run.js');
 const validated: Array<string | undefined> = [];
+let plannedQaAfterReview: QaAfterReview | undefined;
 mock.module('../methods/run.js', {
   namedExports: {
     ...methods,
@@ -23,7 +27,7 @@ mock.module('../methods/run.js', {
         params,
         workflowExecution: undefined,
         reviewQa: undefined,
-        qaAfterReview: undefined,
+        qaAfterReview: structuredClone(plannedQaAfterReview),
         directReviewPublication: undefined,
         executionTemplateSnapshot: undefined,
         workspaceAdmission: undefined,
@@ -109,3 +113,89 @@ test('an explicit request or recorded human pick survives source revalidation', 
     assert.deepEqual(next.dispatchRequest, run.dispatchRequest);
   }
 });
+
+function automaticQaSnapshot(): QaAfterReview {
+  return {
+    version: 1,
+    capturedAt: '2026-10-12T00:00:00Z',
+    selection: {
+      profile: { id: 'smoke', title: 'Smoke', template_id: 'qa' },
+      inputs: { target: 'demo' },
+    },
+    execution: { slotPolicy: { kind: 'pool', allowedSlots: ['candidate'] }, models: [] },
+    review: { mode: 'cold', workflow: 'qa', qaProfileId: 'smoke' },
+    state: 'submitted',
+    teamId: 'team-1',
+    submissionId: 'submission-1',
+    intentId: 'intent-1',
+    checkedAt: '2026-10-12T01:00:00Z',
+    error: 'retained-diagnostic',
+  };
+}
+
+function automaticQaRun(snapshot = automaticQaSnapshot()) {
+  const run = makeRun({
+    id: 'run-1',
+    project: 'demo',
+    flowType: 'review-pr',
+    status: 'slot-finding',
+    slotId: null,
+  });
+  run.sourcePlan = sourceTestPlan();
+  run.qaAfterReview = snapshot;
+  run.dispatchRequest = {
+    project: 'demo',
+    flowType: 'review-pr',
+    ticketOrPr: 'https://github.com/example/demo/pull/1',
+  };
+  return run;
+}
+
+test('automatic QA replan retains the original timestamp and every operational field', async (t) => {
+  t.after(() => {
+    plannedQaAfterReview = undefined;
+  });
+  const run = automaticQaRun();
+  plannedQaAfterReview = {
+    ...structuredClone(run.qaAfterReview!),
+    capturedAt: '2026-10-13T00:00:00Z',
+    state: 'pending',
+    teamId: undefined,
+    submissionId: undefined,
+    intentId: undefined,
+    checkedAt: undefined,
+    error: undefined,
+  };
+  const lock = sourceTestLock('node-1');
+  const next = await withProjectSources(
+    {
+      project: 'demo',
+      pack: lock.packBindings.demo,
+      materialization: sourceTestMaterialization(lock, 'gateway'),
+      packs: lock.packBindings,
+    },
+    () => replanSourceRun(run, { nodeId: 'node-1' }),
+  );
+  assert.equal(next.sourcePlan?.lock.digest, lock.digest);
+  assert.deepEqual(next.qaAfterReview, run.qaAfterReview);
+  assert.notEqual(next.qaAfterReview, run.qaAfterReview);
+});
+
+for (const field of ['selection', 'execution', 'review', 'removed', 'added'] as const) {
+  test(`automatic QA replan refuses ${field} contract changes`, async (t) => {
+    t.after(() => {
+      plannedQaAfterReview = undefined;
+    });
+    const run = automaticQaRun();
+    plannedQaAfterReview = automaticQaSnapshot();
+    if (field === 'selection') plannedQaAfterReview.selection.inputs.target = 'other';
+    else if (field === 'execution') plannedQaAfterReview.execution = undefined;
+    else if (field === 'review') plannedQaAfterReview.review.qaProfileId = 'other';
+    else if (field === 'removed') plannedQaAfterReview = undefined;
+    else run.qaAfterReview = undefined;
+    await assert.rejects(
+      replanSourceRun(run, { nodeId: 'node-1' }),
+      /Automatic QA admission contract changed/,
+    );
+  });
+}

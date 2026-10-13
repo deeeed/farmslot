@@ -59,7 +59,7 @@
         "action": "ui.key_press",
         "intent": "Finish entry and reveal pin controls.",
         "key": "Enter",
-        "next": "pin"
+        "next": "stale-arm"
       },
       "pin": {
         "action": "ui.press",
@@ -72,7 +72,7 @@
         "intent": "The native action publishes the farm pin through the gateway.",
         "cmd": "node --import tsx ../../scripts/sources-validation/client-state.mts native-pin",
         "timeout_ms": 180000,
-        "next": "pin-visible"
+        "next": "fresh-state"
       },
       "pin-capture": {
         "action": "ui.screenshot",
@@ -99,7 +99,7 @@
         "intent": "Record main with the recipe HUD.",
         "path": "screenshots/source-farm-main.png",
         "label": "Farm source main",
-        "next": "fleet"
+        "next": "partial-arm"
       },
       "fleet": {
         "action": "command",
@@ -201,6 +201,145 @@
         "intent": "The retained run workspace exposes its Timeline tab.",
         "next": "run-timeline",
         "test_id": "companion-run-tab-timeline"
+      },
+      "stale-arm": {
+        "action": "command",
+        "intent": "Delay the prepared native pin while a real competing RPC changes its revision.",
+        "cmd": "node --import tsx ../../scripts/sources-validation/client-scenarios.mts arm-native-stale",
+        "timeout_ms": 180000,
+        "next": "stale-pin"
+      },
+      "stale-pin": {
+        "action": "ui.press",
+        "intent": "Send the branch pin through the real native transport with obsolete captured revisions.",
+        "test_id": "source-proof-pack-pin",
+        "next": "stale-visible"
+      },
+      "stale-visible": {
+        "action": "ui.wait_for",
+        "intent": "The real gateway stale rejection is visible and releases the pending command.",
+        "test_id": "sources-operation-error",
+        "text_contains": ["Stale source declaration or pin revision"],
+        "timeout_ms": 120000,
+        "next": "stale-state"
+      },
+      "stale-state": {
+        "action": "command",
+        "intent": "Assert SOURCE_STATE_STALE came from the real gateway response.",
+        "cmd": "node --import tsx ../../scripts/sources-validation/client-scenarios.mts assert-native-stale",
+        "timeout_ms": 180000,
+        "next": "stale-refresh"
+      },
+      "stale-refresh": {
+        "action": "ui.press",
+        "intent": "Read current source facts after the definitive rejection.",
+        "test_id": "sources-refresh",
+        "next": "stale-after-refresh"
+      },
+      "stale-after-refresh": {
+        "action": "ui.wait_for",
+        "intent": "Refreshing preserves the rejected operation diagnostic.",
+        "test_id": "sources-operation-error",
+        "text_contains": ["Stale source declaration or pin revision"],
+        "timeout_ms": 120000,
+        "next": "fresh-ready"
+      },
+      "fresh-edit": {
+        "action": "ui.set_input",
+        "intent": "The native stale rejection permits branch editing for a new command.",
+        "value": "experiment/node",
+        "next": "fresh-branch",
+        "test_id": "source-proof-pack-branch"
+      },
+      "fresh-keyboard": {
+        "action": "ui.key_press",
+        "intent": "Finish the fresh branch selection before submitting.",
+        "key": "Enter",
+        "next": "pin"
+      },
+      "fresh-state": {
+        "action": "command",
+        "intent": "The fresh native packet has a new operation ID, current pin revision and a real successful acknowledgement.",
+        "cmd": "node --import tsx ../../scripts/sources-validation/client-scenarios.mts assert-native-fresh",
+        "timeout_ms": 180000,
+        "next": "pin-visible"
+      },
+      "partial-arm": {
+        "action": "command",
+        "intent": "Disconnect one owned execution node before the native sync packet reaches the real gateway.",
+        "cmd": "node --import tsx ../../scripts/sources-validation/client-scenarios.mts arm-native-partial",
+        "timeout_ms": 180000,
+        "next": "partial-sync"
+      },
+      "partial-sync": {
+        "action": "ui.press",
+        "intent": "Sync the source through the native transport while one real execution node is unavailable.",
+        "test_id": "source-proof-pack-sync",
+        "next": "partial-visible"
+      },
+      "partial-visible": {
+        "action": "ui.wait_for",
+        "intent": "The native panel reports partial completion instead of claiming the action applied.",
+        "text_contains": ["completed with errors"],
+        "timeout_ms": 180000,
+        "next": "partial-state"
+      },
+      "partial-state": {
+        "action": "command",
+        "intent": "The actual sources.sync response contains per-node diagnostics and the matching operation ID.",
+        "cmd": "node --import tsx ../../scripts/sources-validation/client-scenarios.mts assert-native-partial",
+        "timeout_ms": 180000,
+        "next": "partial-refresh"
+      },
+      "partial-refresh": {
+        "action": "ui.press",
+        "intent": "Refresh source facts after the owned node has recovered.",
+        "test_id": "sources-refresh",
+        "next": "partial-refreshed"
+      },
+      "partial-after-refresh": {
+        "action": "ui.wait_for",
+        "intent": "The operation alert retains the real disconnected-node diagnostic after recovery and refresh.",
+        "test_id": "sources-operation-error",
+        "text_contains": ["disconnected"],
+        "timeout_ms": 120000,
+        "next": "partial-capture-hud"
+      },
+      "partial-capture-hud": {
+        "action": "app.hud",
+        "intent": "Native partial-sync diagnostics survive recovered source facts and manual refresh.",
+        "status": "running",
+        "next": "partial-capture"
+      },
+      "partial-capture": {
+        "action": "ui.screenshot",
+        "intent": "Record retained operation diagnostics after refresh with the recipe HUD.",
+        "path": "screenshots/source-sync-partial.png",
+        "label": "Native partial source sync after refresh",
+        "next": "fleet"
+      },
+      "fresh-ready": {
+        "action": "ui.wait_for",
+        "intent": "The stale rejection and current status allow native branch editing again.",
+        "text": "Loading sources...",
+        "expected": "absent",
+        "timeout_ms": 120000,
+        "next": "fresh-edit"
+      },
+      "fresh-branch": {
+        "action": "ui.set_input",
+        "intent": "Select the farm branch with a fresh editable native input.",
+        "test_id": "source-proof-pack-branch",
+        "value": "experiment/farm",
+        "next": "fresh-keyboard"
+      },
+      "partial-refreshed": {
+        "action": "ui.wait_for",
+        "intent": "The refresh completes against the recovered node before checking retained diagnostics.",
+        "text": "Loading sources...",
+        "expected": "absent",
+        "timeout_ms": 120000,
+        "next": "partial-after-refresh"
       }
     }
   }

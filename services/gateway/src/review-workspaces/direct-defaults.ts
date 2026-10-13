@@ -170,6 +170,7 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
   options: {
     purpose: 'preview' | 'queue' | 'run';
     ownerId?: string;
+    excludingRunId?: string;
     execution?: PRExecutionProfile;
   },
 ): Promise<DirectWorkflowDefaultsResult<T & DirectWorkflowRequest>> {
@@ -329,9 +330,10 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
             model: executionModelFromSelection(choice).model,
           },
           options.ownerId,
+          options.excludingRunId,
         );
         waiting ??= { choice, admission };
-        assertReviewWorkspaceAdmitted(admission);
+        assertReviewWorkspaceAdmitted(admission, options.excludingRunId);
         waiting = { choice, admission };
         reason = undefined;
         waitingReason = undefined;

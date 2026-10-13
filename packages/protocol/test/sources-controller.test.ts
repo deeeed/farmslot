@@ -141,3 +141,58 @@ test('controlled selection echoes keep loaded facts and do not trigger another s
   assert.equal(controller.getSnapshot().view?.declarationRevision, 1);
   assert.equal(reads, 1);
 });
+
+test('partial sync diagnostics survive automatic and manual refresh until another operation', async () => {
+  let partial = true;
+  let readFailure = false;
+  const diagnostic = {
+    nodeId: 'node-1',
+    sourceId: 'pack',
+    reason: 'Node source sync timed out',
+  };
+  const controller = new SourceStatusController(
+    createSourceCommandClient(async <T>(method: string, params: unknown): Promise<T> => {
+      if (method === Methods.SOURCES_STATUS) {
+        if (readFailure) throw new Error('Source status unavailable');
+        return sourceStatusFixture() as T;
+      }
+      return {
+        ...sourceStatusFixture(),
+        operationId: (params as { operationId: string }).operationId,
+        errors: partial ? [diagnostic] : [],
+      } as T;
+    }),
+    {
+      connectionKey: 'farm',
+      target: { scope: 'node', targetId: 'node-1' },
+      actions: ['sync'],
+    },
+  );
+  await controller.refresh();
+  await controller.apply('sync', 'pack');
+  const operationError = controller.getSnapshot().operationError;
+  assert(operationError?.includes(diagnostic.reason));
+  assert(operationError.includes(diagnostic.nodeId));
+  assert(operationError.includes(diagnostic.sourceId));
+  assert(controller.getSnapshot().notice?.includes('completed with errors'));
+  assert.equal(controller.getSnapshot().pending, undefined);
+  assert.equal(controller.getSnapshot().canRetry, false);
+  assert.equal(controller.getSnapshot().interactive, true);
+  assert.deepEqual(controller.getSnapshot().view?.errors, []);
+
+  await controller.refresh();
+  assert.equal(controller.getSnapshot().operationError, operationError);
+  readFailure = true;
+  await controller.refresh();
+  assert.equal(controller.getSnapshot().error, 'Source status unavailable');
+  assert.equal(controller.getSnapshot().operationError, operationError);
+  readFailure = false;
+  await controller.refresh();
+  assert.equal(controller.getSnapshot().error, undefined);
+  assert.equal(controller.getSnapshot().operationError, operationError);
+
+  partial = false;
+  await controller.apply('sync', 'pack');
+  assert.equal(controller.getSnapshot().operationError, undefined);
+  assert(controller.getSnapshot().notice?.endsWith('applied.'));
+});

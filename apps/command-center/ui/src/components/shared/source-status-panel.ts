@@ -150,6 +150,11 @@ export class SourceStatusPanel extends LitElement {
       </header>
       ${state.loading ? html`<p>Loading sources...</p>` : nothing}
       ${state.error ? html`<p class="error" role="alert">${state.error}</p>` : nothing}
+      ${state.operationError
+        ? html`<p class="error" role="alert" data-testid="sources-operation-error">
+            ${state.operationError}
+          </p>`
+        : nothing}
       ${state.notice ? html`<p>${state.notice}</p>` : nothing}
       ${state.pending
         ? html`<p>${state.pendingLabel}</p>

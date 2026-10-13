@@ -7,6 +7,7 @@ import type { RunCreationPlan } from '../methods/run.js';
 
 import type { SourceAuthority } from './authority.js';
 import type { RunSourceAdmissionDependencies } from './run-admission.js';
+import { captureRunSourceFence } from './run-fence.js';
 
 export interface SourceSlotPlan extends SlotSelectionPlan {
   sources: ProjectSourceContext;
@@ -112,6 +113,11 @@ export async function planRunSlotSources(
 ): Promise<RunSlotSourcePlans> {
   if (!run.sourcePlan || run.sourceProvenance)
     throw new Error('Run has no provisional source plan');
+  const current = captureRunSourceFence(
+    run,
+    deps.getRun,
+    'Run ownership or source plan changed while inspecting candidate nodes',
+  );
   const forNode = sourceContextLoader(run.project, run.id, deps);
   const plans = await collectSlotSourcePlans(
     run.project,
@@ -134,18 +140,7 @@ export async function planRunSlotSources(
       };
     },
   );
-  const current = deps.getRun(run.id);
-  if (
-    !current?.sourcePlan ||
-    current.sourceProvenance ||
-    current.status === 'cancelled' ||
-    current.status === 'paused' ||
-    (current.engineState?.generation ?? 0) !== (run.engineState?.generation ?? 0) ||
-    current.sourcePlan.lock.digest !== run.sourcePlan.lock.digest ||
-    current.createdByPrincipalId !== run.createdByPrincipalId ||
-    current.nativeOwnerPrincipalId !== run.nativeOwnerPrincipalId
-  )
-    throw new Error('Run ownership or source plan changed while inspecting candidate nodes');
+  current();
   return plans;
 }
 

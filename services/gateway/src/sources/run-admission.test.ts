@@ -141,6 +141,39 @@ test('cancellation or the wrong node receipt cannot publish source provenance', 
   }
 });
 
+for (const stage of ['gateway', 'node'] as const) {
+  for (const mutation of ['replay', 'plan', 'ownership'] as const) {
+    test(`in-place ${mutation} during ${stage} attestation refuses obsolete admission`, async () => {
+      const f = fixture();
+      const original = f.getRun();
+      const mutate = () => {
+        if (mutation === 'replay')
+          original.engineState = { ...original.engineState, generation: 1 };
+        else if (mutation === 'plan') original.sourcePlan!.validatedSlotId = 'replayed-slot';
+        else original.createdByPrincipalId = 'different-owner';
+      };
+      if (stage === 'gateway') {
+        f.deps.gatewayMaterialization = async () => {
+          mutate();
+          return sourceTestMaterialization(f.desired, 'gateway');
+        };
+      } else {
+        f.deps.nodeMaterialization = async () => {
+          mutate();
+          return sourceTestMaterialization(f.desired, 'node-1');
+        };
+      }
+      await assert.rejects(
+        admitPlannedRunSources('run-1', { nodeId: 'node-1' }, f.deps),
+        /Run ownership or source plan changed/,
+      );
+      assert.equal(f.getRun(), original);
+      assert.equal(f.events.includes('save'), false);
+      assert.equal(original.sourceProvenance, undefined);
+    });
+  }
+}
+
 function retainedFixture() {
   const f = fixture();
   const prior = sourceTestLock('node-1');

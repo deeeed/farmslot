@@ -3,6 +3,7 @@ import { type ProjectSourceContext, withProjectSources } from '@farmslot/slot-co
 import { assertSourceAttestation, sourceInputsDigest } from '@farmslot/slot-config/sources';
 
 import type { SourceAuthority } from './authority.js';
+import { captureRunSourceFence } from './run-fence.js';
 
 /** Control flow only: no claimed resource or worker may exist when a plan restarts. */
 export class SourcePlanRestart extends Error {}
@@ -38,21 +39,11 @@ async function preparePlannedRunSources(
   const run = deps.getRun(runId);
   if (!run?.sourcePlan || run.sourceProvenance)
     throw new Error('Run has no provisional source plan');
-  const current = (): Run => {
-    const next = deps.getRun(runId);
-    if (
-      !next?.sourcePlan ||
-      next.sourceProvenance ||
-      next.status === 'cancelled' ||
-      next.status === 'paused' ||
-      (next.engineState?.generation ?? 0) !== (run.engineState?.generation ?? 0) ||
-      next.sourcePlan.lock.digest !== run.sourcePlan!.lock.digest ||
-      next.createdByPrincipalId !== run.createdByPrincipalId ||
-      next.nativeOwnerPrincipalId !== run.nativeOwnerPrincipalId
-    )
-      throw new Error('Run ownership or source plan changed before admission');
-    return next;
-  };
+  const current = captureRunSourceFence(
+    run,
+    deps.getRun,
+    'Run ownership or source plan changed before admission',
+  );
   const lock = await deps.authority.lock({ project: run.project, runId, nodeId: target.nodeId });
   const materialization = await deps.gatewayMaterialization(lock);
   assertSourceAttestation(lock, 'gateway', materialization);

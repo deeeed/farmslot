@@ -18,6 +18,7 @@ export interface SourceStatusSnapshot {
   busy: boolean;
   view?: SourceStatusViewModel;
   error?: string;
+  operationError?: string;
   notice?: string;
   pending?: PreparedSourceCommand;
   pendingLabel?: string;
@@ -112,6 +113,8 @@ export class SourceStatusController {
       loading: false,
       view: undefined,
       error: undefined,
+      operationError: undefined,
+      notice: undefined,
       selections: structuredClone([...(context.selections ?? [])]),
       ...(this.snapshot.pending
         ? {
@@ -166,7 +169,7 @@ export class SourceStatusController {
     )
       return;
     const version = this.version;
-    this.update({ busy: true, error: undefined, notice: undefined });
+    this.update({ busy: true, error: undefined, operationError: undefined, notice: undefined });
     try {
       const target = this.context.target;
       let command: PreparedSourceCommand;
@@ -212,15 +215,25 @@ export class SourceStatusController {
   private async submitPending(): Promise<void> {
     const command = this.snapshot.pending;
     if (!command) return;
-    this.update({ busy: true, error: undefined });
+    this.update({ busy: true, error: undefined, operationError: undefined });
     try {
-      await this.client.execute(command);
+      const result = await this.client.execute(command);
+      const errors = 'errors' in result ? result.errors : [];
       this.update({
         busy: false,
         pending: undefined,
         pendingLabel: undefined,
         canRetry: false,
-        notice: `${commandLabel(command)} applied.`,
+        notice: `${commandLabel(command)} ${errors.length ? 'completed with errors' : 'applied'}.`,
+        // Read refreshes report current facts separately from this operation's diagnostics.
+        operationError: errors.length
+          ? errors
+              .map(
+                (error) =>
+                  `${[error.nodeId, error.sourceId, error.project].filter(Boolean).join(' / ') || 'Source'}: ${error.reason}`,
+              )
+              .join('\n')
+          : undefined,
         selections: [],
       });
       await this.refresh();
@@ -229,7 +242,7 @@ export class SourceStatusController {
       const stale = (error as { code?: string }).code === 'SOURCE_STATE_STALE';
       this.update({
         busy: false,
-        error: (error as Error).message,
+        operationError: (error as Error).message,
         ...(stale ? { pending: undefined, pendingLabel: undefined, canRetry: false } : {}),
       });
     }

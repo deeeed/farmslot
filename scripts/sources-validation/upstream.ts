@@ -68,6 +68,36 @@ export class ProofSourceUpstream {
       path.join(fixture, 'templates/worker/ci-fix.md'),
     );
 
+    // Exercise static Review with automatic QA in the same declared proof pack.
+    const fixtureConfig = JSON.parse(await readFile(path.join(fixture, 'project.json'), 'utf8'));
+    fixtureConfig.repo_url = 'https://github.com/deeeed/farmslot.git';
+    fixtureConfig.static_review = { template_id: 'review-pr/default' };
+    fixtureConfig.execution_templates = {
+      sources: [{ id: 'workspace:shared', kind: 'workspace', root: { projectPath: 'shared' } }],
+      defaults: [
+        { when: { flow: 'dev', runMode: 'interactive' }, templateId: 'dev/interactive' },
+        { when: { flow: 'dev', runMode: 'autonomous' }, templateId: 'dev/default' },
+        {
+          when: { flow: 'pr-complete', runMode: 'interactive' },
+          templateId: 'pr-complete/default',
+        },
+      ],
+    };
+    fixtureConfig.qa.after_review = { enabled: true, profile_id: 'source-smoke' };
+    await writeFile(path.join(fixture, 'project.json'), JSON.stringify(fixtureConfig));
+    for (const [flow, name] of [
+      ['dev', 'interactive'],
+      ['dev', 'default'],
+      ['pr-complete', 'default'],
+      ['review-pr', 'default'],
+    ]) {
+      await mkdir(path.join(fixture, 'shared', flow), { recursive: true });
+      await writeFile(
+        path.join(fixture, 'shared', flow, name + '.md'),
+        '---\nplatforms: [cli]\n---\n\n- [ ] Complete the assigned proof task.\n',
+      );
+    }
+
     const caFile = path.join(root, 'ca.pem');
     const privateKey = path.join(root, 'server.key');
     const tlsConfig = path.join(root, 'openssl.conf');

@@ -483,6 +483,7 @@ export async function planRunCreation(
   const workflowDefaults = await resolveDirectWorkflowDefaults(params, projectConfig, {
     purpose: options.sourcePlanningPurpose ?? 'run',
     execution: options.workflowExecution,
+    excludingRunId: options.replanningRunId,
     ...(params.flowType === 'review-pr' && params.reviewValidationDepth !== 'full-live'
       ? { ownerId: resolveReviewWorkspaceOwner() }
       : {}),
@@ -528,6 +529,7 @@ export async function planRunCreation(
           nativeProfile: params.nativeProfile,
         },
         resolveReviewWorkspaceOwner(),
+        options.replanningRunId,
       ));
     params.executionTemplateId =
       params.executionTemplateId ?? workspaceAdmission.project.staticReview!.templateId;
@@ -784,6 +786,7 @@ export async function planRunCreation(
         nativeProfile: params.nativeProfile,
       },
       resolveReviewWorkspaceOwner(),
+      options.replanningRunId,
     );
   }
   if (publicationOwner) {
