@@ -3287,12 +3287,20 @@ export class RuntimeCapabilityRegistry {
   }
 
   async recover(slotIds?: string[]): Promise<void> {
+    // The retained-provider sweep owns physical dependency ordering and keeps
+    // dependencies when a parent stop fails. Recovery must use that same path.
+    const swept = await this.sweepWarmProviders(
+      (lease) =>
+        (!slotIds || slotIds.includes(lease.slotId)) &&
+        this.isFencedOwner(lease.owner.runId, lease.owner.familyId) &&
+        (runsProvider(lease) || Boolean(lease.cleanupFailure)),
+    );
+    const stillShared = new Set(swept.stillHeld.map((lease) => lease.id));
     await this.mutate(async () => {
       const snapshot = this.options.store.snapshot();
       const active = snapshot.leases.filter(
         (lease) =>
-          (ACTIVE_STATES.has(lease.state) ||
-            (runsProvider(lease) && this.isFencedOwner(lease.owner.runId, lease.owner.familyId))) &&
+          (ACTIVE_STATES.has(lease.state) || stillShared.has(lease.id)) &&
           (!slotIds || slotIds.includes(lease.slotId)),
       );
       const bySlot = new Map<string, RuntimeCapabilityLease[]>();

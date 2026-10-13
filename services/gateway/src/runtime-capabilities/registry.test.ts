@@ -4198,3 +4198,46 @@ test('terminal recovery keeps a deferred claim when provider identity cannot be 
   assert.match(lease.cleanupFailure ?? '', /ownership changed/);
   assert.deepEqual(actions, []);
 });
+
+for (const initiallyFails of [false, true]) {
+  test(`terminal deferred app/Metro recovery preserves dependency order, parent failure=${initiallyFails}`, async (t) => {
+    let terminal = false;
+    let failParent = initiallyFails;
+    const { registry, actions } = await fixture(
+      t,
+      [entry('metro'), entry('app', 'exclusive', ['metro'])],
+      {
+        isTerminalOwner: () => terminal,
+        runAction: async (_slot, action) =>
+          action.kind === 'slot-action' && action.actionId === 'app.release' && failParent
+            ? { ok: false, detail: 'app process ownership cannot be verified' }
+            : { ok: true },
+      },
+    );
+    assert.equal((await acquire(registry, 'app', 'archived-owner')).ok, true);
+    await registry.releaseOwnership(SLOT, 'archived-owner');
+    terminal = true;
+    actions.length = 0;
+    await registry.recover();
+    assert.deepEqual(actions, initiallyFails ? ['app.release'] : ['app.release', 'metro.release']);
+    let leases = (await registry.status({ slotId: SLOT })).leases;
+    assert.equal(
+      leases.find((lease) => lease.capabilityId === 'app')?.state,
+      initiallyFails ? 'error' : 'released',
+    );
+    assert.equal(
+      Boolean(leases.find((lease) => lease.capabilityId === 'metro')?.providerCleanupDeferred),
+      initiallyFails,
+    );
+    if (initiallyFails) {
+      failParent = false;
+      actions.length = 0;
+      await registry.recover();
+      assert.deepEqual(actions, ['app.release', 'metro.release']);
+      leases = (await registry.status({ slotId: SLOT })).leases;
+      assert.ok(
+        leases.every((lease) => lease.state === 'released' && !lease.providerCleanupDeferred),
+      );
+    }
+  });
+}

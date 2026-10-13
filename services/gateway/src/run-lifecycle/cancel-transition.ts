@@ -248,6 +248,11 @@ export function defaultCancelCollaborators(): CancelCollaborators {
     settleBacklog: (run) => markBacklogRunObserved(run),
     tickWorkGraph: (graphId) => schedulerTick({ graphId }),
     releaseCapabilities: async (run) => {
+      if (isSlotFreedByPark(run)) {
+        // Only lease ownership remains ours; do not inspect the transferred workspace.
+        await releaseRunOwnedCapabilities(run);
+        return;
+      }
       const state = {
         fence: { before: null } as RunSlotCleanupFence,
         blocker: null as string | null,

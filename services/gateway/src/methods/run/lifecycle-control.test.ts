@@ -8,6 +8,7 @@ import {
   withRunTransition,
 } from '../../run-lifecycle/transition-coordinator.js';
 import { createRun, deleteRun, getRun, updateRun, updateRunStep } from '../../runs/store.js';
+import type { ResourcePostureRequest } from '../../runtime-capabilities/posture.js';
 
 import {
   GATE_PARK_REPLAY_TRIGGER,
@@ -1080,6 +1081,18 @@ test('resume of a gate-parked run reports the freed slot, not a generic not-paus
 });
 
 test('cancelling a gate-parked run clears the record and leaves the freed slot alone', async (t) => {
+  const { getRunResourcePostureReconciler } = await import('../runtime-posture.js');
+  const releasedOwners: string[] = [];
+  t.mock.method(
+    getRunResourcePostureReconciler(),
+    'apply',
+    async (params: ResourcePostureRequest) => {
+      assert.equal(params.posture, 'terminal');
+      assert.equal(params.ownerOnly, true);
+      releasedOwners.push(params.runId);
+      return { ok: true, transition: { failures: [] } };
+    },
+  );
   const run = createRun({
     flowType: 'dev',
     mode: 'autonomous',
@@ -1101,10 +1114,11 @@ test('cancelling a gate-parked run clears the record and leaves the freed slot a
 
   assert.equal(result.run.status, 'cancelled');
   assert.equal(result.run.park, null, 'the park record is cleared by terminal cleanup');
-  // The park already stopped this run's providers and released the slot, so
-  // terminal cleanup must not act on a slot someone else may now own.
+  // Reconcile only the parked run's leases; physical slot teardown stays skipped
+  // because a successor may already own the transferred workspace.
   const skipped = (name: string) => result.effects?.find((effect) => effect.name === name)?.status;
-  assert.equal(skipped('runtime-capabilities'), 'skipped');
+  assert.equal(skipped('runtime-capabilities'), 'ok');
+  assert.deepEqual(releasedOwners, [run.id]);
   assert.equal(skipped('slot-release'), 'skipped');
   assert.equal(
     result.effects?.some((effect) => effect.status === 'failed'),
