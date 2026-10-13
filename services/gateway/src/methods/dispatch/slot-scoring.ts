@@ -20,6 +20,10 @@ import {
 export { isDispatchScoreStale, SLOT_STALE_BRANCH_SCORE_PENALTY };
 
 import { SLOT_PHASE_RELEASING, SLOT_RELEASING_SINCE } from '../../core/index.js';
+import {
+  slotCapabilityBlocker,
+  type SlotCapabilityCatalogs,
+} from '../../run-engine/slot-capability-requirements.js';
 import { isCompletionPrerequisiteFailure } from '../../run-lifecycle/step-status.js';
 
 import { JIRA_KEY_RE, normalizeTicketRef } from './ticket-ref.js';
@@ -318,6 +322,8 @@ export interface SlotSelectionRefusal {
 export type SlotSelectionPlans = ReadonlyMap<string, SlotSelectionPlan | SlotSelectionRefusal>;
 
 export interface SlotSelectionOptions {
+  requiredCapabilities?: readonly string[];
+  capabilityCatalogs?: SlotCapabilityCatalogs;
   allowedSlots?: string[] | null;
   targetBranch?: string | null;
   releasableBranchHolderIds?: ReadonlySet<string>;
@@ -390,6 +396,8 @@ export function findBestSlot(
       const allow = selected.allowedSlots?.length ? new Set(selected.allowedSlots) : null;
       if (s.project !== project || !isFreeSlot(s) || (allow && !allow.has(s.slot))) return false;
       if (slotRepoBlocker(s, selected)) return false;
+      if (slotCapabilityBlocker(s.slot, selected.requiredCapabilities, selected.capabilityCatalogs))
+        return false;
       if (selected.pressureRejectedMachines?.has(s.machine)) return false;
       if (
         slotBranchCheckoutBlocker(
@@ -487,6 +495,8 @@ export function validateSlotForDispatch(
     requiredPrepareProfile?: string | null;
     allowWorking?: boolean;
     skipPrepare?: boolean;
+    requiredCapabilities?: readonly string[];
+    capabilityCatalogs?: SlotCapabilityCatalogs;
   },
 ): string | null {
   return (
@@ -495,6 +505,7 @@ export function validateSlotForDispatch(
       releasableBranchHolderIds: options?.releasableBranchHolderIds,
     }) ??
     companionResourceBlocker(slot, options?.requiredPrepareProfile) ??
+    slotCapabilityBlocker(slot.slot, options?.requiredCapabilities, options?.capabilityCatalogs) ??
     slotRepoBlocker(slot, options)
   );
 }
