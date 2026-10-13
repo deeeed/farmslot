@@ -3,9 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { after, before, mock, test } from 'node:test';
+import { after, mock, test } from 'node:test';
 
-import type { Run, RunStack } from '@farmslot/protocol';
+import type { ReviewStatus, Run, RunStack } from '@farmslot/protocol';
 
 import '../runtime/mock-pty.test-support.js';
 
@@ -18,9 +18,9 @@ const nativeExec = await import('../core/exec.js');
 const nativeStore = await import('../runs/store.js');
 const nativeMirror = await import('./artifact-mirror.js');
 const nativeSession = await import('../runners/session-process.js');
-const nativeDraft = await import('./draft-pr.js');
 const nativeTemplate = await import('./pr-template.js');
 let run: Run;
+let lineageParent: Run | null = null;
 let repo = '';
 const templateBases: string[] = [];
 const vars = () =>
@@ -53,6 +53,8 @@ mock.module('../runs/store.js', {
   namedExports: {
     ...nativeStore,
     getRun: () => run,
+    getRunWithArchived: async (id: string) =>
+      id === lineageParent?.id ? lineageParent : id === run?.id ? run : null,
     updateRun: (_id: string, patch: Partial<Run>) => (run = { ...run, ...patch }),
   },
 });
@@ -62,6 +64,7 @@ mock.module('./artifact-mirror.js', {
 mock.module('../runners/session-process.js', {
   namedExports: { ...nativeSession, resolveRunnerSessionForRun: async () => null },
 });
+const nativeDraft = await import('./draft-pr.js');
 mock.module('./draft-pr.js', {
   namedExports: { ...nativeDraft, buildDraftPrBody: async () => '## Summary\nChild fix\n' },
 });
@@ -75,8 +78,10 @@ mock.module('./pr-template.js', {
   },
 });
 const { prepareCompletionPackage, renderCurrentDescription } = await import('./orchestrator.js');
-const { publicationBaseForRun } = await import('../run-engine/stack-base.js');
+const { publicationBaseForRun, stackPrBase } = await import('../run-engine/stack-base.js');
 const { parseGitNumstat } = await import('../run-engine/diff-artifacts.js');
+const { captureCurrentReviewSnapshot } = await import('../review/snapshots.js');
+const { assertPublicationReviewPolicySatisfied } = await import('../run-engine/gate-policy.js');
 
 let root = '';
 let git: (...args: string[]) => string;
@@ -90,7 +95,7 @@ after(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 // Disjoint parent/child edits reproduce 18 files +687/-116 versus 9 files +281/-51.
-before(async () => {
+async function prepareFixture() {
   root = await mkdtemp(path.join(tmpdir(), 'stacked-package-'));
   repo = path.join(root, 'repo');
   const remote = path.join(root, 'origin.git');
@@ -151,9 +156,10 @@ before(async () => {
     diffStat: fullDiff,
     reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
   });
-});
+}
 
 function resetRun(currentStack?: RunStack) {
+  lineageParent = null;
   run = {
     ...makeRun({
       id: 'stack-fixture',
@@ -170,6 +176,9 @@ function resetRun(currentStack?: RunStack) {
   templateBases.length = 0;
 }
 
+// The file's elapsed time includes setup; each case times its assertions separately.
+await prepareFixture();
+
 test('stacked package and preview exclude the upstream nine files', async () => {
   resetRun(stack);
   const stacked = (
@@ -183,7 +192,7 @@ test('stacked package and preview exclude the upstream nine files', async () => 
   assert.equal(stacked.reviewSnapshot?.headSha, headSha);
   assert.deepEqual(stacked.reviewSnapshot?.diffStat, parentDiff);
   assert.deepEqual(stacked.diffStat, parentDiff);
-  assert.equal(templateBases.at(-1), publicationBaseForRun(run, 'main'));
+  assert.equal(templateBases.at(-1), await publicationBaseForRun(run, 'main'));
   await renderCurrentDescription(run, stacked);
   assert.equal(templateBases.at(-1), 'feature/parent');
 });
@@ -200,6 +209,67 @@ test('standalone publication keeps the default 18-file package', async () => {
   assert.equal(standalone.reviewSnapshot?.baseRef, 'origin/main');
   assert.deepEqual(standalone.reviewSnapshot?.diffStat, fullDiff);
   assert.equal(templateBases.at(-1), 'main');
+});
+
+test('a follow-up package and preview use the stacked parent contribution', async () => {
+  resetRun();
+  lineageParent = { ...run, id: 'stacked-parent', stack };
+  run = { ...run, flowType: 'pr-complete', parentRunId: lineageParent.id };
+  const prepared = (
+    await prepareCompletionPackage(run.id, {
+      diffStat: parentDiff,
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    })
+  ).prPackage;
+  assert.equal(prepared.reviewSnapshot?.baseRef, 'origin/feature/parent');
+  assert.equal(prepared.reviewSnapshot?.baseSha, parentSha);
+  assert.deepEqual(prepared.reviewSnapshot?.diffStat, parentDiff);
+  await renderCurrentDescription(run, prepared);
+  assert.equal(templateBases.at(-1), 'feature/parent');
+});
+
+test('a comparison child cold review satisfies the one-review publication policy', async () => {
+  resetRun();
+  lineageParent = { ...run, id: 'stacked-comparison-parent', stack };
+  run = { ...run, parentRunId: lineageParent.id };
+  const prepared = (
+    await prepareCompletionPackage(run.id, {
+      diffStat: parentDiff,
+      reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
+    })
+  ).prPackage;
+  const { snapshot } = await captureCurrentReviewSnapshot(vars(), {
+    mode: 'cold',
+    baseRef: await stackPrBase(run),
+  });
+  const review: ReviewStatus = {
+    id: 'comparison-cold-review',
+    source: 'human-gate',
+    mode: 'cold',
+    loopNumber: 1,
+    verdict: 'pass',
+    unresolvedCount: 0,
+    reviewerSessionId: 'comparison-review-session',
+    reviewedHeadSha: prepared.headSha,
+    reviewedReviewSubjectHash: prepared.reviewSubjectHash,
+    reviewSnapshot: snapshot,
+  };
+  run = {
+    ...run,
+    engineState: {
+      ...run.engineState,
+      publishGate: { ...run.engineState?.publishGate, reviews: [review] },
+    },
+  };
+  assert.equal(snapshot.baseRef, prepared.reviewSnapshot?.baseRef);
+  assert.doesNotThrow(() => assertPublicationReviewPolicySatisfied(run, prepared));
+  run.engineState!.publishGate!.reviews = [
+    { ...review, reviewSnapshot: { ...snapshot, baseRef: 'origin/main' } },
+  ];
+  assert.throws(
+    () => assertPublicationReviewPolicySatisfied(run, prepared),
+    /requires passing reviews for the approved package/,
+  );
 });
 
 test('a retargeted stack uses the default branch after its parent merges', async () => {

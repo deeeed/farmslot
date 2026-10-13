@@ -430,7 +430,7 @@ export async function renderCurrentDescription(
     current,
     report,
     artifacts ?? (await scanArtifacts(path.dirname(current.taskFile))),
-    publicationBaseForRun(current, baseBranch),
+    await publicationBaseForRun(current, baseBranch),
     { tolerateMissingSlot: Boolean(preparedPackage.headSha) },
   );
   return { draftTitle: buildDraftPrTitle(current), draftBody };
@@ -655,7 +655,7 @@ export async function prepareCompletionPackage(
   );
   const validation = await readValidationSummary(run);
   const projectVars = await loadProjectVars(run.project);
-  const baseBranch = publicationBaseForRun(
+  const baseBranch = await publicationBaseForRun(
     run,
     getProjectField(projectVars.projectJson, 'default_branch'),
   );
@@ -1046,7 +1046,7 @@ async function createPrFromApprovedPackage(
   const tmpFile = `/tmp/farmslot-pr-body-${run.id.slice(0, 8)}-${randomUUID()}.md`;
   await writeFile(tmpFile, pendingPublicationBody(prPackage), 'utf-8');
   const pv = await loadProjectVars(run.project).catch(() => null);
-  const base = publicationBaseForRun(
+  const base = await publicationBaseForRun(
     getRun(run.id) ?? run,
     pv && getProjectField(pv.projectJson, 'default_branch'),
   );
@@ -1174,7 +1174,7 @@ export async function publishCompletionPackage(
     const ciRepo: string | null = (pv?.projectJson as any)?.ci?.repo ?? null;
     flags.ciRepo = ciRepo;
     if (!ciRepo) throw new Error('no ci.repo configured');
-    const baseBranch = publicationBaseForRun(
+    const baseBranch = await publicationBaseForRun(
       run,
       pv && getProjectField(pv.projectJson, 'default_branch'),
     );

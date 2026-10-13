@@ -1050,7 +1050,7 @@ export async function runReviewAgent(
   const reviewSnapshot = await captureReviewSnapshot(vars, taskDir, loopNumber, artifactScope, {
     mode,
     baseRef: parentRunForAlloc
-      ? (stackPrBase(parentRunForAlloc) ?? parentRunForAlloc.repeatReviewContext?.baseRef)
+      ? ((await stackPrBase(parentRunForAlloc)) ?? parentRunForAlloc.repeatReviewContext?.baseRef)
       : undefined,
     lastReviewedHeadSha: warmSession?.lastReviewedHeadSha,
   });
