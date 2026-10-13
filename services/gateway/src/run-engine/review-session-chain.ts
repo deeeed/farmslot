@@ -69,6 +69,8 @@ export function resolveRepeatReviewResumePlan(
   model?: string | null,
   effort?: string | null,
 ): RepeatReviewResumePlan {
+  // Other flows select pipeline reviewers; their primary worker is not that reviewer.
+  if (current.flowType !== 'review-pr') return { kind: 'fresh' };
   const context = current.repeatReviewContext;
   if (resolveReviewMode({ run: current }) !== 'warm') return { kind: 'fresh' };
   if (!context) return { kind: 'refused', reason: 'missing-session' };
