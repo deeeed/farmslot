@@ -87,5 +87,5 @@ test('enabling Farmslot QA preserves the existing local flow selections and defa
     });
     assert.equal(selected.entry.relativePath, file);
   }
-  assert.deepEqual(project.defaults!.fix, { runner: 'claude', model: 'sonnet' });
+  assert.deepEqual(project.defaults!.fix, { runner: 'claude', model: 'opus' });
 });
