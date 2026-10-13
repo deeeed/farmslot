@@ -461,7 +461,7 @@ pending implementation.
 
 ## Verified claim overrides
 
-Status: Proposed, ADR-062 Amendment 4. These requirements add human override
+Status: Accepted, 2026-10-13, ADR-062 Amendment 4, #1015. These requirements add human override
 authority without changing recipe packages or Amendment 3 publication approval.
 
 ### Selection and authority
@@ -495,6 +495,13 @@ snapshot after awaits and before storage. Service, node, worker, background,
 synthetic solo-mode and client-supplied actors MUST be refused.
 A solo operator provisions an active person credential and global-admin role
 through the existing authentication setup before using this operation.
+
+The gateway derives `claimReviewGate` in the existing worker terminal contract
+from the same human-gate/output-review policy used by execution. The completion
+checker uses the public SDK reader and validator to bind the selected package
+before deferring verdict checks. The monitor calls that same checker. Flows with
+no applicable human gate keep their completion refusal; projects expose no
+verdict-waiver flag.
 
 ### Receipt and effective row
 
@@ -546,6 +553,15 @@ unchanged captured inventory plus that projection. A changed closure or selectio
 cannot reuse an old receipt, even if claim labels match.
 
 ### Public surface and conformance
+
+The experimental protocol exports `ClaimUntestableOverrideReceipt`,
+`ClaimOverrideAuthority`, `isAuthorizedOverride`,
+`recordedEvidenceClosureIdentity`, `projectClaimUntestableOverride` and
+`runClaimOverrideSnapshotIdentity`. Gateway writer, gate policy and the SDK review
+model are their consumers. The gateway supplies checked display authority on
+`RunRecordedEvidenceReview`; clients do not load authority from task files.
+Existing gate and output consumers share the pure `humanGateEnabled` and
+`runOutputReviewEnabled` policy helpers.
 
 `farmslot run gate <runId> --decision <id> --action mark-untestable --claim <id>
 --recipe-run <id> --reason <text>` routes to `run.overrideClaim`, not decision

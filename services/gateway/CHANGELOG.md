@@ -7,10 +7,13 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Release settled-run capability leases independently of workspace holds, retry identified cleanup holds safely, and free preserved workspaces on release-mode parks while retaining orchestration-only pauses.
 
 - Return stopped work graphs to planning without resetting recorded work; keep planning/paused graphs non-dispatching under targeted ticks.
+- Route operator completion intents through lifecycle settlement, retain failed completion ownership across restart until explicit cleanup, and keep output close available after acknowledgement.
 
 - Use shared review-mode precedence for admission, retained reviewer sessions, instructions and recorded evidence; refuse unavailable WARM selections consistently.
 
 - Preserve exact worker pane identity when fix roles adopt or capture a conversation; completed-run cleanup recognizes only uniquely proven aliases and retains ownership and foreign-worker guards.
+- Bind task verdicts to the selected execution and record verified human untestable exceptions without changing engine evidence.
+
 - Keep stacked follow-up packages, cold reviews, description checks and PR targets on their ancestor's current base, including archived ancestors.
 - Resolve worker marking, artifact checks and acceptance guards from the connected node's runtime so dev tasks cannot use stale production helpers; report missing CI verification with its checker and contract paths.
 - Preserve typed media and timeline references when task recipe attempts live in nested artifact directories.

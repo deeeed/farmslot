@@ -639,7 +639,14 @@ test('runForceComplete still returns done when publication after-effects throw',
   });
   assert.equal(result.run.status, 'done');
   assert.equal(result.run.metrics.outcome, 'success');
-  assert.equal(result.run.backlogReconcilePending, true);
+  assert.equal(
+    result.run.backlogReconcilePending,
+    undefined,
+    'unlinked runs need no backlog repair marker',
+  );
+  assert.ok(
+    result.effects?.some((effect) => effect.name === 'publish' && effect.status === 'failed'),
+  );
 });
 
 test('runForceComplete rejects a non-positive prNumber', async (t) => {

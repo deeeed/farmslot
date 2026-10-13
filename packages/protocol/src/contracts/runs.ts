@@ -758,6 +758,8 @@ export interface GateTokenSummary {
 }
 
 export interface ReadyGatePrPackage {
+  /** Gateway override receipts applied when this package was prepared. */
+  claimOverrideReceiptIds?: string[];
   id: string;
   packageHash: string;
   packageInputHash?: string;
@@ -1214,6 +1216,7 @@ export type RunDecisionPayload =
 /** Review retained output independently of worker outcome or publication. */
 export interface OutputReviewPayload {
   kind: 'output-review';
+  claimOverrideReceiptIds?: string[];
   manifestDigest: string;
   reportPath: string;
 }
@@ -1265,6 +1268,18 @@ export function runOutputCloseUnavailableReason(run: Run): string | null {
   )
     return 'Resolve the other pending run decisions first.';
   return null;
+}
+
+/** Workflow-owned output review policy, shared by planning and retained output presentation. */
+export function runOutputReviewEnabled(
+  run: Pick<Run, 'completionPolicy' | 'lane' | 'engineState' | 'reviewWorkspace'>,
+): boolean {
+  return (
+    run.completionPolicy === 'artifact-only' &&
+    run.lane !== 'comparison' &&
+    !run.engineState?.evalExperiment &&
+    !run.reviewWorkspace
+  );
 }
 
 export interface RunDecision {
@@ -2378,6 +2393,8 @@ export interface MachineParkRecord {
 }
 
 export interface Run {
+  /** Append-only gateway-authorised human exceptions; engine evidence stays immutable. */
+  claimOverrideReceipts?: import('../recipe/claim-overrides.js').ClaimUntestableOverrideReceipt[];
   /** ADR-069 provisional inputs. These never claim an execution receipt. */
   sourcePlan?: import('../sources/contracts.js').RunSourcePlan;
   /** Gateway-owned caller choices for revalidation before source-dependent effects. */

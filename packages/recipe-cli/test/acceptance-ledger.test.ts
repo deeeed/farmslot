@@ -140,18 +140,21 @@ test('failed actual assertion stays failed and cannot be overwritten manually as
         verdict: 'untestable',
         note: 'External verification needed.',
       }),
-    /actor and reason/,
+    /verified person/,
   );
-  const override = shared.setAcceptanceVerdict(run.taskDir, {
-    id: 'AC-1',
-    verdict: 'untestable',
-    note: 'External verification needed.',
-    actor: 'operator',
-  });
-  assert.equal(override.criteria[0]?.verdict, 'untestable');
+  assert.throws(
+    () =>
+      shared.setAcceptanceVerdict(run.taskDir, {
+        id: 'AC-1',
+        verdict: 'untestable',
+        note: 'External verification needed.',
+        actor: 'operator',
+      }),
+    /verified person/,
+  );
   assert.equal(
-    (override.criteria[0] as unknown as { overrides: { priorVerdict: string }[] }).overrides[0]
-      ?.priorVerdict,
+    JSON.parse(fs.readFileSync(path.join(run.taskDir, 'artifacts/acceptance-status.json'), 'utf8'))
+      .criteria[0].verdict,
     'failed',
   );
 });

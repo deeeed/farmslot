@@ -1176,3 +1176,45 @@ test('watcher excludes a gate-parked run from auto-recovery', async (t) => {
   assert.deepEqual(replayCalls, []);
   assert.equal(getRun(run.id)?.recoveryProposal, undefined);
 });
+
+test('a failed completion prerequisite waits for operator recovery without automatic replay', async (t) => {
+  withTempAuditDir(t);
+  const project = await makeProject(t, {
+    auto_recovery: {
+      enabled: true,
+      maxAttempts: 2,
+      allowedSteps: ['complete'],
+      allowedCategories: ['infra'],
+    },
+  });
+  const failed = failRun(project);
+  const run = updateRun(failed.id, {
+    steps: [
+      {
+        name: 'complete',
+        status: 'failed',
+        outputs: { gatePrerequisiteRefusal: {} },
+        detail: 'ECONNRESET',
+      },
+    ],
+  });
+  let replayed = false;
+  __resetAutoRecoveryForTest();
+  __setAutoRecoveryHandlersForTest({
+    runReplayStep: async () => {
+      replayed = true;
+      return { run };
+    },
+  });
+  initAutoRecovery(() => undefined);
+  t.after(async () => {
+    __resetAutoRecoveryForTest();
+    await cleanupRun(run.id);
+  });
+  routeEventToAutoRecovery(Events.RUN_UPDATED, { run });
+  await __drainAutoRecoveryForTest();
+  await scanFailedRunsForAutoRecovery();
+  await __drainAutoRecoveryForTest();
+  assert.equal(replayed, false);
+  assert.equal(getRun(run.id)?.status, 'failed');
+});

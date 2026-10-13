@@ -5,6 +5,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 ## Unreleased
 
 - **BREAKING:** Finalize diagnostics, provenance, recovery metadata, observations and reports before the engine validates its immutable evidence package. Closeout helpers on `/harness` now take the engine's artifact-finalization context instead of summary/manifest paths.
+- Project task verdicts only when a successful recipe advances the selected attempt.
 
 ## 0.15.0 - 2026-10-13
 

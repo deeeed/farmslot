@@ -1,9 +1,26 @@
 import type { WorkerTemplateOption } from '../contracts/config.js';
 import type { ExecutionTemplateDefault } from '../contracts/execution-templates.js';
 import type { FlowType } from '../contracts/runs.js';
+import { isRecord } from '../recipe/common.js';
 
 export type DispatchRunMode = 'interactive' | 'autonomous';
 export type RunCreateMode = DispatchRunMode | 'validation';
+
+/** Same existing gate policy for execution and task completion planning. */
+export function humanGateEnabled(
+  flowType: FlowType,
+  mode?: RunCreateMode,
+  projectJson?: unknown,
+): boolean {
+  if (flowType === 'fix-bug') return true;
+  if (flowType === 'dev' && mode === 'autonomous') return true;
+  if (mode === 'autonomous') return false;
+  if (mode === 'interactive' || mode === 'validation') return true;
+  const configured = isRecord(projectJson) ? projectJson.human_gates : undefined;
+  const gate = isRecord(configured) ? configured[flowType] : undefined;
+  if (typeof gate === 'boolean') return gate;
+  return flowType === 'review-pr';
+}
 
 /** Default worker template basename per flow — matches gateway FLOW_TO_TEMPLATE. */
 export const DEFAULT_WORKER_TEMPLATE_BY_FLOW: Record<string, string> = {

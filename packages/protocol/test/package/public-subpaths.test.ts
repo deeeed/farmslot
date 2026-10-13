@@ -269,6 +269,7 @@ for (const [name, actual, expected] of [
       probeWorkerSignal: Methods.RUN_PROBE_WORKER_SIGNAL,
       sessionCommand: Methods.RUN_SESSION_COMMAND,
       resolveDecision: Methods.RUN_RESOLVE_DECISION,
+      overrideClaim: Methods.RUN_OVERRIDE_CLAIM,
       grade: Methods.RUN_GRADE,
       getGrade: Methods.RUN_GET_GRADE,
       proposeImprovement: Methods.RUN_PROPOSE_IMPROVEMENT,

@@ -46,6 +46,7 @@ import {
   type ReviewQaDispatchSelection,
   type ReviewStatus,
   type Run,
+  runClaimOverrideSnapshotIdentity,
   type RunCreateParams,
   type RunCreateResult,
   type RunInteractiveDevResolveParams,
@@ -633,7 +634,7 @@ export async function planRunCreation(
   }
 
   if (params.flowType === 'qa') {
-    if (!params.ticketOrPr.trim()) throw new Error('QA requires a task title or change reference');
+    validateTicketRef(params.ticketOrPr, params.flowType);
     if (!parseGitHubRef(params.ticketOrPr))
       params.ticketData = buildManualTicketData(
         params.initialContext ?? params.ticketOrPr,
@@ -1767,6 +1768,14 @@ export async function resolveRunDecision(
     attestationApprover = dependencies.authorizeEvidenceAttestation();
   }
   if (decision.payload?.kind === 'output-review') {
+    const overrideSnapshot = runClaimOverrideSnapshotIdentity(decision);
+    if (
+      decision.payload.claimOverrideReceiptIds?.length &&
+      params.selectionData?.claimOverrideSnapshot !== runClaimOverrideSnapshotIdentity(decision)
+    )
+      throw new Error(
+        'The claim override review changed. Refresh and confirm the current output snapshot.',
+      );
     if (!['mark-reviewed', 'close-run'].includes(params.actionId))
       throw new Error('Invalid output review action');
     const { acknowledgeRunOutput } = await import('../run-completion/output.js');
@@ -1774,8 +1783,8 @@ export async function resolveRunDecision(
       params.actionId === 'close-run'
         ? await (
             await import('../run-completion/output-close.js')
-          ).closeRunOutput(params.runId, params.decisionId)
-        : await acknowledgeRunOutput(params.runId, params.decisionId);
+          ).closeRunOutput(params.runId, params.decisionId, undefined, overrideSnapshot)
+        : await acknowledgeRunOutput(params.runId, params.decisionId, overrideSnapshot);
     emit(Events.RUN_UPDATED, { run });
     emit(Events.RUN_DECISION_RESOLVED, {
       runId: run.id,

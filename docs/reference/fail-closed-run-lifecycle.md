@@ -184,6 +184,37 @@ RPC/state/ownership receipts and visible HUD evidence where supported. Make a
 negative control fail before restoring each claimed behavior. No fixture-only
 result counts as live acceptance.
 
+## Pipeline settlement
+
+Pipeline entry and restart recovery MUST use the same step-to-status projection.
+A refused COMPLETE or FINALIZE prerequisite ends the pipeline as `failed`; it MUST
+NOT leave the run labelled `completing` after the step stops. This failure alone
+MUST NOT release a worker, slot or runtime whose shutdown is unconfirmed.
+Dispatch occupancy, orphan cleanup and automatic recovery MUST retain this failed
+gate for explicit operator recovery.
+Retention follows the slot's current ownership; it MUST NOT make an explicitly
+released slot unavailable. Ticket and PR admission retain the unfinished execution
+until operator settlement. A linked backlog item and work-graph node observe the
+pipeline failure through the existing ordered transition effects.
+Restart MUST skip engine startup and runtime reconciliation for this retained
+failure. After explicit slot release, archive/delete MAY evict it only when native
+bindings and owner capability cleanup are confirmed released. Archive preserves
+the failed verdict, step history and evidence; unresolved provider cleanup still
+refuses eviction.
+QA completion replay MUST accept the same task title or change reference as QA
+creation, preserving the existing execution, frozen scope and recorded verdict.
+
+Supersede, force-complete and output close use named ADR-053 transitions. Their
+single settled write precedes publication, awaited backlog settlement and graph
+scheduling. Resource release stays outside machine/run locks and checks ownership.
+Output close MUST persist its settled write successfully before resource release.
+Force-complete still refuses QA. Output close preserves the recorded verdict,
+step history and evidence, including partial or failed results.
+
+Acknowledging an output snapshot MUST retain a pending close-only action for that
+snapshot. Recapture of the same bytes keeps it; changed bytes require a new review.
+Acknowledgement does not approve proof, publish work or resume execution.
+
 ## Public surface
 
 | Interface                                                                                              | Owner and named consumers                                                                                                      |

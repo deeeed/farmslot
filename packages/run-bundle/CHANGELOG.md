@@ -4,6 +4,8 @@ All notable changes to `@farmslot/run-bundle` are tracked here.
 
 ## Unreleased
 
+- Keep imported claim-override metadata from granting gateway authority.
+
 - Skip non-run JSON in the runs directory when selecting runs to export, so a run-id prefix lookup no longer fails on the runtime capability store. Export `parseRunRecordFile` for the Gateway run store.
 - Strip runner session archive pointers on export and import, and never pack `.runs/session-archives/`.
 

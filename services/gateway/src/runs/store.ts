@@ -61,6 +61,13 @@ import { invalidateRecipeRunGroupCache } from '../methods/filesystem.js';
 import { normalizeStartRefRequest } from '../projects/start-ref-policy.js';
 import { assertCurrentReviewConfiguration } from '../quality/review-config.js';
 import {
+  assertRunNotArchiving,
+  beginRunArchive,
+  endRunArchive,
+} from '../run-lifecycle/archive-fence.js';
+import { isCompletionPrerequisiteFailure } from '../run-lifecycle/step-status.js';
+import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
+import {
   assertSupportedRunnerSpelling,
   normalizeRunner,
   runnerDefaultModel,
@@ -262,8 +269,9 @@ async function ensureDir(): Promise<void> {
 /** Per-run write chain so background and awaitable persists cannot reorder renames. */
 const runPersistChains = new Map<string, Promise<void>>();
 
-async function persistBody(run: Run): Promise<void> {
+async function persistBody(run: Run, snapshot: Run = run, requireDurable = false): Promise<void> {
   if (isProductionRunsDir() && (isLeakedGatewayTestRun(run) || isSyntheticLeak(run))) {
+    if (requireDurable) throw new Error('Claim override requires a durable run record.');
     console.warn(
       `[run-store] refusing to persist leaked test fixture run ${run.id} to production .runs/`,
     );
@@ -280,12 +288,12 @@ async function persistBody(run: Run): Promise<void> {
   // Snapshot at write time so a later in-memory mutation cannot land an older
   // serialized body after a newer persistRunNow (chain still serializes, but
   // capture the object state this call intends to flush).
-  const payload = JSON.stringify(run, null, 2);
+  const payload = JSON.stringify(snapshot, null, 2);
   await writeFile(tmpPath, payload, {
     encoding: 'utf-8',
     ...(run.transport === 'native' ? { mode: 0o600 } : {}),
   });
-  if (run.transport === 'native') {
+  if (run.transport === 'native' || requireDurable) {
     const file = await open(tmpPath, 'r');
     try {
       await file.sync();
@@ -304,7 +312,7 @@ async function persistBody(run: Run): Promise<void> {
     return;
   }
   await rename(tmpPath, filePath);
-  if (run.transport === 'native') {
+  if (run.transport === 'native' || requireDurable) {
     const directory = await open(RUNS_DIR, 'r');
     try {
       await directory.sync();
@@ -353,6 +361,61 @@ export async function persistRunNow(run: Run, reason = 'explicit'): Promise<void
     );
     throw err;
   }
+}
+
+/** Commit the receipt before publishing its effective row. Shares the existing per-run write queue. */
+export async function commitRunClaimOverride(
+  id: string,
+  build: (run: Run) => import('@farmslot/protocol').ClaimUntestableOverrideReceipt,
+  assertCurrent: (run: Run) => void,
+  outputReceiptIds?: (snapshot: Run) => string[],
+): Promise<import('@farmslot/protocol').ClaimUntestableOverrideReceipt> {
+  let receipt: import('@farmslot/protocol').ClaimUntestableOverrideReceipt | undefined;
+  await enqueueRunWrite(id, async () => {
+    const run = runs.get(id);
+    if (!run) throw new Error('Run is unavailable');
+    assertCurrent(run);
+    receipt = build(run);
+    if (run.claimOverrideReceipts?.some((entry) => entry.id === receipt!.id)) return;
+    const receipts = [...(run.claimOverrideReceipts ?? []), receipt];
+    const snapshot: Run = { ...run, claimOverrideReceipts: receipts };
+    if (outputReceiptIds) {
+      const ids = outputReceiptIds(snapshot);
+      snapshot.decisions = run.decisions.map((decision) =>
+        decision.id === receipt!.decisionId && decision.payload?.kind === 'output-review'
+          ? { ...decision, payload: { ...decision.payload, claimOverrideReceiptIds: ids } }
+          : decision,
+      );
+    }
+    await persistBody(run, snapshot, true);
+    try {
+      assertCurrent(run);
+    } catch (error) {
+      // A decision/auth change during disk IO must not expose a stale receipt on restart.
+      await persistBody(run);
+      throw error;
+    }
+    run.claimOverrideReceipts = receipts;
+    if (outputReceiptIds) {
+      const projected = snapshot.decisions.find(
+        (decision) => decision.id === receipt!.decisionId,
+      )?.payload;
+      if (projected?.kind === 'output-review')
+        run.decisions = run.decisions.map((decision) =>
+          decision.id === receipt!.decisionId && decision.payload?.kind === 'output-review'
+            ? {
+                ...decision,
+                payload: {
+                  ...decision.payload,
+                  claimOverrideReceiptIds: projected.claimOverrideReceiptIds,
+                },
+              }
+            : decision,
+        );
+    }
+    updateRun(id, {});
+  });
+  return receipt!;
 }
 
 /**
@@ -999,7 +1062,9 @@ export function listRuns(filter?: ListRunsFilter): { runs: Run[]; totalCount: nu
   if (filter?.status) {
     result = result.filter((r) => r.status === filter.status);
   } else if (filter?.active) {
-    result = result.filter((r) => ACTIVE_STATUSES.has(r.status));
+    result = result.filter(
+      (r) => ACTIVE_STATUSES.has(r.status) || isCompletionPrerequisiteFailure(r),
+    );
   }
 
   if (filter?.flowType) {
@@ -1126,6 +1191,11 @@ export function recordAdoptedTmuxWorker(id: string, partial: Partial<Run>): Run 
 export function updateRun(id: string, partial: Partial<Run>, authorization?: symbol): Run {
   const run = runs.get(id);
   if (!run) throw new Error(`Run not found: ${id}`);
+  if (
+    'claimOverrideReceipts' in partial &&
+    !isDeepStrictEqual(partial.claimOverrideReceipts, run.claimOverrideReceipts)
+  )
+    throw new Error('Claim override receipts require the verified gateway writer');
   if (
     'reviewPublication' in partial &&
     !isDeepStrictEqual(partial.reviewPublication?.direct, run.reviewPublication?.direct)
@@ -1348,7 +1418,38 @@ function assertNativeWorkersReleased(run: Run): void {
     );
 }
 
+async function withCompletionFailureEviction(
+  id: string,
+  evict: () => Promise<boolean>,
+): Promise<boolean> {
+  const run = runs.get(id);
+  if (!run || !isCompletionPrerequisiteFailure(run)) return evict();
+  // Reuse the archive fence so replay cannot reclaim ownership during the
+  // asynchronous slot/provider checks and durable eviction.
+  await withRunTransition(id, async () => {
+    assertRunNotArchiving(id);
+    beginRunArchive(id);
+  });
+  try {
+    return await evict();
+  } finally {
+    endRunArchive(id);
+  }
+}
+
+async function assertCompletionFailureReleased(run: Run, operation: string): Promise<void> {
+  if (!isCompletionPrerequisiteFailure(run)) return;
+  if (run.slotId)
+    throw new Error(`Cannot ${operation} active run ${run.id}: release slot ${run.slotId} first`);
+  const { getRuntimeCapabilityRegistry } = await import('../methods/runtime-capabilities.js');
+  await getRuntimeCapabilityRegistry().assertRunReleased(run.id);
+}
+
 export async function deleteRun(id: string): Promise<boolean> {
+  return withCompletionFailureEviction(id, () => deleteRunBody(id));
+}
+
+async function deleteRunBody(id: string): Promise<boolean> {
   const run = runs.get(id);
   if (!run) return false;
   if (run.output?.cleanupPending || run.output?.closeError)
@@ -1357,6 +1458,7 @@ export async function deleteRun(id: string): Promise<boolean> {
     throw new Error(`Cannot delete active run ${id} (status=${run.status})`);
   }
   assertNativeWorkersReleased(run);
+  await assertCompletionFailureReleased(run, 'delete');
   if (run.backlogReconcilePending) {
     throw new Error(`Cannot delete run ${id} while backlog reconciliation is pending`);
   }
@@ -1558,11 +1660,13 @@ export async function updateReviewPublication(
 }
 
 export async function archiveRun(id: string): Promise<boolean> {
-  let archived = false;
-  await enqueueRunWrite(id, async () => {
-    archived = await archiveRunBody(id);
+  return withCompletionFailureEviction(id, async () => {
+    let archived = false;
+    await enqueueRunWrite(id, async () => {
+      archived = await archiveRunBody(id);
+    });
+    return archived;
   });
-  return archived;
 }
 
 /**
@@ -1609,6 +1713,7 @@ async function archiveRunBody(id: string): Promise<boolean> {
     );
   }
   assertNativeWorkersReleased(run);
+  await assertCompletionFailureReleased(run, 'archive');
   const archivedRun: Run = { ...run, archivedAt: new Date().toISOString() };
   // A blocked run is not a terminal outcome, so emitAnalyticsForTerminalRun
   // returns null for it on purpose: the archived JSON is its record and the

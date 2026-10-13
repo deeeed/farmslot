@@ -4,7 +4,7 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Show verified untestable overrides with the original engine verdict through the shared evidence review model.
 
 ## 0.10.0 - 2026-10-13
 

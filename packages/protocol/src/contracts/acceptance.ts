@@ -36,6 +36,9 @@ export interface AcceptanceCriterionStatus {
   /** Criterion text as task init recorded it. */
   text: string;
   verdict: AcceptanceVerdict;
+  /** Gateway review projection; absent on immutable engine/task bytes. */
+  engineVerdict?: AcceptanceVerdict;
+  overrides?: Array<{ receiptId: string }>;
   proofMode?: AcceptanceProofMode;
   /** Task-dir relative evidence paths. */
   evidence: string[];

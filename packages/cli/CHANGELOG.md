@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Add run gate mark-untestable for one selected claim through the verified gateway operation.
 - Add graph retry with a required reason to revise a stopped plan without replacing its recorded work.
 
 - Accept a required written reason for the human evidence-attested publish gate action.

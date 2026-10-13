@@ -34,18 +34,35 @@ import {
   assertPrimaryReviewContext,
   assertWarmReviewRequestAvailable,
 } from '../../run-engine/review-plan.js';
+import {
+  operatorCompletionCollaborators,
+  terminalTransitionDeps,
+} from '../../run-lifecycle/terminal-transition.js';
+import { routeRunTransition } from '../../run-lifecycle/transition-router.js';
 import { createRun, getAllRuns, getRun, updateRun } from '../../runs/store.js';
 import { withSourcePlanning } from '../../sources/runtime.js';
 import { submitRereviewRequest } from '../pr-rules.js';
 
+import { publishCompletedRun } from './lifecycle-control.js';
+
 /** Mark a review that could not be posted as superseded so it stops owning the PR. */
-function supersedeBlockedReview(run: Run, successor: string): void {
+async function supersedeBlockedReview(run: Run, successor: string): Promise<void> {
   if (run.status !== 'blocked') return;
-  updateRun(run.id, {
-    status: 'done',
-    completedAt: new Date().toISOString(),
-    error: `${run.error ?? 'Review blocked.'} Superseded by re-review ${successor}.`,
-  });
+  await routeRunTransition(
+    { kind: 'supersede', runId: run.id, actor: 'operator' },
+    terminalTransitionDeps({
+      kind: 'supersede',
+      runId: run.id,
+      actor: 'operator',
+      settlingStatus: 'blocked',
+      patch: {
+        status: 'done',
+        completedAt: new Date().toISOString(),
+        error: `${run.error ?? 'Review blocked.'} Superseded by re-review ${successor}.`,
+      },
+      collaborators: operatorCompletionCollaborators(publishCompletedRun),
+    }),
+  );
 }
 
 export async function runRereviewLatestHead(
@@ -128,7 +145,7 @@ async function rereviewWithSources(
   if (!slot || !runner || !model || !context) {
     const intake = await submitRereviewRequest(run, fallbackRepo, live.headSha);
     const latestParent = getRun(parent.id);
-    if (latestParent) supersedeBlockedReview(latestParent, 'via review intake');
+    if (latestParent) await supersedeBlockedReview(latestParent, 'via review intake');
     return { mode: 'review-intake', ...intake };
   }
 
@@ -160,7 +177,7 @@ async function rereviewWithSources(
     reviewValidationDepth: context.validationDepth,
   });
   applyChainedRunEngineFlags(child.id, { skipPrepare: true, warmSessionReuse: true });
-  supersedeBlockedReview(parent, child.id);
+  await supersedeBlockedReview(parent, child.id);
   console.log(
     `[run] re-review ${run.id.slice(0, 8)} → ${child.id.slice(0, 8)} on ${slot.slot}: warm handoff to the retained ${runner} session, ${context.priorReviewedHeadSha?.slice(0, 7) ?? '?'} → ${live.headSha.slice(0, 7)}`,
   );

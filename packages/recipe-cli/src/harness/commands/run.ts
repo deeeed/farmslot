@@ -784,10 +784,9 @@ function recordRunAcceptance(
   result: Parameters<typeof recordRecipeAcceptance>[2] & Pick<RecipeRunResult, 'status'>,
 ): void {
   try {
-    if (!taskDir) return;
-    if (result.status === 'pass') {
-      attemptSelection.recordRecipeAttemptSelection(taskDir, path.dirname(result.tracePath));
-    }
+    if (!taskDir || result.status !== 'pass') return;
+    if (!attemptSelection.recordRecipeAttemptSelection(taskDir, path.dirname(result.tracePath)))
+      return;
     const { recorded, refused } = recordRecipeAcceptance(taskDir, target, result);
     for (const reason of refused) console.error(`acceptance ledger: not recorded ${reason}`);
     if (recorded.length > 0 && recorded.every((entry) => entry.evidence.length === 0)) {

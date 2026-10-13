@@ -302,6 +302,33 @@ function minimalActiveRun(overrides: Partial<Run> = {}): Run {
   };
 }
 
+test('startup leaves failed completion ownership untouched with or without a fleet slot', async () => {
+  for (const slotId of ['retained-slot', null]) {
+    const run = minimalActiveRun({
+      status: 'failed',
+      slotId,
+      steps: [{ name: 'complete', status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }],
+    });
+    const before = structuredClone(run);
+    const calls: string[] = [];
+    const unexpected = async () => {
+      calls.push('recovery effect');
+    };
+    await recoverActiveRuns({
+      listRuns: () => ({ runs: [run] }),
+      loadFleetStatus: async () => ({ slots: [] }),
+      reconcileRunAgentRuntime: unexpected,
+      startRun: unexpected,
+      resetSlot: unexpected,
+      updateRun: unexpected,
+      updateRunStep: unexpected,
+      quarantineLeakedRun: unexpected,
+    } as unknown as RunRecoveryCollaborators);
+    assert.deepEqual(calls, [], 'no reconciliation, startup, status rewrite or teardown');
+    assert.deepEqual(run, before);
+  }
+});
+
 test('restart restores a failed PR health overlay for a blocked inline CI fix', async () => {
   const run = minimalActiveRun({
     status: 'blocked',
@@ -2167,4 +2194,31 @@ test('restart does not complete a blocked pipeline that still had progressing or
     assert.deepEqual(calls, []);
     assert.equal(run.status, status);
   }
+});
+
+test('orphan reconcile retains failed completion resources after restart until operator recovery', async () => {
+  const owner = minimalActiveRun({
+    id: 'retained-completion',
+    status: 'failed',
+    slotId: 'retained-slot',
+    steps: [{ name: 'complete', status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }],
+  });
+  const reset: string[] = [];
+  const deps = {
+    listRuns: () => ({ runs: [] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: owner.slotId, lifecycle: 'busy', phase: 'completing' }],
+    }),
+    isTerminalTeardownInFlight: () => false,
+    readSlotField: async () => owner.id,
+    getRun: () => owner,
+    resetSlot: async (slotId: string) => {
+      reset.push(slotId);
+    },
+  } as unknown as RunRecoveryCollaborators;
+  await reconcileOrphanedSlots(deps);
+  assert.deepEqual(reset, []);
+  owner.status = 'done';
+  await reconcileOrphanedSlots(deps);
+  assert.deepEqual(reset, [owner.slotId]);
 });

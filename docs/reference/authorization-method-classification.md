@@ -266,6 +266,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `run.grade`                             | admin          |                                                                                    |
 | `run.interactiveDev.resolve`            | admin          |                                                                                    |
 | `run.list`                              | operator       |                                                                                    |
+| `run.overrideClaim`                     | admin          |                                                                                    |
 | `run.pause`                             | admin          |                                                                                    |
 | `run.probeWorkerSignal`                 | admin          |                                                                                    |
 | `run.proposeImprovement`                | admin          |                                                                                    |

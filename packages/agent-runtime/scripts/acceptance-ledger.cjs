@@ -178,33 +178,9 @@ function setAcceptanceVerdict(taskDir, input) {
     }
   }
   if (stored?.schemaVersion === 2) {
-    if (input.verdict !== 'untestable' || !input.note?.trim() || !input.actor?.trim())
-      throw new AcceptanceRefusal(
-        'Automatic claim verdicts are engine-owned; an untestable override requires actor and reason.',
-      );
-    const prior = stored.criteria.find((entry) => entry.id === input.id);
-    if (!prior) throw new AcceptanceRefusal(`No automatic claim ${input.id} to override.`);
-    const override = {
-      actor: input.actor,
-      reason: input.note,
-      priorVerdict: prior.verdict,
-      at: input.now ?? new Date().toISOString(),
-    };
-    const updated = {
-      ...stored,
-      criteria: stored.criteria.map((entry) =>
-        entry.id === input.id
-          ? {
-              ...entry,
-              verdict: 'untestable',
-              note: input.note,
-              overrides: [...(entry.overrides ?? []), override],
-            }
-          : entry,
-      ),
-    };
-    writeAcceptanceLedger(taskDir, updated);
-    return updated;
+    throw new AcceptanceRefusal(
+      'Automatic verdicts are engine-owned. Request human review; a verified person uses farmslot run gate --action mark-untestable.',
+    );
   }
   const byId = new Map((stored?.criteria ?? []).map((entry) => [entry.id, entry]));
   byId.set(criterion.id, {
@@ -309,6 +285,10 @@ function acceptanceContractIssues(taskDir, options = {}) {
     }
   }
   const byId = new Map(stored.criteria.map((entry) => [entry.id, entry]));
+  if (stored.schemaVersion === 2 && stored.criteria.some((entry) => entry.overrides !== undefined))
+    issues.push(
+      'Unverified local overrides require a canonical engine projection; they grant no review authority.',
+    );
   for (const criterion of criteria) {
     const entry = byId.get(criterion.id);
     if (!entry) {
@@ -318,13 +298,16 @@ function acceptanceContractIssues(taskDir, options = {}) {
       continue;
     }
     if (
-      entry.verdict === 'failed' ||
-      entry.verdict === 'awaiting-review' ||
-      (!options.allowWeak && (entry.verdict === 'missing' || entry.verdict === 'weak'))
+      !(stored.schemaVersion === 2 && options.deferClaimVerdicts === true) &&
+      (entry.verdict === 'failed' ||
+        entry.verdict === 'awaiting-review' ||
+        (!options.allowWeak && (entry.verdict === 'missing' || entry.verdict === 'weak')))
     ) {
       issues.push(
-        `${criterion.id} is ${entry.verdict}: prove it, or record \`untestable\` with a note ` +
-          '(a flow may waive this with worker_terminal.acceptance.allowWeak)',
+        stored.schemaVersion === 2
+          ? `${criterion.id} is ${entry.verdict}: run an eligible recipe assertion or request human evidence review.`
+          : `${criterion.id} is ${entry.verdict}: prove it, or record \`untestable\` with a note ` +
+              '(a flow may waive this with worker_terminal.acceptance.allowWeak)',
       );
     }
   }

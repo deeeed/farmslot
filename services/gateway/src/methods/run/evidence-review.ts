@@ -14,6 +14,7 @@ import { loadSlotVars } from '../../core/config.js';
 import { getNode } from '../../fleet/machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from '../../fleet/node-rpc.js';
 import { scanSlotArtifactRootDetailed } from '../../live-recipe/context.js';
+import { claimOverrideAuthority } from '../../run-engine/claim-overrides.js';
 import {
   readFrozenRecordedEvidenceSources,
   readGateRecordedEvidenceSources,
@@ -68,6 +69,9 @@ export async function readRunRecordedEvidence(
       if (!source) throw new Error('Select a retained recipe execution from the gate package.');
       return {
         ...source,
+        ...(source.input.claims
+          ? { claimOverrideAuthority: claimOverrideAuthority(run, source.input) }
+          : {}),
         packagePath: source.artifactPrefix.replace(/^artifacts\//u, '').replace(/\/$/u, '') || '.',
         errors: reviewValidationErrors(source.input),
       };
@@ -111,7 +115,15 @@ export async function readRunRecordedEvidence(
       .filter((check) => check.status === 'fail')
       .map((check) => check.message);
     errors.push(...reviewValidationErrors(result.input));
-    return { input: result.input, artifactPrefix, packagePath, errors };
+    return {
+      input: result.input,
+      artifactPrefix,
+      packagePath,
+      errors,
+      ...(errors.length === 0 && result.input.claims
+        ? { claimOverrideAuthority: claimOverrideAuthority(run, result.input) }
+        : {}),
+    };
   } catch (error) {
     // An unavailable/corrupt retained package stays visible; it never becomes timed proof.
     return {

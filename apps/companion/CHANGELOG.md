@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Use shared verified claim overrides in publish and output review while preserving engine verdicts.
+
 - Use the shared evidence-policy attestation action and reason input in the existing gate workspace.
 - Show shared source status and scoped pin controls in farm, node and run views, with PR completion selections, persistent operation diagnostics and recovery from stale pin revisions.
 

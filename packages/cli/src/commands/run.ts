@@ -7,6 +7,7 @@ import type { Command } from 'commander';
 import {
   type AgentRole,
   assertPRReviewOptions,
+  buildRunDecisionActionRequest,
   buildRunResolveDecisionParams,
   deriveRunLifecycleView,
   DISPATCHABLE_AGENT_ROLES,
@@ -16,6 +17,7 @@ import {
   isAllowedRunDecisionAction,
   isPrerequisiteGatePayload,
   isReviewMode,
+  MARK_CLAIM_UNTESTABLE_ACTION,
   Methods,
   observedReviewSessionContinuity,
   type ReviewChainEntry,
@@ -84,6 +86,8 @@ export function assertRunGateActionAvailable(
 export interface RunGateCliOptions {
   action?: string;
   reason?: string;
+  claim?: string;
+  recipeRun?: string;
   decision?: string;
   runner?: string;
   model?: string;
@@ -781,7 +785,9 @@ export function registerRunCommand(program: Command): void {
       'Action to resolve with (approve-publish|approve-publish-unresolved|hold|close-as-shipped|…)',
     )
     .option('--decision <id>', 'Decision id when several are pending')
-    .option('--reason <text>', 'Written reason for approve-publish-evidence-attested')
+    .option('--reason <text>', 'Written reason for evidence attestation or mark-untestable')
+    .option('--claim <id>', 'Registered claim for mark-untestable')
+    .option('--recipe-run <id>', 'Selected recorded execution for mark-untestable')
     .option('--runner <runner>', 'Review runner for request-review')
     .option('--model <model>', 'Review model for request-review')
     .option('--effort <level>', 'Review reasoning effort for request-review')
@@ -838,6 +844,21 @@ export function registerRunCommand(program: Command): void {
         if (!decision) {
           throw new Error(`Decision ${decisionId} was not found on run ${runId}.`);
         }
+        if (actionId === MARK_CLAIM_UNTESTABLE_ACTION) {
+          const request = buildRunDecisionActionRequest({
+            runId: current.id,
+            decision,
+            actionId,
+            claimId: opts.claim,
+            recipeRunId: opts.recipeRun,
+            claimOverrideReason: opts.reason,
+          });
+          const result = await client.call(request.method, request.params);
+          emit.ok(result);
+          return;
+        }
+        if (opts.claim || opts.recipeRun)
+          throw new Error('Claim selection requires --action mark-untestable');
         assertRunGateActionAvailable(decision, actionId);
         const result = await withProgress(
           `Resolving ${decisionId} with ${opts.action}`,

@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Route valid unresolved engine claims to human review and refuse local schema-2 verdict overrides.
 
 ## 0.19.0 - 2026-10-13
 
