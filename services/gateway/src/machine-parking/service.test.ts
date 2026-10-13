@@ -2304,6 +2304,42 @@ test('release preview accepts a gate-held run with a declared session reload and
   assert.equal(preview.eligibleCount, 1);
 });
 
+test('gate park final preflight permits an already stopped worker and preserves its gate', async () => {
+  const run = gateHeldRun('run-gate', 'slot-a');
+  run.decisions = [
+    {
+      id: 'pending-gate',
+      type: 'engine_human_gate',
+      title: '',
+      description: '',
+      actions: [],
+      createdAt: '',
+    },
+  ];
+  const decisions = structuredClone(run.decisions);
+  const ctx = harness([run]);
+  ctx.runnerStates.set(run.id, 'stopped');
+  ctx.deps.inspectRecoveryHandle = async (_run, _handle, expected) => {
+    assert.equal(expected, 'stopped-or-live');
+  };
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: [run.id] },
+  });
+  const result = await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: run.id, generation: 3 }],
+  });
+  assert.equal(result.outcome, 'complete');
+  assert.equal(ctx.slotOwners.get('slot-a'), null);
+  assert.equal(ctx.runs.get(run.id)!.status, 'human-gating');
+  assert.deepEqual(ctx.runs.get(run.id)!.decisions, decisions);
+  assert.equal(ctx.runs.get(run.id)!.park!.phase, 'parked');
+});
+
 test('release preview codes a stalled liveness probe apart from an unsupported runner', async () => {
   const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
   ctx.deps.resolveRecoveryHandle = async () => {

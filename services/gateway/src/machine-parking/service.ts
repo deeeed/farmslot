@@ -454,7 +454,11 @@ async function defaultResolveRecoveryHandle(run: Run): Promise<MachinePauseRecov
     ...(run.taskFile ? { taskDir: path.posix.dirname(run.taskFile) } : {}),
     capturedAt: new Date().toISOString(),
   };
-  await defaultInspectRecoveryHandle(run, handle, 'live');
+  await defaultInspectRecoveryHandle(
+    run,
+    handle,
+    isGateHeldPublicationRun(run) ? 'stopped-or-live' : 'live',
+  );
   return handle;
 }
 
@@ -1823,7 +1827,11 @@ export class MachineParkingService {
         const recoveryHandle = await handle;
         if (preview.mode === 'release') {
           if (!recoveryHandle) throw new Error(`run ${run.id} has no fresh recovery handle`);
-          await this.deps.inspectRecoveryHandle(run, recoveryHandle, 'live');
+          await this.deps.inspectRecoveryHandle(
+            run,
+            recoveryHandle,
+            item.slotDisposition === 'freed' ? 'stopped-or-live' : 'live',
+          );
         }
         return { item, run, recoveryHandle };
       }),
