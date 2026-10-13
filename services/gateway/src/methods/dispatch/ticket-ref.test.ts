@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { resolvePrRef } from './ticket-ref.js';
+import { normalizeTicketRef, resolvePrRef, validateTicketRef } from './ticket-ref.js';
+
+test('QA replay accepts admitted task titles while other flows retain their reference grammar', () => {
+  const title = 'Recorded iOS AC3 after two local passes';
+  for (const input of [title, 'PROJ-2585', 'https://github.com/example/app/pull/42']) {
+    assert.doesNotThrow(() => validateTicketRef(normalizeTicketRef(input), 'qa'));
+  }
+  for (const empty of ['', '  '])
+    assert.throws(() => validateTicketRef(empty, 'qa'), /QA requires a task title/);
+  for (const flow of ['fix-bug', 'review-pr'])
+    assert.throws(() => validateTicketRef(title, flow), /Invalid .* reference/);
+});
 
 test('resolvePrRef passes a branch containing command substitution as one literal argv value', async () => {
   const branch = 'feature/$(touch /tmp/pwned)`id`';

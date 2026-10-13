@@ -605,3 +605,18 @@ test('cancelling during a wait keeps the time already waited as queue time', () 
   assert.equal(steps[1]!.queuedMs, undefined);
   assert.equal(steps[1]!.durationMs, undefined);
 });
+
+test('required persistence rejects before publication, store settlement or resource release', async () => {
+  const h = harness(run());
+  h.deps.persist = async () => {
+    h.calls.push('persist');
+    throw new Error('ENOSPC');
+  };
+  await assert.rejects(
+    routeRunTransition({ kind: 'cancel', runId: 'run_1', actor: 'operator' }, h.deps),
+    /ENOSPC/,
+  );
+  assert.equal(h.stored.status, 'cancelled');
+  assert.deepEqual(h.calls, ['cancelEngine', 'invalidateWarmSessions', 'persist']);
+  assert.deepEqual(h.emitted, []);
+});

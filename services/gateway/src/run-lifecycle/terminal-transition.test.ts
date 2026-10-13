@@ -375,3 +375,40 @@ for (const kind of ['complete', 'fail', 'block'] as const) {
     );
   });
 }
+
+for (const kind of ['supersede', 'force-complete', 'output-close'] as const) {
+  test(`${kind} settles an expected retained status before ordered fan-out`, async () => {
+    const seed = run({
+      status: 'blocked',
+      workGraphId: 'graph-1',
+      completionPolicy: 'artifact-only',
+      metrics: { outcome: 'partial', nudgeCount: 0, model: null, runner: null },
+      output: {
+        workerFinished: true,
+        capturedAt: NOW,
+        artifactManifest: [],
+        manifestDigest: 'digest',
+        reportPath: 'artifacts/report.md',
+      },
+    });
+    const harness = drive(
+      seed,
+      {
+        runId: seed.id,
+        kind,
+        actor: 'operator',
+        settlingStatus: 'blocked',
+        patch: { status: 'done', completedAt: NOW },
+      },
+      { cleanupEvalHarness: null, cleanupWorkspace: null, cleanupSlot: null },
+    );
+    const result = await harness.result;
+    assert.deepEqual(harness.log, ['publish:done', 'settleBacklog', 'tickWorkGraph']);
+    assert.equal(result.run.metrics.outcome, 'partial');
+    assert.ok(
+      result.effects
+        .filter((effect) => effect.name.includes('cleanup'))
+        .every((effect) => effect.status === 'skipped'),
+    );
+  });
+}

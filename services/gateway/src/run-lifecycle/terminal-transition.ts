@@ -14,10 +14,17 @@
 // content changes — and the router applies it, publishes through `onMutated`,
 // and only then runs the teardown as awaited after-effects.
 
-import { isSlotFreedByPark, isTerminalRunStatus, type Run } from '@farmslot/protocol';
+import {
+  isSlotFreedByPark,
+  isTerminalRunStatus,
+  type Run,
+  runOutputCloseUnavailableReason,
+} from '@farmslot/protocol';
 
+import { markBacklogRunObserved } from '../backlog/store.js';
 import { scheduledGraphOf } from '../run-engine/stack-base.js';
 import { getRun, updateRun } from '../runs/store.js';
+import { schedulerTick } from '../work-graph/store.js';
 
 import {
   effectFailed,
@@ -29,6 +36,7 @@ import {
   RunTransitionRefusedError,
   type RunTransitionRequest,
   type RunTransitionResult,
+  type RunTransitionSyncEffect,
 } from './transition-router.js';
 
 /** The three terminal transitions the run engine owns. */
@@ -38,7 +46,7 @@ export interface TerminalTransitionCollaborators {
   settleBacklog(run: Run): Promise<void>;
   tickWorkGraph(graphId: string): Promise<unknown>;
   /** Eval harness teardown, ahead of the slot so its artifacts survive the reset. */
-  cleanupEvalHarness(run: Run): Promise<void>;
+  cleanupEvalHarness: ((run: Run) => Promise<void>) | null;
   /**
    * Slot teardown, or `null` when this transition owes none.
    *
@@ -49,7 +57,7 @@ export interface TerminalTransitionCollaborators {
    */
   cleanupSlot: ((run: Run) => Promise<void>) | null;
   /** Owned static workspace cleanup is independent of a slot lease. */
-  cleanupWorkspace?: (run: Run) => Promise<void>;
+  cleanupWorkspace?: ((run: Run) => Promise<void>) | null;
   /** Awaited by the router via `onMutated`, so a broadcast failure is reportable. */
   emit(run: Run): void | Promise<void>;
 }
@@ -89,6 +97,7 @@ function terminalEffects(collaborators: TerminalTransitionCollaborators): RunTra
       // Before the slot: the harness reads the slot's tree to finalize its
       // candidate package, and a reset slot no longer has one.
       apply: async ({ run }) => {
+        if (!collaborators.cleanupEvalHarness) return 'skipped';
         await collaborators.cleanupEvalHarness(run);
       },
     },
@@ -96,7 +105,7 @@ function terminalEffects(collaborators: TerminalTransitionCollaborators): RunTra
       name: 'review-workspace-cleanup',
       severity: 'advisory',
       apply: async ({ run }) => {
-        if (!run.reviewWorkspace) return 'skipped';
+        if (!run.reviewWorkspace || collaborators.cleanupWorkspace === null) return 'skipped';
         if (!collaborators.cleanupWorkspace)
           throw new Error('Workspace terminal cleanup is unavailable');
         await collaborators.cleanupWorkspace(run);
@@ -132,7 +141,7 @@ function terminalEffects(collaborators: TerminalTransitionCollaborators): RunTra
 
 export interface TerminalTransitionRequest {
   runId: string;
-  kind: TerminalTransitionKind;
+  kind: Exclude<RunTransitionRequest['kind'], 'cancel'>;
   actor: RunTransitionActor;
   /**
    * The patch the caller already built. Applied as the router's single
@@ -150,6 +159,8 @@ export interface TerminalTransitionRequest {
    * refused.
    */
   settlingStatus?: Run['status'];
+  persist?: RunTransitionDeps['persist'];
+  before?: RunTransitionSyncEffect[];
   collaborators: TerminalTransitionCollaborators;
 }
 
@@ -157,7 +168,7 @@ export function terminalPlan(
   request: TerminalTransitionRequest,
 ): (transitionRequest: RunTransitionRequest, run: Run) => RunTransitionPlan {
   return () => ({
-    before: [],
+    before: request.before ?? [],
     // Write-ahead repair marker, in the SAME durable write as the terminal
     // status — ADR-053 parity with cancel, which has done this since it was
     // written. The router publishes the terminal run before the awaited backlog
@@ -187,9 +198,16 @@ export function terminalTransitionDeps(request: TerminalTransitionRequest): RunT
   return {
     getRun,
     updateRun,
+    persist: request.persist,
     planFor: terminalPlan(request),
     onMutated: (run) => request.collaborators.emit(run),
     guard: (run) => {
+      if (request.kind === 'force-complete' && run.flowType === 'qa')
+        return 'QA cannot be force-completed';
+      if (request.kind === 'output-close') {
+        const refusal = runOutputCloseUnavailableReason(run);
+        if (refusal) return refusal;
+      }
       if (request.settlingStatus !== undefined) {
         return run.status === request.settlingStatus
           ? null
@@ -227,4 +245,20 @@ export async function routeTerminalRunTransition(
     }
     throw error;
   }
+}
+
+/** Operator completion settles stores here; resource release follows outside machine locks. */
+export function operatorCompletionCollaborators(
+  publish: (run: Run) => Promise<unknown>,
+): TerminalTransitionCollaborators {
+  return {
+    settleBacklog: markBacklogRunObserved,
+    tickWorkGraph: (graphId) => schedulerTick({ graphId }),
+    cleanupEvalHarness: null,
+    cleanupWorkspace: null,
+    cleanupSlot: null,
+    emit: async (run) => {
+      await publish(run);
+    },
+  };
 }

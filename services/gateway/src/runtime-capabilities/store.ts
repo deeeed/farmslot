@@ -89,7 +89,7 @@ function isSnapshot(value: unknown): value is RuntimeCapabilityStoreSnapshot {
   );
 }
 
-function leaseNeedsRetention(lease: RuntimeCapabilityLease): boolean {
+export function leaseNeedsRetention(lease: RuntimeCapabilityLease): boolean {
   return (
     ['acquiring', 'acquired', 'releasing'].includes(lease.state) ||
     (lease.state === 'error' && Boolean(lease.cleanupFailure)) ||

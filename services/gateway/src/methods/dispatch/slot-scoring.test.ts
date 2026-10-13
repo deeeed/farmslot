@@ -797,3 +797,21 @@ test('a re-homed park keeps its detached-HEAD exemption on the slot it left', ()
   );
   assert.deepEqual(claims.get('old-home'), [{ runId: 'run-rehomed', headSha: 'sha-rehomed' }]);
 });
+
+test('a failed completion gate retains its owner id without claiming a released slot', () => {
+  const run = {
+    id: 'completion-owner',
+    slotId: 'retained-slot',
+    status: 'failed' as const,
+    steps: [
+      { name: 'complete', status: 'failed' as const, outputs: { gatePrerequisiteRefusal: {} } },
+    ],
+  };
+  assert.equal(
+    activeRunSlotIds([run]).has(run.slotId),
+    false,
+    'a released slot is not occupied by history alone',
+  );
+  assert.ok(activeRunIds([run]).has(run.id));
+  assert.equal(activeRunSlotIds([{ ...run, status: 'done' }]).size, 0);
+});

@@ -1,4 +1,5 @@
 import {
+  closeStepWait,
   Events,
   isSlotFreedByPark,
   MachineParkEligibilityCodes,
@@ -15,7 +16,6 @@ import {
 } from '@farmslot/protocol';
 
 import { selectAgentContext } from '../../agents/contexts.js';
-import { markBacklogRunObserved } from '../../backlog/store.js';
 import { execOnSlot } from '../../core/exec.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { hasValidPrNumber } from '../../run-engine/gate-policy.js';
@@ -29,6 +29,10 @@ import {
   cancelTransitionDeps,
   defaultCancelCollaborators,
 } from '../../run-lifecycle/cancel-transition.js';
+import {
+  operatorCompletionCollaborators,
+  terminalTransitionDeps,
+} from '../../run-lifecycle/terminal-transition.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import { routeRunTransition } from '../../run-lifecycle/transition-router.js';
 import {
@@ -42,8 +46,7 @@ import {
   resolveRunRetainedSessionBinding,
   retainedSessionSendOption,
 } from '../../runners/session-process.js';
-import { getRun, updateRun, updateRunStep } from '../../runs/store.js';
-import { schedulerTick } from '../../work-graph/store.js';
+import { getRun, updateRun } from '../../runs/store.js';
 
 import type { BlockedRunResumeCheck } from './replay-step.js';
 
@@ -146,7 +149,11 @@ export async function runForceComplete(
   // Teardown may cancel a handoff source or join another slot release; neither
   // can run while this request holds the machine/run keys they may need.
   const effects = await collectForceCompleteSlotReleaseEffect(result.run, deps);
-  return { ...result, run: getRun(params.runId) ?? result.run, effects };
+  return {
+    ...result,
+    run: getRun(params.runId) ?? result.run,
+    effects: [...(result.effects ?? []), ...(effects ?? [])],
+  };
 }
 
 export async function runForceCompleteTransitionLocked(
@@ -213,29 +220,8 @@ export async function runForceCompleteTransitionLocked(
   // first lets them revive the run after this transition has committed done.
   deps.cancelEngine(params.runId);
   deps.bumpGeneration(params.runId);
-  if (repairsStaleForceCompletion) {
-    const current = getRun(params.runId)!;
-    const { operatorForceCompleted: _operatorForceCompleted, ...engineState } =
-      current.engineState ?? {};
-    updateRun(params.runId, { engineState });
-  }
-  const reason = `operator force-completed a ${originalStatus} run`;
-  for (const step of existing.steps) {
-    if (step.status === 'done' || step.status === 'skipped') continue;
-    // Rewrite failed (and any other unfinished) steps: the operator is
-    // declaring the run done despite the recorded failure.
-    updateRunStep(params.runId, step.name, {
-      status: 'skipped',
-      completedAt:
-        step.status === 'failed'
-          ? (step.completedAt ?? existing.completedAt ?? new Date().toISOString())
-          : new Date().toISOString(),
-      ...(step.durationMs != null ? { durationMs: step.durationMs } : {}),
-      detail: `Skipped: ${reason}`,
-      outputs: { ...(step.outputs ?? {}), skipped: true, reason, source: 'operator' },
-    });
-  }
   const current = getRun(params.runId)!;
+  const reason = `operator force-completed a ${originalStatus} run`;
   const completedAt = new Date().toISOString();
   const decisions = current.decisions.map((decision) => {
     if (decision.resolvedAt || decision.type === 'retrospective') return decision;
@@ -246,51 +232,62 @@ export async function runForceCompleteTransitionLocked(
       context: { ...decision.context, supersededBy: 'operator-force-complete' },
     };
   });
-  const run = updateRun(params.runId, {
+  const patch: Partial<Run> = {
     status: 'done',
     completedAt,
     error: undefined,
     metrics: { ...current.metrics, outcome: 'success' },
-    backlogReconcilePending: true,
     recoveryProposal: {
       status: 'idle',
       generation: current.engineState?.generation ?? 0,
     },
     engineState: { ...(current.engineState ?? {}), operatorForceCompleted: true },
     decisions,
+    steps: current.steps.map((step) => {
+      if (step.status === 'done' || step.status === 'skipped') return step;
+      const startedAt = step.startedAt ? Date.parse(step.startedAt) : NaN;
+      return {
+        ...step,
+        ...(step.status === 'running' ? closeStepWait(step, Date.parse(completedAt)) : {}),
+        ...(step.status === 'running' && step.durationMs == null && Number.isFinite(startedAt)
+          ? { durationMs: Math.max(0, Date.parse(completedAt) - startedAt) }
+          : {}),
+        status: 'skipped',
+        completedAt:
+          step.status === 'failed'
+            ? (step.completedAt ?? existing.completedAt ?? completedAt)
+            : completedAt,
+        detail: `Skipped: ${reason}`,
+        outputs: { ...(step.outputs ?? {}), skipped: true, reason, source: 'operator' },
+      };
+    }),
     ...(params.prNumber != null ? { prNumber: params.prNumber } : {}),
     // Failed runs already emitted a failure row. Clear the marker so the
     // append-only sink records this override; query last-record-wins.
     analyticsEmittedAt: undefined,
-  });
+  };
+  const transition = await routeRunTransition(
+    { kind: 'force-complete', runId: params.runId, actor: 'operator', reason },
+    terminalTransitionDeps({
+      kind: 'force-complete',
+      runId: params.runId,
+      actor: 'operator',
+      settlingStatus: current.status,
+      patch,
+      collaborators: operatorCompletionCollaborators(deps.publish),
+    }),
+  );
   if (params.prNumber != null) {
     try {
       await deps.attachPrNumber(params.runId, params.prNumber);
-    } catch (err) {
-      // Advisory: the PR number is already on the done write. Stale links
-      // refresh on the next ticketData change.
-      console.warn(
-        `[run] force-complete PR attach failed for ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
-      );
+    } catch (error) {
+      // The PR number is durable; retain a visible repair outcome without hiding publication.
+      transition.effects.push({ name: 'pr-links', status: 'failed', detail: String(error) });
+      console.warn(`[run] force-complete PR attach failed: ${String(error)}`);
     }
   }
-  // Publish terminal state first (ADR-053 cancel order): UI and observers must
-  // see `done` before slow slot teardown. Slot-release failures stay advisory
-  // effects because the operator-owned done write already landed and cannot be
-  // retried.
-  let settled = getRun(params.runId) ?? run;
-  try {
-    settled = await deps.publish(settled);
-  } catch (err) {
-    // Advisory after-effects: the operator-owned done write already landed.
-    // Failing the RPC would block retry because status is already `done`.
-    console.warn(
-      `[run] force-complete publication failed for ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
-    );
-    settled = getRun(params.runId) ?? settled;
-  }
   console.log(`[run] force-completed ${originalStatus} run ${params.runId.slice(0, 8)}`);
-  return { run: getRun(params.runId) ?? settled };
+  return { run: getRun(params.runId) ?? transition.run, effects: transition.effects };
 }
 
 async function collectForceCompleteSlotReleaseEffect(
@@ -383,45 +380,16 @@ export async function releaseCompletedRunSlot(run: Run): Promise<SlotReleaseResu
   }
 }
 
+/** Publication only; the lifecycle router owns ordered backlog and graph settlement. */
 export async function publishCompletedRun(run: Run, broadcast?: Emit): Promise<Run> {
-  try {
-    const emit = broadcast ?? (await import('../../server.js')).broadcastEvent;
-    emit(Events.RUN_UPDATED, { run });
-    emit(Events.RUN_COMPLETED, { run });
-    // Raw broadcastEvent is the WebSocket fan-out only. Terminal observers live
-    // on the index.ts wrapper; invoke them so recovery and Co-Pilot close out.
-    const { routeEventToAutoRecovery } = await import('../../auto-recovery/watcher.js');
-    const { routeEventToObserver } = await import('../../chat/copilot-observer.js');
-    routeEventToAutoRecovery(Events.RUN_UPDATED, { run });
-    routeEventToObserver(Events.RUN_COMPLETED, { run });
-  } catch (err) {
-    // Advisory: the store already holds `done`. Other clients may be stale until
-    // the next refetch; do not fail the RPC or the operator cannot retry.
-    console.warn(
-      `[run] force-complete broadcast failed for ${run.id.slice(0, 8)}: ${(err as Error).message}`,
-    );
-  }
-  try {
-    await markBacklogRunObserved(run);
-  } catch (err) {
-    // Advisory: leave backlogReconcilePending so restart repair can finish.
-    // Skip the work-graph tick; it would schedule against unsettled backlog.
-    console.warn(
-      `[run] force-complete backlog settle failed for ${run.id.slice(0, 8)}: ${(err as Error).message}`,
-    );
-    return getRun(run.id) ?? run;
-  }
-  const settled = getRun(run.id) ?? run;
-  if (!settled.workGraphId) return settled;
-  try {
-    await schedulerTick({ graphId: settled.workGraphId });
-  } catch (err) {
-    // Advisory: scheduler tick is recovery, not the operator-owned terminal write.
-    console.warn(
-      `[run] force-complete work-graph tick failed for ${run.id.slice(0, 8)}: ${(err as Error).message}`,
-    );
-  }
-  return getRun(run.id) ?? settled;
+  const emit = broadcast ?? (await import('../../server.js')).broadcastEvent;
+  emit(Events.RUN_UPDATED, { run });
+  emit(Events.RUN_COMPLETED, { run });
+  const { routeEventToAutoRecovery } = await import('../../auto-recovery/watcher.js');
+  const { routeEventToObserver } = await import('../../chat/copilot-observer.js');
+  routeEventToAutoRecovery(Events.RUN_UPDATED, { run });
+  routeEventToObserver(Events.RUN_COMPLETED, { run });
+  return getRun(run.id) ?? run;
 }
 
 export async function runPause(params: RunPauseParams, emit: Emit): Promise<RunPauseResult> {

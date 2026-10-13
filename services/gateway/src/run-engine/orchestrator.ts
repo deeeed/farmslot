@@ -49,6 +49,7 @@ import {
   teardownReviewWorkspace,
 } from '../review-workspaces/pipeline.js';
 import { scanArtifacts } from '../run-completion/orchestrator.js';
+import { isCompletionPrerequisiteFailure, STEP_TO_STATUS } from '../run-lifecycle/step-status.js';
 import {
   routeTerminalRunTransition,
   type TerminalTransitionCollaborators,
@@ -306,19 +307,6 @@ export async function cleanupSlotAfterRunFailure(
   );
 }
 
-const STEP_TO_STATUS: Record<string, RunStatus> = {
-  [S.GRADE]: 'grading',
-  [S.WRITE_TASK]: 'writing-task',
-  [S.FIND_SLOT]: 'slot-finding',
-  [S.PREPARE]: 'preparing',
-  [S.DISPATCH]: 'dispatching',
-  [S.MONITOR]: 'monitoring',
-  [S.REVIEW]: 'reviewing',
-  [S.HUMAN_GATE]: 'human-gating',
-  [S.FINALIZE]: 'completing',
-  [S.COMPLETE]: 'completing',
-  [S.CI_WATCH]: 'ci-watching',
-};
 // Active monitor abort controllers — keyed by runId
 const activeMonitors = new Map<string, AbortController>();
 // ADR-027 Phase 2: runtime flags + replay generation counter persist on Run.engineState
@@ -614,6 +602,7 @@ async function finalizeNonThrownTerminalRun(
 ): Promise<void> {
   const run = getRun(runId);
   if (!run) return;
+  if (isCompletionPrerequisiteFailure(run)) return;
   // Defensive: cancelled/paused runs go through different cleanup paths; treat as a no-op
   // here so a misrouted call can't accidentally stomp the cancellation record.
   if (run.status !== 'failed' && run.status !== 'blocked') {
@@ -957,17 +946,37 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
         updateRunStep(runId, stepName, {
           status: 'failed',
           detail: err.message,
-          outputs: { gatePrerequisiteRefusal: err.details },
+          outputs: { gatePrerequisiteRefusal: err.details ?? {} },
         });
         for (let j = i + 1; j < steps.length; j++) {
           updateRunStep(runId, steps[j], { status: 'skipped' });
         }
-        updateRun(runId, {
-          status: runDecisionWaitingStatus(getRun(runId)!, progress, 'blocked'),
-          error: err.message,
-          metrics: { ...getRun(runId)!.metrics, outcome: 'partial' },
-        });
-        broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+        const current = getRun(runId)!;
+        if (stepName === S.COMPLETE || stepName === S.FINALIZE) {
+          // The deterministic pipeline stopped. Primary runner activity must not
+          // keep a failed completion labelled as executing. Preserve all owned
+          // resources: a finishing or uncertain turn still needs reconciliation.
+          const collaborators = terminalCollaborators(Events.RUN_UPDATED, null);
+          await routeAndRecordTerminalTransition({
+            runId,
+            kind: 'fail',
+            actor: 'engine',
+            patch: {
+              status: 'failed',
+              completedAt: new Date().toISOString(),
+              error: err.message,
+              metrics: { ...current.metrics, outcome: 'partial' },
+            },
+            collaborators: { ...collaborators, cleanupEvalHarness: null, cleanupWorkspace: null },
+          });
+        } else {
+          updateRun(runId, {
+            status: runDecisionWaitingStatus(current, progress, 'blocked'),
+            error: err.message,
+            metrics: { ...current.metrics, outcome: 'partial' },
+          });
+          broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+        }
         return;
       }
 

@@ -10,6 +10,8 @@ import {
   type RunCreateParams,
 } from '@farmslot/protocol';
 
+import { isCompletionPrerequisiteFailure } from '../run-lifecycle/step-status.js';
+
 export type PRQueuePreparation =
   | { ready: false; reason: string }
   | { ready: true; choices: PRExecutionChoice[] };
@@ -58,7 +60,7 @@ export function runOwnsPR(
   pr: NonNullable<QueueItem['prWork']>['pr'],
   mappedProject?: string,
 ): boolean {
-  if (isTerminalRunStatus(run.status)) return false;
+  if (isTerminalRunStatus(run.status) && !isCompletionPrerequisiteFailure(run)) return false;
   if (run.prWork) return monitoredPRKey(run.prWork.pr) === monitoredPRKey(pr);
   if (
     run.prPublications?.some((publication) => monitoredPRKey(publication.pr) === monitoredPRKey(pr))
@@ -90,7 +92,8 @@ export function assertNoAutomatedPRConflict(params: RunCreateParams, runs: Run[]
   const ref = PR_BOUND_FLOW_TYPES.has(params.flowType) ? parseGitHubRef(params.ticketOrPr) : null;
   if (!ref && params.prNumber === undefined) return;
   for (const run of runs) {
-    if (!run.prWork || isTerminalRunStatus(run.status)) continue;
+    if (!run.prWork || (isTerminalRunStatus(run.status) && !isCompletionPrerequisiteFailure(run)))
+      continue;
     const sameRef =
       ref &&
       ref.repo.toLowerCase() === run.prWork.pr.repo.toLowerCase() &&
@@ -118,7 +121,7 @@ export function assertPRRunActivation(run: Run, others: Run[]): void {
   for (const owner of active) {
     if (
       owner.prWork &&
-      !isTerminalRunStatus(owner.status) &&
+      (!isTerminalRunStatus(owner.status) || isCompletionPrerequisiteFailure(owner)) &&
       runOwnsPR(run, owner.prWork.pr, owner.project)
     )
       throw new Error(`PR execution is owned by run ${owner.id}`);

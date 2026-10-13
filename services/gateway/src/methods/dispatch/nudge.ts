@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   type AgentContextTarget,
   agentDispatchWindow,
+  Events,
   type FlowType,
   isTerminalRunStatus,
   primaryRoleForFlow,
@@ -89,7 +90,7 @@ export class NudgeTimeoutError extends Error {
  * Performs three steps when the slot is held by a different run than the new owner:
  *   1. cancelRunEngine — aborts the prior run's MONITOR / PREPARE controller so its abort
  *      handler short-circuits.
- *   2. updateRun(status='cancelled', completedAt) — terminalizes the prior Run record. Without
+ *   2. routeTerminalRunTransition(kind='supersede') — terminalizes the prior Run record. Without
  *      this, MONITOR's abort returns exitReason='cancelled' but executeStep still marks the
  *      step done and pipeline transitions continue; subsequent steps would let the prior run
  *      mutate the same slot after the new run was assigned.
@@ -112,8 +113,7 @@ export async function terminalizePriorRunOnSlot(
     `[${label}] slot=${slotId} reassigning current_run_id ${priorRunId} -> ${currentRunId} (operator-approved)`,
   );
   // Dynamic import to avoid a static cycle: run-engine imports from this file already.
-  const { getRun: getRunForCleanup, updateRun: updateRunForCleanup } =
-    await import('../../runs/store.js');
+  const { getRun: getRunForCleanup } = await import('../../runs/store.js');
   const priorRun = getRunForCleanup(priorRunId);
   if (priorRun?.slotId === slotId && priorRun.transport === 'native') {
     assertNativeSlotReplacementOwner(slotId, currentRunId);
@@ -137,7 +137,6 @@ export async function terminalizePriorRunOnSlot(
     return { priorRunId, terminated: true };
   }
   const { cancelRunEngine } = await import('../../run-engine/orchestrator.js');
-  cancelRunEngine(priorRunId);
   let terminated = false;
   if (priorRun?.slotId === slotId) {
     const isAlreadyTerminal =
@@ -149,11 +148,24 @@ export async function terminalizePriorRunOnSlot(
       console.log(
         `[${label}] terminalizing prior run ${priorRunId} as cancelled (superseded by ${currentRunId})`,
       );
-      updateRunForCleanup(priorRunId, {
-        status: 'cancelled',
-        completedAt: new Date().toISOString(),
+      const { operatorCompletionCollaborators, routeTerminalRunTransition } =
+        await import('../../run-lifecycle/terminal-transition.js');
+      const result = await routeTerminalRunTransition({
+        kind: 'supersede',
+        runId: priorRunId,
+        actor: 'operator',
+        before: [
+          { name: 'engine-cancel', severity: 'required', apply: () => cancelRunEngine(priorRunId) },
+        ],
+        patch: { status: 'cancelled', completedAt: new Date().toISOString() },
+        collaborators: operatorCompletionCollaborators(async (run) => {
+          const { broadcastEvent } = await import('../../server.js');
+          broadcastEvent(Events.RUN_UPDATED, { run });
+        }),
       });
-      terminated = true;
+      terminated = result !== null;
+    } else {
+      cancelRunEngine(priorRunId);
     }
     for (const ctx of priorRun.agentContexts ?? []) {
       await unwatchContext(slotId, ctx.id);
