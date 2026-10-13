@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Preserve exact worker pane identity when fix roles adopt or capture a conversation; completed-run cleanup recognizes only uniquely proven aliases and retains ownership and foreign-worker guards.
 - Keep stacked follow-up packages, cold reviews, description checks and PR targets on their ancestor's current base, including archived ancestors.
 - Resolve worker marking, artifact checks and acceptance guards from the connected node's runtime so dev tasks cannot use stale production helpers; report missing CI verification with its checker and contract paths.
 - Preserve typed media and timeline references when task recipe attempts live in nested artifact directories.

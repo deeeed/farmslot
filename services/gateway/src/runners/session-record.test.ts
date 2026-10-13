@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { AgentContext, AgentRole } from '@farmslot/protocol';
+import type { AgentContext, AgentRole, Run } from '@farmslot/protocol';
 
 import type { upsertAgentContext } from '../agents/contexts.js';
 
@@ -14,6 +14,7 @@ import {
   clearedRunnerSessionContextPatch,
   recordRunnerSessionForRole,
   runnerSessionContextPatch,
+  runnerSessionContextTarget,
 } from './session-record.js';
 
 type UpsertCall = { runId: string; role: AgentRole; patch: Partial<AgentContext> };
@@ -97,6 +98,84 @@ test('recordRunnerSessionForRole writes nothing when capture produced no binding
 
   assert.equal(result, null);
   assert.equal(calls.length, 0);
+});
+
+function aliasFixture() {
+  const primary = {
+    id: 'dev',
+    role: 'dev',
+    slotId: 'slot-1',
+    runner: 'claude',
+    runnerSessionId: 'worker-session',
+    runnerSessionPath: '/sessions/worker.jsonl',
+    target: { session: 'slot-session', window: 'dev', paneId: '%41', target: 'slot-session:dev' },
+  } as AgentContext;
+  const fix = {
+    ...primary,
+    id: 'review-fix',
+    role: 'review-fix',
+    target: { session: 'slot-session', window: 'dev', pane: null, target: 'slot-session:dev' },
+  } as AgentContext;
+  const run = {
+    id: 'run-1',
+    slotId: 'slot-1',
+    flowType: 'dev',
+    agentContexts: [primary, fix],
+  } as Run;
+  return { run, primary, fix };
+}
+
+test('the session recorder preserves the primary exact pane when a fix role adopts its binding', async () => {
+  const { run, fix } = aliasFixture();
+  fix.runnerSessionId = null;
+  fix.runnerSessionPath = null;
+  const { calls, upsert } = recordingUpsert();
+  await recordRunnerSessionForRole(
+    {
+      runId: run.id,
+      role: 'review-fix',
+      session: { runnerSessionId: 'worker-session', runnerSessionPath: '/sessions/worker.jsonl' },
+      captureLabel: 'retained worker',
+    },
+    { upsert, readRun: () => run },
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].patch.target?.paneId, '%41');
+});
+
+test('exact-pane capture records a relaunched fix pane with its newly captured conversation', async () => {
+  const { run } = aliasFixture();
+  const { calls, upsert } = recordingUpsert();
+  const capture = async () => ({
+    runnerSessionId: 'new-worker',
+    runnerSessionPath: '/sessions/new-worker.jsonl',
+  });
+  await captureAndRecordRunnerSession(
+    {
+      vars: { slotId: 'slot-1' } as never,
+      runner: 'claude',
+      runId: run.id,
+      role: 'review-fix',
+      captureLabel: 'relaunch',
+      capture: { paneId: '%42' },
+    },
+    { upsert, capture, readRun: () => run },
+  );
+  assert.equal(calls[0].patch.runnerSessionId, 'new-worker');
+  assert.equal(calls[0].patch.target?.paneId, '%42');
+});
+
+test('session target resolution refuses partial or ambiguous alias evidence', () => {
+  const { run, primary, fix } = aliasFixture();
+  primary.runnerSessionPath = null;
+  assert.equal(runnerSessionContextTarget(run, fix), null);
+  primary.runnerSessionPath = fix.runnerSessionPath;
+  run.agentContexts!.push({
+    ...primary,
+    id: 'other',
+    target: { ...primary.target!, paneId: '%43' },
+  });
+  assert.equal(runnerSessionContextTarget(run, fix), null);
 });
 
 test('captureAndRecordRunnerSession captures once and records the captured pair', async () => {
