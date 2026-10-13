@@ -35,6 +35,7 @@ export const GRAPH_VERBS = [
   'remove-edge',
   'activate',
   'pause',
+  'retry',
   'tick',
   'gate-resolve',
 ] as const;
@@ -52,6 +53,7 @@ export const GRAPH_VERB_METHODS: Record<GraphVerb, string> = {
   'remove-edge': 'workGraph.removeEdge',
   activate: 'workGraph.activate',
   pause: 'workGraph.pause',
+  retry: 'workGraph.retry',
   tick: 'workGraph.schedulerTick',
   'gate-resolve': 'workGraph.gateResolve',
 };
@@ -100,7 +102,7 @@ function teachPlanningError(err: unknown, graphId: string): never {
       code: 'WORK_GRAPH_NOT_PLANNING',
       userAction:
         `Node/edge structure can only change while the graph is planning. Finish the structure with \`farmslot graph add-node/add-edge\` before \`farmslot graph activate ${graphId}\`. ` +
-        `\`farmslot graph pause ${graphId}\` stops scheduling but does not re-open planning edits — create a new graph if structure must change.`,
+        `Pause a scheduling graph, then use \`farmslot graph retry ${graphId} --reason <text>\` to edit its plan while keeping recorded work.`,
     });
   }
   throw err;
@@ -144,6 +146,11 @@ function renderGraphDetail(projection: WorkGraphProjection): string {
   lines.push(graph.title);
   lines.push(dim(`project: ${graph.project}`));
   if (graph.tags?.length) lines.push(dim(`tags: ${graph.tags.join(', ')}`));
+  const retry = graph.retryHistory?.at(-1);
+  if (retry)
+    lines.push(
+      dim(`planning retry: ${retry.reason} (${retry.previousStatus}, ${retry.retriedAt})`),
+    );
   lines.push(dim(`nodes: ${nodes.length}  edges: ${edges.length}  gates: ${gates.length}`));
   if (nodes.length) {
     lines.push('');
@@ -706,6 +713,26 @@ export function registerGraphCommand(program: Command): void {
         );
         if (emit.machine) emit.ok(result);
         else ctx.output.write(`${yellow('Paused')} ${cyan(graphId)}\n`);
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
+
+  graph
+    .command('retry <graphId>')
+    .description('Return a stopped graph to planning while retaining recorded work')
+    .requiredOption('--reason <text>', 'Reason for revising the plan')
+    .action(async (graphId: string, opts: { reason: string }, cmd: Command) => {
+      const ctx = resolveContext(cmd);
+      const emit = createEmitter(ctx.output, cmd);
+      try {
+        const result = await withProgress(
+          `Retrying plan ${graphId}`,
+          () => ctx.client.call('workGraph.retry', { graphId, reason: opts.reason }),
+          !emit.machine,
+        );
+        if (emit.machine) emit.ok(result);
+        else ctx.output.write(`${yellow('Planning')} ${cyan(graphId)}\n`);
       } catch (err) {
         emit.fail(err);
       }

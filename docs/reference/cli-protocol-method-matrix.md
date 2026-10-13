@@ -628,6 +628,7 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `workGraph.updateNode`    | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `workGraph.activate`      | typed-command | `farmslot graph activate`     |     |                                                                                                |
 | `workGraph.pause`         | typed-command | `farmslot graph pause`        |     |                                                                                                |
+| `workGraph.retry`         | typed-command | `farmslot graph retry`        |     |                                                                                                |
 | `workGraph.gateResolve`   | typed-command | `farmslot graph gate-resolve` |     |                                                                                                |
 | `workGraph.schedulerTick` | typed-command | `farmslot graph tick`         |     |                                                                                                |
 

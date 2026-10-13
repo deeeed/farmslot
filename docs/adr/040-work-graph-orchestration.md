@@ -866,3 +866,37 @@ nodes, so the only base one slot can share with another is a branch pushed to or
   operator-attention path.
 
 Operator steps: [Stacked work](../operations/stacked-work.md).
+
+## Amendment: graph-owned planning retry (2026-10-13)
+
+**Status:** Proposed. Implementation scope is the approved graph-owned retry plan.
+
+### Decision
+
+Use the existing graph mutation owner to return a stopped graph to planning.
+Record the operator's reason on that graph and retain its identity, every
+node/run/backlog link, execution facts, edges, gates and action ledger. A retry
+neither resets an attempt nor attaches or dispatches a run. Existing in-flight
+work may continue; retry requires no blanket graph-idle condition.
+
+Planning and pause remain non-dispatching even under targeted scheduler ticks.
+The existing explicit activation step admits the edited plan again. Planning
+edits cannot remove a node with retained execution facts and thereby detach its
+backlog membership. The exact admission and persistence rules are in
+[the graph retry contract](../reference/work-graph-retry.md).
+
+### Rationale and consequences
+
+Creating a replacement graph conflicts with one-live-graph membership and loses
+links to recorded work. A graph-owned planning retry preserves those links and
+uses the existing authoring and activation paths. This does not implement
+retained-run attachment or the separate stacked-work proposal.
+
+### Public surface
+
+`farmslot graph retry <graphId> --reason <text>` calls the admin-only
+`workGraph.retry` RPC. `@farmslot/protocol` exports its typed request/result and
+optional graph retry history. The gateway graph store owns its only writer;
+CLI and gateway clients consume the same projection. These are additive v1
+fields and methods, with no harness extension, recipe command or run lifecycle
+flag. Harnesses continue through the existing backlog/queue dispatch contract.

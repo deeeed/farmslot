@@ -227,6 +227,7 @@ import {
   type WorkGraphPauseParams,
   type WorkGraphRemoveEdgeParams,
   type WorkGraphRemoveNodeParams,
+  type WorkGraphRetryParams,
   type WorkGraphSchedulerTickParams,
   type WorkGraphUpdateNodeParams,
   type WorkspaceMetroSubscribeParams,
@@ -543,6 +544,7 @@ import {
   workGraphPause,
   workGraphRemoveEdge,
   workGraphRemoveNode,
+  workGraphRetry,
   workGraphSchedulerTick,
   workGraphUpdateNode,
 } from '../methods/work-graph.js';
@@ -882,6 +884,8 @@ async function routeAuthorizedMethod(
       return workGraphActivate(p as WorkGraphActivateParams);
     case Methods.WORK_GRAPH_PAUSE:
       return workGraphPause(p as WorkGraphPauseParams);
+    case Methods.WORK_GRAPH_RETRY:
+      return workGraphRetry(p as WorkGraphRetryParams);
     case Methods.WORK_GRAPH_GATE_RESOLVE:
       return workGraphGateResolve(p as WorkGraphGateResolveParams);
     case Methods.WORK_GRAPH_SCHEDULER_TICK:

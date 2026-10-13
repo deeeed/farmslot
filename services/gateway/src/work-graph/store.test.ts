@@ -126,6 +126,201 @@ async function createReadyBacklogItem(
   );
 }
 
+async function retainedRetryFixture() {
+  const stores = await freshStores();
+  const item = await createReadyBacklogItem(stores.backlog, 'Retained objective');
+  const created = await stores.workGraph.createWorkGraph(
+    { project: 'farmslot-farm', title: 'Retained plan' },
+    { kind: 'system' },
+  );
+  const graphId = created.graph.graph.id;
+  await stores.workGraph.addWorkGraphNode({ graphId, id: 'retained', backlogItemId: item.item.id });
+  const liveRun = stores.runs.createRun({
+    project: 'farmslot-farm',
+    flowType: 'dev',
+    ticketOrPr: 'Retained objective',
+    mode: 'autonomous',
+  });
+  stores.runs.updateRun(liveRun.id, { status: 'monitoring' });
+  await stores.runs.persistRunNow(stores.runs.getRun(liveRun.id)!, 'retry fixture');
+  const snapshot = stores.workGraph.getWorkGraph({ graphId }).graph;
+  snapshot.graph.status = 'paused';
+  snapshot.nodes[0] = {
+    ...snapshot.nodes[0],
+    status: 'running',
+    currentRootRunId: liveRun.id,
+    currentFamilyId: liveRun.familyId,
+    latestRunId: liveRun.id,
+  };
+  snapshot.gates.push({
+    graphId,
+    gateId: 'published',
+    reason: 'Recorded approval',
+    decision: 'approved',
+    resolvedAt: '2026-01-01T00:00:00.000Z',
+  });
+  snapshot.ledger.push({
+    key: 'recorded-enqueue',
+    graphId,
+    nodeId: 'retained',
+    actionKind: 'enqueue',
+    readinessVersion: 'recorded',
+    status: 'completed',
+    startedAt: '2026-01-01T00:00:00.000Z',
+    completedAt: '2026-01-01T00:00:00.000Z',
+  });
+  await writeFile(
+    path.join(process.env.FARMSLOT_WORK_GRAPH_DIR!, `${graphId}.json`),
+    JSON.stringify(snapshot),
+  );
+  await stores.workGraph.loadWorkGraphs();
+  return { ...stores, graphId, item, before: stores.workGraph.getWorkGraph({ graphId }).graph };
+}
+
+test('graph retry retains recorded work, one-live-graph membership and restart history', async () => {
+  const { workGraph, backlog, queue, runs, graphId, item, before } = await retainedRetryFixture();
+  const backlogBefore = JSON.stringify(backlog.getBacklogItemSnapshot(item.item.id));
+  const runsBefore = JSON.stringify(runs.getAllRuns());
+  const retried = (
+    await workGraph.retryWorkGraph({ graphId, reason: '  Revise the dependency plan  ' })
+  ).graph;
+  assert.equal(retried.graph.status, 'planning');
+  for (const field of ['nodes', 'edges', 'gates', 'ledger'] as const)
+    assert.deepEqual(retried[field], before[field]);
+  assert.deepEqual(retried.graph.source, before.graph.source);
+  assert.deepEqual(retried.graph.scheduler, before.graph.scheduler);
+  assert.equal(retried.graph.retryHistory?.[0].reason, 'Revise the dependency plan');
+  assert.equal(retried.graph.retryHistory?.[0].previousStatus, 'paused');
+  assert.equal(JSON.stringify(backlog.getBacklogItemSnapshot(item.item.id)), backlogBefore);
+  assert.equal(JSON.stringify(runs.getAllRuns()), runsBefore);
+  assert.equal(queue.getQueueSnapshot().length, 0);
+  const repeated = (await workGraph.retryWorkGraph({ graphId, reason: 'Network retry' })).graph;
+  assert.deepEqual(repeated, retried);
+  retried.graph.retryHistory![0].reason = 'Caller mutation';
+  assert.equal(
+    workGraph.getWorkGraph({ graphId }).graph.graph.retryHistory![0].reason,
+    'Revise the dependency plan',
+  );
+  await workGraph.loadWorkGraphs();
+  assert.deepEqual(workGraph.getWorkGraph({ graphId }).graph, repeated);
+  const other = await workGraph.createWorkGraph(
+    { project: 'farmslot-farm', title: 'Other plan' },
+    { kind: 'system' },
+  );
+  await assert.rejects(
+    workGraph.addWorkGraphNode({
+      graphId: other.graph.graph.id,
+      id: 'duplicate',
+      backlogItemId: item.item.id,
+    }),
+    /already.*(graph|attached)|linked/i,
+  );
+  await assert.rejects(
+    workGraph.removeWorkGraphNode({ graphId, nodeId: 'retained' }),
+    /retained execution facts/,
+  );
+  const added = await createReadyBacklogItem(backlog, 'New planning objective');
+  await workGraph.addWorkGraphNode({ graphId, id: 'new-plan', backlogItemId: added.item.id });
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    fromNodeId: 'retained',
+    toNodeId: 'new-plan',
+    condition: { kind: 'family-done' },
+  });
+  await workGraph.removeWorkGraphNode({ graphId, nodeId: 'new-plan' });
+  assert.deepEqual(workGraph.getWorkGraph({ graphId }).graph.nodes, before.nodes);
+});
+
+test('planning and paused ticks cannot dispatch or rewrite retained snapshots', async () => {
+  const { workGraph, queue, graphId, before } = await retainedRetryFixture();
+  await workGraph.schedulerTick({ graphId, forceEnqueue: true, operator: true });
+  assert.deepEqual(workGraph.getWorkGraph({ graphId }).graph, before);
+  await workGraph.retryWorkGraph({ graphId, reason: 'Plan revision' });
+  const planning = workGraph.getWorkGraph({ graphId }).graph;
+  await Promise.all([
+    workGraph.schedulerTick({ graphId, forceEnqueue: true, operator: true }),
+    workGraph.schedulerTick(),
+  ]);
+  assert.deepEqual(workGraph.getWorkGraph({ graphId }).graph, planning);
+  assert.equal(queue.getQueueSnapshot().length, 0);
+});
+
+test('graph retry refuses scheduling and archived states and requires a reason', async () => {
+  const { workGraph, graphId, before } = await retainedRetryFixture();
+  await assert.rejects(workGraph.retryWorkGraph({ graphId, reason: ' ' }), /nonempty reason/);
+  assert.deepEqual(workGraph.getWorkGraph({ graphId }).graph, before);
+  for (const status of ['active', 'waiting', 'archived'] as const) {
+    const snapshot = structuredClone(before);
+    snapshot.graph.status = status;
+    await writeFile(
+      path.join(process.env.FARMSLOT_WORK_GRAPH_DIR!, `${graphId}.json`),
+      JSON.stringify(snapshot),
+    );
+    await workGraph.loadWorkGraphs();
+    await assert.rejects(workGraph.retryWorkGraph({ graphId, reason: 'Revise' }), /Pause|archived/);
+    assert.equal(workGraph.getWorkGraph({ graphId }).graph.graph.status, status);
+  }
+  for (const status of ['needs-attention', 'done', 'failed'] as const) {
+    const snapshot = structuredClone(before);
+    snapshot.graph.status = status;
+    await writeFile(
+      path.join(process.env.FARMSLOT_WORK_GRAPH_DIR!, `${graphId}.json`),
+      JSON.stringify(snapshot),
+    );
+    await workGraph.loadWorkGraphs();
+    assert.equal(
+      (await workGraph.retryWorkGraph({ graphId, reason: 'Revise' })).graph.graph.status,
+      'planning',
+    );
+  }
+});
+
+test('failed retry persistence keeps the old paused state visible', async () => {
+  const { workGraph, graphId, before } = await retainedRetryFixture();
+  const file = path.join(process.env.FARMSLOT_WORK_GRAPH_DIR!, `${graphId}.json`);
+  await rm(file);
+  await mkdir(file);
+  await assert.rejects(
+    workGraph.retryWorkGraph({ graphId, reason: 'Revise' }),
+    /EISDIR|ENOTDIR|directory/i,
+  );
+  assert.deepEqual(workGraph.getWorkGraph({ graphId }).graph, before);
+  await rm(file, { recursive: true });
+  assert.equal(
+    (await workGraph.retryWorkGraph({ graphId, reason: 'Retry after storage repair' })).graph.graph
+      .status,
+    'planning',
+  );
+});
+
+test('retry and targeted tick share the graph mutation owner; activation alone admits new work', async () => {
+  const { backlog, workGraph, queue } = await freshStores();
+  const item = await createReadyBacklogItem(backlog, 'Unexecuted objective');
+  const created = await workGraph.createWorkGraph(
+    {
+      project: 'farmslot-farm',
+      title: 'Retry race',
+    },
+    { kind: 'system' },
+  );
+  const graphId = created.graph.graph.id;
+  await workGraph.addWorkGraphNode({ graphId, id: 'unexecuted', backlogItemId: item.item.id });
+  await workGraph.pauseWorkGraph({ graphId });
+  await Promise.all([
+    workGraph.retryWorkGraph({ graphId, reason: 'Plan revision' }),
+    workGraph.schedulerTick({ graphId, forceEnqueue: true, operator: true }),
+  ]);
+  assert.equal(workGraph.getWorkGraph({ graphId }).graph.graph.status, 'planning');
+  assert.equal(queue.getQueueSnapshot().length, 0);
+  await workGraph.activateWorkGraph({ graphId });
+  await workGraph.schedulerTick({ graphId, forceEnqueue: true, operator: true });
+  assert.equal(
+    queue.getQueueSnapshot().filter((entry) => entry.workGraphId === graphId).length,
+    1,
+    JSON.stringify(workGraph.getWorkGraph({ graphId }).graph),
+  );
+});
+
 test('work graph rejects cycles while authoring edges', async () => {
   const { backlog, workGraph } = await freshStores();
   const first = await createReadyBacklogItem(backlog, 'First graph task');
