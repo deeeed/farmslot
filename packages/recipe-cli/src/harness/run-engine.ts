@@ -29,7 +29,7 @@ import { adapterPortEnv, harnessAdapter } from './adapters.js';
 import type { ActionCapabilitySource, RecipeCatalog } from './catalog.js';
 import { color } from './cli-color.js';
 import { CliError } from './cli-error.js';
-import { harnessContextField } from './context-state.js';
+import { harnessContext, harnessContextField } from './context-state.js';
 import {
   captureExecutionProvenance,
   executionProvenanceDrift,
@@ -56,7 +56,7 @@ import {
   withRecipeCleanup,
 } from './host.js';
 import { type CliOptions, isRecord, optionString, shellQuoteArg } from './parse-args.js';
-import { recipeRuntimePath } from './paths.js';
+import { recipeOutputRoots, recipeRuntimePath } from './paths.js';
 import {
   beginRunDiagnostics,
   type ConsoleAllowlist,
@@ -333,6 +333,9 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
       });
     }
   }
+  const context = harnessContext();
+  const projectBinding =
+    context?.target.value === path.resolve(projectRoot) ? context.project : undefined;
   const provenanceInput: ExecutionProvenanceInput = {
     adapter,
     projectRoot,
@@ -341,6 +344,7 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
     ...(librarySources ? { librarySources } : {}),
     excludedProductRoots: [
       absoluteArtifactsDir,
+      ...(projectBinding ? recipeOutputRoots(projectRoot, projectBinding) : []),
       recipeRuntimePath(projectRoot, 'operations'),
       recipeRuntimePath(projectRoot, 'lock-members'),
     ],

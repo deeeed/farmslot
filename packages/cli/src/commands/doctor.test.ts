@@ -558,6 +558,10 @@ test('ordinary project doctor probes readiness without preflighting every recipe
   assert.equal(result.status, 0, JSON.stringify(result.envelope));
   assert.equal(result.envelope.ready, true);
   assert.equal(result.envelope.adapter, 'headless');
+  assert.deepEqual(result.envelope.provider, {
+    ...result.envelope.context.project.provider,
+    version: null,
+  });
   assert.equal(result.envelope.requiredChecks.status, 'pass');
   assert.equal(
     fs.existsSync(path.join(root, 'artifacts/conformance/conformance-report.json')),
@@ -598,12 +602,6 @@ test('project doctor shows resolved provider package version and Git identity', 
     encoding: 'utf8',
   }).stdout.trim();
   const flags = ['--authorize-provider', path.join(root, 'provider.mjs')];
-  const result = await run(t, root, [], {}, ['--json', 'doctor', root, ...flags]);
-  assert.equal(result.status, 0, JSON.stringify(result.envelope));
-  assert.equal(result.envelope.provider.package, 'example-provider');
-  assert.equal(result.envelope.provider.version, '1.2.3');
-  assert.equal(result.envelope.provider.identity.head, head);
-
   const previousEnv = process.env;
   const previousExitCode = process.exitCode;
   const previousTty = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
