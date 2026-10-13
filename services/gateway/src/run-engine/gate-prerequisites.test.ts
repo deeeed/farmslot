@@ -308,6 +308,10 @@ test('the owner input is validated canonically and unreadable closure stays a ty
     recordedEvidence: async () => [{ summary: null, artifactDigests: {}, timelines: {} }],
   });
   assert.ok(invalid.reasons.some((reason) => reason.code === 'evidence-invalid'));
+  assert.deepEqual(
+    gateActionsForReadiness([{ id: 'approve-publish-evidence-attested' }], invalid),
+    [],
+  );
   const unavailable = await collectRunGateReadiness(makeRun(), null, {
     ...sources,
     recordedEvidence: async () => {
@@ -316,6 +320,40 @@ test('the owner input is validated canonically and unreadable closure stays a ty
   });
   assert.ok(
     unavailable.reasons.some((reason) => reason.code === 'evidence-validation-unavailable'),
+  );
+  assert.deepEqual(
+    gateActionsForReadiness([{ id: 'approve-publish-evidence-attested' }], unavailable),
+    [],
+  );
+  // Retained producer shape from the chart run: a stored criterion lacks moments.
+  // The independent validator repair may turn the exception into an invalid result;
+  // either outcome remains non-bypassable here.
+  const missingMoments = await collectRunGateReadiness(makeRun(), null, {
+    ...sources,
+    recordedEvidence: async () => [
+      JSON.parse(
+        JSON.stringify({
+          summary: { status: 'pass' },
+          artifactDigests: {},
+          timelines: {},
+          claims: {
+            schemaVersion: 2,
+            recipeRunId: 'retained',
+            recording: { status: 'complete' },
+            criteria: [{ id: 'AC-1', verdict: 'proven', proofMode: 'visual' }],
+          },
+        }),
+      ),
+    ],
+  });
+  assert.ok(
+    missingMoments.reasons.some((reason) =>
+      ['evidence-invalid', 'evidence-validation-unavailable'].includes(reason.code),
+    ),
+  );
+  assert.deepEqual(
+    gateActionsForReadiness([{ id: 'approve-publish-evidence-attested' }], missingMoments),
+    [],
   );
 });
 
@@ -465,6 +503,32 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
   const valid = await check();
   assert.equal(valid.state, 'ready', JSON.stringify(valid.reasons));
   const retained = (await readRecordedEvidencePackage(directory)).input;
+  // Older retained executions have valid v1 files but no automatic claim identity.
+  // They may receive a human policy attestation, never invented moments/verdicts.
+  const legacy = {
+    ...retained,
+    claims: undefined,
+    summary: { ...documents['summary.json'], recipeRunId: undefined },
+    manifest: {
+      ...documents['artifact-manifest.json'],
+      artifacts: documents['artifact-manifest.json'].artifacts.filter(
+        (file) => file.path !== 'acceptance-status.json',
+      ),
+    },
+  };
+  assert.equal(validateRecordedEvidencePackage(legacy).status, 'valid');
+  const legacyGate = await collectRunGateReadiness(run, prepared, {
+    ...sources,
+    recordedEvidence: async () => [legacy],
+  });
+  assert.deepEqual(
+    legacyGate.reasons.map((reason) => reason.evidencePolicy),
+    ['claim-verdict', 'criterion-binding'],
+  );
+  assert.deepEqual(
+    gateActionsForReadiness([{ id: 'approve-publish-evidence-attested' }], legacyGate),
+    [{ id: 'approve-publish-evidence-attested' }],
+  );
   const partial = {
     ...retained,
     summary: { ...documents['summary.json'], total: 2, passed: 2, stopAfterNode: 'assert' },
@@ -476,7 +540,14 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
     ...sources,
     recordedEvidence: async () => [partial],
   });
-  assert.ok(partialGate.reasons.some((reason) => reason.code === 'evidence-invalid'));
+  assert.ok(partialGate.reasons.some((reason) => reason.evidencePolicy === 'execution-verdict'));
+  assert.deepEqual(
+    gateActionsForReadiness(
+      [{ id: 'approve-publish-evidence-attested' }, { id: 'approve-publish' }],
+      partialGate,
+    ),
+    [{ id: 'approve-publish-evidence-attested' }],
+  );
 
   await writeFile(path.join(root, prepared.artifactPath), JSON.stringify(prepared));
   const recoveredRun = {
@@ -505,7 +576,7 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
       issues: [],
     }),
   });
-  assert.ok(foreign.reasons.some((reason) => reason.code === 'evidence-invalid'));
+  assert.ok(foreign.reasons.some((reason) => reason.evidencePolicy === 'criterion-binding'));
 
   const qaRun = createRun({ flowType: 'dev', project: 'generic-project', ticketOrPr: 'QA-OUTPUT' });
   t.after(() => deleteTestRunIfPresent(qaRun.id));

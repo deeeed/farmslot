@@ -558,6 +558,7 @@ import {
   requireNodeSession,
 } from '../security/auth.js';
 import { authorizeGatewayMethod } from '../security/authorization.js';
+import { authorizeEvidenceAttestation } from '../security/evidence-attestation.js';
 import { assertNativeMachineAssignment, nativeNodeDeclaration } from '../security/native-node.js';
 import { assertNativeWorkerRpcAccess } from '../security/native-worker-access.js';
 import { runWithSessionOriginator } from '../security/work-originator.js';
@@ -634,7 +635,16 @@ async function routeAuthorizedMethod(
   // RPC dispatch boundary — params arrive untyped from the wire;
   // each handler receives its typed params via assertion.
   const p: unknown = params ?? {};
-  const runRoute = await routeRunMethod(method, p, { broadcast, emit });
+  const attestationSession = {
+    ...state,
+    ...(state.authentication ? { authentication: { ...state.authentication } } : {}),
+  };
+  const runRoute = await routeRunMethod(method, p, {
+    broadcast,
+    emit,
+    authorizeEvidenceAttestation: () =>
+      authorizeEvidenceAttestation(authRuntime, attestationSession),
+  });
   if (runRoute.handled) return runRoute.value;
 
   switch (method) {

@@ -435,14 +435,14 @@ pending implementation.
 
 ## Evidence gate policy
 
-Status: Proposed, 2026-10-13, ADR-062 Amendment 3. These requirements become
-normative on design acceptance. They change publication policy, not recording
+Status: Accepted, 2026-10-13, ADR-062 Amendment 3. These requirements change publication policy, not recording
 contracts or artifact-only output-review authority.
 
 ### Integrity and policy findings
 
-The gateway MUST first load and validate the selected frozen input closure using
-the canonical reader and validator. Unreadable/missing inputs, invalid structure,
+The gateway MUST first load and validate selected recorded input closures using
+the canonical reader and validator. Non-recipe files retain the existing frozen
+publication inventory/identity checks; they do not require recipe metadata. Unreadable/missing inputs, invalid structure,
 digest mismatch, replaced bytes and tampering MUST block every publish action.
 Legacy display access MUST NOT become machine-validated evidence.
 
@@ -460,8 +460,8 @@ The existing gate UI MUST show the findings and require a reason before its
 explicit confirmation; the CLI MUST require `--reason <text>` for this action.
 Empty/whitespace-only reasons MUST be refused.
 
-The gateway MUST resolve current person identity, active credential and publish
-authority from trusted ingress context, then recheck them at consumption.
+The gateway MUST resolve current person identity, active credential and the
+existing global-admin authority for `run.resolveDecision` from trusted ingress context, then recheck them at consumption.
 Service/node identities, automatic resolution, direct background calls and the
 synthetic solo-mode person MUST be refused even with a reason. Client kind,
 client-supplied actor and runner name confer no human authority. Operator

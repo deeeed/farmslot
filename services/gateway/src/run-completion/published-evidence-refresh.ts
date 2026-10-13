@@ -12,6 +12,7 @@ import { latestResolvedHumanGateDecision } from '../run-engine/decision-replay.j
 import { recordPublishedDescription } from '../run-engine/finalize-step.js';
 import { getRun } from '../runs/store.js';
 
+import { withEvidenceAttestation } from './evidence-attestation.js';
 import { isPublishedStatus, publicationStatusForRun } from './orchestrator.js';
 import {
   expandPublicationEvidenceSelection,
@@ -109,7 +110,7 @@ export async function refreshPublishedEvidence(
   if (!expanded.length) throw new Error('No local visual evidence is available to refresh');
   const postedBody = await postProcessPRBody(run, ciRepo, run.prNumber, artifactUrls, expanded, {
     failOnError: true,
-    baseBody: before.body,
+    baseBody: withEvidenceAttestation(run, before.body),
     checkAuthorChecklist: false,
     evidenceManifest: manifest,
     validateBody: async () => {

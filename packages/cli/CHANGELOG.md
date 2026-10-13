@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Accept a required written reason for the human evidence-attested publish gate action.
+
 - Carry exact source receipts into project recipe execution.
 - Read a forced native session transcript without requiring a private slot pool in the installed CLI.
 

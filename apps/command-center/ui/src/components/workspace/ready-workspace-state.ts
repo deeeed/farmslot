@@ -57,6 +57,7 @@ export abstract class ReadyWorkspaceState extends LitElement {
 
   @state() _acting = false;
   @state() _pendingConfirm: string | null = null;
+  @state() _evidenceAttestationReason = '';
   @state() _actionMessage = '';
   @state() _actionTone: 'success' | 'error' | '' = '';
   @state() _refreshingPackage = false;

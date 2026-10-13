@@ -79,4 +79,4 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [068](068-project-recipe-binding-and-conformance.md)     | Project recipe binding and conformance                                  | Accepted |
 | [069](069-declared-pinned-sources.md)                    | Declared and pinned farm sources                                        | Accepted |
 
-ADR-062 has a [proposed amendment](062-recorded-run-evidence.md#proposed-amendment-completed-evidence-review-and-run-footprint) for completed review, chapters and retained storage. The base decision remains Accepted.
+ADR-062's [completed review/storage amendment](062-recorded-run-evidence.md#amendment-1-2026-10-12-completed-evidence-review-and-run-footprint) and [evidence policy/attestation amendment](062-recorded-run-evidence.md#amendment-3-2026-10-13-evidence-policy-and-human-attestation) are Accepted. Implementation is tracked separately.

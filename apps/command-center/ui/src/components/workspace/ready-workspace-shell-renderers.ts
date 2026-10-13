@@ -1,10 +1,12 @@
 import { html, nothing } from 'lit';
 
 import {
+  APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   type ArtifactRef,
   deriveRunLifecycleView,
   type GitBranchDiffFile,
+  isValidEvidenceAttestationReason,
   latestExhaustedReview,
   type ReadyGatePayload,
   type RunDecision,
@@ -22,6 +24,8 @@ export function renderReadyTopBar(input: {
   decision?: RunDecision;
   publicationTarget: 'draft' | 'ready';
   pendingConfirm: string | null;
+  attestationReason?: string;
+  setAttestationReason?: (value: string) => void;
   acting: boolean;
   recovering: boolean;
   diffArtifact?: ArtifactRef;
@@ -55,6 +59,9 @@ export function renderReadyTopBar(input: {
   // and still verifies the selected package and current source before publishing.
   const bypassAction = input.decision?.actions?.find(
     (action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION,
+  );
+  const attestationAction = input.decision?.actions.find(
+    (action) => action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   );
   const reviewBlockingReason = !canApprove ? readyReviewBlockingReason(input.payload) : '';
   const approveLabel = hasApprovePublish
@@ -136,6 +143,32 @@ export function renderReadyTopBar(input: {
                     Review
                   </button>
                 `
+              : nothing}
+            ${attestationAction
+              ? html` <label>
+                    Reason for evidence policy attestation
+                    <textarea
+                      data-testid="evidence-attestation-reason"
+                      aria-label="Reason for evidence policy attestation"
+                      .value=${input.attestationReason ?? ''}
+                      ?disabled=${input.acting || input.recovering}
+                      @input=${(event: Event) =>
+                        input.setAttestationReason?.((event.target as HTMLTextAreaElement).value)}
+                    ></textarea>
+                  </label>
+                  <span>${attestationAction.description}</span>
+                  <button
+                    class="rdy-btn rdy-btn-danger"
+                    data-testid="rdy-attest-evidence"
+                    ?disabled=${input.acting ||
+                    input.recovering ||
+                    !isValidEvidenceAttestationReason(input.attestationReason)}
+                    @click=${() => input.confirmAction(APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION)}
+                  >
+                    ${input.pendingConfirm === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION
+                      ? 'Confirm attestation and publish?'
+                      : attestationAction.label}
+                  </button>`
               : nothing}
             ${bypassAction
               ? html`

@@ -7,8 +7,12 @@ import {
   validateRecordedEvidencePackage,
 } from '@farmslot/adapter-sdk/evidence';
 import {
+  APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   type DecisionAction,
   digestRecipeDocument,
+  EVIDENCE_ATTESTATION_ACTION,
+  evidenceAttestationAvailable,
+  isEvidencePolicyReason,
   isPrerequisiteGatePayload,
   isRecord,
   isTerminalRunStatus,
@@ -370,11 +374,14 @@ export async function collectRunGateReadiness(
         const valid =
           inputs.length > 0 &&
           inputs.every((input) => validateRecordedEvidencePackage(input).status === 'valid');
-        const satisfied = inputs.every(
+        const executionSatisfied = inputs.every(
           (input) =>
             isRecord(input.summary) &&
             input.summary.status === 'pass' &&
-            input.summary.stopAfterNode === undefined &&
+            input.summary.stopAfterNode === undefined,
+        );
+        const claimsSatisfied = inputs.every(
+          (input) =>
             input.claims &&
             ['complete', 'not-required'].includes(input.claims.recording.status) &&
             input.claims.criteria.every(
@@ -443,13 +450,38 @@ export async function collectRunGateReadiness(
               );
             });
         }
-        if (!valid || !satisfied || !bound)
+        if (!valid || (qaOutput && (!executionSatisfied || !claimsSatisfied || !bound))) {
           reasons.push({
             code: 'evidence-invalid',
             prerequisite: 'evidence',
-            message: 'Required claim evidence is incomplete or invalid.',
+            message: 'Required claim evidence is structurally invalid or incomplete.',
             actionId: 'hold',
           });
+        } else {
+          const policies: Array<[RunGatePrerequisiteReason['evidencePolicy'], boolean, string]> = [
+            [
+              'execution-verdict',
+              executionSatisfied,
+              'Selected execution results do not satisfy publication policy.',
+            ],
+            [
+              'claim-verdict',
+              claimsSatisfied,
+              'Recorded claim verdicts do not satisfy publication policy.',
+            ],
+            ['criterion-binding', bound, 'Recorded claims do not bind all registered criteria.'],
+          ];
+          for (const [evidencePolicy, satisfied, message] of policies) {
+            if (!satisfied)
+              reasons.push({
+                code: 'evidence-policy-unsatisfied',
+                prerequisite: 'evidence',
+                evidencePolicy,
+                message,
+                actionId: 'hold',
+              });
+          }
+        }
       } catch (error) {
         // An unreadable frozen closure remains an explicit refusal.
         reasons.push({
@@ -583,9 +615,10 @@ export function gateActionsForReadiness<Action extends { id: string }>(
   actions: Action[],
   readiness: RunGateReadiness,
 ): Action[] {
-  return actions.filter(
-    (action) =>
-      !advancingGateAction(action.id) || gateReasonsForAction(readiness, action.id).length === 0,
+  return actions.filter((action) =>
+    action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION
+      ? evidenceAttestationAvailable(readiness)
+      : !advancingGateAction(action.id) || gateReasonsForAction(readiness, action.id).length === 0,
   );
 }
 
@@ -599,7 +632,9 @@ function gateReasonsForAction(
     APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
   ].some((id) => id === actionId);
   return readiness.reasons.filter(
-    (reason) => !(reviewOverride && reason.prerequisite === 'review'),
+    (reason) =>
+      !(reviewOverride && reason.prerequisite === 'review') &&
+      !(actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION && isEvidencePolicyReason(reason)),
   );
 }
 
@@ -607,10 +642,15 @@ export async function assertRunGateReady(
   run: Run,
   preparedPackage: ReadyGatePrPackage | null,
   actionId?: string,
-): Promise<void> {
+): Promise<RunGateReadiness> {
   const readiness = await collectRunGateReadiness(run, preparedPackage);
   const reasons = gateReasonsForAction(readiness, actionId);
-  if (reasons.length || readiness.state === 'collecting')
+  if (
+    reasons.length ||
+    readiness.state === 'collecting' ||
+    (actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
+      !evidenceAttestationAvailable(readiness))
+  )
     throw new GatewayMethodError(
       'RUN_GATE_NOT_READY',
       reasons.map((reason) => reason.message).join(' ') || 'Run work is still progressing.',
@@ -619,13 +659,26 @@ export async function assertRunGateReady(
         userAction: 'Resolve the listed prerequisites, then refresh the gate.',
       },
     );
+  return readiness;
 }
+
+/** Assertions may omit a projection; attestation consumers require the checked identity. */
+export type GatePrerequisiteAssertion = (
+  ...params: Parameters<typeof assertRunGateReady>
+) => Promise<RunGateReadiness | void>;
 
 /** Definitions remain on the existing decision so a later receipt can restore its actions. */
 export function runGateDefinitionActions(decision: RunDecision): DecisionAction[] {
-  return Array.isArray(decision.context?.gateActions)
+  const actions = Array.isArray(decision.context?.gateActions)
     ? (decision.context.gateActions as DecisionAction[])
     : decision.actions;
+  return decision.type === 'engine_human_gate' &&
+    decision.payload?.kind === 'ready' &&
+    decision.payload.prPackage &&
+    !decision.resolvedAt &&
+    !actions.some((action) => action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION)
+    ? [...actions, { ...EVIDENCE_ATTESTATION_ACTION }]
+    : actions;
 }
 
 /** Refresh the existing projection; it is never approval authority. */

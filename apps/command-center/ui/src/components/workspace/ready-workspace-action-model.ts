@@ -1,5 +1,5 @@
 import {
-  APPROVE_PUBLISH_UNRESOLVED_ACTION,
+  isPublishApprovalAction,
   type Run,
   type RunDecision,
   type RunRefreshPublishPackageResult,
@@ -20,11 +20,7 @@ export function readyDecisionActionStateKey(decision?: RunDecision): string {
 }
 
 export function isReadyPublicationApproval(actionId: string, packageGate: boolean): boolean {
-  return (
-    actionId === 'approve-publish' ||
-    actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION ||
-    (packageGate && actionId === 'ready')
-  );
+  return actionId === 'ready' ? packageGate : isPublishApprovalAction(actionId);
 }
 
 export function readyActionRequiresConfirmation(actionId: string, packageGate: boolean): boolean {

@@ -1,4 +1,5 @@
 import {
+  APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   buildRunDecisionActionRequest,
   type DecisionResolveParams,
   Methods,
@@ -24,8 +25,11 @@ export function decisionResolveRequest(
   actionId: string,
   resourcePosture?: ResourcePostureGateChoice | null,
   selectionData?: Record<string, unknown>,
+  evidenceAttestationReason?: string,
 ): DecisionResolveRequest {
   if (!decision.runMeta) {
+    if (actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION)
+      throw new Error('Load the publish run before attesting evidence.');
     if (decision.payload?.kind === 'review' && actionId === 'post')
       throw new Error('Load the review run before posting selected findings.');
     return { method: Methods.DECISION_RESOLVE, params: { decisionId: decision.id, actionId } };
@@ -34,6 +38,7 @@ export function decisionResolveRequest(
     runId: decision.runMeta.runId,
     decision,
     actionId,
+    ...(evidenceAttestationReason !== undefined ? { evidenceAttestationReason } : {}),
     ...(selectionData ? { selectionData } : {}),
     ...(resourcePosture ? { resourcePosture } : {}),
   });

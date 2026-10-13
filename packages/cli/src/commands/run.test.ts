@@ -10,7 +10,11 @@ import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import { WebSocketServer } from 'ws';
 
-import type { Run } from '@farmslot/protocol';
+import {
+  APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
+  type Run,
+  type RunDecision,
+} from '@farmslot/protocol';
 
 import {
   assertRunGateActionAvailable,
@@ -25,6 +29,36 @@ import {
   parseTaskPath,
   registerRunCommand,
 } from './run.js';
+
+test('gate CLI serializes a written attestation reason with its visible package identity', () => {
+  const decision = {
+    id: 'gate',
+    payload: {
+      kind: 'ready',
+      prPackage: { id: 'pkg', packageHash: 'hash', headSha: 'head', selectedEvidenceKeys: [] },
+    },
+  } as RunDecision;
+  const run = { id: 'run' } as Run;
+  const action = APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION;
+  assert.throws(() => buildRunGateParams(run, decision, action, {}), /written reason/);
+  assert.throws(
+    () => buildRunGateParams(run, decision, 'approve-publish', { reason: 'waive' }),
+    /requires attested/,
+  );
+  const params = buildRunGateParams(run, decision, action, {
+    reason: ' Inspected retained evidence. ',
+  });
+  assert.equal(params.evidenceAttestationReason, 'Inspected retained evidence.');
+  assert.equal(params.selectionData?.packageHash, 'hash');
+  const program = new Command();
+  registerRunCommand(program);
+  assert.ok(
+    program.commands
+      .find((command) => command.name() === 'run')!
+      .commands.find((command) => command.name() === 'gate')!
+      .options.some((option) => option.long === '--reason'),
+  );
+});
 
 function repeatReviewRun(): Run {
   return {

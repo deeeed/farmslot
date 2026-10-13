@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   type ReadyGatePayload,
   type RunDecision,
@@ -25,6 +26,11 @@ function payload(overrides: Record<string, unknown>): ReadyGatePayload {
 }
 
 test('ready workspace action model derives decision state keys and messages', () => {
+  assert.equal(isReadyPublicationApproval(APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION, true), true);
+  assert.equal(
+    readyActionRequiresConfirmation(APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION, true),
+    true,
+  );
   assert.equal(
     readyDecisionActionStateKey({
       id: 'd1',

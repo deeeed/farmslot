@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   APPROVE_PUBLISH_ACTION,
+  APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   type DecisionAction,
@@ -23,6 +24,45 @@ import {
   latestReviewVerdicts,
   openHumanGateDecision,
 } from './gate-review';
+
+test('native gate permits attestation only for checked policy failures with all other guards passed', () => {
+  const action: DecisionAction = {
+    id: APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
+    label: 'Attest',
+    style: 'danger',
+  };
+  const guard = approvePublishGuard({
+    acceptance: { rows: [] } as never,
+    reviews: [],
+    requiredReviews: 0,
+  });
+  const readiness = {
+    state: 'not-ready' as const,
+    identity: { runId: 'run', generation: 0, packageHash: 'hash' },
+    reasons: [
+      {
+        code: 'evidence-policy-unsatisfied',
+        prerequisite: 'evidence' as const,
+        evidencePolicy: 'criterion-binding' as const,
+        message: 'Claim text differs.',
+      },
+    ],
+  };
+  assert.equal(gateReviewActions([action], guard, readiness)[0].disabledReason, null);
+  assert.match(gateReviewActions([action], guard)[0].disabledReason!, /unavailable/);
+  assert.match(
+    gateReviewActions([action], guard, {
+      ...readiness,
+      reasons: [{ ...readiness.reasons[0], code: 'evidence-invalid' }],
+    })[0].disabledReason!,
+    /unavailable/,
+  );
+  assert.match(
+    gateReviewActions([action], { ...guard, reviewReasons: ['Review required'] }, readiness)[0]
+      .disabledReason!,
+    /Review required/,
+  );
+});
 import { acceptanceLedgerView } from './task-progress-view';
 
 const GATE_ACTIONS: DecisionAction[] = [
