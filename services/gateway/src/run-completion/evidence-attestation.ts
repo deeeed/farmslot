@@ -56,11 +56,17 @@ export function withEvidenceAttestation(run: Run, body: string): string {
   if (!receipt) return body;
   const plain = (value: string) =>
     value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const fence = '`'.repeat(
+    Math.max(3, ...[...receipt.reason.matchAll(/`+/g)].map((match) => match[0].length + 1)),
+  );
   const section = [
     `Approved by ${plain(receipt.approver.displayName)} (${plain(receipt.approver.principalId)}) at ${receipt.approvedAt}.`,
     `Package: \`${receipt.packageHash}\`. Decision: \`${receipt.decisionId}\`.`,
     '',
-    ...receipt.reason.split('\n').map((line) => `> ${plain(line)}`),
+    'Reason:',
+    `${fence}text`,
+    receipt.reason,
+    fence,
     '',
     'Waived claim-policy findings:',
     ...receipt.waivedReasons.map((reason) => `- ${plain(reason.message)}`),

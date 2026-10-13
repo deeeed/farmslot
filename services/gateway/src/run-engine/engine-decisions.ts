@@ -2,6 +2,7 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   type DecisionAction,
   Events,
   type EvidenceManifestEntry,
@@ -23,6 +24,7 @@ import {
 
 import { isGitHubAncestor } from '../external/github.js';
 import { runReviewRoundBudget } from '../review/review-round-budget.js';
+import { assertEvidenceAttestationReceipt } from '../run-completion/evidence-attestation.js';
 import {
   readRunProgress,
   runDecisionWaitingStatus,
@@ -715,6 +717,11 @@ export async function createEngineDecision(
       actionStillOffered &&
       (reason !== 'human_gate' || replayableHumanGateDecision)
     ) {
+      if (resolvedAction === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION) {
+        if (payload?.kind !== 'ready' || !payload.prPackage)
+          throw new Error('Attested approval replay requires its publication package.');
+        assertEvidenceAttestationReceipt(run, existing, payload.prPackage);
+      }
       return resolvedAction!;
     }
   }

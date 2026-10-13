@@ -1,6 +1,10 @@
-import { Image, Pressable, ScrollView, Text, View } from 'react-native';
+import { Image, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 
-import type { RunDecision } from '@farmslot/protocol';
+import {
+  APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
+  isValidEvidenceAttestationReason,
+  type RunDecision,
+} from '@farmslot/protocol';
 import type { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import { type ArtifactHttpHeaders, artifactSource } from '../../../lib/artifact-url';
@@ -173,15 +177,35 @@ export function GateEvidenceStrip({
 export function PublishGuardNotice({
   actions,
   testID,
+  attestationReason = '',
+  onAttestationReason,
 }: {
   actions: GateReviewAction[];
   testID: string;
+  attestationReason?: string;
+  onAttestationReason?: (reason: string) => void;
 }) {
   const withheld = actions.filter((action) => action.disabledReason);
-  if (withheld.length === 0) return null;
+  const attestation =
+    onAttestationReason &&
+    actions.some((action) => action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION);
+  if (withheld.length === 0 && !attestation) return null;
   return (
     <View style={styles.guardCard} testID={testID}>
-      <Text style={styles.guardTitle}>Publish approval is disabled</Text>
+      {attestation ? (
+        <>
+          <Text style={styles.guardText}>Reason for evidence policy attestation</Text>
+          <TextInput
+            testID="companion-evidence-attestation-reason"
+            accessibilityLabel="Reason for evidence policy attestation"
+            multiline
+            value={attestationReason}
+            onChangeText={onAttestationReason}
+            style={[styles.guardText, { borderWidth: 1, padding: 8 }]}
+          />
+        </>
+      ) : null}
+      {withheld.length ? <Text style={styles.guardTitle}>Publish approval is disabled</Text> : null}
       {withheld.map((action) => (
         <Text key={action.id} style={styles.guardText}>
           • {action.label}: {action.disabledReason}
@@ -197,7 +221,11 @@ export function GateActions({
   sendingActionId,
   onResolve,
   reviewPicker,
+  attestationReason,
+  onAttestationReason,
 }: {
+  attestationReason: string;
+  onAttestationReason: (reason: string) => void;
   reviewPicker: ReviewDispatchViewModel;
   decision: RunDecision;
   actions: GateReviewAction[];
@@ -216,9 +244,18 @@ export function GateActions({
   }
   return (
     <View testID="companion-gate-review-actions">
-      <PublishGuardNotice actions={actions} testID="companion-gate-review-approve-reason" />
+      <PublishGuardNotice
+        actions={actions}
+        testID="companion-gate-review-approve-reason"
+        attestationReason={attestationReason}
+        onAttestationReason={onAttestationReason}
+      />
       {actions.map((action) => {
-        const disabled = Boolean(action.disabledReason) || sendingActionId !== null;
+        const disabled =
+          Boolean(action.disabledReason) ||
+          sendingActionId !== null ||
+          (action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
+            !isValidEvidenceAttestationReason(attestationReason));
         if (action.id === 'request-review')
           return (
             <ReviewDispatchPicker

@@ -37,7 +37,7 @@ test('gate CLI serializes a written attestation reason with its visible package 
       kind: 'ready',
       prPackage: { id: 'pkg', packageHash: 'hash', headSha: 'head', selectedEvidenceKeys: [] },
     },
-  } as RunDecision;
+  } as unknown as RunDecision;
   const run = { id: 'run' } as Run;
   const action = APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION;
   assert.throws(() => buildRunGateParams(run, decision, action, {}), /written reason/);

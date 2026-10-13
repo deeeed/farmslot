@@ -85,6 +85,8 @@ export function GateReviewScreen({
           actions={viewModel.actions}
           sendingActionId={viewModel.sendingActionId}
           onResolve={actions.resolve}
+          attestationReason={viewModel.attestationReason}
+          onAttestationReason={actions.setAttestationReason}
         />
       </View>
       <View

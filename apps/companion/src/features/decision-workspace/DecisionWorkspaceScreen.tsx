@@ -1,15 +1,7 @@
 import * as Haptics from 'expo-haptics';
 import { Stack, useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Alert,
-  type LayoutChangeEvent,
-  Pressable,
-  ScrollView,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, type LayoutChangeEvent, Pressable, ScrollView, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -1791,25 +1783,11 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
                 <PublishGuardNotice
                   actions={humanGate.actions}
                   testID="companion-decision-publish-guard"
+                  attestationReason={attestationReason}
+                  onAttestationReason={(text) =>
+                    setEvidenceReason({ decisionId: decision.id, text })
+                  }
                 />
-              ) : null}
-              {presentation.actions.some(
-                (action) => action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
-              ) ? (
-                <View>
-                  <Text>Reason for evidence policy attestation</Text>
-                  <TextInput
-                    testID="companion-evidence-attestation-reason"
-                    accessibilityLabel="Reason for evidence policy attestation"
-                    multiline
-                    value={attestationReason}
-                    onChangeText={(text) => setEvidenceReason({ decisionId: decision.id, text })}
-                    style={[
-                      styles.actionText,
-                      { borderColor: colors.statusUnknown, borderWidth: 1, padding: 8 },
-                    ]}
-                  />
-                </View>
               ) : null}
               {presentation.actions.map((action) => {
                 const disabled =
