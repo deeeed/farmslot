@@ -2,7 +2,7 @@ import type { Run } from '@farmslot/protocol';
 
 import { execOnSlot, loadSlotVars, ownsRunSlotCleanup, readSlotRow } from '../core/index.js';
 import { shellQuote, tmuxSendTextCommand, tmuxShellSnippet } from '../core/tmux.js';
-import { getRun } from '../runs/store.js';
+import { getRunWithArchived } from '../runs/store.js';
 
 import { getRunnerDefinition, isKnownRunner, runnerPromptSubmitKey } from './registry.js';
 import {
@@ -118,8 +118,8 @@ export async function stopRunOwnedTmuxWorkers(
     if (live.state === 'unknown')
       return `Worker ${context.id} liveness is unknown; cleanup deferred`;
     const assertOwned = async () => {
+      const currentRun = await getRunWithArchived(run.id);
       const currentSlot = await readSlotRow(slotId);
-      const currentRun = getRun(run.id);
       const current = currentRun?.agentContexts?.find((candidate) => candidate.id === context.id);
       const currentTarget =
         currentRun && current ? runnerSessionContextTarget(currentRun, current) : null;

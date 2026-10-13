@@ -31,6 +31,7 @@ let onPreserve: (() => void) | null;
 let onProbe: (() => void) | null;
 let slotRow: Record<string, unknown>;
 let parkedStops: number;
+let runArchived: boolean;
 
 mock.module('../core/index.js', {
   namedExports: {
@@ -55,7 +56,11 @@ mock.module('../core/index.js', {
   },
 });
 mock.module('../runs/store.js', {
-  namedExports: { ...realRunStore, getRun: () => run },
+  namedExports: {
+    ...realRunStore,
+    getRun: () => (runArchived ? undefined : run),
+    getRunWithArchived: async () => run,
+  },
 });
 mock.module('./session-process.js', {
   namedExports: {
@@ -120,6 +125,7 @@ function tat4091Run(publicationStatus?: Publication, runner = 'codex'): Run {
 function setup(publicationStatus?: Publication, runner = 'codex'): void {
   slotRow = { current_run_id: RUN_ID, slot_epoch: 1 };
   parkedStops = 0;
+  runArchived = false;
   run = tat4091Run(publicationStatus, runner);
   // The reviewer pane already closed; the idle dev worker still holds the slot.
   panes = new Map([
@@ -150,6 +156,16 @@ test('a deferred cleanup owner stops its retained exact saved worker', async () 
   assert.equal(await stopRunOwnedTmuxWorkers(run), null);
   assert.equal(parkedStops, 1);
   assert.ok(commands.some((command) => /display-message -p -t '?%75/.test(command)));
+});
+
+test('an archived deferred owner revalidates its saved worker before exit', async () => {
+  setup();
+  slotRow = { current_run_id: null, cleanup_run_id: RUN_ID, slot_epoch: 1 };
+  run.agentContexts![0].runnerSessionId = 'retained-session';
+  run.agentContexts![0].runnerSessionPath = '/sessions/retained.jsonl';
+  runArchived = true;
+  assert.equal(await stopRunOwnedTmuxWorkers(run), null);
+  assert.equal(parkedStops, 1);
 });
 
 test('a successor claim overrides stale cleanup ownership without inspecting or sending', async () => {
