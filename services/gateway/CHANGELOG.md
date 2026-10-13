@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Keep recovered worker sessions bound to their exact pane and repair reviewer-session contamination only with original-process provenance, preserving foreign-worker parking guards.
 - Allow gate-held runs to free their slot after review moves the worker pane, verifying live conversation identity before stopping it and preserving session recovery.
 - Accept project review configuration when planning automatic publication reviews after recovery.
 - Resolve declared source refs into immutable admission locks and refuse source drift.

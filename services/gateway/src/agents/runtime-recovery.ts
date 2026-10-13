@@ -8,6 +8,7 @@ import {
   type AgentContextTarget,
   agentRoleWindow,
   contextIdFor,
+  isReviewerAgentRole,
   isTerminalRunStatus,
   primaryRoleForFlow,
   type Run,
@@ -38,8 +39,13 @@ import {
   runnerPersistsSessionFiles,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
-import { isRunnerAliveUnderPane, resolveRunnerSessionBinding } from '../runners/session-process.js';
-import { getRun, listRuns, updateRunAgentContexts } from '../runs/store.js';
+import {
+  isRunnerAliveUnderPane,
+  readPaneProcessStartedAtMs,
+  resolveRunnerSessionBinding,
+  resolveRunRetainedSessionBinding,
+} from '../runners/session-process.js';
+import { getRun, listRuns, updateRun, updateRunAgentContexts } from '../runs/store.js';
 
 const ACTIVE_CONTEXT_STATUSES: ReadonlySet<AgentContextStatus> = new Set([
   'launching',
@@ -205,13 +211,51 @@ async function sessionBindingForContext(
 ): Promise<{ runnerSessionId: string; runnerSessionPath: string } | null> {
   const runner = ctx.runner ?? run.metrics.runner;
   if (!runner) return null;
+  const retained = resolveRunRetainedSessionBinding(run, ctx);
+  if (retained.incompleteBinding) return null;
+  const exactPane = paneId ?? ctx.target?.paneId;
+  // A missing or moved target does not authorize checkout-wide discovery:
+  // its newest transcript may belong to a completed reviewer.
+  if (!exactPane) return retained.binding;
   const sinceMs = Date.parse(ctx.startedAt ?? run.createdAt);
-  return resolveRunnerSessionBinding(vars, runner, [], {
+  const observed = await resolveRunnerSessionBinding(vars, runner, [], {
     sinceMs: Number.isFinite(sinceMs) ? sinceMs : undefined,
-    paneId,
+    paneId: exactPane,
     slotId: vars.slotId,
-    existingPath: ctx.runnerSessionPath ?? run.metrics.runnerSessionPath,
+    existingPath: retained.binding?.runnerSessionPath,
   });
+  if (
+    !observed ||
+    !retained.binding ||
+    (observed.runnerSessionId === retained.binding.runnerSessionId &&
+      observed.runnerSessionPath === retained.binding.runnerSessionPath)
+  )
+    return observed ?? retained.binding;
+
+  // Repair only the old cross-role fallback corruption. A different live
+  // process must not overwrite a retained identity and then pass the park guard.
+  const capturedAt = Date.parse(ctx.runnerSessionCapturedAt ?? '');
+  const reviewerCollision = (run.agentContexts ?? []).some(
+    (other) =>
+      other.id !== ctx.id &&
+      isReviewerAgentRole(other.role) &&
+      other.target?.paneId !== exactPane &&
+      other.runnerSessionId === retained.binding?.runnerSessionId &&
+      other.runnerSessionPath === retained.binding?.runnerSessionPath &&
+      Date.parse(other.runnerSessionCapturedAt ?? '') > capturedAt,
+  );
+  if (
+    ctx.role !== primaryRoleForFlow(run.flowType) ||
+    exactPane !== ctx.target?.paneId ||
+    !reviewerCollision ||
+    !Number.isFinite(capturedAt) ||
+    !Number.isFinite(sinceMs)
+  )
+    return retained.binding;
+  const processStarted = await readPaneProcessStartedAtMs(vars, exactPane, runner);
+  return processStarted !== null && processStarted >= sinceMs && processStarted <= capturedAt
+    ? observed
+    : retained.binding;
 }
 
 async function inspectContextRuntime(run: Run, ctx: AgentContext): Promise<RuntimeInspection> {
@@ -409,11 +453,29 @@ async function reconcileTmuxRunAgentRuntime(run: Run): Promise<TmuxWorkerRestore
   }
 
   if (patches.size > 0) {
-    updateRunAgentContexts(run.id, (_currentRun, currentContexts) =>
+    const updated = updateRunAgentContexts(run.id, (_currentRun, currentContexts) =>
       currentContexts.map((ctx) =>
         patches.has(ctx.id) ? { ...ctx, ...patches.get(ctx.id)! } : ctx,
       ),
     );
+    const primary = contexts.find((ctx) => ctx.id === primaryContextId(run));
+    const patch = primary && patches.get(primary.id);
+    if (
+      primary?.runnerSessionId &&
+      patch?.runnerSessionId &&
+      patch.runnerSessionPath &&
+      patch.runnerSessionId !== primary.runnerSessionId &&
+      updated.metrics.runnerSessionId === primary.runnerSessionId &&
+      updated.metrics.runnerSessionPath === primary.runnerSessionPath
+    ) {
+      updateRun(run.id, {
+        metrics: {
+          ...updated.metrics,
+          runnerSessionId: patch.runnerSessionId,
+          runnerSessionPath: patch.runnerSessionPath,
+        },
+      });
+    }
   }
   return { slotId: run.slotId, runId: run.id, restored: false, contexts: results };
 }
