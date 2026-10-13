@@ -20,15 +20,15 @@
   "defaults": {
     "fix": {
       "runner": "claude",
-      "model": "sonnet"
+      "model": "opus"
     },
     "feature": {
       "runner": "claude",
-      "model": "sonnet"
+      "model": "opus"
     },
     "review": {
       "runner": "claude",
-      "model": "sonnet"
+      "model": "opus"
     }
   },
   "hooks": {
