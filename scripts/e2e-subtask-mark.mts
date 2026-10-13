@@ -127,6 +127,8 @@ function main() {
         '--var',
         'BRANCH=feat/subtask-observability-phase1',
         '--var',
+        'PUBLICATION_BASE=main',
+        '--var',
         'CI_ISSUE_TYPE=lint',
         '--var',
         'CI_ISSUES=- lint failed on one file',

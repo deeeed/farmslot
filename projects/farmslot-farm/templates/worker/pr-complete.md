@@ -61,9 +61,10 @@
   ```
   **Failure path:** if `mergeConflicts=unknown`, stop and fix the probe; do not
   report the branch clean. If `mergeConflicts=true` or `behindMain` is material,
-  update the branch first — **prefer** `git merge origin/main` during open review loops;
-  use `git rebase origin/main` + `git push --force-with-lease` only when the
-  project already standardizes on rebase. Never auto force-push mid-loop.
+  update the PR branch using TASK.md's branch-update instructions. Fetch
+  `{{PUBLICATION_BASE}}` and rebase onto `origin/{{PUBLICATION_BASE}}` with an
+  explicit lease against the recorded remote PR-head SHA. The probe above still
+  measures default-branch freshness; it does not select the rebase target.
   Record `behindMain`, `mergeConflicts`, and the next command used in the report.
 - [ ] **10. Write report** — create `{{TASK_DIR}}/artifacts/comments-report.md` with: files changed, issue addressed, validation results, behindMain/mergeConflicts.
 - [ ] **11. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- No reviewer-driven learnings — no actionable comment fixes on this run.`

@@ -1,6 +1,7 @@
 // publish-package-refresh.ts — Ready-gate package refresh and evidence-selection preservation
 
 import {
+  DEFAULT_BRANCH,
   effectiveRequiredReviewCount,
   Events,
   GATE_SUMMARY_KINDS,
@@ -281,7 +282,8 @@ export async function refreshPublishPackage(params: {
     try {
       const vars = await loadSlotVars(refreshedRun.slotId);
       const projectVars = await loadProjectVars(refreshedRun.project);
-      const defaultBranch = getProjectField(projectVars.projectJson, 'default_branch') || 'main';
+      const defaultBranch =
+        getProjectField(projectVars.projectJson, 'default_branch') || DEFAULT_BRANCH;
       const strategy = resolveBranchUpdateStrategy(projectVars.projectJson);
       freshness = await probeSlotBranchFreshness(vars, String(defaultBranch), strategy);
       if (freshness) {

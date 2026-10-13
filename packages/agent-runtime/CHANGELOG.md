@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Show the supplied publication base and leased rebase instructions for branch-maintenance tasks.
+
 - Generate recipe-owned acceptance instructions using supplied helper commands; retain authorized untestable review and completion checks.
 
 - Resolve publication manifest requirements and media references inside the selected recipe attempt.
