@@ -24,8 +24,8 @@ test('the task wrapper runs twice with fresh packages and never overwrites promo
   });
   await writeFile(recipe, document);
   await writeFile(path.join(artifacts, 'after.mp4'), 'old retained media');
-  // Isolate UI/runner execution; exercise the real wrapper allocation,
-  // selected engine manifest. Runner admission has separate coverage.
+  // Isolate UI execution; exercise wrapper allocation and producer-owned selection.
+  // Runner admission has separate coverage.
   const driver = path.join(dir, 'driver.mjs');
   await writeFile(
     driver,
@@ -34,6 +34,7 @@ test('the task wrapper runs twice with fresh packages and never overwrites promo
     import {createRequire} from 'node:module';
     const require=createRequire(${JSON.stringify(path.join(root, 'packages/recipe-cli/package.json'))});
     const {digestRecipeDocument}=require('@farmslot/protocol/recipe');
+    const {recordRecipeAttemptSelection}=require('@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs');
     import path from 'node:path';
     const argv=process.argv.slice(2);const artifactsDir=argv[argv.indexOf('--artifacts-dir')+1];
     await mkdir(path.join(artifactsDir,'videos'),{recursive:true});
@@ -45,6 +46,8 @@ test('the task wrapper runs twice with fresh packages and never overwrites promo
     await writeFile(path.join(artifactsDir,'summary.json'),JSON.stringify({status:'pass',total:1,passed:1,failed:0,cause_counts:{subject:0,harness:0,environment:0,unknown:0}}));
     await writeFile(path.join(artifactsDir,'videos/recipe-run.mp4'),'unit moov media '+artifactsDir);
     await writeFile(path.join(artifactsDir,'evidence-manifest.json'),JSON.stringify({version:1,videos:{after:'videos/recipe-run.mp4',preferred:true}}));
+    if (!path.isAbsolute(process.env.RECIPE_TASK_DIR || '')) throw new Error('Wrapper must bind the task before invoking the producer.');
+    if (!recordRecipeAttemptSelection(process.env.RECIPE_TASK_DIR,artifactsDir)) throw new Error('Producer selection refused.');
   `,
   );
   const nodeShim = path.join(bin, 'node');

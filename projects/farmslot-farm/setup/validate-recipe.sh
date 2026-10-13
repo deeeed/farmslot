@@ -237,8 +237,4 @@ fi
 "${ARGS[@]}"
 exit_code=$?
 
-if [[ "${exit_code}" -eq 0 && -n "${TASK_DIR}" && "${ARTIFACTS_DIR}" == "${TASK_DIR}/artifacts/recipe-runs/"* ]]; then
-  node "${PRIMARY_REPO}/packages/agent-runtime/scripts/retained-recipe-attempt.cjs" "${TASK_DIR}" "${ARTIFACTS_DIR}"
-fi
-
 exit "${exit_code}"

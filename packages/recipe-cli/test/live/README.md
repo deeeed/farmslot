@@ -7,5 +7,5 @@ TSX_TSCONFIG_PATH=packages/recipe-cli/tsconfig.json node --import tsx --test pac
 ```
 
 This exercises two wrapper executions, the engine manifest contract and retained
-bytes. It took 9.6 seconds on the validation host, so it is outside default CI.
+bytes. It took 5.9 seconds on the validation host, so it is outside default CI.
 The fast artifact checker and producer tests cover selection and manifest shape.
