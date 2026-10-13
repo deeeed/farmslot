@@ -7,6 +7,8 @@ import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { readUpstreamPr, type UpstreamPr } from '../work-graph/stack-retarget.js';
 import { stackBaseForNode } from '../work-graph/store.js';
 
+import { contributionStack } from './diff-artifacts.js';
+
 let upstreamPrReader: (project: string, prNumber: number) => Promise<UpstreamPr> = readUpstreamPr;
 
 export function setUpstreamPrReaderForTests(
@@ -60,11 +62,11 @@ export function stackPrBase(run: Pick<Run, 'stack'>): string | undefined {
 }
 
 /** One base for publication packages, their previews and PR creation. */
-export function publicationBaseForRun(
-  run: Pick<Run, 'stack'>,
+export async function publicationBaseForRun(
+  run: Pick<Run, 'stack' | 'parentRunId'>,
   defaultBranch?: string | null,
-): string {
-  return stackPrBase(run) ?? (defaultBranch || DEFAULT_BRANCH);
+): Promise<string> {
+  return stackPrBase({ stack: await contributionStack(run) }) ?? (defaultBranch || DEFAULT_BRANCH);
 }
 
 /**

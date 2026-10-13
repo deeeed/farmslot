@@ -21,6 +21,7 @@ const nativeSession = await import('../runners/session-process.js');
 const nativeDraft = await import('./draft-pr.js');
 const nativeTemplate = await import('./pr-template.js');
 let run: Run;
+let lineageParent: Run | null = null;
 let repo = '';
 const templateBases: string[] = [];
 const vars = () =>
@@ -53,6 +54,8 @@ mock.module('../runs/store.js', {
   namedExports: {
     ...nativeStore,
     getRun: () => run,
+    getRunWithArchived: async (id: string) =>
+      id === lineageParent?.id ? lineageParent : id === run?.id ? run : null,
     updateRun: (_id: string, patch: Partial<Run>) => (run = { ...run, ...patch }),
   },
 });
@@ -154,6 +157,7 @@ before(async () => {
 });
 
 function resetRun(currentStack?: RunStack) {
+  lineageParent = null;
   run = {
     ...makeRun({
       id: 'stack-fixture',
@@ -183,7 +187,7 @@ test('stacked package and preview exclude the upstream nine files', async () => 
   assert.equal(stacked.reviewSnapshot?.headSha, headSha);
   assert.deepEqual(stacked.reviewSnapshot?.diffStat, parentDiff);
   assert.deepEqual(stacked.diffStat, parentDiff);
-  assert.equal(templateBases.at(-1), publicationBaseForRun(run, 'main'));
+  assert.equal(templateBases.at(-1), await publicationBaseForRun(run, 'main'));
   await renderCurrentDescription(run, stacked);
   assert.equal(templateBases.at(-1), 'feature/parent');
 });
@@ -200,6 +204,23 @@ test('standalone publication keeps the default 18-file package', async () => {
   assert.equal(standalone.reviewSnapshot?.baseRef, 'origin/main');
   assert.deepEqual(standalone.reviewSnapshot?.diffStat, fullDiff);
   assert.equal(templateBases.at(-1), 'main');
+});
+
+test('a follow-up package and preview use the stacked parent contribution', async () => {
+  resetRun();
+  lineageParent = { ...run, id: 'stacked-parent', stack };
+  run = { ...run, flowType: 'pr-complete', parentRunId: lineageParent.id };
+  const prepared = (
+    await prepareCompletionPackage(run.id, {
+      diffStat: parentDiff,
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    })
+  ).prPackage;
+  assert.equal(prepared.reviewSnapshot?.baseRef, 'origin/feature/parent');
+  assert.equal(prepared.reviewSnapshot?.baseSha, parentSha);
+  assert.deepEqual(prepared.reviewSnapshot?.diffStat, parentDiff);
+  await renderCurrentDescription(run, prepared);
+  assert.equal(templateBases.at(-1), 'feature/parent');
 });
 
 test('a retargeted stack uses the default branch after its parent merges', async () => {
