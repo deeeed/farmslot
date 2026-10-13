@@ -16,7 +16,12 @@ let run: Run;
 let processStarted: number | null;
 let sessionExists: boolean;
 let paneSession: string;
-let observed = original;
+let observed: typeof original | null = original;
+let runnerAlive: boolean;
+let normalizeBinding:
+  | ((...args: unknown[]) => Promise<{ sessionId: string; sessionPath: string } | null>)
+  | undefined;
+const launches: string[] = [];
 const lookups: (string | null | undefined)[] = [];
 const commands: string[] = [];
 
@@ -42,18 +47,30 @@ mock.module('../core/exec.js', {
 });
 const config = await import('../core/config.js');
 mock.module('../core/config.js', {
-  namedExports: { ...config, loadSlotVars: async () => makeVars({ slotId: 'slot-1' }) },
+  namedExports: {
+    ...config,
+    loadSlotVars: async () => makeVars({ slotId: 'slot-1', codexPath: '/bin/codex' }),
+    loadProjectVars: async () => ({ projectJson: {} }),
+    resolveProjectRuntimeDir: async () => 'runtime',
+  },
 });
 const tmux = await import('../core/tmux.js');
 mock.module('../core/tmux.js', {
-  namedExports: { ...tmux, resolveTmuxSession: async () => 'slot-1' },
+  namedExports: {
+    ...tmux,
+    resolveTmuxSession: async () => 'slot-1',
+    respawnTmuxWindowWithCommand: async (_vars: unknown, _target: unknown, command: string) => {
+      launches.push(command);
+      runnerAlive = true;
+    },
+  },
 });
 const sessions = await import('../runners/session-process.js');
 mock.module('../runners/session-process.js', {
   namedExports: {
     ...sessions,
     readPaneProcessStartedAtMs: async () => processStarted,
-    isRunnerAliveUnderPane: async () => true,
+    isRunnerAliveUnderPane: async () => runnerAlive,
     resolveRunnerSessionBinding: async (
       _vars: unknown,
       _runner: unknown,
@@ -61,11 +78,27 @@ mock.module('../runners/session-process.js', {
       options: { paneId?: string | null },
     ) => {
       lookups.push(options.paneId);
+      if (!observed) return null;
       return options.paneId
         ? { ...observed, source: 'hook' }
         : { ...reviewer, source: 'filesystem' };
     },
   },
+});
+const registry = await import('../runners/registry.js');
+mock.module('../runners/registry.js', {
+  namedExports: {
+    ...registry,
+    getRunnerObservability: () => ({ normalizeRetainedSessionBinding: normalizeBinding }),
+  },
+});
+const support = await import('../node-support/ensure.js');
+mock.module('../node-support/ensure.js', {
+  namedExports: { ...support, ensureNodeSupportBundle: async () => {} },
+});
+const index = await import('../core/index.js');
+mock.module('../core/index.js', {
+  namedExports: { ...index, readSlotRow: async () => ({ current_run_id: run.id, slot_epoch: 1 }) },
 });
 const store = await import('../runs/store.js');
 mock.module('../runs/store.js', {
@@ -82,11 +115,14 @@ mock.module('../runs/store.js', {
     },
   },
 });
-const { reconcileRunAgentRuntime } = await import('./runtime-recovery.js');
+const { reconcileRunAgentRuntime, restoreTmuxWorker } = await import('./runtime-recovery.js');
 
 function fixture(corrupt = false): void {
   lookups.length = 0;
   commands.length = 0;
+  launches.length = 0;
+  runnerAlive = true;
+  normalizeBinding = undefined;
   processStarted = Date.parse('2026-10-12T20:22:03.000Z');
   sessionExists = true;
   paneSession = 'slot-1-orch';
@@ -182,4 +218,45 @@ test('a retained context without an exact pane never falls back to another role 
   await reconcileRunAgentRuntime(run);
   assert.deepEqual(lookups, []);
   assert.equal(run.agentContexts![0].runnerSessionId, original.runnerSessionId);
+});
+
+function legacyCodexFixture(): void {
+  fixture();
+  paneSession = 'slot-1';
+  const primary = run.agentContexts![0];
+  primary.runner = 'codex';
+  primary.model = 'gpt-6.1-sol';
+  primary.runnerSessionId = 'rollout-original';
+  primary.runnerSessionPath = '/sessions/rollout-original.jsonl';
+  run.metrics.runnerSessionId = primary.runnerSessionId;
+  run.metrics.runnerSessionPath = primary.runnerSessionPath;
+  normalizeBinding = async (_vars, binding) => {
+    assert.deepEqual(binding, {
+      sessionId: 'rollout-original',
+      sessionPath: '/sessions/rollout-original.jsonl',
+    });
+    return { sessionId: 'native-session', sessionPath: '/sessions/rollout-original.jsonl' };
+  };
+}
+
+test('live reconciliation preserves the runner capability migration to native session IDs', async () => {
+  legacyCodexFixture();
+  observed = {
+    runnerSessionId: 'native-session',
+    runnerSessionPath: '/sessions/rollout-original.jsonl',
+  };
+  await reconcileRunAgentRuntime(run);
+  assert.equal(run.agentContexts![0].runnerSessionId, 'native-session');
+  assert.equal(run.metrics.runnerSessionId, 'native-session');
+});
+
+test('a dead worker reload passes the normalized native ID instead of its rollout filename', async () => {
+  legacyCodexFixture();
+  observed = null;
+  runnerAlive = false;
+  await restoreTmuxWorker({ slotId: 'slot-1', runId: run.id, mode: 'reload-session' });
+  assert.equal(launches.length, 1);
+  assert.match(launches[0], /native-session/);
+  assert.doesNotMatch(launches[0], /resume[^\n]*rollout-original/);
+  assert.equal(run.agentContexts![0].runnerSessionId, 'native-session');
 });

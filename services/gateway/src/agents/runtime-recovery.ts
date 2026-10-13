@@ -35,6 +35,7 @@ import { assertRunNotArchiving } from '../run-lifecycle/archive-fence.js';
 import { buildRunnerSessionReloadCommand } from '../runners/launch-command.js';
 import { reconcileNativeRunAgentRuntime } from '../runners/native/worker-runtime.js';
 import {
+  getRunnerObservability,
   normalizeRunner,
   runnerPersistsSessionFiles,
   WORKER_ENV_PREFIX,
@@ -213,24 +214,34 @@ async function sessionBindingForContext(
   if (!runner) return null;
   const retained = resolveRunRetainedSessionBinding(run, ctx);
   if (retained.incompleteBinding) return null;
+  let saved = retained.binding;
+  const normalize = getRunnerObservability(runner)?.normalizeRetainedSessionBinding;
+  if (saved && normalize) {
+    const normalized = await normalize(vars, {
+      sessionId: saved.runnerSessionId,
+      sessionPath: saved.runnerSessionPath,
+    });
+    if (!normalized) return null;
+    saved = { runnerSessionId: normalized.sessionId, runnerSessionPath: normalized.sessionPath };
+  }
   const exactPane = paneId ?? ctx.target?.paneId;
   // A missing or moved target does not authorize checkout-wide discovery:
   // its newest transcript may belong to a completed reviewer.
-  if (!exactPane) return retained.binding;
+  if (!exactPane) return saved;
   const sinceMs = Date.parse(ctx.startedAt ?? run.createdAt);
   const observed = await resolveRunnerSessionBinding(vars, runner, [], {
     sinceMs: Number.isFinite(sinceMs) ? sinceMs : undefined,
     paneId: exactPane,
     slotId: vars.slotId,
-    existingPath: retained.binding?.runnerSessionPath,
+    existingPath: saved?.runnerSessionPath,
   });
   if (
     !observed ||
-    !retained.binding ||
-    (observed.runnerSessionId === retained.binding.runnerSessionId &&
-      observed.runnerSessionPath === retained.binding.runnerSessionPath)
+    !saved ||
+    (observed.runnerSessionId === saved.runnerSessionId &&
+      observed.runnerSessionPath === saved.runnerSessionPath)
   )
-    return observed ?? retained.binding;
+    return observed ?? saved;
 
   // Repair only the old cross-role fallback corruption. A different live
   // process must not overwrite a retained identity and then pass the park guard.
@@ -251,11 +262,11 @@ async function sessionBindingForContext(
     !Number.isFinite(capturedAt) ||
     !Number.isFinite(sinceMs)
   )
-    return retained.binding;
+    return saved;
   const processStarted = await readPaneProcessStartedAtMs(vars, exactPane, runner);
   return processStarted !== null && processStarted >= sinceMs && processStarted <= capturedAt
     ? observed
-    : retained.binding;
+    : saved;
 }
 
 async function inspectContextRuntime(run: Run, ctx: AgentContext): Promise<RuntimeInspection> {
