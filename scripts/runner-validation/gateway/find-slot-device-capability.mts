@@ -6,6 +6,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { mock } from 'node:test';
 import type { Run } from '@farmslot/protocol';
 import type { WebSocketServer } from 'ws';
 
@@ -219,6 +220,57 @@ try {
     replayed.run.engineState?.slotCapabilityRequirements,
   );
   await store.persistRunNow(store.getRun(run.id)!, 'isolated device selection proof');
+  // Exercise the real admitted-source planning branch with only materializer
+  // IO replaced. The removed execution slot cannot be resolved or contacted.
+  const { SourceAuthority } = await import('../../../services/gateway/src/sources/authority.js');
+  const { SourceMaterializer, sourceLockDigest } = await import('@farmslot/slot-config/sources');
+  const sourceRuntime = await import('../../../services/gateway/src/sources/runtime.js');
+  const { sourceTestLock, sourceTestMaterialization } =
+    await import('../../../services/gateway/src/sources/source.test-support.js');
+  const sourceConfig = path.join(root, 'sources.json');
+  json(sourceConfig, { packs: { [project]: { sourceId: 'pack', entry: '.' } } });
+  process.env.FARMSLOT_SOURCES_CONFIG = sourceConfig;
+  mock.method(SourceAuthority, 'open', async () => ({
+    recoverRunCreations: async () => {},
+    startReconciliation: () => () => {},
+    activatedAt: () => '2020-01-01T00:00:00Z',
+  }));
+  mock.method(SourceMaterializer.prototype, 'materialize', async (lock) =>
+    sourceTestMaterialization(lock, 'gateway'),
+  );
+  await sourceRuntime.initializeSources();
+  const admitted = store.createRun({
+    flowType: 'dev',
+    project,
+    ticketOrPr: 'PROJ-125',
+    runner: 'scripted',
+  });
+  const lock = sourceTestLock(undefined, admitted.id);
+  lock.context.project = project;
+  lock.packBindings = { [project]: { sourceId: 'pack', entry: '.' } };
+  lock.digest = sourceLockDigest(lock);
+  const provenance = {
+    state: 'locked' as const,
+    attemptId: 'original',
+    lock,
+    workerLock: lock,
+    bindings: [lock.packBindings[project]],
+    receiptIds: ['original-receipt'],
+    attempts: [{ id: 'original', receiptIds: ['original-receipt'] }],
+  };
+  store.updateRun(admitted.id, {
+    status: 'failed',
+    slotId: 'removed-admitted-slot',
+    sourceProvenance: provenance,
+  });
+  const admittedReplay = await client.call<{ run: Run }>('run.replayStep', {
+    runId: admitted.id,
+    stepName: 'find-slot',
+  });
+  assert.equal(admittedReplay.run.slotId, null);
+  assert.deepEqual(admittedReplay.run.sourceProvenance, provenance);
+  await store.persistRunNow(store.getRun(admitted.id)!, 'admitted removed-source replay proof');
+  sourceRuntime.stopSourceReconciliation();
   json(path.join(out, 'receipt.json'), {
     head: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     sourceHash: createHash('sha256')
@@ -232,11 +284,13 @@ try {
     workerStarts: 0,
     providerAcquires: 0,
     removedSourceReplay: true,
+    admittedRemovedSourceReplay: true,
   });
   console.log(
     'Public replay retains Android intent; production find-slot selects the configured Android slot and public run.get confirms it.',
   );
 } finally {
+  mock.restoreAll();
   if (wss) {
     for (const peer of wss.clients) peer.terminate();
     await new Promise<void>((resolve) => wss!.close(() => resolve()));

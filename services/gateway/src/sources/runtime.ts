@@ -616,20 +616,22 @@ export async function withRunSources<T>(
   operation: () => Promise<T>,
   options: { planning?: boolean; nodeId?: string } = {},
 ): Promise<T> {
+  const planningLock = run.sourcePlan?.lock ?? run.sourceProvenance?.lock;
+  if (options.planning && planningLock) {
+    if (!authority || !gateway) throw new SourceAdmissionRefusal('Source authority is unavailable');
+    const materialization = await gateway.materialize(planningLock);
+    return withProjectSources(
+      {
+        project: run.project,
+        pack: planningLock.packBindings[run.project],
+        materialization,
+        packs: planningLock.packBindings,
+      },
+      operation,
+    );
+  }
   if (run.sourcePlan) {
     if (!authority || !gateway) throw new SourceAdmissionRefusal('Source authority is unavailable');
-    if (options.planning) {
-      const materialization = await gateway.materialize(run.sourcePlan.lock);
-      return withProjectSources(
-        {
-          project: run.project,
-          pack: run.sourcePlan.lock.packBindings[run.project],
-          materialization,
-          packs: run.sourcePlan.lock.packBindings,
-        },
-        operation,
-      );
-    }
     const nodeId = options.nodeId ?? (await runNodeId(run));
     if (!nodeId) throw new SourceAdmissionRefusal('Source admission requires an execution node');
     for (let attempt = 0; attempt < 4; attempt++) {
