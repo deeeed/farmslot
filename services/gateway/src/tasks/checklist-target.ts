@@ -1,5 +1,4 @@
 import { writeFile } from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 
 import { buildMarkShim, quoteMarkCommandWord } from '@farmslot/agent-runtime';
@@ -39,22 +38,15 @@ export {
   WORKER_SIGNAL_FILE,
 } from '@farmslot/protocol/checklist-target';
 
-import {
-  farmslotRoot,
-  loadProjectVars,
-  type loadSlotVars,
-  type ProjectVars,
-} from '../core/config.js';
+import { loadProjectVars, type loadSlotVars, type ProjectVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
 import { shellQuote } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 
+import { agentRuntimeScriptForSlot } from './agent-runtime-script.js';
 import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
 import { syncTerminalContractForFlowOnSlot } from './worker-terminal-contract.js';
-
-const REMOTE_FARMSLOT_DIR = '~/farmslot-node';
-const localHostname = os.hostname().replace(/\.local$/, '');
 
 export function checklistTargetForAgentRole(
   role: NestedLoopAgentRole,
@@ -132,33 +124,20 @@ export async function syncChecklistTargetForRole(
   );
 }
 
-function farmslotDirForSlot(vars: Pick<Awaited<ReturnType<typeof loadSlotVars>>, 'host'>): string {
-  const slotHost = vars.host.replace(/\.local$/, '');
-  const onOperator =
-    slotHost === 'localhost' || slotHost === '127.0.0.1' || slotHost === localHostname;
-  return onOperator ? farmslotRoot : REMOTE_FARMSLOT_DIR;
-}
-
-export function checklistMarkerHelperPath(farmslotDirForSlot: string): string {
-  return `${farmslotDirForSlot}/packages/agent-runtime/scripts/mark-checklist-step.cjs`.replace(
-    /^~(?=\/)/,
-    '$HOME',
-  );
-}
-
 /**
  * The command the task's `mark` shim runs. A pack may set `vars.mark_cmd`
  * (for example `${MM_HARNESS_BIN:-mm-harness} checklist mark`) so workers get
  * the harness's gates; the default is the slot-synced agent-runtime engine.
  */
-export function markCommandForSlot(
-  vars: Pick<Awaited<ReturnType<typeof loadSlotVars>>, 'host'> &
+export async function markCommandForSlot(
+  vars: Pick<Awaited<ReturnType<typeof loadSlotVars>>, 'host' | 'machine'> &
     Parameters<typeof expandTemplate>[1],
   projectVars?: ProjectVars,
-): string {
+): Promise<string> {
   const raw = projectVars?.projectJson.vars?.mark_cmd;
   if (typeof raw === 'string' && raw.trim()) return expandTemplate(raw, vars, projectVars);
-  return `node ${quoteMarkCommandWord(checklistMarkerHelperPath(farmslotDirForSlot(vars)))}`;
+  const helper = await agentRuntimeScriptForSlot(vars, 'mark-checklist-step.cjs');
+  return `node ${quoteMarkCommandWord(helper)}`;
 }
 
 export async function syncChecklistMarkerOnSlot(
@@ -167,7 +146,7 @@ export async function syncChecklistMarkerOnSlot(
 ): Promise<void> {
   const markRel = taskDirRelPath(taskDir, CHECKLIST_MARKER_INPUT);
   const projectVars = await loadProjectVars(vars.projectName);
-  const content = buildMarkShim(markCommandForSlot(vars, projectVars));
+  const content = buildMarkShim(await markCommandForSlot(vars, projectVars));
   await writeTextFileOnSlot(vars, markRel, content);
   await execOnSlot(
     vars,
