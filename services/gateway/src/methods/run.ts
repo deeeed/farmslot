@@ -1009,6 +1009,15 @@ async function releaseInteractiveDevSlot(run: Run): Promise<string> {
   return (await releaseCompletedRunSlot(run)).released ? 'released-keep-work' : 'kept-shared-slot';
 }
 
+function retainedInteractiveDevContexts(run: Run, slotDisposition: string): Run['agentContexts'] {
+  return slotDisposition === 'kept-shared-slot' ||
+    run.agentContexts?.some(
+      (context) => context.nativeSession || context.nativeSessionHistory?.length,
+    )
+    ? run.agentContexts
+    : [];
+}
+
 async function markInteractiveDevDoneWithoutPr(
   run: Run,
   params: RunInteractiveDevResolveParams,
@@ -1040,11 +1049,7 @@ async function markInteractiveDevDoneWithoutPr(
     completedAt: new Date().toISOString(),
     error: undefined,
     metrics: { ...current.metrics, outcome: 'success' },
-    agentContexts: current.agentContexts?.some(
-      (context) => context.nativeSession || context.nativeSessionHistory?.length,
-    )
-      ? current.agentContexts
-      : [],
+    agentContexts: retainedInteractiveDevContexts(current, slotDisposition),
     engineState: appendInteractiveDevAction(run.id, params, current),
   });
   completeStepAsOperator(run.id, 'complete', reason, {
@@ -1189,12 +1194,9 @@ export async function runInteractiveDevResolve(
       completedAt: isBlocked ? undefined : new Date().toISOString(),
       error: reason,
       metrics: { ...current.metrics, outcome: isBlocked ? 'partial' : 'failure' },
-      ...(isBlocked ||
-      current.agentContexts?.some(
-        (context) => context.nativeSession || context.nativeSessionHistory?.length,
-      )
+      ...(isBlocked
         ? {}
-        : { agentContexts: [] }),
+        : { agentContexts: retainedInteractiveDevContexts(current, slotDisposition) }),
       engineState: appendInteractiveDevAction(run.id, params, current),
     });
     emit(Events.RUN_UPDATED, { run: updated });

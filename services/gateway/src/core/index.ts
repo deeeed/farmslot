@@ -82,6 +82,7 @@ export {
   markSlotBusy,
   markSlotHeld,
   markSlotStatusIf,
+  ownsRunSlotCleanup,
   readSlotField,
   readSlotRow,
   resetSlot,
