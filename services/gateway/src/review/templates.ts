@@ -131,9 +131,14 @@ async function descriptionCheckSection(
   let publication;
   let selectionError: string | undefined;
   try {
-    publication = await resolvePublicationManifest(taskDir, {
-      readText: (file) => readReviewArtifact(vars, file),
-    });
+    publication = await resolvePublicationManifest(
+      taskDir,
+      {
+        readText: (file) => readReviewArtifact(vars, file),
+      },
+      undefined,
+      run.recordedEvidenceContractVersion ?? 0,
+    );
   } catch (error) {
     // An unavailable pre-check still produces the review document with an explicit diagnostic.
     selectionError = error instanceof Error ? error.message : String(error);

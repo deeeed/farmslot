@@ -100,12 +100,19 @@ export class JsonArtifactWriter implements ArtifactWriter {
   async writeEvidenceManifest(claims: RecipeClaimLedger): Promise<string> {
     if (this.#entries.some((artifact) => artifact.path === 'evidence-manifest.json'))
       throw new Error('evidence-manifest.json is owned by the recipe engine.');
+    const media = this.list().filter(
+      (artifact) => artifact.type === 'screenshot' || artifact.type === 'video',
+    );
+    const recording = media.find(
+      (artifact) => artifact.type === 'video' && artifact.record === 'full_run',
+    );
     const manifest: EvidenceManifest = {
       version: 1,
       preferred_mode: 'screenshots',
       summary: claims.criteria.map((claim) => `${claim.id}: ${claim.verdict}`).join('; '),
-      standalone: this.list()
-        .filter((artifact) => artifact.type === 'screenshot' || artifact.type === 'video')
+      ...(recording ? { videos: { after: recording.path, preferred: true } } : {}),
+      standalone: media
+        .filter((artifact) => artifact !== recording)
         .map((artifact) => ({
           label: artifact.label ?? artifact.nodeId ?? artifact.path,
           file: artifact.path,

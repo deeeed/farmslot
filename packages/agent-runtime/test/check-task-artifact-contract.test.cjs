@@ -98,6 +98,7 @@ try {
     JSON.stringify({
       schemaVersion: 1,
       flowType: 'dev',
+      recordedEvidenceContractVersion: 1,
       commands: { complete: { artifacts: ['artifacts/evidence-manifest.json'] } },
     }),
   );
@@ -107,6 +108,57 @@ try {
     { encoding: 'utf8' },
   );
   assert.equal(selectedResult.status, 0, selectedResult.stderr);
+  // The same old completed task keeps its declaration only under explicit contract 0.
+  const attemptManifest = readFileSync(path.join(selectedRoot, 'evidence-manifest.json'));
+  rmSync(path.join(selectedRoot, 'evidence-manifest.json'));
+  writeFileSync(
+    path.join(selectedTask, 'artifacts/evidence-manifest.json'),
+    JSON.stringify({ version: 1, standalone: [] }),
+  );
+  const contract = JSON.parse(readFileSync(manifestContract, 'utf8'));
+  contract.recordedEvidenceContractVersion = 0;
+  writeFileSync(manifestContract, JSON.stringify(contract));
+  selectedResult = spawnSync(
+    process.execPath,
+    [checker, selectedTask, '--contract', manifestContract, '--terminal', 'complete'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(selectedResult.status, 0, selectedResult.stderr);
+  contract.recordedEvidenceContractVersion = 1;
+  writeFileSync(manifestContract, JSON.stringify(contract));
+  selectedResult = spawnSync(
+    process.execPath,
+    [checker, selectedTask, '--contract', manifestContract, '--terminal', 'complete'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(selectedResult.status, 1);
+  assert.match(selectedResult.stderr, /evidence-manifest.json/);
+  writeFileSync(path.join(selectedRoot, 'evidence-manifest.json'), attemptManifest);
+  // QA placement is owned by its finalized case map, even with no managed pointer.
+  const nested = path.join(selectedTask, 'artifacts/recipe-run/smoke-1');
+  mkdirSync(path.dirname(nested), { recursive: true });
+  renameSync(selectedRoot, nested);
+  rmSync(selectedPointerPath);
+  writeFileSync(
+    path.join(selectedTask, 'artifacts/qa-result.json'),
+    JSON.stringify({
+      version: 1,
+      packages: {
+        smoke: 'recipe-run/smoke-1',
+        conformance: 'conformance/attempt2/conformance/live/example',
+      },
+      smoke: { caseId: 'smoke', proofTarget: 'AC-1' },
+    }),
+  );
+  writeFileSync(
+    path.join(selectedTask, 'artifacts/evidence-manifest.json'),
+    JSON.stringify({ version: 1, standalone: [] }),
+  );
+  selectedResult = spawnSync(process.execPath, [checker, selectedTask], { encoding: 'utf8' });
+  assert.equal(selectedResult.status, 0, selectedResult.stderr);
+  renameSync(nested, selectedRoot);
+  writeFileSync(selectedPointerPath, selectedPointer);
+  rmSync(path.join(selectedTask, 'artifacts/qa-result.json'));
   writeFileSync(path.join(selectedRoot, 'summary.json'), '{"status":"fail"}');
   assert.equal(recordRecipeAttemptSelection(selectedTask, selectedRoot), false);
   assert.deepEqual(readFileSync(selectedPointerPath), selectedPointer);

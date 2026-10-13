@@ -654,6 +654,7 @@ export async function prepareCompletionPackage(
     taskDir,
     artifacts,
     runEvidenceManifest,
+    run.recordedEvidenceContractVersion ?? 0,
   );
   const validation = await readValidationSummary(run);
   const projectVars = await loadProjectVars(run.project);

@@ -82,7 +82,11 @@ export async function readRunRecordedEvidence(
           ? `${path.relative(path.dirname(run.taskFile), group.artifactRoot).split(path.sep).join('/')}/`
           : undefined;
       const source =
-        (payload.kind === 'ready' && sources.length === 1 ? sources[0] : undefined) ??
+        (payload.kind === 'ready' &&
+        sources.length === 1 &&
+        (!retainedRunId || sources[0]?.input.claims?.recipeRunId === retainedRunId)
+          ? sources[0]
+          : undefined) ??
         sources.find(({ input, artifactPrefix }) =>
           retainedRunId ? input.claims?.recipeRunId === retainedRunId : artifactPrefix === prefix,
         ) ??

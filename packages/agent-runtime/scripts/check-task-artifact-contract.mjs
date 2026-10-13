@@ -171,7 +171,11 @@ function publicationArtifactPath(rel) {
     JSON.parse(readFileSync(pointerPath, 'utf8')),
   );
   if (!pointer) throw new Error('latest-valid-recipe-run.json: invalid pointer.');
-  return `artifacts/${pointer.relativeArtifactRoot}/evidence-manifest.json`;
+  const selected = `artifacts/${pointer.relativeArtifactRoot}/evidence-manifest.json`;
+  const version = terminalContract ? (terminalContract.recordedEvidenceContractVersion ?? 0) : 1;
+  if (version !== 0 && version !== 1) throw new Error('Unsupported recorded evidence contract.');
+  if (version === 0 && !existsSync(path.resolve(taskDir, selected))) return rel;
+  return selected;
 }
 
 function isRecord(value) {
@@ -285,7 +289,7 @@ function optionalStringArray(record, key, prefix) {
   }
 }
 
-function normalizeArtifactPath(value) {
+function normalizeArtifactPath(value, mediaOnly = true) {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   if (!trimmed || /^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(trimmed)) return null;
@@ -296,7 +300,7 @@ function normalizeArtifactPath(value) {
   if (segments.some((segment) => segment === '.' || segment === '..')) return null;
   const withoutArtifacts =
     segments[0] === 'artifacts' ? segments.slice(1).join('/') : segments.join('/');
-  if (!withoutArtifacts || !mediaExt.test(withoutArtifacts)) return null;
+  if (!withoutArtifacts || (mediaOnly && !mediaExt.test(withoutArtifacts))) return null;
   return `artifacts/${withoutArtifacts}`;
 }
 
@@ -352,6 +356,30 @@ function validateRecipeDocumentArtifact() {
       return;
     }
     packageRoot = `artifacts/${pointer.relativeArtifactRoot}`;
+  }
+  // QA registers its smoke package in qa-result, independently of managed task selection.
+  // This locates the existing execution; QA admission still verifies the full frozen suite.
+  const qaResult = readJsonArtifact('artifacts/qa-result.json', 'qa-result.json');
+  if (qaResult !== undefined) {
+    const smokePackage =
+      isRecord(qaResult) &&
+      qaResult.version === 1 &&
+      isRecord(qaResult.packages) &&
+      isRecord(qaResult.smoke) &&
+      typeof qaResult.smoke.caseId === 'string'
+        ? qaResult.packages[qaResult.smoke.caseId]
+        : undefined;
+    const smokeRecipe =
+      typeof smokePackage === 'string'
+        ? normalizeArtifactPath(`${smokePackage}/recipe.json`, false)
+        : null;
+    if (!smokeRecipe) {
+      issues.push(
+        'qa-result.json: the registered smoke package must identify a confined relative directory',
+      );
+      return;
+    }
+    packageRoot = path.posix.dirname(smokeRecipe);
   }
   const recipe = readJsonArtifact(`${packageRoot}/recipe.json`, 'recipe-run/recipe.json');
   if (recipe === undefined) {

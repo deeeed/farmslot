@@ -44,6 +44,7 @@ export async function buildPackageEvidenceManifest(
   taskDir: string | null,
   artifacts: ArtifactRef[],
   evidenceManifest: EvidenceManifest | null | undefined,
+  contractVersion = 1,
 ): Promise<ArtifactRef[]> {
   const omittedEvidenceKeys = evidenceManifestOmitSet(evidenceManifest);
   const hasDeclaredEvidence =
@@ -86,6 +87,7 @@ export async function buildPackageEvidenceManifest(
         artifacts,
         entries.filter((entry) => isUploadableMediaPath(entry.path)),
         evidenceManifest,
+        contractVersion,
       )
     : [];
   return sortArtifactRefsForComparison([
@@ -108,6 +110,11 @@ export async function readCurrentPackageEvidence(run: Run): Promise<CurrentPacka
   return {
     artifacts,
     manifest,
-    inventory: await buildPackageEvidenceManifest(taskDir, artifacts, manifest),
+    inventory: await buildPackageEvidenceManifest(
+      taskDir,
+      artifacts,
+      manifest,
+      run.recordedEvidenceContractVersion ?? 0,
+    ),
   };
 }

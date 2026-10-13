@@ -1325,6 +1325,7 @@ export async function writeTaskFile(
   const terminalContract = resolveWorkerTerminalContract(workerTerminalConfig, run.flowType, {
     mode: run.mode ?? undefined,
   });
+  terminalContract.recordedEvidenceContractVersion = run.recordedEvidenceContractVersion ?? 0;
   terminalContract.claimReviewGate =
     (run.steps.some((step) => step.name === 'human-gate' && step.status !== 'skipped') &&
       humanGateEnabled(run.flowType, run.mode ?? undefined, projectVars.projectJson)) ||

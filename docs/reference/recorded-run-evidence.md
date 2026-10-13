@@ -730,6 +730,18 @@ runs and otherwise preserves the stored version. Its typed `failureCode` uses
 `evidence-package-unverifiable` or `evidence-contract-unsupported`. These display
 codes grant no waiver; existing integrity and gate policy still apply.
 
+The gateway MUST project the same version into the existing worker terminal
+contract. Pre-cutover contracts retain their declaration-based publication
+selection. Version 1 requires the engine candidate. A missing candidate from an
+older runtime requires updating that runtime before retrying.
+
+QA completion MUST locate its registered smoke execution through
+`qa-result.json.packages[smoke.caseId]`, including nested destinations. This
+placement check grants no QA admission; the existing finalization and gate checks
+still verify the whole frozen suite. Explicit CLI artifact destinations keep
+their requested layout. Managed task execution without a destination allocates a
+fresh attempt; the builtin wrapper also allocates one for its legacy destination.
+
 The SDK model MUST default to the current contract for standalone callers. Legacy
 requires explicit pre-cutover context and absence of a recognized current
 package. Newer unverifiable packages are Invalid, with a recovery action, and

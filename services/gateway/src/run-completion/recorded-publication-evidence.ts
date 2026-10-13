@@ -33,13 +33,14 @@ export async function recordedPublicationDependencies(
   artifacts: readonly ArtifactRef[],
   media: readonly ArtifactRef[],
   expectedManifest: EvidenceManifest | null | undefined,
+  contractVersion = 1,
 ): Promise<ArtifactRef[]> {
-  const source = await resolvePublicationManifest(taskDir);
+  const source = await resolvePublicationManifest(taskDir, undefined, undefined, contractVersion);
   const sourceRoot = source ? path.posix.dirname(source.sourcePath) : undefined;
-  const selectedRoot =
-    source?.pointerPath ||
-    (sourceRoot &&
-      artifacts.some((artifact) => artifact.path === `${sourceRoot}/recipe-invocation.json`))
+  const selectedRoot = source?.selectedArtifactRoot
+    ? `artifacts/${source.selectedArtifactRoot}`
+    : sourceRoot &&
+        artifacts.some((artifact) => artifact.path === `${sourceRoot}/recipe-invocation.json`)
       ? sourceRoot
       : undefined;
   if (!media.length && !selectedRoot) return [];

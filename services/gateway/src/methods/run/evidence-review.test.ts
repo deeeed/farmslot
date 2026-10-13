@@ -157,6 +157,14 @@ test('gate display reuses the frozen inventory and refuses changed bytes or a re
   assert.deepEqual(source.errors, []);
   assert.equal(source.artifactPrefix, prefix);
   assert(source.input);
+  decision.payload = {
+    ...decision.payload!,
+    acceptanceStatus: { schemaVersion: 2, recipeRunId: 'another-execution', criteria: [] },
+  } as RunDecision['payload'];
+  const mismatch = await readRunRecordedEvidence(sourceRun, group, binding);
+  assert.equal(mismatch.input, undefined);
+  assert.match(mismatch.errors.join(' '), /Select a retained recipe execution/);
+  decision.payload = { kind: 'ready', prPackage: prepared } as RunDecision['payload'];
   const changed = await readRunRecordedEvidence(sourceRun, group, {
     ...binding,
     packageHash: 'old-package',

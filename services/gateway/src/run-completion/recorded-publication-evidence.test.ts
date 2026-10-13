@@ -213,6 +213,40 @@ test('selected recorded media freezes the complete execution input and selection
   assert.equal(sources[0]!.artifactPrefix, 'artifacts/recipe-run/');
 });
 
+test('a pre-cutover pointer retains its declaration and freezes only its selected execution', async (t) => {
+  const { taskDir, root, run, artifacts } = await fixture(t);
+  const selected = path.join(taskDir, 'artifacts/recipe-runs/old');
+  await mkdir(path.dirname(selected), { recursive: true });
+  await rename(root, selected);
+  for (const artifact of artifacts)
+    artifact.path = artifact.path.replace('recipe-run/', 'recipe-runs/old/');
+  const manifest = {
+    version: 1,
+    standalone: [{ label: 'Retained old capture', file: 'recipe-runs/old/proof.png' }],
+  };
+  await writeFile(path.join(taskDir, 'artifacts/evidence-manifest.json'), JSON.stringify(manifest));
+  await writeFile(
+    path.join(taskDir, 'artifacts/latest-valid-recipe-run.json'),
+    JSON.stringify({ version: 1, relativeArtifactRoot: 'recipe-runs/old' }),
+  );
+  assert.equal(run.recordedEvidenceContractVersion, undefined);
+  const effective = await readEvidenceManifest(run);
+  assert.deepEqual(effective, manifest);
+  const inventory = await buildPackageEvidenceManifest(taskDir, artifacts, effective, 0);
+  const prepared = {
+    id: 'old-selected',
+    evidenceManifest: inventory,
+    selectedEvidenceKeys: ['artifacts/recipe-runs/old/proof.png'],
+  } as unknown as ReadyGatePrPackage;
+  prepared.packageHash = computeReadyGatePackageHash(prepared);
+  assert.equal(
+    (await readGateRecordedEvidenceSources(run, prepared))[0]?.artifactPrefix,
+    'artifacts/recipe-runs/old/',
+  );
+  run.recordedEvidenceContractVersion = 1;
+  await assert.rejects(readEvidenceManifest(run), /Update the recipe runtime/);
+});
+
 test('an attempt without publication media freezes its closure without selecting prior failed packages', async (t) => {
   const { taskDir, root, run, artifacts } = await fixture(t);
   await rm(path.join(taskDir, 'artifacts/evidence-manifest.json'));
@@ -258,6 +292,7 @@ test('an attempt without publication media freezes its closure without selecting
 
 test('the gate reads only the frozen selected attempt and rejects changed pointer bytes', async (t) => {
   const { taskDir, root, run, artifacts } = await fixture(t);
+  run.recordedEvidenceContractVersion = 1;
   const selected = path.join(taskDir, 'artifacts/recipe-runs/current');
   await mkdir(path.dirname(selected), { recursive: true });
   await rename(root, selected);
@@ -468,6 +503,7 @@ for (const location of ['promoted', 'inherited'] as const) {
       : 'an inherited manifest cannot replace a missing selected attempt manifest',
     async (t) => {
       const { taskDir, root, run, artifacts } = await fixture(t);
+      run.recordedEvidenceContractVersion = 1;
       const promotedRoot = path.join(taskDir, 'artifacts/recipe-runs/retained');
       await mkdir(path.dirname(promotedRoot), { recursive: true });
       await rename(root, promotedRoot);

@@ -778,6 +778,7 @@ export interface ResolvedPublicationManifest {
   sourcePath: string;
   sourceBytes: string;
   declarationSources?: Array<{ file: string; bytes: string }>;
+  selectedArtifactRoot?: string;
   pointerPath?: string;
   pointerBytes?: string;
 }
@@ -797,28 +798,14 @@ const localPublicationManifestReadIO: PublicationManifestReadIO = {
   },
 };
 
-/** Preserve presentation and non-recipe captures without selecting another execution. */
-async function includePublicationDeclarations(
-  selected: EvidenceManifest,
+async function assertPublicationManifestOwnership(
+  manifest: EvidenceManifest,
   artifactRoot: string,
   artifactsDir: string,
   io: PublicationManifestReadIO,
-): Promise<{
-  manifest: EvidenceManifest;
-  declarationSources?: ResolvedPublicationManifest['declarationSources'];
-}> {
-  const declarationPath = path.join(artifactsDir, 'evidence-manifest.json');
-  const bytes = await io.readText(declarationPath);
-  if (bytes === null) return { manifest: selected };
-  const declaration = await readEvidenceManifestFile(declarationPath, null, bytes);
-  if (!declaration)
-    throw new RecordedEvidenceReadError(
-      'evidence-package-unverifiable',
-      'The publication declarations are invalid. Correct evidence-manifest.json.',
-    );
-
+): Promise<void> {
   const retainedManifests = new Map<string, Promise<string | null>>();
-  for (const file of evidenceManifestArtifactPaths(declaration.manifest)) {
+  for (const file of evidenceManifestArtifactPaths(manifest)) {
     const relativeFile = file.slice('artifacts/'.length);
     for (
       let directory = path.posix.dirname(relativeFile);
@@ -860,6 +847,29 @@ async function includePublicationDeclarations(
       if (directory === '.') break;
     }
   }
+}
+
+/** Preserve presentation and non-recipe captures without selecting another execution. */
+async function includePublicationDeclarations(
+  selected: EvidenceManifest,
+  artifactRoot: string,
+  artifactsDir: string,
+  io: PublicationManifestReadIO,
+): Promise<{
+  manifest: EvidenceManifest;
+  declarationSources?: ResolvedPublicationManifest['declarationSources'];
+}> {
+  const declarationPath = path.join(artifactsDir, 'evidence-manifest.json');
+  const bytes = await io.readText(declarationPath);
+  if (bytes === null) return { manifest: selected };
+  const declaration = await readEvidenceManifestFile(declarationPath, null, bytes);
+  if (!declaration)
+    throw new RecordedEvidenceReadError(
+      'evidence-package-unverifiable',
+      'The publication declarations are invalid. Correct evidence-manifest.json.',
+    );
+
+  await assertPublicationManifestOwnership(declaration.manifest, artifactRoot, artifactsDir, io);
   const declaredFiles = new Set(evidenceManifestArtifactPaths(declaration.manifest));
   return {
     manifest: {
@@ -879,17 +889,18 @@ async function includePublicationDeclarations(
   };
 }
 
-interface EvidenceManifestCandidatePath {
+export interface EvidenceManifestCandidatePath {
   manifestPath: string;
   artifactRoot: string | null;
   pointerBytes?: string;
 }
 
-async function evidenceManifestCandidatePaths(
+/** Locate the selected recording without applying publication admission to retention. */
+export async function readSelectedPublicationManifestReference(
   taskDir: string,
-  io: PublicationManifestReadIO,
-  artifactsDir: string,
-): Promise<EvidenceManifestCandidatePath[]> {
+  io: PublicationManifestReadIO = localPublicationManifestReadIO,
+  artifactsDir = path.join(taskDir, 'artifacts'),
+): Promise<EvidenceManifestCandidatePath | null> {
   let promotedArtifactRoot: string | null = null;
   let pointerBytes: string | undefined;
   const pointerPath = path.join(artifactsDir, 'latest-valid-recipe-run.json');
@@ -911,22 +922,44 @@ async function evidenceManifestCandidatePaths(
         'evidence-selection-invalid',
         'The selected recipe attempt pointer is invalid.',
       );
-    return [
-      {
-        manifestPath: path.join(artifactsDir, promotedArtifactRoot, 'evidence-manifest.json'),
-        artifactRoot: promotedArtifactRoot,
-        pointerBytes,
-      },
-    ];
+    return {
+      manifestPath: path.join(artifactsDir, promotedArtifactRoot, 'evidence-manifest.json'),
+      artifactRoot: promotedArtifactRoot,
+      pointerBytes,
+    };
   }
+  return null;
+}
+
+/** The mirror reads current references even when a declaration refuses publication. */
+export async function readSelectedPublicationManifest(
+  taskDir: string,
+  io: PublicationManifestReadIO = localPublicationManifestReadIO,
+): Promise<EvidenceManifest | null> {
+  const selected = await readSelectedPublicationManifestReference(taskDir, io);
+  if (!selected) return null;
+  const bytes = await io.readText(selected.manifestPath);
+  return bytes === null
+    ? null
+    : ((await readEvidenceManifestFile(selected.manifestPath, selected.artifactRoot, bytes))
+        ?.manifest ?? null);
+}
+
+function evidenceManifestCandidatePaths(
+  taskDir: string,
+  artifactsDir: string,
+  selected: EvidenceManifestCandidatePath | null,
+  contractVersion: number,
+): EvidenceManifestCandidatePath[] {
+  if (contractVersion !== 0 && selected) return [selected];
 
   const candidates: EvidenceManifestCandidatePath[] = [
     { manifestPath: path.join(artifactsDir, 'evidence-manifest.json'), artifactRoot: null },
   ];
+  if (selected) candidates.push(selected);
   candidates.push({
     manifestPath: path.join(taskDir, 'inputs', 'inherited', 'evidence-manifest.json'),
-    artifactRoot: promotedArtifactRoot,
-    pointerBytes,
+    artifactRoot: selected?.artifactRoot ?? null,
   });
 
   const seen = new Set<string>();
@@ -942,26 +975,48 @@ export async function resolvePublicationManifest(
   taskDir: string,
   io: PublicationManifestReadIO = localPublicationManifestReadIO,
   artifactsDir = path.join(taskDir, 'artifacts'),
+  contractVersion = 1,
 ): Promise<ResolvedPublicationManifest | null> {
-  for (const { manifestPath, artifactRoot, pointerBytes } of await evidenceManifestCandidatePaths(
+  if (contractVersion !== 0 && contractVersion !== 1)
+    throw new RecordedEvidenceReadError(
+      'evidence-contract-unsupported',
+      'The recorded run evidence contract is unsupported.',
+    );
+  const selected = await readSelectedPublicationManifestReference(taskDir, io, artifactsDir).catch(
+    (error) => {
+      if (contractVersion !== 0 || !(error instanceof RecordedEvidenceReadError)) throw error;
+      // Older records retain their declaration; this never waives version 1 admission.
+      console.warn(`[run-completion] pre-cutover selection: ${error.message}`);
+      return null;
+    },
+  );
+  for (const { manifestPath, artifactRoot, pointerBytes } of evidenceManifestCandidatePaths(
     taskDir,
-    io,
     artifactsDir,
+    selected,
+    contractVersion,
   )) {
     const sourceBytes = await io.readText(manifestPath);
     if (sourceBytes === null) {
-      if (pointerBytes !== undefined)
+      if (pointerBytes !== undefined && contractVersion !== 0)
         throw new RecordedEvidenceReadError(
           'evidence-selection-missing',
-          'The selected recipe attempt has no evidence-manifest.json. Re-run the recipe.',
+          'The selected recipe attempt has no evidence-manifest.json. Update the recipe runtime and re-run the recipe.',
         );
       continue;
     }
     const resolved = await readEvidenceManifestFile(manifestPath, artifactRoot, sourceBytes);
-    if (!resolved && pointerBytes !== undefined)
+    if (!resolved && pointerBytes !== undefined && contractVersion !== 0)
       throw new RecordedEvidenceReadError(
         'evidence-package-unverifiable',
         'The selected recipe attempt evidence-manifest.json is invalid. Re-run the recipe.',
+      );
+    if (resolved && !artifactRoot && selected?.artifactRoot)
+      await assertPublicationManifestOwnership(
+        resolved.manifest,
+        selected.artifactRoot,
+        artifactsDir,
+        io,
       );
     const declarations =
       resolved && artifactRoot
@@ -972,8 +1027,12 @@ export async function resolvePublicationManifest(
           ...resolved,
           ...declarations,
           sourcePath: path.relative(taskDir, manifestPath).split(path.sep).join('/'),
-          ...(artifactRoot
-            ? { pointerPath: 'artifacts/latest-valid-recipe-run.json', pointerBytes }
+          ...(selected
+            ? {
+                selectedArtifactRoot: selected.artifactRoot!,
+                pointerPath: 'artifacts/latest-valid-recipe-run.json',
+                pointerBytes: selected.pointerBytes,
+              }
             : {}),
         }
       : null;
@@ -983,7 +1042,14 @@ export async function resolvePublicationManifest(
 
 export async function readEvidenceManifest(run: Run): Promise<EvidenceManifest | null> {
   return run.taskFile
-    ? ((await resolvePublicationManifest(path.dirname(run.taskFile)))?.manifest ?? null)
+    ? ((
+        await resolvePublicationManifest(
+          path.dirname(run.taskFile),
+          undefined,
+          undefined,
+          run.recordedEvidenceContractVersion ?? 0,
+        )
+      )?.manifest ?? null)
     : null;
 }
 

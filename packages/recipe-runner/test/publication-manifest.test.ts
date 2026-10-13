@@ -158,3 +158,21 @@ test('a host cannot register a second publication-manifest producer', async (t) 
     /owned by the recipe engine/,
   );
 });
+
+test('the shared producer keeps full-run recording preference and every segment', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'preferred-recording-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const writer = new JsonArtifactWriter(root);
+  writer.register({ path: 'videos/first.mp4', type: 'video', record: 'full_run' });
+  writer.register({ path: 'videos/second.mp4', type: 'video', record: 'full_run' });
+  writer.register({ path: 'proof.png', type: 'screenshot' });
+  await writer.writeEvidenceManifest({ schemaVersion: 2, recipeRunId: 'execution', criteria: [] });
+  const manifest: EvidenceManifest = JSON.parse(
+    await readFile(path.join(root, 'evidence-manifest.json'), 'utf8'),
+  );
+  assert.deepEqual(manifest.videos, { after: 'videos/first.mp4', preferred: true });
+  assert.deepEqual(
+    manifest.standalone?.map((entry) => entry.file),
+    ['videos/second.mp4', 'proof.png'],
+  );
+});

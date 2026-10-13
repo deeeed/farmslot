@@ -51,6 +51,7 @@ import {
 import { PR_BODY_ARTIFACT, PR_PROSE_ARTIFACT } from './pr-body-render.js';
 import {
   type PublicationManifestReadIO,
+  readSelectedPublicationManifest,
   resolvePublicationManifest,
 } from './publication-artifacts.js';
 import {
@@ -182,10 +183,17 @@ async function workerEvidenceManifestPaths(
         retainedDeclaration,
       )
     : [];
-  const manifest = await retainedEvidenceManifest(path.dirname(workerArtifactsDir), {
-    readText: async (file) =>
-      (await slotFileExists(vars, file)) ? slotReadFile(vars, file) : null,
-  });
+  let manifest: EvidenceManifest | null;
+  try {
+    manifest = await readSelectedPublicationManifest(path.dirname(workerArtifactsDir), {
+      readText: async (file) =>
+        (await slotFileExists(vars, file)) ? slotReadFile(vars, file) : null,
+    });
+  } catch (error) {
+    if (!(error instanceof RecordedEvidenceReadError)) throw error;
+    console.warn(`[artifact-mirror] ${error.code}: ${error.message}`);
+    manifest = null;
+  }
   // Retention includes explicitly referenced history; it does not select publication proof.
   return [
     ...new Set([
