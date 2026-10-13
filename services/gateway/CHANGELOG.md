@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Run fixture sync directly on the gateway for remote slots so tmux setup cannot terminate it before its configured deadline; retain sync logs and cancellation.
+- Keep browser health within its existing budget by proving the recorded PID owns the CDP listener; check global listener uniqueness only when recovering a stale or missing PID.
 
 - Release settled-run capability leases independently of workspace holds, retry identified cleanup holds safely, and free preserved workspaces on release-mode parks while retaining orchestration-only pauses.
 

@@ -178,7 +178,14 @@ function runBrowserProbe(
     listeners,
     shell = ['/bin/sh', '-c'],
     pidDir = '.',
-  }: { pidFile?: string; listeners: number[]; shell?: string[]; pidDir?: string },
+    refuseHostScan = false,
+  }: {
+    pidFile?: string;
+    listeners: number[];
+    shell?: string[];
+    pidDir?: string;
+    refuseHostScan?: boolean;
+  },
 ) {
   const dir = mkdtempSync(path.join(tmpdir(), 'browser-probe-'));
   try {
@@ -186,7 +193,37 @@ function runBrowserProbe(
     mkdirSync(bin);
     writeFileSync(
       path.join(bin, 'lsof'),
-      `#!/bin/sh\nprintf '%s\\n' ${listeners.map(String).join(' ')}\n`,
+      [
+        '#!/bin/sh',
+        'intersect=0; pid=; port=; listen=0',
+        'while [ "$#" -gt 0 ]; do',
+        '  case "$1" in',
+        '    -a) intersect=1 ;;',
+        '    -p) shift; pid="$1" ;;',
+        '    -iTCP:*) port="${1#-iTCP:}" ;;',
+        '    -sTCP:LISTEN) listen=1 ;;',
+        '  esac',
+        '  shift',
+        'done',
+        ...(refuseHostScan
+          ? [
+              'if [ "$intersect" != 1 ] || [ -z "$pid" ]; then',
+              '  echo "host-wide listener scan exceeded its budget" >&2',
+              '  exit 124',
+              'fi',
+              'test "$port" = 7666 && test "$listen" = 1 || exit 1',
+            ]
+          : []),
+        'matched=0',
+        `for listener in ${listeners.map(String).join(' ')}; do`,
+        '  if [ -z "$pid" ] || [ "$listener" = "$pid" ]; then',
+        '    printf "%s\\n" "$listener"',
+        '    matched=1',
+        '  fi',
+        'done',
+        'test "$matched" = 1',
+        '',
+      ].join('\n'),
     );
     writeFileSync(
       path.join(bin, 'capture-helper'),
@@ -235,7 +272,7 @@ test('browser probes never run capture-helper', () => {
   assert.equal(probe.captureHelperRan, false);
 });
 
-test('buildBrowserPidFileOwnsCdpCommand accepts only the live CDP listener', () => {
+test('buildBrowserPidFileOwnsCdpCommand checks the recorded live PID owns its CDP listener', () => {
   const check = (pidFile: string, listeners: number[], port: number | null = 7666) =>
     runBrowserProbe(
       (dir) => buildBrowserPidFileOwnsCdpCommand(path.join(dir, 'browser.pid'), port),
@@ -244,12 +281,39 @@ test('buildBrowserPidFileOwnsCdpCommand accepts only the live CDP listener', () 
   assert.equal(check(String(livePid), [livePid]), 0);
   assert.notEqual(check(String(livePid), [livePid + 1]), 0);
   assert.notEqual(check(String(livePid), []), 0);
-  assert.notEqual(check(String(livePid), [livePid, livePid + 1]), 0);
+  assert.equal(check(String(livePid), [livePid, livePid + 1]), 0);
   assert.notEqual(check(String(deadPid), [deadPid]), 0);
   // Without a CDP port only liveness can be proven.
   assert.equal(check(String(livePid), [], null), 0);
   assert.notEqual(check(String(deadPid), [], null), 0);
 });
+
+for (const [name, build] of [
+  [
+    'health',
+    (dir: string) => buildBrowserPidFileOwnsCdpCommand(path.join(dir, 'browser.pid'), 7666),
+  ],
+  ['watch', (dir: string) => buildBrowserNodeWatchCommand(path.join(dir, 'browser.pid'), '7666')],
+] as const) {
+  test(`known browser ${name} succeeds when a host-wide scan cannot finish`, () => {
+    const healthy = runBrowserProbe(build, {
+      pidFile: String(livePid),
+      listeners: [livePid],
+      refuseHostScan: true,
+    });
+    assert.equal(healthy.status, 0);
+    assert.equal(healthy.browserPid, String(livePid), 'keep the recorded browser owner');
+    assert.equal(healthy.chromiumPid, null, 'healthy ownership needs no recovery');
+    assert.equal(healthy.captureHelperRan, false);
+    const foreign = runBrowserProbe(build, {
+      pidFile: String(livePid),
+      listeners: [livePid + 1],
+      refuseHostScan: true,
+    });
+    assert.notEqual(foreign.status, 0, 'PID liveness cannot replace CDP ownership');
+    assert.equal(foreign.browserPid, String(livePid));
+  });
+}
 
 test('buildBrowserPidRecoveryCommand rewrites browser pid files from the CDP listener', () => {
   // The same pid twice is an IPv4 and an IPv6 listener of one browser.

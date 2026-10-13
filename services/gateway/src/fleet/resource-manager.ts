@@ -565,7 +565,9 @@ export function buildBrowserPidFileOwnsCdpCommand(pidPath: string, cdpPort: numb
 
 /**
  * Shell functions proving that pid `$1` is alive and, when the slot has a CDP
- * port, is the only process listening on it. Liveness used to be proven with
+ * port, owns a listener on it. The known PID must narrow the kernel query;
+ * discovering a missing owner separately still requires a unique listener.
+ * Liveness used to be proven with
  * `capture-helper resolve`, which goes through ScreenCaptureKit. macOS keys
  * ScreenCaptureKit clients by executable path, so each probe exiting stopped
  * every capture-helper recording on the machine (SCStreamErrorDomain -3805).
@@ -582,11 +584,15 @@ function buildBrowserOwnsCdpFunction(cdpPort: number | null): string {
     `    echo "lsof is required to prove which process holds CDP :${cdpPort}" >&2`,
     '    return 127',
     '  fi',
-    `  "$lsof_bin" -nP -iTCP:${cdpPort} -sTCP:LISTEN -t 2>/dev/null | sort -u`,
+    '  if [ -n "${1:-}" ]; then',
+    `    "$lsof_bin" -nP -a -p "$1" -iTCP:${cdpPort} -sTCP:LISTEN -t 2>/dev/null | sort -u`,
+    '  else',
+    `    "$lsof_bin" -nP -iTCP:${cdpPort} -sTCP:LISTEN -t 2>/dev/null | sort -u`,
+    '  fi',
     '}',
     'browser_owns_cdp() {',
     '  kill -0 "$1" 2>/dev/null || return 1',
-    '  [ "$(cdp_listeners)" = "$1" ]',
+    '  [ "$(cdp_listeners "$1")" = "$1" ]',
     '}',
   ].join('\n');
 }

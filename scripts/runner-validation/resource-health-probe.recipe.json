@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Browser resource health ownership",
+  "description": "Manual public-RPC proof with a real disposable TCP listener and a controlled host-wide census refusal. Checks health, capability acquisition, retaining release and the former global-query negative control.",
+  "workflow": {
+    "entry": "health",
+    "nodes": {
+      "health": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks scripts/runner-validation/gateway/resource-health-probe.mts",
+        "timeout_ms": 120000,
+        "intent": "Verify PID-scoped health and refuse the former host-wide lookup",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
