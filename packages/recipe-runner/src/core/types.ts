@@ -18,6 +18,8 @@ export type RecipeRunStatus = 'pass' | 'fail' | 'unknown';
 export type RecipeVideoRecordingMode = 'off' | 'full-run';
 
 export interface RecipeRunRequest {
+  /** Trusted host closeout, after recording stops and before package publication/validation. */
+  finalizeArtifacts?(context: RecipeArtifactFinalization): Promise<void>;
   /** Cancels execution; authored teardown runs without the cancelled signal. */
   signal?: AbortSignal;
   recipePath?: string;
@@ -113,6 +115,19 @@ export interface RecipeRunResult {
   claims: RecipeClaimLedger;
   /** The run video's recording stream stopped early; the partial video was kept. */
   captureInterruption?: RecipeRunCaptureInterruption;
+}
+
+/** The engine remains the only summary/manifest writer. Hosts register sidecars before sealing. */
+export interface RecipeArtifactFinalization {
+  readonly artifactsDir: string;
+  readonly result: RecipeRunResult;
+  readonly summary: Readonly<SummaryDocument> & Readonly<Record<string, unknown>>;
+  readonly trace: readonly TraceEntry[];
+  artifacts(): RecipeArtifactManifestEntry[];
+  register(entry: RecipeArtifactManifestEntry): void;
+  /** Add host metadata; engine-owned fields cannot be replaced. */
+  annotateSummary(metadata: Readonly<Record<string, unknown>>): void;
+  annotateManifest(metadata: Readonly<Record<string, unknown>>): void;
 }
 
 export interface RecipeRunCaptureInterruption extends RecipeRecordingInterruption {

@@ -2188,7 +2188,13 @@ describe('run', () => {
           '9444',
           '--json',
         ],
-        runOptions,
+        {
+          ...runOptions,
+          beforeResult: async () => {
+            assert.equal(fs.existsSync(path.join(artifacts, 'summary.json')), false);
+            assert.equal(fs.existsSync(path.join(artifacts, 'artifact-manifest.json')), false);
+          },
+        },
       ),
     );
     assert.equal(run.value, 0, run.stderr.join('\n'));
@@ -2207,7 +2213,28 @@ describe('run', () => {
       ['ping:running', 'ping:passed'],
     );
     const result = envelope.result as { artifactManifestPath: string };
-    assert.deepEqual(calls.performanceFinalized, [result.artifactManifestPath]);
+    const inventory = JSON.parse(fs.readFileSync(result.artifactManifestPath, 'utf8'));
+    for (const file of [
+      'execution-provenance.json',
+      'product-provenance.json',
+      'observer-artifacts.json',
+      'network/run-summary.json',
+      'report.md',
+    ]) {
+      assert.ok(
+        inventory.artifacts.some((entry: { path: string }) => entry.path === file),
+        file,
+      );
+      assert.equal(fs.existsSync(path.join(artifacts, file)), true, file);
+    }
+    assert.deepEqual(inventory.recovered, []);
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(artifacts, 'summary.json'), 'utf8')).mutations,
+      [],
+    );
+    assert.deepEqual(calls.performanceFinalized, [
+      path.join(path.dirname(result.artifactManifestPath), 'observer-artifacts.json'),
+    ]);
     const summary = JSON.parse(
       fs.readFileSync(path.join(artifacts, 'network/run-summary.json'), 'utf8'),
     );

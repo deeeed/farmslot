@@ -55,7 +55,6 @@ import {
   activateRecipeRuntimeEnvironment,
   emitHealViolation,
   executeWithHealBounds,
-  persistRunEffects,
   preflightRecipe,
   type PreparedRecipeExecution,
   prepareHeal,
@@ -540,6 +539,11 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
       const started = await startRunObservers(adapter, target, artifactsDir);
       observers = started;
       let executionResult;
+      callRuntimeOptions.finalizeArtifacts = async (context) => {
+        await started.finalize(context);
+        observers = undefined;
+        await commandOptions.beforeResult?.();
+      };
       try {
         executionResult = await executeWithHealBounds(
           () => {
@@ -561,7 +565,7 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
           state,
         );
       } catch (error) {
-        await started.abandon();
+        await observers?.abandon();
         observers = undefined;
         if (error instanceof ProvenanceDriftError) {
           const failure = provenanceFailure(error);
@@ -592,10 +596,6 @@ export async function handleCall<TMutation, TAllowlist extends ConsoleAllowlist>
         throw error;
       }
       const { result, violation } = executionResult;
-      await started.finalize(result.artifactManifestPath);
-      observers = undefined;
-      await commandOptions.beforeResult?.();
-      persistRunEffects(result.summaryPath, result.artifactManifestPath, state);
       if (violation !== null) {
         const conciseFailure = violation.originalError
           ? conciseFailureForHuman(violation.originalError)

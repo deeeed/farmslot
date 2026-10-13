@@ -5,17 +5,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type { AdapterBrowser } from '@farmslot/adapter-sdk';
-import {
-  parseRecipeTemplate,
-  type RecipeRecordingInterruption,
-  recipeTraceEntries,
-} from '@farmslot/protocol';
+import { parseRecipeTemplate, type RecipeRecordingInterruption } from '@farmslot/protocol';
 import {
   CAPTURE_EVIDENCE_INCOMPLETE,
   hasCaptureInterruptionMeasurements,
   isCaptureInterruptedEntry,
   onlyCaptureInterrupted,
-  type RecipeRunCaptureInterruption,
+  type RecipeArtifactFinalization,
 } from '@farmslot/recipe-runner';
 
 import { harnessAdapter } from './adapters.js';
@@ -27,22 +23,20 @@ export interface RunReport {
   preview: string[];
 }
 
-export function writeRunReport(result: {
-  summaryPath: string;
-  tracePath: string;
-  artifactManifestPath: string;
-}): RunReport {
-  const summaryPath = String(result.summaryPath);
-  const tracePath = String(result.tracePath);
-  const artifactManifestPath = String(result.artifactManifestPath);
-  const artifactsDir = path.dirname(summaryPath);
-  const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
-  const trace = JSON.parse(fs.readFileSync(tracePath, 'utf8'));
-  const entries = recipeTraceEntries(trace) ?? [];
-  const lines = renderRunReport(summary, entries, interruptedVideo(artifactManifestPath));
-  const reportPath = path.join(artifactsDir, 'report.md');
+export function writeRunReport(context: RecipeArtifactFinalization): RunReport {
+  const lines = renderRunReport(
+    context.summary,
+    [...context.trace],
+    interruptedVideo(context.artifacts()),
+  );
+  const reportPath = path.join(context.artifactsDir, 'report.md');
   fs.writeFileSync(reportPath, `${lines.join('\n')}\n`);
-  indexRunReportArtifact(artifactManifestPath);
+  context.register({
+    path: 'report.md',
+    type: 'report',
+    label: 'Human run report',
+    category: 'system',
+  });
   return {
     path: reportPath,
     preview: lines
@@ -52,28 +46,21 @@ export function writeRunReport(result: {
   };
 }
 
-/**
- * The report a failed run still writes when its recording was interrupted, whatever else
- * failed, so the partial video is linked; other violations write none.
- */
-export function writeViolationReport(
-  result: Parameters<typeof writeRunReport>[0] & {
-    captureInterruption?: RecipeRunCaptureInterruption;
-  },
-): RunReport | undefined {
-  return result.captureInterruption ? writeRunReport(result) : undefined;
+/** Keep the partial-video report on a violated run whose recording was interrupted. */
+export function writeViolationReport(context: RecipeArtifactFinalization): RunReport | undefined {
+  return context.result.captureInterruption ? writeRunReport(context) : undefined;
 }
 
 // `browser` is the browser the run drove, bound by runRecipe while the run's
 // ports were active (see executedBrowser); it is never re-derived here, after
 // the run environment was restored.
 export function indexProductProvenanceArtifact(
-  artifactManifestPath: string,
+  context: RecipeArtifactFinalization,
   target: string,
   adapter: string,
   browser: AdapterBrowser | null = null,
 ): void {
-  const artifactsDir = path.dirname(artifactManifestPath);
+  const { artifactsDir } = context;
   let gitRef = 'unknown';
   let branch = 'unknown';
   let dirty = true;
@@ -113,35 +100,21 @@ export function indexProductProvenanceArtifact(
     `${JSON.stringify(provenance, null, 2)}\n`,
   );
 
-  let manifest: unknown;
-  try {
-    manifest = JSON.parse(fs.readFileSync(artifactManifestPath, 'utf8'));
-  } catch {
-    return;
-  }
-  if (!isRecord(manifest)) return;
-  const artifacts = Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
-  manifest.artifacts = [
-    ...artifacts.filter(
-      (artifact) => !isRecord(artifact) || artifact.path !== 'product-provenance.json',
-    ),
-    {
-      path: 'product-provenance.json',
-      type: 'json',
-      label: 'Product checkout provenance',
-      category: 'system',
-      metadata: {
-        adapter,
-        git_ref: gitRef,
-        branch,
-        dirty,
-        ...(browser?.boundTo && browser.boundTo !== 'none'
-          ? (harnessAdapter(adapter).run?.browserProvenance?.(browser) ?? {})
-          : {}),
-      },
+  context.register({
+    path: 'product-provenance.json',
+    type: 'json',
+    label: 'Product checkout provenance',
+    category: 'system',
+    metadata: {
+      adapter,
+      git_ref: gitRef,
+      branch,
+      dirty,
+      ...(browser?.boundTo && browser.boundTo !== 'none'
+        ? (harnessAdapter(adapter).run?.browserProvenance?.(browser) ?? {})
+        : {}),
     },
-  ];
-  fs.writeFileSync(artifactManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  });
 }
 
 // A node's cdp_port, literal or "{{params.name}}" resolved from the run's
@@ -217,10 +190,8 @@ export function executedBrowser(
 
 // The video the recorder kept after its stream stopped, with the interruption.
 function interruptedVideo(
-  artifactManifestPath: string,
+  artifacts: ReturnType<RecipeArtifactFinalization['artifacts']>,
 ): { path: string; interruption: RecipeRecordingInterruption } | undefined {
-  const manifest = readArtifactManifest(artifactManifestPath);
-  const artifacts = Array.isArray(manifest?.artifacts) ? manifest.artifacts : [];
   for (const artifact of artifacts) {
     if (!isRecord(artifact) || typeof artifact.path !== 'string') continue;
     const { interruption } = artifact;
@@ -350,26 +321,4 @@ function formatDuration(ms: number): string {
   if (!Number.isFinite(ms) || ms <= 0) return '0ms';
   if (ms < 1000) return `${Math.round(ms)}ms`;
   return `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`;
-}
-
-// The run's artifact manifest; undefined when it is missing or malformed, so there is
-// nothing to index the report into or link from it.
-function readArtifactManifest(artifactManifestPath: string): Record<string, unknown> | undefined {
-  try {
-    const manifest: unknown = JSON.parse(fs.readFileSync(artifactManifestPath, 'utf8'));
-    return isRecord(manifest) ? manifest : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function indexRunReportArtifact(artifactManifestPath: string): void {
-  const manifest = readArtifactManifest(artifactManifestPath);
-  if (!manifest) return;
-  const artifacts = Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
-  manifest.artifacts = [
-    ...artifacts.filter((artifact) => !isRecord(artifact) || artifact.path !== 'report.md'),
-    { path: 'report.md', type: 'report', label: 'Human run report', category: 'system' },
-  ];
-  fs.writeFileSync(artifactManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 }

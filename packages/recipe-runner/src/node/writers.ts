@@ -94,8 +94,13 @@ export class JsonArtifactWriter implements ArtifactWriter {
     return [...this.#entries];
   }
 
-  async write(status: RecipeRunStatus, runner?: RecipeRunnerProvenance): Promise<string> {
+  async write(
+    status: RecipeRunStatus,
+    runner?: RecipeRunnerProvenance,
+    metadata: Readonly<Record<string, unknown>> = {},
+  ): Promise<string> {
     return writeJsonWithinRoot(this.#artifactsDir, 'artifact-manifest.json', {
+      ...metadata,
       version: 1,
       runStatus: status,
       ...(runner ? { provenance: { runner } } : {}),

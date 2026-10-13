@@ -18,6 +18,7 @@ import {
   isCaptureInterruptedEntry,
   loneCaptureInterruption,
   readRunTraceEntries,
+  type RecipeArtifactFinalization,
   type RecipeLibrarySource,
   type RecipeRunner,
   type RecipeRunRequest,
@@ -83,6 +84,11 @@ export type RecipeEngineRunOptions = RecipeRunOptions & {
   cli?: CommandOptions;
   /** Read-only planning/conformance validates authority without publishing execution claims. */
   readOnly?: boolean;
+  /** Command-specific artifacts join the engine package before its final validation. */
+  finalizeArtifacts?(
+    context: RecipeArtifactFinalization,
+    evidence: RecipeRunEvidence,
+  ): Promise<void>;
 };
 
 export interface PreparedRecipeExecution {
@@ -140,44 +146,71 @@ export async function runRecipe<TMutation, TAllowlist extends ConsoleAllowlist>(
     throw new ProvenanceDriftError(provenancePath, preExecuteDrift);
   }
   const diagnosticBaseline = await beginRunDiagnostics(adapter, projectRoot);
-  let result: RecipeRunResult | undefined;
-  let executionError: unknown;
-  try {
-    result = await runner.run(runRequest);
-  } catch (error) {
-    executionError = error;
-  } finally {
-    // Always clear a HUD step the engine left on-device (a failed run strands
-    // the FAIL banner). Best-effort — never masks the run's real outcome.
+  let evidence: RecipeRunEvidence | undefined;
+  let closedRuntime = false;
+  let recordedEnd = false;
+  const closeRuntime = async () => {
+    if (closedRuntime) return;
+    closedRuntime = true;
     const run = harnessAdapter(adapter).run;
     if (run?.teardown) {
       const teardown = () => run.teardown!(projectRoot, recipeRunEnv(adapter, runtimeOptions));
       await (runtimeOptions.signal ? withRecipeCleanup(teardown) : teardown());
     }
+  };
+  const recordEnd = async (context?: RecipeArtifactFinalization) => {
+    recordedEnd = true;
+    const end = await captureExecutionProvenance(provenanceInput, 'end');
+    provenanceSnapshots.push(end);
+    const endDrift = executionProvenanceDrift(provenanceSnapshots[0]!, end);
+    const provenancePath = await writeExecutionProvenance(
+      absoluteArtifactsDir,
+      provenanceSnapshots,
+      endDrift,
+      context,
+    );
+    if (endDrift.length > 0) throw new ProvenanceDriftError(provenancePath, endDrift);
+  };
+  let executionError: unknown;
+  let executionFailed = false;
+  let result: RecipeRunResult | undefined;
+  try {
+    result = await runner.run({
+      ...runRequest,
+      finalizeArtifacts: async (context) => {
+        await closeRuntime();
+        await recordEnd(context);
+        evidence = await finishRunDiagnostics(diagnosticBaseline, context, engine.console);
+        persistRunEffects(context, effectsState);
+        const browser = executedBrowser(
+          adapter,
+          projectRoot,
+          context.result.artifactManifestPath,
+          recipeCdpPorts(runRequest),
+        );
+        if (browser) evidence = { ...evidence, browser };
+        await runtimeOptions.finalizeArtifacts?.(context, evidence);
+      },
+    });
+    if (!recordedEnd) throw new Error('Recipe runner did not finalize its artifact package.');
+  } catch (error) {
+    executionFailed = true;
+    executionError = error;
   }
-  const end = await captureExecutionProvenance(provenanceInput, 'end');
-  provenanceSnapshots.push(end);
-  const endDrift = executionProvenanceDrift(provenanceSnapshots[0]!, end);
-  const provenancePath = await writeExecutionProvenance(
-    absoluteArtifactsDir,
-    provenanceSnapshots,
-    endDrift,
-    result?.artifactManifestPath,
-  );
-  if (endDrift.length > 0) {
-    throw new ProvenanceDriftError(provenancePath, endDrift, executionError);
+  await closeRuntime();
+  if (!recordedEnd) {
+    try {
+      await recordEnd();
+    } catch (error) {
+      if (error instanceof ProvenanceDriftError) {
+        throw new ProvenanceDriftError(error.provenancePath, error.drift, executionError);
+      }
+      throw error;
+    }
   }
-  if (executionError !== undefined) throw executionError;
+  if (executionFailed) throw executionError;
   if (!result) throw new Error('Recipe execution returned no result.');
-  const finalized = await finishRunDiagnostics(diagnosticBaseline, result, engine.console);
-  persistRunEffects(finalized.summaryPath, finalized.artifactManifestPath, effectsState);
-  const browser = executedBrowser(
-    adapter,
-    projectRoot,
-    finalized.artifactManifestPath,
-    recipeCdpPorts(runRequest),
-  );
-  return browser ? { ...finalized, browser } : finalized;
+  return { ...result, ...evidence };
 }
 
 /** Resolve and preflight a recipe inside the caller's `activateRecipeRuntimeEnvironment` scope. */
@@ -203,26 +236,14 @@ export async function preflightRecipe<TMutation, TAllowlist extends ConsoleAllow
   return { ...execution, plan };
 }
 
-/** Record the run's recoveries and mutations in its summary and artifact manifest. */
-export function persistRunEffects(
-  summaryPath: string,
-  artifactManifestPath: string,
-  state: HealState,
-): void {
-  for (const filePath of [summaryPath, artifactManifestPath]) {
-    let document: unknown;
-    try {
-      document = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    } catch {
-      document = null;
-    }
-    if (!isRecord(document)) {
-      throw new Error(`Recipe evidence file is not valid JSON: ${filePath}`);
-    }
-    document.recovered = [...state.recovered];
-    document.mutations = state.mutations.map((mutation) => ({ ...mutation }));
-    fs.writeFileSync(filePath, `${JSON.stringify(document, null, 2)}\n`);
-  }
+/** Register recovery/mutation metadata with the engine's single final writer. */
+export function persistRunEffects(context: RecipeArtifactFinalization, state: HealState): void {
+  const metadata = {
+    recovered: [...state.recovered],
+    mutations: state.mutations.map((mutation) => ({ ...mutation })),
+  };
+  context.annotateSummary(metadata);
+  context.annotateManifest(metadata);
 }
 
 async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllowlist>(
@@ -791,11 +812,20 @@ export async function executeWithHealBounds<T extends RecipeRunResult>(
   state: HealState,
 ): Promise<{ result: T; violation: HealBoundViolation | null }> {
   const result = await exec();
-  if (result.status === 'pass' || result.status === 'unknown') return { result, violation: null };
-  // A lone capture interruption is typed; any other failure is classified as usual.
+  return { result, violation: runHealViolation(result, target, state) };
+}
+
+/** Classification is shared with pre-publication report generation; it never changes run facts. */
+export function runHealViolation(
+  result: RecipeRunResult,
+  target: string,
+  state: HealState,
+): HealBoundViolation | null {
+  if (result.status === 'pass' || result.status === 'unknown') return null;
   const interruption = loneCaptureInterruption(result);
-  if (interruption) return { result, violation: captureInterruptedViolation(interruption) };
-  return { result, violation: checkHealBounds(target, readRunFailureText(result), state) };
+  return interruption
+    ? captureInterruptedViolation(interruption)
+    : checkHealBounds(target, readRunFailureText(result), state);
 }
 
 /** Evidence an action produced through a fallback provider (artifact `metadata.fallbackFrom`). */

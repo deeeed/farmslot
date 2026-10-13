@@ -57,19 +57,20 @@ import {
   executeWithHealBounds,
   fallbackMarker,
   healViolationError,
-  persistRunEffects,
   preflightRecipe,
   type PreparedRecipeExecution,
   prepareHeal,
   type RecipeEngine,
   type RecipeEngineRunOptions,
   type RunFallbackEvidence,
+  runHealViolation,
   runRecipe,
 } from '../run-engine.js';
 import { type RunObservers, startRunObservers } from '../run-observers.js';
 import { recipeRunOptionsFromCli } from '../run-options.js';
 import {
   indexProductProvenanceArtifact,
+  type RunReport,
   writeRunReport,
   writeViolationReport,
 } from '../run-report.js';
@@ -573,6 +574,16 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
       observers = started;
       stream.phase('execute');
       let executionResult;
+      let report: RunReport | undefined;
+      runtimeOptions.finalizeArtifacts = async (context, evidence) => {
+        await started.finalize(context);
+        observers = undefined;
+        await commandOptions.beforeResult?.();
+        indexProductProvenanceArtifact(context, target, adapter, evidence.browser ?? null);
+        report = runHealViolation(context.result, target, state)
+          ? writeViolationReport(context)
+          : writeRunReport(context);
+      };
       try {
         executionResult = await executeWithHealBounds(
           // validated.recipeFile, not the raw arg: the arg may be a library recipe NAME
@@ -596,23 +607,13 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
           state,
         );
       } catch (error) {
-        await started.abandon();
+        await observers?.abandon();
         observers = undefined;
         throw error;
       }
       const { result, violation } = executionResult;
-      await started.finalize(result.artifactManifestPath);
-      observers = undefined;
-      await commandOptions.beforeResult?.();
       for (const mutation of state.mutations) stream.mutation(mutation);
       for (const recovery of state.recovered) stream.recovery(recovery);
-      persistRunEffects(result.summaryPath, result.artifactManifestPath, state);
-      indexProductProvenanceArtifact(
-        result.artifactManifestPath,
-        target,
-        adapter,
-        result.browser ?? null,
-      );
       recordRunAcceptance(taskDir, target, result);
       // Evidence an action produced through a fallback provider (for example a
       // screenshot from a second capture path), so an evidence gate sees it here,
@@ -628,7 +629,6 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
         const userAction =
           violation.userAction ??
           `inspect ${shellQuote(result.summaryPath)} and ${shellQuote(result.tracePath)}; fix the application or recipe failure before retrying`;
-        const report = writeViolationReport(result);
         stream.error(healViolationError(violation, userAction));
         if (stream.enabled) {
           stream.complete('fail', violation.exitCode, {
@@ -647,8 +647,8 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
           report?.path,
         );
       }
-      const report = writeRunReport(result);
-      // Listed after the report is indexed, so the human list includes it.
+      if (!report) throw new Error('Recipe run did not finalize its report.');
+      // The engine indexed the report before publishing the package.
       const artifacts = runArtifactInventory(result.artifactManifestPath);
       const exitCode = result.status === 'pass' ? EXIT.ok : EXIT.runtime;
       const failureUserAction = runFailureUserAction(target, result);

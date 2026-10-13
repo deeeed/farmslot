@@ -764,8 +764,67 @@ class DefaultRecipeRunner implements RecipeRunner {
       ...(request.selection ? { recipeSelection: request.selection } : {}),
       ...(request.stopAfterNode !== undefined ? { stopAfterNode: request.stopAfterNode } : {}),
     };
-    const summaryPath = await summaryWriter.write(summary);
-    const artifactManifestPath = await artifactWriter.write(status, this.#runnerProvenance);
+    const summaryPath = path.join(artifactsDir, 'summary.json');
+    const artifactManifestPath = path.join(artifactsDir, 'artifact-manifest.json');
+    const result: RecipeRunResult = {
+      status,
+      summaryPath,
+      tracePath,
+      artifactManifestPath,
+      recipePath,
+      claimsPath,
+      claims,
+      ...(captureInterruption ? { captureInterruption } : {}),
+    };
+    const manifestMetadata: Record<string, unknown> = {};
+    const summaryFields = new Set([
+      ...Object.keys(summary),
+      'runner',
+      'recipeLibraries',
+      'recipeSelection',
+      'stopAfterNode',
+    ]);
+    const manifestFields = new Set(['version', 'runStatus', 'provenance', 'artifacts']);
+    let finalizing = true;
+    const assertFinalizing = () => {
+      if (!finalizing) throw new Error('Recipe artifact finalization has closed.');
+    };
+    const annotate = (
+      target: object,
+      ownedFields: Set<string>,
+      metadata: Readonly<Record<string, unknown>>,
+    ) => {
+      assertFinalizing();
+      for (const key of Object.keys(metadata)) {
+        if (ownedFields.has(key)) throw new Error(`Host metadata cannot replace ${key}.`);
+      }
+      Object.assign(target, metadata);
+    };
+    let finalizationFailed = false;
+    let finalizationError: unknown;
+    try {
+      await request.finalizeArtifacts?.({
+        artifactsDir,
+        result,
+        summary: summary as SummaryDocument & Record<string, unknown>,
+        trace,
+        artifacts: () => artifactWriter.list(),
+        register: (entry) => {
+          assertFinalizing();
+          artifactWriter.register(entry);
+        },
+        annotateSummary: (metadata) => annotate(summary, summaryFields, metadata),
+        annotateManifest: (metadata) => annotate(manifestMetadata, manifestFields, metadata),
+      });
+    } catch (error) {
+      // Retain the completed execution and any registered diagnostics, then surface closeout failure.
+      finalizationFailed = true;
+      finalizationError = error;
+    } finally {
+      finalizing = false;
+    }
+    await summaryWriter.write(summary);
+    await artifactWriter.write(status, this.#runnerProvenance, manifestMetadata);
 
     const packageValidation = validateRecordedEvidencePackage({
       invocation,
@@ -790,6 +849,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       trace,
       summary,
       manifest: {
+        ...manifestMetadata,
         version: 1,
         runStatus: status,
         ...(this.#runnerProvenance ? { provenance: { runner: this.#runnerProvenance } } : {}),
@@ -812,16 +872,8 @@ class DefaultRecipeRunner implements RecipeRunner {
       );
     }
 
-    return {
-      status,
-      summaryPath,
-      tracePath,
-      artifactManifestPath,
-      recipePath,
-      claimsPath,
-      claims,
-      ...(captureInterruption ? { captureInterruption } : {}),
-    };
+    if (finalizationFailed) throw finalizationError;
+    return result;
   }
 
   #createExecutionContext({
