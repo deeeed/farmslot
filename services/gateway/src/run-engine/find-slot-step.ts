@@ -102,6 +102,7 @@ import {
 } from '../tasks/execution-template-catalog.js';
 import { precheckTaskDirCollision } from '../tasks/writer.js';
 
+import { canReplayBranchAffinityDecision, findLatestResolvedDecision } from './decision-replay.js';
 import { BlockedRunError } from './errors.js';
 import { canReconcileReviewQaRun, reviewQaMigrationPatch } from './review-qa-migration.js';
 import { runSupersededSince } from './run-generation.js';
@@ -1134,6 +1135,7 @@ export async function executeFindSlotStep(
           desc,
           actions,
           payload,
+          { canReplay: (prior) => canReplayBranchAffinityDecision(prior, payload) },
         );
 
         if (actionId === 'abort') throw new Error('Aborted: branch-affinity nudge declined');
@@ -1222,8 +1224,9 @@ export async function executeFindSlotStep(
         // to the existing slot-picker / scoring flow below so the engine still dispatches
         // without re-asking.
         if (actionId === 'pick') {
-          const resolvedDecision = getRun(runId)!.decisions.find(
-            (d) => d.type === 'engine_branch_affinity_nudge' && d.resolvedAt,
+          const resolvedDecision = findLatestResolvedDecision(
+            getRun(runId)!.decisions,
+            'branch_affinity_nudge',
           );
           const pickedSlotId =
             (resolvedDecision?.selectionData?.slotId as string | undefined) ?? null;
