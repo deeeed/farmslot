@@ -49,6 +49,7 @@ export interface ProofTraceEntry {
   output?: unknown;
   next?: string;
   cause_class?: string;
+  error_details?: unknown;
 }
 
 const assertionActions = RECIPE_ASSERTION_ACTIONS;
@@ -60,7 +61,6 @@ const controlActions = new Set([
   'call',
   'index_artifacts',
   'assert_exit_code',
-  'assert_file',
   'branch',
   'repeat',
   'set',
@@ -100,6 +100,7 @@ function hasProofExpectation(node: ProofNode): boolean {
   if (node.action === 'assert_output')
     return text(node.contains) || text(node.match) || meaningfulAssertion(node.assert);
   if (node.action === 'assert_json') return meaningfulAssertion(node.assert);
+  if (node.action === 'assert_file') return text(node.path) && text(node.contains);
   return (
     node.action === 'ui.wait_for' &&
     [node.selector, node.test_id, node.testID, node.text, node.expected].some(text)
@@ -145,7 +146,10 @@ export function potentiallyEligibleProof(
   }
   if (node.action === 'ui.wait_for')
     return [...nodes.values()].some((entry) => PROOF_INPUT_ACTIONS.has(entry.action));
-  return node.action === 'assert_json' && typeof node.path === 'string';
+  return (
+    (node.action === 'assert_json' || node.action === 'assert_file') &&
+    typeof node.path === 'string'
+  );
 }
 
 /** All eligible child assertions are retained; the singular API returns the last one. */
@@ -195,6 +199,14 @@ export function executedProofIndices(
       .some((entry) => entry.ok && PROOF_INPUT_ACTIONS.has(entry.action))
       ? [currentIndex]
       : [];
+  if (node.action === 'assert_file') {
+    const observation = current.ok ? current.output : current.error_details;
+    return isRecord(observation) &&
+      hasProofExpectation({ ...observation, action: 'assert_file' }) &&
+      observation.matched === current.ok
+      ? [currentIndex]
+      : [];
+  }
   return typeof node.path === 'string' &&
     artifacts.some((artifact) => artifact.path === node.path && artifact.category === 'proof')
     ? [currentIndex]

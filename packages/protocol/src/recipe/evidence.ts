@@ -89,6 +89,7 @@ export const RECIPE_CLAIM_KINDS = ['acceptance', 'qa-case', 'qa-check'] as const
 export const RECIPE_ASSERTION_ACTIONS: ReadonlySet<string> = new Set([
   'assert_output',
   'assert_json',
+  'assert_file',
   'ui.wait_for',
 ]);
 

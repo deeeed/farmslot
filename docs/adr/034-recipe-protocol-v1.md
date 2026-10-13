@@ -227,7 +227,7 @@ Providers advertise the optional field only after pinning supporting releases. M
 
 ## Amendment 5 (2026-10-13): File-content proof assertions
 
-**Status:** Proposed. **Shipping PR:** Pending.
+**Status:** Accepted, approved 2026-10-13. **Shipping PR:** Pending.
 
 ### Decision
 

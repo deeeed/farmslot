@@ -333,7 +333,7 @@ Live public-CLI proof MUST exercise a real browser control and a real native con
 
 ### Amendment 5: file-content proof assertions
 
-**Status:** Proposed; implementation and publication pending.
+**Status:** Accepted; implementation and publication pending.
 
 #### Public surface
 

@@ -81,7 +81,7 @@ For a log criterion, read the application's log with `command` and follow it wit
 not the command's exit code alone. Navigation and screenshots cannot replace an
 assertion of non-UI state.
 
-File-content claim proof through `assert_file` with `contains` is proposed in
+File-content claim proof through `assert_file` with `contains` is defined in
 [Amendment 5](../reference/recipe-protocol-v1.md#amendment-5-file-content-proof-assertions).
 Until supporting packages ship, use the executed log-read and output-assertion
 pattern. A file's existence alone does not prove its contents.
