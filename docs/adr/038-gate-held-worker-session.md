@@ -244,3 +244,14 @@ The additive `resolveReviewMode` and `ResolveReviewModeOptions` exports belong
 to `@farmslot/review-dispatch`. Gateway and picker consumers share them. There
 is no new CLI flag or harness extension; harnesses inherit the typed selected
 mode and existing session checks.
+
+## Amendment 4: release-mode parks free occupancy (2026-10-13)
+
+Status: Proposed. Lead approved the scope; acceptance follows paired review.
+
+ADR-054's [release-mode amendment](054-run-resource-posture.md#amendment-release-mode-parks-and-terminal-cleanup-2026-10-13)
+uses the existing branch-preservation and restore checks for every release-mode
+park, including monitoring and CI watch. Those runs pause their engine before
+release; publication-gate parks retain their pending decision and gate status.
+Orchestration-only pauses retain occupancy and leases. No runner permission,
+session-recovery or ownership guard changes.

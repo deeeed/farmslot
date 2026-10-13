@@ -152,6 +152,7 @@ interface PreviousSlotStatus {
   readiness?: ReadinessRecord | null;
   releasing_since?: unknown;
   cleanup_release_token?: unknown;
+  cleanup_run_id?: unknown;
   held_reason?: unknown;
 }
 
@@ -512,6 +513,7 @@ export function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus
           cleanup_release_token: prev.cleanup_release_token ?? null,
         }
       : {}),
+    ...(prev.cleanup_run_id ? { cleanup_run_id: prev.cleanup_run_id } : {}),
     ...(phase === 'occupied' && prev.held_reason ? { held_reason: prev.held_reason } : {}),
     ...(r.resources ? { resources: r.resources } : {}),
   };

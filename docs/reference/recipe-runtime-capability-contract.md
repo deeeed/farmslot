@@ -256,6 +256,32 @@ plus a proof plan.
 | `free-slot`           | `parked`; a typed rejection until the run is park-eligible         |
 | `project-default`     | Whatever the lower precedence levels resolve to                    |
 
+### Release parks and terminal cleanup
+
+- A successful release-mode machine park, including `free-slot`, MUST release the
+  run's slot occupancy and capability leases. Monitor and CI-watch runs MUST pause
+  their engine; publication-gate runs retain their pending gate status.
+- Before freeing occupancy, parking MUST confirm worker/provider shutdown,
+  preserve the clean branch and recorded head, and detach its workspace through
+  the existing guarded path. A dirty tree, changed owner, unknown process or failed
+  cleanup MUST produce a refusal or partial park, never a free slot.
+- Orchestration-only pauses MUST retain slot occupancy, worker and leases.
+- Release parks MUST bypass provider keep-warm. Restore MUST reclaim an eligible
+  slot, reattach the preserved branch and reacquire the recorded capability plan
+  before resuming. A new slot occupant MUST remain untouched.
+- Terminal cleanup MUST release only the selected run's capabilities through the
+  registry's provider/process ownership checks. An unrelated workspace blocker
+  MUST NOT defer every capability. A foreign lease or unverifiable provider
+  identity MUST remain protected and report its reason.
+- A deferred terminal workspace cleanup MUST keep a durable cleanup identity and
+  slot epoch. Reconciliation MUST recheck it through the same cleanup owner and
+  use a conditional release. A live owner, changed epoch, unknown identity or
+  in-flight teardown MUST prevent reclamation. Archive MUST NOT erase authority
+  for terminal capability recovery.
+
+The public methods and request formats are unchanged. Clients and harnesses read
+existing slot, lease, park and cleanup outcomes; no new execution path is exposed.
+
 ### Precedence
 
 The effective policy resolves in this order, and the winning level is recorded on

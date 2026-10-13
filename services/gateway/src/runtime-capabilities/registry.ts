@@ -3290,7 +3290,10 @@ export class RuntimeCapabilityRegistry {
     await this.mutate(async () => {
       const snapshot = this.options.store.snapshot();
       const active = snapshot.leases.filter(
-        (lease) => ACTIVE_STATES.has(lease.state) && (!slotIds || slotIds.includes(lease.slotId)),
+        (lease) =>
+          (ACTIVE_STATES.has(lease.state) ||
+            (runsProvider(lease) && this.isFencedOwner(lease.owner.runId, lease.owner.familyId))) &&
+          (!slotIds || slotIds.includes(lease.slotId)),
       );
       const bySlot = new Map<string, RuntimeCapabilityLease[]>();
       for (const lease of active) {
@@ -3340,9 +3343,11 @@ export class RuntimeCapabilityRegistry {
           const entry = catalog.capabilities.find(
             (capability) => capability.id === lease.capabilityId,
           );
-          const sameCapabilityHolders = leases.filter(
+          const sameCapabilityHolders = snapshot.leases.filter(
             (candidate) =>
-              candidate.capabilityId === lease.capabilityId && holdsProvider(candidate),
+              candidate.slotId === slotId &&
+              candidate.capabilityId === lease.capabilityId &&
+              runsProvider(candidate),
           );
           const ambiguous =
             entry?.sharePolicy === 'exclusive' &&
@@ -3497,6 +3502,8 @@ export class RuntimeCapabilityRegistry {
               lease.releasedAt = lease.updatedAt;
               lease.referenceCount = 0;
               lease.cleanupFailure = undefined;
+              lease.providerCleanupDeferred = undefined;
+              lease.keepWarmUntil = undefined;
               reclaimed.push(lease);
               outcome = stopped
                 ? 'provider stopped'

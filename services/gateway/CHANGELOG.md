@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Release settled-run capability leases independently of workspace holds, retry identified cleanup holds safely, and free preserved workspaces on release-mode parks while retaining orchestration-only pauses.
+
 - Return stopped work graphs to planning without resetting recorded work; keep planning/paused graphs non-dispatching under targeted ticks.
 
 - Use shared review-mode precedence for admission, retained reviewer sessions, instructions and recorded evidence; refuse unavailable WARM selections consistently.

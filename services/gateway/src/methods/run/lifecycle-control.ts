@@ -344,7 +344,7 @@ export async function releaseCompletedRunSlot(run: Run): Promise<SlotReleaseResu
   }
   const slotId = run.slotId;
   if (!slotId) return { released: false };
-  if (run.transport === 'native') {
+  if (run.transport === 'native' && getRun(run.id)) {
     // An uncertain handoff can still have the parent on the slot row. Retire
     // this run's task leases before the release CAS; otherwise that CAS skips
     // the child and leaves its reserved process/handoff alive.
@@ -366,9 +366,11 @@ export async function releaseCompletedRunSlot(run: Run): Promise<SlotReleaseResu
   } = await import('../../run-lifecycle/slot-teardown.js');
   const workerBlocker = await stopRunOwnedTmuxAndWatches(run);
   let blocker = await recordSlotTeardownBlocker(run, workerBlocker);
-  const fence = await fenceRunSlotCleanup(run, blocker);
+  const { readSlotRow } = await import('../../core/index.js');
+  let fence = { before: await readSlotRow(slotId) };
   try {
-    await releaseRunOwnedCapabilities(run, Boolean(blocker));
+    await releaseRunOwnedCapabilities(run);
+    fence = await fenceRunSlotCleanup(run, blocker);
     const { broadcastEvent } = await import('../../server.js');
     const released = await releaseRunSlotOwnership(run, fence, blocker);
     const { loadFleetStatus } = await import('../../fleet/state.js');
@@ -929,7 +931,11 @@ function suppressInheritedGateChoice(runId: string, run: Run, generation: number
  * The record is written before this runs, so the intent is already durable.
  */
 function isGateParkPause(run: Run): boolean {
-  return run.park?.mode === 'release' && run.park.slotDisposition === 'freed';
+  return (
+    run.park?.mode === 'release' &&
+    run.park.slotDisposition === 'freed' &&
+    run.park.prePauseCurrentStep?.name === 'human-gate'
+  );
 }
 
 function assertNotMachineParkManaged(run: Run): void {

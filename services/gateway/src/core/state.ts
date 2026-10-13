@@ -279,6 +279,7 @@ function slotResetFields(warm: boolean): Record<string, unknown> {
     phase: null,
     held_reason: null,
     cleanup_release_token: null,
+    cleanup_run_id: null,
     [SLOT_RELEASING_SINCE]: null,
     agent: 'idle',
     warm,

@@ -565,7 +565,7 @@ function harness(initialRuns: Run[]): Harness {
       const run = runs.get(runId)!;
       // Mirrors runPauseTransitionLocked's gate-park branch: a park that frees
       // the slot leaves the run at its gate so the decision stays answerable.
-      if (!(run.park?.mode === 'release' && run.park.slotDisposition === 'freed')) {
+      if (!gateParkRestorePlan(run)) {
         run.status = 'paused';
       }
       emit('run.updated', { runId });
@@ -2040,6 +2040,12 @@ test('stale restore session fails final preflight before capability acquire or r
     reviewedTargets: [{ runId: 'run-a', generation: 3 }],
     operationId: 'release-before-stale-session',
   });
+  // A persisted release park from before the occupancy amendment retained its slot.
+  const legacy = ctx.runs.get('run-a')!.park!;
+  legacy.slotDisposition = 'retained';
+  delete legacy.slotFreedAt;
+  delete legacy.preservedWorkspace;
+  ctx.slotOwners.set('slot-a', 'run-a');
   const restorePreview = await ctx.service.restore({
     machine: 'machine-a',
     selector: { kind: 'all' },
@@ -2083,6 +2089,12 @@ test('parked release session appearing after final preflight becomes partial wit
     reviewedTargets: [{ runId: 'run-a', generation: 3 }],
     operationId: 'release-before-late-session',
   });
+  // A persisted release park from before the occupancy amendment retained its slot.
+  const legacy = ctx.runs.get('run-a')!.park!;
+  legacy.slotDisposition = 'retained';
+  delete legacy.slotFreedAt;
+  delete legacy.preservedWorkspace;
+  ctx.slotOwners.set('slot-a', 'run-a');
   let inspections = 0;
   ctx.deps.inspectRecoveryHandle = async (_run, _handle, expected) => {
     inspections += 1;
@@ -6003,4 +6015,59 @@ test('native relocation uses shared slot claims and never rehosts the successor 
   assert.equal(handle.sessionId, `session-${run.id}`);
   assert.equal(handle.leaseId, `lease-${run.id}`);
   assert.deepEqual(handle.relocation, { fromSlotId: 'slot-a', fromCwd: '/fixture/slot-a' });
+});
+
+for (const status of ['monitoring', 'ci-watching'] as const) {
+  test(`${status} release park preserves its branch, releases ownership and restores it`, async () => {
+    const ctx = harness([activeRun('run-release', 'slot-a', status)]);
+    const before = structuredClone(ctx.workspaces.get('slot-a'));
+    const preview = await ctx.service.preview({
+      machine: 'machine-a',
+      mode: 'release',
+      selector: { kind: 'all' },
+    });
+    assert.equal(preview.runs[0].slotDisposition, 'freed');
+    const result = await ctx.service.execute({
+      machine: 'machine-a',
+      mode: 'release',
+      previewId: preview.previewId,
+      reviewedTargets: [{ runId: 'run-release', generation: 3 }],
+      operationId: 'release-monitor',
+    });
+    assert.equal(result.ok, true);
+    assert.equal(ctx.runs.get('run-release')?.status, 'paused');
+    assert.equal(ctx.slotOwners.get('slot-a'), null);
+    assert.equal(ctx.workspaces.get('slot-a')?.branch, null);
+    assert.equal(ctx.runs.get('run-release')?.park?.preservedWorkspace?.headSha, before?.headSha);
+    const restore = await ctx.service.restore({ machine: 'machine-a', selector: { kind: 'all' } });
+    const restored = await ctx.service.restore({
+      machine: 'machine-a',
+      selector: { kind: 'all' },
+      execute: true,
+      previewId: restore.previewId,
+      reviewedTargets: [{ runId: 'run-release', generation: 3 }],
+      operationId: 'restore-monitor',
+    });
+    assert.equal(restored.ok, true);
+    assert.equal(ctx.slotOwners.get('slot-a'), 'run-release');
+    assert.equal(ctx.workspaces.get('slot-a')?.branch, before?.branch);
+    assert.equal(ctx.runs.get('run-release')?.status, status);
+  });
+}
+
+test('release-mode monitoring refuses dirty work before stopping anything', async () => {
+  const ctx = harness([activeRun('run-dirty', 'slot-a')]);
+  ctx.workspaces.get('slot-a')!.dirtyPaths = [' M product.ts'];
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  assert.equal(preview.runs[0].eligibility.eligible, false);
+  assert.match(preview.runs[0].eligibility.reason, /uncommitted changes/);
+  assert.equal(ctx.slotOwners.get('slot-a'), 'run-dirty');
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('stop:')),
+    false,
+  );
 });

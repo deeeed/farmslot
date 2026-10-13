@@ -37,7 +37,7 @@ import {
   prepareRunPostureForValidation,
   type PrepareRunPostureOutcome,
 } from '../run-engine/resource-posture.js';
-import { getRun } from '../runs/store.js';
+import { getArchivedRuns, getCachedRunWithArchived, getRun } from '../runs/store.js';
 import {
   evaluateRuntimeCapabilityAdmission,
   type RuntimeCapabilityPressureSnapshot,
@@ -512,7 +512,7 @@ const registry = new RuntimeCapabilityRegistry({
   // eviction, from the run's own terminal status or the terminal posture
   // ADR-054 recorded on it.
   isTerminalOwner: (ownerRunId) => {
-    const run = getRun(ownerRunId);
+    const run = getCachedRunWithArchived(ownerRunId);
     if (!run) return false;
     return hasHadTerminalCleanup(run);
   },
@@ -662,6 +662,8 @@ function isPrepareOutcome(value: unknown): value is PrepareRunPostureOutcome {
 
 export async function initRuntimeCapabilities(broadcast: BroadcastFn): Promise<void> {
   broadcastFn = broadcast;
+  // Prime historical authority before recovery or admission consults its sync fence.
+  await getArchivedRuns();
   await registry.initialize();
   if (!keepWarmCleanupTimer) {
     keepWarmCleanupTimer = setInterval(() => {

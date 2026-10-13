@@ -1512,6 +1512,10 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
     updateSlotStatusIf,
     isTerminalTeardownInFlight,
     readSlotField,
+    retryOccupiedRunSlot: async (slotId) => {
+      const { retryOccupiedRunSlot } = await import('../run-lifecycle/slot-teardown.js');
+      return retryOccupiedRunSlot(slotId);
+    },
     quarantineLeakedRun,
     stopRunOwnedWorkers: async (run) => {
       const { stopRunOwnedTmuxWorkers } = await import('../runners/owned-stop.js');

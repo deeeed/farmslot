@@ -2065,6 +2065,7 @@ test('orphan reconcile preserves a persisted occupied workspace without a run ow
     }),
     isTerminalTeardownInFlight: () => false,
     readSlotField: async () => null,
+    retryOccupiedRunSlot: async () => false,
     resetSlot: async (slotId: string) => reset.push(slotId),
   } as unknown as RunRecoveryCollaborators;
   for (let tick = 0; tick < 2; tick++) await reconcileOrphanedSlots(deps);

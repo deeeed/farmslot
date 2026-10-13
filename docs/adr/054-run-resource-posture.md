@@ -256,3 +256,38 @@ item and depends on this one.
 
 Backlog item `MANUAL-000111` owns the implementation contract in
 `.backlog/specs/farmslot-farm/2026-09-03-run-resource-posture.md`.
+
+## Amendment: release-mode parks and terminal cleanup (2026-10-13)
+
+Status: Proposed. Lead approved the scope; acceptance follows paired review.
+
+### Decision
+
+A release-mode park, including `free-slot`, releases slot occupancy and the run's
+capability leases after confirmed worker/provider shutdown and branch preservation.
+This applies at monitor, CI watch and publication gates. Orchestration-only pauses
+retain the slot, worker and leases. Existing preservation, ownership and restore
+checks remain mandatory; failed cleanup reports a partial park and retains its hold.
+
+Terminal provider cleanup is independent of workspace teardown. The capability
+registry checks each provider's process identity and other lease holders. A foreign
+pane can defer workspace cleanup without retaining an unrelated device lease.
+Identified terminal workspace holds are rechecked through their original cleanup
+owner. Archived terminal owners remain authoritative during lease recovery.
+
+### Rationale and consequences
+
+Previously `free-slot` could succeed while retaining a monitoring slot. A cancelled
+run could also retain a device claim solely because its workspace contained another
+pane. Reusing the existing parking and cleanup owners removes those mismatches.
+Release parks preserve the branch and saved conversation for explicit restore.
+Unknown workers/providers and unidentifiable holds remain protected.
+
+### Public surface
+
+Existing `resource.posture.apply`, `machine.pause` release mode, `machine.restore`,
+`run.cancel` and capability status APIs keep their names and request formats.
+No new CLI flags, project fields or SDK exports are added. Clients observe freed
+slot ownership, released leases and truthful partial-cleanup results. Providers
+and downstream harnesses keep their declared acquire, health and release actions.
+The normative rules are in the [runtime capability contract](../reference/recipe-runtime-capability-contract.md#release-parks-and-terminal-cleanup).
