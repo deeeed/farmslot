@@ -1,4 +1,5 @@
 import path from 'node:path';
+import * as timersPromises from 'node:timers/promises';
 
 import WebSocket from 'ws';
 
@@ -7,6 +8,7 @@ import {
   HUD_PANEL_BOUNDS,
   hudIntentDisplay,
   hudSecondaryText,
+  validateRecipeActionRelationships,
   waitForHudPaint,
 } from '@farmslot/protocol/recipe';
 
@@ -443,7 +445,7 @@ export async function probeCdpCompositorInteractivity(
     });
     const candidates = [...document.querySelectorAll('button, a, input, select, textarea, [role="button"], [role="link"], [role="tab"], [role="checkbox"], [role="radio"], [role="switch"]')];
     const visibleTargets = candidates.filter((element) => {
-      if (element.disabled || element.getAttribute('aria-disabled') === 'true') return false;
+      if (isDisabledDeep(element)) return false;
       const style = getComputedStyle(element);
       const rect = element.getBoundingClientRect();
       return style.display !== 'none' &&
@@ -819,7 +821,7 @@ export class CdpWebPage {
       tagName: string;
       previousValue: string;
     }>(
-      `(() => { ${deepQueryHelpersExpression()} const root = querySelectorDeep(${JSON.stringify(selector)}); if (!root) throw new Error('Selector not found: ${escapeForJsMessage(selector)}'); const el = root.matches('input, textarea, [contenteditable="true"], [contenteditable=""]') ? root : querySelectorDeep('input, textarea, [contenteditable="true"], [contenteditable=""]', root); if (!el) throw new Error('Input target not found inside selector: ${escapeForJsMessage(selector)}'); if (el.disabled || el.getAttribute('aria-disabled') === 'true') throw new Error('Input target is disabled: ${escapeForJsMessage(selector)}'); el.scrollIntoView({ block: 'center', inline: 'nearest' }); el.focus(); if (typeof el.select === 'function') { el.select(); } else { const range = document.createRange(); range.selectNodeContents(el); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); } return { selector: ${JSON.stringify(selector)}, tagName: el.tagName, previousValue: el.value ?? el.textContent ?? '' }; })()`,
+      `(() => { ${deepQueryHelpersExpression()} const root = querySelectorDeep(${JSON.stringify(selector)}); if (!root) throw new Error('Selector not found: ${escapeForJsMessage(selector)}'); const el = root.matches('input, textarea, [contenteditable="true"], [contenteditable=""]') ? root : querySelectorDeep('input, textarea, [contenteditable="true"], [contenteditable=""]', root); if (!el) throw new Error('Input target not found inside selector: ${escapeForJsMessage(selector)}'); if (isDisabledDeep(el)) throw new Error('Input target is disabled: ${escapeForJsMessage(selector)}'); el.scrollIntoView({ block: 'center', inline: 'nearest' }); el.focus(); if (typeof el.select === 'function') { el.select(); } else { const range = document.createRange(); range.selectNodeContents(el); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); } return { selector: ${JSON.stringify(selector)}, tagName: el.tagName, previousValue: el.value ?? el.textContent ?? '' }; })()`,
     );
     await this.keyPress('Backspace');
     if (value) await this.session.call('Input.insertText', { text: value });
@@ -978,11 +980,47 @@ export class CdpWebPage {
     text?: string;
     expected?: string;
     timeoutMs?: number;
+    enabled?: boolean;
+    signal?: AbortSignal;
   }): Promise<unknown> {
+    const validation = validateRecipeActionRelationships({ action: 'ui.wait_for', ...options });
+    if (validation.status !== 'valid')
+      throw new RecipeExecutionError(
+        'harness',
+        validation.findings.map((finding) => finding.message).join(' '),
+      );
     const timeoutMs = options.timeoutMs ?? 5_000;
-    return this.evaluate(
-      `(async () => { ${deepQueryHelpersExpression()} const deadline = Date.now() + ${JSON.stringify(timeoutMs)}; while (Date.now() <= deadline) { const ok = ${waitForPredicateExpression(options)}; if (ok) return { matched: true }; await new Promise((resolve) => setTimeout(resolve, 100)); } throw new Error('ui.wait_for timed out'); })()`,
-    );
+    const deadline = Date.now() + timeoutMs;
+    const expression = `(() => { ${deepQueryHelpersExpression()} return ${waitForPredicateExpression(options)}; })()`;
+    let lastEnabled: boolean | undefined;
+    do {
+      options.signal?.throwIfAborted();
+      const observed = await this.evaluate<boolean | { matched: boolean; enabled?: boolean }>(
+        expression,
+        {
+          signal: options.signal,
+          timeoutMs: Math.max(1, deadline - Date.now()),
+        },
+      );
+      options.signal?.throwIfAborted();
+      if (typeof observed === 'object' && typeof observed.enabled === 'boolean')
+        lastEnabled = observed.enabled;
+      if (typeof observed === 'boolean' ? observed : observed.matched)
+        return options.enabled === undefined
+          ? { matched: true }
+          : { matched: true, enabled: lastEnabled };
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      await timersPromises.setTimeout(Math.min(100, remaining), undefined, {
+        signal: options.signal,
+      });
+    } while (Date.now() <= deadline);
+    if (options.enabled !== undefined)
+      throw new RecipeExecutionError(
+        'subject',
+        `ui.wait_for timed out: expected enabled=${options.enabled}, last observed enabled=${lastEnabled ?? 'unavailable'}.`,
+      );
+    throw new Error('ui.wait_for timed out');
   }
 
   async waitForSelector(selector: string, options: { timeoutMs?: number } = {}): Promise<unknown> {
@@ -1184,6 +1222,14 @@ export function createCdpWebUiTransport(
 ): UiActionTransport {
   return {
     async execute(action, node, context) {
+      if (action === 'ui.wait_for') {
+        const validation = validateRecipeActionRelationships({ ...node, action });
+        if (validation.status !== 'valid')
+          throw new RecipeExecutionError(
+            'harness',
+            validation.findings.map((finding) => finding.message).join(' '),
+          );
+      }
       const input = { action, node, context };
       return withCdpWebPage(options, input, async (page) => {
         switch (action) {
@@ -1256,6 +1302,8 @@ export function createCdpWebUiTransport(
                 selector: asOptionalString(selectorForUiInput(node), 'ui.wait_for.selector'),
                 text: asOptionalString(node.text, 'ui.wait_for.text'),
                 expected: asOptionalString(node.expected, 'ui.wait_for.expected'),
+                enabled: node.enabled as boolean | undefined,
+                signal: context.signal,
                 timeoutMs:
                   node.timeout_ms == null
                     ? undefined
@@ -1453,7 +1501,7 @@ function visibleTargetsExpression(): string {
       label: includeLabel ? textFor(el) : undefined,
       test_id: el.getAttribute('data-testid') || el.getAttribute('data-test-id') || el.getAttribute('data-test') || undefined,
       selector: cssPath(el),
-      enabled: !(el.disabled || el.getAttribute('aria-disabled') === 'true'),
+      enabled: !(isDisabledDeep(el)),
       selected: el.getAttribute('aria-selected') === 'true' || undefined,
       focused: document.activeElement === el || undefined,
       bounds: rect ? { x: Math.round(rect.left), y: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) } : undefined
@@ -1818,7 +1866,19 @@ function waitForPredicateExpression(options: {
   selector?: string;
   text?: string;
   expected?: string;
+  enabled?: boolean;
 }): string {
+  if (options.enabled !== undefined) {
+    return `(() => {
+      const matches = querySelectorAllDeep(${JSON.stringify(options.selector)});
+      if (matches.length > 1) throw new Error('ui.wait_for target is ambiguous');
+      if (!matches.length) return { matched: false };
+      const target = matches[0];
+      const enabled = observedEnabledDeep(target);
+      if (enabled === null) throw new Error('ui.wait_for target has no observable enabled state');
+      return { matched: (${JSON.stringify(options.expected)} !== 'visible' || isVisibleDeep(target)) && enabled === ${options.enabled}, enabled };
+    })()`;
+  }
   let presentExpression: string;
   let visibleExpression: string | undefined;
   if (options.selector && options.text) {
@@ -1866,6 +1926,22 @@ function deepQueryHelpersExpression(): string {
       return matches;
     };
     const querySelectorDeep = (selector, root = document) => querySelectorAllDeep(selector, root)[0] ?? null;
+    const isDisabledDeep = (element) => {
+      if (element.disabled === true || element.matches(':disabled')) return true;
+      let current = element;
+      while (current) {
+        if (String(current.getAttribute('aria-disabled') || '').toLowerCase() === 'true') return true;
+        const root = current.getRootNode();
+        current = current.parentElement || shadowHostFor(root);
+      }
+      return false;
+    };
+    const observedEnabledDeep = (element) => {
+      const roles = String(element.getAttribute('role') || '').toLowerCase().split(/\\s+/);
+      const interactiveRoles = ['button', 'checkbox', 'combobox', 'gridcell', 'link', 'listbox', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'option', 'radio', 'scrollbar', 'searchbox', 'slider', 'spinbutton', 'switch', 'tab', 'textbox', 'treeitem'];
+      const observable = typeof element.disabled === 'boolean' || element.matches('a[href], area[href]') || roles.some((role) => interactiveRoles.includes(role));
+      return observable ? !isDisabledDeep(element) : null;
+    };
     const isRenderedDeep = (element) => {
       if (!element || element.getClientRects().length === 0) return false;
       let current = element;
@@ -1897,7 +1973,7 @@ function deepQueryHelpersExpression(): string {
     };
     const clickablePointDeep = (element, observeObstruction = false) => {
       if (!isVisibleDeep(element)) throw new Error('Target is not visible');
-      if (element.disabled || element.getAttribute('aria-disabled') === 'true') throw new Error('Target is disabled');
+      if (isDisabledDeep(element)) throw new Error('Target is disabled');
       const rect = element.getBoundingClientRect();
       const x = Math.max(0, Math.min(window.innerWidth - 1, rect.left + rect.width / 2));
       const y = Math.max(0, Math.min(window.innerHeight - 1, rect.top + rect.height / 2));

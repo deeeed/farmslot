@@ -278,6 +278,8 @@ The existing `ui.wait_for` action gains optional boolean `enabled`. Recipes and 
 
 `@farmslot/protocol` owns the input rules. `@farmslot/recipe-runner` extends its CDP page wait options and transport. `@farmslot/adapter-rn` extends its existing Agent Device snapshot wait. Native project providers select that path for this parameter; browser providers use the shared CDP path. Provider manifests MUST expose the field only after pinning supporting runtime releases. Unsupported catalogs MUST reject it at planning. A declared backend whose actual hierarchy cannot report state MUST refuse at runtime, never substitute a guess.
 
+The additive `validateRecipeActionRelationships` export from `@farmslot/protocol/recipe` applies these existing input rules to direct `CdpWebPage.waitFor` and `createAgentDeviceUiTransport` calls. Resolved recipe nodes use the same rules.
+
 #### Inputs and planning
 
 - `enabled`, when supplied, MUST resolve to a boolean. Without it, existing wait behavior and result fields MUST remain unchanged.

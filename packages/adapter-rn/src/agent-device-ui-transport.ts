@@ -1,11 +1,12 @@
 import { execFile } from 'node:child_process';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import * as timersPromises from 'node:timers/promises';
 import { promisify } from 'node:util';
 
 import { PNG } from 'pngjs';
 
-import type { UiObserverRef } from '@farmslot/protocol';
+import { type UiObserverRef, validateRecipeActionRelationships } from '@farmslot/protocol';
 import {
   type ActionExecutionContext,
   type GestureAction,
@@ -15,6 +16,7 @@ import {
   gestureSegmentDuration,
   gestureTarget,
   type RecipeActionPhase,
+  RecipeExecutionError,
   type RecipeObservationResult,
   type UiActionTransport,
   type UiPoint,
@@ -34,9 +36,19 @@ export interface AgentDeviceSnapshotNode {
   hittable?: boolean;
   visibleToUser?: boolean;
   interactionBlocked?: 'covered';
+  enabled?: boolean;
   hiddenContentAbove?: boolean;
   hiddenContentBelow?: boolean;
   rect?: { x: number; y: number; width: number; height: number };
+}
+
+export interface AgentDeviceSnapshotQuality {
+  state: 'healthy' | 'recovered' | 'sparse';
+  backend: 'tree' | 'queries' | 'private-ax';
+}
+
+export interface AgentDeviceAndroidSnapshot {
+  backend: string;
 }
 
 export interface AgentDeviceSnapshot {
@@ -44,6 +56,8 @@ export interface AgentDeviceSnapshot {
   truncated: boolean;
   appName?: string;
   appBundleId?: string;
+  snapshotQuality?: AgentDeviceSnapshotQuality;
+  androidSnapshot?: AgentDeviceAndroidSnapshot;
 }
 
 interface AgentDeviceInteractionResult {
@@ -203,7 +217,24 @@ export function createAgentDeviceUiTransport(
       await ensureOpen();
     },
     async execute(action, node, context) {
-      const client = await ensureOpen();
+      if (action === 'ui.wait_for') {
+        const validation = validateRecipeActionRelationships({ ...node, action });
+        if (validation.status !== 'valid')
+          throw new RecipeExecutionError(
+            'harness',
+            validation.findings.map((finding) => finding.message).join(' '),
+          );
+        if (node.enabled !== undefined && node.selector !== undefined)
+          throw new RecipeExecutionError(
+            'harness',
+            'Native enabled waits require test_id or testID.',
+          );
+      }
+      // Enabled waits observe the prepared target without opening the app.
+      const client =
+        action === 'ui.wait_for' && node.enabled !== undefined
+          ? await resolveClient()
+          : await ensureOpen();
       switch (action) {
         case 'ui.press':
           return requireSettledInteraction(
@@ -302,8 +333,14 @@ export function createAgentDeviceUiTransport(
           );
         case 'ui.wait_for': {
           const startedAt = Date.now();
-          const result = await waitForNode(client, options.session, selection, node);
-          if (node.settle === false) return result;
+          const result = await waitForNode(
+            client,
+            options.session,
+            selection,
+            node,
+            context.signal,
+          );
+          if (node.settle === false || node.enabled !== undefined) return result;
           // timeout_ms budgets the whole node: stability only gets what the wait left over.
           return {
             ...(result as Record<string, unknown>),
@@ -899,34 +936,77 @@ async function waitForNode(
   session: string,
   selection: AgentDeviceSelection,
   node: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   const timeoutMs = positiveNumber(node.timeout_ms) ?? 10_000;
   const expected = node.hidden === true ? 'hidden' : (optionalString(node.expected) ?? 'present');
   const deadline = Date.now() + timeoutMs;
   let nodeCount = 0;
+  let lastEnabled: boolean | undefined;
   do {
+    signal?.throwIfAborted();
     const snapshot = await client.capture.snapshot({
       ...selection,
       session,
       interactiveOnly: false,
       forceFull: true,
     });
+    signal?.throwIfAborted();
     nodeCount = snapshot.nodes.length;
-    const present = snapshotMatches(snapshot.nodes, node);
-    const visible = snapshotMatches(snapshot.nodes.filter(isVisibleNode), node);
-    const matched =
-      expected === 'absent' || expected === 'not_present'
-        ? !present
-        : expected === 'hidden'
-          ? !visible
-          : expected === 'visible'
-            ? visible
-            : present;
-    if (matched) {
-      return { matched: true, expected };
+    if (node.enabled !== undefined) {
+      if (snapshot.truncated)
+        throw new RecipeExecutionError(
+          'harness',
+          'Enabled wait requires a complete snapshot to establish target uniqueness.',
+        );
+      const quality = snapshot.snapshotQuality;
+      const qualifiedIos =
+        quality &&
+        ['tree', 'queries'].includes(quality.backend) &&
+        ['healthy', 'recovered'].includes(quality.state);
+      const qualifiedAndroid =
+        snapshot.androidSnapshot &&
+        ['android-helper', 'uiautomator-dump'].includes(snapshot.androidSnapshot.backend);
+      if (!qualifiedIos && !qualifiedAndroid)
+        throw new RecipeExecutionError(
+          'harness',
+          'Native snapshot cannot establish observed enabled state.',
+        );
+      const matches = snapshot.nodes.filter((candidate) => snapshotMatches([candidate], node));
+      if (matches.length > 1)
+        throw new RecipeExecutionError('harness', 'ui.wait_for target is ambiguous.');
+      const target = matches[0];
+      if (target) {
+        if (typeof target.enabled !== 'boolean')
+          throw new RecipeExecutionError('harness', 'Native target has no observed enabled state.');
+        lastEnabled = target.enabled;
+        if ((expected !== 'visible' || isVisibleNode(target)) && target.enabled === node.enabled)
+          return { matched: true, expected, enabled: target.enabled };
+      }
+    } else {
+      const present = snapshotMatches(snapshot.nodes, node);
+      const visible = snapshotMatches(snapshot.nodes.filter(isVisibleNode), node);
+      const matched =
+        expected === 'absent' || expected === 'not_present'
+          ? !present
+          : expected === 'hidden'
+            ? !visible
+            : expected === 'visible'
+              ? visible
+              : present;
+      if (matched) {
+        return { matched: true, expected };
+      }
     }
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await timersPromises.setTimeout(Math.min(300, remaining), undefined, { signal });
   } while (Date.now() < deadline);
+  if (node.enabled !== undefined)
+    throw new RecipeExecutionError(
+      'subject',
+      `ui.wait_for timed out after ${timeoutMs}ms: expected enabled=${node.enabled}, last observed enabled=${lastEnabled ?? 'unavailable'}.`,
+    );
   throw new Error(`ui.wait_for timed out after ${timeoutMs}ms (${nodeCount} nodes observed).`);
 }
 
