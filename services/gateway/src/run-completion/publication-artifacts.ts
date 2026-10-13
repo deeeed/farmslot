@@ -1011,7 +1011,7 @@ export async function resolvePublicationManifest(
         'evidence-package-unverifiable',
         'The selected recipe attempt evidence-manifest.json is invalid. Re-run the recipe.',
       );
-    if (resolved && !artifactRoot && selected?.artifactRoot)
+    if (contractVersion !== 0 && resolved && !artifactRoot && selected?.artifactRoot)
       await assertPublicationManifestOwnership(
         resolved.manifest,
         selected.artifactRoot,

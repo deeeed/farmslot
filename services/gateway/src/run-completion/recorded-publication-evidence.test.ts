@@ -155,6 +155,7 @@ test('selected evidence retains labelled comparisons and external captures with 
 
 test('task declarations cannot select a retained artifact owned by another recipe attempt', async (t) => {
   const { taskDir, root, run } = await fixture(t);
+  run.recordedEvidenceContractVersion = 1;
   const selected = path.join(taskDir, 'artifacts/recipe-runs/current');
   await mkdir(path.dirname(selected), { recursive: true });
   await rename(root, selected);
@@ -213,16 +214,26 @@ test('selected recorded media freezes the complete execution input and selection
   assert.equal(sources[0]!.artifactPrefix, 'artifacts/recipe-run/');
 });
 
-test('a pre-cutover pointer retains its declaration and freezes only its selected execution', async (t) => {
+test('pre-cutover reruns retain both declared captures while the gate reads only the selected execution', async (t) => {
   const { taskDir, root, run, artifacts } = await fixture(t);
   const selected = path.join(taskDir, 'artifacts/recipe-runs/old');
   await mkdir(path.dirname(selected), { recursive: true });
   await rename(root, selected);
   for (const artifact of artifacts)
     artifact.path = artifact.path.replace('recipe-run/', 'recipe-runs/old/');
+  const prior = path.join(taskDir, 'artifacts/recipe-runs/prior');
+  await cp(selected, prior, { recursive: true });
+  for (const artifact of [...artifacts])
+    artifacts.push({
+      ...artifact,
+      path: artifact.path.replace('recipe-runs/old/', 'recipe-runs/prior/'),
+    });
   const manifest = {
     version: 1,
-    standalone: [{ label: 'Retained old capture', file: 'recipe-runs/old/proof.png' }],
+    standalone: [
+      { label: 'Earlier capture', file: 'recipe-runs/prior/proof.png' },
+      { label: 'Retained old capture', file: 'recipe-runs/old/proof.png' },
+    ],
   };
   await writeFile(path.join(taskDir, 'artifacts/evidence-manifest.json'), JSON.stringify(manifest));
   await writeFile(
@@ -233,6 +244,8 @@ test('a pre-cutover pointer retains its declaration and freezes only its selecte
   const effective = await readEvidenceManifest(run);
   assert.deepEqual(effective, manifest);
   const inventory = await buildPackageEvidenceManifest(taskDir, artifacts, effective, 0);
+  assert(inventory.some((entry) => entry.path === 'artifacts/recipe-runs/prior/proof.png'));
+  assert(inventory.some((entry) => entry.path === 'artifacts/recipe-runs/old/proof.png'));
   const prepared = {
     id: 'old-selected',
     evidenceManifest: inventory,
