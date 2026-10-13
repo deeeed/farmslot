@@ -7,6 +7,44 @@ import test from 'node:test';
 import { buildDraftPrBody, buildDraftPrTitle } from './draft-pr.js';
 import { makeRun } from './test-fixtures.js';
 
+test('stacked PR bodies name the parent without changing authored prose or duplicating the link', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-stacked-pr-body-'));
+  const parent = 'https://github.com/example/app/pull/41';
+  const link = `Stacked on [#41](${parent}).`;
+  const prose = '## Summary\n\nChild contribution only.';
+  try {
+    await mkdir(path.join(root, 'artifacts'));
+    const taskFile = path.join(root, 'TASK.md');
+    await writeFile(taskFile, '# Task\n');
+    const source = path.join(root, 'artifacts', 'pr-description.md');
+    await writeFile(source, prose);
+    const run = {
+      ...makeRun({ taskFile, slotId: undefined }),
+      stack: {
+        upstreamNodeId: 'wn_parent',
+        upstreamRunId: 'parent-run',
+        baseBranch: 'feature/parent',
+        upstreamPrNumber: 41,
+        upstreamPrUrl: parent,
+      },
+    };
+    const body = await buildDraftPrBody(run, null, []);
+    assert.ok(body.includes(link));
+    assert.ok(body.endsWith(prose));
+    assert.equal(await buildDraftPrBody({ ...run, stack: undefined }, null, []), prose);
+    await writeFile(source, body);
+    assert.equal(await buildDraftPrBody(run, null, []), body);
+    assert.ok(
+      (
+        await buildDraftPrBody({ ...run, stack: { ...run.stack, retargetedTo: 'main' } }, null, [])
+      ).includes(link),
+      'the parent relationship remains visible after retargeting',
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('buildDraftPrBody renders local before/after evidence preview from manifest', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-pr-body-evidence-'));
   try {
