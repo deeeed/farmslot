@@ -36,7 +36,7 @@ import { inferReviewSourceKind } from '../quality/review-sources.js';
 import { captureCurrentReviewSnapshot, unavailableReviewSnapshot } from '../review/snapshots.js';
 import { latestResolvedHumanGateDecision } from '../run-engine/decision-replay.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
-import { stackPrBase } from '../run-engine/stack-base.js';
+import { publicationBaseForRun } from '../run-engine/stack-base.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
 import { getRun, updateRun } from '../runs/store.js';
 import {
@@ -430,7 +430,7 @@ export async function renderCurrentDescription(
     current,
     report,
     artifacts ?? (await scanArtifacts(path.dirname(current.taskFile))),
-    baseBranch || DEFAULT_BRANCH,
+    publicationBaseForRun(current, baseBranch),
     { tolerateMissingSlot: Boolean(preparedPackage.headSha) },
   );
   return { draftTitle: buildDraftPrTitle(current), draftBody };
@@ -655,7 +655,10 @@ export async function prepareCompletionPackage(
   );
   const validation = await readValidationSummary(run);
   const projectVars = await loadProjectVars(run.project);
-  const baseBranch = getProjectField(projectVars.projectJson, 'default_branch') || DEFAULT_BRANCH;
+  const baseBranch = publicationBaseForRun(
+    run,
+    getProjectField(projectVars.projectJson, 'default_branch'),
+  );
   const reviewPolicy = publicationReviewPolicyForRun(
     run,
     projectVars.projectJson,
@@ -707,7 +710,8 @@ export async function prepareCompletionPackage(
       // A removed slot must not make the package impossible to inspect.
       reviewSnapshot = unavailableReviewSnapshot('slot-load-error', (error as Error).message);
     }
-    if (vars) reviewSnapshot = (await captureCurrentReviewSnapshot(vars)).snapshot;
+    if (vars)
+      reviewSnapshot = (await captureCurrentReviewSnapshot(vars, { baseRef: baseBranch })).snapshot;
   }
   const branch = run.branch ?? before.branch ?? '';
   const packageId = `pkg-${run.id.slice(0, 8)}-${Date.now().toString(36)}`;
@@ -1042,9 +1046,10 @@ async function createPrFromApprovedPackage(
   const tmpFile = `/tmp/farmslot-pr-body-${run.id.slice(0, 8)}-${randomUUID()}.md`;
   await writeFile(tmpFile, pendingPublicationBody(prPackage), 'utf-8');
   const pv = await loadProjectVars(run.project).catch(() => null);
-  const base =
-    stackPrBase(getRun(run.id) ?? run) ??
-    ((pv && getProjectField(pv.projectJson, 'default_branch')) || DEFAULT_BRANCH);
+  const base = publicationBaseForRun(
+    getRun(run.id) ?? run,
+    pv && getProjectField(pv.projectJson, 'default_branch'),
+  );
   const args = [
     'pr',
     'create',
@@ -1169,7 +1174,10 @@ export async function publishCompletionPackage(
     const ciRepo: string | null = (pv?.projectJson as any)?.ci?.repo ?? null;
     flags.ciRepo = ciRepo;
     if (!ciRepo) throw new Error('no ci.repo configured');
-    const baseBranch = (pv && getProjectField(pv.projectJson, 'default_branch')) || DEFAULT_BRANCH;
+    const baseBranch = publicationBaseForRun(
+      run,
+      pv && getProjectField(pv.projectJson, 'default_branch'),
+    );
     // The approved body was completed against the slot's template at
     // preparation; GitHub's current base template is re-read here only to
     // report drift, never to block a publication the operator approved.
