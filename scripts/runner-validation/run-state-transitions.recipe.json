@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Run settlement and reviewed output close",
+  "description": "Manual copied-receipt proof through public RPC. FARMSLOT_QA_OUTPUT_PROOF_INPUT supplies runSnapshot, taskDir and repo. Includes negative controls, active-worker retention and required persistence before release.",
+  "workflow": {
+    "entry": "settlement",
+    "nodes": {
+      "settlement": {
+        "action": "command",
+        "cmd": "FARMSLOT_RUN_STATE_PROOF=1 TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/qa-output-evidence-gate.mts",
+        "timeout_ms": 300000,
+        "intent": "Prove completion failure stops the pipeline while its worker continues, acknowledgement retains close, and persistence failure preserves ownership. Break both transition paths and require the checks to fail.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

@@ -37,6 +37,7 @@ import {
   prepareRunPostureForValidation,
   type PrepareRunPostureOutcome,
 } from '../run-engine/resource-posture.js';
+import { isCompletionPrerequisiteFailure } from '../run-lifecycle/step-status.js';
 import { getRun } from '../runs/store.js';
 import {
   evaluateRuntimeCapabilityAdmission,
@@ -494,8 +495,11 @@ async function pressureFor(
  * reconciler records when it stops a run's providers, and it can land before
  * the run itself settles.
  */
-function hasHadTerminalCleanup(run: Run): boolean {
-  return isTerminalRunStatus(run.status) || run.resourcePosture?.posture === 'terminal';
+export function hasHadTerminalCleanup(run: Run): boolean {
+  return (
+    (isTerminalRunStatus(run.status) && !isCompletionPrerequisiteFailure(run)) ||
+    run.resourcePosture?.posture === 'terminal'
+  );
 }
 
 const registry = new RuntimeCapabilityRegistry({

@@ -6,6 +6,7 @@ import { FLOW_STEPS, PipelineSteps as S, type Run } from '@farmslot/protocol';
 import '../runtime/mock-pty.test-support.js';
 
 import { GatewayMethodError } from '../core/method-error.js';
+import { isCompletionPrerequisiteFailure } from '../run-lifecycle/step-status.js';
 
 import { makeRun } from './test-fixtures.js';
 
@@ -88,6 +89,11 @@ for (const observed of ['making-progress', 'idle', 'unproven'] as const) {
     kind = observed;
     await startRun(run.id);
     assert.equal(run.status, 'failed');
+    assert.equal(
+      isCompletionPrerequisiteFailure(run),
+      true,
+      'missing error details still retain ownership',
+    );
     assert.equal(run.steps.find((step) => step.name === S.COMPLETE)?.status, 'failed');
     assert.ok(
       run.steps.slice(steps.indexOf(S.COMPLETE) + 1).every((step) => step.status === 'skipped'),

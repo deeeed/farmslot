@@ -92,6 +92,10 @@ if (process.argv[2] === 'serve') {
     randomUUID(),
   );
   const native = new NativeSessionClient(path.join(scratch, 'native'));
+  const farmslotHead = execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: source,
+    encoding: 'utf8',
+  }).trim();
   const sourceFiles = [
     'services/gateway/src/run-engine/gate-prerequisites.ts',
     'services/gateway/src/run-engine/recorded-evidence-sources.ts',
@@ -100,10 +104,16 @@ if (process.argv[2] === 'serve') {
     'services/gateway/src/run-engine/orchestrator.ts',
     'services/gateway/src/run-lifecycle/step-status.ts',
     'services/gateway/src/run-lifecycle/terminal-transition.ts',
+    'services/gateway/src/run-lifecycle/transition-router.ts',
+    'services/gateway/src/runs/store.ts',
+    'services/gateway/src/methods/runtime-capabilities.ts',
+    'services/gateway/src/backlog/pr-admission.ts',
+    'services/gateway/src/methods/dispatch/slot-scoring.ts',
     'services/gateway/src/run-completion/artifact-mirror.ts',
     'services/gateway/src/qa/completion.ts',
     'scripts/runner-validation/gateway/qa-output-evidence-gate.mts',
   ];
+  execFileSync('git', ['diff', '--quiet', 'HEAD', '--', ...sourceFiles], { cwd: source });
   const hashes = Object.fromEntries(
     sourceFiles.map((file) => [
       file,
@@ -272,6 +282,7 @@ if (process.argv[2] === 'serve') {
     const checkpoint = path.join(out, 'progress-checkpoint');
     const release = path.join(out, 'release-progress');
     const failTransfer = path.join(out, 'fail-transfer');
+    const failPersistence = path.join(out, 'fail-close-persistence');
     const register = path.join(scratch, 'proof-register.mjs');
     // Stop only after the unmodified production gate and QA completion guards
     // pass. This proves admission without publishing or releasing resources.
@@ -281,6 +292,8 @@ if (process.argv[2] === 'serve') {
     );
     json(path.join(out, 'input-receipt.json'), {
       originalRunId: original.id,
+      farmslotHead,
+      applicationSourceHead: qaResult.source.headSha,
       sourceHead: qaResult.source.headSha,
       hashes,
       negative,
@@ -290,6 +303,31 @@ if (process.argv[2] === 'serve') {
       `import {writeFileSync,existsSync} from 'node:fs'; import {createHash} from 'node:crypto';
       export async function load(url, context, nextLoad) {
       const result = await nextLoad(url, context);
+      const runStateNegative = process.env.FARMSLOT_RUN_STATE_NEGATIVE ?? '';
+      if ((runStateNegative === 'completion' && url.endsWith('/run-engine/orchestrator.ts')) ||
+          (runStateNegative === 'output' && url.endsWith('/run-completion/output.ts'))) {
+        const text = String(result.source);
+        const target = runStateNegative === 'completion'
+          ? 'if (stepName === S.COMPLETE || stepName === S.FINALIZE) {'
+          : "decision.resolvedAction === 'close-run'";
+        const replacement = runStateNegative === 'completion' ? 'if (false) {'
+          : "['mark-reviewed', 'close-run'].includes(decision.resolvedAction ?? '')";
+        if (!text.includes(target)) throw new Error('Run-state negative control target changed');
+        const changed = text.replace(target, replacement);
+        writeFileSync(${JSON.stringify(path.join(out, 'negative-'))} + runStateNegative + '-mutation.json',
+          JSON.stringify({runStateNegative, url,
+            beforeHash:createHash('sha256').update(text).digest('hex'),
+            loadedHash:createHash('sha256').update(changed).digest('hex')}));
+        result.source = changed;
+      }
+      if (url.endsWith('/runs/store.ts')) {
+        const text = String(result.source);
+        const start = text.indexOf('async function persistRunNow(');
+        if(start < 0) throw new Error('Persistence fault target changed');
+        const body = text.indexOf('{', start);
+        result.source = text.slice(0, body+1) +
+          ${JSON.stringify(`if (reason === 'operator closed execution with recorded outcome' && (await import('node:fs')).existsSync(${JSON.stringify(failPersistence)})) throw new Error('Controlled ENOSPC before output close');`)} + text.slice(body+1);
+      }
       if (url.endsWith('/run-engine/post-dispatch-steps.ts')) {
         const text = String(result.source);
         const target = "if (current.flowType === 'qa') await assertQaCompletion(current);";
@@ -384,6 +422,8 @@ if (process.argv[2] === 'serve') {
         }
       }, 'production gateway startup');
     };
+    if (process.env.FARMSLOT_RUN_STATE_PROOF === '1')
+      env.FARMSLOT_RUN_STATE_NEGATIVE = 'completion';
     await startGateway();
     if (process.env.FARMSLOT_QA_OUTPUT_PROOF_SIGNAL === 'SIGTERM')
       process.kill(process.pid, 'SIGTERM');
@@ -396,7 +436,7 @@ if (process.argv[2] === 'serve') {
         'legacy-env',
         binding!,
         activeCommand,
-        "Run exactly one shell command: node -e 'setTimeout(() => process.exit(0), 30000)'. Then reply READY. Do not read or change files.",
+        "Run exactly one shell command: node -e 'setTimeout(() => process.exit(0), 90000)'. Then reply READY. Do not read or change files.",
       );
       json(path.join(out, 'active-command.json'), acceptance);
       await waitFor(
@@ -405,6 +445,21 @@ if (process.argv[2] === 'serve') {
             .state === 'running',
         'real primary turn remains active',
       );
+      const brokenCompletion = await replay();
+      assert.equal(
+        brokenCompletion.status,
+        'completing',
+        'negative control reproduces the stranded active pipeline',
+      );
+      json(path.join(out, 'negative-completion.json'), {
+        expected: 'failed',
+        actual: brokenCompletion.status,
+        checkPassed: false,
+      });
+      assert.ok(existsSync(path.join(out, 'negative-completion-mutation.json')));
+      await stop(gateway);
+      env.FARMSLOT_RUN_STATE_NEGATIVE = '';
+      await startGateway();
       const refused = await replay();
       assert.match(refused.error ?? '', /Run work is still progressing/);
       assert.equal(
@@ -433,9 +488,49 @@ if (process.argv[2] === 'serve') {
         (decision) => !decision.resolvedAt && decision.payload?.kind === 'output-review',
       )!;
       assert.ok(pending);
-      const acknowledged = await rpc<{ run: Run }>('run.resolveDecision', {
+      await stop(gateway);
+      env.FARMSLOT_RUN_STATE_NEGATIVE = 'output';
+      await startGateway();
+      const brokenAcknowledgement = await rpc<{ run: Run }>('run.resolveDecision', {
         runId: run.id,
         decisionId: pending.id,
+        actionId: 'mark-reviewed',
+      });
+      assert.equal(
+        brokenAcknowledgement.run.decisions.some(
+          (decision) => !decision.resolvedAt && decision.payload?.kind === 'output-review',
+        ),
+        false,
+        'negative control removes the only close action',
+      );
+      json(path.join(out, 'negative-output.json'), {
+        expected: 'pending close-run',
+        actual: 'absent',
+        checkPassed: false,
+      });
+      assert.ok(existsSync(path.join(out, 'negative-output-mutation.json')));
+      await stop(gateway);
+      env.FARMSLOT_RUN_STATE_NEGATIVE = '';
+      await startGateway();
+      await rpc('run.refreshMirror', { runId: run.id });
+      assert.ok(
+        (await readRun()).decisions.some(
+          (decision) => !decision.resolvedAt && decision.payload?.kind === 'output-review',
+        ),
+        'recapture repairs the retained legacy acknowledgement',
+      );
+      // A genuinely changed copied report starts another snapshot without rewriting any receipts.
+      const report = path.join(retained, (await readRun()).output!.reportPath!);
+      const nextReport = readFileSync(report, 'utf8') + '\n';
+      writeFileSync(report, nextReport);
+      writeFileSync(path.join(workerDir, path.relative(retained, report)), nextReport);
+      await rpc('run.refreshMirror', { runId: run.id });
+      const nextReview = (await readRun()).decisions.find(
+        (decision) => !decision.resolvedAt && decision.payload?.kind === 'output-review',
+      )!;
+      const acknowledged = await rpc<{ run: Run }>('run.resolveDecision', {
+        runId: run.id,
+        decisionId: nextReview.id,
         actionId: 'mark-reviewed',
       });
       const close = acknowledged.run.decisions.find(
@@ -452,6 +547,24 @@ if (process.argv[2] === 'serve') {
         (await readRun()).decisions.find((decision) => !decision.resolvedAt)?.id,
         close.id,
       );
+      writeFileSync(failPersistence, 'controlled persistence failure');
+      await assert.rejects(
+        rpc('run.resolveDecision', {
+          runId: run.id,
+          decisionId: close.id,
+          actionId: 'close-run',
+        }),
+        /Controlled ENOSPC/,
+      );
+      assert.equal(
+        (await native.readWorker('legacy-env', binding!.sessionId, binding!.leaseId)).session.state,
+        'idle',
+        'persistence refusal preserves the exact worker lease',
+      );
+      const afterFailedPersist = await readRun();
+      assert.equal(afterFailedPersist.output?.cleanupPending, true);
+      json(path.join(out, 'persistence-refusal.json'), afterFailedPersist);
+      rmSync(failPersistence);
       const closed = await rpc<{ run: Run }>('run.resolveDecision', {
         runId: run.id,
         decisionId: close.id,
@@ -469,6 +582,9 @@ if (process.argv[2] === 'serve') {
       );
       json(path.join(out, 'acknowledged.json'), acknowledged);
       json(path.join(out, 'closed.json'), closed);
+      checks.push(
+        'negative completion/output controls fail the claimed checks; required close persistence retains ownership on ENOSPC',
+      );
       checks.push(
         'public acknowledgement retains close through refresh, then closes QA without verdict or step changes',
       );
@@ -490,12 +606,7 @@ if (process.argv[2] === 'serve') {
         'public refreshMirror captures the declared output closure and bound output-review identity',
       );
       const ready = await replay();
-      if (process.env.FARMSLOT_RUN_STATE_PROOF === '1') {
-        assert.equal(ready.status, 'failed', 'completion refusal settles the stopped pipeline');
-        checks.push(
-          'public complete replay leaves failed status with complete failed and resources retained',
-        );
-      }
+
       assert.equal(
         ready.error,
         barrier,
@@ -571,9 +682,13 @@ if (process.argv[2] === 'serve') {
       hashes,
       checks,
       originalRunId: original.id,
+      farmslotHead,
+      applicationSourceHead: qaResult.source.headSha,
       sourceHead: qaResult.source.headSha,
       limits: [
-        'Copied retained QA only. The real run/task/evidence are unchanged. Real public RPC, frozen SDK reader, canonical QA checker and native idle authority. A load barrier throws after both completion guards pass, before publication/teardown. No new application execution or recording. Original retained package verdicts and visual review state are preserved.',
+        process.env.FARMSLOT_RUN_STATE_PROOF === '1'
+          ? 'Copied retained QA only. Public RPC with a real active then idle native worker. Negative controls change only loaded modules in disposable gateways; tracked code and original run/task/evidence are read-only. Copied report bytes advance to a new snapshot through refreshMirror. Required persistence refusal preserves the worker lease, then supported close retry releases it. Application source and partial verdict stay unchanged.'
+          : 'Copied retained QA only. The real run/task/evidence are unchanged. Real public RPC, frozen SDK reader, canonical QA checker and native idle authority. A load barrier throws after both completion guards pass, before publication/teardown. No new application execution or recording. Original retained package verdicts and visual review state are preserved.',
       ],
     });
     process.stdout.write(JSON.stringify({ pass: true, out }) + '\n');

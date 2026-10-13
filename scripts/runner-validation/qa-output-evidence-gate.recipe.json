@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/qa-output-evidence-gate.mts",
         "timeout_ms": 300000,
-        "intent": "Refuse stale QA output and changed bytes. With FARMSLOT_RUN_STATE_PROOF=1, settle failed completion and retain close after acknowledgement without changing the QA verdict.",
+        "intent": "Refuse stale QA output, recapture through public RPC, validate applicable headless proof and reject changed report bytes.",
         "next": "done"
       },
       "done": { "action": "end", "status": "pass" }

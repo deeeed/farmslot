@@ -155,3 +155,25 @@ test('links-only history cannot reactivate or attach to another automated PR own
   assert.equal(previous.status, 'done');
   assert.equal(active.links, undefined);
 });
+
+test('failed completion retains PR exclusivity until explicit operator settlement', () => {
+  const run = {
+    ...makeRun({
+      status: 'failed',
+      flowType: 'pr-complete',
+      ticketOrPr: 'owner/repo#42',
+      steps: [{ name: 'complete', status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }],
+    }),
+    prWork: reference,
+  };
+  assert.equal(runOwnsPR(run, reference.pr), true);
+  assert.throws(
+    () =>
+      assertNoAutomatedPRConflict(
+        { flowType: 'pr-complete', project: run.project, ticketOrPr: 'owner/repo#42' },
+        [run],
+      ),
+    /owned by run/,
+  );
+  assert.equal(runOwnsPR({ ...run, status: 'done' }, reference.pr), false);
+});

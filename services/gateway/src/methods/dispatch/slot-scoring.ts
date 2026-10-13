@@ -76,8 +76,7 @@ export function isActiveSlotHolder(
   return (
     run.id !== excludeRunId &&
     Boolean(run.slotId) &&
-    (!TERMINAL_RUN_STATUSES.includes(run.status as RunStatus) ||
-      isCompletionPrerequisiteFailure(run)) &&
+    !TERMINAL_RUN_STATUSES.includes(run.status as RunStatus) &&
     !isSlotFreedByPark(run)
   );
 }

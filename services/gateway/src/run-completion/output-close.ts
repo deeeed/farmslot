@@ -130,8 +130,9 @@ async function closeRunOutputOnce(
           actor: 'operator',
           patch,
           settlingStatus: current.status,
+          persist: (closed) =>
+            persistRunNow(closed, 'operator closed execution with recorded outcome'),
           collaborators: operatorCompletionCollaborators(async (closed) => {
-            await persistRunNow(closed, 'operator closed execution with recorded outcome');
             await deps.publish(closed);
           }),
         }),

@@ -60,6 +60,7 @@ import { invalidateLiveRecipeContextMemo } from '../live-recipe/context.js';
 import { invalidateRecipeRunGroupCache } from '../methods/filesystem.js';
 import { normalizeStartRefRequest } from '../projects/start-ref-policy.js';
 import { assertCurrentReviewConfiguration } from '../quality/review-config.js';
+import { isCompletionPrerequisiteFailure } from '../run-lifecycle/step-status.js';
 import {
   assertSupportedRunnerSpelling,
   normalizeRunner,
@@ -1055,7 +1056,9 @@ export function listRuns(filter?: ListRunsFilter): { runs: Run[]; totalCount: nu
   if (filter?.status) {
     result = result.filter((r) => r.status === filter.status);
   } else if (filter?.active) {
-    result = result.filter((r) => ACTIVE_STATUSES.has(r.status));
+    result = result.filter(
+      (r) => ACTIVE_STATUSES.has(r.status) || isCompletionPrerequisiteFailure(r),
+    );
   }
 
   if (filter?.flowType) {
@@ -1414,7 +1417,7 @@ export async function deleteRun(id: string): Promise<boolean> {
   if (!run) return false;
   if (run.output?.cleanupPending || run.output?.closeError)
     throw new Error(`Cannot delete run ${id} before output closeout cleanup finishes`);
-  if (ACTIVE_STATUSES.has(run.status)) {
+  if (ACTIVE_STATUSES.has(run.status) || isCompletionPrerequisiteFailure(run)) {
     throw new Error(`Cannot delete active run ${id} (status=${run.status})`);
   }
   assertNativeWorkersReleased(run);
@@ -1648,7 +1651,10 @@ export function assertRunArchivable(run: Run): void {
   // A settled blocked run counts as active for recovery and the inventory, but
   // nothing can advance it; archiving is the operator's way to close it while
   // keeping the blocked outcome (unlike cancel, which overwrites it).
-  if (ACTIVE_STATUSES.has(run.status) && !isSettledBlockedRun(run)) {
+  if (
+    (ACTIVE_STATUSES.has(run.status) || isCompletionPrerequisiteFailure(run)) &&
+    !isSettledBlockedRun(run)
+  ) {
     throw new Error(`Cannot archive active run ${run.id} (status=${run.status})`);
   }
   if (run.backlogReconcilePending) {

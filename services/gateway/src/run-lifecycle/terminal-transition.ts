@@ -159,6 +159,7 @@ export interface TerminalTransitionRequest {
    * refused.
    */
   settlingStatus?: Run['status'];
+  persist?: RunTransitionDeps['persist'];
   before?: RunTransitionSyncEffect[];
   collaborators: TerminalTransitionCollaborators;
 }
@@ -197,6 +198,7 @@ export function terminalTransitionDeps(request: TerminalTransitionRequest): RunT
   return {
     getRun,
     updateRun,
+    persist: request.persist,
     planFor: terminalPlan(request),
     onMutated: (run) => request.collaborators.emit(run),
     guard: (run) => {

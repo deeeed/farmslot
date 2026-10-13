@@ -945,7 +945,7 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
         updateRunStep(runId, stepName, {
           status: 'failed',
           detail: err.message,
-          outputs: { gatePrerequisiteRefusal: err.details },
+          outputs: { gatePrerequisiteRefusal: err.details ?? {} },
         });
         for (let j = i + 1; j < steps.length; j++) {
           updateRunStep(runId, steps[j], { status: 'skipped' });

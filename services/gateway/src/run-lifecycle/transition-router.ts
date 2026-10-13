@@ -140,6 +140,8 @@ export interface RunTransitionDeps {
   getRun(runId: string): Run | undefined;
   updateRun(runId: string, partial: Partial<Run>): Run;
   planFor(request: RunTransitionRequest, run: Run): RunTransitionPlan;
+  /** Required durability before publication or destructive after-effects. */
+  persist?(run: Run): Promise<void>;
   /**
    * Called with the mutated run before the after-effects. Callers publish the
    * terminal state here so the UI reflects it immediately, without waiting on
@@ -287,6 +289,7 @@ export async function routeRunTransition(
     // No await between the guard and the mutation — see RunTransitionSyncEffect.
     runSyncEffects(plan.before, { run: existing, request }, effects);
     const run = deps.updateRun(request.runId, plan.mutate(existing));
+    if (deps.persist) await deps.persist(run);
     // A UI publish must not abort store settlement, but it must not vanish either:
     // record it as a visible outcome instead of throwing or swallowing.
     if (deps.onMutated) {

@@ -13,6 +13,7 @@ const { makeRun } = await import('../methods/run/test-fixtures.js');
 const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
 const { captureRunOutput, failRunOutputCapture, outputReviewDecisions } =
   await import('./output.js');
+const { closeRunOutput } = await import('./output-close.js');
 
 const output: RunOutput = {
   workerFinished: true,
@@ -342,6 +343,7 @@ test('QA with every step done or skipped keeps close available after acknowledge
   });
   await captureRunOutput(run.id, false);
   const initial = getRun(run.id)!;
+  const originalSteps = structuredClone(initial.steps);
   const review = initial.decisions.find((decision) => !decision.resolvedAt)!;
   const acknowledged = await runResolveDecision(
     { runId: run.id, decisionId: review.id, actionId: 'mark-reviewed' },
@@ -353,12 +355,13 @@ test('QA with every step done or skipped keeps close available after acknowledge
     close.actions.map((action) => action.id),
     ['close-run'],
   );
-  const closed = await runResolveDecision(
-    { runId: run.id, decisionId: close.id, actionId: 'close-run' },
-    () => {},
-  );
-  assert.equal(closed.run.status, 'done');
-  assert.equal(closed.run.metrics.outcome, 'partial');
-  assert.deepEqual(closed.run.steps, initial.steps);
-  assert.equal(closed.run.decisions.filter((decision) => !decision.resolvedAt).length, 0);
+  const closed = await closeRunOutput(run.id, close.id, {
+    publish: async (run) => run,
+    releaseSlot: async () => ({ released: false }),
+    slotOwner: async () => null,
+  });
+  assert.equal(closed.status, 'done');
+  assert.equal(closed.metrics.outcome, 'partial');
+  assert.deepEqual(closed.steps, originalSteps);
+  assert.equal(closed.decisions.filter((decision) => !decision.resolvedAt).length, 0);
 });
