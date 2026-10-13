@@ -164,6 +164,20 @@ try {
     }),
   );
   const client = new GatewayClient({ url, credential: null, timeout: 30000 });
+  const removed = store.createRun({
+    flowType: 'dev',
+    project,
+    ticketOrPr: 'PROJ-124',
+    runner: 'scripted',
+  });
+  store.updateRun(removed.id, { status: 'failed', slotId: 'removed-source-slot' });
+  const removedReplay = await client.call<{ run: Run }>('run.replayStep', {
+    runId: removed.id,
+    stepName: 'find-slot',
+  });
+  assert.equal(removedReplay.run.slotId, null);
+  assert.equal(removedReplay.run.engineState?.slotCapabilityRequirements, undefined);
+  await store.persistRunNow(store.getRun(removed.id)!, 'removed-source replay proof');
   const run = store.createRun({
     flowType: 'dev',
     project,
@@ -217,6 +231,7 @@ try {
     liveWrites: 0,
     workerStarts: 0,
     providerAcquires: 0,
+    removedSourceReplay: true,
   });
   console.log(
     'Public replay retains Android intent; production find-slot selects the configured Android slot and public run.get confirms it.',

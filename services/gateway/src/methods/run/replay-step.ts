@@ -70,6 +70,7 @@ import {
 import { clearedRunnerSessionContextPatch } from '../../runners/session-record.js';
 import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
+import { withRunSources } from '../../sources/runtime.js';
 import { resolveContextFilePath } from '../../tasks/watcher.js';
 import { normalizeWorkerSignal, parseStrictIsoMs } from '../../tasks/worker-signals.js';
 import { isActiveSlotHolder, slotClaimBlockedByRelease } from '../dispatch/slot-scoring.js';
@@ -1127,18 +1128,20 @@ export async function runReplayStep(
   let priorOwnedSlotFields: Record<string, unknown> | null = null;
   const priorRunSlotId = existing.slotId ?? null;
   const selectionGeneration = existing.engineState?.generation;
-  const slotCapabilities =
-    targetIdx >= 0 && targetIdx <= findSlotIdx
-      ? await replaySlotCapabilityRequirements(existing)
-      : undefined;
-  if (
-    getRun(params.runId)?.slotId !== priorRunSlotId ||
-    getRun(params.runId)?.engineState?.generation !== selectionGeneration
-  )
-    throw new Error('Run changed while reading replay device requirements');
   let revived = false;
   let nativeReplayGeneration: number | undefined;
   try {
+    const slotCapabilities =
+      targetIdx >= 0 && targetIdx <= findSlotIdx
+        ? await withRunSources(existing, () => replaySlotCapabilityRequirements(existing), {
+            planning: true,
+          })
+        : undefined;
+    if (
+      getRun(params.runId)?.slotId !== priorRunSlotId ||
+      getRun(params.runId)?.engineState?.generation !== selectionGeneration
+    )
+      throw new Error('Run changed while reading replay device requirements');
     // Invalidate any in-flight engine loop so it bails instead of overwriting our state.
     // Do this only after replay entry validation so rejected replays do not leave a
     // synthetic in-progress recovery lane behind.

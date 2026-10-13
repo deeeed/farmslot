@@ -4,8 +4,14 @@ import type {
   RuntimeCapabilityCatalogEntry,
   RuntimeCapabilityListResult,
 } from '@farmslot/protocol';
+import {
+  isMissingProjectConfigError,
+  SlotConfigError,
+  withProjectSources,
+} from '@farmslot/slot-config';
 
 import { claimsDevice } from '../runtime-capabilities/device-target.js';
+import type { SourceSlotPlans } from '../sources/slot-planning.js';
 
 export type SlotCapabilityCatalogs = ReadonlyMap<string, readonly RuntimeCapabilityCatalogEntry[]>;
 
@@ -22,7 +28,20 @@ export async function replaySlotCapabilityRequirements(
   if (run.engineState?.slotCapabilityRequirements)
     return structuredClone(run.engineState.slotCapabilityRequirements);
   if (!run.slotId) return undefined;
-  const catalog = await list(run.slotId);
+  let catalog: RuntimeCapabilityListResult;
+  try {
+    catalog = await list(run.slotId);
+  } catch (error) {
+    if (
+      !(error instanceof SlotConfigError && error.code === 'SLOT_NOT_FOUND') &&
+      !isMissingProjectConfigError(error)
+    )
+      throw error;
+    // Historical runs may outlive their pool entry. No device requirement can
+    // be inferred from a removed slot; retained snapshots above still apply.
+    console.info(`[run] source slot ${run.slotId} was removed; no device intent inferred`);
+    return undefined;
+  }
   const capabilityIds = catalog.capabilities
     .filter((entry) => entry.availability.state === 'available' && claimsDevice(entry))
     .map((entry) => entry.id);
@@ -32,12 +51,19 @@ export async function replaySlotCapabilityRequirements(
 export async function slotCapabilityCatalogs(
   slotIds: readonly string[],
   capabilityIds: readonly string[] | undefined,
+  plans?: SourceSlotPlans,
+  list: (slotId: string) => Promise<RuntimeCapabilityListResult> = listSlotCapabilities,
 ): Promise<SlotCapabilityCatalogs | undefined> {
   if (!capabilityIds?.length) return undefined;
-  return new Map(
+  return new Map<string, readonly RuntimeCapabilityCatalogEntry[]>(
     await Promise.all(
       [...new Set(slotIds)].map(async (slotId) => {
-        const catalog = await listSlotCapabilities(slotId);
+        const plan = plans?.get(slotId);
+        if (plans && (!plan || 'refusal' in plan)) return [slotId, []] as const;
+        const catalog =
+          plan && 'sources' in plan
+            ? await withProjectSources(plan.sources, () => list(slotId))
+            : await list(slotId);
         return [slotId, catalog.capabilities] as const;
       }),
     ),

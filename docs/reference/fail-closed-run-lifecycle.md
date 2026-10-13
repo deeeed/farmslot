@@ -154,6 +154,12 @@ further replays and is distinct from an authored proof plan or acquisition.
 capability before scoring, explicit or affinity selection, and slot claim. It
 MUST retain caller `allowedSlots` filters. The registry remains the capability
 availability authority; health penalties and task prose cannot replace this check.
+Catalog reads MUST use the retained run's pinned sources, each candidate's
+planned node sources, and the admitted sources at claim. If an old slot or
+project definition was removed before a snapshot existed, replay MUST preserve
+legacy re-selection and infer no missing device requirement. Saved requirements
+remain authoritative. Other catalog failures MUST refuse replay and release any
+replacement queue claim immediately.
 
 All scenarios use production gateway RPC/engine paths, isolated stores,
 temporary checkouts/remotes and controlled structured runtime/transport
