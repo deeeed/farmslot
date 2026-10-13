@@ -317,8 +317,10 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `slot.reopen`                           | admin          |                                                                                    |
 | `slot.show`                             | admin          |                                                                                    |
 | `slot.softRefresh`                      | admin          |                                                                                    |
+| `sources.pin`                           | admin          |                                                                                    |
 | `sources.status`                        | admin          |                                                                                    |
 | `sources.sync`                          | admin          |                                                                                    |
+| `sources.unpin`                         | admin          |                                                                                    |
 | `stream.snapshot`                       | admin          |                                                                                    |
 | `stream.subscribe`                      | admin          |                                                                                    |
 | `stream.unsubscribe`                    | admin          |                                                                                    |
@@ -365,6 +367,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `workGraph.pause`                       | admin          |                                                                                    |
 | `workGraph.removeEdge`                  | admin          |                                                                                    |
 | `workGraph.removeNode`                  | admin          |                                                                                    |
+| `workGraph.retry`                       | admin          |                                                                                    |
 | `workGraph.schedulerTick`               | admin          |                                                                                    |
 | `workGraph.updateNode`                  | admin          |                                                                                    |
 | `workspace.metro.subscribe`             | admin          |                                                                                    |

@@ -30,6 +30,7 @@ export interface EvalQueueCell {
 }
 
 export interface QueueItem {
+  sourceSelections?: import('../sources/pins.js').SourceSelection[];
   qaProfileId?: string;
   qaInputs?: Record<string, import('./qa.js').QaInput>;
   reviewQaContract?: import('./qa.js').ReviewQaContract;

@@ -781,6 +781,40 @@ test('webhook ingress requires a configured stored admin service principal', () 
   });
 });
 
+test('scoped source mutations require admin credentials and never trust wire actor fields', async () => {
+  const runtime = isolatedRuntime();
+  const operator = runtime.writer.createPrincipal(
+    { type: 'person', displayName: 'source-operator' },
+    [{ role: 'operator', scope: { kind: 'global' } }],
+  );
+  const credential = runtime.writer.issueCredential(operator.id, 'source-operator-device');
+  const harness = await startServer(runtime);
+  try {
+    const ws = await connect(harness.url);
+    await request(ws, Methods.AUTH_CONNECT, { clientKind: 'ui', token: credential.secret });
+    for (const method of [
+      Methods.SOURCES_STATUS,
+      Methods.SOURCES_SYNC,
+      Methods.SOURCES_PIN,
+      Methods.SOURCES_UNPIN,
+    ]) {
+      const response = await request(ws, method, {
+        sourceId: 'pack',
+        scope: 'farm',
+        targetId: 'farm',
+        ref: 'experiment',
+        actor: 'forged-admin',
+      });
+      assert.equal(response.ok, false);
+      assert.equal(response.error?.code, 'AUTH_FORBIDDEN');
+    }
+    ws.close();
+    await onceClose(ws);
+  } finally {
+    await harness.close();
+  }
+});
+
 function isolatedRuntime() {
   const runtime = createGatewayAuthRuntime({
     FARMSLOT_HOME: mkdtempSync(join(tmpdir(), 'farmslot-server-auth-')),

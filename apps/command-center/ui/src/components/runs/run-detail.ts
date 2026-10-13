@@ -46,6 +46,7 @@ import '../workspace/review-workspace.js';
 import '../workspace/ready-workspace.js';
 import '../terminal/terminal-view.js';
 import '../shared/hydrating-placeholder.js';
+import '../shared/source-status-panel.js';
 import '../shared/slot-prepare-popover.js';
 import '../interactive/interactive-operator-packets.js';
 

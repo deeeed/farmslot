@@ -18,6 +18,7 @@ import {
   workspacePolicyMachines,
 } from '@farmslot/protocol';
 import { executionModelFromSelection, resolveReviewMode } from '@farmslot/review-dispatch';
+import { currentProjectSources } from '@farmslot/slot-config';
 
 import { GatewayMethodError } from '../core/method-error.js';
 import {
@@ -169,6 +170,7 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
   options: {
     purpose: 'preview' | 'queue' | 'run';
     ownerId?: string;
+    excludingRunId?: string;
     execution?: PRExecutionProfile;
   },
 ): Promise<DirectWorkflowDefaultsResult<T & DirectWorkflowRequest>> {
@@ -314,7 +316,10 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
       | undefined;
     let reason: GatewayMethodError | NodeTransportUnavailableError | undefined;
     let waitingReason: GatewayMethodError | undefined;
-    for (const choice of prExecutionChoices(execution)) {
+    const sourceNode = currentProjectSources()?.materialization.lock.context.nodeId;
+    for (const choice of prExecutionChoices(execution).filter(
+      (choice) => !sourceNode || choice.machine === sourceNode,
+    )) {
       let admission: ReviewWorkspaceAdmission | undefined;
       try {
         admission = await inspectReviewWorkspaceTarget(
@@ -325,9 +330,10 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
             model: executionModelFromSelection(choice).model,
           },
           options.ownerId,
+          options.excludingRunId,
         );
         waiting ??= { choice, admission };
-        assertReviewWorkspaceAdmitted(admission);
+        assertReviewWorkspaceAdmitted(admission, options.excludingRunId);
         waiting = { choice, admission };
         reason = undefined;
         waitingReason = undefined;

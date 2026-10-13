@@ -2395,6 +2395,10 @@ export interface MachineParkRecord {
 export interface Run {
   /** Append-only gateway-authorised human exceptions; engine evidence stays immutable. */
   claimOverrideReceipts?: import('../recipe/claim-overrides.js').ClaimUntestableOverrideReceipt[];
+  /** ADR-069 provisional inputs. These never claim an execution receipt. */
+  sourcePlan?: import('../sources/contracts.js').RunSourcePlan;
+  /** Gateway-owned caller choices for revalidation before source-dependent effects. */
+  dispatchRequest?: import('../rpc/run.js').RunCreateParams;
   /** Immutable ADR-069 inputs. Absence on historical runs retains unknown legacy provenance. */
   sourceProvenance?: import('../sources/contracts.js').RunSourceProvenance;
   /** Gateway-owned, opaque reviewer admission receipts. Replay must retain these. */

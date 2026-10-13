@@ -35,6 +35,7 @@ test('GRAPH_VERB_METHODS maps each verb to a workGraph.* handler method', () => 
   assert.equal(GRAPH_VERB_METHODS['remove-edge'], 'workGraph.removeEdge');
   assert.equal(GRAPH_VERB_METHODS.activate, 'workGraph.activate');
   assert.equal(GRAPH_VERB_METHODS.pause, 'workGraph.pause');
+  assert.equal(GRAPH_VERB_METHODS.retry, 'workGraph.retry');
   assert.equal(GRAPH_VERB_METHODS.tick, 'workGraph.schedulerTick');
   assert.equal(GRAPH_VERB_METHODS['gate-resolve'], 'workGraph.gateResolve');
 });
@@ -62,4 +63,14 @@ test('graph command help lists the full verb family', async () => {
   for (const verb of GRAPH_VERBS) {
     assert.match(help, new RegExp(verb.replace('-', '\\-')), `help missing ${verb}`);
   }
+});
+
+test('graph retry requires its reason before any gateway operation', async () => {
+  const program = new Command();
+  program.exitOverride();
+  program.configureOutput({ writeErr: () => {} });
+  registerGraphCommand(program);
+  await assert.rejects(program.parseAsync(['graph', 'retry', 'graph-1'], { from: 'user' }), {
+    code: 'commander.missingMandatoryOptionValue',
+  });
 });

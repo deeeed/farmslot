@@ -360,8 +360,10 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `slot.reopen`                           | slot             | bounded-write | —      | —      | Slot Reopen gateway method.                           |
 | `slot.show`                             | slot             | bounded-write | —      | —      | Slot Show gateway method.                             |
 | `slot.softRefresh`                      | slot             | bounded-write | —      | —      | Slot SoftRefresh gateway method.                      |
+| `sources.pin`                           | sources          | bounded-write | —      | —      | Sources Pin gateway method.                           |
 | `sources.status`                        | sources          | read-only     | —      | —      | Sources Status gateway method.                        |
 | `sources.sync`                          | sources          | bounded-write | —      | —      | Sources Sync gateway method.                          |
+| `sources.unpin`                         | sources          | bounded-write | —      | —      | Sources Unpin gateway method.                         |
 | `stream.snapshot`                       | stream           | bounded-write | —      | —      | Stream Snapshot gateway method.                       |
 | `stream.subscribe`                      | stream           | bounded-write | —      | —      | Stream Subscribe gateway method.                      |
 | `stream.unsubscribe`                    | stream           | bounded-write | —      | —      | Stream Unsubscribe gateway method.                    |
@@ -405,6 +407,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `workGraph.pause`                       | workGraph        | lifecycle     | —      | —      | WorkGraph Pause gateway method.                       |
 | `workGraph.removeEdge`                  | workGraph        | bounded-write | —      | —      | WorkGraph RemoveEdge gateway method.                  |
 | `workGraph.removeNode`                  | workGraph        | bounded-write | —      | —      | WorkGraph RemoveNode gateway method.                  |
+| `workGraph.retry`                       | workGraph        | bounded-write | —      | —      | WorkGraph Retry gateway method.                       |
 | `workGraph.schedulerTick`               | workGraph        | bounded-write | —      | —      | WorkGraph SchedulerTick gateway method.               |
 | `workGraph.updateNode`                  | workGraph        | bounded-write | —      | —      | WorkGraph UpdateNode gateway method.                  |
 | `worker.session.history.get`            | worker           | read-only     | —      | —      | Worker Session History Get gateway method.            |

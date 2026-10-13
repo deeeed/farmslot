@@ -471,9 +471,15 @@ async function main(): Promise<void> {
     console.error(`[work-graph] startup reconciliation failed: ${(err as Error).message}`);
   });
 
-  initDispatchQueue(observedBroadcast, async (item, claim) => {
+  initDispatchQueue(observedBroadcast, async (item, claim, callerRequest) => {
     const prDispatchSelection = item.prWork ? structuredClone(item) : item;
-    const projectConfig = await loadProjectConfig(item.project);
+    const { withSourceRequestPlanning, queuedSourceCreationRequest } =
+      await import('./sources/runtime.js');
+    const projectConfig = await withSourceRequestPlanning(
+      queuedSourceCreationRequest(item),
+      'queue',
+      () => loadProjectConfig(item.project),
+    );
     const requestedSafetyTier =
       item.queueKind === 'eval-cell' &&
       isValidSafetyTier(item.evalCell?.trialStartParams.safetyTier)
@@ -577,6 +583,7 @@ async function main(): Promise<void> {
       variant: item.variant ?? undefined,
       taskTemplate: item.taskTemplate ? { ...item.taskTemplate } : undefined,
       executionTemplateId: item.executionTemplateId,
+      sourceSelections: item.sourceSelections,
       domain: item.domain,
       app: item.app,
       prepareProfile: item.prepareProfile,
@@ -624,6 +631,7 @@ async function main(): Promise<void> {
         reviewQaContract: item.reviewQaContract,
         expectedQa,
         expectedExecutionTemplate: item.executionTemplate,
+        sourceCallerRequest: callerRequest,
         beforeCreateAsync: () => refreshPRQueueAdmission(prDispatchSelection),
         beforeCreate,
         afterCreateSync: (created) => {

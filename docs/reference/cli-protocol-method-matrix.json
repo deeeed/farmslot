@@ -1489,12 +1489,24 @@
       "command": "farmslot run adopt"
     },
     "sources.status": {
-      "surface": "rpc-only",
-      "note": "ADR-069 source authority; dedicated sources CLI lands in the next approved stage."
+      "surface": "typed-command",
+      "command": "farmslot sources status"
     },
     "sources.sync": {
-      "surface": "rpc-only",
-      "note": "ADR-069 source authority; dedicated sources CLI lands in the next approved stage."
+      "surface": "typed-command",
+      "command": "farmslot sources sync"
+    },
+    "sources.pin": {
+      "surface": "typed-command",
+      "command": "farmslot sources pin"
+    },
+    "sources.unpin": {
+      "surface": "typed-command",
+      "command": "farmslot sources unpin"
+    },
+    "workGraph.retry": {
+      "surface": "typed-command",
+      "command": "farmslot graph retry"
     },
     "run.overrideClaim": {
       "surface": "typed-command",

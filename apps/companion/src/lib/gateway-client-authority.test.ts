@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
 import test, { mock } from 'node:test';
 
-import { type GatewayAuthConnectResult, Methods } from '@farmslot/protocol';
+import {
+  createSourceCommandClient,
+  type GatewayAuthConnectResult,
+  Methods,
+  type ResponseFrame,
+  SourceStatusController,
+} from '@farmslot/protocol';
+
+import { sourceStatusFixture } from '../../../../packages/protocol/test/fixtures/source-status';
 
 mock.module('react-native', {
   namedExports: { AppState: { addEventListener: () => ({ remove() {} }) } },
@@ -33,6 +41,9 @@ class Socket {
   }
   response(id: string, payload: unknown) {
     this.onmessage?.({ data: JSON.stringify({ type: 'res', id, ok: true, payload }) });
+  }
+  failure(id: string, error: NonNullable<ResponseFrame['error']>) {
+    this.onmessage?.({ data: JSON.stringify({ type: 'res', id, ok: false, error }) });
   }
   event(event: string, payload: unknown) {
     this.onmessage?.({ data: JSON.stringify({ type: 'event', event, payload }) });
@@ -151,6 +162,106 @@ test('policy revocation clears authority before disconnect listeners and farm co
     socket.close(1008);
     assert.equal(disconnectedAccess, 'none');
     assert.equal(client.authenticatedPrincipal, null);
+  } finally {
+    client.disconnect();
+    globalThis.WebSocket = originalSocket;
+  }
+});
+
+test('native RPC rejection preserves its code, details and next action', async () => {
+  const originalSocket = globalThis.WebSocket;
+  globalThis.WebSocket = Socket as unknown as typeof WebSocket;
+  const { GatewayClient } = await import('./gateway-client');
+  const client = new GatewayClient('ws://localhost:19777');
+  try {
+    client.connect();
+    const socket = Socket.sockets.at(-1)!;
+    socket.open();
+    socket.response(socket.sent[0].id, auth('admin', 'farm'));
+    await settle();
+    const rejection = {
+      code: 'SOURCE_STATE_STALE',
+      message: 'Source pins changed before applying this request.',
+      details: { expectedPinRevision: 2, pinRevision: 3 },
+      userAction: 'Review current source pins and try again.',
+    };
+    const request = assert.rejects(client.request(Methods.SOURCES_PIN), (error: Error) => {
+      assert(error instanceof Error);
+      for (const [key, value] of Object.entries(rejection))
+        assert.deepEqual(Reflect.get(error, key), value);
+      return true;
+    });
+    socket.failure(socket.sent.at(-1)!.id, rejection);
+    await request;
+  } finally {
+    client.disconnect();
+    globalThis.WebSocket = originalSocket;
+  }
+});
+
+test('native stale source rejection releases editing and prepares a fresh command', async () => {
+  const originalSocket = globalThis.WebSocket;
+  globalThis.WebSocket = Socket as unknown as typeof WebSocket;
+  const { GatewayClient } = await import('./gateway-client');
+  const client = new GatewayClient('ws://localhost:19777');
+  try {
+    client.connect();
+    const socket = Socket.sockets.at(-1)!;
+    socket.open();
+    socket.response(socket.sent[0].id, auth('admin', 'farm'));
+    await settle();
+    const controller = new SourceStatusController(
+      createSourceCommandClient((method, params) => client.request(method, params)),
+      {
+        connectionKey: 'farm',
+        target: { scope: 'farm', targetId: 'farm' },
+        actions: ['pin'],
+      },
+    );
+    const refresh = controller.refresh();
+    socket.response(socket.sent.at(-1)!.id, sourceStatusFixture());
+    await refresh;
+    controller.select({ sourceId: 'pack', selection: 'branch', ref: 'experiment' });
+    const stale = controller.apply('pin', 'pack');
+    socket.response(socket.sent.at(-1)!.id, sourceStatusFixture());
+    await settle();
+    const oldCommand = socket.sent.at(-1)!;
+    assert.equal(oldCommand.method, Methods.SOURCES_PIN);
+    socket.failure(oldCommand.id, {
+      code: 'SOURCE_STATE_STALE',
+      message: 'Source pins changed before applying this request.',
+      details: { pinRevision: 3 },
+    });
+    await stale;
+    assert.equal(controller.getSnapshot().pending, undefined);
+    assert.equal(controller.getSnapshot().canRetry, false);
+    assert.equal(controller.getSnapshot().canEdit, true);
+    assert(controller.getSnapshot().operationError?.includes('Source pins changed'));
+
+    const freshStatus = { ...sourceStatusFixture(), pinRevision: 3 };
+    const refreshed = controller.refresh();
+    socket.response(socket.sent.at(-1)!.id, freshStatus);
+    await refreshed;
+    assert(controller.getSnapshot().operationError?.includes('Source pins changed'));
+    controller.select({ sourceId: 'pack', selection: 'branch', ref: 'experiment/fresh' });
+    const fresh = controller.apply('pin', 'pack');
+    socket.response(socket.sent.at(-1)!.id, freshStatus);
+    await settle();
+    const freshCommand = socket.sent.at(-1)!;
+    assert.equal(freshCommand.method, Methods.SOURCES_PIN);
+    const oldParams = oldCommand.params as Record<string, unknown>;
+    const freshParams = freshCommand.params as Record<string, unknown>;
+    assert.notEqual(freshParams.operationId, oldParams.operationId);
+    assert.equal(freshParams.expectedPinRevision, 3);
+    assert.equal(freshParams.ref, 'experiment/fresh');
+    socket.response(freshCommand.id, { operationId: freshParams.operationId });
+    await settle();
+    assert.equal(socket.sent.at(-1)!.method, Methods.SOURCES_STATUS);
+    socket.response(socket.sent.at(-1)!.id, freshStatus);
+    await fresh;
+    assert.equal(controller.getSnapshot().operationError, undefined);
+    assert.equal(controller.getSnapshot().pending, undefined);
+    assert.equal(controller.getSnapshot().canEdit, true);
   } finally {
     client.disconnect();
     globalThis.WebSocket = originalSocket;

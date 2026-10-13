@@ -507,6 +507,9 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
 
   return html`
     ${backToRuns}
+    <source-status-panel
+      .context=${{ target: { scope: 'run', targetId: r.id }, actions: ['pin', 'unpin'] }}
+    ></source-status-panel>
     <file-transfer-progress-banner inline run-id=${r.id}></file-transfer-progress-banner>
     <a
       class="context-read-link"

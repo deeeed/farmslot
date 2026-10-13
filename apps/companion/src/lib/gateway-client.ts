@@ -324,7 +324,7 @@ export class GatewayClient {
     if (frame.ok) {
       req.resolve(frame.payload);
     } else {
-      req.reject(new Error(frame.error?.message ?? 'Unknown error'));
+      req.reject(Object.assign(new Error(frame.error?.message ?? 'Unknown error'), frame.error));
     }
   }
 

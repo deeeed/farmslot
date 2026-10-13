@@ -2476,6 +2476,8 @@ test('loadBacklog keeps orphaned queue items until operator removes them', async
     { kind: 'system' },
   );
   const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  await queue.tryDispatchNext();
+  await backlog.flushBacklogForTests();
   await rm(process.env.FARMSLOT_BACKLOG_FILE!, { force: true });
   await backlog.loadBacklog();
   assert.equal(backlog.listBacklogItems().items.length, 0);
@@ -2519,6 +2521,8 @@ test('dispatch.queue.removeOrphan removes orphaned backlog-linked queue items', 
     { kind: 'system' },
   );
   const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  await queue.tryDispatchNext();
+  await backlog.flushBacklogForTests();
   await rm(process.env.FARMSLOT_BACKLOG_FILE!, { force: true });
   await backlog.loadBacklog();
   await backlog.removeOrphanBacklogQueueItem({ itemId: enqueued.queueItem.id });

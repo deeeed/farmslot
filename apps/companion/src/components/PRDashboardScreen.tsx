@@ -10,8 +10,10 @@ import {
   type PRRecommendation,
   type PRStatus,
   type RunCreateResult,
+  type SourceSelection,
 } from '@farmslot/protocol';
 
+import { SourceStatusSection } from '../features/sources/SourceStatusSection';
 import {
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
@@ -335,6 +337,8 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
   const [sortMode, setSortMode] = useState<PRDashboardSortMode>('group');
   const [refreshing, setRefreshing] = useState(false);
   const [dispatchingKey, setDispatchingKey] = useState<string | null>(null);
+  const [sourceSelections, setSourceSelections] = useState<SourceSelection[]>([]);
+  const [sourceSelectionRefusal, setSourceSelectionRefusal] = useState<string | undefined>();
   const focusedPRNumber = parseRoutePR(focusedPRParam);
   const focusedRepo = routeParamString(focusedRepoParam).trim();
   const prWorkspaceRouteContext = useMemo(
@@ -437,6 +441,10 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
 
   const handleDispatchComplete = useCallback(
     (pr: PRStatus) => {
+      if (sourceSelectionRefusal) {
+        Alert.alert('Source selection needs attention', sourceSelectionRefusal);
+        return;
+      }
       if (!client) {
         Alert.alert('Not connected', 'Connect to the gateway before dispatching PR completion.');
         return;
@@ -451,6 +459,7 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
             setDispatchingKey(key);
             client
               .request<RunCreateResult>(Methods.RUN_CREATE, {
+                ...(sourceSelections.length ? { sourceSelections } : {}),
                 flowType: 'pr-complete',
                 project: pr.project,
                 ticketOrPr: `${pr.repo}#${pr.pr}`,
@@ -474,11 +483,16 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
         },
       ]);
     },
-    [client, router],
+    [client, router, sourceSelections, sourceSelectionRefusal],
   );
 
   const header = (
     <View style={styles.headerContent}>
+      <SourceStatusSection
+        context={{ actions: [], selections: sourceSelections }}
+        onSelectionsChange={setSourceSelections}
+        onSelectionStateChange={setSourceSelectionRefusal}
+      />
       <View style={styles.titleRow}>
         {showStackTitle ? <View /> : <Text style={styles.screenTitle}>Pull Requests</Text>}
         <Pressable

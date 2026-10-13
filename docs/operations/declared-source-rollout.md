@@ -29,13 +29,49 @@ Change the declaration revision whenever its contents change. Authentication
 stays in the existing per-repository Git credential handling. No credentials,
 operator checkout paths or dirty snapshots belong in source declarations.
 
-During this first stage, `sources.status` and `sources.sync` are gateway RPCs.
-Status is read-only. Sync requires `operationId` and
-`expectedDeclarationRevision`, with optional `sourceId`/`nodeId`. Retry the same
-operation ID after a lost acknowledgement. It retains the exact saved lock plan.
-Inspect per-project/node errors before proceeding. A repaired source uses a new
-operation identity. Dedicated CLI/SDK commands and scoped branch pins follow in
-the next approved stage.
+Use `farmslot sources status [sourceId]` for a farm view, or add `--node nodeId`
+or `--run runId`. Status only reads reported facts. It shows effective branch,
+pin scope, captured base main, shadowed selections, recorded locks and verified
+node receipts. A retained run's inputs remain separate from today's selection.
+
+`farmslot sources sync [sourceId] [--node nodeId]` reconciles the same authority
+used by polling and materializes each selected node's complete scoped closure.
+It reports source/node errors and preserves active generations. Sync never runs
+project hooks, restarts services or grants resource leases.
+
+Experiments require a pushed branch in the declared repository:
+
+```sh
+farmslot sources pin pack --ref experiment --node node-1
+farmslot sources unpin pack --node node-1
+```
+
+Pin/unpin require exactly one of `--farm`, `--node nodeId` or `--run runId`.
+Run wins over node, then farm. Unpin stores a visible main selection at that scope,
+so a broader experiment does not become effective silently. Run changes require
+an unadmitted run and revalidate its plan before execution. Active and historical
+inputs are read-only. Use a new run to experiment with those inputs.
+
+CLI commands reuse gateway connection/auth and JSON output options. The shared
+`SourceCommandClient` from `@farmslot/protocol` captures current declaration/pin
+revisions and prepares an operation packet. SDK hosts pass their existing
+authenticated transport to `createSourceCommandClient`; they never resolve refs.
+After a lost acknowledgement, retry `execute(preparedCommand)` unchanged. A CLI
+error includes that exact `sourceCommand` packet for `farmslot rpc <method> '<params>'`.
+Do not mint another operation ID or recapture revisions for an uncertain retry.
+A rejected stale revision requires inspecting current status before a new request.
+
+`run.create` accepts `sourceSelections`, an array of `{sourceId, selection, ref}`
+where `selection` is `branch` with a pushed branch `ref`, or `main`. The gateway
+prepares and validates the entire closure before registering the run. Selections
+are run-scoped and cannot escape to siblings. Preview and queue planning use the
+same provisional inputs without publishing pins or run execution receipts.
+
+Command Center and Companion reuse one source-status controller/model for farm,
+node, run and dispatch contexts. Their platform renderers show gateway facts and
+pass selections to the same RPC contract. Mutation controls remain unavailable
+for immutable runs and unsupported gateways. An uncertain request stays bound
+to its original scope and authenticated farm connection.
 
 ## Prove the fleet
 

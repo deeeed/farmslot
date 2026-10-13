@@ -1,4 +1,9 @@
-import type { DecisionAction, FlowType, RunDecision } from '@farmslot/protocol';
+import type {
+  BranchAffinityNudgePayload,
+  DecisionAction,
+  FlowType,
+  RunDecision,
+} from '@farmslot/protocol';
 
 import { CLOSE_AS_SHIPPED_ACTION, PUBLISH_APPROVAL_ACTIONS } from './gate-policy.js';
 
@@ -130,4 +135,20 @@ export function canReplayCollisionDecision(
   const currentKey = [...currentExistingDirs].sort().join('|');
   const priorKey = [...p.existingDirs].sort().join('|');
   return priorKey === currentKey;
+}
+
+/** A resolved action authorizes the displayed worker, not the next ranked one. */
+export function canReplayBranchAffinityDecision(
+  prior: RunDecision,
+  current: BranchAffinityNudgePayload,
+): boolean {
+  const payload = prior.payload;
+  if (payload?.kind !== 'branch_affinity_nudge' || !payload.candidate.currentRunId) return false;
+  return (
+    payload.project === current.project &&
+    payload.ticketOrPr === current.ticketOrPr &&
+    (['slotId', 'machine', 'branch', 'currentRunId', 'dispatchedAt'] as const).every(
+      (key) => payload.candidate[key] === current.candidate[key],
+    )
+  );
 }

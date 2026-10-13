@@ -19,6 +19,7 @@ import './llm-config.js';
 import './template-viewer.js';
 import './slot-toggle.js';
 import '../flow-graph/flow-graph.js';
+import '../shared/source-status-panel.js';
 
 import { gateway } from '../../gateway-client.js';
 import { providerAccountsStore } from '../../provider-accounts-store.js';
@@ -1101,6 +1102,17 @@ export class ConfigPanel extends LitElement {
         style="${this._selection?.kind === 'flows' ? 'padding:0; overflow:hidden;' : ''}"
       >
         ${this.renderContent()}
+        ${this._selection?.kind !== 'flows'
+          ? html`<source-status-panel
+              .context=${{
+                target:
+                  this._selection?.kind === 'pool'
+                    ? { scope: 'node', targetId: this._selection.machine }
+                    : { scope: 'farm', targetId: 'farm' },
+                actions: ['sync', 'pin', 'unpin'],
+              }}
+            ></source-status-panel>`
+          : nothing}
       </div>
     `;
   }

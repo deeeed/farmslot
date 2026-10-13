@@ -85,6 +85,7 @@ export const Methods = {
   WORK_GRAPH_UPDATE_NODE: 'workGraph.updateNode',
   WORK_GRAPH_ACTIVATE: 'workGraph.activate',
   WORK_GRAPH_PAUSE: 'workGraph.pause',
+  WORK_GRAPH_RETRY: 'workGraph.retry',
   WORK_GRAPH_GATE_RESOLVE: 'workGraph.gateResolve',
   WORK_GRAPH_SCHEDULER_TICK: 'workGraph.schedulerTick',
 
@@ -200,6 +201,8 @@ export const Methods = {
   NODES_LIST: 'nodes.list',
   SOURCES_STATUS: 'sources.status',
   SOURCES_SYNC: 'sources.sync',
+  SOURCES_PIN: 'sources.pin',
+  SOURCES_UNPIN: 'sources.unpin',
   NODE_DEPLOY: 'nodes.deploy',
 
   // Task

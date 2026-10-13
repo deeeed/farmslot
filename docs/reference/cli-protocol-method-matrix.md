@@ -547,10 +547,12 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## sources.\*
 
-| Method           | Surface  | CLI command | TUI | Note                                                                              |
-| ---------------- | -------- | ----------- | --- | --------------------------------------------------------------------------------- |
-| `sources.status` | rpc-only |             |     | ADR-069 source authority; dedicated sources CLI lands in the next approved stage. |
-| `sources.sync`   | rpc-only |             |     | ADR-069 source authority; dedicated sources CLI lands in the next approved stage. |
+| Method           | Surface       | CLI command               | TUI | Note |
+| ---------------- | ------------- | ------------------------- | --- | ---- |
+| `sources.status` | typed-command | `farmslot sources status` |     |      |
+| `sources.sync`   | typed-command | `farmslot sources sync`   |     |      |
+| `sources.pin`    | typed-command | `farmslot sources pin`    |     |      |
+| `sources.unpin`  | typed-command | `farmslot sources unpin`  |     |      |
 
 ## stream.\*
 
@@ -627,6 +629,7 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `workGraph.updateNode`    | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `workGraph.activate`      | typed-command | `farmslot graph activate`     |     |                                                                                                |
 | `workGraph.pause`         | typed-command | `farmslot graph pause`        |     |                                                                                                |
+| `workGraph.retry`         | typed-command | `farmslot graph retry`        |     |                                                                                                |
 | `workGraph.gateResolve`   | typed-command | `farmslot graph gate-resolve` |     |                                                                                                |
 | `workGraph.schedulerTick` | typed-command | `farmslot graph tick`         |     |                                                                                                |
 

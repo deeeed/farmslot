@@ -14,6 +14,7 @@ import type {
   ReviewSequence,
   ReviewWorkspaceTarget,
   RunCreateParams,
+  SourceSelection,
   TaskTemplateSelection,
 } from '@farmslot/protocol';
 
@@ -35,6 +36,7 @@ export function effectivePrepareProfile(input: {
 }
 
 export interface DispatchPayloadDraft {
+  sourceSelections?: SourceSelection[];
   transport?: 'tmux' | 'native';
   nativeProfile?: NativeProfileReference;
   flowType: FlowType;
@@ -87,8 +89,17 @@ function devInteractiveFields(
   return {};
 }
 
+function sourceSelectionFields(
+  input: DispatchPayloadDraft,
+): Pick<RunCreateParams, 'sourceSelections'> {
+  return input.sourceSelections?.length
+    ? { sourceSelections: structuredClone(input.sourceSelections) }
+    : {};
+}
+
 export function buildRunCreateParams(input: DispatchPayloadDraft): RunCreateParams {
   return {
+    ...sourceSelectionFields(input),
     ...(input.transport ? { transport: input.transport } : {}),
     ...(input.transport === 'native' && input.nativeProfile
       ? { nativeProfile: input.nativeProfile }
@@ -131,6 +142,7 @@ export function buildRunCreateParams(input: DispatchPayloadDraft): RunCreatePara
 
 export function buildDispatchPreviewParams(input: DispatchPayloadDraft): DispatchPreviewParams {
   return {
+    ...sourceSelectionFields(input),
     project: input.project,
     flowType: input.flowType,
     ticketOrPr: input.ticketOrPr,
@@ -161,6 +173,7 @@ export function buildDispatchPreviewParams(input: DispatchPayloadDraft): Dispatc
 
 export function buildDispatchQueueAddParams(input: DispatchPayloadDraft): DispatchQueueAddParams {
   return {
+    ...sourceSelectionFields(input),
     ...(input.transport ? { transport: input.transport } : {}),
     ...(input.transport === 'native' && input.nativeProfile
       ? { nativeProfile: input.nativeProfile }

@@ -20,7 +20,7 @@ import { invalidateProjectVarsCache, projectsDir } from '../core/config.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { admitReviewRound } from '../review/review-round-budget.js';
 import { computeReadyGatePackageHash } from '../run-completion/ready-gate-package.js';
-import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
+import { createRun, deleteRun, getAllRuns, getRun, updateRun } from '../runs/store.js';
 import { runWithSessionOriginator } from '../security/work-originator.js';
 
 import { makeRun } from './run/test-fixtures.js';
@@ -28,6 +28,7 @@ import {
   assertDecisionStillUnresolved,
   assertDuplicateRunAllowed,
   assertExpectedExecutionTemplate,
+  planRunCreation,
   resolveCreateSafetyTier,
   runCreate,
   runInteractiveDevResolve,
@@ -35,6 +36,49 @@ import {
   runRehydratePrNumber,
   runResolveDecision,
 } from './run.js';
+
+test('planning resolves the same dispatch defaults without creating a run or consuming a queue claim', async () => {
+  const before = getAllRuns().map((run) => run.id);
+  let claimed = true;
+  let synchronousChecks = 0;
+  const params = {
+    flowType: 'dev' as const,
+    project: 'farmslot-farm',
+    ticketOrPr: `TAT-${Date.now()}`,
+  };
+  const plan = await planRunCreation(params, {
+    beforeCreate: () => {
+      synchronousChecks++;
+    },
+  });
+  assert.equal(plan.params.mode, 'autonomous');
+  assert.equal(synchronousChecks, 0);
+  assert.deepEqual(
+    getAllRuns().map((run) => run.id),
+    before,
+  );
+  const emitted: unknown[] = [];
+  await assert.rejects(
+    runCreate(params, (_event, data) => emitted.push(data), {
+      beforeCreateAsync: async () => {
+        queueMicrotask(() => {
+          claimed = false;
+        });
+      },
+      beforeCreate: () => {
+        synchronousChecks++;
+        if (!claimed) throw new Error('queue claim changed');
+      },
+    }),
+    /queue claim changed/,
+  );
+  assert.equal(synchronousChecks, 1);
+  assert.deepEqual(emitted, []);
+  assert.deepEqual(
+    getAllRuns().map((run) => run.id),
+    before,
+  );
+});
 
 test('assertExpectedExecutionTemplate rejects a changed queued snapshot', () => {
   const expected = {

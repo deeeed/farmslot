@@ -20,7 +20,9 @@ import {
   type QueueItem,
   ReviewQaConfigurationError,
   type Run,
+  type RunCreateParams,
   type SlotStatus,
+  validateSourceSelections,
 } from '@farmslot/protocol';
 import {
   assertReviewPolicy,
@@ -101,7 +103,11 @@ export const DEFAULT_QUEUE_CLAIM_TTL_MS = 60_000;
 type BroadcastFn = (event: string, payload: unknown) => void;
 /** createAndStartRun receives the exclusive claim so it can re-validate at the
  * synchronous createRun boundary after its own awaits (imports, ticket fetch, …). */
-export type CreateAndStartRunFn = (item: QueueRecord, claim: QueueClaim) => Promise<void>;
+export type CreateAndStartRunFn = (
+  item: QueueRecord,
+  claim: QueueClaim,
+  callerRequest?: RunCreateParams,
+) => Promise<void>;
 let _broadcast: BroadcastFn | null = null;
 let _createAndStartRun: CreateAndStartRunFn | null = null;
 let dispatchInFlight: Promise<void> | null = null;
@@ -447,6 +453,10 @@ export function addItem(
   params: InternalDispatchQueueAddParams,
   originator: WorkOriginator,
 ): QueueItem {
+  if (params.sourceSelections !== undefined) {
+    const errors = validateSourceSelections(params.sourceSelections);
+    if (errors.length) throw new Error(errors.join(' '));
+  }
   assertCurrentReviewConfiguration(params, 'dispatch');
   if (params.reviewSequence) assertReviewSequence(params.reviewSequence, { maxRows: 5 });
   if (params.reviewSequenceContext)
@@ -509,6 +519,9 @@ export function addItem(
   const startRef = normalizeStartRefRequest(params);
   const tags = normalizeRunTags(params.tags);
   const item: QueueRecord = {
+    sourceSelections: params.sourceSelections
+      ? structuredClone(params.sourceSelections)
+      : undefined,
     id: randomUUID(),
     prWork: params.prWork ? structuredClone(params.prWork) : undefined,
     queueKind: params.queueKind ?? 'dispatch',
@@ -880,6 +893,10 @@ export function updateItem(
   params: DispatchQueueUpdateParams,
   originator: WorkOriginator,
 ): QueueItem {
+  if (params.sourceSelections !== undefined) {
+    const errors = validateSourceSelections(params.sourceSelections);
+    if (errors.length) throw new Error(errors.join(' '));
+  }
   const item = queue.find((q) => q.id === params.itemId);
   if (!item) throw new Error(`Queue item not found: ${params.itemId}`);
   if (item.status !== 'queued') {
@@ -906,6 +923,8 @@ export function updateItem(
         })
       : item.workflowExecution;
   if (params.priority !== undefined) item.priority = params.priority;
+  if (params.sourceSelections !== undefined)
+    item.sourceSelections = structuredClone(params.sourceSelections);
   if (params.label !== undefined) item.label = params.label;
   if (params.slotId !== undefined) item.slotId = params.slotId ?? undefined;
   if (params.allowedSlots !== undefined) {
@@ -1050,6 +1069,7 @@ export function buildQueuePreviewParams(item: QueueItem) {
     mode: item.mode,
     domain: item.domain,
     executionTemplateId: item.executionTemplateId,
+    ...(item.sourceSelections ? { sourceSelections: structuredClone(item.sourceSelections) } : {}),
     app: item.app,
     prepareProfile: item.prepareProfile,
     // Forward the UI-resolved allow list so the dispatcher refuses to land the
@@ -1146,6 +1166,8 @@ export async function selectQueueDispatchSlot(
     );
     return null;
   }
+  const { planQueuedSourceSlots } = await import('../sources/runtime.js');
+  const sourcePlans = await planQueuedSourceSlots(item);
   if (item.launchSlotPolicy === 'spread' && item.launchGroupId) {
     const activeSiblingSlots = new Set(
       getAllRuns()
@@ -1173,7 +1195,12 @@ export async function selectQueueDispatchSlot(
           { ...buildQueuePreviewParams(item), allowedSlots: allowed },
           slots,
           undefined,
-          { requiredPrepareProfile, pressureDecisions, parkPreservedSlotIds: parkPreserved },
+          {
+            requiredPrepareProfile,
+            pressureDecisions,
+            parkPreservedSlotIds: parkPreserved,
+            plans: sourcePlans,
+          },
         );
         if (preview.pressureAdmission?.outcome === 'rejected') return null;
         return preview.preview.slotId;
@@ -1184,6 +1211,7 @@ export async function selectQueueDispatchSlot(
     requiredPrepareProfile,
     pressureDecisions,
     parkPreservedSlotIds: parkPreserved,
+    plans: sourcePlans,
   });
   // A pinned queue item whose machine is pressure-rejected stays queued until
   // pressure recedes; automatic selection already excluded rejected machines.
@@ -1286,17 +1314,31 @@ async function selectQueuedReviewWorkspace(
       const execution = executionModelFromSelection(choice);
       const proposed = { ...item, reviewWorkspaceTarget: { machine: choice.machine } };
       assertReviewWorkspacePlacement(proposed);
-      const admission = await inspectReviewWorkspaceTarget(
+      const { queuedSourceCreationRequest, withSourceRequestPlanning } =
+        await import('../sources/runtime.js');
+      const admission = await withSourceRequestPlanning(
         {
-          project: item.project,
-          machine: choice.machine,
+          ...queuedSourceCreationRequest(proposed),
           runner: choice.runner,
           model: execution.model,
           effort: execution.effort ?? undefined,
           transport: choice.transport,
           nativeProfile: choice.nativeProfile,
         },
-        owner.principalId,
+        'queue',
+        async () =>
+          inspectReviewWorkspaceTarget(
+            {
+              project: item.project,
+              machine: choice.machine,
+              runner: choice.runner,
+              model: execution.model,
+              effort: execution.effort ?? undefined,
+              transport: choice.transport,
+              nativeProfile: choice.nativeProfile,
+            },
+            owner.principalId,
+          ),
       );
       eligible = true;
       assertQueueClaimHeld(claim, 'workspace-selection');
@@ -1434,7 +1476,8 @@ async function tryDispatchNextOnce(): Promise<void> {
       await holdForReviewQaMigration(item, error);
       continue;
     }
-    if (item.flowType === 'review-pr' || item.flowType === 'qa') {
+    const { sourceAuthority } = await import('../sources/runtime.js');
+    if (!sourceAuthority() && (item.flowType === 'review-pr' || item.flowType === 'qa')) {
       const project = await loadProjectConfig(item.project);
       if (liveQueuedItem(item.id) !== item) continue;
       try {
@@ -1498,6 +1541,9 @@ async function tryDispatchNextOnce(): Promise<void> {
     const claim = claimQueueItem(item.id, holderId, { quiet: true });
     if (!claim) continue;
 
+    const { queuedSourceCreationRequest } = await import('../sources/runtime.js');
+    const callerRequest = queuedSourceCreationRequest(item);
+    if (stopIfClaimLost(claim, 'source-caller-capture')) return;
     let slot: SlotStatus | undefined;
     let workspaceSelected = false;
     try {
@@ -1558,7 +1604,7 @@ async function tryDispatchNextOnce(): Promise<void> {
     }
 
     try {
-      await _createAndStartRun(item, claim);
+      await _createAndStartRun(item, claim, callerRequest);
       resetDispatchRetryBackoff();
       // Defensive: createAndStartRun normally drops the row via removeQueueItemInternalNow
       // after durable create. If the callback did not drop it, remove here so a

@@ -50,7 +50,7 @@ import {
 } from '@farmslot/protocol';
 import { parseReviewRequestContext, resolveReviewMode } from '@farmslot/review-dispatch';
 import { parseRunRecordFile } from '@farmslot/run-bundle';
-import { freezePlannedRunSources } from '@farmslot/slot-config';
+import { planRunSources } from '@farmslot/slot-config';
 
 import { assertNoAutomatedPRConflict, assertPRRunActivation } from '../backlog/pr-admission.js';
 import { isolatedTestPath } from '../core/isolated-test-path.js';
@@ -71,6 +71,7 @@ import {
   resolveReviewWorkspaceOwner,
 } from '../security/native-worker-owner.js';
 import { currentSessionOriginator } from '../security/work-originator.js';
+import { captureRunCreationRequest } from '../sources/creation-request.js';
 
 import { emitAnalyticsForTerminalRun } from './analytics.js';
 import { isLeakedGatewayTestFixture, isLeakedGatewayTestRun } from './test-run-leak.js';
@@ -685,24 +686,29 @@ function normalizePressureAdmissionRefRequest(
   return { machine, pressureGeneration };
 }
 
-export function createRun(
-  params: RunCreateParams,
-  options?: {
-    /** Trusted internal handoff only. Never copied from RPC parameters. */
-    nativeOwnerPrincipalId?: string;
-    createdByPrincipalId?: string;
-    /**
-     * When true, skip fire-and-forget persist so the caller can await a
-     * durable write after related handoff work (e.g. queue stamp) completes.
-     * Used by queue claim create so the Run file cannot land before the stamp.
-     */
-    deferBackgroundPersist?: boolean;
-    reviewQa?: import('@farmslot/protocol').ReviewQaDispatchSelection;
-    workflowExecution?: import('@farmslot/protocol').PRExecutionProfile;
-    qaAfterReview?: import('@farmslot/protocol').QaAfterReview;
-    directReviewPublication?: import('@farmslot/protocol').DirectReviewPublication;
-  },
-): Run {
+export interface RunRecordOptions {
+  dispatchRequest?: RunCreateParams;
+  /** Trusted internal handoff only. Never copied from RPC parameters. */
+  nativeOwnerPrincipalId?: string;
+  createdByPrincipalId?: string;
+  /**
+   * When true, skip fire-and-forget persist so the caller can await a
+   * durable write after related handoff work (e.g. queue stamp) completes.
+   * Used by queue claim create so the Run file cannot land before the stamp.
+   */
+  deferBackgroundPersist?: boolean;
+  reviewQa?: import('@farmslot/protocol').ReviewQaDispatchSelection;
+  workflowExecution?: import('@farmslot/protocol').PRExecutionProfile;
+  qaAfterReview?: import('@farmslot/protocol').QaAfterReview;
+  directReviewPublication?: import('@farmslot/protocol').DirectReviewPublication;
+}
+
+export interface RunRecordBuildOptions extends RunRecordOptions {
+  /** Trusted provisional replan identity. This builder never registers or persists the record. */
+  runId?: string;
+}
+
+export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuildOptions): Run {
   if ('sourceProvenance' in params) throw new Error('Source provenance is gateway-owned');
   if ('nativeOwnerPrincipalId' in params || 'createdByPrincipalId' in params)
     throw new Error('Run ownership cannot be supplied in run parameters');
@@ -751,7 +757,10 @@ export function createRun(
     originator.kind === 'principal'
       ? originator.principalId
       : (options?.createdByPrincipalId ?? parent?.createdByPrincipalId ?? nativeOwnerPrincipalId);
-  assertNoAutomatedPRConflict(params, getAllRuns());
+  assertNoAutomatedPRConflict(
+    params,
+    getAllRuns().filter((run) => run.id !== options?.runId),
+  );
   if (Array.isArray(params.allowedSlots) && params.allowedSlots.length === 0) {
     throw new Error('Cannot create run: active slot filters resolved to no matching slots');
   }
@@ -776,7 +785,7 @@ export function createRun(
   ) {
     throw new Error(`Invalid reviewValidationDepth: ${String(params.reviewValidationDepth)}`);
   }
-  const id = randomUUID();
+  const id = options?.runId ?? randomUUID();
   const familyId = params.familyId ?? id;
   const { lane, variant } = normalizeRunClassification(params);
   const startRef = normalizeStartRefRequest(params);
@@ -966,7 +975,15 @@ export function createRun(
     updatedAt: now,
   };
   run.agentContexts = initialAgentContextsForRun(run);
-  run.sourceProvenance = freezePlannedRunSources(run.id);
+  run.sourcePlan = planRunSources(run.id, params.slotId);
+  if (run.sourcePlan)
+    run.dispatchRequest = captureRunCreationRequest(options?.dispatchRequest ?? params);
+  return run;
+}
+
+export function createRun(params: RunCreateParams, options?: RunRecordBuildOptions): Run {
+  const run = buildRunRecord(params, options);
+  if (runs.has(run.id)) throw new Error('Run creation identity is already registered');
   runs.set(run.id, run);
   if (!options?.deferBackgroundPersist) {
     persistRunBackground(run, 'create');

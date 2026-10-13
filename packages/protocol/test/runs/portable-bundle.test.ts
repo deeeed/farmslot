@@ -57,7 +57,11 @@ test('stripRunnerSessionArchives drops recycle snapshot pointers', () => {
 });
 
 test('sanitizeRunForBundleExport never keeps archive pointers', () => {
-  const sanitized = sanitizeRunForBundleExport(runWithArchive(), 'reference');
+  const run = runWithArchive();
+  run.dispatchRequest = { flowType: 'dev', project: run.project, ticketOrPr: run.ticketOrPr };
+  const sanitized = sanitizeRunForBundleExport(run, 'reference');
   assert.equal(sanitized.metrics.runnerSessionArchive, undefined);
   assert.equal(sanitized.agentContexts?.[0]?.runnerSessionArchive, undefined);
+  assert.equal(sanitized.dispatchRequest, undefined);
+  assert.ok(run.dispatchRequest);
 });

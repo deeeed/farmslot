@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import {
   assertSourceEntry,
+  type RunSourcePlan,
   type RunSourceProvenance,
   type SourceEntryRef,
   type SourceMaterialization,
@@ -149,5 +150,17 @@ export function freezePlannedRunSources(runId: string): RunSourceProvenance | un
       sources.pack,
       ...sources.materialization.lock.entries.flatMap((entry) => entry.dependencies),
     ],
+  };
+}
+
+export function planRunSources(runId: string, validatedSlotId?: string): RunSourcePlan | undefined {
+  const captured = freezePlannedRunSources(runId);
+  if (!captured) return undefined;
+  return {
+    state: 'planned',
+    ...(validatedSlotId ? { validatedSlotId } : {}),
+    lock: captured.lock,
+    workerLock: captured.workerLock,
+    bindings: captured.bindings,
   };
 }

@@ -8,6 +8,7 @@ import type { Run, SlotStatus } from '@farmslot/protocol';
 
 import { FilterEmptyState } from '../../components/FilterEmptyState';
 import { RunTitle } from '../../components/RunTitle';
+import { NodeSourceStatusDisclosure } from '../../features/sources/SourceStatusSection';
 import { DECISION_EVIDENCE_RECIPE_RUN_PARAM } from '../../lib/artifact-url';
 import { runDisplayTitle } from '../../lib/run-display';
 import { baseStyles, colors, fonts, lifecycleColor, spacing } from '../../lib/theme';
@@ -115,6 +116,7 @@ function SlotCard({
 
 type FleetListItem =
   | { type: 'header'; title: string; count: number }
+  | { type: 'sources'; nodeId: string }
   | { type: 'slot'; slot: SlotStatus; contextRun: Run | null; contextRunId: string | null };
 
 function latestRunBySlot(runs: Run[]): Map<string, Run> {
@@ -161,6 +163,7 @@ export default function FleetScreen() {
   const listItems = useMemo((): FleetListItem[] => {
     return sections.flatMap((section) => [
       { type: 'header' as const, title: section.title, count: section.data.length },
+      { type: 'sources' as const, nodeId: section.title },
       ...section.data.map((slot) => ({
         type: 'slot' as const,
         slot,
@@ -198,6 +201,7 @@ export default function FleetScreen() {
         </View>
       );
     }
+    if (item.type === 'sources') return <NodeSourceStatusDisclosure nodeId={item.nodeId} />;
     return (
       <SlotCard slot={item.slot} contextRun={item.contextRun} contextRunId={item.contextRunId} />
     );
@@ -221,7 +225,11 @@ export default function FleetScreen() {
         <FlashList
           data={listItems}
           keyExtractor={(item) =>
-            item.type === 'header' ? `header:${item.title}` : `slot:${item.slot.slot}`
+            item.type === 'header'
+              ? `header:${item.title}`
+              : item.type === 'sources'
+                ? `sources:${item.nodeId}`
+                : `slot:${item.slot.slot}`
           }
           renderItem={renderItem}
           stickyHeaderIndices={stickyHeaderIndices}
