@@ -155,12 +155,27 @@ function isMissingPathError(error) {
 
 function resolveTaskArtifactPath(rel) {
   const root = realpathSync(taskDir);
-  const candidate = realpathSync(path.resolve(taskDir, rel));
+  const candidate = realpathSync(path.resolve(taskDir, publicationArtifactPath(rel)));
   const relative = path.relative(root, candidate);
   if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     throw new Error(`${rel} resolves outside the task directory`);
   }
   return candidate;
+}
+
+function publicationArtifactPath(rel) {
+  if (rel !== 'artifacts/evidence-manifest.json') return rel;
+  const pointerPath = path.join(taskDir, 'artifacts/latest-valid-recipe-run.json');
+  if (!existsSync(pointerPath)) return rel;
+  const pointer = recipeProtocol?.sanitizeLatestValidRecipeRunPointer?.(
+    JSON.parse(readFileSync(pointerPath, 'utf8')),
+  );
+  if (!pointer) throw new Error('latest-valid-recipe-run.json: invalid pointer.');
+  const selected = `artifacts/${pointer.relativeArtifactRoot}/evidence-manifest.json`;
+  const version = terminalContract ? (terminalContract.recordedEvidenceContractVersion ?? 0) : 1;
+  if (version !== 0 && version !== 1) throw new Error('Unsupported recorded evidence contract.');
+  if (version === 0 && !existsSync(path.resolve(taskDir, selected))) return rel;
+  return selected;
 }
 
 function isRecord(value) {
@@ -274,7 +289,7 @@ function optionalStringArray(record, key, prefix) {
   }
 }
 
-function normalizeArtifactPath(value) {
+function normalizeArtifactPath(value, mediaOnly = true) {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   if (!trimmed || /^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(trimmed)) return null;
@@ -285,12 +300,15 @@ function normalizeArtifactPath(value) {
   if (segments.some((segment) => segment === '.' || segment === '..')) return null;
   const withoutArtifacts =
     segments[0] === 'artifacts' ? segments.slice(1).join('/') : segments.join('/');
-  if (!withoutArtifacts || !mediaExt.test(withoutArtifacts)) return null;
+  if (!withoutArtifacts || (mediaOnly && !mediaExt.test(withoutArtifacts))) return null;
   return `artifacts/${withoutArtifacts}`;
 }
 
-function addRef(refs, value) {
-  const normalized = normalizeArtifactPath(value);
+function addRef(refs, value, artifactRoot = 'artifacts') {
+  const relative = normalizeArtifactPath(value);
+  const normalized = relative
+    ? path.posix.join(artifactRoot, relative.slice('artifacts/'.length))
+    : null;
   if (!normalized) return;
   if (internalArtifactPath.test(normalized)) {
     issues.push(`evidence-manifest references internal artifact: ${normalized}`);
@@ -338,6 +356,30 @@ function validateRecipeDocumentArtifact() {
       return;
     }
     packageRoot = `artifacts/${pointer.relativeArtifactRoot}`;
+  }
+  // QA registers its smoke package in qa-result, independently of managed task selection.
+  // This locates the existing execution; QA admission still verifies the full frozen suite.
+  const qaResult = readJsonArtifact('artifacts/qa-result.json', 'qa-result.json');
+  if (qaResult !== undefined) {
+    const smokePackage =
+      isRecord(qaResult) &&
+      qaResult.version === 1 &&
+      isRecord(qaResult.packages) &&
+      isRecord(qaResult.smoke) &&
+      typeof qaResult.smoke.caseId === 'string'
+        ? qaResult.packages[qaResult.smoke.caseId]
+        : undefined;
+    const smokeRecipe =
+      typeof smokePackage === 'string'
+        ? normalizeArtifactPath(`${smokePackage}/recipe.json`, false)
+        : null;
+    if (!smokeRecipe) {
+      issues.push(
+        'qa-result.json: the registered smoke package must identify a confined relative directory',
+      );
+      return;
+    }
+    packageRoot = path.posix.dirname(smokeRecipe);
   }
   const recipe = readJsonArtifact(`${packageRoot}/recipe.json`, 'recipe-run/recipe.json');
   if (recipe === undefined) {
@@ -487,7 +529,7 @@ function listArtifactPaths(root) {
 }
 
 function parseManifest() {
-  const relPath = 'artifacts/evidence-manifest.json';
+  const relPath = publicationArtifactPath('artifacts/evidence-manifest.json');
   if (!fileExists(relPath)) return null;
   const text = readText(relPath) ?? '';
   let manifest;
@@ -585,13 +627,14 @@ function parseManifest() {
   }
 
   const refs = new Set();
+  const artifactRoot = path.posix.dirname(relPath);
   for (const pair of manifest.before_after_pairs ?? []) {
-    addRef(refs, pair?.before);
-    addRef(refs, pair?.after);
+    addRef(refs, pair?.before, artifactRoot);
+    addRef(refs, pair?.after, artifactRoot);
   }
-  for (const entry of manifest.standalone ?? []) addRef(refs, entry?.file);
-  addRef(refs, manifest.videos?.before);
-  addRef(refs, manifest.videos?.after);
+  for (const entry of manifest.standalone ?? []) addRef(refs, entry?.file, artifactRoot);
+  addRef(refs, manifest.videos?.before, artifactRoot);
+  addRef(refs, manifest.videos?.after, artifactRoot);
 
   for (const ref of [...refs].sort()) {
     if (!fileExists(ref)) issues.push(`evidence-manifest references missing artifact: ${ref}`);

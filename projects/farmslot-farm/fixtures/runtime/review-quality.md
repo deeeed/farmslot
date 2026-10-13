@@ -142,10 +142,10 @@ Re-upload or fix when:
 - `?sha=` digest does not match file bytes
 - `## **Screenshots/Recordings**` still has local paths (`.sandbox/`, `/Users/`, `artifacts/recipe-run/`)
 
-Use `/fs-pr-evidence` or:
+Use the gateway's retained publication package. Refresh it through the public CLI:
 
 ```bash
-node projects/farmslot-farm/setup/upload-pr-evidence.mjs --task-dir <dir> --pr <N> --flow feature --edit-pr
+farmslot rpc run.refreshPublishedEvidence '{"runId":"<run-id>"}'
 ```
 
 ## Review report contract

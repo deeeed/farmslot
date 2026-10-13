@@ -59,7 +59,7 @@ Read this before authoring `{{TASK_DIR}}/artifacts/recipe.json`.
     --record-video=full-run \
     --task-dir {{TASK_DIR}}
   ```
-  (`validate-recipe.sh` selects original screenshots and video without copying them when `--task-dir` is set; or run `{{recipe_sync_evidence_cmd}} --task-dir {{TASK_DIR}} --require-video` manually.)
+  The engine writes the attempt-local evidence manifest. No evidence sync step is required.
 - Gateway replay uses the same hook via `hooks.recipe_run` in `projects/farmslot-farm/project.json`. The hook routes `cli`/web runs to Command Center and `ios`/`android` runs to Companion, but both routes must emit the same Recipe v1 package under `--artifacts-dir`: `summary.json`, `trace.json`, and `artifact-manifest.json`; copy the resolved `recipe.json` when practical.
 - The standard `artifacts/recipe-run` wrapper destination allocates a fresh `artifacts/recipe-runs/<attempt>` each time. It prints the actual directory and advances `artifacts/latest-valid-recipe-run.json` after success. Old packages and media remain intact. Task artifact checks follow that pointer.
 - If you need to inspect the package directly, run `cd {{REPO}} && yarn --cwd apps/command-center farmslot recipe artifacts validate {{TASK_DIR}}/artifacts/recipe-runs/<attempt>` using the directory printed by validation (append `--recipe {{TASK_DIR}}/artifacts/recipe-runs/<attempt>/recipe.json` only when that file was copied).
@@ -146,49 +146,19 @@ Never proof:
 
 ## PR evidence package (gateway embeds this in created PRs)
 
-After the proof run, `artifacts/` must contain promotable media the gateway can upload:
+The engine derives `evidence-manifest.json` inside the selected attempt from
+registered screenshots, recordings and claims. The gateway freezes that attempt
+and uploads its selected media. Do not write or sync recipe evidence into the
+task-root manifest.
 
-| File                                                    | Source                                                                               |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `artifacts/recipe-runs/<attempt>/screenshots/before-*`  | recipe `screenshots/before-*`                                                        |
-| `artifacts/recipe-runs/<attempt>/screenshots/after-*`   | recipe `screenshots/after-*` or `demo-*`                                             |
-| `artifacts/recipe-runs/<attempt>/videos/recipe-run.mp4` | `recipe-runs/<attempt>/videos/recipe-run.mp4`, selected by `sync-recipe-evidence.sh` |
+Media captured outside a recipe may keep the task-root declaration. Use the
+existing `before_after_pairs`, `standalone`, `videos` and `omit` fields to label
+comparisons and non-recipe captures. Paths must resolve under `artifacts/`; recipe
+references must belong to the selected attempt. Preserve true-before frames from
+the old implementation rather than labelling fixed-state captures as before.
 
-Write `{{TASK_DIR}}/artifacts/evidence-manifest.json`:
-
-```json
-{
-  "version": 1,
-  "preferred_mode": "screenshots",
-  "summary": "One line describing what reviewers should see.",
-  "before_after_pairs": [
-    {
-      "label": "Demo banner absent vs present",
-      "covers": ["ac1", "ac2"],
-      "before": "artifacts/before-demo-banner.png",
-      "after": "artifacts/after-demo-banner.png"
-    }
-  ],
-  "videos": {
-    "after": "artifacts/recipe-runs/<attempt>/videos/recipe-run.mp4",
-    "preferred": true,
-    "note": "Full recipe replay with HUD at 2s slow playback"
-  }
-}
-```
-
-Rules:
-
-- Paths must resolve under `artifacts/` (gateway normalizes `artifacts/foo.png`).
-- Use the original paths selected by `sync-recipe-evidence.sh`; it does not create top-level media copies.
-- For UI features, `videos.after` is **required** unless capture-helper doctor fails (document the doctor error in `videos.note` and keep screenshots).
-- When capture-helper or CDP screencast fails and screenshots are selected as the fallback
-  (e.g. taken via CDP `Page.captureScreenshot` rather than native capture-helper), set
-  `preferred_mode: "screenshots"` and describe the fallback source in `videos.note`:
-  `"CDP screencast unavailable in tmux/sandbox; screenshots sourced from CDP Page.captureScreenshot."`
-  Do **not** leave the note blank or claim native capture-helper proof when it was not used —
-  reviewers must be able to evaluate media provenance.
-- `pr-description.md` **Screenshots/Recordings** section stays a placeholder — gateway replaces it from this manifest.
+Keep the PR description's Screenshots/Recordings placeholder. The gateway renders
+it from the frozen selection after approval; refresh through its public RPC.
 
 Also write `{{TASK_DIR}}/artifacts/recipe-coverage.md` (for fix-bug, derive it with `farmslot-agent ac render`). Do **not** author `recipe-quality.json` — the gateway computes recipe quality from your `recipe.json` + coverage.
 

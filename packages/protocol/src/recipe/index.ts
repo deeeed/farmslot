@@ -88,6 +88,12 @@ export {
   validateRecipeParams,
   validateRecipeParamsSchema,
 } from './params.js';
+export type {
+  EvidenceManifest,
+  EvidenceManifestOmit,
+  EvidenceManifestPair,
+  EvidenceManifestVideo,
+} from './publication-manifest.js';
 export {
   type RecipeRecordingMarker,
   type RecipeRecordingTimelineBinding,
@@ -96,6 +102,11 @@ export {
   validateRecipeRecordingTimelineBinding,
   validateRecipeRecordingTimelineDocument,
 } from './recording.js';
+export {
+  RECORDED_EVIDENCE_RUN_CONTRACT_VERSION,
+  RecordedEvidenceReadError,
+  type RecordedEvidenceReadFailureCode,
+} from './run-contract.js';
 export {
   type LatestValidRecipeRunPointer,
   sanitizeLatestValidRecipeRunPointer,

@@ -659,6 +659,7 @@ async function buildRunSummary(
   }
   const evidenceReview = createEvidenceReviewModel({
     ...recorded,
+    contractVersion: run.recordedEvidenceContractVersion ?? 0,
     context: 'run-detail',
     criteria: acceptanceCriteria,
     ledger: acceptanceStatus,

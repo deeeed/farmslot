@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Share the publication evidence-manifest contract between the engine and publication consumers.
 - Define verified human claim-override receipts, selected-execution binding and shared review projections.
 - Validate enabled-state wait inputs through shared action relationships for recipe nodes and direct transports.
 

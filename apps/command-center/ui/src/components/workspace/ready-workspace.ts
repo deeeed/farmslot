@@ -107,6 +107,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       this._evidenceModel = createEvidenceReviewModel({
         context: 'pr-preview',
         package: source.recordedEvidence?.input,
+        contractVersion: source.recordedEvidence?.contractVersion,
         claimOverrideAuthority: source.recordedEvidence?.claimOverrideAuthority,
         artifactPrefix: source.recordedEvidence?.artifactPrefix,
         packagePath: source.recordedEvidence?.packagePath,

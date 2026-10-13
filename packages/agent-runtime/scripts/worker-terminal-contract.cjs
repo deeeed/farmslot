@@ -52,6 +52,7 @@ const { atomicWrite } = require('./mark-io.cjs');
  * @property {string} flowType
  * @property {string} [mode]
  * @property {boolean} requireSignal
+ * @property {number} [recordedEvidenceContractVersion] Gateway-owned run version projection.
  * @property {WorkerTerminalAcceptanceRules} [acceptance]
  * @property {Record<WorkerTerminalCommand, WorkerTerminalCommandSpec>} commands
  * @property {WorkerTerminalWhenPresentRule[]} whenPresent

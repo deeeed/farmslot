@@ -7,6 +7,7 @@ export interface EvidenceReviewIssue {
 }
 
 export interface EvidenceReviewPackageStatus {
+  reasonCode?: 'evidence-package-unverifiable' | 'evidence-contract-unsupported';
   status: 'Valid' | 'Legacy' | 'Invalid';
   /** Red requires an identified current-contract package, never an unknown read. */
   tone: 'success' | 'info' | 'error';
@@ -24,6 +25,7 @@ export function evidenceReviewPackageStatus(
   pkg: RecordedEvidencePackageInput | undefined,
   packagePath: string | undefined,
   messages: readonly string[],
+  contractVersion = 1,
 ): EvidenceReviewPackageStatus | null {
   if (!pkg && !messages.length) return null;
   const missingCore = pkg ? requiredFiles.filter((file) => !pkg.artifactPaths?.includes(file)) : [];
@@ -54,20 +56,28 @@ export function evidenceReviewPackageStatus(
     (isRecord(pkg?.summary) && pkg.summary.recipeRunId) ||
     pkg?.artifactPaths?.includes('recipe-invocation.json'),
   );
-  const legacy = Boolean(pkg && !current);
-  const status = legacy ? 'Legacy' : messages.length ? 'Invalid' : 'Valid';
+  const legacy = Boolean(contractVersion === 0 && pkg && !current);
+  const unsupported = contractVersion !== 0 && contractVersion !== 1;
+  const status = legacy ? 'Legacy' : messages.length || unsupported ? 'Invalid' : 'Valid';
   return {
     status,
-    tone: status === 'Invalid' && current ? 'error' : status === 'Valid' ? 'success' : 'info',
+    tone: status === 'Invalid' ? 'error' : status === 'Valid' ? 'success' : 'info',
+    ...(status === 'Invalid'
+      ? {
+          reasonCode: unsupported
+            ? ('evidence-contract-unsupported' as const)
+            : ('evidence-package-unverifiable' as const),
+        }
+      : {}),
     path: (packagePath ?? '.').replace(/^artifacts\//u, '').replace(/\/$/u, '') || '.',
     summary: legacy
       ? `Recorded before Recipe v1: not machine-checkable${missing.length ? ` (missing ${missing.join(', ')})` : ''}; media untimed`
-      : status === 'Invalid'
-        ? `${grouped.size} evidence issue${grouped.size === 1 ? '' : 's'}; measured proof unavailable`
-        : 'Recipe evidence is machine-checkable',
-    ...(status === 'Invalid' && current
-      ? { action: 'Refresh the gate package or re-run the recipe.' }
-      : {}),
+      : unsupported
+        ? 'The recorded run evidence contract is unsupported; measured proof unavailable'
+        : status === 'Invalid'
+          ? `${grouped.size} evidence issue${grouped.size === 1 ? '' : 's'}; measured proof unavailable`
+          : 'Recipe evidence is machine-checkable',
+    ...(status === 'Invalid' ? { action: 'Refresh the gate package or re-run the recipe.' } : {}),
     issues: [...grouped.values()],
   };
 }

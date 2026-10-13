@@ -77,7 +77,7 @@ bash {{recipe_validate_wrapper}} \
   ```bash
   bash {{recipe_validate_wrapper}} ... --slow 2000 --record-video=full-run --task-dir {{TASK_DIR}}
   ```
-- For visual work, promoted `artifacts/before-*.png`, `artifacts/after-*.png`, and `artifacts/after.mp4` feed the created PR via `evidence-manifest.json`.
+- The engine retains recipe media in the selected attempt; the gateway publishes it after approval.
 - Write `recipe-coverage.md` when a recipe exists (gateway computes recipe-quality).
 - Never inject UI state — use `ui.navigate`, `ui.wait_for`, and `ui.screenshot` through the runner.
 
@@ -90,7 +90,7 @@ bash {{recipe_validate_wrapper}} \
 When the operator says the interactive session is complete:
 
 1. Write `{{TASK_DIR}}/artifacts/pr-description.md` with files changed, summary, validation run (include recipe exit code + artifact paths), and any remaining risks — or update the draft from mid-run if already started.
-2. If screenshots/videos prove the change, write `{{TASK_DIR}}/artifacts/evidence-manifest.json` with strict top-level keys: `version`, `preferred_mode`, `summary`, `before_after_pairs`, `standalone`, `omit`, `videos`. Use `before_after_pairs` for comparisons; omit the manifest when there is no visual evidence.
+2. Recipe evidence is engine-derived. Only external captures or comparison labels need a task-root declaration using the existing evidence manifest format. Never copy recipe media into it.
 3. When `artifacts/recipe.json` exists, run:
    ```bash
    node {{farmslot_dir}}/scripts/quality/check-task-artifact-contract.mjs {{TASK_DIR}} --require-recipe-coverage-if-recipe --require-learnings

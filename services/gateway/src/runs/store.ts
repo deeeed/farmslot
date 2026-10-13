@@ -39,6 +39,7 @@ import {
   parseNativeProfileReference,
   primaryRoleForFlow,
   prNumberFromRunInput,
+  RECORDED_EVIDENCE_RUN_CONTRACT_VERSION,
   type Run,
   type RunCreateParams,
   type RunLane,
@@ -884,6 +885,7 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
       : params.engineState;
   const run: Run = {
     id,
+    recordedEvidenceContractVersion: RECORDED_EVIDENCE_RUN_CONTRACT_VERSION,
     ...(options?.qaAfterReview ? { qaAfterReview: structuredClone(options.qaAfterReview) } : {}),
     ...(options?.directReviewPublication
       ? {

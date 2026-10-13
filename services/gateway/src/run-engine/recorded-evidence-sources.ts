@@ -1,17 +1,20 @@
-import { realpath } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import { readRecordedEvidencePackage } from '@farmslot/adapter-sdk';
-import type {
-  ArtifactRef,
-  ReadyGatePrPackage,
-  RecordedEvidencePackageInput,
-  Run,
+import {
+  type ArtifactRef,
+  type ReadyGatePrPackage,
+  type RecordedEvidencePackageInput,
+  RecordedEvidenceReadError,
+  type Run,
+  sanitizeLatestValidRecipeRunPointer,
 } from '@farmslot/protocol';
 
 import {
   resolveSelectedEvidenceRef,
   verifyReadyGatePackageHash,
+  verifyReadyGateSelectedEvidenceFiles,
 } from '../run-completion/ready-gate-package.js';
 
 export interface RecordedEvidenceSource {
@@ -55,11 +58,79 @@ export async function readGateRecordedEvidenceSources(
   if (!preparedPackage)
     throw new Error('A prepared evidence package is required. Refresh the gate package.');
   verifyReadyGatePackageHash(preparedPackage);
-  return readFrozenRecordedEvidenceSources(
+  const sources = await readFrozenPublicationRecipeSources(
     run,
     preparedPackage.evidenceManifest ?? [],
     preparedPackage.selectedEvidenceKeys ?? [],
   );
+  if (!sources.length) throw new Error('The gate package has no retained recipe evidence closure.');
+  return sources;
+}
+
+/** Publication preparation and consumption share the same frozen attempt selection. */
+export async function readFrozenPublicationRecipeSources(
+  run: Run,
+  inventory: readonly ArtifactRef[],
+  selectedKeys: readonly string[] = [],
+): Promise<RecordedEvidenceSource[]> {
+  const contractVersion = run.recordedEvidenceContractVersion ?? 0;
+  if (contractVersion !== 0 && contractVersion !== 1)
+    throw new RecordedEvidenceReadError(
+      'evidence-contract-unsupported',
+      'The recorded run evidence contract is unsupported.',
+    );
+  const pointerPath = 'artifacts/latest-valid-recipe-run.json';
+  if (inventory.some((artifact) => artifact.path === pointerPath)) {
+    await verifyReadyGateSelectedEvidenceFiles(run, { evidenceManifest: [...inventory] }, [
+      pointerPath,
+    ]);
+    if (!run.taskFile) throw new Error('The frozen evidence has no retained task directory.');
+    const pointer = sanitizeLatestValidRecipeRunPointer(
+      JSON.parse(await readFile(path.join(path.dirname(run.taskFile), pointerPath), 'utf8')),
+    );
+    if (!pointer)
+      throw new RecordedEvidenceReadError(
+        'evidence-selection-invalid',
+        'The frozen selected recipe attempt pointer is invalid.',
+      );
+    const prefix = `artifacts/${pointer.relativeArtifactRoot}/`;
+    const roots = recordedEvidenceRoots(inventory);
+    for (const key of selectedKeys) {
+      const selected = resolveSelectedEvidenceRef(key, [...inventory]);
+      if (
+        selected &&
+        roots.some((root) => selected.path.startsWith(`${root}/`)) &&
+        !selected.path.startsWith(prefix)
+      )
+        throw new RecordedEvidenceReadError(
+          'evidence-selection-invalid',
+          'The publication selects evidence from another recipe attempt.',
+        );
+    }
+    return readFrozenRecordedEvidenceSources(
+      run,
+      inventory.filter((artifact) => artifact.path.startsWith(prefix)),
+    );
+  }
+  if (contractVersion === 1) {
+    const sources = inventory.filter(
+      (artifact) =>
+        artifact.purpose === 'evidence-manifest-source' &&
+        path.posix.basename(artifact.path) === 'evidence-manifest.json',
+    );
+    const root = sources.length === 1 ? path.posix.dirname(sources[0]!.path) : undefined;
+    if (!root || !inventory.some((artifact) => artifact.path === `${root}/recipe-invocation.json`))
+      throw new RecordedEvidenceReadError(
+        'evidence-selection-missing',
+        'The gate package has no frozen selected recipe attempt. Refresh the gate package or re-run the recipe.',
+      );
+    return readFrozenRecordedEvidenceSources(
+      run,
+      inventory.filter((artifact) => artifact.path.startsWith(`${root}/`)),
+    );
+  }
+  if (!recordedEvidenceRoots(inventory, selectedKeys).length) return [];
+  return readFrozenRecordedEvidenceSources(run, inventory, selectedKeys);
 }
 
 /** One closure reader for the existing publication inventory and QA output snapshot. */

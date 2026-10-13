@@ -724,6 +724,48 @@ test('refreshArtifactMirror fails when a snapshot link cannot be resolved for a 
   assert.equal(existsSync(path.join(taskDir, 'artifacts/report.md')), false);
 });
 
+test('a rejected publication declaration cannot prune selected attempt screenshots', async (t) => {
+  const { taskDir, put, run } = await publishPackageFixture(t, 'mirror-selected-retention');
+  await put(
+    'latest-valid-recipe-run.json',
+    JSON.stringify({ version: 1, relativeArtifactRoot: 'recipe-runs/current' }),
+  );
+  await put('recipe-runs/current/summary.json', '{}');
+  await put('recipe-runs/current/screenshots/first-proof.png', 'selected first capture');
+  await put(
+    'recipe-runs/current/evidence-manifest.json',
+    JSON.stringify({
+      version: 1,
+      standalone: [{ label: 'Current', file: 'screenshots/first-proof.png' }],
+    }),
+  );
+  await put('recipe-runs/prior/prior.png', 'prior capture');
+  await put(
+    'recipe-runs/prior/artifact-manifest.json',
+    JSON.stringify({ version: 1, artifacts: [{ path: 'prior.png', type: 'screenshot' }] }),
+  );
+  await put(
+    'evidence-manifest.json',
+    JSON.stringify({
+      version: 1,
+      standalone: [{ label: 'Prior', file: 'recipe-runs/prior/prior.png' }],
+    }),
+  );
+  run.recordedEvidenceContractVersion = 1;
+  await refreshArtifactMirror(run);
+  assert.equal(
+    await readFile(
+      path.join(taskDir, 'artifacts/recipe-runs/current/screenshots/first-proof.png'),
+      'utf8',
+    ),
+    'selected first capture',
+  );
+  assert.equal(
+    await readFile(path.join(taskDir, 'artifacts/recipe-runs/prior/prior.png'), 'utf8'),
+    'prior capture',
+  );
+});
+
 test('refreshArtifactMirror counts the promoted snapshot before clearing the mirror', async (t) => {
   const { taskDir, workerArtifacts, put, run } = await publishPackageFixture(t, 'mirror-snapshot');
   await put('report.md', '# Report\n');

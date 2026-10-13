@@ -16,7 +16,7 @@ import {
   isEvidenceManifestReferencedArtifact,
   mergeEvidenceManifestArtifactRefs,
 } from './draft-pr.js';
-import { type EvidenceManifest, evidenceManifestArtifactPaths } from './evidence-manifest.js';
+import type { EvidenceManifest } from './evidence-manifest.js';
 import { exactEvidenceKeys, isUploadableMediaPath } from './evidence-paths.js';
 import { sha256File, sortArtifactRefsForComparison } from './ready-gate-package.js';
 import { recordedPublicationDependencies } from './recorded-publication-evidence.js';
@@ -44,9 +44,13 @@ export async function buildPackageEvidenceManifest(
   taskDir: string | null,
   artifacts: ArtifactRef[],
   evidenceManifest: EvidenceManifest | null | undefined,
+  contractVersion = 1,
 ): Promise<ArtifactRef[]> {
   const omittedEvidenceKeys = evidenceManifestOmitSet(evidenceManifest);
-  const hasDeclaredEvidence = evidenceManifestArtifactPaths(evidenceManifest).length > 0;
+  const hasDeclaredEvidence =
+    evidenceManifest?.standalone !== undefined ||
+    evidenceManifest?.before_after_pairs !== undefined ||
+    evidenceManifest?.videos !== undefined;
   const trustedArtifacts = mergeEvidenceManifestArtifactRefs(artifacts, evidenceManifest);
   const entries: ArtifactRef[] = [];
   for (const artifact of trustedArtifacts) {
@@ -83,6 +87,7 @@ export async function buildPackageEvidenceManifest(
         artifacts,
         entries.filter((entry) => isUploadableMediaPath(entry.path)),
         evidenceManifest,
+        contractVersion,
       )
     : [];
   return sortArtifactRefsForComparison([
@@ -105,6 +110,11 @@ export async function readCurrentPackageEvidence(run: Run): Promise<CurrentPacka
   return {
     artifacts,
     manifest,
-    inventory: await buildPackageEvidenceManifest(taskDir, artifacts, manifest),
+    inventory: await buildPackageEvidenceManifest(
+      taskDir,
+      artifacts,
+      manifest,
+      run.recordedEvidenceContractVersion ?? 0,
+    ),
   };
 }
