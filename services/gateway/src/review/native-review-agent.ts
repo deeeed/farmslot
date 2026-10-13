@@ -224,7 +224,7 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
         ? await readPersistedReviewSnapshot(vars, taskDir, loopNumber, artifactScope)
         : await captureReviewSnapshot(vars, taskDir, loopNumber, artifactScope, {
             mode: input.mode,
-            baseRef: stackPrBase(original) ?? original.repeatReviewContext?.baseRef,
+            baseRef: (await stackPrBase(original)) ?? original.repeatReviewContext?.baseRef,
             lastReviewedHeadSha: retained?.lastReviewedHeadSha,
           });
       if (

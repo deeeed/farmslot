@@ -190,18 +190,18 @@ test('a follow-up measures its diff from the stacked run it continues', async ()
   assert.equal(await contributionStack(unrelated), undefined);
 });
 
-test('stackPrBase targets the upstream branch until the run is retargeted', () => {
-  assert.equal(stackPrBase({}), undefined);
-  assert.equal(stackPrBase({ stack: STACK }), 'feat/upstream');
-  assert.equal(stackPrBase({ stack: { ...STACK, retargetedTo: 'main' } }), 'main');
+test('stackPrBase targets the upstream branch until the run is retargeted', async () => {
+  assert.equal(await stackPrBase({}), undefined);
+  assert.equal(await stackPrBase({ stack: STACK }), 'feat/upstream');
+  assert.equal(await stackPrBase({ stack: { ...STACK, retargetedTo: 'main' } }), 'main');
 });
 
-test('publication packages and previews share the publisher stack/default base', () => {
-  assert.equal(publicationBaseForRun({}), 'main');
-  assert.equal(publicationBaseForRun({}, 'trunk'), 'trunk');
-  assert.equal(publicationBaseForRun({ stack: STACK }, 'trunk'), 'feat/upstream');
+test('publication packages and previews share the publisher stack/default base', async () => {
+  assert.equal(await publicationBaseForRun({}), 'main');
+  assert.equal(await publicationBaseForRun({}, 'trunk'), 'trunk');
+  assert.equal(await publicationBaseForRun({ stack: STACK }, 'trunk'), 'feat/upstream');
   assert.equal(
-    publicationBaseForRun({ stack: { ...STACK, retargetedTo: 'trunk' } }, 'main'),
+    await publicationBaseForRun({ stack: { ...STACK, retargetedTo: 'trunk' } }, 'main'),
     'trunk',
   );
 });
@@ -276,6 +276,21 @@ test("a follow-up of a stacked run reports that run's graph; other runs only the
   assert.equal(scheduledGraphOf(plainParent), 'wg_plain');
 });
 
+test('a follow-up publication uses its own stacked lineage and current retargeted base', async () => {
+  const parent = runs.createRun({ flowType: 'dev', project: 'farmslot-farm', ticketOrPr: 'PB-1' });
+  runs.updateRun(parent.id, { stack: STACK });
+  const followUp = runs.createRun({
+    flowType: 'pr-complete',
+    project: 'farmslot-farm',
+    ticketOrPr: 'deeeed/farmslot#47',
+    familyId: parent.familyId,
+    parentRunId: parent.id,
+  });
+  assert.equal(await publicationBaseForRun(followUp, 'main'), 'feat/upstream');
+  runs.updateRun(parent.id, { stack: { ...STACK, retargetedTo: 'main' } });
+  assert.equal(await publicationBaseForRun(followUp, 'main'), 'main');
+});
+
 test('a follow-up keeps its stack after the stacked run is archived', async () => {
   const stacked = runs.createRun({ flowType: 'dev', project: 'farmslot-farm', ticketOrPr: 'AR-1' });
   runs.updateRun(stacked.id, {
@@ -294,4 +309,5 @@ test('a follow-up keeps its stack after the stacked run is archived', async () =
   assert.equal(await runs.archiveRun(stacked.id), true);
   assert.equal(runs.getRun(stacked.id), undefined, 'gone from the live store');
   assert.deepEqual(await contributionStack(runs.getRun(followUp.id)!), STACK);
+  assert.equal(await publicationBaseForRun(runs.getRun(followUp.id)!, 'main'), 'feat/upstream');
 });

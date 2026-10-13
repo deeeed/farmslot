@@ -1368,7 +1368,7 @@ export async function writeTaskFile(
     taskDir: taskAbsDir,
     taskMarkdown: finalContent,
     checklistMarkdown: checklistContent,
-    markCommand: markCommandForSlot(slotVars, projectVars),
+    markCommand: await markCommandForSlot(slotVars, projectVars),
     handoff,
     terminalContract,
     bugInput: run.ticketData ?? undefined,

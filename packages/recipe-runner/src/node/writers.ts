@@ -4,6 +4,10 @@ import {
   resolvedRecipeArtifactPath,
 } from '@farmslot/protocol';
 
+import {
+  assertRecipeArtifactDestinationAvailable,
+  occupiedRecipeArtifactsError,
+} from '../core/artifact-destination.js';
 import type { RecipeInvocationDocument } from '../core/invocation.js';
 import { writeFileWithinRoot } from '../core/path.js';
 import type {
@@ -25,7 +29,17 @@ export class JsonArtifactWriter implements ArtifactWriter {
   }
 
   async copyRecipe(recipe: unknown): Promise<string> {
-    const recipePath = await writeJsonWithinRoot(this.#artifactsDir, 'recipe.json', recipe);
+    await assertRecipeArtifactDestinationAvailable(this.#artifactsDir);
+    let recipePath: string;
+    try {
+      // Atomic admission: two runners cannot both own this artifact package.
+      recipePath = await writeJsonWithinRoot(this.#artifactsDir, 'recipe.json', recipe, true);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+        throw occupiedRecipeArtifactsError(this.#artifactsDir);
+      }
+      throw error;
+    }
     this.register({
       path: 'recipe.json',
       type: 'recipe',
@@ -148,6 +162,11 @@ export class JsonSummaryWriter implements SummaryWriter {
   }
 }
 
-function writeJsonWithinRoot(root: string, relativePath: string, value: unknown): Promise<string> {
-  return writeFileWithinRoot(root, relativePath, `${JSON.stringify(value, null, 2)}\n`);
+function writeJsonWithinRoot(
+  root: string,
+  relativePath: string,
+  value: unknown,
+  exclusive = false,
+): Promise<string> {
+  return writeFileWithinRoot(root, relativePath, `${JSON.stringify(value, null, 2)}\n`, exclusive);
 }

@@ -43,48 +43,44 @@ done
 
 ARTIFACTS_DIR="$TASK_DIR/artifacts"
 if [[ -z "$RECIPE_RUN_DIR" ]]; then
-  RECIPE_RUN_DIR="$ARTIFACTS_DIR/recipe-run"
+  helper="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/packages/agent-runtime/scripts/retained-recipe-attempt.cjs"
+  RECIPE_RUN_DIR="$(node -e '
+    const path = require("node:path");
+    const {readRecipeAttemptSelection} = require(process.argv[1]);
+    const pointer = readRecipeAttemptSelection(process.argv[2]);
+    console.log(path.join(process.argv[2], "artifacts", pointer?.relativeArtifactRoot ?? "recipe-run"));
+  ' "$helper" "$TASK_DIR")"
 fi
 
-mkdir -p "$ARTIFACTS_DIR"
+# Keep original attempt media; only the mutable selection manifest advances.
+python3 - "$TASK_DIR" "$RECIPE_RUN_DIR" "$REQUIRE_VIDEO" <<'PY'
+import json, os, sys
+from pathlib import Path
 
-if [[ -d "$RECIPE_RUN_DIR/screenshots" ]]; then
-  for src in "$RECIPE_RUN_DIR/screenshots"/*; do
-    [[ -f "$src" ]] || continue
-    base="$(basename "$src")"
-    dest="$ARTIFACTS_DIR/$base"
-    if [[ "$base" == before-* ]]; then
-      cp -f "$src" "$dest"
-    elif [[ "$base" == after-* || "$base" == demo-* || "$base" == evidence-* ]]; then
-      cp -f "$src" "$dest"
-    else
-      cp -f "$src" "$ARTIFACTS_DIR/after-${base}"
-    fi
-    echo "[sync-recipe-evidence] screenshot -> artifacts/$(basename "$dest")"
-  done
-fi
-
-VIDEO_SRC="$RECIPE_RUN_DIR/videos/recipe-run.mp4"
-if [[ -f "$VIDEO_SRC" ]]; then
-  cp -f "$VIDEO_SRC" "$ARTIFACTS_DIR/after.mp4"
-  echo "[sync-recipe-evidence] video -> artifacts/after.mp4"
-  if command -v python3 >/dev/null 2>&1; then
-    python3 - <<'PY' "$ARTIFACTS_DIR/after.mp4"
-import sys
-path = sys.argv[1]
-data = open(path, "rb").read()
-if b"moov" not in data:
-    raise SystemExit(f"after.mp4 missing moov atom: {path}")
-print(f"ok: {path} ({len(data)} bytes, moov present)")
+task = Path(sys.argv[1]).resolve()
+run = Path(sys.argv[2]).resolve()
+require_video = sys.argv[3] == "1"
+run.relative_to(task / "artifacts")
+manifest_path = task / "artifacts" / "evidence-manifest.json"
+manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {"version": 1}
+standalone = manifest.setdefault("standalone", [])
+known = {row.get("file") for row in standalone}
+for source in sorted((run / "screenshots").glob("*")):
+    if not source.is_file():
+        continue
+    relative = source.resolve().relative_to(task).as_posix()
+    if relative not in known:
+        standalone.append({"label": source.name, "file": relative})
+video = run / "videos" / "recipe-run.mp4"
+if video.is_file():
+    if b"moov" not in video.read_bytes():
+        raise SystemExit("recording is missing its moov atom")
+    manifest.setdefault("videos", {}).update({"after": video.relative_to(task).as_posix(), "preferred": True})
+elif require_video:
+    raise SystemExit("required recording is missing from the retained attempt")
+if standalone or manifest.get("videos"):
+    temporary = manifest_path.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(manifest, indent=2) + "\n")
+    os.replace(temporary, manifest_path)
+print("[sync-recipe-evidence] selection references retained attempt media")
 PY
-  fi
-elif [[ "$REQUIRE_VIDEO" -eq 1 ]]; then
-  echo "ERROR: required video missing at $VIDEO_SRC" >&2
-  exit 1
-fi
-
-if [[ -f "$RECIPE_RUN_DIR/summary.json" ]]; then
-  cp -f "$RECIPE_RUN_DIR/summary.json" "$ARTIFACTS_DIR/recipe-run-summary.json"
-fi
-
-echo "[sync-recipe-evidence] done"
