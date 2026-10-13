@@ -367,6 +367,10 @@ policy evaluation and publication confirmation; refresh/review is required.
 Historical/completed runs stay read-only. Failed persistence leaves no effective
 override; retry cannot create an unsigned intermediate verdict.
 
+Completion MUST present a valid selected package with unresolved claim verdicts
+at its existing human gate. Those verdicts continue to block approval. Integrity
+and unrelated completion failures still refuse; reaching review is not admission.
+
 ### Rationale and consequences
 
 The existing free-text actor cannot establish human authority. Changing engine
@@ -382,4 +386,5 @@ Protocol owns request/receipt types and the shared chain predicate. CLI, SDK and
 both clients consume this boundary; providers inherit it without recording or
 verdict code. Replace schema-2 local `ac set` authority with this verified path
 after conformance, with no compatibility writer. The specification names the
-parameters, identity checks and refusal cases.
+parameters, identity checks and refusal cases. Update completion/refusal guidance
+in the same cutover so workers request human review rather than writing overrides.

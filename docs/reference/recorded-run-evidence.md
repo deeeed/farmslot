@@ -447,7 +447,18 @@ authority without changing recipe packages or Amendment 3 publication approval.
 Task-ledger projection MUST occur only when the successful-attempt pointer
 advances. Failed or out-of-task attempts MUST preserve both pointer and projection.
 A schema-2 projection MUST match the selected package's `recipeRunId`; a mismatch
-is non-waivable `evidence-execution-mismatch`, before verdict comparison.
+is non-waivable `evidence-execution-mismatch`, before verdict comparison. Protocol
+owns that typed `RunGatePrerequisiteReason` code; clients do not parse messages.
+When publication also selects a baseline, the projection binds to the selected
+passing implementation attempt. Baseline identity/policy remains separate.
+
+Completion MUST allow a valid selected engine package with unresolved claim
+verdicts to reach its existing ready/output-review gate. `missing`, `weak`,
+`failed` and `awaiting-review` remain visible and blocking for approval; they
+are not successful proof. Verify package integrity, execution/registration and
+unrelated completion requirements before presenting it. This changes only the
+pre-gate verdict refusal, not publish/release admission. No worker request marker,
+`allowWeak` workaround or automatic untestable verdict is introduced.
 
 `run.overrideClaim` MUST accept only a registered claim in a canonically validated
 selected execution at an unresolved ready or output-review gate. Use that gate's
@@ -460,6 +471,8 @@ Authorize an active credential-backed person with current global-admin authority
 using Amendment 3's trusted ingress rules. Recheck identity and the decision's
 snapshot after awaits and before storage. Service, node, worker, background,
 synthetic solo-mode and client-supplied actors MUST be refused.
+A solo operator provisions an active person credential and global-admin role
+through the existing authentication setup before using this operation.
 
 ### Receipt and effective row
 
@@ -496,9 +509,11 @@ visual confirmation. Publication attestation remains a different operation.
 ### Persistence and freshness
 
 Persist the receipt before returning an effective override. If storage fails,
-leave the gate unresolved with no effective change. A retry after successful
-storage returns the same receipt for the same decision/claim/execution/reason;
-a new reason appends a new chain entry. No separate task-file write can succeed
+leave the gate unresolved with no effective change. After reauthentication, a
+retry returns the same committed receipt for the same person/run/claim/execution/
+closure/reason, even if refresh changed the decision identity. It writes nothing;
+require current decision/snapshot freshness for every new receipt. A new reason
+appends a new chain entry. No separate task-file write can succeed
 while receipt persistence fails. Readers derive the row after restart.
 
 The operation MUST NOT resolve or publish the gate. Receipt changes invalidate
@@ -525,7 +540,10 @@ implement no override hook and inherit the gateway policy. After conformance,
 remove schema-2 local `ac set` override writing; unverified chains are never
 grandfathered. A task row with an unsigned chain blocks the operation until a
 canonical engine projection replaces it; the gateway does not silently discard
-or sign its history. Normal-writer cutover retains the existing migration rules.
+or sign its history. Ship the pre-gate verdict transition and update task-contract,
+runtime documentation and completion refusal guidance with this cutover. Guidance
+MUST direct unresolved claims to human review, never local `ac set` or `allowWeak`.
+Normal-writer cutover retains the existing migration rules.
 
 - **O1:** Actual hosted recipe execution A passes and selects its ledger. Failed B
   and an unselected passing attempt preserve A's bytes. A different ledger
@@ -539,6 +557,12 @@ or sign its history. Normal-writer cutover retains the existing migration rules.
 - **O4:** Revoked/service/worker/solo identity, stale/resolved decision and corrupt
   evidence refuse. An override resolves no gate, grants no publication, changes no
   evidence bytes and cannot survive selection changes or bypass unrelated failures.
+- **O5:** A successful selected recipe with a registered untestable/missing claim,
+  and a separate visual claim awaiting review, reaches the existing human gate
+  through ordinary worker completion. Approval remains blocked. A verified human
+  marks only the untestable claim; pending visual review and unrelated requirements
+  still block. Invalid integrity/identity refuses before presentation. The worker
+  writes no verdict or override marker; no `allowWeak` option is used.
 
 ## Evidence gate policy
 
