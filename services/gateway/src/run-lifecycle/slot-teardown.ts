@@ -6,6 +6,7 @@ import {
   execOnSlot,
   loadSlotVars,
   markSlotStatusIf,
+  ownsRunSlotCleanup,
   readSlotRow,
   resetSlotIf,
   SLOT_PHASE_RELEASING,
@@ -44,13 +45,6 @@ export interface RunSlotCleanupFence {
 
 export class RunOwnedResourceCleanupError extends Error {}
 
-/** A deferred teardown retains its identity without retaining run occupancy. */
-function ownsRunCleanup(row: Readonly<Record<string, unknown>> | null, runId: string): boolean {
-  return Boolean(
-    row && (row.current_run_id === runId || (!row.current_run_id && row.cleanup_run_id === runId)),
-  );
-}
-
 /** Recheck a durable hold through the same guarded cleanup that created it. */
 export async function retryOccupiedRunSlot(slotId: string): Promise<boolean> {
   if (isTerminalTeardownInFlight(slotId)) return false;
@@ -74,7 +68,7 @@ export async function retryOccupiedRunSlot(slotId: string): Promise<boolean> {
     if (
       current?.slot_epoch !== before.slot_epoch ||
       current?.phase !== 'occupied' ||
-      !ownsRunCleanup(current, run.id)
+      !ownsRunSlotCleanup(current, run.id)
     )
       return false;
     const { releaseCompletedRunSlot } = await import('../methods/run/lifecycle-control.js');
@@ -95,7 +89,7 @@ export async function fenceRunSlotCleanup(
   const marked = await markSlotStatusIf(
     run.slotId,
     (slot) =>
-      ownsRunCleanup(slot, run.id) &&
+      ownsRunSlotCleanup(slot, run.id) &&
       slot.slot_epoch === before?.slot_epoch &&
       slot.phase !== SLOT_PHASE_RELEASING &&
       !slot.handoff_run_id,
@@ -131,7 +125,8 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
     if (!(error instanceof NativeSlotOwnershipError)) throw error;
     return error.message; // Foreign native ownership is a durable cleanup blocker.
   }
-  if (!ownsRunCleanup(row, run.id)) return `Slot belongs to ${owner ?? 'no run'}, not ${run.id}`;
+  if (!ownsRunSlotCleanup(row, run.id))
+    return `Slot belongs to ${owner ?? 'no run'}, not ${run.id}`;
   const other = findOtherActiveRunOnSlot(run);
   if (other) return `Another active run ${other.id} uses this slot`;
   const listed = await execOnSlot(
@@ -320,7 +315,7 @@ export async function stopRunOwnedTmuxAndWatches(run: Run): Promise<string | nul
   const slotId = run.slotId;
   await unwatchSlot(slotId, { expectedRunId: run.id });
   const slot = await readSlotRow(slotId);
-  if (!ownsRunCleanup(slot, run.id)) return blocker;
+  if (!ownsRunSlotCleanup(slot, run.id)) return blocker;
   const vars = await loadSlotVars(slotId);
   // The slot's recorded prepare scope (preflight group plus its nohup'd
   // holder) outlives an aborted or kept-alive prepare window in the slot
@@ -333,7 +328,7 @@ export async function stopRunOwnedTmuxAndWatches(run: Run): Promise<string | nul
       await reapSlotPrepareScope(vars, {
         stillOwned: async () => {
           const row = await readSlotRow(slotId);
-          return ownsRunCleanup(row, run.id) && row?.slot_epoch === slot?.slot_epoch;
+          return ownsRunSlotCleanup(row, run.id) && row?.slot_epoch === slot?.slot_epoch;
         },
       });
     } catch (error) {
@@ -354,7 +349,7 @@ export async function releaseRunSlotOwnership(
   if (!run.slotId) return false;
   const before = fence.before;
   const current = (slot: Readonly<Record<string, unknown>>) =>
-    ownsRunCleanup(slot, run.id) &&
+    ownsRunSlotCleanup(slot, run.id) &&
     slot.slot_epoch === before?.slot_epoch &&
     (!slot.handoff_run_id || slot.handoff_run_id === run.id) &&
     (fence.token

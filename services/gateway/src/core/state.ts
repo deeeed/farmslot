@@ -340,6 +340,16 @@ export async function readSlotRow(
   return slots.find((s) => s.slot === slotId) ?? null;
 }
 
+/** A deferred teardown retains its identity without retaining run occupancy. */
+export function ownsRunSlotCleanup(
+  row: Readonly<Record<string, unknown>> | null,
+  runId: string,
+): boolean {
+  return Boolean(
+    row && (row.current_run_id === runId || (!row.current_run_id && row.cleanup_run_id === runId)),
+  );
+}
+
 /**
  * Compute-and-apply slot transition in ONE serialized write: `decide` runs
  * INSIDE the write chain against the current row, so classification and the

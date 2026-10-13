@@ -1,6 +1,6 @@
 import type { Run } from '@farmslot/protocol';
 
-import { execOnSlot, loadSlotVars, readSlotRow } from '../core/index.js';
+import { execOnSlot, loadSlotVars, ownsRunSlotCleanup, readSlotRow } from '../core/index.js';
 import { shellQuote, tmuxSendTextCommand, tmuxShellSnippet } from '../core/tmux.js';
 import { getRun } from '../runs/store.js';
 
@@ -90,7 +90,7 @@ export async function stopRunOwnedTmuxWorkers(
     if (context.nativeSession || context.nativeSessionOwner || !context.target) continue;
     const slotId = context.slotId ?? run.slotId;
     const slot = slotId ? await readSlotRow(slotId) : null;
-    if (slot && slot.current_run_id !== run.id) continue;
+    if (slot && !ownsRunSlotCleanup(slot, run.id)) continue;
     if (slot?.handoff_run_id && slot.handoff_run_id !== run.id)
       return 'Another native handoff owns this slot reservation; worker cleanup deferred';
     if (!slotId) return `Worker ${context.id} has no slot ownership evidence`;
@@ -124,7 +124,7 @@ export async function stopRunOwnedTmuxWorkers(
       const currentTarget =
         currentRun && current ? runnerSessionContextTarget(currentRun, current) : null;
       if (
-        currentSlot?.current_run_id !== run.id ||
+        !ownsRunSlotCleanup(currentSlot, run.id) ||
         currentSlot?.slot_epoch !== slot?.slot_epoch ||
         (currentSlot?.handoff_run_id && currentSlot.handoff_run_id !== run.id) ||
         currentRun?.engineState?.generation !== expectedGeneration ||

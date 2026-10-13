@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Keep exact worker identities after deferred interactive terminal cleanup and retry through the recorded cleanup owner, while preserving successor and session ownership guards.
+
 - Preserve completion-prerequisite workspace holds during occupied-slot cleanup retries, retaining their worker, slot and capability ownership for explicit recovery.
 
 - Run fixture sync directly on the gateway for remote slots so tmux setup cannot terminate it before its configured deadline; retain sync logs and cancellation.

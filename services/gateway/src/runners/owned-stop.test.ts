@@ -29,12 +29,14 @@ let commands: string[];
 /** Runs when the pane is set to remain on exit: between the ownership check and the send. */
 let onPreserve: (() => void) | null;
 let onProbe: (() => void) | null;
+let slotRow: Record<string, unknown>;
+let parkedStops: number;
 
 mock.module('../core/index.js', {
   namedExports: {
     ...realCore,
     loadSlotVars: async () => ({ slotId: SLOT_ID, remoteRepo: '/slot', host: 'localhost' }),
-    readSlotRow: async () => ({ current_run_id: RUN_ID, slot_epoch: 1 }),
+    readSlotRow: async () => slotRow,
     execOnSlot: async (_vars: unknown, cmd: string) => {
       commands.push(cmd);
       const display = /display-message -p -t '?(%\d+)/.exec(cmd);
@@ -70,6 +72,7 @@ mock.module('./session-lifecycle.js', {
     ...realSessionLifecycle,
     stopRunnerForPark: async (options: realSessionLifecycle.StopRunnerForParkOptions) => {
       await options.beforeExit?.();
+      parkedStops++;
       return { ok: true, status: 'already-stopped', residualRunner: 'stopped' };
     },
   },
@@ -115,6 +118,8 @@ function tat4091Run(publicationStatus?: Publication, runner = 'codex'): Run {
 }
 
 function setup(publicationStatus?: Publication, runner = 'codex'): void {
+  slotRow = { current_run_id: RUN_ID, slot_epoch: 1 };
+  parkedStops = 0;
   run = tat4091Run(publicationStatus, runner);
   // The reviewer pane already closed; the idle dev worker still holds the slot.
   panes = new Map([
@@ -136,6 +141,38 @@ function setup(publicationStatus?: Publication, runner = 'codex'): void {
 
 const exitsSentTo = (paneId: string) =>
   commands.filter((cmd) => cmd.includes(`send-keys -t '${paneId}' -l '/exit'`)).length;
+
+test('a deferred cleanup owner stops its retained exact saved worker', async () => {
+  setup();
+  slotRow = { current_run_id: null, cleanup_run_id: RUN_ID, slot_epoch: 1 };
+  run.agentContexts![0].runnerSessionId = 'retained-session';
+  run.agentContexts![0].runnerSessionPath = '/sessions/retained.jsonl';
+  assert.equal(await stopRunOwnedTmuxWorkers(run), null);
+  assert.equal(parkedStops, 1);
+  assert.ok(commands.some((command) => /display-message -p -t '?%75/.test(command)));
+});
+
+test('a successor claim overrides stale cleanup ownership without inspecting or sending', async () => {
+  setup('published_ready');
+  slotRow = { current_run_id: 'successor', cleanup_run_id: RUN_ID, slot_epoch: 2 };
+  assert.equal(await stopRunOwnedTmuxWorkers(run), null);
+  assert.deepEqual(commands, []);
+  assert.equal(parkedStops, 0);
+  assert.equal(panes.get('%75')!.runnerLive, true);
+});
+
+test('a deferred owner epoch change prevents a retained worker exit', async () => {
+  setup();
+  slotRow = { current_run_id: null, cleanup_run_id: RUN_ID, slot_epoch: 1 };
+  run.agentContexts![0].runnerSessionId = 'retained-session';
+  run.agentContexts![0].runnerSessionPath = '/sessions/retained.jsonl';
+  onProbe = () => {
+    slotRow = { ...slotRow, slot_epoch: 2 };
+  };
+  await assert.rejects(stopRunOwnedTmuxWorkers(run), /ownership changed before stop/);
+  assert.equal(parkedStops, 0);
+  assert.equal(exitsSentTo('%75'), 0);
+});
 
 test('a published run exits its idle worker even without a saved conversation id', async () => {
   setup('published_ready');
