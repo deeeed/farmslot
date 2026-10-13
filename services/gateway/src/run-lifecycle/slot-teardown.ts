@@ -22,9 +22,10 @@ import {
 } from '../run-engine/gate-held-lifecycle.js';
 import { assertNativeSlotReplacementOwner } from '../runners/native/worker.js';
 import { NativeSlotOwnershipError } from '../runners/native/worker-error.js';
-import { contextPaneId, stopRunOwnedTmuxWorkers } from '../runners/owned-stop.js';
+import { stopRunOwnedTmuxWorkers } from '../runners/owned-stop.js';
 import { archiveRunnerSessionsForSlotRelease } from '../runners/session-archive.js';
 import { isShellProcessCommand, probeRunnerDescendantPid } from '../runners/session-process.js';
+import { contextPaneId } from '../runners/session-record.js';
 import { listRuns, updateRun } from '../runs/store.js';
 import { unwatchSlot } from '../tasks/watcher.js';
 

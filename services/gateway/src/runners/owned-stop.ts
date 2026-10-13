@@ -1,4 +1,4 @@
-import type { AgentContextTarget, Run } from '@farmslot/protocol';
+import type { Run } from '@farmslot/protocol';
 
 import { execOnSlot, loadSlotVars, readSlotRow } from '../core/index.js';
 import { shellQuote, tmuxSendTextCommand, tmuxShellSnippet } from '../core/tmux.js';
@@ -11,14 +11,9 @@ import {
   stopRunnerForPark,
 } from './session-lifecycle.js';
 import { probeRunnerDescendantPid, RUNNER_PROCESS_PROBE_TIMEOUT_MS } from './session-process.js';
+import { contextPaneId, runnerSessionContextTarget } from './session-record.js';
 
 type SlotVars = Awaited<ReturnType<typeof loadSlotVars>>;
-
-/** Reviewer contexts record their exact `%N` pane in `pane`; only worker contexts set `paneId`. */
-export function contextPaneId(target: AgentContextTarget): string | null {
-  if (target.paneId) return target.paneId;
-  return target.pane && /^%\d+$/.test(target.pane) ? target.pane : null;
-}
 
 interface PublishedWorker {
   paneId: string;
@@ -100,8 +95,10 @@ export async function stopRunOwnedTmuxWorkers(
       return 'Another native handoff owns this slot reservation; worker cleanup deferred';
     if (!slotId) return `Worker ${context.id} has no slot ownership evidence`;
     const vars = await loadSlotVars(slotId);
-    const targetPaneId = contextPaneId(context.target);
-    if (!targetPaneId) return `Worker ${context.id} has no exact pane identity; cleanup deferred`;
+    const ownedTarget = runnerSessionContextTarget(run, context);
+    const targetPaneId = ownedTarget && contextPaneId(ownedTarget);
+    if (!ownedTarget || !targetPaneId)
+      return `Worker ${context.id} has no exact pane identity; cleanup deferred`;
     const pane = await execOnSlot(
       vars,
       tmuxShellSnippet(
@@ -124,6 +121,8 @@ export async function stopRunOwnedTmuxWorkers(
       const currentSlot = await readSlotRow(slotId);
       const currentRun = getRun(run.id);
       const current = currentRun?.agentContexts?.find((candidate) => candidate.id === context.id);
+      const currentTarget =
+        currentRun && current ? runnerSessionContextTarget(currentRun, current) : null;
       if (
         currentSlot?.current_run_id !== run.id ||
         currentSlot?.slot_epoch !== slot?.slot_epoch ||
@@ -135,7 +134,10 @@ export async function stopRunOwnedTmuxWorkers(
         current.runner !== context.runner ||
         current.runnerSessionId !== context.runnerSessionId ||
         current.runnerSessionPath !== context.runnerSessionPath ||
-        JSON.stringify(current.target) !== JSON.stringify(context.target)
+        JSON.stringify(current.target) !== JSON.stringify(context.target) ||
+        (current.slotId ?? currentRun?.slotId) !== slotId ||
+        !currentTarget ||
+        contextPaneId(currentTarget) !== targetPaneId
       )
         throw new Error(
           `Worker ${context.id} ownership changed before stop; exit was not delivered`,
@@ -168,7 +170,7 @@ export async function stopRunOwnedTmuxWorkers(
         contextId: context.id,
         sessionId: context.runnerSessionId,
         sessionPath: context.runnerSessionPath,
-        target: { ...context.target, paneId: targetPaneId },
+        target: { ...ownedTarget, paneId: targetPaneId },
         model: context.model ?? null,
         capturedAt: run.createdAt,
       },

@@ -8,6 +8,7 @@ import type { AgentContext, Run } from '@farmslot/protocol';
 import * as realCore from '../core/index.js';
 import * as realRunStore from '../runs/store.js';
 
+import * as realSessionLifecycle from './session-lifecycle.js';
 import * as realSessionProcess from './session-process.js';
 
 const RUN_ID = 'run-owned-stop';
@@ -27,6 +28,7 @@ let panes: Map<string, FakePane>;
 let commands: string[];
 /** Runs when the pane is set to remain on exit: between the ownership check and the send. */
 let onPreserve: (() => void) | null;
+let onProbe: (() => void) | null;
 
 mock.module('../core/index.js', {
   namedExports: {
@@ -57,8 +59,18 @@ mock.module('./session-process.js', {
   namedExports: {
     ...realSessionProcess,
     probeRunnerDescendantPid: async (_vars: unknown, panePid: string) => {
+      onProbe?.();
       const pane = [...panes.values()].find((p) => p.panePid === panePid && p.runnerLive);
       return pane ? { state: 'present', pid: pane.runnerPid } : { state: 'absent' };
+    },
+  },
+});
+mock.module('./session-lifecycle.js', {
+  namedExports: {
+    ...realSessionLifecycle,
+    stopRunnerForPark: async (options: realSessionLifecycle.StopRunnerForParkOptions) => {
+      await options.beforeExit?.();
+      return { ok: true, status: 'already-stopped', residualRunner: 'stopped' };
     },
   },
 });
@@ -119,6 +131,7 @@ function setup(publicationStatus?: Publication, runner = 'codex'): void {
   ]);
   commands = [];
   onPreserve = null;
+  onProbe = null;
 }
 
 const exitsSentTo = (paneId: string) =>
@@ -207,4 +220,75 @@ test('a worker that ignores the exit is reported once the ceiling passes', async
     /runner did not exit within 300ms/,
   );
   assert.equal(exitsSentTo('%75'), 1);
+});
+
+function sharedFixRun() {
+  setup('published_ready');
+  const primary = run.agentContexts![0];
+  primary.runnerSessionId = 'retained-worker';
+  primary.runnerSessionPath = '/sessions/retained-worker.jsonl';
+  const fix = {
+    ...primary,
+    id: 'review-fix',
+    role: 'review-fix',
+    target: { session: 'mmt-3', window: 'dev', pane: null, target: 'mmt-3:dev' },
+  } as AgentContext;
+  run.agentContexts = [fix, primary];
+  panes.get('%75')!.runnerLive = false;
+  return { primary, fix };
+}
+
+test('a completed review-fix alias uses its exact primary pane without guessing or sending', async () => {
+  sharedFixRun();
+  assert.equal(await stopRunOwnedTmuxWorkers(run), null);
+  assert.ok(commands.some((command) => /display-message -p -t '?%75/.test(command)));
+  assert.ok(!commands.some((command) => command.includes('send-keys')));
+});
+
+test('a missing historical primary pane also clears its strongly bound fix alias', async () => {
+  sharedFixRun();
+  panes.clear();
+  assert.equal(await stopRunOwnedTmuxWorkers(run), null);
+  assert.ok(!commands.some((command) => command.includes('send-keys')));
+});
+
+test('a fix without a matching complete primary binding remains held', async () => {
+  for (const change of ['session', 'path', 'slot', 'route']) {
+    const { primary } = sharedFixRun();
+    if (change === 'session') primary.runnerSessionId = 'other-worker';
+    if (change === 'path') primary.runnerSessionPath = null;
+    if (change === 'slot') primary.slotId = 'another-slot';
+    if (change === 'route') primary.target!.target = 'mmt-3:other';
+    if (change === 'route') primary.target!.window = 'other';
+    assert.match((await stopRunOwnedTmuxWorkers(run)) ?? '', /no exact pane identity/);
+    assert.equal(commands.length, 0);
+  }
+});
+
+test('an ambiguous pair of exact panes cannot authorize a fix alias', async () => {
+  const { primary } = sharedFixRun();
+  run.agentContexts!.push({
+    ...primary,
+    id: 'another-peer',
+    target: { ...primary.target!, paneId: '%99' },
+  });
+  assert.match((await stopRunOwnedTmuxWorkers(run)) ?? '', /no exact pane identity/);
+  assert.equal(commands.length, 0);
+});
+
+test('a bound alias whose exact pane moved to another session remains held', async () => {
+  sharedFixRun();
+  panes.get('%75')!.session = 'another-session';
+  assert.match((await stopRunOwnedTmuxWorkers(run)) ?? '', /pane ownership changed/);
+  assert.ok(!commands.some((command) => command.includes('send-keys')));
+});
+
+test('a changed primary alias binding prevents exit after the liveness probe', async () => {
+  const { primary } = sharedFixRun();
+  panes.get('%75')!.runnerLive = true;
+  onProbe = () => {
+    primary.runnerSessionId = 'replacement-worker';
+  };
+  await assert.rejects(stopRunOwnedTmuxWorkers(run), /ownership changed before stop/);
+  assert.ok(!commands.some((command) => command.includes('send-keys')));
 });
