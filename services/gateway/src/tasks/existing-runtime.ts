@@ -83,7 +83,7 @@ export async function initializeExistingTaskRuntime(run: Run): Promise<void> {
     checklistMarkdown: !isLightweightInteractiveDevRun(run) && checklist ? `${checklist}\n` : null,
     handoff,
     terminalContract,
-    markCommand: slot ? markCommandForSlot(slot, project) : undefined,
+    markCommand: slot ? await markCommandForSlot(slot, project) : undefined,
     bugInput: run.ticketData ?? undefined,
   });
 }

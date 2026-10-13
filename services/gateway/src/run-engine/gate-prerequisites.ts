@@ -154,7 +154,7 @@ export async function readGateAcceptance(
     const options = { allowWeak: contract.acceptance?.allowWeak === true };
     if (isLocal(vars.host, vars.machine))
       return { ...acceptance, issues: acceptanceContractIssues(taskDir, options) };
-    const guard = agentRuntimeScriptForSlot(vars, 'acceptance-ledger.cjs');
+    const guard = await agentRuntimeScriptForSlot(vars, 'acceptance-ledger.cjs');
     const script =
       'const { acceptanceContractIssues } = require(process.argv[1]); process.stdout.write(JSON.stringify(acceptanceContractIssues(process.argv[2], JSON.parse(process.argv[3]))));';
     const result = await execOnSlot(
