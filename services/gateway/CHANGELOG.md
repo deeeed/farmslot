@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Preserve typed media and timeline references when task recipe attempts live in nested artifact directories.
+
 - Accept project review configuration when planning automatic publication reviews after recovery.
 - Resolve declared source refs into immutable admission locks and refuse source drift.
 - Freeze selected recorded evidence with its execution dependencies and publication manifest; refresh verifies the approved selection and refuses replaced media or metadata.

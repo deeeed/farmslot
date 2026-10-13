@@ -2466,7 +2466,7 @@ describe('run', () => {
     const secondSummary = (lastJson(second.stdout).result as { summaryPath: string }).summaryPath;
     assert.notEqual(firstSummary, secondSummary);
     for (const summary of [firstSummary, secondSummary]) {
-      assert.equal(path.dirname(path.dirname(summary)), path.join(taskArtifacts, 'runs'));
+      assert.equal(path.dirname(path.dirname(summary)), path.join(taskArtifacts, 'recipe-runs'));
     }
     assert.deepEqual(fs.readFileSync(firstSummary), retained);
     assert.deepEqual(fs.readFileSync(recipe), authored);
@@ -3368,7 +3368,7 @@ describe('call', () => {
       path.dirname(
         path.dirname(String((lastJson(run.stdout).result as { summaryPath: string }).summaryPath)),
       ),
-      path.join(target, 'temp/tasks/t1/artifacts/runs'),
+      path.join(target, 'temp/tasks/t1/artifacts/recipe-runs'),
     );
     for (const dir of dirs) assert.ok(fs.existsSync(path.join(dir, 'summary.json')), dir);
 
