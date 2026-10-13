@@ -2380,7 +2380,7 @@
                   },
                   "includes": {
                     "type": "array",
-                    "description": "List of files to concatenate. Entries are a path string (required \u2014 warns when missing) or {file, optional} where optional entries skip quietly when the resolved path is absent. Paths may contain {{var}} placeholders resolved at sync time.",
+                    "description": "List of files to concatenate. Entries are a path string (required, fails prepare when missing) or {file, optional} where optional entries skip quietly when the resolved path is absent. Paths may contain {{var}} placeholders resolved at sync time.",
                     "items": {
                       "oneOf": [
                         {

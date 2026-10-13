@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Optional overlay fixtures: {file, optional} compose includes and
 # placeholder-expanded src paths skip quietly when absent/unresolved, while
-# required entries keep warning. Domain resolution here uses a project var so
+# required entries refuse sync. Domain resolution here uses a project var so
 # the test is independent of how the DOMAIN env gets set.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+export TMPDIR="$TMP"
 
 cp -R "$REPO_ROOT/scripts" "$TMP/scripts"
 # The relocated tree has no packages/cli — pin the checkout CLI and point the
@@ -35,8 +36,7 @@ write_project() { # $1 = optional project vars JSON object ("" for none)
    {"dst":"COMPOSED.md","compose":{"var":"FLOW_TYPE","variants":{"fix-bug":{"file":"base.md","includes":[
      "required.md",
      {"file":"domains/{{domain}}/domain.md","optional":true},
-     {"file":"domains/{{domain}}/absent.md","optional":true},
-     "missing-required.md"
+     {"file":"domains/{{domain}}/absent.md","optional":true}
    ]}}}},
    {"src":"domains/{{domain}}/review-patterns.md","dst":"REVIEW.md","optional":true},
    {"src":"plain.md","dst":"PLAIN.md"}
@@ -52,7 +52,7 @@ printf 'PLAIN\n' > "$TMP/projects/inc-test-farm/fixtures/plain.md"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 # 1. Domain resolvable: overlay include composed in order, optional src synced,
-#    absent optional include skips quietly, missing required include warns.
+#    absent optional include skips quietly.
 write_project '{"domain": "blue"}'
 out=$(bash "$TMP/scripts/sync-fixtures.sh" --slot it-1 --flow-type fix-bug 2>&1)
 printf 'BASE\n\nREQUIRED\n\nDOMAIN OVERLAY\n' | cmp -s - "$TMP/repo/COMPOSED.md" \
@@ -60,8 +60,6 @@ printf 'BASE\n\nREQUIRED\n\nDOMAIN OVERLAY\n' | cmp -s - "$TMP/repo/COMPOSED.md"
 [ "$(cat "$TMP/repo/REVIEW.md")" = "REVIEW PATTERNS" ] || fail "optional src not synced"
 printf '%s' "$out" | grep -q "\[SKIP\] optional include domains/blue/absent.md" \
   || fail "absent optional include did not skip quietly: $out"
-printf '%s' "$out" | grep -q "\[WARN\] include missing-required.md not found" \
-  || fail "missing required include did not warn: $out"
 
 # 2. Domain unresolved: every overlay entry skips quietly, required content
 #    unchanged, no overlay destinations created.
@@ -74,5 +72,29 @@ printf 'BASE\n\nREQUIRED\n' | cmp -s - "$TMP/repo/COMPOSED.md" \
 printf '%s' "$out" | grep -q "optional src domains/{{domain}}/review-patterns.md not present" \
   || fail "unresolved optional src did not skip quietly: $out"
 [ -f "$TMP/repo/PLAIN.md" ] || fail "required plain fixture missing"
+
+# 3. Missing required inputs must refuse before any destination is overwritten.
+#    Each scenario reaches the real fixture-plan CLI through sync-fixtures.sh.
+for source_kind in template variant include directory; do
+  python3 - "$TMP/projects/inc-test-farm/project.json" "$source_kind" <<'PY'
+import json,sys
+kind=sys.argv[2]
+fixture={
+ 'template': {'templates':[{'src':'absent.md','dst':'PLAIN.md'}]},
+ 'variant': {'templates':[{'dst':'PLAIN.md','compose':{'var':'FLOW_TYPE','variants':{'fix-bug':'absent.md'}}}]},
+ 'include': {'templates':[{'dst':'PLAIN.md','compose':{'var':'FLOW_TYPE','variants':{'fix-bug':{'includes':['absent.md']}}}}]},
+ 'directory': {'directories':[{'src':'absent-directory','dst':'.agent'}]},
+}[kind]
+with open(sys.argv[1],'w') as f:json.dump({'name':'inc-test-farm','fixtures':fixture},f)
+PY
+  printf 'RETAINED\n' > "$TMP/repo/PLAIN.md"
+  if out=$(bash "$TMP/scripts/sync-fixtures.sh" --slot it-1 --flow-type fix-bug 2>&1); then
+    fail "missing required $source_kind succeeded: $out"
+  fi
+  printf '%s' "$out" | grep -q 'Required fixture absent' \
+    || fail "missing required $source_kind did not identify its source: $out"
+  [ "$(cat "$TMP/repo/PLAIN.md")" = RETAINED ] || fail "failed plan overwrote existing work"
+  ! printf '%s' "$out" | grep -q 'fixtures synced to' || fail "failed plan reported success"
+done
 
 echo "sync-fixtures optional includes: all cases passed"

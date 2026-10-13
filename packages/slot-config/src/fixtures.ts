@@ -57,16 +57,29 @@ interface ComposeVariant {
   includes?: unknown[];
 }
 
-async function fileExists(p: string): Promise<boolean> {
+async function fixtureExists(p: string, directory = false): Promise<boolean> {
   try {
     const s = await stat(p);
-    return s.isFile();
-  } catch {
-    // stat throws ENOENT for an absent overlay/include path — that "not present"
-    // is the expected signal a caller acts on (optional skip / required warn),
-    // not an error to surface.
-    return false;
+    return directory ? s.isDirectory() : s.isFile();
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return false;
+    throw error;
   }
+}
+
+function missingRequiredFixture(src: string, dst: string, project: ProjectVars): Error {
+  return Object.assign(
+    new Error(
+      `Required fixture ${src || '<empty source>'} not found for ${dst} (${project.projectConfig})`,
+    ),
+    {
+      code: 'REQUIRED_FIXTURE_MISSING',
+      userAction:
+        'Restore the source in the project pack or correct its fixture declaration. ' +
+        'Mark a template or include optional only when the input is genuinely optional.',
+    },
+  );
 }
 
 /**
@@ -133,10 +146,11 @@ export async function computeFixturePlan(opts: FixturePlanOptions): Promise<Fixt
         : ((compose?.includes as unknown[] | undefined) ?? []);
 
       let composed = '';
-      if (variantFile && (await fileExists(path.join(fixturesDir, variantFile)))) {
+      if (variantFile && (await fixtureExists(path.join(fixturesDir, variantFile)))) {
         composed = await readFile(path.join(fixturesDir, variantFile), 'utf-8');
       } else if (variantFile) {
-        logs.push({ level: 'SKIP', message: `No variant for FLOW_TYPE='${flowVal}'` });
+        if (!optional) throw missingRequiredFixture(variantFile, dst, projectVars);
+        logs.push({ level: 'SKIP', message: `${dst} — optional src ${variantFile} not present` });
         continue;
       }
 
@@ -145,7 +159,7 @@ export async function computeFixturePlan(opts: FixturePlanOptions): Promise<Fixt
         let incFile = incIsObj ? String((inc as { file?: unknown }).file ?? '') : String(inc);
         const incOptional = incIsObj && Boolean((inc as { optional?: unknown }).optional);
         if (incFile) incFile = expandPath(incFile);
-        if (incFile && (await fileExists(path.join(fixturesDir, incFile)))) {
+        if (incFile && (await fixtureExists(path.join(fixturesDir, incFile)))) {
           composed += `\n${await readFile(path.join(fixturesDir, incFile), 'utf-8')}`;
         } else if (incOptional) {
           logs.push({
@@ -153,7 +167,7 @@ export async function computeFixturePlan(opts: FixturePlanOptions): Promise<Fixt
             message: `optional include ${incFile || '<empty>'} not present`,
           });
         } else {
-          logs.push({ level: 'WARN', message: `include ${incFile} not found` });
+          throw missingRequiredFixture(incFile, dst, projectVars);
         }
       }
 
@@ -162,16 +176,24 @@ export async function computeFixturePlan(opts: FixturePlanOptions): Promise<Fixt
     } else if (src) {
       // === Template or plain file entry ===
       const localTpl = path.join(fixturesDir, src);
-      if (await fileExists(localTpl)) {
+      if (await fixtureExists(localTpl)) {
         files.push({ dst, content: render(await readFile(localTpl, 'utf-8')) });
         logs.push({ level: 'PLAN', message: dst });
       } else if (optional) {
         logs.push({ level: 'SKIP', message: `${dst} — optional src ${src} not present` });
       } else {
-        logs.push({ level: 'SKIP', message: `${src} not found` });
+        throw missingRequiredFixture(src, dst, projectVars);
       }
     } else {
       logs.push({ level: 'SKIP', message: `${dst} — no src or compose` });
+    }
+  }
+
+  // Directory copies remain shell edges, but source admission belongs to this
+  // same planner so prepare cannot accept a missing declared directory either.
+  for (const entry of projectVars.projectJson.fixtures?.directories ?? []) {
+    if (!(await fixtureExists(path.join(fixturesDir, entry.src), true))) {
+      throw missingRequiredFixture(entry.src, expandPath(entry.dst), projectVars);
     }
   }
 

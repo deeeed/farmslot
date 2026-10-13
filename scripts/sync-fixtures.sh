@@ -173,7 +173,11 @@ if [ -n "${SLOT_ID}" ]; then
     ${FLOW_TYPE:+--flow-type "$FLOW_TYPE"} \
     ${APP:+--app "$APP"} \
     ${DOMAIN:+--domain "$DOMAIN"} \
-    --stage "$FIXTURE_STAGE" --manifest "$FIXTURE_MANIFEST"
+    --stage "$FIXTURE_STAGE" --manifest "$FIXTURE_MANIFEST" || {
+      fixture_status=$?
+      rm -rf "$FIXTURE_STAGE" "$FIXTURE_MANIFEST"
+      exit "$fixture_status"
+    }
   while IFS=$'\t' read -r TPL_DST STAGED_FILE; do
     [ -z "$TPL_DST" ] && continue
     copy_to_slot "$STAGED_FILE" "${REMOTE_REPO}/${TPL_DST}"
@@ -194,8 +198,10 @@ if [ -n "${SLOT_ID}" ]; then
 
     LOCAL_DIR="${PROJECT_FIXTURES_DIR}/${DIR_SRC}"
     if [ ! -d "$LOCAL_DIR" ]; then
-      echo "  [SKIP] ${DIR_SRC} directory not found in fixtures"
-      continue
+      # The shared fixture planner admitted this required source before copies
+      # began. If it disappeared meanwhile, refuse instead of claiming success.
+      echo "  [FAIL] Required fixture directory ${DIR_SRC} disappeared after planning" >&2
+      exit 1
     fi
 
     # Build exclude args
