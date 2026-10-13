@@ -4,16 +4,15 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.32.0 - 2026-10-13
+
 - Reject task acceptance ledgers used as recipe claim packages with an explicit schema error.
-
 - Harness proof consumers apply the shared intent contract during recipe-cli planning as well as doctor conformance.
-
 - Refuse reruns into retained recipe artifact packages before recording or execution; use a fresh artifact directory to keep prior evidence intact.
-
 - Honor HUD top/bottom placement through automatic progress and capture the painted final outcome.
-
 - Bind recorded evidence to execution-indexed files and consumed metadata, excluding unrelated task artifacts.
-
 - Expose the existing occurrence recording-coverage helper and trusted-host reader transport to the shared review model; equal-byte originals retain their distinct clocks (ADR-062).
 
 ## 0.31.0 - 2026-10-12

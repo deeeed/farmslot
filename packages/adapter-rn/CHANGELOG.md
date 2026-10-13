@@ -4,6 +4,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.21.0 - 2026-10-13
+
 - Honor HUD top/bottom placement through automatic progress and capture the painted final outcome. Native HUD consumers need the optional `react-native-safe-area-context` peer.
 
 ## 0.20.1 - 2026-10-12

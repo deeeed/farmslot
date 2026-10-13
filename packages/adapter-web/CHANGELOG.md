@@ -4,6 +4,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.8.0 - 2026-10-13
+
 - Honor HUD top/bottom placement through automatic progress and capture the painted final outcome.
 
 ## 0.7.2 - 2026-10-12
