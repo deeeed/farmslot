@@ -175,6 +175,7 @@ test('terminal WARM reservation requires exact PR, lineage, session and reviewed
     repeatReviewContext: { mode: 'warm', session: trace },
   } as Run;
   assert.equal(verifiedWarmReviewSessionId(run), 'prior-session');
+  assert.equal(verifiedWarmReviewSessionId({ ...run, reviewMode: 'cold' }), undefined);
   for (const session of [
     { ...trace, reviewId: undefined },
     { ...trace, lastReviewedHeadSha: undefined },

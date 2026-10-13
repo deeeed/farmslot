@@ -1,9 +1,17 @@
 import type {
   ReviewContinuationContext,
+  ReviewMode,
   ReviewRequestContext,
   ReviewSelection,
   ReviewSequence,
+  Run,
 } from '@farmslot/protocol';
+
+export interface ResolveReviewModeOptions {
+  explicitMode?: ReviewMode | null;
+  run?: Pick<Run, 'reviewMode' | 'prWork' | 'repeatReviewContext'> | null;
+  defaultMode?: ReviewMode | null;
+}
 
 export type EffortLevel = string | null;
 export interface ReviewDispatchModelOption {

@@ -19,6 +19,7 @@ import {
   parseReviewRequestContext,
   parseReviewSelection,
   resolveReviewDispatchDefaults,
+  resolveReviewMode,
   reviewContextFromRequest,
   reviewSequenceFromRequest,
 } from '@farmslot/review-dispatch';
@@ -73,7 +74,7 @@ export function automaticPublicationReviewPlan(
     qualifyingPassingReviews(reviews).map((review) => review.reviewerSessionId),
   );
   const missing = Math.max(0, effectiveRequiredReviewCount(policy) - passingSessions.size);
-  const selection = parseReviewSelection({ ...defaults, mode: 'cold' });
+  const selection = parseReviewSelection({ ...defaults, mode: resolveReviewMode() });
   return Array.from({ length: missing }, () => ({ ...selection }));
 }
 
@@ -252,7 +253,7 @@ export function assertWarmReviewRequestAvailable(
 export function assertPrimaryReviewContext(
   input: Pick<Run, 'flowType' | 'ticketOrPr' | 'reviewMode' | 'reviewContext' | 'prWork'>,
 ): void {
-  const mode = input.reviewMode ?? input.prWork?.review?.options.mode ?? 'cold';
+  const mode = resolveReviewMode({ run: input });
   if (mode !== 'warm') return;
   const raw = input.reviewContext ?? input.prWork?.review?.options.reviewContext;
   if (!raw)

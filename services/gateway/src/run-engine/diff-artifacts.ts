@@ -14,6 +14,7 @@ import {
   type ReviewDiffSnapshot,
   type Run,
 } from '@farmslot/protocol';
+import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import {
   getProjectField,
@@ -1131,14 +1132,15 @@ async function readFreshReviewInputArtifacts(
     if (!isFamilyDiffProvenance(parsed) || parsed.kind !== 'review-input') return null;
     if (parsed.repository && parsed.repository !== prRef.repo) return null;
     if (parsed.prNumber != null && parsed.prNumber !== prRef.prNumber) return null;
-    if ((parsed.reviewMode ?? 'cold') !== (run.reviewMode ?? 'cold')) return null;
+    if (resolveReviewMode({ explicitMode: parsed.reviewMode }) !== resolveReviewMode({ run }))
+      return null;
     if (
       run.repeatReviewContext?.currentHeadSha &&
       parsed.headSha !== run.repeatReviewContext.currentHeadSha
     )
       return null;
     if (
-      run.reviewMode === 'warm' &&
+      resolveReviewMode({ run }) === 'warm' &&
       parsed.baseSha !== run.repeatReviewContext?.priorReviewedHeadSha
     )
       return null;
@@ -1283,8 +1285,10 @@ async function captureReviewInputArtifactsForRunUnlocked(
           );
         }
         const incrementalBase =
-          run.reviewMode === 'warm' ? run.repeatReviewContext?.priorReviewedHeadSha : undefined;
-        if (run.reviewMode === 'warm' && !incrementalBase)
+          resolveReviewMode({ run }) === 'warm'
+            ? run.repeatReviewContext?.priorReviewedHeadSha
+            : undefined;
+        if (resolveReviewMode({ run }) === 'warm' && !incrementalBase)
           throw new Error('WARM review unavailable: missing last reviewed head');
         const fetchedFiles = incrementalBase
           ? await (deps.fetchGitHubCompareFiles ?? fetchGitHubCompareFiles)(
@@ -1308,12 +1312,16 @@ async function captureReviewInputArtifactsForRunUnlocked(
       repository: prRef.repo,
       prNumber: prRef.prNumber,
       baseRef:
-        run.reviewMode === 'warm' ? run.repeatReviewContext?.priorReviewedHeadSha : pr.baseRef,
+        resolveReviewMode({ run }) === 'warm'
+          ? run.repeatReviewContext?.priorReviewedHeadSha
+          : pr.baseRef,
       baseSha:
-        run.reviewMode === 'warm' ? run.repeatReviewContext?.priorReviewedHeadSha : pr.baseSha,
+        resolveReviewMode({ run }) === 'warm'
+          ? run.repeatReviewContext?.priorReviewedHeadSha
+          : pr.baseSha,
       headRef: pr.branch,
       headSha: pr.headSha,
-      reviewMode: run.reviewMode ?? 'cold',
+      reviewMode: resolveReviewMode({ run }),
       capturedAt: now,
       source: 'github-pr',
     };
@@ -1337,12 +1345,16 @@ async function captureReviewInputArtifactsForRunUnlocked(
       repository: prRef.repo,
       prNumber: prRef.prNumber,
       baseRef:
-        run.reviewMode === 'warm' ? run.repeatReviewContext?.priorReviewedHeadSha : pr.baseRef,
+        resolveReviewMode({ run }) === 'warm'
+          ? run.repeatReviewContext?.priorReviewedHeadSha
+          : pr.baseRef,
       baseSha:
-        run.reviewMode === 'warm' ? run.repeatReviewContext?.priorReviewedHeadSha : pr.baseSha,
+        resolveReviewMode({ run }) === 'warm'
+          ? run.repeatReviewContext?.priorReviewedHeadSha
+          : pr.baseSha,
       headRef: pr.branch,
       headSha: pr.headSha,
-      reviewMode: run.reviewMode ?? 'cold',
+      reviewMode: resolveReviewMode({ run }),
       capturedAt: now,
       configSource: sourceFilterSettings.configSource,
       ...(sourceFilterSettings.configFallbackReason
@@ -1374,7 +1386,7 @@ async function captureReviewInputArtifactsForRunUnlocked(
     const unavailable: FamilyInputCommitMetadata = {
       repository: prRef.repo,
       prNumber: prRef.prNumber,
-      reviewMode: run.reviewMode ?? 'cold',
+      reviewMode: resolveReviewMode({ run }),
       ...(pr
         ? {
             baseRef: pr.baseRef,

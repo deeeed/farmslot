@@ -137,23 +137,25 @@ test('writePreviousReviewInputs freezes reusable review context as JSON and a co
   await mkdir(path.join(dir, 'inputs'), { recursive: true });
 
   const written = await writePreviousReviewInputs(dir, {
-    version: 1,
-    chainId: 'chain-1',
-    generation: 2,
-    priorRunId: 'prior-run',
-    priorFamilyId: 'family-1',
-    repository: 'owner/repo',
-    prNumber: 42,
-    priorReviewedHeadSha: 'prior-head',
-    currentHeadSha: 'current-head',
-    verdict: 'request changes',
-    unresolvedFindings: [{ file: 'src/a.ts', line: 7, description: 'Fix this.' }],
-    artifactRefs: [{ path: 'artifacts/review.md', purpose: 'review' }],
-    farmslotEvidenceRefs: [{ path: 'artifacts/recipe.json', purpose: 'recipe proof' }],
-    mode: 'warm',
-    validationDepth: 'static-code',
+    repeatReviewContext: {
+      version: 1,
+      chainId: 'chain-1',
+      generation: 2,
+      priorRunId: 'prior-run',
+      priorFamilyId: 'family-1',
+      repository: 'owner/repo',
+      prNumber: 42,
+      priorReviewedHeadSha: 'prior-head',
+      currentHeadSha: 'current-head',
+      verdict: 'request changes',
+      unresolvedFindings: [{ file: 'src/a.ts', line: 7, description: 'Fix this.' }],
+      artifactRefs: [{ path: 'artifacts/review.md', purpose: 'review' }],
+      farmslotEvidenceRefs: [{ path: 'artifacts/recipe.json', purpose: 'recipe proof' }],
+      mode: 'warm',
+      validationDepth: 'static-code',
 
-    priorGenerations: [],
+      priorGenerations: [],
+    },
   });
 
   assert.deepEqual(written, [PREVIOUS_REVIEW_JSON_INPUT, PREVIOUS_REVIEW_MD_INPUT]);
@@ -163,6 +165,19 @@ test('writePreviousReviewInputs freezes reusable review context as JSON and a co
   assert.match(markdown, /Review mode: warm/);
   assert.match(markdown, /src\/a\.ts:7 — Fix this\./);
   assert.match(markdown, /artifacts\/recipe\.json/);
+});
+
+test('explicit COLD omits retained WARM input artifacts', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'cold-review-inputs-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  assert.deepEqual(
+    await writePreviousReviewInputs(dir, {
+      reviewMode: 'cold',
+      repeatReviewContext: { mode: 'warm' } as Run['repeatReviewContext'],
+    }),
+    [],
+  );
+  await assert.rejects(readFile(path.join(dir, PREVIOUS_REVIEW_JSON_INPUT)), { code: 'ENOENT' });
 });
 
 test('writeStaticReviewInstructionInputs freezes configured project guidance without prepare', async (t) => {

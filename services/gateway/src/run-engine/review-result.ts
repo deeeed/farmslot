@@ -6,6 +6,7 @@ import type {
   Run,
   RunReviewResult,
 } from '@farmslot/protocol';
+import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import { upsertAgentContext } from '../agents/contexts.js';
 import { reviewPRIdentity } from '../review/session-mode.js';
@@ -83,7 +84,7 @@ export async function completedReviewSessionTrace(
   )
     return undefined;
   const reviewer = reviewers[0];
-  const mode = run.reviewMode ?? 'cold';
+  const mode = resolveReviewMode({ run });
   const prior = run.repeatReviewContext?.session;
   if (
     mode === 'warm' &&

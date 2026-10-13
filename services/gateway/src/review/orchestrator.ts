@@ -22,7 +22,7 @@ import {
   type RunStatus,
   type WorkerSignal,
 } from '@farmslot/protocol';
-import { executionModelFromSelection } from '@farmslot/review-dispatch';
+import { executionModelFromSelection, resolveReviewMode } from '@farmslot/review-dispatch';
 
 import {
   markAgentContextStatus,
@@ -281,7 +281,7 @@ async function executeOwnedReview(
   if (!validationDepth)
     throw new Error(`Review for run ${runId} requires an explicit validation depth`);
   const artifactScope = options.artifactScope ?? null;
-  const mode = options.mode ?? config.mode ?? 'cold';
+  const mode = resolveReviewMode({ explicitMode: options.mode, defaultMode: config.mode });
   const effort = executionModelFromSelection({
     runner: reviewRunner,
     model,
@@ -719,7 +719,7 @@ export async function runReviewRetryLoop({
   retryCount,
   validationDepth,
   artifactScope = null,
-  mode = 'cold',
+  mode = resolveReviewMode(),
   feedbackAlreadySent = false,
   priorAttempts = [],
   deps = PRODUCTION_DEPS,
@@ -1566,7 +1566,7 @@ async function recoverReviewFixPass({
   reviewTimeoutMs,
   validationDepth,
   artifactScope,
-  mode = 'cold',
+  mode = resolveReviewMode(),
   findingsArtifactScope,
   setProgressDetail = setReviewProgressDetail,
 }: {

@@ -107,6 +107,54 @@ test('repeat review resumes only the exact prior reviewer binding', () => {
   });
 });
 
+test('explicit COLD cannot resume a retained WARM context and unbound WARM cannot start fresh', () => {
+  const { current, prior } = runs();
+  assert.deepEqual(
+    resolveRepeatReviewResumePlan({ ...current, reviewMode: 'cold' }, prior, 'codex'),
+    { kind: 'fresh' },
+  );
+  assert.deepEqual(
+    resolveRepeatReviewResumePlan(
+      { ...current, reviewMode: 'warm', repeatReviewContext: undefined },
+      prior,
+      'codex',
+    ),
+    { kind: 'refused', reason: 'missing-session' },
+  );
+  assert.equal(
+    resolveRepeatReviewResumePlan(
+      {
+        ...current,
+        reviewMode: 'warm',
+        repeatReviewContext: { ...current.repeatReviewContext!, mode: 'cold' },
+      },
+      prior,
+      'codex',
+    ).kind,
+    'resume',
+  );
+});
+
+test('a WARM pipeline selection leaves the pr-complete worker dispatch fresh', () => {
+  const { current, prior } = runs();
+  const pipeline = {
+    ...current,
+    flowType: 'pr-complete' as const,
+    reviewMode: 'warm' as const,
+    reviewContext: {
+      reviewLineages: [
+        { repository: 'deeeed/farmslot', prNumber: 1, reviewId: 'review-lineage-1' },
+      ],
+    },
+    repeatReviewContext: undefined,
+  };
+  assert.deepEqual(resolveRepeatReviewResumePlan(pipeline, prior, 'codex'), { kind: 'fresh' });
+  assert.deepEqual(
+    resolveRepeatReviewResumePlan({ ...pipeline, flowType: 'review-pr' }, prior, 'codex'),
+    { kind: 'refused', reason: 'missing-session' },
+  );
+});
+
 test('an artifact-only primary review resumes from its immutable result without a posting gate', () => {
   const { current, prior } = runs();
   const payload = prior.decisions[0].payload;

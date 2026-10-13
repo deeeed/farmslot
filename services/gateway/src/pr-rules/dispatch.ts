@@ -16,7 +16,7 @@ import {
   reviewResultForRun,
   type Run,
 } from '@farmslot/protocol';
-import { executionModelFromSelection } from '@farmslot/review-dispatch';
+import { executionModelFromSelection, resolveReviewMode } from '@farmslot/review-dispatch';
 
 import {
   addItem,
@@ -460,7 +460,7 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       runner: item.runner ?? '',
       model: item.model ?? null,
       effort: item.effort ?? null,
-      mode: item.reviewMode ?? 'cold',
+      mode: resolveReviewMode({ run: item }),
     });
     const selection = JSON.stringify([
       item.slotId ?? null,
@@ -503,7 +503,7 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       runner: item.runner ?? '',
       model: item.model ?? null,
       effort: item.effort ?? null,
-      mode: item.reviewMode ?? 'cold',
+      mode: resolveReviewMode({ run: item }),
     });
     if (
       !intent ||

@@ -6,6 +6,7 @@ import {
   type ReviewFixDeltaSnapshot,
   type ReviewMode,
 } from '@farmslot/protocol';
+import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
@@ -515,7 +516,7 @@ export function reviewAttemptFromResult(
   const effectiveFixDelta = fixDelta ?? result.fixDelta;
   const verdict = result.incomplete ? 'skipped' : result.verdict === 'pass' ? 'pass' : 'issues';
   return {
-    mode: result.mode ?? 'cold',
+    mode: resolveReviewMode({ explicitMode: result.mode }),
     ...(result.session ? { session: result.session } : {}),
     loopNumber,
     verdict,

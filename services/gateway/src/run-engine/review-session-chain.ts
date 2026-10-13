@@ -5,6 +5,7 @@ import {
   type ReviewSessionTrace,
   type Run,
 } from '@farmslot/protocol';
+import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import { primaryReviewedHeadForSession } from '../review/session-mode.js';
 import {
@@ -57,6 +58,7 @@ export function resolveRepeatReviewResumePlan(
     | 'project'
     | 'slotId'
     | 'repeatReviewContext'
+    | 'reviewMode'
     | 'prWork'
     | 'transport'
     | 'nativeOwnerPrincipalId'
@@ -67,8 +69,11 @@ export function resolveRepeatReviewResumePlan(
   model?: string | null,
   effort?: string | null,
 ): RepeatReviewResumePlan {
+  // Other flows select pipeline reviewers; their primary worker is not that reviewer.
+  if (current.flowType !== 'review-pr') return { kind: 'fresh' };
   const context = current.repeatReviewContext;
-  if (context?.mode !== 'warm') return { kind: 'fresh' };
+  if (resolveReviewMode({ run: current }) !== 'warm') return { kind: 'fresh' };
+  if (!context) return { kind: 'refused', reason: 'missing-session' };
   const reviewId = context.session?.reviewId;
   if (!reviewId) return { kind: 'refused', reason: 'missing-session' };
   const native = current.transport === 'native';

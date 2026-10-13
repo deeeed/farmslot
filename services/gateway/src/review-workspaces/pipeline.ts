@@ -7,6 +7,7 @@ import {
   type ReviewWorkspaceSubject,
   type Run,
 } from '@farmslot/protocol';
+import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import { upsertAgentContext } from '../agents/contexts.js';
 import { loadProjectVars } from '../core/config.js';
@@ -230,10 +231,10 @@ async function freezeSubject(
       )
     : undefined;
   currentWorkspaceRun(runId, generation);
-  if (!prior && run.reviewMode === 'warm')
+  if (!prior && resolveReviewMode({ run }) === 'warm')
     throw new Error('WARM review unavailable: no previous review for this repository/PR');
   if (context && prior) {
-    const resumeRequested = (run.prWork?.review?.options.mode ?? run.reviewMode) === 'warm';
+    const resumeRequested = resolveReviewMode({ run }) === 'warm';
     if (resumeRequested && compatibleWorkspaceReviewer(run, prior)) {
       // Fill only the missing session identity on the saved prior run; its result stays immutable.
       await recoverReviewTmuxSession(prior, () => {

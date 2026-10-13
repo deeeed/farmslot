@@ -56,6 +56,20 @@ are satisfied.
 - Passing review eligibility requires its separate session, current reviewed
   head and verdict evidence. Choosing a different runner proves nothing.
 
+## Mode resolution
+
+`@farmslot/review-dispatch.resolveReviewMode` owns mode selection. Its precedence
+is an explicit selection, `Run.reviewMode`, `Run.prWork.review.options.mode`,
+the retained `Run.repeatReviewContext.mode`, a supplied project default, then
+COLD. An explicit COLD selection MUST override a configured WARM default.
+Admission, continuity, task instructions and recorded review snapshots MUST use
+this precedence. Run creation MUST use the same shared default. The resolver does not verify lineage or authorize session reuse;
+an unavailable selected WARM mode MUST still be refused.
+
+Automatic reviews that create a separate new lineage select the shared COLD
+default. Eligibility filtering for authorized alternatives remains separate
+from mode selection and cannot downgrade an explicit WARM request.
+
 ## Shared picker
 
 `@farmslot/review-dispatch` owns one `ReviewDispatchViewModel`, catalog/default
@@ -85,6 +99,10 @@ The duplicate units listed in ADR-063 MUST be removed after their callers move.
   No CLI flag or client-written receipt is added.
 - The shared package exports the view-model and selection/sequence validators
   for Command Center, Companion, CLI and gateway consumers.
+- `resolveReviewMode` and `ResolveReviewModeOptions` are additive exports from
+  that same package. Pickers and gateway admission, execution and evidence
+  readers consume them. They add no protocol field, CLI flag or harness policy;
+  harnesses inherit the gateway's selected mode and existing lineage checks.
 - Gate action `request-review` replaces both old review-request action IDs.
   Old fields, action IDs and session/scope enums have no aliases or shims.
 - This is a coordinated breaking contract update. Persisted configuration and
