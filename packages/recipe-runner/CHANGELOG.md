@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- Harness proof consumers apply the shared intent contract during recipe-cli planning as well as doctor conformance.
+
 - Refuse reruns into retained recipe artifact packages before recording or execution; use a fresh artifact directory to keep prior evidence intact.
 
 - Honor HUD top/bottom placement through automatic progress and capture the painted final outcome.

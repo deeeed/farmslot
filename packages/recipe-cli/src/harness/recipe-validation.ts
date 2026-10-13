@@ -256,7 +256,7 @@ export async function validateRunRecipeStatic(
   params: Record<string, unknown> = {},
   resolvedSources?: RecipeLibrarySource[],
   resolvedInvocation?: ResolvedRecipeInvocation,
-  lintIntent = false,
+  lintIntent = optionFlag(options, 'proof'),
 ): Promise<RunRecipeStaticValidation> {
   const { resolved, librarySources } =
     resolvedInvocation ??
