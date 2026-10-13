@@ -1,7 +1,7 @@
 # ADR-062: Recorded run evidence
 
 **Status:** Accepted
-**Amendment status:** Proposed, 2026-10-12
+**Amendment status:** 1 and 2 Accepted; 3 Proposed
 **Date:** 2026-10-12
 **Owner:** Farmslot maintainers
 **Scope:** Recipe execution, claim evidence, review gates, and public CLI/SDK
@@ -141,9 +141,9 @@ records, not these public framework documents.
 
 ## Amendment 1 (2026-10-12): Completed evidence review and run footprint
 
-This amendment is Proposed. The accepted decision above remains in force.
-Implementation of this section requires approval; its shared-model extension
-points inform the current client integration.
+**Status:** Accepted, 2026-10-13
+**Documentation:** [#967](https://github.com/deeeed/farmslot/pull/967).
+Approval accepts the design; implementation remains separate from this docs PR.
 
 ### Context
 
@@ -289,9 +289,51 @@ its identity-based refresh selections and evidence overrides. Exact selection,
 source freshness, immutable report/recommendation, publication-race behavior and
 connected acceptance proofs remain in the specification.
 
-This amendment records the delivered review curation/result contract. The
-separate completed-evidence/storage proposal remains Proposed in
-[#967](https://github.com/deeeed/farmslot/pull/967). Its contract is not included
-here; accepting this amendment neither accepts nor implements that proposal. Evidence
+This amendment records the delivered review curation/result contract. Amendment 1
+has separate design acceptance and pending implementation. Evidence
 engine changes, WARM/COLD dispatch policy, review generation/reruns, account
 policy, gate approvals and HTML report rendering remain outside this amendment.
+
+## Amendment 3 (2026-10-13): Evidence policy and human attestation
+
+**Status:** Proposed
+**Specification:** [Evidence gate policy](../reference/recorded-run-evidence.md#evidence-gate-policy).
+
+### Decision
+
+Separate immutable evidence integrity from claim applicability and verdict
+policy. Reader, structure, digest and tamper failures always block publication.
+One gateway evaluator owns typed findings; clients do not classify error text.
+
+Add `approve-publish-evidence-attested` only at an unresolved human publish gate.
+It requires a written reason and a currently authorized, credential-backed
+person. Service, node, background and unauthenticated callers cannot use it;
+loopback access or a client-declared identity is insufficient. The attestation
+waives only the selected package's claim-policy/binding findings. All unrelated
+prerequisites remain enforced. Record the trusted approver, reason, waived
+findings and exact decision/package identity in existing run provenance and the
+published PR body. Preserve original evidence and verdicts.
+
+Normal policy accepts a declared expected-failure baseline at its declared
+assertion, a bound legacy inspection ledger for pending visual claims, matching
+criterion text without its matching AC label, and task-declared non-recipe test
+proof. The specification prevents these rules from accepting unrelated attempts
+or relabeling failures as successful execution.
+
+### Rationale and consequences
+
+A valid regression baseline can fail deliberately; publication policy must not
+mistake that result for corrupt evidence. Explicit human attestation provides an
+audited escape for policy mismatches while normal binding is corrected. It is
+not an automatic fallback, a new verdict writer or permission to replace bytes.
+
+### Public surface and migration
+
+Extend the existing `farmslot run gate --action` command, typed
+`run.resolveDecision` request and shared gate action model. Protocol owns action,
+input and receipt contracts; existing CLI/SDK transports and gate renderers
+consume them. Projects inherit the policy without template or recorder code.
+
+After design approval, ship attested approval first, then normal binding rules
+in a separate PR. Both use the existing frozen reader, validator and publication
+pipeline. No parallel format, store, reader or client policy mapping is added.
