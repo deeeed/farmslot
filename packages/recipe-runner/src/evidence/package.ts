@@ -54,7 +54,12 @@ export function validateRecordedEvidencePackage(
       'warning',
     );
   }
-  if (input.claims && validateAcceptanceStatusLedger(input.claims).length === 0) {
+  if (input.claims && input.claims.schemaVersion !== 2) {
+    issue(
+      'acceptance-status.json.schemaVersion',
+      'Recipe claim packages require schema 2; a task acceptance ledger is not a recipe claim package.',
+    );
+  } else if (input.claims && validateAcceptanceStatusLedger(input.claims).length === 0) {
     if (input.claims.recipeRunId !== recipeRunId)
       issue('acceptance-status.json', 'Claims belong to another execution.');
     for (const claim of input.claims.criteria) {
