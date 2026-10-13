@@ -16,6 +16,7 @@ import type {
   HarnessContext,
   JsonStreamWriter,
   RecipeConformanceOptions,
+  ResolvedProjectBinding,
 } from '@farmslot/recipe-cli/harness';
 import { parseRecipeParamAssignments } from '@farmslot/recipe-runner/cli/support';
 
@@ -209,9 +210,18 @@ async function renderProjectReadiness(checkout: string | undefined, cmd: Command
       async ({ context, provider, engine, librarySources, invocation: parsed, finalize }) => {
         if (!parsed) throw new Error('Project readiness invocation was not validated.');
         const providerOptions = provider.commandOptions?.doctor;
+        const binding = context.project!.provider;
         const execute = async () => {
           const code = await shared.handleDoctor(parsed, {
             ...providerOptions,
+            advisory: (target) => [
+              {
+                key: 'provider',
+                value: { ...binding, version: binding.version ?? null },
+                render: (out) => console.log(out('dim', providerIdentityText(binding))),
+              },
+              ...(providerOptions?.advisory?.(target) ?? []),
+            ],
             manifest:
               providerOptions?.manifest ??
               (async (adapter, override) => {
@@ -601,6 +611,13 @@ export async function runProjectConformance(
   return { context: prepared.context, report, reportPath };
 }
 
+function providerIdentityText(provider: ResolvedProjectBinding['provider']): string {
+  return (
+    `Provider: ${provider.package ?? provider.ref} version=${provider.version ?? 'unknown'} ` +
+    `git=${provider.identity.head ?? 'unversioned'} module=${provider.module}`
+  );
+}
+
 async function renderProjectConformance(checkout: string | undefined, cmd: Command): Promise<void> {
   const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
   try {
@@ -612,6 +629,7 @@ async function renderProjectConformance(checkout: string | undefined, cmd: Comma
     if (isMachineMode(output)) {
       output.writeJson({ ...okEnvelope('doctor', result), exitCode: passed ? 0 : 1 });
     } else {
+      output.write(`${providerIdentityText(result.context.project!.provider)}\n`);
       for (const check of result.report.checks) {
         output.write(
           `${check.status === 'pass' ? green('[OK]') : red('[FAIL]')} ${check.id}: ${check.message}\n`,

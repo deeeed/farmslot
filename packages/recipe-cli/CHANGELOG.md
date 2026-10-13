@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Let project run/call commands allocate fresh task attempts when no artifacts destination is supplied, preserving explicit destinations and readiness defaults.
+
 - Put each task-mode recipe run in its own artifact directory, retaining prior attempts and task-level inputs and ledgers.
 
 - Require an attested source binding for declared providers and recipe libraries.

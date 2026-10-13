@@ -4,9 +4,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 
+import { Command } from 'commander';
+
 import { fileFingerprint, recipeOutputRoots, sourceSnapshot } from '@farmslot/recipe-cli/harness';
 
-import { fixture, run, runProcess } from '../../test/helpers/project-doctor.js';
+import { environment, fixture, run, runProcess } from '../../test/helpers/project-doctor.js';
+import { OutputContext } from '../output.js';
+
+import { registerDoctorCommand } from './doctor.js';
 
 test('public doctor refuses discovered code before import', async (t) => {
   const { root } = fixture(t);
@@ -558,6 +563,71 @@ test('ordinary project doctor probes readiness without preflighting every recipe
     fs.existsSync(path.join(root, 'artifacts/conformance/conformance-report.json')),
     false,
   );
+});
+
+test('project doctor shows resolved provider package version and Git identity', async (t) => {
+  const { root, write } = fixture(t);
+  write('package.json', {
+    name: 'example-provider',
+    version: '1.2.3',
+    type: 'module',
+    exports: { './provider': './provider.mjs' },
+  });
+  const config = JSON.parse(fs.readFileSync(path.join(root, 'project.json'), 'utf8'));
+  config.recipe.provider = { package: 'example-provider', module: 'example-provider/provider' };
+  write('project.json', config);
+  assert.equal(spawnSync('git', ['init', '-q', root]).status, 0);
+  assert.equal(
+    spawnSync('git', [
+      '-C',
+      root,
+      '-c',
+      'user.name=Test',
+      '-c',
+      'user.email=test@example.invalid',
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '--allow-empty',
+      '-qm',
+      'fixture',
+    ]).status,
+    0,
+  );
+  const head = spawnSync('git', ['-C', root, 'rev-parse', 'HEAD'], {
+    encoding: 'utf8',
+  }).stdout.trim();
+  const flags = ['--authorize-provider', path.join(root, 'provider.mjs')];
+  const result = await run(t, root, [], {}, ['--json', 'doctor', root, ...flags]);
+  assert.equal(result.status, 0, JSON.stringify(result.envelope));
+  assert.equal(result.envelope.provider.package, 'example-provider');
+  assert.equal(result.envelope.provider.version, '1.2.3');
+  assert.equal(result.envelope.provider.identity.head, head);
+
+  const previousEnv = process.env;
+  const previousExitCode = process.exitCode;
+  const previousTty = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+  const output: string[] = [];
+  t.mock.method(OutputContext.prototype, 'write', (text: string) => output.push(text));
+  t.mock.method(console, 'log', (...values: unknown[]) => output.push(values.join(' ')));
+  process.env = environment(root, {});
+  Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+  try {
+    process.exitCode = 0;
+    const program = new Command().name('farmslot').option('--json');
+    registerDoctorCommand(program);
+    await program.parseAsync(['doctor', root, ...flags], { from: 'user' });
+    assert.equal(process.exitCode, 0, output.join('\n'));
+    assert.ok(
+      output.join('\n').includes(`Provider: example-provider version=1.2.3 git=${head}`),
+      output.join('\n'),
+    );
+  } finally {
+    process.env = previousEnv;
+    process.exitCode = previousExitCode;
+    if (previousTty) Object.defineProperty(process.stdout, 'isTTY', previousTty);
+    else Reflect.deleteProperty(process.stdout, 'isTTY');
+  }
 });
 
 test('readiness and conformance mutation modes cannot be mixed before provider import', async (t) => {
