@@ -4,7 +4,61 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { buildHandoffMetadata, builtinTerminalContract, ensureTaskRuntime } from './index.js';
+import {
+  buildHandoffMetadata,
+  buildTaskDocument,
+  builtinTerminalContract,
+  defaultMarkCommand,
+  ensureTaskRuntime,
+} from './index.js';
+
+test('task instructions consume supplied helper commands and leave verdicts to recipe execution', () => {
+  const input = {
+    flowType: 'dev',
+    modePreamble: '',
+    vars: {
+      TASK_DIR: '.task/proof',
+      farmslot_dir: '/wrong/deployment',
+      AC_CMD: 'node /connected/runtime/acceptance-cli.cjs',
+      ARTIFACT_CHECK_CMD: 'node /connected/runtime/check-task-artifact-contract.mjs',
+    },
+    description: 'Prove the task',
+    acceptanceCriteria: ['The task behavior passes'],
+    hasTicketData: true,
+  };
+  const document = buildTaskDocument(input);
+  assert.match(
+    document,
+    /node \/connected\/runtime\/acceptance-cli\.cjs list --task-dir "\.task\/proof"/,
+  );
+  assert.match(
+    document,
+    /node \/connected\/runtime\/check-task-artifact-contract\.mjs "\.task\/proof"/,
+  );
+  assert.match(document, /proofTargets/);
+  assert.match(document, /Prefix every task proof invocation.*RECIPE_TASK_DIR=.*cd.*\.task\/proof/);
+  assert.match(document, /proves/);
+  assert.match(
+    document,
+    /--contract "\.task\/proof\/inputs\/worker-terminal-contract\.json" --terminal complete/,
+  );
+  assert.match(document, /fresh directory under.*artifacts\/recipe-runs/);
+  assert.match(document, /run gate.*authorized person.*untestable override.*reason/);
+  assert.doesNotMatch(document, /\/wrong\/deployment|ac set .*proven/);
+  const standalone = buildTaskDocument({ ...input, vars: { TASK_DIR: '.task/proof' } });
+  assert.ok(
+    standalone.includes(
+      defaultMarkCommand().replace('scripts/mark-checklist-step.cjs', 'bin/farmslot-agent.mjs') +
+        ' ac',
+    ),
+  );
+  assert.ok(
+    standalone.includes(
+      defaultMarkCommand().replace('scripts/mark-checklist-step.cjs', 'bin/farmslot-agent.mjs') +
+        ' artifact-check',
+    ),
+  );
+});
 
 test('existing tasks receive the shared runtime without replacing author data', async (t) => {
   const taskDir = await mkdtemp(path.join(tmpdir(), 'existing-task-runtime-'));

@@ -71,10 +71,12 @@ Read this before authoring `{{TASK_DIR}}/artifacts/recipe.json`.
 > directly with the worktree-local runner before publishing proof:
 >
 > ```bash
+> mkdir -p "{{TASK_DIR}}/artifacts/recipe-runs"
+> RECIPE_TASK_DIR="$(cd "{{TASK_DIR}}" && pwd)" \
 > node <WORKTREE>/apps/command-center/scripts/agentic/run-recipe.mjs \
 >   {{TASK_DIR}}/artifacts/recipe.json \
->   --artifacts-dir {{TASK_DIR}}/artifacts/recipe-run \
->   --action-manifest {{TASK_DIR}}/../../../docs/examples/recipes/farmslot-v1.action-manifest.json \
+>   --artifacts-dir "$(mktemp -d "{{TASK_DIR}}/artifacts/recipe-runs/attempt-XXXXXXXX")" \
+>   --action-manifest <WORKTREE>/docs/examples/recipes/farmslot-v1.action-manifest.json \
 >   --project-root <WORKTREE> \
 >   --cdp-port {{CDP_PORT}} --gateway-port {{WATCHER_PORT}}
 > ```

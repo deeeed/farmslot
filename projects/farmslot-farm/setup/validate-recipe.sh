@@ -237,6 +237,10 @@ if [[ "${SYNC_EVIDENCE}" -eq 1 || "${RECORD_VIDEO}" -eq 1 ]]; then
   SYNC_EVIDENCE=1
 fi
 
+if [[ -n "${TASK_DIR}" ]]; then
+  export RECIPE_TASK_DIR="$(cd "${TASK_DIR}" && pwd)"
+fi
+
 "${ARGS[@]}"
 exit_code=$?
 

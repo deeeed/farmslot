@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Bind task recipe claims to registered criteria and transport only successful selected results through the shared task ledger.
+
 - Add a connected roadmap delivery probe for grouping, filters and projected PR links.
 
 - Clarify stored-profile requirements for shell-exported CLI gateway URLs.

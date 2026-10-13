@@ -4,7 +4,6 @@
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
@@ -13,6 +12,7 @@ import {
   type WorkerTerminalContractDocument,
 } from '@farmslot/protocol';
 
+import { installedRuntimeScriptCommand } from './runtime-command.js';
 import {
   BUG_INPUT,
   HANDOFF_INPUT,
@@ -20,12 +20,13 @@ import {
   normalizeAcceptanceCriteria,
 } from './task-document.js';
 
+export { quoteMarkCommandWord } from './runtime-command.js';
+
 export const TASK_DOCUMENT = 'TASK.md';
 export const MARK_SHIM = 'mark';
 /** Whole-command env override honoured by every `mark` shim. */
 export const MARK_COMMAND_ENV = 'FARMSLOT_MARK_CMD';
 
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const require = createRequire(import.meta.url);
 const { deterministicChecks } = require('../../scripts/worker-terminal-contract.cjs') as {
   deterministicChecks: {
@@ -38,17 +39,9 @@ const { deterministicChecks } = require('../../scripts/worker-terminal-contract.
   };
 };
 
-/**
- * Quote one word for the shim's default command: double quotes keep spaces
- * together while `$HOME` (a remote slot's home) still expands.
- */
-export function quoteMarkCommandWord(word: string): string {
-  return `"${word.replace(/(["\\`])/g, '\\$1')}"`;
-}
-
 /** Generic default: this package's mark engine. A control plane or harness passes its own. */
 export function defaultMarkCommand(): string {
-  return `node ${quoteMarkCommandWord(path.join(packageRoot, 'scripts', 'mark-checklist-step.cjs'))}`;
+  return installedRuntimeScriptCommand('mark-checklist-step.cjs');
 }
 
 /**
