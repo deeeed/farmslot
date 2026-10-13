@@ -72,3 +72,31 @@ test('metadata edits also broadcast the authoritative run to other clients', asy
   assert.deepEqual(update?.run?.tags, ['deferred-ci']);
   assert.deepEqual(callerEvents, []);
 });
+
+test('source-selected run creation refuses missing or revoked source authority before registering', async () => {
+  const before = getAllRuns().map((run) => run.id);
+  const params = {
+    project: 'farmslot-farm',
+    flowType: 'dev',
+    ticketOrPr: 'DEV-SOURCE-AUTH',
+    sourceSelections: [{ sourceId: 'pack', selection: 'main' }],
+  };
+  const context = { emit: () => undefined, broadcast: () => undefined };
+  await assert.rejects(
+    routeRunMethod(Methods.RUN_CREATE, params, context),
+    /authenticated routing/,
+  );
+  await assert.rejects(
+    routeRunMethod(Methods.RUN_CREATE_NATIVE, params, {
+      ...context,
+      authorizeSourceSelections: () => {
+        throw new Error('source permission revoked');
+      },
+    }),
+    /permission revoked/,
+  );
+  assert.deepEqual(
+    getAllRuns().map((run) => run.id),
+    before,
+  );
+});

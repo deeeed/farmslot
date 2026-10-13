@@ -316,8 +316,10 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `slot.reopen`                           | admin          |                                                                                    |
 | `slot.show`                             | admin          |                                                                                    |
 | `slot.softRefresh`                      | admin          |                                                                                    |
+| `sources.pin`                           | admin          |                                                                                    |
 | `sources.status`                        | admin          |                                                                                    |
 | `sources.sync`                          | admin          |                                                                                    |
+| `sources.unpin`                         | admin          |                                                                                    |
 | `stream.snapshot`                       | admin          |                                                                                    |
 | `stream.subscribe`                      | admin          |                                                                                    |
 | `stream.unsubscribe`                    | admin          |                                                                                    |

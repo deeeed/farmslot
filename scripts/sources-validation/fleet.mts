@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { isTerminalRunStatus } from '@farmslot/protocol';
+import { createSourceCommandClient, isTerminalRunStatus } from '@farmslot/protocol';
 
 import type {
   SourceConfiguration,
@@ -17,7 +17,10 @@ import type {
   SourcesSyncResult,
   Run,
   NativeSessionReadResult,
+  NativeWorkerSessionBinding,
 } from '@farmslot/protocol';
+
+import { ProofSourceUpstream } from './upstream.js';
 
 interface ProofNode {
   id: string;
@@ -31,10 +34,15 @@ interface ProofNode {
   resources?: Record<string, Record<string, string | number | boolean>>;
 }
 interface ProofConfiguration {
+  clientProof?: boolean;
+  localUpstream?: boolean;
   sources: SourceConfiguration;
   nodes: ProofNode[];
   consumerProject?: string;
   workerModel?: string;
+}
+interface ProofWorkerResult {
+  second: { run: Run; binding: NativeWorkerSessionBinding };
 }
 
 const execute = promisify(execFile);
@@ -87,8 +95,12 @@ if ((await realpath(output)) !== output)
   throw new Error('Proof output must use its canonical absolute path');
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 const children: ReturnType<typeof spawn>[] = [];
+const ownedNodes: ProofNode[] = [];
 const logs: ReturnType<typeof createWriteStream>[] = [];
 const evidence: Record<string, unknown> = { result: 'INCOMPLETE' };
+let upstream: ProofSourceUpstream | undefined;
+let proofFailure: unknown;
+let stopProofReconciliation: (() => void) | undefined;
 
 // Do not inherit an operator gateway profile or node credential into the isolated realm.
 for (const key of Object.keys(process.env))
@@ -97,6 +109,7 @@ await mkdir(path.join(output, 'no-tmux'));
 process.env.TMUX_TMPDIR = path.join(output, 'no-tmux');
 delete process.env.TMUX;
 for (const dir of ['pool', 'projects', 'runs', 'home']) await mkdir(path.join(output, dir));
+
 for (const name of [
   'scripts',
   'services',
@@ -158,7 +171,29 @@ const client = new GatewayClient({
 });
 const localBundle = path.join(output, 'node-bundle');
 const proofRuns: string[] = [];
+const sourceCommands = createSourceCommandClient((method, params) => client.call(method, params));
 try {
+  await mkdir(localBundle, { recursive: true });
+  if (configuration.localUpstream) {
+    upstream = await ProofSourceUpstream.start(path.join(output, 'upstream'), code);
+    process.env.GIT_SSL_CAINFO = upstream.caFile;
+    configuration.sources = {
+      schemaVersion: 1,
+      revision: 1,
+      pollIntervalMs: 30_000,
+      sources: [{ id: 'proof-pack', kind: 'pack', repo: upstream.repository }],
+      packs: {
+        'source-proof': { sourceId: 'proof-pack', entry: 'scripts/sources-validation/fixture' },
+        'farmslot-farm': { sourceId: 'proof-pack', entry: 'framework' },
+      },
+    };
+    evidence.upstream = {
+      repository: upstream.repository,
+      branches: ['main', 'experiment/farm', 'experiment/node', 'experiment/run'],
+    };
+  }
+  await writeFile(path.join(output, 'home', 'sources.json'), JSON.stringify(configuration.sources));
+  if (upstream) await cp(upstream.caFile, path.join(localBundle, 'source-proof-ca.pem'));
   for (const entry of [
     'services/node/src',
     'packages/protocol/dist',
@@ -195,6 +230,7 @@ try {
       ]);
       await execute('rsync', ['-a', `${localBundle}/`, `${node.ssh}:${node.bundle}/`]);
     } else await cp(localBundle, node.bundle, { recursive: true });
+    ownedNodes.push(node);
     const links = [
       ['ws', path.join(node.serviceNodeModules, 'ws')],
       ['tsx', path.join(node.serviceNodeModules, 'tsx')],
@@ -214,6 +250,7 @@ try {
       TSX_TSCONFIG_PATH: path.join(node.bundle, 'tsconfig.json'),
       SCREEN_CONTROL_SOCKET: path.join(node.home, 'screen.sock'),
       TMUX_TMPDIR: path.join(node.home, 'no-tmux'),
+      ...(upstream ? { GIT_SSL_CAINFO: path.join(node.bundle, 'source-proof-ca.pem') } : {}),
     };
     const script =
       [
@@ -256,6 +293,7 @@ try {
             'ServerAliveCountMax=4',
             '-R',
             `${node.forwardPort}:127.0.0.1:${port}`,
+            ...(upstream ? ['-R', `${upstream.port}:127.0.0.1:${upstream.port}`] : []),
             node.ssh,
             'bash -s',
           ],
@@ -338,13 +376,109 @@ try {
     operationId: 'proof-sync',
     expectedDeclarationRevision: configuration.sources.revision,
   };
-  const synced = await client.call<SourcesSyncResult>('sources.sync', request);
+  let synced = await client.call<SourcesSyncResult>('sources.sync', request);
   assert.deepEqual(synced.errors, []);
   assert.deepEqual(await client.call('sources.sync', request), synced);
   evidence.sync = synced;
+  if (upstream) {
+    const firstNode = configuration.nodes[0].id;
+    const farmCommand = await sourceCommands.preparePin(
+      { sourceId: 'proof-pack', ref: 'experiment/farm', scope: 'farm', targetId: 'farm' },
+      'proof-farm-pin',
+    );
+    const farm = await sourceCommands.execute(farmCommand);
+    assert.deepEqual(await sourceCommands.execute(farmCommand), farm);
+    const farmNodes = new Set(
+      runtime
+        .sourceAuthority()!
+        .locks()
+        .filter((lock) => lock.pinRevision === farm.pinRevision)
+        .map((lock) => lock.context.nodeId),
+    );
+    for (const node of configuration.nodes) assert(farmNodes.has(node.id));
+    const nodeCommand = await sourceCommands.preparePin(
+      { sourceId: 'proof-pack', ref: 'experiment/node', scope: 'node', targetId: firstNode },
+      'proof-node-pin',
+    );
+    const nodePin = await sourceCommands.execute(nodeCommand);
+    const nodeStatus = await sourceCommands.status({ nodeId: firstNode });
+    assert.equal(nodeStatus.effectiveSelections![0].effectiveRef, 'experiment/node');
+    assert(nodeStatus.effectiveSelections![0].shadowedPins.some((pin) => pin.scope === 'farm'));
+    const mainCommand = await sourceCommands.prepareUnpin(
+      { sourceId: 'proof-pack', scope: 'node', targetId: firstNode },
+      'proof-node-main',
+    );
+    const main = await sourceCommands.execute(mainCommand);
+    const mainStatus = await sourceCommands.status({ nodeId: firstNode });
+    assert.equal(mainStatus.effectiveSelections![0].effectiveRef, 'main');
+    assert.equal(mainStatus.effectiveSelections![0].pin!.selection, 'main');
+    assert(
+      mainStatus.effectiveSelections![0].shadowedPins.some((pin) => pin.ref === 'experiment/farm'),
+    );
+    const scopedSync = await sourceCommands.execute(
+      await sourceCommands.prepareSync({}, 'proof-scoped-sync'),
+    );
+    assert.deepEqual(scopedSync.errors, []);
+    const inputs = configuration.nodes.map((node) => {
+      const lock = scopedSync.locks.find(
+        (lock) => lock.context.nodeId === node.id && lock.context.project === 'source-proof',
+      );
+      assert(lock);
+      return { nodeId: node.id, lock };
+    });
+    assert.equal(inputs[0].lock.entries[0].effectiveRef, 'main');
+    if (inputs.length > 1) assert.equal(inputs[1].lock.entries[0].effectiveRef, 'experiment/farm');
+    const baseline = (await runtime.projectContext('source-proof', { nodeId: firstNode }))
+      .materialization.lock;
+    const afterCommit = await upstream.advance('main', 'advanced-main');
+    await upstream.alias('experiment/same', 'main');
+    const deadline = Date.now() + 90_000;
+    while (true) {
+      const status = await sourceCommands.status({ sourceId: 'proof-pack', nodeId: firstNode });
+      if (
+        status.resolutions.some(
+          (record) =>
+            record.ref === 'main' && record.commit === afterCommit && record.status === 'resolved',
+        )
+      )
+        break;
+      if (Date.now() > deadline)
+        throw new Error('Branch update was not observed by independent source polling');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.equal(
+      main.pin.baseMainCommit,
+      (await sourceCommands.status({ nodeId: firstNode })).effectiveSelections![0].pin!
+        .baseMainCommit,
+    );
+    assert.notEqual(baseline.entries[0].commit, afterCommit);
+    assert.deepEqual(
+      (await sendNodeRequest(getNode(firstNode)!, 'sources.verify', {
+        lock: baseline,
+      })) as SourceMaterialization,
+      await sendNodeRequest(getNode(firstNode)!, 'sources.verify', { lock: baseline }),
+    );
+    evidence.scopes = {
+      farm,
+      nodePin,
+      main,
+      inputs,
+      branchAdvance: {
+        before: baseline.entries[0].commit,
+        after: afterCommit,
+        baseMainPreserved: true,
+      },
+    };
+    synced = await sourceCommands.execute(
+      await sourceCommands.prepareSync({}, 'proof-current-main-sync'),
+    );
+    assert.deepEqual(synced.errors, []);
+  }
   const protections = [];
   for (const node of configuration.nodes)
-    for (const lock of synced.locks) {
+    for (const lock of synced.locks.filter(
+      (lock) => !lock.context.nodeId || lock.context.nodeId === node.id,
+    )) {
       const connection = getNode(node.id)!;
       const materialization = (await sendNodeRequest(
         connection,
@@ -456,22 +590,39 @@ try {
           timeout: 5_000,
         }) as Promise<{ exitCode: number; stdout: string }>;
       const deadline = Date.now() + 15_000;
-      let result = await read();
-      while (result.exitCode !== 0 && Date.now() < deadline) {
+      let records: Array<{ nodeId: string; lockDigest: string }>;
+      while (true) {
+        const result = await read();
+        records = result.exitCode === 0 ? JSON.parse(result.stdout) : [];
+        if (
+          records.length === 5 &&
+          records.every(
+            (record) =>
+              record.nodeId === node.id &&
+              synced.locks.some(
+                (lock) => lock.context.nodeId === node.id && lock.digest === record.lockDigest,
+              ),
+          )
+        )
+          break;
+        if (Date.now() > deadline)
+          throw new Error(
+            `Source consumer receipts did not reach the current node closure: ${node.id}: ${JSON.stringify(records)}`,
+          );
         await new Promise((resolve) => setTimeout(resolve, 100));
-        result = await read();
       }
-      assert.equal(result.exitCode, 0);
-      const records = JSON.parse(result.stdout) as Array<{ nodeId: string; lockDigest: string }>;
-      assert.ok(
-        records.every(
-          (record) => record.nodeId === node.id && record.lockDigest === synced.locks[0].digest,
-        ),
-      );
       consumers.push({ nodeId: node.id, records });
     }
     evidence.consumers = consumers;
     await writeFile(path.join(output, 'progress.json'), JSON.stringify(evidence, null, 2) + '\n');
+  }
+  if (upstream) {
+    await sourceCommands.execute(
+      await sourceCommands.prepareUnpin(
+        { sourceId: 'proof-pack', scope: 'farm', targetId: 'farm' },
+        'proof-farm-main',
+      ),
+    );
   }
   if (configuration.workerModel) {
     const workers = [];
@@ -510,6 +661,17 @@ try {
           mode: 'interactive',
           skipPrepare: true,
           safetyTier: 'full-auto',
+          ...(upstream
+            ? {
+                sourceSelections: [
+                  {
+                    sourceId: 'proof-pack',
+                    selection: parent ? 'main' : 'branch',
+                    ...(parent ? {} : { ref: 'experiment/same' }),
+                  },
+                ],
+              }
+            : {}),
           ...(parent
             ? {
                 parentRunId: parent.id,
@@ -643,26 +805,303 @@ try {
       workers.push({ nodeId: node.id, first, second, templates });
       evidence.workers = workers;
       await writeFile(path.join(output, 'progress.json'), JSON.stringify(evidence, null, 2) + '\n');
-      await client.call('run.cancel', { runId: second.run.id });
     }
     evidence.workers = workers;
   }
+  if (upstream) {
+    const sourceSelections = [
+      { sourceId: 'proof-pack', selection: 'branch' as const, ref: 'experiment/run' },
+    ];
+    const params = {
+      flowType: 'dev',
+      project: 'source-proof',
+      ticketOrPr: `MANUAL-${Date.now()}`,
+      mode: 'interactive',
+      runner: 'codex',
+      allowedSlots: [`${configuration.nodes[0].id}-consumer`],
+      skipPrepare: true,
+      sourceSelections,
+      actor: 'untrusted-wire-actor',
+    };
+    const before = await sourceCommands.status();
+    await assert.rejects(
+      client.call('run.create', {
+        ...params,
+        sourceSelections: [{ ...sourceSelections[0], ref: 'experiment/missing' }],
+      }),
+      /branch|unavailable|resolve|ref/i,
+    );
+    assert.deepEqual((await sourceCommands.status()).pins, before.pins);
+    const automatic = (
+      await client.call<{ run: Run }>('run.create', {
+        ...params,
+      })
+    ).run;
+    proofRuns.push(automatic.id);
+    assert.equal(automatic.slotId, null);
+    const automaticStatus = await sourceCommands.status({ runId: automatic.id });
+    assert(
+      automaticStatus.effectiveSelections![0].shadowedPins.some(
+        (pin) => pin.scope === 'node' && pin.targetId === configuration.nodes[0].id,
+      ),
+    );
+    assert(
+      automaticStatus.nodes.every(
+        (node) => node.nodeId === 'gateway' || node.nodeId === configuration.nodes[0].id,
+      ),
+    );
+    await client.call('run.cancel', { runId: automatic.id });
+    const planned = (await client.call<{ run: Run }>('run.create', params)).run;
+    proofRuns.push(planned.id);
+    assert.equal(planned.sourceProvenance, undefined);
+    assert.equal(planned.sourcePlan!.lock.entries[0].effectiveRef, 'experiment/run');
+    const runStatus = await sourceCommands.status({ runId: planned.id });
+    assert.equal(runStatus.runSource!.canSelectSources, true);
+    assert.equal(runStatus.effectiveSelections![0].pin!.scope, 'run');
+    assert.equal(runStatus.effectiveSelections![0].pin!.actor, admin.id);
+    await sourceCommands.execute(
+      await sourceCommands.preparePin(
+        { sourceId: 'proof-pack', ref: 'experiment/node', scope: 'run', targetId: planned.id },
+        'proof-queued-run-pin',
+      ),
+    );
+    const replanned = (await client.call<{ run: Run }>('run.get', { runId: planned.id })).run;
+    assert.equal(replanned.sourcePlan!.lock.entries[0].effectiveRef, 'experiment/node');
+    await sourceCommands.execute(
+      await sourceCommands.prepareUnpin(
+        { sourceId: 'proof-pack', scope: 'run', targetId: planned.id },
+        'proof-queued-run-main',
+      ),
+    );
+    const mainRun = (await client.call<{ run: Run }>('run.get', { runId: planned.id })).run;
+    assert.equal(mainRun.sourcePlan!.lock.entries[0].effectiveRef, 'main');
+    const queued = await client.call<{ item: { id: string; sourceSelections: unknown } }>(
+      'dispatch.queue.add',
+      params,
+    );
+    assert.deepEqual(queued.item.sourceSelections, sourceSelections);
+    const listed = await client.call<{ items: Array<{ id: string; sourceSelections: unknown }> }>(
+      'dispatch.queue.list',
+      {},
+    );
+    assert.deepEqual(
+      listed.items.find((item) => item.id === queued.item.id)!.sourceSelections,
+      sourceSelections,
+    );
+    await client.call('dispatch.queue.remove', { itemId: queued.item.id });
+    const raceCommand = await sourceCommands.preparePin(
+      { sourceId: 'proof-pack', ref: 'experiment/run', scope: 'run', targetId: planned.id },
+      'proof-pin-admission-race',
+    );
+    const raced = await Promise.allSettled([
+      sourceCommands.execute(raceCommand),
+      (async () => {
+        await runtime.admitRunSources(mainRun.id, {
+          nodeId: configuration.nodes[0].id,
+          slotId: params.allowedSlots[0],
+        });
+        const latest = (await client.call<{ run: Run }>('run.get', { runId: mainRun.id })).run;
+        return runtime.withRunSources(
+          latest,
+          async () => {
+            const { currentProjectSources } = await import('@farmslot/slot-config');
+            return currentProjectSources()!.execution!;
+          },
+          { nodeId: configuration.nodes[0].id },
+        );
+      })(),
+    ]);
+    assert.equal(raced[1].status, 'fulfilled');
+    const raceRun = (await client.call<{ run: Run }>('run.get', { runId: planned.id })).run;
+    assert(raceRun.sourceProvenance);
+    assert.equal(
+      raceRun.sourceProvenance.lock.entries[0].effectiveRef,
+      raced[0].status === 'fulfilled' ? 'experiment/run' : 'main',
+    );
+    evidence.atomicSelections = {
+      automatic: { runId: automatic.id, plan: automatic.sourcePlan, status: automaticStatus },
+      runId: planned.id,
+      rejectedSelectionPublishedNoPins: true,
+      trustedActor: admin.id,
+      initial: planned.sourcePlan,
+      replanned: replanned.sourcePlan,
+      unpinned: mainRun.sourcePlan,
+      queuedSelections: queued.item.sourceSelections,
+      admissionRace: {
+        pinResult: raced[0].status,
+        provenance: raceRun.sourceProvenance,
+        receipt: raced[1].status === 'fulfilled' ? raced[1].value.receipt : undefined,
+      },
+    };
+    await client.call('run.cancel', { runId: planned.id });
+    runtime.stopSourceReconciliation();
+    await runtime.sourceAuthority()!.reconcile();
+    const actor = auth.writer.createPrincipal(
+      { type: 'person', displayName: 'source-proof-revoked' },
+      [{ role: 'admin', scope: { kind: 'global' } }],
+    );
+    const actorCredential = auth.writer.issueCredential(actor.id, 'source-proof-revoked');
+    const actorClient = new GatewayClient({
+      url: `ws://127.0.0.1:${port}`,
+      credential: { token: actorCredential.secret },
+      timeout: 120_000,
+    });
+    const actorSources = createSourceCommandClient((method, params) =>
+      actorClient.call(method, params),
+    );
+    const actorCommand = await sourceCommands.preparePin(
+      { sourceId: 'proof-pack', ref: 'experiment/node', scope: 'farm', targetId: 'farm' },
+      'proof-actor-fetch-race',
+    );
+    const actorBefore = await sourceCommands.status();
+    let revokedDuringFetch = false;
+    const stopObserver = upstream.onNextRequest(() => {
+      auth.writer.revokeRole(actor.id, 'admin', { kind: 'global' });
+      revokedDuringFetch = true;
+    });
+    try {
+      await assert.rejects(
+        actorSources.execute(actorCommand),
+        /admin|authority|permission|authorized|access|credential|connection closed/i,
+      );
+      assert(
+        revokedDuringFetch,
+        'The real Git fetch must occur before revoking the acting administrator',
+      );
+      // Revocation also closes the caller's socket; drain the real ref fetches before checking publication.
+      await runtime.sourceAuthority()!.reconcile();
+      const actorAfter = await sourceCommands.status();
+      assert.equal(actorAfter.pinRevision, actorBefore.pinRevision);
+      assert.deepEqual(actorAfter.pins, actorBefore.pins);
+      evidence.actorFetchRace = { revokedDuringFetch, noPinPublication: true, actorId: actor.id };
+    } finally {
+      stopObserver();
+      stopProofReconciliation = runtime.sourceAuthority()!.startReconciliation((id, error) => {
+        console.error(`[proof-sources] ${id}: ${String(error)}`);
+      });
+    }
+  }
+  if (configuration.workerModel) {
+    const workers = evidence.workers as ProofWorkerResult[];
+    for (const worker of workers) {
+      const { run, binding } = worker.second;
+      const context = run.agentContexts!.find(
+        (context) => context.nativeSession?.sessionId === binding.sessionId,
+      )!;
+      const closed = await client.call<{ session: { processStopped?: boolean } }>(
+        'native.session.close',
+        {
+          sessionId: binding.sessionId,
+          executionNodeId: binding.executionNodeId,
+          worker: {
+            runId: run.id,
+            contextId: context.id,
+            generation: binding.generation,
+            leaseId: binding.leaseId,
+          },
+        },
+      );
+      assert.equal(closed.session.processStopped, true);
+      await client.call('run.cancel', { runId: run.id });
+    }
+  }
   const admissionProject =
-    Object.keys(configuration.sources.packs).find(
-      (project) => project !== configuration.consumerProject,
-    ) ?? Object.keys(configuration.sources.packs)[0];
-  const created = await client.call<{ run: import('@farmslot/protocol').Run }>('run.create', {
+    configuration.consumerProject ?? Object.keys(configuration.sources.packs)[0];
+  const admissionSlot = `${configuration.nodes[0].id}-consumer`;
+  const created = await client.call<{ run: Run }>('run.create', {
     flowType: 'dev',
     project: admissionProject,
-    ticketOrPr: 'MANUAL-000001',
+    ticketOrPr: `MANUAL-${Date.now()}`,
     mode: 'interactive',
     runner: 'codex',
+    slotId: admissionSlot,
+    skipPrepare: true,
+    ...(upstream ? { sourceSelections: [{ sourceId: 'proof-pack', selection: 'main' }] } : {}),
   });
-  assert.ok(created.run.sourceProvenance);
-  assert.equal(created.run.sourceProvenance.lock.context.runId, created.run.id);
-  assert.deepEqual(created.run.sourceProvenance.lock.entries, synced.locks[0].entries);
-  evidence.runProvenance = created.run.sourceProvenance;
+  proofRuns.push(created.run.id);
+  assert.ok(created.run.sourcePlan || created.run.sourceProvenance);
+  const current = (await client.call<{ run: Run }>('run.get', { runId: created.run.id })).run;
+  const consumed = await runtime.withRunSources(current, async () => {
+    const { currentProjectSources } = await import('@farmslot/slot-config');
+    return currentProjectSources()!.execution!;
+  });
+  const admitted = (await client.call<{ run: Run }>('run.get', { runId: created.run.id })).run;
+  assert.ok(admitted.sourceProvenance);
+  assert.equal(admitted.sourceProvenance.lock.context.runId, admitted.id);
+  assert.equal(consumed.receipt.nodeId, configuration.nodes[0].id);
+  const frozen = structuredClone(admitted.sourceProvenance);
+  if (upstream) {
+    await assert.rejects(
+      async () =>
+        sourceCommands.execute(
+          await sourceCommands.preparePin({
+            sourceId: 'proof-pack',
+            ref: 'experiment/run',
+            scope: 'run',
+            targetId: admitted.id,
+          }),
+        ),
+      /admitted|another run|immutable/,
+    );
+    await sourceCommands.execute(
+      await sourceCommands.preparePin(
+        { sourceId: 'proof-pack', ref: 'experiment/farm', scope: 'farm', targetId: 'farm' },
+        'proof-active-farm-pin',
+      ),
+    );
+    assert.deepEqual(
+      (await client.call<{ run: Run }>('run.get', { runId: admitted.id })).run.sourceProvenance,
+      frozen,
+    );
+    const again = await runtime.withRunSources(admitted, async () => {
+      const { currentProjectSources } = await import('@farmslot/slot-config');
+      return currentProjectSources()!.execution!;
+    });
+    assert.deepEqual(again, consumed);
+    await sourceCommands.execute(
+      await sourceCommands.prepareUnpin(
+        { sourceId: 'proof-pack', scope: 'farm', targetId: 'farm' },
+        'proof-active-farm-main',
+      ),
+    );
+    evidence.admittedFrozen = {
+      runId: admitted.id,
+      provenance: frozen,
+      unchanged: true,
+      protection: consumed.receipt.sources.map((source) => source.protection),
+    };
+  }
+  evidence.runProvenance = admitted.sourceProvenance;
   await client.call('run.cancel', { runId: created.run.id });
+
+  if (configuration.clientProof) {
+    await writeFile(
+      path.join(output, 'client-connection.json'),
+      JSON.stringify({
+        port,
+        token: credential.secret,
+        runId: admitted.id,
+        nodeId: configuration.nodes[0].id,
+      }),
+      { mode: 0o600 },
+    );
+    console.log('Client proof ready; waiting for client-evidence.json in the owned proof root');
+    const deadline = Date.now() + 45 * 60_000;
+    while (true) {
+      try {
+        const clients = JSON.parse(
+          await readFile(path.join(output, 'client-evidence.json'), 'utf8'),
+        );
+        assert.equal(clients.result, 'PASS');
+        evidence.clients = clients;
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+      if (Date.now() > deadline) throw new Error('Client proof did not finish before the deadline');
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
 
   const project = Object.keys(configuration.sources.packs)[0];
   const context = await runtime.projectContext(project);
@@ -690,8 +1129,9 @@ try {
 } catch (error) {
   evidence.result = 'FAIL';
   evidence.error = (error as Error).message;
-  throw error;
+  proofFailure = error;
 } finally {
+  stopProofReconciliation?.();
   runtime.stopSourceReconciliation();
   const teardownErrors: string[] = [];
   try {
@@ -705,7 +1145,7 @@ try {
     }
     for (const node of [
       { id: 'gateway', home: path.join(output, 'home'), kind: 'gateway', ssh: undefined },
-      ...configuration.nodes.map((node) => ({ ...node, kind: 'node' })),
+      ...ownedNodes.map((node) => ({ ...node, kind: 'node' })),
     ]) {
       try {
         const detach = `python3 - <<'PY'\nimport json,subprocess\nfrom pathlib import Path\nreceipts=Path(${JSON.stringify(path.join(node.home, 'sources', node.kind, 'receipts'))})\nmounts={str(Path(root).parent) for record in receipts.glob('*.json') for root in json.loads(record.read_text())['roots'].values()}\nfor mount in mounts:\n try:\n  mounted=Path(mount).stat().st_dev != Path(mount).parent.stat().st_dev\n except FileNotFoundError:\n  mounted=False\n if mounted:\n  subprocess.run(['hdiutil','detach','-quiet',mount],check=True)\nPY\n`;
@@ -729,10 +1169,16 @@ try {
     await new Promise<void>((resolve) => wss.close(() => resolve()));
     await new Promise<void>((resolve) => server.close(() => resolve()));
     for (const log of logs) log.end();
+    if (upstream) await upstream.close();
     evidence.teardownErrors = teardownErrors;
     if (teardownErrors.length) evidence.result = 'FAIL';
     await writeFile(path.join(output, 'evidence.json'), JSON.stringify(evidence, null, 2) + '\n');
   }
-  if (teardownErrors.length) throw new Error(teardownErrors.join('; '));
+  if (teardownErrors.length)
+    throw new AggregateError(
+      [...(proofFailure ? [proofFailure] : []), ...teardownErrors.map((error) => new Error(error))],
+      'Source proof failed during teardown; inspect retained evidence',
+    );
 }
+if (proofFailure) throw proofFailure;
 console.log('Source fleet proof PASS');

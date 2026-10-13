@@ -11,11 +11,13 @@ import {
 } from '@farmslot/slot-config';
 import { sourceLockDigest } from '@farmslot/slot-config/sources';
 
+import { resolveCiFixTemplatePath } from '../ci-monitor/inline-fix.js';
 import { withProjectMachineEnv } from '../core/project-env.js';
+import { expandReviewFixTemplate, expandReviewTemplate } from '../review/templates.js';
 import { buildLaunchCommand } from '../runners/launch-command.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
-import { assertRetainedSourceInputs } from './runtime.js';
+import { assertRetainedSourceInputs, retainedSourceOwner } from './runtime.js';
 
 function materialization(commit = 'a'.repeat(40)): SourceMaterialization {
   const content: Omit<SourceLock, 'digest'> = {
@@ -132,6 +134,63 @@ test('run ownership changes preserve native launch identity; changed source inpu
   assert.equal(before.workerLock.entries[0].commit, 'a'.repeat(40));
 });
 
+test('retained reuse accepts scope audit changes but refuses altered tree and pack bindings', () => {
+  const value = materialization();
+  value.lock.packBindings.other = value.lock.packBindings.demo;
+  const { digest: _digest, ...content } = value.lock;
+  value.lock.digest = sourceLockDigest(content);
+  value.receipt.lockDigest = value.lock.digest;
+  const before = withProjectSources(inputs(value), () => freezePlannedRunSources('before')!);
+  const check = (change: (lock: SourceLock) => void) => {
+    const next = structuredClone(value);
+    change(next.lock);
+    const { digest: _digest, ...content } = next.lock;
+    next.lock.digest = sourceLockDigest(content);
+    next.receipt.lockDigest = next.lock.digest;
+    const after = withProjectSources(inputs(next), () => freezePlannedRunSources('after')!);
+    assertRetainedSourceInputs({ sourceProvenance: before }, { sourceProvenance: after });
+  };
+  assert.doesNotThrow(() =>
+    check((lock) => {
+      lock.pinRevision = 2;
+      lock.entries[0].scope = 'run';
+      lock.entries[0].effectiveRef = 'experiment';
+      lock.entries[0].resolutionGeneration = 9;
+    }),
+  );
+  for (const change of [
+    (lock: SourceLock) => (lock.entries[0].treeDigest = 'd'.repeat(64)),
+    (lock: SourceLock) => (lock.entries[0].repo = 'https://example.test/another/demo'),
+    (lock: SourceLock) => (lock.packBindings.demo.entry = 'another-pack'),
+    (lock: SourceLock) => (lock.context.project = 'other'),
+  ]) {
+    assert.throws(() => check(change), /source inputs changed/);
+  }
+});
+
+test('fresh takeover admits new inputs while warm and nudge require the recorded retained owner', () => {
+  const base = { id: 'next', parentRunId: 'parent' };
+  assert.equal(
+    retainedSourceOwner({ ...base, engineState: { flags: { freshReuse: true } } }, 'prior'),
+    undefined,
+  );
+  assert.equal(
+    retainedSourceOwner({ ...base, engineState: { flags: { nudgeReuse: true } } }, 'prior'),
+    'prior',
+  );
+  assert.equal(
+    retainedSourceOwner(
+      { ...base, engineState: { flags: { warmSessionReuse: true } } },
+      'slot-row-owner',
+    ),
+    'parent',
+  );
+  assert.throws(
+    () => retainedSourceOwner({ ...base, engineState: { flags: { nudgeReuse: true } } }, undefined),
+    /recorded prior owner/,
+  );
+});
+
 test('worker prompts use the inherited pack in the admitted closure and never resolve a floating fallback', async (t) => {
   const { mkdir, mkdtemp, rm, writeFile } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
@@ -184,8 +243,6 @@ test('review and fix templates use locked pack bytes and bound paths while legac
     await import('@farmslot/slot-config');
   const { projectWorkerTemplatePath } = await import('../core/worker-templates.js');
   const { expandTemplateWithReservedLast } = await import('../core/hooks.js');
-  const { expandReviewFixTemplate, expandReviewTemplate } = await import('../review/templates.js');
-  const { resolveCiFixTemplatePath } = await import('../ci-monitor/inline-fix.js');
   const { createRun, deleteRun, updateRun } = await import('../runs/store.js');
   const root = await realpath(await mkdtemp(path.join(tmpdir(), 'locked-review-templates-')));
   t.after(async () => {
@@ -230,6 +287,8 @@ test('review and fix templates use locked pack bytes and bound paths while legac
       ticketOrPr: 'TEST-LOCKED-REVIEW',
     });
     try {
+      assert.equal(run.dispatchRequest?.ticketOrPr, 'TEST-LOCKED-REVIEW');
+      assert.equal(run.dispatchRequest?.mode, 'autonomous');
       await writeFile(
         path.join(root, 'templates/worker/review.md'),
         '# Locked review\n{{FARMSLOT_DIR}}/projects/demo/fixtures/check\n{{REVIEW_CHECKLIST}} {{REVIEW_SIGNAL}} {{TASK_DIR}}/{{REVIEW_FEEDBACK}}\n',

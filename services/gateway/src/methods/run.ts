@@ -176,7 +176,13 @@ import {
   resolveReviewWorkspaceOwner,
 } from '../security/native-worker-owner.js';
 import { currentSessionOriginator } from '../security/work-originator.js';
-import { SourceAdmissionRefusal, withSourcePlanning } from '../sources/runtime.js';
+import { captureRunCreationRequest } from '../sources/creation-request.js';
+import {
+  SourceAdmissionRefusal,
+  type SourceCreationSeal,
+  withSourceCreationPlan,
+  withSourcePlanning,
+} from '../sources/runtime.js';
 import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-template-catalog.js';
 import { resolveWorkerTemplateSelectionForRun } from '../tasks/worker-template-options.js';
 
@@ -327,7 +333,15 @@ export function assertExpectedQaSelection(
     );
 }
 
-interface RunCreateInternalOptions {
+export interface RunCreateInternalOptions {
+  sourcePlanningPurpose?: 'run' | 'preview' | 'queue';
+  sourceCallerRequest?: RunCreateParams;
+  sourceCreationSeal?: SourceCreationSeal;
+  /** Reserved by source planning, never accepted from the wire. */
+  sourceCreationRunId?: string;
+  sourceCreationPins?: import('../sources/authority.js').PreparedSourcePins;
+  /** Revalidate an existing provisional run without treating it as a competing dispatch. */
+  replanningRunId?: string;
   prWork?: Run['prWork'];
   expectedQa?: QueuedQaExpectation;
   reviewQaContract?: import('@farmslot/protocol').ReviewQaContract;
@@ -385,14 +399,31 @@ export async function runCreate(
   options: RunCreateInternalOptions = {},
 ): Promise<RunCreateResult> {
   if ('sourceProvenance' in params) throw new Error('Source provenance is gateway-owned');
-  return withSourcePlanning(params.project, () => runCreateWithSources(params, emit, options));
+  return withSourceCreationPlan(params, options, (plan, seal, runId) =>
+    runCreateWithSources(
+      params,
+      emit,
+      { ...options, sourceCreationSeal: seal, sourceCreationRunId: runId },
+      plan,
+    ),
+  );
 }
 
-async function runCreateWithSources(
+export interface RunCreationPlan {
+  params: RunCreateParams;
+  workflowExecution: Awaited<ReturnType<typeof resolveDirectWorkflowDefaults>>['execution'];
+  reviewQa: ReviewQaDispatchSelection | undefined;
+  qaAfterReview: ReturnType<typeof captureQaAfterReview> | undefined;
+  directReviewPublication: ReturnType<typeof captureDirectReviewPublication> | undefined;
+  executionTemplateSnapshot: ExecutionTemplateReference | undefined;
+  workspaceAdmission: ReviewWorkspaceAdmission | undefined;
+}
+
+/** One config-derived planner serves creation and queued source revalidation. */
+export async function planRunCreation(
   params: RunCreateParams,
-  emit: Emit,
-  options: RunCreateInternalOptions,
-): Promise<RunCreateResult> {
+  options: RunCreateInternalOptions = {},
+): Promise<RunCreationPlan> {
   if (params.taskFile !== undefined && !path.isAbsolute(params.taskFile)) {
     throw new Error(
       'taskFile must be an absolute path resolved by the caller. Upgrade the Farmslot CLI on every node, then upgrade the gateway; older CLIs send relative task paths. Retry with the upgraded CLI or supply an absolute taskFile through RPC.',
@@ -413,7 +444,6 @@ async function runCreateWithSources(
   delete params.startRefSkipPrepareVerified;
   if ('expectedQa' in params)
     throw new Error('QA admission expectations cannot be supplied in run parameters');
-  const expectedQa = options.expectedQa ? structuredClone(options.expectedQa) : undefined;
   if ('workflowExecution' in params)
     throw new Error('Workflow execution snapshots cannot be supplied in run parameters');
   if ('reviewPublication' in params || 'directReviewPublication' in params)
@@ -451,7 +481,7 @@ async function runCreateWithSources(
     validateTicketRef(params.ticketOrPr, params.flowType);
   }
   const workflowDefaults = await resolveDirectWorkflowDefaults(params, projectConfig, {
-    purpose: 'run',
+    purpose: options.sourcePlanningPurpose ?? 'run',
     execution: options.workflowExecution,
     ...(params.flowType === 'review-pr' && params.reviewValidationDepth !== 'full-live'
       ? { ownerId: resolveReviewWorkspaceOwner() }
@@ -706,7 +736,10 @@ async function runCreateWithSources(
 
   // Guard: reject if there's already an active run for the same ticket
   const { runs: existing } = listRuns({ active: true });
-  assertDuplicateRunAllowed(params, existing);
+  assertDuplicateRunAllowed(
+    params,
+    existing.filter((run) => run.id !== options.replanningRunId),
+  );
 
   // Branch-affinity nudge guardrail: nudgeReuse only makes sense when the operator already
   // picked the busy slot in the dispatch wizard. Without slotId the engine has nothing to
@@ -762,9 +795,6 @@ async function runCreateWithSources(
     if (!isDeepStrictEqual(currentPublication, directPublication))
       throw new Error('Publication policy changed during admission; create the run again');
   }
-  options.beforeCreate?.();
-  if (workspaceAdmission) assertReviewWorkspaceAdmitted(workspaceAdmission);
-  assertExpectedQaSelection(reviewQa, expectedQa);
   const qaAfterReview =
     params.flowType === 'review-pr' && projectConfig?.qa?.after_review?.enabled
       ? captureQaAfterReview(
@@ -772,32 +802,69 @@ async function runCreateWithSources(
           resolvePRWorkflowDefaults({ workflow: 'qa', farm: projectConfig.workflowDefaults }),
         )
       : undefined;
-  // Defer background persist on the claim handoff path so the Run file cannot
-  // appear on disk before durableStamp writes the queue runId (restart would
-  // otherwise redispatch an unstamped row while the Run already exists).
-  let run = createRun(createParams, {
-    deferBackgroundPersist: Boolean(options.awaitPersist),
+  return {
+    params: createParams,
     workflowExecution: options.workflowExecution ?? workflowDefaults.execution,
     reviewQa,
     qaAfterReview,
     directReviewPublication: directPublication,
-  });
-  // Apply the resolved execution-template snapshot before the first durable
-  // handoff write so a crash cannot leave a stamped Run without the queue-time
-  // template hash (find-slot would then accept a later template change).
-  // On the awaitPersist path, mutate in-memory only — do not use updateRun,
-  // which schedules a background persist that can land before the queue stamp.
-  if (executionTemplateSnapshot) {
-    if (options.awaitPersist) {
-      run.executionTemplate = executionTemplateSnapshot;
-      run.updatedAt = new Date().toISOString();
-    } else {
-      run = updateRun(run.id, { executionTemplate: executionTemplateSnapshot });
+    executionTemplateSnapshot,
+    workspaceAdmission,
+  };
+}
+
+async function runCreateWithSources(
+  params: RunCreateParams,
+  emit: Emit,
+  options: RunCreateInternalOptions,
+  preparedPlan?: RunCreationPlan,
+): Promise<RunCreateResult> {
+  const dispatchRequest = currentProjectSources()
+    ? captureRunCreationRequest(options.sourceCallerRequest ?? params)
+    : undefined;
+  const expectedQa = options.expectedQa ? structuredClone(options.expectedQa) : undefined;
+  const plan = preparedPlan ?? (await planRunCreation(params, options));
+  params = { ...plan.params, ...(preparedPlan ? { slotId: params.slotId } : {}) };
+  const createRecord = (): Run => {
+    options.beforeCreate?.();
+    if (plan.workspaceAdmission) assertReviewWorkspaceAdmitted(plan.workspaceAdmission);
+    assertExpectedQaSelection(plan.reviewQa, expectedQa);
+    // Defer background persist on the claim handoff path so the Run file cannot
+    // appear on disk before durableStamp writes the queue runId (restart would
+    // otherwise redispatch an unstamped row while the Run already exists).
+    let run = createRun(params, {
+      runId: options.sourceCreationRunId,
+      dispatchRequest,
+      deferBackgroundPersist: Boolean(options.awaitPersist),
+      workflowExecution: plan.workflowExecution,
+      reviewQa: plan.reviewQa,
+      qaAfterReview: plan.qaAfterReview,
+      directReviewPublication: plan.directReviewPublication,
+    });
+    if (run.sourcePlan && options.sourceCallerRequest) {
+      run.slotId = options.sourceCallerRequest.slotId ?? null;
     }
-  }
-  // Stamp runId / handoff marker before any await so concurrent reclaim sees
-  // that create already succeeded (claim re-validation alone is not enough).
-  options.afterCreateSync?.(run);
+    // Apply the resolved execution-template snapshot before the first durable
+    // handoff write so a crash cannot leave a stamped Run without the queue-time
+    // template hash (find-slot would then accept a later template change).
+    // On the awaitPersist path, mutate in-memory only — do not use updateRun,
+    // which schedules a background persist that can land before the queue stamp.
+    if (plan.executionTemplateSnapshot) {
+      if (options.awaitPersist) {
+        run.executionTemplate = plan.executionTemplateSnapshot;
+        run.updatedAt = new Date().toISOString();
+      } else {
+        run = updateRun(run.id, { executionTemplate: plan.executionTemplateSnapshot });
+      }
+    }
+    // Stamp runId / handoff marker before any await so concurrent reclaim sees
+    // that create already succeeded (claim re-validation alone is not enough).
+    options.afterCreateSync?.(run);
+    return run;
+  };
+  let run = options.sourceCreationSeal
+    ? await options.sourceCreationSeal(createRecord)
+    : createRecord();
   if (options.awaitPersist) {
     // Durable queue stamp before run file: crash between these two still leaves
     // a stamped row that restart drops against the Run (live or terminal).
@@ -805,6 +872,11 @@ async function runCreateWithSources(
     // Queue claim handoff: ensure the run file (including template snapshot) is
     // on disk before the caller drops the queue row.
     await persistRunNow(run, 'create-queue-handoff');
+  }
+  if (options.sourceCreationRunId) {
+    if (!options.awaitPersist) await persistRunNow(run, 'source-selected-create');
+    const { completeRunSourceCreation } = await import('../sources/runtime.js');
+    await completeRunSourceCreation(run.id);
   }
   // Soft-link AFTER durable queue handoff so backlog mutation/persist cannot
   // sit between afterCreateSync and durableStamp (crash would leave the queue

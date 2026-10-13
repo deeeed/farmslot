@@ -9,6 +9,7 @@ import type {
   ReviewRequestContext,
   ReviewSequence,
   RunCreateResult,
+  SourceSelection,
   TaskTemplateSelection,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
@@ -25,6 +26,7 @@ import {
 } from './dispatch-wizard-payload.js';
 
 export interface DispatchPayloadDraftInput {
+  sourceSelections?: SourceSelection[];
   transport?: 'tmux' | 'native';
   nativeProfile?: NativeProfileReference;
   flowType: FlowType | null;
@@ -88,6 +90,7 @@ export function buildDispatchWizardPayloadDraft(
     branch: input.branch,
   });
   return {
+    sourceSelections: input.sourceSelections,
     ...(input.transport ? { transport: input.transport } : {}),
     ...(input.transport === 'native' && input.nativeProfile
       ? { nativeProfile: input.nativeProfile }

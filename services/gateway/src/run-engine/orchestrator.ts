@@ -65,7 +65,7 @@ import {
   updateRun,
   updateRunStep,
 } from '../runs/store.js';
-import { SourceAdmissionRefusal, withRunSources } from '../sources/runtime.js';
+import { SourceAdmissionRefusal, SourcePlanRestart, withRunSources } from '../sources/runtime.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 import { schedulerTick } from '../work-graph/store.js';
 
@@ -1562,7 +1562,17 @@ interface StepIO {
 }
 
 async function executeStep(runId: string, step: string, generation: number): Promise<StepIO> {
-  return withRunSources(getRun(runId)!, () => executeSourcedStep(runId, step, generation));
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const run = getRun(runId)!;
+    try {
+      return await withRunSources(run, () => executeSourcedStep(runId, step, generation), {
+        planning: step === S.FIND_SLOT && !run.reviewWorkspaceTarget,
+      });
+    } catch (error) {
+      if (!(error instanceof SourcePlanRestart)) throw error;
+    }
+  }
+  throw new SourceAdmissionRefusal('Source placement kept changing before any slot claim');
 }
 
 async function executeSourcedStep(

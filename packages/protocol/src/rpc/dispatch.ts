@@ -150,6 +150,7 @@ export interface DispatchCandidatesResult {
 // ─── Dispatch Queue param/result types ───
 
 export interface DispatchQueueAddParams {
+  sourceSelections?: import('../sources/pins.js').SourceSelection[];
   qaProfileId?: string;
   qaInputs?: Record<string, import('../contracts/qa.js').QaInput>;
   /** Static-review machine selection, mutually exclusive with slot placement. */
@@ -245,6 +246,7 @@ export interface DispatchQueueRemoveOrphanParams {
 export type DispatchQueueRemoveOrphanResult = OkResult;
 
 export interface DispatchQueueUpdateParams {
+  sourceSelections?: import('../sources/pins.js').SourceSelection[];
   itemId: string;
   priority?: number;
   label?: string;
@@ -274,6 +276,7 @@ export interface DispatchQueueReorderResult {
 }
 
 export interface DispatchPreviewParams {
+  sourceSelections?: import('../sources/pins.js').SourceSelection[];
   qaProfileId?: string;
   qaInputs?: Record<string, import('../contracts/qa.js').QaInput>;
   reviewTier?: string;

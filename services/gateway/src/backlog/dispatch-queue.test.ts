@@ -2141,3 +2141,43 @@ test('dispatch.queue.update preserves ordered WARM/COLD selections and effort', 
   assert.deepEqual(updated.reviewSequence, [initial, second]);
   assert.equal(updated.id, item.id);
 });
+
+test('queue source selections survive snapshots and preview and reject unsupported local inputs', async (t) => {
+  const selections = [{ sourceId: 'pack', selection: 'branch' as const, ref: 'experiment' }];
+  const item = addItem(
+    {
+      project: 'farmslot-farm',
+      flowType: 'dev',
+      ticketOrPr: 'QUEUE-SOURCE-1',
+      sourceSelections: selections,
+      autoDispatch: false,
+    },
+    { kind: 'system' },
+  );
+  t.after(() => removeItem(item.id));
+  selections[0].ref = 'edited-after-request';
+  assert.equal(
+    listItems().find((row) => row.id === item.id)?.sourceSelections?.[0].ref,
+    'experiment',
+  );
+  assert.equal(buildQueuePreviewParams(item).sourceSelections?.[0].ref, 'experiment');
+  const changed = updateItem(
+    { itemId: item.id, sourceSelections: [{ sourceId: 'pack', selection: 'main' }] },
+    { kind: 'system' },
+  );
+  assert.deepEqual(changed.sourceSelections, [{ sourceId: 'pack', selection: 'main' }]);
+  assert.throws(
+    () =>
+      updateItem(
+        {
+          itemId: item.id,
+          sourceSelections: [{ sourceId: 'pack', selection: 'branch', ref: '/tmp/local' }],
+        },
+        { kind: 'system' },
+      ),
+    /pushed branch/,
+  );
+  assert.deepEqual(listItems().find((row) => row.id === item.id)?.sourceSelections, [
+    { sourceId: 'pack', selection: 'main' },
+  ]);
+});

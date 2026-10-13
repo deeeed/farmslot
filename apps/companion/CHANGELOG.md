@@ -5,6 +5,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 ## Unreleased
 
 - Use the shared evidence-policy attestation action and reason input in the existing gate workspace.
+- Show shared source status and scoped pin controls in farm, node and run views, with source selections for PR completion.
 
 - Honor HUD top/bottom placement through automatic progress and capture the painted final outcome.
 

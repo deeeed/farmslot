@@ -1,37 +1,68 @@
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type {
+  QueueItem,
   Run,
+  RunCreateParams,
+  SlotStatus,
   SourceConfiguration,
   SourceLock,
   SourceMaterialization,
   SourceNodeStatus,
+  SourcesPinParams,
+  SourcesPinResult,
+  SourcesUnpinParams,
 } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import {
   configureProjectSources,
   currentProjectSources,
-  loadSlotVars,
   type ProjectSourceContext,
+  resolveSlot,
   withLegacyProjectSources,
   withProjectSources,
 } from '@farmslot/slot-config';
 import {
   assertSourceAttestation,
-  sourceDigest,
+  sourceInputsDigest,
   SourceMaterializer,
 } from '@farmslot/slot-config/sources';
 
+import { GatewayMethodError } from '../core/method-error.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
-import { getRun, updateRun } from '../runs/store.js';
+import { loadFleetStatus, loadPoolConfigs, loadProjectConfig } from '../fleet/state.js';
+import type { RunCreateInternalOptions, RunCreationPlan } from '../methods/run.js';
+import { RunTransitionCoordinator } from '../run-lifecycle/transition-coordinator.js';
+import { buildRunRecord, getRun, persistRunNow, updateRun } from '../runs/store.js';
+import { currentSessionOriginator } from '../security/work-originator.js';
 
-import { SourceAuthority } from './authority.js';
+import { type PreparedSourcePins, SourceAuthority } from './authority.js';
+import { captureRunCreationRequest } from './creation-request.js';
+import { assertSourcePinTarget } from './pin-target.js';
+import {
+  admitPlannedRunSources,
+  refreshPlannedRunSources,
+  type SourceAdmissionTarget,
+  SourcePlanRestart,
+} from './run-admission.js';
+import {
+  planProspectiveSlotSources,
+  planRunSlotSources,
+  type ProspectiveSlotSourcePlan,
+  type ProspectiveSlotSourcePlans,
+  type RunSlotSourcePlans,
+} from './slot-planning.js';
 
 let authority: SourceAuthority | undefined;
 let gateway: SourceMaterializer | undefined;
 let stopReconciliation: (() => void) | undefined;
+const runSourceMutations = new RunTransitionCoordinator();
+
+export const withRunSourceMutation = <T>(runId: string, operation: () => Promise<T>): Promise<T> =>
+  runSourceMutations.withRunWhileMachineHeld(runId, operation);
 
 export class SourceAdmissionRefusal extends Error {
   readonly code = 'SOURCE_ADMISSION_REFUSED';
@@ -39,6 +70,11 @@ export class SourceAdmissionRefusal extends Error {
 
 export function sourceAuthority(): SourceAuthority | undefined {
   return authority;
+}
+
+export async function completeRunSourceCreation(runId: string): Promise<void> {
+  if (!authority) throw new SourceAdmissionRefusal('Source authority disappeared during creation');
+  await authority.completeRunCreation(runId);
 }
 
 export async function gatewaySourceStatus(): Promise<SourceNodeStatus | undefined> {
@@ -66,6 +102,9 @@ export async function initializeSources(): Promise<void> {
     throw new Error('Source declarations disappeared after cut-over');
   }
   authority = await SourceAuthority.open(configuration, path.join(home, 'sources'));
+  await authority.recoverRunCreations((runId) =>
+    Boolean(getRun(runId)?.sourcePlan || getRun(runId)?.sourceProvenance),
+  );
   gateway = new SourceMaterializer('gateway', path.join(home, 'sources', 'gateway'));
   // Configure fail-closed reads immediately; each closure becomes available as
   // its own sources finish, without waiting for an unrelated repository.
@@ -80,10 +119,15 @@ export function stopSourceReconciliation(): void {
   stopReconciliation = undefined;
 }
 
-export async function projectContext(project: string): Promise<ProjectSourceContext> {
+export async function projectContext(
+  project: string,
+  context: Pick<SourceLock['context'], 'nodeId' | 'runId'> = {},
+  prepared?: PreparedSourcePins,
+): Promise<ProjectSourceContext> {
   if (!authority || !gateway) throw new Error('Source authority is unavailable');
-  const lock = await authority.lock({ project });
+  const lock = await authority.lock({ project, ...context }, prepared);
   const materialization = await gateway.materialize(lock);
+  assertSourceAttestation(lock, 'gateway', materialization);
   return {
     project,
     pack: authority.configuration.packs[project],
@@ -95,11 +139,12 @@ export async function projectContext(project: string): Promise<ProjectSourceCont
 export async function withSourcePlanning<T>(
   project: string,
   operation: () => Promise<T>,
+  context: Pick<SourceLock['context'], 'nodeId' | 'runId'> = {},
 ): Promise<T> {
   if (!authority) return operation();
   let selected: ProjectSourceContext;
   try {
-    selected = await projectContext(project);
+    selected = await projectContext(project, context);
   } catch (error) {
     throw new SourceAdmissionRefusal((error as Error).message, { cause: error });
   }
@@ -122,8 +167,471 @@ async function nodeMaterialization(
   return result;
 }
 
+async function runNodeId(run: Run): Promise<string | undefined> {
+  if (run.reviewWorkspaceTarget) return run.reviewWorkspaceTarget.machine;
+  if (!run.slotId) return run.sourcePlan?.lock.context.nodeId;
+  const pool = (await loadPoolConfigs()).find((pool) =>
+    pool.slots.some((slot) => slot.id === run.slotId),
+  );
+  if (!pool) throw new Error('Run execution node is unknown');
+  return pool.machine;
+}
+
+export async function replanSourceRun(run: Run, target: SourceAdmissionTarget): Promise<Run> {
+  if (!run.dispatchRequest) throw new Error('Provisional run has no retained dispatch request');
+  const { planRunCreation } = await import('../methods/run.js');
+  const plan = await planRunCreation(
+    {
+      ...structuredClone(run.dispatchRequest),
+      ...(target.slotId ? { slotId: target.slotId } : {}),
+      familyId: run.familyId,
+      parentRunId: run.parentRunId ?? undefined,
+      familyRootTicketOrPr: run.familyRootTicketOrPr,
+    },
+    {
+      replanningRunId: run.id,
+      prWork: run.prWork,
+      workflowExecution: run.workflowExecution,
+      reviewQaContract: run.reviewQaContract,
+    },
+  );
+  const next = buildRunRecord(plan.params, {
+    runId: run.id,
+    createdByPrincipalId: run.createdByPrincipalId,
+    nativeOwnerPrincipalId: run.nativeOwnerPrincipalId,
+    dispatchRequest: run.dispatchRequest,
+    workflowExecution: plan.workflowExecution,
+    reviewQa: plan.reviewQa,
+    qaAfterReview: plan.qaAfterReview,
+    directReviewPublication: plan.directReviewPublication,
+  });
+  return {
+    ...run,
+    ...next,
+    slotId: target.requestedSlotId ?? run.slotId,
+    status: run.status,
+    createdAt: run.createdAt,
+    startedAt: run.startedAt,
+    steps: run.steps,
+    decisions: run.decisions,
+    queuedAt: run.queuedAt,
+    createdByPrincipalId: run.createdByPrincipalId,
+    nativeOwnerPrincipalId: run.nativeOwnerPrincipalId,
+    executionTemplate: plan.executionTemplateSnapshot,
+    engineState: { ...next.engineState, ...run.engineState },
+  };
+}
+
+export async function planRunSourceSlots(
+  run: Run,
+  slots: readonly Pick<SlotStatus, 'slot' | 'machine' | 'project'>[],
+  prepared?: PreparedSourcePins,
+): Promise<RunSlotSourcePlans | undefined> {
+  if (!run.sourcePlan) return undefined;
+  if (!authority || !gateway) throw new SourceAdmissionRefusal('Source authority is unavailable');
+  const [{ projectConfigsFromProjects }, { buildDispatchPreviewParamsForRun }] = await Promise.all([
+    import('../methods/dispatch/slot-scoring.js'),
+    import('../run-engine/dispatch-policy.js'),
+  ]);
+  const materializer = gateway;
+  const resolver = authority;
+  return planRunSlotSources(run, slots, {
+    authority: { lock: (context) => resolver.lock(context, prepared) },
+    getRun,
+    gatewayMaterialization: (lock) => materializer.materialize(lock),
+    replan: replanSourceRun,
+    params: (planned) => ({
+      ...buildDispatchPreviewParamsForRun(planned),
+      ...(planned.qa ? { qaProfileId: planned.qa.profile.id, qaInputs: planned.qa.inputs } : {}),
+      ...(planned.metrics.runner ? { runner: planned.metrics.runner } : {}),
+      ...(planned.metrics.model ? { model: planned.metrics.model } : {}),
+      ...(planned.engineState?.flags?.skipPrepare ? { skipPrepare: true } : {}),
+    }),
+    projectConfigs: async () => {
+      const project = await loadProjectConfig(run.project);
+      if (!project) throw new Error('Locked project configuration is unavailable');
+      return projectConfigsFromProjects([project]);
+    },
+  });
+}
+
+export async function planSourceRequestSlots(
+  params: RunCreateParams,
+  options: RunCreateInternalOptions = {},
+): Promise<ProspectiveSlotSourcePlans | undefined> {
+  if (!authority) return undefined;
+  if (!gateway) throw new SourceAdmissionRefusal('Source authority is unavailable');
+  const resolver = authority;
+  const materializer = gateway;
+  const [{ planRunCreation }, { projectConfigsFromProjects }] = await Promise.all([
+    import('../methods/run.js'),
+    import('../methods/dispatch/slot-scoring.js'),
+  ]);
+  const fleet = await loadFleetStatus(true);
+  const slots = fleet.slots.filter(
+    (slot) =>
+      slot.project === params.project &&
+      (!params.slotId || slot.slot === params.slotId) &&
+      (!params.allowedSlots?.length || params.allowedSlots.includes(slot.slot)) &&
+      !slot.missingFromPool &&
+      slot.lifecycle !== 'disabled' &&
+      slot.lifecycle !== 'manual',
+  );
+  return planProspectiveSlotSources(
+    params.project,
+    slots,
+    {
+      authority: {
+        lock: (context) => resolver.lock(context, options.sourceCreationPins),
+      },
+      gatewayMaterialization: (lock) => materializer.materialize(lock),
+      plan: (slotId) =>
+        planRunCreation(
+          { ...structuredClone(params), slotId },
+          { ...options, beforeCreateAsync: undefined, sourceCreationSeal: undefined },
+        ),
+      params: (plan) => ({
+        ...plan.params,
+        slotId: params.slotId,
+        targetBranch: ['review-pr', 'pr-complete', 'qa'].includes(plan.params.flowType)
+          ? plan.params.branch
+          : undefined,
+        ...(plan.reviewQa
+          ? { qaProfileId: plan.reviewQa.qa?.profile.id, qaInputs: plan.reviewQa.qa?.inputs }
+          : {}),
+      }),
+      projectConfigs: async () => {
+        const project = await loadProjectConfig(params.project);
+        if (!project) throw new Error('Locked project configuration is unavailable');
+        return projectConfigsFromProjects([project]);
+      },
+    },
+    options.sourceCreationRunId,
+  );
+}
+
+export type SourceCreationSeal = <T>(create: () => T) => Promise<T>;
+type SourceCreationCandidate = Pick<ProspectiveSlotSourcePlan, 'sources' | 'creationPlan'>;
+
+/** Preview and queue planning reuse the creation producer without calling its publication seal. */
+export function withSourceRequestPlanning<T>(
+  params: RunCreateParams,
+  purpose: 'preview' | 'queue',
+  read: (plan?: RunCreationPlan, planning?: RunCreateInternalOptions) => Promise<T>,
+): Promise<T> {
+  return withSourceCreationPlan(
+    params,
+    { sourcePlanningPurpose: purpose },
+    (plan, _seal, _runId, planning) => read(plan, planning),
+  );
+}
+
+export function queuedSourceCreationRequest(item: QueueItem): RunCreateParams {
+  return captureRunCreationRequest({
+    ...item,
+    parentRunId: item.parentRunId ?? undefined,
+    branch: item.branch ?? undefined,
+    allowedSlots: item.allowedSlots ?? undefined,
+    startRef: item.startRef?.requestedRef,
+    startRefSource: item.startRef?.source,
+  });
+}
+
+export async function planQueuedSourceSlots(
+  item: QueueItem,
+): Promise<ProspectiveSlotSourcePlans | undefined> {
+  if (!authority) {
+    if (item.sourceSelections !== undefined) throw new Error('Sources are not configured');
+    return undefined;
+  }
+  const params = queuedSourceCreationRequest(item);
+  const originator = currentSessionOriginator();
+  const runId = params.sourceSelections?.length ? randomUUID() : undefined;
+  const prepared = runId
+    ? await authority.prepareRunSelections(
+        runId,
+        params.sourceSelections!,
+        originator.kind === 'principal' ? originator.principalId : 'system',
+      )
+    : undefined;
+  return planSourceRequestSlots(params, {
+    sourceCreationRunId: runId,
+    sourceCreationPins: prepared,
+    sourcePlanningPurpose: 'queue',
+    workflowExecution: item.workflowExecution,
+    reviewQaContract: item.reviewQaContract,
+  });
+}
+
+export async function withSourceCreationPlan<T>(
+  params: RunCreateParams,
+  options: RunCreateInternalOptions,
+  operation: (
+    plan?: RunCreationPlan,
+    seal?: SourceCreationSeal,
+    runId?: string,
+    planning?: RunCreateInternalOptions,
+  ) => Promise<T>,
+): Promise<T> {
+  if (!authority) {
+    if (params.sourceSelections !== undefined) throw new Error('Sources are not configured');
+    return operation();
+  }
+  const resolver = authority;
+  if (params.sourceSelections !== undefined && !Array.isArray(params.sourceSelections))
+    throw new Error('Source selections must be an array');
+  const runId = params.sourceSelections?.length ? randomUUID() : undefined;
+  const originator = currentSessionOriginator();
+  const prepared = runId
+    ? await resolver.prepareRunSelections(
+        runId,
+        params.sourceSelections!,
+        originator.kind === 'principal' ? originator.principalId : 'system',
+      )
+    : undefined;
+  options = { ...options, sourceCreationRunId: runId, sourceCreationPins: prepared };
+  let candidate: SourceCreationCandidate | undefined;
+  const reasons: string[] = [];
+  if (
+    params.reviewWorkspaceTarget ||
+    (params.flowType === 'review-pr' && params.reviewValidationDepth !== 'full-live')
+  ) {
+    const { planRunCreation } = await import('../methods/run.js');
+    for (const pool of await loadPoolConfigs()) {
+      if (params.reviewWorkspaceTarget && pool.machine !== params.reviewWorkspaceTarget.machine)
+        continue;
+      if (!pool.reviewWorkspaces) continue;
+      try {
+        const sources = await projectContext(
+          params.project,
+          { nodeId: pool.machine, ...(runId ? { runId } : {}) },
+          prepared,
+        );
+        const creationPlan = await withProjectSources(sources, () =>
+          planRunCreation(
+            { ...structuredClone(params), reviewWorkspaceTarget: { machine: pool.machine } },
+            { ...options, beforeCreateAsync: undefined, sourceCreationSeal: undefined },
+          ),
+        );
+        candidate = { sources, creationPlan };
+        break;
+      } catch (error) {
+        // A scoped node refusal must not hide another eligible workspace's complete inputs.
+        reasons.push(`${pool.machine}: ${(error as Error).message}`);
+      }
+    }
+  } else {
+    const plans = await planSourceRequestSlots(params, options);
+    const first = [...(plans?.values() ?? [])].find((plan) => 'creationPlan' in plan);
+    if (first && 'creationPlan' in first) candidate = first;
+    reasons.push(
+      ...[...(plans?.entries() ?? [])].map(
+        ([slotId, plan]) =>
+          `${slotId}: ${'refusal' in plan ? plan.refusal : 'no valid source plan'}`,
+      ),
+    );
+  }
+  if (!candidate) {
+    throw new SourceAdmissionRefusal(`No valid source plan for creation:\n${reasons.join('\n')}`);
+  }
+  const selected = candidate;
+  await options.beforeCreateAsync?.();
+  const seal: SourceCreationSeal = (create) =>
+    prepared
+      ? resolver.publishPins(
+          prepared,
+          [selected.sources.materialization.lock],
+          () => undefined,
+          create,
+        )
+      : resolver.withCurrentLock(selected.sources.materialization.lock, async () => create());
+  return withProjectSources(selected.sources, () =>
+    operation(selected.creationPlan, seal, runId, options),
+  );
+}
+
+async function mutateRunSourcePlan(
+  runId: string,
+  target: SourceAdmissionTarget,
+  operation: typeof admitPlannedRunSources,
+): Promise<void> {
+  if (!authority || !gateway) throw new SourceAdmissionRefusal('Source authority is unavailable');
+  const resolver = authority;
+  const materializer = gateway;
+  try {
+    await withRunSourceMutation(runId, () =>
+      operation(runId, target, {
+        authority: resolver,
+        getRun,
+        gatewayMaterialization: (lock) => materializer.materialize(lock),
+        nodeMaterialization,
+        replan: replanSourceRun,
+        save: async (run) => {
+          updateRun(run.id, run);
+          await persistRunNow(getRun(run.id)!, 'source admission');
+        },
+      }),
+    );
+  } catch (error) {
+    if (error instanceof SourcePlanRestart) throw error;
+    throw new SourceAdmissionRefusal((error as Error).message, { cause: error });
+  }
+}
+
+export const admitRunSources = (runId: string, target: SourceAdmissionTarget): Promise<void> =>
+  mutateRunSourcePlan(runId, target, admitPlannedRunSources);
+
+export const refreshRunSourcePlan = (runId: string, target: SourceAdmissionTarget): Promise<void> =>
+  mutateRunSourcePlan(runId, target, refreshPlannedRunSources);
+
+/** Run pins and admission share one run boundary; all scopes share the authority seal. */
+export async function mutateSourcePin(
+  params: SourcesPinParams | SourcesUnpinParams,
+  actor: string,
+  selection: 'branch' | 'main',
+  authorize: () => void,
+): Promise<SourcesPinResult> {
+  if (!authority) throw new Error('Sources are not configured');
+  const resolver = authority;
+  const execute = async (): Promise<SourcesPinResult> => {
+    let pools = await loadPoolConfigs();
+    const owned = params.scope === 'run' ? getRun(params.targetId) : undefined;
+    const original = owned ? structuredClone(owned) : undefined;
+    const assertTarget = (): void => {
+      authorize();
+      const current = params.scope === 'run' ? getRun(params.targetId) : undefined;
+      assertSourcePinTarget(params, {
+        activatedAt: resolver.activatedAt(),
+        knownNodes: pools.map((pool) => pool.machine),
+        run: current,
+      });
+      if (
+        original &&
+        (current?.createdByPrincipalId !== original.createdByPrincipalId ||
+          current?.nativeOwnerPrincipalId !== original.nativeOwnerPrincipalId ||
+          current?.sourcePlan?.lock.digest !== original.sourcePlan?.lock.digest ||
+          (current?.engineState?.generation ?? 0) !== (original.engineState?.generation ?? 0))
+      )
+        throw new GatewayMethodError(
+          'SOURCE_STATE_STALE',
+          'Run ownership or source plan changed during pinning',
+        );
+    };
+    const prepared = await resolver.preparePinMutation(params, actor, selection, assertTarget);
+    if (!('pins' in prepared)) {
+      authorize();
+      return prepared;
+    }
+    let planned: Run | undefined;
+    const locks: SourceLock[] = [];
+    if (original) {
+      if (original.reviewWorkspaceTarget) {
+        const sources = await projectContext(
+          original.project,
+          {
+            runId: original.id,
+            nodeId: original.reviewWorkspaceTarget.machine,
+          },
+          prepared,
+        );
+        planned = await withProjectSources(sources, () =>
+          replanSourceRun(original, {
+            nodeId: original.reviewWorkspaceTarget!.machine,
+          }),
+        );
+        locks.push(sources.materialization.lock);
+      } else {
+        const fleet = await loadFleetStatus(true);
+        const allowed = original.dispatchRequest?.allowedSlots;
+        const slots = fleet.slots.filter(
+          (slot) =>
+            slot.project === original.project &&
+            (!original.slotId || original.slotId === slot.slot) &&
+            (!allowed?.length || allowed.includes(slot.slot)) &&
+            !slot.missingFromPool &&
+            slot.lifecycle !== 'disabled' &&
+            slot.lifecycle !== 'manual',
+        );
+        const plans = await planRunSourceSlots(original, slots, prepared);
+        const candidate = [...(plans?.values() ?? [])].find((plan) => 'run' in plan);
+        if (!candidate || !('run' in candidate))
+          throw new SourceAdmissionRefusal(
+            'The selected source closure has no valid run placement',
+          );
+        planned = candidate.run;
+        locks.push(candidate.sources.materialization.lock);
+      }
+    } else {
+      const contexts =
+        params.scope === 'node'
+          ? [{ nodeId: params.targetId }]
+          : pools.length
+            ? pools.map((pool) => ({ nodeId: pool.machine }))
+            : [{}];
+      for (const context of contexts)
+        for (const project of resolver.affectedProjects(params.sourceId, context, prepared)) {
+          const sources = await projectContext(project, context, prepared);
+          locks.push(sources.materialization.lock);
+        }
+    }
+    pools = await loadPoolConfigs();
+    const result = await resolver.publishPins(prepared, locks, assertTarget, () => {
+      if (planned) updateRun(planned.id, planned);
+      return prepared.operation!.result;
+    });
+    if (planned) await persistRunNow(getRun(planned.id)!, 'source pin revalidation');
+    return result;
+  };
+  return params.scope === 'run' ? withRunSourceMutation(params.targetId, execute) : execute();
+}
+
+export { SourcePlanRestart };
+
+/** A fresh takeover replaces the process; only a nudge or warm handoff retains its inputs. */
+export function retainedSourceOwner(
+  run: Pick<Run, 'id' | 'parentRunId' | 'engineState'>,
+  slotOwner: unknown,
+): string | undefined {
+  const flags = run.engineState?.flags;
+  if (!flags?.warmSessionReuse && !flags?.nudgeReuse) return undefined;
+  const owner = flags.warmSessionReuse ? run.parentRunId : slotOwner;
+  if (typeof owner !== 'string' || !owner || owner === run.id)
+    throw new SourceAdmissionRefusal('Retained source worker has no recorded prior owner');
+  return owner;
+}
+
 /** Every step retains its run's generation; new main commits can never replace these inputs. */
-export async function withRunSources<T>(run: Run, operation: () => Promise<T>): Promise<T> {
+export async function withRunSources<T>(
+  run: Run,
+  operation: () => Promise<T>,
+  options: { planning?: boolean; nodeId?: string } = {},
+): Promise<T> {
+  if (run.sourcePlan) {
+    if (!authority || !gateway) throw new SourceAdmissionRefusal('Source authority is unavailable');
+    if (options.planning) {
+      const materialization = await gateway.materialize(run.sourcePlan.lock);
+      return withProjectSources(
+        {
+          project: run.project,
+          pack: run.sourcePlan.lock.packBindings[run.project],
+          materialization,
+          packs: run.sourcePlan.lock.packBindings,
+        },
+        operation,
+      );
+    }
+    const nodeId = options.nodeId ?? (await runNodeId(run));
+    if (!nodeId) throw new SourceAdmissionRefusal('Source admission requires an execution node');
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        await admitRunSources(run.id, { nodeId, ...(run.slotId ? { slotId: run.slotId } : {}) });
+        return withRunSources(getRun(run.id)!, operation, { nodeId });
+      } catch (error) {
+        if (!(error instanceof SourcePlanRestart)) throw error;
+      }
+    }
+    throw new SourceAdmissionRefusal('Source inputs kept changing before admission');
+  }
   const provenance = run.sourceProvenance;
   if (!provenance) {
     if (authority && Date.parse(run.createdAt) >= Date.parse(authority.activatedAt()))
@@ -135,16 +643,12 @@ export async function withRunSources<T>(run: Run, operation: () => Promise<T>): 
   let materialization: SourceMaterialization;
   let execution: SourceMaterialization | undefined;
   let workerExecution: SourceMaterialization;
-  let nodeId = run.reviewWorkspaceTarget?.machine;
+  let nodeId = options.nodeId ?? run.reviewWorkspaceTarget?.machine;
   try {
-    if (
-      sourceDigest(provenance.lock.entries) !== sourceDigest(provenance.workerLock.entries) ||
-      sourceDigest(provenance.lock.packBindings) !==
-        sourceDigest(provenance.workerLock.packBindings)
-    )
+    if (sourceInputsDigest(provenance.lock) !== sourceInputsDigest(provenance.workerLock))
       throw new Error('Worker inputs do not match the admitted run lock');
     materialization = await gateway.materialize(provenance.lock);
-    if (run.slotId) nodeId = (await loadSlotVars(run.slotId)).machine;
+    if (!options.nodeId && run.slotId) nodeId = (await resolveSlot(run.slotId)).pool.machine;
     execution = nodeId ? await nodeMaterialization(nodeId, provenance.lock) : undefined;
     workerExecution = nodeId
       ? await nodeMaterialization(nodeId, provenance.workerLock)
@@ -206,7 +710,11 @@ export function assertRetainedSourceInputs(
   const before = prior?.sourceProvenance;
   const after = next.sourceProvenance;
   if (!before && !after) return;
-  if (!before || !after || before.workerLock.digest !== after.workerLock.digest)
+  if (
+    !before ||
+    !after ||
+    sourceInputsDigest(before.workerLock) !== sourceInputsDigest(after.workerLock)
+  )
     throw new SourceAdmissionRefusal('Retained worker source inputs changed or are unknown');
 }
 
@@ -237,18 +745,22 @@ export async function verifyExecutionSources(
 /** Slot actions share admission with runs; the target node attests before hooks expand. */
 export async function withSlotSources<T>(slotId: string, operation: () => Promise<T>): Promise<T> {
   if (!authority) return operation();
-  const slot = await loadSlotVars(slotId);
+  const { slot, pool } = await resolveSlot(slotId);
+  const project = slot.project ?? pool.project;
   const { readSlotField } = await import('../core/state.js');
   const currentRunId = await readSlotField(slotId, 'current_run_id');
   const owner = typeof currentRunId === 'string' ? getRun(currentRunId) : undefined;
   if (owner?.slotId === slotId) return withRunSources(owner, operation);
   const current = currentProjectSources();
-  if (current?.execution?.receipt.nodeId === slot.machine) return operation();
+  if (current?.project === project && current.execution?.receipt.nodeId === pool.machine)
+    return operation();
   const sources =
-    current?.project === slot.projectName ? current : await projectContext(slot.projectName);
-  const execution = await nodeMaterialization(slot.machine, sources.materialization.lock);
+    current?.project === project && current.materialization.lock.context.nodeId === pool.machine
+      ? current
+      : await projectContext(project, { nodeId: pool.machine });
+  const execution = await nodeMaterialization(pool.machine, sources.materialization.lock);
   if (
-    execution.receipt.nodeId !== slot.machine ||
+    execution.receipt.nodeId !== pool.machine ||
     execution.receipt.lockDigest !== sources.materialization.lock.digest
   )
     throw new SourceAdmissionRefusal('Slot node attested a different source lock');

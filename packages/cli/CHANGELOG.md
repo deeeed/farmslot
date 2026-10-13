@@ -6,6 +6,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 - Accept a required written reason for the human evidence-attested publish gate action.
 - Show the resolved recipe provider's package version and Git identity in project doctor diagnostics.
+- Add sources status, sync, pin and unpin with explicit scopes and preserved operation packets for uncertain retries.
 
 - Carry exact source receipts into project recipe execution.
 - Read a forced native session transcript without requiring a private slot pool in the installed CLI.

@@ -5,6 +5,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Add reasoned evidence-policy attestation to the existing publish gate with confirmation and package binding.
+- Show shared source status and scoped pin controls in farm, node and run views, with source selections in dispatch.
 
 - Show compact evidence package status and collapsed diagnostics, with neutral legacy evidence and read-only retained reports.
 

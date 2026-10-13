@@ -431,3 +431,25 @@ test('one picker preserves review choices through direct dispatch, queue and gat
   );
   assert.deepEqual(buildRunCreateParams(draft).reviewSequenceContext, picker.toReviewContext());
 });
+
+test('source selections stay identical across immediate create, preview and queued dispatch payloads', () => {
+  const draft = {
+    flowType: 'dev' as const,
+    project: 'demo',
+    ticketOrPr: 'MANUAL-0001',
+    mode: 'autonomous' as const,
+    devInteractiveProfile: 'lightweight' as const,
+    comparison: {},
+    sourceSelections: [{ sourceId: 'pack', selection: 'branch' as const, ref: 'experiment' }],
+  };
+  for (const build of [
+    buildRunCreateParams,
+    buildDispatchPreviewParams,
+    buildDispatchQueueAddParams,
+  ]) {
+    const params = build(draft);
+    assert.deepEqual(params.sourceSelections, draft.sourceSelections);
+    params.sourceSelections![0].ref = 'changed';
+    assert.equal(draft.sourceSelections[0].ref, 'experiment');
+  }
+});

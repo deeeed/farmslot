@@ -27,6 +27,7 @@ import {
   mergeVisibleProfiles,
   useGatewayProfileController,
 } from '../../features/settings/use-gateway-profile-controller';
+import { SourceStatusSection } from '../../features/sources/SourceStatusSection';
 import {
   microphonePermissionIsBlocked,
   microphonePermissionSetupState,
@@ -582,6 +583,9 @@ export default function SettingsScreen() {
       ]}
     >
       <AppVersionBanner />
+      <SourceStatusSection
+        context={{ target: { scope: 'farm', targetId: 'farm' }, actions: ['sync', 'pin', 'unpin'] }}
+      />
 
       <View style={styles.infoSection}>
         <Text style={styles.sectionTitle}>Attention alerts</Text>

@@ -1,6 +1,7 @@
 import {
   DEFAULT_BRANCH,
   DETACHED_HEAD_BRANCH,
+  type DispatchPreviewParams,
   isCdpLiveValue,
   isDispatchScoreStale,
   isGateParkInFlightOrFreed,
@@ -302,6 +303,49 @@ export function slotScore(
   return score;
 }
 
+export interface SlotSelectionPlan {
+  params: DispatchPreviewParams;
+  projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>;
+}
+
+export interface SlotSelectionRefusal {
+  refusal: string;
+}
+
+export type SlotSelectionPlans = ReadonlyMap<string, SlotSelectionPlan | SlotSelectionRefusal>;
+
+export interface SlotSelectionOptions {
+  allowedSlots?: string[] | null;
+  targetBranch?: string | null;
+  releasableBranchHolderIds?: ReadonlySet<string>;
+  familyId?: string | null;
+  lane?: string | null;
+  variant?: string | null;
+  requiredPrepareProfile?: string | null;
+  projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>;
+  pressureRejectedMachines?: ReadonlySet<string>;
+  parkPreservedSlotIds?: ReadonlyMap<string, ParkPreservedWorkspace[]>;
+  skipPrepare?: boolean;
+  plans?: SlotSelectionPlans;
+}
+
+/** One candidate context supplies eligibility and score; a missing scoped plan refuses. */
+export function slotSelectionOptionsFor(
+  slot: Pick<SlotStatus, 'slot'>,
+  fallback: SlotSelectionOptions = {},
+): SlotSelectionOptions | undefined {
+  if (!fallback.plans) return fallback;
+  const plan = fallback.plans.get(slot.slot);
+  if (!plan || 'refusal' in plan) return undefined;
+  return {
+    ...fallback,
+    ...plan.params,
+    requiredPrepareProfile: plan.params.prepareProfile ?? null,
+    skipPrepare: plan.params.skipPrepare,
+    projectConfigs: plan.projectConfigs,
+  };
+}
+
 export function resolveJiraTargetBranchFromFleet(
   slots: SlotStatus[],
   project: string,
@@ -334,41 +378,26 @@ export function branchContainsJiraKey(branch: string, jiraKey: string): boolean 
 export function findBestSlot(
   slots: SlotStatus[],
   project: string,
-  options?: {
-    allowedSlots?: string[] | null;
-    targetBranch?: string;
-    releasableBranchHolderIds?: ReadonlySet<string>;
-    familyId?: string | null;
-    lane?: string | null;
-    variant?: string | null;
-    requiredPrepareProfile?: string | null;
-    projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>;
-    /** Machines whose sustained-pressure admission decision is rejected.
-     * Automatic selection never lands a new dispatch on them. */
-    pressureRejectedMachines?: ReadonlySet<string>;
-    /** Slots whose detached HEAD a park record preserves; see `slotScore`. */
-    parkPreservedSlotIds?: ReadonlyMap<string, ParkPreservedWorkspace[]>;
-    /** The run reuses the slot's checkout, so its repo blocker does not apply. */
-    skipPrepare?: boolean;
-  },
+  options?: SlotSelectionOptions,
 ): SlotStatus | null {
-  const allow =
-    options?.allowedSlots && options.allowedSlots.length > 0 ? new Set(options.allowedSlots) : null;
   const candidates = slots
     .filter((s) => {
+      const selected = slotSelectionOptionsFor(s, options);
+      if (!selected) return false;
+      const allow = selected.allowedSlots?.length ? new Set(selected.allowedSlots) : null;
       if (s.project !== project || !isFreeSlot(s) || (allow && !allow.has(s.slot))) return false;
-      if (slotRepoBlocker(s, options)) return false;
-      if (options?.pressureRejectedMachines?.has(s.machine)) return false;
+      if (slotRepoBlocker(s, selected)) return false;
+      if (selected.pressureRejectedMachines?.has(s.machine)) return false;
       if (
         slotBranchCheckoutBlocker(
           s,
           slots,
-          options?.targetBranch,
-          options?.releasableBranchHolderIds,
+          selected.targetBranch,
+          selected.releasableBranchHolderIds,
         )
       )
         return false;
-      if (companionResourceBlocker(s, options?.requiredPrepareProfile)) return false;
+      if (companionResourceBlocker(s, selected.requiredPrepareProfile)) return false;
       if (
         !s.currentRunId &&
         !s.currentFamilyId &&
@@ -388,26 +417,21 @@ export function findBestSlot(
           variant: s.currentVariant,
         },
         {
-          familyId: options?.familyId,
-          lane: options?.lane,
-          variant: options?.variant,
+          familyId: selected.familyId,
+          lane: selected.lane,
+          variant: selected.variant,
         },
       );
       return policy.action !== 'block';
     })
-    .sort(
-      (a, b) =>
-        slotScore(a, options?.targetBranch, {
-          familyId: options?.familyId,
-          projectConfigs: options?.projectConfigs,
-          parkPreservedSlotIds: options?.parkPreservedSlotIds,
-        }) -
-        slotScore(b, options?.targetBranch, {
-          familyId: options?.familyId,
-          projectConfigs: options?.projectConfigs,
-          parkPreservedSlotIds: options?.parkPreservedSlotIds,
-        }),
-    );
+    .sort((a, b) => {
+      const before = slotSelectionOptionsFor(a, options)!;
+      const after = slotSelectionOptionsFor(b, options)!;
+      return (
+        slotScore(a, before.targetBranch ?? undefined, before) -
+        slotScore(b, after.targetBranch ?? undefined, after)
+      );
+    });
   if (candidates.length === 0) return null;
   const cdpCandidates = candidates.filter((s) => isCdpLive(s.health.cdp));
   return cdpCandidates.length > 0 ? cdpCandidates[0] : candidates[0];

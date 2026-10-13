@@ -16,7 +16,7 @@ import {
   setPressureAdmissionEnabled,
 } from './pressure-admission-control.js';
 import { resolveDispatchPreviewFromFleet } from './preview.js';
-import { findBestSlot } from './slot-scoring.js';
+import { findBestSlot, type SlotSelectionPlans } from './slot-scoring.js';
 
 /** The lightweight capture reads the kill switch from FARMSLOT_HOME. */
 async function withTempControlHome<T>(run: () => Promise<T>): Promise<T> {
@@ -36,6 +36,87 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const ARTIFACT_DIR = path.join(REPO_ROOT, 'artifacts');
 
 const NOW = Date.parse('2026-08-21T10:00:00.000Z');
+
+test('scoped preview uses candidate profile and execution choices instead of a farm default', () => {
+  const a = slot({ slot: 'a', machine: 'node-a' });
+  const b = slot({ slot: 'b', machine: 'node-b' });
+  const params = {
+    project: 'demo-farm',
+    flowType: 'dev' as const,
+    ticketOrPr: 'TASK-1',
+    prepareProfile: 'sandbox-companion',
+  };
+  const plans: SlotSelectionPlans = new Map([
+    ['a', { params }],
+    [
+      'b',
+      { params: { ...params, prepareProfile: 'plain', runner: 'codex', model: 'selected-model' } },
+    ],
+  ]);
+  const result = resolveDispatchPreviewFromFleet(params, [a, b], undefined, { plans });
+  assert.equal(result.preview.slotId, 'b');
+  assert.equal(result.preview.runner, 'codex');
+  assert.equal(result.preview.model, 'selected-model');
+});
+
+test('scoped scoring uses each pack idle branch while retaining existing host penalties', () => {
+  const a = slot({ slot: 'a', machine: 'node-a', branch: 'experiment-base' });
+  const b = slot({
+    slot: 'b',
+    machine: 'node-b',
+    hostLoad: { cpuPercent: 40, memoryPercent: 30, diskPercent: 30, headroom: 'yellow' },
+  });
+  const params = { project: 'demo-farm', flowType: 'dev' as const, ticketOrPr: 'TASK-1' };
+  assert.equal(resolveDispatchPreviewFromFleet(params, [a, b]).preview.slotId, 'b');
+  const plans: SlotSelectionPlans = new Map([
+    ['a', { params, projectConfigs: { 'demo-farm': { defaultBranch: 'experiment-base' } } }],
+    ['b', { params, projectConfigs: { 'demo-farm': { defaultBranch: 'main' } } }],
+  ]);
+  assert.equal(
+    resolveDispatchPreviewFromFleet(params, [a, b], undefined, { plans }).preview.slotId,
+    'a',
+  );
+});
+
+test('scoped affinity skips an incompatible node and still prefers a valid held slot', () => {
+  const a = slot({ slot: 'a', machine: 'node-a', lifecycle: 'held', branch: 'owner-repo-42' });
+  const b = slot({ slot: 'b', machine: 'node-b', lifecycle: 'held', branch: 'owner-repo-42' });
+  const params = {
+    project: 'demo-farm',
+    flowType: 'pr-complete' as const,
+    ticketOrPr: 'owner/repo#42',
+  };
+  const plans: SlotSelectionPlans = new Map([
+    ['a', { params: { ...params, prepareProfile: 'sandbox-companion' } }],
+    ['b', { params }],
+  ]);
+  assert.equal(
+    resolveDispatchPreviewFromFleet(params, [a, b], undefined, { plans }).preview.slotId,
+    'b',
+  );
+});
+
+test('missing or refused scoped candidates cannot use a floating fallback, including explicit picks', () => {
+  const a = slot({ slot: 'a', machine: 'node-a' });
+  const b = slot({ slot: 'b', machine: 'node-b' });
+  const params = { project: 'demo-farm', flowType: 'dev' as const, ticketOrPr: 'TASK-1' };
+  const plans: SlotSelectionPlans = new Map([
+    ['a', { refusal: 'source ref unavailable' }],
+    ['b', { params }],
+  ]);
+  assert.equal(
+    resolveDispatchPreviewFromFleet(params, [a, b], undefined, { plans }).preview.slotId,
+    'b',
+  );
+  assert.throws(
+    () => resolveDispatchPreviewFromFleet({ ...params, slotId: 'a' }, [a, b], undefined, { plans }),
+    /source ref unavailable/,
+  );
+  assert.throws(
+    () => resolveDispatchPreviewFromFleet(params, [a, b], undefined, { plans: new Map() }),
+    /source plan unavailable/,
+  );
+});
 
 const CONFIG: PressureAdmissionConfig = {
   cpuCritical: 0.9,

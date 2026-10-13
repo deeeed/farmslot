@@ -1,0 +1,207 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion scoped source selections",
+  "description": "Drive the shared source panel against an owned two-node fleet proof. SOURCE_PROOF_ROOT and IOS_SIMULATOR or ANDROID_SERIAL select the fixture and device.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["node_id"],
+    "properties": {
+      "node_id": {
+        "type": "string"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "settings",
+    "nodes": {
+      "settings": {
+        "action": "ui.press",
+        "intent": "Open farm source controls in Settings.",
+        "test_id": "companion-tab-settings",
+        "next": "loaded"
+      },
+      "loaded": {
+        "action": "ui.wait_for",
+        "intent": "The source panel reads the isolated gateway.",
+        "test_id": "source-proof-pack-branch",
+        "timeout_ms": 120000,
+        "next": "invalid"
+      },
+      "invalid": {
+        "action": "ui.set_input",
+        "intent": "A malformed branch cannot publish a pin.",
+        "test_id": "source-proof-pack-branch",
+        "value": "experiment/bad..ref",
+        "next": "invalid-pin"
+      },
+      "invalid-pin": {
+        "action": "ui.press",
+        "intent": "The invalid branch keeps Pin branch disabled.",
+        "selector": "id=\"source-proof-pack-pin\" enabled=false",
+        "next": "invalid-state"
+      },
+      "invalid-state": {
+        "action": "command",
+        "intent": "Gateway state stays on main after refused input.",
+        "cmd": "node --import tsx ../../scripts/sources-validation/client-state.mts native-invalid",
+        "timeout_ms": 180000,
+        "next": "branch"
+      },
+      "branch": {
+        "action": "ui.set_input",
+        "intent": "Select a pushed experimental source branch.",
+        "test_id": "source-proof-pack-branch",
+        "value": "experiment/farm",
+        "next": "keyboard"
+      },
+      "keyboard": {
+        "action": "ui.key_press",
+        "intent": "Finish entry and reveal pin controls.",
+        "key": "Enter",
+        "next": "pin"
+      },
+      "pin": {
+        "action": "ui.press",
+        "intent": "Pin the branch across the farm.",
+        "test_id": "source-proof-pack-pin",
+        "next": "pin-state"
+      },
+      "pin-state": {
+        "action": "command",
+        "intent": "The native action publishes the farm pin through the gateway.",
+        "cmd": "node --import tsx ../../scripts/sources-validation/client-state.mts native-pin",
+        "timeout_ms": 180000,
+        "next": "pin-visible"
+      },
+      "pin-capture": {
+        "action": "ui.screenshot",
+        "intent": "Record branch, scope and base with the recipe HUD.",
+        "path": "screenshots/source-farm-pin.png",
+        "label": "Farm branch source pin",
+        "next": "unpin"
+      },
+      "unpin": {
+        "action": "ui.press",
+        "intent": "Return this scope explicitly to main.",
+        "test_id": "source-proof-pack-unpin",
+        "next": "main-state"
+      },
+      "main-state": {
+        "action": "command",
+        "intent": "The gateway records the explicit main selection.",
+        "cmd": "node --import tsx ../../scripts/sources-validation/client-state.mts native-main",
+        "timeout_ms": 180000,
+        "next": "main-visible"
+      },
+      "main-capture": {
+        "action": "ui.screenshot",
+        "intent": "Record main with the recipe HUD.",
+        "path": "screenshots/source-farm-main.png",
+        "label": "Farm source main",
+        "next": "fleet"
+      },
+      "fleet": {
+        "action": "command",
+        "intent": "Open node scope through the fleet route.",
+        "cmd": "node --import tsx ../../scripts/sources-validation/client-state.mts open-fleet",
+        "next": "node"
+      },
+      "node": {
+        "action": "ui.press",
+        "intent": "Expand the node source panel.",
+        "test_id": "node-{{params.node_id}}-sources",
+        "next": "node-source"
+      },
+      "node-source": {
+        "action": "ui.wait_for",
+        "intent": "The node source panel is mounted in fleet.",
+        "text_contains": ["proof-pack reported"],
+        "timeout_ms": 120000,
+        "next": "node-capture-hud"
+      },
+      "node-capture": {
+        "action": "ui.screenshot",
+        "intent": "Record node precedence and scope with the HUD.",
+        "path": "screenshots/source-node.png",
+        "label": "Node source state",
+        "next": "run"
+      },
+      "run": {
+        "action": "command",
+        "intent": "Open retained inputs through run detail.",
+        "cmd": "node --import tsx ../../scripts/sources-validation/client-state.mts open-run",
+        "next": "run-ready"
+      },
+      "run-source": {
+        "action": "ui.wait_for",
+        "intent": "Retained run inputs remain readable.",
+        "text_contains": ["proof-pack run input"],
+        "timeout_ms": 120000,
+        "next": "run-capture-hud"
+      },
+      "run-capture": {
+        "action": "ui.screenshot",
+        "intent": "Record the retained receipt with the HUD.",
+        "path": "screenshots/source-run.png",
+        "label": "Retained run inputs",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "pin-visible": {
+        "action": "ui.wait_for",
+        "text_contains": ["pinned farm", "experiment/farm"],
+        "timeout_ms": 120000,
+        "intent": "The native panel shows the published branch and scope before capture.",
+        "next": "pin-capture-hud"
+      },
+      "main-visible": {
+        "action": "ui.wait_for",
+        "text_contains": ["main override farm"],
+        "timeout_ms": 120000,
+        "intent": "The native panel shows the returned main selection before capture.",
+        "next": "main-capture-hud"
+      },
+      "pin-capture-hud": {
+        "action": "app.hud",
+        "intent": "Farm pin shows the pushed branch, scope and main base.",
+        "status": "running",
+        "next": "pin-capture"
+      },
+      "main-capture-hud": {
+        "action": "app.hud",
+        "intent": "Farm selection returns explicitly to main.",
+        "status": "running",
+        "next": "main-capture"
+      },
+      "node-capture-hud": {
+        "action": "app.hud",
+        "intent": "Node source state reports its main override.",
+        "status": "running",
+        "next": "node-capture"
+      },
+      "run-capture-hud": {
+        "action": "app.hud",
+        "intent": "Retained run inputs stay fixed and refuse new pins.",
+        "status": "running",
+        "next": "run-capture"
+      },
+      "run-timeline": {
+        "action": "ui.press",
+        "intent": "Open the run timeline that owns the retained source panel.",
+        "next": "run-source",
+        "test_id": "companion-run-tab-timeline"
+      },
+      "run-ready": {
+        "action": "ui.wait_for",
+        "timeout_ms": 30000,
+        "intent": "The retained run workspace exposes its Timeline tab.",
+        "next": "run-timeline",
+        "test_id": "companion-run-tab-timeline"
+      }
+    }
+  }
+}

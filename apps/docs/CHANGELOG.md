@@ -7,6 +7,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 - Document observed enabled-state waits and file-content state proof, with command and assertion controls in the recipe guide.
 
 - Explain the run, gate and evidence responsibilities with truthful migration status; generate run-state/flow tables and shared references from their owning sources.
+- Document scoped source operations, atomic run selections and retry-safe SDK usage.
 
 - Document declared source status and exact-commit synchronization in the gateway API.
 - Document reviewer lane path variables and the all-lane review-fix feedback list.

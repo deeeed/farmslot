@@ -11,6 +11,27 @@ export function sourceLockDigest(lock: Omit<SourceLock, 'digest'>): string {
   return sourceDigest(lock);
 }
 
+/** Execution inputs stay identical when only ref, scope or ownership audit changes. */
+export function sourceInputsDigest(lock: SourceLock): string {
+  assertSourceLock(lock);
+  return sourceDigest({
+    schemaVersion: lock.schemaVersion,
+    project: lock.context.project,
+    packBindings: lock.packBindings,
+    entries: lock.entries
+      .map(({ sourceId, kind, repo, commit, objectFormat, treeDigest, dependencies }) => ({
+        sourceId,
+        kind,
+        repo,
+        commit,
+        objectFormat,
+        treeDigest,
+        dependencies,
+      }))
+      .sort((a, b) => a.sourceId.localeCompare(b.sourceId)),
+  });
+}
+
 export function assertSourceLock(lock: SourceLock): void {
   const { digest, ...content } = lock;
   if (
