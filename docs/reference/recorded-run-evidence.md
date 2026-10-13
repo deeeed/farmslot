@@ -32,6 +32,21 @@ The HUD uses traced intent. Remove independent publication `covers`, stored AC
 clock values and separate HUD captions; clients derive them from the claim/trace
 relationship. Internal validation dependencies are not automatically public.
 
+An artifact package MUST belong to one execution attempt. Preflight and execution
+MUST refuse an existing recipe package before replacing files or starting capture
+or actions, including failed and partial attempts. A rerun uses a fresh artifact
+directory and leaves prior package and publication-reference bytes unchanged.
+Task wrappers allocate fresh attempts and return their actual directory. The
+existing version-1 `latest-valid-recipe-run.json` selects a retained successful
+attempt for task checks; publication still freezes that selection and its bytes.
+`@farmslot/protocol/recipe` owns `LatestValidRecipeRunPointer` and its shared
+`sanitizeLatestValidRecipeRunPointer` helper for gateway and task-check consumers.
+Media selection references original attempt paths rather than overwriting copies.
+The Node `@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs` helper owns
+task selection IO for the CLI and wrappers. Its read/write exports use that
+version-1 contract and are versioned with the runtime package; they grant no
+publication admission.
+
 ## Claim registration and verdicts
 
 Extend the existing `proofTargets` declaration with claim kind, optional parent
@@ -199,14 +214,14 @@ engine contracts belong in `@farmslot/adapter-sdk`; `ProjectRuntime` denotes the
 runtime role represented by the existing provider contract, not a second protocol
 interface to implement.
 
-| API/signature                                                                                                                     | Owner and consumers                                                                       | Status/replacement                                                                                                                            |
-| --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AdapterRecording.target(context): Promise<RecordingTarget>`; `videoRecorder(): Promise<VideoRecorder>`                           | `@farmslot/adapter-sdk`; engine and platform providers                                    | Evolve existing contract; target resolution stays provider-owned                                                                              |
-| `VideoRecorder.start(request): Promise<ActiveVideoRecording>`; `stop(): Promise<VideoRecordingResult>` returning ordered segments | Executable backend contract in the SDK; runner/platform backends                          | Version changed result shape; keep one definition and built-in backends                                                                       |
-| `createDefaultRecipeEngine(options: DefaultRecipeEngineOptions): RecipeEngine`                                                    | Proposed `@farmslot/adapter-sdk`; CLI and custom harness composition                      | Existing public export is `@farmslot/recipe-cli/harness`; move only these engine factory/types in coordinated breaking release, no alias shim |
-| `createEvidenceReviewModel(input): EvidenceReviewModel`; `validateRecordedEvidencePackage(package): ValidationResult`             | Proposed `@farmslot/adapter-sdk/evidence`; every review context, artifact CLI and gateway | Portable model/validator; methods own claim/step selection, caption, seek and bounded playback state                                          |
-| `materializeEvidenceClip(package, moment, outputDir): Promise<ArtifactRef>`                                                       | Proposed `@farmslot/recipe-runner`; artifact CLI/publication                              | Bounded on-demand derivative from validated references                                                                                        |
-| `refreshPublishedEvidence(client, params): Promise<RunRefreshPublishedEvidenceResult>`                                            | Proposed SDK client entry; authorized artifact CLI/integrations                           | Existing typed gateway RPC remains sole publication authority                                                                                 |
+| API/signature                                                                                                                                    | Owner and consumers                                                                   | Status/replacement                                                                                                                            |
+| ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AdapterRecording.target(context): Promise<RecordingTarget>`; `videoRecorder(): Promise<VideoRecorder>`                                          | `@farmslot/adapter-sdk`; engine and platform providers                                | Evolve existing contract; target resolution stays provider-owned                                                                              |
+| `VideoRecorder.start(request): Promise<ActiveVideoRecording>`; `stop(): Promise<VideoRecordingResult>` returning ordered segments                | Executable backend contract in the SDK; runner/platform backends                      | Version changed result shape; keep one definition and built-in backends                                                                       |
+| `createDefaultRecipeEngine(options: DefaultRecipeEngineOptions): RecipeEngine`                                                                   | Proposed `@farmslot/adapter-sdk`; CLI and custom harness composition                  | Existing public export is `@farmslot/recipe-cli/harness`; move only these engine factory/types in coordinated breaking release, no alias shim |
+| `createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceReviewModel`; `validateRecordedEvidencePackage(package): RecipeValidationResult` | Experimental `@farmslot/adapter-sdk/evidence`; web/native review contexts and gateway | Portable model/validator; methods own claim/step selection, caption, seek and bounded playback state                                          |
+| `materializeEvidenceClip(package, moment, outputDir): Promise<ArtifactRef>`                                                                      | Proposed `@farmslot/recipe-runner`; artifact CLI/publication                          | Bounded on-demand derivative from validated references                                                                                        |
+| `refreshPublishedEvidence(client, params): Promise<RunRefreshPublishedEvidenceResult>`                                                           | Proposed SDK client entry; authorized artifact CLI/integrations                       | Existing typed gateway RPC remains sole publication authority                                                                                 |
 
 `readRecordedEvidencePackage(artifactDir)` is the single Node filesystem reader
 exported from the Node entry `@farmslot/adapter-sdk`. CLI artifact validation and gateway
@@ -279,3 +294,242 @@ successful test results:
 - **Frozen refresh:** Replace approved media bytes or request an unapproved artifact and observe refusal; valid approved refresh preserves selection, dependencies, approval and PR identity, and renders hosted media with HTTP 200.
 - **Clean cutover:** One normal ledger writer, no replaced recorder/linking/mapper copies or shim imports; unrecorded headless control and explicitly untimed legacy viewing remain honest.
 - **HUD:** Intent lint accepts 80 characters without a length warning, warns at 81–120 and fails at 121; multi-sentence intents fail. Across supported viewports the shared HUD displays the complete sentence in at most two lines inside its bounded panel, without hiding the checked app content. A harness inherits that HUD without supplying a renderer.
+
+### Review implementation interfaces
+
+The experimental portable SDK model owns claim/occurrence projection, original
+media identity, captions and playback effects. Renderer adapters use each file's
+`artifactPath`; the model retains its package-relative `path` separately. Legacy
+task-ledger paths already belong to the task transport namespace and remain
+untimed. `loadRecordingEvidenceReview` loads only timeline/trace metadata for an
+existing standalone player. It cannot promote a legacy file into a recorded claim.
+
+The Node retained reader accepts optional trusted `RecordedEvidencePackageReadIO`
+callbacks for one root's file inventory, contained JSON reads and actual-byte
+hashes. Local and remote hosts share its input-closure logic and diagnostics.
+The existing recipe-artifact RPC may return selected-package metadata on demand;
+that display snapshot is not frozen approval authority. Gate consumers still
+require the approved complete inventory and canonical validation.
+
+Report review reuses `OutputReviewPayload` and `RunOutput` identity.
+`readEvidenceReviewReport` refuses a changed snapshot or changed report bytes.
+The existing document viewers render that checked text and the same case/check
+controls used at the gate. Publication, visual-judgment persistence and resource
+qualification remain separate completion gates for this feature.
+
+## Accepted amendment: historical review, chapters and footprint
+
+Status: Accepted, 2026-10-13. These requirements define the approved end state;
+implementation remains pending. They add no capture clock or accuracy contract.
+
+### Completed review binding
+
+The default detail view for completed, failed and retrospective runs MUST show
+final evidence and result through the existing gate review component in read-only
+`as-decided` context. Bind it to the final applicable decision's existing frozen
+package identity, closure, selected artifacts and recorded disposition. An output
+acknowledgment binds its existing report/manifest snapshot and is not publication
+approval. The selected snapshot, execution and claim IDs MUST remain visible.
+
+Only selection, playback, navigation and authorized export are available. The
+context MUST expose no gate-resolution, publication, rerun or verdict-writing
+controls, and those operations MUST remain guarded at the authority boundary.
+Diff, observability and analytics are one tab away. Refresh or current task edits
+MUST NOT replace the snapshot on screen.
+
+Without a frozen decision package, show `unreviewed evidence` or `legacy: no
+frozen review`, plus available final artifacts. Never infer approval. Missing
+recording, interruption, missing timeline and pruned media are distinct visible
+states. Frozen claims and measured ranges remain unchanged when media is pruned;
+seeking/export is disabled only for unavailable or incompletely covered sources.
+Keep history metadata for the run's history lifetime. Dependency pins still
+protect unresolved gates and required published references.
+
+### Player and chapters
+
+Where recorded claim markers exist, the shared player MUST be the main element
+with a visible chapter list beside it, or directly below it on a narrow screen.
+Use the existing claim hierarchy, verdicts, intents, expectations and moment refs.
+Do not introduce chapter timestamps, another QA reducer or a chapter store.
+
+Each chapter shows verdict and measured range(s). One selection opens its ordered
+virtual clips using the existing padding and gap rules. Untimed or partly covered
+claims remain listed and disabled for seek. Complete claims in a partial run may
+still play. Selecting an unavailable claim shows its limitation rather than
+silently selecting another chapter.
+
+During selected-claim playback, that claim stays active through its ordered clips.
+During free original playback, choose the deepest measured claim containing the
+position, then latest measured start, then stable claim ID to resolve overlap;
+show its ancestors without changing verdicts. Use the unpadded measured range for
+this lookup. Padding overlaps do not create competing active chapters. The shared
+model owns this rule and both renderers consume the same active ID. Initialize
+only selected media and retain the existing transfer/seek budgets.
+
+### Footprint contract and lifecycle
+
+Proposed protocol-owned `RunDiskFootprint` is a storage projection on `Run`:
+
+- `status`: `complete`, `stale`, `partial`, `unavailable` or `legacy-unknown`;
+- `measuredAt` and the storage retention revision used;
+- known byte totals for recording, stills/materialized clips, logs/transcripts and other retained artifacts;
+- `totalBytes` only for a complete measurement, with unavailable-location count/reason otherwise.
+
+The category sum is the known owned-byte count. A partial count is a labeled lower
+bound; an unavailable or legacy total is not zero. Count regular-file lengths,
+excluding directory/block overhead, sparse allocation and shared extents. Count
+run-owned files in all retained locations, including cache/mirror copies and
+managed execution logs/transcripts; exclude the application checkout and dependency
+caches. Virtual clips add zero bytes. Storage assigns each shared object one
+owner, and exposes referenced shared bytes separately from owned bytes. Per-project
+history totals deduplicate storage objects, include all retained history rather
+than just the listed page, and report unknown coverage.
+
+Storage MUST publish a measurement at completion. Before a retention mutation it
+marks the current projection stale; after the mutation it recomputes against the
+new retention revision. Readers MUST label stale/partial data. Keep completion
+measurement separate from current retained usage so pruning does not rewrite the
+historical review. An offline location or failed stat produces an explicit
+incomplete measurement and retry through storage, without changing the run verdict.
+
+### Public surface and adoption
+
+The existing run detail/list RPCs and SDK client methods expose footprint and final
+review references, using additive `@farmslot/protocol` DTOs. `farmslot run get <id>`
+is the existing detail/show operation and prints both; `run list` adds retained
+bytes and its completeness state. Project-filtered history shows totals and
+unknown coverage. `farmslot recipe artifacts` resolves completed task/run context
+to its final snapshot for validation, claim selection and requested clip export;
+it never silently falls back to current files.
+
+The experimental SDK review model accepts completed/read-only context, frozen
+snapshot identity and storage availability. Its existing claims and selection
+methods drive chapters; active-claim lookup and availability are shared extensions.
+Clients render the same claims/ranges, with platform-specific layout only. Runtime
+providers inherit default UI capture, retention reporting and footprint projection;
+authors add no recording, timestamp, linking or filesystem code. Generate CLI
+reference entries with the implementation. Unavailable legacy coverage stays
+explicit during migration; do not backfill fabricated review identities.
+
+### Testable amendment requirements
+
+- **H1:** Both clients reopen a completed approved run on the same final package, verdicts, expectations and evidence; current task edits and refresh cannot change it. Failed/rejected and report-acknowledged runs preserve their different dispositions.
+- **H2:** All historical review actions are read-only. Attempts to resolve/publish/edit a historical snapshot through a client or SDK are refused by the authority boundary. Other tabs remain one action away.
+- **H3:** A multi-case, segmented QA package shows every case/check chapter and exact range. Selection, playback transitions and overlapping ranges produce identical active IDs in both clients; untimed/outside/pruned entries remain visible without invented seeks.
+- **H4:** UI recipes in development, bug-fix and QA inherit capture without author recording steps. Headless/no-UI and reasoned operator opt-out are explicit controls; target or capture failure is not silently omitted.
+- **H5:** Completion and retention measurements equal known fixture file sizes by category; virtual clips add zero, physical copies count once, and shared references do not double project totals. Offline, stale and legacy measurements never appear as zero or complete.
+- **H6:** CLI/SDK and both clients show the same current and completion footprint, final snapshot reference and project-history coverage. Pruning changes availability/current bytes while preserving the review's verdicts, timing metadata and original completion measurement.
+- **H7:** A legacy run without frozen review metadata opens with its limitation and available artifacts. Migration creates no inferred approval, alternate player, selector or byte-sum implementation.
+
+## Shared review curation and saved results
+
+[ADR-062 Amendment 2](../adr/062-recorded-run-evidence.md#amendment-2-2026-10-12-shared-review-curation-and-saved-results)
+owns the delivered finding-publication and retained-review presentation contract.
+Its normative [review curation specification](review-curation-and-results.md)
+defines reviewed-source reads, payload fingerprints, immutable accepted payloads,
+selected finding publication and read-only saved results. Existing protocol
+projections and native viewers are shared. This contract retains its own accepted
+status and shipping PRs. The historical-review/footprint design in
+[#967](https://github.com/deeeed/farmslot/pull/967) has separate acceptance and
+pending implementation.
+
+## Evidence gate policy
+
+Status: Proposed, 2026-10-13, ADR-062 Amendment 3. These requirements become
+normative on design acceptance. They change publication policy, not recording
+contracts or artifact-only output-review authority.
+
+### Integrity and policy findings
+
+The gateway MUST first load and validate the selected frozen input closure using
+the canonical reader and validator. Unreadable/missing inputs, invalid structure,
+digest mismatch, replaced bytes and tampering MUST block every publish action.
+Legacy display access MUST NOT become machine-validated evidence.
+
+The same evaluator MUST expose typed policy findings separately: disallowed claim
+verdict, criterion text binding, expected-baseline applicability, or non-recipe
+criterion binding. Clients MUST consume this shared classification rather than
+parse messages. Unknown failures are non-bypassable. Code review, CI, source,
+publication selection and other gate prerequisites retain their existing policy.
+
+### Human attested approval
+
+`approve-publish-evidence-attested` MUST be offered only for an unresolved human
+publish gate with valid integrity and at least one eligible policy finding.
+The existing gate UI MUST show the findings and require a reason before its
+explicit confirmation; the CLI MUST require `--reason <text>` for this action.
+Empty/whitespace-only reasons MUST be refused.
+
+The gateway MUST resolve current person identity, active credential and publish
+authority from trusted ingress context, then recheck them at consumption.
+Service/node identities, automatic resolution, direct background calls and the
+synthetic solo-mode person MUST be refused even with a reason. Client kind,
+client-supplied actor and runner name confer no human authority. Operator
+credentials MUST NOT be delegated to workers or lanes.
+
+Before publication, persist the reason, trusted approver identity, time, run and
+decision IDs, frozen package/manifest identity, selected evidence and waived
+typed policy findings in the existing decision/run provenance. The persisted
+receipt MUST render in the PR body through the normal publication pipeline and
+remain visible through refresh. Never copy credential secrets into the receipt.
+
+Consumption MUST revalidate the decision and exact package after awaits; a
+refresh, selection or input change invalidates the attestation. Refusal leaves
+the gate unresolved. Attestation MUST NOT rewrite trace, claims, task ledger,
+media or machine readiness into successful proof. It waives only the recorded
+policy findings; integrity and unrelated prerequisites still block.
+
+### Normal applicability and binding
+
+1. **Expected baseline.** A task-declared baseline binds an exact selected
+   execution and qualified assertion occurrence to an expected failure. It
+   satisfies that baseline expectation only when the trace fails at that
+   occurrence, with no unexpected earlier/additional failure or interrupted
+   capture. A directory name or failing summary alone is insufficient. Preserve
+   the failed summary and missing later claims; a separate passing execution
+   must satisfy the implementation's positive claims. Freeze the declaration
+   with the existing gate evidence inputs, not in a new evidence store.
+2. **Retained inspection.** A schema-v1 task ledger's inspected `proven` row may
+   satisfy a schema-v2 visual/mixed claim's `awaiting-review` policy only when
+   registered ID/text and cited evidence bind to the same selected execution's
+   frozen closure. No evidence or a different attempt cannot bridge the verdict.
+   Keep the original schema-v2 verdict and the legacy review source visible;
+   this migration rule does not restore a second normal verdict writer.
+3. **Criterion text.** Match registered IDs using the shared claim-ID normalizer.
+   Trim/collapse whitespace and remove only a leading `AC<n>:` label whose ID
+   matches that criterion. The remaining text MUST match exactly. Do not ignore
+   changed meaning, a different AC label or mismatched IDs.
+4. **Non-recipe proof.** Task-declared unit/revert-test evidence may satisfy its
+   applicable state criterion through its retained successful result and checked
+   citations. Do not require a fabricated recipe claim. Missing/failed results,
+   uncited files or unit-only evidence for a visual criterion remain unsatisfied.
+
+### Public surface and conformance
+
+Protocol owns the additive action descriptor, reason input and attestation
+receipt on the existing `RunResolveDecisionParams`/decision contracts. Existing
+CLI and SDK/gateway transports consume the same typed `run.resolveDecision`
+boundary; it always requires human authority. `farmslot run gate <runId>
+--action approve-publish-evidence-attested --reason <text>` is the sole new CLI
+use. Generate its CLI reference and document the reason/receipt contract with
+the implementation. Shared web/native action projections and existing gate
+renderers present identical findings; no second policy mapper or gate component.
+Contracts version with `@farmslot/protocol`; no recording-schema bump, new
+provider extension or agent evidence instructions are required.
+
+- **G1:** A credential-backed publish-authorized person can attest a valid frozen
+  package with policy mismatches. The same reason/actor/package receipt appears
+  in the retained decision, PR body and refreshed body.
+- **G2:** Blank reason, service/node/background/solo caller, revoked credential,
+  stale decision or changed package refuses without publication or resolution.
+- **G3:** Missing input, invalid structure, wrong digest or tampering refuses even
+  with valid human identity/reason. Unrelated review/CI/source refusal persists.
+- **G4:** The exact expected baseline failure satisfies only its declaration;
+  wrong-step failure, unexpected pass, additional failure and interruption do not.
+- **G5:** The four normal rules admit bound baseline, inspected pending visual,
+  matching AC-label and declared test evidence without attestation. Their
+  wrong-attempt/text/ID/result counterparts remain blocked; original artifacts
+  and verdicts stay byte-for-byte unchanged.
+- **G6:** CLI and both gate contexts use the shared descriptor and gateway
+  classification. Artifact-only output review and legacy read-only viewing keep
+  their existing authority; neither grants publication.

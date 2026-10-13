@@ -4754,12 +4754,15 @@ __metadata:
     agent-device: ">=0.19.3"
     react: ">=19"
     react-native: ">=0.79"
+    react-native-safe-area-context: ">=5"
   peerDependenciesMeta:
     agent-device:
       optional: true
     react:
       optional: true
     react-native:
+      optional: true
+    react-native-safe-area-context:
       optional: true
   bin:
     farmslot-adapter-rn: ./bin/farmslot-adapter-rn.mjs
@@ -4772,6 +4775,7 @@ __metadata:
   dependencies:
     "@farmslot/protocol": "workspace:*"
     "@farmslot/recipe-runner": "workspace:*"
+    "@noble/hashes": "npm:^1.8.0"
     "@types/node": "npm:^22.0.0"
     eslint: "npm:^10.3.0"
     prettier: "npm:^3.8.3"
@@ -4869,6 +4873,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@farmslot/command-center-ui@workspace:apps/command-center/ui"
   dependencies:
+    "@farmslot/adapter-sdk": "workspace:*"
     "@farmslot/protocol": "workspace:*"
     "@farmslot/review-dispatch": "workspace:*"
     "@farmslot/theme": "workspace:*"
@@ -4990,6 +4995,7 @@ __metadata:
     "@expo/log-box": "npm:^57.0.2"
     "@expo/vector-icons": "npm:^15.0.3"
     "@farmslot/adapter-rn": "workspace:*"
+    "@farmslot/adapter-sdk": "workspace:*"
     "@farmslot/protocol": "workspace:*"
     "@farmslot/recipe-runner": "workspace:*"
     "@farmslot/review-dispatch": "workspace:*"
@@ -5018,7 +5024,7 @@ __metadata:
     expo-haptics: "npm:~57.0.1"
     expo-linking: "npm:~57.0.5"
     expo-notifications: "npm:~57.0.8"
-    expo-router: "npm:~57.0.10"
+    expo-router: "patch:expo-router@npm%3A57.0.10#~/.yarn/patches/expo-router-npm-57.0.10-8111d1eb3e.patch"
     expo-screen-orientation: "npm:~57.0.1"
     expo-secure-store: "npm:~57.0.1"
     expo-splash-screen: "npm:~57.0.5"
@@ -5049,6 +5055,7 @@ __metadata:
     "@farmslot/agent-runtime": "workspace:*"
     "@farmslot/capabilities": "workspace:*"
     "@farmslot/protocol": "workspace:*"
+    "@farmslot/slot-config": "workspace:*"
     "@types/node": "npm:^22.0.0"
     "@types/ws": "npm:^8.5.0"
     tsx: "npm:^4.19.0"
@@ -13031,7 +13038,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"expo-router@npm:~57.0.10":
+"expo-router@npm:57.0.10":
   version: 57.0.10
   resolution: "expo-router@npm:57.0.10"
   dependencies:
@@ -13094,6 +13101,72 @@ __metadata:
     react-server-dom-webpack:
       optional: true
   checksum: 10c0/c5b8b0d0d01b5eb5c0e56a4b6d2263f8260e1c71c30e0f30e533fdc9d230882e3a3be9505cb7938f333a0a501602696bcf52a2a9dc8d5602244754d9e284547e
+  languageName: node
+  linkType: hard
+
+"expo-router@patch:expo-router@npm%3A57.0.10#~/.yarn/patches/expo-router-npm-57.0.10-8111d1eb3e.patch":
+  version: 57.0.10
+  resolution: "expo-router@patch:expo-router@npm%3A57.0.10#~/.yarn/patches/expo-router-npm-57.0.10-8111d1eb3e.patch::version=57.0.10&hash=18f4cf"
+  dependencies:
+    "@expo/log-box": "npm:^57.0.2"
+    "@expo/metro-runtime": "npm:^57.0.8"
+    "@expo/schema-utils": "npm:^57.0.2"
+    "@expo/ui": "npm:^57.0.9"
+    "@radix-ui/react-slot": "npm:^1.2.0"
+    "@radix-ui/react-tabs": "npm:^1.1.12"
+    "@react-native-masked-view/masked-view": "npm:^0.3.2"
+    "@testing-library/jest-dom": "npm:^6.9.1"
+    "@testing-library/user-event": "npm:^14.6.1"
+    client-only: "npm:^0.0.1"
+    color: "npm:^4.2.3"
+    debug: "npm:^4.3.4"
+    escape-string-regexp: "npm:^4.0.0"
+    expo-glass-effect: "npm:^57.0.1"
+    expo-server: "npm:^57.0.1"
+    expo-symbols: "npm:^57.0.1"
+    fast-deep-equal: "npm:^3.1.3"
+    invariant: "npm:^2.2.4"
+    nanoid: "npm:^3.3.8"
+    query-string: "npm:^7.1.3"
+    react-fast-compare: "npm:^3.2.2"
+    react-is: "npm:^19.1.0"
+    react-native-drawer-layout: "npm:^4.2.2"
+    react-native-screens: "npm:^4.26.0"
+    server-only: "npm:^0.0.1"
+    sf-symbols-typescript: "npm:^2.1.0"
+    shallowequal: "npm:^1.1.0"
+    standard-navigation: "npm:^0.0.5"
+    vaul: "npm:^1.1.2"
+  peerDependencies:
+    "@expo/log-box": ^57.0.2
+    "@expo/metro-runtime": ^57.0.8
+    "@testing-library/react-native": ">= 13.2.0"
+    expo: "*"
+    expo-constants: ^57.0.9
+    expo-linking: ^57.0.5
+    react: "*"
+    react-dom: "*"
+    react-native: "*"
+    react-native-gesture-handler: "*"
+    react-native-reanimated: "*"
+    react-native-safe-area-context: ">= 5.4.0"
+    react-native-screens: ^4.26.0
+    react-native-web: "*"
+    react-server-dom-webpack: ~19.0.4 || ~19.1.5 || ~19.2.4
+  peerDependenciesMeta:
+    "@testing-library/react-native":
+      optional: true
+    react-dom:
+      optional: true
+    react-native-gesture-handler:
+      optional: true
+    react-native-reanimated:
+      optional: true
+    react-native-web:
+      optional: true
+    react-server-dom-webpack:
+      optional: true
+  checksum: 10c0/5371cbc4fe5277c6ae43c71fe55925487fff3f00c2c96124999ee4a3a0df9fda9d1cc530df1b4e389180668ca4ff59d5628c6b8fb64b92b01397b94f3a0dc6a7
   languageName: node
   linkType: hard
 

@@ -14,6 +14,7 @@ import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { formatCreatedAt, formatDuration, routeForRun, runStatusColor } from '../runs/run-utils.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
+import { renderRunTitle } from '../shared/run-title.js';
 
 const DEFAULT_LIMIT = 25;
 
@@ -531,10 +532,9 @@ export class SlotHistoryModal extends LitElement {
             ></span
           >
           <span class="shm-run-info">
-            <span class="shm-run-title" title=${run.summary ?? run.ticketOrPr}
-              >${run.flowType} · ${run.summary ?? run.ticketOrPr}</span
-            >
+            ${renderRunTitle(run, 'shm-run-title')}
             <span class="shm-run-meta">
+              <span class="shm-meta-item">${run.flowType}</span>
               <span class="shm-meta-item shm-meta-strong">${run.ticketOrPr}</span>
               <span class="shm-meta-item">${run.branch ?? 'no branch'}</span>
               <span class="shm-meta-item">${run.runner ?? '-'} / ${modelText}</span>

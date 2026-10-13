@@ -99,5 +99,6 @@ export type {
 export {
   readRecordedEvidencePackage,
   type RecordedEvidencePackageReadCheck,
+  type RecordedEvidencePackageReadIO,
   type RecordedEvidencePackageReadResult,
 } from '@farmslot/recipe-runner';

@@ -1,10 +1,11 @@
 import * as Haptics from 'expo-haptics';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, type LayoutChangeEvent, Pressable, ScrollView, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { type EvidenceReviewModel, readEvidenceReviewReport } from '@farmslot/adapter-sdk/evidence';
 import {
   type DecisionListResult,
   Events,
@@ -36,13 +37,17 @@ import {
 import { DocumentViewer } from '../../components/DocumentViewer';
 import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
 import { MediaViewer } from '../../components/MediaViewer';
+import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
 import { TaskProgressFallbackPanel, TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { useConnectedTransport } from '../../hooks/useConnectedTransport';
 import { useHumanGateGuard } from '../../hooks/useHumanGateGuard';
+import { useRunAcceptance } from '../../hooks/useRunAcceptance';
 import { useRunResourcePosture } from '../../hooks/useRunResourcePosture';
+import { acceptanceEvidenceHref } from '../../lib/acceptance-evidence';
 import {
   type ArtifactManifestEntry,
   artifactsForRecipeRun,
+  artifactUrl,
   artifactUrlForEntry,
   classifyArtifact,
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
@@ -54,6 +59,7 @@ import { documentTitle, presentDecision } from '../../lib/decision-presentation'
 import { decisionResolveRequest } from '../../lib/decision-resolve';
 import { decisionRunId, enrichDecisionWithRunContext } from '../../lib/decision-run-context';
 import { diffArtifactCandidate } from '../../lib/diff';
+import { evidenceMediaItems } from '../../lib/evidence-media-items';
 import { gateReviewHref, HUMAN_GATE_DECISION_TYPE } from '../../lib/gate-review';
 import { gatewayFetch } from '../../lib/gateway-http-auth';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
@@ -171,6 +177,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   );
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const isFocused = useIsFocused();
   const client = useConnectionStore((s) => s.client);
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
@@ -183,9 +190,11 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const [decision, setDecision] = useState<DecisionDetail | null>(storeDecision ?? null);
   const [error, setError] = useState<string | null>(null);
   const [viewerUri, setViewerUri] = useState<string | null>(null);
-  const [documentViewer, setDocumentViewer] = useState<{ title: string; body: string } | null>(
-    null,
-  );
+  const [documentViewer, setDocumentViewer] = useState<{
+    title: string;
+    body: string;
+    evidenceModel?: EvidenceReviewModel;
+  } | null>(null);
   const [sourceRun, setSourceRun] = useState<Run | null>(null);
   useEffect(() => {
     reviewPicker.setContext({
@@ -312,6 +321,14 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const runPosture = runPostureStatus.state?.posture;
   // The gate review's publish guard applies here too: this tab sends the same actions.
   const humanGate = useHumanGateGuard(client, sourceRun, decision);
+  const outputReviewPayload =
+    decision?.payload?.kind === 'output-review' ? decision.payload : undefined;
+  const outputAcceptance = useRunAcceptance(client, outputReviewPayload ? sourceRun : null, {
+    reportSnapshot: outputReviewPayload,
+    decisionId: outputReviewPayload ? decision?.id : undefined,
+  });
+  const reviewBudget =
+    decision?.payload?.kind === 'ready' ? decision.payload.reviewRoundBudget : null;
   const withheldActions = useMemo(
     () =>
       new Map(
@@ -753,6 +770,39 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     [artifactAuthHeaders, gatewayUrl, presentation?.runId],
   );
 
+  const openOutputReport = useCallback(async () => {
+    const model = outputAcceptance.evidenceModel;
+    if (!model || !presentation?.runId) return;
+    documentAbortRef.current?.abort();
+    const controller = new AbortController();
+    documentAbortRef.current = controller;
+    setLoadingDocument(outputReviewPayload?.reportPath ?? null);
+    try {
+      const report = await readEvidenceReviewReport(model, async (path) => {
+        const response = await gatewayFetch(
+          artifactUrl(gatewayUrl, presentation.runId!, path),
+          artifactAuthHeaders,
+          { signal: controller.signal },
+        );
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return new Uint8Array(await response.arrayBuffer());
+      });
+      if (!controller.signal.aborted)
+        setDocumentViewer({ title: report.caption, body: report.body, evidenceModel: model });
+    } catch (error) {
+      if (!controller.signal.aborted)
+        Alert.alert('Report unavailable', error instanceof Error ? error.message : String(error));
+    } finally {
+      if (!controller.signal.aborted) setLoadingDocument(null);
+    }
+  }, [
+    artifactAuthHeaders,
+    gatewayUrl,
+    outputAcceptance.evidenceModel,
+    outputReviewPayload?.reportPath,
+    presentation?.runId,
+  ]);
+
   const openDiffArtifact = useCallback(
     (path: string, replace = false) => {
       if (!presentation?.runId) return;
@@ -858,14 +908,12 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const visualViewerItems = useMemo(() => {
     if (!presentation?.runId) return [];
     const runId = presentation.runId;
-    const items = presentation.artifactManifest
-      .filter((artifact) => ['image', 'video'].includes(classifyArtifact(artifact)))
-      .map((artifact) => ({
-        uri: artifactUrlForEntry(gatewayUrl, runId, artifact),
-        title: artifact.label ?? artifact.path,
-        mediaType: classifyArtifact(artifact),
-        authHeaders: artifactAuthHeaders,
-      }));
+    const items = evidenceMediaItems(
+      presentation.artifactManifest,
+      (artifact) => artifactUrlForEntry(gatewayUrl, runId, artifact),
+      artifactAuthHeaders,
+      humanGate?.acceptance.evidenceModel ?? outputAcceptance.evidenceModel,
+    );
 
     for (const pair of recipeFallbackPairs) {
       for (const artifact of [pair.before, pair.after]) {
@@ -890,6 +938,8 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     presentation?.artifactManifest,
     presentation?.runId,
     recipeFallbackPairs,
+    humanGate?.acceptance.evidenceModel,
+    outputAcceptance.evidenceModel,
   ]);
 
   if (!decision || !presentation) {
@@ -1551,6 +1601,44 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
           />
         ) : null}
 
+        {outputReviewPayload ? (
+          <View
+            style={styles.section}
+            onLayout={rememberSection('reports')}
+            testID="companion-output-review"
+          >
+            <Text style={styles.sectionTitle}>Review QA output</Text>
+            <Text style={baseStyles.textMuted}>
+              Report snapshot {outputReviewPayload.manifestDigest}
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              testID="companion-output-report"
+              disabled={!outputAcceptance.evidenceModel || Boolean(loadingDocument)}
+              onPress={() => void openOutputReport()}
+            >
+              <Text style={styles.reportTitle}>Read verified report</Text>
+            </Pressable>
+            <TaskAcceptancePanel
+              evidenceModel={outputAcceptance.evidenceModel}
+              acceptanceStatus={outputAcceptance.acceptanceStatus}
+              acceptanceCriteria={outputAcceptance.acceptanceCriteria}
+              error={outputAcceptance.error}
+              onOpenEvidence={(criterionId, path) =>
+                router.push(
+                  acceptanceEvidenceHref(
+                    presentation.runId!,
+                    criterionId,
+                    path,
+                    outputAcceptance.recipeRunId,
+                    decision?.id,
+                  ),
+                )
+              }
+            />
+          </View>
+        ) : null}
+
         {presentation.textSections.length > 0 && (
           <View style={styles.section} onLayout={rememberSection('reports')}>
             <Text style={styles.sectionTitle}>Reports</Text>
@@ -1608,6 +1696,12 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
 
         <View style={styles.section} onLayout={rememberSection('actions')}>
           <Text style={styles.sectionTitle}>Evidence-reviewed actions</Text>
+          {reviewBudget ? (
+            <Text style={styles.safetyText} testID="companion-review-round-budget">
+              {reviewBudget.label}
+              {reviewBudget.diagnosis ? `\n${reviewBudget.diagnosis}` : ''}
+            </Text>
+          ) : null}
           {reviewPublication.curation && <ReviewPublicationPanel {...reviewPublication} />}
           <View style={styles.safetyCard}>
             <Text style={styles.safetyTitle}>Resolve only from full context</Text>
@@ -1688,7 +1782,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
                       key={action.id}
                       model={reviewPicker}
                       testID="companion-gate-review"
-                      disabled={!client || disabled}
+                      disabled={!client || disabled || reviewBudget?.remaining === 0}
                       action="request-review"
                       actionLabel={action.label}
                       onInvoke={(actionId, payload) =>
@@ -1731,7 +1825,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
 
         <MediaViewer
           testID="companion-artifact-media-viewer"
-          visible={canShowViewer}
+          visible={isFocused && canShowViewer}
           uri={viewerUri}
           items={visualViewerItems}
           authHeaders={artifactAuthHeaders}
@@ -1739,11 +1833,30 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
           onClose={() => setViewerUri(null)}
         />
         <DocumentViewer
-          visible={!!documentViewer}
+          visible={isFocused && !!documentViewer}
           title={documentViewer?.title ?? ''}
           body={documentViewer?.body ?? ''}
           onClose={() => setDocumentViewer(null)}
-        />
+        >
+          {documentViewer?.evidenceModel && sourceRunId ? (
+            <TaskAcceptancePanel
+              acceptanceStatus={null}
+              evidenceModel={documentViewer.evidenceModel}
+              onOpenEvidence={(criterionId, path) => {
+                setDocumentViewer(null);
+                router.push(
+                  acceptanceEvidenceHref(
+                    sourceRunId,
+                    criterionId,
+                    path,
+                    outputAcceptance.recipeRunId,
+                    decision?.id,
+                  ),
+                );
+              }}
+            />
+          ) : null}
+        </DocumentViewer>
       </Animated.ScrollView>
     </View>
   );

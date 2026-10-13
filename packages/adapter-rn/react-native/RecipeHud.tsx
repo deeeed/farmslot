@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import {
   type StyleProp,
   StyleSheet,
@@ -8,8 +8,13 @@ import {
   type ViewProps,
   type ViewStyle,
 } from 'react-native';
+import { initialWindowMetrics, SafeAreaInsetsContext } from 'react-native-safe-area-context';
 
-import { hudIntentDisplay } from '@farmslot/protocol/recipe';
+import {
+  hudIntentDisplay,
+  type RecipeHudPlacement,
+  waitForHudPaint,
+} from '@farmslot/protocol/recipe';
 
 export type FarmslotRecipeHudStatus = 'idle' | 'running' | 'pass' | 'fail';
 
@@ -19,6 +24,55 @@ export interface FarmslotRecipeHudState {
   currentStep?: number;
   totalSteps?: number;
   error?: string;
+  position?: RecipeHudPlacement;
+}
+
+export type RecipeHudStateController = readonly [
+  FarmslotRecipeHudState | null,
+  (state: FarmslotRecipeHudState | null) => Promise<void>,
+];
+
+interface HudAcknowledgement {
+  resolve(): void;
+  reject(error: unknown): void;
+}
+
+/** Bridge acknowledgement follows the committed HUD rather than the state setter. */
+export function useRecipeHudState(): RecipeHudStateController {
+  const [state, setState] = useState<FarmslotRecipeHudState | null>(null);
+  const current = useRef(state);
+  current.current = state;
+  const pending = useRef<HudAcknowledgement[]>([]);
+  const lifecycle = useRef<AbortController | null>(null);
+  const update = useCallback((next: FarmslotRecipeHudState | null) => {
+    if (next === current.current) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      pending.current.push({ resolve, reject });
+      setState(next);
+    });
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    lifecycle.current = controller;
+    return () => {
+      const error = new Error('HUD provider unmounted.');
+      controller.abort(error);
+      for (const acknowledgement of pending.current.splice(0)) acknowledgement.reject(error);
+    };
+  }, []);
+  useEffect(() => {
+    const acknowledgements = pending.current.splice(0);
+    if (acknowledgements.length)
+      void waitForHudPaint(requestAnimationFrame, lifecycle.current?.signal).then(
+        () => {
+          for (const acknowledgement of acknowledgements) acknowledgement.resolve();
+        },
+        (error: unknown) => {
+          for (const acknowledgement of acknowledgements) acknowledgement.reject(error);
+        },
+      );
+  }, [state]);
+  return [state, update];
 }
 
 export interface FarmslotRecipeHudText {
@@ -61,6 +115,7 @@ export function RecipeHud({
   overlay: Overlay,
   onLayout,
 }: Readonly<RecipeHudProps>): React.ReactElement | null {
+  const insets = useContext(SafeAreaInsetsContext) ?? initialWindowMetrics?.insets;
   if (!state || state.status === 'idle') return null;
   const badge = text?.badge?.(state) ?? formatBadge(state);
   const intent = hudIntentDisplay(text?.intent?.(state) ?? state.intent, 'native');
@@ -75,7 +130,13 @@ export function RecipeHud({
       pointerEvents="none"
       style={[
         styles.container,
+        state.position === 'top' ? { top: (insets?.top ?? 0) + 16, bottom: undefined } : undefined,
         customStyles?.container,
+        state.position === 'top'
+          ? { bottom: undefined }
+          : state.position === 'bottom'
+            ? { top: undefined }
+            : undefined,
         intent.panel,
         { overflow: 'hidden', flexDirection: 'row' },
       ]}

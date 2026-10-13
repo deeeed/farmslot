@@ -16,6 +16,7 @@ import {
 export { assertNoUnknownPlaceholders, collectPlaceholderTokens };
 
 import { farmslotRoot, type ProjectVars, type RawProjectJson, type SlotVars } from './config.js';
+import { currentProjectSources, expandSourceBindings } from './source-binding.js';
 
 const localHostname = os.hostname().replace(/\.local$/, '');
 
@@ -76,7 +77,10 @@ function expandTemplateInternal(
   ) {
     throw new Error(missingMetroPortMessage(slotVars));
   }
-  let result = template;
+  let result = expandSourceBindings(
+    template,
+    currentProjectSources() ?? projectVars?.sourceContext,
+  );
   // Runtime extras (e.g. --domain overlays) take precedence over project vars
   // and resource fields — apply them first so later passes see no placeholder.
   if (extraVars) {

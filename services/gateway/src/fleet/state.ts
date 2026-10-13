@@ -27,6 +27,7 @@ import {
 } from '@farmslot/protocol';
 
 import {
+  declaredProjectNames,
   isIgnoredPoolFile,
   normalizeRawProjectAutoRecovery,
   normalizeRawProjectBacklog,
@@ -36,7 +37,10 @@ import {
   normalizeRawRuntimeCapabilities,
   normalizeRawStaticReview,
   poolDir,
+  projectPackRoot,
   projectsDir,
+  projectSourceContext,
+  readSourceRuntimeSettings,
 } from '../core/config.js';
 import { farmslotRoot, resolveStatusFilePath } from '../projects/repo-root.js';
 
@@ -768,12 +772,17 @@ export async function loadPoolConfig(machine: string): Promise<PoolConfig | null
 export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
   const projects: ProjectConfig[] = [];
   try {
-    const dirs = await readdir(projectsDir);
+    const dirs = declaredProjectNames() ?? (await readdir(projectsDir));
     for (const dir of dirs) {
       try {
-        const configPath = path.join(projectsDir, dir, 'project.json');
+        const configPath = path.join(
+          await projectPackRoot(dir, path.join(projectsDir, dir)),
+          'project.json',
+        );
         const content = await readFile(configPath, 'utf-8');
         const raw = JSON.parse(content);
+        if (await projectSourceContext(dir))
+          Object.assign(raw, await readSourceRuntimeSettings(dir));
         const staticReview = normalizeRawStaticReview(
           raw.static_review,
           configPath,

@@ -70,9 +70,12 @@ export {
   HUD_INTENT_MAX_LINES,
   HUD_PANEL_BOUNDS,
   hudIntentDisplay,
+  hudPlacement,
   hudSecondaryText,
   RECIPE_INTENT_MAX_LENGTH,
   RECIPE_INTENT_WARN_LENGTH,
+  type RecipeHudPlacement,
+  waitForHudPaint,
 } from './hud-intent.js';
 export {
   getRecipeActionManifestActionNames,
@@ -91,6 +94,10 @@ export {
   validateRecipeRecordingTimelineBinding,
   validateRecipeRecordingTimelineDocument,
 } from './recording.js';
+export {
+  type LatestValidRecipeRunPointer,
+  sanitizeLatestValidRecipeRunPointer,
+} from './run-pointer.js';
 export {
   CAPTURE_EVIDENCE_INCOMPLETE,
   CAPTURE_INTERRUPTED_REASON,

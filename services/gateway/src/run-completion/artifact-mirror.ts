@@ -18,6 +18,7 @@ import {
   resolveProjectTaskDirName,
   resolveTaskRelDir,
 } from '../core/config.js';
+import { execArgvOnSlot } from '../core/exec.js';
 import {
   type LatestValidRecipeRunPointer,
   sanitizeLatestValidRecipeRunPointer,
@@ -37,11 +38,14 @@ import {
   invalidateArtifactTextCache,
   invalidateLiveRecipeContextMemo,
 } from '../live-recipe/context.js';
+import { parseQaResult } from '../qa/completion.js';
+import { readAcceptanceStatusLedger } from '../tasks/acceptance-status.js';
 import { WORKER_MIRROR_SUFFIX } from '../tasks/sidecars.js';
 
 import {
   type EvidenceManifest,
   evidenceManifestArtifactPaths,
+  normalizeEvidenceManifestArtifactPath,
   validateEvidenceManifest,
 } from './evidence-manifest.js';
 import { PR_BODY_ARTIFACT, PR_PROSE_ARTIFACT } from './pr-body-render.js';
@@ -297,10 +301,43 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
   const citedPaths = workerArtifactsExist
     ? await workerPrBodyCitedPaths(vars, workerArtifactsDir)
     : [];
+  // Artifact-only QA can declare packages deeper than publication discovery,
+  // plus state AC files outside recipe roots. Copy the existing contracts'
+  // named closure so output recapture does not prune its own required proof.
+  const outputPaths: string[] = [];
+  const qaResultPath = path.join(workerArtifactsDir, 'qa-result.json');
+  if (
+    run.flowType === 'qa' &&
+    run.completionPolicy === 'artifact-only' &&
+    (await slotFileExists(vars, qaResultPath))
+  ) {
+    const head = await execArgvOnSlot(vars, ['git', 'rev-parse', 'HEAD']);
+    if (head.exitCode !== 0) throw new Error('QA output source HEAD is unavailable');
+    const qa = parseQaResult(
+      JSON.parse(await slotReadFile(vars, qaResultPath)),
+      run,
+      head.stdout.trim(),
+    );
+    outputPaths.push(qa.suitePath, qa.scope.path, ...Object.values(qa.packages));
+    const acceptance = await readAcceptanceStatusLedger(vars, workerTaskDir);
+    for (const row of acceptance?.criteria ?? []) {
+      for (const evidence of row.evidence) {
+        const normalized = normalizeEvidenceManifestArtifactPath(evidence, { mediaOnly: false });
+        if (!normalized) throw new Error('QA state evidence must stay inside task artifacts');
+        outputPaths.push(normalized.replace(/^artifacts\//, ''));
+      }
+    }
+  }
+  const namedPaths = [
+    ...manifestPaths,
+    ...referencedRecipeRunRoots(manifestPaths),
+    ...citedPaths,
+    ...outputPaths,
+  ];
   const snapshotRoot = promotedPointer?.relativeArtifactRoot ?? null;
   const scan = workerArtifactsExist
     ? await scanPublishPackage(vars, workerArtifactsDir, {
-        namedPaths: [...manifestPaths, ...citedPaths],
+        namedPaths,
         snapshotRoot,
       })
     : { entries: [], links: [], truncated: false };
@@ -316,7 +353,7 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
     });
   const packaged = selectPublishPackageEntries(
     scan.entries.filter((entry) => !inSnapshot(entry.path)),
-    [...manifestPaths, ...citedPaths],
+    namedPaths,
   );
   // A cited media symlink is copied as its target, like a manifest-named one,
   // when the target stays inside artifacts/.
@@ -376,13 +413,6 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
   }
   // Defensive cleanup for stale local mirrors created before screenshots/ was excluded.
   await removeStaleArtifactDirectory(path.join(localArtifactsDir, 'screenshots'));
-  copied += await copyEvidenceManifestReferencedArtifacts(
-    vars,
-    workerArtifactsDir,
-    localArtifactsDir,
-    await readEvidenceManifest(run),
-    transferMeta,
-  );
   if (promotedPointer) {
     const promotedLocalRoot = path.join(localArtifactsDir, promotedPointer.relativeArtifactRoot);
     // Promoted snapshot copy failures also reject so callers never publish a
@@ -403,13 +433,22 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
   } else if (clearLocalRecipeRuns) {
     await removeStaleArtifactDirectory(path.join(localArtifactsDir, 'recipe-runs'));
   }
+  // Snapshot cleanup excludes the raw spool; restore the selected originals
+  // afterward so those explicit references survive that cleanup.
+  copied += await copyEvidenceManifestReferencedArtifacts(
+    vars,
+    workerArtifactsDir,
+    localArtifactsDir,
+    await readEvidenceManifest(run),
+    transferMeta,
+  );
   if (copied > 0) {
     console.log(`[run-completion] copied ${copied} artifact(s) from worker`);
   }
 
   // Assumption: recipe-runs are only pruned after the promoted snapshot is copied,
   // and readers should tolerate a brief overlap while stale entries are removed.
-  await pruneRecipeRunHistory(localArtifactsDir);
+  await pruneRecipeRunHistory(localArtifactsDir, namedPaths);
 
   // Drop the live-recipe-context caches whether or not we copied — pruneRecipeRunHistory
   // can delete recipe-runs/<id>/summary.json + recipe.json even when copy was a no-op
@@ -518,7 +557,22 @@ export async function mirrorWorkerSubtasks(
   return copied;
 }
 
-export async function pruneRecipeRunHistory(localArtifactsDir: string): Promise<void> {
+function referencedRecipeRunRoots(paths: readonly string[]): string[] {
+  return [
+    ...new Set(
+      paths.flatMap((value) => {
+        const normalized = normalizeEvidenceManifestArtifactPath(value, { mediaOnly: false });
+        if (!normalized?.startsWith('artifacts/recipe-runs/')) return [];
+        return [normalized.split('/').slice(1, 3).join('/')];
+      }),
+    ),
+  ];
+}
+
+export async function pruneRecipeRunHistory(
+  localArtifactsDir: string,
+  retainedPaths: readonly string[] = [],
+): Promise<void> {
   const pointerPath = path.join(localArtifactsDir, 'latest-valid-recipe-run.json');
   if (!existsSync(pointerPath)) return;
 
@@ -539,6 +593,7 @@ export async function pruneRecipeRunHistory(localArtifactsDir: string): Promise<
   }
 
   const keepRunId = pointer.runId;
+  const retainedRoots = new Set(referencedRecipeRunRoots(retainedPaths));
   const recipeRunsDir = path.join(localArtifactsDir, 'recipe-runs');
   if (!existsSync(recipeRunsDir)) return;
   const keepRunPath = path.join(recipeRunsDir, keepRunId);
@@ -553,7 +608,7 @@ export async function pruneRecipeRunHistory(localArtifactsDir: string): Promise<
   const entries = await readdir(recipeRunsDir).catch(() => []);
   await Promise.all(
     entries
-      .filter((entry) => entry !== keepRunId)
+      .filter((entry) => entry !== keepRunId && !retainedRoots.has(`recipe-runs/${entry}`))
       .map(async (entry) => {
         const entryPath = path.join(recipeRunsDir, entry);
         const stats = await lstat(entryPath).catch(() => null);

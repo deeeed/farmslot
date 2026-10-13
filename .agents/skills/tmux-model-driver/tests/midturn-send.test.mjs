@@ -145,6 +145,27 @@ test('unknown Codex delivers the complete owned queue and retries without keystr
   );
 });
 
+test('an exited model receipt remains intact while its shell accepts a guarded recovery script', async (t) => {
+  const f = fixture(t);
+  f.setDrop(true);
+  assert.equal((await send('%1', 'codex', f.payload)).verification, 'unverified');
+  const receipts = fs.readdirSync(f.dir).filter((name) => name.endsWith('.json'));
+  const originals = receipts.map((name) => fs.readFileSync(path.join(f.dir, name), 'utf8'));
+  process.env.TMUX_PANE_STATE_CURRENT_COMMAND = 'zsh';
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = '$';
+  const exists = fs.existsSync;
+  t.mock.method(fs, 'existsSync', (file) => String(file).endsWith('/started') || exists(file));
+  const shell = await send('%1', 'shell', 'true');
+  assert.equal(shell.submitted, true);
+  assert.equal(shell.evidence.source, 'shell-sentinel');
+  assert.deepEqual(
+    receipts.map((name) => fs.readFileSync(path.join(f.dir, name), 'utf8')),
+    originals,
+  );
+  process.env.TMUX_PANE_STATE_CURRENT_COMMAND = 'claude';
+  assert.equal(paneState('%1', 'claude').queued, true, 'live model receipt gating is preserved');
+});
+
 test('a retry submits only the owned composer through Enter while Codex is unknown', async (t) => {
   const f = fixture(t);
   f.setDrop(true);

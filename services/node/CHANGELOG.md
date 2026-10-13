@@ -4,6 +4,8 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
+- Materialize exact gateway source locks on read-only volumes and report source integrity.
+
 - Track cancellable executions by their gateway connection and retain them through closeout.
 
 - fix(deploy): `deploy-node.sh` starts the node with `FARMSLOT_ROOT` unset (`/usr/bin/env -u FARMSLOT_ROOT` in the launchd and systemd invocation, after the login shell on native nodes), which the shadowed-token check shares. A `FARMSLOT_ROOT` from launchd, systemd or a login profile reached the service but not the check, so the two could pick different env files. Processes the node starts no longer inherit that `FARMSLOT_ROOT` either.

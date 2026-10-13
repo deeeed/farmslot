@@ -27,6 +27,7 @@ import { captureHostLoadSnapshot } from '../runs/analytics.js';
 import { ensureRunSlotBinding } from '../runs/slot-binding.js';
 import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
 
+import { prepareConfiguredRunCapabilities } from './declared-capabilities.js';
 import { RETAINED_SESSION_HANDOFF_HOLD } from './errors.js';
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
 import { probeRemotePath } from './remote-probes.js';
@@ -566,6 +567,9 @@ export async function executeDispatchStep(
     taskFile: current.taskFile,
     app: current.app,
   };
+
+  if (current.engineState?.flags?.warmSessionReuse || current.engineState?.flags?.nudgeReuse)
+    await prepareConfiguredRunCapabilities(runId);
 
   // CI-watch warm-session handoff — parent finalize kept the worker alive through
   // ci-watch. Prefer handing the follow-up TASK.md into that session; fall through

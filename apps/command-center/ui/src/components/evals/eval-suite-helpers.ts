@@ -1,3 +1,4 @@
+import { runDisplayTitle } from '@farmslot/protocol';
 import {
   type DiffStat,
   type EvalExperimentSource,
@@ -485,7 +486,7 @@ export function catalogItemFromRun(run: Run): EvalCaseCatalogItem {
       run.completedAt ?? run.updatedAt ?? run.createdAt,
       run.completedAt ? 'completed' : run.updatedAt ? 'updated' : 'created',
     ),
-    primary: run.summary || run.ticketOrPr || `run ${run.id.slice(0, 8)}`,
+    primary: runDisplayTitle(run, 120, 'summary').title || `run ${run.id.slice(0, 8)}`,
     secondary: `${run.id.slice(0, 8)} · ${run.project} · ${run.flowType} · ${run.status}`,
     searchText: runSearchText(run),
     selectable: terminal && !flowWarning,

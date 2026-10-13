@@ -2266,6 +2266,8 @@ function fakeDomPage(document: FakeDocument): { page: CdpWebPage; mouse: string[
     innerWidth: 1_000,
     innerHeight: 1_000,
     setTimeout,
+    clearTimeout,
+    requestAnimationFrame: (callback: () => void) => callback(),
     getComputedStyle: () => ({
       display: 'block',
       visibility: 'visible',

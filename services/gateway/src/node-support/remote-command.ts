@@ -9,6 +9,8 @@
 // bundle; this does the same for every remote command, so config and scripts
 // always travel together and rollout order stops mattering.
 
+import { currentProjectSources } from '@farmslot/slot-config';
+
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/index.js';
 
 import {
@@ -196,6 +198,14 @@ export async function resolveRemoteFarmCommand(
     selectSlot?: boolean;
   } = {},
 ): Promise<string> {
+  const sources = currentProjectSources();
+  if (sources) {
+    // Project hooks already resolve to exact read-only source roots. Framework scripts
+    // remain part of node service deployment, separate from pack synchronization.
+    if (command.includes('~/farmslot-node/projects/'))
+      throw new Error('Loose node pack reference is refused for locked execution');
+    return command;
+  }
   if (!hasRemoteFarmRef(command)) return command;
   // No project config means no bundle to run from; the command keeps the
   // node's own copy, as it always has.

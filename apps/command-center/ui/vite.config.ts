@@ -22,6 +22,14 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      '@farmslot/adapter-sdk/evidence': resolve(
+        __dirname,
+        '../../../packages/adapter-sdk/src/evidence.ts',
+      ),
+      '@farmslot/recipe-runner/evidence': resolve(
+        __dirname,
+        '../../../packages/recipe-runner/src/evidence/index.ts',
+      ),
       '@farmslot/protocol': resolve(__dirname, '../../../packages/protocol/src'),
       '@farmslot/review-dispatch': resolve(__dirname, '../../../packages/review-dispatch/src'),
       '@farmslot/theme': resolve(__dirname, '../../../packages/theme/src'),

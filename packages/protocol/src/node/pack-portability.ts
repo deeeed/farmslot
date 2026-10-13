@@ -3,6 +3,8 @@ import { existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, rmSync 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { validateQaConfig } from '../contracts/qa.js';
+
 import { isLoopbackHost } from './loopback-host.js';
 import { readPoolFiles } from './slot-by-repo.js';
 
@@ -144,6 +146,7 @@ export function validatePackFilePortability(
   // while admission checks runtime files, templates and ordinary fixture files.
   if (/(?:^|\/)[^/]+\.(?:test|spec)\.(?:[cm]?[jt]sx?|sh|bats|py)$/.test(file)) return [];
   const names = new Set<string>();
+  const flowErrors: string[] = [];
   if (file.endsWith('.json')) {
     // Explicit node selectors are forbidden even before a pool is installed.
     let parsed: unknown;
@@ -152,6 +155,20 @@ export function validatePackFilePortability(
     } catch (error) {
       // Structural validators own invalid JSON; fixture JSON may be deliberately malformed.
       if (!(error instanceof SyntaxError)) throw error;
+    }
+    if (path.basename(file) === 'project.json' && parsed && typeof parsed === 'object') {
+      const qa = (parsed as { qa?: unknown }).qa;
+      try {
+        validateQaConfig(qa);
+      } catch (error) {
+        const reason =
+          qa === undefined
+            ? 'missing required qa flow'
+            : `invalid qa flow: ${(error as Error).message}`;
+        flowErrors.push(
+          `${file}:1: ${reason}; configure qa.default_profile and qa.profiles selecting a QA checklist`,
+        );
+      }
     }
     const visit = (value: unknown) => {
       if (!value || typeof value !== 'object') return;
@@ -176,7 +193,7 @@ export function validatePackFilePortability(
         String.raw`(?:--machine(?:=|\s+)|(?:^|[\s;])(?:HOST|FARMSLOT_MACHINE)=)["']?(?:${registered})(?=[\s"'\x60)]|$)`,
       )
     : null;
-  return content.split(/\r?\n/).flatMap((line, index) => {
+  const portabilityErrors = content.split(/\r?\n/).flatMap((line, index) => {
     const privatePath = PRIVATE_PATH.exec(line);
     const match =
       privatePath?.[1] ??
@@ -191,6 +208,7 @@ export function validatePackFilePortability(
         ]
       : [];
   });
+  return [...flowErrors, ...portabilityErrors];
 }
 
 export function validatePackBytesPortability(

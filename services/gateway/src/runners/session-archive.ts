@@ -338,3 +338,20 @@ export async function readRunnerSessionArchiveLines(params: {
     truncated,
   };
 }
+
+/** Usage reads require a complete, hash-qualified retained transcript. */
+export async function verifiedRunnerSessionArchivePath(run: Run): Promise<string | null> {
+  const ref = resolveArchiveRef(run);
+  const contextId = selectAgentContext(run)?.id;
+  if (!ref || ref.status !== 'captured' || !ref.sha256 || !contextId) return null;
+  const filePath = await confinedArchiveTranscript(run.id, contextId);
+  if (!filePath) throw new Error('Retained runner transcript is missing.');
+  const bytes = await readFile(filePath);
+  if (
+    bytes.length > SESSION_ARCHIVE_MAX_BYTES ||
+    createHash('sha256').update(bytes).digest('hex') !== ref.sha256
+  ) {
+    throw new Error('Retained runner transcript failed its recorded SHA256 identity.');
+  }
+  return filePath;
+}

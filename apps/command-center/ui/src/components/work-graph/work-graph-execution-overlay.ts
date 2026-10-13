@@ -8,7 +8,7 @@ import type {
   WorkNodeKind,
   WorkNodeStatus,
 } from '@farmslot/protocol';
-import { isTerminalRunStatus } from '@farmslot/protocol';
+import { isTerminalRunStatus, taskTitleText } from '@farmslot/protocol';
 
 import { labelWithRef } from '../shared/item-ref.js';
 
@@ -572,7 +572,9 @@ export function buildSlotPendingWork(params: {
     if (!run.slotId || isTerminalRunStatus(run.status)) continue;
     result.get(run.slotId)?.running.push({
       id: run.id,
-      title: backlogById.get(run.backlogItemId ?? '')?.title ?? run.summary ?? run.ticketOrPr,
+      title: taskTitleText(
+        backlogById.get(run.backlogItemId ?? '')?.title ?? run.summary ?? run.ticketOrPr,
+      ),
       project: run.project,
       kind: 'running',
       graphId: run.workGraphId,

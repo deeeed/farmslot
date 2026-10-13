@@ -59,6 +59,7 @@ import {
   assertWarmReviewContext,
   parseReviewRequestContext,
 } from '@farmslot/review-dispatch';
+import { currentProjectSources } from '@farmslot/slot-config';
 
 import { selectAgentContext } from '../agents/contexts.js';
 import { digest, RUBRIC_VERSION } from '../assessment/failure-triage/packet.js';
@@ -79,6 +80,10 @@ import { readTriagePolicy } from '../intelligence/triage/policy.js';
 import { admittedFailureSnapshot } from '../intelligence/triage/snapshot.js';
 import type { MachineParkGateRestoreResult } from '../machine-parking/service.js';
 import { assertStartRefSkipPrepareEligible } from '../projects/start-ref-policy.js';
+import {
+  assertReviewRoundAvailable,
+  prepareReviewRoundAvailabilityCheck,
+} from '../review/review-round-budget.js';
 import { captureDirectReviewPublication } from '../review-publication/direct.js';
 import {
   assertReviewWorkspaceAdmitted,
@@ -165,6 +170,7 @@ import {
   resolveReviewWorkspaceOwner,
 } from '../security/native-worker-owner.js';
 import { currentSessionOriginator } from '../security/work-originator.js';
+import { SourceAdmissionRefusal, withSourcePlanning } from '../sources/runtime.js';
 import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-template-catalog.js';
 import { resolveWorkerTemplateSelectionForRun } from '../tasks/worker-template-options.js';
 
@@ -372,6 +378,15 @@ export async function runCreate(
   emit: Emit,
   options: RunCreateInternalOptions = {},
 ): Promise<RunCreateResult> {
+  if ('sourceProvenance' in params) throw new Error('Source provenance is gateway-owned');
+  return withSourcePlanning(params.project, () => runCreateWithSources(params, emit, options));
+}
+
+async function runCreateWithSources(
+  params: RunCreateParams,
+  emit: Emit,
+  options: RunCreateInternalOptions,
+): Promise<RunCreateResult> {
   if (params.taskFile !== undefined && !path.isAbsolute(params.taskFile)) {
     throw new Error(
       'taskFile must be an absolute path resolved by the caller. Upgrade the Farmslot CLI on every node, then upgrade the gateway; older CLIs send relative task paths. Retry with the upgraded CLI or supply an absolute taskFile through RPC.',
@@ -415,6 +430,14 @@ export async function runCreate(
 
   // Load project config once — used for PR-ref resolution and safety-tier default.
   const projectConfig = await loadProjectConfig(params.project);
+  if (currentProjectSources() && params.runner !== 'none') {
+    const { resolveWorkerDispatchPrompt } = await import('../runners/worker-prompt.js');
+    try {
+      await resolveWorkerDispatchPrompt(params.project, { taskFile: params.taskFile ?? 'TASK.md' });
+    } catch (error) {
+      throw new SourceAdmissionRefusal((error as Error).message, { cause: error });
+    }
+  }
   // Resolve PR references before selecting static workspace placement.
   if (PR_BOUND_FLOW_TYPES.has(params.flowType)) {
     if (projectConfig?.ci?.repo)
@@ -1710,6 +1733,7 @@ export async function resolveRunDecision(
   if (decision.type === 'engine_human_gate' && isHumanGateReviewRequestAction(params.actionId)) {
     const reviewRequest = params.selectionData?.reviewRequest;
     assertReviewRequestPayload(reviewRequest, { maxRows: 5 });
+    await assertReviewRoundAvailable(getRun(params.runId)!);
     assertWarmReviewRequestAvailable(existing, reviewRequest, getAllRuns());
   }
   if (params.actionId === 'post' && decision.payload?.kind === 'review')
@@ -1812,11 +1836,17 @@ export async function resolveRunDecision(
           'The run or gate package changed during validation. Refresh the gate.',
         );
     }
+    const assertReviewBudgetAtConsumption =
+      decision.type === 'engine_human_gate' && isHumanGateReviewRequestAction(params.actionId)
+        ? await prepareReviewRoundAvailabilityCheck(params.runId)
+        : undefined;
     assertDecisionStillUnresolved(params.runId, params.decisionId);
     assertNotGateParked(params.runId, getRun(params.runId)!);
     decision = getRun(params.runId)!.decisions.find(
       (candidate) => candidate.id === params.decisionId,
     )!;
+    // No review-request await separates this fresh check from decision consumption.
+    assertReviewBudgetAtConsumption?.();
     // Past every refusal now, so the normalization may persist.
     if (normalizedReviews) normalizeExhaustedReviewContinuationsForRun(params.runId);
     if (decision.type === 'engine_human_gate' && isHumanGateReviewRequestAction(params.actionId)) {
@@ -1944,7 +1974,9 @@ export async function resolveRunDecision(
               console.log(
                 `[run] run ${params.runId.slice(0, 8)} — chaining ${chainSpec.flowType} after resolved CI decision`,
               );
-              const chainRun = createRun(chainSpec.createParams);
+              const chainRun = await withSourcePlanning(chainSpec.createParams.project, async () =>
+                createRun(chainSpec.createParams),
+              );
               applyChainedRunEngineFlags(chainRun.id, chainSpec.engineFlags);
               if (Object.keys(chainSpec.updateFields).length)
                 updateRun(chainRun.id, chainSpec.updateFields);

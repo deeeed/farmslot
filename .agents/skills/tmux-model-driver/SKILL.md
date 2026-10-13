@@ -130,8 +130,9 @@ Existing helpers remain available:
 - `launch-file-task.sh <pane> <runner> <model> <task-file> [trace] [signal] [skill]`
   launches a file-first task from a verified shell, including clean-room Claude mode.
 - `watch-file-task.sh` classifies task-file and signal-file progress.
-- `resolve-launch-blockers.sh <pane> <runner> [seconds]` resolves only the known
-  Cursor workspace-trust or Grok current-project gate for the expected live runner.
+- `resolve-launch-blockers.sh <pane> <runner> [seconds]` resolves known
+  Cursor workspace-trust, Grok current-project and Codex startup update gates for the expected
+  live runner. Update menus use the shared skip choice after a fresh process/pane check.
   Auth gates and model questions require the lead.
 - `headless-exec.sh --last <file> --log <file> --timeout <seconds> -- <command>`
   closes stdin, records the process exit code and requires an anchored terminal

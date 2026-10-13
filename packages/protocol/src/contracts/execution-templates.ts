@@ -7,8 +7,9 @@ export const EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX = 'domain:';
 export type ConfiguredExecutionTemplateSourceKind = 'workspace' | 'user' | 'package' | 'fallback';
 
 export type ExecutionTemplateSourceRoot =
-  | { projectPath: string; env?: never }
-  | { env: string; projectPath?: never };
+  | { projectPath: string; env?: never; sourceId?: never; entry?: never }
+  | { env: string; projectPath?: never; sourceId?: never; entry?: never }
+  | { sourceId: string; entry: string; projectPath?: never; env?: never };
 
 export interface ConfiguredExecutionTemplateSource {
   id: string;

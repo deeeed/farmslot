@@ -18,6 +18,7 @@ import { digest } from '../assessment/failure-triage/packet.js';
 import { beginAssessment, finishAssessment, reserveAssessment } from '../assessment/store.js';
 import { invalidateProjectVarsCache, projectsDir } from '../core/config.js';
 import { GatewayMethodError } from '../core/method-error.js';
+import { admitReviewRound } from '../review/review-round-budget.js';
 import { computeReadyGatePackageHash } from '../run-completion/ready-gate-package.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 import { runWithSessionOriginator } from '../security/work-originator.js';
@@ -55,6 +56,65 @@ test('assertExpectedExecutionTemplate rejects a changed queued snapshot', () => 
     () => assertExpectedExecutionTemplate(undefined, expected),
     /no configured execution template/,
   );
+});
+
+test('a sixth gate review is refused before decision consumption, restore or launch checks', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'interactive',
+    project: 'review-round-budget',
+    ticketOrPr: 'MANUAL-REVIEW-ROUND-LIMIT',
+    runner: 'scripted',
+    transport: 'tmux',
+  });
+  const decision: RunDecision = {
+    id: 'sixth-review',
+    type: 'engine_human_gate',
+    title: 'Publication gate',
+    description: 'Review budget spent',
+    actions: [{ id: 'request-review', label: 'Review', style: 'secondary' }],
+    createdAt: new Date().toISOString(),
+  };
+  updateRun(run.id, {
+    status: 'human-gating',
+    decisions: [decision],
+    reviewRoundAdmissions: ['one', 'two', 'three', 'four', 'five'],
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'failed' });
+    await deleteRun(run.id);
+  });
+  const effects: string[] = [];
+  await assert.rejects(
+    runResolveDecision(
+      {
+        runId: run.id,
+        decisionId: decision.id,
+        actionId: 'request-review',
+        selectionData: {
+          reviewRequest: { runner: 'codex', model: null, effort: null, mode: 'cold' },
+        },
+      },
+      () => effects.push('broadcast'),
+      {
+        restoreGatePark: async () => {
+          throw new Error('restore must not run');
+        },
+        assertReviewLaunchAllowed: async () => {
+          effects.push('launch');
+        },
+      },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof GatewayMethodError);
+      assert.equal(error.code, 'REVIEW_ROUND_LIMIT_REACHED');
+      assert.match(error.message, /design problem or scope creep/);
+      return true;
+    },
+  );
+  assert.deepEqual(effects, []);
+  assert.equal(getRun(run.id)!.decisions[0].resolvedAt, undefined);
+  assert.equal(getRun(run.id)!.status, 'human-gating');
 });
 
 test('runResolveDecision keeps a review request unresolved when launch validation refuses it', async (t) => {
@@ -120,6 +180,63 @@ test('runResolveDecision keeps a review request unresolved when launch validatio
   );
   assert.equal(persistedDecision?.resolvedAt, undefined);
   assert.equal(persistedDecision?.resolvedAction, undefined);
+});
+
+test('a fifth review spent during launch validation leaves the waiting request pending', async (t) => {
+  const runs = ['waiting', 'sibling'].map((name) =>
+    createRun({
+      flowType: 'fix-bug',
+      mode: 'autonomous',
+      project: 'review-budget-race',
+      ticketOrPr: `MANUAL-${name}`,
+      runner: 'claude',
+      slotId: `test-budget-${name}`,
+    }),
+  );
+  const [waiting, sibling] = runs;
+  const url = `https://github.com/example/budget-${waiting.id}/pull/42`;
+  for (const run of runs) updateRun(run.id, { links: [{ label: 'PR', url }] });
+  const decision: RunDecision = {
+    id: 'budget-race',
+    type: 'engine_human_gate',
+    title: 'Review',
+    description: '',
+    actions: [{ id: 'request-review', label: 'Review', style: 'secondary' }],
+    createdAt: new Date().toISOString(),
+  };
+  updateRun(waiting.id, { status: 'human-gating', decisions: [decision] });
+  t.after(async () => {
+    for (const run of runs) {
+      updateRun(run.id, { status: 'failed' });
+      await deleteRun(run.id);
+    }
+  });
+  for (let index = 0; index < 4; index++) await admitReviewRound(waiting.id, `spent-${index}`);
+  await assert.rejects(
+    runResolveDecision(
+      {
+        runId: waiting.id,
+        decisionId: decision.id,
+        actionId: 'request-review',
+        selectionData: {
+          reviewRequest: { runner: 'claude', model: 'sonnet', effort: null, mode: 'cold' },
+        },
+      },
+      () => {},
+      {
+        assertReviewLaunchAllowed: async () => {
+          await admitReviewRound(sibling.id, 'concurrent-fifth');
+        },
+      },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof GatewayMethodError);
+      assert.equal(error.code, 'REVIEW_ROUND_LIMIT_REACHED');
+      return true;
+    },
+  );
+  assert.equal(getRun(waiting.id)!.decisions[0].resolvedAt, undefined);
+  assert.equal(getRun(waiting.id)!.decisions[0].selectionData, undefined);
 });
 
 test('runResolveDecision refuses a full-live review loop before any restore or launch check', async (t) => {
@@ -1295,10 +1412,14 @@ test('runCreate defaults omitted dev mode to autonomous when interactive templat
 test('runCreate permits explicit fresh replacement for a non-PR flow', async (t) => {
   const previousNodeTestContext = process.env.NODE_TEST_CONTEXT;
   const previousDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+  const previousDemoPool = process.env.FARMSLOT_DEMO_POOL;
+  process.env.FARMSLOT_DEMO_POOL = '1';
   process.env.NODE_TEST_CONTEXT = '1';
   process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
   let runId = '';
   t.after(async () => {
+    if (previousDemoPool === undefined) delete process.env.FARMSLOT_DEMO_POOL;
+    else process.env.FARMSLOT_DEMO_POOL = previousDemoPool;
     if (previousNodeTestContext === undefined) delete process.env.NODE_TEST_CONTEXT;
     else process.env.NODE_TEST_CONTEXT = previousNodeTestContext;
     if (previousDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
@@ -1314,7 +1435,7 @@ test('runCreate permits explicit fresh replacement for a non-PR flow', async (t)
       flowType: 'fix-bug',
       project: 'farmslot-farm',
       ticketOrPr: `TAT-${Date.now()}`,
-      slotId: 'replaceable-warm-slot',
+      slotId: 'demo-ff-1',
       freshReuse: true,
     },
     () => {},
@@ -1324,13 +1445,17 @@ test('runCreate permits explicit fresh replacement for a non-PR flow', async (t)
   assert.equal(result.run.engineState?.flags?.freshReuse, true);
 });
 
-test('runCreate persists implicit dev-interactive template selection for interactive dev', async (t) => {
+test('runCreate persists the configured dev-interactive template for interactive dev', async (t) => {
   const previousNodeTestContext = process.env.NODE_TEST_CONTEXT;
   const previousDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+  const previousDemoPool = process.env.FARMSLOT_DEMO_POOL;
+  process.env.FARMSLOT_DEMO_POOL = '1';
   process.env.NODE_TEST_CONTEXT = '1';
   process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
   const created: string[] = [];
   t.after(async () => {
+    if (previousDemoPool === undefined) delete process.env.FARMSLOT_DEMO_POOL;
+    else process.env.FARMSLOT_DEMO_POOL = previousDemoPool;
     if (previousNodeTestContext === undefined) delete process.env.NODE_TEST_CONTEXT;
     else process.env.NODE_TEST_CONTEXT = previousNodeTestContext;
     if (previousDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
@@ -1347,6 +1472,7 @@ test('runCreate persists implicit dev-interactive template selection for interac
     {
       flowType: 'dev',
       mode: 'interactive',
+      slotId: 'demo-ff-1',
       project: 'farmslot-farm',
       ticketOrPr: `interactive dev spike ${Date.now()}`,
     },
@@ -1354,10 +1480,8 @@ test('runCreate persists implicit dev-interactive template selection for interac
   );
   created.push(result.run.id);
 
-  assert.deepEqual(result.run.taskTemplate, {
-    fileName: 'dev-interactive.md',
-    variant: 'interactive',
-  });
+  assert.equal(result.run.executionTemplate?.id, 'dev/interactive');
+  assert.equal(result.run.taskTemplate, undefined);
 });
 
 test('runCreate persists implicit pr-complete-interactive template and branch-based lineage', async (t) => {

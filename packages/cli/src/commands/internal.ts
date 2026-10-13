@@ -498,14 +498,16 @@ export function registerInternalCommand(program: Command): void {
     .description('Extract runner session token usage (snapshot / report / total)')
     .action(async (slotId: string, action: string, _opts: unknown, _cmd: Command) => {
       try {
-        const vars = await loadSlotVars(slotId);
+        const forcedPath = process.env.RUNNER_SESSION_PATH || undefined;
+        // A forced transcript is self-contained; installed CLIs need no private pool.
+        const repo = forcedPath ? '' : (await loadSlotVars(slotId)).remoteRepo;
         const result = await runSessionUsage({
-          repo: vars.remoteRepo,
+          repo,
           slotId,
           action: action as SessionAction,
           // RUNNER_SESSION_PATH / RUNNER_SESSION_RUNNER flow through exec from
           // the thin bash wrapper; treat empty string the same as unset.
-          forcedPath: process.env.RUNNER_SESSION_PATH || undefined,
+          forcedPath,
           forcedRunner: process.env.RUNNER_SESSION_RUNNER || undefined,
         });
         // Raw plumbing output — consumed by scripts and the gateway, never enveloped.

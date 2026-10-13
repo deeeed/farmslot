@@ -4,6 +4,35 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Keep stacked follow-up packages, cold reviews, description checks and PR targets on their ancestor's current base, including archived ancestors.
+- Resolve worker marking, artifact checks and acceptance guards from the connected node's runtime so dev tasks cannot use stale production helpers; report missing CI verification with its checker and contract paths.
+- Preserve typed media and timeline references when task recipe attempts live in nested artifact directories.
+- Name the upstream PR in stacked publication bodies and previews, including follow-ups, while preserving authored prose.
+- Keep recovered worker sessions bound to their exact pane and repair reviewer-session contamination only with original-process provenance, preserving foreign-worker parking guards.
+- Prepare stacked publication packages and review previews against the same parent branch used for PR creation.
+
+- Allow gate-held runs to free their slot after review moves the worker pane, verifying live conversation identity before stopping it and preserving session recovery.
+- Accept project review configuration when planning automatic publication reviews after recovery.
+- Resolve declared source refs into immutable admission locks and refuse source drift.
+- Freeze selected recorded evidence with its execution dependencies and publication manifest; refresh verifies the approved selection and refuses replaced media or metadata.
+- Acquire declared run capabilities before dispatch and fix delivery, reusing frozen proof plans and rolling back only new leases on preparation failure.
+- Render reviewer checklist, signal and feedback paths for the allocated lane in local and catalog templates, and give fix workers every matching lane feedback file.
+
+- Add a portable Farmslot QA preset and validation checklist with recipe evidence and required local CI parity, preserving eval template comparisons through catalog snapshots.
+
+- Validate artifact-only QA completion from retained output and declared cases, preserving pending visual review and recovery across refreshes and restarts.
+- Count review diff files from numstat rows instead of patch text while retaining untracked source identities.
+- Return artifact-relative package paths for retained evidence review.
+
+- Preserve explicitly labeled acceptance criteria from ticket intake through cached task data and the worker handoff.
+- Derive plain free-text task and report titles while preserving the complete task and report bodies.
+- Recover verified native session usage and show recorded retrospective outcomes, review skips, and capture failures.
+
+- Return checked recorded-evidence metadata for the selected recipe package using the public retained reader, without transferring original media to review clients.
+- Wait for the reviewer-owned terminal mark before archiving its checklist and result.
+
+- Enforce five review rounds per PR, including retries and publication requests, with durable admission before launch and a design or scope refusal at the limit.
+
 - Publish the exact selected review findings and report, preserving accepted choices across refresh races.
 
 - Declare mid-turn prompt support and verify complete Enter-submitted queue messages for guarded lane steering.
@@ -52,6 +81,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Publish packages match curated evidence and omissions by full path, so excluding an older screenshot cannot remove a newer same-named capture or select unrelated media.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+- Allow managed runner resumes to suppress startup update checks.
 
 ## 0.21.0 - 2026-10-10
 

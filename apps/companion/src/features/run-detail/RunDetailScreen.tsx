@@ -4,6 +4,7 @@ import { Alert, Pressable, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { createEvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import {
   type AcceptanceCriterionRef,
   type AcceptanceStatusLedger,
@@ -15,8 +16,8 @@ import {
   Methods,
   type RecipeRunArtifactGroup,
   type Run,
-  type RunGetResult,
   type RunRecipeRunsForRunResult,
+  type RunRecordedEvidenceReview,
   type RunReplayStepResult,
   type RunStep,
   type TaskProgressResult,
@@ -25,6 +26,7 @@ import {
 } from '@farmslot/protocol';
 
 import { RunPipelineFull } from '../../components/RunPipeline';
+import { RunTitle } from '../../components/RunTitle';
 import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
 import { TaskProgressFallbackPanel, TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { useConnectedTransport } from '../../hooks/useConnectedTransport';
@@ -75,6 +77,7 @@ import { GateReviewEntryCard } from '../gate-review/components/gate-review-panel
 import { NativeWorkerLinks } from '../native-conversation/components/NativeWorkerLinks';
 import { formatDuration } from '../workspace-shared/format';
 import { useReviewPackageTab } from '../workspace-shared/review-package-tabs';
+import { readReviewRun } from '../workspace-shared/review-publication-action';
 import { ReviewPublication } from '../workspace-shared/ReviewPublication';
 
 import { InteractiveOperatorPacketsPanel } from './components/InteractiveOperatorPacketsPanel';
@@ -124,8 +127,26 @@ export default function RunDetailScreen() {
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
   const storeRun = useRunStore((s) => s.runs.find((r) => r.id === resolvedRunId));
   const upsertRun = useRunStore((s) => s.upsertRun);
-  const [run, setRun] = useState<Run | null>(storeRun ?? null);
+  const profileId = useConnectionStore((s) => s.activeProfileId);
+  const authorityEpoch = useConnectionStore((s) => s.authorityEpoch);
+  // A transport pause invalidates pending reads, not already-authorized evidence.
+  const readIdentity = `${resolvedRunId}:${profileId}:${authorityEpoch}`;
+  const readScope = useRef({ client, identity: readIdentity });
+  if (readScope.current.client !== client || readScope.current.identity !== readIdentity)
+    readScope.current = { client, identity: readIdentity };
+  const readRequest = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const [loadedRun, setLoadedRun] = useState<{ scope: object; run: Run }>();
+  const run = loadedRun?.scope === readScope.current ? loadedRun.run : (storeRun ?? null);
+  const setRun = (value: Run) => setLoadedRun({ scope: readScope.current, run: value });
   const [recipeRuns, setRecipeRuns] = useState<RecipeRunArtifactGroup[]>([]);
+  const [recordedEvidence, setRecordedEvidence] = useState<RunRecordedEvidenceReview | null>(null);
   const [recipeRunsLoaded, setRecipeRunsLoaded] = useState(false);
   const [selectedRecipeRunId, setSelectedRecipeRunId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -169,6 +190,20 @@ export default function RunDetailScreen() {
     requestedRecipeRunIdRef.current = requestedRecipeRunId;
   }, [requestedRecipeRunId]);
 
+  const evidenceModel = useMemo(
+    () =>
+      createEvidenceReviewModel({
+        context: 'run-detail',
+        package: recordedEvidence?.input,
+        readErrors: recordedEvidence?.errors,
+        artifactPrefix: recordedEvidence?.artifactPrefix,
+        packagePath: recordedEvidence?.packagePath,
+        ledger: acceptanceStatus,
+        criteria: acceptanceCriteria ?? undefined,
+        report: recordedEvidence?.report,
+      }),
+    [acceptanceCriteria, acceptanceStatus, recordedEvidence, run?.output],
+  );
   const loadRecipeRuns = useCallback(
     (selectionHint: string | null) => {
       const requestId = recipeRunsRequestRef.current + 1;
@@ -179,10 +214,17 @@ export default function RunDetailScreen() {
       }
       setRecipeRunsLoaded(false);
       return client
-        .request<RunRecipeRunsForRunResult>('run.recipeRunsForRun', { runId: resolvedRunId })
+        .request<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
+          runId: resolvedRunId,
+          includeRecordedEvidence: true,
+          ...(selectionHint && selectionHint !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
+            ? { recipeRunId: selectionHint }
+            : {}),
+        })
         .then((result) => {
           if (recipeRunsRequestRef.current !== requestId) return;
           setRecipeRuns(result.recipeRuns);
+          setRecordedEvidence(result.recordedEvidence ?? null);
           setSelectedRecipeRunId(
             selectionHint === DECISION_EVIDENCE_RECIPE_RUN_PARAM
               ? null
@@ -205,21 +247,28 @@ export default function RunDetailScreen() {
   );
 
   const loadRun = useCallback(() => {
-    if (!client || !resolvedRunId) return Promise.resolve();
+    if (!client || !resolvedRunId || connection === null) return Promise.resolve();
+    const scope = readScope.current;
+    const request = ++readRequest.current;
+    const connectionCurrent = currentFarmConnection(client, useConnectionStore.getState);
+    const current = () =>
+      mounted.current &&
+      readScope.current === scope &&
+      readRequest.current === request &&
+      connectionCurrent();
     setError(null);
-    return client
-      .request<RunGetResult>('run.get', { runId: resolvedRunId })
-      .then((r) => setRun(r.run))
-      .catch((err: Error) => {
-        if (isGatewayBackgroundPauseError(err)) {
-          // Android route screenshots and app transitions can briefly pause the
-          // gateway while cached run data is still usable; keep review visible.
-          console.warn(`Run refresh paused: ${err.message}`);
-          return;
-        }
-        setError(`Failed to load run: ${err.message}`);
-      });
-  }, [client, resolvedRunId]);
+    return readReviewRun(client, resolvedRunId, current, (value) => {
+      setLoadedRun({ scope, run: value });
+    }).catch((err: Error) => {
+      if (!current()) return;
+      if (isGatewayBackgroundPauseError(err)) {
+        // Reconnect retries a paused read while cached run data stays visible.
+        console.warn(`Run refresh paused: ${err.message}`);
+        return;
+      }
+      setError(`Failed to load run: ${err.message}`);
+    });
+  }, [client, resolvedRunId, connection, profileId, authorityEpoch]);
 
   useEffect(() => {
     // Each reconnect re-reads: the operator packets' publish guard judges this run.
@@ -242,12 +291,16 @@ export default function RunDetailScreen() {
   }, [loadRecipeRuns, noteRecipeRunsUnavailable, requestedRecipeRunId]);
 
   useEffect(() => {
-    if (!client || !resolvedRunId) return;
+    if (!client || !resolvedRunId || connection === null) return;
+    const scope = readScope.current;
+    const connectionCurrent = currentFarmConnection(client, useConnectionStore.getState);
     const handleRunEvent = (payload: unknown, _reason: string) => {
+      if (!mounted.current || readScope.current !== scope || !connectionCurrent()) return;
       const event = payload as { run?: Run; runId?: string };
       if (!runRefreshEventMatches(resolvedRunId, event)) return;
       if (event.run?.id === resolvedRunId) {
-        setRun(event.run);
+        ++readRequest.current; // A complete event supersedes any earlier run.get reply.
+        setLoadedRun({ scope, run: event.run });
         upsertRun(event.run);
       } else {
         void loadRun();
@@ -273,7 +326,7 @@ export default function RunDetailScreen() {
     return () => {
       unsubscribers.forEach((unsubscribe) => unsubscribe());
     };
-  }, [client, loadRecipeRuns, loadRun, resolvedRunId, upsertRun]);
+  }, [client, connection, loadRecipeRuns, loadRun, resolvedRunId, upsertRun]);
 
   const fetchTaskProgress = useCallback(() => {
     const params = taskProgressRequestForRun(run);
@@ -571,7 +624,7 @@ export default function RunDetailScreen() {
             </View>
           </View>
           <Text style={styles.ticketText}>{run.ticketOrPr}</Text>
-          {run.summary && <Text style={baseStyles.textSecondary}>{run.summary}</Text>}
+          {run.summary && <RunTitle style={baseStyles.textSecondary} title={run.summary} />}
           <View style={[styles.row, { marginTop: spacing.lg }]}>
             {run.slotId && (
               <Text style={baseStyles.textMuted} testID="companion-run-detail-slot">
@@ -605,7 +658,7 @@ export default function RunDetailScreen() {
         ) : null}
 
         <RunPosturePanel state={runPosture} gatePark={liveGateParkView(run)} />
-        <ReviewPublication run={run} />
+        <ReviewPublication run={run} context="saved" />
 
         {reviewPackageActiveTab === 'evidence' && focusedArtifactPath ? (
           <RunFocusedArtifactCard
@@ -995,13 +1048,20 @@ export default function RunDetailScreen() {
         {reviewPackageActiveTab === 'timeline' ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Timeline</Text>
-            {acceptanceStatus || acceptanceCriteria?.length || acceptanceStatusError ? (
+            {acceptanceStatus ||
+            acceptanceCriteria?.length ||
+            acceptanceStatusError ||
+            evidenceModel.claims.length ||
+            evidenceModel.errors.length ? (
               <TaskAcceptancePanel
+                evidenceModel={evidenceModel}
                 acceptanceStatus={acceptanceStatus}
                 acceptanceCriteria={acceptanceCriteria}
                 error={acceptanceStatusError}
                 onOpenEvidence={(criterionId, path) =>
-                  router.push(acceptanceEvidenceHref(run.id, criterionId, path))
+                  router.push(
+                    acceptanceEvidenceHref(run.id, criterionId, path, selectedRecipeRunId),
+                  )
                 }
               />
             ) : null}

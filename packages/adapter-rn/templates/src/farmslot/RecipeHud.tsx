@@ -7,4 +7,4 @@ export type {
   RecipeHudOverlayProps,
   RecipeHudProps,
 } from '@farmslot/adapter-rn/recipe-hud';
-export { RecipeHud } from '@farmslot/adapter-rn/recipe-hud';
+export { RecipeHud, useRecipeHudState } from '@farmslot/adapter-rn/recipe-hud';

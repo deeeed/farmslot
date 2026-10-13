@@ -191,6 +191,44 @@ Manifest presence alone MUST NOT establish handler coverage. Resource availabili
 
 Pure requirement validation and compatibility derivation belong in `@farmslot/protocol`. Gateway admission, Command Center and future Companion views MUST consume that model or its unchanged wire result. Renderers MUST clear retained results when their target/flow/profile or gateway identity changes and ignore late responses for prior selections. Existing resource lease controls remain the resource controller; no second lease panel or client-side admission implementation is introduced.
 
+### Initial resource proof requirements, Amendment 1
+
+This subsection is normative under the accepted [ADR-068 Amendment 1](../adr/068-project-recipe-binding-and-conformance.md#amendment-1-initial-resource-proof-requirements-2026-10-13). The amendment was approved on 2026-10-13; the accepted requirements above remain in force.
+
+The optional flat metadata field `runtime_capability_requirements` MUST be a quoted scalar containing one JSON array. Each entry MUST use the existing `RuntimeCapabilityProofRequirement` shape from `@farmslot/protocol`:
+
+```ts
+interface RuntimeCapabilityProofRequirement {
+  capabilityId: string;
+  reason: string;
+  mode: 'state' | 'visual' | 'mixed';
+  parameters?: Record<string, unknown>;
+}
+```
+
+For example, a flow reserving a catalog-declared browser for visual proof can declare:
+
+```yaml
+runtime_capabilities: [browser-cdp]
+runtime_capability_requirements: '[{"capabilityId":"browser-cdp","reason":"Observe the selected application","mode":"visual"}]'
+```
+
+`recipeFlowRequirements` MUST decode this scalar once and expose its entries as `RecipeFlowRequirements.proofRequirements`. Missing metadata yields an empty array, not an inferred mode. The existing flat frontmatter parser MUST NOT become a nested YAML parser for this field. The accessor MUST reject invalid JSON, a non-array, unknown entry members, empty or padded provider IDs/reasons, invalid modes, duplicate provider IDs and non-object `parameters`. When the field is present, its provider IDs MUST exactly cover `runtime_capabilities`; extra or missing IDs refuse. An empty array is valid only with no declared resources. An absent field remains parseable for retained legacy tasks; it does not authorize first dispatch.
+
+`parameters` are acquire inputs, distinct from `RecipeFlowRequirements.params`, which remain smoke inputs. The accessor MUST preserve JSON value types and MUST NOT interpret shell commands or interpolate strings. Portable template data MUST NOT contain machine names, absolute home paths, literal device identities or secrets. Node/device values come from the existing pool/slot binding and catalog authority. Provider parameter schemas, recording target identity and device ownership MUST be validated by their existing owners before any provider action. Omitted parameters mean no template-supplied inputs, not permission to guess missing required values.
+
+The effective requirements MUST follow these rules:
+
+1. Use only the canonically selected, revision-bound template for a fresh dispatch and the retained task/checklist declaration for an existing execution. Later template edits MUST NOT change that execution's obligations. Static Review remains independent of runtime requirements.
+2. For each declared resource, use the matching requirement from an existing valid run/slot-owned proof plan when present. Its explicit retarget parameters remain authoritative; template defaults MUST NOT overwrite, merge into or undo them. Its mode MUST match the selected declaration's mode when that declaration is present. A mode conflict, duplicate requirement or foreign plan MUST refuse with the existing recovery guidance.
+3. For a resource absent from the run plan, use its validated template requirement as the initial input. Preserve unrelated stored requirements and dependency parameters. An IDs-only declaration with no matching valid stored requirement MUST refuse with the resource ID and the missing authored proof mode before acquire/release or worker delivery. It MUST NOT infer mode from provider names, catalog availability, capture/HUD flags or recipe parameters.
+4. Read-only preview/admission and compatibility display MUST consume the same pure validation result. When a run owner exists, admission MUST resolve modes against that run's valid stored plan per rules 2 and 3, including warm/nudge reuse. A resource satisfied by a valid stored requirement MUST NOT appear in `missingRequirements`. A run-less preview MUST display an IDs-only resource as requiring an authored mode; initial dispatch without one still refuses under rule 3. These reads MUST NOT create/update a plan, acquire a resource or execute its health/repair hooks. Display the required mode and concrete missing/conflicting requirement; a valid declaration is at most `declared`, never acquired ownership or verified live evidence.
+5. After core prepare and target binding, the ADR-065 consumer MUST pass the effective requirements through the existing posture/registry path. Only that path may persist the existing proof plan and acquire resources. Existing schema/target checks, dependency ordering, parameter freezing, ownership, health, rollback and generation/restart fences remain mandatory. A valid mode MUST NOT bypass another refusal.
+
+No additional proof-plan representation, store, CLI flag or project-specific acquisition loop is introduced. Goal 3 owns the declaration/accessor, read-only admission and shared display projection; ADR-065 owns its acquisition/recovery consumer. Harnesses retain provider schema/action extensions and inherit this behavior. `RecipeFlowRequirements.proofRequirements` and the extended `recipeFlowRequirements` are protocol exports consumed by those gateway paths; clients consume the shared compatibility result. This additive pre-1.0 API requires a minor protocol release and coordinated consumer pins, with the existing reviewed-release and registry gates. No conformance report schema or proof-mode semantics change.
+
+Acceptance MUST cover a first dispatch with no pre-created plan, each authored mode, explicit acquire inputs and omitted optional inputs, malformed/partial/duplicate declarations, provider-schema/target refusals, zero preview effects, retained IDs-only recovery and warm/nudge admission with a valid stored plan, preserved explicit retargets, mode conflicts, and pinned declarations across replay/restart. A live gateway proof MUST start without a plan or held lease and observe acquisition plus health before worker delivery, using one real owned provider and normal cleanup. A pre-seeded plan or mocked acquisition alone does not prove first-dispatch completion.
+
 ## 6. Library references and cutover
 
 The final composed-library interface MUST resolve `<library>/<ref>` to the named library. A bare ref MUST resolve only when unique across the composed set; ambiguity MUST list candidates. Exact qualified-ref overrides follow declared source precedence and MUST retain winners and shadows in describe/conformance/provenance. Cross-library dependency closure, version requirements and trust MUST be checked before effects.

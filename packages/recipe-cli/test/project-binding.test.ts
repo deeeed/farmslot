@@ -744,3 +744,59 @@ test('nested SDK snapshots retain ignored delivery bytes without duplicate hashi
     after.sourceFingerprint,
   );
 });
+
+test('locked provider and library revisions use attested commits without Git metadata', async () => {
+  const directory = root();
+  const helper = root();
+  const library = root();
+  const commit = 'a'.repeat(40);
+  project(helper);
+  const config = project(directory, {
+    recipe: {
+      adapter: 'headless',
+      provider: {
+        module: 'provider.mjs',
+        root: { sourceId: 'helper', entry: '.' },
+        revision: commit,
+      },
+      libraries: [
+        {
+          name: 'team',
+          source: { sourceId: 'library', entry: '.' },
+          owner: 'team',
+          revision: commit,
+        },
+      ],
+    },
+  });
+  const options = {
+    tokens: [],
+    cwd: directory,
+    projects: [{ config, root: directory }],
+    load: { env: {} },
+    resolveSourceBinding: (selection: { sourceId: string; entry: string }) => ({
+      root: selection.sourceId === 'helper' ? helper : library,
+      commit,
+      lockDigest: 'b'.repeat(64),
+    }),
+  };
+  const context = await resolveProjectContext(options);
+  assert.equal(context.project?.provider.identity.head, commit);
+  assert.equal(context.project?.libraries[0].identity.head, commit);
+  assert.equal(globals.bindingImports, 0);
+  await loadProjectProvider(context);
+  assert.equal(globals.bindingImports, 1);
+  fs.appendFileSync(path.join(helper, 'provider.mjs'), '\n// changed delivery bytes\n');
+  await assert.rejects(loadProjectProvider(context), { code: 'PROVIDER_SOURCE_CHANGED' });
+  const wrong = {
+    ...config,
+    recipe: {
+      ...config.recipe!,
+      libraries: [{ ...config.recipe!.libraries![0], revision: 'c'.repeat(40) }],
+    },
+  };
+  await assert.rejects(
+    resolveProjectContext({ ...options, projects: [{ config: wrong, root: directory }] }),
+    { code: 'SOURCE_REVISION_MISMATCH' },
+  );
+});

@@ -4,6 +4,12 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## Unreleased
 
+- Honor HUD top/bottom placement through automatic progress and capture the painted final outcome.
+
+## 0.7.2 - 2026-10-12
+
+- Record web-dapp recipes through the shared recorder, selecting only the owned browser on the requested CDP port.
+
 ## 0.7.1 - 2026-10-12
 
 - Update shared runtime dependencies for corrected keyboard events and bounded log observations.

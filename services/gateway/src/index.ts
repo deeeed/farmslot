@@ -1,6 +1,5 @@
 // index.ts — Gateway daemon entry point
 // Starts HTTP + WebSocket server on port 7777
-
 import {
   closeSync,
   existsSync,
@@ -130,6 +129,7 @@ import {
   resolveWorkOriginator,
   runWithSessionOriginator,
 } from './security/work-originator.js';
+import { initializeSources, stopSourceReconciliation } from './sources/runtime.js';
 import { onTaskProgress, onWorkerSignal, startWatchingActiveSlots } from './tasks/watcher.js';
 import { applyRunningWorkerSignalToContext } from './tasks/worker-signal-context.js';
 import { initWorkGraphStore, loadWorkGraphs, schedulerTick } from './work-graph/store.js';
@@ -228,6 +228,7 @@ async function main(): Promise<void> {
   const releaseIdentityResources = (): void => {
     stopCredentialFreshnessPolling();
     releaseGatewayPresence();
+    stopSourceReconciliation();
     releaseGatewaySingletonLock();
   };
   process.once('exit', releaseIdentityResources);
@@ -401,6 +402,7 @@ async function main(): Promise<void> {
 
   // Load initial fleet state
   const missingFile = !existsSync(statusFile);
+  await initializeSources();
   await loadFleetStatus();
   await initRuntimeCapabilities(observedBroadcast);
   initRuntimePosture(observedBroadcast);

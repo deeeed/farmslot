@@ -1,6 +1,5 @@
 // methods/recipe.ts — recipe.rerun and recipe.cancel handlers
 // Re-execute a recipe on a warm slot during review-gate.
-
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
@@ -83,6 +82,7 @@ import {
   retargetProofRequirements,
 } from '../runtime-capabilities/device-target.js';
 import type { RunResourcePostureReconciler } from '../runtime-capabilities/posture.js';
+import { withRunSources, withSlotSources } from '../sources/runtime.js';
 
 import { runHealthCheck, runUnlockHook } from './slot/check.js';
 import { getRuntimeCapabilityRegistry } from './runtime-capabilities.js';
@@ -1230,6 +1230,12 @@ async function buildRecipeExecutionCommand(
 }
 
 export async function recipeCommand(params: RecipeCommandParams): Promise<RecipeCommandResult> {
+  const run = getRun(params.runId);
+  if (!run) throw new Error(`Run not found: ${params.runId}`);
+  return withRunSources(run, () => recipeCommandWithSources(params));
+}
+
+async function recipeCommandWithSources(params: RecipeCommandParams): Promise<RecipeCommandResult> {
   const { runId, slotId, recipeArtifactPath, recipeRunId, playbackSlowMs, recordVideo } = params;
   const run = getRun(runId);
   if (!run) throw new Error(`Run not found: ${runId}`);
@@ -1273,6 +1279,13 @@ async function buildRecipeProjectHookCommand(
 }
 
 export async function recipeProjectHookRun(
+  params: RecipeProjectHookRunParams,
+  conformance?: HostedRecipeConformanceOptions,
+): Promise<RecipeProjectHookRunResult> {
+  return withSlotSources(params.slotId, () => recipeProjectHookRunWithSources(params, conformance));
+}
+
+async function recipeProjectHookRunWithSources(
   params: RecipeProjectHookRunParams,
   conformance?: HostedRecipeConformanceOptions,
 ): Promise<RecipeProjectHookRunResult> {
@@ -1869,6 +1882,15 @@ async function executeRecipeRerunJob(args: {
 }
 
 export async function recipeRerun(
+  params: RecipeRerunParams,
+  emit: EmitFn,
+): Promise<ScriptActionResult> {
+  const run = getRun(params.runId);
+  if (!run) throw new Error(`Run not found: ${params.runId}`);
+  return withRunSources(run, () => recipeRerunWithSources(params, emit));
+}
+
+async function recipeRerunWithSources(
   params: RecipeRerunParams,
   emit: EmitFn,
 ): Promise<ScriptActionResult> {

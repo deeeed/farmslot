@@ -1,6 +1,5 @@
 // resource-manager.ts — resolve slot resources + execute resource control hooks + health polling
 // Supports both push-based (agent watches) and pull-based (60s poll reconciliation)
-
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -22,6 +21,7 @@ import {
   type SlotResource,
   type SlotStatus,
 } from '@farmslot/protocol';
+import { withSourceEnvironment } from '@farmslot/slot-config';
 
 // ─── Placeholder helpers ───
 import { loadProjectVars, loadSlotVars, type RawProjectJson, resolveSlot } from '../core/config.js';
@@ -446,6 +446,17 @@ export async function executeResourceHealth(
   slotId: string,
   resourceId: string,
   /** See `executeResourceControl`: the leased device identity wins over slot resources. */
+  extraVars?: Record<string, string>,
+): Promise<{ ok: boolean; detail?: string }> {
+  const { withSlotSources } = await import('../sources/runtime.js');
+  return withSlotSources(slotId, () =>
+    executeResourceHealthWithSources(slotId, resourceId, extraVars),
+  );
+}
+
+async function executeResourceHealthWithSources(
+  slotId: string,
+  resourceId: string,
   extraVars?: Record<string, string>,
 ): Promise<{ ok: boolean; detail?: string }> {
   const { pool, slot } = await resolveSlot(slotId);
@@ -980,147 +991,152 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
     let totalWatches = 0;
     for (const slot of machineSlots) {
       try {
-        const { pool, slot: slotCfg } = await resolveSlot(slot.slot);
-        const projectName = slotCfg.project ?? pool.project;
-        const projectVars = await loadProjectVars(projectName);
-        const projectJson = projectVars.projectJson;
-        const slotVars = await loadSlotVars(slot.slot);
+        const { withSlotSources } = await import('../sources/runtime.js');
+        await withSlotSources(slot.slot, async () => {
+          const { pool, slot: slotCfg } = await resolveSlot(slot.slot);
+          const projectName = slotCfg.project ?? pool.project;
+          const projectVars = await loadProjectVars(projectName);
+          const projectJson = projectVars.projectJson;
+          const slotVars = await loadSlotVars(slot.slot);
 
-        const watchInstructions: Array<{
-          id: string;
-          watch: {
-            type: string;
-            path?: string;
-            port?: number;
-            cmd?: string;
-            cwd?: string;
-            provider?: ResourceWatchProvider;
-            target?: string;
-            intervalMs?: number;
-          };
-        }> = [];
-
-        for (const [id, def] of Object.entries(projectJson.resources ?? {})) {
-          if (!isSlotResourceConfigured(slotCfg.resources, id)) continue;
-          if (!def.watch) continue;
-
-          const expandedWatch: {
-            type: string;
-            path?: string;
-            port?: number;
-            cmd?: string;
-            cwd?: string;
-            provider?: ResourceWatchProvider;
-            target?: string;
-            intervalMs?: number;
-          } = { type: def.watch.type };
-
-          if (def.watch.path) {
-            const expanded = expandTemplate(def.watch.path, slotVars, projectVars);
-            if (hasUnresolvedPlaceholders(expanded)) continue;
-            // Make path absolute relative to repo
-            expandedWatch.path = expanded.startsWith('/')
-              ? expanded
-              : `${slotVars.remoteRepo}/${expanded}`;
-          }
-
-          if (def.watch.port) {
-            const expanded = expandTemplate(def.watch.port, slotVars, projectVars);
-            if (hasUnresolvedPlaceholders(expanded)) continue;
-            const port = parseInt(expanded, 10);
-            if (isNaN(port)) continue;
-            expandedWatch.port = port;
-          }
-
-          if (def.watch.cmd) {
-            const expanded = expandTemplate(def.watch.cmd, slotVars, projectVars);
-            if (hasUnresolvedPlaceholders(expanded)) continue;
-            expandedWatch.cmd = expanded;
-            expandedWatch.cwd = slotVars.remoteRepo;
-          }
-
-          const watchDefinition = {
-            type: def.type as ResourceDefinition['type'],
-            platform: def.platform,
+          const watchInstructions: Array<{
+            id: string;
             watch: {
-              type: def.watch.type as ResourceWatchType,
-              provider: def.watch.provider,
-            },
-          };
-          if (isEmptyIosSimulatorProbe(watchDefinition, expandedWatch.cmd ?? '')) continue;
+              type: string;
+              path?: string;
+              port?: number;
+              cmd?: string;
+              cwd?: string;
+              provider?: ResourceWatchProvider;
+              target?: string;
+              intervalMs?: number;
+            };
+          }> = [];
 
-          const sharedProvider = inferSharedProcessPollProvider(
-            watchDefinition,
-            expandedWatch.cmd ?? '',
-            String(slotVars.resourceVars.simulator ?? ''),
-          );
-          if (sharedProvider) {
-            const targetTemplate =
-              def.watch.target ??
-              (sharedProvider === 'ios-simulator-inventory'
-                ? String(slotVars.resourceVars.simulator ?? '')
-                : '');
-            const target = expandTemplate(targetTemplate, slotVars, projectVars).trim();
-            if (target && !hasUnresolvedPlaceholders(target)) {
-              expandedWatch.provider = sharedProvider;
-              expandedWatch.target = target;
-              if (!def.watch.provider) {
-                const inferenceKey = `${projectName}:${id}`;
-                if (!loggedLegacySharedProviderInferences.has(inferenceKey)) {
-                  loggedLegacySharedProviderInferences.add(inferenceKey);
-                  console.log(
-                    `[resource-manager] inferred shared ${sharedProvider} provider for legacy ${inferenceKey}; declare watch.provider + watch.target in project.json`,
-                  );
-                }
-              }
-            } else if (def.watch.provider) {
-              continue;
+          for (const [id, def] of Object.entries(projectJson.resources ?? {})) {
+            if (!isSlotResourceConfigured(slotCfg.resources, id)) continue;
+            if (!def.watch) continue;
+
+            const expandedWatch: {
+              type: string;
+              path?: string;
+              port?: number;
+              cmd?: string;
+              cwd?: string;
+              provider?: ResourceWatchProvider;
+              target?: string;
+              intervalMs?: number;
+            } = { type: def.watch.type };
+
+            if (def.watch.path) {
+              const expanded = expandTemplate(def.watch.path, slotVars, projectVars);
+              if (hasUnresolvedPlaceholders(expanded)) continue;
+              // Make path absolute relative to repo
+              expandedWatch.path = expanded.startsWith('/')
+                ? expanded
+                : `${slotVars.remoteRepo}/${expanded}`;
             }
-          }
 
-          if (def.watch.intervalMs) {
-            expandedWatch.intervalMs = def.watch.intervalMs;
-          }
+            if (def.watch.port) {
+              const expanded = expandTemplate(def.watch.port, slotVars, projectVars);
+              if (hasUnresolvedPlaceholders(expanded)) continue;
+              const port = parseInt(expanded, 10);
+              if (isNaN(port)) continue;
+              expandedWatch.port = port;
+            }
 
-          if (def.type === 'browser' && expandedWatch.path) {
-            // Keep pid-file watch semantics so node events still carry pid,
-            // sidecar meta, and relaunch coalescing. The command only repairs
-            // stale/missing pid files from CDP before the pid-file watcher
-            // re-reads the canonical file.
-            expandedWatch.cmd = buildBrowserNodeWatchCommand(
-              expandedWatch.path,
-              slotVars.resourceVars.cdp_port,
+            if (def.watch.cmd) {
+              const expanded = expandTemplate(def.watch.cmd, slotVars, projectVars);
+              if (hasUnresolvedPlaceholders(expanded)) continue;
+              expandedWatch.cmd = expanded;
+              expandedWatch.cwd = slotVars.remoteRepo;
+            }
+
+            const watchDefinition = {
+              type: def.type as ResourceDefinition['type'],
+              platform: def.platform,
+              watch: {
+                type: def.watch.type as ResourceWatchType,
+                provider: def.watch.provider,
+              },
+            };
+            if (isEmptyIosSimulatorProbe(watchDefinition, expandedWatch.cmd ?? '')) continue;
+
+            const sharedProvider = inferSharedProcessPollProvider(
+              watchDefinition,
+              expandedWatch.cmd ?? '',
+              String(slotVars.resourceVars.simulator ?? ''),
             );
-            expandedWatch.cwd = slotVars.remoteRepo;
-            delete expandedWatch.port;
-          }
-
-          // The node runs watch commands itself, so resolve farm refs now. The
-          // bundle is immutable: the watch keeps working after a later fast-
-          // forward and moves to the new bundle with the next watch set.
-          if (expandedWatch.cmd) {
-            try {
-              expandedWatch.cmd = await resolveRemoteFarmCommand(slotVars, expandedWatch.cmd);
-            } catch (err) {
-              // Leave this watch out rather than run the node's stale copy, and
-              // keep the slot's other watches: the set is only re-sent on
-              // reconnect or a toggle, so failing it whole would blind them all.
-              console.log(
-                `[resource-manager] watch ${id} on ${slot.slot} not started: ${(err as Error).message}`,
-              );
-              continue;
+            if (sharedProvider) {
+              const targetTemplate =
+                def.watch.target ??
+                (sharedProvider === 'ios-simulator-inventory'
+                  ? String(slotVars.resourceVars.simulator ?? '')
+                  : '');
+              const target = expandTemplate(targetTemplate, slotVars, projectVars).trim();
+              if (target && !hasUnresolvedPlaceholders(target)) {
+                expandedWatch.provider = sharedProvider;
+                expandedWatch.target = target;
+                if (!def.watch.provider) {
+                  const inferenceKey = `${projectName}:${id}`;
+                  if (!loggedLegacySharedProviderInferences.has(inferenceKey)) {
+                    loggedLegacySharedProviderInferences.add(inferenceKey);
+                    console.log(
+                      `[resource-manager] inferred shared ${sharedProvider} provider for legacy ${inferenceKey}; declare watch.provider + watch.target in project.json`,
+                    );
+                  }
+                }
+              } else if (def.watch.provider) {
+                continue;
+              }
             }
-          }
-          watchInstructions.push({ id, watch: expandedWatch });
-        }
 
-        // The node treats this as the complete watch set for the slot, so send
-        // an empty set too. Omitting the request would leave removed watches alive.
-        await sendNodeRequest(node, 'resource.watch.start', {
-          slotId: slot.slot,
-          resources: watchInstructions,
+            if (def.watch.intervalMs) {
+              expandedWatch.intervalMs = def.watch.intervalMs;
+            }
+
+            if (def.type === 'browser' && expandedWatch.path) {
+              // Keep pid-file watch semantics so node events still carry pid,
+              // sidecar meta, and relaunch coalescing. The command only repairs
+              // stale/missing pid files from CDP before the pid-file watcher
+              // re-reads the canonical file.
+              expandedWatch.cmd = buildBrowserNodeWatchCommand(
+                expandedWatch.path,
+                slotVars.resourceVars.cdp_port,
+              );
+              expandedWatch.cwd = slotVars.remoteRepo;
+              delete expandedWatch.port;
+            }
+
+            // The node runs watch commands itself, so resolve farm refs now. The
+            // bundle is immutable: the watch keeps working after a later fast-
+            // forward and moves to the new bundle with the next watch set.
+            if (expandedWatch.cmd) {
+              try {
+                expandedWatch.cmd = withSourceEnvironment(
+                  await resolveRemoteFarmCommand(slotVars, expandedWatch.cmd),
+                );
+              } catch (err) {
+                // Leave this watch out rather than run the node's stale copy, and
+                // keep the slot's other watches: the set is only re-sent on
+                // reconnect or a toggle, so failing it whole would blind them all.
+                console.log(
+                  `[resource-manager] watch ${id} on ${slot.slot} not started: ${(err as Error).message}`,
+                );
+                continue;
+              }
+            }
+            watchInstructions.push({ id, watch: expandedWatch });
+          }
+
+          // The node treats this as the complete watch set for the slot, so send
+          // an empty set too. Omitting the request would leave removed watches alive.
+          await sendNodeRequest(node, 'resource.watch.start', {
+            slotId: slot.slot,
+            resources: watchInstructions,
+          });
+          totalWatches += watchInstructions.length;
         });
-        totalWatches += watchInstructions.length;
       } catch (err) {
         console.log(
           `[resource-manager] failed to send watch for ${slot.slot}: ${(err as Error).message}`,
@@ -1308,6 +1324,19 @@ export async function executeResourceControl(
    * here (ADR-054 item 3), so `{{simulator}}`/`{{avd}}`/`{{adb_serial}}` resolve
    * to the leased device before falling back to the slot's configured one.
    */
+  extraVars?: Record<string, string>,
+  ownerRunId?: string,
+): Promise<ResourceControlResult> {
+  const { withSlotSources } = await import('../sources/runtime.js');
+  return withSlotSources(slotId, () =>
+    executeResourceControlWithSources(slotId, resourceId, action, extraVars, ownerRunId),
+  );
+}
+
+async function executeResourceControlWithSources(
+  slotId: string,
+  resourceId: string,
+  action: ResourceControlAction,
   extraVars?: Record<string, string>,
   ownerRunId?: string,
 ): Promise<ResourceControlResult> {

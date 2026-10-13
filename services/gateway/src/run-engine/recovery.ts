@@ -1,5 +1,4 @@
 // run-engine/recovery.ts — restart recovery and orphan slot reconciliation.
-
 import path from 'node:path';
 
 import {
@@ -22,6 +21,7 @@ import { SLOT_PHASE_RELEASING, SLOT_RELEASING_SINCE } from '../core/state.js';
 import { activeRunSlotIds } from '../methods/dispatch/slot-scoring.js';
 import { runDecisionWaitingStatus, type RunProgressObservation } from '../runners/run-progress.js';
 import { isLeakedGatewayTestRun } from '../runs/test-run-leak.js';
+import { withSourcePlanning } from '../sources/runtime.js';
 
 import { pendingDecisionForRun } from './decision-projection.js';
 import { pendingReviewContinuation } from './gate-policy.js';
@@ -806,7 +806,9 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
               `[run-engine] run ${run.id.slice(0, 8)} — chaining ${chainSpec.flowType} on slot ${run.slotId} (recovery)`,
             );
             deps.updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
-            const chainRun = deps.createRun(chainSpec.createParams);
+            const chainRun = await withSourcePlanning(chainSpec.createParams.project, async () =>
+              deps.createRun(chainSpec.createParams),
+            );
             deps.applyChainedRunEngineFlags(chainRun.id, chainSpec.engineFlags);
             if (Object.keys(chainSpec.updateFields).length)
               deps.updateRun(chainRun.id, chainSpec.updateFields);

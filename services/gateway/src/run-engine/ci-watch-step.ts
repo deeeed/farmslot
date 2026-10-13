@@ -17,6 +17,7 @@ import {
   publicationStatusForRun,
 } from '../run-completion/orchestrator.js';
 import { createRun, getRun, updateRun, updateRunStep } from '../runs/store.js';
+import { withSourcePlanning } from '../sources/runtime.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
 import { captureReviewInputArtifactsForRun } from './diff-artifacts.js';
@@ -340,7 +341,9 @@ export async function executeCIWatchStep(
     console.log(
       `[run-engine] run ${runId.slice(0, 8)} — chaining ${chainSpec.flowType} on slot ${current.slotId} ticket=${chainSpec.createParams.ticketOrPr}`,
     );
-    const chainRun = createRun(chainSpec.createParams);
+    const chainRun = await withSourcePlanning(chainSpec.createParams.project, async () =>
+      createRun(chainSpec.createParams),
+    );
     applyChainedRunEngineFlags(chainRun.id, chainSpec.engineFlags);
     if (Object.keys(chainSpec.updateFields).length) updateRun(chainRun.id, chainSpec.updateFields);
     broadcastFn(Events.RUN_UPDATED, { run: getRun(chainRun.id) ?? chainRun });
@@ -382,7 +385,9 @@ export async function executeCIWatchStep(
     console.log(
       `[run-engine] run ${runId.slice(0, 8)} — chaining ${chainSpec.flowType} on slot ${current.slotId} ticket=${chainSpec.createParams.ticketOrPr}`,
     );
-    const chainRun = createRun(chainSpec.createParams);
+    const chainRun = await withSourcePlanning(chainSpec.createParams.project, async () =>
+      createRun(chainSpec.createParams),
+    );
     applyChainedRunEngineFlags(chainRun.id, chainSpec.engineFlags);
     if (Object.keys(chainSpec.updateFields).length) updateRun(chainRun.id, chainSpec.updateFields);
     broadcastFn(Events.RUN_UPDATED, { run: getRun(chainRun.id) ?? chainRun });

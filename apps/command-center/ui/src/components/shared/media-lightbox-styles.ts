@@ -239,6 +239,10 @@ export const mediaLightboxStyles = css`
     align-items: stretch;
     min-height: 0;
   }
+  .ml-body:has(.ml-md-shell),
+  .ml-body:has(.ml-html-shell) {
+    align-items: flex-start;
+  }
   .ml-log-body .ml-md-shell {
     min-height: 0;
   }

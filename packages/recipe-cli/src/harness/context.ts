@@ -19,6 +19,7 @@ import {
   DEFAULT_TASK_DIR,
   type ExecutionTemplateSourceRoot,
   type ProjectConfig,
+  type SourceEntryRef,
   validateProjectRecipeConfig,
 } from '@farmslot/protocol';
 import {
@@ -577,6 +578,12 @@ export interface ConfiguredRecipeProject {
 }
 
 export interface ResolveProjectContextOptions extends ResolveHarnessContextOptions {
+  /** Supplied by the farm's shared, attested binding resolver. Harnesses never resolve refs. */
+  resolveSourceBinding?: (selection: SourceEntryRef) => {
+    root: string;
+    commit: string;
+    lockDigest: string;
+  };
   projects?: readonly ConfiguredRecipeProject[];
   /** Explicit operator-owned project registry, with <name>/project.json entries. */
   projectsDir?: string;
@@ -618,6 +625,7 @@ export interface LoadProjectProviderOptions {
 const projectProviders = new WeakMap<HarnessContext, ResolvedProjectBinding['provider']>();
 const projectLibraries = new WeakMap<HarnessContext, ResolvedProjectLibrary[]>();
 const providerOutputRoots = new WeakMap<HarnessContext, string[]>();
+const providerAttestedCommits = new WeakMap<HarnessContext, string>();
 const importedProviderSources = new Map<string, string>();
 
 /** Read project metadata and resolve defaults without importing executable code. */
@@ -819,14 +827,35 @@ export async function resolveProjectContext(
       );
     }
   };
+  const attestedCommits = new Map<string, string>();
   const sourceRoot = (ref: ExecutionTemplateSourceRoot): string => {
+    if (ref.sourceId) {
+      if (!options.resolveSourceBinding)
+        throw new ProjectBindingError(
+          'SOURCE_LOCK_REQUIRED',
+          'Declared source has no verified materialization.',
+          'execute through a source-admitted Farmslot invocation',
+        );
+      const binding = options.resolveSourceBinding({ sourceId: ref.sourceId, entry: ref.entry });
+      const root = existingSourceRoot(binding.root);
+      attestedCommits.set(root, binding.commit);
+      return root;
+    }
+    if (options.resolveSourceBinding && ref.env)
+      throw new ProjectBindingError(
+        'SOURCE_UNDECLARED',
+        'A locked provider or library cannot use an environment checkout.',
+        'declare a sourceId and contained entry instead',
+      );
     if (!configured)
       throw new ProjectBindingError(
         'SOURCE_UNAUTHORIZED',
         'Discovered root references cannot read operator environment or checkout paths.',
         'register the project before resolving provider or library root references',
       );
-    const value = ref.env ? environment[ref.env] : path.resolve(checkoutRoot, ref.projectPath!);
+    const value = ref.env
+      ? environment[ref.env]
+      : path.resolve(options.resolveSourceBinding ? root : checkoutRoot, ref.projectPath!);
     if (!value)
       throw new ProjectBindingError(
         'SOURCE_ROOT_MISSING',
@@ -835,17 +864,26 @@ export async function resolveProjectContext(
       );
     return existingSourceRoot(value, ref.env ?? ref.projectPath);
   };
+  const providerRoot = recipe.provider.root ? sourceRoot(recipe.provider.root) : undefined;
+  const providerCommit = providerRoot ? attestedCommits.get(providerRoot) : undefined;
   const provider = resolveProvider(
     recipe.provider,
     root,
     configured,
-    recipe.provider.root ? sourceRoot(recipe.provider.root) : undefined,
+    providerRoot,
     excludedRoots,
+    providerCommit,
   );
   const overrides = await resolveRecipeLibrarySources({
     cliEntries: optionValues(options.tokens, '--library'),
     ...(options.load?.env ? { env: options.load.env } : {}),
   });
+  if (options.resolveSourceBinding && overrides.length)
+    throw new ProjectBindingError(
+      'SOURCE_UNDECLARED',
+      'Locked execution cannot override libraries with loose checkout paths.',
+      'use a pushed branch source pin',
+    );
   const libraries: ResolvedProjectLibrary[] = overrides.map((entry) => {
     const libraryRoot = existingSourceRoot(path.resolve(cwd, entry.root));
     const identity = inputSourceSnapshot(libraryRoot, excludedRoots);
@@ -865,7 +903,9 @@ export async function resolveProjectContext(
           ? path.resolve(root, entry.source)
           : entry.source.env
             ? `env:${entry.source.env}`
-            : path.resolve(checkoutRoot, entry.source.projectPath!);
+            : entry.source.sourceId
+              ? sourceRoot(entry.source)
+              : path.resolve(checkoutRoot, entry.source.projectPath!);
       override.overrides ??= original;
       override.overriddenSource = {
         root: original,
@@ -879,7 +919,10 @@ export async function resolveProjectContext(
         ? existingSourceRoot(path.resolve(root, entry.source))
         : sourceRoot(entry.source);
     const identity = inputSourceSnapshot(libraryRoot, excludedRoots);
-    if (identity.head && !entry.revision) {
+    const attestedCommit = attestedCommits.get(libraryRoot);
+    if (attestedCommit)
+      Object.assign(identity, { head: attestedCommit, status: '', dirtyDigest: null });
+    if (identity.head && !entry.revision && !attestedCommit) {
       throw new ProjectBindingError(
         'SOURCE_REVISION_MISSING',
         `Library ${entry.name} is a repository source without a pinned revision.`,
@@ -946,6 +989,7 @@ export async function resolveProjectContext(
   projectProviders.set(context, structuredClone(provider));
   projectLibraries.set(context, structuredClone(libraries));
   providerOutputRoots.set(context, excludedRoots);
+  if (providerCommit) providerAttestedCommits.set(context, providerCommit);
   return context;
 }
 
@@ -989,6 +1033,10 @@ export async function loadProjectProvider(
     provider.module,
     providerOutputRoots.get(context),
   );
+  // Exported locked trees omit .git; retain the resolver's attested commit while
+  // rechecking the actual source and delivery bytes before import.
+  const attestedCommit = providerAttestedCommits.get(context);
+  if (attestedCommit) current.head = attestedCommit;
   if (
     current.head !== provider.identity.head ||
     current.sourceFingerprint !== provider.identity.sourceFingerprint
@@ -1165,6 +1213,7 @@ function resolveProvider(
   configured: boolean,
   declaredRoot?: string,
   excludedRoots: string[] = [],
+  attestedCommit?: string,
 ): ResolvedProjectBinding['provider'] {
   let file: string;
   try {
@@ -1197,6 +1246,8 @@ function resolveProvider(
     );
   }
   const identity = providerSourceSnapshot(packageRoot, file, excludedRoots);
+  if (attestedCommit)
+    Object.assign(identity, { head: attestedCommit, status: '', dirtyDigest: null });
   checkRevision(declaration.revision, identity.head, 'provider');
   return {
     ref: declaration.module,

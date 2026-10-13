@@ -198,6 +198,8 @@ export const Methods = {
 
   // Nodes (per-machine daemon)
   NODES_LIST: 'nodes.list',
+  SOURCES_STATUS: 'sources.status',
+  SOURCES_SYNC: 'sources.sync',
   NODE_DEPLOY: 'nodes.deploy',
 
   // Task

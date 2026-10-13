@@ -12,6 +12,7 @@ import type {
   SlotActionStyle,
   SlotActionSummary,
 } from '@farmslot/protocol';
+import { withSourceEnvironment } from '@farmslot/slot-config';
 
 import {
   loadProjectVars,
@@ -31,6 +32,7 @@ import {
   pollSlotResources,
 } from '../fleet/resource-manager.js';
 import { resolveRemoteFarmCommand } from '../node-support/remote-command.js';
+import { withSlotSources } from '../sources/runtime.js';
 
 const ACTION_ID_RE = /^[A-Za-z0-9._-]+$/;
 const PLACEMENTS: SlotActionPlacement[] = ['slot-header', 'resource-panel'];
@@ -263,6 +265,13 @@ export async function slotActionRun(
    */
   extraVars?: Record<string, string>,
 ): Promise<SlotActionRunResult> {
+  return withSlotSources(params.slotId, () => slotActionRunWithSources(params, extraVars));
+}
+
+async function slotActionRunWithSources(
+  params: SlotActionRunParams,
+  extraVars?: Record<string, string>,
+): Promise<SlotActionRunResult> {
   const actions = await resolveProjectActions(params.slotId);
   const action = findAction(actions, params.actionId);
   if (!action) {
@@ -287,7 +296,7 @@ export async function slotActionRun(
     return {
       ok: true,
       detail: 'command resolved',
-      command: expanded,
+      command: withSourceEnvironment(expanded),
       refresh: action.summary.refresh,
     };
   }

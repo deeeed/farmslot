@@ -279,7 +279,7 @@ async function resolveRemoteTaskArtifactsRoot(run: Run): Promise<string | null> 
   }
 }
 
-async function resolveRemoteRecipeArtifactRoot(
+export async function resolveRemoteRecipeArtifactRoot(
   run: Run,
   selectedRecipeArtifactRoot: string | null,
 ): Promise<string | null> {

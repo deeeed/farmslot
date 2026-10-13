@@ -86,3 +86,29 @@ test('reader refuses linked files outside the retained package', async (t) => {
     assert.ok(loaded.checks.some((check) => check.id === id && check.status === 'fail'));
   }
 });
+
+test('host IO consumes the same closure and diagnostics without transferring original media', async (t) => {
+  const root = await fixture(t);
+  const original = await readRecordedEvidencePackage(root);
+  const readPaths: string[] = [];
+  const transported = await readRecordedEvidencePackage(root, {
+    listPaths: async () => [...original.input.artifactPaths!],
+    readJson: async (file) => {
+      readPaths.push(file);
+      return JSON.parse(await readFile(path.join(root, file), 'utf8'));
+    },
+    digestFile: async (file) => original.input.artifactDigests[file]!,
+  });
+  assert.deepEqual(transported, original);
+  assert(readPaths.every((file) => file.endsWith('.json')));
+});
+
+test('task-root package consumes its indexed execution rather than unrelated gateway files', async (t) => {
+  const root = await fixture(t);
+  const original = await readRecordedEvidencePackage(root);
+  for (const name of ['pr-package.json', 'pr-package.md', 'diff.txt', 'report.html'])
+    await writeFile(path.join(root, name), 'unrelated task output');
+  const prepared = await readRecordedEvidencePackage(root);
+  assert.deepEqual(prepared, original);
+  assert.equal(validateRecordedEvidencePackage(prepared.input).status, 'valid');
+});

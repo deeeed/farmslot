@@ -1,6 +1,7 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import type {
   AcceptanceCriterionRef,
   AcceptanceEvidenceLink,
@@ -24,7 +25,13 @@ export function TaskAcceptancePanel({
   acceptanceEvidenceLinks,
   error,
   onOpenEvidence,
+  evidenceModel,
+  showOccurrences,
+  onOpenOccurrence,
 }: {
+  evidenceModel?: EvidenceReviewModel | null;
+  showOccurrences?: boolean;
+  onOpenOccurrence?: (traceIndex: number) => void;
   acceptanceStatus: AcceptanceStatusLedger | null;
   /** Registered criteria, so one awaiting a verdict still gets a row. */
   acceptanceCriteria?: AcceptanceCriterionRef[] | null;
@@ -39,9 +46,22 @@ export function TaskAcceptancePanel({
     ledger,
     acceptanceCriteria ?? ledger.criteria,
     acceptanceEvidenceLinks ?? [],
+    evidenceModel ?? undefined,
   );
+  const [showDetails, setShowDetails] = React.useState(false);
+  React.useEffect(() => setShowDetails(false), [evidenceModel]);
+  const packageStatus = evidenceModel?.packageStatus;
   const [expanded, setExpanded] = React.useState(view.hasOpenCriteria || Boolean(error));
-  if (view.rows.length === 0 && !error) return null;
+  React.useEffect(() => {
+    if (
+      error ||
+      evidenceModel?.errors.length ||
+      evidenceModel?.claims.some((claim) => claim.kind === 'qa-case')
+    )
+      setExpanded(true);
+  }, [error, evidenceModel]);
+  if (view.rows.length === 0 && !error && !packageStatus && !evidenceModel?.occurrences.length)
+    return null;
   return (
     <View style={styles.panel} testID="companion-ac-panel">
       <Pressable
@@ -62,8 +82,62 @@ export function TaskAcceptancePanel({
         </Text>
       </Pressable>
       {expanded && error ? <Text style={styles.error}>ledger unreadable: {error}</Text> : null}
+      {expanded && packageStatus ? (
+        <View testID="companion-evidence-package-status" style={styles.row}>
+          <View style={styles.rowHeader}>
+            <Text
+              style={[
+                styles.pill,
+                {
+                  color:
+                    packageStatus.tone === 'error'
+                      ? colors.statusFail
+                      : packageStatus.status === 'Valid'
+                        ? colors.statusOk
+                        : colors.textSecondary,
+                },
+              ]}
+            >
+              {packageStatus.status}
+            </Text>
+            <Text style={baseStyles.textMuted}>{packageStatus.path}</Text>
+          </View>
+          <Text style={packageStatus.tone === 'error' ? styles.error : styles.text}>
+            {packageStatus.summary}
+          </Text>
+          {packageStatus.action ? <Text style={styles.error}>{packageStatus.action}</Text> : null}
+          {packageStatus.issues.length ? (
+            <Pressable
+              accessibilityRole="button"
+              testID="companion-evidence-package-details"
+              onPress={() => setShowDetails((value) => !value)}
+            >
+              <Text style={styles.evidence}>
+                {showDetails ? 'Hide' : 'Show'} details ({packageStatus.issues.length} issues)
+              </Text>
+            </Pressable>
+          ) : null}
+          {showDetails
+            ? packageStatus.issues.map((issue) => (
+                <Text
+                  key={issue.message}
+                  style={packageStatus.tone === 'error' ? styles.error : styles.text}
+                >
+                  {issue.message} ({issue.count} messages)
+                </Text>
+              ))
+            : null}
+        </View>
+      ) : null}
       {expanded
-        ? view.rows.map(({ criterion, verdict, color, evidence }) => (
+        ? evidenceModel?.displayWarnings.map((warning) => (
+            <Text key={warning} style={baseStyles.textMuted}>
+              {warning}
+            </Text>
+          ))
+        : null}
+      {expanded
+        ? view.rows.map(({ criterion, verdict, color, evidence, review }) => (
             <View key={criterion.id} style={styles.row} testID={`companion-ac-row-${criterion.id}`}>
               <View style={styles.rowHeader}>
                 <Text style={styles.id}>{criterion.id}</Text>
@@ -75,6 +149,35 @@ export function TaskAcceptancePanel({
                 ) : null}
               </View>
               <Text style={styles.text}>{criterion.text}</Text>
+              {review?.timing && review?.timing !== 'measured' ? (
+                <Text style={baseStyles.textMuted}>{review?.timing}</Text>
+              ) : null}
+              {review?.moments.length &&
+              evidenceModel &&
+              !evidenceModel.errors.length &&
+              onOpenEvidence ? (
+                <Pressable
+                  accessibilityRole="button"
+                  testID={`companion-ac-clip-${criterion.id}`}
+                  onPress={() => {
+                    const selected = evidenceModel.selectClaim(criterion.id);
+                    const path = selected?.clips[0]?.videoPath;
+                    if (path) onOpenEvidence(criterion.id, evidenceModel.artifactPath(path));
+                  }}
+                >
+                  <Text style={styles.evidence}>Play proof</Text>
+                </Pressable>
+              ) : null}
+              {review?.occurrences.map((occurrence) => (
+                <View key={occurrence.traceIndex}>
+                  <Text style={styles.text}>{occurrence.intent}</Text>
+                  {occurrence.expectation ? (
+                    <Text style={baseStyles.textMuted}>
+                      {JSON.stringify(occurrence.expectation)}
+                    </Text>
+                  ) : null}
+                </View>
+              ))}
               {evidence.length > 0 && onOpenEvidence ? (
                 <View style={styles.evidenceList}>
                   {evidence.map((entry, index) => (
@@ -101,6 +204,20 @@ export function TaskAcceptancePanel({
                 <Text style={baseStyles.textMuted}>{criterion.status.note}</Text>
               ) : null}
             </View>
+          ))
+        : null}
+      {expanded && showOccurrences
+        ? evidenceModel?.occurrences.map((occurrence) => (
+            <Pressable
+              key={occurrence.traceIndex}
+              accessibilityRole="button"
+              testID={`companion-proof-step-${occurrence.traceIndex}`}
+              onPress={() => onOpenOccurrence?.(occurrence.traceIndex)}
+            >
+              <Text style={styles.evidence}>
+                {occurrence.nodeId}: {occurrence.intent} · {occurrence.ok ? 'pass' : 'fail'}
+              </Text>
+            </Pressable>
           ))
         : null}
     </View>

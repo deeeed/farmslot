@@ -8,6 +8,7 @@ import type { PendingDecision } from '@farmslot/protocol';
 import { KIND_COLORS } from '@farmslot/theme';
 
 import { FilterEmptyState } from '../../components/FilterEmptyState';
+import { RunTitle } from '../../components/RunTitle';
 import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
 import {
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
@@ -82,7 +83,10 @@ function DecisionCard({ decision }: { decision: PendingDecision }) {
         </View>
         <Text style={styles.timeText}>{new Date(decision.createdAt).toLocaleTimeString()}</Text>
       </View>
-      <Text style={styles.decisionTitle}>{displayTitle.title}</Text>
+      <RunTitle
+        style={styles.decisionTitle}
+        title={decisionDisplayTitle(decision, Infinity).title}
+      />
       {displayTitle.subtitle ? (
         <Text style={styles.decisionSubtitle} numberOfLines={1}>
           {displayTitle.subtitle}

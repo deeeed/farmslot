@@ -36,11 +36,12 @@ import { inferReviewSourceKind } from '../quality/review-sources.js';
 import { captureCurrentReviewSnapshot, unavailableReviewSnapshot } from '../review/snapshots.js';
 import { latestResolvedHumanGateDecision } from '../run-engine/decision-replay.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
-import { stackPrBase } from '../run-engine/stack-base.js';
+import { publicationBaseForRun } from '../run-engine/stack-base.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
 import { getRun, updateRun } from '../runs/store.js';
 import {
   extractRunnerSessionUsage,
+  runnerUsageMetrics,
   usesReviewChainSessionTotal,
 } from '../runtime/session-usage.js';
 import {
@@ -96,6 +97,10 @@ import {
   sortArtifactRefsForComparison,
   stableJson,
 } from './ready-gate-package.js';
+import {
+  readFrozenPublicationManifest,
+  verifyFrozenPublicationEvidence,
+} from './recorded-publication-evidence.js';
 import { augmentReviewAttemptsFromArtifacts, materializeReviewArtifacts } from './reviews.js';
 
 export {
@@ -290,7 +295,7 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
     const cacheRead = usage.cacheRead ?? null;
     const actualModel = usage.actualModel ?? null;
     const chainSessionTotal = usesReviewChainSessionTotal(run);
-    const metricsPatch: Partial<typeof run.metrics> = {};
+    const metricsPatch: Partial<typeof run.metrics> = { sessionUsageError: usage.error };
     let accounted = {
       costUsd,
       turns,
@@ -321,23 +326,7 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
       metricsPatch.sessionUsageScope = 'session-total';
     }
     if (!chainSessionTotal || metricsPatch.sessionUsageScope === 'review-generation-delta') {
-      const {
-        costUsd: accountedCost,
-        turns: accountedTurns,
-        inputTokens: accountedInput,
-        outputTokens: accountedOutput,
-        cacheCreation: accountedCacheCreation,
-        cacheRead: accountedCacheRead,
-        totalTokens: accountedTotal,
-      } = accounted;
-      if (accountedCost !== null) metricsPatch.costEstimate = accountedCost;
-      if (accountedTurns !== null) metricsPatch.sessionTurns = accountedTurns;
-      if (accountedInput !== null) metricsPatch.sessionInputTokens = accountedInput;
-      if (accountedOutput !== null) metricsPatch.sessionOutputTokens = accountedOutput;
-      if (accountedCacheCreation !== null)
-        metricsPatch.sessionCacheCreation = accountedCacheCreation;
-      if (accountedCacheRead !== null) metricsPatch.sessionCacheRead = accountedCacheRead;
-      if (accountedTotal !== null) metricsPatch.sessionTotalTokens = accountedTotal;
+      Object.assign(metricsPatch, runnerUsageMetrics({ ...usage, ...accounted }));
     }
     if (actualModel) metricsPatch.actualModel = actualModel;
     if (actualModel && run.metrics.model && !modelsMatch(run.metrics.model, actualModel)) {
@@ -366,6 +355,7 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
       actualModel,
     };
   } catch (err) {
+    updateRun(runId, { metrics: { ...run.metrics, sessionUsageError: (err as Error).message } });
     console.warn(`[run-completion] cost extraction failed (non-fatal): ${(err as Error).message}`);
     return empty;
   }
@@ -440,7 +430,7 @@ export async function renderCurrentDescription(
     current,
     report,
     artifacts ?? (await scanArtifacts(path.dirname(current.taskFile))),
-    baseBranch || DEFAULT_BRANCH,
+    await publicationBaseForRun(current, baseBranch),
     { tolerateMissingSlot: Boolean(preparedPackage.headSha) },
   );
   return { draftTitle: buildDraftPrTitle(current), draftBody };
@@ -665,7 +655,10 @@ export async function prepareCompletionPackage(
   );
   const validation = await readValidationSummary(run);
   const projectVars = await loadProjectVars(run.project);
-  const baseBranch = getProjectField(projectVars.projectJson, 'default_branch') || DEFAULT_BRANCH;
+  const baseBranch = await publicationBaseForRun(
+    run,
+    getProjectField(projectVars.projectJson, 'default_branch'),
+  );
   const reviewPolicy = publicationReviewPolicyForRun(
     run,
     projectVars.projectJson,
@@ -717,7 +710,8 @@ export async function prepareCompletionPackage(
       // A removed slot must not make the package impossible to inspect.
       reviewSnapshot = unavailableReviewSnapshot('slot-load-error', (error as Error).message);
     }
-    if (vars) reviewSnapshot = (await captureCurrentReviewSnapshot(vars)).snapshot;
+    if (vars)
+      reviewSnapshot = (await captureCurrentReviewSnapshot(vars, { baseRef: baseBranch })).snapshot;
   }
   const branch = run.branch ?? before.branch ?? '';
   const packageId = `pkg-${run.id.slice(0, 8)}-${Date.now().toString(36)}`;
@@ -1052,9 +1046,10 @@ async function createPrFromApprovedPackage(
   const tmpFile = `/tmp/farmslot-pr-body-${run.id.slice(0, 8)}-${randomUUID()}.md`;
   await writeFile(tmpFile, pendingPublicationBody(prPackage), 'utf-8');
   const pv = await loadProjectVars(run.project).catch(() => null);
-  const base =
-    stackPrBase(getRun(run.id) ?? run) ??
-    ((pv && getProjectField(pv.projectJson, 'default_branch')) || DEFAULT_BRANCH);
+  const base = await publicationBaseForRun(
+    getRun(run.id) ?? run,
+    pv && getProjectField(pv.projectJson, 'default_branch'),
+  );
   const args = [
     'pr',
     'create',
@@ -1179,7 +1174,10 @@ export async function publishCompletionPackage(
     const ciRepo: string | null = (pv?.projectJson as any)?.ci?.repo ?? null;
     flags.ciRepo = ciRepo;
     if (!ciRepo) throw new Error('no ci.repo configured');
-    const baseBranch = (pv && getProjectField(pv.projectJson, 'default_branch')) || DEFAULT_BRANCH;
+    const baseBranch = await publicationBaseForRun(
+      run,
+      pv && getProjectField(pv.projectJson, 'default_branch'),
+    );
     // The approved body was completed against the slot's template at
     // preparation; GitHub's current base template is re-read here only to
     // report drift, never to block a publication the operator approved.
@@ -1198,7 +1196,10 @@ export async function publishCompletionPackage(
 
     const approvedSelectedEvidenceKeys =
       options?.selectedEvidenceKeys ?? approvedPackage.selectedEvidenceKeys ?? [];
-    const evidenceManifest = run.taskFile ? await readEvidenceManifest(run) : null;
+    const evidenceManifest = await readFrozenPublicationManifest(
+      run,
+      approvedPackage.evidenceManifest ?? [],
+    );
     const publishableSelectedEvidenceKeys = assertPublicationEvidenceSelection({
       selectedEvidenceKeys: approvedSelectedEvidenceKeys,
       evidenceManifest: approvedPackage.evidenceManifest ?? [],
@@ -1274,9 +1275,14 @@ export async function publishCompletionPackage(
         failOnError: true,
         baseBody: approvedPackage.draftBody,
         evidenceManifest,
-        validateBody: prTemplate
-          ? (body) => reportTemplateDrift(body, 'published body')
-          : undefined,
+        validateBody: async (body) => {
+          await verifyFrozenPublicationEvidence(
+            latestRun,
+            approvedPackage.evidenceManifest ?? [],
+            selectedEvidenceKeys,
+          );
+          if (prTemplate) reportTemplateDrift(body, 'published body');
+        },
       },
     );
     flags.bodyPostProcessed = true;

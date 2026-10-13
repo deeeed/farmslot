@@ -30,10 +30,9 @@ import {
 } from './evidence-paths.js';
 import {
   assertPublicationEvidenceSelection,
-  publicationEvidenceChangedError,
   type PublicationEvidenceSelection,
 } from './publication-evidence-policy.js';
-import { verifyReadyGateSelectedEvidenceFiles } from './ready-gate-package.js';
+import { verifyFrozenPublicationEvidence } from './recorded-publication-evidence.js';
 
 // ─── LLM PR body rewrite ───
 
@@ -423,21 +422,23 @@ export interface PublishedEvidence {
   artifactUrls: Map<string, string>;
 }
 
+export function expandPublicationEvidenceSelection(
+  selection: PublicationEvidenceSelection,
+): string[] {
+  const selected = assertPublicationEvidenceSelection(selection);
+  const expanded =
+    expandEvidenceSelectionForManifest(selection.trustedEvidenceManifest, selected) ?? [];
+  return assertPublicationEvidenceSelection({ ...selection, selectedEvidenceKeys: expanded });
+}
+
 export async function publishSelectedEvidence(
   run: Run,
   prNumber: number,
   selection: PublicationEvidenceSelection,
 ): Promise<PublishedEvidence> {
-  const selected = assertPublicationEvidenceSelection(selection);
-  const selectedEvidenceKeys =
-    expandEvidenceSelectionForManifest(selection.trustedEvidenceManifest, selected) ?? [];
+  const selectedEvidenceKeys = expandPublicationEvidenceSelection(selection);
   if (selectedEvidenceKeys.length) {
-    await verifyReadyGateSelectedEvidenceFiles(
-      run,
-      { evidenceManifest: selection.evidenceManifest },
-      selectedEvidenceKeys,
-      publicationEvidenceChangedError,
-    );
+    await verifyFrozenPublicationEvidence(run, selection.evidenceManifest, selectedEvidenceKeys);
   }
   const artifactUrls = await uploadArtifacts(run, prNumber, selectedEvidenceKeys, {
     failOnError: true,
@@ -722,6 +723,14 @@ function prefixPromotedEvidenceManifest(
       ...entry,
       file: prefixPromotedEvidenceManifestPath(entry.file, artifactRoot) ?? entry.file,
     })),
+    omit: manifest.omit?.map((entry) =>
+      typeof entry === 'string'
+        ? (prefixPromotedEvidenceManifestPath(entry, artifactRoot) ?? entry)
+        : {
+            ...entry,
+            file: prefixPromotedEvidenceManifestPath(entry.file, artifactRoot) ?? entry.file,
+          },
+    ),
     videos: manifest.videos
       ? {
           ...manifest.videos,
@@ -735,9 +744,10 @@ function prefixPromotedEvidenceManifest(
 async function readEvidenceManifestFile(
   manifestPath: string,
   artifactRoot: string | null,
-): Promise<EvidenceManifest | null> {
+): Promise<{ manifest: EvidenceManifest; sourceBytes: string } | null> {
   try {
-    const parsed = JSON.parse(await readFile(manifestPath, 'utf-8'));
+    const sourceBytes = await readFile(manifestPath, 'utf-8');
+    const parsed = JSON.parse(sourceBytes);
     const issues = validateEvidenceManifest(parsed);
     if (issues.length > 0) {
       console.warn(
@@ -745,7 +755,10 @@ async function readEvidenceManifestFile(
       );
       return null;
     }
-    return prefixPromotedEvidenceManifest(parsed as EvidenceManifest, artifactRoot);
+    return {
+      manifest: prefixPromotedEvidenceManifest(parsed as EvidenceManifest, artifactRoot),
+      sourceBytes,
+    };
   } catch (err) {
     console.warn(
       `[run-completion] invalid evidence manifest ${manifestPath}: ${(err as Error).message}`,
@@ -754,21 +767,30 @@ async function readEvidenceManifestFile(
   }
 }
 
+export interface ResolvedPublicationManifest {
+  manifest: EvidenceManifest;
+  sourcePath: string;
+  sourceBytes: string;
+  pointerPath?: string;
+  pointerBytes?: string;
+}
+
 interface EvidenceManifestCandidatePath {
   manifestPath: string;
   artifactRoot: string | null;
+  pointerBytes?: string;
 }
 
 async function evidenceManifestCandidatePaths(
   taskDir: string,
 ): Promise<EvidenceManifestCandidatePath[]> {
   let promotedArtifactRoot: string | null = null;
+  let pointerBytes: string | undefined;
   const pointerPath = path.join(taskDir, 'artifacts', 'latest-valid-recipe-run.json');
   if (existsSync(pointerPath)) {
     try {
-      const pointer = sanitizeLatestValidRecipeRunPointer(
-        JSON.parse(await readFile(pointerPath, 'utf-8')),
-      );
+      pointerBytes = await readFile(pointerPath, 'utf-8');
+      const pointer = sanitizeLatestValidRecipeRunPointer(JSON.parse(pointerBytes));
       promotedArtifactRoot = pointer?.relativeArtifactRoot ?? null;
     } catch (err) {
       console.warn(
@@ -784,11 +806,13 @@ async function evidenceManifestCandidatePaths(
     candidates.push({
       manifestPath: path.join(taskDir, 'artifacts', promotedArtifactRoot, 'evidence-manifest.json'),
       artifactRoot: promotedArtifactRoot,
+      pointerBytes,
     });
   }
   candidates.push({
     manifestPath: path.join(taskDir, 'inputs', 'inherited', 'evidence-manifest.json'),
     artifactRoot: promotedArtifactRoot,
+    pointerBytes,
   });
 
   const seen = new Set<string>();
@@ -800,13 +824,31 @@ async function evidenceManifestCandidatePaths(
   });
 }
 
-export async function readEvidenceManifest(run: Run): Promise<EvidenceManifest | null> {
-  if (!run.taskFile) return null;
-  const taskDir = path.dirname(run.taskFile);
-  for (const { manifestPath, artifactRoot } of await evidenceManifestCandidatePaths(taskDir)) {
-    if (existsSync(manifestPath)) return readEvidenceManifestFile(manifestPath, artifactRoot);
+export async function resolvePublicationManifest(
+  taskDir: string,
+): Promise<ResolvedPublicationManifest | null> {
+  for (const { manifestPath, artifactRoot, pointerBytes } of await evidenceManifestCandidatePaths(
+    taskDir,
+  )) {
+    if (!existsSync(manifestPath)) continue;
+    const resolved = await readEvidenceManifestFile(manifestPath, artifactRoot);
+    return resolved
+      ? {
+          ...resolved,
+          sourcePath: path.relative(taskDir, manifestPath).split(path.sep).join('/'),
+          ...(artifactRoot
+            ? { pointerPath: 'artifacts/latest-valid-recipe-run.json', pointerBytes }
+            : {}),
+        }
+      : null;
   }
   return null;
+}
+
+export async function readEvidenceManifest(run: Run): Promise<EvidenceManifest | null> {
+  return run.taskFile
+    ? ((await resolvePublicationManifest(path.dirname(run.taskFile)))?.manifest ?? null)
+    : null;
 }
 
 export function replaceMarkdownSection(body: string, heading: string, content: string): string {

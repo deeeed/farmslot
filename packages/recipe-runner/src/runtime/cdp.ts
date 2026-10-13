@@ -3,7 +3,12 @@ import path from 'node:path';
 import WebSocket from 'ws';
 
 import type { UiObserverRef } from '@farmslot/protocol';
-import { HUD_PANEL_BOUNDS, hudIntentDisplay, hudSecondaryText } from '@farmslot/protocol/recipe';
+import {
+  HUD_PANEL_BOUNDS,
+  hudIntentDisplay,
+  hudSecondaryText,
+  waitForHudPaint,
+} from '@farmslot/protocol/recipe';
 
 import {
   type GestureAction,
@@ -70,6 +75,7 @@ interface PendingCall {
 
 interface CdpCallOptions {
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 class CdpCallTimeoutError extends Error {}
@@ -206,21 +212,30 @@ export class CdpSession {
     params: Record<string, unknown> = {},
     options: CdpCallOptions = {},
   ): Promise<T> {
+    if (options.signal?.aborted) throw options.signal.reason;
     if (this.#ws.readyState !== WebSocket.OPEN) throw closedCdpConnection();
     const id = ++this.#nextId;
     let timeout: ReturnType<typeof setTimeout> | undefined;
+    const abort = () => {
+      const pending = this.#pending.get(id);
+      this.#pending.delete(id);
+      pending?.reject(options.signal?.reason ?? new Error('CDP call cancelled.'));
+    };
     const response = new Promise<T>((resolve, reject) => {
       this.#pending.set(id, {
         resolve(value) {
           if (timeout) clearTimeout(timeout);
+          options.signal?.removeEventListener('abort', abort);
           resolve(value as T);
         },
         reject(error) {
           if (timeout) clearTimeout(timeout);
+          options.signal?.removeEventListener('abort', abort);
           reject(error);
         },
       });
     });
+    options.signal?.addEventListener('abort', abort, { once: true });
     if (options.timeoutMs !== undefined) {
       timeout = setTimeout(() => {
         const pending = this.#pending.get(id);
@@ -243,6 +258,7 @@ export class CdpSession {
     } catch (error) {
       this.#pending.delete(id);
       if (timeout) clearTimeout(timeout);
+      options.signal?.removeEventListener('abort', abort);
       throw error;
     }
     return response;
@@ -682,11 +698,11 @@ export class CdpWebPage {
     }
   }
 
-  async evaluate<T = unknown>(expression: string): Promise<T> {
+  async evaluate<T = unknown>(expression: string, options: CdpCallOptions = {}): Promise<T> {
     const result = await this.session.call<{
       result?: { value?: T };
       exceptionDetails?: { text?: string; exception?: { description?: string } };
-    }>('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+    }>('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, options);
     if (result.exceptionDetails) {
       throw new Error(
         result.exceptionDetails.exception?.description ??
@@ -1790,8 +1806,11 @@ async function renderCdpHud(
         document.documentElement.style.removeProperty('--farmslot-recipe-hud-height');
         document.body?.style.removeProperty('padding-bottom');
       }
-      return { hud: true, status: payload.status, nodeId: payload.nodeId, flow: payload.flow };
+      return (${waitForHudPaint.toString()})(requestAnimationFrame).then(() =>
+        ({ hud: true, status: payload.status, nodeId: payload.nodeId, flow: payload.flow }));
     })()`,
+    // Navigation/hydration may occupy the main thread before the paint wait starts.
+    { timeoutMs: 10_000, signal: context.signal },
   );
 }
 

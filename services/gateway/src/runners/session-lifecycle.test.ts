@@ -224,6 +224,112 @@ test('runnerRunningForPark reports structured residual liveness', async () => {
   );
 });
 
+test('parking accepts a proven stopped moved pane without sending or reloading it', async () => {
+  for (const row of ['slot-1-orch\tworker\t%1\t101\n', 'slot-1\tretired\t%1\t101\n']) {
+    const commands: string[] = [];
+    const deps = {
+      exec: async (_vars: unknown, command: string) => {
+        commands.push(command);
+        return { exitCode: 0, stdout: command.includes('display-message') ? row : '', stderr: '' };
+      },
+      findRunnerPid: async () => '',
+      respawnPane: async () => assert.fail('a moved pane must never be respawned'),
+      sleep: async () => {},
+    };
+    const inspection = await inspectRunnerRecovery(
+      { vars, runnerId: 'claude', recoveryHandle: handle, expectedRunnerState: 'stopped-or-live' },
+      deps,
+    );
+    assert.equal(inspection.supported, true);
+    assert.equal(inspection.liveTarget.state, 'stopped');
+    assert.equal(await runnerRunningForPark({ vars, recoveryHandle: handle }, deps), 'stopped');
+    const stopped = await stopRunnerForPark({ vars, recoveryHandle: handle }, deps);
+    assert.equal(stopped.ok, true);
+    assert.equal(stopped.status, 'already-stopped');
+    const reload = await reloadRunnerForPark(
+      { vars, recoveryHandle: handle, initialPrompt: 'Continue' },
+      deps,
+    );
+    assert.equal(reload.ok, false, 'restore must rehost into the owned slot first');
+    assert.equal(
+      commands.some((command) => command.includes('send-keys')),
+      false,
+    );
+  }
+});
+
+test('a moved pane refuses a foreign live session or an unreadable process tree', async () => {
+  const commands: string[] = [];
+  const deps = {
+    exec: async (_vars: unknown, command: string) => {
+      commands.push(command);
+      return {
+        exitCode: 0,
+        stdout: command.includes('display-message') ? 'slot-1-orch\tworker\t%1\t101\n' : '',
+        stderr: '',
+      };
+    },
+    findRunnerPid: async () => '202',
+    verifyLiveBinding: async () => ({ ok: false as const, reason: 'foreign live session' }),
+    respawnPane: async () => assert.fail('a moved live pane must never be respawned'),
+    sleep: async () => {},
+  };
+  const stopped = await stopRunnerForPark({ vars, recoveryHandle: handle }, deps);
+  assert.equal(stopped.ok, false);
+  assert.match(stopped.ok ? '' : stopped.error, /foreign live session/);
+  assert.equal(
+    commands.some((command) => command.includes('send-keys')),
+    false,
+  );
+  await assert.rejects(
+    stopRunnerForPark(
+      { vars, recoveryHandle: handle },
+      {
+        ...deps,
+        findRunnerPid: async () => {
+          throw new Error('process tree unreadable');
+        },
+      },
+    ),
+    /process tree unreadable/,
+  );
+});
+
+test('parking stops a moved live pane only after proving its saved conversation', async () => {
+  const commands: string[] = [];
+  let bindings = 0;
+  const result = await stopRunnerForPark(
+    { vars, recoveryHandle: handle },
+    {
+      exec: async (_vars, command) => {
+        commands.push(command);
+        return {
+          exitCode: 0,
+          stdout: command.includes('display-message') ? 'slot-1-orch\tworker\t%1\t101\n' : '',
+          stderr: '',
+        };
+      },
+      findRunnerPid: async () => '202',
+      verifyLiveBinding: async (_vars, _runner, options) => {
+        bindings++;
+        assert.equal(options.paneId, '%1');
+        assert.equal(options.expectedSessionId, handle.sessionId);
+        return verifyPersistedLiveBinding();
+      },
+      probeRunnerPid: paneStopped,
+      respawnPane: async () => assert.fail('no archive pane reload'),
+      sleep: async () => {},
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'stopped');
+  assert.equal(bindings, 1);
+  assert.equal(
+    commands.some((command) => command.includes("'/exit'") && command.includes("'%1'")),
+    true,
+  );
+});
+
 test('stopRunnerForPark sends only the registry graceful-exit command and confirms exit', async () => {
   const commands: string[] = [];
   const result = await stopRunnerForPark(

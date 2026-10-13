@@ -4,6 +4,14 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show compact evidence package status and collapsed diagnostics, with neutral legacy evidence and read-only retained reports.
+
+- Display readable run titles in lists, retrospectives, detail and decisions with two-line cards and full title on hover.
+- Show retained retrospective reports and specific usage/code-delta capture reasons.
+
+- Use the shared evidence review model for claim/step navigation, verified video markers and bounded playback (ADR-062).
+- Show review rounds as N/5 and disable another review when the budget is spent.
+
 - Move delivered roadmap work into a collapsed group with PR links and prominent delivery status.
 
 - Make inventory selection visible and close details when the selected row is activated again.

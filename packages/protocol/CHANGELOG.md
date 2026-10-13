@@ -4,6 +4,23 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Share the existing retained-attempt pointer validator with task artifact checks and gateway consumers.
+
+- Declare versioned source locks, exact source receipts and run input provenance.
+- Honor HUD top/bottom placement through automatic progress and capture the painted final outcome.
+
+- Keep frozen recording dependencies out of selectable publication media.
+- Require a valid farm-owned QA preset during project pack admission and gateway support sync, with a missing-flow error and configuration hint.
+
+- Include the retained package display path in evidence review snapshots.
+
+- Share plain run titles across clients, deriving HTML and Markdown headings with bounded display text.
+- Distinguish missing retrospective turn and code-delta capture from observed zero.
+
+- Keep saved reviews readable on the phone after publication closes, with the original verdict, reviewed SHA and full report. Requested choices stay separate from confirmed publication.
+- Add an opt-in selected-package metadata projection to the existing run recipe-artifact query (ADR-062).
+- Share the five-round review budget and its gate display independently of passing-review counts.
+
 ## 0.40.0 - 2026-10-12
 
 - Validate bounded `watch_logs` windows and require explicit file scope for output-derived log paths.

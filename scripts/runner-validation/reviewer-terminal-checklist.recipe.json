@@ -1,0 +1,28 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Reviewer terminal and checklist ownership",
+  "description": "Manual production gateway and public harness proof. Requires an existing tmux server; never starts or kills the server.",
+  "workflow": {
+    "entry": "terminal-proof",
+    "nodes": {
+      "terminal-proof": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/reviewer-terminal-checklist.mts",
+        "timeout_ms": 300000,
+        "intent": "A real reviewer keeps its checklist until its own terminal mark; explicit host overrides and blocked start remain usable.",
+        "next": "runner-exit-proof"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "runner-exit-proof": {
+        "action": "command",
+        "cmd": "FARMSLOT_TERMINAL_PROOF_SCENARIO=runner-exit TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/reviewer-terminal-checklist.mts",
+        "timeout_ms": 300000,
+        "intent": "An observed reviewer crash is blocked promptly without accepting its written result as completion.",
+        "next": "done"
+      }
+    }
+  }
+}

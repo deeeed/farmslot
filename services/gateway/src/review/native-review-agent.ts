@@ -57,6 +57,7 @@ import {
   reviewerResultRelPath,
   scopeReviewFeedbackPath,
 } from './review-agent.js';
+import { admitReviewRound, reviewRoundAdmissionId } from './review-round-budget.js';
 import { noteReviewInputsAtLaunch } from './reviewed-inputs.js';
 import {
   claimWarmReviewerSession,
@@ -212,6 +213,7 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
   const startedAt = recovering
     ? (context!.attemptStartedAt ?? context!.startedAt ?? new Date().toISOString())
     : new Date().toISOString();
+  await admitReviewRound(runId, reviewRoundAdmissionId(lineage, loopNumber, startedAt));
   let progress: { stop(): void | Promise<void> } | undefined;
   let activeTaskSet = false;
   let primaryFailure: unknown;
@@ -222,7 +224,7 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
         ? await readPersistedReviewSnapshot(vars, taskDir, loopNumber, artifactScope)
         : await captureReviewSnapshot(vars, taskDir, loopNumber, artifactScope, {
             mode: input.mode,
-            baseRef: stackPrBase(original) ?? original.repeatReviewContext?.baseRef,
+            baseRef: (await stackPrBase(original)) ?? original.repeatReviewContext?.baseRef,
             lastReviewedHeadSha: retained?.lastReviewedHeadSha,
           });
       if (
@@ -264,7 +266,10 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
           resultRelPath,
         );
         let template = scopeReviewFeedbackPath(
-          await expandReviewTemplate(vars, taskDir, runId, validationDepth),
+          await expandReviewTemplate(vars, taskDir, runId, validationDepth, {
+            ...target,
+            feedback: feedbackRelPath,
+          }),
           feedbackRelPath,
           resultRelPath,
         );

@@ -59,6 +59,7 @@ import {
 import { NativeWorkerOperationUncertainError } from '../../runners/native/worker-error.js';
 import { getRun } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
+import { withSlotSources } from '../../sources/runtime.js';
 
 import { runHealthCheck, runUnlockHook } from './check.js';
 import { runFixtureSync } from './fixtures.js';
@@ -167,6 +168,15 @@ export async function verifyPrepareHealth(
 }
 
 export async function slotPrepare(
+  params: SlotPrepareParams,
+  emit: EventEmitter,
+  signal?: AbortSignal,
+  opts?: SlotPrepareInternalOptions,
+): Promise<SlotPrepareResult> {
+  return withSlotSources(params.slotId, () => slotPrepareWithSources(params, emit, signal, opts));
+}
+
+async function slotPrepareWithSources(
   params: SlotPrepareParams,
   emit: EventEmitter,
   signal?: AbortSignal,

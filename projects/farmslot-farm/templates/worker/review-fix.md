@@ -43,7 +43,9 @@ TICKET: {{TICKET}}
 ### Fix (steps 1-3)
 
 - [ ] **1. Start** — run the explicit checklist/signal marker with `start`, followed by `1`.
-- [ ] **2. Read the review feedback** — `{{TASK_DIR}}/artifacts/review-feedback.md` has the full analysis. Understand each issue.
+- [ ] **2. Read the review feedback** — Read every lane feedback file below and understand each issue.
+
+{{REVIEW_FEEDBACK_FILES}}
 - [ ] **3. Fix each issue:**
       For each issue above:
   - Open the file, make the smallest possible fix

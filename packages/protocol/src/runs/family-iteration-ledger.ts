@@ -4,6 +4,8 @@ import type {
   FamilyObservabilitySnapshot,
 } from '../contracts/index.js';
 
+import { taskTitleText } from './run-title.js';
+
 export interface FamilyIterationLedgerCard {
   index: number;
   runId: string;
@@ -55,7 +57,12 @@ export function buildFamilyIterationLedgerPresentation(
     cards,
     summary: {
       totalRuns: cards.length,
-      producedDiffRuns: cards.filter((card) => card.diffLabel !== 'no code delta').length,
+      producedDiffRuns: orderedEntries.filter(
+        (entry) =>
+          entry.iterationDiff?.available ||
+          entry.contributionDiff.available ||
+          entry.legacyDiffFallback?.available,
+      ).length,
       reviewedInputRuns: cards.filter((card) => card.reviewedInputLabel !== 'no reviewed input')
         .length,
       recipeRuns: cards.filter((card) => card.recipeLabel !== 'recipe not captured').length,
@@ -79,7 +86,10 @@ function buildFamilyIterationCard(
     flowType: entry.flowType,
     flowLabel: flowTypeLabel(entry.flowType),
     reason: iterationReason(entry, run),
-    title: run?.summary?.trim() || entry.ticketOrPr || entry.familyRootTicketOrPr,
+    title: taskTitleText(
+      run?.summary?.trim() || entry.ticketOrPr || entry.familyRootTicketOrPr,
+      Infinity,
+    ),
     diffLabel: contributionDiffLabel(entry),
     reviewedInputLabel: reviewedInputLabel(entry),
     evidenceLabel: evidenceLabel(entry, run),
@@ -151,7 +161,7 @@ function contributionDiffLabel(entry: FamilyChangeLedgerEntry): string {
       : entry.legacyDiffFallback?.available
         ? entry.legacyDiffFallback
         : null;
-  if (!diff) return 'no code delta';
+  if (!diff) return unavailableContributionLabel(entry);
   const scope = entry.iterationDiff?.available ? 'iteration delta' : 'produced code delta';
   return `${scope} · ${diff.files} files · +${diff.additions} -${diff.deletions}`;
 }
@@ -264,4 +274,15 @@ function fallbackLedgerEntryForRun(run: FamilyObservabilityRunSummary): FamilyCh
     taskInputArtifacts: [],
     missingData: run.missingData,
   };
+}
+
+/** Distinguish unavailable capture from a deliberately absent validation delta. */
+export function unavailableContributionLabel(
+  entry: Pick<FamilyChangeLedgerEntry, 'flowType' | 'contributionDiff'>,
+): string {
+  const reason = entry.contributionDiff.missingReason;
+  if (reason === 'no-source-diff') return 'no source-code delta recorded';
+  if (reason === 'no-contribution-expected' || reason === 'validation-only')
+    return 'validation-only run; no code delta expected';
+  return `code delta not captured: ${reason ?? 'base or diff was not recorded'}`;
 }

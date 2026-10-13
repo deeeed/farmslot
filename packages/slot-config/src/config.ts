@@ -5,6 +5,7 @@ import { readdir, readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  assertSourceEntry,
   DEFAULT_TASK_DIR,
   FAILURE_CATEGORIES,
   type FlowType,
@@ -42,6 +43,12 @@ import {
 import { SlotConfigError } from './error.js';
 import { referenceRepoKeysIn, referenceRepoPlaceholder } from './hooks.js';
 import { farmslotRoot } from './repo-root.js';
+import {
+  type ProjectSourceContext,
+  projectSourceContext,
+  resolveSourceBinding,
+} from './source-binding.js';
+import { readSourceRuntimeSettings } from './source-runtime-settings.js';
 
 // FARMSLOT_POOL_DIR / FARMSLOT_PROJECTS_DIR are the historical script-level
 // overrides (session-usage.sh tests, fixture harnesses); default to the
@@ -500,6 +507,7 @@ export type RawRuntimeCapabilityActionRef =
   | { kind?: 'slot-action'; action_id?: string };
 
 export interface ProjectVars {
+  sourceContext?: ProjectSourceContext;
   projectName: string;
   projectConfig: string; // path to project.json
   projectFixturesDir: string;
@@ -785,21 +793,30 @@ const projectVarsCache = new Map<string, { value: ProjectVars; at: number }>();
 
 export function invalidateProjectVarsCache(projectName?: string): void {
   if (!projectName) projectVarsCache.clear();
-  else projectVarsCache.delete(projectName);
+  else
+    for (const key of projectVarsCache.keys())
+      if (key.startsWith(`${projectName}\0`)) projectVarsCache.delete(key);
 }
 
 export async function loadProjectVars(projectName: string): Promise<ProjectVars> {
-  const cached = projectVarsCache.get(projectName);
-  if (cached && Date.now() - cached.at < PROJECT_VARS_CACHE_TTL_MS) return cached.value;
+  const sourceContext = await projectSourceContext(projectName);
+  const packRoot = sourceContext
+    ? resolveSourceBinding(sourceContext.pack, sourceContext.materialization).root
+    : path.join(projectsDir, projectName);
+  const cacheKey = `${projectName}\0${sourceContext?.materialization.lock.digest ?? 'legacy'}`;
+  const cached = projectVarsCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < PROJECT_VARS_CACHE_TTL_MS)
+    return { ...cached.value, sourceContext };
 
-  const projectConfig = path.join(projectsDir, projectName, 'project.json');
-  const projectFixturesDir = path.join(projectsDir, projectName, 'fixtures');
-  const projectTemplatesDir = path.join(projectsDir, projectName, 'templates');
+  const projectConfig = path.join(packRoot, 'project.json');
+  const projectFixturesDir = path.join(packRoot, 'fixtures');
+  const projectTemplatesDir = path.join(packRoot, 'templates');
 
   let projectJson: RawProjectJson;
   try {
     const content = await readFile(projectConfig, 'utf-8');
     projectJson = JSON.parse(content);
+    if (sourceContext) Object.assign(projectJson, await readSourceRuntimeSettings(projectName));
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       throw new Error(`Project config not found: ${projectConfig}`);
@@ -848,6 +865,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   const roadmap = normalizeRawProjectRoadmap(projectJson.roadmap);
 
   const value: ProjectVars = {
+    sourceContext,
     projectName,
     projectConfig,
     projectFixturesDir,
@@ -858,7 +876,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
     artifactDir,
     recipeDir,
   };
-  projectVarsCache.set(projectName, { value, at: Date.now() });
+  projectVarsCache.set(cacheKey, { value, at: Date.now() });
   return value;
 }
 
@@ -1120,7 +1138,13 @@ export function validateExecutionTemplatesConfig(
       throw new Error(`${projectConfig}: ${field}.root must be an object`);
     }
     const rootKeys = Object.keys(root);
-    if (rootKeys.length !== 1 || (rootKeys[0] !== 'projectPath' && rootKeys[0] !== 'env')) {
+    if ('sourceId' in root) {
+      assertSourceEntry(root);
+    }
+    if (
+      !('sourceId' in root) &&
+      (rootKeys.length !== 1 || (rootKeys[0] !== 'projectPath' && rootKeys[0] !== 'env'))
+    ) {
       throw new Error(
         `${projectConfig}: ${field}.root must define exactly one of projectPath or env`,
       );

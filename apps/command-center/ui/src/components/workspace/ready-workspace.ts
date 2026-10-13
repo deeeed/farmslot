@@ -1,8 +1,13 @@
 // <ready-workspace> — Rich human-gate workspace for fix-bug/dev flows (D8)
 // Shows worker report, diff, recipe, artifacts, and review verdict.
 import { nothing } from 'lit';
-import { customElement } from 'lit/decorators.js';
+import { customElement, state } from 'lit/decorators.js';
 
+import {
+  createEvidenceReviewModel,
+  type EvidenceReviewModel,
+} from '@farmslot/adapter-sdk/evidence';
+import type { RunRecipeRunsForRunResult } from '@farmslot/protocol';
 import {
   type ArtifactRef,
   isInternalRunArtifactPath,
@@ -21,6 +26,7 @@ import { gateway } from '../../gateway-client.js';
 import { formatDiffFileCount } from '../../utils/diff-test-filter.js';
 import { summarizeReviewCounts } from '../../utils/review-gate-display.js';
 import { requestProjectConfigs } from '../dispatch/dispatch-wizard-loaders.js';
+import { renderAcceptancePanel } from '../progress-tracker/acceptance-panel.js';
 import type { ReviewLoopArtifactOpenDetail } from '../reviews/review-loop-timeline.js';
 
 import { ReadyWorkspaceActionPresenter } from './ready-workspace-action-presenter.js';
@@ -66,8 +72,67 @@ import {
 
 @customElement('ready-workspace')
 export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
+  @state() private _evidenceModel: EvidenceReviewModel | null = null;
+  private _evidenceRequest = 0;
+  private _evidenceRecipeRunId: string | null = null;
+  private _evidenceItems: import('../shared/media-lightbox-types.js').LightboxItem[] | null = null;
+  private async _loadReviewEvidence(): Promise<void> {
+    const request = ++this._evidenceRequest;
+    this._evidenceModel = null;
+    this._evidenceItems = null;
+    if (!this.runId || this.mockData) return;
+    try {
+      const source = await gateway.request<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
+        runId: this.runId,
+        includeRecordedEvidence: true,
+        decisionId: this.decision?.id,
+        evidenceSnapshotHash: this._payload?.prPackage?.packageHash,
+      });
+      if (request !== this._evidenceRequest || !this.isConnected) return;
+      this._evidenceModel = createEvidenceReviewModel({
+        context: 'pr-preview',
+        package: source.recordedEvidence?.input,
+        artifactPrefix: source.recordedEvidence?.artifactPrefix,
+        packagePath: source.recordedEvidence?.packagePath,
+        readErrors: source.recordedEvidence?.errors,
+      });
+      this._evidenceRecipeRunId = source.selectedRecipeRunId;
+    } catch (error) {
+      if (request === this._evidenceRequest && this.isConnected)
+        this._evidenceModel = createEvidenceReviewModel({
+          readErrors: [error instanceof Error ? error.message : String(error)],
+        });
+    }
+  }
+  private _renderClaimReview() {
+    const model = this._evidenceModel;
+    if (!model) return nothing;
+    return renderAcceptancePanel(
+      { schemaVersion: 1, criteria: [] },
+      {
+        evidenceModel: model,
+        evidenceHref: (path) => this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
+        openEvidence: ({ criterion, evidence, index }) => {
+          this._lightboxRecipeRunId = this._evidenceRecipeRunId;
+          model.selectClaim(criterion.id, evidence[index]);
+          this._evidenceItems = evidence.map((path) => ({
+            path,
+            purpose: 'evidence',
+            url: this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
+            evidenceModel: model,
+            resolveArtifactUrl: (path) => this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
+          }));
+          this._lightboxIndex = index;
+          this._lightboxMode = 'single';
+          this._lightboxOpen = true;
+        },
+      },
+    );
+  }
   override updated(changed: Map<string, unknown>): void {
     super.updated(changed);
+    if (['runId', 'decision', 'selectedRecipeRunId'].some((key) => changed.has(key)))
+      void this._loadReviewEvidence();
     if (changed.has('run')) {
       const projectName = this.run?.project ?? '';
       this._reviewPicker.setContext({
@@ -115,7 +180,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       beginRecovery: () => void this._beginRecovery(),
       onResizeStart: this._splitResizer.start,
       lightbox: {
-        items: this._lightboxItems(payload),
+        items: this._evidenceItems ?? this._lightboxItems(payload),
         pairs: this._lightboxPairs(payload),
         open: this._lightboxOpen,
         selectedIndex: this._lightboxIndex,
@@ -127,9 +192,15 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
         ).length,
         close: () => {
           this._lightboxOpen = false;
+          this._evidenceItems = null;
           this._syncViewStateToHash();
         },
         navigate: (index) => {
+          this._lightboxIndex = index;
+          this._syncViewStateToHash();
+        },
+        replace: ({ items, index }) => {
+          this._evidenceItems = items;
           this._lightboxIndex = index;
           this._syncViewStateToHash();
         },
@@ -349,6 +420,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       publicationTarget: this._publicationTarget,
       markdown: this._renderPrPreviewMarkdown(payload),
       fallback: () => this._renderDiffTab(),
+      claims: this._renderClaimReview(),
     });
   }
 

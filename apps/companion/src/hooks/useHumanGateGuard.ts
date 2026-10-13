@@ -26,10 +26,10 @@ export interface HumanGateGuard extends HumanGateGuardState {
 export function useHumanGateGuard(
   client: GatewayClient | null,
   run: Run | null,
-  decision: (HumanGateGuardDecision & Pick<RunDecision, 'type'>) | null,
+  decision: (HumanGateGuardDecision & Pick<RunDecision, 'id' | 'type'>) | null,
 ): HumanGateGuard | null {
   const gate = decision?.type === HUMAN_GATE_DECISION_TYPE ? decision : null;
-  const acceptance = useRunAcceptance(client, gate ? run : null);
+  const acceptance = useRunAcceptance(client, gate ? run : null, { decisionId: gate?.id });
   return useMemo(
     () => (gate ? { acceptance, ...humanGateGuard(run, gate, acceptance) } : null),
     [acceptance, gate, run],

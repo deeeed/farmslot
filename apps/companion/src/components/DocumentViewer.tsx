@@ -22,7 +22,9 @@ export function DocumentViewer({
   title,
   body,
   onClose,
+  children,
 }: {
+  children?: React.ReactNode;
   visible: boolean;
   title: string;
   body: string;
@@ -38,6 +40,7 @@ export function DocumentViewer({
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'ios' ? 10 : 0);
   const formatted = formatDocument(title, body);
   const minCodeWidth = Math.max(320, width - spacing.xl * 2);
+  if (!visible) return null;
   return (
     <Modal
       visible={visible}
@@ -62,7 +65,11 @@ export function DocumentViewer({
             <Text style={styles.closeText}>Close</Text>
           </Pressable>
         </View>
-        <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
+        <ScrollView
+          testID="companion-document-body"
+          style={styles.body}
+          contentContainerStyle={styles.bodyContent}
+        >
           {formatted.length > 0 ? (
             formatted.map((block, index) =>
               block.kind === 'separator' ? (
@@ -95,9 +102,14 @@ export function DocumentViewer({
           ) : (
             <Text style={styles.documentText}>No document content</Text>
           )}
-          <Pressable style={styles.footerCloseButton} onPress={onClose}>
+          <Pressable
+            testID="companion-document-end"
+            style={styles.footerCloseButton}
+            onPress={onClose}
+          >
             <Text style={styles.closeText}>Close document</Text>
           </Pressable>
+          {children}
         </ScrollView>
         {/* Android dialogs are separate windows; the root HUD cannot cover them. */}
         {Platform.OS === 'android' && <RecipeHud state={recipeHud} />}

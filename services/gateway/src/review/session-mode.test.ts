@@ -11,6 +11,7 @@ import {
   persistedWarmReviewerSession,
   registerWarmReviewerSession,
   resetWarmReviewerSessionsForTest,
+  reviewPRIdentity,
   shouldRetainCompletedReviewer,
   type WarmReviewerScope,
 } from './session-mode.js';
@@ -179,4 +180,16 @@ test('multiple reviewer lineages for one PR never select the latest unrelated re
     () => claimWarmReviewerSession({ ...scope, ownerPrincipalId: 'foreign' }),
     /incompatible project, owner or transport/,
   );
+});
+
+test('canonical review identity accepts stored PR links and qualified references', () => {
+  const run = makeRun({
+    ticketOrPr: 'MANUAL-review',
+    links: [{ label: 'PR', url: 'https://github.com/owner/repo/pull/42' }],
+  });
+  assert.deepEqual(reviewPRIdentity(run), { repository: 'owner/repo', prNumber: 42 });
+  assert.deepEqual(reviewPRIdentity({ ...run, links: [], ticketOrPr: 'owner/repo#42' }), {
+    repository: 'owner/repo',
+    prNumber: 42,
+  });
 });

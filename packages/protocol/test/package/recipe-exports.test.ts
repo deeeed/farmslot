@@ -46,6 +46,7 @@ test('recipe module exposes only the public recipe protocol surface', async () =
     'getRecipeWorkflowNodeIds',
     'hasUnresolvedRecipeFailure',
     'hudIntentDisplay',
+    'hudPlacement',
     'hudSecondaryText',
     'isDynamicRecipeRef',
     'isRecord',
@@ -59,6 +60,7 @@ test('recipe module exposes only the public recipe protocol surface', async () =
     'recordingTargetClaimKey',
     'replaceRecipeTemplates',
     'resolvedRecipeArtifactPath',
+    'sanitizeLatestValidRecipeRunPointer',
     'validateArtifactManifestDocument',
     'validateRecipeActionManifestDocument',
     'validateRecipeArtifactPackage',
@@ -74,6 +76,7 @@ test('recipe module exposes only the public recipe protocol surface', async () =
     'validateRecipeSuiteScopeDocument',
     'validateRecipeWithManifest',
     'validateResolvedRecipeActionNode',
+    'waitForHudPaint',
   ]);
 });
 

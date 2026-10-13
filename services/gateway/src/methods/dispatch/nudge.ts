@@ -227,6 +227,8 @@ export async function nudgeDispatch(
   const requestingRun = getRunForVerify(params.runId);
   if (!requestingRun) throw new Error(`Run ${params.runId} not found in store`);
   const priorOwner = liveSlot?.currentRunId ? getRunForVerify(liveSlot.currentRunId) : null;
+  const { assertRetainedSourceInputs } = await import('../../sources/runtime.js');
+  assertRetainedSourceInputs(priorOwner, requestingRun);
   if (requestingRun.transport === 'native' || priorOwner?.transport === 'native')
     throw new Error(
       'Native task reuse requires the native dispatch path; terminal adoption is unsupported',

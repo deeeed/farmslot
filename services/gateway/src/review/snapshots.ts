@@ -1,6 +1,5 @@
 import {
   agentRoleWindow,
-  type DiffStat,
   isReviewerWindowName,
   type ReviewAttempt,
   type ReviewDiffSnapshot,
@@ -19,6 +18,7 @@ import {
 import { refreshRemoteBaseRef } from '../methods/git.js';
 import {
   cappedRunSourceDiffCommand,
+  parseGitNumstat,
   projectSourceDiffPathspecs,
   runSourceDiffNumstatCommand,
   runSourceDiffUntrackedManifestCommand,
@@ -38,20 +38,6 @@ export type ReviewSessionMeta = {
   runnerSessionId: string | null;
   error?: string;
 };
-
-function parseReviewNumstat(text: string): DiffStat {
-  const stat = { files: 0, additions: 0, deletions: 0 };
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    const [addRaw, delRaw] = line.split('\t');
-    stat.files += 1;
-    const additions = Number(addRaw);
-    const deletions = Number(delRaw);
-    if (Number.isFinite(additions)) stat.additions += additions;
-    if (Number.isFinite(deletions)) stat.deletions += deletions;
-  }
-  return stat;
-}
 
 type UntrackedReviewFile = NonNullable<ReviewDiffSnapshot['untrackedFiles']>[number];
 
@@ -220,7 +206,8 @@ async function resolveReviewContext(
 }
 
 export interface ReviewSnapshotRange {
-  mode: ReviewMode;
+  /** Omit mode to override only the base, retaining source filters and untracked identity. */
+  mode?: ReviewMode;
   lastReviewedHeadSha?: string;
   baseRef?: string;
 }
@@ -236,6 +223,7 @@ export async function captureCurrentReviewSnapshot(
   deps: ReviewSnapshotDependencies = { resolveContext: resolveReviewContext, exec: execOnSlot },
 ): Promise<{ snapshot: ReviewDiffSnapshot; diffText?: string }> {
   try {
+    const immutableRange = range?.mode !== undefined;
     const { baseRef, pathspecs } = await deps.resolveContext(vars, range?.baseRef);
     const headResult = await deps.exec(vars, 'git rev-parse HEAD', { timeout: 10_000 });
     if (headResult.exitCode !== 0) {
@@ -281,11 +269,11 @@ export async function captureCurrentReviewSnapshot(
         throw new Error('Last reviewed head is not an ancestor of the current PR head');
     }
     // Immutable COLD/WARM ranges cover the complete committed PR diff.
-    const pathspec = (range ? ['.'] : pathspecs).map(shellQuote).join(' ');
+    const pathspec = (immutableRange ? ['.'] : pathspecs).map(shellQuote).join(' ');
     const capturedRange = `${shellQuote(baseSha)} ${shellQuote(headSha)} -- ${pathspec}`;
     const numstat = await deps.exec(
       vars,
-      range
+      immutableRange
         ? `git diff --no-ext-diff --no-textconv --numstat ${capturedRange}`
         : runSourceDiffNumstatCommand(baseSha, pathspecs),
       {
@@ -299,7 +287,7 @@ export async function captureCurrentReviewSnapshot(
     }
     const diff = await deps.exec(
       vars,
-      range
+      immutableRange
         ? `git diff --no-ext-diff --no-textconv ${capturedRange}`
         : cappedRunSourceDiffCommand(baseSha, pathspecs),
       {
@@ -315,7 +303,7 @@ export async function captureCurrentReviewSnapshot(
         ),
       };
     }
-    const untrackedManifest = range
+    const untrackedManifest = immutableRange
       ? { exitCode: 0, stdout: '', stderr: '' }
       : await deps.exec(vars, runSourceDiffUntrackedManifestCommand(pathspecs), {
           timeout: 10_000,
@@ -338,7 +326,7 @@ export async function captureCurrentReviewSnapshot(
         headRef: branchResult.stdout.trim() || null,
         headSha: headResult.stdout.trim(),
         diffHash: reviewDiffHash(reviewDiffIdentity),
-        diffStat: parseReviewNumstat(numstat.stdout),
+        diffStat: parseGitNumstat(numstat.stdout),
         ...(untrackedFiles.length > 0 ? { untrackedFiles } : {}),
         capturedAt: new Date().toISOString(),
       },
@@ -484,7 +472,7 @@ export async function captureFixDeltaSnapshot(
       fixHeadSha,
       diffPath: diffRel,
       diffHash: reviewDiffHash(fixDiffIdentity),
-      diffStat: parseReviewNumstat(numstat.stdout),
+      diffStat: parseGitNumstat(numstat.stdout),
       ...(untrackedFiles.length > 0 ? { untrackedFiles } : {}),
       capturedAt: new Date().toISOString(),
     };

@@ -677,3 +677,57 @@ test('buildGateSummary omits the subtasks field when a run registered no child u
   });
   assert.equal(buildGateSummary(run, 'publication').checklist?.subtasks, undefined);
 });
+
+test('retrospective distinguishes missing turns from observed zero and records review skips', () => {
+  const absent = makeRun({
+    metrics: metrics({ outcome: 'success' }),
+    steps: [
+      {
+        name: 'review',
+        status: 'done',
+        outputs: { skipped: true, reason: 'disabled-for-project' },
+      },
+    ],
+  });
+  const summary = buildGateSummary(absent, 'review');
+  assert.equal(summary.worker.turns, null);
+  assert.match(summary.headline ?? '', /turns not captured/);
+  assert.match(summary.review.summaryText ?? '', /disabled-for-project/);
+  assert.doesNotMatch(summary.review.summaryText ?? '', /no reviews/);
+  assert.match(
+    buildGateSummary(makeRun({ metrics: metrics({ sessionTurns: 0 }) }), 'review').headline ?? '',
+    /in 0 turns/,
+  );
+});
+
+test('retrospective read projection refreshes stale outcome and zero-turn snapshot', () => {
+  const run = makeRun({
+    metrics: metrics({ outcome: 'success', sessionTurns: 7 }),
+    decisions: [
+      {
+        id: 'retro',
+        type: 'retrospective',
+        title: 'Review',
+        description: 'Recorded run review',
+        createdAt: '2026-10-10',
+        actions: [],
+        payload: {
+          kind: 'retrospective',
+          outcome: 'partial',
+          whatThisIs: 'Review',
+          actionEffects: [],
+        },
+      },
+    ],
+  });
+  const projected = enrichDecisionsWithGateSummary(run);
+  const payload = projected.decisions[0].payload;
+  assert.equal(payload?.kind, 'retrospective');
+  if (payload?.kind !== 'retrospective') throw new Error('missing retrospective');
+  assert.equal(payload.outcome, 'success');
+  assert.equal(payload.gateSummary?.worker.turns, 7);
+  assert.equal(
+    run.decisions[0].payload?.kind === 'retrospective' && run.decisions[0].payload.outcome,
+    'partial',
+  );
+});

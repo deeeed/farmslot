@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 
 import {
   decideAddAction,
@@ -18,6 +18,11 @@ import {
 const validatePackDir = (dir: string, pool = join(dir, '.test-pool')) =>
   validateInstalledPackDir(dir, pool);
 
+const QA = {
+  default_profile: 'smoke',
+  profiles: [{ id: 'smoke', title: 'Smoke', template_id: 'qa/default' }],
+};
+
 const VALID_PACK = {
   name: 'example-app',
   projects: [{ dir: 'projects/example-app-farm', platform: 'cli', slots: 1 }],
@@ -25,11 +30,12 @@ const VALID_PACK = {
 
 function writePackDir(overrides: Record<string, unknown> = {}): string {
   const dir = mkdtempSync(join(tmpdir(), 'fs-pack-'));
+  after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(join(dir, 'pack.json'), JSON.stringify({ ...VALID_PACK, ...overrides }, null, 2));
   mkdirSync(join(dir, 'projects', 'example-app-farm'), { recursive: true });
   writeFileSync(
     join(dir, 'projects', 'example-app-farm', 'project.json'),
-    JSON.stringify({ name: 'example-app-farm' }),
+    JSON.stringify({ name: 'example-app-farm', qa: QA }),
   );
   mkdirSync(join(dir, 'projects', 'example-app-farm', 'setup'), { recursive: true });
   writeFileSync(
@@ -65,12 +71,13 @@ test('validatePackDir validates project dirs and name match', () => {
 
   writeFileSync(
     join(dir, 'projects', 'example-app-farm', 'project.json'),
-    JSON.stringify({ name: 'wrong-name' }),
+    JSON.stringify({ name: 'wrong-name', qa: QA }),
   );
   const mismatched = validatePackDir(dir);
   assert.ok(mismatched.errors.some((e) => e.includes(`must match the dir name`)));
 
   const empty = mkdtempSync(join(tmpdir(), 'fs-pack-'));
+  after(() => rmSync(empty, { recursive: true, force: true }));
   assert.ok(validatePackDir(empty).errors[0].includes('no pack.json'));
 });
 
@@ -154,14 +161,34 @@ test('pack validation refuses malformed recipe sources before any provider impor
       ],
     },
   ]) {
-    writeFileSync(file, JSON.stringify({ name: 'example-app-farm', recipe }));
+    writeFileSync(file, JSON.stringify({ name: 'example-app-farm', qa: QA, recipe }));
     const result = validatePackDir(dir);
     assert.equal(result.pack, null);
     assert.ok(result.errors.some((error) => error.includes('recipe.')));
   }
   writeFileSync(
     file,
-    JSON.stringify({ name: 'example-app-farm', recipe: { provider: { module: 'provider.mjs' } } }),
+    JSON.stringify({
+      name: 'example-app-farm',
+      qa: QA,
+      recipe: { provider: { module: 'provider.mjs' } },
+    }),
   );
   assert.deepEqual(validatePackDir(dir).errors, []);
+});
+
+test('project add refuses a missing QA flow before registration', (t) => {
+  const root = writePackDir();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(
+    join(root, 'projects/example-app-farm/project.json'),
+    JSON.stringify({ name: 'example-app-farm' }),
+  );
+  const result = validatePackDir(root);
+  assert.equal(result.pack, null);
+  assert.match(
+    result.errors[0],
+    /^projects\/example-app-farm\/project.json:1: missing required qa flow/,
+  );
+  assert.match(result.errors[0], /qa.default_profile and qa.profiles/);
 });

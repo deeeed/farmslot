@@ -6,6 +6,7 @@
 import type { RunTicketData } from '@farmslot/protocol';
 
 import {
+  acceptanceCriteriaFromMarkdown,
   adfToInlineText,
   extractSection,
   sectionItems,
@@ -96,7 +97,7 @@ export async function fetchJiraIssue(
   // they nest under TASK.md's `## Description` (and a linked ticket's `### KEY`).
   const ticketMarkdown = ticketBodyToMarkdown(issue.fields.description);
   const description = ticketBodyToMarkdown(issue.fields.description, { headingOffset: 3 });
-  const ac = extractSection(ticketMarkdown, [
+  const ac = acceptanceCriteriaFromMarkdown(ticketMarkdown, [
     'acceptance criteria',
     'expected behavior',
     'expected result',
@@ -117,7 +118,7 @@ export async function fetchJiraIssue(
     issueType: issue.fields.issuetype?.name,
     title: issue.fields.summary,
     description,
-    acceptanceCriteria: sectionItems(ac),
+    acceptanceCriteria: ac,
     affectedArea: area || issue.fields.components.map((c) => c.name).join(', '),
     stepsToReproduce: sectionItems(steps),
     screenshots,

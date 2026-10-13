@@ -2,6 +2,22 @@
 
 One directory per run, the same shape whether Farmslot dispatched the worker or an engineer started the task from a skill. Farmslot defines the files; `@farmslot/agent-runtime` and any harness built on it consume them.
 
+Review completion MUST wait for the reviewer's own terminal mark before archiving
+its checklist and artifacts. A result file, idle runner or closed window alone
+does not establish successful completion.
+
+The shared harness checklist command MUST resolve explicit `--checklist` and
+`--signal` overrides before preserving a terminal signal. To resume a cleared
+blocker, run `checklist mark <task-dir> start`, then continue numbered marks. This
+uses the existing runtime start verb, preserves checked boxes and resumes signal
+progress under the launcher's attempt identity. Successful terminal verdicts remain protected.
+
+Ticket intake preserves an explicit acceptance section, including an empty one. When none is supplied,
+authored `AC1:` or `AC-1:` paragraphs outside fenced code populate the same
+acceptance array in source order. Paragraph boundaries exclude unrelated prose.
+Existing structured criteria remain authoritative. Generated TASK.md and
+`inputs/handoff.json` MUST consume that same normalized array.
+
 ## Two documents, one checklist
 
 The task document says **what** the work is. The execution checklist says **how** to do it, step by step. Only the checklist has steps.
@@ -104,6 +120,12 @@ The selected checklist travels inside `inputs/handoff.json` as `executionTemplat
 ## Deterministic checklist checks
 
 [ADR-064](../adr/064-deterministic-checklist-checks.md) defines task-owned command receipts before publication.
+
+Its [CI decision check context amendment](../adr/064-deterministic-checklist-checks.md#amendment-1-2026-10-12-ci-decision-check-context)
+owns the read-only gate/current comparison. The linked
+[CI decision specification](ci-decision-check-context.md) defines retained provider
+snapshots and refresh availability; those reads do not replace command receipts
+or resolve publication gates.
 
 ### Public surface
 

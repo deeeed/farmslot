@@ -344,6 +344,8 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'slot.reopen': { classification: 'admin' },
   'slot.show': { classification: 'admin' },
   'slot.softRefresh': { classification: 'admin' },
+  'sources.status': { classification: 'admin' },
+  'sources.sync': { classification: 'admin' },
   'stream.snapshot': { classification: 'admin' },
   'stream.subscribe': { classification: 'admin' },
   'stream.unsubscribe': { classification: 'admin' },

@@ -13,6 +13,11 @@ import {
 import { buildRunnerObservabilityInstallCommand } from '../../../../services/gateway/src/runners/runner-observability.ts';
 
 // Lane policy supplies context. CLI syntax and hook installation remain in the shared runner adapter.
+export function persistentLaneCommand(command) {
+  // A subshell also contains an adapter's exec; handle failure under a caller's set -e.
+  return `if ( ${command} ); then lane_runner_exit=0; else lane_runner_exit=$?; fi; printf 'Lane runner exited with status %s. Recover with launch and resume_id.\\n' "$lane_runner_exit"; exec "\${SHELL:-/bin/sh}" -i`;
+}
+
 export function runnerLaunch(lane) {
   if (!['codex', 'claude'].includes(lane.runner))
     throw new Error('Lane launcher supports codex and claude');
@@ -45,6 +50,7 @@ export function runnerLaunch(lane) {
     safetyTier: lane.safety_tier,
     effort: lane.effort,
     codexAccountLabel: lane.account_label,
+    skipUpdateCheck: true,
   };
   let command;
   if (lane.resume_id) {
@@ -82,7 +88,7 @@ export function runnerLaunch(lane) {
     throw new Error('Claude /goal requires a local goal skill or command');
   const goalSupported = lane.runner === 'codex' || localGoal;
   return {
-    command,
+    command: persistentLaneCommand(command),
     runtime_dir: runtime,
     observability_dir: path.join(runtime, '.observability'),
     goal_supported: goalSupported,

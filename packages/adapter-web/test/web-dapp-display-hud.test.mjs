@@ -36,7 +36,8 @@ const { assertMatch } = require('./fixtures/match.cjs');
 process.env.RECIPE_WEB_DAPP_POLICY = policy.module;
 
 // The expression runs in another realm: compare its results as plain data.
-const draw = (expression, page) => JSON.parse(JSON.stringify(vm.runInNewContext(expression, page)));
+const draw = async (expression, page) =>
+  JSON.parse(JSON.stringify(await vm.runInNewContext(expression, page)));
 const LAUNCH = ['--target', '/t', '--cdp-port', '9541', '--app-port', '9341'];
 const LAPTOP = { left: 0, top: 38, width: 2056, height: 1251 };
 const closeTo = (actual, expected, digits = 6) =>
@@ -306,12 +307,15 @@ function fakeDocument(origin) {
   return {
     document: { documentElement: html, body, createElement: (tag) => new Element(tag) },
     location: { origin },
+    requestAnimationFrame: (callback) => callback(),
+    setTimeout,
+    clearTimeout,
     text,
     html,
   };
 }
 
-describe('web-dapp HUD drawing', () => {
+describe('web-dapp HUD drawing', async () => {
   const state = nextHudState(
     null,
     {
@@ -323,9 +327,9 @@ describe('web-dapp HUD drawing', () => {
     'submit',
   );
 
-  it('draws outside <body> in a closed shadow root that ignores the pointer', () => {
+  it('draws outside <body> in a closed shadow root that ignores the pointer', async () => {
     const page = fakeDocument('http://localhost:9341');
-    const result = draw(hudRenderExpression(state, 'http://localhost:9341/'), page);
+    const result = await draw(hudRenderExpression(state, 'http://localhost:9341/'), page);
     assert.deepEqual(result, { hud: true, seq: 1 });
     const host = page.html.querySelector(HUD_ELEMENT);
     assert.equal(host.parent, page.html);
@@ -337,7 +341,7 @@ describe('web-dapp HUD drawing', () => {
     assert.ok(!page.text(page.document.body).includes('Submit the market order'));
   });
 
-  it('preserves full recipe text until two-line layout and draws it as inert text', () => {
+  it('preserves full recipe text until two-line layout and draws it as inert text', async () => {
     const intent = `<img src=x onerror="alert(1)"> ${'a'.repeat(400)}`;
     const capped = nextHudState(
       null,
@@ -348,7 +352,7 @@ describe('web-dapp HUD drawing', () => {
     const expression = hudRenderExpression(capped, 'http://localhost:9341');
     assert.ok(!expression.includes('innerHTML'));
     const page = fakeDocument('http://localhost:9341');
-    draw(expression, page);
+    await draw(expression, page);
     const host = page.html.querySelector(HUD_ELEMENT);
     assert.equal(host.shadowMode, 'closed');
     const [head, line] = host.shadow.children.find((child) => child.className === 'hud').children;
@@ -363,10 +367,44 @@ describe('web-dapp HUD drawing', () => {
     assert.equal(line.style.overflowWrap, 'anywhere');
   });
 
-  it('is a no-op for the same state, replaces a newer one and clears on null', () => {
+  it('honors both HUD edges, preserves placement on updates and resets for a new run', async () => {
     const page = fakeDocument('http://localhost:9341');
-    draw(hudRenderExpression(state, 'http://localhost:9341'), page);
-    assertMatch(draw(hudRenderExpression(state, 'http://localhost:9341'), page), {
+    let current = null;
+    for (const position of ['bottom', 'top']) {
+      current = nextHudState(
+        current,
+        {
+          status: 'running',
+          intent: 'Keep the application controls visible.',
+          display: { position },
+        },
+        'placement',
+      );
+      current = nextHudState(
+        current,
+        { status: 'pass', intent: 'The controls are visible.' },
+        'placement',
+      );
+      await draw(hudRenderExpression(current, 'http://localhost:9341'), page);
+      const box = page.html
+        .querySelector(HUD_ELEMENT)
+        .shadow.children.find((child) => child.className === 'hud');
+      assert.equal(box.style[position], '12px');
+      assert.equal(box.style[position === 'top' ? 'bottom' : 'top'], 'auto');
+    }
+    current = nextHudState(
+      current,
+      { status: 'pass', progress: { complete: true } },
+      'recipe-complete',
+    );
+    assert.equal(current.position, 'top');
+    assert.equal(nextHudState(current, { status: 'running' }, 'new-run').position, undefined);
+  });
+
+  it('is a no-op for the same state, replaces a newer one and clears on null', async () => {
+    const page = fakeDocument('http://localhost:9341');
+    await draw(hudRenderExpression(state, 'http://localhost:9341'), page);
+    assertMatch(await draw(hudRenderExpression(state, 'http://localhost:9341'), page), {
       unchanged: true,
     });
     const next = nextHudState(
@@ -374,21 +412,21 @@ describe('web-dapp HUD drawing', () => {
       { status: 'pass', intent: 'Submit the market order' },
       'submit',
     );
-    draw(hudRenderExpression(next, 'http://localhost:9341'), page);
+    await draw(hudRenderExpression(next, 'http://localhost:9341'), page);
     assert.equal(
       page.html.children.filter((child) => child.tagName === HUD_ELEMENT.toUpperCase()).length,
       1,
     );
-    assert.deepEqual(draw(hudRenderExpression(null, 'http://localhost:9341'), page), {
+    assert.deepEqual(await draw(hudRenderExpression(null, 'http://localhost:9341'), page), {
       hud: false,
       cleared: true,
     });
     assert.equal(page.html.querySelector(HUD_ELEMENT), null);
   });
 
-  it('never draws inside MetaMask pages', () => {
+  it('never draws inside MetaMask pages', async () => {
     const page = fakeDocument('chrome-extension://hebhblbkkdabgoldnojllkipeoacjioc');
-    assert.deepEqual(draw(hudRenderExpression(state, 'http://localhost:9341'), page), {
+    assert.deepEqual(await draw(hudRenderExpression(state, 'http://localhost:9341'), page), {
       hud: false,
       reason: 'not-app-origin',
     });

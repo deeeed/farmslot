@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { groupAlive } from './proof-gateway.mjs';
 import { seedIOSGatewayProfile } from './seed-ios-gateway-profile.mjs';
 import { openSimulatorDevClient } from './simulator-dev-client.mjs';
 
@@ -151,16 +152,6 @@ async function waitFor(what, read, timeoutMs) {
       if (Date.now() >= deadline) throw error;
     }
     await sleep(250);
-  }
-}
-
-function groupAlive(pid) {
-  try {
-    process.kill(-pid, 0);
-    return true;
-  } catch (error) {
-    if (error.code === 'ESRCH') return false;
-    throw error;
   }
 }
 

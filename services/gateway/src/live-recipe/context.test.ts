@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
-import { DEFAULT_TASK_DIR, type Run } from '@farmslot/protocol';
+import { type ArtifactRef, DEFAULT_TASK_DIR, type Run } from '@farmslot/protocol';
 
 import { sanitizeLatestValidRecipeRunPointer } from '../core/recipe-artifacts.js';
 import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
@@ -358,6 +358,78 @@ test('sanitizeLatestValidRecipeRunPointer rejects parent traversal', () => {
     relativeArtifactRoot: 'recipe-runs/../../../tmp/outside',
   });
   assert.equal(pointer, null);
+});
+
+test('task artifact discovery preserves timelines from nested CLI attempt manifests', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'nested-attempt-timeline-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const task = path.join(root, 'task');
+  const attempts = ['runs/first', 'runs/second'];
+  for (const attempt of attempts) {
+    const dir = path.join(task, 'artifacts', attempt);
+    await mkdir(path.join(dir, 'videos'), { recursive: true });
+    await writeFile(path.join(dir, 'videos/recipe-run.mp4'), 'unit recording bytes');
+    await writeFile(path.join(dir, 'videos/recipe-run.mp4.timeline.json'), '{}');
+    await writeFile(
+      path.join(dir, 'artifact-manifest.json'),
+      JSON.stringify({
+        version: 1,
+        artifacts: [
+          {
+            path: 'videos/recipe-run.mp4',
+            type: 'video',
+            timelinePath: 'videos/recipe-run.mp4.timeline.json',
+          },
+        ],
+      }),
+    );
+  }
+  const context = await loadLiveRecipeContextForRun(makeRun(path.join(task, 'TASK.md')));
+  assert.ok(context);
+  for (const attempt of attempts) {
+    const video: ArtifactRef | undefined = context.artifactManifest?.find(
+      (ref) => ref.path === `artifacts/${attempt}/videos/recipe-run.mp4`,
+    );
+    assert.equal(video?.type, 'video');
+    assert.equal(video?.timelinePath, `artifacts/${attempt}/videos/recipe-run.mp4.timeline.json`);
+    assert.match(video?.sha256 ?? '', /^[a-f0-9]{64}$/u);
+  }
+  const selectedTask = path.join(root, 'selected-task');
+  const selectedDir = path.join(selectedTask, 'artifacts/recipe-runs/current');
+  await mkdir(path.join(selectedDir, 'videos'), { recursive: true });
+  await writeFile(path.join(selectedDir, 'videos/run.mp4'), 'selected unit recording');
+  await writeFile(path.join(selectedDir, 'videos/run.mp4.timeline.json'), '{}');
+  await writeFile(
+    path.join(selectedDir, 'artifact-manifest.json'),
+    JSON.stringify({
+      version: 1,
+      artifacts: [
+        { path: 'videos/run.mp4', type: 'video', timelinePath: 'videos/run.mp4.timeline.json' },
+      ],
+    }),
+  );
+  await writeFile(
+    path.join(selectedTask, 'artifacts/latest-valid-recipe-run.json'),
+    JSON.stringify({ version: 1, relativeArtifactRoot: 'recipe-runs/current' }),
+  );
+  await writeFile(path.join(selectedTask, 'artifacts/before.png'), 'manual unit capture');
+  const groups = await listRecipeRunArtifactGroupsForRun(
+    makeRun(path.join(selectedTask, 'TASK.md')),
+  );
+  const selectedVideo: ArtifactRef | undefined = groups
+    .find((group) => group.id === 'current-artifacts')
+    ?.artifactManifest?.find((ref) => ref.type === 'video');
+  assert.equal(selectedVideo?.path, 'artifacts/recipe-runs/current/videos/run.mp4');
+  assert.equal(
+    selectedVideo?.timelinePath,
+    'artifacts/recipe-runs/current/videos/run.mp4.timeline.json',
+  );
+  assert.match(selectedVideo?.sha256 ?? '', /^[a-f0-9]{64}$/u);
+  assert.ok(
+    groups
+      .find((group) => group.id === 'current-artifacts')
+      ?.artifactManifest?.some((ref) => ref.path === 'artifacts/before.png'),
+  );
 });
 
 test('sanitizeLatestValidRecipeRunPointer rejects non-numeric version', () => {

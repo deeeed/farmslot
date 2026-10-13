@@ -927,3 +927,22 @@ test('a pipeline node shows queue and execution only when the step queued', () =
     '5m 12s',
   );
 });
+
+test('family ledger badge names unavailable capture rather than claiming no code change', () => {
+  assert.match(
+    familyLedgerTurnLabel(
+      makeLedgerEntry({
+        contributionDiff: {
+          source: 'unavailable',
+          available: false,
+          files: 0,
+          additions: 0,
+          deletions: 0,
+          missingReason: 'missing-branch',
+          kind: 'contribution',
+        },
+      }),
+    ),
+    /not captured: missing-branch/,
+  );
+});

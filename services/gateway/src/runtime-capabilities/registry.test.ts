@@ -6,6 +6,7 @@ import test, { type TestContext } from 'node:test';
 
 import {
   recordingTargetClaimKey,
+  type RuntimeCapabilityAcquireParams,
   type RuntimeCapabilityCatalogEntry,
   type RuntimeCapabilityLifecycleEvent,
   type RuntimeCapabilityProviderActionRef,
@@ -284,6 +285,111 @@ function acquire(
     },
   });
 }
+
+function batchRequests(ids: string[], ownerRunId = 'run-a'): RuntimeCapabilityAcquireParams[] {
+  return ids.map((capabilityId) => ({
+    slotId: SLOT,
+    capabilityId,
+    ownerRunId,
+    proofRequirement: { capabilityId, reason: `prove ${capabilityId}`, mode: 'state' },
+    revalidateHealth: true,
+  }));
+}
+
+test('posture batch rolls back new roots and dependencies while preserving pre-held and foreign leases', async (t) => {
+  const { registry, actions } = await fixture(
+    t,
+    [
+      entry('held'),
+      entry('foreign'),
+      entry('dependency'),
+      entry('parent', 'exclusive', ['held', 'dependency']),
+      entry('unavailable'),
+    ],
+    {
+      runAction: async (_slot, action) => ({
+        ok: !(action.kind === 'slot-action' && action.actionId === 'unavailable.acquire'),
+        detail: 'injected provider start failure',
+      }),
+    },
+  );
+  assert.equal((await acquire(registry, 'held', 'run-a')).ok, true);
+  assert.equal((await acquire(registry, 'foreign', 'foreign-run')).ok, true);
+  actions.length = 0;
+  const result = await registry.acquireBatch(batchRequests(['parent', 'unavailable']));
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.completed, 1);
+    assert.equal(result.cleanupFailures.length, 0);
+  }
+  assert.deepEqual(
+    actions.filter((action) => action.endsWith('.release')),
+    ['unavailable.release', 'parent.release', 'dependency.release'],
+  );
+  const leases = (await registry.status({ slotId: SLOT })).leases;
+  assert.equal(leases.find((lease) => lease.capabilityId === 'held')?.state, 'acquired');
+  assert.equal(leases.find((lease) => lease.owner.runId === 'foreign-run')?.state, 'acquired');
+  assert.equal(leases.find((lease) => lease.capabilityId === 'parent')?.state, 'released');
+  assert.equal(leases.find((lease) => lease.capabilityId === 'dependency')?.state, 'released');
+});
+
+test('batch rollback retains failed cleanup identity and never reports its provider stopped', async (t) => {
+  const { registry } = await fixture(t, [entry('started'), entry('unavailable')], {
+    runAction: async (_slot, action) => ({
+      ok: !(
+        action.kind === 'slot-action' &&
+        ['unavailable.acquire', 'started.release'].includes(action.actionId)
+      ),
+      detail: 'injected failure',
+    }),
+  });
+  const result = await registry.acquireBatch(batchRequests(['started', 'unavailable']));
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.cleanupFailures.length, 1);
+    assert.equal(result.cleanupFailures[0]?.capabilityId, 'started');
+    const lease = (await registry.status({ slotId: SLOT })).leases.find(
+      (item) => item.id === result.cleanupFailures[0]?.leaseId,
+    );
+    assert.equal(lease?.state, 'error');
+    assert.match(lease?.cleanupFailure ?? '', /injected failure/);
+  }
+});
+
+test('an acquisition queued during batch rollback survives outside that operation', async (t) => {
+  let enter!: () => void;
+  let release!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { registry } = await fixture(
+    t,
+    [entry('started'), entry('unavailable'), entry('independent')],
+    {
+      runAction: async (_slot, action) => {
+        if (action.kind === 'slot-action' && action.actionId === 'started.acquire') {
+          enter();
+          await held;
+        }
+        return {
+          ok: !(action.kind === 'slot-action' && action.actionId === 'unavailable.acquire'),
+        };
+      },
+    },
+  );
+  const batch = registry.acquireBatch(batchRequests(['started', 'unavailable']));
+  await entered;
+  const independent = acquire(registry, 'independent', 'run-a');
+  release();
+  assert.equal((await batch).ok, false);
+  assert.equal((await independent).ok, true);
+  const leases = (await registry.status({ slotId: SLOT })).leases;
+  assert.equal(leases.find((lease) => lease.capabilityId === 'started')?.state, 'released');
+  assert.equal(leases.find((lease) => lease.capabilityId === 'independent')?.state, 'acquired');
+});
 
 test('acquire is idempotent and exclusive conflicts expose owner and reason', async (t) => {
   const { registry, actions } = await fixture(t, [entry('browser')]);

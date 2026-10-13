@@ -1,11 +1,13 @@
 // stack-base.ts — resolve where a stacked run sits before its task is written
 // and its slot is prepared (ADR-040 stacked work).
 
-import type { Run } from '@farmslot/protocol';
+import { DEFAULT_BRANCH, type Run } from '@farmslot/protocol';
 
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { readUpstreamPr, type UpstreamPr } from '../work-graph/stack-retarget.js';
 import { stackBaseForNode } from '../work-graph/store.js';
+
+import { contributionStack } from './diff-artifacts.js';
 
 let upstreamPrReader: (project: string, prNumber: number) => Promise<UpstreamPr> = readUpstreamPr;
 
@@ -54,9 +56,20 @@ export async function ensureRunStack(runId: string): Promise<Run> {
   return updated;
 }
 
-/** The PR base a stacked run publishes against; undefined for every other run. */
-export function stackPrBase(run: Pick<Run, 'stack'>): string | undefined {
-  return run.stack ? (run.stack.retargetedTo ?? run.stack.baseBranch) : undefined;
+/** The stack base for publication and review, including the run's own lineage. */
+export async function stackPrBase(
+  run: Pick<Run, 'stack' | 'parentRunId'>,
+): Promise<string | undefined> {
+  const stack = await contributionStack(run);
+  return stack ? (stack.retargetedTo ?? stack.baseBranch) : undefined;
+}
+
+/** One base for publication packages, their previews and PR creation. */
+export async function publicationBaseForRun(
+  run: Pick<Run, 'stack' | 'parentRunId'>,
+  defaultBranch?: string | null,
+): Promise<string> {
+  return (await stackPrBase(run)) ?? (defaultBranch || DEFAULT_BRANCH);
 }
 
 /**

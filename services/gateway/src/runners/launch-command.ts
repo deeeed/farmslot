@@ -12,6 +12,7 @@ import {
   type SafetyTier,
   type ScriptedRunnerConfig,
 } from '@farmslot/protocol';
+import { currentProjectSources, sourceWorkerEnvironment } from '@farmslot/slot-config';
 
 import type { loadSlotVars, ProjectVars, RawPoolJson, RawProjectJson } from '../core/config.js';
 import {
@@ -324,7 +325,7 @@ export function buildInteractiveRefinementRunnerCommand(options: {
       options.workspaceTrust
         ? `--config ${shellQuote(`projects={${JSON.stringify(options.repo)}={trust_level=${JSON.stringify(options.workspaceTrust)}}}`)}`
         : '',
-      options.skipUpdateCheck ? `--config ${shellQuote('check_for_update_on_startup=false')}` : '',
+      codexStartupUpdateFlag(options.skipUpdateCheck).trim(),
       options.disableHooks ? `--config ${shellQuote('features.hooks=false')}` : '',
       options.shellEnvironmentNames
         ? `--config ${shellQuote(codexShellEnvironmentPolicy(options.shellEnvironmentNames))}`
@@ -384,21 +385,28 @@ export function buildOperatorPasteableCommand(command: string): string {
   return `bash -lc ${shellQuote(command)}`;
 }
 
+function codexStartupUpdateFlag(skip?: boolean): string {
+  return skip ? ` --config ${shellQuote('check_for_update_on_startup=false')}` : '';
+}
+
+interface RunnerSessionReloadOptions {
+  repo?: string;
+  taskDir?: string;
+  effort?: string | null;
+  safetyTier?: SafetyTier;
+  runtimeDir?: string;
+  codexAccountLabel?: string | null;
+  codexAuthSource?: string | null;
+  initialPrompt?: string;
+  skipUpdateCheck?: boolean;
+}
+
 export function buildRunnerSessionReloadCommand(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runnerId: string,
   model: string | null | undefined,
   sessionId: string,
-  opts: {
-    repo?: string;
-    taskDir?: string;
-    effort?: string | null;
-    safetyTier?: SafetyTier;
-    runtimeDir?: string;
-    codexAccountLabel?: string | null;
-    codexAuthSource?: string | null;
-    initialPrompt?: string;
-  } = {},
+  opts: RunnerSessionReloadOptions = {},
 ): string {
   const runner = normalizeRunner(runnerId);
   const repo = opts.repo ?? vars.remoteRepo;
@@ -460,7 +468,7 @@ export function buildRunnerSessionReloadCommand(
         withRunnerObservabilityInstall(
           `unset CLAUDECODE && cd ${shellQuote(repo)} && ${codexHomeSetup} && ${resolveCodexBinary(
             vars.codexPath,
-          )}${CODEX_PLUGIN_HOOK_ARGS} resume${flags}${effortFlag}${workerConfigFlags}${modelFlag} ${quotedSessionId}${initialPrompt}`,
+          )}${CODEX_PLUGIN_HOOK_ARGS} resume${flags}${effortFlag}${workerConfigFlags}${codexStartupUpdateFlag(opts.skipUpdateCheck)}${modelFlag} ${quotedSessionId}${initialPrompt}`,
           installCommand,
         ),
         repo,
@@ -791,10 +799,18 @@ export function buildLaunchCommand(
   const launchPrompt =
     opts.initialPromptOnLaunch || !runnerNeedsPostLaunchPrompt(runner) ? prompt : '';
 
+  const withSourceInputs = (command: string): string => {
+    const sources = currentProjectSources();
+    if (!sources) return command;
+    const env = sourceWorkerEnvironment(sources);
+    return `${Object.entries(env)
+      .map(([key, value]) => `export ${key}=${shellQuote(value)};`)
+      .join(' ')} ${command}`;
+  };
   const withRecipeTrust = (command: string): string =>
     withMachineEnv(
       withTaskRecipeTrustEnvironment(
-        command,
+        withSourceInputs(command),
         repo,
         opts.taskDir ?? (opts.taskFile ? path.posix.dirname(opts.taskFile) : undefined),
       ),

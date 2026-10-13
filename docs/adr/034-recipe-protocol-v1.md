@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-04-29
-- Updated: 2026-07-22
+- Updated: 2026-10-13
 
 ## Context
 
@@ -70,3 +70,157 @@ Recipes are directed graphs, not linear scripts. Setup, start state, branching, 
 - Evidence remains reviewable without access to the original library.
 - Project runners stay thin and domain-owned.
 - Simple recipes remain valid without composition or visual evidence.
+
+## Amendment 1 (2026-10-12): Bounded shared HUD intent
+
+**Status:** Accepted
+**Implementation:** Merged in [#944](https://github.com/deeeed/farmslot/pull/944).
+**Specification:** [Intent and HUD policy](../reference/recipe-protocol-v1.md#intent).
+
+### Decision
+
+`@farmslot/protocol/recipe` owns one intent display model and authoring policy.
+Native and thin DOM renderers consume that model, preserve the normalized intent,
+and let platform layout wrap within two lines and bounded panels. One shared
+native component lives in `@farmslot/adapter-rn/recipe-hud`, re-exported by
+Companion and scaffold templates. The runner passes the complete normalized
+intent to adapters. Existing placement, isolation, pointer pass-through,
+status/progress and renderer extension points remain supported.
+
+The existing CLI lint/conformance path opts into authoring checks: warn above
+80 Unicode code points and fail above 120, counted after trimming. One plain
+sentence is guidance, not a new grammar parser. Ordinary graph validation,
+execution and retained-artifact verification retain their v1 behavior.
+
+### Rationale
+
+Different one-line and character-slicing policies cut useful intent and allow
+HUD panels to obscure the checked application. One shared model and native
+renderer prevent project-specific formatting drift.
+
+### Consequences
+
+Mandatory panel and line bounds apply after styling. Existing text/style,
+overlay and custom `renderHud` options remain, with custom renderers adopting
+the shared helper. CLI consumers need no native peers.
+Framework examples adopt the authoring rule. Farm recipes are not rewritten;
+copied project HUDs adopt the shared renderer through deliberate scaffold
+updates rather than deployment overwrites. The specification retains exact
+layout bounds, extension behavior and verification requirements.
+
+### Public surface
+
+Existing `farmslot recipe validate` and conformance validation consume the
+explicit authoring option. `@farmslot/protocol/recipe` exports the shared display
+helper/policy, consumed by the runner, web adapter and native renderer.
+`@farmslot/adapter-rn/recipe-hud` supplies the native component to Companion and
+scaffold re-exports. Harnesses including mm-harness inherit runner/adapter policy
+and retain `app.hud` and custom rendering extension points. These are additive
+package APIs; no command/flag or recipe wire/schema version changes.
+
+## Amendment 2 (2026-10-12): Bounded log observations
+
+**Status:** Accepted
+**Implementation:** Merged in [#969](https://github.com/deeeed/farmslot/pull/969).
+**Specification:** [Recipe log observations](../reference/recipe-log-observations.md).
+
+### Decision
+
+Extend the existing `watch_logs` action with optional `timeout_ms`. Omission or
+zero keeps one immediate read. A positive bounded window polls read-only for the
+authored condition; it never starts or repairs the producer. Preserve contained
+reads, cancellation, run/file scope, output fields and failure classification.
+
+The protocol owns input relationships. The shared runner owns resolved-invocation
+preflight, pre-producer file offsets and polling. Run-scoped paths resolve from
+inputs before producers execute; output-derived paths require explicit file
+scope. Existing project lifecycle callbacks remain unchanged.
+
+### Rationale
+
+One immediate read misses asynchronous output that arrives just afterward.
+Observing for a declared window proves the condition without confusing an
+observation with a producer retry or accepting stale run content.
+
+### Consequences
+
+The optional window is a backward-compatible action extension that requires
+supporting runtime dependencies. Refusing output-derived run-scoped paths is a
+breaking correction to stale-content false passes. Project manifests and
+protocol/runner dependency pins move together. MetaMask Core, Mobile, Extension
+and web-dapp catalogs are the first consumers; Terminal inherits the web-dapp
+catalog and adds domain actions. Recipes and `farmslot recipe call watch_logs`
+use existing parameters. The specification owns timeout/poll bounds, preflight
+and real-producer acceptance requirements. A merged implementation does not
+record package publication or provider rollout.
+
+### Public surface
+
+`@farmslot/recipe-runner` owns action execution. Recipes and the existing
+`farmslot recipe call watch_logs` consume the optional parameter through project
+catalogs, whose provider/runner dependencies declare support. No SDK export,
+CLI flag, new action or project lifecycle hook is added.
+
+## Amendment 3 (2026-10-13): Shared HUD placement
+
+**Status:** Accepted, authorized 2026-10-12.
+
+### Decision
+
+Honor existing `app.hud` `display.position` values `top` and `bottom` across
+browser and native adapters. Placement persists through automatic progress,
+screenshots and the final outcome within one execution. A later execution starts
+with its configured defaults. Existing corner positions retain their vertical
+edge on native targets. Omitted placement preserves each adapter's default.
+HUD updates acknowledge after the caption paints, before capture or recorder
+stop. One shared paint wait serves browser and native renderers; recording clocks
+and marker contracts remain unchanged.
+
+### Rationale and consequences
+
+A required HUD can cover the application control being checked. Moving it to the
+opposite edge preserves visible proof without clearing the HUD. Native rendering
+clears the opposite anchor and respects safe areas; existing panel bounds,
+isolation and required evidence rules remain. Harnesses forward placement to the
+shared renderer and add no renderer of their own.
+
+### Public surface
+
+Recipes use `app.hud` with `display.position`; SDK runner callers use existing
+`RecipeHudOptions.display.position`. The additive `hudPlacement` helper in
+`@farmslot/protocol/recipe` normalizes the vertical edge for the shared native
+bridge and web adapter. There is no new CLI flag or command. Supporting package
+versions and consumers' action catalogs move together.
+`waitForHudPaint` in the same package lets native bridges and thin browser
+renderers acknowledge painted captions without a fixed sleep.
+Native bridges use `useRecipeHudState` from `@farmslot/adapter-rn/recipe-hud`
+to await the React commit before that paint wait. Companion and scaffold providers
+consume the same hook; CLI users need no native peer.
+
+### Verification
+
+One recipe moves the HUD from bottom to top, checks that application footers
+remain visible, captures both placements, and records the final HUD before stop.
+Automatic updates preserve placement; a second execution restores its default.
+
+## Amendment 4: enabled-state waits (2026-10-12)
+
+**Status:** Accepted, approved 2026-10-13. **Shipping PR:** Pending.
+
+### Decision
+
+Add optional boolean `enabled` to the existing `ui.wait_for` contract. It combines an explicit presence/visibility expectation with one control's observed state. Missing controls cannot satisfy disabled; duplicate targets and unqualified native state refuse. Protocol validation rejects the `visible`/`hidden` aliases for this new predicate so all backends receive explicit `expected`. Existing calls without the field retain their behavior.
+
+Extend existing shared CDP and native-accessibility wait paths. MetaMask Mobile selects its existing native transport for enabled waits, including on debuggable builds; Extension uses shared CDP. Native state requires qualified backend provenance because an upstream accessibility fallback may synthesize a true value. The [normative specification](../reference/recipe-protocol-v1.md#amendment-4-enabled-state-waits) defines inputs, refusal, cancellation and validation.
+
+### Rationale
+
+A refused press or screenshot alone does not provide an executable disabled-state assertion. Ranked locator discovery is bounded and may default unknown fields; it cannot supply durable state proof for a specific control. Reusing the existing action and transports avoids another provider-specific polling or fiber-walking implementation.
+
+### Consequences
+
+Providers advertise the optional field only after pinning supporting releases. Mobile and Extension are the first consumers; unsupported catalogs continue to reject it. No UI mutation or recovery is allowed to make the predicate pass. ADR-062 assertion eligibility and visual-review requirements remain unchanged. Live controls in both states, contrary-state failure, cleanup and HUD evidence are required before implementation acceptance.
+
+### Public surface
+
+`farmslot recipe run` and `farmslot recipe call ui.wait_for` consume the existing action with `enabled`; no action name or CLI flag is added. `@farmslot/protocol` owns validation, `@farmslot/recipe-runner` owns CDP execution and extends its existing exported wait options, and `@farmslot/adapter-rn` owns native execution. No new SDK callback or evidence format is introduced. MetaMask supplies product identity/native routing and manifest/dependency pins. This additive action extension requires supporting package releases before provider advertisement.

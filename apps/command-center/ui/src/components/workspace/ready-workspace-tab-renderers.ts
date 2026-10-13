@@ -13,6 +13,7 @@ export function renderReadyPrPreviewTab(input: {
   payload: ReadyGatePayload;
   publicationTarget: PublicationTarget;
   markdown: string;
+  claims?: TemplateResult | typeof nothing;
   fallback: () => TemplateResult;
 }) {
   const { payload } = input;
@@ -30,6 +31,7 @@ export function renderReadyPrPreviewTab(input: {
           >${payload.publicationStatus ?? payload.prPackage.publicationStatus}</span
         >
       </div>
+      ${input.claims ?? nothing}
       <div class="rdy-pr-preview-body rdy-md-section">${unsafeHTML(input.markdown)}</div>
     </div>
   `;

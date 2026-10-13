@@ -556,6 +556,7 @@ export interface ReviewStatus {
 export const PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES = {
   launchRejected: 'PUBLICATION_REVIEW_LAUNCH_REJECTED',
   gitProbeFailed: 'PUBLICATION_REVIEW_GIT_PROBE_FAILED',
+  roundLimitReached: 'REVIEW_ROUND_LIMIT_REACHED',
 } as const;
 
 export type PublicationReviewLaunchRejectionCode =
@@ -613,7 +614,7 @@ export interface GateSummary {
   headline?: string;
   worker: {
     model: string | null;
-    turns: number;
+    turns: number | null;
     outcome?: 'success' | 'failure' | 'partial' | 'cancelled';
   };
   review: ReviewSummary;
@@ -797,9 +798,18 @@ export interface ReadyGateInputSnapshot {
   templateProvenance?: TemplateProvenance | null;
 }
 
+export interface ReviewRoundBudget {
+  used: number;
+  limit: number;
+  remaining: number;
+  label: string;
+  diagnosis?: string;
+}
+
 export interface ReadyGatePayload {
   kind: 'ready';
   gateReadiness?: RunGateReadiness;
+  reviewRoundBudget?: ReviewRoundBudget;
   prNumber: number | null;
   repo: string | null;
   diffStat: DiffStat;
@@ -1462,6 +1472,8 @@ export interface RunMetrics {
   // Session-truth fields populated from the worker's transcript via session-usage.sh.
   // Help diagnose cost anomalies (e.g. dispatched sonnet but fast-mode forced opus).
   sessionTurns?: number;
+  /** Native usage capture failure, retained rather than displayed as observed zero. */
+  sessionUsageError?: string;
   sessionInputTokens?: number;
   sessionOutputTokens?: number;
   sessionCacheCreation?: number;
@@ -2364,6 +2376,10 @@ export interface MachineParkRecord {
 }
 
 export interface Run {
+  /** Immutable ADR-069 inputs. Absence on historical runs retains unknown legacy provenance. */
+  sourceProvenance?: import('../sources/contracts.js').RunSourceProvenance;
+  /** Gateway-owned, opaque reviewer admission receipts. Replay must retain these. */
+  reviewRoundAdmissions?: string[];
   /** Run cleanup preserved resources whose ownership could not be proven. */
   slotTeardownSkipped?: string;
   /** Gateway-owned automatic QA opt-in and durable follow-up status. */

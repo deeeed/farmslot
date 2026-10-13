@@ -9,6 +9,7 @@ import {
 } from '@farmslot/protocol';
 
 import { BeforeAfterPreview } from '../../../components/BeforeAfterPreview';
+import { RunTitle } from '../../../components/RunTitle';
 import {
   type ArtifactHttpHeaders,
   type ArtifactManifestEntry,
@@ -407,9 +408,7 @@ export function RunReviewWorkspaceSummary({
           </Text>
         )}
       </View>
-      <Text style={styles.workspaceTitle} numberOfLines={2}>
-        {run.summary ?? run.ticketOrPr}
-      </Text>
+      <RunTitle style={styles.workspaceTitle} title={run.summary ?? run.ticketOrPr} />
       <Text style={styles.workspaceSummary} numberOfLines={4}>
         Review the run evidence here; gate blockers, review history, package freshness, and actions
         stay in the Gate tab.
