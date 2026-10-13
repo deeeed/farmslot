@@ -33,8 +33,10 @@ import {
 } from '../integrations/pr-linkage.js';
 import { inferReviewSourceKind } from '../quality/review-sources.js';
 import { captureCurrentReviewSnapshot, unavailableReviewSnapshot } from '../review/snapshots.js';
+import { appliedClaimOverrideReceiptIds } from '../run-engine/claim-overrides.js';
 import { latestResolvedHumanGateDecision } from '../run-engine/decision-replay.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
+import { readFrozenRecordedEvidenceSources } from '../run-engine/recorded-evidence-sources.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
 import { getRun, updateRun } from '../runs/store.js';
@@ -756,6 +758,17 @@ export async function prepareCompletionPackage(
     publicationStatus: 'not_published',
     createdAt: new Date().toISOString(),
   };
+  if (run.claimOverrideReceipts?.length) {
+    const sources = await readFrozenRecordedEvidenceSources(
+      run,
+      evidenceManifest,
+      basePackage.selectedEvidenceKeys,
+    );
+    basePackage.claimOverrideReceiptIds = appliedClaimOverrideReceiptIds(
+      run,
+      sources.map(({ input }) => input),
+    );
+  }
   const packageInputHash = computeReadyGatePackageInputHash(basePackage);
   const reviewSubjectHash = computeReadyGateReviewSubjectHash(basePackage);
   const packageWithoutHash = {

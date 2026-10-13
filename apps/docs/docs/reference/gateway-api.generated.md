@@ -309,6 +309,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `run.grade`                             | run              | bounded-write | —      | —      | Run Grade gateway method.                             |
 | `run.interactiveDev.resolve`            | run              | high-impact   | —      | —      | Run InteractiveDev Resolve gateway method.            |
 | `run.list`                              | run              | read-only     | —      | —      | Run List gateway method.                              |
+| `run.overrideClaim`                     | run              | bounded-write | —      | —      | Run OverrideClaim gateway method.                     |
 | `run.pause`                             | run              | lifecycle     | —      | —      | Run Pause gateway method.                             |
 | `run.probeWorkerSignal`                 | run              | bounded-write | —      | —      | Run ProbeWorkerSignal gateway method.                 |
 | `run.proposeImprovement`                | run              | bounded-write | —      | —      | Run ProposeImprovement gateway method.                |

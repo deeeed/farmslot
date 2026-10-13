@@ -4,6 +4,7 @@ export {
   validateArtifactManifestDocument,
   validateRecipeArtifactPackage,
 } from './artifact.js';
+export * from './claim-overrides.js';
 export {
   BUILT_IN_UI_OBSERVERS,
   type BuiltInUiObserverRef,

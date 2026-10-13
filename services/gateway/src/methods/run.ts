@@ -46,6 +46,7 @@ import {
   type ReviewQaDispatchSelection,
   type ReviewStatus,
   type Run,
+  runClaimOverrideSnapshotIdentity,
   type RunCreateParams,
   type RunCreateResult,
   type RunInteractiveDevResolveParams,
@@ -1692,6 +1693,13 @@ export async function resolveRunDecision(
     attestationApprover = dependencies.authorizeEvidenceAttestation();
   }
   if (decision.payload?.kind === 'output-review') {
+    if (
+      decision.payload.claimOverrideReceiptIds?.length &&
+      params.selectionData?.claimOverrideSnapshot !== runClaimOverrideSnapshotIdentity(decision)
+    )
+      throw new Error(
+        'The claim override review changed. Refresh and confirm the current output snapshot.',
+      );
     if (!['mark-reviewed', 'close-run'].includes(params.actionId))
       throw new Error('Invalid output review action');
     const { acknowledgeRunOutput } = await import('../run-completion/output.js');

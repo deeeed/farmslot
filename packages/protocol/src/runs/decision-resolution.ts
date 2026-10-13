@@ -5,9 +5,13 @@ import type {
   RunDecision,
   SlotPickerPayload,
 } from '../contracts/runs.js';
+import {
+  MARK_CLAIM_UNTESTABLE_ACTION,
+  runClaimOverrideSnapshotIdentity,
+} from '../recipe/claim-overrides.js';
 import type { ImprovementApplyParams, ImprovementApplyResult } from '../rpc/intelligence.js';
 import { Methods } from '../rpc/registry.js';
-import type { RunResolveDecisionParams } from '../rpc/run.js';
+import type { RunOverrideClaimParams, RunResolveDecisionParams } from '../rpc/run.js';
 
 import { evidenceAttestationReason } from './publish-approval.js';
 import { reviewPostingFingerprint } from './review-curation.js';
@@ -28,12 +32,16 @@ export interface RunDecisionActionInput {
   runId: string;
   decision: Pick<RunDecision, 'id' | 'payload'> & Partial<Pick<RunDecision, 'type'>>;
   actionId: string;
+  claimId?: string;
+  recipeRunId?: string;
+  claimOverrideReason?: string;
   evidenceAttestationReason?: string;
   selectionData?: Record<string, unknown>;
   resourcePosture?: ResourcePostureGateChoice;
 }
 
 export type RunDecisionActionRequest =
+  | { method: typeof Methods.RUN_OVERRIDE_CLAIM; params: RunOverrideClaimParams }
   | { method: typeof Methods.IMPROVEMENT_APPLY; params: ImprovementApplyParams }
   | { method: typeof Methods.RUN_RESOLVE_DECISION; params: RunResolveDecisionParams };
 
@@ -41,6 +49,21 @@ export type RunDecisionActionRequest =
 export function buildRunDecisionActionRequest(
   input: RunDecisionActionInput,
 ): RunDecisionActionRequest {
+  if (input.actionId === MARK_CLAIM_UNTESTABLE_ACTION) {
+    if (!input.claimId || !input.recipeRunId || !input.claimOverrideReason?.trim())
+      throw new TypeError('An untestable override requires claim, recipe execution and reason.');
+    return {
+      method: Methods.RUN_OVERRIDE_CLAIM,
+      params: {
+        runId: input.runId,
+        decisionId: input.decision.id,
+        claimId: input.claimId,
+        recipeRunId: input.recipeRunId,
+        reason: input.claimOverrideReason.trim(),
+        snapshotIdentity: runClaimOverrideSnapshotIdentity(input.decision),
+      },
+    };
+  }
   if (input.decision.type === 'improvement' && input.actionId === 'apply') {
     return {
       method: Methods.IMPROVEMENT_APPLY,
@@ -133,6 +156,11 @@ export function buildRunResolveDecisionParams(input: {
       ...selectionData,
     };
   }
+  if (input.decision.payload?.kind === 'output-review')
+    selectionData = {
+      ...selectionData,
+      claimOverrideSnapshot: runClaimOverrideSnapshotIdentity(input.decision),
+    };
   return {
     runId: input.runId,
     decisionId: input.decision.id,

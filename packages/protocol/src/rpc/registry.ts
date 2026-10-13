@@ -338,6 +338,7 @@ export const Methods = {
   RUN_INTERACTIVE_DEV_RESOLVE: 'run.interactiveDev.resolve',
   RUN_FOR_SLOT: 'run.forSlot',
   RUN_RESOLVE_DECISION: 'run.resolveDecision',
+  RUN_OVERRIDE_CLAIM: 'run.overrideClaim',
   RUN_PROBE_WORKER_SIGNAL: 'run.probeWorkerSignal',
   RUN_SESSION_COMMAND: 'run.sessionCommand',
   RUN_GRADE: 'run.grade',

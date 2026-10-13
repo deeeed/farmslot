@@ -8,6 +8,7 @@ import {
   type Run,
   type RunDecision,
   type RunOutput,
+  runOutputReviewEnabled,
 } from '@farmslot/protocol';
 
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
@@ -37,10 +38,7 @@ export function outputReviewDecisions(run: Run, output: RunOutput): RunDecision[
     output.workerFinished &&
     output.reportPath &&
     !output.captureError &&
-    run.completionPolicy === 'artifact-only' &&
-    run.lane !== 'comparison' &&
-    !run.engineState?.evalExperiment &&
-    !run.reviewWorkspace;
+    runOutputReviewEnabled(run);
   if (
     eligible &&
     prior.some(

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Review and record verified untestable exceptions without resolving the evidence gate.
+
 - Add reasoned evidence-policy attestation to the existing publish gate with confirmation and package binding.
 
 - Show compact evidence package status and collapsed diagnostics, with neutral legacy evidence and read-only retained reports.

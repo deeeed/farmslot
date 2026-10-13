@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Add run gate mark-untestable for one selected claim through the verified gateway operation.
+
 - Accept a required written reason for the human evidence-attested publish gate action.
 - Show the resolved recipe provider's package version and Git identity in project doctor diagnostics.
 

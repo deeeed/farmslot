@@ -285,6 +285,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'run.grade': { classification: 'admin' },
   'run.interactiveDev.resolve': { classification: 'admin' },
   'run.list': { classification: 'operator' },
+  'run.overrideClaim': { classification: 'admin' },
   'run.pause': { classification: 'admin' },
   'run.probeWorkerSignal': { classification: 'admin' },
   'run.proposeImprovement': { classification: 'admin' },

@@ -1495,6 +1495,11 @@
     "sources.sync": {
       "surface": "rpc-only",
       "note": "ADR-069 source authority; dedicated sources CLI lands in the next approved stage."
+    },
+    "run.overrideClaim": {
+      "surface": "typed-command",
+      "note": "farmslot run gate --action mark-untestable records a verified human exception without resolving the gate.",
+      "command": "farmslot run gate --action mark-untestable"
     }
   }
 }

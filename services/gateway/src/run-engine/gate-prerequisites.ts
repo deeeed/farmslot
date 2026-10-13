@@ -12,6 +12,7 @@ import {
   digestRecipeDocument,
   EVIDENCE_ATTESTATION_ACTION,
   evidenceAttestationAvailable,
+  isAuthorizedOverride,
   isEvidencePolicyReason,
   isPrerequisiteGatePayload,
   isRecord,
@@ -57,6 +58,11 @@ import {
   validateDeterministicChecksForRun,
 } from '../tasks/worker-terminal-contract.js';
 
+import {
+  appliedClaimOverrideReceiptIds,
+  claimOverrideAuthority,
+  projectGateAcceptance,
+} from './claim-overrides.js';
 import { readReviewInputSnapshot } from './diff-artifacts.js';
 import {
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
@@ -101,7 +107,10 @@ export interface GateAcceptanceRead extends AcceptanceStatusRead {
 const require = createRequire(import.meta.url);
 const { acceptanceContractIssues } =
   require('@farmslot/agent-runtime/scripts/acceptance-ledger.cjs') as {
-    acceptanceContractIssues(taskDir: string, options: { allowWeak: boolean }): string[];
+    acceptanceContractIssues(
+      taskDir: string,
+      options: { allowWeak: boolean; deferClaimVerdicts?: boolean },
+    ): string[];
   };
 
 export async function readGateAcceptance(
@@ -155,7 +164,10 @@ export async function readGateAcceptance(
       };
     if (!acceptance.criteria.length) return { ...acceptance, issues: [] };
     const contract = await sources.contract(run, run.slotId);
-    const options = { allowWeak: contract.acceptance?.allowWeak === true };
+    const options = {
+      allowWeak: contract.acceptance?.allowWeak === true,
+      deferClaimVerdicts: true,
+    };
     if (isLocal(vars.host, vars.machine))
       return { ...acceptance, issues: acceptanceContractIssues(taskDir, options) };
     const guard = await agentRuntimeScriptForSlot(vars, 'acceptance-ledger.cjs');
@@ -190,7 +202,7 @@ function capturedOutputReviewDecision(run: Run): RunDecision | undefined {
     .find((candidate) => candidate.payload?.kind === 'output-review');
 }
 
-async function readGateRecordedEvidence(
+export async function readGateRecordedEvidence(
   run: Run,
   preparedPackage: ReadyGatePrPackage | null,
   qa?: Awaited<ReturnType<typeof assertQaCompletion>>,
@@ -340,7 +352,7 @@ export async function collectRunGateReadiness(
       actionId: 'hold',
     });
   }
-  const acceptance = await source.acceptance(run);
+  let acceptance = await source.acceptance(run);
   if (acceptance.error) {
     reasons.push({
       code: 'acceptance-unreadable',
@@ -371,9 +383,30 @@ export async function collectRunGateReadiness(
       try {
         const qa = qaOutput ? await source.qaCompletion(run) : undefined;
         const inputs = await source.recordedEvidence(run, preparedPackage, qa);
+        acceptance = projectGateAcceptance(acceptance, run, inputs);
+        const appliedReceipts = appliedClaimOverrideReceiptIds(run, inputs);
+        const frozenReceipts =
+          preparedPackage?.claimOverrideReceiptIds ??
+          (outputDecision?.payload?.kind === 'output-review'
+            ? outputDecision.payload.claimOverrideReceiptIds
+            : undefined) ??
+          [];
+        if (!isDeepStrictEqual(appliedReceipts, [...frozenReceipts].sort()))
+          reasons.push({
+            code: 'evidence-override-refresh-required',
+            prerequisite: 'evidence',
+            message: 'Human claim overrides changed. Refresh and review the gate package.',
+            actionId: 'hold',
+          });
         const valid =
           inputs.length > 0 &&
           inputs.every((input) => validateRecordedEvidencePackage(input).status === 'valid');
+        const projectedRunId = acceptance.ledger?.recipeRunId;
+        const projectedIdentityMatches =
+          acceptance.ledger?.schemaVersion !== 2 ||
+          (typeof projectedRunId === 'string' &&
+            projectedRunId.length > 0 &&
+            inputs.some((input) => input.claims?.recipeRunId === projectedRunId));
         const executionSatisfied = inputs.every(
           (input) =>
             isRecord(input.summary) &&
@@ -395,21 +428,38 @@ export async function collectRunGateReadiness(
                 acceptance.criteria.some(
                   (criterion) =>
                     criterion.id === claim.id &&
-                    acceptance.ledger?.criteria.find((row) => row.id === criterion.id)?.verdict ===
-                      claim.verdict &&
+                    (acceptance.ledger?.schemaVersion !== 2 ||
+                      input.claims?.recipeRunId === projectedRunId) &&
+                    ((acceptance.ledger?.schemaVersion !== 2 &&
+                      acceptance.ledger?.criteria.find((row) => row.id === criterion.id)
+                        ?.verdict === claim.verdict) ||
+                      (input.claims &&
+                        acceptance.ledger?.criteria.some(
+                          (row) =>
+                            row.id === criterion.id &&
+                            isAuthorizedOverride(row, claim, claimOverrideAuthority(run, input)),
+                        ))) &&
                     acceptance.issues.length === 0,
                 ),
             ),
         );
         let bound = acceptance.criteria.every((criterion) =>
-          inputs.some((input) =>
-            input.claims?.criteria.some(
-              (claim) =>
-                claim.id === criterion.id &&
-                claim.text.trim() === criterion.text.trim() &&
-                claim.verdict ===
-                  acceptance.ledger?.criteria.find((row) => row.id === criterion.id)?.verdict,
-            ),
+          inputs.some(
+            (input) =>
+              (acceptance.ledger?.schemaVersion !== 2 ||
+                input.claims?.recipeRunId === projectedRunId) &&
+              input.claims?.criteria.some(
+                (claim) =>
+                  claim.id === criterion.id &&
+                  claim.text.trim() === criterion.text.trim() &&
+                  (claim.verdict ===
+                    acceptance.ledger?.criteria.find((row) => row.id === criterion.id)?.verdict ||
+                    acceptance.ledger?.criteria.some(
+                      (row) =>
+                        row.id === criterion.id &&
+                        isAuthorizedOverride(row, claim, claimOverrideAuthority(run, input)),
+                    )),
+              ),
           ),
         );
         if (qaOutput && acceptance.ledger?.schemaVersion === 1) {
@@ -450,11 +500,21 @@ export async function collectRunGateReadiness(
               );
             });
         }
-        if (!valid || (qaOutput && (!executionSatisfied || !claimsSatisfied || !bound))) {
+        if (
+          !valid ||
+          !projectedIdentityMatches ||
+          (qaOutput && (!executionSatisfied || !claimsSatisfied || !bound))
+        ) {
           reasons.push({
-            code: 'evidence-invalid',
+            code:
+              valid && !projectedIdentityMatches
+                ? 'evidence-execution-mismatch'
+                : 'evidence-invalid',
             prerequisite: 'evidence',
-            message: 'Required claim evidence is structurally invalid or incomplete.',
+            message:
+              valid && !projectedIdentityMatches
+                ? 'Task verdicts belong to another recipe execution. Run the recipe and refresh the gate package.'
+                : 'Required claim evidence is structurally invalid or incomplete.',
             actionId: 'hold',
           });
         } else {

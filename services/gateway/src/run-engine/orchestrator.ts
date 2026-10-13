@@ -7,6 +7,7 @@ import {
   type EvidenceManifestEntry,
   FLOW_STEPS,
   type FlowType,
+  humanGateEnabled,
   PipelineSteps,
   type Run,
   type RunDecisionPayload,
@@ -1773,27 +1774,16 @@ function findStartStep(run: Run, steps: string[]): number {
   return steps.length;
 }
 
-const DEFAULT_HUMAN_GATES: Record<string, boolean> = {
-  'review-pr': true,
-  'fix-bug': true,
-  dev: false,
-  'pr-complete': false,
-};
-
 async function isHumanGateEnabled(
   project: string,
   flowType: FlowType,
   mode?: 'interactive' | 'autonomous' | 'validation',
 ): Promise<boolean> {
-  if (flowType === 'fix-bug') return true;
-  if (flowType === 'dev' && mode === 'autonomous') return true;
-  if (mode === 'autonomous') return false;
-  if (mode === 'interactive') return true;
-  if (mode === 'validation') return true;
-  const pv = await loadProjectVarsOrNull(project, 'human gate config');
-  const gates = (pv?.projectJson as any)?.human_gates;
-  if (gates && typeof gates[flowType] === 'boolean') return gates[flowType];
-  return DEFAULT_HUMAN_GATES[flowType] ?? false;
+  const pv =
+    mode === undefined && flowType !== 'fix-bug'
+      ? await loadProjectVarsOrNull(project, 'human gate config')
+      : null;
+  return humanGateEnabled(flowType, mode, pv?.projectJson);
 }
 
 async function executeNoChangeGate(runId: string): Promise<void> {

@@ -173,6 +173,7 @@ export class RunDetail extends RunDetailState {
       this.evidenceModel = createEvidenceReviewModel({
         context: 'run-detail',
         package: this._recordedEvidence?.input,
+        claimOverrideAuthority: this._recordedEvidence?.claimOverrideAuthority,
         readErrors: this._recordedEvidence?.errors,
         artifactPrefix: this._recordedEvidence?.artifactPrefix,
         packagePath: this._recordedEvidence?.packagePath,

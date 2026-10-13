@@ -476,6 +476,20 @@ test('import clears stale taskFile when bundle has no task tree', () => {
     activeTaskFile: '/tmp/source/projects/demo-farm/tasks/dev/stale/TASK.md',
     steps: [],
     decisions: [],
+    claimOverrideReceipts: [
+      {
+        id: 'foreign',
+        runId,
+        decisionId: 'gate',
+        claimId: 'AC-1',
+        recipeRunId: 'execution',
+        closureIdentity: 'closure',
+        priorVerdict: 'missing',
+        approver: { principalId: 'person', displayName: 'Reviewer', credentialId: 'foreign' },
+        reason: 'Foreign authority',
+        overriddenAt: new Date().toISOString(),
+      },
+    ],
     metrics: { nudgeCount: 0, model: 'claude', runner: 'claude' },
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -514,6 +528,11 @@ test('import clears stale taskFile when bundle has no task tree', () => {
     ) as Run;
     assert.equal(persisted.taskFile, null);
     assert.equal(persisted.activeTaskFile, undefined);
+    assert.equal(
+      persisted.claimOverrideReceipts,
+      undefined,
+      'imported metadata grants no gateway override authority',
+    );
   } finally {
     rmSync(targetRoot, { recursive: true, force: true });
     rmSync(bundleDir, { recursive: true, force: true });

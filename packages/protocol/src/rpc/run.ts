@@ -39,6 +39,7 @@ export const RunMethods = {
   interactiveDevResolve: Methods.RUN_INTERACTIVE_DEV_RESOLVE,
   forSlot: Methods.RUN_FOR_SLOT,
   resolveDecision: Methods.RUN_RESOLVE_DECISION,
+  overrideClaim: Methods.RUN_OVERRIDE_CLAIM,
   probeWorkerSignal: Methods.RUN_PROBE_WORKER_SIGNAL,
   sessionCommand: Methods.RUN_SESSION_COMMAND,
   grade: Methods.RUN_GRADE,
@@ -549,6 +550,8 @@ export interface RunRecipeRunsForRunParams {
 }
 
 export interface RunRecordedEvidenceReview {
+  /** Checked gateway authority for display; never supplied by task/recipe files. */
+  claimOverrideAuthority?: import('../recipe/index.js').ClaimOverrideAuthority;
   /** Display path relative to run artifacts, independent of media transport. */
   packagePath?: string;
   /** Full retained report inventory; run-list projections deliberately omit it. */
@@ -583,6 +586,21 @@ export interface RunResolveDecisionParams {
    * copied into `selectionData.resourcePosture` for the run engine to read.
    */
   resourcePosture?: import('../contracts/index.js').ResourcePostureGateChoice;
+}
+
+/** Mark one selected claim untestable without resolving the human gate. */
+export interface RunOverrideClaimParams {
+  runId: string;
+  decisionId: string;
+  claimId: string;
+  recipeRunId: string;
+  snapshotIdentity: string;
+  reason: string;
+}
+
+export interface RunOverrideClaimResult {
+  run: Run;
+  receipt: import('../recipe/claim-overrides.js').ClaimUntestableOverrideReceipt;
 }
 
 export interface RunResolveDecisionResult {

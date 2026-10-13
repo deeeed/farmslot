@@ -84,6 +84,7 @@ import {
   runSetTags,
 } from '../methods/run/admin.js';
 import { runAdopt } from '../methods/run/adopt.js';
+import { runOverrideClaim } from '../methods/run/claim-overrides.js';
 import {
   runForSlot,
   runGet,
@@ -139,6 +140,12 @@ export async function routeRunMethod(
   };
 
   switch (method) {
+    case Methods.RUN_OVERRIDE_CLAIM:
+      return handled(
+        runOverrideClaim(p as import('@farmslot/protocol').RunOverrideClaimParams, emit, {
+          authorizeEvidenceAttestation: context.authorizeEvidenceAttestation,
+        }),
+      );
     // Runs
     case Methods.RUN_CREATE:
     case Methods.RUN_CREATE_NATIVE: {

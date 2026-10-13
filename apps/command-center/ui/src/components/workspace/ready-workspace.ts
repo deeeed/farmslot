@@ -10,7 +10,9 @@ import {
 import type { RunRecipeRunsForRunResult } from '@farmslot/protocol';
 import {
   type ArtifactRef,
+  buildRunDecisionActionRequest,
   isInternalRunArtifactPath,
+  MARK_CLAIM_UNTESTABLE_ACTION,
   type ReadyGatePayload,
 } from '@farmslot/protocol';
 import { resolveReviewDispatchDefaults } from '@farmslot/review-dispatch';
@@ -72,13 +74,26 @@ import {
 
 @customElement('ready-workspace')
 export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
+  @state() private _claimOverrideId: string | null = null;
+  @state() private _claimOverrideReason = '';
   @state() private _evidenceModel: EvidenceReviewModel | null = null;
   private _evidenceRequest = 0;
+  private _evidenceScope = '';
   private _evidenceRecipeRunId: string | null = null;
   private _evidenceItems: import('../shared/media-lightbox-types.js').LightboxItem[] | null = null;
   private async _loadReviewEvidence(): Promise<void> {
     const request = ++this._evidenceRequest;
-    this._evidenceModel = null;
+    const scope = JSON.stringify([
+      this.runId,
+      this.decision?.id,
+      this._payload?.prPackage?.packageHash,
+    ]);
+    if (scope !== this._evidenceScope) {
+      this._evidenceModel = null;
+      this._claimOverrideId = null;
+      this._claimOverrideReason = '';
+      this._evidenceScope = scope;
+    }
     this._evidenceItems = null;
     if (!this.runId || this.mockData) return;
     try {
@@ -92,6 +107,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       this._evidenceModel = createEvidenceReviewModel({
         context: 'pr-preview',
         package: source.recordedEvidence?.input,
+        claimOverrideAuthority: source.recordedEvidence?.claimOverrideAuthority,
         artifactPrefix: source.recordedEvidence?.artifactPrefix,
         packagePath: source.recordedEvidence?.packagePath,
         readErrors: source.recordedEvidence?.errors,
@@ -111,6 +127,38 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       { schemaVersion: 1, criteria: [] },
       {
         evidenceModel: model,
+        overrideEditor: {
+          claimId: this._claimOverrideId,
+          reason: this._claimOverrideReason,
+          select: (id) => {
+            this._claimOverrideId = id;
+          },
+          change: (reason) => {
+            this._claimOverrideReason = reason;
+          },
+        },
+        markUntestable: async (claimId, reason) => {
+          if (!this.decision || this._acting) return;
+          const candidate = model.claimOverrideCandidate(claimId);
+          if (!candidate) return;
+          this._acting = true;
+          try {
+            const request = buildRunDecisionActionRequest({
+              runId: this.runId,
+              decision: this.decision,
+              actionId: MARK_CLAIM_UNTESTABLE_ACTION,
+              ...candidate,
+              claimOverrideReason: reason,
+            });
+            await gateway.request(request.method, request.params);
+            await this._loadReviewEvidence();
+            this._actionMessage = 'Claim marked untestable. Refresh and review the gate package.';
+          } catch (error) {
+            this._actionMessage = error instanceof Error ? error.message : String(error);
+          } finally {
+            this._acting = false;
+          }
+        },
         evidenceHref: (path) => this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
         openEvidence: ({ criterion, evidence, index }) => {
           this._lightboxRecipeRunId = this._evidenceRecipeRunId;

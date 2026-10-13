@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Define verified human claim-override receipts, selected-execution binding and shared review projections.
 
 ## 0.41.0 - 2026-10-13
 

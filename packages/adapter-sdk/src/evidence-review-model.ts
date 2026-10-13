@@ -5,15 +5,18 @@ import {
   type AcceptanceEvidenceLink,
   type AcceptanceStatusLedger,
   type AcceptanceStatusSummary,
+  type ClaimOverrideAuthority,
   EVIDENCE_PADDING_MS,
   type EvidenceMomentRef,
   isRecord,
   type OutputReviewPayload,
+  projectClaimUntestableOverride,
   type RecipeClaimDeclaration,
   type RecipeClaimKind,
   type RecipeRecordingTimelineBinding,
   type RecipeRecordingTimelineDocument,
   recipeTraceEntries,
+  recordedEvidenceClosureIdentity,
   type RecordedEvidencePackageInput,
   type RecordingSegmentRef,
   type RunOutput,
@@ -44,6 +47,7 @@ export interface EvidenceReviewRecordingInput extends RecipeRecordingTimelineBin
 }
 
 export interface EvidenceReviewInput {
+  claimOverrideAuthority?: ClaimOverrideAuthority;
   context?: EvidenceReviewContext;
   readErrors?: readonly string[];
   /** Transport namespace; contract references stay relative to their recipe package. */
@@ -120,6 +124,9 @@ export interface EvidenceReviewPlaybackEffect {
 }
 
 export interface EvidenceReviewModel {
+  claimOverrideCandidate(
+    id: string,
+  ): Pick<import('@farmslot/protocol').RunOverrideClaimParams, 'claimId' | 'recipeRunId'> | null;
   readonly context: EvidenceReviewContext;
   readonly summary: AcceptanceStatusSummary;
   readonly claims: readonly EvidenceReviewClaim[];
@@ -188,7 +195,24 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     warnings.push(
       `Recording ${packageClaims.recording.status}: ${packageClaims.recording.reason ?? 'see retained capture status'}`,
     );
-  const ledger = packageClaims ?? input.ledger ?? null;
+  const overrideAuthority =
+    packageClaims &&
+    input.claimOverrideAuthority &&
+    errors.length === 0 &&
+    pkg &&
+    input.claimOverrideAuthority.recipeRunId === packageClaims.recipeRunId &&
+    input.claimOverrideAuthority.closureIdentity === recordedEvidenceClosureIdentity(pkg)
+      ? input.claimOverrideAuthority
+      : undefined;
+  const ledger =
+    packageClaims && overrideAuthority
+      ? {
+          ...packageClaims,
+          criteria: packageClaims.criteria.map((claim) =>
+            projectClaimUntestableOverride(claim, overrideAuthority),
+          ),
+        }
+      : (packageClaims ?? input.ledger ?? null);
   if (input.ledger?.schemaVersion === 2 && !pkg)
     errors.push('Recorded claim evidence requires its retained execution package.');
   if (
@@ -440,6 +464,14 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
   );
   return {
     context: input.context ?? 'artifact',
+    claimOverrideCandidate(id) {
+      const claim = packageClaims?.criteria.find(
+        (claim) => claim.id === id && claim.kind === 'acceptance',
+      );
+      return claim && packageClaims && overrideAuthority
+        ? { claimId: claim.id, recipeRunId: packageClaims.recipeRunId }
+        : null;
+    },
     summary: summarizeAcceptanceStatus(
       {
         schemaVersion: 1,
@@ -635,6 +667,7 @@ function claimCaption(claim: AcceptanceCriterionView): string {
     ? [
         claim.id,
         status.verdict,
+        ...(status.engineVerdict ? [`engine: ${status.engineVerdict}`, status.note ?? ''] : []),
         status.proofMode ?? 'no proof mode',
         status.recipeNodes.length ? `node ${status.recipeNodes.join(', ')}` : 'no recipe node',
       ].join(' · ')

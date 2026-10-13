@@ -23,12 +23,14 @@ import {
   enumerateChecklistCheckboxes,
   EXECUTION_CHECKLIST_DOCUMENT,
   type FlowType,
+  humanGateEnabled,
   isBranchUpdateStrategy,
   isLightweightInteractiveDevRun,
   type PlanningContextProjection,
   renderTemplatePlaceholders,
   type RepeatReviewContext,
   type Run,
+  runOutputReviewEnabled,
   type TaskSchema,
   type TaskSchemaPhase,
   type TemplateProvenance,
@@ -1321,6 +1323,10 @@ export async function writeTaskFile(
   const terminalContract = resolveWorkerTerminalContract(workerTerminalConfig, run.flowType, {
     mode: run.mode ?? undefined,
   });
+  terminalContract.claimReviewGate =
+    (run.steps.some((step) => step.name === 'human-gate' && step.status !== 'skipped') &&
+      humanGateEnabled(run.flowType, run.mode ?? undefined, projectVars.projectJson)) ||
+    (runOutputReviewEnabled(run) && Boolean(terminalContract.commands.complete.report));
 
   // Run identity in the shape the recipe-cook skill writes, so `handoff closeout`
   // and any other task-dir consumer see one contract on both surfaces. The

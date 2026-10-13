@@ -26,6 +26,7 @@ import {
   type AcceptanceEvidenceStripItem,
 } from '../../lib/acceptance-evidence';
 import { type ArtifactHttpHeaders, artifactUrl } from '../../lib/artifact-url';
+import { requestClaimUntestableOverride } from '../../lib/claim-overrides';
 import { decisionResolveRequest } from '../../lib/decision-resolve';
 import {
   type ApprovePublishGuard,
@@ -308,6 +309,16 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
   return {
     state,
     actions: {
+      markUntestable: async (claimId: string, reason: string) => {
+        const model = viewModel?.acceptance.evidenceModel;
+        if (!client || !run || !decision || !model) return;
+        try {
+          await requestClaimUntestableOverride(client, run.id, decision, model, claimId, reason);
+          await refresh('claim override');
+        } catch (error) {
+          setLoadError(error instanceof Error ? error.message : String(error));
+        }
+      },
       refresh: () => void refresh('manual refresh'),
       openEvidence,
       openLog,

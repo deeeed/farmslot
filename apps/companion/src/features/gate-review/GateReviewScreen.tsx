@@ -59,6 +59,7 @@ export function GateReviewScreen({
         {acceptance.view || acceptance.error ? (
           <TaskAcceptancePanel
             evidenceModel={acceptance.evidenceModel}
+            onMarkUntestable={actions.markUntestable}
             acceptanceStatus={acceptance.acceptanceStatus}
             acceptanceCriteria={acceptance.acceptanceCriteria}
             acceptanceEvidenceLinks={acceptance.acceptanceEvidenceLinks}
