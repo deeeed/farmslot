@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Generate recipe-owned acceptance instructions using supplied helper commands; retain authorized untestable review and completion checks.
+
 - Route valid unresolved engine claims to human review and refuse local schema-2 verdict overrides.
 
 ## 0.19.0 - 2026-10-13

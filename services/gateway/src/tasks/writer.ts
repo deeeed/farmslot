@@ -59,6 +59,7 @@ import { getPRRawData, parseJsonLines } from '../methods/pr/raw-cache.js';
 import { harnessRoot } from '../projects/harness-root.js';
 import { extractRecipeFromPRBody, materializeExtractedRecipe } from '../quality/pr-body-recipe.js';
 
+import { agentRuntimeCommandForSlot } from './agent-runtime-script.js';
 import {
   assertArtifactOnlyTaskGuard,
   evaluateArtifactOnlyTaskGuard,
@@ -1066,6 +1067,8 @@ export async function writeTaskFile(
   const farmslotDirForSlot = isLocal ? farmslotRoot : REMOTE_FARMSLOT_DIR;
   vars.farmslot_dir = farmslotDirForSlot;
   vars.FARMSLOT_DIR = farmslotDirForSlot;
+  vars.AC_CMD = await agentRuntimeCommandForSlot(slotVars, 'ac');
+  vars.ARTIFACT_CHECK_CMD = await agentRuntimeCommandForSlot(slotVars, 'artifact-check');
 
   // ─── Linked tickets (plural, pre-rendered markdown) ───
   // A PR can reference multiple tickets ("Fixes PROJ-123, PROJ-456"). Templates

@@ -2,6 +2,7 @@ import path from 'node:path';
 
 import { farmslotRoot, type SlotVars } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
+import { shellQuote } from '../core/tmux.js';
 import { nodeExecArgv } from '../fleet/node-rpc.js';
 
 /** Resolve remote helpers from the connected node, which may be a dev deployment. */
@@ -33,4 +34,13 @@ export async function agentRuntimeScriptForSlot(
         `Repair that node's runtime installation; no other deployment will be used.`,
     );
   return script;
+}
+
+export async function agentRuntimeCommandForSlot(
+  vars: Pick<SlotVars, 'host' | 'machine'>,
+  command: 'ac' | 'artifact-check',
+): Promise<string> {
+  const script = await agentRuntimeScriptForSlot(vars, 'acceptance-cli.cjs');
+  const entry = path.posix.join(path.posix.dirname(script), '..', 'bin', 'farmslot-agent.mjs');
+  return `node ${shellQuote(entry)} ${command}`;
 }

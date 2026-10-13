@@ -17,6 +17,8 @@ import {
   type WorkerTerminalContractDocument,
 } from '@farmslot/protocol';
 
+import { installedTaskCommands } from './runtime-command.js';
+
 export const HANDOFF_INPUT = 'inputs/handoff.json';
 export const BUG_INPUT = 'inputs/bug-input.json';
 /** Optional project-owned addendum rendered into TASK.md (relative to `templates/`). */
@@ -142,16 +144,15 @@ export function buildTaskDocument(input: TaskDocumentInput): string {
     renderAcceptanceCriteria(input.acceptanceCriteria),
   );
   if (normalizeAcceptanceCriteria(input.acceptanceCriteria).length > 0) {
-    const agentRoot = vars.farmslot_dir?.replace(/^~(?=\/)/, '${HOME}');
-    const agent = agentRoot
-      ? `node "${agentRoot}/packages/agent-runtime/bin/farmslot-agent.mjs"`
-      : 'farmslot-agent';
+    const defaults = installedTaskCommands();
+    const acceptance = vars.AC_CMD?.trim() || defaults.AC_CMD;
+    const artifactCheck = vars.ARTIFACT_CHECK_CMD?.trim() || defaults.ARTIFACT_CHECK_CMD;
     sections.push(
       '',
-      '## Acceptance verdicts + recipe coverage',
+      '## Recipe proof + acceptance review',
       '',
-      `Before successful completion or handing off a PR, set TASK_DIR to \`${taskDir}\` and run \`${agent} ac list\`. Record an honest verdict for every registered AC with \`${agent} ac set AC-N proven --proof-mode state --recipe-node <node-id> --evidence <task-relative-path>\`; choose the actual state, visual or mixed mode and existing evidence, and omit the recipe node when no recipe applies. Use \`untestable --note <reason>\` only when proof is unavailable.`,
-      `Run \`ac list\` again. When recipe.json exists, render coverage with \`${agent} ac render\` to a temporary file, then replace \`artifacts/recipe-coverage.md\` only after a successful render. Run \`${agent} artifact-check ${taskDir} --require-recipe-coverage-if-recipe --require-acceptance-status\` before \`mark complete\`. Missing or unrecorded verdicts refuse completion; checked checklist items alone do not assess an AC.`,
+      `Inspect registered criteria with \`${acceptance} list --task-dir "${taskDir}"\`. Declare their IDs and claims in the recipe's \`proofTargets\` and bind qualifying assertion nodes through \`proves\`. Run the recipe through the configured command and inspect its retained results. Recipe execution produces normal verdicts; never set a proven verdict by hand or edit acceptance ledger rows. If a criterion cannot be proved, retain the refusal and ask an authorized reviewer for an untestable override with an actor and reason.`,
+      `Inspect the criteria again. When recipe.json exists, render coverage with \`${acceptance} render --task-dir "${taskDir}"\` to a temporary file, then replace \`artifacts/recipe-coverage.md\` only after a successful render. Run \`${artifactCheck} "${taskDir}" --require-recipe-coverage-if-recipe --require-acceptance-status\` before \`mark complete\`. Missing or unrecorded verdicts refuse completion; checked checklist items alone do not assess an AC.`,
     );
   }
 

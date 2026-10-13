@@ -11,7 +11,7 @@ import { farmslotRoot, type ProjectVars, type SlotVars } from '../core/config.js
 import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
 import { handleNodeResponse } from '../fleet/node-rpc.js';
 
-import { agentRuntimeScriptForSlot } from './agent-runtime-script.js';
+import { agentRuntimeCommandForSlot, agentRuntimeScriptForSlot } from './agent-runtime-script.js';
 import { markCommandForSlot } from './checklist-target.js';
 
 async function fixture(t: test.TestContext) {
@@ -29,6 +29,11 @@ async function fixture(t: test.TestContext) {
     await cp(
       new URL('../../../../packages/agent-runtime/scripts', import.meta.url),
       path.join(runtime, 'scripts'),
+      { recursive: true },
+    );
+    await cp(
+      new URL('../../../../packages/agent-runtime/bin', import.meta.url),
+      path.join(runtime, 'bin'),
       { recursive: true },
     );
     await writeFile(
@@ -87,6 +92,27 @@ test('remote helpers follow the connected deployment and never resolve in the pr
       );
     }
   }
+  assert.ok(requests.every((request) => request.cwd === undefined));
+});
+
+test('worker commands execute the connected acceptance helper with an explicit task directory', async (t) => {
+  const { root, roots, vars, requests } = await fixture(t);
+  const taskDir = path.join(root, 'task with spaces');
+  await mkdir(path.join(taskDir, 'inputs'), { recursive: true });
+  await writeFile(
+    path.join(taskDir, 'inputs/handoff.json'),
+    JSON.stringify({
+      task: { acceptanceCriteria: ['The configured helper reads this task'] },
+    }),
+  );
+  const command = await agentRuntimeCommandForSlot(vars, 'ac');
+  assert.ok(command.includes(roots[1]));
+  const result = spawnSync('bash', ['-c', `${command} list --task-dir "$1"`, '_', taskDir], {
+    cwd: root,
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /The configured helper reads this task/);
   assert.ok(requests.every((request) => request.cwd === undefined));
 });
 
