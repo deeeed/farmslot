@@ -48,11 +48,11 @@ pixels; visual claims still need the judgment ADR-062 requires.
 
 Acquire a task's declared device and runtime resources automatically after core
 prepare and before dispatch, and reacquire them before validation or a fix pass
-that needs them. Consume Goal 3's resolved requirements and existing target,
+that needs them. Consume the project recipe contract's resolved requirements and existing target,
 proof-plan and provider contracts. Reuse the capability registry and posture
 reconciler. No new requirement syntax, resource picker, provider or lease store
 is introduced. Preview stays read-only; acquisition cannot steal a foreign lease
-or grant mutation authority. This work starts only after Goal 3's declaration
+or grant mutation authority. This work starts only after the project recipe declaration
 contract merges.
 
 Structured operation and runner receipts determine progress. `blocked` requires
@@ -81,9 +81,9 @@ checks; separate live acceptance proves actual runner and device behavior.
   separate status API. `@farmslot/sdk`'s existing `GatewayClient` reads those DTOs
   and resolves decisions; it gains no local approval authority.
 - ADR-062 owns its evidence SDK exports. ADR-063 owns its review exports.
-  Goal 3 owns `RecipeFlowRequirements`, `recipeFlowRequirements` and target
+  ADR-068 owns `RecipeFlowRequirements`, `recipeFlowRequirements` and target
   resolution. Proposed names do not imply that these dependencies have shipped.
-- Downstream harnesses declare project/provider requirements through Goal 3 and
+- Downstream harnesses declare project/provider requirements through ADR-068 and
   implement the existing provider acquire, health and release extension points.
   They inherit prerequisite checks, acquisition, ownership, state and recovery.
   They do not implement another gate validator or resource manager.
@@ -111,65 +111,9 @@ private paths. Acquisition does not authorize funding, resets or external writes
 - Integration waits for the owning contracts. Shared files require a recorded
   ownership handoff before implementation.
 
-## Implementation order
+## Delivery status
 
-1. Independent ADR/spec review, Goal 3 conflict review and lead approval are
-   complete. ADR-065 and its specification were accepted on 2026-10-12.
-2. PR 2 may start immediately after ADR/spec approval. It adds the six recovery
-   scenarios and only repairs their demonstrated gaps. Reuse existing branch,
-   runner, sandbox and release protections.
-3. PR 1 starts only after cx-orchestrator's ADR-063 implementation PR merges,
-   because both touch the gate and pipeline UI. It implements prerequisite
-   enforcement and truthful state, including shared DTOs, CLI and thin client
-   consumers. It consumes merged ADR-062/ADR-063 work and the existing
-   acceptance-completion guard; it does not replace them.
-4. PR 3 waits for Goal 3's declaration contract to merge, then consumes those
-   requirements for automatic acquisition through the existing posture
-   reconciler, with target/ownership and recovery proof.
-5. Reserve the exact paths before each PR. Keep at most two unmerged PRs, use
-   independent exact-head reviews with a five-round maximum, and freeze an
-   approved head. The lead owns merging and coordinated rollout.
-
-### Expected paths and owning lanes
-
-These are the anticipated edits, not blanket reservations. New files are marked
-`new`. Tests and package changelogs belong to the PR that changes their behavior.
-Before implementation, reconcile this list with the owning lane and reserve the
-exact paths. Any additional path needs the same check.
-
-| Expected paths                                                                                                                                                                                                                                                                       | Purpose and overlap owner                                                                                                                  |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `docs/adr/065-fail-closed-run-lifecycle.md`; `docs/reference/fail-closed-run-lifecycle.md`                                                                                                                                                                                           | This proposal/spec; cx-reliability                                                                                                         |
-| `packages/protocol/src/contracts/run-gate-readiness.ts`, new; `packages/protocol/src/contracts/run-lifecycle-view.ts`, new; their `.test.ts` files                                                                                                                                   | Shared readiness DTO and lifecycle presentation; cx-reliability, coordinate cx-capture's evidence model and cx-orchestrator's review types |
-| `packages/protocol/src/contracts/runs.ts`; `packages/protocol/src/contracts/index.ts`; `packages/protocol/src/rpc/run.ts`; `packages/protocol/CHANGELOG.md`                                                                                                                          | Run/decision fields, states, RPC DTOs and exports; overlap cx-goal3, cx-capture, cx-orchestrator and cx-farmslot                           |
-| `services/gateway/src/run-engine/gate-prerequisites.ts`, new; its `.test.ts` file                                                                                                                                                                                                    | Compose owning validators and deterministic results; cx-reliability, consume cx-capture/cx-orchestrator contracts                          |
-| `services/gateway/src/run-engine/ready-gate.ts`; `review-gate.ts`; `review-artifacts.ts` in that directory                                                                                                                                                                           | Gate assembly and reviewer-result failure projection; overlaps cx-capture, cx-orchestrator and cx-farmslot                                 |
-| `services/gateway/src/methods/run.ts`; `services/gateway/src/run-engine/decision-replay.ts`; `run-monitor.ts`; `recovery.ts`; `engine-decisions.ts`; `finalize-step.ts` in that directory; `services/gateway/src/runs/store.ts`                                                      | Resolve/replay/finalize freshness and persisted structured progress; overlaps cx-orchestrator and cx-farmslot                              |
-| `services/gateway/src/methods/dispatch/execute.ts`; `services/gateway/src/run-engine/dispatch-lifecycle-steps.ts`; `services/gateway/src/run-engine/resource-posture.ts`; `services/gateway/src/runtime-capabilities/posture.ts`                                                     | Consume admitted requirements and existing acquisition; overlaps cx-goal3 and cx-farmslot                                                  |
-| `services/gateway/src/run-engine/run-recovery-scenarios.test.ts`, new; `services/gateway/src/run-engine/gate-prerequisite-integration.test.ts`, new; `services/gateway/CHANGELOG.md`                                                                                                 | Gateway-path regression coverage and release notes; cx-reliability                                                                         |
-| `services/gateway/src/methods/slot/prepare.ts`; `release.ts`; `unmerged-work.ts`; `release-run-ownership.ts` in that directory; `services/gateway/src/methods/dispatch/branch-checkout.ts`; `services/gateway/src/run-engine/deferred-slot-release.ts`                               | Only scenario-proven recovery gaps; existing repair owner cx-farmslot                                                                      |
-| `services/gateway/src/methods/runtime-capabilities.ts`; `services/gateway/src/runtime-capabilities/registry.ts`; `services/gateway/src/fleet/resource-manager.ts`; `resource-process.ts` in that directory                                                                           | Only demonstrated lease/owned-orphan cleanup gaps; overlaps cx-farmslot, no second manager                                                 |
-| `services/gateway/src/runners/registry.ts`; `session-process.ts`; `launch-command.ts` in that directory; `scripts/dev.sh`; `scripts/lib/sandbox-home.cjs`                                                                                                                            | Only demonstrated transport/sandbox recovery gaps; cx-farmslot owns existing repairs, shared runner adapter remains authoritative          |
-| `packages/cli/src/commands/run.ts`; `packages/cli/CHANGELOG.md`                                                                                                                                                                                                                      | Existing run/gate output; coordinate cx-goal3's CLI work, no recipe command changes                                                        |
-| `apps/command-center/ui/src/components/workspace/ready-workspace-action-presenter.ts`; `ready-workspace-state.ts`; `ready-workspace-shell-renderers.ts` in that directory; `apps/command-center/ui/src/utils/review-gate-display.ts`; `apps/command-center/ui/CHANGELOG.md`          | Render shared reasons and action availability; overlaps cx-capture and cx-orchestrator                                                     |
-| `apps/command-center/ui/src/components/runs/run-utils.ts`; `run-pipeline-status.ts`; `run-pipeline-model.ts`; `run-detail-model.ts` in that directory                                                                                                                                | State labels and colors consume the shared projection; coordinate cx-orchestrator                                                          |
-| `apps/companion/src/features/decision-workspace/DecisionWorkspaceScreen.tsx`; `apps/companion/src/lib/decision-presentation.ts`; `apps/companion/src/features/run-detail/run-detail-model.ts`; `RunDetailScreen.tsx` in that directory; `apps/companion/CHANGELOG.md`                | Same reasons/state in thin native consumers; overlaps cx-capture and cx-orchestrator                                                       |
-| `apps/companion/src/components/RunPipeline.tsx`; `apps/companion/src/lib/task-progress.ts`; `apps/companion/src/app/(tabs)/runs.tsx`; `apps/companion/src/features/slot-workspace/slot-workspace-model.ts`; `apps/companion/src/features/family-workspace/family-workspace-model.ts` | Exhaustive new-status consumers; coordinate cx-orchestrator                                                                                |
-| `packages/protocol/package.json`; `services/gateway/package.json`; `packages/cli/package.json`; `apps/command-center/ui/package.json`; `apps/companion/package.json`; `yarn.lock`                                                                                                    | Only required scripts/dependency version changes; lead coordinates shared manifests                                                        |
-
-Goal 3 retains ownership of
-`packages/protocol/src/contracts/recipe-conformance.ts`,
-`services/gateway/src/tasks/recipe-dispatch-check.ts`, ProjectRuntime declaration
-and capability display. ADR-062 retains ledger, recording, package validation and
-evidence review. ADR-063 retains review policy, results and the shared picker.
-cx-farmslot retains deterministic CI-parity steps and pack/template AC wiring.
-This lane requests an owner edit if those contracts lack a required input.
-
-The six gateway `.test.ts` scenarios use the existing CI test collection, so no
-new workflow or root command is expected. If isolation or the runtime budget
-requires a separate CI entry, first coordinate/reserve root `package.json` and
-`.github/workflows/farmslot-quality.yml` with the lead. Do not silently omit the
-scenarios from CI.
+This design is Accepted. Delivery is incremental; acceptance does not certify all lifecycle paths. The [implementation plan](../plans/fail-closed-run-lifecycle.md) tracks the remaining integration and scenario gates.
 
 ## Non-goals
 

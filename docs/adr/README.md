@@ -1,8 +1,8 @@
 # Architecture Decision Records
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-10-12
-**Stale by:** 2026-11-12
+**Last updated:** 2026-10-13
+**Stale by:** 2026-11-13
 
 ADRs for Farmslot. Some are Command Center-specific, while newer records may apply to the whole Farmslot product.
 
@@ -53,15 +53,18 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [037](037-prepare-profiles.md)                           | Prepare Profiles — Project-Defined Slot Entry Points                    | Accepted |
 | [038](038-gate-held-worker-session.md)                   | Gate-Held Worker Session at Publication Human Gate                      | Accepted |
 | [039](039-run-portable-bundles.md)                       | Portable Run Bundles for Cross-Gateway Reference Seeding                | Accepted |
-| [040](040-work-graph-orchestration.md)                   | Work-Graph Orchestration for Backlog Dependency DAGs                    | Proposed |
+| [040](040-work-graph-orchestration.md)                   | Work-Graph Orchestration for Backlog Dependency DAGs                    | Accepted |
 | [041](041-roadmap-idea-refinement-layer.md)              | Operator Roadmap Idea Refinement Layer                                  | Proposed |
 | [042](042-slot-tracking-branches.md)                     | Slot Tracking Branches for Worktrees and Idle State                     | Accepted |
 | [043](043-scripted-runner-execution-policy.md)           | Scripted Runner and Per-Step Executor Policy                            | Proposed |
 | [044](044-backlog-launch-plans.md)                       | Backlog Launch Plans and Comparison Candidate Sets                      | Accepted |
 | [045](045-worker-terminal-contract.md)                   | Worker Terminal Contract — project.json required outputs                | Accepted |
+| [046](046-mandatory-local-node.md)                       | Mandatory co-located local node                                         | Proposed |
 | [047](047-worker-session-history-panel.md)               | Experimental Worker Session History Panel (transcript mirror)           | Accepted |
 | [048](048-interactive-operator-packets.md)               | Interactive Operator Packets for Agent Review Surfaces                  | Accepted |
 | [049](049-agent-execution-template-selection.md)         | Agent Execution Template Selection                                      | Accepted |
+| [050](050-dual-mode-cli-ink-tui.md)                      | Dual-mode CLI architecture and Ink TUI                                  | Accepted |
+| [051](051-principal-and-credential-model.md)             | Principal and credential model                                          | Accepted |
 | [052](052-recipe-derived-visual-review-boards.md)        | Recipe-Derived Visual Review Boards                                     | Accepted |
 | [053](053-run-lifecycle-transition-routing.md)           | Run Lifecycle Transition Routing                                        | Accepted |
 | [054](054-run-resource-posture.md)                       | Run Resource Posture at Lifecycle Boundaries                            | Proposed |
@@ -79,4 +82,4 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [068](068-project-recipe-binding-and-conformance.md)     | Project recipe binding and conformance                                  | Accepted |
 | [069](069-declared-pinned-sources.md)                    | Declared and pinned farm sources                                        | Accepted |
 
-ADR-062's [completed review/storage amendment](062-recorded-run-evidence.md#amendment-1-2026-10-12-completed-evidence-review-and-run-footprint) and [evidence policy/attestation amendment](062-recorded-run-evidence.md#amendment-3-2026-10-13-evidence-policy-and-human-attestation) are Accepted. Implementation is tracked separately.
+ADR-062 includes accepted [completed evidence and storage](062-recorded-run-evidence.md#completed-evidence-review-and-run-footprint) design, with implementation pending, and shipped [review curation/results](062-recorded-run-evidence.md#shared-review-curation-and-saved-results). Its [evidence-policy amendment 3](062-recorded-run-evidence.md#amendment-3-2026-10-13-evidence-policy-and-human-attestation) is Accepted under [#1011](https://github.com/deeeed/farmslot/pull/1011). Attested approval shipped there; normal-policy binding rules remain separate implementation.

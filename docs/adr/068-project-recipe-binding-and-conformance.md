@@ -11,7 +11,7 @@
 
 Project runtimes, recipe graphs and project configuration already have owners. Different command wrappers currently resolve their inputs and lifecycle differently. A generic command must preserve project authorization, target selection, cleanup and evidence rather than introduce another executor.
 
-The approved single-CLI migration has delivered project binding, static conformance, checkout execution and hosted execution. The remaining lifecycle, live-report, admission and cutover work has a prototype. This Proposed decision and its specification require independent review and maintainer approval before further framework implementation. Existing prototype evidence does not establish completion of the migration.
+The approved single-CLI migration has delivered project binding, static conformance, checkout execution and hosted execution. The remaining lifecycle, live-report, admission and cutover work has a prototype. This decision and its specification are Accepted; the remaining migration gates require implementation and independent validation. Existing prototype evidence does not establish completion of the migration.
 
 ## Decision
 
@@ -33,7 +33,7 @@ Shared lifecycle handlers use provider options and runtime hooks. Project code s
 
 The check report binds project, app, domain, runtime/target selection, checkout revision and dirty digest, executable provider/library/configuration identities, shared implementation identities and invocation parameters. Static evidence proves preflight. Live evidence adds an observed effect, an authored teardown assertion and verified artifact bytes.
 
-HUD defaults on for targets that support it. Their live proof must retain a screenshot or recording of the proof step with its intent HUD visible, and live validation must check that evidence. The report records capture/HUD support explicitly; headless or opaque targets record unsupported with the reason. Handler availability alone cannot satisfy visual proof.
+HUD defaults on for targets that support it. Live proof retains observed behavior through a screenshot, recording or supported non-visual observation. HUD intent is recommended where supported; missing HUD alone MUST NOT invalidate evidence or require a rerun. The report records capture/HUD support explicitly; headless or opaque targets record unsupported with the reason. Handler availability alone cannot satisfy visual proof.
 
 Only positive evidence establishes a capability. A missing, skipped, unsupported or failed required check never becomes success. A verified target does not certify another target or domain. Engine approval, project funding policy and gateway resource ownership remain separate from compatibility.
 
@@ -57,7 +57,7 @@ The conformance view explains registration and checked recipe support for a sele
 
 ### Preserve project log views during lifecycle migration
 
-The shared logs handler owns target/source selection, argument validation, raw output, JSON envelopes and cancellation. Optional `ProjectProvider.commandOptions.logs` callbacks supply the existing project compact view and owned-window recovery. MetaMask reuses its current log viewer and session resolver through asynchronous helpers; it does not dispatch to its old CLI or copy the handler into the framework.
+The shared logs handler owns target/source selection, argument validation, raw output, JSON envelopes and cancellation. Optional `ProjectProvider.commandOptions.logs` callbacks supply the existing project compact view and owned-window recovery. A project provider reuses its existing log viewer and session resolver through asynchronous helpers; it does not dispatch to its old CLI or copy the handler into the framework.
 
 This restores compact follow, event-count/environment precedence and window recovery without changing launch/watch consumers of the same provider helper. The final Phase 3 cutover must still move generic viewer/session mechanics to shared packages, migrate every launcher/injected consumer, and delete the old command glue. These callbacks do not exempt provider code from that deletion gate.
 
@@ -85,7 +85,7 @@ The [specification's Public surface](../reference/project-recipe-contract.md#pub
 | `@farmslot/recipe-runner`      | Existing graph/library/authorization contracts, ActionHandler and contained artifact digest helper, consumed by the engine and evidence validator |
 | `@farmslot/protocol`           | Report, selected requirements, compatibility model and positive-evidence predicate, consumed by the gateway and thin clients                      |
 
-MetaMask retains funding authorization, device targeting, collector cleanup, fixture repairs, plugin policy and closeout in its provider/engine/actions. Other harnesses inherit the same command mechanics and add only their project behavior. Provider command metadata extends strict parsing before factory effects; configured or operator-authorized sources remain required before executable imports.
+Project providers retain funding authorization, device targeting, collector cleanup, fixture repairs, plugin policy and closeout in its provider/engine/actions. Other harnesses inherit the same command mechanics and add only their project behavior. Provider command metadata extends strict parsing before factory effects; configured or operator-authorized sources remain required before executable imports.
 
 Published schema-v1 artifacts remain schema-v1 only for additive changes. Semantic incompatibility requires an explicit schema/version transition. Pre-1.0 SDK additions and the coordinated type rename require minor releases, updated exact consumer pins and registry-only package checks. Each release set requires its own approval and exact reviewed release commit. Proposed surfaces are not stable published APIs until that release completes.
 
@@ -118,6 +118,6 @@ A first dispatch has no stored proof plan. Provider IDs alone cannot tell enforc
 
 ### Consequences and public surface
 
-Goal 3 owns template metadata, the protocol accessor, read-only admission and capability display. ADR-065's owner consumes that contract for acquisition, health, cleanup and recovery. Provider schemas, slot/device-target validation, authority and ownership remain in the existing catalog/registry path. No second proof-plan store, allocator, parser for acquire semantics, CLI flag or SDK host callback is added.
+ADR-068 owns template metadata, the protocol accessor, read-only admission and capability display. ADR-065's owner consumes that contract for acquisition, health, cleanup and recovery. Provider schemas, slot/device-target validation, authority and ownership remain in the existing catalog/registry path. No second proof-plan store, allocator, parser for acquire semantics, CLI flag or SDK host callback is added.
 
 The public addition is `RecipeFlowRequirements.proofRequirements` and the extended `recipeFlowRequirements`, owned by `@farmslot/protocol` and consumed by gateway admission and ADR-065 enforcement. Pack templates consume the metadata; thin clients consume the shared compatibility result. Project harnesses keep declaring provider schemas/actions and inherit dispatch mechanics. The pre-1.0 protocol addition requires a minor release and coordinated consumer pins under the existing release gates. IDs-only retained runs remain recoverable through their valid stored plans; IDs-only first dispatch without an authored mode refuses explicitly. Declaration availability is not acquired ownership or live proof.

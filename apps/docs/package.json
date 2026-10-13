@@ -6,8 +6,8 @@
     "generate:api": "tsx scripts/generate-gateway-api-docs.ts && yarn --cwd ../command-center prettier --write ../docs/docs/reference/gateway-api.generated.md",
     "generate:onboarding": "node scripts/generate-getting-started.mjs && yarn --cwd ../command-center prettier --write ../docs/docs/guides/getting-started.generated.md",
     "generate:template-vars": "node ../../scripts/docs/generate-template-variables.mjs && yarn --cwd ../command-center prettier --write ../docs/docs/reference/template-variables.generated.md ../../docs/reference/template-variables.md",
-    "start": "yarn generate:api && yarn generate:onboarding && yarn generate:template-vars && node scripts/start-docs-dev.mjs",
-    "build": "yarn generate:api && yarn generate:onboarding && yarn generate:template-vars && docusaurus build",
+    "start": "yarn generate:api && yarn generate:onboarding && yarn generate:template-vars && yarn generate:contracts && node scripts/start-docs-dev.mjs",
+    "build": "yarn generate:api && yarn generate:onboarding && yarn generate:template-vars && yarn generate:contracts && docusaurus build",
     "serve": "docusaurus serve --host 0.0.0.0",
     "clear": "docusaurus clear",
     "deploy": "docusaurus deploy",
@@ -20,7 +20,9 @@
     "overlay:runner-hud": "node scripts/overlay-runner-hud.mjs",
     "capture:project-type-matrix": "node scripts/capture-project-type-validation-matrix.mjs",
     "capture:companion-supervision": "node scripts/capture-companion-supervision.mjs",
-    "capture:human-ready-gate": "node scripts/capture-command-center-human-ready-gate.mjs"
+    "capture:human-ready-gate": "node scripts/capture-command-center-human-ready-gate.mjs",
+    "generate:contracts": "tsx scripts/generate-contract-docs.ts",
+    "check:contracts": "tsx scripts/generate-contract-docs.ts --check"
   },
   "dependencies": {
     "@docusaurus/core": "3.10.1",
@@ -39,6 +41,7 @@
   "devDependencies": {
     "@types/react": "^19.1.17",
     "@types/react-dom": "^19.1.9",
+    "prettier": "^3.8.3",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   },

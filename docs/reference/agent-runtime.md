@@ -35,13 +35,16 @@ Do not hand-write `SIGNAL.json`. The runtime preserves pass-through fields, reco
 
 ```bash
 farmslot-agent task init <task-dir> --flow <flow> --platform <p> --template <id> --package-templates <catalog> --title "…" [--run-mode <mode>]
-farmslot-agent mark <task-md> <signal-json> complete --mark-last
+farmslot-agent mark <task-dir> complete --mark-last
+farmslot-agent mark <task-dir> --checklist TASK.md complete --mark-last
 farmslot-agent artifact-check <task-dir> --require-recipe-quality-if-recipe
 farmslot-agent recipe-quality build --input recipe-quality-input.json --output artifacts/recipe-quality.json
 farmslot-agent contract resolve --flow fix-bug
 farmslot-agent ac set AC-1 proven --evidence artifacts/after.png --recipe-node assert-order-sheet
 farmslot-agent ac render
 ```
+
+`mark` takes a task directory, not individual file paths. Its first argument must be an existing directory or it exits with a usage error. It marks `CHECKLIST.md`, falling back to `TASK.md`, and writes `SIGNAL.json` unless a role switch supplies `checklist-target.json`. `--checklist` selects a checklist explicitly and derives its role-scoped signal filename.
 
 ## Child checklist units
 
@@ -84,6 +87,8 @@ Ownership rules, all enforced by `mark`:
   terminal mark, which is refused while any child is unsettled.
 
 ## Acceptance-criteria ledger
+
+This remains a transitional contract. Manual schema-1 task verdicts and recipe-derived schema-2 projections are both live through one file writer. [ADR-062](../adr/062-recorded-run-evidence.md) assigns the eventual sole normal verdict path to the engine after conformance and adopter migration. A task ledger without its recorded package is not measured recording proof.
 
 `farmslot-agent ac` and a recipe run with a task dir write
 `artifacts/acceptance-status.json`, through one module. `ac set` records one
@@ -138,7 +143,7 @@ A gateway or browser disconnect only ends its RPC connection.
 
 Set `FARMSLOT_NATIVE_STATE_DIR` to a stable private directory for each configured
 execution profile. The default is `native-sessions` beneath `FARMSLOT_HOME`, or
-`~/.farmslot/native-sessions` when no home override is configured. State directories
+the `.farmslot/native-sessions` directory under the current user's home when no home override is configured. State directories
 require mode 0700 and files use 0600. A hashed socket path under `/tmp` fits macOS
 limits. IPC uses a private random bearer token, distinct from provider credentials.
 Native authentication environment and configuration stay inherited locally;

@@ -77,6 +77,8 @@ const sidebars = {
       items: [
         'reference/gateway-api',
         'reference/worker-run-finish',
+        'reference/run-states-and-gate.generated',
+        'reference/review-modes-warm-cold',
         'reference/worker-artifacts-by-flow',
         'reference/template-variables.generated',
         'reference/worker-template-quality',

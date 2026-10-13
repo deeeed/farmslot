@@ -44,6 +44,8 @@ Use these folders for everything else:
 
 ## ADRs: amend first
 
+Specs hold normative field, command and validation detail. ADRs hold decisions, rationale and consequences; rollout ordering and temporary coordination belong in an approved plan. Website reference copies must be generated from the canonical spec or link to it, never maintained as a second contract.
+
 A new ADR is for a new architectural decision or capability with lasting
 trade-offs, such as a subsystem, inter-component contract or farm policy.
 Bounded UI changes, optional parameters, display corrections and bug fixes amend

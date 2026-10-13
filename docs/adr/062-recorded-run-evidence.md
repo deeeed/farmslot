@@ -1,7 +1,7 @@
 # ADR-062: Recorded run evidence
 
 **Status:** Accepted
-**Amendment status:** 1, 2 and 3 Accepted
+**Revision:** Accepted amendments 1 and 2 consolidated on 2026-10-13; amendment 3 Accepted under #1011. Historical/footprint implementation remains pending; curation delivery is recorded below.
 **Date:** 2026-10-12
 **Owner:** Farmslot maintainers
 **Scope:** Recipe execution, claim evidence, review gates, and public CLI/SDK
@@ -80,6 +80,161 @@ Both output-review gates show the retained report identity and QA case/check
 results. Reviewing a report snapshot does not itself authorize publication or
 release. Inactive clips load no media; selected clips use authenticated seeking.
 
+### Completed evidence review and run footprint
+
+**Status:** Accepted, 2026-10-13
+**Documentation:** [#967](https://github.com/deeeed/farmslot/pull/967).
+Approval accepts the design; implementation remains separate from this docs PR.
+
+#### Context
+
+An engineer should validate an application in Farmslot through recorded evidence.
+A completed run should reopen what was reviewed, rather than the latest mutable
+files or an analytics page. The same review needs a prominent player, useful
+chapters and an honest account of retained storage. Images embedded in a PR are a
+secondary distribution channel.
+
+#### Decision
+
+Keep P1 through P8 and the existing recording/timeline/claim contracts. Default UI recording
+applies equally to development, bug-fix and QA recipes. Headless state-only runs
+retain their non-video evidence; an operator opt-out remains explicit and reasoned.
+A run with no executed UI recipe must not acquire a fictitious recording.
+
+Completed, failed and retrospective views default to evidence and the final
+result. They reuse the gate review component in read-only `as-decided` context.
+The gateway selects the final decision's frozen package identity and closure,
+including its verdicts, reviewer outcome, expectations and selected media. The
+view never reads a mutable latest pointer as that historical authority. Evidence
+navigation, replay and export remain available; publish, rerun, judgment editing
+and gate resolution are absent. Diff, observability and analytics remain one tab
+away. A final rejected or report-acknowledged snapshot retains that disposition;
+it is never labeled approved.
+
+The player is the primary element. Its visible chapter list uses the same claims
+and required occurrences as the gate, with verdict and measured range. Selecting
+a chapter opens its ordered bounded clips. The active claim follows playback;
+there is one shared selection/active-claim rule, not a second chapter model.
+Untimed or partly covered claims stay visible without seeking. A fully covered
+claim in an interrupted recording remains playable. Existing measured ranges,
+1 s padding, segment/gap rules and lazy transfer apply unchanged.
+
+Storage owns footprint measurement and retention. It measures retained regular
+file sizes in run-owned artifact, log and transcript locations at completion and
+after retention changes. It does not crawl repository dependencies. `Run` carries
+the resulting projection, with category totals, measurement time and completeness.
+These are logical retained file bytes, not filesystem allocation/free-space
+measurements. Virtual clips occupy no additional bytes. Each physical copy counts
+once; shared storage objects have one owner so project totals do not double-count
+references. A referenced shared object is identified separately from owned bytes.
+
+| Fact                                        | Owner                                       | Shared review consumption                                                   |
+| ------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------- |
+| Final review identity and disposition       | Existing gateway decision/package authority | Bind the historical context to that snapshot                                |
+| Claims, marker ranges and source digests    | Existing ledger/timeline/artifact contracts | Project chapters and bounded playback                                       |
+| Current media availability                  | Storage                                     | Show available, pruned or unavailable without changing the recorded verdict |
+| Retained byte counts and retention revision | Storage                                     | Project into `Run`, CLI/SDK and both clients                                |
+
+After media pruning, retain the lightweight frozen review metadata for the run's
+history lifetime. Timing and the recorded verdict remain historical facts; media
+availability is a separate fact. Unresolved gates and required published
+references retain their existing dependency pins. This changes the base rule that
+all completed package dependencies expire together: media may expire after its
+pins are released, while history metadata remains.
+
+#### Public surface
+
+`@farmslot/protocol` owns additive run-footprint and review-reference DTOs. Existing
+run detail/list RPCs and SDK client methods expose them; no separate statistics
+store or API family is introduced. The existing CLI detail operation,
+`farmslot run get <id>`, shows footprint and final snapshot, and `run list` adds a
+retained-bytes column. Project history exposes totals and unknown coverage beyond
+the current result page. `farmslot recipe artifacts` resolves completed task/run
+review context to the final frozen package and keeps the existing claim selector
+and clip export. Command Center and Companion use the same SDK review model.
+
+Extend that model with completed/read-only context, supplied snapshot identity and
+availability, and active-claim projection. Reuse `claims`, `selectClaim`,
+`selectOccurrence` and playback effects for chapters. Runtime bindings inherit
+capture and storage reporting; authors implement neither a recorder nor a disk
+scanner. New DTOs are proposed additive protocol changes; model extensions remain
+experimental until documented conformance and release.
+
+#### Alternatives considered
+
+- A separate historical screen/player would duplicate gate selection and validation.
+- Rebuilding history from current files would change what was reviewed.
+- PR images alone would omit exact claim navigation and partial/missing states.
+- Client filesystem scans or summing paginated manifests would disagree and miss retained files.
+
+#### Consequences and migration
+
+One review component serves live gates and history. More snapshot metadata must be
+retained, while media remains subject to storage policy and existing pins.
+Unavailable measurements stay unknown, never zero. A legacy run with no frozen
+package shows that limitation and its available unreviewed artifacts; it cannot
+claim `as decided`. Backfill footprint only from reachable owned locations. Reuse
+verified historical package identities where present, and never manufacture an
+approval or recording. Delete replaced completed-view selectors and byte-sum
+copies when adoption lands; no compatibility renderer or parallel model remains.
+
+### Shared review curation and saved results
+
+**Status:** Accepted
+**Implementation:** Curation and reviewed-line inspection merged in [#963](https://github.com/deeeed/farmslot/pull/963). The saved-result reader merged separately in [#985](https://github.com/deeeed/farmslot/pull/985).
+**Specification:** [Review curation and saved results](../reference/review-curation-and-results.md).
+
+#### Decision
+
+Extend the existing native review-publication component and controller for
+finding curation and a read-only saved-result context. Reuse the existing
+source/diff and document viewers; one renderer serves each job. Protocol owns
+shared comment identity/grouping, curation, recommendation normalization,
+serialization and the portable review fingerprint. ADR-063's existing dispatch
+picker remains the owner of review-request choices.
+
+Bind selected findings, recommendation and evidence choices to the exact reviewed
+payload. Retain reviewed source identity and the original report. The existing
+run resolver validates an optional fingerprint before restoration and at final
+consumption; payload changes invalidate confirmations and stale source reads.
+Both publication paths synchronously capture the accepted payload before further
+awaits, and refresh refuses writes after resolution or payload replacement.
+Legacy callers without fingerprints retain their behavior.
+
+The saved reader consumes existing retained results, falling back to historical
+review payloads. It displays raw saved verdict, reviewed SHA and report after
+Post, Dismiss or automatic finish. Publication disposition and requested
+recommendation/selection are separate facts. Missing receipts, counts and
+historical data remain explicit; the view offers no curation or publication.
+
+#### Rationale
+
+Phone review gates lacked finding selection and reviewed-line inspection, and
+closed reviews showed publication status without the retained result. Sharing
+pure projections and the existing native renderer provides parity without
+copying viewers or reconstructing reviewed facts from mutable workspace files.
+
+#### Public surface
+
+Existing `git.show`, `git.diff`, `run.get` and `run.resolveDecision` remain the
+public RPCs. The optional review fingerprint and protocol presentation exports
+are additive; no public CLI flag, harness hook, result-store schema or review
+policy changes. Harnesses inherit retained results and optional selection data.
+The internal `post-review.sh --review-input-file` is consumed only by the gateway
+slot publisher.
+
+#### Consequences
+
+Native selection resets on payload replacement; desktop retains
+its identity-based refresh selections and evidence overrides. Exact selection,
+source freshness, immutable report/recommendation, publication-race behavior and
+connected acceptance proofs remain in the specification.
+
+This section records the delivered review curation/result contract. Completed
+evidence review and run footprint has separate design acceptance and pending implementation. Evidence
+engine changes, WARM/COLD dispatch policy, review generation/reruns, account
+policy, gate approvals and HTML report rendering remain outside this curation decision.
+
 ### Existing pieces assessed
 
 | Piece                                | Decision | Reason                                                                                                                         |
@@ -134,165 +289,10 @@ contracts, concepts and declarative-adoption guidance with implementation.
 
 1. Complete shared engine derivation, assertion/segment contracts and public APIs through the existing canonical work. Pass conformance before changing normal verdict ownership.
 2. Adopt the shared model and immutable package selection in clients/publication. Migrate verified legacy relationships once; retain other historical media as explicitly untimed.
-3. Cut over each adopter with its own coordinated change linking this ADR. Until engine derivation passes, existing manual verdict steps remain the sole normal path. Then remove those steps in one cutover: never run two normal paths or writers. Delete replaced recorders, orchestration, link plumbing and imports; no shims.
+3. Cut over each adopter with its own coordinated change linking this ADR. The intended pre-cutover policy keeps manual verdict steps until engine derivation passes. Today both manual verdicts and engine projections are live through one task-ledger file writer; this is a migration gap, not two approved permanent authorities. Then remove those steps in one cutover: never run two normal paths or writers. Delete replaced recorders, orchestration, link plumbing and imports; no shims.
 
 Specific repositories, files and rollout coordination belong in separate adoption
 records, not these public framework documents.
-
-## Amendment 1 (2026-10-12): Completed evidence review and run footprint
-
-**Status:** Accepted, 2026-10-13
-**Documentation:** [#967](https://github.com/deeeed/farmslot/pull/967).
-Approval accepts the design; implementation remains separate from this docs PR.
-
-### Context
-
-An engineer should validate an application in Farmslot through recorded evidence.
-A completed run should reopen what was reviewed, rather than the latest mutable
-files or an analytics page. The same review needs a prominent player, useful
-chapters and an honest account of retained storage. Images embedded in a PR are a
-secondary distribution channel.
-
-### Decision
-
-Keep P1 through P8 and the existing recording/timeline/claim contracts. Default UI recording
-applies equally to development, bug-fix and QA recipes. Headless state-only runs
-retain their non-video evidence; an operator opt-out remains explicit and reasoned.
-A run with no executed UI recipe must not acquire a fictitious recording.
-
-Completed, failed and retrospective views default to evidence and the final
-result. They reuse the gate review component in read-only `as-decided` context.
-The gateway selects the final decision's frozen package identity and closure,
-including its verdicts, reviewer outcome, expectations and selected media. The
-view never reads a mutable latest pointer as that historical authority. Evidence
-navigation, replay and export remain available; publish, rerun, judgment editing
-and gate resolution are absent. Diff, observability and analytics remain one tab
-away. A final rejected or report-acknowledged snapshot retains that disposition;
-it is never labeled approved.
-
-The player is the primary element. Its visible chapter list uses the same claims
-and required occurrences as the gate, with verdict and measured range. Selecting
-a chapter opens its ordered bounded clips. The active claim follows playback;
-there is one shared selection/active-claim rule, not a second chapter model.
-Untimed or partly covered claims stay visible without seeking. A fully covered
-claim in an interrupted recording remains playable. Existing measured ranges,
-1 s padding, segment/gap rules and lazy transfer apply unchanged.
-
-Storage owns footprint measurement and retention. It measures retained regular
-file sizes in run-owned artifact, log and transcript locations at completion and
-after retention changes. It does not crawl repository dependencies. `Run` carries
-the resulting projection, with category totals, measurement time and completeness.
-These are logical retained file bytes, not filesystem allocation/free-space
-measurements. Virtual clips occupy no additional bytes. Each physical copy counts
-once; shared storage objects have one owner so project totals do not double-count
-references. A referenced shared object is identified separately from owned bytes.
-
-| Fact                                        | Owner                                       | Shared review consumption                                                   |
-| ------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------- |
-| Final review identity and disposition       | Existing gateway decision/package authority | Bind the historical context to that snapshot                                |
-| Claims, marker ranges and source digests    | Existing ledger/timeline/artifact contracts | Project chapters and bounded playback                                       |
-| Current media availability                  | Storage                                     | Show available, pruned or unavailable without changing the recorded verdict |
-| Retained byte counts and retention revision | Storage                                     | Project into `Run`, CLI/SDK and both clients                                |
-
-After media pruning, retain the lightweight frozen review metadata for the run's
-history lifetime. Timing and the recorded verdict remain historical facts; media
-availability is a separate fact. Unresolved gates and required published
-references retain their existing dependency pins. This changes the base rule that
-all completed package dependencies expire together: media may expire after its
-pins are released, while history metadata remains.
-
-### Public surface
-
-`@farmslot/protocol` owns additive run-footprint and review-reference DTOs. Existing
-run detail/list RPCs and SDK client methods expose them; no separate statistics
-store or API family is introduced. The existing CLI detail operation,
-`farmslot run get <id>`, shows footprint and final snapshot, and `run list` adds a
-retained-bytes column. Project history exposes totals and unknown coverage beyond
-the current result page. `farmslot recipe artifacts` resolves completed task/run
-review context to the final frozen package and keeps the existing claim selector
-and clip export. Command Center and Companion use the same SDK review model.
-
-Extend that model with completed/read-only context, supplied snapshot identity and
-availability, and active-claim projection. Reuse `claims`, `selectClaim`,
-`selectOccurrence` and playback effects for chapters. Runtime bindings inherit
-capture and storage reporting; authors implement neither a recorder nor a disk
-scanner. New DTOs are proposed additive protocol changes; model extensions remain
-experimental until documented conformance and release.
-
-### Alternatives considered
-
-- A separate historical screen/player would duplicate gate selection and validation.
-- Rebuilding history from current files would change what was reviewed.
-- PR images alone would omit exact claim navigation and partial/missing states.
-- Client filesystem scans or summing paginated manifests would disagree and miss retained files.
-
-### Consequences and migration
-
-One review component serves live gates and history. More snapshot metadata must be
-retained, while media remains subject to storage policy and existing pins.
-Unavailable measurements stay unknown, never zero. A legacy run with no frozen
-package shows that limitation and its available unreviewed artifacts; it cannot
-claim `as decided`. Backfill footprint only from reachable owned locations. Reuse
-verified historical package identities where present, and never manufacture an
-approval or recording. Delete replaced completed-view selectors and byte-sum
-copies when adoption lands; no compatibility renderer or parallel model remains.
-
-## Amendment 2 (2026-10-12): Shared review curation and saved results
-
-**Status:** Accepted
-**Implementation:** Curation and reviewed-line inspection merged in [#963](https://github.com/deeeed/farmslot/pull/963). The saved-result reader merged separately in [#985](https://github.com/deeeed/farmslot/pull/985).
-**Specification:** [Review curation and saved results](../reference/review-curation-and-results.md).
-
-### Decision
-
-Extend the existing native review-publication component and controller for
-finding curation and a read-only saved-result context. Reuse the existing
-source/diff and document viewers; one renderer serves each job. Protocol owns
-shared comment identity/grouping, curation, recommendation normalization,
-serialization and the portable review fingerprint. ADR-063's existing dispatch
-picker remains the owner of review-request choices.
-
-Bind selected findings, recommendation and evidence choices to the exact reviewed
-payload. Retain reviewed source identity and the original report. The existing
-run resolver validates an optional fingerprint before restoration and at final
-consumption; payload changes invalidate confirmations and stale source reads.
-Both publication paths synchronously capture the accepted payload before further
-awaits, and refresh refuses writes after resolution or payload replacement.
-Legacy callers without fingerprints retain their behavior.
-
-The saved reader consumes existing retained results, falling back to historical
-review payloads. It displays raw saved verdict, reviewed SHA and report after
-Post, Dismiss or automatic finish. Publication disposition and requested
-recommendation/selection are separate facts. Missing receipts, counts and
-historical data remain explicit; the view offers no curation or publication.
-
-### Rationale
-
-Phone review gates lacked finding selection and reviewed-line inspection, and
-closed reviews showed publication status without the retained result. Sharing
-pure projections and the existing native renderer provides parity without
-copying viewers or reconstructing reviewed facts from mutable workspace files.
-
-### Public surface
-
-Existing `git.show`, `git.diff`, `run.get` and `run.resolveDecision` remain the
-public RPCs. The optional review fingerprint and protocol presentation exports
-are additive; no public CLI flag, harness hook, result-store schema or review
-policy changes. Harnesses inherit retained results and optional selection data.
-The internal `post-review.sh --review-input-file` is consumed only by the gateway
-slot publisher.
-
-### Consequences
-
-Native selection resets on payload replacement; desktop retains
-its identity-based refresh selections and evidence overrides. Exact selection,
-source freshness, immutable report/recommendation, publication-race behavior and
-connected acceptance proofs remain in the specification.
-
-This amendment records the delivered review curation/result contract. Amendment 1
-has separate design acceptance and pending implementation. Evidence
-engine changes, WARM/COLD dispatch policy, review generation/reruns, account
-policy, gate approvals and HTML report rendering remain outside this amendment.
 
 ## Amendment 3 (2026-10-13): Evidence policy and human attestation
 

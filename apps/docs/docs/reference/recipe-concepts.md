@@ -1,38 +1,64 @@
 ---
-title: Recipe concepts
+# GENERATED from docs/reference/recipe-concepts.md; edit that source, then run generate:contracts.
+title: 'Recipe concepts'
 ---
 
-# Recipe concepts
+This reference explains the recipe model behind the checkout CLI and hosted execution. It supports the recipe protocol and SDK contracts. Keep it current when those contracts change.
 
-A project supplies a **ProjectRuntime** for readiness, owned lifecycle, actions and supported capture. Its **ActionCatalog** pairs action declarations with code. The shared **RecipeEngine** resolves the recipe graph and runs its **ActionHandlers**. Recipes compose actions and assertions into retained evidence.
+A project ships one **ProjectRuntime**. It identifies the target, checks readiness, manages owned processes, captures supported evidence and supplies an **ActionCatalog**. The catalog pairs strict action declarations with executable code. An **ActionHandler** executes one declared action. The shared **RecipeEngine** checks and runs the recipe graph using those handlers.
+
+A recipe names actions, parameters, assertions and teardown. A passing action call alone does not prove its effect. Assertions and retained artifacts must establish the recipe's claim.
 
 Use `farmslot doctor --conformance` to check a binding and `farmslot recipe actions` to inspect its action catalog. `--action <name>` shows one action's inputs. `recipe call <action> [key=value ...]` and `recipe run <ref|file> [key=value ...]` execute through the same authorized provider. `run --plan` checks the complete plan without executing actions.
 
 ```mermaid
 flowchart LR
   CLI[farmslot recipe run] --> Binding[Resolved binding]
-  Binding --> Runtime[ProjectRuntime]
-  Runtime --> Engine[RecipeEngine preflight]
+  Binding --> Provider[ProjectRuntime]
+  Provider --> Engine[RecipeEngine preflight]
   Engine --> Actions[ActionHandlers]
   Actions --> Artifacts[Artifact package]
   Artifacts --> Evidence[Assertions and evidence]
 ```
 
-The [browser provider example](https://github.com/deeeed/farmslot/tree/main/docs/examples/projects/browser-example) attaches the shared UI transport to an explicitly selected existing page. Its recipe presses a control, asserts the resulting URL and retains HUD evidence.
+The [browser provider example](https://github.com/deeeed/farmslot/blob/main/docs/examples/projects/browser-example/README.md) attaches the shared UI transport to an explicitly selected existing page. Its recipe presses a control, asserts the resulting URL and retains HUD evidence.
 
-`pack.json` describes onboarding, `project.json` describes behavior, and pool bindings describe machine targets. The binding resolves project, app, domain, runtime, target, libraries, ports and output paths. Flags win over checkout bindings, then pool slots, unique detection and configured defaults. An ambiguous target refuses execution.
+The declaration has three existing parts. `pack.json` describes onboarding, `project.json` describes project behavior, and pool bindings select machine targets, ports and devices. The resolved binding joins project, app, domain, runtime, target, libraries and output paths. Explicit flags take priority, followed by the checkout binding, pool slot, unique detection and configured defaults. Subdirectory lookup starts at the Git root. An ambiguous selection refuses execution.
 
-Team libraries compose in declaration order. Each keeps its owner, source revision and version requirements. Namespaced references identify the library; the first source wins for a bare reference. Preflight checks cross-library dependencies and parameters. Reports name the winning sources and any shadows.
+Projects can compose several team libraries in declaration order. A library keeps its owner, pinned source and version requirements. A namespaced recipe reference selects a library; the first source wins for a bare reference. Dependency and parameter checks cover cross-library calls. The report records precedence winners and shadows, so a local override is visible.
 
-Metadata discovery grants no permission to import code. Runtime sources must be installed or explicitly authorized. Execution checks the complete plan, including action authority. The gateway owns hosted resource leases.
+Discovery can read project metadata without importing code. Runtime loading requires an installed or explicitly authorized source. Engine authorization also checks the resolved execution plan. Funding, reset, profile deletion and publication authority stay explicit. Hosted leases belong to the gateway.
 
-Capabilities are scoped to a project, app, runtime and target, with `declared`, `verified`, `failed` or `unknown` results. `registered` records declaration availability. `recipe-verified` requires current positive evidence. Unsupported operations are explicit.
+Capabilities describe one project, app, runtime and target. Their states are `declared`, `verified`, `failed` or `unknown`. `registered` means the project declaration is available. `recipe-verified` needs current positive recipe evidence. Unsupported operations remain visible; a web result cannot verify Android.
 
-Conformance reports record code, configuration, target and timestamp. Changed checkout, provider or library bytes make them stale. Static checks prove preflight; live checks prove bounded effects and teardown. Missing required evidence cannot pass. HUD and capture checks apply where supported.
+Conformance reports bind checks to the checkout SHA and dirty bytes, provider and library code, configuration, target and timestamp. Static preflight checks dependencies, parameters, handlers and authorization. Live checks add bounded effects and teardown evidence. Changed inputs make a report stale. Missing required evidence cannot pass, and HUD or capture claims apply only where supported.
 
-Run `farmslot doctor <checkout> --conformance` to check the provider, catalog and full preflight without launching the app or executing actions. The report records the checked invocation and source digests. It writes `conformance-report.json` under the configured artifact directory. By default it checks every catalog recipe; `--recipe <ref>` and repeatable `--param key=value` select a specific invocation.
+`farmslot doctor <checkout> --conformance` checks the resolved provider and catalog without launching the app or executing actions. It writes `conformance-report.json` under the project's artifact directory. With no recipe selector it checks every catalog recipe. Use `--recipe <ref>` and repeatable `--param key=value` for a specific parameterized invocation. A required parameter, handler or authorization that is missing fails the check.
 
-Declare `recipe.provider` and an ordered `recipe.libraries` list in `project.json`. Each library has `name`, `source` and `owner`; repository sources also require an exact `revision`. The provider exports `createProvider(context)` and returns its runtime, plus an optional engine. The shared engine is the default. Registered configuration or an installed package authorizes loading. Discovered executable sources require the operator's exact `--authorize-provider <module>` approval.
+A project declares its executable provider and ordered library sources in `project.json`:
+
+```json
+{
+  "recipe": {
+    "provider": {
+      "module": "@example/project-runtime/provider",
+      "package": "@example/project-runtime"
+    },
+    "adapter": "web",
+    "domain": "catalog",
+    "libraries": [
+      {
+        "name": "catalog",
+        "source": { "env": "CATALOG_LIBRARY_ROOT" },
+        "revision": "0123456789abcdef0123456789abcdef01234567",
+        "owner": "catalog-team"
+      }
+    ]
+  }
+}
+```
+
+Set `CATALOG_LIBRARY_ROOT` in the selected pool environment to a separate library checkout and replace the example revision with that checkout's full commit SHA. String library paths resolve from the project directory. Repository sources need an exact `revision`; a local `--library name=path` override records the source it replaces. Registered project configuration authorizes its provider. Discovered checkout metadata requires `--authorize-provider <module>` unless it names an installed provider package. Authorizing a provider does not bypass recipe-plan or domain authorization.
 
 Executable library sources need registered project configuration, `--library name=path`, `RECIPE_LIBRARY_PATH`, or the operator's configured personal library. Authorizing a discovered provider alone does not authorize libraries found in checkout metadata. Engine trust checks still apply to every source.
 

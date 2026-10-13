@@ -1,6 +1,6 @@
 # Review curation and saved results
 
-**Status:** Accepted under [ADR-062 Amendment 2](../adr/062-recorded-run-evidence.md#amendment-2-2026-10-12-shared-review-curation-and-saved-results).
+**Status:** Accepted under [ADR-062 review curation decision](../adr/062-recorded-run-evidence.md#shared-review-curation-and-saved-results).
 **Implementation:** Finding curation and reviewed-line inspection merged in [#963](https://github.com/deeeed/farmslot/pull/963); the saved-result reader merged in [#985](https://github.com/deeeed/farmslot/pull/985).
 
 This delivered contract is separate from the Proposed completed-evidence/storage

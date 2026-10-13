@@ -1,10 +1,25 @@
 ---
-title: Task directory contract
+# GENERATED from docs/reference/task-directory-contract.md; edit that source, then run generate:contracts.
+title: 'Task directory contract'
 ---
 
-# Task directory contract
-
 One directory per run, the same shape whether Farmslot dispatched the worker or an engineer started the task from a skill. Farmslot defines the files; `@farmslot/agent-runtime` and any harness built on it consume them.
+
+Review completion MUST wait for the reviewer's own terminal mark before archiving
+its checklist and artifacts. A result file, idle runner or closed window alone
+does not establish successful completion.
+
+The shared harness checklist command MUST resolve explicit `--checklist` and
+`--signal` overrides before preserving a terminal signal. To resume a cleared
+blocker, run `checklist mark <task-dir> start`, then continue numbered marks. This
+uses the existing runtime start verb, preserves checked boxes and resumes signal
+progress under the launcher's attempt identity. Successful terminal verdicts remain protected.
+
+Ticket intake preserves an explicit acceptance section, including an empty one. When none is supplied,
+authored `AC1:` or `AC-1:` paragraphs outside fenced code populate the same
+acceptance array in source order. Paragraph boundaries exclude unrelated prose.
+Existing structured criteria remain authoritative. Generated TASK.md and
+`inputs/handoff.json` MUST consume that same normalized array.
 
 ## Two documents, one checklist
 
@@ -46,11 +61,11 @@ This is the only layout the task writer produces. One flow keeps its own pairing
 
 ## Producers and consumers
 
-One producer writes the shared layer on every surface: `taskInit` / `farmslot-agent task init` in `@farmslot/agent-runtime`. The gateway composes the same pieces (`renderTemplatePlaceholders`, `buildTaskDocument`, `writeTaskDir`) around its control-plane steps; mm-harness wraps the CLI with MetaMask defaults; the recipe-cook skill calls mm-harness.
+One producer writes the shared layer on every surface: `taskInit` / `farmslot-agent task init` in `@farmslot/agent-runtime`. The gateway composes the same pieces (`renderTemplatePlaceholders`, `buildTaskDocument`, `writeTaskDir`) around its control-plane steps; project harnesses wrap the CLI with their defaults; recipe skills consume that shared task writer.
 
 | File                                   | Producer                                                | Consumer                                                                                                             |
 | -------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `TASK.md`                              | task init; worker updates `STATUS` and may append notes | worker, family follow-ups, review brief                                                                              |
+| `TASK.md`                              | task init; worker may append notes                      | worker, family follow-ups, review brief                                                                              |
 | `CHECKLIST.md`                         | task init                                               | worker, `mark`, progress parser, Command Center progress                                                             |
 | `mark`                                 | task init; command is a project value (`vars.mark_cmd`) | worker                                                                                                               |
 | `checklist-target.json`                | role switch only                                        | `mark`, progress path resolution (default when absent)                                                               |
@@ -62,7 +77,7 @@ One producer writes the shared layer on every surface: `taskInit` / `farmslot-ag
 | `subtasks/<id>.md`                     | `mark sub start` (materialized from the named source)   | worker, `mark sub`, progress projection, view mirror                                                                 |
 | `subtasks/<id>-SIGNAL.json`            | `mark sub` only                                         | gateway task watcher, review-workspace progress publisher, progress projection, terminal contract check, view mirror |
 | `artifacts/acceptance-status.json`     | `farmslot-agent ac`; a recipe run with a task dir       | terminal contract check, PR body / gate summary, run detail AC panel                                                 |
-| `artifacts/sandbox.json`               | harness preparation (`mm-harness prepare`)              | worker, evidence package, Command Center (later)                                                                     |
+| `artifacts/sandbox.json`               | project harness preparation                             | worker, evidence package, Command Center (later)                                                                     |
 | `artifacts/*`                          | worker                                                  | publication gate, review, retrospective (see worker artifacts by flow)                                               |
 
 ## Provenance
@@ -105,6 +120,45 @@ The selected checklist travels inside `inputs/handoff.json` as `executionTemplat
 | `report`                  | the terminal contract's `complete.report` (`artifacts/pr-description.md` for dev / fix-bug) | `artifacts/pr-description.md` (dev / fix-bug) |
 | `learnings`               | `artifacts/learnings.md`                                                                    | `artifacts/learnings.md`                      |
 
+## Deterministic checklist checks
+
+[ADR-064](https://github.com/deeeed/farmslot/blob/main/docs/adr/064-deterministic-checklist-checks.md) defines task-owned command receipts before publication.
+
+Its [CI decision check context amendment](https://github.com/deeeed/farmslot/blob/main/docs/adr/064-deterministic-checklist-checks.md#amendment-1-2026-10-12-ci-decision-check-context)
+owns the read-only gate/current comparison. The linked
+[CI decision specification](https://github.com/deeeed/farmslot/blob/main/docs/reference/ci-decision-check-context.md) defines retained provider
+snapshots and refresh availability; those reads do not replace command receipts
+or resolve publication gates.
+
+### Public surface
+
+`project.json` may set `ci.local_check` to a nonempty portable shell command. The built-in project uses `yarn ci:local`; the repository quality job calls the same script. Its guard list is shared, formatting is scoped to changed files when Git supplies a base, and tests requiring a tmux server remain CI-only.
+
+PR-producing worker templates reference one `{{CI_PARITY_STEP}}` part. It materializes when a local command is configured. Projects without that field retain their existing checklist. A template can also declare a step explicitly:
+
+```markdown
+- [ ] CI parity [DETERMINISTIC: ci.local_check]
+```
+
+The shared task writer freezes each declaration under `inputs/worker-terminal-contract.json.deterministicChecks`, with `checklist`, `stepNumber`, `reference` and the resolved `command`. Task-init callers supply command references through their existing `vars`, including `vars['ci.local_check']`. Missing command references or malformed declarations refuse initialization. No new mark flags or top-level SDK functions are added.
+
+### Mark and receipt rules
+
+1. `./mark N` MUST execute the declared command itself before checking the box. Repeating an already checked deterministic step reruns it. Execution uses the Git checkout containing the task, or the caller's target checkout when a standalone task is outside Git. The process inherits the configured environment and runs without a login shell.
+2. Mark MUST persist a running record first, then an immutable output log and a schema-version-1 completion receipt under `artifacts/deterministic-checks/<checklist>/<step>.json`. The receipt records command, reference, checklist, step, source-input hash, timestamps, exit code, signal and the relative log path/hash.
+   Tracked submodules bind their checked-out commit, or their recorded gitlink commit while uninitialized. Uncommitted submodule work MUST fail closed with a commit-and-rerun hint because the parent repository publishes a gitlink, not those local files.
+3. Only exit zero, unchanged publishable inputs and successful receipt persistence permit checking the box. Failure, interruption and missing configuration MUST refuse completion. Bulk/terminal marks and checklist skip flags do not waive these checks. Custom mark engines that cannot produce receipts cannot satisfy declared steps.
+4. Publishable inputs are Git's tracked and nonignored untracked file inventory, paths, file permissions, file bytes or symlink targets, including tracked deletions. The task directory's owned inputs/outputs are excluded. Commit metadata is excluded, so committing identical checked content preserves a pass. Failure to identify the checkout or inputs fails closed.
+5. The artifact checker MUST reject absent, failed, interrupted or stale receipts, changed commands, and missing/changed logs, independently of checkbox state. The active role's frozen declarations apply; role initialization freezes its own materialized checklist through the same writer.
+
+Lightweight interactive development keeps the operator plan in `CHECKLIST.md`. Its generated CI-parity step is frozen in `TASK.md` and the shared part gives the existing `mark --checklist TASK.md N` invocation. The operator plan cannot waive its receipt.
+
+### Publication and display
+
+Package preparation and publication MUST validate receipts on the selected checkout. An older node checker that cannot return verified records fails closed. The package carries one optional `deterministicChecks` projection with command, state, exit code and log path; Command Center and Companion render it and open logs through their existing artifact viewers. After role cleanup, the last completed source-fix checklist supplies the final receipt. Read-only review checklists do not replace it. Restoring the parent MUST retain its initialized command declarations. Source or receipt changes after review require package refresh. Evidence-only refreshes of already published packages retain their archived source proof.
+
+Receipts prevent skipped checks; they are not an attestation against a worker forging its task files. The existing trusted task initialization, artifact boundaries and publication authority still apply. Harnesses invoke the same mark/checker behavior and consume the same versioned records instead of implementing another checker.
+
 ## Outcome file: one name on both surfaces
 
 dev and fix-bug workers finish with `artifacts/pr-description.md` whether Farmslot dispatched the run or an engineer ran the skill. It is the PR body in the repository's PR-template shape and carries the proof summary (what changed, root cause, validation, evidence paths). Most runs want a PR, and the file is usable before anyone decides to open one.
@@ -123,7 +177,7 @@ Both surfaces produce the same task directory. Without the control plane (an eng
 | Layer                     | Producer                                  | Files                                                                                                                                                                                                                                                                                                                                                                                                           | Surfaces                                                                                                   |
 | ------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | Worker outputs            | the agent following `CHECKLIST.md`        | outcome file (`pr-description.md`, `report.md`, `no-change-report.md`), `learnings.md`, `recipe.json`, `recipe-run/`, `recipe-coverage.md`, `recipe-quality.json`, `evidence-manifest.json`, `validation-summary.{json,md}`, before/after media, tool logs (`coverage.log`, `jest.log`, …); `subtasks/index.json`, `subtasks/<id>.md`, `subtasks/<id>-SIGNAL.json` through `mark sub`                           | both, same names                                                                                           |
-| Harness readiness records | `mm-harness` during preparation           | `harness-provenance.json`, `sandbox.md`, `doctor-fix.json`, `status.json`, `launch-verify.txt`, `fixtures-set.txt`, `verify.json`; task-local `.mm-harness/` lock                                                                                                                                                                                                                                               | skill today; the farm prepares the same environment in `preflight.sh` without leaving these records (open) |
+| Harness readiness records | the project harness during preparation    | `harness-provenance.json`, `sandbox.md`, `doctor-fix.json`, `status.json`, `launch-verify.txt`, `fixtures-set.txt`, `verify.json`; task-local provider lock                                                                                                                                                                                                                                                     | skill today; the farm prepares the same environment in `preflight.sh` without leaving these records (open) |
 | Gateway-owned             | the gateway, on the orchestrator copy     | `diff.txt`, `diff.txt.previous.*`, `diff-stat.json`, `session-metrics.json`, `workflow.mmd`, `pr-package.json`, `pr-package.md`, `publication-gate-<slug>.md` (slug: letters, digits, dashes), and per review round `<n>` (digits): `self-review-<n>/`, `self-review-<n>.json`, `self-review-<n>.md`, `independent-review-<n>/`, `independent-review-<n>.json`, `independent-review-<n>.md`, `review-loop-<n>/` | Farmslot only                                                                                              |
 | Review-loop outputs       | reviewer roles on the slot, change ledger | `review-feedback.<context>.md`, `review-result.<context>.json`, `iteration-diff*.{json,txt}`                                                                                                                                                                                                                                                                                                                    | Farmslot only                                                                                              |
 
@@ -150,7 +204,7 @@ A slot-free static review workspace (ADR-058) mirrors the same directory into it
 
 The mirror travels one way. `*.worker` files are orchestrator-owned output written **from** the slot, so the outbound copy skips them: re-dispatching, nudging, or warm-handing off a task directory that already completed once must not put stale copies of the worker's own files back beside the live ones.
 
-`subtasks/` is also the one directory the gateway creates on the slot without writing anything into it: both file-watch primitives observe a file through its parent directory, and the directory otherwise appears only with the first `mark sub start`, so the task watcher would never see a child registered mid-run. The registry, the child checklists, and the child signals stay `mark`-written.
+`subtasks/` is also the one directory the gateway creates on the slot without writing anything into it: both file-watch primitives observe a file through its parent directory, and the directory otherwise appears only with the first `mark sub start`, so the task watcher would never see a child registered mid-run. The registry, the child checklists, and the child signals stay `mark`-written. `artifacts/` is created the same way and for the same reason, so the acceptance-ledger watch has a directory to observe on a task dir that has not written one yet; the gateway writes nothing into it either.
 
 ## Project addendum
 
@@ -164,7 +218,7 @@ A project may ship `templates/task-document.md`. The writer renders it with the 
 - `SIGNAL.json` is written by `mark` only. Hand-written signals are rejected by the monitor.
 - `subtasks/` is written by `mark sub` only, and a step may own one child unit for the life of the task directory. A child unit is observed, never spawned: registering one writes files and starts no process. A parent terminal mark is refused while any registered child is unsettled, by `mark` and again by the gateway's terminal check. Settled is `complete` or `done`: a `blocked` child is terminal for the run but keeps its step. The verbs and their refusals live in [Agent runtime](agent-runtime.md).
 - A child unit is not a role switch. It never writes `checklist-target.json` and never changes the run's active task file, so a child may hang off `CHECKLIST.md` or off a role checklist such as `SELF-REVIEW.md`; the parent link names which. A child progress update is live only while its parent checklist is the active one, and `running` with no recent mark projects as `stale` — a projection only, never a status in the file.
-- `artifacts/acceptance-status.json` is written through one module (agent-runtime's `acceptance-ledger.cjs`) by `farmslot-agent ac` and by a recipe run with a task dir, which records its proof targets: `proven` when every node proving a target passed, `missing` when one failed or did not run. A run replaces the verdicts of the criteria it proves, a manual one included, and leaves every other criterion as it was; a verdict for a target the recipe no longer proves stays until `ac set` or a run records it again. Successful completion requires a verdict for every registered criterion even without an acceptance opt-in; missing ledgers or unreadable handoffs refuse. Weak or missing verdicts refuse unless the resolved contract sets `acceptance.allowWeak`. No-change and self-review keep their existing outcome contracts. `acceptance.require` remains a compatibility request for callers that explicitly invoke older checkers; it cannot disable the successful-completion default in the current checker. Per-flow `acceptance.allowWeak` overrides inherit unspecified keys from the project setting. Standalone validation can request the same check with `--require-acceptance-status`.
+- `artifacts/acceptance-status.json` has one physical writer, agent-runtime's `acceptance-ledger.cjs`, and two current verdict producers: manual `farmslot-agent ac set` and recipe-derived schema-2 projection. Recipe verdicts come from eligible executed expectations and required occurrences; action success alone is not proof, and visual claims require review. ADR-062's single normal engine-writer cutover remains pending. A schema-1 task ledger is not a schema-2 recorded recipe package and cannot supply a timeline. Successful completion requires a verdict for every registered criterion even without an acceptance opt-in; missing ledgers or unreadable handoffs refuse. Weak or missing verdicts refuse unless the resolved contract sets `acceptance.allowWeak`. No-change and self-review keep their existing outcome contracts. `acceptance.require` cannot disable the current successful-completion default. Per-flow `acceptance.allowWeak` overrides inherit unspecified keys from the project setting. Standalone validation can request the same check with `--require-acceptance-status`.
 - Lightweight interactive dev keeps its own pairing: `CHECKLIST.md` is the operator-agreed plan and `TASK.md` the context.
 
-See also: [Agent runtime](agent-runtime.md), [Template variables](template-variables.generated.md), and [Worker artifacts by flow](worker-artifacts-by-flow.md).
+See also: [Agent runtime](agent-runtime.md), [Template variables](https://github.com/deeeed/farmslot/blob/main/docs/reference/template-variables.md), and the worker artifacts by flow reference on the documentation site.

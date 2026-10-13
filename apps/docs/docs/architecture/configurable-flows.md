@@ -4,31 +4,15 @@ title: Configurable farm flows
 
 # Configurable farm flows
 
-Farmslot scales the operator by turning repeatable engineering coordination into explicit, configurable flows.
+Flows configure preparation, worker policy, validation and completion for each project. [How Farmslot works](../concepts/operating-loop.md) owns the run sequence.
 
 The framework should not assume every project starts the same way, validates the same way, or uses the same runner. Instead, the farm describes the stable orchestration shape, and each project supplies the commands and adapters that make that shape real.
 
 ## Flow map
 
-```mermaid
-flowchart TD
-  Sources[Voice, GitHub, Jira, docs, notes]
-  Backlog[Farmslot backlog]
-  Refine[Human + agent refinement]
-  Queue[Dispatch queue]
-  Slot[Machine slot]
-  Prepare[Prepare + health]
-  Prompt[Render worker prompt]
-  Runner[Agent runner]
-  Observe[Observe + steer]
-  Validate[Validation recipe]
-  Evidence[Evidence package]
-  Review[Cross-runner review]
-  Human[Human gate]
-  Learn[Replay + improvement]
-
-  Sources --> Backlog --> Refine --> Queue --> Slot --> Prepare --> Prompt --> Runner --> Observe --> Validate --> Evidence --> Review --> Human --> Learn --> Backlog
-```
+See [How Farmslot works](../concepts/operating-loop.md) for the operating loop
+and [Run states and the gate](../reference/run-states-and-gate.generated.md) for
+the generated per-flow steps and publication boundaries.
 
 ## Project import flow
 

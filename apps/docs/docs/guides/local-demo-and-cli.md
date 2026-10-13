@@ -57,9 +57,10 @@ There is no runtime discovery method, so look the method set up ahead of time: s
 
 ## Slot lifecycle commands
 
-```text
-ready -> dispatching -> working -> recycling -> ready
-```
+Slot lifecycle values are `ready`, `busy`, `held`, `manual` and `disabled`.
+Preparation, dispatch, work and release are phases within that lifecycle; they
+are not additional slot states. A held slot can monitor a PR or defer cleanup.
+Manual and disabled slots do not accept automatic dispatch.
 
 | CLI command                  | Purpose                                                                    |
 | ---------------------------- | -------------------------------------------------------------------------- |
@@ -74,12 +75,12 @@ ready -> dispatching -> working -> recycling -> ready
 Create runs from either source:
 
 ```bash
-farmslot run create --project audiolab-farm --flow-type dev \
-  --ticket https://github.com/deeeed/audiolab/issues/414 \
-  --slot mini-audiolab-1
+farmslot run create --project example-project --flow-type dev \
+  --ticket https://github.com/example/project/issues/123 \
+  --slot example-slot-1
 
-farmslot run create --task projects/audiolab-farm/tasks/dev/example/TASK.md \
-  --slot mini-audiolab-1
+farmslot run create --task projects/example-project/tasks/dev/example/TASK.md \
+  --slot example-slot-1
 ```
 
 ## About the shell scripts

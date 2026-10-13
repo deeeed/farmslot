@@ -1,8 +1,7 @@
 ---
-title: Agent runtime
+# GENERATED from docs/reference/agent-runtime.md; edit that source, then run generate:contracts.
+title: 'Agent Runtime'
 ---
-
-# Agent runtime
 
 `@farmslot/agent-runtime` is the reusable task lifecycle layer for Farmslot-compatible agent runs. It can be used by full Farmslot dispatch, a project harness, or a skills-only workflow without Command Center, gateway, pools, or slots.
 
@@ -15,16 +14,13 @@ title: Agent runtime
 | `@farmslot/agent-runtime` | Task-local marking, `SIGNAL.json`, checklist timing, worker terminal contract resolution, closeout artifact checks, and recipe-quality artifact building. |
 | `@farmslot/skills`        | Agent instructions and installer behavior; legacy runtime paths are shims.                                                                                |
 
-See [Protocol boundaries](../architecture/protocol-boundaries.md) for the wider Farmslot-owns / project-owns split.
-
-## Task directory
+## Task Directory
 
 A runtime-compatible task directory contains:
 
 - `CHECKLIST.md` with `- [ ]` checklist items (the execution checklist) beside `TASK.md`, the task document that holds the ticket and acceptance criteria and is never enumerated (see [Task directory contract](task-directory-contract.md));
 - `artifacts/` for reports, learnings, recipe outputs, and evidence;
 - `SIGNAL.json`, written by `mark` only;
-- optionally `checklist-target.json`, written by a role switch to point `mark` at another checklist; absent means `CHECKLIST.md` + `SIGNAL.json`;
 - optional `inputs/worker-terminal-contract.json` for project-specific terminal requirements;
 - `mark`, a task-local executable shim written by `task init` (gateway or `farmslot-agent task init`).
 
@@ -38,8 +34,6 @@ Agents should use the task-local shim:
 
 Do not hand-write `SIGNAL.json`. The runtime preserves pass-through fields, records checklist timing, verifies terminal artifacts, and writes the terminal status atomically.
 
-For the terminal status shape see [Worker signal protocol](worker-signal-protocol.md), and for the per-flow artifact lists that `mark` enforces see [Worker artifacts by flow](worker-artifacts-by-flow.md).
-
 ## CLI
 
 ```bash
@@ -49,14 +43,66 @@ farmslot-agent mark <task-dir> --checklist TASK.md complete --mark-last
 farmslot-agent artifact-check <task-dir> --require-recipe-quality-if-recipe
 farmslot-agent recipe-quality build --input recipe-quality-input.json --output artifacts/recipe-quality.json
 farmslot-agent contract resolve --flow fix-bug
-farmslot-agent execution-template <list|materialize|lint|new> [options]
 farmslot-agent ac set AC-1 proven --evidence artifacts/after.png --recipe-node assert-order-sheet
 farmslot-agent ac render
 ```
 
-`mark` takes a **task directory**, not individual file paths — its first argument must be an existing directory or the command exits with the usage error. In task-dir mode it marks `CHECKLIST.md` (or `TASK.md` when there is no `CHECKLIST.md`) and writes `SIGNAL.json`, unless a `checklist-target.json` written by a role switch points elsewhere. `--checklist` selects another checklist explicitly; the signal filename is then derived from it (other checklists get a role-scoped signal).
+`mark` takes a task directory, not individual file paths. Its first argument must be an existing directory or it exits with a usage error. It marks `CHECKLIST.md`, falling back to `TASK.md`, and writes `SIGNAL.json` unless a role switch supplies `checklist-target.json`. `--checklist` selects a checklist explicitly and derives its role-scoped signal filename.
 
-`task init` writes the whole task directory: `TASK.md`, `CHECKLIST.md`, the task-local `mark` shim, `inputs/handoff.json`, and `inputs/worker-terminal-contract.json`. It does not write `checklist-target.json`: absent means `CHECKLIST.md` + `SIGNAL.json`, and only a role switch writes the manifest to point elsewhere. `./mark <step>` therefore works from inside the task without overrides.
+## Child checklist units
+
+A checklist step can delegate its work to a child unit: a checklist plus signal
+under `subtasks/`, written only by `mark sub` (ADR-060). Farmslot materializes
+files and reads signals; it never spawns the child, so who executes the rows —
+the same session, a runner sub-agent, a harness script — is outside the contract.
+
+```bash
+./mark sub start <id> --step N --from <path|inline:<text>> [--var KEY=VALUE ...]
+./mark sub <id> <n>
+./mark sub <id> complete [--report <artifact>] [--mark-last]
+./mark sub <id> blocked --reason "..."
+./mark sub <id> status                      # the child projection as JSON
+```
+
+`--from` takes a path to a checklist-shaped file (a skill body is the usual one;
+see the authoring rule in `@farmslot/skills`) or `inline:<text>`. The source is
+rendered with the task's variables, its digest is recorded before rendering and
+the written child's after, and a source with no enumerable row, or with numbered
+labels that disagree with their positions, is refused. `template:<id>` catalog
+resolution is refused: resolving a catalog id needs the project's template
+sources, which a task-dir-local engine cannot read, so materialize the template
+first and pass its path.
+
+Ownership rules, all enforced by `mark`:
+
+- A step owns one child for the life of the task directory. Registering on a step
+  that already has one, or on a checked box, is refused.
+- While the child is unsettled, `mark N` for that step is refused with a pointer
+  to the child. Settled means `complete` or `done`; a `blocked` child is terminal
+  for the run yet keeps its step, so the parent still cannot mark past it.
+- `sub <id> complete` ticks the parent box and appends the parent timing event a
+  normal parent mark would, then a later `mark N` on that step is a no-op.
+- `sub <id> blocked` writes the child signal and the parent signal as `blocked`
+  with `subtask <id>: <reason>`; the next child step or completion restores
+  `running` on both.
+- A child has no flow terminal contract: `--report <artifact>` is its only
+  artifact rule, and the parent's contract still governs the parent's own
+  terminal mark, which is refused while any child is unsettled.
+
+## Acceptance-criteria ledger
+
+This remains a transitional contract. Manual schema-1 task verdicts and recipe-derived schema-2 projections are both live through one file writer. [ADR-062](https://github.com/deeeed/farmslot/blob/main/docs/adr/062-recorded-run-evidence.md) assigns the eventual sole normal verdict path to the engine after conformance and adopter migration. A task ledger without its recorded package is not measured recording proof.
+
+`farmslot-agent ac` and a recipe run with a task dir write
+`artifacts/acceptance-status.json`, through one module. `ac set` records one
+verdict per criterion (`proven`, `weak`, `missing`, `untestable`)
+with evidence paths and recipe nodes, and `ac render` prints the coverage table
+the PR body reads. Successful completion requires every registered criterion to have a verdict,
+including contracts without an opt-in. Missing ledgers or unreadable handoffs
+refuse, and weak or missing verdicts refuse unless `acceptance.allowWeak` is set.
+No-change and self-review keep their existing outcome contracts. The legacy
+`acceptance.require` setting requests explicit checking from older callers;
+it cannot turn off current successful-completion enforcement.
 
 `artifact-check` validates task closeout files. When recipe artifacts exist, `recipe-quality.json` must satisfy the shared `RecipeQualityArtifact` validator from `@farmslot/protocol`.
 
@@ -73,66 +119,79 @@ farmslot-agent recipe-quality build \
 
 The builder preserves additive metadata under `extra` while protecting the required protocol fields from being overwritten. Use `--input -` to read compact JSON from stdin. CLI flags override file-provided scalar and array fields; `trainingFields` merge field-by-field so flags can refine proof metadata without dropping project or flow metadata.
 
-## Child checklist units
-
-A checklist step can delegate its work to a child unit: a checklist plus signal
-under `subtasks/`, written only by `mark sub`. Farmslot materializes the files and
-reads the signals; it never spawns the child, so who executes the rows — the same
-session, a runner sub-agent, a harness script — is outside the contract. See
-[ADR-060](https://github.com/deeeed/farmslot/blob/main/docs/adr/060-sub-task-observability.md)
-for the decision and [Task directory contract](task-directory-contract.md) for the
-files.
-
-```bash
-./mark sub start <id> --step N --from <path|inline:<text>> [--var KEY=VALUE ...]
-./mark sub <id> <n>
-./mark sub <id> complete [--report <artifact>] [--mark-last]
-./mark sub <id> blocked --reason "..."
-./mark sub <id> status                      # the child projection as JSON
-```
-
-`--from` takes a path to a checklist-shaped file (a skill body is the usual one)
-or `inline:<text>`. The source is rendered with the task's variables, its digest
-is recorded before rendering and the written child's after, and a source with no
-enumerable row, or with numbered labels that disagree with their positions, is
-refused. `template:<id>` catalog resolution is refused: resolving a catalog id
-needs the project's template sources, which a task-dir-local engine cannot read,
-so materialize the template first and pass its path.
-
-Ownership rules, all enforced by `mark`:
-
-- A step owns one child for the life of the task directory. Registering on a step
-  that already has one, or on a checked box, is refused.
-- While the child is unsettled, `mark N` for that step is refused with a pointer
-  to the child. Settled means `complete` or `done`; a `blocked` child is terminal
-  for the run yet keeps its step, so the parent still cannot mark past it.
-- `sub <id> complete` ticks the parent box and appends the parent timing event a
-  normal parent mark would, then a later `mark N` on that step is a no-op.
-- `sub <id> blocked` writes the child signal and the parent signal as `blocked`
-  with `subtask <id>: <reason>`; the next child step or completion restores
-  `running` on both.
-- A child has no flow terminal contract: `--report <artifact>` is its only
-  artifact rule, and the parent's contract still governs the parent's own terminal
-  mark, which is refused while any child is unsettled.
-
-A child progress update is live only while its parent checklist is the active one,
-and a `running` child with no recent mark projects as `stale` — a projection only,
-never a status in the file. Child units are projected and mirrored for slot runs;
-slot-free static review workspaces do not do so yet.
-
-## Acceptance-criteria ledger
-
-`farmslot-agent ac` and a recipe run with a task dir write
-`artifacts/acceptance-status.json`, through one module. `ac set` records one
-verdict per criterion (`proven`, `weak`, `missing`, `untestable`) with
-evidence paths and recipe nodes, and `ac render` prints the coverage table the PR
-body reads. Successful completion requires every registered criterion to have a verdict,
-including contracts without an opt-in. Missing ledgers or unreadable handoffs
-refuse, and weak or missing verdicts refuse unless `acceptance.allowWeak` is set.
-No-change and self-review keep their existing outcome contracts. The legacy
-`acceptance.require` setting requests explicit checking from older callers;
-it cannot turn off current successful-completion enforcement.
-
 ## Compatibility
 
 The previous script paths in `@farmslot/skills` and `scripts/quality/` remain compatibility shims for one migration window. New templates should point to `packages/agent-runtime/scripts/*` in the Farmslot monorepo or use `farmslot-agent` when installed as a package.
+
+## Native session host
+
+Claude saved-session recovery requires sessions started with Claude Code 2.1.265
+or newer. Earlier releases have documented native history-loss bugs: [2.1.83
+fixed hook progress forking the conversation chain, and 2.1.265 fixed resume after
+tool-process interruption](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md).
+Farmslot leaves those older sessions readable and closeable but disables recovery
+with an explicit reason. Updating a binary cannot establish that an older saved
+conversation is complete. Start a new session after updating the native runner;
+Farmslot neither rewrites its history nor replays previous work to fill gaps.
+
+`@farmslot/agent-runtime/native` exports `NativeSessionClient`. The gateway runner
+layer validates registry capabilities and model policy, then calls this client.
+Execution nodes can use the same runtime without importing gateway code.
+
+The client starts a detached supervisor and host on demand. The host owns native
+stdin; the supervisor stops wrapper groups and observed descendants after host failure.
+The native launch wrapper waits for durable PID registration before executing the
+installed binary. Closing a session waits for that cleanup to finish.
+A gateway or browser disconnect only ends its RPC connection.
+
+Set `FARMSLOT_NATIVE_STATE_DIR` to a stable private directory for each configured
+execution profile. The default is `native-sessions` beneath `FARMSLOT_HOME`, or
+the `.farmslot/native-sessions` directory under the current user's home when no home override is configured. State directories
+require mode 0700 and files use 0600. A hashed socket path under `/tmp` fits macOS
+limits. IPC uses a private random bearer token, distinct from provider credentials.
+Native authentication environment and configuration stay inherited locally;
+the runtime does not serialize them or send them over IPC. Account labels under
+one OS user do not provide tenant isolation.
+
+Session journals append events and changed metadata/receipts, fsyncing command
+intent before submission. Receipts distinguish pending, unknown, accepted, failed
+and completed. `submitted` records a submission attempt; only `accepted` records
+native acknowledgement. A lost reply or unknown receipt never triggers a resend.
+`read` accepts `after` and `limit`, returns a cursor and `hasMore`, and exposes the
+latest 100 receipts. Older IDs remain deduplicated across process generations;
+a missing receipt in a page does not mean the command was never submitted. Consume each page once and
+persist its returned cursor. Pending interactions are separate from the event
+page. Respond with `request.id`; `nativeId` is evidence, not an input token.
+
+After runner or host failure, reads expose failure and recovery instructions.
+Explicit `create` with the recorded `resumeSessionId` retains the Farmslot session
+ID and command history, and starts a new generation only after confirmed cleanup
+of the previous generation. It preserves the working directory and native account configuration.
+It never starts a blank conversation as a recovery fallback. Unknown acceptance
+remains unknown, including after resume. Stale approval IDs cannot target the new
+generation. An interrupt reply acknowledges native control; the ordered terminal
+turn event supplies the actual interrupted/completed outcome.
+
+The host uses source entry points with the workspace TypeScript loader during
+development, and packaged `dist/native` entry points after `yarn workspace
+@farmslot/agent-runtime build`. Ship the entire native output directory. Existing
+hosts retain their loaded code until stopped. Finish/close sessions before an
+operator stops the supervisor for an upgrade; restarting the gateway alone keeps
+those sessions on the existing host.
+
+A partial ownership claim or a surviving process whose death cannot be verified
+blocks automatic takeover. Inspect `host.log`, the private lock/worker records,
+and the recorded process groups before removing a stale claim. Never remove a
+lock while its supervisor or host is alive. PID reuse is treated conservatively;
+the runtime does not kill an unrelated live group to force recovery. The supervisor and each runner track OS descendant identity and retain detached
+children for cleanup. They stop observed owners before the final process scan and
+verify process start metadata before each signal. Processes that fully daemonize
+and reparent between scans cannot be attributed reliably; full OS containment and
+node-loss survival remain outside this phase. Journals currently remain on disk for the
+session lifetime and load into host memory; archival/compaction is not implemented.
+
+See the staged live proof in the runner validation operations guide. Local
+regressions run with `node --import tsx --test
+packages/agent-runtime/src/native/durability.test.ts`. The host test needs permission
+to bind a local Unix socket. The same regression can run from the built output
+with `node --test packages/agent-runtime/dist/native/durability.test.js`.

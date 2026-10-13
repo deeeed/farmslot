@@ -136,7 +136,7 @@ Most farms need nothing beyond [Worker artifacts by flow](worker-artifacts-by-fl
 { "worker_terminal": { "acceptance": { "require": true, "allowWeak": false } } }
 ```
 
-`require` defaults to false. Until a project's templates record verdicts with `farmslot-agent ac`, a missing ledger never blocks `mark complete`; the ledger is still watched, shown in run detail and preferred for coverage when one exists. With `require: true`, `complete` needs a verdict for every criterion in `inputs/handoff.json`, and `weak` or `missing` fails unless `allowWeak` is set.
+Successful completion requires a verdict for every registered criterion in `inputs/handoff.json`, including contracts without an opt-in. A missing ledger or unreadable handoff refuses completion. Weak or missing verdicts refuse unless `acceptance.allowWeak` is set. `require` remains an explicit request for older checkers and cannot disable this default. No-change and self-review retain their existing outcome contracts. Manual task verdicts and recipe-derived projections are still both live until the ADR-062 cutover; the task ledger alone is not recording proof.
 
 ```text
 Skill/template checklist  →  worker writes artifacts  →  ./mark validates  →  SIGNAL.json
