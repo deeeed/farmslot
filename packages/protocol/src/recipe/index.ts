@@ -36,6 +36,7 @@ export { recipeProtocolSchemaUrlForVersion } from './common.js';
 export { canonicalRecipeJson, digestRecipeDocument, resolvedRecipeArtifactPath } from './digest.js';
 export {
   type RecipeDocumentValidationOptions,
+  validateRecipeActionRelationships,
   validateRecipeDocument,
   validateRecipeWithManifest,
   validateResolvedRecipeActionNode,

@@ -3,7 +3,11 @@ import test from 'node:test';
 
 import { digestRecipeDocument } from '@farmslot/protocol';
 
-import { executedProofIndex, type ProofNode } from '../src/evidence/assertions.js';
+import {
+  executedProofIndex,
+  potentiallyEligibleProof,
+  type ProofNode,
+} from '../src/evidence/assertions.js';
 import { deriveRecipeClaims, type DeriveRecipeClaimsInput } from '../src/evidence/claims.js';
 import { validateRecordedEvidencePackage } from '../src/evidence/package.js';
 import { planRecipeEvidence } from '../src/evidence/plan.js';
@@ -31,6 +35,105 @@ const base: DeriveRecipeClaimsInput = {
   artifacts: [],
   segments: [],
 };
+
+test('file-content proof uses its executed read without an indexed artifact', () => {
+  const fileNodes = new Map<string, ProofNode>([
+    ['file', { action: 'assert_file', path: 'state.log', contains: 'ready', proves: ['AC1'] }],
+  ]);
+  const observed = { path: 'state.log', sizeBytes: 14, contains: 'ready', matched: true };
+  const trace = [{ nodeId: 'file', action: 'assert_file', ok: true, output: observed }];
+  const input = { ...base, nodes: fileNodes, trace };
+  assert.equal(potentiallyEligibleProof('file', fileNodes), true);
+  assert.equal(deriveRecipeClaims(input)[0]?.verdict, 'proven');
+  const failed = {
+    nodeId: 'file',
+    action: 'assert_file',
+    ok: false,
+    cause_class: 'subject',
+    error_details: { ...observed, matched: false },
+  };
+  assert.equal(deriveRecipeClaims({ ...input, trace: [failed] })[0]?.verdict, 'failed');
+  assert.equal(deriveRecipeClaims({ ...input, trace: [...trace, failed] })[0]?.verdict, 'failed');
+  const retryNodes = new Map(fileNodes);
+  retryNodes.set('file', { ...fileNodes.get('file')!, retryGroup: 'file-content' });
+  assert.equal(
+    deriveRecipeClaims({ ...input, nodes: retryNodes, trace: [failed, ...trace] })[0]?.verdict,
+    'proven',
+  );
+  assert.equal(
+    deriveRecipeClaims({ ...input, trace: [{ ...failed, cause_class: 'environment' }] })[0]
+      ?.verdict,
+    'missing',
+  );
+  assert.equal(deriveRecipeClaims({ ...input, trace: [] })[0]?.verdict, 'missing');
+});
+
+test('file existence, blank expectations and old unobserved outputs cannot prove contents', () => {
+  for (const contains of [undefined, '', ' ']) {
+    const fileNodes = new Map<string, ProofNode>([
+      ['file', { action: 'assert_file', path: 'state.log', contains, proves: ['AC1'] }],
+    ]);
+    assert.equal(potentiallyEligibleProof('file', fileNodes), false);
+    assert.equal(
+      deriveRecipeClaims({
+        ...base,
+        nodes: fileNodes,
+        trace: [
+          {
+            nodeId: 'file',
+            action: 'assert_file',
+            ok: true,
+            output: { path: 'state.log', sizeBytes: 14 },
+          },
+        ],
+      })[0]?.verdict,
+      'missing',
+    );
+  }
+  const fileNodes = new Map<string, ProofNode>([
+    [
+      'file',
+      {
+        action: 'assert_file',
+        path: 'state.log',
+        contains: '{{params.expected}}',
+        proves: ['AC1'],
+      },
+    ],
+  ]);
+  for (const output of [
+    { path: 'state.log', sizeBytes: 14 },
+    { path: 'state.log', contains: ' ', matched: true },
+  ]) {
+    assert.equal(
+      deriveRecipeClaims({
+        ...base,
+        nodes: fileNodes,
+        trace: [{ nodeId: 'file', action: 'assert_file', ok: true, output }],
+      })[0]?.verdict,
+      'missing',
+    );
+  }
+  const jsonNodes = new Map<string, ProofNode>([
+    [
+      'file',
+      {
+        action: 'assert_json',
+        path: 'state.json',
+        assert: { path: '$.ready', operator: 'eq', value: true },
+        proves: ['AC1'],
+      },
+    ],
+  ]);
+  assert.equal(
+    deriveRecipeClaims({
+      ...base,
+      nodes: jsonNodes,
+      trace: [{ nodeId: 'file', action: 'assert_json', ok: true, output: { matched: true } }],
+    })[0]?.verdict,
+    'missing',
+  );
+});
 
 test('an executed observation-bound expectation derives state proof, not action success', () => {
   assert.equal(deriveRecipeClaims(base)[0]?.verdict, 'proven');

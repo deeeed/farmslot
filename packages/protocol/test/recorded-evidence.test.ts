@@ -5,12 +5,33 @@ import { validateRecipeDocument } from '../src/recipe/document.js';
 import {
   DEFAULT_RECORDED_EVIDENCE_POLICY,
   EVIDENCE_PADDING_MS,
+  hasUnresolvedRecipeFailure,
   normalizeRecipeClaimId,
   type RecipeRecordingTarget,
   recordingTargetClaimKey,
   validateRecipeClaimDeclarations,
   validateRecipeRecordingTarget,
 } from '../src/recipe/evidence.js';
+
+test('file assertions retain independent failures and resolve only their declared retry', () => {
+  const failed = { nodeId: 'file', action: 'assert_file', ok: false };
+  const passed = { ...failed, ok: true };
+  assert.equal(hasUnresolvedRecipeFailure([failed, passed]), true);
+  assert.equal(
+    hasUnresolvedRecipeFailure([
+      { ...failed, retryGroup: 'file-check' },
+      { ...passed, retryGroup: 'file-check' },
+    ]),
+    false,
+  );
+  assert.equal(
+    hasUnresolvedRecipeFailure([
+      { ...failed, retryGroup: 'file-check' },
+      { ...passed, nodeId: 'other', retryGroup: 'file-check' },
+    ]),
+    true,
+  );
+});
 
 test('recording admission uses one validated target identity for every backend', () => {
   const targets: RecipeRecordingTarget[] = [

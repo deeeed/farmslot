@@ -184,6 +184,37 @@ function validateOfficialActionRelationships(
   node: Record<string, unknown>,
   path: string,
 ): void {
+  if (action === 'ui.wait_for' && node.enabled !== undefined) {
+    const deferred = (value: unknown) => typeof value === 'string' && hasRecipeTemplate(value);
+    const issue = (field: string, message: string) =>
+      addFinding(ctx, 'error', 'recipe.invalid_enabled_wait', `${path}.${field}`, message);
+    if (!deferred(node.enabled) && typeof node.enabled !== 'boolean')
+      issue('enabled', 'ui.wait_for.enabled must resolve to a boolean.');
+    if (!deferred(node.expected) && node.expected !== 'present' && node.expected !== 'visible')
+      issue('expected', 'Enabled waits require explicit expected=present or visible.');
+    for (const alias of ['visible', 'hidden'])
+      if (node[alias] !== undefined)
+        issue(alias, 'Enabled waits do not accept visible or hidden aliases.');
+    for (const field of ['text', 'label', 'text_contains'])
+      if (node[field] !== undefined)
+        issue(field, 'Enabled waits require an exact selector or test ID, not text targeting.');
+    const hasSelector = node.selector !== undefined;
+    const hasId = node.test_id !== undefined || node.testID !== undefined;
+    if (hasSelector === hasId)
+      issue('selector', 'Enabled waits require exactly one selector or test ID.');
+    for (const field of ['selector', 'test_id', 'testID'])
+      if (node[field] !== undefined && !isNonEmptyString(node[field]))
+        issue(field, 'Enabled wait targets must be nonempty strings.');
+    if (
+      node.test_id !== undefined &&
+      node.testID !== undefined &&
+      !deferred(node.test_id) &&
+      !deferred(node.testID) &&
+      node.test_id !== node.testID
+    )
+      issue('testID', 'Enabled waits cannot use conflicting test ID aliases.');
+    return;
+  }
   if (action === 'watch_logs') {
     const timeout = node.timeout_ms;
     if (
@@ -241,6 +272,17 @@ function validateOfficialActionRelationships(
     path,
     `${action} requires exactly one of path or delta.`,
   );
+}
+
+/** Shared input relationships for direct transports and resolved recipe nodes. */
+export function validateRecipeActionRelationships(node: unknown): RecipeValidationResult {
+  const ctx = createContext();
+  if (!isRecord(node) || !isNonEmptyString(node.action)) {
+    addFinding(ctx, 'error', 'recipe.invalid_action_node', 'node', 'Action node is invalid.');
+  } else {
+    validateOfficialActionRelationships(ctx, node.action, node, 'node');
+  }
+  return finishResult(ctx);
 }
 
 export function validateRecipeDocument(

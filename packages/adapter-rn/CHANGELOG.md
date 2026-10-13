@@ -4,7 +4,7 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Observe enabled-state waits from qualified native accessibility snapshots without opening the app; reject ambiguous or unknown state.
 
 ## 0.21.0 - 2026-10-13
 

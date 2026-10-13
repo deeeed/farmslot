@@ -9,6 +9,7 @@ import { PNG } from 'pngjs';
 import type { ActionExecutionContext } from '@farmslot/recipe-runner';
 
 import {
+  type AgentDeviceSnapshot,
   type AgentDeviceUiTransportOptions,
   createAgentDeviceUiTransport,
 } from './agent-device-ui-transport.js';
@@ -1253,3 +1254,62 @@ test('stability-wait failures after scroll and unsettled fills surface as warnin
     /ui\.set_input did not reach a settled native UI state: keyboard animation/u,
   );
 });
+
+test(
+  'native enabled waits bound snapshot capture and cancel before its response',
+  { timeout: 800 },
+  async (t) => {
+    for (const cancel of [false, true]) {
+      let finishCapture!: (snapshot: AgentDeviceSnapshot) => void;
+      let captureStarted!: () => void;
+      let captureBudget = 0;
+      const pending = new Promise<AgentDeviceSnapshot>((resolve) => {
+        finishCapture = resolve;
+      });
+      const started = new Promise<void>((resolve) => {
+        captureStarted = resolve;
+      });
+      const response: AgentDeviceSnapshot = {
+        nodes: [{ identifier: 'submit', enabled: true }],
+        truncated: false,
+        snapshotQuality: { backend: 'tree', state: 'healthy' },
+      };
+      t.after(() => finishCapture(response));
+      const client = {
+        capture: {
+          snapshot(options: Record<string, unknown>) {
+            captureBudget = Number(options.timeoutMs);
+            captureStarted();
+            return pending;
+          },
+        },
+      } as NonNullable<AgentDeviceUiTransportOptions['client']>;
+      const transport = createAgentDeviceUiTransport({
+        platform: 'ios',
+        device: 'wait-device',
+        app: 'example.app',
+        session: 'wait-session',
+        client,
+      });
+      const controller = new AbortController();
+      const timeoutMs = cancel ? 500 : 20;
+      const result = transport.execute(
+        'ui.wait_for',
+        {
+          test_id: 'submit',
+          expected: 'present',
+          enabled: true,
+          timeout_ms: timeoutMs,
+        },
+        { signal: controller.signal } as ActionExecutionContext,
+      );
+      const refused = assert.rejects(result, cancel ? /aborted/iu : /timed out.*enabled=true/u);
+      await started;
+      assert.ok(captureBudget > 0 && captureBudget <= timeoutMs);
+      if (cancel) controller.abort();
+      await refused;
+      // A matching snapshot arriving after rejection must not become a pass.
+      finishCapture(response);
+    }
+  },
+);

@@ -4,6 +4,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Validate enabled-state wait inputs through shared action relationships for recipe nodes and direct transports.
+
+- Treat file assertions as assertions for declared retry resolution; file-content proof still requires an executed non-blank expectation.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.41.0 - 2026-10-13
