@@ -102,6 +102,8 @@ if (process.argv[2] === 'serve') {
     'services/gateway/src/run-completion/output.ts',
     'services/gateway/src/run-completion/output-close.ts',
     'services/gateway/src/run-engine/orchestrator.ts',
+    'services/gateway/src/run-engine/recovery.ts',
+    'services/gateway/src/methods/dispatch/ticket-ref.ts',
     'services/gateway/src/run-lifecycle/step-status.ts',
     'services/gateway/src/run-lifecycle/terminal-transition.ts',
     'services/gateway/src/run-lifecycle/transition-router.ts',
@@ -255,7 +257,8 @@ if (process.argv[2] === 'serve') {
       ...original,
       project,
       slotId,
-      ticketOrPr: 'QA-101',
+      ticketOrPr:
+        process.env.FARMSLOT_RUN_STATE_PROOF === '1' ? 'Retained QA completion recovery' : 'QA-101',
       taskFile: path.join(retained, 'TASK.md'),
       nativeOwnerPrincipalId: 'legacy-env',
       transport: 'native',
@@ -491,6 +494,20 @@ if (process.argv[2] === 'serve') {
       await stop(gateway);
       env.FARMSLOT_RUN_STATE_NEGATIVE = 'output';
       await startGateway();
+      const afterRestart = await readRun();
+      assert.equal(afterRestart.status, 'failed', 'restart retains the stopped pipeline');
+      assert.deepEqual(afterRestart.steps, originalSteps, 'restart does not re-enter completion');
+      assert.ok(
+        afterRestart.agentContexts?.some(
+          (context) => context.nativeSession?.leaseId === binding!.leaseId,
+        ),
+        'restart preserves the exact native owner',
+      );
+      await assert.rejects(
+        rpc('run.archive', { runId: run.id }),
+        /confirmed close or transfer|release slot/,
+      );
+      json(path.join(out, 'retained-restart.json'), afterRestart);
       const brokenAcknowledgement = await rpc<{ run: Run }>('run.resolveDecision', {
         runId: run.id,
         decisionId: pending.id,

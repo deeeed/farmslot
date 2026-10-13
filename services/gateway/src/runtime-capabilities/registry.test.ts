@@ -22,6 +22,31 @@ import { RUNTIME_CAPABILITY_TERMINAL_FENCE_TTL_MS, RuntimeCapabilityStore } from
 
 const SLOT = 'slot-a';
 
+test('run eviction checks exact owners across slots and retains deferred provider cleanup', async (t) => {
+  const { registry, actions } = await fixture(t, [entry('app')]);
+  assert.equal((await acquire(registry, 'app', 'retained-run')).ok, true);
+  assert.equal(
+    (
+      await registry.acquire({
+        slotId: 'slot-b',
+        capabilityId: 'app',
+        ownerRunId: 'sibling-run',
+        proofRequirement: { capabilityId: 'app', reason: 'sibling', mode: 'state' },
+      })
+    ).ok,
+    true,
+  );
+  actions.length = 0;
+  await assert.rejects(registry.assertRunReleased('retained-run'), /still owns capability app/);
+  await registry.releaseOwnership(SLOT, 'retained-run');
+  await assert.rejects(registry.assertRunReleased('retained-run'), /finish provider cleanup/);
+  assert.deepEqual(actions, [], 'inspection and logical release do not stop providers');
+  await registry.stopWarmProviders(SLOT);
+  await registry.assertRunReleased('retained-run');
+  await assert.rejects(registry.assertRunReleased('sibling-run'), /on slot slot-b/);
+  assert.equal((await registry.status({ slotId: 'slot-b' })).leases[0]?.state, 'acquired');
+});
+
 function holdsProviderForTest(lease: { state: string }): boolean {
   return ['acquiring', 'acquired', 'releasing'].includes(lease.state);
 }

@@ -60,7 +60,13 @@ import { invalidateLiveRecipeContextMemo } from '../live-recipe/context.js';
 import { invalidateRecipeRunGroupCache } from '../methods/filesystem.js';
 import { normalizeStartRefRequest } from '../projects/start-ref-policy.js';
 import { assertCurrentReviewConfiguration } from '../quality/review-config.js';
+import {
+  assertRunNotArchiving,
+  beginRunArchive,
+  endRunArchive,
+} from '../run-lifecycle/archive-fence.js';
 import { isCompletionPrerequisiteFailure } from '../run-lifecycle/step-status.js';
+import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import {
   assertSupportedRunnerSpelling,
   normalizeRunner,
@@ -1412,15 +1418,47 @@ function assertNativeWorkersReleased(run: Run): void {
     );
 }
 
+async function withCompletionFailureEviction(
+  id: string,
+  evict: () => Promise<boolean>,
+): Promise<boolean> {
+  const run = runs.get(id);
+  if (!run || !isCompletionPrerequisiteFailure(run)) return evict();
+  // Reuse the archive fence so replay cannot reclaim ownership during the
+  // asynchronous slot/provider checks and durable eviction.
+  await withRunTransition(id, async () => {
+    assertRunNotArchiving(id);
+    beginRunArchive(id);
+  });
+  try {
+    return await evict();
+  } finally {
+    endRunArchive(id);
+  }
+}
+
+async function assertCompletionFailureReleased(run: Run, operation: string): Promise<void> {
+  if (!isCompletionPrerequisiteFailure(run)) return;
+  if (run.slotId)
+    throw new Error(`Cannot ${operation} active run ${run.id}: release slot ${run.slotId} first`);
+  const { getRuntimeCapabilityRegistry } = await import('../methods/runtime-capabilities.js');
+  await getRuntimeCapabilityRegistry().assertRunReleased(run.id);
+}
+
 export async function deleteRun(id: string): Promise<boolean> {
+  return withCompletionFailureEviction(id, () => deleteRunBody(id));
+}
+
+async function deleteRunBody(id: string): Promise<boolean> {
   const run = runs.get(id);
   if (!run) return false;
   if (run.output?.cleanupPending || run.output?.closeError)
     throw new Error(`Cannot delete run ${id} before output closeout cleanup finishes`);
-  if (ACTIVE_STATUSES.has(run.status) || isCompletionPrerequisiteFailure(run)) {
+  if (ACTIVE_STATUSES.has(run.status)) {
     throw new Error(`Cannot delete active run ${id} (status=${run.status})`);
   }
   assertNativeWorkersReleased(run);
+  await assertCompletionFailureReleased(run, 'delete');
   if (run.backlogReconcilePending) {
     throw new Error(`Cannot delete run ${id} while backlog reconciliation is pending`);
   }
@@ -1622,11 +1660,13 @@ export async function updateReviewPublication(
 }
 
 export async function archiveRun(id: string): Promise<boolean> {
-  let archived = false;
-  await enqueueRunWrite(id, async () => {
-    archived = await archiveRunBody(id);
+  return withCompletionFailureEviction(id, async () => {
+    let archived = false;
+    await enqueueRunWrite(id, async () => {
+      archived = await archiveRunBody(id);
+    });
+    return archived;
   });
-  return archived;
 }
 
 /**
@@ -1651,10 +1691,7 @@ export function assertRunArchivable(run: Run): void {
   // A settled blocked run counts as active for recovery and the inventory, but
   // nothing can advance it; archiving is the operator's way to close it while
   // keeping the blocked outcome (unlike cancel, which overwrites it).
-  if (
-    (ACTIVE_STATUSES.has(run.status) || isCompletionPrerequisiteFailure(run)) &&
-    !isSettledBlockedRun(run)
-  ) {
+  if (ACTIVE_STATUSES.has(run.status) && !isSettledBlockedRun(run)) {
     throw new Error(`Cannot archive active run ${run.id} (status=${run.status})`);
   }
   if (run.backlogReconcilePending) {
@@ -1676,6 +1713,7 @@ async function archiveRunBody(id: string): Promise<boolean> {
     );
   }
   assertNativeWorkersReleased(run);
+  await assertCompletionFailureReleased(run, 'archive');
   const archivedRun: Run = { ...run, archivedAt: new Date().toISOString() };
   // A blocked run is not a terminal outcome, so emitAnalyticsForTerminalRun
   // returns null for it on purpose: the archived JSON is its record and the

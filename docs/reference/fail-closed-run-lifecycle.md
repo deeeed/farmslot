@@ -196,6 +196,13 @@ Retention follows the slot's current ownership; it MUST NOT make an explicitly
 released slot unavailable. Ticket and PR admission retain the unfinished execution
 until operator settlement. A linked backlog item and work-graph node observe the
 pipeline failure through the existing ordered transition effects.
+Restart MUST skip engine startup and runtime reconciliation for this retained
+failure. After explicit slot release, archive/delete MAY evict it only when native
+bindings and owner capability cleanup are confirmed released. Archive preserves
+the failed verdict, step history and evidence; unresolved provider cleanup still
+refuses eviction.
+QA completion replay MUST accept the same task title or change reference as QA
+creation, preserving the existing execution, frozen scope and recorded verdict.
 
 Supersede, force-complete and output close use named ADR-053 transitions. Their
 single settled write precedes publication, awaited backlog settlement and graph

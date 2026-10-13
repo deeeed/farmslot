@@ -36,6 +36,7 @@ import { claimsDevice } from './device-target.js';
 import { sameCapabilityParameters, stableJson } from './parameters.js';
 import {
   hydrateFenceEntries,
+  leaseNeedsRetention,
   retainFreshFenceEntries,
   RUNTIME_CAPABILITY_EVENT_LIMIT,
   type RuntimeCapabilityFenceEntry,
@@ -801,6 +802,23 @@ export class RuntimeCapabilityRegistry {
   async settledStatus(slotId: string): Promise<RuntimeCapabilityStatusResult> {
     await this.mutationTail;
     return this.status({ slotId });
+  }
+
+  /** Run eviction must retain every unresolved provider, even after slot detach. */
+  async assertRunReleased(ownerRunId: string): Promise<void> {
+    await this.initialize();
+    await this.mutationTail;
+    const retained = this.options.store
+      .snapshot()
+      .leases.find(
+        (lease) =>
+          lease.owner.runId === ownerRunId &&
+          (lease.state === 'queued' || leaseNeedsRetention(lease)),
+      );
+    if (retained)
+      throw new Error(
+        `Run ${ownerRunId} still owns capability ${retained.capabilityId} on slot ${retained.slotId}; finish provider cleanup before eviction`,
+      );
   }
 
   async acquire(params: RuntimeCapabilityAcquireParams): Promise<RuntimeCapabilityAcquireResult> {

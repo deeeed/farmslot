@@ -285,6 +285,9 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
 
   const recoverable: Run[] = [];
   for (const run of active) {
+    // Admission still owns this execution, but restart must not re-enter its
+    // stopped pipeline or reconcile away its retained worker and slot.
+    if (isCompletionPrerequisiteFailure(run)) continue;
     if (isLeakedGatewayTestRun(run)) {
       console.warn(
         `[run-engine] skipping recovery for leaked gateway test run ${run.id.slice(0, 8)}`,

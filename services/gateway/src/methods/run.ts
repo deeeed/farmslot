@@ -634,7 +634,7 @@ export async function planRunCreation(
   }
 
   if (params.flowType === 'qa') {
-    if (!params.ticketOrPr.trim()) throw new Error('QA requires a task title or change reference');
+    validateTicketRef(params.ticketOrPr, params.flowType);
     if (!parseGitHubRef(params.ticketOrPr))
       params.ticketData = buildManualTicketData(
         params.initialContext ?? params.ticketOrPr,

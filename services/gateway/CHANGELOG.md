@@ -5,7 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Return stopped work graphs to planning without resetting recorded work; keep planning/paused graphs non-dispatching under targeted ticks.
-- Route operator completion intents through lifecycle settlement, expose failed completion for recovery, and retain output close after acknowledgement.
+- Route operator completion intents through lifecycle settlement, retain failed completion ownership across restart until explicit cleanup, and keep output close available after acknowledgement.
 
 - Use shared review-mode precedence for admission, retained reviewer sessions, instructions and recorded evidence; refuse unavailable WARM selections consistently.
 

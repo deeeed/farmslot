@@ -302,6 +302,33 @@ function minimalActiveRun(overrides: Partial<Run> = {}): Run {
   };
 }
 
+test('startup leaves failed completion ownership untouched with or without a fleet slot', async () => {
+  for (const slotId of ['retained-slot', null]) {
+    const run = minimalActiveRun({
+      status: 'failed',
+      slotId,
+      steps: [{ name: 'complete', status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }],
+    });
+    const before = structuredClone(run);
+    const calls: string[] = [];
+    const unexpected = async () => {
+      calls.push('recovery effect');
+    };
+    await recoverActiveRuns({
+      listRuns: () => ({ runs: [run] }),
+      loadFleetStatus: async () => ({ slots: [] }),
+      reconcileRunAgentRuntime: unexpected,
+      startRun: unexpected,
+      resetSlot: unexpected,
+      updateRun: unexpected,
+      updateRunStep: unexpected,
+      quarantineLeakedRun: unexpected,
+    } as unknown as RunRecoveryCollaborators);
+    assert.deepEqual(calls, [], 'no reconciliation, startup, status rewrite or teardown');
+    assert.deepEqual(run, before);
+  }
+});
+
 test('restart restores a failed PR health overlay for a blocked inline CI fix', async () => {
   const run = minimalActiveRun({
     status: 'blocked',

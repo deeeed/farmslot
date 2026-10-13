@@ -49,7 +49,7 @@ import {
   teardownReviewWorkspace,
 } from '../review-workspaces/pipeline.js';
 import { scanArtifacts } from '../run-completion/orchestrator.js';
-import { STEP_TO_STATUS } from '../run-lifecycle/step-status.js';
+import { isCompletionPrerequisiteFailure, STEP_TO_STATUS } from '../run-lifecycle/step-status.js';
 import {
   routeTerminalRunTransition,
   type TerminalTransitionCollaborators,
@@ -602,6 +602,7 @@ async function finalizeNonThrownTerminalRun(
 ): Promise<void> {
   const run = getRun(runId);
   if (!run) return;
+  if (isCompletionPrerequisiteFailure(run)) return;
   // Defensive: cancelled/paused runs go through different cleanup paths; treat as a no-op
   // here so a misrouted call can't accidentally stomp the cancellation record.
   if (run.status !== 'failed' && run.status !== 'blocked') {

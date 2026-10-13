@@ -32,6 +32,7 @@ const { runCreate, queuedQaExpectation, assertExpectedQaSelection } = await impo
 const { invalidateProjectVarsCache } = await import('../../core/config.js');
 const { getAllRuns, getRun, updateRun, deleteRun } = await import('../../runs/store.js');
 const { migrateQueuedReviewQa } = await import('../../backlog/review-qa-migration.js');
+const { runReplayStep } = await import('./replay-step.js');
 const qa: ProjectQaConfig = {
   default_profile: 'pr',
   profiles: [
@@ -140,6 +141,40 @@ test('public direct QA can still resolve current defaults without a queued expec
   const result = await runCreate(f.params, () => {}, { awaitPersist: true });
   t.after(() => cleanup(result.run.id));
   assert.deepEqual(result.run.qa?.inputs, { directDefault: 'current', scope: 'pr' });
+});
+
+test('an admitted manual QA title can replay COMPLETE without replacing its frozen QA', async (t) => {
+  const f = fixture();
+  const result = await runCreate(
+    { ...f.params, ticketOrPr: 'Recorded iOS AC3 after two local passes' },
+    () => {},
+    { awaitPersist: true },
+  );
+  t.after(() => cleanup(result.run.id));
+  updateRun(result.run.id, {
+    status: 'completing',
+    steps: result.run.steps.map((step) =>
+      step.name === 'complete'
+        ? { ...step, status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }
+        : { ...step, status: 'done' },
+    ),
+    metrics: { ...result.run.metrics, outcome: 'partial' },
+  });
+  const frozenQa = structuredClone(result.run.qa);
+  const frozenSteps = structuredClone(result.run.steps.filter((step) => step.name !== 'complete'));
+  const replayed = await runReplayStep(
+    { runId: result.run.id, stepName: 'complete', triggeredBy: 'operator' },
+    () => {},
+  );
+  assert.equal(replayed.run.id, result.run.id);
+  assert.equal(replayed.run.ticketOrPr, 'Recorded iOS AC3 after two local passes');
+  assert.equal(replayed.run.steps.find((step) => step.name === 'complete')?.status, 'pending');
+  assert.deepEqual(replayed.run.qa, frozenQa);
+  assert.deepEqual(
+    replayed.run.steps.filter((step) => step.name !== 'complete'),
+    frozenSteps,
+  );
+  assert.equal(replayed.run.metrics.outcome, 'partial');
 });
 
 test('the trusted expectation is detached before asynchronous creation work', async () => {

@@ -12,6 +12,7 @@ import { makeRun } from './test-fixtures.js';
 
 let run: Run;
 let kind: 'making-progress' | 'idle' | 'unproven';
+let runWrites = 0;
 mock.module('../runners/run-progress.js', {
   namedExports: {
     readRunProgress: async () => ({ kind, activeRole: 'primary' }),
@@ -56,7 +57,10 @@ mock.module('../runs/store.js', {
   namedExports: {
     ...store,
     getRun: (id: string) => (run?.id === id ? run : undefined),
-    updateRun: (_id: string, patch: Partial<Run>) => Object.assign(run, patch),
+    updateRun: (_id: string, patch: Partial<Run>) => {
+      runWrites++;
+      return Object.assign(run, patch);
+    },
     updateRunStep: (_id: string, name: string, patch: Partial<Run['steps'][number]>) =>
       Object.assign(run.steps.find((step) => step.name === name)!, patch),
   },
@@ -101,5 +105,11 @@ for (const observed of ['making-progress', 'idle', 'unproven'] as const) {
     assert.equal(run.error, 'Evidence package unavailable');
     assert.equal(run.metrics.outcome, 'partial');
     assert.deepEqual(run.agentContexts, [context], 'no worker retirement on prerequisite refusal');
+    run.slotId = 'retained-slot';
+    const retained = structuredClone(run);
+    const beforeWrites = runWrites;
+    await startRun(run.id);
+    assert.equal(runWrites, beforeWrites, 'direct engine re-entry cannot settle or clean up');
+    assert.deepEqual(run, retained, 'retained failure, worker and slot are untouched');
   });
 }

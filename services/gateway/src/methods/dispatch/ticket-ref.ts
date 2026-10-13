@@ -91,9 +91,16 @@ export async function resolvePrRef(
  * allocation or task-file generation, with a message that lists accepted shapes.
  */
 export function validateTicketRef(normalized: string, flowType: string): void {
-  if (!normalized) {
-    throw new Error('ticketOrPr is required (paste a Jira key, PR number, or URL)');
+  if (!normalized.trim()) {
+    throw new Error(
+      flowType === 'qa'
+        ? 'QA requires a task title or change reference'
+        : 'ticketOrPr is required (paste a Jira key, PR number, or URL)',
+    );
   }
+  // QA owns its profile and scope separately from the human task title.
+  // Creation and in-place replay must accept the same stored reference.
+  if (flowType === 'qa') return;
   if (PR_BOUND_FLOW_TYPES.has(flowType as FlowType)) {
     if (!parseGitHubRef(normalized)) {
       const shown = normalized.length > 80 ? normalized.slice(0, 77) + '...' : normalized;
