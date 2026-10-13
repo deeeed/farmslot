@@ -155,6 +155,28 @@ framed lifecycle remains. Capture failure is an evidence/environment failure,
 not a product regression. Preserve usable partial footage and typed interruption;
 abort releases only owned processes/leases and staging.
 
+Trusted host diagnostics, execution/product provenance, recovery metadata, observer
+exports and human reports MUST finish before package validation. The engine is the
+only writer of `summary.json` and `artifact-manifest.json`. Hosts register sidecar
+entries and descriptive metadata through `RecipeRunRequest.finalizeArtifacts`,
+using `RecipeArtifactFinalization` from `@farmslot/recipe-runner`. The named consumer
+is the shared recipe-cli `run`/`call` host. Engine-owned status, counts, identity and
+artifact fields cannot be replaced by host annotations. Existing provider observers
+index a separate `observer-artifacts.json`; its entries join the canonical manifest
+before validation. No closeout step rewrites the validated package. These optional
+host bindings are experimental until the coordinated package release.
+
+The existing `@farmslot/recipe-cli/harness` closeout exports keep their jobs:
+`finishRunDiagnostics(baseline, context, classifier)`,
+`writeExecutionProvenance(artifactsDir, snapshots, drift, context?)`,
+`indexProductProvenanceArtifact(context, target, adapter, browser?)`,
+`writeRunReport(context)` and `writeViolationReport(context)` register with that
+same engine context. Standalone provenance failure records may omit the context;
+they do not modify a retained package manifest. Consumers of the former path-based
+signatures migrate in the coordinated breaking recipe-cli release. The `run`/`call`
+commands and provider `RunObserver.finalize(path?)` interface keep their existing
+arguments; the host supplies the observer sidecar path during closeout.
+
 Default UI policy records without author instructions, at ≤15 FPS and a 1080-pixel
 maximum edge. Explicit operator off requires a reason and appears at the gate.
 Headless state-only execution does not require video. Proposed performance

@@ -15,7 +15,7 @@ import type {
   ConsoleRecord,
   DiagnosticLevel,
 } from '@farmslot/adapter-sdk';
-import type { RecipeRunResult } from '@farmslot/recipe-runner';
+import type { RecipeArtifactFinalization, RecipeRunResult } from '@farmslot/recipe-runner';
 
 import { harnessAdapter } from './adapters.js';
 
@@ -237,9 +237,10 @@ function isRunDiagnosticsDocument(value: unknown): value is RunDiagnosticsDocume
 
 export async function finishRunDiagnostics<TAllowlist extends ConsoleAllowlist>(
   baseline: RunDiagnosticBaseline | null,
-  result: RecipeRunResult,
+  context: RecipeArtifactFinalization,
   classifier: ConsoleClassifier<TAllowlist>,
 ): Promise<RecipeRunEvidence> {
+  const { result } = context;
   if (!baseline) return result;
   try {
     const bufferedIssues = baseline.issueBuffer
@@ -247,7 +248,7 @@ export async function finishRunDiagnostics<TAllowlist extends ConsoleAllowlist>(
           baseline.issueBuffer.projectRoot,
         )
       : undefined;
-    const allowlist = classifier.loadAllowlist(recipeLibraryRoots(result.summaryPath, classifier));
+    const allowlist = classifier.loadAllowlist(recipeLibraryRoots(context.summary, classifier));
     const capture = baseline.capture ? await verifyConsoleCapture(baseline.capture) : undefined;
     const { diagnostics, rawAppLog } = collectRunDiagnosticsCapture(
       baseline,
@@ -263,8 +264,8 @@ export async function finishRunDiagnostics<TAllowlist extends ConsoleAllowlist>(
       path.join(artifactsDir, RAW_APP_LOG_ARTIFACT),
       redactDiagnosticText(rawAppLog.toString('utf8')),
     );
-    indexDiagnosticArtifact(result.artifactManifestPath);
-    indexDiagnosticSummary(result.summaryPath, diagnostics);
+    indexDiagnosticArtifact(context);
+    indexDiagnosticSummary(context, diagnostics);
 
     return {
       ...result,
@@ -572,52 +573,42 @@ function safeStat(filePath: string): fs.Stats | null {
   }
 }
 
-function indexDiagnosticArtifact(manifestPath: string): void {
-  const manifest = readJsonRecord(manifestPath);
-  if (!manifest) return;
-  const artifacts = Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
-  manifest.artifacts = [
-    ...artifacts.filter(
-      (artifact) =>
-        !isRecord(artifact) ||
-        !['diagnostics.json', RAW_APP_LOG_ARTIFACT].includes(String(artifact.path)),
-    ),
-    {
-      path: 'diagnostics.json',
-      type: 'json',
-      label: 'Run-scoped application diagnostics',
-      category: 'diagnostic',
-    },
-    {
-      path: RAW_APP_LOG_ARTIFACT,
-      type: 'log',
-      label: 'Redacted run-scoped application log slice',
-      category: 'diagnostic',
-    },
-  ];
-  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+function indexDiagnosticArtifact(context: RecipeArtifactFinalization): void {
+  context.register({
+    path: 'diagnostics.json',
+    type: 'json',
+    label: 'Run-scoped application diagnostics',
+    category: 'diagnostic',
+  });
+  context.register({
+    path: RAW_APP_LOG_ARTIFACT,
+    type: 'log',
+    label: 'Redacted run-scoped application log slice',
+    category: 'diagnostic',
+  });
 }
 
-function indexDiagnosticSummary(summaryPath: string, diagnostics: RunDiagnosticsDocument): void {
-  const summary = readJsonRecord(summaryPath);
-  if (!summary) return;
-  summary.sideFindings = {
-    status: diagnostics.status,
-    nonBlocking: true,
-    counts: diagnostics.counts,
-    diagnosticsPath: 'diagnostics.json',
-    appLogPath: RAW_APP_LOG_ARTIFACT,
-    appLogRedacted: true,
-  };
-  fs.writeFileSync(summaryPath, `${JSON.stringify(summary, null, 2)}\n`);
+function indexDiagnosticSummary(
+  context: RecipeArtifactFinalization,
+  diagnostics: RunDiagnosticsDocument,
+): void {
+  context.annotateSummary({
+    sideFindings: {
+      status: diagnostics.status,
+      nonBlocking: true,
+      counts: diagnostics.counts,
+      diagnosticsPath: 'diagnostics.json',
+      appLogPath: RAW_APP_LOG_ARTIFACT,
+      appLogRedacted: true,
+    },
+  });
 }
 
-// The run's recipe library roots (summary.json), where console allowlists live.
+// The engine's final summary supplies the recipe library roots for console allowlists.
 function recipeLibraryRoots(
-  summaryPath: string,
+  summary: RecipeArtifactFinalization['summary'],
   classifier: Pick<ConsoleClassifier<ConsoleAllowlist>, 'libraryRoots'>,
 ): string[] {
-  const summary = readJsonRecord(summaryPath);
   const libraries = isRecord(summary?.recipeLibraries) ? summary.recipeLibraries : null;
   const sources = Array.isArray(libraries?.sources) ? libraries.sources : [];
   const roots = sources
@@ -626,15 +617,6 @@ function recipeLibraryRoots(
     )
     .filter((root): root is string => Boolean(root));
   return roots.length ? roots : classifier.libraryRoots();
-}
-
-function readJsonRecord(filePath: string): Record<string, unknown> | null {
-  try {
-    const value: unknown = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    return isRecord(value) ? value : null;
-  } catch {
-    return null;
-  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

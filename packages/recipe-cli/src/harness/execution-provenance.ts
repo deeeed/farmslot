@@ -7,10 +7,9 @@ import fs, { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 
 import { digestRecipeDocument, type RecipeConformanceSource } from '@farmslot/protocol';
-import type { RecipeLibrarySource } from '@farmslot/recipe-runner';
+import type { RecipeArtifactFinalization, RecipeLibrarySource } from '@farmslot/recipe-runner';
 
 import { harnessAdapter } from './adapters.js';
-import { indexArtifactManifest } from './artifact-files.js';
 import { harnessHost } from './host.js';
 import { isPathWithin } from './paths.js';
 
@@ -167,7 +166,7 @@ export async function writeExecutionProvenance(
   artifactsDir: string,
   snapshots: ExecutionProvenanceSnapshot[],
   drift: ExecutionProvenanceDrift[],
-  artifactManifestPath?: string,
+  context?: RecipeArtifactFinalization,
 ): Promise<string> {
   const provenancePath = path.join(path.resolve(artifactsDir), 'execution-provenance.json');
   const record: ExecutionProvenanceRecord = {
@@ -178,21 +177,17 @@ export async function writeExecutionProvenance(
   };
   fs.mkdirSync(path.dirname(provenancePath), { recursive: true });
   fs.writeFileSync(provenancePath, `${JSON.stringify(record, null, 2)}\n`);
-  if (artifactManifestPath) {
-    // The one manifest upsert the harness has; a missing or unreadable
-    // manifest is the caller's error, not something to skip past.
-    await indexArtifactManifest(artifactManifestPath, [
-      {
-        path: 'execution-provenance.json',
-        type: 'json',
-        label: 'Execution provenance',
-        category: 'system',
-        metadata: {
-          valid: record.valid,
-          errorCode: record.valid ? null : 'PROVENANCE_DRIFT',
-        },
+  if (context) {
+    context.register({
+      path: 'execution-provenance.json',
+      type: 'json',
+      label: 'Execution provenance',
+      category: 'system',
+      metadata: {
+        valid: record.valid,
+        errorCode: record.valid ? null : 'PROVENANCE_DRIFT',
       },
-    ]);
+    });
   }
   return provenancePath;
 }

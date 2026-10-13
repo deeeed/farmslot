@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Keep the engine as the only summary and artifact-manifest writer; trusted hosts register closeout metadata and sidecars before package validation.
 
 ## 0.32.0 - 2026-10-13
 

@@ -18,8 +18,15 @@ import {
 import {
   type RecipeActionManifestDocument,
   type RecipeArtifactManifestDocument,
+  recipeTraceEntries,
 } from '@farmslot/protocol';
-import { createRecipeRunner, createStandardCoreAdapters } from '@farmslot/recipe-runner';
+import {
+  createRecipeRunner,
+  createStandardCoreAdapters,
+  type RecipeArtifactFinalization,
+  type RecipeRunResult,
+  type SummaryDocument,
+} from '@farmslot/recipe-runner';
 
 import {
   beginRunDiagnostics,
@@ -71,6 +78,40 @@ function tempRoot(prefix = 'recipe-cli-evidence-'): string {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   roots.push(root);
   return root;
+}
+
+// Helper unit tests use the engine's in-memory closeout contract, never a second file writer.
+function artifactContext(
+  result: Pick<RecipeRunResult, 'summaryPath' | 'tracePath' | 'artifactManifestPath'> &
+    Partial<RecipeRunResult>,
+): RecipeArtifactFinalization {
+  const summary = fs.existsSync(result.summaryPath)
+    ? (JSON.parse(fs.readFileSync(result.summaryPath, 'utf8')) as SummaryDocument &
+        Record<string, unknown>)
+    : ({} as SummaryDocument & Record<string, unknown>);
+  const manifest = JSON.parse(
+    fs.readFileSync(result.artifactManifestPath, 'utf8'),
+  ) as RecipeArtifactManifestDocument;
+  return {
+    artifactsDir: path.dirname(result.summaryPath),
+    result: result as RecipeRunResult,
+    summary,
+    trace: fs.existsSync(result.tracePath)
+      ? (recipeTraceEntries(
+          JSON.parse(fs.readFileSync(result.tracePath, 'utf8')),
+        ) as RecipeArtifactFinalization['trace'])
+      : [],
+    artifacts: () => manifest.artifacts,
+    register: (entry) => {
+      manifest.artifacts.push(entry);
+    },
+    annotateSummary: (metadata) => {
+      Object.assign(summary, metadata);
+    },
+    annotateManifest: (metadata) => {
+      Object.assign(manifest, metadata);
+    },
+  };
 }
 
 function fakeAdapter(id: string, extra: Partial<PlatformAdapter> = {}): PlatformAdapter {
@@ -727,7 +768,7 @@ describe('execution provenance', () => {
     workflow: { entry: 'done', nodes: { done: { action: 'end', status: 'pass' } } },
   };
 
-  test('writes the record without a manifest, and refuses a manifest it cannot read', async () => {
+  test('writes the record without a package, and surfaces registration failure', async () => {
     const artifactsDir = path.join(tempRoot(), 'artifacts');
     const provenancePath = await writeExecutionProvenance(artifactsDir, [], []);
     assert.deepEqual(JSON.parse(fs.readFileSync(provenancePath, 'utf8')), {
@@ -737,8 +778,12 @@ describe('execution provenance', () => {
       drift: [],
     });
     await assert.rejects(
-      writeExecutionProvenance(artifactsDir, [], [], path.join(artifactsDir, 'missing.json')),
-      /missing\.json/u,
+      writeExecutionProvenance(artifactsDir, [], [], {
+        register() {
+          throw new Error('finalization closed');
+        },
+      } as unknown as RecipeArtifactFinalization),
+      /finalization closed/u,
     );
   });
 
@@ -810,15 +855,19 @@ describe('execution provenance', () => {
     fs.mkdirSync(artifactsDir);
     const manifestPath = path.join(artifactsDir, 'artifact-manifest.json');
     fs.writeFileSync(manifestPath, '{"artifacts":[]}\n');
+    const context = artifactContext({
+      summaryPath: path.join(artifactsDir, 'summary.json'),
+      tracePath: path.join(artifactsDir, 'trace.json'),
+      artifactManifestPath: manifestPath,
+    });
     const provenancePath = await writeExecutionProvenance(
       artifactsDir,
       [start, end],
       executionProvenanceDrift(start, end),
-      manifestPath,
+      context,
     );
     assert.equal(JSON.parse(fs.readFileSync(provenancePath, 'utf8')).valid, false);
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-    assert.deepEqual(manifest.artifacts[0].metadata, {
+    assert.deepEqual(context.artifacts()[0].metadata, {
       valid: false,
       errorCode: 'PROVENANCE_DRIFT',
     });
@@ -1077,13 +1126,12 @@ describe('run diagnostics', () => {
     const artifactManifestPath = path.join(root, 'artifact-manifest.json');
     fs.writeFileSync(summaryPath, '{}\n');
     fs.writeFileSync(artifactManifestPath, '{"artifacts":[]}\n');
-    const result = await finishRunDiagnostics(
-      baseline,
-      { summaryPath, artifactManifestPath, tracePath: path.join(root, 'trace.json') } as Parameters<
-        typeof finishRunDiagnostics
-      >[1],
-      classifier,
-    );
+    const context = artifactContext({
+      summaryPath,
+      artifactManifestPath,
+      tracePath: path.join(root, 'trace.json'),
+    });
+    const result = await finishRunDiagnostics(baseline, context, classifier);
     const document = readRunDiagnosticsDocument(result.diagnosticsPath);
     assert.deepEqual(
       document?.findings.map((finding) => [finding.source, finding.preview]),
@@ -1095,12 +1143,12 @@ describe('run diagnostics', () => {
     assert.equal(document?.source.inAppBuffer, 'collected');
     assert.deepEqual(result.sideFindings?.counts.total, 2);
     assert.deepEqual(
-      JSON.parse(fs.readFileSync(artifactManifestPath, 'utf8')).artifacts.map(
-        (artifact: { path: string }) => artifact.path,
-      ),
+      context.artifacts().map((artifact) => artifact.path),
       ['diagnostics.json', 'diagnostics-app-log.txt'],
     );
-    assert.equal(JSON.parse(fs.readFileSync(summaryPath, 'utf8')).sideFindings.status, 'review');
+    assert.equal((context.summary.sideFindings as { status: string }).status, 'review');
+    assert.equal(fs.readFileSync(summaryPath, 'utf8'), '{}\n');
+    assert.equal(fs.readFileSync(artifactManifestPath, 'utf8'), '{"artifacts":[]}\n');
     assert.deepEqual(formatRunDiagnosticsForHuman(document, 'web').slice(0, 1), [
       `REVIEW — ${document?.note}`,
     ]);
@@ -1209,13 +1257,14 @@ describe('run report', () => {
   test('writes report.md under the host product name and indexes it', () => {
     const root = tempRoot();
     const files = runFiles(root);
-    const report = writeRunReport(files);
+    const context = artifactContext(files);
+    const report = writeRunReport(context);
     const text = fs.readFileSync(report.path, 'utf8');
     assert.match(text, /^# Shop Recipe Run\n\nStatus: pass\nDuration: 1\.5s\nNodes: 1\/1 passed/u);
     assert.deepEqual(report.preview, [
       'PASS read (state_read, 20ms): account=0x1234...5678, count=2',
     ]);
-    assert.deepEqual(JSON.parse(fs.readFileSync(files.artifactManifestPath, 'utf8')).artifacts[0], {
+    assert.deepEqual(context.artifacts()[0], {
       path: 'report.md',
       type: 'report',
       label: 'Human run report',
@@ -1275,7 +1324,7 @@ describe('run report', () => {
           ],
         }),
       );
-      return fs.readFileSync(writeRunReport(files).path, 'utf8');
+      return fs.readFileSync(writeRunReport(artifactContext(files)).path, 'utf8');
     };
     const lone = write([]);
     assert.match(lone, /\nStatus: evidence incomplete \(capture interrupted\)\n/u);
@@ -1318,18 +1367,20 @@ describe('run report', () => {
       }),
     );
     fs.writeFileSync(files.summaryPath, JSON.stringify({ status: 'fail', passed: 0, total: 2 }));
-    assert.equal(writeViolationReport(files), undefined);
+    assert.equal(writeViolationReport(artifactContext(files)), undefined);
     assert.equal(fs.existsSync(path.join(root, 'report.md')), false);
-    const report = writeViolationReport({
-      ...files,
-      captureInterruption: {
-        frames: 1,
-        mediaTimeMs: 1,
-        cause: 'x',
-        videoPath: 'v.mp4',
-        message: 'm',
-      },
-    });
+    const report = writeViolationReport(
+      artifactContext({
+        ...files,
+        captureInterruption: {
+          frames: 1,
+          mediaTimeMs: 1,
+          cause: 'x',
+          videoPath: 'v.mp4',
+          message: 'm',
+        },
+      }),
+    );
     assert.equal(report?.path, path.join(root, 'report.md'));
     assert.match(fs.readFileSync(report!.path, 'utf8'), /\nStatus: fail\n/u);
   });
@@ -1361,11 +1412,16 @@ describe('run report', () => {
       reason: 'the run drove several CDP ports (1, 2)',
     });
     const browser = executedBrowser('web', root, manifestPath, ['9222']);
-    indexProductProvenanceArtifact(manifestPath, root, 'web', browser);
-    const entry = JSON.parse(fs.readFileSync(manifestPath, 'utf8')).artifacts[0];
+    const context = artifactContext({
+      summaryPath: path.join(root, 'summary.json'),
+      tracePath: path.join(root, 'trace.json'),
+      artifactManifestPath: manifestPath,
+    });
+    indexProductProvenanceArtifact(context, root, 'web', browser);
+    const entry = context.artifacts()[0];
     assert.equal(entry.path, 'product-provenance.json');
-    assert.equal(entry.metadata.adapter, 'web');
-    assert.equal(entry.metadata.browser_version, '1');
+    assert.equal(entry.metadata?.adapter, 'web');
+    assert.equal(entry.metadata?.browser_version, '1');
     const provenance = JSON.parse(
       fs.readFileSync(path.join(root, 'product-provenance.json'), 'utf8'),
     );
