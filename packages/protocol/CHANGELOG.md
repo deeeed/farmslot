@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Define verified human claim-override receipts, selected-execution binding and shared review projections.
 - Validate enabled-state wait inputs through shared action relationships for recipe nodes and direct transports.
 
 - Treat file assertions as assertions for declared retry resolution; file-content proof still requires an executed non-blank expectation.

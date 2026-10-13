@@ -81,7 +81,10 @@ function loadBundledRun(bundleDir: string, runPath: string, manifest: RunBundleM
   }
   assertManifestEntryPathMatchesKey(runPath, meta);
   const filePath = resolvePathInsideRoot(path.resolve(bundleDir), runPath);
-  return JSON.parse(readFileSync(filePath, 'utf-8')) as Run;
+  const run = JSON.parse(readFileSync(filePath, 'utf-8')) as Run;
+  // Imported audit metadata cannot become this gateway's verified override authority.
+  delete run.claimOverrideReceipts;
+  return run;
 }
 
 function assertNoUnlistedFilesInBundleSubtree(

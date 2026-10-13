@@ -10,7 +10,7 @@ const {
   deterministicChecks,
 } = require('./worker-terminal-contract.cjs');
 const { SUBTASK_INDEX_REL, openSubtaskUnits } = require('./subtask-unit.cjs');
-const { acceptanceContractIssues } = require('./acceptance-ledger.cjs');
+const { acceptanceContractIssues, readAcceptanceLedger } = require('./acceptance-ledger.cjs');
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const workspaceProtocolRoot = path.resolve(packageRoot, '../protocol');
 
@@ -710,8 +710,21 @@ if (
   flags.has('--require-acceptance-status') ||
   (terminalCommand === 'complete' && !isReviewTerminal)
 ) {
+  let deferClaimVerdicts = false;
+  const ledger = readAcceptanceLedger(taskDir);
+  if (
+    terminalCommand === 'complete' &&
+    terminalContract?.claimReviewGate === true &&
+    ledger?.schemaVersion === 2
+  ) {
+    const { pendingClaimReviewIssues } = await import('./claim-review-gate.mjs');
+    const integrityIssues = await pendingClaimReviewIssues(taskDir, ledger);
+    issues.push(...integrityIssues);
+    deferClaimVerdicts = integrityIssues.length === 0;
+  }
   for (const issue of acceptanceContractIssues(taskDir, {
     allowWeak: terminalContract?.acceptance?.allowWeak === true,
+    deferClaimVerdicts,
   })) {
     issues.push(issue);
   }

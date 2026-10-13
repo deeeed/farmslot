@@ -101,6 +101,15 @@ No-change and self-review keep their existing outcome contracts. The legacy
 `acceptance.require` setting requests explicit checking from older callers;
 it cannot turn off current successful-completion enforcement.
 
+Schema-2 verdicts are engine-owned. Local `ac set` refuses every schema-2 change,
+including an actor-labelled untestable override. A gateway-generated
+`claimReviewGate` contract lets ordinary completion reach human review after the
+canonical SDK reader validates and binds the selected package. Unresolved verdicts
+still block approval. A credential-backed person uses `farmslot run gate <runId>
+--action mark-untestable --claim <id> --recipe-run <id> --reason <text>`; the gateway
+stores the receipt without changing engine or task bytes. Flows without a human
+review gate keep their refusal. See [verified claim overrides](recorded-run-evidence.md#verified-claim-overrides).
+
 `artifact-check` validates task closeout files. When recipe artifacts exist, `recipe-quality.json` must satisfy the shared `RecipeQualityArtifact` validator from `@farmslot/protocol`.
 
 `recipe-quality build` lets an agent provide the fields it knows after review — verdict, reasons, findings, suggested deltas, and proof metadata — and receive a complete `artifacts/recipe-quality.json` that passes the protocol validator. Use an input JSON file for nested findings/dimensions and repeated CLI flags for simple cases:

@@ -9,6 +9,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Use shared review-mode precedence for admission, retained reviewer sessions, instructions and recorded evidence; refuse unavailable WARM selections consistently.
 
 - Preserve exact worker pane identity when fix roles adopt or capture a conversation; completed-run cleanup recognizes only uniquely proven aliases and retains ownership and foreign-worker guards.
+- Bind task verdicts to the selected execution and record verified human untestable exceptions without changing engine evidence.
+
 - Keep stacked follow-up packages, cold reviews, description checks and PR targets on their ancestor's current base, including archived ancestors.
 - Resolve worker marking, artifact checks and acceptance guards from the connected node's runtime so dev tasks cannot use stale production helpers; report missing CI verification with its checker and contract paths.
 - Preserve typed media and timeline references when task recipe attempts live in nested artifact directories.

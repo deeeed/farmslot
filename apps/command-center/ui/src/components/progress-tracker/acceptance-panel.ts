@@ -38,6 +38,13 @@ export interface AcceptancePanelPresentation {
   hasOpenCriteria: boolean;
 }
 
+export interface AcceptanceClaimOverrideEditor {
+  claimId: string | null;
+  reason: string;
+  select: (id: string | null) => void;
+  change: (reason: string) => void;
+}
+
 export function acceptancePanelPresentation(
   ledger: AcceptanceStatusLedger,
   criteria: ReadonlyArray<AcceptanceCriterionRef> = ledger.criteria,
@@ -376,6 +383,8 @@ function renderRow(
   evidenceHref?: (evidencePath: string) => string,
   openEvidence?: (open: AcceptanceEvidenceOpen) => void,
   model?: EvidenceReviewModel,
+  markUntestable?: (id: string, reason: string) => void,
+  editor?: AcceptanceClaimOverrideEditor,
 ): TemplateResult {
   const criterion = view.status;
   // A registered criterion with no verdict yet is a row, not an absence: the panel
@@ -458,6 +467,42 @@ function renderRow(
           </div>`,
       )}
     ${criterion?.note ? html`<div class="ac-note">${criterion.note}</div>` : nothing}
+    ${criterion?.engineVerdict
+      ? html`<div class="ac-note">Engine verdict: ${criterion.engineVerdict}</div>`
+      : nothing}
+    ${markUntestable && model?.claimOverrideCandidate(view.id)
+      ? html`<div class="ac-note">
+          <button
+            type="button"
+            data-testid="claim-override-open"
+            @click=${() => editor?.select(view.id)}
+          >
+            Mark untestable
+          </button>
+          ${editor?.claimId === view.id
+            ? html`
+                <label
+                  >Reason
+                  <textarea
+                    data-testid="claim-override-reason"
+                    aria-label=${`Reason for ${view.id}`}
+                    .value=${editor.reason}
+                    @input=${(event: Event) =>
+                      editor.change((event.target as HTMLTextAreaElement).value)}
+                  ></textarea>
+                </label>
+                <button
+                  type="button"
+                  data-testid="claim-override-confirm"
+                  ?disabled=${!editor.reason.trim()}
+                  @click=${() => markUntestable(view.id, editor.reason)}
+                >
+                  Confirm untestable override
+                </button>
+              `
+            : nothing}
+        </div>`
+      : nothing}
   `;
 }
 
@@ -471,6 +516,8 @@ export function renderAcceptancePanel(
   ledger: AcceptanceStatusLedger,
   options: {
     evidenceModel?: EvidenceReviewModel;
+    markUntestable?: (id: string, reason: string) => void;
+    overrideEditor?: AcceptanceClaimOverrideEditor;
     showOccurrences?: boolean;
     openOccurrence?: (traceIndex: number) => void;
     evidenceHref?: (evidencePath: string) => string;
@@ -545,7 +592,16 @@ export function renderAcceptancePanel(
               evidence manifest unreadable: ${linksError}
             </div>`
           : nothing}
-        ${rows.map((row) => renderRow(row, options.evidenceHref, options.openEvidence, model))}
+        ${rows.map((row) =>
+          renderRow(
+            row,
+            options.evidenceHref,
+            options.openEvidence,
+            model,
+            options.markUntestable,
+            options.overrideEditor,
+          ),
+        )}
         ${model.packageStatus
           ? html`<div
               class="ac-package"

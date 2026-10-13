@@ -56,6 +56,7 @@ import {
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
   groupVisualArtifactPairs,
 } from '../../lib/artifact-url';
+import { requestClaimUntestableOverride } from '../../lib/claim-overrides';
 import { currentFarmConnection } from '../../lib/connection-authority';
 import { documentTitle, presentDecision } from '../../lib/decision-presentation';
 import { decisionResolveRequest } from '../../lib/decision-resolve';
@@ -611,6 +612,25 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     }, 10_000);
     return () => clearInterval(timer);
   }, [fetchTaskProgress, sourceRun]);
+  const markOutputClaimUntestable = async (claimId: string, reason: string) => {
+    const gate = sourceRun?.decisions.find(({ id }) => id === resolvedDecisionId);
+    const model = outputAcceptance.evidenceModel;
+    if (!client || !sourceRun || !gate || !model) return;
+    try {
+      const result = await requestClaimUntestableOverride(
+        client,
+        sourceRun.id,
+        gate,
+        model,
+        claimId,
+        reason,
+      );
+      setSourceRun(result.run);
+      refreshDecision();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error));
+    }
+  };
   const resolveAction = useCallback(
     (actionId: string, selectionData?: Record<string, unknown>) => {
       if (!client || !decision) return;
@@ -1640,6 +1660,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
             </Pressable>
             <TaskAcceptancePanel
               evidenceModel={outputAcceptance.evidenceModel}
+              onMarkUntestable={markOutputClaimUntestable}
               acceptanceStatus={outputAcceptance.acceptanceStatus}
               acceptanceCriteria={outputAcceptance.acceptanceCriteria}
               error={outputAcceptance.error}

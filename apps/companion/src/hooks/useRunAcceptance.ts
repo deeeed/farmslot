@@ -193,6 +193,7 @@ export function useRunAcceptance(
           criteria: acceptanceCriteria ?? undefined,
           evidenceLinks: acceptanceEvidenceLinks ?? undefined,
           package: evidence?.recordedEvidence?.input,
+          claimOverrideAuthority: evidence?.recordedEvidence?.claimOverrideAuthority,
           readErrors: evidence?.recordedEvidence?.errors,
           artifactPrefix: evidence?.recordedEvidence?.artifactPrefix,
           packagePath: evidence?.recordedEvidence?.packagePath,

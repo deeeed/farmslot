@@ -490,36 +490,26 @@ done
 # node's `+match <app>\t<window>` probe; 0.2.6 is the known-compatible release.
 # Raising the range is what makes a repeated install upgrade an old lock.
 echo "[deploy] writing standalone package.json..."
-if [[ "$REMOTE_OS" == "Darwin" ]]; then
-  run "cat > $REMOTE_DIR/package.json" << 'PKGJSON'
-{
-  "name": "@farmslot/node-standalone",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "ws": "^8.18.0",
-    "tsx": "^4.19.0",
-    "@siteed/capture-helper": "^0.2.6",
-    "@noble/hashes": "1.4.0"
+standalone_package_json="$(node - "$REPO_ROOT" "$REMOTE_OS" "$FARMSLOT_DEPS" <<'PKGJSON'
+const fs = require('node:fs');
+const path = require('node:path');
+const [root, platform, workspaces] = process.argv.slice(2);
+const read = (file) => JSON.parse(fs.readFileSync(path.join(root, file), 'utf8'));
+// Preserve the existing node-level pins; add missing external modules from bundled workspaces.
+const dependencies = {ws: '^8.18.0', tsx: '^4.19.0', '@noble/hashes': '1.4.0'};
+for (const pkg of [read('services/node/package.json'),
+  ...workspaces.trim().split('\n').map((line) => read(`packages/${line.split('\t')[1]}/package.json`))]) {
+  for (const [name, version] of Object.entries(pkg.dependencies ?? {})) {
+    if (name.startsWith('@farmslot/')) continue;
+    dependencies[name] ??= version;
   }
 }
+if (platform === 'Darwin') dependencies['@siteed/capture-helper'] = '^0.2.6';
+console.log(JSON.stringify({name: '@farmslot/node-standalone', version: '0.1.0',
+  private: true, type: 'module', dependencies}, null, 2));
 PKGJSON
-else
-  run "cat > $REMOTE_DIR/package.json" << 'PKGJSON'
-{
-  "name": "@farmslot/node-standalone",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "ws": "^8.18.0",
-    "tsx": "^4.19.0",
-    "@noble/hashes": "1.4.0"
-  }
-}
-PKGJSON
-fi
+)"
+run "cat > $REMOTE_DIR/package.json" <<< "$standalone_package_json"
 
 echo "[deploy] installing dependencies..."
 # Use yarn if available (with node-modules linker), otherwise npm

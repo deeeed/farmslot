@@ -6,8 +6,10 @@ import {
   type ArtifactRef,
   FLOW_WORKER_REPORT_ARTIFACTS,
   type Run,
+  runClaimOverrideSnapshotIdentity,
   type RunDecision,
   type RunOutput,
+  runOutputReviewEnabled,
 } from '@farmslot/protocol';
 
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
@@ -37,10 +39,7 @@ export function outputReviewDecisions(run: Run, output: RunOutput): RunDecision[
     output.workerFinished &&
     output.reportPath &&
     !output.captureError &&
-    run.completionPolicy === 'artifact-only' &&
-    run.lane !== 'comparison' &&
-    !run.engineState?.evalExperiment &&
-    !run.reviewWorkspace;
+    runOutputReviewEnabled(run);
   if (
     eligible &&
     prior.some(
@@ -193,6 +192,7 @@ export async function verifyRunOutputReview(
   runId: string,
   decisionId: string,
   allowReviewed = false,
+  expectedOverrideSnapshot?: string,
 ): Promise<Run> {
   const run = getRun(runId);
   const decision = run?.decisions.find((candidate) => candidate.id === decisionId);
@@ -207,6 +207,8 @@ export async function verifyRunOutputReview(
   const taskFile = run.taskFile;
   const generation = run.engineState?.generation;
   const expected = decision.payload.manifestDigest;
+  const overrideSnapshot = expectedOverrideSnapshot ?? runClaimOverrideSnapshotIdentity(decision);
+  assertOutputOverrideSnapshot(run, decisionId, overrideSnapshot);
   const reportPath = decision.payload.reportPath;
   if (
     path.isAbsolute(reportPath) ||
@@ -245,11 +247,32 @@ export async function verifyRunOutputReview(
     current.engineState?.generation !== generation
   )
     throw new Error('Output review changed while it was being checked');
+  assertOutputOverrideSnapshot(current, decisionId, overrideSnapshot);
   return current;
 }
 
-export async function acknowledgeRunOutput(runId: string, decisionId: string): Promise<Run> {
-  const current = await verifyRunOutputReview(runId, decisionId);
+export function assertOutputOverrideSnapshot(run: Run, decisionId: string, expected: string): void {
+  const decision = run.decisions.find((entry) => entry.id === decisionId);
+  if (!decision || runClaimOverrideSnapshotIdentity(decision) !== expected)
+    throw new Error(
+      'The claim override review changed. Refresh and confirm the current output snapshot.',
+    );
+}
+
+export function outputOverrideSnapshot(runId: string, decisionId: string): string {
+  const decision = getRun(runId)?.decisions.find((entry) => entry.id === decisionId);
+  if (decision?.payload?.kind !== 'output-review') throw new Error('Output review is unavailable');
+  return runClaimOverrideSnapshotIdentity(decision);
+}
+
+export async function acknowledgeRunOutput(
+  runId: string,
+  decisionId: string,
+  expectedOverrideSnapshot?: string,
+): Promise<Run> {
+  const expected = expectedOverrideSnapshot ?? outputOverrideSnapshot(runId, decisionId);
+  const current = await verifyRunOutputReview(runId, decisionId, false, expected);
+  assertOutputOverrideSnapshot(current, decisionId, expected);
   const decisions = current.decisions.map((entry) =>
     entry.id === decisionId
       ? { ...entry, resolvedAt: new Date().toISOString(), resolvedAction: 'mark-reviewed' }

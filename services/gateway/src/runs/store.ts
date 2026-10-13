@@ -262,8 +262,9 @@ async function ensureDir(): Promise<void> {
 /** Per-run write chain so background and awaitable persists cannot reorder renames. */
 const runPersistChains = new Map<string, Promise<void>>();
 
-async function persistBody(run: Run): Promise<void> {
+async function persistBody(run: Run, snapshot: Run = run, requireDurable = false): Promise<void> {
   if (isProductionRunsDir() && (isLeakedGatewayTestRun(run) || isSyntheticLeak(run))) {
+    if (requireDurable) throw new Error('Claim override requires a durable run record.');
     console.warn(
       `[run-store] refusing to persist leaked test fixture run ${run.id} to production .runs/`,
     );
@@ -280,12 +281,12 @@ async function persistBody(run: Run): Promise<void> {
   // Snapshot at write time so a later in-memory mutation cannot land an older
   // serialized body after a newer persistRunNow (chain still serializes, but
   // capture the object state this call intends to flush).
-  const payload = JSON.stringify(run, null, 2);
+  const payload = JSON.stringify(snapshot, null, 2);
   await writeFile(tmpPath, payload, {
     encoding: 'utf-8',
     ...(run.transport === 'native' ? { mode: 0o600 } : {}),
   });
-  if (run.transport === 'native') {
+  if (run.transport === 'native' || requireDurable) {
     const file = await open(tmpPath, 'r');
     try {
       await file.sync();
@@ -304,7 +305,7 @@ async function persistBody(run: Run): Promise<void> {
     return;
   }
   await rename(tmpPath, filePath);
-  if (run.transport === 'native') {
+  if (run.transport === 'native' || requireDurable) {
     const directory = await open(RUNS_DIR, 'r');
     try {
       await directory.sync();
@@ -353,6 +354,61 @@ export async function persistRunNow(run: Run, reason = 'explicit'): Promise<void
     );
     throw err;
   }
+}
+
+/** Commit the receipt before publishing its effective row. Shares the existing per-run write queue. */
+export async function commitRunClaimOverride(
+  id: string,
+  build: (run: Run) => import('@farmslot/protocol').ClaimUntestableOverrideReceipt,
+  assertCurrent: (run: Run) => void,
+  outputReceiptIds?: (snapshot: Run) => string[],
+): Promise<import('@farmslot/protocol').ClaimUntestableOverrideReceipt> {
+  let receipt: import('@farmslot/protocol').ClaimUntestableOverrideReceipt | undefined;
+  await enqueueRunWrite(id, async () => {
+    const run = runs.get(id);
+    if (!run) throw new Error('Run is unavailable');
+    assertCurrent(run);
+    receipt = build(run);
+    if (run.claimOverrideReceipts?.some((entry) => entry.id === receipt!.id)) return;
+    const receipts = [...(run.claimOverrideReceipts ?? []), receipt];
+    const snapshot: Run = { ...run, claimOverrideReceipts: receipts };
+    if (outputReceiptIds) {
+      const ids = outputReceiptIds(snapshot);
+      snapshot.decisions = run.decisions.map((decision) =>
+        decision.id === receipt!.decisionId && decision.payload?.kind === 'output-review'
+          ? { ...decision, payload: { ...decision.payload, claimOverrideReceiptIds: ids } }
+          : decision,
+      );
+    }
+    await persistBody(run, snapshot, true);
+    try {
+      assertCurrent(run);
+    } catch (error) {
+      // A decision/auth change during disk IO must not expose a stale receipt on restart.
+      await persistBody(run);
+      throw error;
+    }
+    run.claimOverrideReceipts = receipts;
+    if (outputReceiptIds) {
+      const projected = snapshot.decisions.find(
+        (decision) => decision.id === receipt!.decisionId,
+      )?.payload;
+      if (projected?.kind === 'output-review')
+        run.decisions = run.decisions.map((decision) =>
+          decision.id === receipt!.decisionId && decision.payload?.kind === 'output-review'
+            ? {
+                ...decision,
+                payload: {
+                  ...decision.payload,
+                  claimOverrideReceiptIds: projected.claimOverrideReceiptIds,
+                },
+              }
+            : decision,
+        );
+    }
+    updateRun(id, {});
+  });
+  return receipt!;
 }
 
 /**
@@ -1126,6 +1182,11 @@ export function recordAdoptedTmuxWorker(id: string, partial: Partial<Run>): Run 
 export function updateRun(id: string, partial: Partial<Run>, authorization?: symbol): Run {
   const run = runs.get(id);
   if (!run) throw new Error(`Run not found: ${id}`);
+  if (
+    'claimOverrideReceipts' in partial &&
+    !isDeepStrictEqual(partial.claimOverrideReceipts, run.claimOverrideReceipts)
+  )
+    throw new Error('Claim override receipts require the verified gateway writer');
   if (
     'reviewPublication' in partial &&
     !isDeepStrictEqual(partial.reviewPublication?.direct, run.reviewPublication?.direct)

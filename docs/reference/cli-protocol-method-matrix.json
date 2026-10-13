@@ -1507,6 +1507,11 @@
     "workGraph.retry": {
       "surface": "typed-command",
       "command": "farmslot graph retry"
+    },
+    "run.overrideClaim": {
+      "surface": "typed-command",
+      "note": "farmslot run gate --action mark-untestable records a verified human exception without resolving the gate.",
+      "command": "farmslot run gate --action mark-untestable"
     }
   }
 }

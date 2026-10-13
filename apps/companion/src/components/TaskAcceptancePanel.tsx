@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import type {
@@ -28,7 +28,9 @@ export function TaskAcceptancePanel({
   evidenceModel,
   showOccurrences,
   onOpenOccurrence,
+  onMarkUntestable,
 }: {
+  onMarkUntestable?: (id: string, reason: string) => void;
   evidenceModel?: EvidenceReviewModel | null;
   showOccurrences?: boolean;
   onOpenOccurrence?: (traceIndex: number) => void;
@@ -49,6 +51,8 @@ export function TaskAcceptancePanel({
     evidenceModel ?? undefined,
   );
   const [showDetails, setShowDetails] = React.useState(false);
+  const [overrideClaim, setOverrideClaim] = React.useState<string | null>(null);
+  const [overrideReason, setOverrideReason] = React.useState('');
   React.useEffect(() => setShowDetails(false), [evidenceModel]);
   const packageStatus = evidenceModel?.packageStatus;
   const [expanded, setExpanded] = React.useState(view.hasOpenCriteria || Boolean(error));
@@ -149,6 +153,44 @@ export function TaskAcceptancePanel({
                 ) : null}
               </View>
               <Text style={styles.text}>{criterion.text}</Text>
+              {criterion.status?.engineVerdict ? (
+                <Text style={baseStyles.textMuted}>
+                  Engine verdict: {criterion.status.engineVerdict} · {criterion.status.note}
+                </Text>
+              ) : null}
+              {onMarkUntestable && evidenceModel?.claimOverrideCandidate(criterion.id) ? (
+                <View>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => {
+                      setOverrideClaim(criterion.id);
+                      setOverrideReason('');
+                    }}
+                  >
+                    <Text style={styles.evidence}>Mark untestable</Text>
+                  </Pressable>
+                  {overrideClaim === criterion.id ? (
+                    <View>
+                      <TextInput
+                        accessibilityLabel={`Reason for ${criterion.id}`}
+                        testID="companion-claim-override-reason"
+                        style={styles.text}
+                        value={overrideReason}
+                        onChangeText={setOverrideReason}
+                        placeholder="Written reason"
+                      />
+                      <Pressable
+                        accessibilityRole="button"
+                        testID="companion-claim-override-confirm"
+                        disabled={!overrideReason.trim()}
+                        onPress={() => onMarkUntestable(criterion.id, overrideReason)}
+                      >
+                        <Text style={styles.evidence}>Confirm untestable override</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
               {review?.timing && review?.timing !== 'measured' ? (
                 <Text style={baseStyles.textMuted}>{review?.timing}</Text>
               ) : null}

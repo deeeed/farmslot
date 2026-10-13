@@ -7,6 +7,7 @@ import {
   digestRecipeDocument,
   type RecipeClaimDeclaration,
   type RecipeRecordingTimelineDocument,
+  recordedEvidenceClosureIdentity,
   type RecordedEvidencePackageInput,
 } from '@farmslot/protocol';
 
@@ -352,6 +353,53 @@ test('identical video bytes retain distinct original clocks and playback identit
   model.cueClip(1);
   assert.equal(model.playbackAt('first.mp4', 2_000).sourceChanged, false);
   assert.equal(model.playbackAt('next.mp4', 1_500).pause, true);
+});
+
+test('gateway override projection keeps original engine facts and refuses another closure', () => {
+  const pkg = qaPackage(1);
+  pkg.artifactDigests = Object.fromEntries(
+    (pkg.artifactPaths ?? []).map((file) => [
+      file,
+      pkg.artifactDigests[file] ?? `sha256:${createHash('sha256').update(file).digest('hex')}`,
+    ]),
+  );
+  const original = structuredClone(pkg.claims);
+  const claim = pkg.claims!.criteria[0]!;
+  const authority = {
+    runId: 'run',
+    recipeRunId: pkg.claims!.recipeRunId,
+    closureIdentity: recordedEvidenceClosureIdentity(pkg),
+    receipts: [
+      {
+        id: 'receipt',
+        runId: 'run',
+        decisionId: 'gate',
+        claimId: claim.id,
+        recipeRunId: pkg.claims!.recipeRunId,
+        closureIdentity: recordedEvidenceClosureIdentity(pkg),
+        priorVerdict: claim.verdict,
+        approver: { principalId: 'person', displayName: 'Reviewer', credentialId: 'credential' },
+        reason: 'Manual exception.',
+        overriddenAt: '2026-10-13T00:00:00Z',
+      },
+    ],
+  };
+  for (const context of ['gate', 'pr-preview', 'run-detail', 'artifact'] as const) {
+    const model = createEvidenceReviewModel({
+      context,
+      package: pkg,
+      claimOverrideAuthority: authority,
+    });
+    assert.deepEqual(model.errors, []);
+    assert.equal(model.claims[0]?.status?.verdict, 'untestable');
+    assert.equal(model.claims[0]?.status?.engineVerdict, 'proven');
+  }
+  assert.deepEqual(pkg.claims, original);
+  const changed = createEvidenceReviewModel({
+    package: pkg,
+    claimOverrideAuthority: { ...authority, closureIdentity: 'other' },
+  });
+  assert.equal(changed.claims[0]?.status?.verdict, 'proven');
 });
 
 test('ten QA cases and their checks use the same verified claim and occurrence navigation', () => {

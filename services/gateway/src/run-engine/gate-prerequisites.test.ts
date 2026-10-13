@@ -503,6 +503,23 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
   const valid = await check();
   assert.equal(valid.state, 'ready', JSON.stringify(valid.reasons));
   const retained = (await readRecordedEvidencePackage(directory)).input;
+  const staleLedger = await collectRunGateReadiness(run, prepared, {
+    ...sources,
+    acceptance: async () => ({
+      criteria: [{ id: declaration.id, text: declaration.claim }],
+      ledger: { ...claims, recipeRunId: 'different-attempt' },
+      issues: [],
+    }),
+    recordedEvidence: async () => [retained],
+  });
+  assert.ok(staleLedger.reasons.some((reason) => reason.code === 'evidence-execution-mismatch'));
+  assert.deepEqual(
+    gateActionsForReadiness(
+      [{ id: 'approve-publish' }, { id: 'approve-publish-evidence-attested' }, { id: 'hold' }],
+      staleLedger,
+    ),
+    [{ id: 'hold' }],
+  );
   // Older retained executions have valid v1 files but no automatic claim identity.
   // They may receive a human policy attestation, never invented moments/verdicts.
   const legacy = {
@@ -519,6 +536,24 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
   assert.equal(validateRecordedEvidencePackage(legacy).status, 'valid');
   const legacyGate = await collectRunGateReadiness(run, prepared, {
     ...sources,
+    acceptance: async () => ({
+      criteria: [{ id: declaration.id, text: declaration.claim }],
+      ledger: {
+        schemaVersion: 1,
+        criteria: [
+          {
+            id: declaration.id,
+            text: declaration.claim,
+            verdict: 'proven',
+            proofMode: 'state',
+            recipeNodes: [],
+            evidence: ['artifacts/proof/trace.json'],
+            updatedAt: invocation.startedAt,
+          },
+        ],
+      },
+      issues: [],
+    }),
     recordedEvidence: async () => [legacy],
   });
   assert.deepEqual(

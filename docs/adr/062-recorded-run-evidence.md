@@ -1,7 +1,7 @@
 # ADR-062: Recorded run evidence
 
 **Status:** Accepted
-**Revision:** Accepted amendments 1 and 2 consolidated on 2026-10-13; amendment 3 Accepted under #1011; amendment 4 Proposed. Historical/footprint implementation remains pending; curation delivery is recorded below.
+**Revision:** Accepted amendments 1 and 2 consolidated on 2026-10-13; amendment 3 Accepted under #1011; amendment 4 Accepted under #1015. Historical/footprint implementation remains pending; curation delivery is recorded below.
 **Date:** 2026-10-12
 **Owner:** Farmslot maintainers
 **Scope:** Recipe execution, claim evidence, review gates, and public CLI/SDK
@@ -341,7 +341,8 @@ pipeline. No parallel format, store, reader or client policy mapping is added.
 
 ## Amendment 4 (2026-10-13): Verified untestable overrides and selected execution
 
-**Status:** Proposed
+**Status:** Accepted, 2026-10-13
+**Approval:** Maintainer acceptance of [#1015](https://github.com/deeeed/farmslot/pull/1015).
 **Specification:** [Verified claim overrides](../reference/recorded-run-evidence.md#verified-claim-overrides).
 
 ### Decision
