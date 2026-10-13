@@ -143,7 +143,7 @@ A gateway or browser disconnect only ends its RPC connection.
 
 Set `FARMSLOT_NATIVE_STATE_DIR` to a stable private directory for each configured
 execution profile. The default is `native-sessions` beneath `FARMSLOT_HOME`, or
-`~/.farmslot/native-sessions` when no home override is configured. State directories
+the `.farmslot/native-sessions` directory under the current user's home when no home override is configured. State directories
 require mode 0700 and files use 0600. A hashed socket path under `/tmp` fits macOS
 limits. IPC uses a private random bearer token, distinct from provider credentials.
 Native authentication environment and configuration stay inherited locally;
