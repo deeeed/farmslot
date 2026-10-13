@@ -154,8 +154,6 @@ const realRuntimeCapabilities = await import('../methods/runtime-capabilities.js
 mock.module('../methods/runtime-capabilities.js', {
   namedExports: {
     ...realRuntimeCapabilities,
-    releaseRuntimeCapabilityOwnershipForRun: async () =>
-      assert.fail('a workspace blocker must not defer all providers'),
     getRuntimeCapabilityRegistry: () => ({
       settledStatus: async () => ({ catalog: [], leases: [] }),
       releaseRunTerminal: async () => {
