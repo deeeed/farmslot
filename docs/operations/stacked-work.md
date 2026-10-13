@@ -49,6 +49,18 @@ nodes must belong to the same project.
 
 If A merged before B started, B is an ordinary run from the default branch.
 
+## Retained standalone work, Proposed
+
+[ADR-040 Amendment 3](../adr/040-work-graph-orchestration.md#amendment-3-retained-run-stack-attachment) proposes attachment without re-dispatching completed work. The command below is unavailable until the amendment is accepted and implemented.
+
+Reuse the existing graph and upstream node. Add the retained run's backlog node and the same `published`/completion edges shown above, then verify the retained child HEAD:
+
+```sh
+farmslot graph attach-run <graphId> <nodeId> <runId> --expected-head <headSha>
+```
+
+Attachment preserves the task, code, evidence and worker binding. If `publicationRefreshRequired` is true, use the existing package refresh before approval. A refresh refusal remains a blocker; attachment grants no readiness and does not change evidence verdicts. See the [normative contract](../reference/stacked-work.md) for admission, idempotency and restart rules.
+
 ## Limits
 
 - Only dev and fix-bug runs stack; other flows on the node run as usual.

@@ -867,6 +867,44 @@ nodes, so the only base one slot can share with another is a branch pushed to or
 
 Operator steps: [Stacked work](../operations/stacked-work.md).
 
+## Amendment 3: retained-run stack attachment
+
+- **Date:** 2026-10-13
+- **Status:** Proposed. The base ADR and the shipped stacked-run amendment remain Accepted.
+- **Normative specification:** [Stacked work](../reference/stacked-work.md).
+
+### Decision
+
+Add `workGraph.attachRun` to bind an existing, unpublished dev or fix-bug root run to its backlog node in the existing graph. The node's `published` edge determines the upstream; the caller supplies the expected child HEAD, not a base branch or stack record. The gateway verifies the retained branch, repository, open upstream PR and Git ancestry, then records the existing graph links and `Run.stack` together.
+
+Attachment preserves the run ID, family, task, source, evidence, worker binding, steps and review budget. It does not dispatch or prepare work. An identical attachment is idempotent; a competing binding or unverifiable source refuses before writing.
+
+A prepared publication package must describe the run's current derived base. Attachment or retargeting can change that base at the same HEAD. Approval remains unavailable until the supported package refresh captures the new subject; earlier reviews retain their original subject and may become stale. Existing evidence and verdict requirements still apply. Artifact-only acceptance gates continue to use their retained execution package.
+
+### Rationale
+
+A worker can branch manually from an open PR while its run remains standalone. The code may be correct, but Farmslot cannot derive its publication base or maintain the stack. Re-dispatching that work creates another run and does not guarantee reuse of its proof. Attachment repairs the missing horizontal linkage through the authority that already owns it.
+
+### Public surface
+
+| Surface     | Proposed contract                                                                                            | Consumer                                               |
+| ----------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
+| Gateway RPC | `workGraph.attachRun` with `graphId`, `nodeId`, `runId`, `expectedHeadSha`                                   | Graph attachment CLI and typed gateway clients         |
+| CLI         | `farmslot graph attach-run <graphId> <nodeId> <runId> --expected-head <sha>`                                 | Operators recovering retained standalone work          |
+| SDK types   | `WorkGraphAttachRunParams`, `WorkGraphAttachRunResult`, `WorkGraphMethods.attachRun` in `@farmslot/protocol` | CLI and harnesses using the existing gateway transport |
+
+These are Proposed additive interfaces, enabled through the normal compatible protocol, CLI and gateway release after acceptance. Harnesses consume the same RPC and existing `Run.stack`; resource and recipe declaration contracts keep their current owners and formats.
+
+### Alternatives considered
+
+- Editing persisted run JSON bypasses source checks, concurrency fences and restart reconciliation.
+- Re-dispatching as a stacked node is the existing route for new work, but cannot promise preservation of this run and proof.
+- A separate publication-base flag would create another authority beside the graph's stack edge.
+
+### Consequences
+
+Existing stores and stack retargeting maintain attached runs. No task or evidence rewrite is needed. A base change may require a fresh review under the existing budget, even when code has not changed. Keep the stacked root retained until its upstream merge and retarget are recorded. Implementation and live proof follow acceptance of this amendment.
+
 ## Amendment: graph-owned planning retry (2026-10-13)
 
 **Status:** Proposed. Implementation scope is the approved graph-owned retry plan.
