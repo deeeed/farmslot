@@ -96,6 +96,10 @@ if (process.argv[2] === 'serve') {
     'services/gateway/src/run-engine/gate-prerequisites.ts',
     'services/gateway/src/run-engine/recorded-evidence-sources.ts',
     'services/gateway/src/run-completion/output.ts',
+    'services/gateway/src/run-completion/output-close.ts',
+    'services/gateway/src/run-engine/orchestrator.ts',
+    'services/gateway/src/run-lifecycle/step-status.ts',
+    'services/gateway/src/run-lifecycle/terminal-transition.ts',
     'services/gateway/src/run-completion/artifact-mirror.ts',
     'services/gateway/src/qa/completion.ts',
     'scripts/runner-validation/gateway/qa-output-evidence-gate.mts',
@@ -385,87 +389,184 @@ if (process.argv[2] === 'serve') {
       process.kill(process.pid, 'SIGTERM');
     if (process.env.FARMSLOT_QA_OUTPUT_PROOF_SIGNAL === 'SIGINT')
       process.kill(process.pid, 'SIGINT');
-    const stale = await replay();
-    if (negative === 'reader') assert.match(stale.error ?? '', /A prepared evidence package/);
-    else if (stale.error !== barrier) assert.match(stale.error ?? '', /Run output changed/);
-    checks.push(
-      stale.error === barrier
-        ? 'original complete captured QA package passes without a publication package'
-        : 'original stale inventory refuses without fabricating a publication package',
-    );
-    assert.equal((await rpc<{ ok: boolean }>('run.refreshMirror', { runId: run.id })).ok, true);
-    const refreshed = await readRun();
-    if (negative === 'mirror')
-      assert.notEqual(refreshed.output?.manifestDigest, original.output?.manifestDigest);
-    assert.equal(refreshed.decisions.at(-1)?.payload?.kind, 'output-review');
-    checks.push(
-      'public refreshMirror captures the declared output closure and bound output-review identity',
-    );
-    const ready = await replay();
-    assert.equal(
-      ready.error,
-      barrier,
-      'real gate and canonical QA checker must pass before the teardown barrier',
-    );
-    checks.push(
-      'registered task ACs and canonical QA cases pass with retained attempt history preserved',
-    );
-    if (!negative || negative === 'refresh-fence') {
-      writeFileSync(hold, 'hold');
-      await rpc('run.replayStep', { runId: run.id, stepName: 'complete' });
-      await waitFor(() => existsSync(checkpoint), 'gate reaches progress-await checkpoint');
-      const beforeFailedRefresh = await readRun();
-      writeFileSync(failTransfer, 'fail');
-      assert.equal((await rpc<{ ok: boolean }>('run.refreshMirror', { runId: run.id })).ok, false);
-      const failedRefresh = await readRun();
-      assert.equal(
-        failedRefresh.output?.manifestDigest,
-        beforeFailedRefresh.output?.manifestDigest,
+    if (process.env.FARMSLOT_RUN_STATE_PROOF === '1') {
+      await rpc('run.refreshMirror', { runId: run.id });
+      const activeCommand = randomUUID();
+      const acceptance = await native.sendWorker(
+        'legacy-env',
+        binding!,
+        activeCommand,
+        "Run exactly one shell command: node -e 'setTimeout(() => process.exit(0), 30000)'. Then reply READY. Do not read or change files.",
       );
-      assert.ok(failedRefresh.output?.captureError);
-      writeFileSync(release, 'release');
-      assert.match((await settleReplay()).error ?? '', /no longer owns/);
-      rmSync(hold);
-      rmSync(checkpoint);
-      rmSync(release);
-      rmSync(failTransfer);
+      json(path.join(out, 'active-command.json'), acceptance);
+      await waitFor(
+        async () =>
+          (await native.readWorker('legacy-env', binding!.sessionId, binding!.leaseId)).session
+            .state === 'running',
+        'real primary turn remains active',
+      );
+      const refused = await replay();
+      assert.match(refused.error ?? '', /Run work is still progressing/);
+      assert.equal(
+        (await native.readWorker('legacy-env', binding!.sessionId, binding!.leaseId)).session.state,
+        'running',
+        'pipeline refusal does not stop the worker',
+      );
+      await waitFor(
+        async () =>
+          (await native.readWorker('legacy-env', binding!.sessionId, binding!.leaseId)).session
+            .state === 'idle',
+        'real primary turn finishes naturally',
+      );
+      assert.equal(refused.status, 'failed', 'completion refusal settles the stopped pipeline');
+      assert.equal(refused.steps.find((step) => step.name === 'complete')?.status, 'failed');
+      assert.equal(
+        (await native.readWorker('legacy-env', binding!.sessionId, binding!.leaseId)).session.state,
+        'idle',
+      );
+      checks.push(
+        'public complete refusal leaves failed pipeline while preserving the real active worker',
+      );
+      const originalMetrics = structuredClone((await readRun()).metrics);
+      const originalSteps = structuredClone((await readRun()).steps);
+      const pending = (await readRun()).decisions.find(
+        (decision) => !decision.resolvedAt && decision.payload?.kind === 'output-review',
+      )!;
+      assert.ok(pending);
+      const acknowledged = await rpc<{ run: Run }>('run.resolveDecision', {
+        runId: run.id,
+        decisionId: pending.id,
+        actionId: 'mark-reviewed',
+      });
+      const close = acknowledged.run.decisions.find(
+        (decision) => !decision.resolvedAt && decision.payload?.kind === 'output-review',
+      );
+      assert.ok(close, 'acknowledgement keeps a visible close action');
+      assert.deepEqual(
+        close.actions.map((action) => action.id),
+        ['close-run'],
+      );
+      assert.deepEqual(acknowledged.run.metrics, originalMetrics);
+      await rpc('run.refreshMirror', { runId: run.id });
+      assert.equal(
+        (await readRun()).decisions.find((decision) => !decision.resolvedAt)?.id,
+        close.id,
+      );
+      const closed = await rpc<{ run: Run }>('run.resolveDecision', {
+        runId: run.id,
+        decisionId: close.id,
+        actionId: 'close-run',
+      });
+      assert.equal(closed.run.status, 'done');
+      assert.ok(closed.run.output?.closedAt);
+      assert.deepEqual(closed.run.metrics, originalMetrics);
+      assert.deepEqual(closed.run.steps, originalSteps);
+      assert.equal(
+        closed.run.decisions.some(
+          (decision) => !decision.resolvedAt && decision.payload?.kind === 'output-review',
+        ),
+        false,
+      );
+      json(path.join(out, 'acknowledged.json'), acknowledged);
+      json(path.join(out, 'closed.json'), closed);
+      checks.push(
+        'public acknowledgement retains close through refresh, then closes QA without verdict or step changes',
+      );
+    } else {
+      const stale = await replay();
+      if (negative === 'reader') assert.match(stale.error ?? '', /A prepared evidence package/);
+      else if (stale.error !== barrier) assert.match(stale.error ?? '', /Run output changed/);
+      checks.push(
+        stale.error === barrier
+          ? 'original complete captured QA package passes without a publication package'
+          : 'original stale inventory refuses without fabricating a publication package',
+      );
       assert.equal((await rpc<{ ok: boolean }>('run.refreshMirror', { runId: run.id })).ok, true);
+      const refreshed = await readRun();
+      if (negative === 'mirror')
+        assert.notEqual(refreshed.output?.manifestDigest, original.output?.manifestDigest);
+      assert.equal(refreshed.decisions.at(-1)?.payload?.kind, 'output-review');
       checks.push(
-        'failed public refresh preserves digest but retires the decision and refuses in-flight gate',
+        'public refreshMirror captures the declared output closure and bound output-review identity',
       );
-
-      writeFileSync(hold, 'hold');
-      await rpc('run.replayStep', { runId: run.id, stepName: 'complete' });
-      await waitFor(() => existsSync(checkpoint), 'gate is in flight before gateway restart');
-      const beforeRestart = await readRun();
-      assert.equal(beforeRestart.steps.find((step) => step.name === 'complete')?.status, 'running');
-      await stop(gateway);
-      rmSync(hold);
-      rmSync(checkpoint);
-      env.FARMSLOT_DISABLE_ORCHESTRATION = '0';
-      await startGateway();
-      const restarted = await settleReplay();
+      const ready = await replay();
+      if (process.env.FARMSLOT_RUN_STATE_PROOF === '1') {
+        assert.equal(ready.status, 'failed', 'completion refusal settles the stopped pipeline');
+        checks.push(
+          'public complete replay leaves failed status with complete failed and resources retained',
+        );
+      }
       assert.equal(
-        restarted.error,
+        ready.error,
         barrier,
-        'restart must re-evaluate the retained QA gate without a publication package',
+        'real gate and canonical QA checker must pass before the teardown barrier',
       );
-      assert.equal(restarted.output?.manifestDigest, beforeRestart.output?.manifestDigest);
       checks.push(
-        'gateway restart during gate re-evaluates the same retained execution/output identity',
+        'registered task ACs and canonical QA cases pass with retained attempt history preserved',
+      );
+      if (!negative || negative === 'refresh-fence') {
+        writeFileSync(hold, 'hold');
+        await rpc('run.replayStep', { runId: run.id, stepName: 'complete' });
+        await waitFor(() => existsSync(checkpoint), 'gate reaches progress-await checkpoint');
+        const beforeFailedRefresh = await readRun();
+        writeFileSync(failTransfer, 'fail');
+        assert.equal(
+          (await rpc<{ ok: boolean }>('run.refreshMirror', { runId: run.id })).ok,
+          false,
+        );
+        const failedRefresh = await readRun();
+        assert.equal(
+          failedRefresh.output?.manifestDigest,
+          beforeFailedRefresh.output?.manifestDigest,
+        );
+        assert.ok(failedRefresh.output?.captureError);
+        writeFileSync(release, 'release');
+        assert.match((await settleReplay()).error ?? '', /no longer owns/);
+        rmSync(hold);
+        rmSync(checkpoint);
+        rmSync(release);
+        rmSync(failTransfer);
+        assert.equal((await rpc<{ ok: boolean }>('run.refreshMirror', { runId: run.id })).ok, true);
+        checks.push(
+          'failed public refresh preserves digest but retires the decision and refuses in-flight gate',
+        );
+
+        writeFileSync(hold, 'hold');
+        await rpc('run.replayStep', { runId: run.id, stepName: 'complete' });
+        await waitFor(() => existsSync(checkpoint), 'gate is in flight before gateway restart');
+        const beforeRestart = await readRun();
+        assert.equal(
+          beforeRestart.steps.find((step) => step.name === 'complete')?.status,
+          'running',
+        );
+        await stop(gateway);
+        rmSync(hold);
+        rmSync(checkpoint);
+        env.FARMSLOT_DISABLE_ORCHESTRATION = '0';
+        await startGateway();
+        const restarted = await settleReplay();
+        assert.equal(
+          restarted.error,
+          barrier,
+          'restart must re-evaluate the retained QA gate without a publication package',
+        );
+        assert.equal(restarted.output?.manifestDigest, beforeRestart.output?.manifestDigest);
+        checks.push(
+          'gateway restart during gate re-evaluates the same retained execution/output identity',
+        );
+      }
+      const report = path.join(retained, ready.output!.reportPath!);
+      writeFileSync(report, readFileSync(report, 'utf8') + '\n');
+      assert.match((await replay()).error ?? '', /Run output changed/);
+      checks.push('changed report bytes refuse admission');
+      assert.equal((await rpc<{ ok: boolean }>('run.refreshMirror', { runId: run.id })).ok, true);
+      assert.equal((await replay()).error, barrier);
+      checks.push('supported mirror recapture restores checked admission');
+      assert.equal(
+        execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim(),
+        qaResult.source.headSha,
       );
     }
-    const report = path.join(retained, ready.output!.reportPath!);
-    writeFileSync(report, readFileSync(report, 'utf8') + '\n');
-    assert.match((await replay()).error ?? '', /Run output changed/);
-    checks.push('changed report bytes refuse admission');
-    assert.equal((await rpc<{ ok: boolean }>('run.refreshMirror', { runId: run.id })).ok, true);
-    assert.equal((await replay()).error, barrier);
-    checks.push('supported mirror recapture restores checked admission');
-    assert.equal(
-      execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim(),
-      qaResult.source.headSha,
-    );
     json(path.join(out, 'receipt.json'), {
       hashes,
       checks,

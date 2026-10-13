@@ -19,6 +19,7 @@ import {
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/config.js';
 import { SLOT_PHASE_RELEASING, SLOT_RELEASING_SINCE } from '../core/state.js';
 import { activeRunSlotIds } from '../methods/dispatch/slot-scoring.js';
+import { isCompletionPrerequisiteFailure, STEP_TO_STATUS } from '../run-lifecycle/step-status.js';
 import { runDecisionWaitingStatus, type RunProgressObservation } from '../runners/run-progress.js';
 import { isLeakedGatewayTestRun } from '../runs/test-run-leak.js';
 import { withSourcePlanning } from '../sources/runtime.js';
@@ -176,20 +177,6 @@ export interface RunRecoveryCollaborators {
   ) => Promise<PublicationReviewRecoveryResult>;
   replayHumanGate: (runId: string) => Promise<void>;
 }
-
-const STEP_TO_STATUS: Record<string, Run['status']> = {
-  [S.GRADE]: 'grading',
-  [S.WRITE_TASK]: 'writing-task',
-  [S.FIND_SLOT]: 'slot-finding',
-  [S.PREPARE]: 'preparing',
-  [S.DISPATCH]: 'dispatching',
-  [S.MONITOR]: 'monitoring',
-  [S.REVIEW]: 'reviewing',
-  [S.HUMAN_GATE]: 'human-gating',
-  [S.FINALIZE]: 'completing',
-  [S.COMPLETE]: 'completing',
-  [S.CI_WATCH]: 'ci-watching',
-};
 
 export async function markTerminalReviewArtifactOperatorRequired(
   deps: Pick<RunRecoveryCollaborators, 'updateRun' | 'getRun' | 'observeRunProgress'>,
@@ -1204,6 +1191,10 @@ export async function reconcileOrphanedSlots(deps: RunRecoveryCollaborators): Pr
     // Releasing fences above still use their existing bounded recovery path.
     const ownerId = await deps.readSlotField(slot.slot, 'current_run_id');
     const owner = typeof ownerId === 'string' ? deps.getRun(ownerId) : undefined;
+    if (owner && isCompletionPrerequisiteFailure(owner)) {
+      console.log(`[run-engine] reconcile: ${slot.slot} awaits completion gate recovery`);
+      continue;
+    }
     if (owner?.output?.closedAt && (owner.output.cleanupPending || owner.output.closeError)) {
       console.log(`[run-engine] reconcile: ${slot.slot} awaits closed-run resource cleanup`);
       continue;

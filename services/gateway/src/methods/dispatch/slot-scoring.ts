@@ -20,6 +20,7 @@ import {
 export { isDispatchScoreStale, SLOT_STALE_BRANCH_SCORE_PENALTY };
 
 import { SLOT_PHASE_RELEASING, SLOT_RELEASING_SINCE } from '../../core/index.js';
+import { isCompletionPrerequisiteFailure } from '../../run-lifecycle/step-status.js';
 
 import { JIRA_KEY_RE, normalizeTicketRef } from './ticket-ref.js';
 
@@ -59,7 +60,7 @@ export function isFreeSlot(slot: SlotStatus): boolean {
  * lives in the run engine so fleet refresh and dispatch cannot drift.
  */
 export function activeRunSlotIds(
-  runs: ReadonlyArray<Pick<Run, 'id' | 'slotId' | 'status' | 'park'>>,
+  runs: ReadonlyArray<Pick<Run, 'id' | 'slotId' | 'status' | 'park'> & Partial<Pick<Run, 'steps'>>>,
   excludeRunId?: string,
 ): Set<string> {
   return new Set(
@@ -69,13 +70,14 @@ export function activeRunSlotIds(
 
 /** Whether `run` occupies its slot, by the rule of {@link activeRunSlotIds}. */
 export function isActiveSlotHolder(
-  run: Pick<Run, 'id' | 'slotId' | 'status' | 'park'>,
+  run: Pick<Run, 'id' | 'slotId' | 'status' | 'park'> & Partial<Pick<Run, 'steps'>>,
   excludeRunId?: string,
 ): boolean {
   return (
     run.id !== excludeRunId &&
     Boolean(run.slotId) &&
-    !TERMINAL_RUN_STATUSES.includes(run.status as RunStatus) &&
+    (!TERMINAL_RUN_STATUSES.includes(run.status as RunStatus) ||
+      isCompletionPrerequisiteFailure(run)) &&
     !isSlotFreedByPark(run)
   );
 }
@@ -100,14 +102,16 @@ export function slotPinIsRequestOnly(
 }
 
 export function activeRunIds(
-  runs: ReadonlyArray<Pick<Run, 'id' | 'status'>>,
+  runs: ReadonlyArray<Pick<Run, 'id' | 'status'> & Partial<Pick<Run, 'steps'>>>,
   excludeRunId?: string,
 ): Set<string> {
   return new Set(
     runs
       .filter(
         (run) =>
-          run.id !== excludeRunId && !TERMINAL_RUN_STATUSES.includes(run.status as RunStatus),
+          run.id !== excludeRunId &&
+          (!TERMINAL_RUN_STATUSES.includes(run.status as RunStatus) ||
+            isCompletionPrerequisiteFailure(run)),
       )
       .map((run) => run.id),
   );

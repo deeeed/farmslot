@@ -47,8 +47,7 @@ export function outputReviewDecisions(run: Run, output: RunOutput): RunDecision[
         decision.payload?.kind === 'output-review' &&
         decision.payload.manifestDigest === output.manifestDigest &&
         decision.payload.reportPath === output.reportPath &&
-        (!decision.resolvedAt ||
-          ['mark-reviewed', 'close-run'].includes(decision.resolvedAction ?? '')),
+        (!decision.resolvedAt || decision.resolvedAction === 'close-run'),
     )
   )
     return decisions;
@@ -59,10 +58,17 @@ export function outputReviewDecisions(run: Run, output: RunOutput): RunDecision[
     }
   }
   if (!eligible || !output.reportPath) return decisions;
+  const reviewed = prior.some(
+    (decision) =>
+      decision.resolvedAction === 'mark-reviewed' &&
+      decision.payload?.kind === 'output-review' &&
+      decision.payload.manifestDigest === output.manifestDigest &&
+      decision.payload.reportPath === output.reportPath,
+  );
   decisions.push({
     id: randomUUID(),
     type: 'engine_output_review',
-    title: 'Review run output',
+    title: reviewed ? 'Close reviewed run output' : 'Review run output',
     description:
       'The worker has produced a report. Review its findings, gaps and evidence. Marking it reviewed does not approve a release, publish anything or change the worker outcome.',
     actions: [
@@ -73,13 +79,17 @@ export function outputReviewDecisions(run: Run, output: RunOutput): RunDecision[
         description:
           'Close finished execution and release its resources. Keep the recorded verdict and all coverage gaps; do not publish or approve a release.',
       },
-      {
-        id: 'mark-reviewed',
-        label: 'Mark reviewed',
-        style: 'secondary',
-        description:
-          'Acknowledge this exact report and evidence snapshot. The recorded verdict stays unchanged.',
-      },
+      ...(!reviewed
+        ? [
+            {
+              id: 'mark-reviewed',
+              label: 'Mark reviewed',
+              style: 'secondary' as const,
+              description:
+                'Acknowledge this exact report and evidence snapshot. The recorded verdict stays unchanged.',
+            },
+          ]
+        : []),
     ],
     createdAt: new Date().toISOString(),
     payload: {
@@ -278,7 +288,9 @@ export async function acknowledgeRunOutput(
       ? { ...entry, resolvedAt: new Date().toISOString(), resolvedAction: 'mark-reviewed' }
       : entry,
   );
-  const updated = updateRun(runId, { decisions });
+  const updated = updateRun(runId, {
+    decisions: outputReviewDecisions({ ...current, decisions }, current.output!),
+  });
   await persistRunNow(updated, 'output review acknowledged');
   return updated;
 }

@@ -19,7 +19,14 @@ import { isTerminalRunStatus, type Run } from '@farmslot/protocol';
  * every terminal transition publishes before it tears anything down, instead of
  * gating the terminal status on tmux teardown the way the engine used to.
  */
-export type RunTransitionKind = 'cancel' | 'complete' | 'fail' | 'block';
+export type RunTransitionKind =
+  | 'cancel'
+  | 'complete'
+  | 'fail'
+  | 'block'
+  | 'supersede'
+  | 'force-complete'
+  | 'output-close';
 
 /** Who asked for the transition. Consumers use this instead of re-deriving intent. */
 export type RunTransitionActor = 'operator' | 'engine' | 'recovery';

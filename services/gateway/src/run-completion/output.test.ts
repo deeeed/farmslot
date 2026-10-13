@@ -94,7 +94,13 @@ test('report review applies across projects and flows without changing outcome',
     assert.equal(outputReviewDecisions({ ...run, decisions }, output).length, 1);
     decisions[0].resolvedAt = new Date().toISOString();
     decisions[0].resolvedAction = 'mark-reviewed';
-    assert.equal(outputReviewDecisions({ ...run, decisions }, output).length, 1);
+    const acknowledged = outputReviewDecisions({ ...run, decisions }, output);
+    assert.equal(acknowledged.length, 2);
+    assert.deepEqual(
+      acknowledged[1].actions.map((action) => action.id),
+      ['close-run'],
+    );
+    assert.equal(outputReviewDecisions({ ...run, decisions: acknowledged }, output).length, 2);
     const changed = outputReviewDecisions(
       { ...run, decisions },
       { ...output, manifestDigest: 'new' },
@@ -225,7 +231,15 @@ test('partial output can be reviewed without resuming the worker; changed bytes 
   assert.equal(result.run.metrics.outcome, 'partial');
   assert.equal(result.run.steps[1].status, 'skipped');
   assert.ok(events.includes('run.decision.resolved'));
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  const close = result.run.decisions.find((decision) => !decision.resolvedAt)!;
+  assert.deepEqual(
+    close.actions.map((action) => action.id),
+    ['close-run'],
+  );
+  assert.equal(
+    result.run.decisions.find((decision) => decision.id === pending.id)?.resolvedAction,
+    'mark-reviewed',
+  );
   assert.equal(getRun(run.id)?.status, 'blocked');
   await writeFile(path.join(dir, 'artifacts/report.md'), '# Changed report\n');
   await captureRunOutput(run.id, false);
@@ -299,4 +313,52 @@ test('partial output can be reviewed without resuming the worker; changed bytes 
     decisionsBefore,
     'cancel does not introduce another gate',
   );
+});
+
+test('QA with every step done or skipped keeps close available after acknowledgement', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'qa-reviewed-output-'));
+  await mkdir(path.join(dir, 'artifacts'));
+  await writeFile(
+    path.join(dir, 'artifacts/qa-report.md'),
+    '# QA partial output\nUnproved criteria remain.\n',
+  );
+  const run = createRun({ flowType: 'dev', project: 'generic-project', ticketOrPr: 'QA-123' });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done' });
+    await deleteRun(run.id);
+    await rm(dir, { recursive: true, force: true });
+  });
+  updateRun(run.id, {
+    flowType: 'qa',
+    status: 'blocked',
+    taskFile: path.join(dir, 'TASK.md'),
+    completionPolicy: 'artifact-only',
+    completedAt: new Date().toISOString(),
+    metrics: { ...run.metrics, outcome: 'partial' },
+    steps: [
+      { name: 'monitor', status: 'done' },
+      { name: 'complete', status: 'skipped' },
+    ],
+  });
+  await captureRunOutput(run.id, false);
+  const initial = getRun(run.id)!;
+  const review = initial.decisions.find((decision) => !decision.resolvedAt)!;
+  const acknowledged = await runResolveDecision(
+    { runId: run.id, decisionId: review.id, actionId: 'mark-reviewed' },
+    () => {},
+  );
+  assert.equal(acknowledged.run.status, 'blocked');
+  const close = acknowledged.run.decisions.find((decision) => !decision.resolvedAt)!;
+  assert.deepEqual(
+    close.actions.map((action) => action.id),
+    ['close-run'],
+  );
+  const closed = await runResolveDecision(
+    { runId: run.id, decisionId: close.id, actionId: 'close-run' },
+    () => {},
+  );
+  assert.equal(closed.run.status, 'done');
+  assert.equal(closed.run.metrics.outcome, 'partial');
+  assert.deepEqual(closed.run.steps, initial.steps);
+  assert.equal(closed.run.decisions.filter((decision) => !decision.resolvedAt).length, 0);
 });

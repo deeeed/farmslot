@@ -2167,3 +2167,30 @@ test('restart does not complete a blocked pipeline that still had progressing or
     assert.equal(run.status, status);
   }
 });
+
+test('orphan reconcile retains failed completion resources after restart until operator recovery', async () => {
+  const owner = minimalActiveRun({
+    id: 'retained-completion',
+    status: 'failed',
+    slotId: 'retained-slot',
+    steps: [{ name: 'complete', status: 'failed', outputs: { gatePrerequisiteRefusal: {} } }],
+  });
+  const reset: string[] = [];
+  const deps = {
+    listRuns: () => ({ runs: [] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: owner.slotId, lifecycle: 'busy', phase: 'completing' }],
+    }),
+    isTerminalTeardownInFlight: () => false,
+    readSlotField: async () => owner.id,
+    getRun: () => owner,
+    resetSlot: async (slotId: string) => {
+      reset.push(slotId);
+    },
+  } as unknown as RunRecoveryCollaborators;
+  await reconcileOrphanedSlots(deps);
+  assert.deepEqual(reset, []);
+  owner.status = 'done';
+  await reconcileOrphanedSlots(deps);
+  assert.deepEqual(reset, [owner.slotId]);
+});

@@ -184,6 +184,25 @@ RPC/state/ownership receipts and visible HUD evidence where supported. Make a
 negative control fail before restoring each claimed behavior. No fixture-only
 result counts as live acceptance.
 
+## Pipeline settlement
+
+Pipeline entry and restart recovery MUST use the same step-to-status projection.
+A refused COMPLETE or FINALIZE prerequisite ends the pipeline as `failed`; it MUST
+NOT leave the run labelled `completing` after the step stops. This failure alone
+MUST NOT release a worker, slot or runtime whose shutdown is unconfirmed.
+Dispatch occupancy, orphan cleanup and automatic recovery MUST retain this failed
+gate for explicit operator recovery.
+
+Supersede, force-complete and output close use named ADR-053 transitions. Their
+single settled write precedes publication, awaited backlog settlement and graph
+scheduling. Resource release stays outside machine/run locks and checks ownership.
+Force-complete still refuses QA. Output close preserves the recorded verdict,
+step history and evidence, including partial or failed results.
+
+Acknowledging an output snapshot MUST retain a pending close-only action for that
+snapshot. Recapture of the same bytes keeps it; changed bytes require a new review.
+Acknowledgement does not approve proof, publish work or resume execution.
+
 ## Public surface
 
 | Interface                                                                                              | Owner and named consumers                                                                                                      |
