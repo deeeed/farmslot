@@ -11,7 +11,7 @@ import { farmslotRoot, type ProjectVars, type SlotVars } from '../core/config.js
 import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
 import { handleNodeResponse } from '../fleet/node-rpc.js';
 
-import { agentRuntimeCommandForSlot, agentRuntimeScriptForSlot } from './agent-runtime-script.js';
+import { agentRuntimeCommandsForSlot, agentRuntimeScriptForSlot } from './agent-runtime-script.js';
 import { markCommandForSlot } from './checklist-target.js';
 
 async function fixture(t: test.TestContext) {
@@ -105,8 +105,11 @@ test('worker commands execute the connected acceptance helper with an explicit t
       task: { acceptanceCriteria: ['The configured helper reads this task'] },
     }),
   );
-  const command = await agentRuntimeCommandForSlot(vars, 'ac');
+  const { AC_CMD: command, ARTIFACT_CHECK_CMD: artifactCheck } =
+    await agentRuntimeCommandsForSlot(vars);
   assert.ok(command.includes(roots[1]));
+  assert.ok(artifactCheck.includes(roots[1]));
+  assert.equal(requests.length, 1);
   const result = spawnSync('bash', ['-c', `${command} list --task-dir "$1"`, '_', taskDir], {
     cwd: root,
     encoding: 'utf8',

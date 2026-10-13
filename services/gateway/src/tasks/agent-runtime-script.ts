@@ -36,11 +36,11 @@ export async function agentRuntimeScriptForSlot(
   return script;
 }
 
-export async function agentRuntimeCommandForSlot(
+export async function agentRuntimeCommandsForSlot(
   vars: Pick<SlotVars, 'host' | 'machine'>,
-  command: 'ac' | 'artifact-check',
-): Promise<string> {
+): Promise<{ AC_CMD: string; ARTIFACT_CHECK_CMD: string }> {
   const script = await agentRuntimeScriptForSlot(vars, 'acceptance-cli.cjs');
   const entry = path.posix.join(path.posix.dirname(script), '..', 'bin', 'farmslot-agent.mjs');
-  return `node ${shellQuote(entry)} ${command}`;
+  const command = `node ${shellQuote(entry)}`;
+  return { AC_CMD: `${command} ac`, ARTIFACT_CHECK_CMD: `${command} artifact-check` };
 }
