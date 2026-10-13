@@ -5,6 +5,7 @@ import path from 'node:path';
 import { type ArtifactRef, type Run } from '@farmslot/protocol';
 
 import { getProjectField, inferArtifactPurpose } from '../core/index.js';
+import { contributionStack } from '../run-engine/diff-artifacts.js';
 import { loadProjectVarsOrNull } from '../run-engine/project-vars.js';
 
 import {
@@ -219,6 +220,16 @@ function stripExecutionPreamble(rawBody: string): string {
   return isExecutionPreamble ? lines.slice(summaryIndex).join('\n').trim() : rawBody.trim();
 }
 
+async function withStackParentLink(run: Run, body: string): Promise<string> {
+  const stack = await contributionStack(run);
+  if (!stack) return body;
+  const parent = stack.upstreamPrUrl
+    ? `[#${stack.upstreamPrNumber}](${stack.upstreamPrUrl})`
+    : `#${stack.upstreamPrNumber}`;
+  const line = `Stacked on ${parent}.`;
+  return body.includes(line) ? body : `${line}\n\n${body}`;
+}
+
 export async function buildDraftPrBody(
   run: Run,
   report: string | null,
@@ -238,7 +249,11 @@ export async function buildDraftPrBody(
     : ((await readTaskArtifactText(run, PR_PROSE_ARTIFACT)) ??
       (await readTaskArtifactText(run, PR_BODY_ARTIFACT)));
   if (existing?.trim()) {
-    return applyLocalEvidencePreview(run, stripExecutionPreamble(existing), artifacts);
+    return applyLocalEvidencePreview(
+      run,
+      await withStackParentLink(run, stripExecutionPreamble(existing)),
+      artifacts,
+    );
   }
   const publishableArtifacts = artifacts.filter(
     (artifact) => !isPublicationGateMetadataArtifact(artifact.path),
@@ -256,5 +271,5 @@ export async function buildDraftPrBody(
     '',
     '<!-- Published by Farmslot after human approval. -->',
   ].join('\n');
-  return applyLocalEvidencePreview(run, body, artifacts);
+  return applyLocalEvidencePreview(run, await withStackParentLink(run, body), artifacts);
 }
