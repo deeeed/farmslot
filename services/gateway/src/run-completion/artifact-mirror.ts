@@ -328,7 +328,12 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
       }
     }
   }
-  const namedPaths = [...manifestPaths, ...citedPaths, ...outputPaths];
+  const namedPaths = [
+    ...manifestPaths,
+    ...referencedRecipeRunRoots(manifestPaths),
+    ...citedPaths,
+    ...outputPaths,
+  ];
   const snapshotRoot = promotedPointer?.relativeArtifactRoot ?? null;
   const scan = workerArtifactsExist
     ? await scanPublishPackage(vars, workerArtifactsDir, {
@@ -408,13 +413,6 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
   }
   // Defensive cleanup for stale local mirrors created before screenshots/ was excluded.
   await removeStaleArtifactDirectory(path.join(localArtifactsDir, 'screenshots'));
-  copied += await copyEvidenceManifestReferencedArtifacts(
-    vars,
-    workerArtifactsDir,
-    localArtifactsDir,
-    await readEvidenceManifest(run),
-    transferMeta,
-  );
   if (promotedPointer) {
     const promotedLocalRoot = path.join(localArtifactsDir, promotedPointer.relativeArtifactRoot);
     // Promoted snapshot copy failures also reject so callers never publish a
@@ -435,13 +433,22 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
   } else if (clearLocalRecipeRuns) {
     await removeStaleArtifactDirectory(path.join(localArtifactsDir, 'recipe-runs'));
   }
+  // Snapshot cleanup excludes the raw spool; restore the selected originals
+  // afterward so those explicit references survive that cleanup.
+  copied += await copyEvidenceManifestReferencedArtifacts(
+    vars,
+    workerArtifactsDir,
+    localArtifactsDir,
+    await readEvidenceManifest(run),
+    transferMeta,
+  );
   if (copied > 0) {
     console.log(`[run-completion] copied ${copied} artifact(s) from worker`);
   }
 
   // Assumption: recipe-runs are only pruned after the promoted snapshot is copied,
   // and readers should tolerate a brief overlap while stale entries are removed.
-  await pruneRecipeRunHistory(localArtifactsDir);
+  await pruneRecipeRunHistory(localArtifactsDir, namedPaths);
 
   // Drop the live-recipe-context caches whether or not we copied — pruneRecipeRunHistory
   // can delete recipe-runs/<id>/summary.json + recipe.json even when copy was a no-op
@@ -550,7 +557,22 @@ export async function mirrorWorkerSubtasks(
   return copied;
 }
 
-export async function pruneRecipeRunHistory(localArtifactsDir: string): Promise<void> {
+function referencedRecipeRunRoots(paths: readonly string[]): string[] {
+  return [
+    ...new Set(
+      paths.flatMap((value) => {
+        const normalized = normalizeEvidenceManifestArtifactPath(value, { mediaOnly: false });
+        if (!normalized?.startsWith('artifacts/recipe-runs/')) return [];
+        return [normalized.split('/').slice(1, 3).join('/')];
+      }),
+    ),
+  ];
+}
+
+export async function pruneRecipeRunHistory(
+  localArtifactsDir: string,
+  retainedPaths: readonly string[] = [],
+): Promise<void> {
   const pointerPath = path.join(localArtifactsDir, 'latest-valid-recipe-run.json');
   if (!existsSync(pointerPath)) return;
 
@@ -571,6 +593,7 @@ export async function pruneRecipeRunHistory(localArtifactsDir: string): Promise<
   }
 
   const keepRunId = pointer.runId;
+  const retainedRoots = new Set(referencedRecipeRunRoots(retainedPaths));
   const recipeRunsDir = path.join(localArtifactsDir, 'recipe-runs');
   if (!existsSync(recipeRunsDir)) return;
   const keepRunPath = path.join(recipeRunsDir, keepRunId);
@@ -585,7 +608,7 @@ export async function pruneRecipeRunHistory(localArtifactsDir: string): Promise<
   const entries = await readdir(recipeRunsDir).catch(() => []);
   await Promise.all(
     entries
-      .filter((entry) => entry !== keepRunId)
+      .filter((entry) => entry !== keepRunId && !retainedRoots.has(`recipe-runs/${entry}`))
       .map(async (entry) => {
         const entryPath = path.join(recipeRunsDir, entry);
         const stats = await lstat(entryPath).catch(() => null);

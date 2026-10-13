@@ -268,6 +268,66 @@ farmslot-recipe run perps.smoke --describe --adapter mobile
 
 Prefer an existing recipe, then an existing action. Add a shared recipe only when reuse removes repeated inference or enforces a safety invariant.
 
+### Amendment 4: enabled-state waits
+
+Status: Accepted under [ADR-034 amendment 4](../adr/034-recipe-protocol-v1.md#amendment-4-enabled-state-waits-2026-10-12). Approved on 2026-10-13; this section is normative.
+
+#### Public surface
+
+The existing `ui.wait_for` action gains optional boolean `enabled`. Recipes and `farmslot recipe call ui.wait_for` use existing catalog parameters; `farmslot recipe run --plan` validates resolved invocations without device effects. No action alias, CLI flag, evidence format or SDK callback is added.
+
+`@farmslot/protocol` owns the input rules. `@farmslot/recipe-runner` extends its CDP page wait options and transport. `@farmslot/adapter-rn` extends its existing Agent Device snapshot wait. MetaMask Mobile selects that native path for this parameter; Extension uses the shared CDP path. Provider manifests MUST expose the field only after pinning supporting runtime releases. Unsupported catalogs MUST reject it at planning. A declared backend whose actual hierarchy cannot report state MUST refuse at runtime, never substitute a guess.
+
+#### Inputs and planning
+
+- `enabled`, when supplied, MUST resolve to a boolean. Without it, existing wait behavior and result fields MUST remain unchanged.
+- The request MUST name one exact target using `selector`, `test_id` or the existing `testID` alias supported by that backend. Conflicting aliases or selector-plus-test-ID requests MUST fail. Text targeting alongside `enabled` is unsupported and MUST fail; it must not select another element by page-wide text.
+- When `enabled` is supplied, `expected` MUST explicitly be `present` or `visible`. Protocol validation MUST reject the `visible` and `hidden` aliases on that request rather than relying on provider-only normalization. Calls without `enabled` retain their existing aliases and defaults. Absent, hidden and not-present requests cannot assert a control's enabled state.
+- Planning MUST reject invalid statically resolved inputs, including recipe defaults and called-recipe parameters, before setup or provider effects. Output-dependent values remain deferred until immediately before this node's observation, using the same rules. Planning MUST NOT query the UI to determine whether a particular control exists or which state it has.
+- Supporting manifests declare `enabled` as boolean. A manifest without it is unsupported even if a different transport happens to accept the field. Normal manifest/handler conformance remains authoritative.
+
+#### Observation
+
+The existing backend wait MUST require both the presence/visibility condition and observed enabled state to match in the same poll. It MUST use the same selected page or native target as other actions in the run.
+
+- Zero matching controls means the condition is unmet, including for `enabled: false`.
+- More than one matching control is ambiguous and MUST fail without choosing the first or combining their states. Even two controls with equal states are not one identified control.
+- A matched control whose backend cannot determine enabled state MUST fail as unsupported. Missing native fields MUST NOT become `true` through a default or boolean coercion.
+- CDP MUST use its existing deep selector traversal and visibility checks. For a native HTML control, effective disabled state includes HTML `:disabled` semantics and `aria-disabled="true"` on the target or an applicable ancestor. For an ARIA interactive control, explicit/default ARIA disabled semantics apply. A target with neither control semantics nor a reliable enabled property MUST refuse instead of treating an arbitrary container as enabled.
+- Native accessibility MUST accept enabled state only with backend provenance that establishes it was observed. On iOS, require `snapshotQuality` identifying the tree or queries backend with non-sparse quality; private-ax, sparse or missing-quality snapshots MUST refuse as unknown state because private-ax can replace a missing value with `true`. On Android, require an explicit boolean parsed from the XML enabled attribute. Adapter structural types MUST retain the optional `enabled` and `snapshotQuality` fields needed for these checks. The selected node's value MUST NOT be inferred from text, opacity, a successful press or a missing field. Opaque builds may support this when qualified native data is available.
+- Snapshot truncation that prevents proving target uniqueness MUST refuse. A ranked locator suggestion list is not a complete target query.
+
+The action MUST retain the existing authored timeout and backend polling cadence. It MUST not restart the wait budget after a mismatch or extend it for this predicate. Cancellation MUST stop further probes and release action-owned handles through the existing transport cleanup; recipe teardown remains engine-owned. Observation MUST NOT press, focus, scroll, mutate UI state, reconnect, reload or start a runtime.
+
+Success retains the backend's existing result and adds `enabled` with the observed boolean. Timeout reports the unmet condition and last available state. A contrary state is an assertion failure, not unsupported. Duplicate targets, unknown state and transport errors remain distinct diagnostics.
+
+#### Evidence
+
+An enabled wait is still `ui.wait_for` under ADR-062. It can prove state only when the existing source, execution and eligible-assertion rules admit it. Declaring `enabled: false` is not proof of a hidden or missing control. Visual or mixed claims still require their own captured evidence and recorded visual judgment. A refused press does not replace this assertion.
+
+```json
+{
+  "action": "ui.wait_for",
+  "test_id": "submit-order",
+  "expected": "visible",
+  "enabled": false,
+  "timeout_ms": 2000,
+  "intent": "The submit control remains disabled while required input is missing",
+  "next": "done"
+}
+```
+
+#### Implementation ownership and acceptance
+
+- Protocol `src/recipe/document.ts`: add the conditional input relationships to the existing validator, with root/default/called and deferred-value cases. Reuse existing parameter resolution.
+- Runner `src/runtime/cdp.ts`: extend existing target selection, wait predicate, returned state and transport forwarding. Share any disabled-state derivation used by touched observation code; do not add a second DOM walker or wait engine.
+- React Native adapter `src/agent-device-ui-transport.ts`: extend the existing snapshot matching/wait path and its cancellation cleanup, preserving calls without the new predicate.
+- MetaMask `src/adapters/mobile/actions.ts` and its native transport wrapper: route enabled waits to the existing native execution path. Update Mobile/Extension action manifests, public recipe examples and relevant discovery contracts. Preserve closed enabled-state work until its useful cases are reconciled with these owners.
+
+Default tests MUST cover disabled and enabled transitions, absent targets, duplicates, unknown native state, inherited HTML disabled behavior, malformed and called inputs, cancellation and compatibility without `enabled`. New tests stay below five seconds with no fixed wait of one second or more.
+
+Live public-CLI proof MUST exercise a real Extension control and a real Mobile control in both states, a contrary-state refusal, visible HUD evidence and authored cleanup. Do not enter secrets merely to toggle a control; prefer non-financial forms and preserve borrowed state. Disabling or bypassing the predicate in an isolated candidate MUST make its negative control fail. Supporting packages publish before provider dependency pins are raised; release review and registry verification remain separate gates.
+
 ## Libraries
 
 ```text

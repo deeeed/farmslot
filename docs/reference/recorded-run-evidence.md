@@ -32,6 +32,21 @@ The HUD uses traced intent. Remove independent publication `covers`, stored AC
 clock values and separate HUD captions; clients derive them from the claim/trace
 relationship. Internal validation dependencies are not automatically public.
 
+An artifact package MUST belong to one execution attempt. Preflight and execution
+MUST refuse an existing recipe package before replacing files or starting capture
+or actions, including failed and partial attempts. A rerun uses a fresh artifact
+directory and leaves prior package and publication-reference bytes unchanged.
+Task wrappers allocate fresh attempts and return their actual directory. The
+existing version-1 `latest-valid-recipe-run.json` selects a retained successful
+attempt for task checks; publication still freezes that selection and its bytes.
+`@farmslot/protocol/recipe` owns `LatestValidRecipeRunPointer` and its shared
+`sanitizeLatestValidRecipeRunPointer` helper for gateway and task-check consumers.
+Media selection references original attempt paths rather than overwriting copies.
+The Node `@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs` helper owns
+task selection IO for the CLI and wrappers. Its read/write exports use that
+version-1 contract and are versioned with the runtime package; they grant no
+publication admission.
+
 ## Claim registration and verdicts
 
 Extend the existing `proofTargets` declaration with claim kind, optional parent
@@ -302,10 +317,10 @@ The existing document viewers render that checked text and the same case/check
 controls used at the gate. Publication, visual-judgment persistence and resource
 qualification remain separate completion gates for this feature.
 
-## Proposed amendment: historical review, chapters and footprint
+## Accepted amendment: historical review, chapters and footprint
 
-Status: Proposed, 2026-10-12. The requirements below become normative when this
-amendment is accepted. They add no capture clock or accuracy contract.
+Status: Accepted, 2026-10-13. These requirements define the approved end state;
+implementation remains pending. They add no capture clock or accuracy contract.
 
 ### Completed review binding
 
@@ -414,5 +429,107 @@ Its normative [review curation specification](review-curation-and-results.md)
 defines reviewed-source reads, payload fingerprints, immutable accepted payloads,
 selected finding publication and read-only saved results. Existing protocol
 projections and native viewers are shared. This contract retains its own accepted
-status and shipping PRs; it does not accept or implement the Proposed
-completed-evidence/storage proposal in [#967](https://github.com/deeeed/farmslot/pull/967).
+status and shipping PRs. The historical-review/footprint design in
+[#967](https://github.com/deeeed/farmslot/pull/967) has separate acceptance and
+pending implementation.
+
+## Evidence gate policy
+
+Status: Proposed, 2026-10-13, ADR-062 Amendment 3. These requirements become
+normative on design acceptance. They change publication policy, not recording
+contracts or artifact-only output-review authority.
+
+### Integrity and policy findings
+
+The gateway MUST first load and validate the selected frozen input closure using
+the canonical reader and validator. Unreadable/missing inputs, invalid structure,
+digest mismatch, replaced bytes and tampering MUST block every publish action.
+Legacy display access MUST NOT become machine-validated evidence.
+
+The same evaluator MUST expose typed policy findings separately: disallowed claim
+verdict, criterion text binding, expected-baseline applicability, or non-recipe
+criterion binding. Clients MUST consume this shared classification rather than
+parse messages. Unknown failures are non-bypassable. Code review, CI, source,
+publication selection and other gate prerequisites retain their existing policy.
+
+### Human attested approval
+
+`approve-publish-evidence-attested` MUST be offered only for an unresolved human
+publish gate with valid integrity and at least one eligible policy finding.
+The existing gate UI MUST show the findings and require a reason before its
+explicit confirmation; the CLI MUST require `--reason <text>` for this action.
+Empty/whitespace-only reasons MUST be refused.
+
+The gateway MUST resolve current person identity, active credential and publish
+authority from trusted ingress context, then recheck them at consumption.
+Service/node identities, automatic resolution, direct background calls and the
+synthetic solo-mode person MUST be refused even with a reason. Client kind,
+client-supplied actor and runner name confer no human authority. Operator
+credentials MUST NOT be delegated to workers or lanes.
+
+Before publication, persist the reason, trusted approver identity, time, run and
+decision IDs, frozen package/manifest identity, selected evidence and waived
+typed policy findings in the existing decision/run provenance. The persisted
+receipt MUST render in the PR body through the normal publication pipeline and
+remain visible through refresh. Never copy credential secrets into the receipt.
+
+Consumption MUST revalidate the decision and exact package after awaits; a
+refresh, selection or input change invalidates the attestation. Refusal leaves
+the gate unresolved. Attestation MUST NOT rewrite trace, claims, task ledger,
+media or machine readiness into successful proof. It waives only the recorded
+policy findings; integrity and unrelated prerequisites still block.
+
+### Normal applicability and binding
+
+1. **Expected baseline.** A task-declared baseline binds an exact selected
+   execution and qualified assertion occurrence to an expected failure. It
+   satisfies that baseline expectation only when the trace fails at that
+   occurrence, with no unexpected earlier/additional failure or interrupted
+   capture. A directory name or failing summary alone is insufficient. Preserve
+   the failed summary and missing later claims; a separate passing execution
+   must satisfy the implementation's positive claims. Freeze the declaration
+   with the existing gate evidence inputs, not in a new evidence store.
+2. **Retained inspection.** A schema-v1 task ledger's inspected `proven` row may
+   satisfy a schema-v2 visual/mixed claim's `awaiting-review` policy only when
+   registered ID/text and cited evidence bind to the same selected execution's
+   frozen closure. No evidence or a different attempt cannot bridge the verdict.
+   Keep the original schema-v2 verdict and the legacy review source visible;
+   this migration rule does not restore a second normal verdict writer.
+3. **Criterion text.** Match registered IDs using the shared claim-ID normalizer.
+   Trim/collapse whitespace and remove only a leading `AC<n>:` label whose ID
+   matches that criterion. The remaining text MUST match exactly. Do not ignore
+   changed meaning, a different AC label or mismatched IDs.
+4. **Non-recipe proof.** Task-declared unit/revert-test evidence may satisfy its
+   applicable state criterion through its retained successful result and checked
+   citations. Do not require a fabricated recipe claim. Missing/failed results,
+   uncited files or unit-only evidence for a visual criterion remain unsatisfied.
+
+### Public surface and conformance
+
+Protocol owns the additive action descriptor, reason input and attestation
+receipt on the existing `RunResolveDecisionParams`/decision contracts. Existing
+CLI and SDK/gateway transports consume the same typed `run.resolveDecision`
+boundary; it always requires human authority. `farmslot run gate <runId>
+--action approve-publish-evidence-attested --reason <text>` is the sole new CLI
+use. Generate its CLI reference and document the reason/receipt contract with
+the implementation. Shared web/native action projections and existing gate
+renderers present identical findings; no second policy mapper or gate component.
+Contracts version with `@farmslot/protocol`; no recording-schema bump, new
+provider extension or agent evidence instructions are required.
+
+- **G1:** A credential-backed publish-authorized person can attest a valid frozen
+  package with policy mismatches. The same reason/actor/package receipt appears
+  in the retained decision, PR body and refreshed body.
+- **G2:** Blank reason, service/node/background/solo caller, revoked credential,
+  stale decision or changed package refuses without publication or resolution.
+- **G3:** Missing input, invalid structure, wrong digest or tampering refuses even
+  with valid human identity/reason. Unrelated review/CI/source refusal persists.
+- **G4:** The exact expected baseline failure satisfies only its declaration;
+  wrong-step failure, unexpected pass, additional failure and interruption do not.
+- **G5:** The four normal rules admit bound baseline, inspected pending visual,
+  matching AC-label and declared test evidence without attestation. Their
+  wrong-attempt/text/ID/result counterparts remain blocked; original artifacts
+  and verdicts stay byte-for-byte unchanged.
+- **G6:** CLI and both gate contexts use the shared descriptor and gateway
+  classification. Artifact-only output review and legacy read-only viewing keep
+  their existing authority; neither grants publication.

@@ -2420,6 +2420,8 @@ describe('run', () => {
     );
     assert.equal(run.value, 0, run.stderr.join('\n'));
     assert.equal(lastJson(run.stdout).status, 'pass');
+    const tracePath = (lastJson(run.stdout).result as { tracePath: string }).tracePath;
+    const taskTrace = path.relative(taskDir, tracePath).split(path.sep).join('/');
     const ledger = JSON.parse(
       fs.readFileSync(path.join(taskDir, 'artifacts', 'acceptance-status.json'), 'utf8'),
     );
@@ -2431,10 +2433,46 @@ describe('run', () => {
         entry.evidence,
       ]),
       [
-        ['AC-1', 'proven', ['check'], ['artifacts/trace.json']],
-        ['AC-2', 'missing', [], ['artifacts/trace.json']],
+        ['AC-1', 'proven', ['check'], [taskTrace]],
+        ['AC-2', 'missing', [], [taskTrace]],
       ],
     );
+  });
+
+  test('task runs keep authored inputs, ledgers and prior attempts in distinct directories', async () => {
+    const target = checkout();
+    const taskDir = path.join(target, 'temp/tasks/retained');
+    const taskArtifacts = path.join(taskDir, 'artifacts');
+    fs.mkdirSync(taskArtifacts, { recursive: true });
+    const source = recipeFile(target, {
+      ping: { action: 'shop.ping', mode: 'fast', intent: 'Ping the shop.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const authored = fs.readFileSync(source);
+    const recipe = path.join(taskArtifacts, 'recipe.json');
+    fs.writeFileSync(recipe, authored);
+    fs.writeFileSync(
+      path.join(taskArtifacts, 'acceptance-status.json'),
+      JSON.stringify({ schemaVersion: 1, criteria: [] }),
+    );
+    process.env.RECIPE_TASK_DIR = path.relative(target, taskDir);
+    const args = [recipe, '--adapter', 'web', '--target', target, '--heal', 'off', '--json'];
+    const first = await capture(() => handleRun(args, runOptions));
+    assert.equal(first.value, 0, first.stderr.join('\n'));
+    const firstSummary = (lastJson(first.stdout).result as { summaryPath: string }).summaryPath;
+    const retained = fs.readFileSync(firstSummary);
+    const second = await capture(() => handleRun(args, runOptions));
+    assert.equal(second.value, 0, second.stderr.join('\n'));
+    const secondSummary = (lastJson(second.stdout).result as { summaryPath: string }).summaryPath;
+    assert.notEqual(firstSummary, secondSummary);
+    for (const summary of [firstSummary, secondSummary]) {
+      assert.equal(path.dirname(path.dirname(summary)), path.join(taskArtifacts, 'recipe-runs'));
+    }
+    assert.deepEqual(fs.readFileSync(firstSummary), retained);
+    assert.deepEqual(fs.readFileSync(recipe), authored);
+    assert.ok(fs.existsSync(path.join(taskArtifacts, 'acceptance-status.json')));
+    const plan = await capture(() => handleRun([...args, '--plan'], runOptions));
+    assert.equal(plan.value, 0, plan.stderr.join('\n'));
   });
 
   test('the runtime check, the observers and app.network_capture run on the same ports as the engine', async () => {
@@ -3327,8 +3365,10 @@ describe('call', () => {
     );
     assert.equal(run.value, 0, run.stderr.join('\n'));
     assert.equal(
-      path.dirname(String((lastJson(run.stdout).result as { summaryPath: string }).summaryPath)),
-      path.join(target, 'temp/tasks/t1/artifacts'),
+      path.dirname(
+        path.dirname(String((lastJson(run.stdout).result as { summaryPath: string }).summaryPath)),
+      ),
+      path.join(target, 'temp/tasks/t1/artifacts/recipe-runs'),
     );
     for (const dir of dirs) assert.ok(fs.existsSync(path.join(dir, 'summary.json')), dir);
 

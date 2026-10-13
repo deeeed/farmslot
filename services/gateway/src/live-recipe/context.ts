@@ -394,7 +394,7 @@ async function readRecipeQualityArtifactPortable(
   }
 }
 
-function normalizeTypedArtifactManifestPath(value: string): string | null {
+function normalizeTypedArtifactManifestPath(value: string, artifactPrefix = ''): string | null {
   const normalizedSeparators = value.replaceAll('\\', '/').trim();
   if (!normalizedSeparators) return null;
   if (normalizedSeparators.startsWith('/') || /^[A-Za-z]:/.test(normalizedSeparators)) return null;
@@ -413,12 +413,13 @@ function normalizeTypedArtifactManifestPath(value: string): string | null {
   if (normalized === '.' || normalized.startsWith('../') || path.posix.isAbsolute(normalized)) {
     return null;
   }
-  return `artifacts/${normalized}`;
+  return `artifacts/${path.posix.join(artifactPrefix, normalized)}`;
 }
 
 function parseTypedArtifactManifestRefs(
   raw: string | null,
   manifestPath: string,
+  artifactPrefix = '',
 ): ArtifactRef[] | null {
   if (!raw) return null;
   let parsed: unknown;
@@ -460,7 +461,7 @@ function parseTypedArtifactManifestRefs(
       );
       return null;
     }
-    const artifactPath = normalizeTypedArtifactManifestPath(entry.path);
+    const artifactPath = normalizeTypedArtifactManifestPath(entry.path, artifactPrefix);
     if (!artifactPath) {
       console.warn(
         `[live-recipe-context] rejecting artifact-manifest.json at ${manifestPath}: entry ${index} path ${entry.path} is invalid; falling back to scan`,
@@ -476,8 +477,8 @@ function parseTypedArtifactManifestRefs(
       ...(typeof entry.nodeId === 'string' ? { nodeId: entry.nodeId } : {}),
       ...(typeof entry.mimeType === 'string' ? { mimeType: entry.mimeType } : {}),
       ...(typeof entry.timelinePath === 'string' &&
-      normalizeTypedArtifactManifestPath(entry.timelinePath)
-        ? { timelinePath: normalizeTypedArtifactManifestPath(entry.timelinePath)! }
+      normalizeTypedArtifactManifestPath(entry.timelinePath, artifactPrefix)
+        ? { timelinePath: normalizeTypedArtifactManifestPath(entry.timelinePath, artifactPrefix)! }
         : {}),
       ...(typeof entry.timelineUnavailableReason === 'string'
         ? { timelineUnavailableReason: entry.timelineUnavailableReason }
@@ -493,6 +494,7 @@ function parseTypedArtifactManifestRefs(
 function mergeTypedArtifactManifestRefs(
   scannedRefs: ArtifactRef[],
   typedRefs: ArtifactRef[] | null,
+  preserveUnindexed = false,
 ): ArtifactRef[] {
   if (typedRefs === null) return scannedRefs;
   if (typedRefs.length === 0) return scannedRefs;
@@ -517,6 +519,9 @@ function mergeTypedArtifactManifestRefs(
       ...(scanned?.sha256 ? { sha256: scanned.sha256 } : {}),
       ...(typeof scanned?.sizeBytes === 'number' ? { sizeBytes: scanned.sizeBytes } : {}),
     });
+  }
+  if (preserveUnindexed) {
+    for (const ref of scannedRefs) if (!emitted.has(ref.path)) refs.push(ref);
   }
   return refs;
 }
@@ -663,11 +668,28 @@ async function loadContextFromArtifactRoot({
     evidenceManifestJson,
     evidenceManifestPath,
   );
+  const selectedPointer = await readLatestValidRecipeRunPointer(run, artifactRoot);
+  const selectedManifestRelative = selectedPointer
+    ? `${selectedPointer.relativeArtifactRoot}/artifact-manifest.json`
+    : null;
+  const selectedTypedRefs =
+    selectedPointer && selectedManifestRelative
+      ? parseTypedArtifactManifestRefs(
+          await readPortableTextIfExists(run, path.join(artifactRoot, selectedManifestRelative)),
+          path.join(artifactRoot, selectedManifestRelative),
+          selectedPointer.relativeArtifactRoot,
+        )
+      : null;
   const effectiveScanOptions: ArtifactScanOptions = {
     ...scanOptions,
     includeRelativePaths: [
       ...(scanOptions.includeRelativePaths ?? []),
       ...evidenceManifestReferencedPaths,
+      ...(selectedManifestRelative ? [selectedManifestRelative] : []),
+      ...(selectedTypedRefs ?? []).flatMap((ref) => [
+        ref.path,
+        ...(ref.timelinePath ? [ref.timelinePath] : []),
+      ]),
     ],
   };
   const [
@@ -700,11 +722,40 @@ async function loadContextFromArtifactRoot({
           })
         ).artifact
       : storedRecipeQualityArtifact;
-  const typedArtifactRefs = parseTypedArtifactManifestRefs(
+  const rootTypedArtifactRefs = parseTypedArtifactManifestRefs(
     typedArtifactManifestJson,
     path.join(artifactRoot, 'artifact-manifest.json'),
   );
-  const artifactRefs = mergeTypedArtifactManifestRefs(artifactScan.refs, typedArtifactRefs);
+  const nestedTypedArtifactRefs = await Promise.all(
+    artifactScan.refs
+      .filter(
+        (ref) =>
+          ref.path !== 'artifacts/artifact-manifest.json' &&
+          ref.path !== `artifacts/${selectedManifestRelative}` &&
+          path.posix.basename(ref.path) === 'artifact-manifest.json',
+      )
+      .map(async (ref) => {
+        const relative = ref.path.replace(/^artifacts\//u, '');
+        const manifestPath = path.join(artifactRoot, relative);
+        return (
+          parseTypedArtifactManifestRefs(
+            await readPortableTextIfExists(run, manifestPath),
+            manifestPath,
+            path.posix.dirname(relative),
+          ) ?? []
+        );
+      }),
+  );
+  const typedArtifactRefs = [
+    ...(rootTypedArtifactRefs ?? []),
+    ...(selectedTypedRefs ?? []),
+    ...nestedTypedArtifactRefs.flat(),
+  ];
+  const artifactRefs = mergeTypedArtifactManifestRefs(
+    artifactScan.refs,
+    typedArtifactRefs,
+    rootTypedArtifactRefs === null,
+  );
   const usedTypedArtifactManifest = typedArtifactRefs !== null && typedArtifactRefs.length > 0;
   const effectiveIsStale =
     isStale ||

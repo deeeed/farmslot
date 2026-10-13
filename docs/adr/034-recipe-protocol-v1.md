@@ -202,3 +202,25 @@ consume the same hook; CLI users need no native peer.
 One recipe moves the HUD from bottom to top, checks that application footers
 remain visible, captures both placements, and records the final HUD before stop.
 Automatic updates preserve placement; a second execution restores its default.
+
+## Amendment 4: enabled-state waits (2026-10-12)
+
+**Status:** Accepted, approved 2026-10-13. **Shipping PR:** Pending.
+
+### Decision
+
+Add optional boolean `enabled` to the existing `ui.wait_for` contract. It combines an explicit presence/visibility expectation with one control's observed state. Missing controls cannot satisfy disabled; duplicate targets and unqualified native state refuse. Protocol validation rejects the `visible`/`hidden` aliases for this new predicate so all backends receive explicit `expected`. Existing calls without the field retain their behavior.
+
+Extend existing shared CDP and native-accessibility wait paths. MetaMask Mobile selects its existing native transport for enabled waits, including on debuggable builds; Extension uses shared CDP. Native state requires qualified backend provenance because an upstream accessibility fallback may synthesize a true value. The [normative specification](../reference/recipe-protocol-v1.md#amendment-4-enabled-state-waits) defines inputs, refusal, cancellation and validation.
+
+### Rationale
+
+A refused press or screenshot alone does not provide an executable disabled-state assertion. Ranked locator discovery is bounded and may default unknown fields; it cannot supply durable state proof for a specific control. Reusing the existing action and transports avoids another provider-specific polling or fiber-walking implementation.
+
+### Consequences
+
+Providers advertise the optional field only after pinning supporting releases. Mobile and Extension are the first consumers; unsupported catalogs continue to reject it. No UI mutation or recovery is allowed to make the predicate pass. ADR-062 assertion eligibility and visual-review requirements remain unchanged. Live controls in both states, contrary-state failure, cleanup and HUD evidence are required before implementation acceptance.
+
+### Public surface
+
+`farmslot recipe run` and `farmslot recipe call ui.wait_for` consume the existing action with `enabled`; no action name or CLI flag is added. `@farmslot/protocol` owns validation, `@farmslot/recipe-runner` owns CDP execution and extends its existing exported wait options, and `@farmslot/adapter-rn` owns native execution. No new SDK callback or evidence format is introduced. MetaMask supplies product identity/native routing and manifest/dependency pins. This additive action extension requires supporting package releases before provider advertisement.

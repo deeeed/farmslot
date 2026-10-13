@@ -43,6 +43,7 @@ import {
 import { writeRecordingTimeline } from '../recording/timeline.js';
 import { RECIPE_RUNNER_VERSION } from '../version.js';
 
+import { assertRecipeArtifactDestinationAvailable } from './artifact-destination.js';
 import {
   type ResolvedRecipeDependencies,
   resolveRecipeDependencies,
@@ -231,8 +232,9 @@ class DefaultRecipeRunner implements RecipeRunner {
   }
 
   async preflight(request: RecipeRunRequest): Promise<RecipeExecutionPlan> {
-    const { executionPlan } = await this.#resolveRequest(request);
+    const { executionPlan, artifactsDir } = await this.#resolveRequest(request);
     enforceRecipeExecutionPlan(executionPlan, request, this.#blockedCapabilities);
+    await assertRecipeArtifactDestinationAvailable(artifactsDir);
     return executionPlan;
   }
 

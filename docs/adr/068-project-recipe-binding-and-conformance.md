@@ -101,3 +101,23 @@ Published schema-v1 artifacts remain schema-v1 only for additive changes. Semant
 Retain baselines, then validate direct and hosted execution, lifecycle and live checks before deletion. The normative specification names the project/target matrix, signal/refusal checks, tutorial gate and source-to-package checks. UI fixture rendering is useful evidence for its renderer; it cannot stand in for a real farm dispatch.
 
 Unresolved rollout gates remain explicit: target readiness, provider ownership transfers, real dispatch, release approval and installed fleet acceptance. Publication and deployment do not follow from this Proposed document or from a passing static report.
+
+## Amendment 1: Initial resource proof requirements, 2026-10-13
+
+**Status:** Accepted, approved 2026-10-13. The accepted base decision remains unchanged. Implementation and shipping PR are pending.
+
+### Decision
+
+The selected execution template may carry `runtime_capability_requirements`, a quoted JSON array of the existing `RuntimeCapabilityProofRequirement` from `@farmslot/protocol`. The canonical `recipeFlowRequirements` accessor exposes it as `RecipeFlowRequirements.proofRequirements`. `runtime_capabilities` remains the list of required provider IDs; the new metadata supplies their authored reason, state/visual/mixed mode and optional acquire parameters. It does not reuse smoke inputs from `recipe_params`.
+
+Read-only admission validates the declaration and explains missing initial proof modes. When a run owner exists, admission must consult its valid stored plan before reporting a mode as missing, including warm/nudge reuse of an IDs-only declaration. After prepare, ADR-065's existing consumer supplies these requirements to the existing posture/registry path. For an already authored run plan, retain its validated requirement and explicit retarget parameters instead of replacing them with template defaults. A conflicting mode or malformed plan refuses; defaults do not weaken an authored requirement. The normative [initial resource requirements](../reference/project-recipe-contract.md#initial-resource-proof-requirements-amendment-1) section defines coverage, validation and precedence.
+
+### Rationale
+
+A first dispatch has no stored proof plan. Provider IDs alone cannot tell enforcement whether the task needs state, visual or mixed proof. Reusing the existing requirement type supplies that missing input without guessing from capture flags, resource names or smoke parameters.
+
+### Consequences and public surface
+
+Goal 3 owns template metadata, the protocol accessor, read-only admission and capability display. ADR-065's owner consumes that contract for acquisition, health, cleanup and recovery. Provider schemas, slot/device-target validation, authority and ownership remain in the existing catalog/registry path. No second proof-plan store, allocator, parser for acquire semantics, CLI flag or SDK host callback is added.
+
+The public addition is `RecipeFlowRequirements.proofRequirements` and the extended `recipeFlowRequirements`, owned by `@farmslot/protocol` and consumed by gateway admission and ADR-065 enforcement. Pack templates consume the metadata; thin clients consume the shared compatibility result. Project harnesses keep declaring provider schemas/actions and inherit dispatch mechanics. The pre-1.0 protocol addition requires a minor release and coordinated consumer pins under the existing release gates. IDs-only retained runs remain recoverable through their valid stored plans; IDs-only first dispatch without an authored mode refuses explicitly. Declaration availability is not acquired ownership or live proof.
