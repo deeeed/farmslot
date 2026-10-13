@@ -18,7 +18,6 @@ const nativeExec = await import('../core/exec.js');
 const nativeStore = await import('../runs/store.js');
 const nativeMirror = await import('./artifact-mirror.js');
 const nativeSession = await import('../runners/session-process.js');
-const nativeDraft = await import('./draft-pr.js');
 const nativeTemplate = await import('./pr-template.js');
 let run: Run;
 let lineageParent: Run | null = null;
@@ -65,6 +64,7 @@ mock.module('./artifact-mirror.js', {
 mock.module('../runners/session-process.js', {
   namedExports: { ...nativeSession, resolveRunnerSessionForRun: async () => null },
 });
+const nativeDraft = await import('./draft-pr.js');
 mock.module('./draft-pr.js', {
   namedExports: { ...nativeDraft, buildDraftPrBody: async () => '## Summary\nChild fix\n' },
 });
