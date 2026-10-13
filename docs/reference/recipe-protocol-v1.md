@@ -100,7 +100,7 @@ vertical edge for existing corner values and respect the host's safe-area
 insets. Omitted placement retains the adapter's existing default. The selection
 MUST persist through subsequent automatic progress, screenshot repaint and the
 final outcome of that execution; a new execution starts with its configured
-default. HUD evidence remains required at either edge. Custom harnesses MUST
+default. HUD evidence is recommended at either edge; missing HUD alone MUST NOT invalidate evidence or require a rerun. Custom harnesses MUST
 forward this setting to the shared renderer rather than provide another one.
 HUD acknowledgement MUST wait for the updated caption to paint before a
 subsequent capture or recorder stop. The shared `waitForHudPaint` helper uses
@@ -130,7 +130,7 @@ findings; there are no new CLI flags. The additive `@farmslot/protocol/recipe`
 display helper and policy constants are consumed by Companion's shared native
 HUD, the web adapter and the runner CDP HUD. Native projects consume the shared
 renderer through `@farmslot/adapter-rn/recipe-hud`; CLI consumers need no native
-runtime. Harnesses such as mm-harness inherit this policy through the runner and
+runtime. Project harnesses inherit this policy through the runner and
 adapter, retaining `app.hud` as the extension point. Custom app-owned renderers
 must adopt the shared helper explicitly. Existing copied HUDs can adopt the
 shared native export through a deliberate scaffold update; no farm files are
@@ -262,8 +262,8 @@ Every action is declared in a runner manifest with a strict parameter schema. Ac
 Discover before authoring:
 
 ```bash
-farmslot-recipe run --list --adapter mobile
-farmslot-recipe run perps.smoke --describe --adapter mobile
+farmslot recipe run --list --adapter mobile
+farmslot recipe run service.smoke --describe --adapter mobile
 ```
 
 Prefer an existing recipe, then an existing action. Add a shared recipe only when reuse removes repeated inference or enforces a safety invariant.
@@ -276,7 +276,7 @@ Status: Accepted under [ADR-034 amendment 4](../adr/034-recipe-protocol-v1.md#am
 
 The existing `ui.wait_for` action gains optional boolean `enabled`. Recipes and `farmslot recipe call ui.wait_for` use existing catalog parameters; `farmslot recipe run --plan` validates resolved invocations without device effects. No action alias, CLI flag, evidence format or SDK callback is added.
 
-`@farmslot/protocol` owns the input rules. `@farmslot/recipe-runner` extends its CDP page wait options and transport. `@farmslot/adapter-rn` extends its existing Agent Device snapshot wait. MetaMask Mobile selects that native path for this parameter; Extension uses the shared CDP path. Provider manifests MUST expose the field only after pinning supporting runtime releases. Unsupported catalogs MUST reject it at planning. A declared backend whose actual hierarchy cannot report state MUST refuse at runtime, never substitute a guess.
+`@farmslot/protocol` owns the input rules. `@farmslot/recipe-runner` extends its CDP page wait options and transport. `@farmslot/adapter-rn` extends its existing Agent Device snapshot wait. Native project providers select that path for this parameter; browser providers use the shared CDP path. Provider manifests MUST expose the field only after pinning supporting runtime releases. Unsupported catalogs MUST reject it at planning. A declared backend whose actual hierarchy cannot report state MUST refuse at runtime, never substitute a guess.
 
 #### Inputs and planning
 
@@ -322,11 +322,11 @@ An enabled wait is still `ui.wait_for` under ADR-062. It can prove state only wh
 - Protocol `src/recipe/document.ts`: add the conditional input relationships to the existing validator, with root/default/called and deferred-value cases. Reuse existing parameter resolution.
 - Runner `src/runtime/cdp.ts`: extend existing target selection, wait predicate, returned state and transport forwarding. Share any disabled-state derivation used by touched observation code; do not add a second DOM walker or wait engine.
 - React Native adapter `src/agent-device-ui-transport.ts`: extend the existing snapshot matching/wait path and its cancellation cleanup, preserving calls without the new predicate.
-- MetaMask `src/adapters/mobile/actions.ts` and its native transport wrapper: route enabled waits to the existing native execution path. Update Mobile/Extension action manifests, public recipe examples and relevant discovery contracts. Preserve closed enabled-state work until its useful cases are reconciled with these owners.
+- Project native action bindings and transport wrappers: route enabled waits to the existing native execution path. Update Mobile/Extension action manifests, public recipe examples and relevant discovery contracts. Preserve closed enabled-state work until its useful cases are reconciled with these owners.
 
 Default tests MUST cover disabled and enabled transitions, absent targets, duplicates, unknown native state, inherited HTML disabled behavior, malformed and called inputs, cancellation and compatibility without `enabled`. New tests stay below five seconds with no fixed wait of one second or more.
 
-Live public-CLI proof MUST exercise a real Extension control and a real Mobile control in both states, a contrary-state refusal, visible HUD evidence and authored cleanup. Do not enter secrets merely to toggle a control; prefer non-financial forms and preserve borrowed state. Disabling or bypassing the predicate in an isolated candidate MUST make its negative control fail. Supporting packages publish before provider dependency pins are raised; release review and registry verification remain separate gates.
+Live public-CLI proof MUST exercise a real browser control and a real native control in both states, a contrary-state refusal, observed state evidence and authored cleanup. HUD intent is recommended where supported. Do not enter secrets merely to toggle a control; prefer non-financial forms and preserve borrowed state. Disabling or bypassing the predicate in an isolated candidate MUST make its negative control fail. Supporting packages publish before provider dependency pins are raised; release review and registry verification remain separate gates.
 
 ## Libraries
 

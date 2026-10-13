@@ -14,7 +14,7 @@ caller may render or parse. Some useful models answer a different kind of
 question: they evaluate typed questions against a bounded state and return
 choices, scores, boolean probabilities, and confidence.
 
-Recipe planning is already owned by `mm-harness`, which has the action catalog,
+Recipe planning is already owned by the project harness, which has the action catalog,
 recipe library, adapter variants, and the optional recipe advisor. Farmslot
 must not duplicate that domain logic. Farmslot does need a general way to use
 structured assessments for gateway-owned routing and review intake.
@@ -65,7 +65,7 @@ Assessment results are advisory. They cannot:
 
 - replace deterministic runner hooks or structured gateway state;
 - mark a visual acceptance criterion proven;
-- replace an Opus/Astra or human line-by-line PR review;
+- replace an independent model or human line-by-line PR review;
 - publish a review, request changes, merge, retry, or mutate a run by
   themselves.
 
@@ -75,10 +75,10 @@ shipped consumer is opt-in advice for recorded failures. Textual evidence,
 static checklists, copilot context and meaningful review routing require
 separate evaluations before rollout.
 
-`mm-harness` remains the owner of recipe planning. Farmslot forwards optional
+the project harness remains the owner of recipe planning. Farmslot forwards optional
 advisor configuration and stores/displays the harness's recipe-plan and
 recipe-advice artifacts; it does not call the assessment provider to discover
-MetaMask actions or recipes itself.
+project actions or recipes itself.
 
 ## Security and data handling
 
@@ -103,7 +103,7 @@ the reverse.
 - Command Center can show assessment status and confidence without presenting
   an advisory result as proof.
 - Provider-specific adapters and policy tests add a small maintenance cost.
-- Recipe authoring stays in one place, so Farmslot and `mm-harness` do not
+- Recipe authoring stays in one place, so Farmslot and the project harness do not
   drift apart.
 
 ## Implementation order

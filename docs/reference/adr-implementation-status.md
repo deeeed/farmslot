@@ -1,11 +1,11 @@
 # ADR Implementation Status
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-09-20 (ADR-060 workspace parity: child units on the slot-free static review path, PR #692)
-**Stale by:** 2026-11-20
+**Last updated:** 2026-10-13 (focused reconciliation of ADR-040/051/060 and recent review/evidence/lifecycle delivery; older detailed rows retain their historical scope)
+**Stale by:** 2026-11-13
 **Authority:** Derived visibility doc. When this file disagrees with an ADR body, the ADR wins for intent; git history and `IMPLEMENTED-HISTORY.md` win for what actually shipped.
 
-This matrix answers: **for each current ADR, what is shipped, what is partial, and what is still open?** Use it with [adr/README.md](../adr/README.md), [ROADMAP-next.md](../ROADMAP-next.md), and [IMPLEMENTED-HISTORY.md](../IMPLEMENTED-HISTORY.md).
+This focused matrix distinguishes shipped scope from partial and open work for the ADRs listed below. Use it with [adr/README.md](../adr/README.md), [ROADMAP-next.md](../ROADMAP-next.md), and [IMPLEMENTED-HISTORY.md](../IMPLEMENTED-HISTORY.md).
 
 ## How to read status
 
@@ -17,37 +17,41 @@ This matrix answers: **for each current ADR, what is shipped, what is partial, a
 | **Not started** | Accepted/planned decision with no meaningful implementation yet.                            |
 | **Proposed**    | ADR not accepted — treat as design intent only.                                             |
 
-## Summary (ADR-026 – ADR-063)
+## Summary
 
-| ADR                                                        | Title                              | ADR status | Implementation | Top open gap                                                                 |
-| ---------------------------------------------------------- | ---------------------------------- | ---------- | -------------- | ---------------------------------------------------------------------------- |
-| [026](../adr/026-self-improvement-recursive-loop.md)       | Self-improvement recursive loop    | Proposed   | Partial        | Structured retrospective grading + improvement loop not fully wired          |
-| [030](../adr/030-replay-provenance-and-reference-evals.md) | Eval packages on run families      | Accepted   | Partial        | Replay closure: baseline/head identity, live regression evidence             |
-| [031](../adr/031-deterministic-first-auto-recovery.md)     | Deterministic-first auto-recovery  | Accepted   | Shipped        | Policy tuning from audit evidence                                            |
-| [032](../adr/032-runner-observability-via-hooks.md)        | Runner observability via hooks     | Accepted   | Shipped        | Phase 3 shipped — Claude send path is hook-only (pane retired)               |
-| [033](../adr/033-mobile-tmux-worker-control.md)            | Mobile tmux worker control         | Accepted   | Shipped        | Deferred: background wake-word, auto-send, remote provisioning               |
-| [034](../adr/034-recipe-protocol-v1.md)                    | Recipe Protocol v1                 | Accepted   | Shipped        | Maintenance: external adoption and replay use                                |
-| [035](../adr/035-node-support-bundles.md)                  | Node support bundles               | Accepted   | Partial        | Gateway prepare sync; not all projects declare bundles                       |
-| [036](../adr/036-cli-gateway-profiles.md)                  | CLI gateway profiles               | Accepted   | Partial        | Core shipped; demo/onboarding rehearsal follow-ups                           |
-| [037](../adr/037-prepare-profiles.md)                      | Prepare profiles                   | Accepted   | Shipped        | Automatic profile selection deferred by ADR                                  |
-| [038](../adr/038-gate-held-worker-session.md)              | Gate-held worker session           | Accepted   | Partial        | Companion gate-held affordances; optional pane-died softening                |
-| [039](../adr/039-run-portable-bundles.md)                  | Portable run bundles               | Accepted   | Shipped        | v1.1 selectors, CC export UI, `--seed-eval` helper                           |
-| [040](../adr/040-work-graph-orchestration.md)              | Work-graph orchestration           | Accepted   | Partial        | Scheduler/graph UI and stacked runs exist; dispatch config parity open       |
-| [041](../adr/041-roadmap-idea-refinement-layer.md)         | Operator roadmap idea refinement   | Proposed   | Partial        | Multi-project `targetProjects` + project-aware promotion fan-out             |
-| [042](../adr/042-slot-tracking-branches.md)                | Slot tracking branches             | Accepted   | Shipped        | Polish: fleet-status `@ origin/main` display string; bash release parity doc |
-| [045](../adr/045-worker-terminal-contract.md)              | Worker terminal contract           | Accepted   | Shipped        | None tracked; authoring-quality tooling is optional                          |
-| [047](../adr/047-worker-session-history-panel.md)          | Worker session history panel       | Accepted   | Partial        | Live History shipped; recycle snapshot is ADR-056                            |
-| [056](../adr/056-runner-session-archive.md)                | Runner session archive at recycle  | Accepted   | In progress    | Opaque jsonl snapshot for Claude/Codex/Grok; History fallback                |
-| [048](../adr/048-interactive-operator-packets.md)          | Interactive operator packets       | Accepted   | Partial        | Eval/replay packet response persistence remains open                         |
-| [049](../adr/049-agent-execution-template-selection.md)    | Agent execution template selection | Accepted   | Implemented    | None tracked                                                                 |
-| [060](../adr/060-sub-task-observability.md)                | Sub-task observability             | Accepted   | Complete       | Slot runs (#682) and slot-free review workspaces (#692)                      |
+This is a focused delivery inventory, not a re-audit of every legacy implementation. Acceptance means design approval, not deployment or npm publication. Newer rows below cite shipping PRs and leave later consolidation work open.
+
+| ADR                                                         | Title                              | ADR status | Implementation | Top open gap                                                                                                                    |
+| ----------------------------------------------------------- | ---------------------------------- | ---------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| [026](../adr/026-self-improvement-recursive-loop.md)        | Self-improvement recursive loop    | Proposed   | Partial        | Structured retrospective grading + improvement loop not fully wired                                                             |
+| [030](../adr/030-replay-provenance-and-reference-evals.md)  | Eval packages on run families      | Accepted   | Partial        | Replay closure: baseline/head identity, live regression evidence                                                                |
+| [031](../adr/031-deterministic-first-auto-recovery.md)      | Deterministic-first auto-recovery  | Accepted   | Shipped        | Policy tuning from audit evidence                                                                                               |
+| [032](../adr/032-runner-observability-via-hooks.md)         | Runner observability via hooks     | Accepted   | Shipped        | Phase 3 shipped — Claude send path is hook-only (pane retired)                                                                  |
+| [033](../adr/033-mobile-tmux-worker-control.md)             | Mobile tmux worker control         | Accepted   | Shipped        | Deferred: background wake-word, auto-send, remote provisioning                                                                  |
+| [034](../adr/034-recipe-protocol-v1.md)                     | Recipe Protocol v1                 | Accepted   | Shipped        | Maintenance: external adoption and replay use                                                                                   |
+| [035](../adr/035-node-support-bundles.md)                   | Node support bundles               | Accepted   | Partial        | Gateway prepare sync; not all projects declare bundles                                                                          |
+| [036](../adr/036-cli-gateway-profiles.md)                   | CLI gateway profiles               | Accepted   | Partial        | Core shipped; demo/onboarding rehearsal follow-ups                                                                              |
+| [037](../adr/037-prepare-profiles.md)                       | Prepare profiles                   | Accepted   | Shipped        | Automatic profile selection deferred by ADR                                                                                     |
+| [038](../adr/038-gate-held-worker-session.md)               | Gate-held worker session           | Accepted   | Partial        | Companion gate-held affordances; optional pane-died softening                                                                   |
+| [039](../adr/039-run-portable-bundles.md)                   | Portable run bundles               | Accepted   | Shipped        | v1.1 selectors, CC export UI, `--seed-eval` helper                                                                              |
+| [040](../adr/040-work-graph-orchestration.md)               | Work-graph orchestration           | Accepted   | Partial        | Scheduler/graph UI and stacked runs exist; dispatch config parity open                                                          |
+| [041](../adr/041-roadmap-idea-refinement-layer.md)          | Operator roadmap idea refinement   | Proposed   | Partial        | Multi-project `targetProjects` + project-aware promotion fan-out                                                                |
+| [042](../adr/042-slot-tracking-branches.md)                 | Slot tracking branches             | Accepted   | Shipped        | Polish: fleet-status `@ origin/main` display string; bash release parity doc                                                    |
+| [045](../adr/045-worker-terminal-contract.md)               | Worker terminal contract           | Accepted   | Shipped        | None tracked; authoring-quality tooling is optional                                                                             |
+| [047](../adr/047-worker-session-history-panel.md)           | Worker session history panel       | Accepted   | Partial        | Live History shipped; recycle snapshot is ADR-056                                                                               |
+| [048](../adr/048-interactive-operator-packets.md)           | Interactive operator packets       | Accepted   | Partial        | Eval/replay packet response persistence remains open                                                                            |
+| [049](../adr/049-agent-execution-template-selection.md)     | Agent execution template selection | Accepted   | Shipped        | None tracked                                                                                                                    |
+| [051](../adr/051-principal-and-credential-model.md)         | Principal and credential model     | Accepted   | Shipped        | Core model #509, `30ea26b1b`; containment/scoping follow-ons remain separate                                                    |
+| [056](../adr/056-runner-session-archive.md)                 | Runner session archive at recycle  | Accepted   | In progress    | Opaque jsonl snapshot for Claude/Codex/Grok; History fallback                                                                   |
+| [060](../adr/060-sub-task-observability.md)                 | Sub-task observability             | Accepted   | Shipped        | Slot runs (#682) and slot-free review workspaces (#692)                                                                         |
+| [062](../adr/062-recorded-run-evidence.md)                  | Recorded evidence and review       | Accepted   | Partial        | Curation #963 and saved results #985 shipped; single-ledger cutover, immutable package closure and historical footprint pending |
+| [063](../adr/063-review-modes-warm-cold.md)                 | Review modes WARM/COLD             | Accepted   | Shipped        | Shared picker and COLD/WARM migration #947; later resolver consolidation pending                                                |
+| [064](../adr/064-deterministic-checklist-checks.md)         | Deterministic checklist checks     | Accepted   | Shipped        | Deterministic receipts #952 and CI decision context #951; subsequent cutover work is separate                                   |
+| [065](../adr/065-fail-closed-run-lifecycle.md)              | Fail-closed lifecycle              | Accepted   | Partial        | Prerequisites #961, recovery scenarios #950 and acquisition #990 shipped; remaining transition/consumer consolidation pending   |
+| [068](../adr/068-project-recipe-binding-and-conformance.md) | Project recipe binding             | Accepted   | Partial        | Shared CLI/hosted binding shipped; remaining conformance/adopter cutover gates open                                             |
+| [069](../adr/069-declared-pinned-sources.md)                | Declared pinned sources            | Accepted   | Partial        | Source status and pre-execution locks #981 shipped; remaining exact-commit sync/deployment closure pending                      |
 
 Older ADRs **001–025** are foundation/shipped for their core scope. This file does not re-audit every legacy ADR; use `IMPLEMENTED-HISTORY.md` for historical detail.
-
----
-
-| [063](../adr/063-review-modes-warm-cold.md) | Review modes WARM/COLD | Accepted | In progress | Shared picker and complete protocol/consumer migration; not shipped |
-| [064](../adr/064-deterministic-checklist-checks.md) | Deterministic checklist checks | Accepted | Not started | Implement command receipts and publication enforcement in the existing task directory contract |
 
 ## ADR-026 — Self-Improvement Recursive Loop (Proposed)
 

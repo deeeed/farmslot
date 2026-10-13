@@ -94,7 +94,7 @@ The duplicate units listed in ADR-063 MUST be removed after their callers move.
   as `minimum_independent_reviews`, `require_cross_runner` and
   `self_review.session_policy` MUST be rejected with a conversion hint, not
   ignored into a less restrictive default.
-- Harnesses, including `mm-harness`, consume the typed gateway contract. They
+- Project harnesses consume the typed gateway contract. They
   inherit session/mode validation; farm-owned QA remains separate under
   ADR-058. This adds no harness-specific review policy or extension flag.
 

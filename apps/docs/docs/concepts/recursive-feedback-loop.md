@@ -1,9 +1,11 @@
 ---
-title: Recursive feedback loop
+title: Recursive feedback loop proposal
 description: How Farmslot turns runs, reviews, retrospectives, and learnings into a supervised improvement loop.
 ---
 
-# Recursive feedback loop
+# Recursive feedback loop proposal
+
+This page describes [ADR-026](https://github.com/deeeed/farmslot/blob/main/docs/adr/026-self-improvement-recursive-loop.md), which remains Proposed. Run artifacts, reviews and retrospective foundations exist; the full grading, curation and automatic improvement loop is not shipped. The diagram and requirements below are design intent.
 
 Farmslot is designed around a supervised loop: every run should leave behind enough evidence for the human operator to understand what happened, and enough learning for the next run to be better.
 

@@ -2,6 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-10-11, accepted 2026-10-12
+**Implementation:** Deterministic receipts and publication enforcement shipped in [#952](https://github.com/deeeed/farmslot/pull/952).
 **Owner:** Farmslot maintainers
 **Scope:** Extends [ADR-060](060-sub-task-observability.md) and the [task directory contract](../reference/task-directory-contract.md).
 
@@ -37,7 +38,7 @@ Receipts identify checklist, step, command, source inputs, timestamps, exit code
 
 Local checks and CI call the same script. Remote-only checks remain in CI. Undeclared steps retain existing behavior.
 
-The implementation PR adds normative rules to the existing [task directory contract](../reference/task-directory-contract.md).
+The implementation added normative rules to the existing [task directory contract](../reference/task-directory-contract.md).
 
 ## Amendment 1 (2026-10-12): CI decision check context
 

@@ -181,9 +181,12 @@ Encoding separate clips in advance is forbidden; virtual clips/stills are derive
 automatically, exported clips only when requested.
 
 Pin the dependency closure for unresolved gates and approved published references.
-Unpinned completed packages default to 30-day local retention, overridable by
-storage policy. Expire their dependencies together and preserve an unavailable
-record. Derivatives share the source lifetime. Delete temporary staging on stop/
+Unpinned completed media defaults to 30-day local retention, overridable by
+storage policy. The accepted historical-review design retains lightweight frozen
+review metadata for the run's history lifetime; media may expire once dependency
+pins are released. Preserve an unavailable-media record without changing recorded
+verdicts or ranges. Derivatives share the source media lifetime. This is the
+approved end state; the historical/footprint implementation remains pending. Delete temporary staging on stop/
 abort; local expiration does not delete independently hosted public evidence.
 
 ## Public surface
@@ -423,7 +426,7 @@ explicit during migration; do not backfill fabricated review identities.
 
 ## Shared review curation and saved results
 
-[ADR-062 Amendment 2](../adr/062-recorded-run-evidence.md#amendment-2-2026-10-12-shared-review-curation-and-saved-results)
+[ADR-062 review curation decision](../adr/062-recorded-run-evidence.md#shared-review-curation-and-saved-results)
 owns the delivered finding-publication and retained-review presentation contract.
 Its normative [review curation specification](review-curation-and-results.md)
 defines reviewed-source reads, payload fingerprints, immutable accepted payloads,

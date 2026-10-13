@@ -85,6 +85,8 @@ Ownership rules, all enforced by `mark`:
 
 ## Acceptance-criteria ledger
 
+This remains a transitional contract. Manual schema-1 task verdicts and recipe-derived schema-2 projections are both live through one file writer. [ADR-062](../adr/062-recorded-run-evidence.md) assigns the eventual sole normal verdict path to the engine after conformance and adopter migration. A task ledger without its recorded package is not measured recording proof.
+
 `farmslot-agent ac` and a recipe run with a task dir write
 `artifacts/acceptance-status.json`, through one module. `ac set` records one
 verdict per criterion (`proven`, `weak`, `missing`, `untestable`)

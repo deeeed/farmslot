@@ -1,46 +1,65 @@
 ---
-title: Recipe Runner Protocol
+# GENERATED from docs/reference/recipe-runner-protocol.md; edit that source, then run generate:contracts.
+title: 'Recipe Runner Protocol'
 ---
 
-# Recipe Runner Protocol
+The runner contract connects [Recipe Protocol v1](recipe-protocol-v1.md) to a project's real runtime. It standardizes discovery, execution, trust, and evidence without moving product logic into Farmslot.
 
-The runner connects [Recipe Protocol v1](./recipe-protocol-v1.md) to a project's real runtime.
+## Required pieces
 
-## Contract
+| Piece            | Responsibility                                                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------------- |
+| Recipe           | Declares `$schema`, workflow, optional title/description, parameters, proof targets, and teardown |
+| Action manifest  | Declares supported actions, strict parameter schemas, result cases, examples, and capabilities    |
+| Adapter          | Implements each declared action against the selected runtime                                      |
+| Library          | Publishes named, optionally adapter-specific recipes                                              |
+| Runner command   | Receives recipe, target, parameters, and artifact directory                                       |
+| Artifact package | Retains exact inputs, resolution, trace, verdict, observations, and proof                         |
 
-| Piece            | Responsibility                                                       |
-| ---------------- | -------------------------------------------------------------------- |
-| Recipe           | Parameters, executable workflow, optional proof targets and teardown |
-| Action manifest  | Strict action schemas, examples, result cases, capabilities          |
-| Adapter          | Runtime implementation for one declared action                       |
-| Library          | Named and adapter-specific recipes                                   |
-| Runner           | Validation, static resolution, trust preflight, execution            |
-| Artifact package | Exact recipes, provenance, trace, verdict, and proof                 |
+## Action manifest
 
-Projects own namespaced actions and recipe libraries. Farmslot owns the graph, trust, trace, and artifact contracts.
-Action manifests use `https://farmslot.io/schemas/action-manifest-v1.schema.json` for editor validation.
-Actions may declare `adapters` when support differs by adapter; validation rejects other active adapters before execution and names the supported alternatives. `adapter_schemas` may further narrow parameters for one declared adapter, and planning applies that refinement before execution.
+An action manifest is the runner's public capability contract. An action declaration includes:
+
+- stable name and concise description;
+- strict JSON-Schema-shaped parameters;
+- optional adapter names when support differs by adapter;
+- optional `adapter_schemas` that narrow parameters for individual declared adapters;
+- capabilities required before execution;
+- finite `result_cases` when the action can branch;
+- one or more valid examples for exact-detail discovery.
+
+Namespaced project actions such as `metamask.wallet.ensure_unlocked` remain project-owned. Official actions stay small and platform-neutral.
+
+The manifest is authoritative. Unknown actions, fields, and result cases fail validation. When an action declares `adapters`, validation rejects other active adapters before execution and names the supported alternatives. Adapter-specific schemas refine the shared schema during planning, and every manifest example must satisfy every declared refinement.
+The published Action Manifest schema at `https://farmslot.io/schemas/action-manifest-v1.schema.json` provides editor structure and completion; runtime validation also enforces cross-field relationships such as required-property membership and enum/default value types.
 
 ## Discovery
+
+Runners expose progressive disclosure:
 
 ```sh
 farmslot-recipe run --list --adapter <adapter> --json
 farmslot-recipe run <recipe> --describe --adapter <adapter> --json
 ```
 
-For library-wide discovery (actions, variants, call graphs, search), see [Recipe discovery](./recipe-discovery.md).
+List output contains only selection facts and exact recipe detail expands only when requested. Action discovery belongs to the project runner because manifests and adapters are project-owned.
 
-List output stays compact and exact recipe detail expands only when requested. Action discovery belongs to the project runner because manifests and adapters are project-owned.
+## Execution contract
 
-## Execution
+Before side effects, the runner:
 
-Before side effects, the runner validates the root, resolves the complete static call graph, applies and validates parameters, checks manifests and capabilities, and binds trust approval to the exact plan. The plan covers the project root, artifact directory, parameters and run environment. Only values Yarn changes on every invocation or derives from the package are excluded: `BERRY_BIN_FOLDER`, `npm_execpath`, `npm_node_execpath`, `npm_config_user_agent`, `npm_package_*`, `INIT_CWD`, `PROJECT_CWD`, `COREPACK_ROOT`, `COREPACK_ENABLE_DOWNLOAD_PROMPT`, and Yarn's shim folder at the front of `PATH`. Repeated runs through the same invocation path (for example `yarn farmslot recipe run`) therefore approve the same digest. A digest from one invocation path does not carry over to another (`yarn <script>` and a direct call can differ), and user settings such as `npm_config_registry` or `COREPACK_NPM_REGISTRY` stay bound to the approval.
+1. validates the root recipe;
+2. indexes ordered libraries and selects the adapter variant;
+3. resolves and validates the complete static call graph;
+4. applies parameter defaults, then validates values;
+5. checks action compatibility and capabilities;
+6. binds trust approval to the exact plan.
 
-Adapters return `case`, `output`, `artifacts`, and `observations`. Recipes own routing and status. Declared teardown runs after main success or failure.
+During execution, adapters return only `case`, `output`, `artifacts`, and `observations`. The recipe graph owns transitions and final status. Declared teardown runs after main success or failure.
 
-## Evidence
+## Artifact contract
 
-Every run retains:
+A complete run contains:
 
 ```text
 recipe.json
@@ -51,7 +70,13 @@ trace.json
 artifact-manifest.json
 ```
 
-Package validation revalidates every recipe, digest, call edge, and artifact. Missing evidence never becomes a passing claim.
+The manifest may index screenshots, video, logs, and domain evidence. Every file stays under the artifact root. Package validation revalidates recipe documents, dependency digests, call edges, reachability, and file presence.
+
+## Failure contract
+
+Failures identify the layer and provide a next action. Machine mode uses stable codes rather than prose. A runner must fail before side effects for invalid documents, unresolved dependencies, parameter errors, capability denial, or trust denial.
+
+Runtime failures retain the partial trace and still execute declared teardown when possible. Runners never convert missing evidence into a passing claim.
 
 Failed trace entries carry one explicit `cause_class`: `subject`, `harness`,
 `environment`, or `unknown`. Successful entries omit it. `summary.json` retains
@@ -72,6 +97,18 @@ harness finalizer aggregates completed runs; it does not schedule or retry them.
 
 ## Command Center replay options
 
-Command Center renders the same live trace and artifact package as the CLI. It is not a second executor. Optional video capture is capability-bound, stored under the artifact root, and indexed in the manifest.
+Command Center may replay a validated recipe, follow its live trace, and render artifacts. It must use the same runner contract and artifact package as the CLI. UI replay is a presentation surface, not a second executor.
 
-For onboarding, see [Headless Recipe integration](../guides/headless-recipe.md) or [Expo / React Native project integration](../guides/expo-project-integration.md).
+Video capture is optional evidence. If enabled, its capability and destination are included in the trust plan and its output is indexed in `artifact-manifest.json`.
+
+## Project integration
+
+A project needs only:
+
+1. an install or injection hook for its runner;
+2. a strict action manifest;
+3. adapter implementations for declared actions;
+4. one minimal smoke recipe;
+5. a verify command that validates the manifest, recipe, and produced artifacts.
+
+See [New project recipe support](https://github.com/deeeed/farmslot/blob/main/docs/reference/new-project-recipe-support.md) for the onboarding sequence.
