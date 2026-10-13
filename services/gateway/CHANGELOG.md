@@ -6,6 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Preserve typed media and timeline references when task recipe attempts live in nested artifact directories.
 
+- Allow gate-held runs to free their slot after review moves the worker pane, verifying live conversation identity before stopping it and preserving session recovery.
 - Accept project review configuration when planning automatic publication reviews after recovery.
 - Resolve declared source refs into immutable admission locks and refuse source drift.
 - Freeze selected recorded evidence with its execution dependencies and publication manifest; refresh verifies the approved selection and refuses replaced media or metadata.
