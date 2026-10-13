@@ -227,6 +227,18 @@ for (const platform of ['Darwin', 'Linux']) {
           platform === 'Darwin' ? '^0.2.6' : undefined,
           'macOS nodes bundle capture-helper at the supported floor; Linux nodes bundle none',
         );
+        for (const name of ['adapter-sdk', 'recipe-runner']) {
+          const pkg = JSON.parse(
+            fs.readFileSync(path.join(repo, 'packages', name, 'package.json'), 'utf8'),
+          );
+          for (const [dependency, version] of Object.entries(pkg.dependencies))
+            if (!dependency.startsWith('@farmslot/'))
+              assert.equal(
+                standalone.dependencies[dependency],
+                dependency === '@noble/hashes' ? '1.4.0' : version,
+                dependency,
+              );
+        }
         if (native) {
           assert.deepEqual(args.slice(0, 2), [
             platform === 'Darwin' ? '/bin/zsh' : '/bin/bash',

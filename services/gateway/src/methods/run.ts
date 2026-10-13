@@ -1693,6 +1693,7 @@ export async function resolveRunDecision(
     attestationApprover = dependencies.authorizeEvidenceAttestation();
   }
   if (decision.payload?.kind === 'output-review') {
+    const overrideSnapshot = runClaimOverrideSnapshotIdentity(decision);
     if (
       decision.payload.claimOverrideReceiptIds?.length &&
       params.selectionData?.claimOverrideSnapshot !== runClaimOverrideSnapshotIdentity(decision)
@@ -1707,8 +1708,8 @@ export async function resolveRunDecision(
       params.actionId === 'close-run'
         ? await (
             await import('../run-completion/output-close.js')
-          ).closeRunOutput(params.runId, params.decisionId)
-        : await acknowledgeRunOutput(params.runId, params.decisionId);
+          ).closeRunOutput(params.runId, params.decisionId, undefined, overrideSnapshot)
+        : await acknowledgeRunOutput(params.runId, params.decisionId, overrideSnapshot);
     emit(Events.RUN_UPDATED, { run });
     emit(Events.RUN_DECISION_RESOLVED, {
       runId: run.id,

@@ -1,16 +1,18 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import fsPromises, { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { RunOutput } from '@farmslot/protocol';
+import { buildRunResolveDecisionParams, type RunOutput } from '@farmslot/protocol';
 
-import { runResolveDecision } from '../methods/run.js';
-import { makeRun } from '../methods/run/test-fixtures.js';
-import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
-
-import { captureRunOutput, failRunOutputCapture, outputReviewDecisions } from './output.js';
+await import('../runtime/mock-pty.test-support.js');
+const { runResolveDecision } = await import('../methods/run.js');
+const { makeRun } = await import('../methods/run/test-fixtures.js');
+const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
+const { captureRunOutput, failRunOutputCapture, outputReviewDecisions } =
+  await import('./output.js');
 
 const output: RunOutput = {
   workerFinished: true,
@@ -19,6 +21,63 @@ const output: RunOutput = {
   reportPath: 'artifacts/report.md',
   artifactManifest: [],
 };
+
+test('an override arriving during output verification invalidates both confirmation actions', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'output-override-fence-'));
+  const reportFile = path.join(dir, 'artifacts/report.md');
+  await mkdir(path.dirname(reportFile));
+  await writeFile(reportFile, '# Finished report\n');
+  const run = createRun({
+    flowType: 'dev',
+    project: 'generic-project',
+    ticketOrPr: 'override-fence',
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'failed' });
+    await deleteRun(run.id);
+    await rm(dir, { recursive: true, force: true });
+  });
+  updateRun(run.id, {
+    status: 'blocked',
+    taskFile: path.join(dir, 'TASK.md'),
+    completionPolicy: 'artifact-only',
+    completedAt: new Date().toISOString(),
+  });
+  await captureRunOutput(run.id, false);
+  const decision = getRun(run.id)!.decisions.find((entry) => !entry.resolvedAt)!;
+  const originalRead = fsPromises.readFile;
+  let inject = false;
+  t.mock.method(fsPromises, 'readFile', async (...args: Parameters<typeof originalRead>) => {
+    const result = await originalRead(...args);
+    if (inject && String(args[0]) === reportFile) {
+      inject = false;
+      updateRun(run.id, {
+        decisions: getRun(run.id)!.decisions.map((entry) =>
+          entry.id === decision.id && entry.payload?.kind === 'output-review'
+            ? { ...entry, payload: { ...entry.payload, claimOverrideReceiptIds: ['new-receipt'] } }
+            : entry,
+        ),
+      });
+    }
+    return result;
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  for (const actionId of ['mark-reviewed', 'close-run']) {
+    updateRun(run.id, { decisions: [structuredClone(decision)] });
+    const request = buildRunResolveDecisionParams({ runId: run.id, decision, actionId });
+    inject = true;
+    await assert.rejects(
+      runResolveDecision(request, () => {}),
+      /claim override review changed/,
+    );
+    assert.equal(getRun(run.id)!.decisions[0].resolvedAt, undefined);
+    assert.equal(getRun(run.id)!.status, 'blocked');
+  }
+});
 
 test('report review applies across projects and flows without changing outcome', () => {
   for (const flowType of ['qa', 'dev', 'fix-bug'] as const) {

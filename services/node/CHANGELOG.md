@@ -4,6 +4,8 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
+- Install external dependencies for the full bundled workspace closure, including recorded-evidence readers.
+
 - Materialize exact gateway source locks on read-only volumes and report source integrity.
 
 - Track cancellable executions by their gateway connection and retain them through closeout.
