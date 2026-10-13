@@ -145,6 +145,14 @@ fi
 REPO_ROOT="${FARMSLOT_SLOT_REPO:-${REPO:-$PRIMARY_REPO}}"
 MANIFEST_PATH="${PRIMARY_REPO}/docs/examples/recipes/farmslot-v1.action-manifest.json"
 
+# The standard task destination selects a fresh attempt, never an overwrite.
+if [[ "${ARTIFACTS_DIR}" == */artifacts/recipe-run && "${DRY_RUN}" -eq 0 ]]; then
+  TASK_DIR="${TASK_DIR:-${ARTIFACTS_DIR%/artifacts/recipe-run}}"
+  mkdir -p "${TASK_DIR}/artifacts/recipe-runs"
+  ARTIFACTS_DIR="$(mktemp -d "${TASK_DIR}/artifacts/recipe-runs/attempt-XXXXXXXX")"
+  echo "[validate-recipe] artifacts: ${ARTIFACTS_DIR}"
+fi
+
 case "${PLATFORM_VALUE}" in
   ios|android)
     if [[ ! "${GATEWAY_PORT_VALUE}" =~ ^[0-9]+$ || ! "${METRO_PORT_VALUE}" =~ ^[0-9]+$ ]]; then
@@ -232,6 +240,7 @@ fi
 "${ARGS[@]}"
 exit_code=$?
 
+
 if [[ "${exit_code}" -eq 0 && "${SYNC_EVIDENCE}" -eq 1 && -n "${TASK_DIR}" ]]; then
   sync_args=(
     bash "${PRIMARY_REPO}/projects/farmslot-farm/setup/sync-recipe-evidence.sh"
@@ -242,6 +251,10 @@ if [[ "${exit_code}" -eq 0 && "${SYNC_EVIDENCE}" -eq 1 && -n "${TASK_DIR}" ]]; t
     sync_args+=(--require-video)
   fi
   "${sync_args[@]}"
+fi
+
+if [[ "${exit_code}" -eq 0 && -n "${TASK_DIR}" && "${ARTIFACTS_DIR}" == "${TASK_DIR}/artifacts/recipe-runs/"* ]]; then
+  node "${PRIMARY_REPO}/packages/agent-runtime/scripts/retained-recipe-attempt.cjs" "${TASK_DIR}" "${ARTIFACTS_DIR}"
 fi
 
 exit "${exit_code}"

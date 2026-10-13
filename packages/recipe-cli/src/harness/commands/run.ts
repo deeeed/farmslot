@@ -2,6 +2,7 @@
 // healing, observation, and the run report; or describe its plan (--plan).
 
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 
 import type { RecipeNodeEvent } from '@farmslot/adapter-sdk';
@@ -76,6 +77,10 @@ import { checkoutBusyOut, EXIT, usageOut, writeInteractiveProgress } from '../sh
 import { type RecipeTrustFailure, recipeTrustFailure } from '../trust.js';
 
 import { handleDescribeRecipe, handleListExecutables } from './discover.js';
+
+const attemptSelection = createRequire(import.meta.url)(
+  '@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs',
+) as typeof import('@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs');
 
 /**
  * Resolve and pin the device a `run` or `call` drives, before the engine reads
@@ -474,11 +479,13 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
   let artifactContext: RecipeExecutionArtifacts;
   try {
     const stamp = new Date().toISOString().replace(/[-:.TZ]/gu, '');
+    const attempt = `${stamp}-${process.pid}`;
     artifactContext = resolveRecipeExecutionArtifacts(
       target,
       optionString(options, 'artifactsDir'),
       {
-        fresh: path.join('runs', `${stamp}-${process.pid}`),
+        fresh: path.join('runs', attempt),
+        taskSubdir: path.join('recipe-runs', attempt),
       },
     );
   } catch (error) {
@@ -762,7 +769,7 @@ export function resolveRecipeExecutionArtifacts(
       explicit !== undefined
         ? path.resolve(explicit)
         : taskDir
-          ? path.join(taskDir, 'artifacts', layout.taskSubdir ?? '')
+          ? path.join(taskDir, 'artifacts', layout.taskSubdir ?? layout.fresh)
           : path.join(target, 'temp', 'recipe', layout.fresh),
     taskDir,
     claims: registeredTaskClaims(taskDir),
@@ -774,10 +781,13 @@ export function resolveRecipeExecutionArtifacts(
 function recordRunAcceptance(
   taskDir: string | null,
   target: string,
-  result: Parameters<typeof recordRecipeAcceptance>[2],
+  result: Parameters<typeof recordRecipeAcceptance>[2] & Pick<RecipeRunResult, 'status'>,
 ): void {
   try {
     if (!taskDir) return;
+    if (result.status === 'pass') {
+      attemptSelection.recordRecipeAttemptSelection(taskDir, path.dirname(result.tracePath));
+    }
     const { recorded, refused } = recordRecipeAcceptance(taskDir, target, result);
     for (const reason of refused) console.error(`acceptance ledger: not recorded ${reason}`);
     if (recorded.length > 0 && recorded.every((entry) => entry.evidence.length === 0)) {

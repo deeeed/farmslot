@@ -3,7 +3,15 @@
 
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
-const { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } = require('node:fs');
+const {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  renameSync,
+  symlinkSync,
+  writeFileSync,
+} = require('node:fs');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
@@ -59,6 +67,36 @@ function makeTaskDir(name) {
   writeFileSync(path.join(runDir, 'trace.json'), '[{"nodeId":"done","action":"end","ok":true}]\n');
   writeFileSync(path.join(artifactsDir, 'recipe-coverage.md'), '1/1 passed\n');
   return taskDir;
+}
+
+// Fresh-attempt selection must not fall back to an obsolete fixed package.
+const selectionStarted = performance.now();
+const selectedTask = makeTaskDir('farmslot-agent-selected-attempt-');
+const selectedRoot = path.join(selectedTask, 'artifacts', 'recipe-runs', 'current');
+try {
+  mkdirSync(path.dirname(selectedRoot), { recursive: true });
+  renameSync(path.join(selectedTask, 'artifacts', 'recipe-run'), selectedRoot);
+  const { recordRecipeAttemptSelection } = require('../scripts/retained-recipe-attempt.cjs');
+  assert.equal(recordRecipeAttemptSelection(selectedTask, selectedRoot), true);
+  const selectedPointerPath = path.join(selectedTask, 'artifacts', 'latest-valid-recipe-run.json');
+  const selectedPointer = readFileSync(selectedPointerPath);
+  let selectedResult = spawnSync(process.execPath, [checker, selectedTask], { encoding: 'utf8' });
+  assert.equal(selectedResult.status, 0, selectedResult.stderr);
+  writeFileSync(path.join(selectedRoot, 'summary.json'), '{"status":"fail"}');
+  assert.equal(recordRecipeAttemptSelection(selectedTask, selectedRoot), false);
+  assert.deepEqual(readFileSync(selectedPointerPath), selectedPointer);
+  writeFileSync(
+    selectedPointerPath,
+    JSON.stringify({ version: 1, relativeArtifactRoot: '../outside' }),
+  );
+  selectedResult = spawnSync(process.execPath, [checker, selectedTask], { encoding: 'utf8' });
+  assert.equal(selectedResult.status, 1);
+  assert.match(selectedResult.stderr, /invalid pointer/);
+  console.log(
+    `retained-attempt selection cases: ${(performance.now() - selectionStarted).toFixed(1)} ms`,
+  );
+} finally {
+  rmSync(selectedTask, { recursive: true, force: true });
 }
 
 let taskDir = makeTaskDir('farmslot-agent-artifact-invalid-');

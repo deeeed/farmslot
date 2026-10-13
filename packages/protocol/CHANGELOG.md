@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Share the existing retained-attempt pointer validator with task artifact checks and gateway consumers.
+
 - Declare versioned source locks, exact source receipts and run input provenance.
 - Honor HUD top/bottom placement through automatic progress and capture the painted final outcome.
 

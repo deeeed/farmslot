@@ -590,6 +590,49 @@ test('refreshArtifactMirror keeps subdirectory media the PR body cites without a
   assert.equal(existsSync(path.join(taskDir, 'outside.png')), false);
 });
 
+test('refreshArtifactMirror retains selected screenshots and both referenced attempt packages', async (t) => {
+  const { taskDir, put, run } = await publishPackageFixture(t, 'mirror-selected-attempts');
+  for (const id of ['first', 'second']) {
+    await put(`recipe-runs/${id}/artifact-manifest.json`, '{"version":1,"artifacts":[]}');
+    await put(`recipe-runs/${id}/summary.json`, '{"status":"pass"}');
+    await put(`recipe-runs/${id}/trace.json`, '[]');
+    await put(`recipe-runs/${id}/screenshots/result.png`, `${id} screenshot`);
+  }
+  await put('recipe-runs/unselected/summary.json', '{}');
+  await put(
+    'latest-valid-recipe-run.json',
+    JSON.stringify({ version: 1, relativeArtifactRoot: 'recipe-runs/second' }),
+  );
+  await put(
+    'evidence-manifest.json',
+    JSON.stringify({
+      standalone: ['first', 'second'].map((id) => ({
+        label: id,
+        file: `artifacts/recipe-runs/${id}/screenshots/result.png`,
+      })),
+    }),
+  );
+  await refreshArtifactMirror(run);
+  for (const id of ['first', 'second']) {
+    for (const file of [
+      'artifact-manifest.json',
+      'summary.json',
+      'trace.json',
+      'screenshots/result.png',
+    ]) {
+      assert.ok(existsSync(path.join(taskDir, 'artifacts/recipe-runs', id, file)), `${id}/${file}`);
+    }
+    assert.equal(
+      await readFile(
+        path.join(taskDir, 'artifacts/recipe-runs', id, 'screenshots/result.png'),
+        'utf8',
+      ),
+      `${id} screenshot`,
+    );
+  }
+  assert.equal(existsSync(path.join(taskDir, 'artifacts/recipe-runs/unselected')), false);
+});
+
 test('refreshArtifactMirror keeps recipe packages whole by marker, within the depth bound', async (t) => {
   const { taskDir, put, run } = await publishPackageFixture(t, 'mirror-packages');
   await put('recipe-run-1/artifact-manifest.json', '{"version":1,"artifacts":[]}\n');

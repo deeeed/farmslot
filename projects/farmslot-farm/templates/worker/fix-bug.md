@@ -104,7 +104,7 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
     ],
     "omit": ["artifacts/redundant.png"],
     "videos": {
-      "after": "artifacts/after.mp4",
+      "after": "artifacts/recipe-runs/<attempt>/videos/recipe-run.mp4",
       "preferred": true,
       "note": "Full recipe replay at 2s slow playback"
     }

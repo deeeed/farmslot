@@ -32,6 +32,21 @@ The HUD uses traced intent. Remove independent publication `covers`, stored AC
 clock values and separate HUD captions; clients derive them from the claim/trace
 relationship. Internal validation dependencies are not automatically public.
 
+An artifact package MUST belong to one execution attempt. Preflight and execution
+MUST refuse an existing recipe package before replacing files or starting capture
+or actions, including failed and partial attempts. A rerun uses a fresh artifact
+directory and leaves prior package and publication-reference bytes unchanged.
+Task wrappers allocate fresh attempts and return their actual directory. The
+existing version-1 `latest-valid-recipe-run.json` selects a retained successful
+attempt for task checks; publication still freezes that selection and its bytes.
+`@farmslot/protocol/recipe` owns `LatestValidRecipeRunPointer` and its shared
+`sanitizeLatestValidRecipeRunPointer` helper for gateway and task-check consumers.
+Media selection references original attempt paths rather than overwriting copies.
+The Node `@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs` helper owns
+task selection IO for the CLI and wrappers. Its read/write exports use that
+version-1 contract and are versioned with the runtime package; they grant no
+publication admission.
+
 ## Claim registration and verdicts
 
 Extend the existing `proofTargets` declaration with claim kind, optional parent
