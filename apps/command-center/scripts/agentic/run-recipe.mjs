@@ -19,7 +19,8 @@
  *     [--json]
  */
 import { execFile } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -45,6 +46,14 @@ import {
 } from '@farmslot/recipe-runner/runtime/cdp';
 
 const execFileAsync = promisify(execFile);
+const require = createRequire(import.meta.url);
+const {
+  requireHandoffAcceptanceCriteria,
+  setDerivedClaims,
+} = require('@farmslot/agent-runtime/scripts/acceptance-ledger.cjs');
+const {
+  recordRecipeAttemptSelection,
+} = require('@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
@@ -57,6 +66,43 @@ export const COMMAND_CENTER_RECIPE_SOURCE = Object.freeze({
 
 export function resolveCommandCenterRecipeTrust(env = process.env) {
   return resolveRecipeTrustInput({}, env);
+}
+
+/** Consume the task's registration and transport only a selected engine result. */
+export async function runCommandCenterTaskRecipe(runner, request, configuredTaskDir) {
+  const taskDir = configuredTaskDir ? path.resolve(request.projectRoot, configuredTaskDir) : null;
+  const result = await runner.run({
+    ...request,
+    ...(taskDir
+      ? {
+          claims: requireHandoffAcceptanceCriteria(taskDir).map(({ id, text }) => ({
+            id,
+            claim: text,
+          })),
+        }
+      : {}),
+  });
+  if (
+    taskDir &&
+    result.status === 'pass' &&
+    recordRecipeAttemptSelection(taskDir, path.dirname(result.tracePath))
+  ) {
+    const packageRoot = path.dirname(result.claimsPath);
+    const realTask = await realpath(taskDir);
+    setDerivedClaims(taskDir, {
+      ...result.claims,
+      criteria: result.claims.criteria.map((claim) => ({
+        ...claim,
+        evidence: [
+          ...new Set([
+            result.tracePath,
+            ...claim.evidence.map((file) => path.resolve(packageRoot, file)),
+          ]),
+        ].map((file) => path.relative(realTask, file).split(path.sep).join('/')),
+      })),
+    });
+  }
+  return result;
 }
 
 function die(message, code = 1) {
@@ -825,31 +871,35 @@ async function main() {
     },
   });
 
-  const result = await runner.run({
-    ...trust,
-    recipeDocument: recipeRaw,
-    recipePath,
-    adapter: 'web',
-    params,
-    ...(librarySources.length ? { librarySources } : {}),
-    ...(options.stopAfterNode ? { stopAfterNode: options.stopAfterNode } : {}),
-    artifactsDir,
-    projectRoot: options.projectRoot,
-    recordVideo: options.recordVideo
-      ? {
-          mode: 'full-run',
-          maxFps: options.recordMaxFps,
-          maxSize: options.recordMaxSize,
-          target: recordingTarget,
-        }
-      : false,
-    env: {
-      FARMSLOT_CDP_PORT: String(options.cdpPort),
-      FARMSLOT_UI_URL: uiUrl,
-      GATEWAY_PORT: String(options.gatewayPort ?? ''),
-      FARMSLOT_SLOT_ID: options.slotId,
+  const result = await runCommandCenterTaskRecipe(
+    runner,
+    {
+      ...trust,
+      recipeDocument: recipeRaw,
+      recipePath,
+      adapter: 'web',
+      params,
+      ...(librarySources.length ? { librarySources } : {}),
+      ...(options.stopAfterNode ? { stopAfterNode: options.stopAfterNode } : {}),
+      artifactsDir,
+      projectRoot: options.projectRoot,
+      recordVideo: options.recordVideo
+        ? {
+            mode: 'full-run',
+            maxFps: options.recordMaxFps,
+            maxSize: options.recordMaxSize,
+            target: recordingTarget,
+          }
+        : false,
+      env: {
+        FARMSLOT_CDP_PORT: String(options.cdpPort),
+        FARMSLOT_UI_URL: uiUrl,
+        GATEWAY_PORT: String(options.gatewayPort ?? ''),
+        FARMSLOT_SLOT_ID: options.slotId,
+      },
     },
-  });
+    process.env.RECIPE_TASK_DIR || process.env.FARMSLOT_TASK_DIR,
+  );
 
   if (options.json) {
     console.log(JSON.stringify(result, null, 2));

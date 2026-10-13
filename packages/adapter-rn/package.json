@@ -46,6 +46,7 @@
     "prepublishOnly": "node ../../scripts/quality/check-farmslot-package-readiness.mjs --publish --packages @farmslot/adapter-rn"
   },
   "dependencies": {
+    "@farmslot/agent-runtime": "workspace:*",
     "@farmslot/protocol": "workspace:*",
     "@farmslot/recipe-runner": "workspace:*",
     "pngjs": "^7.0.0",

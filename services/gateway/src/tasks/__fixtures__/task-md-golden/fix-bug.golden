@@ -30,7 +30,14 @@ Render the task document for a run that is not stacked.
 
 ## Recipe proof + acceptance review
 
-Inspect registered criteria with `node '<FARMSLOT_ROOT>/packages/agent-runtime/bin/farmslot-agent.mjs' ac list --task-dir ".sandbox/farmslot-farm/worker-task/fix/<TASK_ID>"`. Declare their IDs and claims in the recipe's `proofTargets` and bind qualifying assertion nodes through `proves`. Run the recipe through the configured command and inspect its retained results. Recipe execution produces normal verdicts; never set a proven verdict by hand or edit acceptance ledger rows. If a criterion cannot be proved, retain the refusal and ask an authorized reviewer for an untestable override with an actor and reason.
+Before running the task's recipe, bind its retained results and verdict transport to this task:
+
+```bash
+RECIPE_TASK_DIR="$(cd ".sandbox/farmslot-farm/worker-task/fix/<TASK_ID>" && pwd)" && export RECIPE_TASK_DIR
+```
+
+Keep this binding for every task proof run through the configured recipe command. Independent diagnostics must clear task binding so they cannot replace this task's selected proof.
+Inspect registered criteria with `node '<FARMSLOT_ROOT>/packages/agent-runtime/bin/farmslot-agent.mjs' ac list --task-dir ".sandbox/farmslot-farm/worker-task/fix/<TASK_ID>"`. Declare their IDs and claims in the recipe's `proofTargets` and bind qualifying assertion nodes through `proves`. Run the recipe through the configured command and inspect its retained results. Recipe execution produces normal verdicts; never set a proven verdict by hand or edit acceptance ledger rows. If a criterion cannot be proved, retain the refusal and ask an authorized person to record an untestable override through the run human gate with a reason.
 Inspect the criteria again. When recipe.json exists, render coverage with `node '<FARMSLOT_ROOT>/packages/agent-runtime/bin/farmslot-agent.mjs' ac render --task-dir ".sandbox/farmslot-farm/worker-task/fix/<TASK_ID>"` to a temporary file, then replace `artifacts/recipe-coverage.md` only after a successful render. Run `node '<FARMSLOT_ROOT>/packages/agent-runtime/bin/farmslot-agent.mjs' artifact-check ".sandbox/farmslot-farm/worker-task/fix/<TASK_ID>" --require-recipe-coverage-if-recipe --require-acceptance-status` before `mark complete`. Missing or unrecorded verdicts refuse completion; checked checklist items alone do not assess an AC.
 
 ## Affected Area

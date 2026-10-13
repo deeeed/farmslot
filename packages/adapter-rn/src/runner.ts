@@ -1,11 +1,15 @@
+import { realpath } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 
+import { recordRecipeAttemptSelection } from '@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs';
 import {
   digestRecipeDocument,
   getRecipeActionManifestActionNames,
   isRecord,
   type RecipeActionManifestDocument,
+  type RecipeClaimLedger,
 } from '@farmslot/protocol';
 import {
   applyTaskLocalInvocationTrust,
@@ -45,6 +49,14 @@ import { createRedactingCoreAdapters } from './redaction.js';
 import { createIosSimulatorVideoRecorder } from './simctl-video-recorder.js';
 import { ADAPTER_RN_PACKAGE_VERSIONS } from './version.js';
 import { createAndroidVideoRecorder } from './video-recorder.js';
+
+interface TaskAcceptanceTransport {
+  requireHandoffAcceptanceCriteria(taskDir: string): Array<{ id: string; text: string }>;
+  setDerivedClaims(taskDir: string, claims: RecipeClaimLedger): unknown;
+}
+const require = createRequire(import.meta.url);
+const taskAcceptance =
+  require('@farmslot/agent-runtime/scripts/acceptance-ledger.cjs') as TaskAcceptanceTransport;
 
 export interface ExpoRecipeRunOptions {
   projectRoot?: string;
@@ -92,6 +104,14 @@ export async function runExpoRecipeDocument(
     options.artifactsDir ?? defaultArtifactsDir(recipePath),
     projectRoot,
   );
+  const configuredTaskDir = process.env.RECIPE_TASK_DIR || process.env.FARMSLOT_TASK_DIR;
+  const taskDir = configuredTaskDir ? path.resolve(projectRoot, configuredTaskDir) : null;
+  const claims = taskDir
+    ? taskAcceptance.requireHandoffAcceptanceCriteria(taskDir).map(({ id, text }) => ({
+        id,
+        claim: text,
+      }))
+    : undefined;
 
   const manifest = (await readJsonFile(manifestPath)) as RecipeActionManifestDocument;
   const platform = normalizeRecipeAdapter(process.env.PLATFORM);
@@ -136,7 +156,7 @@ export async function runExpoRecipeDocument(
   });
 
   try {
-    return await runner.run({
+    const result = await runner.run({
       recipePath: recipeAbsolutePath,
       artifactsDir,
       projectRoot,
@@ -149,7 +169,29 @@ export async function runExpoRecipeDocument(
       },
       recordVideo: options.recordVideo,
       ...trust,
+      ...(claims ? { claims } : {}),
     });
+    if (
+      taskDir &&
+      result.status === 'pass' &&
+      recordRecipeAttemptSelection(taskDir, path.dirname(result.tracePath))
+    ) {
+      const realTask = await realpath(taskDir);
+      const packageRoot = path.dirname(result.claimsPath);
+      taskAcceptance.setDerivedClaims(taskDir, {
+        ...result.claims,
+        criteria: result.claims.criteria.map((claim) => ({
+          ...claim,
+          evidence: [
+            ...new Set([
+              result.tracePath,
+              ...claim.evidence.map((file) => path.resolve(packageRoot, file)),
+            ]),
+          ].map((file) => path.relative(realTask, file).split(path.sep).join('/')),
+        })),
+      });
+    }
+    return result;
   } finally {
     await closeUiTransportQuietly(transport);
   }

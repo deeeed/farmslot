@@ -36,8 +36,9 @@ test('task instructions consume supplied helper commands and leave verdicts to r
     /node \/connected\/runtime\/check-task-artifact-contract\.mjs "\.task\/proof"/,
   );
   assert.match(document, /proofTargets/);
+  assert.match(document, /RECIPE_TASK_DIR=.*cd.*\.task\/proof.*&& export RECIPE_TASK_DIR/);
   assert.match(document, /proves/);
-  assert.match(document, /authorized reviewer.*untestable override.*actor and reason/);
+  assert.match(document, /authorized person.*untestable override.*run human gate.*reason/);
   assert.doesNotMatch(document, /\/wrong\/deployment|ac set .*proven/);
   const standalone = buildTaskDocument({ ...input, vars: { TASK_DIR: '.task/proof' } });
   assert.ok(
