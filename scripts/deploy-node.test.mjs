@@ -28,7 +28,14 @@ const deployFixture = (t, prefix) => {
     'services/node/package.json',
   ])
     write(relative, fs.readFileSync(path.join(repo, relative)));
-  for (const name of ['protocol', 'capabilities', 'agent-runtime', 'slot-config']) {
+  for (const name of [
+    'protocol',
+    'capabilities',
+    'agent-runtime',
+    'slot-config',
+    'adapter-sdk',
+    'recipe-runner',
+  ]) {
     write(
       `packages/${name}/package.json`,
       fs.readFileSync(path.join(repo, 'packages', name, 'package.json')),
