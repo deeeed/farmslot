@@ -224,3 +224,40 @@ Providers advertise the optional field only after pinning supporting releases. M
 ### Public surface
 
 `farmslot recipe run` and `farmslot recipe call ui.wait_for` consume the existing action with `enabled`; no action name or CLI flag is added. `@farmslot/protocol` owns validation, `@farmslot/recipe-runner` owns CDP execution and extends its existing exported wait options, and `@farmslot/adapter-rn` owns native execution. No new SDK callback or evidence format is introduced. MetaMask supplies product identity/native routing and manifest/dependency pins. This additive action extension requires supporting package releases before provider advertisement.
+
+## Amendment 5 (2026-10-13): File-content proof assertions
+
+**Status:** Proposed. **Shipping PR:** Pending.
+
+### Decision
+
+An executed `assert_file` with a non-empty resolved `contains` expectation may
+prove a state claim about that file's contents. Its own file read is the
+observation. An existence-only check remains ineligible for claim proof.
+
+Reuse ADR-062's assertion, observation, occurrence and verdict contracts. Retain
+the checked path, text expectation and match outcome from the executed read;
+derive the verdict through the shared assertion reducer. A skipped node,
+unreadable file or absent expectation cannot manufacture proven evidence.
+Existing failure classification and visual-review requirements still apply.
+
+### Rationale and consequences
+
+Non-UI criteria need an executable check of the claimed behavior. Test-command
+exit codes and captured log output already use `command` followed by
+`assert_output`. File-content claims should also use the existing `assert_file`
+action without a second ledger writer or evidence format. A file assertion
+certifies its content check, not a visible UI outcome or a command's success.
+
+### Public surface
+
+The existing `farmslot recipe run` and `farmslot recipe call assert_file` consume
+the existing `path` and `contains` fields. No action name or CLI flag is added.
+`@farmslot/protocol` owns the shared assertion policy;
+`@farmslot/recipe-runner` owns execution-bound eligibility and derived evidence.
+SDK, hosted CLI and provider consumers inherit that path. Supporting packages
+must ship together before adopters rely on file-content claim proof.
+
+The [normative rule](../reference/recipe-protocol-v1.md#amendment-5-file-content-proof-assertions)
+and the existing recipe guide define authoring and conformance. P2/P5 proof on
+one UI and one non-UI ticket per pack precedes the normal-writer cutover.

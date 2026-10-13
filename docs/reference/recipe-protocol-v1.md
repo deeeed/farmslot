@@ -328,6 +328,43 @@ Default tests MUST cover disabled and enabled transitions, absent targets, dupli
 
 Live public-CLI proof MUST exercise a real browser control and a real native control in both states, a contrary-state refusal, observed state evidence and authored cleanup. HUD intent is recommended where supported. Do not enter secrets merely to toggle a control; prefer non-financial forms and preserve borrowed state. Disabling or bypassing the predicate in an isolated candidate MUST make its negative control fail. Supporting packages publish before provider dependency pins are raised; release review and registry verification remain separate gates.
 
+### Amendment 5: file-content proof assertions
+
+**Status:** Proposed; implementation and publication pending.
+
+#### Public surface
+
+`assert_file` keeps its existing `path` and optional `contains` parameters.
+`farmslot recipe run` and `farmslot recipe call` use the same registered handler.
+The shared protocol assertion policy and runner evidence reducer own eligibility;
+providers inherit it without supplying another writer or observation store.
+
+#### Eligibility and evidence
+
+A file-content assertion is eligible only when the executed node has a resolved,
+non-empty text expectation in `contains`. The node's own read supplies the
+observation. The checked path, expectation and actual match outcome MUST remain
+bound to that execution occurrence in the existing assertion evidence. An
+existence-only check or an empty expectation MUST NOT prove a claim. Skipped
+checks and infrastructure failures follow the existing ADR-062 verdict rules.
+
+A passing content assertion may prove the stated file-content criterion. It does
+not prove a visual criterion, and its `proves` label does not override missing
+observations or visual review. Declared retries retain their failed attempts;
+independent iterations remain independent. Failed content matches, missing
+provers and unsupported predicates cannot become proven through a later unrelated
+success.
+
+#### Conformance
+
+Before adopters use this eligibility, P2/P5 from
+[recorded-run evidence](recorded-run-evidence.md#migration-and-conformance) MUST pass on one UI
+and one non-UI ticket per pack. Retain the minimal author's actual model/version
+and prompt privately; provide only task criteria, catalog and schema. Verify
+content-match success and contrary-content failure, existence-only and empty
+expectation refusals, and screenshot-only/navigation-only negative controls.
+Keep the existing enabled-state amendment and visual-review contract intact.
+
 ## Libraries
 
 ```text
