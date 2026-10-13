@@ -66,6 +66,10 @@ observation-bound expectations.
 
 ## Reading a recorded package
 
+The review-model helpers are experimental source exports. Published adapter-sdk
+0.9.1 includes the reader and validator, but not this new model. Use the approved
+merged source or wait for a release that includes it; no new package pin is implied.
+
 Use `readRecordedEvidencePackage(artifactDir)` from `@farmslot/adapter-sdk` in
 Node. Reject failed `checks` before passing the canonical package to
 `createEvidenceReviewModel` from `@farmslot/adapter-sdk/evidence`. The portable

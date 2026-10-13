@@ -38,13 +38,16 @@ Do not hand-write `SIGNAL.json`. The runtime preserves pass-through fields, reco
 
 ```bash
 farmslot-agent task init <task-dir> --flow <flow> --platform <p> --template <id> --package-templates <catalog> --title "…" [--run-mode <mode>]
-farmslot-agent mark <task-md> <signal-json> complete --mark-last
+farmslot-agent mark <task-dir> complete --mark-last
+farmslot-agent mark <task-dir> --checklist TASK.md complete --mark-last
 farmslot-agent artifact-check <task-dir> --require-recipe-quality-if-recipe
 farmslot-agent recipe-quality build --input recipe-quality-input.json --output artifacts/recipe-quality.json
 farmslot-agent contract resolve --flow fix-bug
 farmslot-agent ac set AC-1 proven --evidence artifacts/after.png --recipe-node assert-order-sheet
 farmslot-agent ac render
 ```
+
+`mark` takes a task directory, not individual file paths. Its first argument must be an existing directory or it exits with a usage error. It marks `CHECKLIST.md`, falling back to `TASK.md`, and writes `SIGNAL.json` unless a role switch supplies `checklist-target.json`. `--checklist` selects a checklist explicitly and derives its role-scoped signal filename.
 
 ## Child checklist units
 
