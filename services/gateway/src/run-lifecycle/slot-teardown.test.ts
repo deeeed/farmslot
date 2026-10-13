@@ -176,6 +176,8 @@ const run = {
 const reaps = () => commands.filter((cmd) => cmd.includes(`identityfile='${IDENTITY}'`));
 
 beforeEach(() => {
+  run.status = 'cancelled';
+  run.steps = [];
   slotRow = { current_run_id: RUN_ID, slot_epoch: 1 };
   slotWrites = [];
   commands = [];
@@ -297,6 +299,36 @@ test('an identified terminal hold is freed after its worker disappears', async (
   assert.equal(slotRow?.lifecycle, 'ready');
   assert.equal(slotRow?.cleanup_run_id, null);
 });
+
+for (const name of ['complete', 'finalize']) {
+  test(`an occupied ${name} prerequisite hold retains its workspace and providers`, async () => {
+    run.status = 'failed';
+    run.steps = [
+      { name, status: 'failed', outputs: { gatePrerequisiteRefusal: { kind: 'evidence' } } },
+    ];
+    for (const owner of [
+      { current_run_id: RUN_ID },
+      { current_run_id: null, cleanup_run_id: RUN_ID },
+    ]) {
+      slotRow = {
+        ...owner,
+        slot_epoch: 4,
+        lifecycle: 'held',
+        phase: 'occupied',
+        held_reason: 'recipe closeout unconfirmed',
+      };
+      const before = structuredClone(slotRow);
+      assert.equal(await retryOccupiedRunSlot(SLOT_ID), false);
+      assert.deepEqual(slotRow, before);
+      assert.equal(providerCleanups, 0);
+      assert.equal(archived, 0);
+      assert.deepEqual(commands, []);
+      assert.deepEqual(slotWrites, []);
+      assert.equal(holderAlive, true);
+      assert.equal(recordedScope, SCOPE);
+    }
+  });
+}
 
 test('an archived terminal owner can finish an identified hold without changing its record', async () => {
   slotRow = {
