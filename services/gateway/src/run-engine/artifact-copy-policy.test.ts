@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  GATEWAY_OWNED_DIFF_ARTIFACTS,
   INTERNAL_ARTIFACT_COPY_EXCLUDES,
   isGatewayOwnedArtifactMirrorEntry,
   isGatewayOwnedArtifactPath,
@@ -10,6 +11,13 @@ import {
 } from '../core/artifact-copy-policy.js';
 
 test('gateway-owned artifact predicates cover package and review artifacts consistently', () => {
+  for (const name of GATEWAY_OWNED_DIFF_ARTIFACTS) {
+    assert.equal(isGatewayOwnedArtifactMirrorEntry(name), true);
+    assert.equal(isGatewayOwnedArtifactPath(`artifacts/${name}`), true);
+    assert.equal(isGatewayOwnedArtifactPath(`artifacts/attempt-3/${name}`), false);
+    assert.equal((WORKER_ARTIFACT_COPY_EXCLUDES as readonly string[]).includes(name), true);
+    assert.equal((REVIEW_GATE_ARTIFACT_COPY_EXCLUDES as readonly string[]).includes(name), true);
+  }
   assert.equal(isGatewayOwnedArtifactMirrorEntry('pr-package.json'), true);
   assert.equal(isGatewayOwnedArtifactMirrorEntry('review-loop-1'), true);
   assert.equal(isGatewayOwnedArtifactMirrorEntry('review-2'), true);

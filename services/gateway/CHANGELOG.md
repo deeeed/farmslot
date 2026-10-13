@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Keep report and evidence reviews valid when completion adds or updates gateway-owned diff diagnostics; preserve strict checks on worker output.
+
 - Preserve completion-prerequisite workspace holds during occupied-slot cleanup retries, retaining their worker, slot and capability ownership for explicit recovery.
 
 - Render worker acceptance and artifact-check commands from the connected node runtime before writing the task.
