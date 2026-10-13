@@ -4,6 +4,7 @@ import {
   type RepeatReviewContext,
   type Run,
 } from '@farmslot/protocol';
+import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import { incrementalReviewAvailable } from '../run-engine/engine-decisions.js';
 import { getRunnerDefinition } from '../runners/registry.js';
@@ -50,7 +51,7 @@ export function configureWorkspaceContinuity(
   prior: Run,
   context: RepeatReviewContext,
 ): void {
-  const mode = run.prWork?.review?.options.mode ?? run.reviewMode ?? 'cold';
+  const mode = resolveReviewMode({ run });
   context.mode = mode;
   if (mode === 'cold') {
     context.session = { mode, continuity: 'fresh', priorRunId: prior.id };

@@ -3,6 +3,8 @@ import test from 'node:test';
 
 import type { RepeatReviewContext, Run } from '@farmslot/protocol';
 
+import { assertPrimaryReviewContext } from '../run-engine/review-plan.js';
+
 import { configureWorkspaceContinuity } from './continuity.js';
 
 const prior = {
@@ -92,4 +94,34 @@ test('COLD records fresh continuity without a retained lineage', () => {
   const result = context();
   configureWorkspaceContinuity({ ...current, reviewMode: 'cold' }, prior, result);
   assert.deepEqual(result.session, { mode: 'cold', continuity: 'fresh', priorRunId: 'prior' });
+});
+
+test('planner and workspace continuity both honor the explicit run mode over PR defaults', () => {
+  for (const mode of ['warm', 'cold'] as const) {
+    const run = {
+      ...current,
+      flowType: 'review-pr',
+      reviewMode: mode,
+      prWork: { review: { options: { mode: mode === 'warm' ? 'cold' : 'warm' } } },
+    } as Run;
+    const result = context();
+    if (mode === 'warm')
+      assert.throws(() => assertPrimaryReviewContext(run), /explicit reviewId lineage/);
+    else assert.doesNotThrow(() => assertPrimaryReviewContext(run));
+    configureWorkspaceContinuity(run, prior, result);
+    assert.equal(result.mode, mode);
+    assert.equal(result.session?.continuity, mode === 'warm' ? 'resumed' : 'fresh');
+  }
+});
+
+test('nested WARM selection without a retained session cannot fall back to COLD', () => {
+  const run = {
+    ...current,
+    reviewMode: undefined,
+    prWork: { review: { options: { mode: 'warm' } } },
+  } as Run;
+  assert.throws(
+    () => configureWorkspaceContinuity(run, { ...prior, agentContexts: [] }, context()),
+    /WARM review unavailable/,
+  );
 });

@@ -25,12 +25,13 @@ MONITOR → SELF_REVIEW → COMPLETE (gate-held) → HUMAN_GATE (worker live)
 1. **COMPLETE** — prepare local package; call `holdSlotForPublicationGate` (`busy` / `review-gate` / `agent: working`); emit `slotDisposition: 'gate-held'`. Do **not** call `slotRelease`.
 2. **HUMAN_GATE** — keep `agent: working`; operator may attach via Companion/tmux.
    - Before presenting publication approval, materialize
-     `publication_review.<flow>.minimum_independent_reviews` into reviewer work when no explicit
-     dispatch plan exists. These automatic passes use `static-code`; `full-live` is opt-in through
-     an explicit review plan/operator request.
-   - Pipeline self-review is worker feedback and never counts as an independent review. A separate
-     reviewer context using the same runner may count; runner diversity is required only when
-     `require_cross_runner` is configured.
+     `publication_review.<flow>.minimum_reviews` into separate reviewer work when no explicit
+     dispatch plan exists. These automatic passes use `static-code`; runtime validation belongs
+     to the separate farm QA flow under ADR-058.
+   - Review eligibility, WARM/COLD selection and separate-session provenance follow
+     [ADR-063](063-review-modes-warm-cold.md). A qualifying pipeline reviewer counts like a
+     gate-requested reviewer. Worker feedback is not a review, and runner diversity is not
+     an eligibility condition.
 3. **FINALIZE** — capture session metrics while worker is alive; **do not** call `killSlotAgents`. Transition slot to `held` / `ci-watch` so CI follow-ups can reuse the warm session (MANUAL-000065).
 4. **CI_WATCH handoff** — chained `pr-complete` / `update-branch` set `engineState.flags.warmSessionReuse` (+ `skipPrepare`). DISPATCH probes process liveness and hands the new TASK.md into the warm worker when alive; falls back to fresh `dispatchExecute` when the session is dead, the runner/model swapped, or the runner is not tmux-nudgeable (composes with MANUAL-000043 dead-session fallback and MANUAL-000045 ownership claims).
 5. **Terminal cleanup** — tear down live agents when the **family/run** ends, not merely because FINALIZE completed:
@@ -218,3 +219,28 @@ changes and what deliberately does not:
   passed a proof.
 - **Not attempted here:** re-homing across machines, creating a worktree or branch, re-running the
   run's prepare hooks on the target, or copying a runner session file.
+
+## Amendment 3: shared review-mode resolution (2026-10-13)
+
+**Status:** Accepted. This note applies ADR-063 and the approved review-selection consolidation.
+
+### Decision
+
+ADR-063 owns reviewer eligibility and WARM/COLD behavior. The shared picker
+package owns one mode resolver, consumed by admission, workspace continuity,
+task instructions and evidence readers. The exact precedence is normative in
+[the review contract](../reference/review-modes-warm-cold.md#mode-resolution).
+
+### Rationale and consequences
+
+Local selectors previously reversed run and PR-option precedence. They could
+validate one mode and launch another. All consumers now resolve the same
+selection; unavailable WARM still fails closed. Worker gate-held lifecycle,
+runner/model defaults, review counts and farm QA remain unchanged.
+
+### Public surface
+
+The additive `resolveReviewMode` and `ResolveReviewModeOptions` exports belong
+to `@farmslot/review-dispatch`. Gateway and picker consumers share them. There
+is no new CLI flag or harness extension; harnesses inherit the typed selected
+mode and existing session checks.

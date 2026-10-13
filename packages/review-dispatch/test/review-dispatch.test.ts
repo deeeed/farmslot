@@ -19,6 +19,7 @@ import {
   executionModelsFromReviewSequence,
   parseReviewSequence,
   resolveReviewDispatchDefaults,
+  resolveReviewMode,
   reviewContextFromRequest,
   ReviewDispatchViewModel,
   reviewLineagesForRun,
@@ -42,6 +43,35 @@ const warm: ReviewSelection = {
   effort: 'ultra',
   mode: 'warm',
 };
+
+test('review mode has one precedence across explicit selection, run, PR options and defaults', () => {
+  const run = {
+    reviewMode: 'warm',
+    prWork: { review: { options: { mode: 'cold' } } },
+    repeatReviewContext: { mode: 'cold' },
+  } as Run;
+  assert.equal(resolveReviewMode(), 'cold');
+  assert.equal(resolveReviewMode({ run, explicitMode: 'cold', defaultMode: 'warm' }), 'cold');
+  assert.equal(resolveReviewMode({ run, defaultMode: 'cold' }), 'warm');
+  assert.equal(
+    resolveReviewMode({ run: { ...run, reviewMode: 'cold' }, explicitMode: 'warm' }),
+    'warm',
+  );
+  assert.equal(
+    resolveReviewMode({ run: { ...run, reviewMode: undefined }, defaultMode: 'warm' }),
+    'cold',
+  );
+  assert.equal(
+    resolveReviewMode({
+      run: { repeatReviewContext: { mode: 'warm' } as Run['repeatReviewContext'] },
+      defaultMode: 'cold',
+    }),
+    'warm',
+  );
+  assert.equal(resolveReviewMode({ defaultMode: 'warm' }), 'warm');
+  assert.equal(run.reviewMode, 'warm');
+  assert.equal(run.prWork!.review!.options.mode, 'cold');
+});
 
 function picker(sequence = [cold, warm]) {
   return new ReviewDispatchViewModel({

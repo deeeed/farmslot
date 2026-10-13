@@ -27,6 +27,7 @@ import {
   type WorkerTerminalDisposition,
   type WorkerTerminalEvidence,
 } from '@farmslot/protocol';
+import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import { REQUESTED_REVIEW_SOURCE, reviewLoopNumberFromId } from '../quality/review-sources.js';
 import type { ReviewResult } from '../review/orchestrator.js';
@@ -264,7 +265,7 @@ export function buildPublishGateReviewStatus({
       : [
           {
             loopNumber: 1,
-            mode: reviewResult.mode ?? 'cold',
+            mode: resolveReviewMode({ explicitMode: reviewResult.mode }),
             verdict: reviewResult.skipped
               ? 'skipped'
               : reviewResult.verdict === 'pass'
@@ -295,7 +296,7 @@ export function buildPublishGateReviewStatus({
   const status: ReviewStatus = {
     id: resolvedReviewId,
     source,
-    mode: finalAttempt.mode ?? reviewResult.mode ?? 'cold',
+    mode: resolveReviewMode({ explicitMode: finalAttempt.mode, defaultMode: reviewResult.mode }),
     session: finalAttempt.session ?? reviewResult.session,
     runner: reviewRunner,
     model: reviewResult.model ?? model ?? null,

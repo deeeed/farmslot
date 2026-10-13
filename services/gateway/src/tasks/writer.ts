@@ -33,6 +33,7 @@ import {
   type TaskSchemaPhase,
   type TemplateProvenance,
 } from '@farmslot/protocol';
+import { resolveReviewMode } from '@farmslot/review-dispatch';
 import { normalizeRawRuntimeCapabilities, resolveEffectiveDomain } from '@farmslot/slot-config';
 
 import {
@@ -243,7 +244,7 @@ function buildReviewExecutionContract(
   instructionPaths: readonly string[],
 ): string {
   if (run.flowType !== 'review-pr') return '';
-  const scope = run.reviewMode ?? 'cold';
+  const scope = resolveReviewMode({ run });
   const depth = run.reviewValidationDepth ?? 'static-code';
   const range =
     scope === 'warm' && run.repeatReviewContext?.priorReviewedHeadSha
@@ -256,7 +257,7 @@ function buildReviewExecutionContract(
     ? `Read the frozen project review guidance: ${instructionPaths.map((item) => `\`${item}\``).join(', ')}.`
     : 'No additional project review guidance was configured.';
   const session =
-    (run.reviewMode ?? 'cold') === 'warm'
+    scope === 'warm'
       ? 'Resume the same-PR reviewer session when the gateway confirms the exact persisted session binding; refuse if the verified session cannot be resumed.'
       : 'Start with fresh reviewer context.';
   return `

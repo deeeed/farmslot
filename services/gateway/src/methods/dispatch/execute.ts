@@ -18,6 +18,7 @@ import {
   primaryRoleForFlow,
   type ReviewSessionTrace,
 } from '@farmslot/protocol';
+import { resolveReviewMode } from '@farmslot/review-dispatch';
 import { resolveEffectiveDomain } from '@farmslot/slot-config';
 
 import {
@@ -1197,12 +1198,11 @@ export async function dispatchExecute(
     : null;
   const primaryReviewId =
     currentRun?.flowType === 'review-pr'
-      ? currentRun?.reviewMode === 'warm'
+      ? resolveReviewMode({ run: currentRun }) === 'warm'
         ? currentRun.repeatReviewContext?.session?.reviewId
         : randomUUID()
       : undefined;
-  const repeatReviewMode =
-    currentRun?.repeatReviewContext?.mode ?? currentRun?.reviewMode ?? 'cold';
+  const repeatReviewMode = resolveReviewMode({ run: currentRun });
   const existingNativeBinding =
     currentRun?.transport === 'native'
       ? selectAgentContext(currentRun, { role: primaryRoleForFlow(currentRun.flowType) })

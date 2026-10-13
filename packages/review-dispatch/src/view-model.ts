@@ -1,5 +1,4 @@
 import {
-  DEFAULT_REVIEW_MODE,
   DEFAULT_RUNNER,
   type ReviewContinuationContext,
   type ReviewMode,
@@ -13,6 +12,7 @@ import {
   DEFAULT_REVIEW_DISPATCH_CATALOG,
   effortsForRunner,
   modelsForRunner,
+  resolveReviewMode,
   runnerOption,
 } from './catalog.js';
 import { copyExecutionResources } from './execution.js';
@@ -165,8 +165,8 @@ export class ReviewDispatchViewModel {
           values.mode === 'warm' &&
           patch.mode === undefined &&
           !this.contextForRow(this.currentRows.length)
-            ? DEFAULT_REVIEW_MODE
-            : (values.mode ?? DEFAULT_REVIEW_MODE),
+            ? resolveReviewMode()
+            : resolveReviewMode({ explicitMode: values.mode }),
       },
       { catalog: this.catalog },
     );

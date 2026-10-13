@@ -21,6 +21,7 @@ import {
   type RunReviewResult,
   type RunStatus,
 } from '@farmslot/protocol';
+import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import { isGitHubAncestor } from '../external/github.js';
 import { runReviewRoundBudget } from '../review/review-round-budget.js';
@@ -267,7 +268,7 @@ function priorReviewChain(
       prNumber: subject.prNumber,
       ...(payload?.reviewSnapshot?.baseSha ? { baseSha: payload.reviewSnapshot.baseSha } : {}),
       ...(payload?.reviewSnapshot?.headSha ? { headSha: payload.reviewSnapshot.headSha } : {}),
-      mode: prior.reviewMode ?? 'cold',
+      mode: resolveReviewMode({ run: prior }),
       validationDepth: prior.reviewValidationDepth ?? 'static-code',
       verdict: payload?.recommendation?.trim() || 'pending',
       unresolvedCount: payload ? payload.lineComments.length : null,
@@ -428,7 +429,7 @@ export async function handleRepeatReviewDecision(
 ): Promise<RepeatReviewContext | null> {
   if (current.flowType !== 'review-pr') return null;
   assertPrimaryReviewContext(current);
-  const requestedMode = current.reviewMode ?? current.prWork?.review?.options.mode ?? 'cold';
+  const requestedMode = resolveReviewMode({ run: current });
   const requestContext = current.reviewContext ?? current.prWork?.review?.options.reviewContext;
   if (
     requestedMode === 'warm' &&
@@ -445,10 +446,10 @@ export async function handleRepeatReviewDecision(
   const allRuns = listRuns({}).runs;
   const prior = findLatestPriorReviewRun(current, allRuns);
   if (!prior) {
-    if (current.reviewMode === 'warm')
+    if (requestedMode === 'warm')
       throw new Error('WARM review unavailable: no previous review session for this repository/PR');
     updateRun(runId, {
-      reviewMode: 'cold',
+      reviewMode: requestedMode,
       reviewValidationDepth: current.reviewValidationDepth ?? 'static-code',
     });
     return null;

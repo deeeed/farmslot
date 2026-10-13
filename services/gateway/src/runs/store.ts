@@ -48,7 +48,7 @@ import {
   signalFileForTask,
   taskTitleText,
 } from '@farmslot/protocol';
-import { parseReviewRequestContext } from '@farmslot/review-dispatch';
+import { parseReviewRequestContext, resolveReviewMode } from '@farmslot/review-dispatch';
 import { parseRunRecordFile } from '@farmslot/run-bundle';
 import { freezePlannedRunSources } from '@farmslot/slot-config';
 
@@ -889,7 +889,8 @@ export function createRun(
     reviewTier: params.reviewTier,
     reviewAutoFinish:
       params.flowType === 'review-pr' ? params.reviewAutoFinish === true : undefined,
-    reviewMode: params.reviewMode ?? (params.flowType === 'review-pr' ? 'cold' : undefined),
+    reviewMode:
+      params.flowType === 'review-pr' ? resolveReviewMode({ run: params }) : params.reviewMode,
     reviewContext: params.reviewContext
       ? parseReviewRequestContext(params.reviewContext, 1)
       : undefined,

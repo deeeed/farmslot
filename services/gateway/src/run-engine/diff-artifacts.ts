@@ -14,6 +14,7 @@ import {
   type ReviewDiffSnapshot,
   type Run,
 } from '@farmslot/protocol';
+import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import {
   getProjectField,
@@ -1131,7 +1132,8 @@ async function readFreshReviewInputArtifacts(
     if (!isFamilyDiffProvenance(parsed) || parsed.kind !== 'review-input') return null;
     if (parsed.repository && parsed.repository !== prRef.repo) return null;
     if (parsed.prNumber != null && parsed.prNumber !== prRef.prNumber) return null;
-    if ((parsed.reviewMode ?? 'cold') !== (run.reviewMode ?? 'cold')) return null;
+    if (resolveReviewMode({ explicitMode: parsed.reviewMode }) !== resolveReviewMode({ run }))
+      return null;
     if (
       run.repeatReviewContext?.currentHeadSha &&
       parsed.headSha !== run.repeatReviewContext.currentHeadSha
@@ -1313,7 +1315,7 @@ async function captureReviewInputArtifactsForRunUnlocked(
         run.reviewMode === 'warm' ? run.repeatReviewContext?.priorReviewedHeadSha : pr.baseSha,
       headRef: pr.branch,
       headSha: pr.headSha,
-      reviewMode: run.reviewMode ?? 'cold',
+      reviewMode: resolveReviewMode({ run }),
       capturedAt: now,
       source: 'github-pr',
     };
@@ -1342,7 +1344,7 @@ async function captureReviewInputArtifactsForRunUnlocked(
         run.reviewMode === 'warm' ? run.repeatReviewContext?.priorReviewedHeadSha : pr.baseSha,
       headRef: pr.branch,
       headSha: pr.headSha,
-      reviewMode: run.reviewMode ?? 'cold',
+      reviewMode: resolveReviewMode({ run }),
       capturedAt: now,
       configSource: sourceFilterSettings.configSource,
       ...(sourceFilterSettings.configFallbackReason
@@ -1374,7 +1376,7 @@ async function captureReviewInputArtifactsForRunUnlocked(
     const unavailable: FamilyInputCommitMetadata = {
       repository: prRef.repo,
       prNumber: prRef.prNumber,
-      reviewMode: run.reviewMode ?? 'cold',
+      reviewMode: resolveReviewMode({ run }),
       ...(pr
         ? {
             baseRef: pr.baseRef,

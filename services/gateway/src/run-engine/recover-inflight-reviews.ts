@@ -26,6 +26,7 @@ import {
   type Run,
   type WorkerSignal,
 } from '@farmslot/protocol';
+import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import { upsertAgentContext } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
@@ -328,12 +329,14 @@ export function buildRecoveredReview(params: {
     reviewSnapshot,
     reviewId: ctx.reviewId,
     reviewerSessionId: ctx.runnerSessionId ?? undefined,
-    mode: priorReviews.find((review) => review.id === reviewId)?.mode ?? 'cold',
+    mode: resolveReviewMode({
+      explicitMode: priorReviews.find((review) => review.id === reviewId)?.mode,
+    }),
     session: priorReviews.find((review) => review.id === reviewId)?.session,
     attempts: [
       {
         loopNumber: 1,
-        mode: run.reviewMode ?? 'cold',
+        mode: resolveReviewMode({ run }),
         verdict: feedback.verdict,
         unresolvedCount: feedback.verdict === 'pass' ? 0 : feedback.issues.length,
         ...(feedback.issues.length ? { issues: feedback.issues } : {}),
@@ -759,7 +762,7 @@ async function persistRecoveredFailedReviewer(
       attempts: [
         {
           loopNumber: 1,
-          mode: existing?.mode ?? 'cold',
+          mode: resolveReviewMode({ explicitMode: existing?.mode }),
           verdict: 'failed',
           unresolvedCount: 0,
           validationDepth,

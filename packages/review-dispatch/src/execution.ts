@@ -9,6 +9,7 @@ import {
   DEFAULT_REVIEW_DISPATCH_CATALOG,
   defaultEffortForRunner,
   defaultModelForRunner,
+  resolveReviewMode,
 } from './catalog.js';
 import type {
   ResolvedReviewDispatchExecutionModel,
@@ -52,7 +53,7 @@ export function executionModelsFromReviewSequence(
 
 export function reviewSequenceForExecution(
   models: readonly PRExecutionModel[],
-  mode: ReviewMode = 'cold',
+  mode: ReviewMode = resolveReviewMode(),
   catalog: ReviewDispatchCatalog = DEFAULT_REVIEW_DISPATCH_CATALOG,
 ): ReviewSequence {
   return parseReviewSequence(
@@ -60,7 +61,7 @@ export function reviewSequenceForExecution(
       runner: model.runner,
       model: model.model,
       effort: model.effort ?? null,
-      mode: model.mode ?? mode,
+      mode: resolveReviewMode({ explicitMode: model.mode, defaultMode: mode }),
     })),
     { catalog, sequenceRole: 'execution-alternatives' },
   );
@@ -78,7 +79,7 @@ export function defaultReviewDispatchExecutionModels(
           '',
         model: null,
         effort: null,
-        mode: 'cold',
+        mode: resolveReviewMode(),
       },
       catalog,
     ),

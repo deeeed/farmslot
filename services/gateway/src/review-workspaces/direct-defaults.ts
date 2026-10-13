@@ -17,7 +17,7 @@ import {
   sameNativeProfileReference,
   workspacePolicyMachines,
 } from '@farmslot/protocol';
-import { executionModelFromSelection } from '@farmslot/review-dispatch';
+import { executionModelFromSelection, resolveReviewMode } from '@farmslot/review-dispatch';
 
 import { GatewayMethodError } from '../core/method-error.js';
 import {
@@ -195,7 +195,7 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
   let params = {
     ...original,
     mode: original.mode ?? ('autonomous' as const),
-    reviewMode: original.reviewMode ?? defaults.review.mode,
+    reviewMode: resolveReviewMode({ run: original, defaultMode: defaults.review.mode }),
     ...(flow === 'review-pr'
       ? { reviewAutoFinish: original.reviewAutoFinish ?? defaults.review.autoFinish ?? false }
       : {}),
@@ -253,7 +253,7 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
       {
         runner,
         model,
-        mode: params.reviewMode ?? 'cold',
+        mode: resolveReviewMode({ run: params }),
         effort:
           params.effort ??
           (params.model === undefined || params.model === configured?.model
@@ -279,7 +279,7 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
       workspacePolicy: { kind: 'exact', machine: params.reviewWorkspaceTarget.machine },
       models: [
         {
-          mode: 'cold' as const,
+          mode: resolveReviewMode({ run: params }),
           runner: params.runner,
           model: params.model,
           effort: params.effort ?? null,

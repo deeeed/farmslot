@@ -9,9 +9,11 @@ import {
   DEFAULT_GROK_MODEL,
   DEFAULT_PI_MODEL,
   DEFAULT_PI_THINKING,
+  DEFAULT_REVIEW_MODE,
   DEFAULT_RUNNER,
   type NativeRunnerOption,
   PI_THINKING_LEVELS,
+  type ReviewMode,
   type ReviewSelection,
   RUNNER_PICKER_MODELS,
   type RunnerModelCatalogResult,
@@ -19,10 +21,27 @@ import {
 } from '@farmslot/protocol';
 
 import type {
+  ResolveReviewModeOptions,
   ReviewDispatchCatalog,
   ReviewDispatchProjectDefaults,
   ReviewDispatchRunnerOption,
 } from './types.js';
+
+/** Selection precedence shared by pickers, run admission and review execution. */
+export function resolveReviewMode({
+  explicitMode,
+  run,
+  defaultMode,
+}: ResolveReviewModeOptions = {}): ReviewMode {
+  return (
+    explicitMode ??
+    run?.reviewMode ??
+    run?.prWork?.review?.options.mode ??
+    run?.repeatReviewContext?.mode ??
+    defaultMode ??
+    DEFAULT_REVIEW_MODE
+  );
+}
 
 /** Capability defaults shared by every picker until the host supplies its registry catalog. */
 export const DEFAULT_REVIEW_DISPATCH_CATALOG: ReviewDispatchCatalog = {
@@ -218,11 +237,10 @@ export function defaultsForFlow(
 ): Partial<ReviewSelection> {
   const config = projects.find((entry) => entry.name === project);
   const selected = config?.defaults?.[flow];
-  return {
+  const defaults: Partial<ReviewSelection> = {
     runner: DEFAULT_RUNNER,
     model: null,
     effort: null,
-    mode: 'cold',
     ...fallback,
     ...(selected?.runner ? { runner: selected.runner } : {}),
     ...(selected?.model ? { model: selected.model } : {}),
@@ -235,6 +253,7 @@ export function defaultsForFlow(
         )
       : {}),
   };
+  return { ...defaults, mode: resolveReviewMode({ explicitMode: defaults.mode }) };
 }
 
 export interface CreateReviewDispatchCatalogOptions {

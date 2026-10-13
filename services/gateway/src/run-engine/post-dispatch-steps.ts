@@ -18,7 +18,11 @@ import {
   type SlotReleaseParams,
   type WorkerSignal,
 } from '@farmslot/protocol';
-import { resolveReviewDispatchDefaults, reviewContextFromRequest } from '@farmslot/review-dispatch';
+import {
+  resolveReviewDispatchDefaults,
+  resolveReviewMode,
+  reviewContextFromRequest,
+} from '@farmslot/review-dispatch';
 
 import { markSlotBusy, markSlotHeld, updateSlotStatusIf } from '../core/index.js';
 import {
@@ -832,7 +836,9 @@ export async function rerunReviewIfReviewedInputsChanged(
   console.log(
     `[run-engine] run ${runId.slice(0, 8)} — evidence or HEAD changed since the last review; running review again`,
   );
-  const plan: ReviewSelection[] = [{ runner: 'claude', model: null, effort: null, mode: 'cold' }];
+  const plan: ReviewSelection[] = [
+    { runner: 'claude', model: null, effort: null, mode: resolveReviewMode() },
+  ];
   const reviewedPackage = await readReadyGatePreparedPackage(latest);
   const reviewPlanResult = await context.executePublishGateReviewPlan(
     runId,

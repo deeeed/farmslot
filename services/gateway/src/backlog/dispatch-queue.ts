@@ -28,6 +28,7 @@ import {
   assertWarmReviewContext,
   executionModelFromSelection,
   parseReviewRequestContext,
+  resolveReviewMode,
 } from '@farmslot/review-dispatch';
 
 import { isolatedTestPath } from '../core/isolated-test-path.js';
@@ -1266,7 +1267,7 @@ async function selectQueuedReviewWorkspace(
             runner: item.runner ?? '',
             model: item.model ?? '',
             effort: item.effort ?? null,
-            mode: item.reviewMode ?? 'cold',
+            mode: resolveReviewMode({ run: item }),
             transport: item.transport,
             nativeProfile: item.nativeProfile,
           },
