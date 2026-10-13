@@ -226,6 +226,7 @@ async function fixture(
   t: TestContext,
   capabilities: RuntimeCapabilityCatalogEntry[],
   options: {
+    catalogForSlot?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['catalogForSlot'];
     pressureFor?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['pressureFor'];
     familyForRun?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['familyForRun'];
     runAction?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['runAction'];
@@ -263,12 +264,14 @@ async function fixture(
     store,
     captureProviderProcesses: options.captureProviderProcesses,
     checkProviderCleanup: options.checkProviderCleanup,
-    catalogForSlot: async (slotId) => ({
-      slotId,
-      project: 'test-project',
-      ...(options.machineFor?.(slotId) ? { machine: options.machineFor(slotId)! } : {}),
-      capabilities,
-    }),
+    catalogForSlot:
+      options.catalogForSlot ??
+      (async (slotId) => ({
+        slotId,
+        project: 'test-project',
+        ...(options.machineFor?.(slotId) ? { machine: options.machineFor(slotId)! } : {}),
+        capabilities,
+      })),
     runAction: async (_slotId, action, parameters, declaredParameters) => {
       const name =
         action.kind === 'slot-action' ? action.actionId : `${action.resourceId}.${action.action}`;
@@ -4157,4 +4160,139 @@ test('recording waiters retain frozen target claims through handoff and refuse c
   const completed = await recordingAcquire(registry, SLOT_B, 'waiter', target, 'recording', true);
   assert.equal(completed.ok, true);
   if (completed.ok) assert.equal(completed.lease.claims?.[0].id, claimId);
+});
+
+test('recovery clears a terminal owners deferred device claim before serving the next run', async (t) => {
+  let terminal = false;
+  const { registry, actions } = await fixture(t, [entry('device')], {
+    isTerminalOwner: () => terminal,
+  });
+  assert.equal((await acquire(registry, 'device', 'archived-pixel')).ok, true);
+  await registry.releaseOwnership(SLOT, 'archived-pixel');
+  const blocked = await acquire(registry, 'device', 'next-run');
+  assert.equal(blocked.ok, false);
+  terminal = true;
+  actions.length = 0;
+  await registry.recover();
+  const lease = (await registry.status({ slotId: SLOT })).leases[0];
+  assert.equal(lease.state, 'released');
+  assert.equal(lease.providerCleanupDeferred, undefined);
+  assert.deepEqual(actions, ['device.release']);
+  terminal = false;
+  assert.equal((await acquire(registry, 'device', 'next-run')).ok, true);
+});
+
+test('terminal recovery preserves a live siblings warm provider', async (t) => {
+  const terminal = new Set<string>();
+  const { registry, actions, store } = await fixture(
+    t,
+    [{ ...entry('shared', 'shared'), keepWarmMs: 60_000 }],
+    { isTerminalOwner: (id) => terminal.has(id) },
+  );
+  for (const id of ['ending', 'live-sibling'])
+    assert.equal((await acquire(registry, 'shared', id)).ok, true);
+  await registry.releaseOwnership(SLOT, 'ending');
+  // Restart can retain a warm sibling record beside a deferred terminal record.
+  const snapshot = store.snapshot();
+  const sibling = snapshot.leases.find((lease) => lease.owner.runId === 'live-sibling')!;
+  sibling.state = 'released';
+  sibling.keepWarmUntil = '2026-08-11T00:01:00.000Z';
+  await store.replace(snapshot);
+  terminal.add('ending');
+  actions.length = 0;
+  await registry.recover();
+  assert.deepEqual(actions, []);
+  const leases = (await registry.status({ slotId: SLOT })).leases;
+  assert.ok(leases.find((lease) => lease.owner.runId === 'live-sibling')?.keepWarmUntil);
+  assert.equal(
+    leases.find((lease) => lease.owner.runId === 'ending')?.providerCleanupDeferred,
+    undefined,
+  );
+});
+
+test('terminal recovery keeps a deferred claim when provider identity cannot be verified', async (t) => {
+  let terminal = false;
+  const { registry, actions } = await fixture(t, [entry('device')], {
+    isTerminalOwner: () => terminal,
+    checkProviderCleanup: async () => 'Provider process ownership changed',
+  });
+  assert.equal((await acquire(registry, 'device', 'ending')).ok, true);
+  await registry.releaseOwnership(SLOT, 'ending');
+  terminal = true;
+  actions.length = 0;
+  await registry.recover();
+  const lease = (await registry.status({ slotId: SLOT })).leases[0];
+  assert.equal(lease.state, 'error');
+  assert.match(lease.cleanupFailure ?? '', /ownership changed/);
+  assert.deepEqual(actions, []);
+});
+
+for (const initiallyFails of [false, true]) {
+  test(`terminal deferred app/Metro recovery preserves dependency order, parent failure=${initiallyFails}`, async (t) => {
+    let terminal = false;
+    let failParent = initiallyFails;
+    const { registry, actions } = await fixture(
+      t,
+      [entry('metro'), entry('app', 'exclusive', ['metro'])],
+      {
+        isTerminalOwner: () => terminal,
+        runAction: async (_slot, action) =>
+          action.kind === 'slot-action' && action.actionId === 'app.release' && failParent
+            ? { ok: false, detail: 'app process ownership cannot be verified' }
+            : { ok: true },
+      },
+    );
+    assert.equal((await acquire(registry, 'app', 'archived-owner')).ok, true);
+    await registry.releaseOwnership(SLOT, 'archived-owner');
+    terminal = true;
+    actions.length = 0;
+    await registry.recover();
+    assert.deepEqual(actions, initiallyFails ? ['app.release'] : ['app.release', 'metro.release']);
+    let leases = (await registry.status({ slotId: SLOT })).leases;
+    assert.equal(
+      leases.find((lease) => lease.capabilityId === 'app')?.state,
+      initiallyFails ? 'error' : 'released',
+    );
+    assert.equal(
+      Boolean(leases.find((lease) => lease.capabilityId === 'metro')?.providerCleanupDeferred),
+      initiallyFails,
+    );
+    if (initiallyFails) {
+      failParent = false;
+      actions.length = 0;
+      await registry.recover();
+      assert.deepEqual(actions, ['app.release', 'metro.release']);
+      leases = (await registry.status({ slotId: SLOT })).leases;
+      assert.ok(
+        leases.every((lease) => lease.state === 'released' && !lease.providerCleanupDeferred),
+      );
+    }
+  });
+}
+
+test('catalog-error recovery preserves a shared provider claimed by a live sibling', async (t) => {
+  const capabilities = [entry('shared', 'shared')];
+  const terminal = new Set<string>();
+  let failCatalog = false;
+  const { registry, actions } = await fixture(t, capabilities, {
+    isTerminalOwner: (id) => terminal.has(id),
+    catalogForSlot: async (slotId) => {
+      if (failCatalog) throw new Error('project pack temporarily unavailable');
+      return { slotId, project: 'test-project', capabilities };
+    },
+  });
+  for (const owner of ['ending', 'live-sibling'])
+    assert.equal((await acquire(registry, 'shared', owner)).ok, true);
+  failCatalog = true;
+  await registry.recover();
+  failCatalog = false;
+  terminal.add('ending');
+  actions.length = 0;
+  await registry.recover();
+  assert.deepEqual(actions, [], 'a live error holder still protects the physical provider');
+  const leases = (await registry.status({ slotId: SLOT })).leases;
+  assert.equal(leases.find((lease) => lease.owner.runId === 'ending')?.state, 'released');
+  const live = leases.find((lease) => lease.owner.runId === 'live-sibling');
+  assert.equal(live?.state, 'error');
+  assert.match(live?.cleanupFailure ?? '', /catalog unavailable/);
 });

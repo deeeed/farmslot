@@ -702,8 +702,10 @@ test('buildRefreshSlotRow carries teardown bookkeeping while its phase survives'
     lifecycle: 'held',
     phase: 'occupied',
     held_reason: 'Tmux session x uses the slot repository',
+    cleanup_run_id: 'settled-owner',
   });
   assert.equal(occupied.held_reason, 'Tmux session x uses the slot repository');
+  assert.equal(occupied.cleanup_run_id, 'settled-owner');
   assert.equal(
     'held_reason' in buildRefreshSlotRow(probe, { lifecycle: 'ready', held_reason: 'stale' }),
     false,

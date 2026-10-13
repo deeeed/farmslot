@@ -31,6 +31,9 @@ let holderSurvives: boolean;
 let onIdentityRead: (() => void) | null;
 let otherRuns: Run[];
 let archived: number;
+let liveRun: boolean;
+let workerBlocker: string | null;
+let providerCleanups: number;
 
 function reapIdentity(cmd: string) {
   const expected = /if \[ "\$scope" != '([0-9a-f]+)' \]/.exec(cmd)?.[1];
@@ -59,6 +62,29 @@ mock.module('../core/index.js', {
     }),
     loadProjectVars: async () => ({ runtimeDir: '.agent' }),
     readSlotRow: async () => slotRow,
+    markSlotStatusIf: async (
+      _id: string,
+      predicate: (row: Record<string, unknown>) => boolean,
+      fields: Record<string, unknown>,
+    ) => {
+      if (!slotRow || !predicate(slotRow)) return { applied: false };
+      slotWrites.push(fields);
+      slotRow = { ...slotRow, ...fields };
+      return { applied: true };
+    },
+    resetSlotIf: async (_id: string, predicate: (row: Record<string, unknown>) => boolean) => {
+      if (!slotRow || !predicate(slotRow)) return false;
+      slotRow = {
+        ...slotRow,
+        lifecycle: 'ready',
+        phase: null,
+        current_run_id: null,
+        cleanup_run_id: null,
+        held_reason: null,
+      };
+      slotWrites.push(slotRow);
+      return true;
+    },
     updateSlotStatusIf: async (
       _slotId: string,
       predicate: (slot: Record<string, unknown>) => boolean,
@@ -88,11 +114,13 @@ mock.module('../runs/store.js', {
   namedExports: {
     ...realRunStore,
     listRuns: () => ({ runs: otherRuns }),
+    getRun: (id: string) => (liveRun && id === RUN_ID ? run : undefined),
+    getRunWithArchived: async (id: string) => (id === RUN_ID ? run : undefined),
     updateRun: (_id: string, patch: Partial<Run>) => ({ ...run, ...patch }),
   },
 });
 mock.module('../runners/owned-stop.js', {
-  namedExports: { ...realOwnedStop, stopRunOwnedTmuxWorkers: async () => null },
+  namedExports: { ...realOwnedStop, stopRunOwnedTmuxWorkers: async () => workerBlocker },
 });
 mock.module('../runners/session-archive.js', {
   namedExports: {
@@ -104,20 +132,47 @@ mock.module('../runners/session-archive.js', {
   },
 });
 mock.module('../server.js', { namedExports: { broadcastEvent: () => {} } });
+const realSlotIO = await import('../core/slot-io.js');
+mock.module('../core/slot-io.js', {
+  namedExports: { ...realSlotIO, slotRealpath: async () => '/slot' },
+});
+const realPosture = await import('../methods/runtime-posture.js');
+mock.module('../methods/runtime-posture.js', {
+  namedExports: {
+    ...realPosture,
+    getRunResourcePostureReconciler: () => ({
+      apply: async () => {
+        providerCleanups += 1;
+        return { ok: true, transition: { failures: [] } };
+      },
+    }),
+  },
+});
 // Loaded only after the mocks above, so its graph sees them; teardown imports
 // it lazily, so the override below is what releaseRunOwnedCapabilities gets.
 const realRuntimeCapabilities = await import('../methods/runtime-capabilities.js');
 mock.module('../methods/runtime-capabilities.js', {
   namedExports: {
     ...realRuntimeCapabilities,
-    releaseRuntimeCapabilityOwnershipForRun: async () => ({ ok: true, failures: [] }),
+    getRuntimeCapabilityRegistry: () => ({
+      settledStatus: async () => ({ catalog: [], leases: [] }),
+      releaseRunTerminal: async () => {
+        providerCleanups += 1;
+        return { ok: true, failures: [] };
+      },
+    }),
   },
 });
 
-const { stopRunOwnedTmuxAndWatches } = await import('./slot-teardown.js');
+const { stopRunOwnedTmuxAndWatches, retryOccupiedRunSlot } = await import('./slot-teardown.js');
 const { releaseCompletedRunSlot } = await import('../methods/run/lifecycle-control.js');
 
-const run = { id: RUN_ID, slotId: SLOT_ID, agentContexts: [] } as unknown as Run;
+const run = {
+  id: RUN_ID,
+  slotId: SLOT_ID,
+  status: 'cancelled',
+  agentContexts: [],
+} as unknown as Run;
 const reaps = () => commands.filter((cmd) => cmd.includes(`identityfile='${IDENTITY}'`));
 
 beforeEach(() => {
@@ -130,6 +185,9 @@ beforeEach(() => {
   onIdentityRead = null;
   otherRuns = [];
   archived = 0;
+  liveRun = true;
+  workerBlocker = null;
+  providerCleanups = 0;
 });
 
 test('cancel during or after prepare stops the run prepare-scope holder', async () => {
@@ -219,4 +277,74 @@ test('a completed run whose holder survives keeps the slot held with the reason'
   assert.match(String(held?.held_reason), /Prepare scope cleanup failed/);
   assert.equal(archived, 1, 'the transcript archive still runs');
   assert.equal(recordedScope, SCOPE, 'the identity is kept for a retry');
+});
+
+test('terminal cleanup releases providers independently of a surviving worker hold', async () => {
+  workerBlocker = 'Worker primary pane ownership changed; cleanup deferred';
+  const result = await releaseCompletedRunSlot(run);
+  assert.equal(result.released, false);
+  assert.equal(providerCleanups, 1);
+  assert.equal(slotRow?.current_run_id, null);
+  assert.equal(slotRow?.cleanup_run_id, RUN_ID);
+  assert.equal(slotRow?.phase, 'occupied');
+});
+
+test('an identified terminal hold is freed after its worker disappears', async () => {
+  workerBlocker = 'worker still alive';
+  await releaseCompletedRunSlot(run);
+  workerBlocker = null;
+  assert.equal(await retryOccupiedRunSlot(SLOT_ID), true);
+  assert.equal(slotRow?.lifecycle, 'ready');
+  assert.equal(slotRow?.cleanup_run_id, null);
+});
+
+test('an archived terminal owner can finish an identified hold without changing its record', async () => {
+  slotRow = {
+    current_run_id: null,
+    cleanup_run_id: RUN_ID,
+    slot_epoch: 4,
+    lifecycle: 'held',
+    phase: 'occupied',
+  };
+  liveRun = false;
+  assert.equal(await retryOccupiedRunSlot(SLOT_ID), true);
+  assert.equal(providerCleanups, 1);
+  assert.equal(slotRow?.lifecycle, 'ready');
+});
+
+test('a surviving worker keeps the identified hold across reconciliation', async () => {
+  workerBlocker = 'worker still alive';
+  await releaseCompletedRunSlot(run);
+  assert.equal(await retryOccupiedRunSlot(SLOT_ID), false);
+  assert.equal(slotRow?.phase, 'occupied');
+  assert.equal(slotRow?.held_reason, workerBlocker);
+});
+
+test('an unidentified hold and a successor claim grant no terminal cleanup authority', async () => {
+  for (const row of [
+    { current_run_id: null },
+    { current_run_id: 'successor', cleanup_run_id: RUN_ID },
+  ]) {
+    slotRow = { ...row, slot_epoch: 5, lifecycle: 'held', phase: 'occupied' };
+    assert.equal(await retryOccupiedRunSlot(SLOT_ID), false);
+  }
+  assert.equal(providerCleanups, 0);
+  assert.equal(slotWrites.length, 0);
+});
+
+test('a successor claiming during a retry preserves its owner and epoch', async () => {
+  slotRow = {
+    current_run_id: null,
+    cleanup_run_id: RUN_ID,
+    slot_epoch: 4,
+    lifecycle: 'held',
+    phase: 'occupied',
+  };
+  onIdentityRead = () => {
+    slotRow = { current_run_id: 'successor', slot_epoch: 5, lifecycle: 'busy', phase: 'working' };
+  };
+  const result = await retryOccupiedRunSlot(SLOT_ID);
+  assert.equal(result, false);
+  assert.equal(slotRow?.current_run_id, 'successor');
+  assert.equal(slotRow?.slot_epoch, 5);
 });

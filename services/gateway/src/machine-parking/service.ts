@@ -716,7 +716,7 @@ const defaultDependencies: MachineParkingDependencies = {
   capabilityStatus: (slotId, runId) =>
     runtimeCapabilityStatus({ slotId, ...(runId ? { ownerRunId: runId } : {}) }),
   releaseCapability: ({ slotId, runId, leaseId, capabilityId }) =>
-    runtimeCapabilityRelease({ slotId, ownerRunId: runId, leaseId, capabilityId }),
+    runtimeCapabilityRelease({ slotId, ownerRunId: runId, leaseId, capabilityId, keepWarm: false }),
   acquireCapability: runtimeCapabilityAcquire,
   inspectRunnerReload: defaultInspectRunnerReload,
   inspectParkWorkspace: defaultInspectParkWorkspace,
@@ -1425,14 +1425,9 @@ export class MachineParkingService {
       resources: [],
       capabilityLeases: [],
     });
-    // ADR-038 amendment (ADR-054 `free-slot`): a publication gate is a durable
-    // operator wait, so it is a third parkable shape beside monitor and
-    // ci-watch. It is the only shape that frees the slot: monitor/ci-watch
-    // parks keep the slot bound because their restore reclaims it in place.
     const gateHeld =
       isGateHeldPublicationRun(run) && currentStep?.name === PipelineSteps.HUMAN_GATE;
-    const slotDisposition: MachineParkSlotDisposition =
-      mode === 'release' && gateHeld ? 'freed' : 'retained';
+    const slotDisposition: MachineParkSlotDisposition = mode === 'release' ? 'freed' : 'retained';
     const base = {
       runId: run.id,
       generation,
@@ -1496,8 +1491,8 @@ export class MachineParkingService {
         resourceManifest: emptyManifest(),
       };
     }
-    if (gateHeld) {
-      // Fail closed before anything else touches the slot: stopping a gate-held
+    if (mode === 'release') {
+      // Fail closed before anything else touches the slot: stopping a released
       // worker is only safe when the runner itself declares a graceful stop and
       // a persisted session reload to bring it back.
       let reload: RunnerReloadInspection;
@@ -1956,7 +1951,11 @@ export class MachineParkingService {
       const currentLease = beforeCapabilityStatus?.leases.find(
         (candidate) => candidate.id === lease.leaseId,
       );
-      if (currentLease?.state === 'released') {
+      if (
+        currentLease?.state === 'released' &&
+        !currentLease.keepWarmUntil &&
+        !currentLease.providerCleanupDeferred
+      ) {
         await this.patchCapability(runId, lease.leaseId, {
           state: 'released',
           error: undefined,
@@ -2030,10 +2029,15 @@ export class MachineParkingService {
     if (record.resourceManifest.capabilityLeases.length > 0) {
       const finalCapabilityStatus = await this.deps.capabilityStatus(record.slotId);
       for (const lease of record.resourceManifest.capabilityLeases) {
-        const state = finalCapabilityStatus.leases.find(
+        const finalLease = finalCapabilityStatus.leases.find(
           (candidate) => candidate.id === lease.leaseId,
-        )?.state;
-        if (state === 'released') {
+        );
+        const state = finalLease?.state;
+        if (
+          state === 'released' &&
+          !finalLease?.keepWarmUntil &&
+          !finalLease?.providerCleanupDeferred
+        ) {
           await this.patchCapability(runId, lease.leaseId, {
             state: 'released',
             error: undefined,
@@ -4533,7 +4537,8 @@ function capabilityLeaseBlocksStop(
     lease.state === 'acquiring' ||
     lease.state === 'acquired' ||
     lease.state === 'releasing' ||
-    (lease.state === 'error' && Boolean(lease.cleanupFailure))
+    (lease.state === 'error' && Boolean(lease.cleanupFailure)) ||
+    (lease.state === 'released' && Boolean(lease.keepWarmUntil || lease.providerCleanupDeferred))
   );
 }
 

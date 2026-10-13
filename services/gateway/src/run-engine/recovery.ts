@@ -147,6 +147,7 @@ export interface RunRecoveryCollaborators {
   getProjectField: (projectJson: RawProjectJson, field: string) => string;
   setRunFlags: (runId: string, flags: { warmRecovery?: true }) => void;
   resetSlot: (slotId: string) => Promise<void>;
+  retryOccupiedRunSlot: (slotId: string) => Promise<boolean>;
   /**
    * Conditional reset: `predicate` runs INSIDE the serialized slot write, so
    * the check and the write cannot be split by a concurrent release. The
@@ -1095,7 +1096,7 @@ export async function reconcileOrphanedSlots(deps: RunRecoveryCollaborators): Pr
         : undefined;
     if (activeSlotIds.has(slot.slot) && !blockedOwner) continue;
     if (slot.lifecycle === 'held' && slot.phase === 'occupied') {
-      console.log(`[run-engine] reconcile: ${slot.slot} remains held for workspace occupants`);
+      await deps.retryOccupiedRunSlot(slot.slot);
       continue;
     }
     // A terminal run's slot is NOT orphaned while its teardown is still

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Release settled-run capability leases independently of workspace holds, retry identified cleanup holds safely, and free preserved workspaces on release-mode parks while retaining orchestration-only pauses.
+
 - Return stopped work graphs to planning without resetting recorded work; keep planning/paused graphs non-dispatching under targeted ticks.
 - Route operator completion intents through lifecycle settlement, retain failed completion ownership across restart until explicit cleanup, and keep output close available after acknowledgement.
 

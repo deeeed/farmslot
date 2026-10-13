@@ -3305,10 +3305,21 @@ export class RuntimeCapabilityRegistry {
   }
 
   async recover(slotIds?: string[]): Promise<void> {
+    // The retained-provider sweep owns physical dependency ordering and keeps
+    // dependencies when a parent stop fails. Recovery must use that same path.
+    const swept = await this.sweepWarmProviders(
+      (lease) =>
+        (!slotIds || slotIds.includes(lease.slotId)) &&
+        this.isFencedOwner(lease.owner.runId, lease.owner.familyId) &&
+        (runsProvider(lease) || Boolean(lease.cleanupFailure)),
+    );
+    const stillShared = new Set(swept.stillHeld.map((lease) => lease.id));
     await this.mutate(async () => {
       const snapshot = this.options.store.snapshot();
       const active = snapshot.leases.filter(
-        (lease) => ACTIVE_STATES.has(lease.state) && (!slotIds || slotIds.includes(lease.slotId)),
+        (lease) =>
+          (ACTIVE_STATES.has(lease.state) || stillShared.has(lease.id)) &&
+          (!slotIds || slotIds.includes(lease.slotId)),
       );
       const bySlot = new Map<string, RuntimeCapabilityLease[]>();
       for (const lease of active) {
@@ -3358,9 +3369,11 @@ export class RuntimeCapabilityRegistry {
           const entry = catalog.capabilities.find(
             (capability) => capability.id === lease.capabilityId,
           );
-          const sameCapabilityHolders = leases.filter(
+          const sameCapabilityHolders = snapshot.leases.filter(
             (candidate) =>
-              candidate.capabilityId === lease.capabilityId && holdsProvider(candidate),
+              candidate.slotId === slotId &&
+              candidate.capabilityId === lease.capabilityId &&
+              holdsClaim(candidate),
           );
           const ambiguous =
             entry?.sharePolicy === 'exclusive' &&
@@ -3515,6 +3528,8 @@ export class RuntimeCapabilityRegistry {
               lease.releasedAt = lease.updatedAt;
               lease.referenceCount = 0;
               lease.cleanupFailure = undefined;
+              lease.providerCleanupDeferred = undefined;
+              lease.keepWarmUntil = undefined;
               reclaimed.push(lease);
               outcome = stopped
                 ? 'provider stopped'

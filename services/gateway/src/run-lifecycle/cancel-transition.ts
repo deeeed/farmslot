@@ -128,15 +128,8 @@ function cancelEffects(collaborators: CancelCollaborators): {
         severity: 'advisory',
         apply: async ({ run }) => {
           if (!run.slotId) return 'skipped';
-          // A gate park already stopped every provider this run owned and then
-          // published the slot for dispatch. Reconciling terminal posture now
-          // would act on leases and keep-warm providers of whoever claimed it.
-          if (isSlotFreedByPark(run)) {
-            return {
-              status: 'skipped' as const,
-              detail: "park already stopped this run's providers and freed the slot",
-            };
-          }
+          // Owner-only release cannot affect a successor, and also settles leases
+          // left by older parks that kept a provider warm or deferred its cleanup.
           await collaborators.releaseCapabilities(run);
           return 'ok';
         },
@@ -255,6 +248,11 @@ export function defaultCancelCollaborators(): CancelCollaborators {
     settleBacklog: (run) => markBacklogRunObserved(run),
     tickWorkGraph: (graphId) => schedulerTick({ graphId }),
     releaseCapabilities: async (run) => {
+      if (isSlotFreedByPark(run)) {
+        // Only lease ownership remains ours; do not inspect the transferred workspace.
+        await releaseRunOwnedCapabilities(run);
+        return;
+      }
       const state = {
         fence: { before: null } as RunSlotCleanupFence,
         blocker: null as string | null,
@@ -267,10 +265,10 @@ export function defaultCancelCollaborators(): CancelCollaborators {
         await cancelNativeRunWorkers(run.id, { machineTransitionHeld: true });
       const workerBlocker = await stopRunOwnedTmuxAndWatches(run);
       const blocker = await recordSlotTeardownBlocker(run, workerBlocker);
-      state.fence = await fenceRunSlotCleanup(run, blocker);
       state.blocker = blocker;
-      await releaseRunOwnedCapabilities(run, Boolean(blocker));
+      await releaseRunOwnedCapabilities(run);
       state.succeeded = true;
+      state.fence = await fenceRunSlotCleanup(run, blocker);
     },
     releaseSlot: async (run) => {
       const state = cleanup.get(run.id);
