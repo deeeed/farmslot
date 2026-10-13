@@ -53,6 +53,7 @@ import {
   probeWorkerSignalForRun,
   signalMatchesMonitorContext,
 } from '../../run-engine/run-monitor.js';
+import { replaySlotCapabilityRequirements } from '../../run-engine/slot-capability-requirements.js';
 import { isTerminalTeardownInFlight } from '../../run-engine/terminal-teardown-registry.js';
 import {
   assertRunNotArchiving,
@@ -1125,6 +1126,16 @@ export async function runReplayStep(
   let reclaimedSlotEpoch: number | null = null;
   let priorOwnedSlotFields: Record<string, unknown> | null = null;
   const priorRunSlotId = existing.slotId ?? null;
+  const selectionGeneration = existing.engineState?.generation;
+  const slotCapabilities =
+    targetIdx >= 0 && targetIdx <= findSlotIdx
+      ? await replaySlotCapabilityRequirements(existing)
+      : undefined;
+  if (
+    getRun(params.runId)?.slotId !== priorRunSlotId ||
+    getRun(params.runId)?.engineState?.generation !== selectionGeneration
+  )
+    throw new Error('Run changed while reading replay device requirements');
   let revived = false;
   let nativeReplayGeneration: number | undefined;
   try {
@@ -1228,7 +1239,18 @@ export async function runReplayStep(
     if (targetIdx >= 0 && targetIdx <= findSlotIdx) {
       replayTaskFile = null;
       effectiveSlotId = null;
-      updateRun(params.runId, { slotId: null, taskFile: null });
+      updateRun(params.runId, {
+        slotId: null,
+        taskFile: null,
+        ...(slotCapabilities
+          ? {
+              engineState: {
+                ...getRun(params.runId)!.engineState,
+                slotCapabilityRequirements: slotCapabilities,
+              },
+            }
+          : {}),
+      });
       console.log(
         `[run] replay from ${replayStepName} — cleared slotId + taskFile for re-selection`,
       );

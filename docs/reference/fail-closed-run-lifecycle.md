@@ -145,6 +145,16 @@ owning contracts; it cannot silently reuse the prior ready approval.
 
 ## Recovery invariants and six CI scenarios
 
+Slot re-selection MUST retain the device capabilities of the requested or previously
+selected slot. Before `run.replayStep` clears that binding, the gateway records
+the available device providers from its configured capability catalog in
+`Run.engineState.slotCapabilityRequirements`. This placement intent survives
+further replays and is distinct from an authored proof plan or acquisition.
+`find-slot` MUST reject candidates whose catalog cannot provide every retained
+capability before scoring, explicit or affinity selection, and slot claim. It
+MUST retain caller `allowedSlots` filters. The registry remains the capability
+availability authority; health penalties and task prose cannot replace this check.
+
 All scenarios use production gateway RPC/engine paths, isolated stores,
 temporary checkouts/remotes and controlled structured runtime/transport
 fixtures. Observe state and side effects, not just successful return values.
@@ -216,6 +226,13 @@ snapshot. Recapture of the same bytes keeps it; changed bytes require a new revi
 Acknowledgement does not approve proof, publish work or resume execution.
 
 ## Public surface
+
+`run.replayStep` retains device placement intent, and `run.get` exposes the
+optional `Run.engineState.slotCapabilityRequirements` snapshot. Its
+`RunSlotCapabilityRequirements` type belongs to `@farmslot/protocol`; the gateway
+replay and `find-slot` consumers own this internal recovery state. Callers do not
+supply new CLI flags or capability acquire inputs. Harnesses continue using the
+existing registry proof-plan, health and lease contracts.
 
 | Interface                                                                                              | Owner and named consumers                                                                                                      |
 | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |

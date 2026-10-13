@@ -2632,7 +2632,15 @@ export function isInteractiveDevRun(run: Pick<Run, 'flowType' | 'mode'>): boolea
 }
 
 /** Persisted run-engine state — see ADR-027. */
+/** Device providers required by the slot a replay is leaving. This is placement
+ * intent, not an authored proof plan or authorization to acquire a device. */
+export interface RunSlotCapabilityRequirements {
+  sourceSlotId: string;
+  capabilityIds: string[];
+}
+
 export interface RunEngineState {
+  slotCapabilityRequirements?: RunSlotCapabilityRequirements;
   /**
    * What the last passing review (pipeline review or a publication review)
    * judged on the slot: HEAD, the evidence manifest and the evidence files. When
