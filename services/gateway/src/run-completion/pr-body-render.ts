@@ -20,8 +20,16 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import type { Run } from '@farmslot/protocol';
+import { readPoolFiles } from '@farmslot/protocol/node/slot-by-repo';
 
-import { loadProjectVars, loadSlotVars, SlotConfigError } from '../core/config.js';
+import {
+  getProjectFieldRaw,
+  loadProjectVars,
+  loadSlotVars,
+  poolDir,
+  type RawPoolJson,
+  SlotConfigError,
+} from '../core/config.js';
 import { execLocal, type ExecResult, isLocal } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
 import { withMachineEnv } from '../core/project-env.js';
@@ -53,25 +61,60 @@ export interface PrBodyRenderDeps {
   resolveRenderer: (run: Run) => Promise<PrBodyRenderer | PrBodyRenderSkip>;
 }
 
-async function resolvePackRenderer(run: Run): Promise<PrBodyRenderer | PrBodyRenderSkip> {
+export interface PrBodyRendererConfigDeps {
+  loadSlotVars: typeof loadSlotVars;
+  loadProjectVars: typeof loadProjectVars;
+  readPools: () => RawPoolJson[];
+}
+
+const rendererConfigDeps: PrBodyRendererConfigDeps = {
+  loadSlotVars,
+  loadProjectVars,
+  readPools: () => readPoolFiles<RawPoolJson>(poolDir).map(({ pool }) => pool),
+};
+
+export async function resolvePackRenderer(
+  run: Run,
+  config: PrBodyRendererConfigDeps = rendererConfigDeps,
+): Promise<PrBodyRenderer | PrBodyRenderSkip> {
   if (!run.slotId) return 'no-slot';
   let vars: Awaited<ReturnType<typeof loadSlotVars>>;
   try {
-    vars = await loadSlotVars(run.slotId);
+    vars = await config.loadSlotVars(run.slotId);
   } catch (error) {
     if (error instanceof SlotConfigError && error.code === 'SLOT_NOT_FOUND') return 'no-slot';
     throw error;
   }
-  const projectVars = await loadProjectVars(vars.projectName);
+  const projectVars = await config.loadProjectVars(vars.projectName);
   const raw = projectVars.projectJson.vars?.pr_body_cmd;
   if (typeof raw !== 'string' || !raw.trim()) return 'no-command';
-  // The renderer runs on the gateway host, so a remote slot's machine env (for
-  // example a remote MM_HARNESS_BIN path) must not be applied; the host's PATH
-  // resolves the harness there.
+  // Rendering executes on the gateway host; remote node paths never apply here.
   const local = isLocal(vars.host, vars.machine);
+  const rootEnv = getProjectFieldRaw(projectVars.projectJson, 'recipe.provider.root.env');
+  let machineEnv = local ? vars.machineEnv : undefined;
+  if (rootEnv !== undefined) {
+    if (typeof rootEnv !== 'string' || !rootEnv.trim()) {
+      throw new Error('PR body provider root must name its configured environment key');
+    }
+    const roots = new Set(
+      (local
+        ? [vars.machineEnv?.[rootEnv]]
+        : config
+            .readPools()
+            .filter((pool) => isLocal(pool.host, pool.machine))
+            .map((pool) => pool.env?.[rootEnv])
+      ).filter((value): value is string => typeof value === 'string' && value.trim().length > 0),
+    );
+    if (roots.size !== 1) {
+      throw new Error(
+        `PR body rendering requires one gateway-host provider root in pool.env.${rootEnv}; found ${roots.size}`,
+      );
+    }
+    machineEnv = { ...machineEnv, [rootEnv]: [...roots][0] };
+  }
   return {
     command: expandTemplate(raw, vars, projectVars),
-    ...(local && vars.machineEnv ? { machineEnv: vars.machineEnv } : {}),
+    ...(machineEnv ? { machineEnv } : {}),
   };
 }
 
