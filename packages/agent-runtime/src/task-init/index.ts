@@ -25,6 +25,7 @@ import {
 } from '../execution-template/snapshot.js';
 import type { ExecutionTemplateSource } from '../execution-template/types.js';
 
+import { installedTaskCommands } from './runtime-command.js';
 import {
   buildHandoffMetadata,
   buildTaskDocument,
@@ -132,6 +133,7 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
     ...(spec.domain ? { DOMAIN: spec.domain } : {}),
     TEMPLATE: selected.entry.id,
     TASK_DIR: taskDirLabel,
+    ...installedTaskCommands(),
     ...(spec.task.sourceRef
       ? /^https?:\/\//.test(spec.task.sourceRef)
         ? { TICKET_URL: spec.task.sourceRef }

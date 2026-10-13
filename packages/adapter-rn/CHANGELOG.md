@@ -4,6 +4,8 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## Unreleased
 
+- Transport task-bound recipe registration and selected engine verdicts through the shared task ledger.
+
 - Observe enabled-state waits from qualified native accessibility snapshots without opening the app; reject ambiguous or unknown state.
 
 ## 0.21.0 - 2026-10-13
