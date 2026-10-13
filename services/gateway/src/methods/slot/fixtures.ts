@@ -11,7 +11,6 @@ import {
 import { execLocal, farmslotRoot, isLocal, loadSlotVars, type SlotVars } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
 
-import { runPrepareCommand } from './prepare-command.js';
 import type { EventEmitter, PrepareCommandError } from './shared.js';
 
 // Backstops against a hung sync-fixtures.sh — not a pacing budget. A real local
@@ -100,7 +99,7 @@ async function runFixtureSyncInline(
       signal: controller.signal,
     });
     const payload = [
-      `[fixture-sync] inline local sync`,
+      `[fixture-sync] gateway sync`,
       `command: ${syncCmd}`,
       `durationMs: ${Date.now() - startedAt}`,
       `exit: ${result.exitCode}`,
@@ -123,8 +122,6 @@ export async function runFixtureSync(
     slotId: string;
     logPath: string;
     signal?: AbortSignal;
-    windowLabel?: string;
-    phase: string;
     flowType?: string;
     selectedApp?: string;
     domain?: string;
@@ -138,18 +135,11 @@ export async function runFixtureSync(
     opts.domain,
   );
   const timeout = resolveFixtureSyncTimeoutMs(vars);
-  const slotIsLocal = isLocal(vars.host, vars.machine);
   const startedAt = Date.now();
-  const syncResult = slotIsLocal
-    ? await runFixtureSyncInline(syncCmd, opts.logPath, timeout, opts.signal)
-    : await runPrepareCommand(vars, opts.logPath, syncCmd, {
-        cwd: farmslotRoot,
-        timeout,
-        signal: opts.signal,
-        windowLabel: opts.windowLabel,
-        phase: opts.phase,
-        forceLocal: true,
-      });
+  // The gateway owns sync-fixtures.sh for both local and remote slots; the
+  // script transfers files itself. It needs no PTY. A tmux setup timeout must
+  // not prevent the sync from starting or masquerade as its command backstop.
+  const syncResult = await runFixtureSyncInline(syncCmd, opts.logPath, timeout, opts.signal);
   if (syncResult.exitCode === 0) return;
 
   const message =
@@ -202,8 +192,6 @@ export async function slotFixtureRefresh(
     await runFixtureSync(vars, {
       slotId: params.slotId,
       logPath,
-      windowLabel: requestId,
-      phase: 'fixture-refresh',
       flowType: params.flowType,
       selectedApp: params.app,
       domain: params.domain ?? vars.domain,

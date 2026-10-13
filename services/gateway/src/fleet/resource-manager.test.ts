@@ -195,18 +195,18 @@ function runBrowserProbe(
       path.join(bin, 'lsof'),
       [
         '#!/bin/sh',
+        'intersect=0; pid=; port=; listen=0',
+        'while [ "$#" -gt 0 ]; do',
+        '  case "$1" in',
+        '    -a) intersect=1 ;;',
+        '    -p) shift; pid="$1" ;;',
+        '    -iTCP:*) port="${1#-iTCP:}" ;;',
+        '    -sTCP:LISTEN) listen=1 ;;',
+        '  esac',
+        '  shift',
+        'done',
         ...(refuseHostScan
           ? [
-              'intersect=0; pid=; port=; listen=0',
-              'while [ "$#" -gt 0 ]; do',
-              '  case "$1" in',
-              '    -a) intersect=1 ;;',
-              '    -p) shift; pid="$1" ;;',
-              '    -iTCP:*) port="${1#-iTCP:}" ;;',
-              '    -sTCP:LISTEN) listen=1 ;;',
-              '  esac',
-              '  shift',
-              'done',
               'if [ "$intersect" != 1 ] || [ -z "$pid" ]; then',
               '  echo "host-wide listener scan exceeded its budget" >&2',
               '  exit 124',
@@ -214,7 +214,14 @@ function runBrowserProbe(
               'test "$port" = 7666 && test "$listen" = 1 || exit 1',
             ]
           : []),
-        `printf '%s\\n' ${listeners.map(String).join(' ')}`,
+        'matched=0',
+        `for listener in ${listeners.map(String).join(' ')}; do`,
+        '  if [ -z "$pid" ] || [ "$listener" = "$pid" ]; then',
+        '    printf "%s\\n" "$listener"',
+        '    matched=1',
+        '  fi',
+        'done',
+        'test "$matched" = 1',
         '',
       ].join('\n'),
     );
@@ -265,7 +272,7 @@ test('browser probes never run capture-helper', () => {
   assert.equal(probe.captureHelperRan, false);
 });
 
-test('buildBrowserPidFileOwnsCdpCommand accepts only the live CDP listener', () => {
+test('buildBrowserPidFileOwnsCdpCommand checks the recorded live PID owns its CDP listener', () => {
   const check = (pidFile: string, listeners: number[], port: number | null = 7666) =>
     runBrowserProbe(
       (dir) => buildBrowserPidFileOwnsCdpCommand(path.join(dir, 'browser.pid'), port),
@@ -274,7 +281,7 @@ test('buildBrowserPidFileOwnsCdpCommand accepts only the live CDP listener', () 
   assert.equal(check(String(livePid), [livePid]), 0);
   assert.notEqual(check(String(livePid), [livePid + 1]), 0);
   assert.notEqual(check(String(livePid), []), 0);
-  assert.notEqual(check(String(livePid), [livePid, livePid + 1]), 0);
+  assert.equal(check(String(livePid), [livePid, livePid + 1]), 0);
   assert.notEqual(check(String(deadPid), [deadPid]), 0);
   // Without a CDP port only liveness can be proven.
   assert.equal(check(String(livePid), [], null), 0);

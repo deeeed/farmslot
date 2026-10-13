@@ -90,6 +90,7 @@ Object.assign(process.env, {
   FARMSLOT_DISPATCH_QUEUE_FILE: path.join(root, 'queue.json'),
   NODE_TEST_CONTEXT: '1',
   FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
+  FARMSLOT_GATEWAY_TOKEN: 'synthetic-parent-credential-not-for-this-fixture',
 });
 await import(moduleUrl('services/gateway/src/runtime/mock-pty.test-support.ts'));
 const listener = createServer((_request, response) => {
@@ -207,7 +208,11 @@ try {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const gateway = server.address();
   assert.ok(gateway && typeof gateway !== 'string');
-  client = new GatewayClient({ url: `ws://127.0.0.1:${gateway.port}`, timeout: 30000 });
+  client = new GatewayClient({
+    url: `ws://127.0.0.1:${gateway.port}`,
+    timeout: 30000,
+    credential: null,
+  });
   const acquire: RuntimeCapabilityAcquireParams = {
     slotId,
     ownerRunId: owner.id,
@@ -261,6 +266,7 @@ try {
     listenerPidPreserved: true,
     listenerHttpStatusAfterRelease: 200,
     liveOperatorWrites: 0,
+    inheritedCredentialIgnored: true,
     note: 'Controlled refusal applies only to global queries. Scoped queries use real lsof and a real disposable TCP listener. This is gateway health proof, not Terminal acceptance.',
   });
   console.log(
