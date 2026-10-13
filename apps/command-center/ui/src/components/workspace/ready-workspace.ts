@@ -300,6 +300,8 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       decision: this.decision,
       publicationTarget: this._publicationTarget,
       pendingConfirm: this._pendingConfirm,
+      attestationReason: this._evidenceAttestationReason,
+      setAttestationReason: (value) => this._setEvidenceAttestationReason(value),
       acting: this._acting,
       recovering: this._isRecovering,
       diffArtifact,

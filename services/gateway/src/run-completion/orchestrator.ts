@@ -1,6 +1,5 @@
 // run-completion.ts — Post-work completion pipeline
 // Handles artifact copy, PR comments (with worker report), PR body sanitization, retrospective curation.
-
 import { randomUUID } from 'node:crypto';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -59,6 +58,7 @@ import {
   isPackageSelectableEvidenceArtifact,
   mergeEvidenceManifestArtifactRefs,
 } from './draft-pr.js';
+import { withEvidenceAttestation } from './evidence-attestation.js';
 import type { EvidenceManifest } from './evidence-manifest.js';
 import { evidenceKeyVariants } from './evidence-paths.js';
 import {
@@ -1192,7 +1192,11 @@ export async function publishCompletionPackage(
           (drift.outOfOrder.length > 0 ? `; out of order ${drift.outOfOrder.join(', ')}` : ''),
       );
     };
-    reportTemplateDrift(approvedPackage.draftBody, 'approved package');
+    const publicationPackage = {
+      ...approvedPackage,
+      draftBody: withEvidenceAttestation(run, approvedPackage.draftBody),
+    };
+    reportTemplateDrift(publicationPackage.draftBody, 'approved package');
 
     const approvedSelectedEvidenceKeys =
       options?.selectedEvidenceKeys ?? approvedPackage.selectedEvidenceKeys ?? [];
@@ -1211,7 +1215,7 @@ export async function publishCompletionPackage(
     let prNumber = run.prNumber ?? (await findPRNumber(run, ciRepo, { noRetry: true }));
     if (!prNumber) {
       emit('substep', { name: 'create-pr', detail: `Creating draft PR on ${ciRepo}` });
-      prNumber = await createPrFromApprovedPackage(run, ciRepo, approvedPackage);
+      prNumber = await createPrFromApprovedPackage(run, ciRepo, publicationPackage);
     }
     if (!prNumber) throw new Error('publication could not resolve or create a PR number');
     flags.prNumber = prNumber;
@@ -1273,7 +1277,7 @@ export async function publishCompletionPackage(
       selectedEvidenceKeys,
       {
         failOnError: true,
-        baseBody: approvedPackage.draftBody,
+        baseBody: publicationPackage.draftBody,
         evidenceManifest,
         validateBody: async (body) => {
           await verifyFrozenPublicationEvidence(

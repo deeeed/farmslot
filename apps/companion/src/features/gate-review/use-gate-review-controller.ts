@@ -3,7 +3,14 @@ import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 
-import { Events, type Run, type RunDecision, type RunGetResult } from '@farmslot/protocol';
+import {
+  APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
+  Events,
+  isValidEvidenceAttestationReason,
+  type Run,
+  type RunDecision,
+  type RunGetResult,
+} from '@farmslot/protocol';
 import {
   ReviewDispatchViewModel,
   reviewLineagesForRun,
@@ -55,6 +62,7 @@ export interface GateReviewViewModel {
   actions: GateReviewAction[];
   authHeaders: ArtifactHttpHeaders;
   sendingActionId: string | null;
+  attestationReason: string;
   /** A refresh that failed after the gate was already on screen. */
   error: string | null;
 }
@@ -85,6 +93,9 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
   const [run, setRun] = useState<Run | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sendingActionId, setSendingActionId] = useState<string | null>(null);
+  const [evidenceReason, setEvidenceReason] = useState<{ decisionId: string; text: string } | null>(
+    null,
+  );
   const requestRef = useRef(0);
   const reviewPicker = useMemo(
     () =>
@@ -162,8 +173,10 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
   const gate = useHumanGateGuard(client, run, decision);
   // Send re-checks the gate as it is when the operator confirms, not as it was
   // when the confirmation opened.
-  const latestRef = useRef({ run, decision, gate });
-  latestRef.current = { run, decision, gate };
+  const attestationReason =
+    evidenceReason?.decisionId === decision?.id ? (evidenceReason?.text ?? '') : '';
+  const latestRef = useRef({ run, decision, gate, attestationReason });
+  latestRef.current = { run, decision, gate, attestationReason };
 
   const viewModel = useMemo((): Omit<GateReviewViewModel, 'sendingActionId' | 'error'> | null => {
     if (!run || !decision || !gate) return null;
@@ -183,9 +196,10 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
         : [],
       guard: gate.guard,
       actions: gate.actions,
+      attestationReason,
       authHeaders,
     };
-  }, [authHeaders, decision, gate, gatewayUrl, reviewPicker, run]);
+  }, [attestationReason, authHeaders, decision, gate, gatewayUrl, reviewPicker, run]);
 
   const openEvidence = useCallback(
     (criterionId: string, path: string) => {
@@ -220,12 +234,20 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
         Alert.alert(action.label, action.disabledReason);
         return;
       }
+      if (
+        action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
+        !isValidEvidenceAttestationReason(attestationReason)
+      ) {
+        Alert.alert(action.label, 'A written reason is required.');
+        return;
+      }
       // Bound to the package on screen now, the one the operator is confirming.
       const confirmed = decisionResolveRequest(
         decisionDetailFromRun(run, decision),
         action.id,
         null,
         selectionData,
+        action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION ? attestationReason : undefined,
       );
       Alert.alert('Confirm action', `Send "${action.id}" for ${decision.title}?`, [
         { text: 'Cancel', style: 'cancel' },
@@ -242,6 +264,13 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
               Alert.alert(action.label, current.disabledReason);
               return;
             }
+            if (
+              action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
+              !isValidEvidenceAttestationReason(latest.attestationReason)
+            ) {
+              Alert.alert(action.label, 'A written reason is required.');
+              return;
+            }
             // A package refreshed while the confirmation was open is not the one
             // the operator reviewed.
             const now = decisionResolveRequest(
@@ -249,6 +278,9 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
               action.id,
               null,
               selectionData,
+              action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION
+                ? latest.attestationReason
+                : undefined,
             );
             if (JSON.stringify(now) !== JSON.stringify(confirmed)) {
               Alert.alert(action.label, 'The publish package changed; review it again.');
@@ -268,7 +300,7 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
         },
       ]);
     },
-    [client, decision, refresh, removeDecision, run],
+    [attestationReason, client, decision, refresh, removeDecision, run],
   );
 
   const state = gateReviewScreenState({ run, decision, viewModel, loadError, sendingActionId });
@@ -280,6 +312,7 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
       openEvidence,
       openLog,
       resolve,
+      setAttestationReason: (text: string) => setEvidenceReason({ decisionId, text }),
     },
   };
 }

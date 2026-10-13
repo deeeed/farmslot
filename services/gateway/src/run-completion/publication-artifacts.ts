@@ -15,6 +15,7 @@ import {
 } from '../core/index.js';
 import { ghRequest } from '../integrations/github-client.js';
 
+import { withEvidenceAttestation } from './evidence-attestation.js';
 import {
   autoDetectEvidenceManifest,
   buildEvidenceSection,
@@ -965,6 +966,9 @@ export async function postProcessPRBody(
         body = body.replace(/- \[ \]/g, '- [x]');
       }
     }
+    // The gateway-owned explanation is literal provenance, not a local media
+    // reference. Restore it after body rewrites so they cannot drop its text.
+    body = withEvidenceAttestation(run, body);
     await options.validateBody?.(body);
 
     const tmpFile = `/tmp/farmslot-pr-body-${prNumber}-${randomUUID()}.md`;

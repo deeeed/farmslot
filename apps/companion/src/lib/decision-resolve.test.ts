@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   createReviewCuration,
   Methods,
   type ReadyGatePayload,
@@ -9,6 +10,32 @@ import {
 } from '@farmslot/protocol';
 
 import { decisionResolveRequest } from './decision-resolve';
+
+test('native attestation requires the run and sends the shared reason and package identity', () => {
+  const action = APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION;
+  assert.throws(
+    () => decisionResolveRequest({ id: 'gate' }, action, null, undefined, 'Inspected'),
+    /Load the publish run/,
+  );
+  const decision = { id: 'gate', payload, runMeta: { runId: 'run' } as never };
+  assert.throws(() => decisionResolveRequest(decision, action), /written reason/);
+  const request = decisionResolveRequest(
+    decision,
+    action,
+    null,
+    undefined,
+    ' Inspected retained evidence. ',
+  );
+  assert.equal(request.method, Methods.RUN_RESOLVE_DECISION);
+  assert.equal(
+    (request.params as { evidenceAttestationReason?: string }).evidenceAttestationReason,
+    'Inspected retained evidence.',
+  );
+  assert.equal(
+    (request.params as { selectionData?: { packageHash?: string } }).selectionData?.packageHash,
+    'hash-1',
+  );
+});
 
 const payload = {
   kind: 'ready',

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
+  APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   assertReviewCurationFresh,
   type AssessmentRecord,
   captureQaAfterReview,
@@ -12,6 +13,10 @@ import {
   type DevInteractiveActionRecord,
   type DevInteractiveProfile,
   Events,
+  type EvidenceAttestationApprover,
+  evidenceAttestationAvailable,
+  evidenceAttestationReason,
+  type EvidencePolicyAttestation,
   type ExecutionTemplateReference,
   failedRunCancelEffects,
   failureTriageCause,
@@ -19,6 +24,7 @@ import {
   INTERACTIVE_HANDOFF_EXTEND_ACTION,
   interactiveHandoffAllowsExtend,
   isAllowedRunDecisionAction,
+  isEvidencePolicyReason,
   isGateParkInFlightOrFreed,
   isInteractiveDevRun,
   isPrerequisiteGatePayload,
@@ -1458,7 +1464,9 @@ export function assertDecisionStillUnresolved(runId: string, decisionId: string)
 type TriageAssessmentPrice = NonNullable<NonNullable<AssessmentRecord['reservation']>['price']>;
 
 export interface RunResolveDecisionDependencies {
-  assertGatePrerequisites?: typeof assertRunGateReady;
+  assertGatePrerequisites?: import('../run-engine/gate-prerequisites.js').GatePrerequisiteAssertion;
+  /** Supplied only by the authenticated ingress, never RPC parameters or background callers. */
+  authorizeEvidenceAttestation?: () => EvidenceAttestationApprover;
   triageSnapshot?: (
     runId: string,
     step: string,
@@ -1661,6 +1669,28 @@ export async function resolveRunDecision(
 
   let decision = existing.decisions.find((d) => d.id === params.decisionId);
   if (!decision) throw new Error(`Decision not found: ${params.decisionId}`);
+  const attestationReason = evidenceAttestationReason(
+    params.actionId,
+    params.evidenceAttestationReason,
+  );
+  if (params.selectionData && Object.hasOwn(params.selectionData, 'evidenceAttestation'))
+    throw new Error('Evidence attestation receipts are gateway-owned. Supply only a reason.');
+  const attestedApproval = params.actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION;
+  let attestationApprover: EvidenceAttestationApprover | undefined;
+  if (attestedApproval) {
+    if (
+      decision.type !== 'engine_human_gate' ||
+      decision.payload?.kind !== 'ready' ||
+      !decision.payload.prPackage ||
+      !dependencies.authorizeEvidenceAttestation
+    ) {
+      throw new GatewayMethodError(
+        'AUTH_FORBIDDEN',
+        'Evidence attestation requires an authenticated human publish gate.',
+      );
+    }
+    attestationApprover = dependencies.authorizeEvidenceAttestation();
+  }
   if (decision.payload?.kind === 'output-review') {
     if (!['mark-reviewed', 'close-run'].includes(params.actionId))
       throw new Error('Invalid output review action');
@@ -1790,6 +1820,7 @@ export async function resolveRunDecision(
   }
   const currentDescription = await assertReadyPublishResolveIsFresh(existing, decision, params);
   const consume = async (): Promise<RunResolveDecisionResult> => {
+    let attestation: EvidencePolicyAttestation | undefined;
     // The probes above await; a concurrent resolver (operator abort vs re-armed
     // auto-recovery) may have resolved this decision during that window. Re-read
     // from the store so the first resolution wins instead of being overwritten.
@@ -1819,11 +1850,34 @@ export async function resolveRunDecision(
     if (params.actionId === 'post' && decision.payload?.kind === 'review')
       assertReviewCurationFresh(decision.payload, params.selectionData);
     if (guardedAdvance) {
-      await (dependencies.assertGatePrerequisites ?? assertRunGateReady)(
+      const readiness = await (dependencies.assertGatePrerequisites ?? assertRunGateReady)(
         getRun(existing.id)!,
         gatePayload.kind === 'ready' ? (gatePayload.prPackage ?? null) : null,
         params.actionId,
       );
+      if (attestedApproval) {
+        const prepared = gatePayload.kind === 'ready' ? gatePayload.prPackage : undefined;
+        if (
+          !readiness ||
+          !prepared ||
+          !evidenceAttestationAvailable(readiness) ||
+          readiness.identity.runId !== existing.id ||
+          readiness.identity.generation !== gateGeneration ||
+          readiness.identity.packageHash !== prepared.packageHash
+        )
+          throw new Error('Evidence attestation requires the current checked publication package.');
+        attestation = {
+          schemaVersion: 1,
+          runId: existing.id,
+          decisionId: decision.id,
+          packageHash: prepared.packageHash,
+          selectedEvidenceKeys: [...(prepared.selectedEvidenceKeys ?? [])],
+          approver: attestationApprover!,
+          reason: attestationReason!,
+          approvedAt: new Date().toISOString(),
+          waivedReasons: readiness.reasons.filter(isEvidencePolicyReason),
+        };
+      }
       const current = getRun(params.runId);
       const currentDecision = current?.decisions.find((entry) => entry.id === params.decisionId);
       if (
@@ -1847,6 +1901,18 @@ export async function resolveRunDecision(
     )!;
     // No review-request await separates this fresh check from decision consumption.
     assertReviewBudgetAtConsumption?.();
+    if (attestation) {
+      const currentApprover = dependencies.authorizeEvidenceAttestation!();
+      if (
+        currentApprover.principalId !== attestation.approver.principalId ||
+        currentApprover.credentialId !== attestation.approver.credentialId
+      )
+        throw new GatewayMethodError(
+          'AUTH_FORBIDDEN',
+          'Evidence attestation caller changed during validation.',
+        );
+      decision.evidenceAttestation = attestation;
+    }
     // Past every refusal now, so the normalization may persist.
     if (normalizedReviews) normalizeExhaustedReviewContinuationsForRun(params.runId);
     if (decision.type === 'engine_human_gate' && isHumanGateReviewRequestAction(params.actionId)) {

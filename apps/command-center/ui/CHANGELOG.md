@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Add reasoned evidence-policy attestation to the existing publish gate with confirmation and package binding.
+
 - Show compact evidence package status and collapsed diagnostics, with neutral legacy evidence and read-only retained reports.
 
 - Display readable run titles in lists, retrospectives, detail and decisions with two-line cards and full title on hover.

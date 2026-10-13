@@ -572,6 +572,8 @@ export interface RunResolveDecisionParams {
   runId: string;
   decisionId: string;
   actionId: string;
+  /** Written human explanation, accepted only by evidence-attested publish approval. */
+  evidenceAttestationReason?: string;
   /** Optional completed failure-triage assessment consulted for this choice. */
   triageAssessmentId?: string;
   selectionData?: Record<string, unknown>;

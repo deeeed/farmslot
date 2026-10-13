@@ -5,6 +5,7 @@ import {
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   type DecisionAction,
   effectiveRequiredReviewCount,
+  EVIDENCE_ATTESTATION_ACTION,
   type EvidenceManifestEntry,
   isPublishApprovalAction,
   isQualifyingReview,
@@ -81,6 +82,7 @@ export function publicationGateDecisionActions(opts: {
       ? opts.pendingReviewContinuation
       : undefined;
   return [
+    ...(opts.preparedPackage ? [{ ...EVIDENCE_ATTESTATION_ACTION }] : []),
     ...(opts.mergedPrNumber || opts.branchZeroAhead
       ? [
           {

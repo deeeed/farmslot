@@ -83,6 +83,7 @@ export function assertRunGateActionAvailable(
 
 export interface RunGateCliOptions {
   action?: string;
+  reason?: string;
   decision?: string;
   runner?: string;
   model?: string;
@@ -133,7 +134,13 @@ export function buildRunGateParams(
   ) {
     throw new Error('Review selection options require --action request-review');
   }
-  return buildRunResolveDecisionParams({ runId: run.id, decision, actionId, selectionData });
+  return buildRunResolveDecisionParams({
+    runId: run.id,
+    decision,
+    actionId,
+    selectionData,
+    ...(options.reason !== undefined ? { evidenceAttestationReason: options.reason } : {}),
+  });
 }
 
 export function buildReviewChainResult(run: Run): { chain: ReviewChainEntry[] } {
@@ -774,6 +781,7 @@ export function registerRunCommand(program: Command): void {
       'Action to resolve with (approve-publish|approve-publish-unresolved|hold|close-as-shipped|…)',
     )
     .option('--decision <id>', 'Decision id when several are pending')
+    .option('--reason <text>', 'Written reason for approve-publish-evidence-attested')
     .option('--runner <runner>', 'Review runner for request-review')
     .option('--model <model>', 'Review model for request-review')
     .option('--effort <level>', 'Review reasoning effort for request-review')

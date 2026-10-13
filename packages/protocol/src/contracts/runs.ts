@@ -20,7 +20,7 @@ import type { EvidenceQualityReport, RecipeQualityArtifact } from './recipes.js'
 import type { ResourcePostureWaitPolicy, RunResourcePostureState } from './resource-posture.js';
 import type { ResourceType } from './resources.js';
 import type { RunImportProvenance } from './run-bundles.js';
-import type { RunGateReadiness } from './run-gate-readiness.js';
+import type { EvidencePolicyAttestation, RunGateReadiness } from './run-gate-readiness.js';
 import type { RuntimeCapabilityProofRequirement } from './runtime-capabilities.js';
 import type { SlotHealth } from './slots.js';
 import type { SubtaskSource } from './task.js';
@@ -1276,6 +1276,8 @@ export interface RunDecision {
   createdAt: string;
   resolvedAt?: string;
   resolvedAction?: string;
+  /** Authoritative human policy waiver, stamped only by the gateway. */
+  evidenceAttestation?: EvidencePolicyAttestation;
   /** Completed failure-triage assessment consulted at resolution, without implied causation. */
   triageAssessmentId?: string;
   payload?: RunDecisionPayload;

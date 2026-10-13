@@ -5,6 +5,7 @@
  * withholds buttons; the gateway's own publish checks are unchanged.
  */
 import {
+  APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
   APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
@@ -12,6 +13,7 @@ import {
   defaultReviewPolicy,
   type DeterministicChecklistCheck,
   effectiveRequiredReviewCount,
+  evidenceAttestationAvailable,
   isPublishApprovalAction,
   isQualifyingReview,
   qualifyingPassingReviews,
@@ -19,6 +21,7 @@ import {
   type ReviewStatus,
   type Run,
   type RunDecision,
+  type RunGateReadiness,
 } from '@farmslot/protocol';
 // The shared palette, not `./theme`: that module builds StyleSheets, which pulls
 // react-native into this pure module and out of reach of the node test runner.
@@ -265,8 +268,14 @@ export function approvePublishGuard(input: ApprovePublishGuardInput): ApprovePub
 export function gateReviewActions(
   actions: ReadonlyArray<DecisionAction>,
   guard: ApprovePublishGuard,
+  readiness?: RunGateReadiness,
 ): GateReviewAction[] {
   return actions.map((action) => {
+    if (
+      action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
+      !evidenceAttestationAvailable(readiness)
+    )
+      return { ...action, disabledReason: 'Evidence attestation is unavailable for this gate.' };
     if (!isPublishApprovalAction(action.id)) return { ...action, disabledReason: null };
     const reasons = REVIEW_OVERRIDE_ACTIONS.has(action.id)
       ? guard.acceptanceReasons
@@ -293,5 +302,13 @@ export function humanGateGuard(
     reviews,
     requiredReviews: gateRequiredReviewCount(decision),
   });
-  return { reviews, guard, actions: gateReviewActions(decision.actions, guard) };
+  return {
+    reviews,
+    guard,
+    actions: gateReviewActions(
+      decision.actions,
+      guard,
+      decision.payload?.kind === 'ready' ? decision.payload.gateReadiness : undefined,
+    ),
+  };
 }

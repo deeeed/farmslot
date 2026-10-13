@@ -9,6 +9,7 @@ import type { ImprovementApplyParams, ImprovementApplyResult } from '../rpc/inte
 import { Methods } from '../rpc/registry.js';
 import type { RunResolveDecisionParams } from '../rpc/run.js';
 
+import { evidenceAttestationReason } from './publish-approval.js';
 import { reviewPostingFingerprint } from './review-curation.js';
 
 /** Candidate selection shared by the desktop and native decision renderers. */
@@ -27,6 +28,7 @@ export interface RunDecisionActionInput {
   runId: string;
   decision: Pick<RunDecision, 'id' | 'payload'> & Partial<Pick<RunDecision, 'type'>>;
   actionId: string;
+  evidenceAttestationReason?: string;
   selectionData?: Record<string, unknown>;
   resourcePosture?: ResourcePostureGateChoice;
 }
@@ -99,6 +101,7 @@ export function buildRunResolveDecisionParams(input: {
   runId: string;
   decision: Pick<RunDecision, 'id' | 'payload'>;
   actionId: string;
+  evidenceAttestationReason?: string;
   triageAssessmentId?: string;
   publicationTarget?: PublicationTarget;
   selectedEvidenceKeys?: string[];
@@ -110,6 +113,10 @@ export function buildRunResolveDecisionParams(input: {
    */
   resourcePosture?: ResourcePostureGateChoice;
 }): RunResolveDecisionParams {
+  const attestationReason = evidenceAttestationReason(
+    input.actionId,
+    input.evidenceAttestationReason,
+  );
   const payload =
     input.decision.payload?.kind === 'ready'
       ? (input.decision.payload as ReadyGatePayload)
@@ -130,6 +137,7 @@ export function buildRunResolveDecisionParams(input: {
     runId: input.runId,
     decisionId: input.decision.id,
     actionId: input.actionId,
+    ...(attestationReason !== undefined ? { evidenceAttestationReason: attestationReason } : {}),
     ...(input.triageAssessmentId !== undefined
       ? { triageAssessmentId: input.triageAssessmentId }
       : {}),

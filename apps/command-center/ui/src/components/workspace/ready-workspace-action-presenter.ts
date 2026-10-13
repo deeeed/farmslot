@@ -7,7 +7,11 @@ import type {
   RecipeRunArtifactGroup,
   RunRefreshPublishPackageResult,
 } from '@farmslot/protocol';
-import { buildRunResolveDecisionParams, Methods } from '@farmslot/protocol';
+import {
+  APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
+  buildRunResolveDecisionParams,
+  Methods,
+} from '@farmslot/protocol';
 import { ReviewDispatchViewModel, reviewLineagesForRun } from '@farmslot/review-dispatch';
 
 import { gateway } from '../../gateway-client.js';
@@ -584,6 +588,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     this._decisionActionStateKey = key;
     this._acting = false;
     this._pendingConfirm = null;
+    this._evidenceAttestationReason = '';
     this._actionMessage = '';
     this._actionTone = '';
   }
@@ -647,6 +652,12 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     );
   }
 
+  _setEvidenceAttestationReason(value: string) {
+    this._evidenceAttestationReason = value;
+    this._confirmTimer.clear();
+    this._pendingConfirm = null;
+  }
+
   _confirmAction(actionId: string) {
     if (this._isRecovering) return;
     const packageGate = Boolean(this._payload?.prPackage);
@@ -707,6 +718,9 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
           runId: this.runId,
           decision: this.decision,
           actionId,
+          ...(actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION
+            ? { evidenceAttestationReason: this._evidenceAttestationReason }
+            : {}),
           ...(this.resourcePosture ? { resourcePosture: this.resourcePosture } : {}),
           publicationTarget: this._publicationTarget,
           selectedEvidenceKeys: payload ? this._selectedEvidenceKeysForSubmit(payload) : [],

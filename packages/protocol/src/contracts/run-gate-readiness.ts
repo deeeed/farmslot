@@ -20,6 +20,27 @@ export interface RunGatePrerequisiteReason {
   reference?: string;
   /** Existing action that can resolve the prerequisite. */
   actionId?: string;
+  /** Only these checked claim-policy findings may receive human attestation. */
+  evidencePolicy?: 'execution-verdict' | 'claim-verdict' | 'criterion-binding';
+}
+
+export interface EvidenceAttestationApprover {
+  principalId: string;
+  displayName: string;
+  credentialId: string;
+}
+
+/** Gateway-stamped decision receipt; request callers supply only the reason. */
+export interface EvidencePolicyAttestation {
+  schemaVersion: 1;
+  runId: string;
+  decisionId: string;
+  packageHash: string;
+  selectedEvidenceKeys: string[];
+  approver: EvidenceAttestationApprover;
+  reason: string;
+  approvedAt: string;
+  waivedReasons: RunGatePrerequisiteReason[];
 }
 
 /** A projection of the current decision's checked inputs, never approval authority. */

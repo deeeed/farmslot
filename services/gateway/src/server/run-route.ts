@@ -8,6 +8,7 @@ import {
   type EvalTrialStartParams,
   type EventFrame,
   Events,
+  type EvidenceAttestationApprover,
   type FamilyObservabilityGetParams,
   type FamilyReportGenerateParams,
   type IntelligenceActionsSummaryParams,
@@ -116,6 +117,7 @@ export interface RouteRunMethodContext {
   /** Caller-only emitter retained in the routing context; shared run mutations use broadcast. */
   emit: (event: string, payload: unknown) => void;
   broadcast: (frame: EventFrame) => void;
+  authorizeEvidenceAttestation?: () => EvidenceAttestationApprover;
 }
 
 export type RouteRunMethodResult = { handled: true; value: unknown } | { handled: false };
@@ -215,7 +217,9 @@ export async function routeRunMethod(
       // this, family-observability and slot-card tabs in other windows derive
       // stale `state.runs` and continue showing the resolved card until some
       // unrelated update arrives. Mirrors DECISION_RESOLVE.
-      const result = await runResolveDecision(params, emit);
+      const result = await runResolveDecision(params, emit, {
+        authorizeEvidenceAttestation: context.authorizeEvidenceAttestation,
+      });
       // DECISION_RESOLVED is the inbox-side event surface; runResolveDecision
       // only emits RUN_DECISION_RESOLVED, so we still need this explicit
       // broadcast for clients subscribed to the file-based shape.

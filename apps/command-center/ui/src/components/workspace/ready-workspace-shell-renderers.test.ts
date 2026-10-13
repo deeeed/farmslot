@@ -1,13 +1,50 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { GitBranchDiffFile, ReadyGatePayload } from '@farmslot/protocol';
+import {
+  EVIDENCE_ATTESTATION_ACTION,
+  type GitBranchDiffFile,
+  type ReadyGatePayload,
+  type RunDecision,
+} from '@farmslot/protocol';
 
 import { FakeControllerHost } from '../../testing/fake-controller-host.js';
 import { litText } from '../../testing/lit-text.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 
-import { renderReadyDiffTab, renderReadyTabBar } from './ready-workspace-shell-renderers.js';
+import {
+  renderReadyDiffTab,
+  renderReadyTabBar,
+  renderReadyTopBar,
+} from './ready-workspace-shell-renderers.js';
+
+test('the existing top bar shows the shared attestation reason and explicit confirmation', () => {
+  const rendered = renderReadyTopBar({
+    payload: {
+      kind: 'ready',
+      branch: 'branch',
+      diffStat: { files: 0, additions: 0, deletions: 0 },
+      reviews: [],
+      prPackage: {},
+    } as unknown as ReadyGatePayload,
+    decision: { actions: [EVIDENCE_ATTESTATION_ACTION] } as RunDecision,
+    publicationTarget: 'draft',
+    pendingConfirm: EVIDENCE_ATTESTATION_ACTION.id,
+    attestationReason: 'Inspected retained evidence.',
+    acting: false,
+    recovering: false,
+    fileDiffAvailable: false,
+    actionMessage: '',
+    actionTone: '',
+    openDiff: () => undefined,
+    openReviewRequestModal: () => undefined,
+    confirmAction: () => undefined,
+  });
+  const text = litText(rendered);
+  assert.match(text, /Reason for evidence policy attestation/);
+  assert.match(text, /Confirm attestation and publish/);
+  assert.match(text, /Integrity, source, CI and review checks remain required/);
+});
 
 const files: GitBranchDiffFile[] = [
   { path: 'src/gate.ts', status: 'M', additions: 4, deletions: 1 },

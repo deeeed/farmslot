@@ -7,10 +7,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { type EvidenceReviewModel, readEvidenceReviewReport } from '@farmslot/adapter-sdk/evidence';
 import {
+  APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   type DecisionListResult,
   Events,
   improvementApplyOutcome,
   type ImprovementApplyResult,
+  isValidEvidenceAttestationReason,
   liveGateParkView,
   Methods,
   type RecipeRunArtifactGroup,
@@ -189,6 +191,11 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const removeDecision = useDecisionStore((s) => s.removeDecision);
   const [decision, setDecision] = useState<DecisionDetail | null>(storeDecision ?? null);
   const [error, setError] = useState<string | null>(null);
+  const [evidenceReason, setEvidenceReason] = useState<{ decisionId: string; text: string } | null>(
+    null,
+  );
+  const attestationReason =
+    evidenceReason && evidenceReason.decisionId === decision?.id ? evidenceReason.text : '';
   const [viewerUri, setViewerUri] = useState<string | null>(null);
   const [documentViewer, setDocumentViewer] = useState<{
     title: string;
@@ -607,6 +614,16 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const resolveAction = useCallback(
     (actionId: string, selectionData?: Record<string, unknown>) => {
       if (!client || !decision) return;
+      if (
+        actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
+        !isValidEvidenceAttestationReason(attestationReason)
+      ) {
+        Alert.alert(
+          'Written reason required',
+          'Explain the evidence policy attestation before approving.',
+        );
+        return;
+      }
       if (slotPicker && actionId === 'pick' && !slotPicker.selectedSlotId) {
         Alert.alert('Choose a slot', 'Select an available candidate before using this action.');
         return;
@@ -644,6 +661,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
           : slotPicker && actionId === 'pick'
             ? { slotId: slotPicker.selectedSlotId }
             : selectionData,
+        actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION ? attestationReason : undefined,
       );
 
       // Transition ids already on screen. `run.resolveDecision` returns before
@@ -728,6 +746,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     },
     [
       applyPostureGate,
+      attestationReason,
       client,
       decision,
       decisionWithRunContext,
@@ -1764,11 +1783,18 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
                 <PublishGuardNotice
                   actions={humanGate.actions}
                   testID="companion-decision-publish-guard"
+                  attestationReason={attestationReason}
+                  onAttestationReason={(text) =>
+                    setEvidenceReason({ decisionId: decision.id, text })
+                  }
                 />
               ) : null}
               {presentation.actions.map((action) => {
                 const disabled =
                   withheldActions.has(action.id) ||
+                  (action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
+                    (!isValidEvidenceAttestationReason(attestationReason) ||
+                      !decisionWithRunContext?.runMeta)) ||
                   (decision.type === 'engine_review_posting' &&
                     action.id === 'post' &&
                     (!reviewPublication.curation ||

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Use the shared evidence-policy attestation action and reason input in the existing gate workspace.
+
 - Honor HUD top/bottom placement through automatic progress and capture the painted final outcome.
 
 - Show shared package status and collapsed diagnostics, with neutral legacy evidence and independent retained report access.

@@ -57,6 +57,7 @@ import { assertReviewRoundAvailable } from '../review/review-round-budget.js';
 import { reviewedInputsAwaitingReview, reviewedInputsChanged } from '../review/reviewed-inputs.js';
 import { reviewPRIdentity } from '../review/session-mode.js';
 import { isTerminalReviewArtifactError } from '../review/terminal-result.js';
+import { assertEvidenceAttestationReceipt } from '../run-completion/evidence-attestation.js';
 import {
   isArtifactOnlyRun,
   publicationStatusForRun,
@@ -1232,6 +1233,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
     if (isPublishApprovalAction(actionId)) {
       if (!approvedPackage) throw new Error('Publication approval requires a prepared package');
       validatePackageApprovalSelection(approvedPackage, decision);
+      assertEvidenceAttestationReceipt(getRun(runId)!, decision, approvedPackage);
       if (actionId !== APPROVE_PUBLISH_UNRESOLVED_ACTION) {
         assertPublicationReviewPolicySatisfied(getRun(runId)!, approvedPackage);
       }

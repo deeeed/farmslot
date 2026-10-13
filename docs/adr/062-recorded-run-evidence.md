@@ -1,7 +1,7 @@
 # ADR-062: Recorded run evidence
 
 **Status:** Accepted
-**Amendment status:** 1 and 2 Accepted; 3 Proposed
+**Amendment status:** 1, 2 and 3 Accepted
 **Date:** 2026-10-12
 **Owner:** Farmslot maintainers
 **Scope:** Recipe execution, claim evidence, review gates, and public CLI/SDK
@@ -296,7 +296,8 @@ policy, gate approvals and HTML report rendering remain outside this amendment.
 
 ## Amendment 3 (2026-10-13): Evidence policy and human attestation
 
-**Status:** Proposed
+**Status:** Accepted, 2026-10-13
+**Approval:** Maintainer acceptance of [#1003](https://github.com/deeeed/farmslot/pull/1003).
 **Specification:** [Evidence gate policy](../reference/recorded-run-evidence.md#evidence-gate-policy).
 
 ### Decision

@@ -18,6 +18,7 @@ import { SSH_CONNECT_SHELL_OPTIONS } from '../core/ssh-options.js';
 import { shellQuote } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { ghRequest } from '../integrations/github-client.js';
+import { assertEvidenceAttestationReceipt } from '../run-completion/evidence-attestation.js';
 import {
   assertReadyGatePackageInputsCurrent,
   isArtifactOnlyRun,
@@ -57,7 +58,7 @@ type BroadcastFn = (event: string, payload: unknown) => void;
 type LoadedProjectVars = { projectJson: Parameters<typeof getProjectField>[0] };
 
 export interface FinalizeStepContext {
-  assertGatePrerequisites?: typeof assertRunGateReady;
+  assertGatePrerequisites?: import('./gate-prerequisites.js').GatePrerequisiteAssertion;
   blockedRunError: (message: string, reason: string) => Error;
   broadcastFn: BroadcastFn;
   latestResolvedHumanGateDecision: (
@@ -327,6 +328,7 @@ export async function executeFinalizeStep(
     if (!preparedPackage) throw new Error('Approved PR package snapshot missing');
     verifyReadyGatePackageHash(preparedPackage);
     validatePackageApprovalSelection(preparedPackage, gateDecision);
+    assertEvidenceAttestationReceipt(current, gateDecision, preparedPackage);
     if (resolvedAction !== APPROVE_PUBLISH_UNRESOLVED_ACTION) {
       assertPublicationReviewPolicySatisfied(current, preparedPackage);
     }
