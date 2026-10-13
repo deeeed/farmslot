@@ -22,6 +22,7 @@ export const WorkGraphMethods = {
   updateNode: Methods.WORK_GRAPH_UPDATE_NODE,
   activate: Methods.WORK_GRAPH_ACTIVATE,
   pause: Methods.WORK_GRAPH_PAUSE,
+  retry: Methods.WORK_GRAPH_RETRY,
   gateResolve: Methods.WORK_GRAPH_GATE_RESOLVE,
   schedulerTick: Methods.WORK_GRAPH_SCHEDULER_TICK,
 } as const;
@@ -87,6 +88,14 @@ export interface WorkGraphPauseParams {
   graphId: string;
 }
 export interface WorkGraphPauseResult {
+  graph: WorkGraphProjection;
+}
+
+export interface WorkGraphRetryParams {
+  graphId: string;
+  reason: string;
+}
+export interface WorkGraphRetryResult {
   graph: WorkGraphProjection;
 }
 

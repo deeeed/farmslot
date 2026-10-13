@@ -406,6 +406,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `workGraph.pause`                       | workGraph        | lifecycle     | —      | —      | WorkGraph Pause gateway method.                       |
 | `workGraph.removeEdge`                  | workGraph        | bounded-write | —      | —      | WorkGraph RemoveEdge gateway method.                  |
 | `workGraph.removeNode`                  | workGraph        | bounded-write | —      | —      | WorkGraph RemoveNode gateway method.                  |
+| `workGraph.retry`                       | workGraph        | bounded-write | —      | —      | WorkGraph Retry gateway method.                       |
 | `workGraph.schedulerTick`               | workGraph        | bounded-write | —      | —      | WorkGraph SchedulerTick gateway method.               |
 | `workGraph.updateNode`                  | workGraph        | bounded-write | —      | —      | WorkGraph UpdateNode gateway method.                  |
 | `worker.session.history.get`            | worker           | read-only     | —      | —      | Worker Session History Get gateway method.            |

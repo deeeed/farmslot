@@ -9,6 +9,7 @@ import type {
   WorkGraphPauseParams,
   WorkGraphRemoveEdgeParams,
   WorkGraphRemoveNodeParams,
+  WorkGraphRetryParams,
   WorkGraphSchedulerTickParams,
   WorkGraphUpdateNodeParams,
 } from '@farmslot/protocol';
@@ -25,6 +26,7 @@ import {
   pauseWorkGraph,
   removeWorkGraphEdge,
   removeWorkGraphNode,
+  retryWorkGraph,
   schedulerTick,
   updateWorkGraphNode,
   workGraphRecordOriginator,
@@ -53,6 +55,8 @@ export const workGraphActivate = (params: WorkGraphActivateParams) =>
   activateWorkGraph(params, currentSessionOriginator());
 export const workGraphPause = (params: WorkGraphPauseParams) =>
   pauseWorkGraph(params, currentSessionOriginator());
+export const workGraphRetry = (params: WorkGraphRetryParams) =>
+  retryWorkGraph(params, currentSessionOriginator());
 export const workGraphGateResolve = (params: WorkGraphGateResolveParams) =>
   gateResolve(params, currentSessionOriginator());
 // The RPC is the operator's `farmslot graph tick`; run events tick internally.

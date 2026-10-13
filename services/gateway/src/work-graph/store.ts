@@ -20,6 +20,7 @@ import {
   type WorkGraphCreateParams,
   type WorkGraphListRpcParams,
   type WorkGraphProjection,
+  type WorkGraphRetryParams,
   type WorkGraphSnapshot,
   type WorkGraphUpdateNodeParams,
   type WorkNode,
@@ -135,7 +136,13 @@ function emit(snapshot: WorkGraphRecord): void {
 
 function project(snapshot: WorkGraphRecord): WorkGraphProjection {
   return {
-    graph: { ...snapshot.graph, tags: snapshot.graph.tags ? [...snapshot.graph.tags] : undefined },
+    graph: {
+      ...snapshot.graph,
+      tags: snapshot.graph.tags ? [...snapshot.graph.tags] : undefined,
+      ...(snapshot.graph.retryHistory
+        ? { retryHistory: snapshot.graph.retryHistory.map((entry) => ({ ...entry })) }
+        : {}),
+    },
     nodes: snapshot.nodes.map((node) => ({
       ...node,
       reference: node.reference ? cloneReference(node.reference) : undefined,
@@ -597,6 +604,18 @@ export async function removeWorkGraphNode(
     const nodeIndex = snapshot.nodes.findIndex((node) => node.id === params.nodeId);
     if (nodeIndex < 0) throw new Error(`Work node not found: ${params.nodeId}`);
     const node = snapshot.nodes[nodeIndex]!;
+    if (
+      snapshot.graph.retryHistory?.length &&
+      (node.currentRootRunId ||
+        node.currentFamilyId ||
+        node.latestRunId ||
+        snapshot.ledger.some((entry) => entry.nodeId === node.id) ||
+        getQueueSnapshot().some(
+          (entry) => entry.workGraphId === params.graphId && entry.workNodeId === node.id,
+        ) ||
+        (node.backlogItemId && getBacklogItemSnapshot(node.backlogItemId)?.runId))
+    )
+      throw new Error('Cannot remove a retried graph node with retained execution facts');
     if (node.backlogItemId) {
       assertBacklogItemAttachedToWorkNode({
         itemId: node.backlogItemId,
@@ -738,6 +757,45 @@ export async function pauseWorkGraph(
     await persistNow(snapshot);
     emit(snapshot);
     return { graph: project(snapshot) };
+  });
+}
+
+/** Reopen the plan around recorded work; activation remains the dispatch admission. */
+export async function retryWorkGraph(
+  params: WorkGraphRetryParams,
+  originator?: WorkOriginator,
+): Promise<{ graph: WorkGraphProjection }> {
+  if (typeof params.reason !== 'string' || !params.reason.trim())
+    throw new Error('workGraph.retry requires a nonempty reason');
+  return withMutation(async () => {
+    const snapshot = requireGraph(params.graphId);
+    const status = snapshot.graph.status;
+    if (status === 'planning') return { graph: project(snapshot) };
+    if (status === 'archived') throw new Error('Cannot retry an archived work graph');
+    if (status === 'active' || status === 'waiting')
+      throw new Error('Pause the work graph before retrying its plan');
+    const now = new Date().toISOString();
+    const candidate: WorkGraphRecord = {
+      ...snapshot,
+      graph: {
+        ...snapshot.graph,
+        status: 'planning',
+        updatedAt: now,
+        retryHistory: [
+          ...(snapshot.graph.retryHistory ?? []),
+          {
+            reason: params.reason.trim(),
+            previousStatus: status,
+            retriedAt: now,
+          },
+        ],
+      },
+    };
+    restampWorkGraph(candidate, originator);
+    await persistNow(candidate);
+    graphs.set(params.graphId, candidate);
+    emit(candidate);
+    return { graph: project(candidate) };
   });
 }
 
@@ -1779,6 +1837,11 @@ function schedulerTickLocked(
     });
     const updated: WorkGraphProjection[] = [];
     for (const snapshot of targets) {
+      // A targeted tick observes stopped plans without activating or dispatching them.
+      if (['planning', 'paused', 'archived'].includes(snapshot.graph.status)) {
+        updated.push(project(snapshot));
+        continue;
+      }
       if (!acquireLease(snapshot, owner, nowMs)) continue;
       const runs = getAllRuns();
       const reclaimed = new Set<string>();

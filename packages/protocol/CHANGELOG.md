@@ -8,6 +8,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Treat file assertions as assertions for declared retry resolution; file-content proof still requires an executed non-blank expectation.
 - Expose scoped source selection contracts, shared status/picker state and a retry-safe source command client that retains partial-sync diagnostics.
+- Add graph-owned planning retry with typed request/result and retained retry reasons.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

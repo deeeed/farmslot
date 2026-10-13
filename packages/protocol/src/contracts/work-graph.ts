@@ -86,6 +86,13 @@ export interface WorkGraph {
   scheduler: SchedulerLease;
   createdAt: string;
   updatedAt: string;
+  retryHistory?: WorkGraphRetryRecord[];
+}
+
+export interface WorkGraphRetryRecord {
+  reason: string;
+  previousStatus: WorkGraphStatus;
+  retriedAt: string;
 }
 
 export interface WorkNode {

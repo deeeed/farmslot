@@ -394,6 +394,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'workGraph.pause': { classification: 'admin' },
   'workGraph.removeEdge': { classification: 'admin' },
   'workGraph.removeNode': { classification: 'admin' },
+  'workGraph.retry': { classification: 'admin' },
   'workGraph.schedulerTick': { classification: 'admin' },
   'workGraph.updateNode': { classification: 'admin' },
   'workspace.metro.subscribe': { classification: 'admin' },
