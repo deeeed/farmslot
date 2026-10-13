@@ -6,6 +6,7 @@ import {
   type RecipeResolutionEdge,
   type RecipeSourceProvenance,
   resolvedRecipeArtifactPath,
+  validateRecipeActionRelationships,
   validateResolvedRecipeActionNode,
 } from '@farmslot/protocol';
 
@@ -38,20 +39,28 @@ export function validateRecipeDependencyParams(options: {
     for (const [nodeId, rawNode] of Object.entries(extractWorkflowGraph(document).nodes)) {
       const node = resolveRecipeValue(rawNode, params, undefined, { nodeId });
       if (!isRecord(node)) continue;
-      if (node.action === 'watch_logs' && options.actionManifest) {
-        const validation = validateResolvedRecipeActionNode(node, options.actionManifest, {
-          allowTemplates: true,
-        });
-        if (validation.status === 'invalid') {
-          throw new RecipeResolutionError(
-            'RECIPE_PARAMS_INVALID',
-            `Recipe node ${nodeId}: ${validation.findings.map((finding) => finding.message).join('; ')}`,
-            'correct the log observation parameters before running the recipe',
-          );
-        }
-        if (node.scope !== 'file' && typeof node.path === 'string') {
-          runLogPaths.add(normalizeRelativePath(node.path).split(path.sep).join('/'));
-        }
+      const validation =
+        node.action === 'ui.wait_for' && node.enabled !== undefined
+          ? validateRecipeActionRelationships(node)
+          : node.action === 'watch_logs' && options.actionManifest
+            ? validateResolvedRecipeActionNode(node, options.actionManifest, {
+                allowTemplates: true,
+              })
+            : undefined;
+      if (validation?.status === 'invalid') {
+        throw new RecipeResolutionError(
+          'RECIPE_PARAMS_INVALID',
+          `Recipe node ${nodeId}: ${validation.findings.map((finding) => finding.message).join('; ')}`,
+          'correct the observation parameters before running the recipe',
+        );
+      }
+      if (
+        node.action === 'watch_logs' &&
+        options.actionManifest &&
+        node.scope !== 'file' &&
+        typeof node.path === 'string'
+      ) {
+        runLogPaths.add(normalizeRelativePath(node.path).split(path.sep).join('/'));
       }
       if (node.action !== 'call' || typeof node.ref !== 'string') continue;
       const ref = normalizeRecipeRef(node.ref);

@@ -445,7 +445,7 @@ export async function probeCdpCompositorInteractivity(
     });
     const candidates = [...document.querySelectorAll('button, a, input, select, textarea, [role="button"], [role="link"], [role="tab"], [role="checkbox"], [role="radio"], [role="switch"]')];
     const visibleTargets = candidates.filter((element) => {
-      if (isDisabledDeep(element)) return false;
+      if (element.disabled || element.getAttribute('aria-disabled') === 'true') return false;
       const style = getComputedStyle(element);
       const rect = element.getBoundingClientRect();
       return style.display !== 'none' &&

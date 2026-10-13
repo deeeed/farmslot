@@ -945,13 +945,30 @@ async function waitForNode(
   let lastEnabled: boolean | undefined;
   do {
     signal?.throwIfAborted();
-    const snapshot = await client.capture.snapshot({
-      ...selection,
-      session,
-      interactiveOnly: false,
-      forceFull: true,
-    });
+    const captureBudgetMs = deadline - Date.now();
+    if (captureBudgetMs <= 0) break;
+    const captureTimer = new AbortController();
+    let snapshot: AgentDeviceSnapshot | undefined;
+    try {
+      // Capture is read-only; the SDK receives the same bounded budget while
+      // the host can cancel without waiting for a native snapshot response.
+      snapshot = await Promise.race([
+        client.capture.snapshot({
+          ...selection,
+          session,
+          interactiveOnly: false,
+          forceFull: true,
+          timeoutMs: captureBudgetMs,
+        }),
+        timersPromises.setTimeout(captureBudgetMs, undefined, {
+          signal: signal ? AbortSignal.any([signal, captureTimer.signal]) : captureTimer.signal,
+        }),
+      ]);
+    } finally {
+      captureTimer.abort();
+    }
     signal?.throwIfAborted();
+    if (!snapshot || Date.now() >= deadline) break;
     nodeCount = snapshot.nodes.length;
     if (node.enabled !== undefined) {
       if (snapshot.truncated)
