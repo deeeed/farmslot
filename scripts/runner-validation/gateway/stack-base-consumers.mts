@@ -37,7 +37,7 @@ import {
   computeReadyGatePackageHash,
   readReadyGatePreparedPackage,
 } from '../../../services/gateway/src/run-completion/ready-gate-package.js';
-import { readFrozenRecordedEvidenceSources } from '../../../services/gateway/src/run-engine/recorded-evidence-sources.js';
+import { readGateRecordedEvidenceSources } from '../../../services/gateway/src/run-engine/recorded-evidence-sources.js';
 import { buildCodexExecLaunch } from '../../../services/gateway/src/runners/launch-command.js';
 import { makeVars } from '../../../services/gateway/src/runners/test-fixtures.js';
 
@@ -1059,11 +1059,7 @@ async function proveRetainedAttachment(afterRestart: boolean): Promise<void> {
   const taskDir = path.dirname(taskFile);
   const frozen = await readReadyGatePreparedPackage(before);
   assert.ok(frozen, 'The real retained run needs its captured publication inventory');
-  const evidence = await readFrozenRecordedEvidenceSources(
-    before,
-    frozen.evidenceManifest ?? [],
-    frozen.selectedEvidenceKeys ?? [],
-  );
+  const evidence = await readGateRecordedEvidenceSources(before, frozen);
   assert.ok(evidence.length > 0, 'Require a real inventory-qualified execution package');
   const inventoried = (frozen.evidenceManifest ?? []).map((ref) => {
     const retained = path.resolve(taskDir, ref.path);
