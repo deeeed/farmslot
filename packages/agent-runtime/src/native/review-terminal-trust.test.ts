@@ -1,0 +1,87 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+const scripts = fileURLToPath(new URL('../../scripts/', import.meta.url));
+
+test('a scripts-only frozen terminal bundle records trust before requesting launch', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'frozen-terminal-trust-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const staged = path.join(root, 'inputs/runtime/node_modules/@farmslot/agent-runtime/scripts');
+  await cp(scripts, staged, { recursive: true });
+  await assert.rejects(readFile(path.join(staged, '../dist/native/registry.js')), /ENOENT/);
+  // The OS sandbox has its own enforcement proofs; this case tests frozen dependency closure.
+  await writeFile(
+    path.join(staged, 'review-filesystem.cjs'),
+    "module.exports={sandbox:async()=>({temporaryDirectory:process.env.FIXTURE_OUTPUT,sandbox:{executable:'/bin/sh',args:[]}})};\n",
+  );
+  const owner = 'fixture-owner';
+  const workspaceId = 'fixture-review';
+  const workspace = path.join(
+    root,
+    'review-workspaces',
+    createHash('sha256').update(owner).digest('hex'),
+    'runs',
+    workspaceId,
+  );
+  const source = path.join(workspace, 'source');
+  const task = path.join(workspace, 'task');
+  const account = path.join(root, 'account');
+  const bin = path.join(root, 'bin');
+  for (const directory of [source, task, account, bin]) await mkdir(directory, { recursive: true });
+  await writeFile(
+    path.join(workspace, 'identity.json'),
+    JSON.stringify({ owner, workspaceId, runId: workspaceId }),
+    { mode: 0o600 },
+  );
+  const git = path.join(bin, 'git');
+  await writeFile(git, '#!/bin/sh\nprintf "%s\\n" "$FIXTURE_SOURCE"\n');
+  await chmod(git, 0o700);
+  const tmux = path.join(bin, 'tmux');
+  await writeFile(
+    tmux,
+    `#!${process.execPath}\nconst fs=require('node:fs'),path=require('node:path');const action=process.argv[2];if(action==='has-session')process.exit(1);if(action!=='new-session')throw Error('Unexpected terminal operation');const text=fs.readFileSync(path.join(process.env.GROK_HOME,'trusted_folders.toml'),'utf8');if(!text.includes('trusted = true'))throw Error('Trust must precede launch');fs.writeFileSync(process.env.FIXTURE_LAUNCH,'verified');\n`,
+  );
+  await chmod(tmux, 0o700);
+  const launched = path.join(root, 'launch');
+  const result = spawnSync(
+    process.execPath,
+    [
+      path.join(staged, 'review-terminal.cjs'),
+      JSON.stringify({
+        action: 'launch',
+        runner: 'grok',
+        model: 'fixture-model',
+        runId: workspaceId,
+        workspaceId,
+        session: 'fixture-review',
+        cwd: source,
+        task,
+        runtimeRoots: [],
+        environment: { set: { GROK_HOME: account }, unset: [] },
+        prompt: 'Read-only review',
+        command: 'true',
+      }),
+    ],
+    {
+      env: {
+        ...process.env,
+        PATH: bin + path.delimiter + process.env.PATH,
+        GROK_HOME: account,
+        FIXTURE_OUTPUT: task,
+        FIXTURE_SOURCE: source,
+        FIXTURE_LAUNCH: launched,
+      },
+      encoding: 'utf8',
+      timeout: 5000,
+    },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(await readFile(launched, 'utf8'), 'verified');
+  assert.equal(JSON.parse(result.stdout).runner, 'grok');
+});

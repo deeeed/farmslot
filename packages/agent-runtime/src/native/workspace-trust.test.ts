@@ -85,7 +85,7 @@ async function farmSource(root: string, workspaceId: string) {
 }
 
 for (const runner of ['codex', 'grok', 'claude']) {
-  test(`${runner} trusts only allocator-owned source in the selected account home`, async (t) => {
+  test(`${runner} configures only allocator-owned source in the selected account home`, async (t) => {
     const directory = await mkdtemp(path.join(tmpdir(), 'native-workspace-trust-'));
     t.after(() => rm(directory, { recursive: true, force: true }));
     const source = await farmSource(directory, 'review-"quoted]#');
@@ -119,7 +119,7 @@ for (const runner of ['codex', 'grok', 'claude']) {
     else {
       assert.ok(first.includes(JSON.stringify(source)), first);
       assert.ok(
-        first.includes(runner === 'codex' ? 'trust_level = "trusted"' : 'trusted = true'),
+        first.includes(runner === 'codex' ? 'trust_level = "untrusted"' : 'trusted = true'),
         first,
       );
     }
@@ -139,7 +139,8 @@ for (const runner of ['codex', 'grok']) {
     const prefix =
       'note = """\n[projects."not-a-table"]\ntrust_level = "untrusted"\n"""\n[other]\nsetting = true\n';
     await writeFile(file, prefix);
-    const functionName = runner === 'codex' ? 'trustCodexWorkspace' : 'trustGrokWorkspace';
+    const functionName =
+      runner === 'codex' ? 'configureCodexReviewWorkspace' : 'trustGrokWorkspace';
     await Promise.all(
       sources.map((source) =>
         exec(

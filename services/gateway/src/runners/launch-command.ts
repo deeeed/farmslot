@@ -1,5 +1,6 @@
 import path from 'node:path';
 
+import { codexWorkspaceTrustConfig } from '@farmslot/agent-runtime/native/registry';
 import {
   codexReasoningEfforts,
   DEFAULT_CODEX_EFFORT,
@@ -323,7 +324,7 @@ export function buildInteractiveRefinementRunnerCommand(options: {
       `--cd ${shellQuote(options.repo)}`,
       codexSafety,
       options.workspaceTrust
-        ? `--config ${shellQuote(`projects={${JSON.stringify(options.repo)}={trust_level=${JSON.stringify(options.workspaceTrust)}}}`)}`
+        ? `--config ${shellQuote(codexWorkspaceTrustConfig(options.repo, options.workspaceTrust))}`
         : '',
       codexStartupUpdateFlag(options.skipUpdateCheck).trim(),
       options.disableHooks ? `--config ${shellQuote('features.hooks=false')}` : '',

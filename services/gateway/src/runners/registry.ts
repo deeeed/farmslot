@@ -187,13 +187,6 @@ export interface RunnerDefinition {
    * The reader must not parse runner TUI or CLI help text.
    */
   modelCatalog?: RunnerModelCatalogSource;
-  /**
-   * Review-workspace launches run interactively in a brand-new git worktree the
-   * runner has never seen, which can trigger a one-time "trust this folder?"
-   * dialog nothing answers. Codex and Cursor bypass it via launch flags; a
-   * runner without a flag (e.g. Claude's trust record lives in a JSON file, not
-   * argv) returns a script here that pre-seeds trust before launch.
-   */
   id: string;
   defaultLaunchMode: 'interactive' | 'exec';
   headlessPrintExecutables?: readonly string[];

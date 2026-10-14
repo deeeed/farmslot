@@ -172,12 +172,12 @@ function trustGrokWorkspace(cwd, env = process.env, owner) {
   if (!farmReviewWorkspace(cwd, owner)) return;
   trustGrokFolders([path.resolve(cwd), fs.realpathSync(cwd)], env);
 }
-function trustCodexWorkspace(cwd, env = process.env, owner) {
+function configureCodexReviewWorkspace(cwd, env = process.env, owner) {
   if (!farmReviewWorkspace(cwd, owner)) return;
   seed(
     path.join(env.CODEX_HOME || path.join(home(env), '.codex'), 'config.toml'),
     [path.resolve(cwd), fs.realpathSync(cwd)],
-    { trust_level: 'trusted' },
+    { trust_level: 'untrusted' },
     'projects',
     env,
   );
@@ -192,10 +192,19 @@ function trustClaudeWorkspace(cwd, env = process.env, owner) {
     env,
   );
 }
+function codexWorkspaceTrustConfig(cwd, trust) {
+  return `projects={${JSON.stringify(cwd)}={trust_level=${JSON.stringify(trust)}}}`;
+}
 module.exports = {
+  codexWorkspaceTrustConfig,
   trustGrokFolders,
   trustGrokWorkspace,
-  trustCodexWorkspace,
+  configureCodexReviewWorkspace,
+  workspaceTrustByRunner: {
+    codex: configureCodexReviewWorkspace,
+    grok: trustGrokWorkspace,
+    claude: trustClaudeWorkspace,
+  },
   trustClaudeWorkspace,
 };
 if (require.main === module)

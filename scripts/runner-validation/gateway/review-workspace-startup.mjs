@@ -57,7 +57,7 @@ if (binary) assert.ok(launch.includes(binary), 'Launch must use the configured m
 
 if (run.metrics.runner === 'codex') {
   assert.ok(
-    launch.includes('trust_level=\\\"trusted\\\"'),
+    launch.includes('trust_level=\\\"untrusted\\\"'),
     'The farm source trust must be explicit',
   );
   assert.ok(

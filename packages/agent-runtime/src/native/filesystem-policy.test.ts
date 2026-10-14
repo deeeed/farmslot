@@ -12,11 +12,13 @@ async function fixture(confirm: boolean) {
   const root = await mkdtemp(join(tmpdir(), 'native-filesystem-contract-'));
   const executable = join(root, 'runner');
   const requests = join(root, 'requests.jsonl');
+  const argv = join(root, 'argv.json');
   await writeFile(
     executable,
     `#!/usr/bin/env node
 const fs = require('node:fs');
 if (process.argv.includes('--version')) { console.log('codex-cli 0.154.0'); process.exit(0); }
+fs.writeFileSync(${JSON.stringify(argv)}, JSON.stringify(process.argv.slice(2)));
 require('node:readline').createInterface({input:process.stdin}).on('line', line => {
  const message = JSON.parse(line);
  fs.appendFileSync(${JSON.stringify(requests)}, line + '\\n');
@@ -28,7 +30,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
 });\n`,
   );
   await chmod(executable, 0o755);
-  return { root, executable, requests };
+  return { root, executable, requests, argv };
 }
 
 test('source policy omits legacy writable cwd, pins exact output roots and refuses unconfirmed profile', async () => {
@@ -51,6 +53,12 @@ test('source policy omits legacy writable cwd, pins exact output roots and refus
         .trim()
         .split('\n')
         .map((line) => JSON.parse(line));
+      const argv = JSON.parse(await readFile(f.argv, 'utf8'));
+      assert.deepEqual(argv, [
+        '--config',
+        `projects={${JSON.stringify(f.root)}={trust_level="untrusted"}}`,
+        'app-server',
+      ]);
       const request = messages.find((message) => message.method === 'thread/start').params;
       assert.equal(request.cwd, f.root);
       assert.equal(request.approvalPolicy, 'never');

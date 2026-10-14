@@ -14,10 +14,14 @@ import { grokNativeAdapter } from './grok.js';
 import { hostReviewSandboxAvailable } from './review-sandbox.js';
 import type { NativeAdapter } from './types.js';
 
-const workspaceTrust = createRequire(import.meta.url)('../../scripts/workspace-trust.cjs') as {
-  trustCodexWorkspace(cwd: string, environment: NodeJS.ProcessEnv, owner?: string): void;
-  trustClaudeWorkspace(cwd: string, environment: NodeJS.ProcessEnv, owner?: string): void;
-  trustGrokWorkspace(cwd: string, environment: NodeJS.ProcessEnv, owner?: string): void;
+export const { workspaceTrustByRunner, codexWorkspaceTrustConfig } = createRequire(import.meta.url)(
+  '../../scripts/workspace-trust.cjs',
+) as {
+  codexWorkspaceTrustConfig(cwd: string, trust: 'trusted' | 'untrusted'): string;
+  workspaceTrustByRunner: Record<
+    string,
+    (cwd: string, environment: NodeJS.ProcessEnv, owner?: string) => void
+  >;
 };
 
 export interface NativeRunnerDefinition {
@@ -41,7 +45,7 @@ export interface NativeRunnerDefinition {
 /** Native profile mechanics stay with the runner definition, not client workflows. */
 export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
   codex: {
-    trustWorkspace: workspaceTrust.trustCodexWorkspace,
+    trustWorkspace: workspaceTrustByRunner.codex,
     adapter: codexNativeAdapter,
     binary: 'codex',
     supportsWorkers: true,
@@ -55,7 +59,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     },
   },
   claude: {
-    trustWorkspace: workspaceTrust.trustClaudeWorkspace,
+    trustWorkspace: workspaceTrustByRunner.claude,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
     reviewRuntimeRoots: (env) => [
       env.CLAUDE_CONFIG_DIR ?? join(env.HOME ?? homedir(), '.claude'),
@@ -109,7 +113,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     },
   },
   grok: {
-    trustWorkspace: workspaceTrust.trustGrokWorkspace,
+    trustWorkspace: workspaceTrustByRunner.grok,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
     reviewRuntimeRoots: (env) => [env.GROK_HOME ?? join(env.HOME ?? homedir(), '.grok')],
     adapter: grokNativeAdapter,
