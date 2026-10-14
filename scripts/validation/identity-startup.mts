@@ -133,7 +133,7 @@ try {
     return result.nodes.some((node) => node.machine === hostname().replace(/\.local$/, ''));
   }, 'local node did not register');
   const listed = await client.call<{
-    credentials: Array<{ principalId: string; revokedAt: string | null }>;
+    credentials: Array<{ id: string; principalId: string; revokedAt: string | null }>;
   }>('credential.list', {});
   const principals = await client.call<{
     principals: Array<{ id: string; subject: { type: string } }>;
@@ -148,6 +148,50 @@ try {
   const reused = await client.call<{ credentials: unknown[] }>('credential.list', {});
   assert.equal(reused.credentials.length, listed.credentials.length);
   claims.push('repeat startup reuses credentials');
+
+  const originalNode = listed.credentials.find((c) => nodeIds.has(c.principalId))!;
+  const originalNodeSecret = (await readFile(join(home, 'node.secret'), 'utf8')).trim();
+  const rotatedNode = await client.call<{ secret: string; credential: { id: string } }>(
+    'credential.issue',
+    { principalId: originalNode.principalId, displayName: 'rotated-startup-proof' },
+  );
+  const restartNode = async () => {
+    const down = cli('down');
+    assert.equal(down.status, 0, down.stderr);
+    const restarted = cli('up', '--port', String(port), '--no-open');
+    assert.equal(restarted.status, 0, restarted.stderr + restarted.stdout);
+    await waitFor(async () => {
+      const nodes = await client.call<{ nodes: Array<{ machine: string }> }>('nodes.list', {});
+      return nodes.nodes.some((node) => node.machine === hostname().replace(/\.local$/, ''));
+    }, 'rotated local node did not register');
+  };
+  env.FARMSLOT_NODE_TOKEN = rotatedNode.secret;
+  await restartNode();
+  assert.ok(
+    (await readFile(join(home, 'node.secret'), 'utf8')).trim() === rotatedNode.secret,
+    'startup did not cache the verified replacement node credential',
+  );
+  await client.call('credential.revoke', { credentialId: originalNode.id });
+  env.FARMSLOT_NODE_TOKEN = '';
+  await restartNode();
+  const rotatedList = await client.call<{
+    credentials: Array<{ id: string; principalId: string }>;
+  }>('credential.list', {});
+  assert.deepEqual(
+    rotatedList.credentials.filter((c) => nodeIds.has(c.principalId)).map((c) => c.id),
+    [rotatedNode.credential.id],
+  );
+  claims.push('verified node rotation survives old-credential revocation and restart without env');
+
+  await rm(join(home, 'node.secret'));
+  await writeFile(join(scratch, '.env.local-auth'), `FARMSLOT_NODE_TOKEN=${rotatedNode.secret}\n`, {
+    mode: 0o600,
+  });
+  env.FARMSLOT_NODE_TOKEN = originalNodeSecret;
+  await restartNode();
+  env.FARMSLOT_NODE_TOKEN = '';
+  await rm(join(scratch, '.env.local-auth'));
+  claims.push('installed node file outranks stale launch env and repairs a missing startup cache');
 
   // A distinct logical node name forces the real WebSocket/node file path.
   // The co-launched local node above intentionally takes local filesystem paths.
@@ -243,6 +287,7 @@ try {
   assert.ok(!logs.includes(token));
   const nodeSecret = (await readFile(join(home, 'node.secret'), 'utf8')).trim();
   assert.ok(!logs.includes(nodeSecret));
+  assert.ok(!logs.includes(originalNodeSecret));
   console.log(JSON.stringify({ ok: true, claims }, null, 2));
 } finally {
   if (browserRoute) cdp('close', browserRoute);

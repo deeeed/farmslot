@@ -4,7 +4,7 @@ import { once } from 'node:events';
 import { mkdir, open, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { testGatewayIdentity } from '../../lib/test-gateway-identity.mts';
+import { testGatewayIdentity } from '../../lib/test-gateway-identity.mjs';
 
 assert.equal(process.env.FARMSLOT_ASSESSMENT_VALIDATION, '1');
 const out = process.env.PR_PREVIEW_RESUME_OUT,

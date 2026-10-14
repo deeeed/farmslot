@@ -1,6 +1,6 @@
 import { tsImport } from 'tsx/esm/api';
 const { testGatewayIdentity } = await tsImport(
-  '../../lib/test-gateway-identity.mts',
+  '../../lib/test-gateway-identity.mjs',
   import.meta.url,
 );
 import assert from 'node:assert/strict';

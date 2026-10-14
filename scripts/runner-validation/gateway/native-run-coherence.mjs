@@ -28,7 +28,7 @@ import {
   prepareDeclaredCapabilityProof,
   proveDeclaredCapabilityAcquisition,
 } from '../../e2e-declared-capabilities.mts';
-import { testGatewayIdentity } from '../../lib/test-gateway-identity.mts';
+import { testGatewayIdentity } from '../../lib/test-gateway-identity.mjs';
 
 import {
   prepareCleanupGuards,

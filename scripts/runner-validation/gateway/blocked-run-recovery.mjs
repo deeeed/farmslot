@@ -20,7 +20,7 @@ import path from 'node:path';
 
 import { FLOW_STEPS } from '@farmslot/protocol';
 
-import { testGatewayIdentity } from '../../lib/test-gateway-identity.mts';
+import { testGatewayIdentity } from '../../lib/test-gateway-identity.mjs';
 
 const sourceRoot = process.cwd();
 const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'farmslot-blocked-recovery-'));

@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { testGatewayProfile } from '../lib/test-gateway-identity.mts';
+import { testGatewayProfile } from '../lib/test-gateway-identity.mjs';
 const out = process.env.ASSESSMENT_PROVIDER_PROOF_OUT;
 assert.ok(out && process.env.FARMSLOT_UI_URL && process.env.FARMSLOT_CDP_PORT);
 const session = JSON.parse(await readFile(path.join(out, 'ui-session.json'), 'utf8'));

@@ -19,6 +19,7 @@ import {
 import http from 'node:http';
 import { hostname, networkInterfaces } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import type { Command } from 'commander';
 
@@ -250,8 +251,14 @@ function ensureLocalCredential(port: number): string {
 async function localNodeCredential(port: number, token: string): Promise<string> {
   const machine = hostname().replace(/\.local$/, '');
   const secretPath = join(farmslotHome(), 'node.secret');
-  if (existsSync(secretPath)) {
-    const secret = readFileSync(secretPath, 'utf8').trim();
+  // Use the node's own install/reconnect resolution before the startup cache.
+  // A verified rotation must also survive a later up without the inherited env.
+  const { resolveGatewayCredential } = await import(
+    pathToFileURL(join(repoRoot, 'services/node/src/gateway-credential.ts')).href
+  );
+  const installed: string | undefined = resolveGatewayCredential(process.env, repoRoot)?.token;
+  if (installed || existsSync(secretPath)) {
+    const secret = installed ?? readFileSync(secretPath, 'utf8').trim();
     const runtime = new CredentialStoreRuntime();
     const parsed = parseCredentialWire(secret);
     const credential = parsed ? runtime.findCredential(parsed.credentialId) : undefined;
@@ -266,6 +273,10 @@ async function localNodeCredential(port: number, token: string): Promise<string>
       throw new Error(
         'The local node credential is invalid. Rotate it with credential issue --principal <node-id>, verify the replacement, and revoke the old credential.',
       );
+    }
+    if (installed) {
+      writeFileSync(secretPath, `${secret}\n`, { mode: 0o600 });
+      chmodSync(secretPath, 0o600);
     }
     return secret;
   }

@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 // Real Electron UI + isolated gateway + disposable Git remote. No model calls.
-import { testGatewayIdentity } from './lib/test-gateway-identity.mts';
+import { testGatewayIdentity } from './lib/test-gateway-identity.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';

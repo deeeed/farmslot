@@ -49,6 +49,10 @@ or run `credential issue --write-node-env` from the node checkout. Supply it thr
 file transfer use the authenticated node connection. An HTTP file download still
 requires a person or service credential.
 
+`farmslot up` uses the node's installed environment credential before its private
+`FARMSLOT_HOME/node.secret` startup cache. A verified replacement refreshes that
+cache so the next startup can reuse it without an inherited environment value.
+
 To rotate, issue to the existing principal without `--subject`, install the
 replacement in its caller, verify the caller's
 identity and operations, then revoke the old credential. For a person, pair that

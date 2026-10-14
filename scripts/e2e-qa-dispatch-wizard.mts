@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-import { testGatewayIdentity } from './lib/test-gateway-identity.mts';
+import { testGatewayIdentity } from './lib/test-gateway-identity.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';

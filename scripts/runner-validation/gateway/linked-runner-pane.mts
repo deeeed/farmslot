@@ -8,7 +8,7 @@
 // the runner. Nothing reads pane text.
 //
 // Run: yarn tsx scripts/runner-validation/gateway/linked-runner-pane.mts [evidence-dir]
-import { testGatewayIdentity } from '../../lib/test-gateway-identity.mts';
+import { testGatewayIdentity } from '../../lib/test-gateway-identity.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';

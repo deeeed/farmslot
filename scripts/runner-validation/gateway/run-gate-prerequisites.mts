@@ -1,5 +1,5 @@
 // Manual production-RPC proof. Persisted recovery inputs are seeded before startup.
-import { testGatewayIdentity } from '../../lib/test-gateway-identity.mts';
+import { testGatewayIdentity } from '../../lib/test-gateway-identity.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
