@@ -6,6 +6,14 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.22.4 - 2026-10-14
+
+- Use agent-runtime 0.21.3 for guarded farm review startup.
+
+## 0.22.3 - 2026-10-14
+
+- Align native recipe helpers with agent-runtime 0.21.2 and its shared SDK dependency.
+
 ## 0.22.2 - 2026-10-14
 
 - Align runtime dependencies with recipe-runner 0.34.1 so installed adapters and recipe hosts use one engine version.

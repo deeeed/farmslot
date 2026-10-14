@@ -1,3 +1,5 @@
+import { isRecord } from '@farmslot/protocol';
+
 import { ADAPTER_SDK_VERSION, type PlatformAdapter } from './types.js';
 
 export interface AdapterRegistry<A extends PlatformAdapter = PlatformAdapter> {
@@ -18,6 +20,36 @@ function assertAdapterShape(adapter: PlatformAdapter): void {
     throw new Error(
       `adapter '${adapter.id}' targets adapter SDK ${String(adapter.sdkVersion)}; this host implements ${ADAPTER_SDK_VERSION}`,
     );
+  }
+  const harness = adapter.harness;
+  // Existing headless providers never needed checkout overlay members.
+  if (adapter.headless && harness?.kind === undefined) return;
+  if (!isRecord(harness) || typeof harness.verify !== 'function') {
+    throw new Error(`adapter '${adapter.id}' must declare harness.verify`);
+  }
+  if (harness.kind === 'built-in') {
+    if ('install' in harness || 'cleanup' in harness) {
+      throw new Error(`adapter '${adapter.id}' built-in harness cannot declare install or cleanup`);
+    }
+  } else {
+    if (harness.kind !== undefined && harness.kind !== 'overlay') {
+      throw new Error(`adapter '${adapter.id}' declares an unknown harness kind`);
+    }
+    // Headless runtimes have always skipped checkout overlay installation.
+    if (!adapter.headless) {
+      for (const name of ['install', 'cleanup'] as const) {
+        const leaf = harness[name];
+        if (
+          !isRecord(leaf) ||
+          typeof leaf.entry !== 'string' ||
+          typeof leaf.fallback !== 'string'
+        ) {
+          throw new Error(
+            `adapter '${adapter.id}' overlay harness must declare ${name} entry and fallback`,
+          );
+        }
+      }
+    }
   }
 }
 

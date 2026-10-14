@@ -87,8 +87,9 @@ export async function ensureOverlay(
   state: HealState,
   json: boolean,
 ): Promise<{ ok: boolean; error?: string }> {
-  // A headless platform (core) needs no launch overlay for run/call.
-  if (harnessAdapter(adapter).headless) return { ok: true };
+  // Built-in bridges and headless runtimes need no checkout overlay.
+  const surface = harnessAdapter(adapter);
+  if (surface.headless || surface.harness.kind === 'built-in') return { ok: true };
   if (overlayPresent(target, adapter) && overlayDelegateValid(target, adapter)) return { ok: true };
   if (heal === 'off') return { ok: true };
 

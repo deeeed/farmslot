@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.13.0 - 2026-10-14
+
+- **BREAKING:** Declare app-built-in bridges explicitly and validate overlay requirements without adding installer stubs. Typed consumers must narrow the harness kind before using overlay install/cleanup leaves.
+
 ## 0.12.1 - 2026-10-14
 
 - Align runtime dependencies with recipe-runner 0.34.1 so installed adapters and recipe hosts use one engine version.

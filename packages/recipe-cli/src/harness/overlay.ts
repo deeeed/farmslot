@@ -246,6 +246,9 @@ function resolveHarnessDispatch(
   target: string,
 ): AdapterHarnessVerify {
   if (action === 'verify') return surface.harness.verify(target);
+  if (surface.harness.kind === 'built-in') {
+    return { error: 'A built-in bridge has no checkout overlay operation.' };
+  }
   const leaf = action === 'install' ? surface.harness.install : surface.harness.cleanup;
   const { packageRoot } = harnessHost();
   const base =
@@ -316,12 +319,28 @@ export async function handleHarness(
   // checkout; inject the resolved path only when the caller omitted it.
   let forwardArgs = hasArg(forward, '--target') ? [...forward] : ['--target', target, ...forward];
 
+  const surface = harnessAdapter(adapter);
+  if (surface.harness.kind === 'built-in' && harnessAction !== 'verify') {
+    const message =
+      'Built-in bridge: no checkout overlay operation is needed. Readiness was not checked.';
+    if (!quiet) {
+      if (json) {
+        console.log(
+          JSON.stringify({
+            ...JSON.parse(harnessSummary(harnessAction, adapter, target, 'pass', 0, autoDetected)),
+            message,
+          }),
+        );
+      } else console.error(message);
+    }
+    return 0;
+  }
+
   if (harnessAction === 'install' && commandOptions.install) {
     const handled = commandOptions.install({ adapter, target, forward, json });
     if (handled !== undefined) return handled;
   }
 
-  const surface = harnessAdapter(adapter);
   if (harnessAction === 'verify' && surface.harness.verifyArgs) {
     forwardArgs = surface.harness.verifyArgs(target, forwardArgs);
   }
