@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import fs, { chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
-import test, { type TestContext } from 'node:test';
+import test, { mock, type TestContext } from 'node:test';
 
 import { GitHeadCache } from './git-head-cache.js';
 
@@ -162,6 +163,47 @@ test('ordinary shell cwd stays spawn-free and later git init is discovered', asy
   execFileSync(process.env.F81_TEST_GIT!, ['-C', plain, 'init', '-q', '-b', 'new-repo']);
   f.tick();
   assert.equal(await f.cache.read(plain), 'new-repo');
+});
+
+test('reftable refreshes branch and detached labels when its compatibility HEAD stays fixed', async (t) => {
+  const f = await fixture(t);
+  if (f.git('rev-parse', '--show-ref-format') !== 'files') {
+    t.skip('installed Git cannot create reftable storage');
+    return;
+  }
+  f.git('refs', 'migrate', '--ref-format=reftable');
+  assert.equal(await f.cache.read(f.repo), 'main');
+  const compatibilityHead = await readFile(path.join(f.repo, '.git', 'HEAD'), 'utf8');
+  f.git('checkout', '-qb', 'feature/reftable');
+  assert.equal(await readFile(path.join(f.repo, '.git', 'HEAD'), 'utf8'), compatibilityHead);
+  f.tick();
+  assert.equal(await f.cache.read(f.repo), 'feature/reftable');
+  f.git('checkout', '--detach', '-q', 'HEAD');
+  f.tick();
+  assert.equal(await f.cache.read(f.repo), f.git('rev-parse', '--short', 'HEAD'));
+});
+
+test('unavailable metadata on one cwd preserves the healthy inventory branches', async (t) => {
+  const f = await fixture(t);
+  const original = fs.stat;
+  let code = 'EPERM';
+  const badCwd = path.join(f.root, 'unavailable-pane');
+  const mocked = mock.method(fs, 'stat', (...args: Parameters<typeof fs.stat>) => {
+    if (String(args[0]).startsWith(badCwd)) {
+      return Promise.reject(Object.assign(new Error('repository metadata unavailable'), { code }));
+    }
+    return Reflect.apply(original, fs, args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    mocked.mock.restore();
+    syncBuiltinESMExports();
+  });
+  for (code of ['EPERM', 'EIO', 'ESTALE', 'ETIMEDOUT', 'ELOOP', 'ENAMETOOLONG']) {
+    f.tick();
+    const branches = await Promise.all([f.cache.read(badCwd), f.cache.read(f.repo)]);
+    assert.deepEqual(branches, [undefined, 'main'], code);
+  }
 });
 
 test('shutdown kills only its pending query and waits until the child is reaped', async (t) => {

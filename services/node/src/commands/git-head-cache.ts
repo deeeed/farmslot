@@ -22,7 +22,19 @@ interface GitHead {
 }
 
 function metadataUnavailable(error: unknown): boolean {
-  return ['ENOENT', 'ENOTDIR', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '');
+  // Missing/recycled paths, TCC/permissions, invalid links and unavailable mounts
+  // make one pane's repository unknown; they must not hide the other workers.
+  return [
+    'ENOENT',
+    'ENOTDIR',
+    'EACCES',
+    'EPERM',
+    'EIO',
+    'ESTALE',
+    'ETIMEDOUT',
+    'ELOOP',
+    'ENAMETOOLONG',
+  ].includes((error as NodeJS.ErrnoException).code ?? '');
 }
 
 async function optionalText(file: string): Promise<string | undefined> {
@@ -161,7 +173,12 @@ export class GitHeadCache {
     const version = head.version;
     // A removed/unreadable worktree must lose its old branch, not keep displaying it.
     const content = await optionalText(path.join(gitDir, 'HEAD'));
-    if (content !== head.content || !head.branch) {
+    // Reftable keeps a fixed compatibility HEAD. Retain the existing bounded Git
+    // fallback for its real refs, including migration from file-backed storage.
+    const reftable =
+      content?.trim() === 'ref: refs/heads/.invalid' ||
+      (await optionalStat(path.join(gitDir, 'reftable')))?.isDirectory();
+    if (reftable || content !== head.content || !head.branch) {
       head.branch =
         (await this.git(cwd, ['symbolic-ref', '--quiet', '--short', 'HEAD'])) ??
         (await this.git(cwd, ['rev-parse', '--short', 'HEAD']));
