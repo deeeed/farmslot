@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -90,7 +91,7 @@ async function startAndroidRecording(
       `Android screenrecord is already running on ${serial} (pid ${running.join(', ')}). Stop that recording before retrying.`,
     );
   }
-  const prefix = `/sdcard/Download/recipe-video-${Date.now()}-${process.pid}`;
+  const prefix = `/sdcard/Download/recipe-video-${randomUUID()}`;
   const segments: Segment[] = [];
   let stopping = false;
   let interruption: string | undefined;
@@ -138,7 +139,7 @@ async function startAndroidRecording(
           `Android screenrecord exited before capture started on ${serial}: ${segment.output.trim() || 'no recorder output'}`,
         );
       }
-      const pid = screenrecordPids(adb)[0];
+      const pid = screenrecordPids(adb, remotePath)[0];
       if (pid) {
         segment.pid = pid;
         return;
@@ -153,9 +154,9 @@ async function startAndroidRecording(
 
   // Synchronous, so it also runs from a process 'exit' listener. A device file
   // is removed only once its screenrecord has exited: one still starting would
-  // create it again. A starting file's pid is not known yet; the start refusal
-  // and the device lease make every screenrecord on the device this recording's.
-  const abandon = () => {
+  // create it again. A unique output path identifies each owned process even
+  // when a capture starts before its PID is observed.
+  const stopOwnedRecorders = (terminateHostClients = false) => {
     const live = segments.filter((segment) => segment.stoppedAtUnixMs === undefined);
     for (const segment of live) segment.killed = true;
     if (live.length > 0) {
@@ -164,9 +165,7 @@ async function startAndroidRecording(
       const giveUpAt = Date.now() + RECORDING_STOP_TIMEOUT_MS;
       const signaled = new Set<string>();
       while (Date.now() < giveUpAt) {
-        const pids = screenrecordPids(adb).filter(
-          (pid) => starting || live.some((segment) => segment.pid === pid),
-        );
+        const pids = live.flatMap((segment) => screenrecordPids(adb, segment.remotePath));
         if (pids.length === 0 && Date.now() >= graceUntil) break;
         for (const pid of pids) {
           if (!signaled.has(pid)) adb(['shell', 'kill', '-2', pid]);
@@ -174,8 +173,11 @@ async function startAndroidRecording(
         }
         sleepSync(pollMs);
       }
-      for (const segment of live) segment.child.kill('SIGTERM');
+      if (terminateHostClients) for (const segment of live) segment.child.kill('SIGTERM');
     }
+  };
+  const abandon = () => {
+    stopOwnedRecorders(true);
     if (segments.length > 0)
       adb(['shell', 'rm', '-f', ...segments.map((segment) => segment.remotePath)]);
     for (const localPath of localFiles) fs.rmSync(localPath, { force: true });
@@ -184,18 +186,27 @@ async function startAndroidRecording(
   const interrupt = (signal: (typeof HOST_SIGNALS)[number]) => {
     stopping = true;
     interruption = `Android recording interrupted by ${signal}.`;
-    abandon();
-    removeGuards();
-    if (host.listenerCount(signal) === 0) host.kill(host.pid, signal);
+    removeSignalGuards();
+    if (host.listenerCount(signal) > 0) {
+      // The CLI owns cancellation and calls stop() to retain partial evidence.
+      stopOwnedRecorders();
+    } else {
+      abandon();
+      removeGuards();
+      host.kill(host.pid, signal);
+    }
   };
   const signalHandlers = {
     SIGINT: () => interrupt('SIGINT'),
     SIGTERM: () => interrupt('SIGTERM'),
     SIGHUP: () => interrupt('SIGHUP'),
   };
+  const removeSignalGuards = () => {
+    for (const signal of HOST_SIGNALS) host.removeListener(signal, signalHandlers[signal]);
+  };
   const removeGuards = () => {
     host.removeListener('exit', onExit);
-    for (const signal of HOST_SIGNALS) host.removeListener(signal, signalHandlers[signal]);
+    removeSignalGuards();
   };
   host.once('exit', onExit);
   for (const signal of HOST_SIGNALS) host.once(signal, signalHandlers[signal]);
@@ -219,7 +230,9 @@ async function startAndroidRecording(
       try {
         await chain;
         const tail = segments.at(-1)!;
-        if (tail.stoppedAtUnixMs === undefined && tail.pid) adb(['shell', 'kill', '-2', tail.pid]);
+        if (tail.stoppedAtUnixMs === undefined)
+          for (const pid of screenrecordPids(adb, tail.remotePath))
+            adb(['shell', 'kill', '-2', pid]);
         if (!(await settles(tail.exited, RECORDING_STOP_TIMEOUT_MS))) {
           tail.killed = true;
           tail.child.kill('SIGKILL');
@@ -230,6 +243,7 @@ async function startAndroidRecording(
         // After a mid-run failure only the files that ended normally are kept.
         // Without one, a file stopped while screenrecord was still starting
         // can fail; the files before it still cover the run up to that restart.
+        if (tail.exitCode !== 0) interruption ??= segmentFailure(tail);
         const kept = interruption
           ? segments.filter((segment) => segment.exitCode === 0)
           : tail.exitCode === 0
@@ -254,17 +268,18 @@ async function startAndroidRecording(
                 );
           localFiles.add(localPath);
           const pull = adb(['pull', segment.remotePath, localPath]);
-          if (pull.status !== 0)
-            throw new Error(
-              `Could not pull Android recording from ${serial}: ${commandFailure(pull)}`,
-            );
+          if (pull.status !== 0) {
+            interruption ??= `Could not pull Android recording from ${serial}: ${commandFailure(pull)}`;
+            break;
+          }
           const bytes = fs.statSync(localPath).size;
           if (bytes > 0) recorded.push({ ...segment, localPath, bytes });
+          else interruption ??= `Android recording output is empty: ${localPath}`;
         }
         if (recorded.length === 0)
           throw recordingFailure(
-            'RECORDING_FAILED',
-            `Android recording output is empty: ${request.outputPath}`,
+            interruption ? 'RECORDER_INTERRUPTED' : 'RECORDING_FAILED',
+            interruption ?? `Android recording output is empty: ${request.outputPath}`,
           );
         const startedAtUnixMs = recorded[0].startedAtUnixMs;
         const placed = recorded.map((segment) => ({
@@ -331,9 +346,24 @@ async function startAndroidRecording(
   };
 }
 
-function screenrecordPids(adb: (args: string[]) => ReturnType<typeof runAdb>): string[] {
+function screenrecordPids(
+  adb: (args: string[]) => ReturnType<typeof runAdb>,
+  remotePath?: string,
+): string[] {
   const result = adb(['shell', 'pidof', 'screenrecord']);
-  return result.status === 0 ? result.stdout.trim().split(/\s+/u).filter(Boolean) : [];
+  if (result.status !== 0) return [];
+  const pids = result.stdout.trim().split(/\s+/u).filter(Boolean);
+  if (!remotePath) return pids;
+  return pids.filter((pid) => {
+    if (!/^\d+$/u.test(pid)) throw new Error(`Invalid Android screenrecord pid: ${pid}`);
+    const command = adb(['shell', 'cat', `/proc/${pid}/cmdline`]);
+    if (command.status !== 0) {
+      // The recorder can exit between pidof and the ownership read.
+      if (!screenrecordPids(adb).includes(pid)) return false;
+      throw new Error(`Could not verify Android recorder ownership: ${commandFailure(command)}`);
+    }
+    return command.stdout.split('\0').includes(remotePath);
+  });
 }
 
 function settles(promise: Promise<unknown>, ms: number): Promise<boolean> {

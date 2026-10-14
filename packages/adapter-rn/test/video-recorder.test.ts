@@ -19,7 +19,9 @@ shift 2
 echo "$*" >> "$dir/calls"
 case "$1" in
   get-state) echo device ;;
-  pull) cp "$dir/device/$(basename "$2")" "$3" ;;
+  pull)
+    [ ! -f "$dir/fail-pull" ] || [[ "$2" != *-1.mp4 ]] || { echo 'transfer failed' >&2; exit 1; }
+    cp "$dir/device/$(basename "$2")" "$3" ;;
   shell)
     shift
     case "$1" in
@@ -28,6 +30,10 @@ case "$1" in
         [ -n "$pids" ] || exit 1
         for pid in $pids; do : > "$dir/seen-$pid"; done
         echo "$pids" ;;
+      cat)
+        pid="$(printf '%s' "$2" | cut -d/ -f3)"
+        [ -f "$dir/running/$pid" ] || exit 1
+        printf '%s\0' screenrecord --time-limit 180 "$(cat "$dir/running/$pid")" ;;
       kill) : > "$dir/stop-$3" ;;
       rm) shift 2; for file in "$@"; do rm -f "$dir/device/$(basename "$file")"; done ;;
       screenrecord)
@@ -35,7 +41,7 @@ case "$1" in
         echo "$$" >> "$dir/owned-pids"
         [ ! -f "$dir/slow-start" ] || sleep 0.3
         file="$dir/device/$(basename "$4")"
-        : > "$file"; : > "$dir/running/$$"
+        : > "$file"; printf '%s' "$4" > "$dir/running/$$"
         finish() {
           [ -f "$dir/empty" ] || printf 'original %s' "$file" > "$file"
           rm -f "$dir/running/$$"
@@ -45,7 +51,10 @@ case "$1" in
         while :; do
           [ ! -f "$dir/crash" ] || finish 3
           [ ! -f "$dir/end-$$" ] || [ ! -f "$dir/seen-$$" ] || finish 0
-          [ ! -f "$dir/stop-$$" ] || finish 0
+          if [ -f "$dir/stop-$$" ]; then
+            [ ! -f "$dir/fail-on-stop" ] || finish 1
+            finish 0
+          fi
           sleep 0.02
         done ;;
       *) exit 2 ;;
@@ -217,7 +226,7 @@ test('empty capture fails and leaves no published output or recording guard', as
   d.set('empty');
   const guards = process.listenerCount('SIGTERM');
   const recording = await d.recorder.start(d.request);
-  await assert.rejects(recording.stop(), /RECORDING_FAILED/);
+  await assert.rejects(recording.stop(), /RECORDER_INTERRUPTED/);
   assert.deepEqual(fs.readdirSync(path.dirname(d.request.outputPath)), []);
   assert.deepEqual(d.running(), []);
   assert.deepEqual(fs.readdirSync(path.join(d.dir, 'device')), []);
@@ -248,7 +257,47 @@ test('host signal removes owned recorder files and unregisters its guards', asyn
   const recording = await d.recorder.start(d.request);
   process.emit('SIGTERM');
   assert.deepEqual(d.running(), []);
-  assert.deepEqual(fs.readdirSync(path.join(d.dir, 'device')), []);
+  assert.equal(fs.readdirSync(path.join(d.dir, 'device')).length, 1);
   assert.equal(process.listenerCount('SIGTERM'), guards);
-  await assert.rejects(recording.stop(), /RECORDER_INTERRUPTED|Could not pull Android recording/);
+  const partial = await recording.stop();
+  assert.equal(partial.segments.length, 1);
+  assert.match(partial.interruption?.cause ?? '', /SIGTERM/);
+  assert.ok(
+    fs.existsSync(path.join(path.dirname(d.request.outputPath), partial.segments[0]!.path)),
+  );
+  assert.deepEqual(fs.readdirSync(path.join(d.dir, 'device')), []);
+});
+
+for (const failure of ['fail-on-stop', 'empty', 'fail-pull']) {
+  test(`retains the completed prefix with interruption after ${failure}`, async (t) => {
+    const d = device(t);
+    const recording = await d.recorder.start(d.request);
+    const first = d.running()[0];
+    d.set(`end-${first}`);
+    await waitFor(() => assert.ok(d.running().some((pid) => pid !== first)));
+    d.set(failure);
+    const result = await recording.stop();
+    assert.equal(result.segments.length, 1);
+    assert.ok(result.interruption?.cause);
+    assert.ok(fs.statSync(d.request.outputPath).size > 0);
+    assert.deepEqual(d.running(), []);
+    assert.deepEqual(fs.readdirSync(path.join(d.dir, 'device')), []);
+  });
+}
+
+test('startup cancellation leaves a foreign recorder and its file untouched', async (t) => {
+  const d = device(t);
+  const keepTestAlive = () => {};
+  process.on('SIGTERM', keepTestAlive);
+  t.after(() => process.removeListener('SIGTERM', keepTestAlive));
+  d.set('slow-start');
+  const starting = d.recorder.start(d.request);
+  const refused = assert.rejects(starting, /exited before capture started/);
+  fs.writeFileSync(path.join(d.dir, 'running', '999999'), '/sdcard/Download/manual.mp4');
+  fs.writeFileSync(path.join(d.dir, 'device', 'manual.mp4'), 'foreign video');
+  process.emit('SIGTERM');
+  await refused;
+  assert.deepEqual(d.running(), ['999999']);
+  assert.equal(fs.readFileSync(path.join(d.dir, 'device', 'manual.mp4'), 'utf8'), 'foreign video');
+  assert.ok(!d.calls().includes('shell kill -2 999999'));
 });
