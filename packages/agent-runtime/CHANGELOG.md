@@ -2,10 +2,12 @@
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.21.0 - 2026-10-14
+
 - **BREAKING:** Make acceptance commands read-only, transfer only schema-2 engine claims, and refuse retained schema-1 verdicts for current completion.
 - Resolve completion's evidence-manifest requirement through the selected engine attempt, matching artifact validation without a root copy or symlink.
-
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.20.1 - 2026-10-14
 
