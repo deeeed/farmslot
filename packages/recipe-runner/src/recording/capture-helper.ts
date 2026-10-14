@@ -44,11 +44,16 @@ export function createCaptureHelperVideoRecorder(
   return new CaptureHelperVideoRecorder(options);
 }
 
+interface CaptureHelperSnapshotResult {
+  data: Uint8Array;
+  metadata: Record<string, unknown>;
+}
+
 /** Unrecorded UI captures use the same native target and snapshot command as recordings. */
 export async function captureHelperSnapshot(
   target: RecordingTarget,
   options: { captureHelperPath?: string } = {},
-) {
+): Promise<CaptureHelperSnapshotResult> {
   const staging = await mkdtemp(path.join(os.tmpdir(), 'farmslot-snapshot-'));
   try {
     const output = path.join(staging, 'frame.png');

@@ -1203,7 +1203,7 @@ export interface UiScreenshotProvider {
 }
 
 export interface UiScreenshotCapture {
-  data: Buffer;
+  data: Uint8Array;
   metadata?: Record<string, unknown>;
 }
 
@@ -1682,7 +1682,7 @@ async function captureCdpScreenshot(
 async function writeScreenshot(
   context: ActionExecutionContext,
   relativePath: string,
-  data: Buffer,
+  data: Uint8Array,
   metadata: Record<string, unknown>,
 ) {
   await writeFileWithinRoot(context.artifactsDir, relativePath, data);
