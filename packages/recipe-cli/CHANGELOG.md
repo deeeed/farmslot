@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.17.2 - 2026-10-15
+
+- Align the installed worker dependency closure with protocol 0.44.0 and provenance-bound branch maintenance.
+
 ## 0.17.1 - 2026-10-14
 
 - Keep nested app execution provenance scoped to Git source, so ignored native dependencies do not block recipe runs. Explicit provider, library, runner and helper inputs remain bound.

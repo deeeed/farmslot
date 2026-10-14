@@ -6,6 +6,9 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.6.6 - 2026-10-15
+
+- Align the installed worker dependency closure with protocol 0.44.0 and provenance-bound branch maintenance.
 - Keep lane terminals after runner exit, show retained session IDs and support guarded resume with skip-only startup updates.
 
 ## 0.6.5 - 2026-10-14
