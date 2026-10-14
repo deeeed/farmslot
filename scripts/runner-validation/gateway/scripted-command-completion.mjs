@@ -31,8 +31,7 @@ function rpc(method, params) {
       { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
     ),
   );
-  assert.equal(response.status, 'ok');
-  return response.data;
+  return response;
 }
 const hash = (text) => createHash('sha256').update(text).digest('hex');
 const { run: before } = rpc('run.get', { runId });
@@ -60,7 +59,7 @@ const artifactHashes = () =>
   );
 const hashes = artifactHashes();
 const replay = rpc('run.replayStep', { runId, stepName: 'complete', triggeredBy: 'operator' });
-assert.equal(replay.ok, true);
+assert.equal(replay.run.id, runId);
 let after;
 const deadline = Date.now() + 60_000;
 do {
