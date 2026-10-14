@@ -101,7 +101,12 @@ export async function readRunRecordedEvidence(
           ? sources[0]
           : undefined) ??
         sources.find(({ input, artifactPrefix }) =>
-          retainedRunId ? input.claims?.recipeRunId === retainedRunId : artifactPrefix === prefix,
+          recordedRecipeRunId ||
+          (payload?.kind === 'ready' && payload.acceptanceStatus?.schemaVersion === 2)
+            ? input.claims?.recipeRunId === retainedRunId
+            : prefix
+              ? artifactPrefix === prefix
+              : input.claims?.recipeRunId === retainedRunId,
         ) ??
         (!retainedRunId && sources.length === 1 ? sources[0] : undefined);
       if (!source) throw new Error('Select a retained recipe execution from the gate package.');

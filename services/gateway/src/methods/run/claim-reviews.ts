@@ -97,6 +97,7 @@ export async function runReviewVisualClaim(
         receipt.recipeRunId === params.recipeRunId &&
         receipt.claimId === claim.id &&
         receipt.closureIdentity === closureIdentity &&
+        receipt.snapshotIdentity === params.snapshotIdentity &&
         receipt.verdict === params.verdict &&
         receipt.reason === reason &&
         receipt.approver.principalId === approver.principalId,

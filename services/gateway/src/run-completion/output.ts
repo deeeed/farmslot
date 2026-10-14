@@ -73,6 +73,15 @@ export function outputReviewDecisions(run: Run, output: RunOutput): RunDecision[
       decision.payload.manifestDigest === output.manifestDigest &&
       decision.payload.reportPath === output.reportPath,
   );
+  const capturedReview = prior
+    .slice()
+    .reverse()
+    .find(
+      (decision) =>
+        decision.payload?.kind === 'output-review' &&
+        decision.payload.manifestDigest === output.manifestDigest &&
+        decision.payload.reportPath === output.reportPath,
+    )?.payload;
   decisions.push({
     id: randomUUID(),
     type: 'engine_output_review',
@@ -104,6 +113,16 @@ export function outputReviewDecisions(run: Run, output: RunOutput): RunDecision[
       kind: 'output-review',
       manifestDigest: output.manifestDigest,
       reportPath: output.reportPath,
+      ...(capturedReview?.kind === 'output-review'
+        ? {
+            ...(capturedReview.claimOverrideReceiptIds
+              ? { claimOverrideReceiptIds: capturedReview.claimOverrideReceiptIds }
+              : {}),
+            ...(capturedReview.visualJudgmentReceiptIds
+              ? { visualJudgmentReceiptIds: capturedReview.visualJudgmentReceiptIds }
+              : {}),
+          }
+        : {}),
     },
   });
   return decisions;

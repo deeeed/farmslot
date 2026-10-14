@@ -222,6 +222,10 @@ test('QA output display uses the same frozen closure and refuses a changed repor
     binding,
   );
   assert.deepEqual(changed.errors, []);
+  const pointerGroup = { ...group, recipeRunId: 'directory-id' };
+  const selected = await readRunRecordedEvidence(sourceRun, pointerGroup, binding);
+  assert.deepEqual(selected.errors, []);
+  assert.equal(selected.artifactPrefix, prefix);
   const stale = await readRunRecordedEvidence(
     { ...sourceRun, output: { ...output, manifestDigest: 'refreshed-output' } },
     group,

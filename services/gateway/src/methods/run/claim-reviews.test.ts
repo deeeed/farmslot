@@ -158,6 +158,22 @@ test('durable visual review derives parent/check verdicts, retries once and pres
     result.receipt.id,
   );
   assert.equal(f.run.visualJudgmentReceipts?.length, 2);
+  const fresh = await runReviewVisualClaim(
+    {
+      ...f.params,
+      snapshotIdentity: visualReviewSnapshotIdentity(f.run, f.decision.id),
+    },
+    () => {},
+    f.dependencies,
+  );
+  assert.notEqual(fresh.receipt.id, result.receipt.id);
+  assert.deepEqual(
+    deriveReviewedRecipeClaims(f.input, visualReviewAuthority(f.run, f.input)).map(
+      ({ verdict }) => verdict,
+    ),
+    ['proven', 'proven'],
+  );
+  assert.equal(f.run.visualJudgmentReceipts?.length, 3);
 });
 
 test('unauthenticated, spoofed, stale, wrong-execution and derived-parent requests record nothing', async (t) => {

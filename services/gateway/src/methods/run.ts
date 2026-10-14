@@ -1772,7 +1772,8 @@ export async function resolveRunDecision(
   if (decision.payload?.kind === 'output-review') {
     const overrideSnapshot = runClaimOverrideSnapshotIdentity(decision);
     if (
-      decision.payload.claimOverrideReceiptIds?.length &&
+      (decision.payload.claimOverrideReceiptIds?.length ||
+        decision.payload.visualJudgmentReceiptIds?.length) &&
       params.selectionData?.claimOverrideSnapshot !== runClaimOverrideSnapshotIdentity(decision)
     )
       throw new Error(
