@@ -462,12 +462,20 @@ owns `deriveReviewedRecipeClaims` and the SDK re-exports it through `/evidence`.
 review model supplies both clients. These additive contracts are experimental
 until their coordinated release; no harness writer or compatibility path is added.
 
-## Amendment 7 (2026-10-14): Compare evidence by claim
+## Amendment 7 (2026-10-14): Delegated visual judgments and Compare by AC
 
 **Status:** Proposed.
-**Specification:** [Compare by AC](../reference/recorded-run-evidence.md#compare-by-ac).
+**Specification:** [Delegated visual judgments](../reference/recorded-run-evidence.md#delegated-visual-judgments) and [Compare by AC](../reference/recorded-run-evidence.md#compare-by-ac).
 
 ### Decision
+
+Add `lead-agent-reviewed` alongside `person-reviewed` in the existing visual
+judgment receipt. A delegated reviewer uses its own authenticated agent identity.
+The gateway records the AC, verdict, rationale and exact evidence digests through
+the same Run-store writer and engine reducer. Per-project policy may allow this
+kind to satisfy visual claims; person-only criteria still require person review.
+Label the result "agent-reviewed (delegated by <name>)" in the UI and PR body.
+It never represents a human judgment or grants publication authority.
 
 Captures may declare `ac` and `role`: `before` for the reviewed base commit,
 `after` for the reviewed head, and `review` for other observations. The engine
@@ -484,6 +492,11 @@ bindings through the existing engine publication manifest.
 
 ### Rationale and consequences
 
+Delegation should be explicit about who inspected the evidence. An agent's
+judgment can close a permitted visual claim without borrowing a person's
+credential. Existing assertion, integrity, independent-review, CI and publication
+gates still apply.
+
 A flat screenshot grid cannot explain which criterion changed. Explicit bindings
 connect comparison to the evidence already retained. A baseline remains a
 comparison dependency, never proof for the selected head execution. Frozen
@@ -491,6 +504,12 @@ reviews retain both sides and their source identities. No evidence store,
 parallel writer, filename migration or verdict reducer is added.
 
 ### Public surface and migration
+
+Extend `run.reviewVisualClaim` and the existing `farmslot run gate` actions with
+the judgment kind. Protocol owns the receipt and per-project policy types; the
+gateway checks identity and policy. The existing shared model supplies the proof
+kind and reviewer label. Implement this bounded judgment change first, then the
+comparison producers and view. Both follow this amendment's design acceptance.
 
 Existing `farmslot recipe run` capture nodes accept the optional bindings;
 `farmslot recipe artifacts` exposes them without another command or flag.

@@ -721,9 +721,7 @@ final artifact-manifest validation. This is a publication candidate, not another
 claim writer. Projects declare recipes and MUST NOT copy or rewrite that file.
 
 For version 1, publication and its gate MUST read only the frozen selected
-execution. Explicit [comparison dependencies](#compare-by-ac) retain their own
-execution identities and cannot satisfy that execution's claims. Freeze its
-pointer or exact engine manifest source and every input
+execution. Freeze its pointer or exact engine manifest source and every input
 consumed by the canonical reader. A headless attempt freezes the same closure
 without inventing or selecting media. An explicitly empty media selection MUST
 NOT publish historical captures. Refresh and consumption recheck the closure
@@ -830,9 +828,73 @@ execution/moments/bytes, stale snapshot/person races, restart and lost-response
 retry, retained cancelled evidence, and unchanged package bytes. A real public
 CLI/RPC control MUST record a judgment and show its derived verdict at the gate.
 
+## Delegated visual judgments
+
+**Status:** Proposed under [ADR-062 Amendment 7](../adr/062-recorded-run-evidence.md#amendment-7-2026-10-14-delegated-visual-judgments-and-compare-by-ac). Implement this part first.
+
+The existing gateway visual-review writer MUST support `person-reviewed` and
+`lead-agent-reviewed`. This extends the preceding person-only requirement for
+the delegated kind. Person review retains its credential-backed person check.
+Agent review MUST use the reviewer's own active service principal/credential,
+with existing RPC permission and explicit authorization by the run project's
+operator-owned `visualClaimReview` policy. `legacy-env`, node identities, anonymous
+sessions and client actor strings grant neither kind. No agent may use a person's
+credential or be recorded as a person reviewer.
+
+`ProjectVisualClaimReviewPolicy` contains `delegatedReviewerPrincipalIds`,
+`delegatorPrincipalId` and optional `personOnlyClaimIds`. Without an explicit
+delegation, agent review is refused. The delegator is an identified person; the
+reviewer must be listed for this project. Person-only applies to the normalized
+claim and its parents, so reviewing a child cannot bypass it. Policy comes from
+the existing trusted project configuration, never from task/recipe input or a
+review RPC. The gateway rechecks policy and identity before persisting. It retains
+the checked policy digest with the receipt; changed policy holds current gates
+for refresh while historical review keeps its frozen policy/receipt references.
+
+Extend `RecipeVisualJudgmentReceipt` with the kind and gateway-stamped reviewer
+subject kind, delegation identity and policy digest. Both kinds retain the run,
+selected `recipeRunId`, claim, exact moments, closure identity, verdict, rationale
+and time. The receipt MUST list the reviewed claim's visual files and their
+checked digests, derived from the canonical input rather than supplied hashes.
+The existing Run store remains the sole writer. Existing authenticated person
+receipts retain their provenance and meaning; no package or task ledger is rewritten.
+
+The canonical engine reducer MUST qualify the receipt against this authority.
+`confirmed` may prove the visual part of an eligible visual/mixed claim whose
+assertions passed; `rejected` fails it. Missing assertions, invalid evidence or a
+different execution cannot be repaired by delegation. All other run gates and
+the existing own/independent review, CI and publication rules remain in force.
+An agent receipt grants no publish, close-run or policy-attestation permission.
+
+The shared model, gate and PR body MUST display proof kind `assertion`,
+`agent-reviewed` or `person-reviewed`, including the reviewer and recorded
+execution/head identity. Agent review is labeled
+`agent-reviewed (delegated by <delegator displayName>)`, never human-reviewed.
+For mixed claims, show the assertion and review contributions without changing
+the existing `state`/`visual`/`mixed` proof mode. A later valid receipt and retries
+follow the same stored-order and submission-snapshot rules as person review.
+
+### Public surface and first implementation
+
+| Entry                                                                                                                                                                | Owner and named consumer                                                                        | Change                                                                                         |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `RecipeVisualJudgmentKind`, extended `RecipeVisualJudgmentReceipt` and `ProjectVisualClaimReviewPolicy`/`ProjectConfig.visualClaimReview`                            | `@farmslot/protocol`; gateway, installed project config and both clients                        | One receipt contract; explicit project delegation and person-only rules                        |
+| Existing `RunRpc.reviewVisualClaim` optional `kind`; `farmslot run gate --action confirm-visual\|reject-visual --judgment-kind person-reviewed\|lead-agent-reviewed` | Gateway/CLI; authenticated person and delegated lead reviewer                                   | Omitted kind selects person review; identity, files/digests and delegator remain gateway-owned |
+| Existing `deriveReviewedRecipeClaims`, `RecipeVisualReviewAuthority` and `createEvidenceReviewModel`                                                                 | Runner and `@farmslot/adapter-sdk/evidence`; gateway, Command Center, Companion and PR renderer | Same reducer; qualified review kind/label, no new writer or review model                       |
+
+These contracts are experimental and ship through coordinated package versioning.
+Required incompatible type changes use the existing breaking-release rule.
+Update the generated API/CLI reference and project-policy guide. Conformance MUST
+cover authorized own-agent review, absent/foreign-project delegation, person-only
+claims/parents, actor/person/legacy-env impersonation refusal, evidence mutation,
+policy change, retry/restart, visible proof labels and unchanged publication gates.
+Prove this writer through public CLI/RPC and the shared gate before starting the
+comparison implementation. It MUST work with selected retained evidence without
+requiring new captures or a comparison pair.
+
 ## Compare by AC
 
-**Status:** Proposed under [ADR-062 Amendment 7](../adr/062-recorded-run-evidence.md#amendment-7-2026-10-14-compare-evidence-by-claim). Implementation follows design acceptance.
+**Status:** Proposed under the same Amendment 7. Implement after delegated visual judgments.
 
 ### Capture binding and source
 
@@ -846,14 +908,21 @@ proof-eligible or change the engine verdict.
 
 The engine MUST record the observed source commit as `sourceCommit` with the
 capture, using the existing source/checkout authority. Worker-supplied SHA strings
-are not observations. `before` MUST match the reviewed base SHA and `after` the
-reviewed head SHA. A dirty checkout cannot be labeled a commit-only baseline or
-head capture. `review` retains the observed source without claiming either side.
+are not observations. The existing frozen `ReviewDiffSnapshot.baseSha` and
+`headSha` define the compared revisions, not a later branch tip or recomputed
+merge-base. Check `before`/`after` against that snapshot during finalization and
+review projection. A changed snapshot yields a typed source mismatch and requires
+refresh/reselection; it MUST NOT silently relabel the capture. Tracked-file changes,
+including tracked fixtures, make the source dirty under the existing checksum
+rules. Ignored generated fixtures outside that input set do not alone disqualify
+a capture. `review` retains observed source
+without claiming either side.
 Unknown source remains visible with its limitation and MUST NOT be compared as
 Before/After. Capture and selected review MUST agree on claim identity and text;
 an unknown claim, invalid role or contradictory source binding fails validation.
 
-Without both optional declarations, media MUST appear under "Unassigned". Do not
+If either or both optional declarations are absent, media MUST appear under
+"Unassigned"; the omission itself is not a validation failure. Do not
 infer either from filenames, prose, directory names, capture order or identical
 bytes. Preserve the existing reader's Valid/Legacy/Invalid classification;
 Unassigned describes comparison availability, not package validity. Recorded
@@ -872,6 +941,30 @@ the defect if its package passes integrity validation; its verdict cannot satisf
 a selected head claim. Missing or changed dependencies refuse comparison and
 publication of those files, while retained history stays readable. No mutable
 latest lookup, borrowed task ledger or new package-selection path is allowed.
+
+The hosted recipe path accepts the existing `--param evidenceBaseline=<relative
+package directory>`; the public SDK supplies the same dependency through
+`RecipeRunRequest.comparisonDependencies`. The host resolves it inside the
+existing authorized task/project artifact root and the canonical reader validates
+its original package. Record its `recipeRunId` and checked closure identity in the
+retained invocation and selected artifact manifest's `comparisonDependencies`.
+Reject a wrong source/claim binding, missing root or dependency cycle.
+
+Before sealing the fresh selected package, the engine writer retains each unique
+dependency once under `comparison-dependencies/<recipeRunId>/`, preserving all
+original package bytes and execution/moment identities. This is an immutable
+dependency copy in the existing artifact store, not another execution or writer.
+Do not rewrite the original or register its captures as head occurrences. The
+canonical reader loads and validates each declared root independently and freezes
+its full closure; it does not validate baseline timelines against the head trace.
+Existing size limits/footprint accounting include these retained bytes.
+
+Existing publication pair/standalone paths stay relative to the selected root,
+for example `comparison-dependencies/<recipeRunId>/stills/base.png`. Their capture
+binding retains the original execution/path identity; the shared model selects
+that source's existing moment. No escaping path or new external-reference parser
+is required. `before_after_pairs.covers` describes the current registered claim,
+while the baseline package's verdict remains separate.
 
 The existing engine writer MUST derive `before_after_pairs.covers` and standalone
 `covers` from the capture bindings. PR evidence and both clients MUST consume the
@@ -894,19 +987,32 @@ Extend the existing Command Center evidence preview/lightbox and Companion media
 viewer with this comparison context. Reuse them in the Evidence tab, gate review,
 run detail, PR preview and ArtifactViewer. A two-image pair shares one normalized
 zoom and focal position through the shared model, so either image's interaction
-moves both without stretching their aspect ratios. Reset on pair change. On
-narrow displays the pair may stack; keep the same selected pair and controls.
+moves both without stretching their aspect ratios. Reset on pair change or model
+rebuild/input refresh. On narrow displays the pair may stack; keep the same
+selected pair and controls.
 Load only selected media. Rendering per platform is allowed; duplicate grouping,
 pair selection, transform state or verdict logic is not.
 
+At a gate, show one screen with each AC's text, verdict and proof kind. When both
+sides exist, show the matched before/after pair and source SHAs so the change
+relevant to that AC is visible; otherwise show the AC's available visual proof
+with the missing side stated. Unrelated captures MUST NOT fill a missing side.
+Each capture opens its own measured
+video timestamp in one interaction. Untimed evidence keeps its explicit no-seek
+state. On this same screen show own and independent review verdicts with the
+reviewed head SHA, CI for that head, outstanding requirements and one primary
+next action. Reuse the existing shared readiness/action and review-publication
+models; do not derive approval from media or invent another gate resolver.
+
 ### Public surface and migration
 
-| Entry                                                                                                                                                               | Owner and named consumer                                          | Contract                                                                                          |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Existing capture-node `ac`/`role`; `RecipeEvidenceRole`, `RecipeEvidenceCaptureBinding`, extended `RecipeArtifactManifestEntry`/`ArtifactRef`                       | `@farmslot/protocol`; engine, gateway and capture providers       | Optional annotations plus engine-observed `sourceCommit`; existing claim/moment IDs               |
-| `farmslot recipe run`, existing `--param` and `--artifacts-dir`; `farmslot recipe artifacts <directory> --format text\|markdown` and `artifacts validate`           | Existing recipe CLI; recipe authors and retained-evidence readers | Runs declared captures and exposes retained bindings; no comparison command or new flag           |
-| Existing engine artifact writer and `RecipeRunRequest.finalizeArtifacts`                                                                                            | `@farmslot/recipe-runner`; hosted CLI and public SDK hosts        | Sole capture/publication producer; retains explicit baseline dependencies before final validation |
-| `EvidenceReviewModel.comparisons`/`unassigned`, `EvidenceReviewComparisonRow` and shared comparison selection/transform methods through `createEvidenceReviewModel` | `@farmslot/adapter-sdk/evidence`; Command Center and Companion    | One portable grouping, selection and normalized-image state; no additional model factory          |
+| Entry                                                                                                                                                               | Owner and named consumer                                                             | Contract                                                                                                    |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| Existing capture-node `ac`/`role`; `RecipeEvidenceRole`, `RecipeEvidenceCaptureBinding`, extended `RecipeArtifactManifestEntry`/`ArtifactRef`                       | `@farmslot/protocol`; engine, gateway and capture providers                          | Optional annotations plus engine-observed `sourceCommit`; existing claim/moment IDs                         |
+| `farmslot recipe run`, existing `--param` and `--artifacts-dir`; `farmslot recipe artifacts <directory> --format text\|markdown` and `artifacts validate`           | Existing recipe CLI; recipe authors and retained-evidence readers                    | Runs declared captures and exposes retained bindings; no comparison command or new flag                     |
+| Existing `--param evidenceBaseline`; `RecipeRunRequest.comparisonDependencies` and `RecipeArtifactManifestDocument.comparisonDependencies`                          | CLI/runner and `@farmslot/protocol`; worker template, canonical reader and SDK hosts | Explicit baseline root, original execution and closure digest; independently validated contained dependency |
+| Existing engine artifact writer and `RecipeRunRequest.finalizeArtifacts`; existing publication pair/standalone paths                                                | `@farmslot/recipe-runner`; hosted CLI, gateway and PR renderer                       | Sole producer; retains immutable dependency bytes within the selected root before sealing                   |
+| `EvidenceReviewModel.comparisons`/`unassigned`, `EvidenceReviewComparisonRow` and shared comparison selection/transform methods through `createEvidenceReviewModel` | `@farmslot/adapter-sdk/evidence`; Command Center and Companion                       | One portable grouping, selection and normalized-image state; no additional model factory                    |
 
 These additive fields/exports are experimental and require a coordinated minor
 package release after conformance. Retained packages are not rewritten or
@@ -921,12 +1027,12 @@ independent pair maps and handwritten publication bindings they replace.
 Replace these current role/pair rules after their callers consume the shared
 projection. Source locations identify the design baseline, not a second contract.
 
-| Existing rule                                                               | Replacement                                                                    |
-| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `packages/recipe-runner/src/node/writers.ts:113`                            | Full-run/standalone publication roles derive from retained capture bindings    |
-| `apps/command-center/ui/src/components/workspace/workspace-artifacts.ts:65` | Explicit role groups and Unassigned from the SDK model                         |
-| `apps/command-center/ui/src/utils/artifact-pairs.ts:57`, `:85`              | Claim-bound candidates and explicit selection; remove filename AC/pair guesses |
-| `apps/companion/src/lib/family-evidence.ts:69`                              | Same explicit role projection as Command Center                                |
+| Existing rule                                                                                | Replacement                                                                        |
+| -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `packages/recipe-runner/src/node/writers.ts:113`                                             | Full-run/standalone publication roles derive from retained capture bindings        |
+| `apps/command-center/ui/src/components/workspace/workspace-artifacts.ts:65`                  | Explicit role groups and Unassigned from the SDK model                             |
+| `apps/command-center/ui/src/utils/artifact-pairs.ts:57`, `:85`                               | Claim-bound candidates and explicit selection; remove filename AC/pair guesses     |
+| `apps/companion/src/lib/family-evidence.ts:69`, `apps/companion/src/lib/artifact-url.ts:366` | Same role/pair projection as Command Center; retain Diff, Recipe and Setup filters |
 
 The existing Lit lightbox and native `MediaViewer` remain the rendering owners;
 extend their controls rather than adding comparison viewers.
@@ -941,3 +1047,7 @@ PR/client grouping and zoom reset. A real ticket run MUST retain a base/head pai
 for every applicable AC through the public recipe path and show it in Command
 Center and Companion. Negative controls MUST fail on the wrong AC or revision.
 That live acceptance follows implementation; this amendment does not claim it.
+The real ticket gate demo MUST show the complete one-screen review, including a
+matched pair or honest single-proof fallback for each AC, timestamp navigation,
+agent/person review labels, head-bound independent review and CI, open requirements
+and the correct single next action. No tab-hunting or inferred screenshot binding.
