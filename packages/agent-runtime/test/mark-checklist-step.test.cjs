@@ -13,7 +13,10 @@ const { spawnSync } = require('node:child_process');
 
 const root = path.resolve(__dirname, '..');
 const helper = path.join(root, 'scripts', 'mark-checklist-step.cjs');
-const { CHECKLIST_TARGET_MANIFEST } = require('../scripts/checklist-target.cjs');
+const {
+  CHECKLIST_TARGET_MANIFEST,
+  terminalContractInputForChecklist,
+} = require('../scripts/checklist-target.cjs');
 
 function writeManifest(taskDir, checklistBasename) {
   writeFileSync(
@@ -522,7 +525,7 @@ try {
   const pointerPath = path.join(artifacts, 'latest-valid-recipe-run.json');
   const pointerBytes = readFileSync(pointerPath);
   writeFileSync(
-    path.join(inputs, 'worker-terminal-contract.review-fix.json'),
+    path.join(selectedDir, terminalContractInputForChecklist('REVIEW-FIX.md')),
     JSON.stringify({
       schemaVersion: 1,
       flowType: 'review-fix',
