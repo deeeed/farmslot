@@ -27,8 +27,7 @@ import {
   type NodeFsReadChunkResult,
 } from '@farmslot/protocol';
 
-import { getNode } from '../fleet/machine-registry.js';
-import { sendNodeRequest } from '../fleet/node-rpc.js';
+import { assertNodeReconnectCurrent, sendNodeRequest, waitForNode } from '../fleet/node-rpc.js';
 
 import { isLocal } from './exec.js';
 import { sha256File } from './file-hash.js';
@@ -111,16 +110,13 @@ function local(ctx: SlotLocality): boolean {
   return isLocal(ctx.host, ctx.machine);
 }
 
-function requireNode(machine: string) {
-  const node = getNode(machine);
-  if (!node) throw new Error(`No node connected for ${machine}`);
-  return node;
-}
-
 function requestFor(ctx: SlotLocality): NonNullable<SlotLocality['nodeRequest']> {
   if (ctx.nodeRequest) return ctx.nodeRequest;
-  const node = requireNode(ctx.machine);
-  return (method, params, options) => sendNodeRequest(node, method, params, options);
+  return async (method, params, options) => {
+    const node = await waitForNode(ctx.machine, 0);
+    assertNodeReconnectCurrent();
+    return sendNodeRequest(node, method, params, options);
+  };
 }
 
 function nodePathParams(fullPath: string): { root: string; relPath: string } {

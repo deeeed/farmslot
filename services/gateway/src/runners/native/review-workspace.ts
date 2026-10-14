@@ -56,7 +56,7 @@ function reviewReadOnlyRoots(workspace: NonNullable<Run['reviewWorkspace']>): st
 }
 
 /** Retry only a lost transport, keeping the same session, lease and command identities. */
-async function observeTransport<T>(
+export async function observeReviewWorkspaceTransport<T>(
   operation: () => Promise<T>,
   assertCurrent: () => void,
   deadline: number,
@@ -208,7 +208,7 @@ export async function launchReviewWorkspaceWorker(input: {
   const workspace = structuredClone(original.reviewWorkspace);
   const assertCurrent = executionFence(original);
   const check = async () => {
-    await observeTransport(
+    await observeReviewWorkspaceTransport(
       async () => input.assertCurrent(),
       assertCurrent,
       input.deadline,
@@ -219,7 +219,7 @@ export async function launchReviewWorkspaceWorker(input: {
   };
   const run = await check();
   const route = (owner: string, method: string, params: Record<string, unknown>) =>
-    observeTransport(
+    observeReviewWorkspaceTransport(
       () => routeNativeExecution(owner, method, params),
       assertCurrent,
       input.deadline,
@@ -234,7 +234,7 @@ export async function launchReviewWorkspaceWorker(input: {
   if (!runnerSupportsEffort(runner, model, effort))
     throw new Error('Selected static review runner/model does not support this effort');
   if (run.nativeProfile)
-    await observeTransport(
+    await observeReviewWorkspaceTransport(
       () => inspectNativeWorkerProfile(run.nativeOwnerPrincipalId, run.nativeProfile!),
       assertCurrent,
       input.deadline,
@@ -410,7 +410,7 @@ export async function readReviewWorkspaceWorker(
   const binding = structuredClone(currentBinding(original));
   if (!binding.generation) throw new Error('Static review worker creation is not yet confirmed');
   const { deadline = Date.now(), allowGate: _allowGate, ...readOptions } = options;
-  const snapshot = (await observeTransport(
+  const snapshot = (await observeReviewWorkspaceTransport(
     () =>
       routeNativeExecution(binding.ownerPrincipalId, NATIVE_WORKER_READ, {
         ...target(binding),

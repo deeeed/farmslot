@@ -25,8 +25,10 @@ import {
 import { GatewayMethodError } from '../../core/method-error.js';
 import { type ConnectedNode, getAllNodes, getNode } from '../../fleet/machine-registry.js';
 import {
+  assertNodeReconnectCurrent,
   isNodeTransportUnavailableError,
   NodeTransportUnavailableError,
+  resolveAfterNodeReconnect,
   sendNodeRequest,
 } from '../../fleet/node-rpc.js';
 import { loadCredentialStore } from '../../security/credential-store.js';
@@ -128,7 +130,11 @@ export async function requestNativeNode(
   params: unknown,
   timeout: number,
 ): Promise<unknown> {
-  const node = resolveNativeExecutionNode(owner, machine);
+  const resolved = resolveAfterNodeReconnect(machine, () =>
+    resolveNativeExecutionNode(owner, machine),
+  );
+  const node = resolved instanceof Promise ? await resolved : resolved;
+  assertNodeReconnectCurrent();
   if (!node.nativeSessions.supportsWorkers || !node.nativeSessions.supportsEnsure)
     throw new GatewayMethodError(
       'NATIVE_SESSION_ERROR',
@@ -196,7 +202,11 @@ export async function routeNativeExecution(
       ? routeNativeWorkerSession(nativeSessionManager, owner, method, params)
       : routeNativeSession(nativeSessionManager, owner, method, params);
   }
-  const node = resolveNativeExecutionNode(owner, executionNodeId);
+  const resolved = resolveAfterNodeReconnect(executionNodeId, () =>
+    resolveNativeExecutionNode(owner, executionNodeId),
+  );
+  const node = resolved instanceof Promise ? await resolved : resolved;
+  assertNodeReconnectCurrent();
   if (
     method === NATIVE_WORKER_CONFIRM_STOPPED &&
     !node.nativeSessions.supportsWorkerStopAttestation

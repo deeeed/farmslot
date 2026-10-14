@@ -25,6 +25,7 @@ import { resolveMonitorConfig } from '../run-engine/run-monitor.js';
 import {
   cancelReviewWorkspaceWorker,
   launchReviewWorkspaceWorker,
+  observeReviewWorkspaceTransport,
   readReviewWorkspaceWorker,
 } from '../runners/native/review-workspace.js';
 import { observeReviewPromptAcceptance } from '../runners/review-startup.js';
@@ -434,7 +435,12 @@ export async function executeReviewWorkspaceStep(
       if (run.reviewWorkspace?.cleanedAt) {
         // Recovery of a completed report needs its frozen task and artifacts,
         // not a checkout, skill installation or a new reviewer process.
-        const completion = await readReviewWorkspaceCompletion(runId);
+        const completion = await observeReviewWorkspaceTransport(
+          () => readReviewWorkspaceCompletion(runId),
+          check,
+          Date.now() + 300_000,
+          'observation',
+        );
         check();
         if (!completion?.result || completion.signal.outcome !== 'success')
           throw new BlockedRunError(
@@ -451,14 +457,18 @@ export async function executeReviewWorkspaceStep(
           },
         };
       }
-      await ensureReviewWorkspaceSupport(runId, check);
-      check();
       const project = await loadProjectVars(run.project);
       const config = resolveMonitorConfig(project.projectJson.monitoring, run.project, 'review-pr');
       const started =
         run.steps.find((entry) => entry.name === PipelineSteps.MONITOR)?.startedAt ??
         new Date().toISOString();
       const deadline = Date.parse(started) + config.totalTimeoutMs;
+      // Restart recovery can enter before the owning execution node reconnects.
+      // All monitor reads share the journal's retry/fencing rules and deadline.
+      const observe = <T>(operation: () => Promise<T>) =>
+        observeReviewWorkspaceTransport(operation, check, deadline, 'observation');
+      await observe(() => ensureReviewWorkspaceSupport(runId, check));
+      check();
       // Live checklist, child-unit (ADR-060) and acceptance-ledger progress for a
       // run that has no slot, and with it the view refresh that keeps the
       // operator-visible mirror current. The publisher throttles its own reads and
@@ -472,11 +482,11 @@ export async function executeReviewWorkspaceStep(
         await progress.publish();
         check();
         if (run.transport === 'tmux') {
-          const signal = await readReviewWorkspaceSignal(runId);
+          const signal = await observe(() => readReviewWorkspaceSignal(runId));
           check();
           const current = currentWorkspaceRun(runId, generation);
           const context = current.agentContexts?.find((entry) => entry.id === 'review');
-          const acceptance = await observeReviewPromptAcceptance(current);
+          const acceptance = await observe(() => observeReviewPromptAcceptance(current));
           check();
           const startup = reviewTmuxStartupState(signal, acceptance, {
             startedAt: context?.promptDeliveryStartedAt ?? started,
@@ -524,7 +534,7 @@ export async function executeReviewWorkspaceStep(
             await persistRunNow(getRun(runId)!, 'reviewer startup acknowledgment');
             emit(Events.RUN_UPDATED, { run: getRun(runId) });
           }
-          const completion = await readReviewWorkspaceCompletion(runId);
+          const completion = await observe(() => readReviewWorkspaceCompletion(runId));
           check();
           if (completion) {
             if (
@@ -555,9 +565,8 @@ export async function executeReviewWorkspaceStep(
               },
             };
           }
-          const state = await reviewTmuxOperation(
-            currentWorkspaceRun(runId, generation),
-            'inspect',
+          const state = await observe(() =>
+            reviewTmuxOperation(currentWorkspaceRun(runId, generation), 'inspect'),
           );
           check();
           if (!state.exists)
@@ -577,7 +586,7 @@ export async function executeReviewWorkspaceStep(
         const command = snapshot.commands.find((entry) => entry.commandId === binding?.commandId);
         const completion =
           command?.accepted && command.outcome === 'completed'
-            ? await readReviewWorkspaceCompletion(runId)
+            ? await observe(() => readReviewWorkspaceCompletion(runId))
             : null;
         check();
         if (completion && command?.accepted && command.outcome === 'completed') {
