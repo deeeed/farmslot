@@ -161,6 +161,45 @@ so another active or uncertain context retains its normal precedence. It MUST NO
 bypass acceptance, evidence, deterministic checks or resource ownership. Scenario
 mode and runners without this capability retain their existing observations.
 
+### Waiting for an operator
+
+Proposed under ADR-065 Amendment 3. ADR-045 remains the terminal-contract owner.
+
+`./mark wait --who <name> --reason <text>` MUST write a nonterminal `running`
+signal through the existing atomic, role-owned writer. Its optional
+`waitingForOperator` object contains nonempty `who` and `reason` strings and an
+ISO `since` timestamp. It MUST retain the context, attempt, checklist events and
+unchecked rows. An identical repeated wait MUST retain its original timestamp;
+it is not a heartbeat or progress receipt. It MUST refuse a terminal signal.
+
+`./mark resume` MUST clear the wait and preserve the execution attempt and
+checklist. `start`, numeric checklist marks and terminal marks MUST also clear
+it. Clearing a wait MUST NOT imply completion, a checked row, approval or a new
+worker. Existing artifact and terminal-contract checks still apply.
+
+The gateway MUST validate shape, freshness, role/context and execution attempt
+before accepting a wait. A valid wait is healthy operator dependency, not
+making-progress or worker-done. During it the monitor MUST keep observing the
+owned signal, retain the worker/slot, and suppress inactivity nudges,
+`monitor_max_nudges`, idle-exit handoff and elapsed execution timeout. Explicit
+cancellation and independent resource/credential safety checks remain available.
+Wait time MUST be excluded from the monitor's execution timeout, including
+across restart. Clearing it starts a fresh inactivity window while retaining
+execution time already consumed. A missing, invalid, stale or foreign signal
+MUST NOT suspend monitoring; a stored display label is never authority.
+
+The existing run DTO MUST project only the validated wait. The shared lifecycle
+view MUST expose `Waiting on operator: <who>` to CLI, Command Center and Companion
+while retaining the current nonterminal run status. Terminal settlement removes
+the activity label. Waiting MUST NOT satisfy COMPLETE, publish, output review or
+any human decision prerequisite.
+
+Acceptance MUST cover mark/resume and repeated-wait idempotence; stale/foreign
+signals; monitor nudges and timeout across a restart; resumed monitoring; shared
+client labels; and completion/publication remaining guarded. Live acceptance
+MUST use the production mark command and monitor with an owned native worker
+waiting for an operator, then resume that same execution without a replacement.
+
 ## Recovery invariants and six CI scenarios
 
 Slot re-selection MUST retain the device capabilities of the requested or previously
