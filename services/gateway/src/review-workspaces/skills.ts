@@ -81,6 +81,17 @@ function generatedFile(relativePath: string, content: string, mode: number): Nod
     sha256: createHash('sha256').update(bytes).digest('hex'),
   };
 }
+function compiledEntryAdapter(commandPath: string, entryPath: string): NodeSupportFile {
+  const relativeEntry = JSON.stringify(
+    path.posix.relative(path.posix.dirname(commandPath), entryPath),
+  );
+  // Dynamic imports work in both the package's module mode and the support root's CommonJS mode.
+  return generatedFile(
+    commandPath,
+    `#!/usr/bin/env node\n(async () => {\nconst { realpathSync } = await import('node:fs');\nconst path = await import('node:path');\nconst { pathToFileURL } = await import('node:url');\nconst entry = path.resolve(path.dirname(realpathSync(process.argv[1])), ${relativeEntry});\nprocess.argv[1] = entry;\nawait import(pathToFileURL(entry).href);\n})().catch(error => { console.error(error); process.exitCode = 1; });\n`,
+    0o755,
+  );
+}
 async function regularEntry(root: string, relative: string): Promise<void> {
   relativeFile(relative);
   let current = root;
@@ -122,9 +133,10 @@ async function packageRootFor(
   }
   return undefined;
 }
-async function collectRuntime(root: string, destination: string) {
+async function collectRuntime(root: string, destination: string, commandName: string) {
   const files: NodeSupportFile[] = [];
   const packages: NonNullable<SourceManifest['packages']> = [];
+  let publicBin: string | undefined;
   const visited = new Set<string>();
   async function visit(directory: string) {
     if (visited.has(directory)) return;
@@ -136,6 +148,16 @@ async function collectRuntime(root: string, destination: string) {
       typeof metadata.version !== 'string'
     )
       throw new Error('Review runtime packages must declare a valid name and version');
+    if (directory === root) {
+      const bin = typeof metadata.bin === 'string' ? metadata.bin : metadata.bin?.[commandName];
+      if (bin !== undefined) {
+        if (typeof bin !== 'string' || !bin)
+          throw new Error('Review runtime public bin must name a confined relative file');
+        const entry = path.posix.normalize(bin);
+        await regularEntry(root, entry);
+        publicBin = path.posix.join(destination, entry);
+      }
+    }
     const relative = path.posix.join(
       destination,
       path.relative(root, directory).split(path.sep).join('/'),
@@ -163,7 +185,7 @@ async function collectRuntime(root: string, destination: string) {
     }
   }
   await visit(root);
-  return { files, packages: packages.sort((a, b) => a.path.localeCompare(b.path)) };
+  return { files, packages: packages.sort((a, b) => a.path.localeCompare(b.path)), publicBin };
 }
 
 /** Collect twice and reject drift; the caller persists and transports these exact bytes before launch. */
@@ -240,9 +262,11 @@ export async function collectReviewWorkspaceSupport(
         ...(sourceRevision !== undefined ? { sourceRevision } : {}),
         ...(sourceDirty !== undefined ? { sourceDirty } : {}),
       };
+      let entryPath = destination;
       if ('entry' in definition) {
         await regularEntry(source.root, definition.entry);
-        identity.entry = `${destination}/${definition.entry}`;
+        entryPath = `${destination}/${definition.entry}`;
+        identity.entry = entryPath;
         identity.sourceEntry = definition.entry;
       }
       if (definition.kind === 'runtime') {
@@ -250,19 +274,14 @@ export async function collectReviewWorkspaceSupport(
           throw new Error(
             'Review runtime must select a compiled Node entry, not an installer or shell command',
           );
-        const runtime = await collectRuntime(source.root, destination);
-        files.push(...runtime.files);
+        const runtime = await collectRuntime(source.root, destination, definition.name);
+        const adaptedBin = runtime.publicBin !== entryPath ? runtime.publicBin : undefined;
+        files.push(...runtime.files.filter((file) => file.relativePath !== adaptedBin));
+        if (adaptedBin) files.push(compiledEntryAdapter(adaptedBin, entryPath));
         identity.packages = runtime.packages;
         // A portable argv adapter for the frozen Node entry. No package manager or source bootstrap.
-        const relativeEntry = JSON.stringify(identity.entry);
         files.push(generatedFile('package.json', '{"private":true,"type":"commonjs"}\n', 0o644));
-        files.push(
-          generatedFile(
-            `bin/${definition.name}`,
-            `#!/usr/bin/env node\nconst { pathToFileURL } = require('node:url');\nconst path = require('node:path');\nconst entry = path.resolve(__dirname, '..', ${relativeEntry});\nprocess.argv[1] = entry;\nimport(pathToFileURL(entry).href).catch(error => { console.error(error); process.exitCode = 1; });\n`,
-            0o755,
-          ),
-        );
+        files.push(compiledEntryAdapter(`bin/${definition.name}`, entryPath));
       } else {
         const collected = await collectSupportFiles(source.root, destination);
         if (!collected.length)

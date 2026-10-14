@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Bind frozen runtime package commands to the captured compiled entry so root-only review consumers preserve arguments without source bootstrap or ambient selectors.
+
 - Preserve configured remote hook execution timeouts after support-bundle resolution, while retaining bounded delivery refusals.
 
 - Render remote-run PR bodies with the gateway host's declared provider root from its pool, refusing missing or conflicting roots instead of using a remote path or ambient harness selection.
