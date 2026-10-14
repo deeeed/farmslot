@@ -11,6 +11,8 @@ import {
   type RecipeClaimLedger,
 } from '@farmslot/protocol';
 
+import { harnessContext } from './context-state.js';
+
 interface AcceptanceLedgerModule {
   handoffAcceptanceCriteria(taskDir: string): Array<{ id: string; text: string }>;
   setDerivedClaims(taskDir: string, claims: RecipeClaimLedger): unknown;
@@ -35,7 +37,13 @@ export function runTaskDir(target: string, ignoreOutside = false): string | null
   const configured = process.env.RECIPE_TASK_DIR || process.env.FARMSLOT_TASK_DIR;
   if (!configured) return null;
   const task = path.resolve(target, configured);
-  const relative = path.relative(path.resolve(target), task);
+  const context = harnessContext();
+  // App execution and checkout-level task storage have different boundaries.
+  const checkoutRoot =
+    context?.target.value === path.resolve(target)
+      ? (context.project?.checkoutRoot ?? target)
+      : target;
+  const relative = path.relative(path.resolve(checkoutRoot), task);
   if (relative === '..' || relative.startsWith(`..${path.sep}`)) {
     if (ignoreOutside) return null;
     throw new Error(`task directory must be inside the target checkout: ${configured}`);
