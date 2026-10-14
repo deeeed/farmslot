@@ -106,7 +106,7 @@ test('family evidence groups use source run provenance before display run ids', 
   assert.match(groups[0].subtitle, /slot slot-source/);
 });
 
-test('family lightbox pairs before and after captures by stem', () => {
+test('family lightbox does not pair unbound before and after filenames', () => {
   const pairs = buildFamilyLightboxPairs(
     [
       artifact('captures/before-login.png', 'BEFORE screenshot'),
@@ -115,12 +115,10 @@ test('family lightbox pairs before and after captures by stem', () => {
     (a) => ({ url: `/artifact/${a.path}`, path: a.path, purpose: a.purpose, caption: a.path }),
   );
 
-  assert.equal(pairs.length, 1);
-  assert.equal(pairs[0].stem, 'login');
-  assert.equal(pairs[0].kind, 'image');
+  assert.deepEqual(pairs, []);
 });
 
-test('family lightbox pairs distinguish videos and ignore incomplete before-after pairs', () => {
+test('family lightbox does not pair unbound videos or incomplete captures', () => {
   const pairs = buildFamilyLightboxPairs(
     [
       artifact('captures/before-flow.webm', 'BEFORE video'),
@@ -130,12 +128,10 @@ test('family lightbox pairs distinguish videos and ignore incomplete before-afte
     (a) => ({ url: `/artifact/${a.path}`, path: a.path, purpose: a.purpose, caption: a.path }),
   );
 
-  assert.equal(pairs.length, 1);
-  assert.equal(pairs[0].stem, 'flow');
-  assert.equal(pairs[0].kind, 'video');
+  assert.deepEqual(pairs, []);
 });
 
-test('family lightbox uses shared artifact-kind and AC fallback pairing', () => {
+test('family lightbox does not infer AC relationships from numbered filenames', () => {
   const pairs = buildFamilyLightboxPairs(
     [
       artifact('artifacts/after-ac1-market-detail-liq-distance.png', 'screenshot', {
@@ -155,10 +151,7 @@ test('family lightbox uses shared artifact-kind and AC fallback pairing', () => 
     (a) => ({ url: `/artifact/${a.path}`, path: a.path, purpose: a.purpose, caption: a.path }),
   );
 
-  assert.equal(pairs.length, 1);
-  assert.equal(pairs[0].stem, 'ac1');
-  assert.equal(pairs[0].before.path, 'artifacts/before-ac1-market-detail-no-liq-distance.png');
-  assert.equal(pairs[0].after.path, 'artifacts/after-ac1-market-detail-liq-distance.png');
+  assert.deepEqual(pairs, []);
 });
 
 test('family run badge labels identify eval and comparison runs', () => {

@@ -55,33 +55,33 @@ test('family artifact captions and bucket summaries match existing display forma
   assert.equal(familyBucketSummary([]), 'none');
 });
 
-test('family artifact kind and provenance match lightbox semantics', () => {
-  assert.equal(familyArtifactKind(artifact({ path: 'before.png', purpose: 'before' })), 'before');
+test('unbound family artifacts do not imply comparison roles or source commits', () => {
+  assert.equal(familyArtifactKind(artifact({ path: 'before.png', purpose: 'before' })), 'setup');
   assert.equal(familyArtifactKind(artifact({ path: 'setup.png', purpose: 'setup' })), 'setup');
   assert.equal(
     familyArtifactProvenance(artifact({ path: 'before.png', purpose: 'before' }), {
       branch: 'fix/demo',
     }),
-    'baseline @ main',
+    undefined,
   );
   assert.equal(
     familyArtifactProvenance(artifact({ purpose: 'after' }), { branch: 'fix/demo' }),
-    'fix @ fix/demo',
+    undefined,
   );
-  assert.equal(familyArtifactProvenance(artifact({ purpose: 'after' }), null), 'fix');
+  assert.equal(familyArtifactProvenance(artifact({ purpose: 'after' }), null), undefined);
   assert.equal(
     familyArtifactProvenance(artifact({ path: 'setup.png', purpose: 'debug-screenshot' }), null),
     undefined,
   );
 });
 
-test('familyLightboxItem derives URL, caption, and provenance together', () => {
+test('unbound familyLightboxItem retains its URL and recorded run caption', () => {
   const item = familyLightboxItem(artifact(), {
     branch: 'fix/demo',
   } as Pick<FamilyObservabilityRunSummary, 'branch'>);
 
   assert.equal(item.path, 'artifacts/after.png');
   assert.equal(item.caption, 'Run run-1234 · task artifact · 2.0 KB');
-  assert.equal(item.provenance, 'fix @ fix/demo');
+  assert.equal(item.provenance, undefined);
   assert.match(item.url, /run-1234567890/);
 });
