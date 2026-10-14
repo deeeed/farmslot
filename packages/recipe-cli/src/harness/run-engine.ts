@@ -57,7 +57,7 @@ import {
   withRecipeCleanup,
 } from './host.js';
 import { type CliOptions, isRecord, optionString, shellQuoteArg } from './parse-args.js';
-import { recipeOutputRoots, recipeRuntimePath } from './paths.js';
+import { harnessExecutable, recipeOutputRoots, recipeRuntimePath } from './paths.js';
 import {
   beginRunDiagnostics,
   type ConsoleAllowlist,
@@ -534,10 +534,10 @@ function runtimeRecipeDocument(
   }
 }
 
-// The run's child environment: this process's, without the host's checkout
-// lock and operation identity.
+// Children re-enter the selected host, without inheriting its checkout lock
+// or operation identity.
 function recipeProcessEnvironment(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
+  const env = { ...process.env, [hostEnvName('EXECUTABLE')]: harnessExecutable() };
   delete env[hostEnvName('CHECKOUT_LOCK_TOKEN')];
   delete env[hostEnvName('OPERATION_ID')];
   return env;
