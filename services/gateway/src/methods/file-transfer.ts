@@ -210,8 +210,18 @@ export async function fileTransferRemoteE2e(
 
   try {
     // Materialize remote fixtures via node fs APIs (same confinement as production).
-    await sendNodeRequest(node, 'fs.mkdir', { root: remoteRoot, relPath: '.' }, { timeout: 30_000 });
-    await sendNodeRequest(node, 'fs.mkdir', { root: remoteRoot, relPath: 'dir' }, { timeout: 30_000 });
+    await sendNodeRequest(
+      node,
+      'fs.mkdir',
+      { root: remoteRoot, relPath: '.' },
+      { timeout: 30_000 },
+    );
+    await sendNodeRequest(
+      node,
+      'fs.mkdir',
+      { root: remoteRoot, relPath: 'dir' },
+      { timeout: 30_000 },
+    );
 
     const largePath = path.posix.join(remoteRoot, 'large.bin');
     const largeBuf = Buffer.alloc(largeBytes);
@@ -291,7 +301,9 @@ export async function fileTransferRemoteE2e(
         }
       },
     });
-    const localHash = createHash('sha256').update(await readFile(localLarge)).digest('hex');
+    const localHash = createHash('sha256')
+      .update(await readFile(localLarge))
+      .digest('hex');
     const bufHash = createHash('sha256').update(bufRead).digest('hex');
     if (localHash !== bufHash || bufRead.byteLength !== largeBytes) {
       throw new Error(
@@ -400,9 +412,14 @@ export async function fileTransferRemoteE2e(
         )}\n`,
       );
       try {
-        await sendNodeRequest(node, 'fs.mkdir', { root: httpRepo, relPath: 'artifacts' }, {
-          timeout: 30_000,
-        });
+        await sendNodeRequest(
+          node,
+          'fs.mkdir',
+          { root: httpRepo, relPath: 'artifacts' },
+          {
+            timeout: 30_000,
+          },
+        );
         let httpOff = 0;
         while (httpOff < httpPayload.byteLength) {
           const end = Math.min(httpOff + FILE_TRANSFER_CHUNK_MAX_BYTES, httpPayload.byteLength);
@@ -423,8 +440,8 @@ export async function fileTransferRemoteE2e(
         const port = process.env.GATEWAY_PORT || '8801';
         const url = `http://127.0.0.1:${port}/api/file?slotId=${encodeURIComponent(httpSlotId)}&path=${encodeURIComponent(relFile)}`;
         const headers: Record<string, string> = {};
-        if (process.env.FARMSLOT_GATEWAY_TOKEN) {
-          headers.Authorization = `Bearer ${process.env.FARMSLOT_GATEWAY_TOKEN}`;
+        if (params.httpCredential) {
+          headers.Authorization = `Bearer ${params.httpCredential}`;
         }
         const res = await fetch(url, { headers });
         const body = Buffer.from(await res.arrayBuffer());
@@ -497,7 +514,8 @@ export async function fileTransferRemoteE2e(
         'artifacts',
       );
       const poolPath = path.join(farmslotRoot, 'pool', `${testId}.json`);
-      const largeRel = path.posix.join(workerArtifactsRel, 'large-mirror.bin');
+      // Mirror a supported top-level log artifact; arbitrary binary files are excluded.
+      const largeRel = path.posix.join(workerArtifactsRel, 'large-mirror.log');
       const mirrorPayload = Buffer.alloc(FILE_TRANSFER_CHUNK_MAX_BYTES * 3 + 19);
       for (let i = 0; i < mirrorPayload.byteLength; i++) mirrorPayload[i] = i % 251;
       const expectedHash = createHash('sha256').update(mirrorPayload).digest('hex');
@@ -608,7 +626,7 @@ export async function fileTransferRemoteE2e(
         if (mirrorError) throw mirrorError;
         if (copied < 1) throw new Error(`refreshArtifactMirror copied ${copied} (need ≥1)`);
 
-        const dest = path.join(taskDir, 'artifacts/large-mirror.bin');
+        const dest = path.join(taskDir, 'artifacts/large-mirror.log');
         const got = await readFile(dest);
         const gotHash = createHash('sha256').update(got).digest('hex');
         if (got.byteLength !== mirrorPayload.byteLength || gotHash !== expectedHash) {

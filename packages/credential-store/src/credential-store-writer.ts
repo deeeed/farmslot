@@ -5,18 +5,19 @@ import {
   generateCredentialId,
   generateCredentialSecret,
   hashSecret,
-  verifySecret,
 } from './credential-secret.js';
 import {
   activeAdminCredentialCount,
   type CredentialRecord,
   type CredentialStore,
   type CredentialStoreRuntime,
+  VIRTUAL_PRINCIPAL_IDS,
 } from './credential-store.js';
 import { CredentialStoreRefusalError, withCredentialStoreLock } from './credential-store-lock.js';
 import { assertNoLiveGatewaysUnlocked } from './gateway-presence.js';
 
-export const VIRTUAL_PRINCIPAL_IDS = ['local-admin', 'local-node', 'system'] as const;
+export { VIRTUAL_PRINCIPAL_IDS } from './credential-store.js';
+import { type PrincipalRetirement, retireSelectedPrincipals } from './credential-retirement.js';
 
 export interface IssuedCredential {
   record: CredentialRecord;
@@ -28,12 +29,6 @@ export interface CredentialIssue {
   secret: string;
   adminGrant?: IssuedCredential;
   activationLatched: boolean;
-}
-
-export interface EnvironmentCredentialReconciliation {
-  credentialId: string;
-  created: boolean;
-  otherActiveCredentialIds: string[];
 }
 
 export function readCredentialStoreOffline(env: NodeJS.ProcessEnv = process.env): CredentialStore {
@@ -61,6 +56,9 @@ export class CredentialStoreWriter {
         throw new CredentialStoreRefusalError(
           `Principal id '${id}' is reserved for a virtual principal`,
         );
+      }
+      if (store.retiredPrincipalIds?.includes(id)) {
+        throw new CredentialStoreRefusalError(`Principal '${id}' has been retired`);
       }
       if (store.principals.some((principal) => principal.id === id)) {
         throw new CredentialStoreRefusalError(`Principal '${id}' already exists`);
@@ -160,6 +158,7 @@ export class CredentialStoreWriter {
         roles: cloneRoles(roles),
       };
       const issued = buildCredential(
+        store,
         principal.id,
         credentialDisplayName,
         'paired',
@@ -191,7 +190,7 @@ export class CredentialStoreWriter {
       const principal = requiredPrincipal(store, principalId);
       const now = new Date().toISOString();
       const activationLatched = store.activatedAt === null;
-      const issued = buildCredential(principalId, displayName, origin, rawSecret, now);
+      const issued = buildCredential(store, principalId, displayName, origin, rawSecret, now);
       let next: CredentialStore = {
         ...store,
         activatedAt: store.activatedAt ?? now,
@@ -201,7 +200,7 @@ export class CredentialStoreWriter {
       if (!this.offline && activationLatched && activeAdminCredentialCount(next) === 0) {
         const owner = buildOwnerPrincipal(next);
         const ownerSecret = generateCredentialSecret();
-        adminGrant = buildCredential(owner.id, 'owner', 'issued', ownerSecret, now);
+        adminGrant = buildCredential(next, owner.id, 'owner', 'issued', ownerSecret, now);
         next = {
           ...next,
           principals: [...next.principals, owner],
@@ -254,48 +253,8 @@ export class CredentialStoreWriter {
     });
   }
 
-  reconcileEnvironmentCredential(rawSecret: string): EnvironmentCredentialReconciliation {
-    return this.mutate<EnvironmentCredentialReconciliation>((store) => {
-      const activeEnvironmentCredentials = store.credentials.filter(
-        (credential) => credential.origin === 'env-migrated' && credential.revokedAt === null,
-      );
-      const matching = activeEnvironmentCredentials.find((credential) =>
-        verifySecret(rawSecret, credential.secret),
-      );
-      if (matching) {
-        return {
-          next: store,
-          result: {
-            credentialId: matching.id,
-            created: false,
-            otherActiveCredentialIds: activeEnvironmentCredentials
-              .filter((credential) => credential.id !== matching.id)
-              .map((credential) => credential.id),
-          },
-        };
-      }
-
-      const now = new Date().toISOString();
-      const principal: Principal = {
-        id: uniquePrincipalId(store, 'legacy-env'),
-        subject: { type: 'service', displayName: 'legacy-env' },
-        roles: [{ role: 'admin', scope: { kind: 'global' } }],
-      };
-      const issued = buildCredential(principal.id, 'legacy-env', 'env-migrated', rawSecret, now);
-      return {
-        next: {
-          ...store,
-          activatedAt: store.activatedAt ?? now,
-          principals: [...store.principals, principal],
-          credentials: [...store.credentials, issued.record],
-        },
-        result: {
-          credentialId: issued.record.id,
-          created: true,
-          otherActiveCredentialIds: activeEnvironmentCredentials.map((credential) => credential.id),
-        },
-      };
-    });
+  retirePrincipals(principalIds: string[]): PrincipalRetirement {
+    return this.mutate((store) => retireSelectedPrincipals(store, principalIds, this.runtime.path));
   }
 
   private mutate<T>(fn: (store: CredentialStore) => { next: CredentialStore; result: T }): T {
@@ -357,13 +316,20 @@ function validateNativeOwner(store: CredentialStore, principal: Principal): void
 }
 
 function buildCredential(
+  store: CredentialStore,
   principalId: string,
   displayName: string,
   origin: CredentialRecord['origin'],
   rawSecret: string,
   now: string,
 ): IssuedCredential {
-  const id = generateCredentialId();
+  let id = generateCredentialId();
+  while (
+    store.credentials.some((record) => record.id === id) ||
+    store.retiredCredentialIds?.includes(id)
+  ) {
+    id = generateCredentialId();
+  }
   return {
     record: {
       id,
@@ -374,7 +340,7 @@ function buildCredential(
       createdAt: now,
       revokedAt: null,
     },
-    secret: origin === 'env-migrated' ? rawSecret : formatCredentialWire(id, rawSecret),
+    secret: formatCredentialWire(id, rawSecret),
   };
 }
 
@@ -416,7 +382,10 @@ function uniquePrincipalId(store: CredentialStore, displayName: string): string 
   }
   let candidate = base;
   let suffix = 2;
-  while (store.principals.some((principal) => principal.id === candidate)) {
+  while (
+    store.principals.some((principal) => principal.id === candidate) ||
+    store.retiredPrincipalIds?.includes(candidate)
+  ) {
     candidate = `${base}-${suffix}`;
     suffix += 1;
   }

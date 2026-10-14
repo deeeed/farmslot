@@ -120,8 +120,8 @@ function resolveBrowserGatewayConnection(): BrowserGatewayConnection {
   const env = (import.meta as ImportMetaWithEnv).env;
   const storedAuth = readGatewayAuth();
   const hosted = parseHostedGatewayConnection(location.hash);
-  const token = env.VITE_FARMSLOT_GATEWAY_TOKEN ?? hosted.token ?? storedAuth.token;
-  const password = env.VITE_FARMSLOT_GATEWAY_PASSWORD ?? hosted.password ?? storedAuth.password;
+  const token = hosted.token ?? storedAuth.token;
+  const password = hosted.password ?? storedAuth.password;
   const storedCandidates = localStorage.getItem(GATEWAY_CANDIDATES_STORAGE_KEY);
   const storedGatewayUrl = localStorage.getItem(GATEWAY_URL_STORAGE_KEY);
   const storedSource = localStorage.getItem(GATEWAY_SOURCE_STORAGE_KEY);

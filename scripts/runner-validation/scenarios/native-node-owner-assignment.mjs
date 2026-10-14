@@ -3,10 +3,13 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { automationGatewayToken } from '../../lib/gateway-profile.mjs';
 import { ROOT } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 
 import { connect } from './native-node-broker-smoke.mjs';
+
+let gatewayToken;
 
 export const SCENARIO_ID = 'native-node-owner-assignment';
 export const RUNNER_AGNOSTIC = true;
@@ -14,13 +17,14 @@ export const RUNNER_AGNOSTIC = true;
 /** Real enrollment and node sockets; this proves authorization, not native inference. */
 export async function runScenario({ outDir, explicit }) {
   if (!explicit) return { scenario: SCENARIO_ID, runner: 'codex', pass: true, skipped: true };
+  gatewayToken = await automationGatewayToken();
   const report = { runner: 'codex', checks: [], pass: false, inferenceExpected: false };
   const clients = [];
   const credentials = [];
   let admin;
   try {
     assert.equal(process.env.FARMSLOT_GATEWAY, 'ws://127.0.0.1:18777');
-    admin = await connect(process.env.FARMSLOT_GATEWAY_TOKEN, 'ui');
+    admin = await connect(gatewayToken, 'ui');
     clients.push(admin);
     const ok = async (method, params, timeoutMs) => {
       const result = await admin.request(method, params, timeoutMs);

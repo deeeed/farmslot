@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+import { testGatewayIdentity, testGatewayProfile } from './lib/test-gateway-identity-source.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -71,7 +72,7 @@ assert(scenario === 'direct', 'Expected direct');
 const fixture = await mkdtemp(path.join(tmpdir(), 'farmslot-workflow-defaults-'));
 execFileSync('git', ['clone', '--shared', '--no-checkout', root, fixture], { stdio: 'pipe' });
 const log = path.join(fixture, 'gateway.log');
-const token = randomBytes(32).toString('hex');
+const token = testGatewayIdentity(path.join(fixture, 'home'));
 const probe = createServer();
 probe.listen(0, '127.0.0.1');
 await once(probe, 'listening');
@@ -209,6 +210,7 @@ process.stdout.write(JSON.stringify(body));
 );
 
 const output = openSync(log, 'w', 0o600);
+testGatewayProfile(path.join(fixture, 'home'), `ws://127.0.0.1:${port}`, token);
 const gateway = spawn('yarn', ['workspace', '@farmslot/gateway', 'start'], {
   cwd: root,
   detached: true,
@@ -224,13 +226,13 @@ const gateway = spawn('yarn', ['workspace', '@farmslot/gateway', 'start'], {
     FARMSLOT_DISPATCH_QUEUE_FILE: path.join(fixture, 'queue.json'),
     GATEWAY_HOST: '127.0.0.1',
     GATEWAY_PORT: String(port),
-    FARMSLOT_GATEWAY_TOKEN: token,
+    FARMSLOT_GATEWAY_PROFILE: 'proof',
     FARMSLOT_DISABLE_ORCHESTRATION: '1',
     NODE_TEST_CONTEXT: '1',
     FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
     FARMSLOT_TEST_STATUS_FILE: path.join(fixture, '.farm-status.json'),
     FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
-    FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'legacy-env',
+    FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'test-automation',
   },
 });
 closeSync(output);
@@ -272,6 +274,7 @@ try {
     ticketOrPr: 'example/app#100',
   };
   function cli(args: string[]) {
+    testGatewayProfile(path.join(fixture, 'home'), `ws://127.0.0.1:${port}`, token);
     const raw = execFileSync(
       'yarn',
       [
@@ -289,8 +292,8 @@ try {
         timeout: 30_000,
         env: {
           ...process.env,
-          FARMSLOT_HOME: path.join(fixture, 'cli-home'),
-          FARMSLOT_GATEWAY_TOKEN: token,
+          FARMSLOT_HOME: path.join(fixture, 'home'),
+          FARMSLOT_GATEWAY_PROFILE: 'proof',
         },
       },
     );
@@ -354,7 +357,7 @@ try {
   );
   await connection.call('principal.bindNativeOwner', {
     nodePrincipalId: offlinePrincipal.id,
-    ownerPrincipalId: 'legacy-env',
+    ownerPrincipalId: 'test-automation',
   });
   const offlineCredential = await connection.call<{ credential: { id: string } }>(
     'credential.issue',

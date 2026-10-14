@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+import { testGatewayIdentity, testGatewayProfile } from './lib/test-gateway-identity-source.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -115,9 +116,10 @@ const port = (portProbe.address() as { port: number }).port;
 await new Promise<void>((resolve, reject) =>
   portProbe.close((error) => (error ? reject(error) : resolve())),
 );
-const token = randomBytes(32).toString('hex');
+const token = testGatewayIdentity(path.join(fixture, 'home'));
 const log = path.join(evidence, 'gateway.log');
 const fd = openSync(log, 'w', 0o600);
+testGatewayProfile(path.join(fixture, 'home'), `ws://127.0.0.1:${port}`, token);
 const gateway = spawn('yarn', ['workspace', '@farmslot/gateway', 'start'], {
   cwd: root,
   detached: true,
@@ -133,8 +135,8 @@ const gateway = spawn('yarn', ['workspace', '@farmslot/gateway', 'start'], {
     FARMSLOT_DISPATCH_QUEUE_FILE: path.join(fixture, 'queue.json'),
     GATEWAY_HOST: '127.0.0.1',
     GATEWAY_PORT: String(port),
-    FARMSLOT_GATEWAY_TOKEN: token,
-    FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'legacy-env',
+    FARMSLOT_GATEWAY_PROFILE: 'proof',
+    FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'test-automation',
     FARMSLOT_NATIVE_STATE_DIR: path.join(fixture, 'home/native-sessions'),
     FARMSLOT_DISABLE_ORCHESTRATION: '1',
     FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
@@ -167,7 +169,7 @@ function startNode() {
       FARMSLOT_ROOT: fixture,
       FARMSLOT_HOME: path.join(fixture, 'node-home'),
       FARMSLOT_NATIVE_STATE_DIR: nodeNativeRoot,
-      FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'legacy-env',
+      FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'test-automation',
       FARMSLOT_NODE_TOKEN: nodeToken,
       FARMSLOT_GATEWAY_TOKEN: '',
       GATEWAY_URL: `ws://127.0.0.1:${port}`,
@@ -216,7 +218,7 @@ try {
   });
   await connection.call('principal.bindNativeOwner', {
     nodePrincipalId: principal.principal.id,
-    ownerPrincipalId: 'legacy-env',
+    ownerPrincipalId: 'test-automation',
   });
   const credential = await connection.call<{ secret: string; credential: { id: string } }>(
     'credential.issue',

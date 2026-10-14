@@ -13,6 +13,8 @@ import type {
   PrincipalGrantParams,
   PrincipalGrantResult,
   PrincipalListResult,
+  PrincipalRetireParams,
+  PrincipalRetireResult,
   PrincipalRevokeRoleParams,
   PrincipalRevokeRoleResult,
   PrincipalSubject,
@@ -79,6 +81,16 @@ export function principalRevokeRole(
       runtime.writer.revokeRole(params.principalId, params.role, params.scope),
     ),
   };
+}
+
+export function principalRetire(
+  params: PrincipalRetireParams,
+  runtime: GatewayAuthRuntime,
+): PrincipalRetireResult {
+  if (!Array.isArray(params?.principalIds) || params.principalIds.length === 0)
+    throw invalid('principal.retire requires principalIds');
+  params.principalIds.forEach(validatePrincipalId);
+  return translateWriterError(() => runtime.writer.retirePrincipals(params.principalIds));
 }
 
 export function credentialIssue(

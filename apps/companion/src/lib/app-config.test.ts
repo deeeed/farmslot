@@ -116,9 +116,9 @@ test('Expo config uses script-provided bundle id and scheme for local native lau
 
 test('Expo config lets isolated launcher gateway settings override local dotenv defaults', () => {
   const previousGatewayUrl = process.env.EXPO_PUBLIC_GATEWAY_URL;
-  const previousGatewayToken = process.env.FARMSLOT_GATEWAY_TOKEN;
+  const previousGatewayToken = process.env.FARMSLOT_REMOTE_GATEWAY_TOKEN;
   process.env.EXPO_PUBLIC_GATEWAY_URL = 'ws://localhost:7801/ws';
-  process.env.FARMSLOT_GATEWAY_TOKEN = 'isolated-token';
+  process.env.FARMSLOT_REMOTE_GATEWAY_TOKEN = 'isolated-token';
   try {
     const config = createExpoConfig({
       config: {
@@ -131,7 +131,7 @@ test('Expo config lets isolated launcher gateway settings override local dotenv 
     assert.equal(config.extra?.gatewayAuthToken, 'isolated-token');
   } finally {
     restoreEnv('EXPO_PUBLIC_GATEWAY_URL', previousGatewayUrl);
-    restoreEnv('FARMSLOT_GATEWAY_TOKEN', previousGatewayToken);
+    restoreEnv('FARMSLOT_REMOTE_GATEWAY_TOKEN', previousGatewayToken);
   }
 });
 

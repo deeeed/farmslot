@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+import { automationGatewayTarget } from './lib/gateway-profile.mjs';
 // Read-only gateway proof. Start a packaged app with the isolated profile below,
 // CDP9497 and main inspector9498. Links are delivered by macOS, not injected into UI state.
 import assert from 'node:assert/strict';
@@ -18,7 +19,7 @@ const app = path.resolve('apps/command-center-desktop/release/mac-arm64/Farmslot
 const port = process.env.FARMSLOT_CDP_PORT ?? '9497';
 const inspector = process.env.FARMSLOT_DESKTOP_INSPECTOR_PORT ?? '9498';
 const gateway = process.env.FARMSLOT_GATEWAY ?? 'ws://127.0.0.1:7801';
-const token = process.env.FARMSLOT_GATEWAY_TOKEN;
+const token = (await automationGatewayTarget(gateway))?.credential.token;
 const runId = process.env.FARMSLOT_TEST_RUN_ID;
 const slotId = process.env.FARMSLOT_TEST_SLOT_ID;
 assert(token && runId && slotId, 'Set gateway token and real test run/slot IDs');

@@ -48,7 +48,6 @@ interface AppConfigEnv {
   GOOGLE_SERVICES_FILE: string;
   EXPO_PUBLIC_GATEWAY_URL: string;
   FARMSLOT_REMOTE_GATEWAY_URL: string;
-  FARMSLOT_GATEWAY_TOKEN: string;
   FARMSLOT_REMOTE_GATEWAY_TOKEN: string;
   EXPO_PUBLIC_SHERPA_ASR_MODEL_DIR: string;
   EXPO_PUBLIC_SHERPA_ASR_MODEL_ID: string;
@@ -64,7 +63,6 @@ const envSchema = Joi.object({
   GOOGLE_SERVICES_FILE: Joi.string().allow('').default(''),
   EXPO_PUBLIC_GATEWAY_URL: Joi.string().allow('').default(''),
   FARMSLOT_REMOTE_GATEWAY_URL: Joi.string().allow('').default(''),
-  FARMSLOT_GATEWAY_TOKEN: Joi.string().allow('').default(''),
   FARMSLOT_REMOTE_GATEWAY_TOKEN: Joi.string().allow('').default(''),
   EXPO_PUBLIC_SHERPA_ASR_MODEL_DIR: Joi.string().allow('').default(''),
   EXPO_PUBLIC_SHERPA_ASR_MODEL_ID: Joi.string().allow('').default(''),
@@ -140,7 +138,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     process.env.METRO_PORT,
     variant === 'development' && localFarmslotRuntime,
   );
-  const remoteGatewayToken = env.FARMSLOT_REMOTE_GATEWAY_TOKEN || env.FARMSLOT_GATEWAY_TOKEN;
+  const remoteGatewayToken = env.FARMSLOT_REMOTE_GATEWAY_TOKEN;
 
   return {
     ...config,

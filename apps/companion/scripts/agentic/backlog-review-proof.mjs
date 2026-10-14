@@ -4,10 +4,11 @@
 // Companion UI; these phases only own the fixture gateway and read its persisted state.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { testGatewayIdentity } from '../../../../scripts/lib/test-gateway-identity.mjs';
 
 import { openSimulatorDevClient } from './simulator-dev-client.mjs';
 
@@ -32,7 +33,8 @@ const evidence = (name, value) =>
 async function rpc(method, params = {}) {
   const state = readState();
   process.env.FARMSLOT_GATEWAY = `ws://127.0.0.1:${state.port}`;
-  process.env.FARMSLOT_GATEWAY_TOKEN = state.token;
+  process.env.FARMSLOT_HOME = path.join(state.fixture, 'home');
+  process.env.FARMSLOT_GATEWAY_PROFILE = 'proof';
   const { rpc: call } = await import(
     path.join(root, 'scripts/runner-validation/scenarios/native-worker-lifecycle.mjs')
   );
@@ -53,12 +55,11 @@ if (phase === 'setup') {
   assert(!fs.existsSync(statePath), `Run cleanup first; ${statePath} exists`);
   const fixture = path.join(proofDir, 'farm');
   const port = Number(process.env.COMPANION_PROOF_GATEWAY_PORT ?? 18791);
-  // A rerun can keep the token the Companion's saved proof profile already holds.
-  const token = process.env.COMPANION_PROOF_TOKEN ?? randomBytes(32).toString('hex');
   execFileSync('git', ['clone', '--shared', '--no-checkout', root, fixture], { stdio: 'pipe' });
   for (const name of ['scripts', 'services', 'packages'])
     fs.symlinkSync(path.join(root, name), path.join(fixture, name));
   fs.writeFileSync(path.join(fixture, 'CLAUDE.md'), '# Companion backlog proof fixture\n');
+  const token = testGatewayIdentity(path.join(fixture, 'home'), `ws://127.0.0.1:${port}`);
   const project = path.join(fixture, 'projects/companion-proof');
   for (const flow of ['dev', 'fix-bug']) {
     fs.mkdirSync(path.join(project, 'shared', flow), { recursive: true });
@@ -113,7 +114,7 @@ if (phase === 'setup') {
       FARMSLOT_BACKLOG_FILE: path.join(fixture, '.backlog.json'),
       GATEWAY_HOST: '127.0.0.1',
       GATEWAY_PORT: String(port),
-      FARMSLOT_GATEWAY_TOKEN: token,
+      FARMSLOT_GATEWAY_PROFILE: 'proof',
       FARMSLOT_DISABLE_ORCHESTRATION: '1',
       FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
     },

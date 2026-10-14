@@ -8,9 +8,9 @@
 // the runner. Nothing reads pane text.
 //
 // Run: yarn tsx scripts/runner-validation/gateway/linked-runner-pane.mts [evidence-dir]
+import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { closeSync, openSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
@@ -148,7 +148,7 @@ await json(path.join(fixture, '.farm-status.json'), {
 });
 
 const port = await freePort();
-const token = randomBytes(32).toString('hex');
+const token = testGatewayIdentity(path.join(fixture, 'home'), `ws://127.0.0.1:${port}`);
 const gateway = startWorkspaceProcess('@farmslot/gateway', 'gateway.log', {
   FARMSLOT_ROOT: fixture,
   FARMSLOT_HOME: path.join(fixture, 'home'),
@@ -158,7 +158,7 @@ const gateway = startWorkspaceProcess('@farmslot/gateway', 'gateway.log', {
   FARMSLOT_DISPATCH_QUEUE_FILE: path.join(fixture, 'queue.json'),
   GATEWAY_HOST: '127.0.0.1',
   GATEWAY_PORT: String(port),
-  FARMSLOT_GATEWAY_TOKEN: token,
+  FARMSLOT_GATEWAY_PROFILE: 'proof',
   FARMSLOT_DISABLE_ORCHESTRATION: '1',
   FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
 });

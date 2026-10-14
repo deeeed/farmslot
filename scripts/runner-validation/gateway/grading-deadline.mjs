@@ -19,6 +19,8 @@ import { fileURLToPath } from 'node:url';
 
 import { FLOW_STEPS } from '@farmslot/protocol';
 
+import { testGatewayIdentity } from '../../lib/test-gateway-identity.mjs';
+
 const sourceRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'farmslot-grading-deadline-'));
 const root = path.join(temporaryRoot, 'root');
@@ -142,7 +144,8 @@ process.stdout.write(JSON.stringify({ result: JSON.stringify({ summary: 'Correct
     GATEWAY_HOST: '127.0.0.1',
     GATEWAY_PORT: String(port),
     FARMSLOT_GATEWAY: `ws://127.0.0.1:${port}`,
-    FARMSLOT_GATEWAY_TOKEN: randomUUID(),
+    FARMSLOT_GATEWAY_PROFILE:
+      (testGatewayIdentity(path.join(temporaryRoot, 'home'), `ws://127.0.0.1:${port}`), 'proof'),
     FARMSLOT_GATEWAY_PASSWORD: '',
     FARMSLOT_RPC_TIMEOUT_MS: '30000',
     CODEX_LB_API_KEY: 'synthetic-grading-proof-key',

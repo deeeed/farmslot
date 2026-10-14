@@ -10,6 +10,20 @@ import { fileURLToPath } from 'node:url';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+// Both the platform matrix and owner cases read generated plists on Linux CI.
+const readRenderedPlist = (file) =>
+  JSON.parse(
+    execFileSync(
+      'python3',
+      [
+        '-c',
+        'import plistlib,json,sys; print(json.dumps(plistlib.load(open(sys.argv[1],"rb"))))',
+        file,
+      ],
+      { encoding: 'utf8' },
+    ),
+  );
+
 // A checkout copy holding the deploy script, the worker prefix it reads, and
 // the workspace packages the node bundles. It is removed when its scope (a test,
 // or the file for a shared one) ends, however that ends.
@@ -97,6 +111,11 @@ case $command in
   *'which yarn'*) echo no ;;
   'test -d '*) exit 1 ;;
   'test -f '*.plist*) [[ $RENDER_CAPTURE_MODE =~ ^(retained|missing-key|corrupt)$ ]] ;;
+  '/usr/bin/plutil -extract EnvironmentVariables.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID '*)
+    printf '%s\n' "$command" >> "$RENDER_ROOT/native-owner-probes"
+    [ -n "$RENDER_NATIVE_OWNER" ] || exit 1
+    [[ $command == *' -o /dev/null '* ]] || printf '%s\n' "$RENDER_NATIVE_OWNER"
+    ;;
   '/usr/bin/plutil -lint '*) [ "$RENDER_CAPTURE_MODE" != corrupt ] ;;
   '/usr/bin/plutil -extract '*) [ "$RENDER_CAPTURE_MODE" = retained ] && echo /opt/homebrew/bin/capture-helper ;;
 esac
@@ -169,17 +188,7 @@ for (const platform of ['Darwin', 'Linux']) {
         let args;
         let servicePath;
         if (platform === 'Darwin') {
-          const document = JSON.parse(
-            execFileSync(
-              'python3',
-              [
-                '-c',
-                'import plistlib,json,sys; print(json.dumps(plistlib.load(open(sys.argv[1],"rb"))))',
-                path.join(output, 'service.plist'),
-              ],
-              { encoding: 'utf8' },
-            ),
-          );
+          const document = readRenderedPlist(path.join(output, 'service.plist'));
           assert.equal(
             document.EnvironmentVariables.CAPTURE_HELPER_PATH,
             captureMode === 'override'
@@ -799,16 +808,20 @@ test('deploy-node runs the native check through the login shell and still refuse
   assert.deepEqual(fixture.systemctl(), []);
 });
 
-// Without --node-token-file the service carries FARMSLOT_GATEWAY_TOKEN as its
-// node token, so that is what an env file must match.
+// Without --node-token-file the service uses only an explicit node credential.
 for (const [held, deploys] of [
-  ['fixture-operator-secret', true],
-  ['fixture-node-credential', false],
+  ['fixture-node-credential', true],
+  ['different-node-credential', false],
 ]) {
-  test(`deploy-node checks a gateway-token-only deploy against that token (${deploys ? 'matching' : 'differing'} file)`, (t) => {
+  test(`deploy-node checks a node-token-only deploy against that token (${deploys ? 'matching' : 'differing'} file)`, (t) => {
     const fixture = cliFixture(t);
     fixture.write('home/farmslot-node/.env.local-auth', `FARMSLOT_NODE_TOKEN=${held}\n`);
-    const deploy = () => fixture.deploy({ machine: localMachine(), nodeTokenFile: false });
+    const deploy = () =>
+      fixture.deploy({
+        machine: localMachine(),
+        nodeTokenFile: false,
+        env: { FARMSLOT_NODE_TOKEN: 'fixture-node-credential' },
+      });
     if (deploys) {
       assert.match(deploy(), /checking for an env file that shadows the node token/);
       assert.ok(fixture.systemctl().some((line) => line.includes('restart farmslot-node')));
@@ -1159,3 +1172,48 @@ test('deploy-node fails with the fix when the node has only a Yarn 1 and no core
   assert.equal(fs.existsSync(fixture.snapshot), false);
   assert.deepEqual(fixture.snapshotInstalls(), []);
 });
+
+for (const [name, explicit, expected, instance] of [
+  ['retained prod', undefined, 'retained-owner', 'prod'],
+  ['retained dev', undefined, 'retained-owner', 'dev'],
+  ['explicit replacement', 'new-owner', 'new-owner', 'dev'],
+  ['explicit disable', '', undefined, 'dev'],
+]) {
+  test(`deploy-node preserves existing native enrollment: ${name}`, (t) => {
+    const root = sharedRenderCheckout();
+    const output = fs.mkdtempSync(path.join(os.tmpdir(), 'node-deploy-native-owner-'));
+    t.after(() => fs.rmSync(output, { recursive: true, force: true }));
+    const env = {
+      ...process.env,
+      PATH: `${root}/bin:${process.env.PATH}`,
+      RENDER_ROOT: output,
+      RENDER_OS: 'Darwin',
+      RENDER_CAPTURE_MODE: 'retained',
+      RENDER_NATIVE_OWNER: 'retained-owner',
+      FARMSLOT_NODE_PATH: '/opt/node/bin/node',
+      FARMSLOT_NODE_INSTANCE: instance,
+      CAPTURE_HELPER_PATH: '',
+    };
+    if (explicit === undefined) delete env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = explicit;
+    execFileSync(
+      'bash',
+      [
+        path.join(root, 'scripts/deploy-node.sh'),
+        'fixture-machine',
+        '127.0.0.1',
+        '--node-token-file',
+        path.join(root, 'node-token'),
+      ],
+      { cwd: root, env, stdio: 'pipe' },
+    );
+    const document = readRenderedPlist(path.join(output, 'service.plist'));
+    assert.equal(document.EnvironmentVariables.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID, expected);
+    assert.equal(document.ProgramArguments[1] === '-lc', Boolean(expected));
+    const probes = path.join(output, 'native-owner-probes');
+    if (explicit === undefined) {
+      const query = fs.readFileSync(probes, 'utf8');
+      assert.ok(query.includes(`com.farmslot.node${instance === 'dev' ? '.dev' : ''}.plist`));
+    } else assert.equal(fs.existsSync(probes), false);
+  });
+}

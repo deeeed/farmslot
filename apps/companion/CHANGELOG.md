@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Remove the generic gateway-token fallback from automation configuration.
+
 - Show authenticated visual claim reviews through the shared evidence model.
 
 - Use the shared run evidence contract in package status and recovery guidance.

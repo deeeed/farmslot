@@ -1,9 +1,66 @@
 # Principal Core Implementation Spec
 
-**Status:** proposed implementation spec
+**Status:** Accepted; credential consolidation amendment approved 2026-10-14
 **Supports:** [ADR-051](../adr/051-principal-and-credential-model.md), [ADR-036](../adr/036-cli-gateway-profiles.md), [ADR-046](../adr/046-mandatory-local-node.md)
 
 ## Summary
+
+### Credential consolidation contract, 2026-10-14
+
+This section governs the current implementation and replaces the environment
+authentication and retirement rules in this specification. The
+[operator reference](../reference/identity-and-credentials.md) owns login,
+rotation and recovery instructions; ADR-051 Amendment 1 owns this decision.
+
+1. Credential origins are `issued` and `paired`. Authentication accepts only
+   the `fs_<credential-id>_<secret>` token grammar, resolves its credential and
+   principal live, and rejects revoked or missing records. No process or
+   checkout environment secret authenticates a caller or creates a principal.
+2. CLI clients select credentials from a gateway profile matching the target
+   URL. A missing profile credential cannot borrow a secret from an environment
+   variable or checkout file. Scripts use an explicitly selected automation or
+   isolated test profile. Nodes use only `FARMSLOT_NODE_TOKEN` and cannot perform
+   person/service operations, including HTTP file downloads.
+3. Only a person may provide human attestations. Service principals automate
+   farm work. Nodes remain bound to a machine with no role bindings. The
+   deployment end state has one active credential per node and one for the named
+   automation service; person devices pair separately.
+4. `principal.retire` takes `{ principalIds: string[] }` and returns
+   `{ principalIds: string[], credentialIds: string[] }`. It is admin-only.
+   The CLI exposes `principal retire <id...> [--offline]` to the credential
+   operator. The owning writer validates ids, refuses virtual ids, requires all
+   selected principals to exist and all their credentials to be revoked,
+   refuses any remaining node assignment to a selected owner, and keeps at least
+   one active admin credential. It commits the whole retirement under the
+   existing `credentials.lock` and invalidates deleted references.
+5. The store retains `retiredPrincipalIds` and `retiredCredentialIds` as id-only
+   tombstone arrays. Absent arrays mean empty for a store with no retirements.
+   Creation and issuance cannot reuse those ids. Historic authorship is retained
+   without creating an alias to another principal. Unowned work remains
+   unproven and requires explicit re-authoring before scheduling.
+6. Offline retirement acquires the credential lock, proves no gateway sharing
+   the identity home is live, and performs the same transaction. For cutover,
+   it reads the selected revoked records without accepting their former origin
+   as a runtime credential type. It validates the complete result against the
+   current schema before writing. It cannot remove an active record, clear
+   activation, modify a surviving principal or credential, or silently repair
+   malformed surviving data. Failed validation leaves the store unchanged.
+7. Native ownership stays immutable. Re-enroll a replacement node, verify its
+   credential and transfers, revoke and retire the old node, then bind the new
+   node to its owner. Never overwrite a live owner binding to enable retirement.
+8. Proof covers actual authenticated gateway calls, node-only denials, profile
+   routing with environment secrets absent, revocation and retirement effects,
+   id reuse refusal, offline quiescence, last-admin refusal and recovery. Tests
+   use isolated homes and service/node credentials. Live personal pairing is an
+   operator step; automation never handles the person's secret.
+
+#### Public surface
+
+`@farmslot/credential-store` exports the locked writer retirement and offline
+retirement operation to `@farmslot/gateway` and `@farmslot/cli`.
+`@farmslot/protocol` exports the retirement params/result used by both callers.
+The CLI, gateway and scripts ship together; harnesses use the inherited profile
+and node authorization contract without an authentication extension.
 
 This spec derives the **principal core** from ADR-051: the identity and credential types, the
 credential store with its two coordination mechanisms, secret handling, principal resolution with
@@ -17,28 +74,27 @@ methods, node-subject enforcement, pairing changes, and work-item provenance are
 [Boundaries](#boundaries).
 
 The store is scoped to one `FARMSLOT_HOME` while gateways are per-root and per-port, and that
-asymmetry shapes three designs below: short-lived write locking, additive-only environment
-reconciliation, and change-based freshness. Each is noted where it applies.
+asymmetry shapes three designs below: short-lived write locking, explicit offline retirement, and change-based freshness. Each is noted where it applies.
 
 Where this spec and ADR-051 differ, the ADR governs.
 
 ## ADR sections implemented
 
-| ADR section                                        | What this spec derives                                                             |
-| -------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| §1 Principals, subjects, and role bindings         | `Principal`, `PrincipalSubject`, `Role`, `RoleBinding`, `RoleScope`                  |
-| §1 Virtual principals                              | `local-admin` and `local-node`; the reserved-id rule for all virtual principals      |
+| ADR section                                        | What this spec derives                                                                |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| §1 Principals, subjects, and role bindings         | `Principal`, `PrincipalSubject`, `Role`, `RoleBinding`, `RoleScope`                   |
+| §1 Virtual principals                              | `local-admin` and `local-node`; the reserved-id rule for all virtual principals       |
 | §2 One identity domain per `FARMSLOT_HOME`         | Every store-adjacent path resolving through `farmslotHome()`                          |
-| §2 Credentials and storage                         | `CredentialRecord`, `StoredSecret`, `CredentialStore`, `schemaVersion`               |
-| §2 Store (permissions, atomicity, write exclusion) | The store module, `credentials.lock`, and the fail-closed load contract              |
-| §2 Secret handling                                 | Entropy, wire format, the boot-secret path, `scrypt-v1`, constant-time comparison    |
-| §2 Presenting a credential over the wire           | Store resolution replacing the single configured-value comparison                    |
+| §2 Credentials and storage                         | `CredentialRecord`, `StoredSecret`, `CredentialStore`, `schemaVersion`                |
+| §2 Store (permissions, atomicity, write exclusion) | The store module, `credentials.lock`, and the fail-closed load contract               |
+| §2 Secret handling                                 | Entropy, wire format, `scrypt-v1`, constant-time comparison                           |
+| §2 Presenting a credential over the wire           | Store resolution replacing the single configured-value comparison                     |
 | §2 Revocation and invalidation 1-3                 | `AuthenticationRef`, live lookup, session invalidation, verification cache, freshness |
-| §3 Activation latch (`activatedAt`)                | The stored latch and the writes that set it                                          |
-| §3 Two write mechanisms                            | `credentials.lock` for atomicity; the gateway presence marker for quiescence         |
-| §3 Last-admin invariant                            | A running gateway's store writer refusal, evaluated against freshly read state       |
-| §3 Legacy environment auth                         | Additive-only reconciliation to an `env-migrated` admin credential                   |
-| §7 Writer-side revoke primitives                   | Credential and role revocation on the writer, per §7's boundary note                 |
+| §3 Activation latch (`activatedAt`)                | The stored latch and the writes that set it                                           |
+| §3 Two write mechanisms                            | `credentials.lock` for atomicity; the gateway presence marker for quiescence          |
+| §3 Last-admin invariant                            | A running gateway's store writer refusal, evaluated against freshly read state        |
+| Amendment 1 Credential consolidation               | Explicit profile authentication and retirement without environment identity           |
+| §7 Writer-side revoke primitives                   | Credential and role revocation on the writer, per §7's boundary note                  |
 
 Not implemented here, though the sections are adjacent: §2 invariant 4 (outbound filtering), §4, §5,
 §6, and the rest of §7.
@@ -94,15 +150,15 @@ interface CredentialRecord {
   principalId: string;
   displayName: string;
   secret: StoredSecret;
-  origin: 'issued' | 'paired' | 'env-migrated';
+  origin: 'issued' | 'paired';
   createdAt: string;
   revokedAt: string | null;
 }
 
 interface StoredSecret {
   scheme: 'scrypt-v1';
-  salt: string;   // base64
-  hash: string;   // base64
+  salt: string; // base64
+  hash: string; // base64
 }
 
 interface CredentialStore {
@@ -110,11 +166,13 @@ interface CredentialStore {
   activatedAt: string | null;
   principals: Principal[];
   credentials: CredentialRecord[];
+  retiredPrincipalIds?: string[];
+  retiredCredentialIds?: string[];
 }
 ```
 
-Every field is required. `revokedAt === null` means active; revocation writes a tombstone and never
-deletes the record, so a re-used id cannot resurrect access. `createdAt` is the rotation-age signal.
+Retired-id arrays are optional and default to empty; all other fields are required. `revokedAt === null` means active; revocation writes a tombstone and never
+deletes an active record. Explicit retirement removes revoked records and keeps their ids as tombstones so a re-used id cannot resurrect access. `createdAt` is the rotation-age signal.
 Timestamps are **ISO-8601 UTC** strings — a ruled choice, because the store is read by whichever
 deployment in the domain opens it next.
 
@@ -152,7 +210,7 @@ separation mechanism and it already exists.
 substitutes for the other. Both live in `FARMSLOT_HOME` because the store does, and because the
 gateway singleton lock cannot serve either: `acquireGatewaySingletonLock()` writes
 `<farmslotRoot>/.runs/gateway-<PORT>.pid` (`services/gateway/src/index.ts:100-144`), scoped per root
-*and* per port, while `credentials.json` is shared across all of them.
+_and_ per port, while `credentials.json` is shared across all of them.
 
 ### New: `services/gateway/src/security/credential-store-lock.ts` — write exclusion
 
@@ -242,7 +300,7 @@ existing `security/` folder.
 **Load.** `loadCredentialStore(path)`:
 
 - File absent → return the empty store `{ schemaVersion: 1, activatedAt: null, principals: [],
-  credentials: [] }` without writing anything. No file exists until the first mutation. This matches
+credentials: [] }` without writing anything. No file exists until the first mutation. This matches
   `loadProfiles()` (`gateway-profiles.ts:33-54`), which returns `{ gateways: {} }` for an absent file.
 - Parse failure, non-object shape, or a record failing structural validation → throw naming the file,
   as `loadProfiles` does at `gateway-profiles.ts:38-52`. The gateway does not start.
@@ -290,7 +348,7 @@ one was present, or present where absent, counts as a difference. This is the "c
 on store identity and modification metadata" §2 invariant 3 requires.
 
 **Lazy freshness alone cannot satisfy invariant 2, so detection is also proactive.** `ensureFresh()`
-runs on request-driven paths, and a subscription is a *push* stream: after an external writer revokes
+runs on request-driven paths, and a subscription is a _push_ stream: after an external writer revokes
 a credential or changes a binding, the affected session may never make another request, so no
 authorization decision ever occurs and its subscription keeps delivering. The gateway therefore also
 **polls** the store on an interval, running the same `ensureFresh()` and, on a detected change,
@@ -298,7 +356,7 @@ invalidating sessions as described under Session invalidation.
 
 **A poll rather than a watch, and the reason is this node's own write mechanism.** Every write lands
 by `rename`, which replaces the file's inode. An `fs.watch` handle bound to the store path keeps
-watching the *old* inode and stops seeing changes after the first external write — the failure would
+watching the _old_ inode and stops seeing changes after the first external write — the failure would
 be silent and would look exactly like "no writes happened". Watching the containing directory avoids
 that but trades it for platform-inconsistent event delivery and coalescing, and `FARMSLOT_HOME` also
 holds the lock and presence entries, so directory events are noisy in a way that has nothing to do
@@ -306,7 +364,7 @@ with the store. A `statSync` poll is one code path shared with the lazy check, h
 problem because it re-stats the path each time, and bounds staleness deterministically.
 
 **The interval is a security parameter, and the specified value is 2 seconds.** It is not a tuning
-knob: the interval *is* the bound on how long a revoked credential's or demoted principal's
+knob: the interval _is_ the bound on how long a revoked credential's or demoted principal's
 subscription may continue receiving push events, because on an otherwise idle session the poll is the
 only thing that will ever notice. Raising it to five minutes would leave revoked authority receiving
 events for five minutes. **Changing this value changes the invalidation guarantee, so it is a change
@@ -317,13 +375,13 @@ two must not be read as the same kind of value.
 
 **The window is inherent to detection by polling, not introduced here.** Any polled detector has one;
 a watch-based mechanism would bound it by event-delivery latency instead, which is usually smaller
-but — for the inode reason above — not reliably *present* after a rename. Choosing the poll accepts a
+but — for the inode reason above — not reliably _present_ after a rename. Choosing the poll accepts a
 known, stated, testable bound over an unstated one that can silently become infinite.
 
 **Invalidation is change-based, not authorship-based.** A gateway that invalidated only on its own
 writes would keep serving revoked authority after any external write — another gateway's or an
 offline operation's — because the store is shared across the identity domain. So the projection is invalidated on this
-gateway's own writes *and* whenever `ensureFresh()` observes a change underneath it.
+gateway's own writes _and_ whenever `ensureFresh()` observes a change underneath it.
 
 **Reads (used by resolution).** Each is called after `ensureFresh()` on the resolution paths below.
 
@@ -351,7 +409,7 @@ the writer and must be provable before any handler can reach it.
 **Two invariants bracket activation, and both live on the writer.** §3 reaches "activated with no
 active admin credential" two ways and closes both here.
 
-**The dual mint closes the first way.** A *first* issuance that mints only a non-admin credential
+**The dual mint closes the first way.** A _first_ issuance that mints only a non-admin credential
 would latch activation while leaving no admin, so an operator could authenticate and nobody could
 manage the store. §3 calls the dual mint "a correctness requirement, not a convenience", so
 `issueCredential` may not complete an activation-latching issuance that leaves
@@ -391,7 +449,7 @@ Each successful mutation calls the invalidation hook below before returning.
 - `formatCredentialWire(credentialId, secret): string` — `` `fs_${credentialId}_${secret}` ``.
 - `parseCredentialWire(presented): { credentialId, secret } | null` — requires the `fs_` prefix, then
   splits at the **first** `_` after it. The remainder is the secret verbatim, so a base64url secret
-  containing `_` parses correctly. Anything else returns `null`, which routes to the boot-secret path.
+  containing `_` parses correctly. Anything else returns `null` and authentication is refused.
 - `hashSecret(secret): StoredSecret` — `scheme: 'scrypt-v1'`, `salt` = 16 random bytes, `hash` =
   `scrypt(secret, salt, 32, { N: 32768, r: 8, p: 1, maxmem: 67108864 })`. `maxmem` is set explicitly
   because `128 · N · r` is exactly 32 MiB and sits on Node's default boundary. Both fields are
@@ -402,10 +460,11 @@ Each successful mutation calls the invalidation hook below before returning.
   derive a key from `presented` with the stored salt and the pinned parameters and compare with
   `timingSafeEqual`.
 
-  **The length check is explicit, not structural.** `timingSafeEqual` *throws* on buffers of
+  **The length check is explicit, not structural.** `timingSafeEqual` _throws_ on buffers of
   differing length rather than returning false, and `StoredSecret` fields are read from a file that
   can be corrupted or attacker-influenced — so treating `dkLen` as guaranteed by construction would
   turn a malformed record into an exception on the authentication path instead of a clean denial.
+
 - `safeEqualSecret(actual, expected): boolean` — moved here unchanged from `auth.ts:271-281`. See the
   `auth.ts` entry below for why it survives.
 
@@ -447,7 +506,7 @@ matter what is cached.
 ### New: `services/gateway/src/security/principal-resolver.ts`
 
 The single place that answers "who is this". **Every entry point calls `ensureFresh()` first.** §2
-invariant 3 places that check before *any* authority resolution rather than only before credential
+invariant 3 places that check before _any_ authority resolution rather than only before credential
 verification: an established session authenticates once and then resolves authority on each request
 without re-verifying a secret, so a check sitting only in front of the cache would never run for it,
 and another writer's revocation would never reach it.
@@ -458,62 +517,19 @@ type PrincipalResolution =
   | { ok: false; reason: 'no_credential' | 'revoked' | 'missing_principal' | 'secret_mismatch' };
 ```
 
-**`resolveSecret(presented: string, transport: 'token' | 'password'): PrincipalResolution`** — the
-authentication path. §2 states one rule with one stated exception, and the transport argument is what
-keeps the exception from widening.
+**`resolveSecret(presented: string, transport: 'token' | 'password'): PrincipalResolution`**
+resolves only issued or paired token credentials. Password transport is always refused.
 
-**Transport is part of the rule, not an implementation detail.** §2 puts a credential's secret in the
-`token` field and says password mode stays legacy-only, reachable only through the env-configured
-admin path of §3, with no credential ever issued in password mode. So:
+1. Call `ensureFresh()`.
+2. Refuse any transport except `token` before consulting the cache.
+3. Consult the verification cache. A hit yields only a credential id.
+4. Otherwise parse the credential wire format and look up its embedded id. Refuse malformed
+   or raw values; no environment value or boot mapping participates.
+5. Refuse revoked records and missing principals on both cache hits and misses.
+6. On a cache miss, verify the secret with the stored KDF hash, then cache only the id.
+7. Return the live principal and `{ kind: 'credential', credentialId }`.
 
-- **`token`** resolves issued and paired credentials by their embedded id, and falls through to the
-  boot-secret path for a non-prefixed value (an environment token).
-- **`password`** resolves the boot-secret path **only**, and only when this gateway's boot secret came
-  from `FARMSLOT_GATEWAY_PASSWORD`. A `fs_`-prefixed value presented as `password` is refused without
-  any lookup — an issued credential must never authenticate through password transport.
-
-**Transport validation precedes the cache, always.** The verification cache answers "is this secret
-valid", never "may this secret arrive this way" — it is keyed by the secret alone and knows nothing
-about transport, so consulting it first would let a credential verified once through `token`
-authenticate thereafter through `password`. The step order below is therefore normative, and an
-implementer may not reorder steps 2 and 3.
-
-1. `ensureFresh()`.
-2. **Transport validation, before any cache or store access.** A `fs_`-prefixed value presented with
-   `transport === 'password'` is refused here and goes no further. So is any `password` presentation
-   when this gateway's boot secret did not come from `FARMSLOT_GATEWAY_PASSWORD`, since password mode
-   is reachable only through that env-configured path. Neither refusal consults the cache, and
-   neither depends on whether the secret would otherwise have verified.
-3. Consult the verification cache. A hit yields a credential id and skips to step 6.
-4. `parseCredentialWire(presented)`. On a match — an issued or paired credential — look up that one
-   credential id. A single record lookup, which is what the embedded id buys.
-5. On no match, the presented value may be this gateway's environment secret. Compare it with
-   `safeEqualSecret` against the **boot-time environment secret** held for the process lifetime, and
-   resolve to the single credential reconciled at boot. No scan and no `scrypt` on this path, so no
-   timing surface across records.
-6. `revokedAt !== null` → `{ ok: false, reason: 'revoked' }`.
-7. `principalId` resolving to no principal → `{ ok: false, reason: 'missing_principal' }`. §2:
-   missing principal fails closed.
-8. `verifySecret` failure → `{ ok: false, reason: 'secret_mismatch' }`. On success, populate the
-   cache. Step 5 has already compared its own value and does not re-verify.
-9. Success → the principal and `{ kind: 'credential', credentialId }`.
-
-Steps 6 and 7 run on a cache hit as well as a miss, and on the boot-secret path as well as the
-prefixed one. That ordering is the invariant: nothing skips transport validation, and nothing skips
-the revocation and principal checks.
-
-**The boot-secret path narrows deliberately.** `env-migrated` credentials accumulate across roots and
-rotations under additive-only reconciliation, so "there is at most one" is not available as a bound.
-Binding the path to this gateway's own configured secret bounds it structurally instead. The
-consequence belongs in code comments and operator-facing docs: **an `env-migrated` credential is
-presentable only to a gateway configured with that secret.** Other roots' migrated credentials remain
-valid records in the store but are not authenticable through this gateway, which is correct rather
-than unfortunate — the environment variable *is* that credential's presentation mechanism, and a
-gateway never given it has no way to know it. A gateway with no environment secret resolves no
-non-prefixed secret at all.
-
-If the boot credential is revoked while the gateway runs, step 5 denies it on the next request like
-any other; the boot mapping is a lookup shortcut, never an authority.
+Transport validation, revocation and principal lookup must run even on a warm cache.
 
 **`resolveSessionPrincipal(session): PrincipalResolution`** — the per-check path, called on every
 authorization decision rather than once per session:
@@ -531,15 +547,15 @@ another gateway or by an offline operation reaches this session at step 1.
 
 **Virtual principals** are constructed values with no stored record, exactly as §1's table specifies:
 
-| id            | subject                                                       | roles                                            |
-| ------------- | ------------------------------------------------------------- | ------------------------------------------------ |
-| `local-admin` | `{ type: 'person', displayName: 'local' }`                    | `[{ role: 'admin', scope: { kind: 'global' } }]` |
+| id            | subject                                                        | roles                                            |
+| ------------- | -------------------------------------------------------------- | ------------------------------------------------ |
+| `local-admin` | `{ type: 'person', displayName: 'local' }`                     | `[{ role: 'admin', scope: { kind: 'global' } }]` |
 | `local-node`  | `{ type: 'node', displayName: <machine>, machine: <machine> }` | `[]` — subject-authorized                        |
 
 They carry real role bindings, so authorization code sees an ordinary `Principal` and has no
 virtual-principal branch.
 
-**Reserved ids are one rule, not a list of cases.** §1 reserves *every* virtual principal's id and
+**Reserved ids are one rule, not a list of cases.** §1 reserves _every_ virtual principal's id and
 extends that to any virtual principal added later. The resolver therefore exports a single
 `VIRTUAL_PRINCIPAL_IDS` constant, and `createPrincipal` refuses any id in it. The constant today is
 `['local-admin', 'local-node', 'system']`. `system` appears even though this node never constructs it
@@ -570,7 +586,7 @@ a solo session.
 
 **Activation is shared by the identity domain, and the implementation should expect that rather than
 treat it as a fault.** `activatedAt` is stored, and the store is one per `FARMSLOT_HOME`, so issuing
-a credential from one deployment latches activation for *every* deployment sharing that home: their
+a credential from one deployment latches activation for _every_ deployment sharing that home: their
 `local-admin` and `local-node` stop resolving, and their co-launched nodes need issued credentials
 per §6. A gateway that was never given a secret and binds only to loopback can therefore leave solo
 mode because a different deployment activated. That is shared domain, shared activation — the same
@@ -578,114 +594,29 @@ rule as shared principals, seen from the lifecycle side. **A deployment that nee
 lifecycle sets its own `FARMSLOT_HOME`**, which is the separation mechanism §2 already describes,
 applied to activation rather than to identity.
 
-### New: `services/gateway/src/security/env-credential-migration.ts`
+### Gateway authentication and explicit retirement
 
-Runs once at gateway start, after the store loads, before the server accepts connections. §3 makes
-reconciliation **additive only**: one action, one prohibition, one report.
+Gateway startup loads the credential store without importing any environment token or password.
+`resolveGatewayAuth` derives token mode from the activation latch. Unactivated loopback-only
+homes may use solo mode; environment values cannot activate a home or create a principal.
 
-- **If the current environment secret has no active `env-migrated` credential, migrate it** — create
-  one. Retain `{ secret, credentialId }` for the process lifetime as the boot mapping the
-  non-prefixed resolution path uses.
-- **Never revoke any credential on the basis of an environment value, in any case.** Not on rotation,
-  not on removal, not on mismatch.
-- **Report at boot any other active `env-migrated` credentials that do not match the current
-  environment**, naming explicit revocation as the way to remove them.
+`authenticateGatewayClient` accepts issued/paired tokens, preserves remote rate limiting and
+loopback exemption when proxy headers are not trusted, and rejects password presentation.
+Resolution failures use `credential_mismatch` without revealing whether an id exists.
 
-**The reason is a limit on what the gateway can know**, and carrying it into the code comments keeps
-the rule from reading as arbitrary. Deployments sharing an identity domain share one credential
-store, while each loads its own `.env.local-auth`: `services/gateway/src/index.ts:173-188` reads it
-from `resolve(farmslotRoot, name)`, and `ensureTokenAuthEnv()`
-(`packages/cli/src/commands/up.ts:190-212`) mints a fresh `FARMSLOT_GATEWAY_TOKEN` into each root's
-copy. That is how two deployments in one domain come to present different secrets, and it means **a
-gateway cannot distinguish "the operator rotated this secret" from "this is a different deployment's
-secret in the same domain"** — both present as a mismatch against the store. Inferring revocation
-from an ambiguity the system cannot resolve would let one deployment silently disable another's
-access, and it would thrash: migrate deployment A's secret, start B and revoke A's, return to A and
-revoke B's, indefinitely.
+`getHttpCredential` accepts Bearer, token query parameters for header-incapable resources, and
+`farmslot_gateway_credential` cookies. Basic, password query parameters and password cookies
+are refused. HTTP authority still delegates to the shared authorization contract; node credentials
+cannot read files through the person/service HTTP route.
 
-Reconciliation therefore only ever adds, and revocation is always explicit — the tombstone-only model
-§2 already establishes, applied to the one path tempted to deviate from it. There is consequently
-**no ordering hazard to manage**: a rule that never revokes cannot pass through a zero-admin state.
+`requireAuthenticatedSession` resolves the current principal for every request. The rate limiter,
+request-IP rules and solo-mode exposure protections remain in force. No raw-secret comparator
+or environment-reconciliation writer is part of authentication.
 
-**First migration**, when the current secret has no credential, creates a `service` principal with a
-single `{ role: 'admin', scope: { kind: 'global' } }` binding, creates a credential over it with
-`origin: 'env-migrated'` whose `secret` is `hashSecret(<env secret>)`, and sets `activatedAt` if
-unset. The principal's display name is **`legacy-env`**, a ruled choice satisfying §1's only
-constraint that it not collide with `system`. The environment secret keeps authenticating because it
-*is* that credential.
-
-This is an issuance, so the dual-mint invariant applies to it like any other: migrating an
-environment secret creates an admin-bound principal, so a first migration cannot latch activation
-without an admin. That falls out rather than needing a special case — the migrated principal already
-carries `{ role: 'admin', scope: { kind: 'global' } }`.
-
-The boot report uses §3's text, because the surprise would otherwise run in the dangerous direction —
-an operator who changes or unsets the variable expecting access to follow:
-
-```
-FARMSLOT_GATEWAY_TOKEN does not match any active credential; migrated it as a new one.
-1 other active env-migrated credential does not match this environment — changing or
-unsetting the variable does not remove access.
-Next: to remove it, run
-  farmslot credential revoke <id>
-or stop every gateway and revoke offline.
-```
-
-Reconciliation is a single `withCredentialStoreLock` call, so principal and credential cannot
-half-apply — which is why §2 keeps identity and credentials in one file.
-
-### Changed: `services/gateway/src/security/auth.ts`
-
-- `GatewayAuthSession` (`:16-21`) gains `authentication?: AuthenticationRef`. The existing
-  `authenticated`, `clientKind`, `authMode`, and `authenticatedAt` fields stay: they record transport
-  and telemetry, not authority.
-- `GatewayAuthResult` (`:28-34`) gains `authentication?: AuthenticationRef` and
-  `principal?: Principal`, so the caller can stamp the session and report the resolution without a
-  second lookup.
-- `authenticateGatewayClient` (`:142-188`) keeps its signature, its loopback rate-limit exemption
-  (`:148-162`), and its failure reasons. Its comparison body changes: instead of comparing the
-  presented value against `auth.token`/`auth.password`, it calls `resolveSecret` **with the transport
-  the value arrived on** — `connectParams.token` as `'token'`, and `connectParams.password` as
-  `'password'`. It keeps the existing branch order, trying `token` first, so it never launders a
-  prefixed credential through the password branch. Failure records a rate-limit failure and returns
-  `{ ok: false, reason: 'credential_mismatch' }` — a resolution failure never distinguishes "no such
-  credential id" from "wrong secret" on the wire. Solo mode returns `{ ok: true, mode: 'none' }` with
-  no ref, as it does today for `auth.mode === 'none'` (`:164-167`).
-- `getHttpCredential` (`:300-315`) changes its return type from `string | undefined` to
-  `{ value: string; transport: 'token' | 'password' } | undefined`. It already knows which scheme it
-  matched; today it discards that and returns a bare string, which is what forces the caller to guess.
-- `authorizeHttpRequest` (`:222-231`) **sets exactly one of `token` and `password`, never both.**
-  Today it copies one extracted value into both fields, which launders an HTTP Basic credential into
-  the token branch and defeats the rule above. Each scheme maps to exactly one transport:
-
-  | HTTP scheme                                          | Transport  | Consequence                                            |
-  | ---------------------------------------------------- | ---------- | ------------------------------------------------------ |
-  | `Authorization: Bearer <secret>`                     | `token`    | issued, paired, and env-token credentials all resolve  |
-  | Query parameter `?token=<secret>`                    | `token`    | the Companion's image path, which cannot send headers  |
-  | Cookie `farmslot_gateway_credential`                 | `token`    | browser surfaces                                       |
-  | `Authorization: Basic <user:secret>` (password part) | `password` | legacy-only — an issued credential presented as Basic is refused |
-
-  The Basic row is the point of the table: it is the one HTTP scheme that maps to password transport,
-  so it reaches only the env-configured admin path of §3 and never an issued credential. The other
-  three are token transport, which is why the Companion's header-less image loads keep working
-  unchanged.
-- `requireAuthenticatedSession` (`:201-207`) replaces its `runtime.auth.mode === 'none'` short-circuit
-  with a solo-mode check, and otherwise requires that `resolveSessionPrincipal` succeed. This is the
-  freshness and live-lookup point on the request path.
-- `safeEqualSecret` (`:271-281`) **survives and moves to `credential-secret.ts`**. Its callers in the
-  token and password branches go away, but the boot-secret path needs exactly what it provides: the
-  presented value and the configured secret may differ in length, and its padding branch keeps that
-  comparison constant-time. `verifySecret` cannot serve there, because the boot-secret path compares
-  two raw values rather than derived keys.
-- `assertGatewayBindAllowed` (`:123-140`) is **unchanged**. Its rule — loopback without auth is fine,
-  non-loopback without auth is refused with an error naming the fix — is the principle §3 extends, not
-  a thing §3 replaces.
-- `authorizeHttpRequest` (`:216-235`) keeps its shape and continues to delegate to
-  `authenticateGatewayClient`, so HTTP credentials resolve against the store like WebSocket ones. Its
-  `auth.mode === 'none'` fast path (`:221`) becomes a solo-mode check. The verification cache is what
-  makes this path affordable; `ensureFresh()` is what keeps it correct.
-- `resolveGatewayAuth`, the rate limiter, `resolveRequestIp`, `getHttpCredential`, and the failure
-  responses are unchanged.
+The explicit `principal.retire` and offline CLI operation follow the consolidation contract above.
+Runtime loading refuses unknown credential origins. Only the offline retirement transaction may
+read a revoked record with an old origin, remove it with its selected principal, validate the complete
+surviving store and save it under the ordinary lock. This is a cutover operation, never authentication.
 
 ### Changed: `services/gateway/src/server/client-state.ts`
 
@@ -713,7 +644,7 @@ added — no principal, no roles, no cached authority.
 ### Changed: `services/gateway/src/index.ts`
 
 After the environment files load (`:173-188`) and before the auth runtime is built (`:201`): register
-the gateway presence entry, load the store, run environment reconciliation, register the invalidation
+the gateway presence entry, load the store, register the invalidation
 hook, and start the freshness poll. Deregister the presence entry and stop the poll on shutdown
 alongside the singleton lock release, including on the `SIGINT` and `SIGTERM` paths at `:164-171`.
 The poll's timer is unref'd so it never holds the process open by itself.
@@ -747,12 +678,12 @@ invalidate sessions in this node; none of them is deferred.
   sessions must re-authenticate and their subscriptions are closed. Solo sessions in particular must
   drop, because `local-admin` and `local-node` stop resolving at that moment.
 - **Role-binding change** → close every session whose resolved principal is the one whose bindings
-  changed. Closing takes the invariant's *close* arm, which this node can satisfy completely: closing
+  changed. Closing takes the invariant's _close_ arm, which this node can satisfy completely: closing
   the socket tears down that session's subscriptions with it, so a principal cannot keep receiving a
   surface its new bindings no longer permit.
 
 **Why closing rather than downgrading, stated so a later node does not read it as an oversight.** The
-invariant offers close *or* downgrade. Downgrading — keeping the session open and narrowing what it
+invariant offers close _or_ downgrade. Downgrading — keeping the session open and narrowing what it
 receives — is the better operator experience, but it requires per-principal outbound filtering of
 `broadcast` and `sendHello`, which is §2 invariant 4 and needs the authorization check that does not
 exist yet. Closing is the arm that is fully implementable now and is strictly the safer of the two,
@@ -782,7 +713,7 @@ fails for any reason is closed regardless of which set it fell in, which is the 
 
 **Closing is this node's work; filtering the content of a surviving session is not.** Downgrading —
 keeping a session open and narrowing what it receives — needs per-principal outbound filtering
-(§2 invariant 4). This node takes the invariant's *close* arm on every path, local and external
+(§2 invariant 4). This node takes the invariant's _close_ arm on every path, local and external
 alike, which discharges "including subscriptions" completely because a closed socket has none.
 
 ## Test obligations
@@ -813,32 +744,25 @@ Stated as behaviours to prove.
 
 - **An issued credential presented in the `password` field is refused**, and refused without a store
   lookup, even though the identical value in the `token` field authenticates. This is the property
-  that keeps password mode legacy-only.
+  that rejects password transport.
 - The same holds for a paired credential, since both carry the `fs_` prefix.
 - **Refusal survives a warm cache.** Authenticate the credential successfully through `token` so the
   verification cache holds it, then present the identical value through `password` and assert it is
   refused. This is the test that proves transport validation precedes the cache: a cache consulted
   first would return the credential id and authenticate it.
-- An environment password secret still authenticates in the `password` field, so the legacy path is
-  unbroken.
-- An environment token secret authenticates in the `token` field.
-- A gateway whose boot secret came from `FARMSLOT_GATEWAY_TOKEN` refuses that value presented as
-  `password`, so the boot-secret path does not become transport-agnostic.
+- Environment token and password values neither authenticate nor create an identity.
 
 **HTTP transport mapping**
 
 - Each scheme resolves on exactly the transport the table specifies: Bearer, query parameter, and
-  cookie as `token`; Basic as `password`.
+  cookie as `token`; Basic is refused.
 - **`authorizeHttpRequest` never populates both fields** — assert on the params it builds, since this
   is the laundering path and a behavioural test would pass while the bug is present.
 - **An issued credential presented as HTTP Basic is refused**, while the same credential presented as
   Bearer authenticates.
 - A Companion image request carrying `?token=<issued credential>` authenticates, so the header-less
   path keeps working.
-- An environment password secret presented as Basic authenticates, so the legacy HTTP path is
-  unbroken.
-
-**Store file properties**
+  **Store file properties**
 
 - After a save, the store file's mode is `0600` and its directory's is `0700`.
 - Saving over an existing file whose mode was widened restores `0600`.
@@ -872,12 +796,12 @@ Stated as behaviours to prove.
 
 - An offline operation is refused while any gateway's presence entry in this domain is live, and the
   error names each running gateway by root and port.
-- A gateway running under a *different* `FARMSLOT_HOME` does not block the operation.
+- A gateway running under a _different_ `FARMSLOT_HOME` does not block the operation.
 - **The registration race is closed.** Interleave a gateway registering its presence entry with an
   offline operation performing its presence check and read-modify-write, and assert the two outcomes
   are the only ones reachable: either the offline operation completes and the gateway registers
   afterwards, or the gateway registers first and the offline operation is refused. A gateway must
-  never register *between* the offline operation's check and its write. Drive it by holding each
+  never register _between_ the offline operation's check and its write. Drive it by holding each
   side at the point after acquiring `credentials.lock`, which is the interleaving the lock exists to
   close.
 - An offline operation succeeds when no live entry exists.
@@ -913,21 +837,11 @@ failure — the system keeps working, weaker.
 - Verification compares derived keys with `timingSafeEqual` — assert that the comparison is reachable
   only after the explicit length validation above, since a timing assertion is not reliable in a
   test.
-- **The raw boot-secret comparison is also constant-time by construction**: it is reachable only
-  through `safeEqualSecret`, whose padding branch keeps a length mismatch constant-time. Assert the
-  construction, and assert behaviourally that presented values both shorter and longer than the
-  configured secret fail without throwing.
+  **Raw secrets**
 
-**Boot-secret path**
-
-- A gateway configured with secret A authenticates A and resolves it to the credential reconciled at
-  boot.
-- **A gateway configured with secret A denies secret B**, even though B is an active `env-migrated`
-  credential in the same store — proving the narrowing is structural rather than incidental.
-- A gateway with no environment secret resolves no non-prefixed secret at all.
-- No `scrypt` derivation occurs on the boot-secret path — assert by counting invocations.
-- Revoking the boot credential while the gateway runs denies the environment secret on the next
-  request.
+- Non-prefixed values always fail credential resolution without a store scan.
+- Password presentation is refused before verification-cache lookup.
+- Changing or removing obsolete environment auth variables does not mutate the store.
 
 **Freshness**
 
@@ -937,7 +851,7 @@ failure — the system keeps working, weaker.
   session, then rewrite the store file directly — as a second gateway or an offline operation would,
   without invoking this gateway's invalidation hook — and assert the session's next authorization
   decision is denied, with no re-authentication and no local write. This is the test that proves the
-  cross-writer gap is closed: freshness must gate *authority resolution*, not merely verification, or
+  cross-writer gap is closed: freshness must gate _authority resolution_, not merely verification, or
   an established session would never observe the change.
 - The same for a role-binding change written externally: the next resolution reports the new bindings.
 - The same for an externally written activation latch: solo resolution stops.
@@ -953,13 +867,13 @@ failure — the system keeps working, weaker.
 **Activation dual mint**
 
 - **Issuing a first non-admin credential into an unactivated store yields a reachable admin.** After
-  the call, `activatedAt` is set, the requested operator credential is active, *and* an active admin
+  the call, `activatedAt` is set, the requested operator credential is active, _and_ an active admin
   credential exists over an owner principal — so the store is never activated with zero admins.
 - The second secret is returned to the caller exactly once, as `adminGrant`, and is not recoverable
   from the store afterwards.
 - Both credentials land in **one** write: an injected failure during the issuance leaves the store
   unactivated with neither credential, never activated with only the operator one.
-- Issuing a first *admin* credential mints exactly one credential — the dual mint triggers on the
+- Issuing a first _admin_ credential mints exactly one credential — the dual mint triggers on the
   absence of an admin, not on first issuance generally.
 - Issuing into an already-activated store that has an active admin mints exactly one credential.
 - The writer path is the one that carries this: an offline first issuance creating a non-admin alone
@@ -1014,25 +928,15 @@ invalidation hook, and **the subscribed session makes no request at any point**.
   for minutes. A change to the interval must therefore break this test, which is the point of
   pinning it.
 
-**Environment reconciliation**
+**Explicit retirement**
 
-- First boot with `FARMSLOT_GATEWAY_TOKEN` set and no store file: a `service` principal with an
-  `admin`/`global` binding exists, one credential with `origin: 'env-migrated'` exists, `activatedAt`
-  is set, and the raw environment token still authenticates.
-- The same holds for `FARMSLOT_GATEWAY_PASSWORD` presented in the `password` field.
-- The migrated principal's display name is not `system`.
-- Restarting with the same secret performs no write — the store file's contents are byte-identical.
-- **Rotation adds and revokes nothing**: restarting with a changed secret leaves the previous
-  `env-migrated` credential active and adds one for the new value.
-- **Removal revokes nothing**: restarting with the variable unset leaves every `env-migrated`
-  credential active, whatever the admin count.
-- The boot report names each active `env-migrated` credential that does not match the current
-  environment, and names explicit revocation as the way to remove it.
-- Two roots reconciling in turn converge rather than thrash: after A, then B, then A again, every
-  migrated credential from both is still active and no revocation has occurred.
-- A stored profile written before migration (`authMode: 'token'`, the environment secret verbatim)
-  still authenticates after migration, so existing deployments and paired Companions keep working.
-- Revoking an `env-migrated` credential explicitly revokes only it.
+- An active selected credential blocks retirement.
+- Live gateways block offline retirement across the entire identity home.
+- Retirement preserves the activation latch and at least one active admin.
+- Bound nodes must be re-enrolled or retired before retiring their native owner.
+- Retired principal and credential ids cannot be re-used.
+- A removed principal stays unresolved in historical work; no implicit re-authoring occurs.
+- Invalid surviving records reject the entire retirement transaction without a write.
 
 **Solo mode and reserved ids**
 
@@ -1048,53 +952,44 @@ invalidation hook, and **the subscribed session makes no request at any point**.
 - A `node` subject with `roles: []` is accepted, and the virtual `local-node` satisfies the same rule
   without a special case.
 
-## Migration and compatibility
+## Cutover
 
-**First boot with an existing environment secret.** Covered above: the secret becomes a credential and
-keeps working. Clients need no change — a credential is presented as the existing token mode,
-`authMode` stays in the protocol contract, and stored profiles are already the right shape
-(`gateway-profiles.ts:100-106`).
+Verify automation, node agents, remote transfer and each person's login before revoking old
+credentials. Remove obsolete environment auth variables only after those checks pass. Re-enroll
+nodes whose immutable native-owner binding refers to a principal being retired; do not overwrite
+the binding. Stop every gateway in the identity home and retire revoked obsolete principals through
+the supported offline command before starting the new runtime. Keep a verified active admin.
 
-**First boot with no store at all and no environment secret.** Nothing is written. On a loopback bind
-the gateway is in solo mode and `farmslot up` works unchanged, satisfying ADR-046 by resolving virtual
-principals rather than by excepting them. On a non-loopback bind, `assertGatewayBindAllowed`
-(`auth.ts:123-140`) refuses as it does today.
+An existing store must use schema version 1 and current credential origins. Unknown origins are
+refused at runtime. A fresh store remains unwritten until explicit issuance or exposure activation.
+Deployments sharing a home share its latch, principals, lock and presence directory.
 
-**A second deployment in the same identity domain.** Its gateway registers a presence entry,
-reconciles its own `.env.local-auth` secret additively, and shares the store. Both gateways serve,
-neither revokes the other's credential, and writes serialize on `credentials.lock`. They also share
-principals and activation state; a deployment that wants neither sets its own `FARMSLOT_HOME`, and
-then shares nothing — a separate store, latch, lock, and presence directory.
-
-**An existing store.** Loaded and used. Only version `1` exists; anything else is a refusal to start,
-which is what `schemaVersion` was added to buy.
-
-**Downgrade.** A gateway built before this node ignores `credentials.json` entirely and reads the
-environment secret directly, so rolling back is safe as long as the variable is still set. A store
-containing issued credentials has no effect on an older binary — those credentials simply stop
-working. This is a property of the design, not a supported procedure.
+CLI and script callers select explicit gateway profiles. Noninteractive `farmslot up` requires a
+credentialed local profile; first interactive startup may create the owner and local profile offline.
+The co-launched node uses its own machine-bound credential. Rollback does not recreate environment
+identities or restore retired authority.
 
 ## Boundaries
 
 What this node deliberately leaves to later work, and where the seam sits.
 
-| Deferred to                | Seam this node leaves                                                                                                     |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Authorization (§5.1-5.3)   | `resolveSessionPrincipal` returns a `Principal` with real role bindings. No caller reads `roles` yet. The operator allowlist, default-deny, and the denial messages of §8 attach at `routeMethod()`. |
-| Conformance gate (§5.4)    | Nothing here. The gate takes the registry plus the allowlist, neither of which this node touches.                          |
-| Node subject (§6)          | The `node` subject variant exists with `machine` required. The node frame guards in `server.ts:135-244` still key on `clientKind`, and `auth.connect` does not yet reject `clientKind: 'node'` from a non-node principal. |
-| Protocol surface (§7)      | `GatewayAuthConnectResult` gains no `principal` summary here, and `CredentialSummary`, the seven `principal.*`/`credential.*` methods, and `PairingCreateParams.authority` are not defined. The CLI plumbing in `gateway-auth.ts:13-17` and `commands/auth.ts:181-190` follows §7, not this node. |
-| Pairing (§7)               | `pairingExchange` still returns the runtime secret. Minting an `origin: 'paired'` credential needs `PairingAuthority`.      |
-| Provenance (§5.5)          | The `system` virtual principal is **not** constructed here — it is returned only for gateway-scheduled work, which does not exist yet. Its id is reserved regardless. `WorkOriginator` belongs with each work item's own store, not with this one. |
-| Outbound filtering (§2.4)  | `broadcast` and `sendHello` are unchanged. Filtering them by the receiving session's principal needs the authorization check first. This is the *downgrade* refinement of §2 invariant 2 only — invalidation on role change is satisfied here by closing, not deferred. |
-| Activation triggers (§3)   | This node latches `activatedAt` on first credential issuance and on environment migration. Latching on a non-loopback bind and on declared proxy trust is activation semantics beyond what the store needs, and lands with the work that owns the bind path. |
-| Offline store operations (§3) | The store module, both coordination mechanisms, and the writer are all usable offline, and the presence marker is what makes offline operations refuse while any gateway in the domain runs. No CLI command calls them yet. |
-| Node credential re-resolve (§6) | `services/node/src/index.ts:62` still resolves once at module load.                                                    |
-| `farmslot doctor` (§3)     | Reporting which of §3's four states the gateway is in. This node emits the reconciliation boot report only.                |
+| Deferred to                     | Seam this node leaves                                                                                                                                                                                                                                                                             |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Authorization (§5.1-5.3)        | `resolveSessionPrincipal` returns a `Principal` with real role bindings. No caller reads `roles` yet. The operator allowlist, default-deny, and the denial messages of §8 attach at `routeMethod()`.                                                                                              |
+| Conformance gate (§5.4)         | Nothing here. The gate takes the registry plus the allowlist, neither of which this node touches.                                                                                                                                                                                                 |
+| Node subject (§6)               | The `node` subject variant exists with `machine` required. The node frame guards in `server.ts:135-244` still key on `clientKind`, and `auth.connect` does not yet reject `clientKind: 'node'` from a non-node principal.                                                                         |
+| Protocol surface (§7)           | `GatewayAuthConnectResult` gains no `principal` summary here, and `CredentialSummary`, the seven `principal.*`/`credential.*` methods, and `PairingCreateParams.authority` are not defined. The CLI plumbing in `gateway-auth.ts:13-17` and `commands/auth.ts:181-190` follows §7, not this node. |
+| Pairing (§7)                    | `pairingExchange` still returns the runtime secret. Minting an `origin: 'paired'` credential needs `PairingAuthority`.                                                                                                                                                                            |
+| Provenance (§5.5)               | The `system` virtual principal is **not** constructed here — it is returned only for gateway-scheduled work, which does not exist yet. Its id is reserved regardless. `WorkOriginator` belongs with each work item's own store, not with this one.                                                |
+| Outbound filtering (§2.4)       | `broadcast` and `sendHello` are unchanged. Filtering them by the receiving session's principal needs the authorization check first. This is the _downgrade_ refinement of §2 invariant 2 only — invalidation on role change is satisfied here by closing, not deferred.                           |
+| Activation triggers (§3)        | This node latches `activatedAt` on first credential issuance. Latching on a non-loopback bind and on declared proxy trust is activation semantics beyond what the store needs, and lands with the work that owns the bind path.                                                                   |
+| Offline store operations (§3)   | The store module, both coordination mechanisms, and the writer are all usable offline, and the presence marker is what makes offline operations refuse while any gateway in the domain runs. No CLI command calls them yet.                                                                       |
+| Node credential re-resolve (§6) | `services/node/src/index.ts:62` still resolves once at module load.                                                                                                                                                                                                                               |
+| `farmslot doctor` (§3)          | Reporting which of §3's four states the gateway is in. This node emits the reconciliation boot report only.                                                                                                                                                                                       |
 
 ## Divergences, rulings, and open questions
 
-**No *implementation* question is open in this spec, and nothing here is assumed** — but the design is
+**No _implementation_ question is open in this spec, and nothing here is assumed** — but the design is
 not settled end to end, and the two levels must not be confused.
 
 Every divergence raised against earlier revisions of ADR-051 was resolved in the ADR, and every
@@ -1147,8 +1042,6 @@ may not substitute an alternative without a further ruling.
   **The security properties are that the cache is cleared on every store write, that it is consulted
   only after `ensureFresh()`, and that it never caches authority** — no principal, no roles, no
   record. Those three may not be traded away for any cache policy.
-- **The migrated environment principal's display name is `legacy-env`**, satisfying §1's only
-  constraint that it not collide with `system`.
 
 ### Fills that follow from the rulings
 

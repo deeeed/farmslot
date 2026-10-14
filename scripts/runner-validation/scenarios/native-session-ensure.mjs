@@ -12,7 +12,7 @@ import { writeEvidence } from '../lib/evidence.mjs';
 export const SCENARIO_ID = 'native-session-ensure';
 const exec = promisify(execFile);
 
-async function rpc(method, params = {}, token = process.env.FARMSLOT_GATEWAY_TOKEN) {
+async function rpc(method, params = {}, token = process.env.FARMSLOT_GATEWAY_PROFILE) {
   const executionNodeId = process.env.FARMSLOT_NATIVE_EXECUTION_NODE ?? 'local';
   try {
     const { stdout } = await exec(
@@ -25,7 +25,7 @@ async function rpc(method, params = {}, token = process.env.FARMSLOT_GATEWAY_TOK
           method.startsWith('native.session.') ? { ...params, executionNodeId } : params,
         ),
       ],
-      { cwd: ROOT, timeout: 70000, env: { ...process.env, FARMSLOT_GATEWAY_TOKEN: token } },
+      { cwd: ROOT, timeout: 70000, env: { ...process.env, FARMSLOT_GATEWAY_PROFILE: token } },
     );
     return JSON.parse(stdout);
   } catch (error) {
@@ -206,9 +206,9 @@ export async function runScenario({ runnerAdapter, outDir, model }) {
         await refused({ ...params, mode: 'plan' }, /launch configuration differs: mode/);
         for (const resumeSessionId of [session.nativeSessionId, '', null])
           await refused({ ...params, resumeSessionId }, /not for resume/);
-        const other = process.env.FARMSLOT_NATIVE_OTHER_TOKEN;
+        const other = process.env.FARMSLOT_NATIVE_OTHER_PROFILE;
         assert.ok(
-          other && other !== process.env.FARMSLOT_GATEWAY_TOKEN,
+          other && other !== process.env.FARMSLOT_GATEWAY_PROFILE,
           'A second authenticated admin is required',
         );
         await rpc('principal.list', {}, other);

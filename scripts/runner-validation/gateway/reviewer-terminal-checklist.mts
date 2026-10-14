@@ -1,3 +1,4 @@
+import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 // Manual proof against an existing tmux server. Never starts or kills the server.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
@@ -212,7 +213,7 @@ if (process.argv[2] === 'serve') {
       FARMSLOT_POOL_DIR: path.join(root, 'pool'),
       FARMSLOT_RUNS_DIR: path.join(root, '.runs'),
       FARMSLOT_HOME: path.join(temporary, 'home'),
-      FARMSLOT_GATEWAY_TOKEN: randomUUID(),
+      FARMSLOT_GATEWAY_PROFILE: 'proof',
       FARMSLOT_GATEWAY_PASSWORD: '',
       FARMSLOT_DISABLE_ORCHESTRATION: '1',
       FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
@@ -316,6 +317,9 @@ if (process.argv[2] === 'serve') {
     env = {
       ...env,
       GATEWAY_HOST: '127.0.0.1',
+      FARMSLOT_GATEWAY_PROFILE:
+        (testGatewayIdentity(path.join(temporary, 'home'), `ws://127.0.0.1:${address.port}`),
+        'proof'),
       GATEWAY_PORT: String(address.port),
       FARMSLOT_GATEWAY: `ws://127.0.0.1:${address.port}`,
     };

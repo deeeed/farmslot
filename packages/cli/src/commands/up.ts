@@ -6,8 +6,8 @@
 // authed profile for subsequent commands (pair, fleet, …). `farmslot down`
 // stops it. pid + log live under <FARMSLOT_HOME> (default ~/.farmslot).
 import { spawn, spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
 import {
+  chmodSync,
   closeSync,
   existsSync,
   mkdirSync,
@@ -19,13 +19,27 @@ import {
 import http from 'node:http';
 import { hostname, networkInterfaces } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import type { Command } from 'commander';
 
+import {
+  CredentialStoreRuntime,
+  CredentialStoreWriter,
+  parseCredentialWire,
+  verifySecret,
+} from '@farmslot/credential-store';
+import type {
+  CredentialIssueResult,
+  CredentialListResult,
+  PrincipalCreateResult,
+  PrincipalListResult,
+} from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { bold, cyan, dim, green, red, yellow } from '../colors.js';
 import { probeGatewayAuth } from '../gateway-auth.js';
+import { GatewayClient } from '../gateway-client.js';
 import {
   DEFAULT_GATEWAY_PORT,
   DEFAULT_GATEWAY_URL,
@@ -192,35 +206,120 @@ function readPid(): number | null {
   return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
-/**
- * Ensure .env.local-auth gives the up-managed gateway token auth: reuse or mint
- * FARMSLOT_GATEWAY_TOKEN, and pin FARMSLOT_GATEWAY_AUTH_MODE=token. The gateway
- * force-loads .env then .env.local-auth (last wins) and resolves password /
- * explicit mode over token — without the pin, a password or mode override in
- * .env would start the gateway with auth the stored token profile can't satisfy.
- */
-function ensureTokenAuthEnv(): string {
-  const envPath = join(repoRoot, '.env.local-auth');
-  const original = existsSync(envPath) ? readFileSync(envPath, 'utf-8') : '';
-  const lines = original.split('\n');
-  // The gateway's env loader applies lines top-to-bottom (last assignment
-  // wins) — mirror that when reusing an existing token.
-  let token: string | null = null;
-  for (const line of lines) {
-    const match = line.match(/^FARMSLOT_GATEWAY_TOKEN=(.+)$/);
-    if (match) token = match[1].trim();
+/** First interactive startup issues a person credential; subsequent starts reuse its profile. */
+function ensureLocalCredential(port: number): string {
+  const profile = loadProfiles().gateways[LOCAL_PROFILE];
+  const url = port === DEFAULT_GATEWAY_PORT ? DEFAULT_GATEWAY_URL : `ws://localhost:${port}`;
+  const runtime = new CredentialStoreRuntime();
+  if (
+    profile?.url === url &&
+    profile.authMode === 'token' &&
+    profile.secret &&
+    parseCredentialWire(profile.secret)
+  ) {
+    const parsed = parseCredentialWire(profile.secret)!;
+    const credential = runtime.findCredential(parsed.credentialId);
+    const principal = credential ? runtime.findPrincipal(credential.principalId) : undefined;
+    if (
+      !credential ||
+      credential.revokedAt !== null ||
+      !verifySecret(parsed.secret, credential.secret) ||
+      !principal ||
+      principal.subject.type === 'node'
+    ) {
+      throw new Error(
+        'The local profile credential is invalid or revoked. Log in again before starting the gateway.',
+      );
+    }
+    return profile.secret;
   }
-  const hadToken = token !== null;
-  if (!token) token = randomBytes(32).toString('base64url');
-  // Drop EVERY AUTH_MODE line (duplicates included — the last one would win in
-  // the loader) and pin exactly one token-mode line at the end of the file.
-  const kept = lines.filter((line) => !line.startsWith('FARMSLOT_GATEWAY_AUTH_MODE='));
-  while (kept.length > 0 && kept[kept.length - 1] === '') kept.pop();
-  if (!hadToken) kept.push(`FARMSLOT_GATEWAY_TOKEN=${token}`);
-  kept.push('FARMSLOT_GATEWAY_AUTH_MODE=token');
-  const next = kept.join('\n') + '\n';
-  if (next !== original) writeFileSync(envPath, next, { mode: 0o600 });
-  return token;
+  if (runtime.isActivated() || !process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error(
+      'A verified local profile is required. Add the local gateway profile and log in with a person pairing code; for recovery, stop every gateway and use credential issue --offline.',
+    );
+  }
+  const writer = new CredentialStoreWriter(runtime, true);
+  const principal = writer.createPrincipal({ type: 'person', displayName: 'owner' }, [
+    { role: 'admin', scope: { kind: 'global' } },
+  ]);
+  const issued = writer.issueCredential(principal.id, 'local-cli');
+  registerLocalProfile(port, issued.secret);
+  return issued.secret;
+}
+
+/** The local node has its own machine-bound credential, never the CLI's identity. */
+async function localNodeCredential(port: number, token: string): Promise<string> {
+  const machine = hostname().replace(/\.local$/, '');
+  const secretPath = join(farmslotHome(), 'node.secret');
+  // Use the node's own install/reconnect resolution before the startup cache.
+  // A verified rotation must also survive a later up without the inherited env.
+  const { resolveGatewayCredential } = await import(
+    pathToFileURL(join(repoRoot, 'services/node/src/gateway-credential.ts')).href
+  );
+  const installed: string | undefined = resolveGatewayCredential(process.env, repoRoot)?.token;
+  if (installed || existsSync(secretPath)) {
+    const secret = installed ?? readFileSync(secretPath, 'utf8').trim();
+    const runtime = new CredentialStoreRuntime();
+    const parsed = parseCredentialWire(secret);
+    const credential = parsed ? runtime.findCredential(parsed.credentialId) : undefined;
+    const principal = credential ? runtime.findPrincipal(credential.principalId) : undefined;
+    if (
+      !parsed ||
+      credential?.revokedAt !== null ||
+      !verifySecret(parsed.secret, credential.secret) ||
+      principal?.subject.type !== 'node' ||
+      principal.subject.machine !== machine
+    ) {
+      throw new Error(
+        'The local node credential is invalid. Rotate it with credential issue --principal <node-id>, verify the replacement, and revoke the old credential.',
+      );
+    }
+    if (installed) {
+      writeFileSync(secretPath, `${secret}\n`, { mode: 0o600 });
+      chmodSync(secretPath, 0o600);
+    }
+    return secret;
+  }
+  const client = new GatewayClient({
+    url: `ws://localhost:${port}`,
+    timeout: 5000,
+    credential: { token },
+  });
+  const listed = await client.call<PrincipalListResult>('principal.list', {});
+  const nodes = listed.principals.filter(
+    (principal) => principal.subject.type === 'node' && principal.subject.machine === machine,
+  );
+  if (nodes.length > 1)
+    throw new Error('Consolidate node principals for this machine before starting its local node');
+  const existing = nodes[0];
+  if (existing) {
+    const credentials = await client.call<CredentialListResult>('credential.list', {});
+    if (credentials.credentials.some((credential) => credential.principalId === existing.id)) {
+      throw new Error(
+        'This machine already has an active node credential. Install that credential rather than creating a duplicate.',
+      );
+    }
+  }
+  const created =
+    existing ??
+    (
+      await client.call<PrincipalCreateResult>('principal.create', {
+        subject: { type: 'node', displayName: `node-${machine}`, machine },
+        roles: [],
+      })
+    ).principal;
+  const issue = await client.call<CredentialIssueResult>('credential.issue', {
+    principalId: created.id,
+    displayName: machine,
+  });
+  try {
+    writeFileSync(secretPath, `${issue.secret}\n`, { flag: 'wx', mode: 0o600 });
+    chmodSync(secretPath, 0o600);
+  } catch (error) {
+    await client.call('credential.revoke', { credentialId: issue.credential.id });
+    throw error;
+  }
+  return issue.secret;
 }
 
 /** Register/refresh the `local` profile; returns true when it is the active profile. */
@@ -286,9 +385,9 @@ async function verifyTokenAuth(port: number, token: string, output: OutputContex
   if (probe.state === 'authenticated') return;
   output.error(
     `gateway on :${port} did not accept the local token (auth state: ${probe.state}) — ` +
-      `check FARMSLOT_GATEWAY_* overrides in ${join(repoRoot, '.env')} and restart: farmslot down && farmslot up`,
+      `check the local gateway profile and restart: farmslot down && farmslot up`,
   );
-  process.exit(1);
+  throw new Error(`Local gateway credential verification failed: ${probe.state}`);
 }
 
 function pairHint(localActive: boolean): string {
@@ -372,7 +471,7 @@ export function writeUpResult(params: {
 
 // Co-launch a local node so the gateway host is a real, ONLINE node in the fleet and
 // local slots get the node's capability layers (device feed, file-watch, resource-watch,
-// metrics). It connects to this gateway over loopback with the same token — no separate
+// metrics). It connects over loopback with a node credential. There is no separate
 // launchd service, so dev (7801) and prod (7777) each get their own node with no
 // cross-gateway conflict. Best-effort: if it can't start, the farm runs degraded, never
 // fatal. See ADR-046.
@@ -400,8 +499,7 @@ async function startLocalNode(port: number, token: string, output: OutputContext
       ...process.env,
       GATEWAY_URL: `ws://127.0.0.1:${port}`,
       MACHINE_NAME: machine,
-      FARMSLOT_GATEWAY_TOKEN: token,
-      FARMSLOT_GATEWAY_AUTH_MODE: 'token',
+      FARMSLOT_NODE_TOKEN: token,
     },
   });
   closeSync(logFd); // the detached child owns its own dup of the fd now
@@ -451,10 +549,10 @@ async function up(
   const existingPid = readPid();
   if (existingPid && isAlive(existingPid)) {
     if (await waitForHealth(port, 2000)) {
-      const token = ensureTokenAuthEnv();
+      const token = ensureLocalCredential(port);
       await verifyTokenAuth(port, token, output);
       const localActive = registerLocalProfile(port, token);
-      if (startNode) await startLocalNode(port, token, output);
+      if (startNode) await startLocalNode(port, await localNodeCredential(port, token), output);
       writeUpResult({
         output,
         status: 'gateway already running',
@@ -497,7 +595,7 @@ async function up(
     process.exit(1);
   }
 
-  const token = ensureTokenAuthEnv();
+  const token = ensureLocalCredential(port);
   mkdirSync(farmslotHome(), { recursive: true, mode: 0o700 });
   const logFd = openSync(logFilePath(), 'a');
   const child = spawn(tsx, [entry], {
@@ -508,8 +606,6 @@ async function up(
       ...process.env,
       GATEWAY_PORT: String(port),
       GATEWAY_HOST: '0.0.0.0',
-      FARMSLOT_GATEWAY_TOKEN: token,
-      FARMSLOT_GATEWAY_AUTH_MODE: 'token',
       // Hand the gateway the resolved cert so it serves wss:// on tls.port too.
       ...(tls
         ? {
@@ -520,6 +616,7 @@ async function up(
         : {}),
     },
   });
+  closeSync(logFd);
   if (child.pid === undefined) {
     output.error('failed to spawn gateway process');
     process.exit(1);
@@ -540,9 +637,16 @@ async function up(
     );
     process.exit(1);
   }
-  await verifyTokenAuth(port, token, output);
-  const localActive = registerLocalProfile(port, token);
-  if (startNode) await startLocalNode(port, token, output);
+  let localActive: boolean;
+  try {
+    await verifyTokenAuth(port, token, output);
+    localActive = registerLocalProfile(port, token);
+    if (startNode) await startLocalNode(port, await localNodeCredential(port, token), output);
+  } catch (error) {
+    await killGracefully(child.pid);
+    rmSync(pidFilePath(), { force: true });
+    throw error;
+  }
 
   writeUpResult({
     output,

@@ -2,13 +2,17 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+
+import { testGatewayProfile } from '../lib/test-gateway-identity.mjs';
 const out = process.env.ASSESSMENT_PROVIDER_PROOF_OUT;
 assert.ok(out && process.env.FARMSLOT_UI_URL && process.env.FARMSLOT_CDP_PORT);
 const session = JSON.parse(await readFile(path.join(out, 'ui-session.json'), 'utf8'));
+testGatewayProfile(path.join(out, 'home'), session.gateway, session.token);
 const env = {
   ...process.env,
   FARMSLOT_GATEWAY: session.gateway,
-  FARMSLOT_GATEWAY_TOKEN: session.token,
+  FARMSLOT_HOME: path.join(out, 'home'),
+  FARMSLOT_GATEWAY_PROFILE: 'proof',
 };
 delete env.FARMSLOT_GATEWAY_PASSWORD;
 const route = `intelligence?tab=assessments&assessment=${session.recordId}&proof=${Date.now()}`;

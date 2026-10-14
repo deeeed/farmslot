@@ -245,8 +245,9 @@ A passed stage is partial evidence; the full sequence is the acceptance proof.
 
 Configure the gateway with a dedicated absolute `FARMSLOT_NATIVE_STATE_DIR` and
 its pinned `FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID`. Keep the same state directory,
-native HOME/configuration, and owner across restarts. Export the owner gateway
-token through the environment. Never put tokens in scenario arguments or reports.
+native HOME/configuration, and owner across restarts. Select the owner gateway
+profile through `FARMSLOT_GATEWAY_PROFILE`. Keep credentials in the isolated
+profile home; never put tokens in scenario arguments or reports.
 
 ```sh
 export FARMSLOT_GATEWAY=ws://127.0.0.1:18777
@@ -266,8 +267,8 @@ Repeat that command with these stages in order:
    same host, native identity and generation, contiguous missing events, cursor
    exhaustion, and duplicate-command receipts without repeated side effects.
 4. Run `approval`, stop the gateway, run `approval-offline`, then restart it.
-   Run `approval-reconnect` with `FARMSLOT_NATIVE_OTHER_TOKEN` set to a second
-   authenticated admin. It rejects cross-owner, native-ID and stale replies,
+   Run `approval-reconnect` with `FARMSLOT_NATIVE_OTHER_PROFILE` set to a second
+   authenticated admin profile. It rejects cross-owner, native-ID and stale replies,
    then proves that the retained denial prevented the write.
 5. Run `failure` to kill only the recorded test runner, or the test host with
    `FARMSLOT_NATIVE_KILL=host`. Host killing refuses to proceed if another active
@@ -315,8 +316,8 @@ retained-handoff scenarios. Unit fixtures cannot substitute for these live check
 ### Reserved native session creation
 
 `native-session-ensure` checks duplicate-safe initial creation without inference.
-Set the isolated local `FARMSLOT_GATEWAY`, owner token, a second authenticated
-admin in `FARMSLOT_NATIVE_OTHER_TOKEN`, and a private
+Set the isolated local `FARMSLOT_GATEWAY`, owner profile in
+`FARMSLOT_GATEWAY_PROFILE`, a second authenticated admin profile in `FARMSLOT_NATIVE_OTHER_PROFILE`, and a private
 `FARMSLOT_NATIVE_ENSURE_STATE` file beneath `temp/native-validation/`.
 Use `FARMSLOT_NATIVE_ENSURE_STAGE` to select each step:
 

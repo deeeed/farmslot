@@ -1,7 +1,8 @@
 #!/usr/bin/env tsx
+import { testGatewayIdentity } from './lib/test-gateway-identity-source.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -119,7 +120,7 @@ try {
     await symlink(path.join(root, name), path.join(fixture, name));
   await writeFile(path.join(fixture, 'CLAUDE.md'), '# Isolated browser validation fixture\n');
   const [gatewayPort, uiPort, cdpPort] = await Promise.all([port(), port(), port()]);
-  token = randomBytes(32).toString('hex');
+  token = testGatewayIdentity(path.join(fixture, 'home'), `ws://127.0.0.1:${gatewayPort}`);
   const models = [{ runner: 'codex', model: 'gpt-5.6-luna', effort: 'low', mode: 'cold' }];
   for (const name of ['wizard-farm', 'workspace-only']) {
     const project = path.join(fixture, 'projects', name);
@@ -289,8 +290,8 @@ process.stdout.write(JSON.stringify(body));
     GATEWAY_HOST: '127.0.0.1',
     GATEWAY_PORT: String(gatewayPort),
     VITE_PORT: String(uiPort),
-    FARMSLOT_GATEWAY_TOKEN: token,
-    FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'legacy-env',
+    FARMSLOT_GATEWAY_PROFILE: 'proof',
+    FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'test-automation',
     FARMSLOT_DISABLE_ORCHESTRATION: '1',
     NODE_TEST_CONTEXT: '1',
     FARMSLOT_DISABLE_RUN_ENGINE_START: '1',

@@ -1,3 +1,7 @@
+import {
+  testGatewayIdentity,
+  testGatewayProfile,
+} from '../../../../scripts/lib/test-gateway-identity-source.mjs';
 process.env.NODE_TEST_CONTEXT = '1';
 
 import assert from 'node:assert/strict';
@@ -61,12 +65,10 @@ test('acceptance evidence RPC refuses stale and unadmitted input and leaves ledg
   // Provider composition captures fetch on import. This fixture answers in-process;
   // no request reaches a live LLM endpoint.
   const { createWebSocketServer } = await import('../server.js');
-  const token = 'synthetic-only-ac-gateway-proof';
+  const token = testGatewayIdentity(home);
   const runtime = createGatewayAuthRuntime({
     FARMSLOT_HOME: home,
     GATEWAY_HOST: '127.0.0.1',
-    FARMSLOT_GATEWAY_AUTH_MODE: 'token',
-    FARMSLOT_GATEWAY_TOKEN: token,
   });
   initializeGatewayIdentity(runtime, { host: '127.0.0.1' });
   const server = createServer();
@@ -122,7 +124,8 @@ test('acceptance evidence RPC refuses stale and unadmitted input and leaves ledg
           env: {
             ...process.env,
             FARMSLOT_GATEWAY: `ws://127.0.0.1:${gatewayPort}`,
-            FARMSLOT_GATEWAY_TOKEN: token,
+            FARMSLOT_GATEWAY_PROFILE:
+              (testGatewayProfile(home, `ws://127.0.0.1:${gatewayPort}`, token), 'proof'),
             FARMSLOT_RPC_TIMEOUT_MS: '15000',
           },
           timeout: 20_000,

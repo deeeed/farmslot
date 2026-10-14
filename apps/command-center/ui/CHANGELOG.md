@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Require stored or explicitly supplied login credentials instead of build-time environment secrets.
+
 - Show authenticated visual claim reviews through the shared evidence model.
 
 - Use the shared run evidence contract in package status and recovery guidance.

@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Electron development profile and live UI",
-  "description": "Build package:mac and package:mac:dev first. Uses its own profile and ports 5186/9513/9514. Set FARMSLOT_GATEWAY and FARMSLOT_GATEWAY_TOKEN for an existing gateway. Only reads gateway state; no dispatch or inference.",
+  "description": "Build package:mac and package:mac:dev first. Uses its own profile and ports 5186/9513/9514. Set FARMSLOT_GATEWAY and FARMSLOT_GATEWAY_PROFILE for an existing gateway. Only reads gateway state; no dispatch or inference.",
   "workflow": {
     "entry": "live-ui",
     "nodes": {

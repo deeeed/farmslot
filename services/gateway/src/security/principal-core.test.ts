@@ -356,40 +356,9 @@ test('presence registration reclaims an exact stale entry after PID reuse', () =
   }
 });
 
-test('gateway SIGINT and SIGTERM cleanup remove identity-domain presence', async () => {
-  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-    const env = isolatedEnv({ FARMSLOT_GATEWAY_TOKEN: `signal-${signal}` });
-    const port = await availablePort();
-    const child = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
-      cwd: resolve(process.cwd()),
-      env: {
-        ...process.env,
-        ...env,
-        GATEWAY_HOST: '127.0.0.1',
-        GATEWAY_PORT: String(port),
-        FARMSLOT_DISABLE_ORCHESTRATION: '1',
-        FARMSLOT_LOCAL_HEALTH_POLL: '0',
-        FARMSLOT_RESOURCE_POLL_ALL: '0',
-        FARMSLOT_STARTUP_BRANCH_PREWARM: '0',
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const presenceDirectory = gatewayPresenceDirectory(env);
-    await waitFor(
-      () => existsSync(presenceDirectory) && readdirSync(presenceDirectory).length === 1,
-      10_000,
-    );
-    assert.equal(child.kill(signal), true);
-    await waitForChild(child, [signal === 'SIGINT' ? 130 : 143]);
-    assert.equal(
-      existsSync(presenceDirectory) ? readdirSync(presenceDirectory).length : 0,
-      0,
-      `${signal} should remove its presence entry`,
-    );
-  }
-});
+// Full gateway shutdown is a manual startup proof in scripts/validation/gateway-shutdown.mts.
 
-test('HTTP transport matrix keeps tokens and legacy passwords unambiguous end to end', async () => {
+test('HTTP transport accepts issued tokens and rejects password schemes', async () => {
   const issuedRuntime = createGatewayAuthRuntime(isolatedEnv());
   initializeGatewayIdentity(issuedRuntime, { host: '127.0.0.1' });
   const admin = issuedRuntime.writer.createPrincipal(
@@ -407,28 +376,13 @@ test('HTTP transport matrix keeps tokens and legacy passwords unambiguous end to
     assert.equal(await httpStatus(origin, { authorization: basicAuth(issued.secret) }), 401);
   });
 
-  const password = 'legacy password';
-  const passwordRuntime = createGatewayAuthRuntime(
-    isolatedEnv({ FARMSLOT_GATEWAY_PASSWORD: password }),
-  );
-  initializeGatewayIdentity(passwordRuntime, { host: '127.0.0.1' });
-  await withProtectedHttpServer(passwordRuntime, async (origin) => {
-    assert.equal(await httpStatus(origin, { authorization: basicAuth(password) }), 200);
-    assert.equal(await httpStatus(`${origin}?password=${encodeURIComponent(password)}`), 200);
+  await withProtectedHttpServer(issuedRuntime, async (origin) => {
+    assert.equal(await httpStatus(`${origin}?password=${encodeURIComponent(issued.secret)}`), 401);
     assert.equal(
-      await httpStatus(origin, {
-        cookie: `farmslot_gateway_password=${encodeURIComponent(password)}`,
-      }),
-      200,
-    );
-    assert.equal(await httpStatus(origin, { authorization: `Bearer ${password}` }), 401);
-    assert.equal(await httpStatus(`${origin}?token=${encodeURIComponent(password)}`), 401);
-    assert.equal(
-      await httpStatus(
-        `${origin}?token=${encodeURIComponent(password)}&password=${encodeURIComponent(password)}`,
-      ),
+      await httpStatus(origin, { cookie: `farmslot_gateway_password=${issued.secret}` }),
       401,
     );
+    assert.equal(await httpStatus(origin, { authorization: `Bearer obsolete-env-value` }), 401);
   });
 });
 
@@ -451,7 +405,7 @@ test('first non-admin issuance dual-mints an admin and never stores recoverable 
   assert.equal(serialized.includes(issue.adminGrant!.secret), false);
 });
 
-test('verification cache never caches authority and password transport stays legacy-only', () => {
+test('verification cache never caches authority and rejects password transport', () => {
   const env = isolatedEnv();
   const runtime = createGatewayAuthRuntime(env);
   initializeGatewayIdentity(runtime, { host: '127.0.0.1' });
@@ -476,39 +430,21 @@ test('verification cache never caches authority and password transport stays leg
   });
 });
 
-test('environment migration is additive and boot-secret resolution stays gateway-local', () => {
-  const env = isolatedEnv({ FARMSLOT_GATEWAY_TOKEN: 'first-token' });
-  const first = createGatewayAuthRuntime(env);
-  initializeGatewayIdentity(first, { host: '127.0.0.1' });
-  assert.equal(first.store.snapshot().credentials.length, 1);
-
-  const messages: string[] = [];
-  const changedEnv = { ...env, FARMSLOT_GATEWAY_TOKEN: 'second-token' };
-  const second = createGatewayAuthRuntime(changedEnv);
-  initializeGatewayIdentity(second, {
-    host: '127.0.0.1',
-    log: (message) => messages.push(message),
+test('environment secrets never create principals, activate a home or authenticate', () => {
+  const env = isolatedEnv({
+    FARMSLOT_GATEWAY_TOKEN: 'first-token',
+    FARMSLOT_GATEWAY_PASSWORD: 'old-password',
   });
-  assert.equal(second.store.snapshot().credentials.length, 2);
-  assert.equal(second.resolver.resolveSecret('first-token', 'token').ok, false);
-  assert.equal(second.resolver.resolveSecret('second-token', 'token').ok, true);
-  assert.ok(messages.some((message) => message.includes('does not remove access')));
-
-  const unset = createGatewayAuthRuntime({
-    FARMSLOT_HOME: env.FARMSLOT_HOME,
-    GATEWAY_HOST: '127.0.0.1',
-  });
-  initializeGatewayIdentity(unset, { host: '127.0.0.1' });
-  assert.equal(unset.store.snapshot().credentials.length, 2);
-  assert.equal(unset.resolver.resolveSecret('first-token', 'token').ok, false);
-  assert.equal(unset.resolver.resolveSecret('second-token', 'token').ok, false);
-
-  const password = createGatewayAuthRuntime(
-    isolatedEnv({ FARMSLOT_GATEWAY_PASSWORD: 'legacy-password' }),
-  );
-  initializeGatewayIdentity(password, { host: '127.0.0.1' });
-  assert.equal(password.resolver.resolveSecret('legacy-password', 'password').ok, true);
-  assert.equal(password.resolver.resolveSecret('legacy-password', 'token').ok, false);
+  for (const token of ['first-token', 'second-token', undefined]) {
+    const runtime = createGatewayAuthRuntime({ ...env, FARMSLOT_GATEWAY_TOKEN: token });
+    initializeGatewayIdentity(runtime, { host: '127.0.0.1' });
+    assert.equal(runtime.store.snapshot().credentials.length, 0);
+    assert.equal(runtime.store.snapshot().principals.length, 0);
+    assert.equal(runtime.store.isActivated(), false);
+    assert.equal(runtime.resolver.resolveSecret('first-token', 'token').ok, false);
+    assert.equal(runtime.resolver.resolveSecret('old-password', 'password').ok, false);
+    assert.equal(existsSync(runtime.store.path), false);
+  }
 });
 
 test('last-admin refusal lives in both writer revoke primitives; offline recovery escapes it', () => {
@@ -805,17 +741,6 @@ async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<voi
     if (Date.now() >= deadline) throw new Error(`condition not met within ${timeoutMs}ms`);
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
   }
-}
-
-async function availablePort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('failed to reserve test port');
-  await new Promise<void>((resolvePromise, rejectPromise) =>
-    server.close((error) => (error ? rejectPromise(error) : resolvePromise())),
-  );
-  return address.port;
 }
 
 async function withProtectedHttpServer(

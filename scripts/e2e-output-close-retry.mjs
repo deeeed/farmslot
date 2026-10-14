@@ -44,7 +44,7 @@ if (process.argv.includes('--seed')) {
     id: runId,
     familyId: runId,
     parentRunId: null,
-    createdByPrincipalId: 'legacy-env',
+    createdByPrincipalId: 'test-automation',
     lane: 'production',
     flowType: 'dev',
     mode: 'autonomous',

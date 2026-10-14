@@ -20,6 +20,8 @@ import path from 'node:path';
 
 import { FLOW_STEPS } from '@farmslot/protocol';
 
+import { testGatewayIdentity } from '../../lib/test-gateway-identity.mjs';
+
 const sourceRoot = process.cwd();
 const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'farmslot-blocked-recovery-'));
 const root = path.join(temporaryRoot, 'root');
@@ -496,6 +498,7 @@ try {
   );
 
   const port = await freePort();
+  testGatewayIdentity(path.join(temporaryRoot, 'home'), `ws://127.0.0.1:${port}`);
   const env = {
     ...process.env,
     FARMSLOT_ROOT: root,
@@ -513,7 +516,7 @@ try {
     FARMSLOT_DEMO_POOL: '0',
     GATEWAY_HOST: '127.0.0.1',
     GATEWAY_PORT: String(port),
-    FARMSLOT_GATEWAY_TOKEN: randomUUID(),
+    FARMSLOT_GATEWAY_PROFILE: 'proof',
     FARMSLOT_GATEWAY_PASSWORD: '',
     FARMSLOT_GATEWAY: `ws://127.0.0.1:${port}`,
     FARMSLOT_RPC_TIMEOUT_MS: '25000',

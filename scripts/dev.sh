@@ -62,7 +62,7 @@ if [ -n "$_gateway_override" ]; then export GATEWAY_PORT="$_gateway_override"; f
 if [ -n "$_vite_override" ]; then export VITE_PORT="$_vite_override"; fi
 
 # Load optional local-only auth secrets. This file is gitignored and should contain
-# FARMSLOT_GATEWAY_TOKEN or FARMSLOT_GATEWAY_PASSWORD when exposing the gateway remotely.
+# FARMSLOT_NODE_TOKEN for the local node; gateway identity lives in its credential store.
 if [ -f "$AUTH_ENV_FILE" ]; then
   set -a; source "$AUTH_ENV_FILE"; set +a
   echo "[dev] Loaded gateway auth from $AUTH_ENV_FILE"
@@ -86,6 +86,9 @@ if [ -n "$_sandbox_home_override" ]; then
   export FARMSLOT_SANDBOX_HOME_GUARD="$_sandbox_guard_override"
 fi
 pin_sandbox_home
+# Retired gateway env credentials must not reach co-launched clients even when
+# an old checkout file still contains them. Gateway identity is store-owned.
+unset FARMSLOT_GATEWAY_TOKEN FARMSLOT_GATEWAY_PASSWORD FARMSLOT_GATEWAY_AUTH_MODE
 
 if [[ ! "${GATEWAY_PORT:-}" =~ ^[0-9]+$ || ! "${VITE_PORT:-}" =~ ^[0-9]+$ ]]; then
   echo "[dev] ERROR: GATEWAY_PORT and VITE_PORT must come from .env.ports or explicit environment values." >&2
@@ -110,7 +113,8 @@ if (exec 3<>"/dev/tcp/127.0.0.1/$GATEWAY_PORT") 2>/dev/null; then
   exit 1
 fi
 if [ -z "${GATEWAY_HOST:-}" ]; then
-  if [ -n "${FARMSLOT_GATEWAY_TOKEN:-}" ] || [ -n "${FARMSLOT_GATEWAY_PASSWORD:-}" ]; then
+  dev_activated="$(cd "$DEV_FRAMEWORK_ROOT" && node --import tsx --input-type=module -e 'import { CredentialStoreRuntime } from "@farmslot/credential-store"; process.stdout.write(new CredentialStoreRuntime().isActivated() ? "yes" : "no")')"
+  if [ "$dev_activated" = yes ]; then
     export GATEWAY_HOST=0.0.0.0
   else
     export GATEWAY_HOST=127.0.0.1
@@ -126,13 +130,7 @@ echo "[dev] Node:    $GATEWAY_URL (machine: $(hostname -s))"
 if [ "$GATEWAY_HOST" = "127.0.0.1" ] || [ "$GATEWAY_HOST" = "localhost" ]; then
   echo "[dev] WARN: gateway is loopback-only — Companion LAN QR pairing needs GATEWAY_HOST=0.0.0.0 in this checkout's .env.ports or .env.local-auth"
 fi
-if [ -n "${FARMSLOT_GATEWAY_TOKEN:-}" ]; then
-  echo "[dev] Gateway auth: token"
-elif [ -n "${FARMSLOT_GATEWAY_PASSWORD:-}" ]; then
-  echo "[dev] Gateway auth: password"
-else
-  echo "[dev] Gateway auth: none (loopback-only)"
-fi
+echo "[dev] Gateway auth: credential store, solo mode only before activation on loopback"
 
 cd "$FARMSLOT_ROOT/apps/command-center"
 exec yarn dev

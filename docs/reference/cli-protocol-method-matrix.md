@@ -348,6 +348,7 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `principal.list`            | typed-command | `farmslot principal list`              |     |      |
 | `principal.grant`           | typed-command | `farmslot principal grant`             |     |      |
 | `principal.revokeRole`      | typed-command | `farmslot principal revokeRole`        |     |      |
+| `principal.retire`          | typed-command | `farmslot principal retire`            |     |      |
 
 ## providerAccounts.\*
 

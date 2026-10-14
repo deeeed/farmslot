@@ -1,7 +1,3 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
 import { WebSocket as NodeWebSocket } from 'ws';
 
 import type { EventFrame, Frame } from '@farmslot/protocol';
@@ -10,8 +6,8 @@ export interface GatewayClientOpts {
   url: string;
   timeout: number;
   /**
-   * Profile credential (ADR-036); takes precedence over env/.env discovery.
-   * Pass null to disable env discovery entirely (exact-credential probes).
+   * Caller-selected profile or explicit test credential.
+   * Absent credentials never trigger discovery.
    */
   credential?: GatewayCredential | null;
 }
@@ -61,7 +57,7 @@ export class GatewayClient {
   constructor(opts: GatewayClientOpts) {
     this.url = opts.url;
     this.timeout = opts.timeout;
-    this.credential = effectiveCredential(opts.credential, resolveGatewayCredential);
+    this.credential = effectiveCredential(opts.credential);
   }
 
   async call<T = unknown>(method: string, params: unknown = {}): Promise<T> {
@@ -377,88 +373,9 @@ export class GatewayClient {
   }
 }
 
-/**
- * Profile credential beats env discovery; an explicit null disables discovery
- * entirely (profile targets must never borrow local env secrets).
- */
+/** Only a caller-selected profile or explicit test credential authenticates. */
 export function effectiveCredential(
   optCredential: GatewayCredential | null | undefined,
-  discover: () => GatewayCredential | null,
 ): GatewayCredential | null {
-  return optCredential === undefined ? discover() : optCredential;
-}
-
-function resolveGatewayCredential(): GatewayCredential | null {
-  const envCredential = credentialFromEnv(process.env);
-  if (envCredential) return envCredential;
-
-  for (const envFile of findGatewayEnvFiles()) {
-    const parsed = readEnvFile(envFile);
-    const credential = credentialFromEnv(parsed);
-    if (credential) return credential;
-  }
-
-  return null;
-}
-
-function credentialFromEnv(
-  env: NodeJS.ProcessEnv | Record<string, string>,
-): GatewayCredential | null {
-  const password = nonEmpty(env.FARMSLOT_GATEWAY_PASSWORD);
-  if (password) return { password };
-  const token = nonEmpty(env.FARMSLOT_GATEWAY_TOKEN);
-  if (token) return { token };
-  return null;
-}
-
-function findGatewayEnvFiles(): string[] {
-  const roots = new Set<string>();
-  if (process.env.FARMSLOT_ROOT) roots.add(resolve(process.env.FARMSLOT_ROOT));
-
-  let cwd = resolve(process.cwd());
-  while (true) {
-    roots.add(cwd);
-    const parent = dirname(cwd);
-    if (parent === cwd) break;
-    cwd = parent;
-  }
-
-  // Source path: <repo>/packages/cli/src/gateway-client.ts.
-  // Built path, if introduced later: <repo>/packages/cli/dist/…
-  const sourceDir = dirname(fileURLToPath(import.meta.url));
-  roots.add(resolve(sourceDir, '../../..'));
-
-  const files: string[] = [];
-  for (const root of roots) {
-    for (const name of ['.env.local-auth', '.env']) {
-      const file = resolve(root, name);
-      if (existsSync(file) && !files.includes(file)) files.push(file);
-    }
-  }
-  return files;
-}
-
-function readEnvFile(path: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const rawLine of readFileSync(path, 'utf8').split('\n')) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#')) continue;
-    const normalized = line.startsWith('export ') ? line.slice('export '.length).trim() : line;
-    const eqIdx = normalized.indexOf('=');
-    if (eqIdx <= 0) continue;
-    const key = normalized.slice(0, eqIdx).trim();
-    let value = normalized.slice(eqIdx + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    result[key] = value;
-  }
-  return result;
-}
-
-function nonEmpty(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+  return optCredential ?? null;
 }

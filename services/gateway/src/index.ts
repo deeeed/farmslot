@@ -124,11 +124,7 @@ import { authorizeStoredRunEffect } from './security/authorization.js';
 import { registerGatewayPresence } from './security/gateway-presence.js';
 import { requireNativeProfileOwner } from './security/native-worker-owner.js';
 import { applyGatewayCors } from './security/origin.js';
-import {
-  migrationOriginator,
-  resolveWorkOriginator,
-  runWithSessionOriginator,
-} from './security/work-originator.js';
+import { resolveWorkOriginator, runWithSessionOriginator } from './security/work-originator.js';
 import { initializeSources, stopSourceReconciliation } from './sources/runtime.js';
 import { onTaskProgress, onWorkerSignal, startWatchingActiveSlots } from './tasks/watcher.js';
 import { applyRunningWorkerSignalToContext } from './tasks/worker-signal-context.js';
@@ -243,8 +239,8 @@ async function main(): Promise<void> {
 
   // Load env files from farmslot root — force-override existing env vars
   // (Node --env-file won't override, causing stale values after tsx watch reload).
-  // .env.local-auth holds FARMSLOT_GATEWAY_TOKEN; without it the gateway falls
-  // back to auth=none and binds to 127.0.0.1, breaking remote node connections.
+  // Checkout files contain bind and node settings. Gateway identity is read
+  // from the credential store, never imported from an environment secret.
   for (const name of ['.env', '.env.local-auth']) {
     const envPath = resolve(farmslotRoot, name);
     try {
@@ -461,12 +457,11 @@ async function main(): Promise<void> {
 
   // Load dispatch queue + init auto-dispatch
   await loadEvalSuiteCaps();
-  const legacyWorkOriginator = migrationOriginator(gatewayAuthRuntime);
-  await loadQueue(legacyWorkOriginator);
+  await loadQueue();
   initBacklogStore(observedBroadcast);
-  await loadBacklog(legacyWorkOriginator);
+  await loadBacklog();
   initWorkGraphStore(observedBroadcast);
-  await loadWorkGraphs(legacyWorkOriginator);
+  await loadWorkGraphs();
   schedulerTick().catch((err) => {
     console.error(`[work-graph] startup reconciliation failed: ${(err as Error).message}`);
   });

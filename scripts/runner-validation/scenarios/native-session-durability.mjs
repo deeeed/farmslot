@@ -33,7 +33,7 @@ function nativeStateRoot() {
   );
   return root;
 }
-function rpc(method, params = {}, token = process.env.FARMSLOT_GATEWAY_TOKEN) {
+function rpc(method, params = {}, token = process.env.FARMSLOT_GATEWAY_PROFILE) {
   try {
     return JSON.parse(
       execFileSync(
@@ -48,7 +48,7 @@ function rpc(method, params = {}, token = process.env.FARMSLOT_GATEWAY_TOKEN) {
           cwd: ROOT,
           encoding: 'utf8',
           stdio: ['ignore', 'pipe', 'pipe'],
-          env: { ...process.env, FARMSLOT_GATEWAY_TOKEN: token },
+          env: { ...process.env, FARMSLOT_GATEWAY_PROFILE: token },
           timeout: 60_000,
         },
       ),
@@ -276,17 +276,17 @@ export async function runScenario({ runnerAdapter, model, timeoutMs = 120000, ou
           assert.ok(pending);
           assert.equal(pending.generation, state.session.generation);
           assert.ok(
-            process.env.FARMSLOT_NATIVE_OTHER_TOKEN,
+            process.env.FARMSLOT_NATIVE_OTHER_PROFILE,
             'Supply a second authenticated principal for the cross-owner negative check',
           );
           // Establish valid credentials first so native ownership is the reason for rejection.
-          rpc('principal.list', {}, process.env.FARMSLOT_NATIVE_OTHER_TOKEN);
+          rpc('principal.list', {}, process.env.FARMSLOT_NATIVE_OTHER_PROFILE);
           const response = {
             sessionId: state.session.id,
             requestId: pending.request.id,
             decision: 'deny',
           };
-          rejected('native.session.respond', response, process.env.FARMSLOT_NATIVE_OTHER_TOKEN);
+          rejected('native.session.respond', response, process.env.FARMSLOT_NATIVE_OTHER_PROFILE);
           rejected('native.session.respond', { ...response, requestId: pending.nativeId });
           rpc('native.session.respond', response);
           rejected('native.session.respond', response);

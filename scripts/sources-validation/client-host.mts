@@ -25,8 +25,6 @@ const specs = [
       GATEWAY_PORT: String(connection.port),
       GATEWAY_HOST: '127.0.0.1',
       VITE_FARMSLOT_GATEWAY_URL: `ws://127.0.0.1:${webPort}/ws`,
-      VITE_FARMSLOT_GATEWAY_TOKEN: connection.token,
-      VITE_FARMSLOT_GATEWAY_PASSWORD: '',
     },
   },
   {
@@ -40,8 +38,7 @@ const specs = [
       GATEWAY_PORT: String(connection.port),
       EXPO_PUBLIC_GATEWAY_URL: `ws://127.0.0.1:${connection.port}`,
       FARMSLOT_REMOTE_GATEWAY_URL: '',
-      FARMSLOT_GATEWAY_TOKEN: connection.token,
-      FARMSLOT_REMOTE_GATEWAY_TOKEN: '',
+      FARMSLOT_REMOTE_GATEWAY_TOKEN: connection.token,
       NODE_OPTIONS: `${env.NODE_OPTIONS ?? ''} --dns-result-order=ipv4first`.trim(),
       EXPO_PUBLIC_FARMSLOT_RECIPE_BRIDGE: '1',
       CI: '1',

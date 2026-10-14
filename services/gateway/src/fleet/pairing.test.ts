@@ -2,7 +2,17 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
+
+const homes: string[] = [];
+after(() => {
+  for (const home of homes) rmSync(home, { recursive: true, force: true });
+});
+function testHome(prefix: string): string {
+  const home = mkdtempSync(join(tmpdir(), prefix));
+  homes.push(home);
+  return home;
+}
 
 import { type PairingCreateParams, parseTailscaleDnsNameFromStatus } from '@farmslot/protocol';
 
@@ -53,7 +63,7 @@ test('pairing requires explicit authority and validates existing principals at c
 
 test('pairing cannot become the first issuance and rejects malformed role bindings', () => {
   const solo = createGatewayAuthRuntime({
-    FARMSLOT_HOME: mkdtempSync(join(tmpdir(), 'farmslot-pairing-solo-')),
+    FARMSLOT_HOME: testHome('farmslot-pairing-solo-'),
     GATEWAY_HOST: '127.0.0.1',
   });
   initializeGatewayIdentity(solo, { host: '127.0.0.1' });
@@ -91,35 +101,32 @@ test('pairing cannot become the first issuance and rejects malformed role bindin
   );
 });
 
-test('pairing exchange mints a derived revocable credential instead of returning the boot secret', () => {
+test('pairing exchange mints a separately revocable credential', () => {
   const runtime = initializedRuntime();
-  const envCredential = runtime.store
-    .snapshot()
-    .credentials.find((credential) => credential.origin === 'env-migrated');
-  assert.ok(envCredential);
+  const issued = runtime.writer.issueCredential('test-automation', 'source-client');
   const code = pairingCreate(
     {
       gatewayUrl: 'ws://127.0.0.1:7777/ws',
       profileName: 'phone',
       authority: {
         kind: 'existing-principal',
-        principalId: envCredential.principalId,
+        principalId: issued.record.principalId,
       },
     },
     runtime,
   );
   const exchanged = pairingExchange({ code: code.code }, runtime);
-  assert.notEqual(exchanged.profile.secret, 'boot-token');
+  assert.notEqual(exchanged.profile.secret, issued.secret);
   const parsed = parseCredentialWire(exchanged.profile.secret);
   assert.ok(parsed);
   const paired = runtime.store.findCredential(parsed.credentialId);
   assert.equal(paired?.origin, 'paired');
-  assert.equal(paired?.principalId, envCredential.principalId);
+  assert.equal(paired?.principalId, issued.record.principalId);
   assert.equal(runtime.resolver.resolveSecret(exchanged.profile.secret, 'token').ok, true);
 
   runtime.writer.revokeCredential(parsed.credentialId);
   assert.equal(runtime.resolver.resolveSecret(exchanged.profile.secret, 'token').ok, false);
-  assert.equal(runtime.resolver.resolveSecret('boot-token', 'token').ok, true);
+  assert.equal(runtime.resolver.resolveSecret(issued.secret, 'token').ok, true);
 });
 
 test('new service principal is provisioned only when its pairing code is redeemed', () => {
@@ -194,10 +201,13 @@ test('failed new-service pairing leaves the store unchanged and can be retried',
 
 function initializedRuntime() {
   const runtime = createGatewayAuthRuntime({
-    FARMSLOT_HOME: mkdtempSync(join(tmpdir(), 'farmslot-pairing-test-')),
-    FARMSLOT_GATEWAY_TOKEN: 'boot-token',
+    FARMSLOT_HOME: testHome('farmslot-pairing-test-'),
     GATEWAY_HOST: '127.0.0.1',
   });
   initializeGatewayIdentity(runtime, { host: '127.0.0.1' });
+  runtime.writer.createPrincipal({ type: 'service', displayName: 'test-automation' }, [
+    { role: 'admin', scope: { kind: 'global' } },
+  ]);
+  runtime.writer.issueCredential('test-automation', 'test-client');
   return runtime;
 }

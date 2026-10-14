@@ -3,9 +3,12 @@ import { randomUUID } from 'node:crypto';
 
 import { Methods } from '@farmslot/protocol';
 
+import { automationGatewayToken } from '../../lib/gateway-profile.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 
 import { connect } from './native-node-broker-smoke.mjs';
+
+let gatewayToken;
 
 export const SCENARIO_ID = 'native-owner-worker-denial';
 export const RUNNER_AGNOSTIC = true;
@@ -13,6 +16,7 @@ export const RUNNER_AGNOSTIC = true;
 /** Use a real stopped worker; a separate administrator always restores the owner's role. */
 export async function runScenario({ explicit, outDir }) {
   if (!explicit) return { scenario: SCENARIO_ID, runner: 'native', pass: true, skipped: true };
+  gatewayToken = await automationGatewayToken();
   if (process.env.FARMSLOT_NATIVE_DENIAL_UNCLAIMED_RUN_ID) return unclaimedSlotScenario(outDir);
   const report = { runner: 'native', checks: [], pass: false, inferenceExpected: false };
   const clients = [];
@@ -30,10 +34,13 @@ export async function runScenario({ explicit, outDir }) {
   try {
     assert.equal(process.env.FARMSLOT_GATEWAY, 'ws://127.0.0.1:18777');
     assert.ok(process.env.FARMSLOT_NATIVE_DENIAL_RUN_ID);
-    assert.ok(process.env.FARMSLOT_NATIVE_DENIAL_ADMIN_TOKEN);
-    owner = await connect(process.env.FARMSLOT_GATEWAY_TOKEN, 'ui');
+    assert.ok(process.env.FARMSLOT_NATIVE_DENIAL_ADMIN_PROFILE);
+    owner = await connect(gatewayToken, 'ui');
     clients.push(owner);
-    admin = await connect(process.env.FARMSLOT_NATIVE_DENIAL_ADMIN_TOKEN, 'ui');
+    admin = await connect(
+      await automationGatewayToken(process.env.FARMSLOT_NATIVE_DENIAL_ADMIN_PROFILE),
+      'ui',
+    );
     clients.push(admin);
     assert.notEqual(admin.principalId, owner.principalId);
     const { principals } = await ok(admin, Methods.PRINCIPAL_LIST);
@@ -87,7 +94,7 @@ export async function runScenario({ explicit, outDir }) {
       role: 'admin',
       scope: { kind: 'global' },
     });
-    const native = await connect(process.env.FARMSLOT_GATEWAY_TOKEN, 'companion');
+    const native = await connect(gatewayToken, 'companion');
     clients.push(native);
     assert.equal(native.principalId, owner.principalId);
     const catalog = await ok(native, Methods.NATIVE_SESSION_CATALOG);
@@ -148,7 +155,7 @@ export async function runScenario({ explicit, outDir }) {
           principals.find((item) => item.id === owner.principalId)?.roles,
           originalRoles,
         );
-        const restored = await connect(process.env.FARMSLOT_GATEWAY_TOKEN, 'ui');
+        const restored = await connect(gatewayToken, 'ui');
         clients.push(restored);
         const after = await ok(restored, Methods.NATIVE_SESSION_READ, pin);
         assert.equal(after.session.processStopped, true);
@@ -176,9 +183,12 @@ async function unclaimedSlotScenario(outDir) {
   const clients = [];
   try {
     assert.equal(process.env.FARMSLOT_GATEWAY, 'ws://127.0.0.1:18777');
-    const owner = await connect(process.env.FARMSLOT_GATEWAY_TOKEN, 'ui');
+    const owner = await connect(gatewayToken, 'ui');
     clients.push(owner);
-    const admin = await connect(process.env.FARMSLOT_NATIVE_DENIAL_ADMIN_TOKEN, 'ui');
+    const admin = await connect(
+      await automationGatewayToken(process.env.FARMSLOT_NATIVE_DENIAL_ADMIN_PROFILE),
+      'ui',
+    );
     clients.push(admin);
     assert.notEqual(owner.principalId, admin.principalId);
     const runId = process.env.FARMSLOT_NATIVE_DENIAL_UNCLAIMED_RUN_ID;

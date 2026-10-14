@@ -175,7 +175,6 @@ export function authenticateNode(
       clientName: options.machine,
       protocolVersion: PROTOCOL_VERSION,
       ...(credential?.token ? { token: credential.token } : {}),
-      ...(credential?.password ? { password: credential.password } : {}),
     },
     { timeoutMs: options.timeoutMs },
   );

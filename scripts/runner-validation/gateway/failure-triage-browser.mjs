@@ -4,6 +4,8 @@ import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { testGatewayProfile } from '../../lib/test-gateway-identity.mjs';
+
 const out = process.env.TRIAGE_PILOT_PROOF_OUT;
 assert.ok(
   out && process.env.FARMSLOT_UI_URL && process.env.FARMSLOT_CDP_PORT,
@@ -25,10 +27,12 @@ if (!recoverNoCall) {
 }
 const session = JSON.parse(await readFile(path.join(out, 'ui-session.json'), 'utf8'));
 const route = `run/${session.runId}?step=validation&proof=triage-browser-${Date.now()}`;
+testGatewayProfile(path.join(out, 'home'), session.gateway, session.token);
 const env = {
   ...process.env,
   FARMSLOT_GATEWAY: session.gateway,
-  FARMSLOT_GATEWAY_TOKEN: session.token,
+  FARMSLOT_HOME: path.join(out, 'home'),
+  FARMSLOT_GATEWAY_PROFILE: 'proof',
 };
 delete env.FARMSLOT_GATEWAY_PASSWORD;
 function cdp(...args) {

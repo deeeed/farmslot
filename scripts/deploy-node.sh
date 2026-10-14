@@ -334,6 +334,20 @@ NODE_SERVICE_PATH="$NODE_DIR:/usr/local/bin:/usr/bin:/bin"
 if [[ "$REMOTE_OS" == "Darwin" ]]; then
   NODE_SERVICE_PATH="$REMOTE_DIR/node_modules/.bin:$NODE_DIR:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/usr/sbin:/bin"
 fi
+# Updates retain the target instance's native enrollment unless explicitly overridden.
+# An explicit empty value still disables native execution. Read only this public field.
+if [[ "${FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID+x}" != x && "$REMOTE_OS" == Darwin ]]; then
+  native_plist="$REMOTE_HOME/Library/LaunchAgents/com.farmslot.node${LAUNCHD_LABEL_SUFFIX}.plist"
+  native_plist_quoted=$(printf '%q' "$native_plist")
+  if run "test -f $native_plist_quoted"; then
+    run "/usr/bin/plutil -lint $native_plist_quoted" > /dev/null
+    native_key=EnvironmentVariables.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID
+    if run "/usr/bin/plutil -extract $native_key raw -o /dev/null $native_plist_quoted"; then
+      FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID=$(run "/usr/bin/plutil -extract $native_key raw -o - $native_plist_quoted")
+    fi
+  fi
+fi
+
 if [[ -n "${FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID:-}" ]]; then
   # Native CLI configuration can depend on exports in the user's login shell.
   # Load those on the execution machine, without exporting credentials to the gateway.
@@ -375,17 +389,13 @@ systemd_node_arguments() {
 
 # The token the service definition carries as FARMSLOT_NODE_TOKEN, and that the
 # shadowed-token check compares against.
-DEPLOYED_NODE_TOKEN="${FARMSLOT_NODE_TOKEN:-${FARMSLOT_GATEWAY_TOKEN:-}}"
+DEPLOYED_NODE_TOKEN="${FARMSLOT_NODE_TOKEN:-}"
 
 launchd_auth_env_xml() {
   if [[ -n "$DEPLOYED_NODE_TOKEN" ]]; then
     printf '        <key>FARMSLOT_NODE_TOKEN</key>
         <string>%s</string>
 ' "$(printf '%s' "$DEPLOYED_NODE_TOKEN" | xml_escape)"
-  elif [[ -n "${FARMSLOT_GATEWAY_PASSWORD:-}" ]]; then
-    printf '        <key>FARMSLOT_GATEWAY_PASSWORD</key>
-        <string>%s</string>
-' "$(printf '%s' "$FARMSLOT_GATEWAY_PASSWORD" | xml_escape)"
   fi
 }
 
@@ -393,9 +403,6 @@ systemd_auth_env_lines() {
   if [[ -n "$DEPLOYED_NODE_TOKEN" ]]; then
     printf 'Environment="FARMSLOT_NODE_TOKEN=%s"
 ' "$(printf '%s' "$DEPLOYED_NODE_TOKEN" | sed 's/\\/\\\\/g; s/"/\\"/g')"
-  elif [[ -n "${FARMSLOT_GATEWAY_PASSWORD:-}" ]]; then
-    printf 'Environment="FARMSLOT_GATEWAY_PASSWORD=%s"
-' "$(printf '%s' "$FARMSLOT_GATEWAY_PASSWORD" | sed 's/\\/\\\\/g; s/"/\\"/g')"
   fi
 }
 

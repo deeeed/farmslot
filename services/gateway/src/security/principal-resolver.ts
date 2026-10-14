@@ -1,7 +1,7 @@
 import type { AuthenticationRef, GatewayAuthClientKind, Principal } from '@farmslot/protocol';
 
 import type { GatewayAuthSession } from './auth.js';
-import { parseCredentialWire, safeEqualSecret, verifySecret } from './credential-secret.js';
+import { parseCredentialWire, verifySecret } from './credential-secret.js';
 import type { CredentialStoreRuntime } from './credential-store.js';
 import { VerificationCache } from './verification-cache.js';
 
@@ -18,15 +18,8 @@ export interface PrincipalResolverFacts {
   machine: string;
 }
 
-interface BootCredential {
-  rawSecret: string;
-  credentialId: string;
-  transport: 'token' | 'password';
-}
-
 export class PrincipalResolver {
   readonly verificationCache = new VerificationCache();
-  private bootCredential: BootCredential | undefined;
 
   constructor(
     readonly store: CredentialStoreRuntime,
@@ -39,10 +32,6 @@ export class PrincipalResolver {
     this.facts = facts;
   }
 
-  setBootCredential(bootCredential: BootCredential | undefined): void {
-    this.bootCredential = bootCredential;
-  }
-
   isSoloMode(): boolean {
     return (
       !this.store.isActivated() && this.facts.bindIsLoopbackOnly && !this.facts.trustProxyHeaders
@@ -52,22 +41,10 @@ export class PrincipalResolver {
   resolveSecret(presented: string, transport: 'token' | 'password'): PrincipalResolution {
     this.store.ensureFresh();
     const parsed = parseCredentialWire(presented);
-    if (transport === 'password') {
-      if (parsed || this.bootCredential?.transport !== 'password') {
-        return { ok: false, reason: 'secret_mismatch' };
-      }
-      return this.resolveBootSecret(presented);
-    }
-
+    if (transport !== 'token' || !parsed) return { ok: false, reason: 'secret_mismatch' };
     const cachedCredentialId = this.verificationCache.get(presented);
     if (cachedCredentialId) return this.resolveCredentialReference(cachedCredentialId);
 
-    if (!parsed) {
-      if (this.bootCredential?.transport !== 'token') {
-        return { ok: false, reason: 'secret_mismatch' };
-      }
-      return this.resolveBootSecret(presented);
-    }
     const credential = this.store.findCredential(parsed.credentialId);
     if (!credential) return { ok: false, reason: 'secret_mismatch' };
     const resolved = this.resolveCredentialReference(credential.id);
@@ -100,14 +77,6 @@ export class PrincipalResolver {
     }
     const principal = this.store.findPrincipal(principalId);
     return principal ? { ok: true, principal } : { ok: false, reason: 'missing_principal' };
-  }
-
-  private resolveBootSecret(presented: string): PrincipalResolution {
-    const boot = this.bootCredential;
-    if (!boot || !safeEqualSecret(presented, boot.rawSecret)) {
-      return { ok: false, reason: 'secret_mismatch' };
-    }
-    return this.resolveCredentialReference(boot.credentialId);
   }
 
   private resolveCredentialReference(credentialId: string): PrincipalResolution {

@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+import { testGatewayIdentity, testGatewayProfile } from './lib/test-gateway-identity-source.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -139,7 +140,7 @@ async function main() {
   const gatewayPort = await port(),
     uiPort = await port(),
     cdpPort = await port();
-  const token = randomBytes(32).toString('hex');
+  const token = testGatewayIdentity(path.join(fixture, 'home'));
   const project = path.join(fixture, 'projects/review');
   await mkdir(path.join(project, 'shared/review-pr'), { recursive: true });
   await mkdir(path.join(project, 'shared/validation'), { recursive: true });
@@ -242,6 +243,7 @@ process.stdout.write(JSON.stringify(body));
 `,
     { mode: 0o700 },
   );
+  testGatewayProfile(path.join(fixture, 'home'), `ws://127.0.0.1:${gatewayPort}`, token);
   const environment = {
     ...process.env,
     PATH: `${path.join(fixture, 'bin')}:${process.env.PATH}`,
@@ -254,8 +256,8 @@ process.stdout.write(JSON.stringify(body));
     GATEWAY_HOST: '127.0.0.1',
     GATEWAY_PORT: String(gatewayPort),
     VITE_PORT: String(uiPort),
-    FARMSLOT_GATEWAY_TOKEN: token,
-    FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'legacy-env',
+    FARMSLOT_GATEWAY_PROFILE: 'proof',
+    FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'test-automation',
     FARMSLOT_DISABLE_ORCHESTRATION: '1',
     ...(process.argv[3] === 'recovery'
       ? { FARMSLOT_DISABLE_RUN_ENGINE_START: '1', NODE_TEST_CONTEXT: '1' }
@@ -270,7 +272,7 @@ process.stdout.write(JSON.stringify(body));
   const { PRMonitorStore } = await import('../services/gateway/src/pr-monitoring/store.js');
   const monitorStore = await PRMonitorStore.load(path.join(fixture, '.pr-monitors.json'));
   const repairExecution = { slotPolicy: { kind: 'exact' as const, slotId: 'qa-disabled' }, models };
-  let seededMonitor = await monitorStore.subscribe('legacy-env', {
+  let seededMonitor = await monitorStore.subscribe('test-automation', {
     pr: { host: 'github.com', repo: 'example/app', number: 44 },
     account: { host: 'github.com', login: 'fixture-reviewer' },
     project: 'review',
@@ -280,7 +282,7 @@ process.stdout.write(JSON.stringify(body));
     automaticAttemptLimit: 1,
     cooldownMs: 60_000,
   });
-  await monitorStore.observe(seededMonitor.id, 'legacy-env', seededMonitor.revision, {
+  await monitorStore.observe(seededMonitor.id, 'test-automation', seededMonitor.revision, {
     observation: {
       checkedAt: new Date().toISOString(),
       headSha: 'a'.repeat(40),
@@ -317,7 +319,7 @@ process.stdout.write(JSON.stringify(body));
     slotId: null,
     branch: null,
     taskFile: null,
-    createdByPrincipalId: 'legacy-env',
+    createdByPrincipalId: 'test-automation',
     steps: [],
     decisions: [],
     metrics: {},
@@ -330,7 +332,7 @@ process.stdout.write(JSON.stringify(body));
     flowType: 'review-pr',
     status: 'failed',
     transport: 'tmux',
-    nativeOwnerPrincipalId: 'legacy-env',
+    nativeOwnerPrincipalId: 'test-automation',
     reviewWorkspaceTarget: { machine: 'review-one' },
     reviewWorkspace: {
       workspaceId: 'ui-review-workspace',
@@ -398,7 +400,7 @@ process.stdout.write(JSON.stringify(body));
       headSha: 'a'.repeat(40),
       review: {
         profile: 'fixture',
-        ownerId: 'legacy-env',
+        ownerId: 'test-automation',
         options: { mode: 'cold', publishReview: true },
       },
       publication: {
@@ -420,7 +422,7 @@ process.stdout.write(JSON.stringify(body));
     qaAfterReview: undefined,
     reviewPublication: {
       direct: {
-        ownerId: 'legacy-env',
+        ownerId: 'test-automation',
         pr: { host: 'github.com', repo: 'example/app', number: 42 },
         policy: publicationSeed.prWork.publication,
       },
@@ -429,7 +431,7 @@ process.stdout.write(JSON.stringify(body));
         version: 1,
         state: 'published',
         runId: 'ui-publication-published',
-        ownerId: 'legacy-env',
+        ownerId: 'test-automation',
         account: { host: 'github.com', login: 'fixture-reviewer' },
         pr: { host: 'github.com', repo: 'example/app', number: 42 },
         headSha: 'a'.repeat(40),
@@ -780,7 +782,7 @@ process.stdout.write(JSON.stringify(body));
     await servers.stop();
     const storeFile = path.join(fixture, '.pr-rules.json');
     const historical = JSON.parse(await readFile(storeFile, 'utf8'));
-    const sourceRule = historical.rules.find((rule: any) => rule.ownerId === 'legacy-env');
+    const sourceRule = historical.rules.find((rule: any) => rule.ownerId === 'test-automation');
     assert(sourceRule);
     for (const number of [42, 43]) {
       for (const owner of ['owned', 'foreign']) {
@@ -802,7 +804,7 @@ process.stdout.write(JSON.stringify(body));
               ruleRevision: sourceRule.revision,
               teamId: sourceRule.config.teamId,
               teamRevision: 1,
-              ownerId: 'legacy-env',
+              ownerId: 'test-automation',
               reasons: ['Historical shared review fixture'],
               autoStart: false,
               eligible: false,
@@ -818,7 +820,7 @@ process.stdout.write(JSON.stringify(body));
           ticketOrPr: `example/app#${number}`,
           flowType: 'review-pr',
           status: 'done',
-          createdByPrincipalId: owner === 'owned' ? 'legacy-env' : 'another-principal',
+          createdByPrincipalId: owner === 'owned' ? 'test-automation' : 'another-principal',
           updatedAt,
           reviewResult: {
             recommendation: 'COMMENT',

@@ -8,11 +8,10 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const statePath = process.env.NATIVE_COMPANION_DRAFT_STATE;
-assert(statePath && process.env.NATIVE_COMPANION_TOKEN_FILE);
-process.env.FARMSLOT_GATEWAY = 'ws://127.0.0.1:18777';
-process.env.FARMSLOT_GATEWAY_TOKEN = fs
-  .readFileSync(process.env.NATIVE_COMPANION_TOKEN_FILE, 'utf8')
-  .trim();
+assert(
+  statePath && process.env.FARMSLOT_GATEWAY_PROFILE,
+  'Select an isolated service/test profile',
+);
 const { rpc } = await import(
   path.join(root, 'scripts/runner-validation/scenarios/native-worker-lifecycle.mjs')
 );

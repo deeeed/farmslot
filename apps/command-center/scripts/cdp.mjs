@@ -7,7 +7,7 @@
 //   node scripts/cdp.mjs eval <hash> --file <p> --out <f>  Also write the result JSON to a file (evidence).
 //   node scripts/cdp.mjs focus <hash>                 Front the tab + grant clipboard (probes that click copy buttons).
 //   node scripts/cdp.mjs goto <hash|url> [--new]      Navigate a reused Command Center tab.
-//   node scripts/cdp.mjs login <hash>                 Fill the auth form from env token/password.
+//   node scripts/cdp.mjs login <hash>                 Fill the auth form from an explicit test profile.
 //   node scripts/cdp.mjs screenshot <hash> <path>      Capture a PNG screenshot of a page tab.
 //   node scripts/cdp.mjs viewport <hash> <width> <height> Resize the browser content area.
 //   node scripts/cdp.mjs fill <hash> <selector> <text> Type into a control with real CDP input.
@@ -23,7 +23,7 @@
 //   FARMSLOT_CDP_HOST   CDP address (default 127.0.0.1); must match debug-chrome.sh.
 //   FARMSLOT_UI_URL     Command Center URL used by `goto` for hash targets (default from .env.ports VITE_PORT, else 5174).
 //   FARMSLOT_GATEWAY    Gateway WS url (default ws://localhost:7777).
-//   FARMSLOT_GATEWAY_TOKEN/PASSWORD are read from process env or nearest .env.local-auth/.env.
+//   FARMSLOT_GATEWAY_PROFILE names an explicit automation/test profile in FARMSLOT_HOME.
 //
 // Exit codes: 0 on success, 1 on usage error, 2 on runtime error (no tab / WS failure).
 
@@ -33,15 +33,18 @@ import { fileURLToPath } from 'node:url';
 
 import WebSocket from 'ws';
 
+import { automationGatewayTarget } from '../../../scripts/lib/gateway-profile.mjs';
+
 const CDP_PORT = process.env.FARMSLOT_CDP_PORT ?? '9323';
 // Must match debug-chrome.sh: it verifies which process owns CDP at this exact
 // address before allowing us to drive it. Connecting to "localhost" here would let
 // resolution pick a different socket than the one that was checked.
 const CDP_HOST = process.env.FARMSLOT_CDP_HOST ?? '127.0.0.1';
 const UI_URL = process.env.FARMSLOT_UI_URL ?? defaultUiUrl();
-const GATEWAY_URL = process.env.FARMSLOT_GATEWAY ?? 'ws://localhost:7777';
-const GATEWAY_CREDENTIAL = resolveGatewayCredential();
 const [, , cmd, ...rest] = process.argv;
+const gatewayTarget = cmd === 'gateway' || cmd === 'login' ? await automationGatewayTarget() : null;
+const GATEWAY_URL = gatewayTarget?.url ?? process.env.FARMSLOT_GATEWAY ?? 'ws://localhost:7777';
+const GATEWAY_CREDENTIAL = gatewayTarget?.credential ?? null;
 
 function defaultUiUrl() {
   const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -443,7 +446,7 @@ async function inputInTab(hash, selector, value, select) {
 async function loginInTab(hash) {
   const secret = GATEWAY_CREDENTIAL?.token ?? GATEWAY_CREDENTIAL?.password;
   const mode = GATEWAY_CREDENTIAL?.token ? 'token' : 'password';
-  if (!secret) die('login requires FARMSLOT_GATEWAY_TOKEN or FARMSLOT_GATEWAY_PASSWORD', 2);
+  if (!secret) die('login requires an explicit FARMSLOT_GATEWAY_PROFILE', 2);
   return evalInTab(
     hash,
     `
@@ -531,78 +534,6 @@ async function gatewayRpc(method, paramsJson) {
       reject(err);
     });
   });
-}
-
-function resolveGatewayCredential() {
-  const envCredential = credentialFromEnv(process.env);
-  if (envCredential) return envCredential;
-
-  for (const envFile of findGatewayEnvFiles()) {
-    const parsed = readEnvFile(envFile);
-    const credential = credentialFromEnv(parsed);
-    if (credential) return credential;
-  }
-
-  return null;
-}
-
-function credentialFromEnv(env) {
-  const password = nonEmpty(env.FARMSLOT_GATEWAY_PASSWORD);
-  if (password) return { password };
-  const token = nonEmpty(env.FARMSLOT_GATEWAY_TOKEN);
-  if (token) return { token };
-  return null;
-}
-
-function findGatewayEnvFiles() {
-  const roots = new Set();
-  if (process.env.FARMSLOT_ROOT) roots.add(resolve(process.env.FARMSLOT_ROOT));
-
-  let cwd = resolve(process.cwd());
-  while (true) {
-    roots.add(cwd);
-    const parent = dirname(cwd);
-    if (parent === cwd) break;
-    cwd = parent;
-  }
-
-  const scriptDir = dirname(fileURLToPath(import.meta.url));
-  roots.add(resolve(scriptDir, '..'));
-  roots.add(resolve(scriptDir, '../..'));
-
-  const files = [];
-  for (const root of roots) {
-    for (const name of ['.env.local-auth', '.env']) {
-      const file = resolve(root, name);
-      if (existsSync(file) && !files.includes(file)) files.push(file);
-    }
-  }
-  return files;
-}
-
-function readEnvFile(path) {
-  const result = {};
-  for (const rawLine of readFileSync(path, 'utf8').split('\n')) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#')) continue;
-    const normalized = line.startsWith('export ') ? line.slice('export '.length).trim() : line;
-    const eqIdx = normalized.indexOf('=');
-    if (eqIdx <= 0) continue;
-    const key = normalized.slice(0, eqIdx).trim();
-    let value = normalized.slice(eqIdx + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    result[key] = value;
-  }
-  return result;
-}
-
-function nonEmpty(value) {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
 try {

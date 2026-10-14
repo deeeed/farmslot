@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdir, open, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+
+import { testGatewayIdentity } from '../../lib/test-gateway-identity.mjs';
 
 assert.equal(process.env.FARMSLOT_ASSESSMENT_VALIDATION, '1');
 const out = process.env.PR_PREVIEW_RESUME_OUT,
@@ -55,6 +56,7 @@ await writeFile(
   `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(path.resolve('scripts/runner-validation/fixtures/gh-preview-pages.mjs'))} "$@"\n`,
   { mode: 0o700 },
 );
+testGatewayIdentity(path.join(out, 'home'), `ws://127.0.0.1:${port}`);
 const env = {
   ...process.env,
   PATH: `${bin}:${process.env.PATH}`,
@@ -66,7 +68,7 @@ const env = {
   FARMSLOT_ASSESSMENT_PROVIDER: 'unavailable-proof',
   FARMSLOT_PR_SOURCE_BUDGET_MS: '1500',
   FARMSLOT_GATEWAY_AUTH_MODE: 'token',
-  FARMSLOT_GATEWAY_TOKEN: randomUUID(),
+  FARMSLOT_GATEWAY_PROFILE: 'proof',
   GATEWAY_HOST: '127.0.0.1',
   GATEWAY_PORT: String(port),
   FARMSLOT_GATEWAY: `ws://127.0.0.1:${port}`,

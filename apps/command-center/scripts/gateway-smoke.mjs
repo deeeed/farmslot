@@ -2,9 +2,12 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { automationGatewayTarget } from '../../../scripts/lib/gateway-profile.mjs';
+
 const args = parseArgs(process.argv.slice(2));
 const method = requiredArg(args, 'method');
 const gatewayUrl = args['gateway-url'] ?? process.env.FARMSLOT_GATEWAY ?? 'ws://localhost:7777';
+const authTarget = await automationGatewayTarget(gatewayUrl);
 const runId = args['run-id'];
 const slotId = args['slot-id'];
 
@@ -69,7 +72,7 @@ function requiredArg(args, key) {
 async function callGateway(rpcMethod, params) {
   const url = normalizeWebSocketUrl(gatewayUrl);
   const ws = new WebSocket(url);
-  const authPayload = gatewayCredential();
+  const authPayload = authTarget?.credential ?? {};
   await waitForOpen(ws);
   await request(ws, 'auth-1', 'auth.connect', {
     clientKind: 'ui',
@@ -84,14 +87,6 @@ function normalizeWebSocketUrl(url) {
   if (url.startsWith('http://')) return `ws://${url.slice('http://'.length)}`;
   if (url.startsWith('https://')) return `wss://${url.slice('https://'.length)}`;
   throw new Error(`Gateway URL must be ws(s):// or http(s)://, received: ${url}`);
-}
-
-function gatewayCredential() {
-  if (process.env.FARMSLOT_GATEWAY_TOKEN) return { token: process.env.FARMSLOT_GATEWAY_TOKEN };
-  if (process.env.FARMSLOT_GATEWAY_PASSWORD) {
-    return { password: process.env.FARMSLOT_GATEWAY_PASSWORD };
-  }
-  return {};
 }
 
 function waitForOpen(ws) {

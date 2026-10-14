@@ -4,6 +4,8 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
+- Authenticate with machine-bound node credentials only.
+
 - Share Git HEAD observations across pane polling requests and reap pending inventory children before node shutdown, preserving branch and worker telemetry.
 
 - Install external dependencies for the full bundled workspace closure, including recorded-evidence readers.

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Use explicit local credentials for startup and gateway profiles for authentication; retire unused principals through guarded online or offline commands.
 - Let live conformance use the shared recording mode and opt-out reason, and report missing HUD observations as warnings while retaining required captures and cleanup proof.
 
 - Add `run adopt-published-pr` for linking a reviewed human publication without republishing.

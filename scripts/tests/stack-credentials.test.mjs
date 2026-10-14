@@ -8,6 +8,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -49,6 +50,8 @@ function fixture(t, auth = '') {
   }
   mkdirSync(path.join(root, 'apps/command-center'), { recursive: true });
   mkdirSync(path.join(root, 'apps/companion/scripts/agentic'), { recursive: true });
+  symlinkSync(path.join(repo, 'node_modules'), path.join(root, 'node_modules'), 'dir');
+  symlinkSync(path.join(repo, 'node_modules'), path.join(root, 'framework/node_modules'), 'dir');
   writeFileSync(path.join(root, '.env.ports'), 'GATEWAY_PORT=0\nVITE_PORT=0\n');
   if (auth) writeFileSync(path.join(root, '.env.local-auth'), auth);
   const bin = path.join(root, 'bin');
@@ -72,6 +75,7 @@ function fixture(t, auth = '') {
     FARMSLOT_GATEWAY_PASSWORD: 'parent-password',
     FARMSLOT_SLOT_REPO: root,
     FARMSLOT_RUNTIME_DIR: path.join(root, 'runtime'),
+    FARMSLOT_HOME: path.join(root, 'home'),
     STACK_CREDENTIAL_CAPTURE: capture,
   };
   return {
@@ -94,18 +98,15 @@ test('dev stack drops inherited parent credentials before co-launching its node'
   assert.equal(child.FARMSLOT_GATEWAY_AUTH_MODE, null);
 });
 
-test('checkout auth replaces parent node and gateway credentials', (t) => {
+test('checkout auth supplies only its node credential', (t) => {
   for (const auth of [
     'FARMSLOT_GATEWAY_TOKEN=stack-token\n',
     'FARMSLOT_GATEWAY_PASSWORD=stack-password\n',
   ]) {
-    const child = fixture(t, auth).run();
-    assert.equal(child.FARMSLOT_NODE_TOKEN, null);
-    assert.equal(child.FARMSLOT_GATEWAY_TOKEN, auth.includes('TOKEN=') ? 'stack-token' : null);
-    assert.equal(
-      child.FARMSLOT_GATEWAY_PASSWORD,
-      auth.includes('PASSWORD=') ? 'stack-password' : null,
-    );
+    const child = fixture(t, auth + 'FARMSLOT_NODE_TOKEN=stack-node\n').run();
+    assert.equal(child.FARMSLOT_NODE_TOKEN, 'stack-node');
+    assert.equal(child.FARMSLOT_GATEWAY_TOKEN, null);
+    assert.equal(child.FARMSLOT_GATEWAY_PASSWORD, null);
   }
 });
 
@@ -148,7 +149,11 @@ test('current sandbox launcher isolates home even for an older slot dev script',
     path.join(f.root, 'projects/farmslot-farm/project.json'),
     JSON.stringify({ primary_repo: primary }),
   );
-  writeFileSync(path.join(f.root, '.env.ports'), 'GATEWAY_PORT=0\nVITE_PORT=8809\n');
+  // Bind selection is explicit here; other tests exercise the activation lookup.
+  writeFileSync(
+    path.join(f.root, '.env.ports'),
+    'GATEWAY_PORT=0\nVITE_PORT=8809\nGATEWAY_HOST=127.0.0.1\n',
+  );
   writeFileSync(path.join(f.root, 'scripts/dev.sh'), '#!/bin/sh\nexec yarn dev\n');
   const bin = path.join(f.root, 'bin');
   writeFileSync(path.join(bin, 'lsof'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
@@ -157,20 +162,26 @@ test('current sandbox launcher isolates home even for an older slot dev script',
     '#!/usr/bin/env node\nconst fs=require("node:fs");if(!fs.existsSync(process.env.FARMSLOT_RUNTIME_DIR+"/sandbox-dev.pid"))process.exit(1);const deadline=Date.now()+1500;function poll(){if(fs.existsSync(process.env.STACK_CREDENTIAL_CAPTURE))process.exit(0);if(Date.now()>=deadline)process.exit(1);setTimeout(poll,10);}poll();\n',
     { mode: 0o755 },
   );
-  execFileSync(
-    'bash',
-    [
-      path.join(f.root, 'framework/projects/farmslot-farm/setup/sandbox-dev.sh'),
-      'start',
-      '--gateway-port',
-      '0',
-    ],
-    {
-      env: { ...f.env, STACK_KEEP_CAPTURE_RUNNING: '1', FARMSLOT_RUNS_DIR: '' },
-      stdio: 'pipe',
-      timeout: 3000,
-    },
-  );
+  try {
+    execFileSync(
+      'bash',
+      [
+        path.join(f.root, 'framework/projects/farmslot-farm/setup/sandbox-dev.sh'),
+        'start',
+        '--gateway-port',
+        '0',
+      ],
+      {
+        env: { ...f.env, STACK_KEEP_CAPTURE_RUNNING: '1', FARMSLOT_RUNS_DIR: '' },
+        stdio: 'pipe',
+        timeout: 3000,
+      },
+    );
+  } catch (error) {
+    const logFile = path.join(f.root, 'runtime/sandbox-dev.log');
+    if (existsSync(logFile)) error.message += '\n' + readFileSync(logFile, 'utf8');
+    throw error;
+  }
   const child = JSON.parse(readFileSync(f.capture, 'utf8'));
   for (const key of keys) assert.equal(child[key], null, key);
   assert.equal(child.FARMSLOT_HOME, realpathSync(path.join(f.root, 'runtime/home')));
@@ -226,7 +237,7 @@ test('sandbox home stays private through checkout config and Node child reloads'
   assert.equal(existsSync(path.join(child.FARMSLOT_HOME, 'credentials.json')), false);
 });
 
-test('stack-local ports restore their own bind host and auth mode after clearing parent policy', (t) => {
+test('stack-local ports restore their bind host without retired auth policy', (t) => {
   const f = fixture(t, 'FARMSLOT_GATEWAY_PASSWORD=stack-password\n');
   writeFileSync(
     path.join(f.root, '.env.ports'),
@@ -234,7 +245,7 @@ test('stack-local ports restore their own bind host and auth mode after clearing
   );
   const child = f.run();
   assert.equal(child.GATEWAY_HOST, 'localhost');
-  assert.equal(child.FARMSLOT_GATEWAY_AUTH_MODE, 'password');
-  assert.equal(child.FARMSLOT_GATEWAY_PASSWORD, 'stack-password');
+  assert.equal(child.FARMSLOT_GATEWAY_AUTH_MODE, null);
+  assert.equal(child.FARMSLOT_GATEWAY_PASSWORD, null);
   assert.equal(child.FARMSLOT_NODE_TOKEN, null);
 });

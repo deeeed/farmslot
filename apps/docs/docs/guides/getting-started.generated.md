@@ -24,6 +24,9 @@ Two commands take a fresh machine to working farm slots; one keeps it current.
 For a visual walk-through of the full lifecycle (what runs, what lands where, what
 you customize, and how to remove it), see [onboarding-flow.md](https://github.com/deeeed/farmslot/blob/main/docs/operations/onboarding-flow.md).
 
+For person login, farm automation, node credentials and admin recovery, see
+[identity and credentials](https://github.com/deeeed/farmslot/blob/main/docs/reference/identity-and-credentials.md).
+
 ## Install
 
 ```bash

@@ -1,14 +1,15 @@
 process.env.NODE_TEST_CONTEXT = '1';
 
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 
 import type { PressureAdmissionDecision } from '@farmslot/protocol';
 
 const root = mkdtempSync(join(tmpdir(), 'farmslot-provenance-'));
+after(() => rmSync(root, { recursive: true, force: true }));
 const queueFile = join(root, 'dispatch-queue.json');
 const backlogFile = join(root, 'backlog.json');
 const graphDir = join(root, 'work-graphs');
@@ -84,23 +85,24 @@ const { resolveWorkOriginator, runWithSessionOriginator } =
   await import('../security/work-originator.js');
 const { dispatchQueueUpdate } = await import('../methods/dispatch/queue.js');
 
-test('legacy migration is per-store, observable, one-time, and public projections stay clean', async () => {
+test('missing stored authorship stays unproven and explicit public edits re-author cleanly', async () => {
   const logs: string[] = [];
   const originalLog = console.log;
   console.log = (...args: unknown[]) => logs.push(args.map(String).join(' '));
   queue.setQueueDispatchPressureCaptureForTests(admittedPressure);
   try {
     const legacyOriginator = { kind: 'principal' as const, principalId: 'local-admin' };
-    await queue.loadQueue(legacyOriginator);
-    await backlog.loadBacklog(legacyOriginator);
-    await workGraph.loadWorkGraphs(legacyOriginator);
+    await queue.loadQueue();
+    await backlog.loadBacklog();
+    await workGraph.loadWorkGraphs();
 
-    assert.deepEqual(queue.queueRecordOriginator('legacy-queue'), legacyOriginator);
-    assert.deepEqual(backlog.backlogRecordOriginator('legacy-backlog'), legacyOriginator);
-    assert.deepEqual(workGraph.workGraphRecordOriginator('wg_legacy'), legacyOriginator);
-    assert.ok(logs.some((line) => line.includes('dispatch queue migrated 1 item(s)')));
-    assert.ok(logs.some((line) => line.includes('backlog migrated 1 item(s)')));
-    assert.ok(logs.some((line) => line.includes('work graph migrated 1 item(s)')));
+    assert.equal(queue.queueRecordOriginator('legacy-queue'), undefined);
+    assert.equal(backlog.backlogRecordOriginator('legacy-backlog'), undefined);
+    assert.equal(workGraph.workGraphRecordOriginator('wg_legacy'), undefined);
+    assert.equal(
+      logs.some((line) => line.includes('migrated')),
+      false,
+    );
 
     const runtime = createGatewayAuthRuntime({
       FARMSLOT_HOME: join(root, 'authorization-home'),
@@ -121,7 +123,12 @@ test('legacy migration is per-store, observable, one-time, and public projection
     );
     setCachedFleetForTests(readyFleet('provenance-slot'));
     await queue.tryDispatchNext();
-    assert.equal(legacyDispatches, 1, 'a migrated pre-provenance queue row must still dispatch');
+    assert.equal(
+      legacyDispatches,
+      0,
+      'missing authorship must not receive implicit admin authority',
+    );
+    queue.removeItem('legacy-queue');
 
     const events: unknown[] = [];
     queue.initDispatchQueue(
@@ -227,9 +234,9 @@ test('legacy migration is per-store, observable, one-time, and public projection
     writeFileSync(graphPath, JSON.stringify(graphJson));
 
     logs.length = 0;
-    await queue.loadQueue(legacyOriginator);
-    await backlog.loadBacklog(legacyOriginator);
-    await workGraph.loadWorkGraphs(legacyOriginator);
+    await queue.loadQueue();
+    await backlog.loadBacklog();
+    await workGraph.loadWorkGraphs();
     assert.equal(queue.queueRecordOriginator(added.id), undefined);
     assert.equal(backlog.backlogRecordOriginator(createdBacklog.item.id), undefined);
     assert.equal(workGraph.workGraphRecordOriginator('wg_new'), undefined);

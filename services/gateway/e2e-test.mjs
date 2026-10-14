@@ -2,16 +2,14 @@
 // E2E validation: tests every RPC the UI calls and validates response shapes match expectations.
 // Catches type mismatches like slot.check returning { requestId } when UI expects { slot, checks }.
 // Run: cd services/gateway && yarn node e2e-test.mjs
-// Auth: FARMSLOT_GATEWAY_TOKEN/PASSWORD are read from process env or nearest .env.local-auth/.env.
-
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+// Auth: select an explicit service/test FARMSLOT_GATEWAY_PROFILE in its isolated FARMSLOT_HOME.
 
 import { WebSocket } from 'ws';
 
+import { automationGatewayTarget } from '../../scripts/lib/gateway-profile.mjs';
+
 const GW = process.env.FARMSLOT_GATEWAY ?? process.env.GW_URL ?? 'ws://localhost:7777';
-const GATEWAY_CREDENTIAL = resolveGatewayCredential();
+const GATEWAY_CREDENTIAL = (await automationGatewayTarget(GW))?.credential ?? null;
 let passed = 0;
 let failed = 0;
 
@@ -65,77 +63,6 @@ function openWebSocket() {
     ws.once('open', () => resolve(ws));
     ws.once('error', reject);
   });
-}
-
-function resolveGatewayCredential() {
-  const envCredential = credentialFromEnv(process.env);
-  if (envCredential) return envCredential;
-
-  for (const envFile of findGatewayEnvFiles()) {
-    const parsed = readEnvFile(envFile);
-    const credential = credentialFromEnv(parsed);
-    if (credential) return credential;
-  }
-
-  return null;
-}
-
-function credentialFromEnv(env) {
-  const password = nonEmpty(env.FARMSLOT_GATEWAY_PASSWORD);
-  if (password) return { password };
-  const token = nonEmpty(env.FARMSLOT_GATEWAY_TOKEN);
-  if (token) return { token };
-  return null;
-}
-
-function findGatewayEnvFiles() {
-  const roots = new Set();
-  if (process.env.FARMSLOT_ROOT) roots.add(resolve(process.env.FARMSLOT_ROOT));
-
-  let cwd = resolve(process.cwd());
-  while (true) {
-    roots.add(cwd);
-    const parent = dirname(cwd);
-    if (parent === cwd) break;
-    cwd = parent;
-  }
-
-  const scriptDir = dirname(fileURLToPath(import.meta.url));
-  roots.add(resolve(scriptDir, '../..'));
-
-  const files = [];
-  for (const root of roots) {
-    for (const name of ['.env.local-auth', '.env']) {
-      const file = resolve(root, name);
-      if (existsSync(file) && !files.includes(file)) files.push(file);
-    }
-  }
-  return files;
-}
-
-function readEnvFile(path) {
-  const result = {};
-  for (const rawLine of readFileSync(path, 'utf8').split('\n')) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#')) continue;
-    const normalized = line.startsWith('export ') ? line.slice('export '.length).trim() : line;
-    const eqIdx = normalized.indexOf('=');
-    if (eqIdx <= 0) continue;
-    const key = normalized.slice(0, eqIdx).trim();
-    let value = normalized.slice(eqIdx + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    result[key] = value;
-  }
-  return result;
-}
-
-function nonEmpty(value) {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
 const ws = new WebSocket(GW);

@@ -1,3 +1,4 @@
+import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 // Manual gateway proof. Setup fixtures are isolated; derived task bytes are not injected.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
@@ -327,7 +328,9 @@ if (process.argv[2] === 'serve') {
       FARMSLOT_POOL_DIR: path.join(root, 'pool'),
       FARMSLOT_RUNS_DIR: path.join(root, '.runs'),
       FARMSLOT_HOME: path.join(scratch, 'home'),
-      FARMSLOT_GATEWAY_TOKEN: randomUUID(),
+      FARMSLOT_GATEWAY_PROFILE:
+        (testGatewayIdentity(path.join(scratch, 'home'), `ws://127.0.0.1:${address.port}`),
+        'proof'),
       FARMSLOT_GATEWAY_PASSWORD: '',
       FARMSLOT_DISABLE_ORCHESTRATION: '1',
       FARMSLOT_DISABLE_RUN_ENGINE_START: '0',

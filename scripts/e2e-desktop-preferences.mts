@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+import { automationGatewayTarget } from './lib/gateway-profile.mjs';
 // Local-only UI proof against an existing gateway. Start a packaged test app with
 // a dedicated profile, CDP port and main inspector; never use the operator profile.
 import assert from 'node:assert/strict';
@@ -18,8 +19,8 @@ const profile = path.join(evidence, 'profile');
 const port = process.env.FARMSLOT_CDP_PORT ?? '9493';
 const inspector = process.env.FARMSLOT_DESKTOP_INSPECTOR_PORT ?? '9494';
 const gateway = process.env.FARMSLOT_GATEWAY ?? 'ws://127.0.0.1:7801';
-const token = process.env.FARMSLOT_GATEWAY_TOKEN;
-assert(token, 'Set FARMSLOT_GATEWAY_TOKEN without printing it');
+const token = (await automationGatewayTarget(gateway))?.credential.token;
+assert(token, 'Select an isolated FARMSLOT_GATEWAY_PROFILE');
 process.on('uncaughtException', (error) => {
   console.error(error.message.replaceAll(token, '[redacted]'));
   process.exit(1);

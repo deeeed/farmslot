@@ -14,6 +14,7 @@ const IDENTITY_MANAGEMENT_METHODS = new Set([
   'principal.list',
   'principal.grant',
   'principal.revokeRole',
+  'principal.retire',
   'credential.issue',
   'credential.list',
   'credential.revoke',

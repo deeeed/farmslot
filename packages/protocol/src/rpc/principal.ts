@@ -32,7 +32,7 @@ export interface CredentialSummary {
   id: string;
   principalId: string;
   displayName: string;
-  origin: 'issued' | 'paired' | 'env-migrated';
+  origin: 'issued' | 'paired';
   createdAt: string;
   revokedAt: string | null;
 }
@@ -66,6 +66,13 @@ export interface PrincipalGrantResult {
 export interface PrincipalRevokeRoleParams extends PrincipalGrantParams {}
 export interface PrincipalRevokeRoleResult {
   principal: Principal;
+}
+export interface PrincipalRetireParams {
+  principalIds: string[];
+}
+export interface PrincipalRetireResult {
+  principalIds: string[];
+  credentialIds: string[];
 }
 export interface CredentialIssueParams {
   principalId: string;

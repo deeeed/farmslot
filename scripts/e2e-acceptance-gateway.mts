@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+import { testGatewayIdentity } from './lib/test-gateway-identity-source.mjs';
 /** Manual public-RPC proof. Disposable inputs are seeded before startup; no runner is launched. */
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
@@ -178,7 +179,8 @@ try {
     FARMSLOT_RUNS_DIR: path.join(root, '.runs'),
     FARMSLOT_CAPABILITY_STORE_FILE: path.join(root, '.runs/capabilities.json'),
     FARMSLOT_GATEWAY: `ws://127.0.0.1:${port}`,
-    FARMSLOT_GATEWAY_TOKEN: randomUUID(),
+    FARMSLOT_GATEWAY_PROFILE:
+      (testGatewayIdentity(path.join(work, 'home'), `ws://127.0.0.1:${port}`), 'proof'),
     FARMSLOT_GATEWAY_PASSWORD: '',
     GATEWAY_HOST: '127.0.0.1',
     GATEWAY_PORT: String(port),

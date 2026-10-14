@@ -20,6 +20,7 @@ export const Methods = {
   PRINCIPAL_LIST: 'principal.list',
   PRINCIPAL_GRANT: 'principal.grant',
   PRINCIPAL_REVOKE_ROLE: 'principal.revokeRole',
+  PRINCIPAL_RETIRE: 'principal.retire',
   CREDENTIAL_ISSUE: 'credential.issue',
   CREDENTIAL_LIST: 'credential.list',
   CREDENTIAL_REVOKE: 'credential.revoke',

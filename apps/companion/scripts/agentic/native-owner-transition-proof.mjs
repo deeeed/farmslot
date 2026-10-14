@@ -8,6 +8,7 @@ import WebSocket from 'ws';
 
 import { Methods } from '@farmslot/protocol';
 
+import { automationGatewayToken } from '../../../../scripts/lib/gateway-profile.mjs';
 import { ROOT } from '../../../../scripts/runner-validation/lib/common.mjs';
 import { connect } from '../../../../scripts/runner-validation/scenarios/native-node-broker-smoke.mjs';
 
@@ -29,7 +30,10 @@ const selection = {
   target: 'mobile',
   udid: process.env.IOS_SIMULATOR,
 };
-const admin = await connect(process.env.FARMSLOT_NATIVE_DENIAL_ADMIN_TOKEN, 'ui');
+const admin = await connect(
+  await automationGatewayToken(process.env.FARMSLOT_NATIVE_DENIAL_ADMIN_PROFILE),
+  'ui',
+);
 const ok = async (method, params = {}) => {
   const result = await admin.request(method, params, 30000);
   assert.equal(result.ok, true, `${method}: ${result.error?.message ?? 'request refused'}`);

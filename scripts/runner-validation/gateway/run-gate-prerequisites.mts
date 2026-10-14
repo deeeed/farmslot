@@ -1,4 +1,5 @@
 // Manual production-RPC proof. Persisted recovery inputs are seeded before startup.
+import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -241,6 +242,7 @@ try {
   const port = await freePort();
   const uiPort = await freePort();
   mkdirSync(path.join(temporary, 'tmux'));
+  testGatewayIdentity(path.join(temporary, 'home'), `ws://127.0.0.1:${port}`);
   env = {
     ...process.env,
     FARMSLOT_ROOT: root,
@@ -250,9 +252,9 @@ try {
     FARMSLOT_RUNS_DIR: path.join(root, '.runs'),
     FARMSLOT_CAPABILITY_STORE_FILE: path.join(root, '.runs/capabilities.json'),
     FARMSLOT_GATEWAY: `ws://127.0.0.1:${port}`,
-    FARMSLOT_GATEWAY_TOKEN: randomUUID(),
+    FARMSLOT_GATEWAY_PROFILE: 'proof',
     FARMSLOT_NATIVE_STATE_DIR: native.root,
-    FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'legacy-env',
+    FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'test-automation',
     FARMSLOT_GATEWAY_PASSWORD: '',
     FARMSLOT_UI_URL: `http://127.0.0.1:${uiPort}`,
     FARMSLOT_CDP_PORT: process.env.FARMSLOT_CDP_PORT ?? '19223',
@@ -410,7 +412,7 @@ try {
     }
     writeJson(path.join(retainedDir, prepared.artifactPath), prepared);
     const session = await native.ensureWorker(
-      'legacy-env',
+      'test-automation',
       {
         sessionId: randomUUID(),
         runner: 'claude',
@@ -434,27 +436,31 @@ try {
       leaseId: worker.leaseId,
     };
     await native.sendWorker(
-      'legacy-env',
+      'test-automation',
       target,
       worker.commandId,
       'Reply READY. Do not use tools or change files.',
     );
     await waitFor(
       async () =>
-        (await native.readWorker('legacy-env', worker!.sessionId, worker!.leaseId)).session
+        (await native.readWorker('test-automation', worker!.sessionId, worker!.leaseId)).session
           .state === 'idle',
       'real native task turn completes',
     );
     const commandId = randomUUID();
     const hold = `while [ ! -f '${releaseFile}' ]; do sleep 0.1; done`;
     await native.sendWorker(
-      'legacy-env',
+      'test-automation',
       target,
       commandId,
       `Use Bash once with timeout 300000 to run this exact command and wait for it to finish: ${hold}. Then reply DONE. Do not read or change any other file.`,
     );
     await waitFor(async () => {
-      const snapshot = await native.readWorker('legacy-env', worker!.sessionId, worker!.leaseId);
+      const snapshot = await native.readWorker(
+        'test-automation',
+        worker!.sessionId,
+        worker!.leaseId,
+      );
       return (
         snapshot.session.state === 'running' &&
         snapshot.commands.some(
@@ -466,7 +472,7 @@ try {
       ...run,
       id: requiredRunId,
       familyId: randomUUID(),
-      nativeOwnerPrincipalId: 'legacy-env',
+      nativeOwnerPrincipalId: 'test-automation',
       transport: 'native',
       ticketOrPr: 'GATE-REQUIRED',
       taskFile: path.join(retainedDir, 'TASK.md'),
@@ -870,7 +876,7 @@ try {
       'real recipe required claim plus frozen closure and idle native worker restore Ready',
     );
     writeJson(path.join(out, 'required-ready.json'), ready);
-    await native.closeWorker('legacy-env', {
+    await native.closeWorker('test-automation', {
       sessionId: worker.sessionId,
       generation: worker.generation!,
       leaseId: worker.leaseId,
@@ -975,7 +981,7 @@ try {
     try {
       if (worker) {
         writeFileSync(releaseFile, 'finish');
-        await native.closeWorker('legacy-env', {
+        await native.closeWorker('test-automation', {
           sessionId: worker.sessionId,
           generation: worker.generation!,
           leaseId: worker.leaseId,

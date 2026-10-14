@@ -1,3 +1,4 @@
+import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 // Manual public-RPC regression proof from a retained QA receipt. Originals are read-only.
 import assert from 'node:assert/strict';
 import { execFile, execFileSync, spawn, type ChildProcess } from 'node:child_process';
@@ -224,7 +225,7 @@ if (process.argv[2] === 'serve') {
       slot_id: slotId,
     });
     const session = await native.ensureWorker(
-      'legacy-env',
+      'test-automation',
       { sessionId: randomUUID(), runner: 'claude', cwd: repo, model: 'sonnet' },
       { leaseId: randomUUID(), safetyTier: 'full-auto', environment: { set: {}, unset: [] } },
     );
@@ -242,14 +243,14 @@ if (process.argv[2] === 'serve') {
     if (session.processPid) nativeTree = new NativeProcessTree(session.processPid);
     interruption.signal.throwIfAborted();
     await native.sendWorker(
-      'legacy-env',
+      'test-automation',
       worker,
       commandId,
       'Reply READY. Do not use tools or change files.',
     );
     await waitFor(
       async () =>
-        (await native.readWorker('legacy-env', binding!.sessionId, binding!.leaseId)).session
+        (await native.readWorker('test-automation', binding!.sessionId, binding!.leaseId)).session
           .state === 'idle',
       'real native turn becomes idle',
     );
@@ -260,7 +261,7 @@ if (process.argv[2] === 'serve') {
       ticketOrPr:
         process.env.FARMSLOT_RUN_STATE_PROOF === '1' ? 'Retained QA completion recovery' : 'QA-101',
       taskFile: path.join(retained, 'TASK.md'),
-      nativeOwnerPrincipalId: 'legacy-env',
+      nativeOwnerPrincipalId: 'test-automation',
       transport: 'native',
       status: 'blocked',
       agentContexts: [
@@ -411,12 +412,13 @@ if (process.argv[2] === 'serve') {
       FARMSLOT_RUNS_DIR: path.join(root, '.runs'),
       FARMSLOT_CAPABILITY_STORE_FILE: path.join(root, '.runs/capabilities.json'),
       FARMSLOT_GATEWAY: `ws://127.0.0.1:${port}`,
-      FARMSLOT_GATEWAY_TOKEN: randomUUID(),
+      FARMSLOT_GATEWAY_PROFILE:
+        (testGatewayIdentity(path.join(scratch, 'home'), `ws://127.0.0.1:${port}`), 'proof'),
       FARMSLOT_GATEWAY_PASSWORD: '',
       GATEWAY_HOST: '127.0.0.1',
       GATEWAY_PORT: String(port),
       FARMSLOT_NATIVE_STATE_DIR: native.root,
-      FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'legacy-env',
+      FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'test-automation',
       FARMSLOT_DISABLE_ORCHESTRATION: '1',
       FARMSLOT_DISABLE_RUN_ENGINE_START: '0',
       FARMSLOT_DEMO_POOL: '0',
@@ -454,7 +456,7 @@ if (process.argv[2] === 'serve') {
       await rpc('run.refreshMirror', { runId: run.id });
       const activeCommand = randomUUID();
       const acceptance = await native.sendWorker(
-        'legacy-env',
+        'test-automation',
         binding!,
         activeCommand,
         "Run exactly one shell command: node -e 'setTimeout(() => process.exit(0), 90000)'. Then reply READY. Do not read or change files.",
@@ -462,7 +464,7 @@ if (process.argv[2] === 'serve') {
       json(path.join(out, 'active-command.json'), acceptance);
       await waitFor(
         async () =>
-          (await native.readWorker('legacy-env', binding!.sessionId, binding!.leaseId)).session
+          (await native.readWorker('test-automation', binding!.sessionId, binding!.leaseId)).session
             .state === 'running',
         'real primary turn remains active',
       );
@@ -484,20 +486,22 @@ if (process.argv[2] === 'serve') {
       const refused = await replay();
       assert.match(refused.error ?? '', /Run work is still progressing/);
       assert.equal(
-        (await native.readWorker('legacy-env', binding!.sessionId, binding!.leaseId)).session.state,
+        (await native.readWorker('test-automation', binding!.sessionId, binding!.leaseId)).session
+          .state,
         'running',
         'pipeline refusal does not stop the worker',
       );
       await waitFor(
         async () =>
-          (await native.readWorker('legacy-env', binding!.sessionId, binding!.leaseId)).session
+          (await native.readWorker('test-automation', binding!.sessionId, binding!.leaseId)).session
             .state === 'idle',
         'real primary turn finishes naturally',
       );
       assert.equal(refused.status, 'failed', 'completion refusal settles the stopped pipeline');
       assert.equal(refused.steps.find((step) => step.name === 'complete')?.status, 'failed');
       assert.equal(
-        (await native.readWorker('legacy-env', binding!.sessionId, binding!.leaseId)).session.state,
+        (await native.readWorker('test-automation', binding!.sessionId, binding!.leaseId)).session
+          .state,
         'idle',
       );
       checks.push(
@@ -592,7 +596,8 @@ if (process.argv[2] === 'serve') {
         /Controlled ENOSPC/,
       );
       assert.equal(
-        (await native.readWorker('legacy-env', binding!.sessionId, binding!.leaseId)).session.state,
+        (await native.readWorker('test-automation', binding!.sessionId, binding!.leaseId)).session
+          .state,
         'idle',
         'persistence refusal preserves the exact worker lease',
       );
@@ -766,7 +771,7 @@ if (process.argv[2] === 'serve') {
     try {
       if (process.env.FARMSLOT_QA_OUTPUT_CLOSE_FAIL === '1')
         throw new Error('Injected native close failure');
-      if (binding) await bounded(native.closeWorker('legacy-env', binding), 'native worker');
+      if (binding) await bounded(native.closeWorker('test-automation', binding), 'native worker');
     } catch (error) {
       failures.push(error);
     }

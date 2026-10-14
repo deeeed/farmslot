@@ -3,23 +3,30 @@ import { execFileSync } from 'node:child_process';
 
 import { Methods } from '@farmslot/protocol';
 
+import { automationGatewayToken } from '../../lib/gateway-profile.mjs';
 import { ROOT } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 
 import { connect } from './native-node-broker-smoke.mjs';
 import { observePage } from './native-owner-ui.mjs';
+let gatewayToken;
+
 export const SCENARIO_ID = 'native-owner-transition-ui';
 export const RUNNER_AGNOSTIC = true;
 
 /** Real role/account changes, native history selection and browser input; no UI state writes. */
 export async function runScenario({ explicit, outDir }) {
   if (!explicit) return { scenario: SCENARIO_ID, runner: 'native', pass: true, skipped: true };
+  gatewayToken = await automationGatewayToken();
   assert.equal(process.env.FARMSLOT_GATEWAY, 'ws://127.0.0.1:18777');
   assert.equal(process.env.FARMSLOT_CDP_PORT, '19323');
   assert.equal(process.env.FARMSLOT_UI_URL, 'http://127.0.0.1:18778');
-  const ownerToken = process.env.FARMSLOT_GATEWAY_TOKEN;
-  assert.ok(ownerToken && process.env.FARMSLOT_NATIVE_DENIAL_ADMIN_TOKEN);
-  const admin = await connect(process.env.FARMSLOT_NATIVE_DENIAL_ADMIN_TOKEN, 'ui');
+  const ownerToken = gatewayToken;
+  assert.ok(ownerToken && process.env.FARMSLOT_NATIVE_DENIAL_ADMIN_PROFILE);
+  const admin = await connect(
+    await automationGatewayToken(process.env.FARMSLOT_NATIVE_DENIAL_ADMIN_PROFILE),
+    'ui',
+  );
   const ok = async (method, params = {}) => {
     const r = await admin.request(method, params);
     assert.equal(r.ok, true, `${method}: ${r.error?.message ?? 'request refused'}`);

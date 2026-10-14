@@ -4,17 +4,21 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { automationGatewayToken } from '../../lib/gateway-profile.mjs';
 import { ROOT } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 
 import { connect } from './native-node-broker-smoke.mjs';
 import { wait } from './native-worker-lifecycle.mjs';
 
+let gatewayToken;
+
 export const SCENARIO_ID = 'native-auth-revocation';
 export const RUNNER_AGNOSTIC = true;
 
 export async function runScenario({ outDir, explicit }) {
   if (!explicit) return { scenario: SCENARIO_ID, runner: 'codex', pass: true, skipped: true };
+  gatewayToken = await automationGatewayToken();
   const report = { runner: 'codex', checks: [], pass: false, inferenceExpected: false };
   const clients = [];
   const credentials = [];
@@ -37,7 +41,7 @@ export async function runScenario({ outDir, explicit }) {
     assert.ok(fs.existsSync(`${fault}.${pids[0]}.loaded`));
     const clientName = `native-revoked-response-${randomUUID()}`;
     fs.writeFileSync(fault, JSON.stringify({ gatewayPid: pids[0], clientName }), { mode: 0o600 });
-    admin = await connect(process.env.FARMSLOT_GATEWAY_TOKEN, 'ui');
+    admin = await connect(gatewayToken, 'ui');
     clients.push(admin);
     const ok = async (method, params) => {
       const response = await admin.request(method, params);

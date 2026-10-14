@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -79,7 +78,6 @@ function resolveGraphDir(): string {
 }
 
 const GRAPH_DIR = resolveGraphDir();
-const GRAPH_PROVENANCE_MARKER = path.join(GRAPH_DIR, '.provenance-v1');
 const SAFE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 export function initWorkGraphStore(fn: BroadcastFn): void {
@@ -231,13 +229,9 @@ function normalizeStoredSnapshot(raw: unknown): WorkGraphRecord | null {
   };
 }
 
-export async function loadWorkGraphs(
-  legacyOriginator: WorkOriginator = { kind: 'principal', principalId: 'local-admin' },
-): Promise<void> {
+export async function loadWorkGraphs(): Promise<void> {
   graphs.clear();
   await ensureDir();
-  const migrationOpen = !existsSync(GRAPH_PROVENANCE_MARKER);
-  let migrated = 0;
   let files: string[];
   try {
     files = await readdir(GRAPH_DIR);
@@ -250,17 +244,8 @@ export async function loadWorkGraphs(
     const parsed: unknown = JSON.parse(await readFile(path.join(GRAPH_DIR, file), 'utf-8'));
     const snapshot = normalizeStoredSnapshot(parsed);
     if (snapshot) {
-      if (migrationOpen && !snapshot.originator) {
-        snapshot.originator = structuredClone(legacyOriginator);
-        migrated += 1;
-        await persistNow(snapshot);
-      }
       graphs.set(snapshot.graph.id, snapshot);
     }
-  }
-  if (migrationOpen) {
-    await writeFile(GRAPH_PROVENANCE_MARKER, 'provenance-v1\n', 'utf8');
-    console.log(`[provenance] work graph migrated ${migrated} item(s)`);
   }
 }
 

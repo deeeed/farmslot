@@ -125,15 +125,17 @@ test('conformance reads opaque HUD policy in the selected runtime environment an
   const provider = fs.readFileSync(path.join(root, 'provider.mjs'), 'utf8');
   write(
     'provider.mjs',
-    provider.replace(
-      'headless: true,',
-      `headless: false,
+    provider
+      .replace(
+        'headless: true,',
+        `headless: false,
     run: {
       envKeys: ['PROOF_OPAQUE'],
       activateEnv() { process.env.PROOF_OPAQUE = '1'; },
       autoHud() { return process.env.PROOF_OPAQUE !== '1'; },
     },`,
-    ),
+      )
+      .replace('harness: {}', "harness: {kind: 'built-in', verify: async () => ({pass: true})}"),
   );
   const previous = process.env.PROOF_OPAQUE;
   const result = await run(t, root, ['--authorize-provider', path.join(root, 'provider.mjs')]);

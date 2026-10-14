@@ -110,7 +110,7 @@ export interface GatewayTarget {
    * Profile credential when the target came from a profile. null = profile has
    * no credential: the client must NOT fall back to env discovery, or a local
    * secret could leak to a remote gateway. undefined = non-profile target
-   * (env discovery stays allowed for back-compat).
+   * (no credential is sent).
    */
   credential?: { token?: string; password?: string } | null;
   profileName?: string;

@@ -158,7 +158,11 @@ test(
     const runtime = path.join(checkout, 'runtime');
     mkdirSync(runtime);
     writeFileSync(path.join(runtime, 'isolated-home'), path.join(f.root, 'obsolete-home'));
-    writeFileSync(path.join(checkout, '.env.ports'), 'GATEWAY_PORT=0\nVITE_PORT=0\n');
+    // Bind choice is explicit; this fixture tests sandbox identity, not activation.
+    writeFileSync(
+      path.join(checkout, '.env.ports'),
+      'GATEWAY_PORT=0\nVITE_PORT=0\nGATEWAY_HOST=127.0.0.1\n',
+    );
     const bin = path.join(checkout, 'bin');
     mkdirSync(bin);
     const capture = path.join(checkout, 'child.json');

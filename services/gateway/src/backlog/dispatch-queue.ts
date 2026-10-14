@@ -2,7 +2,7 @@
 // Items persist across gateway restarts. Auto-dispatches when slots free up.
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -94,7 +94,6 @@ function resolveQueueFile(): string {
 
 const QUEUE_FILE = resolveQueueFile();
 const queue: QueueRecord[] = [];
-const QUEUE_PROVENANCE_MARKER = `${QUEUE_FILE}.provenance-v1`;
 let queuePersistChain: Promise<void> = Promise.resolve();
 
 /** Default exclusive-claim TTL. Holders must re-validate before createRun. */
@@ -302,15 +301,11 @@ function findNonTerminalHandoffOwner(item: QueueItem): Run | undefined {
   });
 }
 
-export async function loadQueue(
-  legacyOriginator: WorkOriginator = { kind: 'principal', principalId: 'local-admin' },
-): Promise<void> {
+export async function loadQueue(): Promise<void> {
   queue.length = 0;
   try {
     const raw = await readFile(QUEUE_FILE, 'utf-8');
     const items: QueueRecord[] = JSON.parse(raw);
-    const migrationOpen = !existsSync(QUEUE_PROVENANCE_MARKER);
-    let migrated = 0;
     for (const item of items) {
       assertCurrentReviewConfiguration(item, 'queued dispatch');
       if (item.reviewSequence) assertReviewSequence(item.reviewSequence, { maxRows: 5 });
@@ -320,8 +315,6 @@ export async function loadQueue(
         queueKind: item.queueKind ?? 'dispatch',
       };
       if (storedOriginator) setQueueOriginator(normalized, storedOriginator);
-      else if (migrationOpen) setQueueOriginator(normalized, legacyOriginator);
-      if (migrationOpen && !item.originator) migrated += 1;
       if (normalized.status === 'queued') {
         // Crash after create/revive can leave a still-queued disk row while a
         // live Run already owns the work — drop rather than double-dispatch.
@@ -407,21 +400,11 @@ export async function loadQueue(
       }
     }
     console.log(`[dispatch-queue] loaded ${queue.length} queued items from disk`);
-    if (migrationOpen) {
-      await persist();
-      await writeFile(QUEUE_PROVENANCE_MARKER, 'provenance-v1\n', 'utf8');
-      console.log(`[provenance] dispatch queue migrated ${migrated} item(s)`);
-    }
+
     schedulePersist('load-reconcile');
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT' && !existsSync(QUEUE_PROVENANCE_MARKER)) {
-      await mkdir(path.dirname(QUEUE_PROVENANCE_MARKER), { recursive: true });
-      await writeFile(QUEUE_PROVENANCE_MARKER, 'provenance-v1\n', 'utf8');
-      console.log('[provenance] dispatch queue migrated 0 item(s)');
-    } else if (code !== 'ENOENT') {
-      throw err;
-    }
+    if (code !== 'ENOENT') throw err;
   }
 }
 

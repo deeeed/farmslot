@@ -9,7 +9,7 @@ import { writeEvidence } from '../lib/evidence.mjs';
 
 export const SCENARIO_ID = 'native-workspace-smoke';
 
-function rpc(method, params = {}, token = process.env.FARMSLOT_GATEWAY_TOKEN) {
+function rpc(method, params = {}, token = process.env.FARMSLOT_GATEWAY_PROFILE) {
   try {
     return JSON.parse(
       execFileSync(
@@ -24,7 +24,7 @@ function rpc(method, params = {}, token = process.env.FARMSLOT_GATEWAY_TOKEN) {
           cwd: ROOT,
           encoding: 'utf8',
           stdio: ['ignore', 'pipe', 'pipe'],
-          env: { ...process.env, FARMSLOT_GATEWAY_TOKEN: token },
+          env: { ...process.env, FARMSLOT_GATEWAY_PROFILE: token },
           timeout: 60_000,
         },
       ),
@@ -47,9 +47,9 @@ export async function runScenario({ runnerAdapter, outDir }) {
       'ws://127.0.0.1:18777',
       'Use the isolated validation gateway',
     );
-    const other = process.env.FARMSLOT_NATIVE_OTHER_TOKEN;
+    const other = process.env.FARMSLOT_NATIVE_OTHER_PROFILE;
     assert.ok(
-      other && other !== process.env.FARMSLOT_GATEWAY_TOKEN,
+      other && other !== process.env.FARMSLOT_GATEWAY_PROFILE,
       'Supply a second authenticated principal',
     );
     rpc('principal.list', {}, other);

@@ -4,23 +4,10 @@ import test from 'node:test';
 import { describeProbe, probeGatewayAuth } from './gateway-auth.js';
 import { effectiveCredential } from './gateway-client.js';
 
-test('effectiveCredential: profile credential beats env, null disables discovery', () => {
-  const env = { token: 'env-secret' };
-  // Non-profile target → env discovery allowed.
-  assert.deepEqual(
-    effectiveCredential(undefined, () => env),
-    env,
-  );
-  // Profile with its own credential → exactly that credential.
-  assert.deepEqual(
-    effectiveCredential({ token: 'profile-secret' }, () => env),
-    { token: 'profile-secret' },
-  );
-  // Profile WITHOUT credential → null, env secret must never leak to it.
-  assert.equal(
-    effectiveCredential(null, () => env),
-    null,
-  );
+test('effectiveCredential never discovers a credential for an uncredentialed target', () => {
+  assert.equal(effectiveCredential(undefined), null);
+  assert.deepEqual(effectiveCredential({ token: 'profile-secret' }), { token: 'profile-secret' });
+  assert.equal(effectiveCredential(null), null);
 });
 
 test('probeGatewayAuth classifies a refused connection as unreachable', async () => {

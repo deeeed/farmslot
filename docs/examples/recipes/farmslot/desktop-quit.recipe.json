@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Desktop quit confirmation and relaunch",
-  "description": "Requires macOS Accessibility permission, a built Dev app and FARMSLOT_GATEWAY_TOKEN for an existing gateway. Uses an isolated profile and ports 9543/9544. Set FARMSLOT_DESKTOP_APP to repeat with the production bundle. No inference or dispatch.",
+  "description": "Requires macOS Accessibility permission, a built Dev app and FARMSLOT_GATEWAY_PROFILE for an existing gateway. Uses an isolated profile and ports 9543/9544. Set FARMSLOT_DESKTOP_APP to repeat with the production bundle. No inference or dispatch.",
   "workflow": {
     "entry": "quit-and-relaunch",
     "nodes": {

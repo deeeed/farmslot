@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+import { automationGatewayTarget } from './lib/gateway-profile.mjs';
 // Isolated desktop/Vite proof against an existing gateway. No inference or dispatch.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
@@ -20,8 +21,8 @@ const inspector = '9514';
 const vitePort = '5186';
 const devUrl = `http://localhost:${vitePort}/`;
 const gateway = process.env.FARMSLOT_GATEWAY ?? 'ws://127.0.0.1:7801/ws';
-const token = process.env.FARMSLOT_GATEWAY_TOKEN;
-assert(token, 'Set FARMSLOT_GATEWAY_TOKEN without printing it');
+const token = (await automationGatewayTarget(gateway))?.credential.token;
+assert(token, 'Select an isolated FARMSLOT_GATEWAY_PROFILE');
 const app = path.resolve('apps/command-center-desktop/release-dev/mac-arm64/Farmslot Dev.app');
 const env = { ...process.env, FARMSLOT_CDP_PORT: port };
 function cdp(...args: string[]) {

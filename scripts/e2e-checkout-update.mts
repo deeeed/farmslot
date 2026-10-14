@@ -1,8 +1,8 @@
 #!/usr/bin/env tsx
 // Real Electron UI + isolated gateway + disposable Git remote. No model calls.
+import { testGatewayIdentity } from './lib/test-gateway-identity-source.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { closeSync, existsSync, openSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -18,14 +18,15 @@ const publisher = path.join(fixture, 'publisher');
 const remote = path.join(fixture, 'remote.git');
 const home = path.join(fixture, 'home');
 const profile = path.join(fixture, 'desktop');
-const token = randomBytes(24).toString('hex');
+const token = testGatewayIdentity(home, 'ws://127.0.0.1:8991/ws');
 const gatewayUrl = 'ws://127.0.0.1:8991/ws';
 const uiUrl = 'http://localhost:5190/';
 const env = {
   ...process.env,
   FARMSLOT_CDP_PORT: '9523',
+  FARMSLOT_HOME: home,
   FARMSLOT_GATEWAY: gatewayUrl,
-  FARMSLOT_GATEWAY_TOKEN: token,
+  FARMSLOT_GATEWAY_PROFILE: 'proof',
 };
 const children: ReturnType<typeof spawn>[] = [];
 const bin = path.join(fixture, 'bin');

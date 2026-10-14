@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 
 import type { ExecResult, Run } from '@farmslot/protocol';
 
+import { testGatewayIdentity } from '../../../../scripts/lib/test-gateway-identity-source.mjs';
 import type { RawProjectJson, SlotVars } from '../core/config.js';
 
 const executeFile = promisify(execFile);
@@ -171,11 +172,10 @@ export const { loadSlotVars, readSlotRow } = await import('../core/index.js');
 export const { createRun, getRun, updateRun, deleteRun } = await import('../runs/store.js');
 const { createGatewayAuthRuntime, initializeGatewayIdentity } = await import('../security/auth.js');
 const { createWebSocketServer } = await import('../server.js');
+const fixtureToken = testGatewayIdentity(environment.FARMSLOT_HOME!);
 const auth = createGatewayAuthRuntime({
   FARMSLOT_HOME: environment.FARMSLOT_HOME,
   GATEWAY_HOST: '127.0.0.1',
-  FARMSLOT_GATEWAY_AUTH_MODE: 'token',
-  FARMSLOT_GATEWAY_TOKEN: 'fixture-only-token',
 });
 initializeGatewayIdentity(auth, { host: '127.0.0.1' });
 const server = createServer();
@@ -184,23 +184,15 @@ await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
 const address = server.address();
 assert.ok(address && typeof address !== 'string');
 const port = address.port;
+const { GatewayClient } = await import('../../../../packages/cli/src/gateway-client.js');
+const client = new GatewayClient({
+  url: `ws://127.0.0.1:${port}`,
+  credential: { token: fixtureToken },
+  timeout: 3000,
+});
 
 export async function rpc<T>(method: string, params: unknown): Promise<T> {
-  const client = new URL('../../../../apps/command-center/scripts/cdp.mjs', import.meta.url);
-  const { stdout } = await executeFile(
-    process.execPath,
-    [client.pathname, 'gateway', method, JSON.stringify(params)],
-    {
-      env: {
-        ...process.env,
-        FARMSLOT_GATEWAY: `ws://127.0.0.1:${port}`,
-        FARMSLOT_GATEWAY_TOKEN: 'fixture-only-token',
-        FARMSLOT_RPC_TIMEOUT_MS: '3000',
-      },
-      timeout: 4000,
-    },
-  );
-  return JSON.parse(stdout) as T;
+  return client.call<T>(method, params);
 }
 
 const runs: Run[] = [];

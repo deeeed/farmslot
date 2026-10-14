@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+import { automationGatewayTarget } from './lib/gateway-profile.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
@@ -23,18 +24,13 @@ const sourceFile = process.env.FARMSLOT_ELECTRON_TEST_FILE ?? 'package.json';
 assert(['localhost', '127.0.0.1'].includes(new URL(gatewayUrl).hostname));
 assert.notEqual(new URL(gatewayUrl).port, '7777', 'Use an isolated gateway');
 assert.notEqual(cdpPort, '9323', 'Use the Electron validation CDP port');
-const token =
-  process.env.FARMSLOT_GATEWAY_TOKEN ??
-  (await readFile(path.join(root, '.env.local-auth'), 'utf8'))
-    .match(/^FARMSLOT_GATEWAY_TOKEN=(.+)$/m)?.[1]
-    .replace(/^['"]|['"]$/g, '');
-assert(token, 'Set FARMSLOT_GATEWAY_TOKEN for the isolated gateway');
+const token = (await automationGatewayTarget(gatewayUrl))?.credential.token;
+assert(token, 'Select an isolated FARMSLOT_GATEWAY_PROFILE');
 await mkdir(evidence, { recursive: true });
 const environment = {
   ...process.env,
   FARMSLOT_CDP_PORT: cdpPort,
   FARMSLOT_GATEWAY: gatewayUrl,
-  FARMSLOT_GATEWAY_TOKEN: token,
 };
 function cdp(...args: string[]) {
   try {
