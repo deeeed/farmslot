@@ -32,6 +32,10 @@ The HUD uses traced intent. Remove independent publication `covers`, stored AC
 clock values and separate HUD captions; clients derive them from the claim/trace
 relationship. Internal validation dependencies are not automatically public.
 
+The proposed [Compare by AC](#compare-by-ac) amendment adds optional capture
+bindings. Publication `covers` and before/after pairs are derived from those
+bindings by the existing engine writer, never authored as another claim mapping.
+
 An artifact package MUST belong to one execution attempt. Preflight and execution
 MUST refuse an existing recipe package before replacing files or starting capture
 or actions, including failed and partial attempts. A rerun uses a fresh artifact
@@ -717,7 +721,9 @@ final artifact-manifest validation. This is a publication candidate, not another
 claim writer. Projects declare recipes and MUST NOT copy or rewrite that file.
 
 For version 1, publication and its gate MUST read only the frozen selected
-execution. Freeze its pointer or exact engine manifest source and every input
+execution. Explicit [comparison dependencies](#compare-by-ac) retain their own
+execution identities and cannot satisfy that execution's claims. Freeze its
+pointer or exact engine manifest source and every input
 consumed by the canonical reader. A headless attempt freezes the same closure
 without inventing or selecting media. An explicitly empty media selection MUST
 NOT publish historical captures. Refresh and consumption recheck the closure
@@ -823,3 +829,115 @@ rejected visual claims, parent derivation, service/actor spoofing refusal, chang
 execution/moments/bytes, stale snapshot/person races, restart and lost-response
 retry, retained cancelled evidence, and unchanged package bytes. A real public
 CLI/RPC control MUST record a judgment and show its derived verdict at the gate.
+
+## Compare by AC
+
+**Status:** Proposed under [ADR-062 Amendment 7](../adr/062-recorded-run-evidence.md#amendment-7-2026-10-14-compare-evidence-by-claim). Implementation follows design acceptance.
+
+### Capture binding and source
+
+A screenshot or video capture node MAY declare `ac` and `role`. `ac` MUST resolve
+through the existing claim registry and composition bindings to one AC, QA case
+or QA check. `role` is `before`, `after` or `review`. The engine MUST record this
+binding on the existing `RecipeArtifactManifestEntry`, along with the original
+artifact identity, execution ID, producing occurrence and any existing
+`EvidenceMomentRef`. This declaration annotates media; it MUST NOT make a capture
+proof-eligible or change the engine verdict.
+
+The engine MUST record the observed source commit as `sourceCommit` with the
+capture, using the existing source/checkout authority. Worker-supplied SHA strings
+are not observations. `before` MUST match the reviewed base SHA and `after` the
+reviewed head SHA. A dirty checkout cannot be labeled a commit-only baseline or
+head capture. `review` retains the observed source without claiming either side.
+Unknown source remains visible with its limitation and MUST NOT be compared as
+Before/After. Capture and selected review MUST agree on claim identity and text;
+an unknown claim, invalid role or contradictory source binding fails validation.
+
+Without both optional declarations, media MUST appear under "Unassigned". Do not
+infer either from filenames, prose, directory names, capture order or identical
+bytes. Preserve the existing reader's Valid/Legacy/Invalid classification;
+Unassigned describes comparison availability, not package validity. Recorded
+stills use their existing occurrence/moment relation. A still with no measured
+moment remains viewable; its video link MUST state untimed or outside recording
+and MUST NOT invent a seek range. Existing padding and segment rules apply.
+
+### Frozen selection and publication
+
+The selected head execution remains the claim/verdict authority. Baseline and
+review captures from another execution MUST be explicit comparison dependencies
+of that selected evidence, using the existing manifest and closure reader. Freeze
+their binding, observed source, original package metadata and media digests in the
+same publication/output inventory. A failed baseline execution can illustrate
+the defect if its package passes integrity validation; its verdict cannot satisfy
+a selected head claim. Missing or changed dependencies refuse comparison and
+publication of those files, while retained history stays readable. No mutable
+latest lookup, borrowed task ledger or new package-selection path is allowed.
+
+The existing engine writer MUST derive `before_after_pairs.covers` and standalone
+`covers` from the capture bindings. PR evidence and both clients MUST consume the
+same result. Missing sides are shown explicitly. Multiple captures in one role
+stay available; do not silently overwrite or pair them by filename. When several
+pairs are possible, require explicit media selection through the existing review
+selection/curation authority. Identical bytes with different roles or executions
+remain distinct references. Rendering or selecting a pair grants no visual
+judgment, gate approval or publication permission.
+
+### Shared comparison view
+
+The existing `createEvidenceReviewModel` MUST project one comparison row per
+registered claim, retaining its text and canonical verdict. Rows contain Before,
+After and Review media, their source revisions, the existing video moments and
+explicit missing/unavailable states. Keep a separate Unassigned list; an AC with
+no captures still has a row. QA cases/checks use these same rows.
+
+Extend the existing Command Center evidence preview/lightbox and Companion media
+viewer with this comparison context. Reuse them in the Evidence tab, gate review,
+run detail, PR preview and ArtifactViewer. A two-image pair shares one normalized
+zoom and focal position through the shared model, so either image's interaction
+moves both without stretching their aspect ratios. Reset on pair change. On
+narrow displays the pair may stack; keep the same selected pair and controls.
+Load only selected media. Rendering per platform is allowed; duplicate grouping,
+pair selection, transform state or verdict logic is not.
+
+### Public surface and migration
+
+| Entry                                                                                                                                                               | Owner and named consumer                                          | Contract                                                                                          |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Existing capture-node `ac`/`role`; `RecipeEvidenceRole`, `RecipeEvidenceCaptureBinding`, extended `RecipeArtifactManifestEntry`/`ArtifactRef`                       | `@farmslot/protocol`; engine, gateway and capture providers       | Optional annotations plus engine-observed `sourceCommit`; existing claim/moment IDs               |
+| `farmslot recipe run`, existing `--param` and `--artifacts-dir`; `farmslot recipe artifacts <directory> --format text\|markdown` and `artifacts validate`           | Existing recipe CLI; recipe authors and retained-evidence readers | Runs declared captures and exposes retained bindings; no comparison command or new flag           |
+| Existing engine artifact writer and `RecipeRunRequest.finalizeArtifacts`                                                                                            | `@farmslot/recipe-runner`; hosted CLI and public SDK hosts        | Sole capture/publication producer; retains explicit baseline dependencies before final validation |
+| `EvidenceReviewModel.comparisons`/`unassigned`, `EvidenceReviewComparisonRow` and shared comparison selection/transform methods through `createEvidenceReviewModel` | `@farmslot/adapter-sdk/evidence`; Command Center and Companion    | One portable grouping, selection and normalized-image state; no additional model factory          |
+
+These additive fields/exports are experimental and require a coordinated minor
+package release after conformance. Retained packages are not rewritten or
+backfilled. Update recipe guide/examples and generate CLI/API reference entries
+from their owners. Harnesses implement capture/target actions and supply observed
+source through the existing host; they inherit binding validation, moment
+navigation and publication. Worker templates request a base-checkout capture and
+a head-checkout capture through the same public recipe path, preserving held
+workspaces. Move consumers before removing filename/purpose classifiers,
+independent pair maps and handwritten publication bindings they replace.
+
+Replace these current role/pair rules after their callers consume the shared
+projection. Source locations identify the design baseline, not a second contract.
+
+| Existing rule                                                               | Replacement                                                                    |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `packages/recipe-runner/src/node/writers.ts:113`                            | Full-run/standalone publication roles derive from retained capture bindings    |
+| `apps/command-center/ui/src/components/workspace/workspace-artifacts.ts:65` | Explicit role groups and Unassigned from the SDK model                         |
+| `apps/command-center/ui/src/utils/artifact-pairs.ts:57`, `:85`              | Claim-bound candidates and explicit selection; remove filename AC/pair guesses |
+| `apps/companion/src/lib/family-evidence.ts:69`                              | Same explicit role projection as Command Center                                |
+
+The existing Lit lightbox and native `MediaViewer` remain the rendering owners;
+extend their controls rather than adding comparison viewers.
+
+### Conformance
+
+Verify canonical AC and QA bindings; base/head source mismatch and dirty-source
+refusal; Unassigned captures; empty and one-sided rows; repeated captures and
+equal-byte references; parent/composed IDs; independent failed baseline verdicts;
+frozen dependency mutation refusal; untimed/outside-recording links; identical
+PR/client grouping and zoom reset. A real ticket run MUST retain a base/head pair
+for every applicable AC through the public recipe path and show it in Command
+Center and Companion. Negative controls MUST fail on the wrong AC or revision.
+That live acceptance follows implementation; this amendment does not claim it.

@@ -429,8 +429,9 @@ contract. Implementation and package publication are recorded separately.
 
 ## Amendment 6 (2026-10-14): Authenticated visual review and QA binding
 
-**Status:** Proposed, approved for the single step 7 implementation/review PR.
+**Status:** Accepted, 2026-10-14.
 **Specification:** [Authenticated visual review](../reference/recorded-run-evidence.md#authenticated-visual-review).
+**Implementation:** [#1037](https://github.com/deeeed/farmslot/pull/1037), merged. Package release and deployment are separate delivery records.
 
 ### Decision
 
@@ -460,3 +461,42 @@ the same authenticated operation. Protocol owns receipt/request types; the runne
 owns `deriveReviewedRecipeClaims` and the SDK re-exports it through `/evidence`. The shared
 review model supplies both clients. These additive contracts are experimental
 until their coordinated release; no harness writer or compatibility path is added.
+
+## Amendment 7 (2026-10-14): Compare evidence by claim
+
+**Status:** Proposed.
+**Specification:** [Compare by AC](../reference/recorded-run-evidence.md#compare-by-ac).
+
+### Decision
+
+Captures may declare `ac` and `role`: `before` for the reviewed base commit,
+`after` for the reviewed head, and `review` for other observations. The engine
+records those bindings with the existing artifact, claim and moment identities.
+It checks the captured source against the reviewed revisions. Missing bindings
+remain Unassigned; filenames, worker prose and capture order supply no binding.
+
+Extend the shared evidence review model and existing media viewers with
+"Compare by AC". Each claim row shows its text, canonical verdict, before/after
+captures, synchronized image zoom and its recorded video moment. Preserve missing
+sides and multiple captures. Command Center and Companion share grouping and
+selection; only platform rendering differs. PR evidence renders from the same
+bindings through the existing engine publication manifest.
+
+### Rationale and consequences
+
+A flat screenshot grid cannot explain which criterion changed. Explicit bindings
+connect comparison to the evidence already retained. A baseline remains a
+comparison dependency, never proof for the selected head execution. Frozen
+reviews retain both sides and their source identities. No evidence store,
+parallel writer, filename migration or verdict reducer is added.
+
+### Public surface and migration
+
+Existing `farmslot recipe run` capture nodes accept the optional bindings;
+`farmslot recipe artifacts` exposes them without another command or flag.
+Protocol owns the binding types and artifact contracts; the runner owns capture
+registration and publication derivation. The experimental
+`@farmslot/adapter-sdk/evidence` model adds comparison rows and shared image
+transform state for both clients. Harnesses implement capture/target bindings and
+inherit recording, claim validation, comparison and publication. Migrate templates
+and consumers before removing their role guesses or pair-mapping copies.
