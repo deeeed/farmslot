@@ -50,6 +50,7 @@ import {
 } from './evidence-manifest.js';
 import { PR_BODY_ARTIFACT, PR_PROSE_ARTIFACT } from './pr-body-render.js';
 import {
+  publicationBaselineContext,
   type PublicationManifestReadIO,
   readSelectedPublicationManifest,
   resolvePublicationManifest,
@@ -355,6 +356,7 @@ export async function refreshArtifactMirror(
       workerPublicationReadIO(vars),
       workerArtifactsDir,
       run.recordedEvidenceContractVersion ?? 0,
+      publicationBaselineContext(run),
     );
   }
   const workerPointerPath = path.join(workerArtifactsDir, 'latest-valid-recipe-run.json');

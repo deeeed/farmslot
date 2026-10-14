@@ -17,6 +17,7 @@ const { allSelectedEvidenceKeysForPublication, assertPublicationEvidenceSelectio
   await import('./publication-evidence-policy.js');
 const { expandPublicationEvidenceSelection, readEvidenceManifest } =
   await import('./publication-artifacts.js');
+const { publicationBaselineContext } = await import('./publication-artifacts.js');
 const { computeReadyGatePackageHash } = await import('./ready-gate-package.js');
 
 const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
@@ -193,6 +194,273 @@ test('task declarations cannot select a retained artifact owned by another recip
     assert.match((error as Error).message, /belongs to another recipe attempt/);
     return true;
   });
+});
+
+async function baselineFixture(t: TestContext) {
+  const { createRecipeRunner, createStandardCoreAdapters, readRecordedEvidencePackage } =
+    await import('@farmslot/recipe-runner');
+  const { buildRunRecord } = await import('../runs/store.js');
+  const taskDir = await mkdtemp(path.join(os.tmpdir(), 'baseline-publication-'));
+  t.after(() => rm(taskDir, { recursive: true, force: true }));
+  const baselineRoot = 'recipe-baseline-run';
+  const headRoot = 'recipe-runs/current';
+  const { RECIPE_ACTION_MANIFEST_SCHEMA_URL } = await import('@farmslot/protocol');
+  const runner = createRecipeRunner({
+    actionManifest: {
+      $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+      actions: {
+        command: {
+          description: 'Read a value.',
+          schema: {
+            type: 'object',
+            properties: { cmd: { type: 'string' } },
+            additionalProperties: false,
+          },
+          examples: [
+            { action: 'command', cmd: 'printf observed', intent: 'Read the value.', next: 'check' },
+          ],
+        },
+        assert_output: {
+          description: 'Assert a value.',
+          schema: {
+            type: 'object',
+            properties: { source: { type: 'string' }, contains: { type: 'string' } },
+            additionalProperties: false,
+          },
+          examples: [
+            {
+              action: 'assert_output',
+              source: 'read',
+              contains: 'observed',
+              intent: 'Check the value.',
+              next: 'done',
+            },
+          ],
+        },
+        end: { description: 'Finish.', examples: [{ action: 'end', status: 'pass' }] },
+      },
+    },
+    adapters: createStandardCoreAdapters({ actions: ['command', 'assert_output'] }),
+    hud: false,
+    defaultSource: { kind: 'operator', trust: 'trusted' },
+  });
+  const recipe = (value: string) => ({
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    title: 'Observe the changed value',
+    description: 'Keep baseline failure separate from head proof.',
+    proofTargets: [{ id: 'AC-1', claim: 'The value is observed.', proofMode: 'state' }],
+    workflow: {
+      entry: 'read',
+      nodes: {
+        read: {
+          action: 'command',
+          cmd: `printf ${value}`,
+          intent: 'Read the value.',
+          next: 'check',
+        },
+        check: {
+          action: 'assert_output',
+          source: 'read',
+          contains: 'observed',
+          proves: ['AC-1'],
+          intent: 'Check the value.',
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
+      },
+    },
+  });
+  const baseline = await runner.run({
+    projectRoot: taskDir,
+    artifactsDir: path.join(taskDir, 'artifacts', baselineRoot),
+    recipeDocument: recipe('defect'),
+  });
+  const head = await runner.run({
+    projectRoot: taskDir,
+    artifactsDir: path.join(taskDir, 'artifacts', headRoot),
+    recipeDocument: recipe('observed'),
+  });
+  const baseSha = 'a'.repeat(40);
+  const branch = 'feature';
+  const provenance = { schemaVersion: 1, git_ref: baseSha, dirty: false, branch };
+  for (const root of [baselineRoot, headRoot]) {
+    const dir = path.join(taskDir, 'artifacts', root);
+    await writeFile(path.join(dir, 'proof.png'), `capture ${root}`);
+    await indexMedia(dir, 'proof.png');
+    if (root === baselineRoot) {
+      await writeFile(path.join(dir, 'product-provenance.json'), JSON.stringify(provenance));
+      const filename = path.join(dir, 'artifact-manifest.json');
+      const manifest = JSON.parse(await readFile(filename, 'utf8'));
+      manifest.artifacts.push({
+        path: 'product-provenance.json',
+        type: 'json',
+        category: 'system',
+      });
+      await writeFile(filename, JSON.stringify(manifest));
+    }
+  }
+  await writeFile(
+    path.join(taskDir, 'artifacts', headRoot, 'evidence-manifest.json'),
+    JSON.stringify({ version: 1, standalone: [{ label: 'Head proof', file: 'proof.png' }] }),
+  );
+  await writeFile(
+    path.join(taskDir, 'artifacts/latest-valid-recipe-run.json'),
+    JSON.stringify({ version: 1, relativeArtifactRoot: headRoot }),
+  );
+  const declaration = {
+    version: 1,
+    before_after_pairs: [
+      {
+        label: 'Changed value',
+        covers: ['AC-1'],
+        before: `${baselineRoot}/proof.png`,
+        after: `${headRoot}/proof.png`,
+      },
+    ],
+  };
+  const declarationPath = path.join(taskDir, 'artifacts/evidence-manifest.json');
+  await writeFile(declarationPath, JSON.stringify(declaration));
+  const inventory: ArtifactRef[] = [];
+  for (const root of [baselineRoot, headRoot]) {
+    const read = await readRecordedEvidencePackage(path.join(taskDir, 'artifacts', root));
+    assert(read.checks.every((check) => check.status === 'pass'));
+    for (const file of read.input.artifactPaths ?? [])
+      inventory.push({
+        path: `artifacts/${root}/${file}`,
+        purpose: file === 'proof.png' ? 'screenshot' : 'other',
+        sha256: read.input.artifactDigests[file],
+      });
+  }
+  const run = buildRunRecord({ project: 'baseline-proof', flowType: 'dev', ticketOrPr: 'TEST-1' });
+  Object.assign(run, {
+    taskFile: path.join(taskDir, 'TASK.md'),
+    branch,
+    worktreeHeadAtDispatch: baseSha,
+    recordedEvidenceContractVersion: 1,
+  });
+  run.output = {
+    workerFinished: true,
+    capturedAt: new Date().toISOString(),
+    manifestDigest: digest(Buffer.from(JSON.stringify(inventory))),
+    artifactManifest: inventory,
+  };
+  return {
+    taskDir,
+    run,
+    inventory,
+    baseline,
+    head,
+    provenance,
+    declaration,
+    declarationPath,
+    baselineRoot,
+    headRoot,
+  };
+}
+
+test('same-run clean baseline freezes as before evidence without supplying head verdicts', async (t) => {
+  const f = await baselineFixture(t);
+  assert.equal(f.baseline.claims.criteria[0]?.verdict, 'failed');
+  assert.equal(f.head.claims.criteria[0]?.verdict, 'proven');
+  const effective = await readEvidenceManifest(f.run);
+  const inventory = await buildPackageEvidenceManifest(
+    f.taskDir,
+    f.inventory,
+    effective,
+    1,
+    publicationBaselineContext(f.run),
+  );
+  assert(
+    inventory.some(
+      (entry) => entry.path === `artifacts/${f.baselineRoot}/trace.json` && entry.sha256,
+    ),
+  );
+  const keys = [`artifacts/${f.baselineRoot}/proof.png`, `artifacts/${f.headRoot}/proof.png`];
+  const { readFrozenPublicationRecipeSources } =
+    await import('../run-engine/recorded-evidence-sources.js');
+  const sources = await readFrozenPublicationRecipeSources(f.run, inventory, keys);
+  assert.equal(sources.length, 1);
+  assert.equal(sources[0]?.input.claims?.recipeRunId, f.head.claims.recipeRunId);
+  assert.equal(sources[0]?.input.claims?.criteria[0]?.verdict, 'proven');
+  await assert.rejects(
+    readFrozenPublicationRecipeSources(f.run, inventory, [
+      `artifacts/${f.baselineRoot}/trace.json`,
+    ]),
+    /undeclared recipe attempt/,
+  );
+  await verifyFrozenPublicationEvidence(f.run, inventory, keys);
+  await writeFile(
+    path.join(f.taskDir, 'artifacts', f.baselineRoot, 'proof.png'),
+    'changed baseline capture',
+  );
+  await assert.rejects(verifyFrozenPublicationEvidence(f.run, inventory, keys), /hash mismatch/);
+});
+
+test('baseline declarations refuse other roles, source changes and incomplete captured closures', async (t) => {
+  const f = await baselineFixture(t);
+  await writeFile(
+    f.declarationPath,
+    JSON.stringify({
+      version: 1,
+      standalone: [{ label: 'Other attempt', file: `${f.baselineRoot}/proof.png` }],
+    }),
+  );
+  await assert.rejects(readEvidenceManifest(f.run), /belongs to another recipe attempt/);
+  await writeFile(
+    f.declarationPath,
+    JSON.stringify({
+      ...f.declaration,
+      before_after_pairs: f.declaration.before_after_pairs.map((pair) => ({
+        ...pair,
+        before: pair.after,
+        after: pair.before,
+      })),
+    }),
+  );
+  await assert.rejects(readEvidenceManifest(f.run), /belongs to another recipe attempt/);
+  await writeFile(f.declarationPath, JSON.stringify(f.declaration));
+  for (const provenance of [
+    { ...f.provenance, dirty: true },
+    { ...f.provenance, git_ref: 'b'.repeat(40) },
+    { ...f.provenance, branch: 'another-run' },
+  ]) {
+    const ref = f.inventory.find(
+      (entry) => entry.path === `artifacts/${f.baselineRoot}/product-provenance.json`,
+    )!;
+    ref.sha256 = digest(Buffer.from(JSON.stringify(provenance)));
+    await writeFile(
+      path.join(f.taskDir, 'artifacts', f.baselineRoot, 'product-provenance.json'),
+      JSON.stringify(provenance),
+    );
+    await assert.rejects(readEvidenceManifest(f.run), /belongs to another recipe attempt/);
+  }
+  await writeFile(
+    path.join(f.taskDir, 'artifacts', f.baselineRoot, 'product-provenance.json'),
+    JSON.stringify(f.provenance),
+  );
+  f.inventory.find(
+    (entry) => entry.path === `artifacts/${f.baselineRoot}/product-provenance.json`,
+  )!.sha256 = digest(Buffer.from(JSON.stringify(f.provenance)));
+  const effective = await readEvidenceManifest(f.run);
+  const missing = publicationBaselineContext(
+    f.run,
+    f.inventory.filter((entry) => entry.path !== `artifacts/${f.baselineRoot}/trace.json`),
+  );
+  await assert.rejects(
+    buildPackageEvidenceManifest(f.taskDir, f.inventory, effective, 1, missing),
+    /Baseline closure is missing or changed/,
+  );
+  await writeFile(path.join(f.taskDir, 'artifacts', f.baselineRoot, 'trace.json'), '{}');
+  await assert.rejects(
+    buildPackageEvidenceManifest(
+      f.taskDir,
+      f.inventory,
+      effective,
+      1,
+      publicationBaselineContext(f.run),
+    ),
+    /closure is invalid|Baseline closure is missing or changed/,
+  );
 });
 
 test('selected recorded media freezes the complete execution input and selection manifest', async (t) => {

@@ -18,7 +18,10 @@ import {
 
 import { type EvidenceManifest, validateEvidenceManifest } from './evidence-manifest.js';
 import { isUploadableMediaPath } from './evidence-paths.js';
-import { resolvePublicationManifest } from './publication-artifacts.js';
+import {
+  type PublicationBaselineContext,
+  resolvePublicationManifest,
+} from './publication-artifacts.js';
 import {
   resolveSelectedEvidenceRef,
   sha256Text,
@@ -34,8 +37,15 @@ export async function recordedPublicationDependencies(
   media: readonly ArtifactRef[],
   expectedManifest: EvidenceManifest | null | undefined,
   contractVersion = 1,
+  baseline?: PublicationBaselineContext,
 ): Promise<ArtifactRef[]> {
-  const source = await resolvePublicationManifest(taskDir, undefined, undefined, contractVersion);
+  const source = await resolvePublicationManifest(
+    taskDir,
+    undefined,
+    undefined,
+    contractVersion,
+    baseline,
+  );
   const sourceRoot = source ? path.posix.dirname(source.sourcePath) : undefined;
   const selectedRoot = source?.selectedArtifactRoot
     ? `artifacts/${source.selectedArtifactRoot}`
@@ -48,7 +58,7 @@ export async function recordedPublicationDependencies(
   const entries = new Map<string, ArtifactRef>();
   const byPath = new Map(media.map((artifact) => [artifact.path, artifact]));
   const roots = selectedRoot
-    ? [selectedRoot]
+    ? [selectedRoot, ...(source?.beforeArtifactRoots ?? []).map((root) => `artifacts/${root}`)]
     : recordedEvidenceRoots(
         artifacts,
         media.map((artifact) => artifact.path),
@@ -67,8 +77,19 @@ export async function recordedPublicationDependencies(
     ];
     if (issues.length)
       throw new Error(`Publication recipe closure is invalid (${root}): ${issues.join('; ')}`);
+    const isBaseline = source?.beforeArtifactRoots?.some((entry) => root === `artifacts/${entry}`);
     for (const file of input.artifactPaths ?? []) {
       const artifactPath = path.posix.join(root, file);
+      if (
+        isBaseline &&
+        baseline?.inventory
+          .find((entry) => entry.path === artifactPath)
+          ?.sha256?.replace(/^sha256:/u, '') !==
+          input.artifactDigests[file]?.replace(/^sha256:/u, '')
+      )
+        throw new Error(
+          `Baseline closure is missing or changed in the run capture: ${artifactPath}`,
+        );
       if (isGatewayOwnedArtifactPath(artifactPath))
         throw new Error(`Publication recipe closure includes gateway-owned data: ${artifactPath}`);
       const existing = byPath.get(artifactPath);

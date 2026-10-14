@@ -18,6 +18,10 @@ import {
 } from './draft-pr.js';
 import type { EvidenceManifest } from './evidence-manifest.js';
 import { exactEvidenceKeys, isUploadableMediaPath } from './evidence-paths.js';
+import {
+  type PublicationBaselineContext,
+  publicationBaselineContext,
+} from './publication-artifacts.js';
 import { sha256File, sortArtifactRefsForComparison } from './ready-gate-package.js';
 import { recordedPublicationDependencies } from './recorded-publication-evidence.js';
 
@@ -45,6 +49,7 @@ export async function buildPackageEvidenceManifest(
   artifacts: ArtifactRef[],
   evidenceManifest: EvidenceManifest | null | undefined,
   contractVersion = 1,
+  baseline?: PublicationBaselineContext,
 ): Promise<ArtifactRef[]> {
   const omittedEvidenceKeys = evidenceManifestOmitSet(evidenceManifest);
   const hasDeclaredEvidence =
@@ -88,6 +93,7 @@ export async function buildPackageEvidenceManifest(
         entries.filter((entry) => isUploadableMediaPath(entry.path)),
         evidenceManifest,
         contractVersion,
+        baseline,
       )
     : [];
   return sortArtifactRefsForComparison([
@@ -115,6 +121,7 @@ export async function readCurrentPackageEvidence(run: Run): Promise<CurrentPacka
       artifacts,
       manifest,
       run.recordedEvidenceContractVersion ?? 0,
+      publicationBaselineContext(run),
     ),
   };
 }

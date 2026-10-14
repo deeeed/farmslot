@@ -2,6 +2,7 @@ import { readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import { readRecordedEvidencePackage } from '@farmslot/adapter-sdk';
+import { validateRecordedEvidencePackage } from '@farmslot/adapter-sdk/evidence';
 import {
   type ArtifactRef,
   digestRecipeDocument,
@@ -193,6 +194,7 @@ export async function readFrozenPublicationRecipeSources(
       );
     const prefix = `artifacts/${pointer.relativeArtifactRoot}/`;
     const roots = recordedEvidenceRoots(inventory);
+    const external: string[] = [];
     for (const key of selectedKeys) {
       const selected = resolveSelectedEvidenceRef(key, [...inventory]);
       if (
@@ -200,10 +202,44 @@ export async function readFrozenPublicationRecipeSources(
         roots.some((root) => selected.path.startsWith(`${root}/`)) &&
         !selected.path.startsWith(prefix)
       )
+        external.push(selected.path);
+    }
+    if (external.length) {
+      const { readFrozenPublicationManifest } =
+        await import('../run-completion/recorded-publication-evidence.js');
+      const {
+        assertPublicationManifestOwnership,
+        filterEvidenceManifestBySelection,
+        publicationBaselineContext,
+      } = await import('../run-completion/publication-artifacts.js');
+      const manifest = await readFrozenPublicationManifest(run, inventory);
+      if (!manifest)
         throw new RecordedEvidenceReadError(
           'evidence-selection-invalid',
-          'The publication selects evidence from another recipe attempt.',
+          'The publication has no frozen before-evidence declaration.',
         );
+      const beforeRoots = await assertPublicationManifestOwnership(
+        filterEvidenceManifestBySelection(manifest, external),
+        pointer.relativeArtifactRoot,
+        path.join(path.dirname(run.taskFile), 'artifacts'),
+        undefined,
+        publicationBaselineContext(run, [...inventory]),
+      );
+      if (
+        external.some((file) => !beforeRoots.some((root) => file.startsWith(`artifacts/${root}/`)))
+      )
+        throw new RecordedEvidenceReadError(
+          'evidence-selection-invalid',
+          'The publication selects an undeclared recipe attempt.',
+        );
+      const before = await readFrozenRecordedEvidenceSources(run, inventory, external);
+      for (const source of before) {
+        if (validateRecordedEvidencePackage(source.input).status !== 'valid')
+          throw new RecordedEvidenceReadError(
+            'evidence-package-unverifiable',
+            'The frozen before-evidence package is invalid.',
+          );
+      }
     }
     return readFrozenRecordedEvidenceSources(
       run,
