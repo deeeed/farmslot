@@ -359,10 +359,11 @@ if (process.argv[2] === 'serve') {
         const target = ${/const\s+progress\s*=\s*await\s+source\.progress\(run\);/u};
         if (!target.test(text)) throw new Error('Progress checkpoint target changed');
         result.source = text.replace(target, match => match + ${JSON.stringify(`
-          if (require('node:fs').existsSync(${JSON.stringify(hold)})) {
-            require('node:fs').writeFileSync(${JSON.stringify(checkpoint)}, 'observed');
+          const proofFs = await import('node:fs');
+          if (proofFs.existsSync(${JSON.stringify(hold)})) {
+            proofFs.writeFileSync(${JSON.stringify(checkpoint)}, 'observed');
             const deadline = Date.now()+90000;
-            while(!require('node:fs').existsSync(${JSON.stringify(release)})) {
+            while(!proofFs.existsSync(${JSON.stringify(release)})) {
               if(Date.now()>deadline) throw new Error('Proof progress checkpoint was not released');
               await new Promise(resolve=>setTimeout(resolve,50));
             }
