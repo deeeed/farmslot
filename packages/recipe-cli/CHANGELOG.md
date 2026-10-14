@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Keep nested app execution provenance scoped to Git source, so ignored native dependencies do not block recipe runs. Explicit provider, library, runner and helper inputs remain bound.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.17.0 - 2026-10-14

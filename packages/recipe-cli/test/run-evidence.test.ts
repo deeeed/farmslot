@@ -911,6 +911,45 @@ describe('execution provenance', () => {
       assert.ok(fields.includes(field), field);
   });
 
+  test('nested product provenance excludes ignored native dependencies and detects source drift', async () => {
+    const repository = checkout('provenance-monorepo-', {
+      '.gitignore': 'apps/mobile/ios/Pods/\n',
+      'apps/mobile/src/value.ts': 'export const value = 1;\n',
+      'runner/index.ts': 'export const runner = 1;\n',
+    });
+    const product = path.join(repository, 'apps/mobile');
+    const dependency = path.join(tempRoot('provenance-dependency-'), 'native.framework');
+    fs.writeFileSync(dependency, 'installed dependency');
+    const pods = path.join(product, 'ios/Pods');
+    fs.mkdirSync(pods, { recursive: true });
+    fs.symlinkSync(dependency, path.join(pods, 'native.framework'));
+    const input = {
+      adapter: 'web',
+      projectRoot: product,
+      recipeDocument,
+      runnerRoot: repository,
+      runnerIncludes: ['runner'],
+    };
+    const start = await captureExecutionProvenance(input, 'start');
+    fs.writeFileSync(dependency, 'refreshed installed dependency');
+    assert.deepEqual(
+      executionProvenanceDrift(start, await captureExecutionProvenance(input, 'pre-execute')),
+      [],
+    );
+    fs.writeFileSync(path.join(product, 'src/value.ts'), 'export const value = 2;\n');
+    assert.ok(
+      executionProvenanceDrift(start, await captureExecutionProvenance(input, 'end')).some(
+        (entry) => entry.field === 'product.sourceFingerprint',
+      ),
+    );
+    const helper = path.join(pods, 'helper.mjs');
+    fs.symlinkSync(dependency, helper);
+    await assert.rejects(
+      captureExecutionProvenance({ ...input, helperPaths: [helper] }, 'start'),
+      /symbolic link/u,
+    );
+  });
+
   test('the runner defaults to the host package root', async () => {
     const runner = checkout('provenance-host-', { 'bin/shop-harness': '#!/bin/sh\n' });
     configureHarnessHost({ ...SHOP_HOST, packageRoot: runner });
