@@ -418,11 +418,18 @@ if (process.argv[2] === 'serve') {
     );
     mkdirSync(path.dirname(projectCiTemplate), { recursive: true });
     writeFileSync(projectCiTemplate, '# Project CI fix\n\n- [ ] Repair the check\n');
-    const nativeInline = process.env.FARMSLOT_STACK_BASE_PROOF_ONLY === 'inline-terminal';
+    const nativeNoChange = process.env.FARMSLOT_STACK_BASE_PROOF_ONLY === 'inline-no-change';
+    const nativeInline =
+      nativeNoChange || process.env.FARMSLOT_STACK_BASE_PROOF_ONLY === 'inline-terminal';
     if (nativeInline)
       writeFileSync(
         projectCiTemplate,
         '# Native inline maintenance proof\n\n- [ ] Execute the exact generated execute command below. Write {{TASK_DIR}}/artifacts/inline-executed.txt, then poll for {{TASK_DIR}}/artifacts/inline-allow-push.txt with a 90-second timeout before proceeding.\n- [ ] Run the exact generated push command.\n- [ ] Use the supplied marker command to start and mark every row of CI-FIX.md, then complete that checklist with disposition fixed and a short summary. Do not run an extra rebase or raw push.\n',
+      );
+    if (nativeNoChange)
+      writeFileSync(
+        projectCiTemplate,
+        '# Native no-change maintenance proof\n\n- [ ] Run the supplied execute command. Confirm current HEAD is unchanged and write {{TASK_DIR}}/artifacts/inline-executed.txt.\n- [ ] Write the required comments report and no-change evidence using the supplied terminal-contract instructions. The branch is already current; make no code edits and do not push.\n- [ ] Use the supplied marker to complete this checklist with disposition already_fixed and a truthful summary of the unchanged branch.\n',
       );
     const inlineCases = (
       nativeInline ? [projectWithoutToken] : [project, projectWithoutToken]
@@ -581,7 +588,7 @@ if (process.argv[2] === 'serve') {
     };
     await startGateway();
     const results = [];
-    for (const entry of ['inline', 'inline-terminal'].includes(
+    for (const entry of ['inline', 'inline-terminal', 'inline-no-change'].includes(
       process.env.FARMSLOT_STACK_BASE_PROOF_ONLY ?? '',
     )
       ? []
@@ -841,11 +848,13 @@ if (process.argv[2] === 'serve') {
           'scripted worker',
         );
       else {
-        git('checkout', 'feat/upstream');
-        writeFileSync(path.join(repo, 'inline-parent.txt'), 'inline target advanced\n');
-        git('add', 'inline-parent.txt');
-        git('commit', '-m', 'test: advance inline base');
-        git('push', 'origin', 'feat/upstream');
+        if (!nativeNoChange) {
+          git('checkout', 'feat/upstream');
+          writeFileSync(path.join(repo, 'inline-parent.txt'), 'inline target advanced\n');
+          git('add', 'inline-parent.txt');
+          git('commit', '-m', 'test: advance inline base');
+          git('push', 'origin', 'feat/upstream');
+        }
         git('checkout', 'feat/inline');
       }
       for (const entry of inlineCases) {
@@ -872,35 +881,47 @@ if (process.argv[2] === 'serve') {
             'native execute before push',
             210_000,
           );
-          await wait(() => {
-            const file = path.join(out, entry.id + '.inline-progress');
-            if (!existsSync(file)) return false;
-            const progress = JSON.parse(readFileSync(file, 'utf8'));
-            return progress.head !== progress.baseline && progress.pending && progress.active;
-          }, 'rebase remains progress before terminal push');
-          assert.deepEqual(
-            rpc('run.get', { runId: ownerId }).run.engineState.publishGate.maintainedSnapshot,
-            oldCheckpoint,
-          );
-          writeFileSync(
-            path.join(entry.slotTaskDir, 'artifacts/inline-allow-push.txt'),
-            'push allowed\n',
-          );
+          if (!nativeNoChange) {
+            await wait(() => {
+              const file = path.join(out, entry.id + '.inline-progress');
+              if (!existsSync(file)) return false;
+              const progress = JSON.parse(readFileSync(file, 'utf8'));
+              return progress.head !== progress.baseline && progress.pending && progress.active;
+            }, 'rebase remains progress before terminal push');
+            assert.deepEqual(
+              rpc('run.get', { runId: ownerId }).run.engineState.publishGate.maintainedSnapshot,
+              oldCheckpoint,
+            );
+            writeFileSync(
+              path.join(entry.slotTaskDir, 'artifacts/inline-allow-push.txt'),
+              'push allowed\n',
+            );
+          }
           await wait(
             () => existsSync(path.join(out, entry.id + '.inline-complete')),
             'native terminal signal and guarded push',
           );
           const latest: Run = rpc('run.get', { runId: entry.id }).run;
           const owner: Run = rpc('run.get', { runId: ownerId }).run;
-          assert.equal(
-            owner.engineState?.publishGate?.maintainedSnapshot?.headSha,
-            git('rev-parse', 'HEAD'),
-          );
-          assert.equal(
-            latest.steps.find((step) => step.name === 'write-task')?.outputs
-              ?.branchMaintenanceCompleted,
-            true,
-          );
+          if (nativeNoChange) {
+            assert.deepEqual(owner.engineState?.publishGate?.maintainedSnapshot, oldCheckpoint);
+            assert.equal(
+              latest.steps.find((step) => step.name === 'write-task')?.outputs
+                ?.branchMaintenanceOperation,
+              undefined,
+            );
+            assert.equal(git('rev-parse', 'HEAD'), oldCheckpoint.headSha);
+          } else {
+            assert.equal(
+              owner.engineState?.publishGate?.maintainedSnapshot?.headSha,
+              git('rev-parse', 'HEAD'),
+            );
+            assert.equal(
+              latest.steps.find((step) => step.name === 'write-task')?.outputs
+                ?.branchMaintenanceCompleted,
+              true,
+            );
+          }
           assert.equal(
             latest.steps.find((step) => step.name === 'ci-watch')?.outputs?.fixInProgress,
             false,

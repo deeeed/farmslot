@@ -926,3 +926,88 @@ test('recovery is explicit and its journal safely resumes after guarded ref muta
   assert.equal(readFileSync(path.join(f.repo, 'worker-fix'), 'utf8'), 'keep');
   assert.equal(f.git('rev-parse', result), result);
 });
+
+test('graph no-op retires when the target advances before renewal', (t) => {
+  const f = fixture(t);
+  const operation = inspectBranchMaintenance({
+    ...graphRequest(f, 'graph-noop-stale'),
+    baseRef: 'main',
+  });
+  assert.equal(executeBranchMaintenance(operation), f.source);
+  pushBranchMaintenance(operation);
+  f.git('checkout', 'main');
+  f.commit('main-later', 'later');
+  f.git('push', 'origin', 'main');
+  assert.deepEqual(validateBranchMaintenance(operation), {
+    status: 'stale',
+    reason: 'TARGET_CHANGED',
+  });
+  assert.deepEqual(retireBranchMaintenance(operation), { status: 'retired' });
+});
+
+test('recovery completes a source-head journal with no appended worker fix', (t) => {
+  const f = fixture(t);
+  f.git('checkout', 'parent');
+  f.commit('parent-next', 'next');
+  f.git('push', 'origin', 'parent');
+  f.git('checkout', 'child');
+  const operation = f.inspect();
+  const result = executeBranchMaintenance(operation);
+  f.git('checkout', 'parent');
+  f.commit('parent-later', 'later');
+  f.git('push', 'origin', 'parent');
+  f.git('checkout', 'child');
+  const retired = retireBranchMaintenance(operation, true);
+  assert.equal(retired.recoveredHeadSha, f.source);
+  const file = receiptFile(f.repo);
+  const receipt = JSON.parse(readFileSync(file, 'utf8'));
+  receipt.phase = 'completed';
+  writeFileSync(file, JSON.stringify(receipt));
+  f.git('read-tree', '--reset', '-u', result);
+  assert.notEqual(f.git('status', '--porcelain'), '');
+  assert.deepEqual(retireBranchMaintenance(operation, true), retired);
+  assert.equal(f.git('status', '--porcelain'), '');
+  assert.equal(f.git('rev-parse', 'HEAD'), f.source);
+});
+
+for (const reset of ['same-lease', 'foreign-push', 'published-rewrite'] as const) {
+  test(`ordinary receipt permits supported slot reset after ${reset}`, (t) => {
+    const f = fixture(t);
+    f.git('checkout', 'parent');
+    f.commit('parent-next', 'next');
+    f.git('push', 'origin', 'parent');
+    f.git('checkout', 'child');
+    const request = { kind: 'ordinary' as const, repo: f.repo, branch: 'child', baseRef: 'parent' };
+    const abandoned = executeOrdinaryBranchMaintenance(request);
+    if (reset === 'published-rewrite') pushOrdinaryBranchMaintenance(request);
+    if (reset !== 'same-lease') {
+      const peer = path.join(f.root, 'peer');
+      f.raw(['clone', '--branch', 'child', f.remote, peer]);
+      f.raw(['config', 'user.name', 'Peer'], peer);
+      f.raw(['config', 'user.email', 'peer@example.invalid'], peer);
+      if (reset === 'published-rewrite') f.raw(['reset', '--hard', 'origin/parent'], peer);
+      writeFileSync(path.join(peer, 'child-only'), 'child');
+      writeFileSync(path.join(peer, 'foreign-fix'), 'retain foreign work');
+      f.raw(['add', '.'], peer);
+      f.raw(['commit', '-m', 'fix: foreign update'], peer);
+      const prior = f.raw(['rev-parse', 'origin/child'], peer);
+      f.raw(
+        ['push', 'origin', 'HEAD:refs/heads/child', `--force-with-lease=refs/heads/child:${prior}`],
+        peer,
+      );
+    }
+    f.git('fetch', 'origin', '+refs/heads/child:refs/remotes/origin/child');
+    f.git('reset', '--hard', 'origin/child');
+    executeOrdinaryBranchMaintenance(request);
+    pushOrdinaryBranchMaintenance(request);
+    assert.equal(f.git('status', '--porcelain'), '');
+    assert.equal(readFileSync(path.join(f.repo, 'child-only'), 'utf8'), 'child');
+    if (reset !== 'same-lease')
+      assert.equal(readFileSync(path.join(f.repo, 'foreign-fix'), 'utf8'), 'retain foreign work');
+    assert.equal(
+      f.git('rev-parse', abandoned),
+      abandoned,
+      'prior abandoned result remains retained',
+    );
+  });
+}

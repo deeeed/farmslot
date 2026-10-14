@@ -404,3 +404,18 @@ test('initial comparison consumes the settled immutable publication head instead
     prepared,
   );
 });
+
+test('terminal abandonment persists input retirement without SDK lookup or checkout mutation', async (t) => {
+  const { owner, worker, deps } = await fixture(t);
+  await maintenance.prepareBranchMaintenance(worker, makeVars(), 'main', 'rebase', deps);
+  runs.updateRun(worker.id, { slotId: 'unavailable-node' });
+  await maintenance.abandonBranchMaintenance(worker);
+  assert.equal(maintenance.pendingBranchMaintenance(worker), undefined);
+  assert.deepEqual(owner.engineState!.publishGate!.maintainedSnapshot, initial);
+  const stored = JSON.parse(await readFile(runs.runRecordPath(worker.id), 'utf8'));
+  assert.equal(
+    stored.steps.find((step: { name: string }) => step.name === PipelineSteps.WRITE_TASK).outputs
+      .branchMaintenanceOperation,
+    undefined,
+  );
+});

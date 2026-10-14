@@ -53,6 +53,7 @@ import {
   rediscoverAcceptingWorkerPane,
 } from '../review/worker-lifecycle.js';
 import {
+  abandonBranchMaintenance,
   completeBranchMaintenance,
   pendingBranchMaintenance,
   prepareBranchMaintenance,
@@ -1203,7 +1204,10 @@ async function attemptInlineCIFix(
           if (ws.status !== 'failed') {
             try {
               const latest = getRun(runId);
-              if (latest) await completeBranchMaintenance(latest);
+              if (latest) {
+                if (validatedNoChange) await abandonBranchMaintenance(latest);
+                else await completeBranchMaintenance(latest);
+              }
             } catch (error) {
               return blockInlineFix(
                 `Branch maintenance push verification failed: ${(error as Error).message}`,

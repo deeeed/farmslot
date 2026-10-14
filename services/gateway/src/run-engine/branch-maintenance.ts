@@ -154,17 +154,21 @@ export async function retireBranchMaintenance(
   }
   // The SDK preserves verified local work before an input can be replaced.
   await deps.runtime(vars, 'retire', { operation, recoverLocal: true });
-  const latest = getRun(run.id);
+  await retireMaintenanceInput(run.id, operation.id);
+}
+
+async function retireMaintenanceInput(runId: string, operationId: string): Promise<void> {
+  const latest = getRun(runId);
   if (!latest) throw new MaintenanceRefusal('MAINTENANCE_RUN_MISSING');
   await persistRunNow(
-    updateRun(run.id, {
-      ...(latest.ciWatchState?.branchMaintenanceOperation?.id === operation.id
+    updateRun(runId, {
+      ...(latest.ciWatchState?.branchMaintenanceOperation?.id === operationId
         ? { ciWatchState: { ...latest.ciWatchState, branchMaintenanceOperation: undefined } }
         : {}),
       steps: latest.steps.map((step) =>
         step.name === PipelineSteps.WRITE_TASK &&
         (step.outputs?.branchMaintenanceOperation as BranchMaintenanceOperation | undefined)?.id ===
-          operation.id
+          operationId
           ? {
               ...step,
               outputs: {
@@ -178,6 +182,12 @@ export async function retireBranchMaintenance(
     }),
     'maintenance input retired',
   );
+}
+
+/** Terminal work keeps its checkout for inspection; input retirement grants no approval. */
+export async function abandonBranchMaintenance(run: Run): Promise<void> {
+  const operation = pendingBranchMaintenance(getRun(run.id) ?? run);
+  if (operation) await retireMaintenanceInput(run.id, operation.id);
 }
 
 /** Graph transport uses the same pinned execution and exact lease as worker maintenance. */

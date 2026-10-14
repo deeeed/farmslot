@@ -526,6 +526,12 @@ export function validateBranchMaintenance(
   fetchHeads(operation.repo, operation.branch, operation.baseRef);
   const remote = ref(operation.repo, operation.branch);
   if (
+    operation.kind === 'graph-merge' &&
+    remote === operation.remoteHeadSha &&
+    ref(operation.repo, operation.baseRef) !== operation.targetSha
+  )
+    return { status: 'stale', reason: 'TARGET_CHANGED' };
+  if (
     receipt?.phase === 'completed' &&
     receipt.resultHeadSha === remote &&
     (remote !== operation.remoteHeadSha || receipt.pushedHeadSha === remote)
@@ -564,6 +570,21 @@ function assertRecoveryCheckout(
   };
   if (!matches(recovery.previousHeadSha) && !matches(recovery.recoveredHeadSha))
     refuse('UNCOMMITTED_CHANGES');
+}
+
+function retainReceiptHeads(
+  operation: BranchMaintenanceOperation,
+  receipt: BranchUpdateReceipt,
+): void {
+  const prefix = `refs/farmslot/branch-maintenance/${operationHash(operation)}`;
+  const heads = {
+    source: receipt.sourceHeadSha,
+    replay: receipt.replayHeadSha,
+    result: receipt.resultHeadSha,
+    recovered: receipt.recovery?.recoveredHeadSha,
+  };
+  for (const [name, head] of Object.entries(heads))
+    if (head) git(operation.repo, ['update-ref', `${prefix}/${name}`, head]);
 }
 
 /** Explicitly retire stale input. Preserve every source/result before local recovery. */
@@ -606,10 +627,28 @@ export function retireBranchMaintenance(
     return { status: 'retired' };
   }
   if (rebaseActive(repo)) refuse('RESOLVE_REBASE_CONFLICT');
+  const currentHead = sha(git(repo, ['rev-parse', 'HEAD']).trim());
+  const currentRemote = ref(repo, operation.branch);
+  if (
+    currentHead === currentRemote &&
+    (currentRemote !== operation.remoteHeadSha ||
+      (receipt.phase === 'completed' && currentHead !== receipt.resultHeadSha && !receipt.recovery))
+  ) {
+    // Prepare replaced this checkout with verified remote content. Retain the
+    // abandoned attempt, then start fresh without rewriting any current work.
+    assertCheckout(operation);
+    retainReceiptHeads(operation, receipt);
+    recordReceipt(operation, {
+      ...receipt,
+      phase: 'retired',
+      retiredReason: 'CHECKOUT_REPREPARED',
+    });
+    return { status: 'retired' };
+  }
   if (receipt?.recovery) assertRecoveryCheckout(operation, receipt.recovery);
   else assertCheckout(operation);
   const head = sha(git(repo, ['rev-parse', 'HEAD']).trim());
-  if (head === receipt.sourceHeadSha) {
+  if (head === receipt.sourceHeadSha && !receipt.recovery) {
     recordReceipt(operation, {
       ...receipt,
       phase: 'retired',
@@ -762,7 +801,7 @@ export function executeOrdinaryBranchMaintenance(
       (saved.pushedHeadSha === saved.resultHeadSha ||
         (remote === saved.resultHeadSha && remote !== saved.operation.remoteHeadSha));
     if (published) {
-      if (!ancestor(request.repo, saved.resultHeadSha!, remote)) refuse('REMOTE_CHILD_CHANGED');
+      retainReceiptHeads(saved.operation, saved);
       if (!ancestor(request.repo, remote, head)) refuse('REMOTE_CHILD_COMMITS_MISSING');
       if (
         remote === saved.resultHeadSha &&
@@ -773,7 +812,11 @@ export function executeOrdinaryBranchMaintenance(
       // A completed published attempt no longer binds a later child's lease.
     } else if (saved.phase !== 'retired') {
       const validation = validateBranchMaintenance(saved.operation);
-      if (validation.status === 'pending') return executeBranchMaintenance(saved.operation);
+      if (
+        validation.status === 'pending' &&
+        !(saved.phase === 'completed' && head === remote && head !== saved.resultHeadSha)
+      )
+        return executeBranchMaintenance(saved.operation);
       if (validation.status === 'pushed') return saved.resultHeadSha!;
       retireBranchMaintenance(saved.operation, true);
     }

@@ -53,7 +53,7 @@ import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { collectRunSubtaskMetrics, withSubtaskMetrics } from '../tasks/subtask-metrics.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
-import { completeBranchMaintenance, retireBranchMaintenance } from './branch-maintenance.js';
+import { abandonBranchMaintenance, completeBranchMaintenance } from './branch-maintenance.js';
 import {
   isHumanGateReviewRequestAction,
   markResolvedHumanGateReviewRequestConsumed,
@@ -1304,7 +1304,7 @@ export async function executeCompleteStep(
   // A refused completion must not strand a successful push behind stale ownership.
   const noCodeDisposition = isNoCodeTerminalDisposition(current.metrics.disposition);
   if (noCodeDisposition || ['blocked', 'failed'].includes(current.metrics.disposition ?? ''))
-    await retireBranchMaintenance(current);
+    await abandonBranchMaintenance(current);
   else await completeBranchMaintenance(current);
   if (!shouldPrepareLocalFirstPackage(current))
     await (context.assertGatePrerequisites ?? assertRunGateReady)(current, null, 'complete');
