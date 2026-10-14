@@ -342,7 +342,7 @@ if (process.argv[2] === 'serve') {
       if (url.endsWith('/run-engine/post-dispatch-steps.ts')) {
         let text = String(result.source);
         if (${JSON.stringify(negative)} === 'claim-policy') {
-          const call = /\(current,\\s*null,\\s*["']complete["']\)/u;
+          const call = ${/\(current,\s*null,\s*["']complete["']\)/u};
           if (!call.test(text)) throw new Error('QA completion policy control target changed');
           const changed = text.replace(call, '(current, null)');
           writeFileSync(${JSON.stringify(path.join(out, 'source-mutation.json'))}, JSON.stringify({mode:'claim-policy',url,
@@ -350,13 +350,13 @@ if (process.argv[2] === 'serve') {
             loadedHash:createHash('sha256').update(changed).digest('hex')}));
           text = changed;
         }
-        const target = /if\\s*\(current\\.flowType\\s*===\\s*["']qa["']\)\\s*await\\s+assertQaCompletion\(current\);/u;
+        const target = ${/if\s*\(current\.flowType\s*===\s*["']qa["']\)\s*await\s+assertQaCompletion\(current\);/u};
         if (!target.test(text)) throw new Error('Completion proof barrier target changed');
         return {...result, source: text.replace(target, match => match + " throw new (await import('../core/method-error.js')).GatewayMethodError('RUN_GATE_NOT_READY','${barrier}');")};
       }
       if (url.endsWith('/run-engine/gate-prerequisites.ts')) {
         const text = String(result.source);
-        const target = /const\\s+progress\\s*=\\s*await\\s+source\\.progress\(run\);/u;
+        const target = ${/const\s+progress\s*=\s*await\s+source\.progress\(run\);/u};
         if (!target.test(text)) throw new Error('Progress checkpoint target changed');
         result.source = text.replace(target, match => match + ${JSON.stringify(`
           if (require('node:fs').existsSync(${JSON.stringify(hold)})) {
@@ -370,7 +370,7 @@ if (process.argv[2] === 'serve') {
       }
       if (url.endsWith('/run-completion/artifact-mirror.ts')) {
         const text = String(result.source);
-        const target = /const\\s+workerArtifactsExist\\s*=\\s*await\\s+slotFileExists\(vars,\\s*workerArtifactsDir\);/u;
+        const target = ${/const\s+workerArtifactsExist\s*=\s*await\s+slotFileExists\(vars,\s*workerArtifactsDir\);/u};
         if (!target.test(text)) throw new Error('Transfer failure checkpoint target changed');
         result.source = text.replace(target, match => ${JSON.stringify(`if ((await import('node:fs')).existsSync(${JSON.stringify(failTransfer)})) throw new Error('Controlled mirror transfer failure'); `)} + match);
       }
