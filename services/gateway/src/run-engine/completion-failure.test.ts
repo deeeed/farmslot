@@ -113,3 +113,53 @@ for (const observed of ['making-progress', 'idle', 'unproven'] as const) {
     assert.deepEqual(run, retained, 'retained failure, worker and slot are untouched');
   });
 }
+
+for (const historicalDoneFlags of [false, true]) {
+  test(`unapproved publication retains review-fix and slot with historical done flags ${historicalDoneFlags}`, async () => {
+    const steps = FLOW_STEPS.dev;
+    run = makeRun({
+      id: `unapproved-finalize-${historicalDoneFlags}`,
+      flowType: 'dev',
+      mode: 'autonomous',
+      status: 'fixing',
+      slotId: 'retained-publication-slot',
+      engineState: { generation: 0, publishGate: { publicationStatus: 'not_published' } },
+      decisions: [
+        {
+          id: 'continue-fix',
+          type: 'engine_human_gate',
+          title: 'Publication gate',
+          description: '',
+          actions: [],
+          createdAt: '2026-10-14T16:00:00Z',
+          resolvedAt: '2026-10-14T16:01:00Z',
+          resolvedAction: 'continue-review-fix',
+        },
+      ],
+      steps: steps.map((name, index) => ({
+        name,
+        status: historicalDoneFlags || index < steps.indexOf(S.FINALIZE) ? 'done' : 'pending',
+      })),
+    });
+    const worker = {
+      id: 'review-fix',
+      role: 'review-fix' as const,
+      label: 'Review fix',
+      status: 'working' as const,
+      slotId: run.slotId!,
+      runId: run.id,
+    };
+    run.agentContexts = [worker];
+    kind = 'making-progress';
+    await startRun(run.id);
+    assert.equal(run.status, 'failed');
+    assert.equal(run.steps.find((step) => step.name === S.FINALIZE)?.status, 'failed');
+    assert.equal(isCompletionPrerequisiteFailure(run), true);
+    assert.equal(run.slotId, worker.slotId);
+    assert.deepEqual(run.agentContexts, [worker], 'active repair cannot be retired');
+    assert.equal(run.engineState?.publishGate?.publicationStatus, 'not_published');
+    const retained = structuredClone(run);
+    await startRun(run.id);
+    assert.deepEqual(run, retained, 're-entry cannot turn a refused finalize into DONE or release');
+  });
+}

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Keep publication gates open across review-fix recovery and retain workers, slots and evidence when finalization lacks approval or publication; completed step flags cannot bypass publication before DONE.
 - Persist and reconcile one verified stack-maintenance checkpoint across worker rebases and graph catch-up without changing retained evidence. Install the compatible task runtime before deploying enforcement or migrating pack templates; stacked lint fixes require retained publication ownership too. Graph catch-up requires a configured signing key; local recovery requires Git 2.40 or later.
 - Wait for confirmed worker progress to reach idle before completing a run, preserving prerequisite refusals and operator pause, cancellation and replay ownership.
 - Preserve gateway startup and existing credential authentication when upgrading a store with historical `env-migrated` origin metadata.

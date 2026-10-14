@@ -26,6 +26,9 @@ const { makeReadyGatePackage, deleteTestRunIfPresent } =
 const { collectRunGateReadiness } = await import('../../run-engine/gate-prerequisites.js');
 const { latestResolvedHumanGateDecision, isReplayableResolvedHumanGateDecision } =
   await import('../../run-engine/decision-replay.js');
+const { assertPublicationFinalization } =
+  await import('../../run-engine/publication-finalization.js');
+const { resetPublishGateApprovalForReplay } = await import('./replay-step.js');
 const { buildCIWatchChainedRunParams } = await import('../../run-engine/ci-watch-chain.js');
 const { reviewPRIdentity } = await import('../../review/session-mode.js');
 const { initPrLinkage } = await import('../../integrations/pr-linkage.js');
@@ -148,6 +151,36 @@ function dependencies(overrides: Partial<Dependencies> = {}): Dependencies {
     ...overrides,
   };
 }
+
+test('adopted publication remains fulfilled after gate replay without restoring package approval', async (t) => {
+  const run = fixture(t);
+  updateRun(run.id, { mode: 'autonomous' });
+  await runAdoptPublishedPr(request(run), noop, dependencies());
+  const adopted = getRun(run.id)!;
+  const receipt = structuredClone(adopted.engineState?.publishGate?.humanPublicationAdoption);
+  assert.ok(receipt);
+  updateRun(run.id, { engineState: resetPublishGateApprovalForReplay(adopted.engineState) });
+  const replayed = getRun(run.id)!;
+  assert.equal(replayed.engineState?.publishGate?.publicationStatus, 'not_published');
+  assert.equal(replayed.engineState?.publishGate?.approvedPackageHash, undefined);
+  assert.deepEqual(replayed.engineState?.publishGate?.humanPublicationAdoption, receipt);
+  assert.doesNotThrow(() => assertPublicationFinalization(replayed, 'finalize'));
+  assert.doesNotThrow(() => assertPublicationFinalization(replayed, 'complete'));
+  const readiness = await collectRunGateReadiness(
+    replayed,
+    null,
+    {
+      deterministic: async () => {},
+      acceptance: async () => ({ criteria: [], ledger: null, issues: [] }),
+      progress: async () => ({ kind: 'making-progress' }),
+    },
+    'post-publication',
+  );
+  assert.ok(
+    readiness.reasons.some((reason) => reason.code === 'run-work-progressing'),
+    'an adopted publication never proves native idle or bypasses continuation checks',
+  );
+});
 
 test('active adoption retains three heads and exhausted reviews; only the publication wait is superseded', async (t) => {
   const run = fixture(t);

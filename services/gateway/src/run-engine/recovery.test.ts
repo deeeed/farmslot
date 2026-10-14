@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Run, RunStep, SubStepRecord } from '@farmslot/protocol';
+import { FLOW_STEPS, type Run, type RunStep, type SubStepRecord } from '@farmslot/protocol';
 
 import {
   hasPendingPublicationReviewContinuation,
@@ -1124,6 +1124,70 @@ function gateRecoveryDeps(
   } as unknown as RunRecoveryCollaborators;
   return { deps, calls };
 }
+
+test('restart re-enters the publication gate for a resolved review-fix continuation without advancing finalize', async () => {
+  const continuation = {
+    ...humanGateDecision('continue-fix'),
+    resolvedAt: '2026-10-14T16:01:00Z',
+    resolvedAction: 'continue-review-fix',
+  };
+  const run = minimalActiveRun({
+    ticketOrPr: 'RECOVERY-CONTINUE-FIX',
+    familyRootTicketOrPr: 'RECOVERY-CONTINUE-FIX',
+    taskFile: '/tmp/recovery-continue-fix/TASK.md',
+    status: 'fixing',
+    steps: [
+      { name: 'human-gate', status: 'running' },
+      { name: 'finalize', status: 'pending' },
+    ],
+    decisions: [continuation],
+  });
+  run.agentContexts = [
+    {
+      id: 'review-fix',
+      role: 'review-fix',
+      label: 'Review fix',
+      status: 'working',
+      slotId: run.slotId!,
+      runId: run.id,
+    },
+  ];
+  const { deps, calls } = publicationReviewRecoveryDeps(run);
+  deps.updateRunStep = () => assert.fail('continuation does not complete the human gate');
+  deps.startRun = async () => assert.fail('continuation cannot advance into finalize');
+  await recoverActiveRuns(deps);
+  assert.deepEqual(calls.replayed, [run.id]);
+  assert.equal(run.agentContexts[0].status, 'working');
+  assert.notEqual(run.steps.find((step) => step.name === 'human-gate')?.status, 'done');
+  assert.equal(run.steps.find((step) => step.name === 'finalize')?.status, 'pending');
+});
+
+test('recovery of the last completed step restores completing and leaves DONE to the engine', async () => {
+  const run = minimalActiveRun({
+    ticketOrPr: 'RECOVERY-LAST-STEP',
+    familyRootTicketOrPr: 'RECOVERY-LAST-STEP',
+    taskFile: '/tmp/recovery-last-step/TASK.md',
+    status: 'blocked',
+    flowType: 'review-pr',
+    steps: FLOW_STEPS['review-pr'].map((name) => ({
+      name,
+      status: name === 'complete' ? 'running' : 'done',
+    })),
+    decisions: [
+      {
+        ...humanGateDecision('posted'),
+        resolvedAt: '2026-10-14T16:01:00Z',
+        resolvedAction: 'post',
+      },
+    ],
+  });
+  const { deps, calls } = publicationReviewRecoveryDeps(run);
+  deps.reconstructStepOutputs = () => null;
+  deps.startRun = async () => {};
+  await recoverActiveRuns(deps);
+  assert.ok(calls.updates.some((update) => update.status === 'completing'));
+  assert.ok(calls.updates.every((update) => update.status !== 'done'));
+});
 
 test('recovery re-enters the human gate when a lost reviewer result was ingested at startup', async () => {
   const run = minimalActiveRun({

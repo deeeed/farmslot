@@ -26,6 +26,8 @@ import { withSourcePlanning } from '../sources/runtime.js';
 
 import { pendingDecisionForRun } from './decision-projection.js';
 import { pendingReviewContinuation } from './gate-policy.js';
+import { publicationFinalizationAction } from './publication-finalization.js';
+import { requiresPublicationApproval } from './publication-policy.js';
 import {
   type PublicationReviewRecoveryResult,
   reviewerContextNeedsRecovery,
@@ -736,12 +738,13 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
             (decision.type === 'engine_human_gate' || decision.type === 'engine_review_posting') &&
             !!decision.resolvedAt,
         );
-      const supersededGateWithoutReplacement =
+      const resolvedGateRequiresReentry =
         runningStepName === S.HUMAN_GATE &&
-        latestResolvedGateDecision?.resolvedAction === 'superseded';
-      if (supersededGateWithoutReplacement) {
+        (latestResolvedGateDecision?.resolvedAction === 'superseded' ||
+          (requiresPublicationApproval(run) && !publicationFinalizationAction(run)));
+      if (resolvedGateRequiresReentry) {
         console.log(
-          `[run-engine] run ${run.id.slice(0, 8)} — superseded gate has no replacement, re-entering human gate`,
+          `[run-engine] run ${run.id.slice(0, 8)} — resolved decision has not fulfilled the gate, re-entering human gate`,
         );
         try {
           await deps.replayHumanGate(run.id);
@@ -814,7 +817,11 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         }
 
         const nextStep = run.steps.find((s) => s.status === 'pending');
-        const restoredStatus = nextStep ? (STEP_TO_STATUS[nextStep.name] ?? 'created') : 'done';
+        // The engine owns terminal publication. Recovery may restore the last
+        // step, but must not label the run done before its completion checks.
+        const restoredStatus = nextStep
+          ? (STEP_TO_STATUS[nextStep.name] ?? 'created')
+          : 'completing';
         deps.updateRun(run.id, { status: restoredStatus });
       } else {
         // Nothing to advance. A worker-signal or engine block already skipped
