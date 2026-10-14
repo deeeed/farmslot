@@ -21,10 +21,13 @@ import { fileURLToPath } from 'node:url';
 import type {
   BranchMaintenanceCheckpoint,
   BranchMaintenanceOperation,
+  ReadyGatePrPackage,
   Run,
 } from '@farmslot/protocol';
 import { shellQuote as shSingleQuote } from '../../../services/gateway/src/core/tmux.js';
 import { captureCurrentReviewSnapshot } from '../../../services/gateway/src/review/snapshots.js';
+import { computeReadyGatePackageHash } from '../../../services/gateway/src/run-completion/ready-gate-package.js';
+import { buildCodexExecLaunch } from '../../../services/gateway/src/runners/launch-command.js';
 import { makeVars } from '../../../services/gateway/src/runners/test-fixtures.js';
 
 const source = fileURLToPath(new URL('../../../', import.meta.url));
@@ -73,8 +76,12 @@ if (process.argv[2] === 'serve') {
         { cwd: source, env, encoding: 'utf8', timeout: 45_000, maxBuffer: 8 * 1024 * 1024 },
       ),
     );
-  const wait = async (read: () => boolean | Promise<boolean>, label: string) => {
-    const until = Date.now() + 90_000;
+  const wait = async (
+    read: () => boolean | Promise<boolean>,
+    label: string,
+    timeoutMs = 90_000,
+  ) => {
+    const until = Date.now() + timeoutMs;
     while (Date.now() < until) {
       assert.ok(!gateway || gateway.exitCode === null, logs.join('').slice(-2500));
       if (await read()) return;
@@ -119,6 +126,24 @@ if (process.argv[2] === 'serve') {
     git('branch', 'feat/inline', childSha);
     git('push', 'origin', 'feat/retargeted', 'feat/inline');
     writeFileSync(path.join(repo, '.git/info/exclude'), '.task/\nnode_modules/\n');
+    const commonSha = git('rev-parse', parentSha + '^');
+    git('branch', 'feat/merged-parent', parentSha);
+    git('push', 'origin', 'feat/merged-parent');
+    git('checkout', 'trunk');
+    writeFileSync(path.join(repo, 'unrelated-default.txt'), 'unrelated default work\n');
+    git('add', 'unrelated-default.txt');
+    git('commit', '-m', 'test: unrelated default work before publication');
+    const defaultAdditionSha = git('rev-parse', 'HEAD');
+    git('push', 'origin', 'trunk');
+    git('checkout', '-b', 'feat/merged-owned', childSha);
+    git('merge', '--no-ff', 'trunk', '-m', 'test: child took unrelated default work');
+    const mergedSourceSha = git('rev-parse', 'HEAD');
+    git('push', 'origin', 'feat/merged-owned');
+    git('checkout', 'trunk');
+    git('revert', '--no-edit', defaultAdditionSha);
+    git('push', 'origin', 'trunk');
+    git('push', 'origin', commonSha + ':refs/heads/feat/merged-parent', '--force');
+
     const captured = await captureCurrentReviewSnapshot(
       makeVars({ remoteRepo: repo, host: 'localhost', machine: hostname() }),
       {
@@ -152,8 +177,8 @@ if (process.argv[2] === 'serve') {
     );
     const projectConfig = {
       name: project,
-      task_dir_name: '.task',
-      runtime_dir: '.task',
+      task_dir: '.task',
+      paths: { runtime_dir: '.task' },
       default_branch: 'trunk',
       hooks: {},
       ci: { enabled: true, repo: 'fixture/missing', checkGroups: [] },
@@ -212,6 +237,7 @@ if (process.argv[2] === 'serve') {
       familyId: id,
       flowType,
       mode: 'autonomous',
+      safetyTier: 'dangerous',
       transport: 'tmux',
       scripted: { mode: 'command', commandRef: 'maintain' },
       status: 'failed',
@@ -274,6 +300,58 @@ if (process.argv[2] === 'serve') {
       stack: { ...stack, retargetedTo: 'trunk', upstreamMergeSha },
       engineState: { generation: 0, publishGate: { maintainedSnapshot: initialCheckpoint } },
     });
+    const mergedOwnerId = randomUUID();
+    const mergedTask = path.join(
+      root,
+      'projects',
+      project,
+      'tasks',
+      'frozen-merged-owner',
+      'TASK.md',
+    );
+    const mergedSnapshot = await captureCurrentReviewSnapshot(
+      makeVars({ remoteRepo: repo, host: 'localhost', machine: hostname() }),
+      {
+        baseRef: 'feat/merged-parent',
+        committedBaseSha: defaultAdditionSha,
+        committedHeadSha: mergedSourceSha,
+      },
+    );
+    const mergedPackage: ReadyGatePrPackage = {
+      id: 'frozen-merged-owner',
+      packageHash: '',
+      artifactPath: 'artifacts/pr-package.json',
+      branch: 'feat/merged-owned',
+      headSha: mergedSourceSha,
+      diffStat: { files: 2, additions: 2, deletions: 0 },
+      reviewSnapshot: mergedSnapshot.snapshot,
+      draftTitle: 'fix: merged child',
+      draftBody: '',
+      reviewArtifactIds: [],
+      gatePolicy: {
+        owner: 'human',
+        dispatchMode: 'interactive',
+        publishAuthority: 'human',
+        reason: 'fixture',
+      },
+      publicationTarget: 'ready',
+      publicationStatus: 'not_published',
+      createdAt: now,
+    };
+    mergedPackage.packageHash = computeReadyGatePackageHash(mergedPackage);
+    mkdirSync(path.dirname(mergedTask), { recursive: true });
+    writeFileSync(mergedTask, '# Frozen merged publication\n');
+    json(path.join(path.dirname(mergedTask), mergedPackage.artifactPath), mergedPackage);
+    json(path.join(root, '.runs', mergedOwnerId + '.json'), {
+      ...baseRun(mergedOwnerId, 'dev'),
+      status: 'done',
+      completedAt: now,
+      prNumber: 46,
+      branch: 'feat/merged-owned',
+      taskFile: mergedTask,
+      stack: { ...stack, baseBranch: 'feat/merged-parent' },
+      engineState: { generation: 0, publishGate: { packageHash: mergedPackage.packageHash } },
+    });
     const cases = [
       {
         id: randomUUID(),
@@ -303,6 +381,13 @@ if (process.argv[2] === 'serve') {
         parentRunId: null,
         expected: 'trunk',
       },
+      {
+        id: randomUUID(),
+        flow: 'pr-complete',
+        branch: 'feat/merged-owned',
+        parentRunId: mergedOwnerId,
+        expected: 'feat/merged-parent',
+      },
     ];
     for (const entry of cases)
       json(path.join(root, '.runs', entry.id + '.json'), {
@@ -317,6 +402,14 @@ if (process.argv[2] === 'serve') {
       ...projectConfig,
       name: projectWithoutToken,
     });
+    const siblingDispatchPrompt = path.join(
+      root,
+      'projects',
+      projectWithoutToken,
+      'templates/prompts/worker-dispatch.md',
+    );
+    mkdirSync(path.dirname(siblingDispatchPrompt), { recursive: true });
+    writeFileSync(siblingDispatchPrompt, 'Read {{TASK_FILE}} and follow its checklist.\n');
     const projectCiTemplate = path.join(
       root,
       'projects',
@@ -325,8 +418,16 @@ if (process.argv[2] === 'serve') {
     );
     mkdirSync(path.dirname(projectCiTemplate), { recursive: true });
     writeFileSync(projectCiTemplate, '# Project CI fix\n\n- [ ] Repair the check\n');
-    const inlineCases = [project, projectWithoutToken].flatMap((selectedProject) =>
-      [false, true].map((retargeted) => {
+    const nativeInline = process.env.FARMSLOT_STACK_BASE_PROOF_ONLY === 'inline-terminal';
+    if (nativeInline)
+      writeFileSync(
+        projectCiTemplate,
+        '# Native inline maintenance proof\n\n- [ ] Execute the exact generated execute command below. Write {{TASK_DIR}}/artifacts/inline-executed.txt, then poll for {{TASK_DIR}}/artifacts/inline-allow-push.txt with a 90-second timeout before proceeding.\n- [ ] Run the exact generated push command.\n- [ ] Use the supplied marker command to start and mark every row of CI-FIX.md, then complete that checklist with disposition fixed and a short summary. Do not run an extra rebase or raw push.\n',
+      );
+    const inlineCases = (
+      nativeInline ? [projectWithoutToken] : [project, projectWithoutToken]
+    ).flatMap((selectedProject) =>
+      (nativeInline ? [false] : [false, true]).map((retargeted) => {
         const parentRunId = randomUUID();
         json(path.join(root, '.runs', parentRunId + '.json'), {
           ...baseRun(parentRunId, 'dev'),
@@ -360,6 +461,9 @@ if (process.argv[2] === 'serve') {
         const seeded = baseRun(id, 'update-branch');
         json(path.join(root, '.runs', id + '.json'), {
           ...seeded,
+          ...(nativeInline
+            ? { scripted: undefined, metrics: { ...seeded.metrics, runner: 'codex', model: null } }
+            : {}),
           familyId: parentRunId,
           branch: 'feat/inline',
           project: selectedProject,
@@ -372,7 +476,7 @@ if (process.argv[2] === 'serve') {
               label: 'Primary',
               role: 'primary',
               status: 'working',
-              runner: 'scripted',
+              runner: nativeInline ? 'codex' : 'scripted',
               runId: id,
               slotId,
               taskFile: path.join('.task', relativeTaskDir, 'TASK.md'),
@@ -425,10 +529,14 @@ if (process.argv[2] === 'serve') {
     const checkpoint = `{ const result = await executeWriteTaskStep(runId, run, {broadcastFn,stepPartialIO}); const fs=await import('node:fs');fs.writeFileSync(${JSON.stringify(out)}+'/'+runId+'.written',String(getRun(runId).engineState?.generation??0));const until=Date.now()+90000;while(!fs.existsSync(${JSON.stringify(out)}+'/'+runId+'.release')){if(Date.now()>until)throw new Error('Proof checkpoint timed out');await new Promise(resolve=>setTimeout(resolve,50));}return result;}`;
     const renewCheckpoint = `const fs=await import('node:fs');fs.writeFileSync(${JSON.stringify(out)}+'/'+runId+'.renewed','renewed');const until=Date.now()+90000;while(getRun(runId)?.status!=='cancelled'){if(Date.now()>until)throw new Error('Renewal proof timed out');await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('Proof stopped after native checkpoint commit');`;
     const reviewCheckpoint = `{ const fs=await import('node:fs');fs.writeFileSync(${JSON.stringify(out)}+'/'+runId+'.pre-review','held');const until=Date.now()+90000;while(getRun(runId)?.status!=='cancelled'){if(Date.now()>until)throw new Error('Review scheduling proof timed out');await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('Proof review scheduling cancelled'); }`;
-    const inlineCheckpoint = `{ const fs=await import('node:fs');fs.writeFileSync(${JSON.stringify(out)}+'/'+runId+'.inline-written','written');const until=Date.now()+90000;while(!signal.aborted){if(Date.now()>until)throw new Error('Inline proof checkpoint timed out');await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('Inline proof cancelled after native writer'); }`;
+    const inlineCheckpoint = nativeInline
+      ? `{ const fs=await import('node:fs');fs.writeFileSync(${JSON.stringify(out)}+'/'+runId+'.inline-written','written'); }`
+      : `{ const fs=await import('node:fs');fs.writeFileSync(${JSON.stringify(out)}+'/'+runId+'.inline-written','written');const until=Date.now()+90000;while(!signal.aborted){if(Date.now()>until)throw new Error('Inline proof checkpoint timed out');await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('Inline proof cancelled after native writer'); }`;
+    const inlineObserve = `const fs=await import('node:fs');fs.writeFileSync(${JSON.stringify(out)}+'/'+runId+'.inline-progress',JSON.stringify({head:currentSha,baseline:beforeSha,pending:pendingBranchMaintenance(getRun(runId))?.id,active:getRun(runId)?.steps.find(step=>step.name==='ci-watch')?.outputs?.fixInProgress}));const alive = await isWorkerSessionAlive(slotId, runner, runId);`;
+    const inlineFinish = `  if(result?.success){const fs=await import('node:fs');fs.writeFileSync(${JSON.stringify(out)}+'/'+runId+'.inline-complete',JSON.stringify(result));while(!signal.aborted)await new Promise(resolve=>setTimeout(resolve,50));}return result;\n}\n\nexport async function rerunFailedChecks`;
     writeFileSync(
       loader,
-      `import{registerHooks}from'node:module';import assert from'node:assert/strict';registerHooks({load(url,context,next){const result=next(url,context);const before=String(result.source);if(url.endsWith('/services/gateway/src/run-engine/post-dispatch-steps.ts')){const after=before.replace('await completeBranchMaintenance(current);', 'await completeBranchMaintenance(current);'+${JSON.stringify(renewCheckpoint)});assert.notEqual(after,before);return{...result,source:after};}if(process.env.FARMSLOT_STACK_BASE_PROOF_BREAK==='renewal'&&url.endsWith('/services/gateway/src/run-engine/branch-maintenance.ts')){const after=before.replace('await commitRunPublication(', 'await ((_id,_build,_assert)=>Promise.resolve(owner))(');assert.notEqual(after,before);return{...result,source:after};}if(process.env.FARMSLOT_STACK_BASE_PROOF_BREAK==='writer'&&url.endsWith('/services/gateway/src/tasks/writer.ts')){const after=before.replace('? await publicationBaseForRun(run, defaultBranch)', '? defaultBranch');assert.notEqual(after,before);return{...result,source:after};}if(url.endsWith('/services/gateway/src/ci-monitor/inline-fix.ts')){let after=before.replace('// Delete old CI-FIX-SIGNAL.json so we can detect fresh completion',${JSON.stringify(inlineCheckpoint)});assert.notEqual(after,before);if(process.env.FARMSLOT_STACK_BASE_PROOF_BREAK==='inline'){const fixed=after.replace('await publicationBaseForRun(run, defaultBranch)','defaultBranch');assert.notEqual(fixed,after);after=fixed;}return{...result,source:after};}if(!url.endsWith('/services/gateway/src/run-engine/orchestrator.ts'))return result;const after=before.replace('return executeWriteTaskStep(runId, run, { broadcastFn, stepPartialIO });',${JSON.stringify(checkpoint)}).replace('case S.REVIEW:', 'case S.REVIEW:'+${JSON.stringify(reviewCheckpoint)});assert.notEqual(after,before);return{...result,source:after};}});`,
+      `import{registerHooks}from'node:module';import assert from'node:assert/strict';registerHooks({load(url,context,next){const result=next(url,context);const before=String(result.source);if(url.endsWith('/services/gateway/src/run-engine/post-dispatch-steps.ts')){const after=before.replace('await completeBranchMaintenance(current);', 'await completeBranchMaintenance(current);'+${JSON.stringify(renewCheckpoint)});assert.notEqual(after,before);return{...result,source:after};}if(process.env.FARMSLOT_STACK_BASE_PROOF_BREAK==='renewal'&&url.endsWith('/services/gateway/src/run-engine/branch-maintenance.ts')){const after=before.replace('await commitRunPublication(', 'await ((_id,_build,_assert)=>Promise.resolve(owner))(');assert.notEqual(after,before);return{...result,source:after};}if(process.env.FARMSLOT_STACK_BASE_PROOF_BREAK==='writer'&&url.endsWith('/services/gateway/src/tasks/writer.ts')){const after=before.replace('? await publicationBaseForRun(run, defaultBranch)', '? defaultBranch');assert.notEqual(after,before);return{...result,source:after};}if(url.endsWith('/services/gateway/src/ci-monitor/inline-fix.ts')){let after=before.replace('// Delete old CI-FIX-SIGNAL.json so we can detect fresh completion',${JSON.stringify(inlineCheckpoint)});assert.notEqual(after,before);if(${nativeInline}){after=after.replace('const alive = await isWorkerSessionAlive(slotId, runner, runId);',${JSON.stringify(inlineObserve)}).replace('  return result;\\n}\\n\\nexport async function rerunFailedChecks',${JSON.stringify(inlineFinish)});} if(process.env.FARMSLOT_STACK_BASE_PROOF_BREAK==='inline'){const fixed=after.replace('await publicationBaseForRun(run, defaultBranch)','defaultBranch');assert.notEqual(fixed,after);after=fixed;}return{...result,source:after};}if(!url.endsWith('/services/gateway/src/run-engine/orchestrator.ts'))return result;const after=before.replace('return executeWriteTaskStep(runId, run, { broadcastFn, stepPartialIO });',${JSON.stringify(checkpoint)}).replace('case S.REVIEW:', 'case S.REVIEW:'+${JSON.stringify(reviewCheckpoint)});assert.notEqual(after,before);return{...result,source:after};}});`,
     );
     env = {
       ...env,
@@ -473,7 +581,11 @@ if (process.argv[2] === 'serve') {
     };
     await startGateway();
     const results = [];
-    for (const entry of process.env.FARMSLOT_STACK_BASE_PROOF_ONLY === 'inline' ? [] : cases) {
+    for (const entry of ['inline', 'inline-terminal'].includes(
+      process.env.FARMSLOT_STACK_BASE_PROOF_ONLY ?? '',
+    )
+      ? []
+      : cases) {
       if (entry.expected === 'feat/upstream') {
         git('checkout', 'feat/upstream');
         writeFileSync(path.join(repo, 'upstream-new.txt'), entry.id + '\n');
@@ -488,10 +600,10 @@ if (process.argv[2] === 'serve') {
         if (run.status === 'failed') throw new Error(run.error);
         return existsSync(path.join(out, entry.id + '.written'));
       }, 'write-task');
-      const run = rpc('run.get', { runId: entry.id }).run;
+      let run = rpc('run.get', { runId: entry.id }).run;
       assert.ok(run.taskFile);
-      const task = readFileSync(run.taskFile, 'utf8');
-      const checklist = readFileSync(path.join(path.dirname(run.taskFile), 'CHECKLIST.md'), 'utf8');
+      let task = readFileSync(run.taskFile, 'utf8');
+      let checklist = readFileSync(path.join(path.dirname(run.taskFile), 'CHECKLIST.md'), 'utf8');
       const publicationBase = task.match(/^PUBLICATION_BASE: (.+)$/m)?.[1];
       assert.equal(publicationBase, entry.expected);
       assert.ok(checklist.includes('origin/' + entry.expected));
@@ -507,22 +619,87 @@ if (process.argv[2] === 'serve') {
         publicationBase,
         runId: entry.id,
       });
-      const operation = run.steps.find((step: { name: string }) => step.name === 'write-task')
+      let operation = run.steps.find((step: { name: string }) => step.name === 'write-task')
         ?.outputs?.branchMaintenanceOperation as BranchMaintenanceOperation | undefined;
       if (entry.parentRunId) {
         assert.ok(operation, 'public writer must retain stack input before handoff');
         assert.equal(operation.ownerRunId, entry.parentRunId);
         assert.equal(operation.baseRef, entry.expected);
       } else assert.equal(operation, undefined);
-      const executeCommand = task.match(/^node .*branch-update\.mjs.* execute .+$/m)?.[0];
-      const pushCommand = task.match(/^node .*branch-update\.mjs.* push .+$/m)?.[0];
+      let executeCommand = task.match(/^node .*branch-update\.mjs.* execute .+$/m)?.[0];
+      let pushCommand = task.match(/^node .*branch-update\.mjs.* push .+$/m)?.[0];
       assert.ok(
         executeCommand && pushCommand,
         'execute the commands actually rendered by the supplying runtime',
       );
+      if (entry === cases[0]) {
+        const staleInput = operation;
+        const oldTaskFile = run.taskFile;
+        const oldTask = task;
+        assert.ok(staleInput);
+        git('checkout', 'feat/upstream');
+        writeFileSync(path.join(repo, 'late-parent.txt'), 'parent advanced after handoff\n');
+        git('add', 'late-parent.txt');
+        git('commit', '-m', 'test: advance parent after captured handoff');
+        git('push', 'origin', 'feat/upstream');
+        git('checkout', entry.branch);
+        assert.throws(
+          () =>
+            execFileSync('bash', ['-eu', '-c', executeCommand!], {
+              cwd: repo,
+              encoding: 'utf8',
+              stdio: 'pipe',
+            }),
+          /TARGET_CHANGED/,
+        );
+        rpc('run.replayStep', { runId: entry.id, stepName: 'write-task', triggeredBy: 'operator' });
+        await wait(() => {
+          const replayed: Run = rpc('run.get', { runId: entry.id }).run;
+          if (replayed.status === 'failed')
+            throw new Error(replayed.error ?? 'Stale input recovery refused');
+          return (
+            readFileSync(path.join(out, entry.id + '.written'), 'utf8') ===
+            String(replayed.engineState?.generation ?? 0)
+          );
+        }, 'new verified input after stale parent refusal');
+        run = rpc('run.get', { runId: entry.id }).run;
+        task = readFileSync(run.taskFile, 'utf8');
+        checklist = readFileSync(path.join(path.dirname(run.taskFile), 'CHECKLIST.md'), 'utf8');
+        operation = run.steps.find((step: { name: string }) => step.name === 'write-task')?.outputs
+          ?.branchMaintenanceOperation;
+        assert.ok(operation);
+        assert.notEqual(operation.id, staleInput.id);
+        assert.equal(operation.targetSha, git('rev-parse', 'origin/feat/upstream'));
+        assert.equal(operation.expectedCheckpoint?.headSha, staleInput.expectedCheckpoint?.headSha);
+        assert.equal(
+          readFileSync(oldTaskFile, 'utf8'),
+          oldTask,
+          'refusal retains the old task bytes',
+        );
+        executeCommand = task.match(/^node .*branch-update\.mjs.* execute .+$/m)?.[0];
+        pushCommand = task.match(/^node .*branch-update\.mjs.* push .+$/m)?.[0];
+        assert.ok(executeCommand && pushCommand);
+        json(path.join(out, entry.id + '.stale-retry.json'), {
+          staleInput,
+          operation,
+          oldTaskFile,
+          oldTaskUnchanged: true,
+        });
+      }
       git('checkout', entry.branch);
       execFileSync('bash', ['-eu', '-c', executeCommand], { cwd: repo, encoding: 'utf8' });
       execFileSync('bash', ['-eu', '-c', pushCommand], { cwd: repo, encoding: 'utf8' });
+      if (entry.branch === 'feat/merged-owned') {
+        assert.equal(readFileSync(path.join(repo, 'child.txt'), 'utf8'), 'child\n');
+        assert.equal(existsSync(path.join(repo, 'parent.txt')), false);
+        assert.equal(existsSync(path.join(repo, 'unrelated-default.txt')), false);
+        assert.deepEqual(
+          JSON.parse(
+            readFileSync(path.join(path.dirname(mergedTask), mergedPackage.artifactPath), 'utf8'),
+          ),
+          mergedPackage,
+        );
+      }
       const pushedHead = git('rev-parse', 'HEAD');
       assert.equal(readFileSync(run.taskFile, 'utf8'), task);
       assert.equal(
@@ -618,39 +795,59 @@ if (process.argv[2] === 'serve') {
     const inlineResults = [];
     if (process.env.FARMSLOT_STACK_BASE_PROOF_ONLY !== 'maintenance') {
       const workerTaskDir = path.join(scratch, 'scripted-worker');
-      const command = [
-        'env',
-        'FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1',
-        `FARMSLOT_ROOT=${source}`,
-        `TSX_TSCONFIG_PATH=${path.join(source, 'services/gateway/tsconfig.json')}`,
-        process.execPath,
-        '--import',
-        'tsx',
-        path.join(source, 'packages/cli/src/scripted-runner-entry.ts'),
-        'scripted-runner',
-        '--task-dir',
-        workerTaskDir,
-        '--mode',
-        'scenario',
-        '--scenario',
-        'timeout',
-        '--step-delay-ms',
-        '600000',
-      ]
-        .map(shSingleQuote)
-        .join(' ');
+      if (nativeInline) {
+        const { installHooks } = await import('../lib/install.mjs');
+        installHooks('codex', repo, '.task', slotId);
+      }
+      const command = nativeInline
+        ? buildCodexExecLaunch({
+            binary: 'codex',
+            repo,
+            runtimeDir: '.task',
+            safetyTier: 'dangerous',
+          })
+        : [
+            'env',
+            'FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1',
+            `FARMSLOT_ROOT=${source}`,
+            `TSX_TSCONFIG_PATH=${path.join(source, 'services/gateway/tsconfig.json')}`,
+            process.execPath,
+            '--import',
+            'tsx',
+            path.join(source, 'packages/cli/src/scripted-runner-entry.ts'),
+            'scripted-runner',
+            '--task-dir',
+            workerTaskDir,
+            '--mode',
+            'scenario',
+            '--scenario',
+            'timeout',
+            '--step-delay-ms',
+            '600000',
+          ]
+            .map(shSingleQuote)
+            .join(' ');
       execFileSync('tmux', [
         '-N',
         'respawn-pane',
         '-k',
         '-t',
         `=${session}:proof`,
-        `cd ${shSingleQuote(source)} && exec ${command}`,
+        `cd ${shSingleQuote(nativeInline ? repo : source)} && exec ${command}`,
       ]);
-      await wait(
-        () => existsSync(path.join(workerTaskDir, 'artifacts/scripted-runner-provenance.json')),
-        'scripted worker',
-      );
+      if (!nativeInline)
+        await wait(
+          () => existsSync(path.join(workerTaskDir, 'artifacts/scripted-runner-provenance.json')),
+          'scripted worker',
+        );
+      else {
+        git('checkout', 'feat/upstream');
+        writeFileSync(path.join(repo, 'inline-parent.txt'), 'inline target advanced\n');
+        git('add', 'inline-parent.txt');
+        git('commit', '-m', 'test: advance inline base');
+        git('push', 'origin', 'feat/upstream');
+        git('checkout', 'feat/inline');
+      }
       for (const entry of inlineCases) {
         rpc('run.replayStep', { runId: entry.id, stepName: 'ci-watch', triggeredBy: 'operator' });
         await wait(
@@ -666,6 +863,58 @@ if (process.argv[2] === 'serve') {
         );
         const run = rpc('run.get', { runId: entry.id }).run;
         json(path.join(out, entry.id + '.json'), { run, checklist });
+        if (nativeInline) {
+          const ownerId = run.parentRunId;
+          const oldCheckpoint = rpc('run.get', { runId: ownerId }).run.engineState.publishGate
+            .maintainedSnapshot;
+          await wait(
+            () => existsSync(path.join(entry.slotTaskDir, 'artifacts/inline-executed.txt')),
+            'native execute before push',
+            210_000,
+          );
+          await wait(() => {
+            const file = path.join(out, entry.id + '.inline-progress');
+            if (!existsSync(file)) return false;
+            const progress = JSON.parse(readFileSync(file, 'utf8'));
+            return progress.head !== progress.baseline && progress.pending && progress.active;
+          }, 'rebase remains progress before terminal push');
+          assert.deepEqual(
+            rpc('run.get', { runId: ownerId }).run.engineState.publishGate.maintainedSnapshot,
+            oldCheckpoint,
+          );
+          writeFileSync(
+            path.join(entry.slotTaskDir, 'artifacts/inline-allow-push.txt'),
+            'push allowed\n',
+          );
+          await wait(
+            () => existsSync(path.join(out, entry.id + '.inline-complete')),
+            'native terminal signal and guarded push',
+          );
+          const latest: Run = rpc('run.get', { runId: entry.id }).run;
+          const owner: Run = rpc('run.get', { runId: ownerId }).run;
+          assert.equal(
+            owner.engineState?.publishGate?.maintainedSnapshot?.headSha,
+            git('rev-parse', 'HEAD'),
+          );
+          assert.equal(
+            latest.steps.find((step) => step.name === 'write-task')?.outputs
+              ?.branchMaintenanceCompleted,
+            true,
+          );
+          assert.equal(
+            latest.steps.find((step) => step.name === 'ci-watch')?.outputs?.fixInProgress,
+            false,
+          );
+          assert.equal(
+            latest.agentContexts?.find((context) => context.role === 'ci-fix')?.status,
+            'complete',
+          );
+          json(path.join(out, entry.id + '.native-terminal.json'), {
+            oldCheckpoint,
+            latest,
+            successor: owner.engineState?.publishGate?.maintainedSnapshot,
+          });
+        }
         inlineResults.push({ project: entry.project, expected: entry.expected, runId: entry.id });
         rpc('run.cancel', { runId: entry.id });
         await wait(

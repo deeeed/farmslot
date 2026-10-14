@@ -28,53 +28,57 @@ const operation: BranchMaintenanceOperation = {
 };
 
 function dependencies() {
-  const calls: string[][] = [];
+  const calls: string[] = [];
   const deps: NonNullable<Parameters<typeof updateStackedPrBranch>[1]> = {
     project: async () => ({ repo: 'example/repo', base: 'main' }),
     loadSlot: async () => makeVars(),
     prepare: async () => operation,
-    complete: async () => undefined,
-    github: async (args) => {
-      calls.push(args);
-      return { stdout: '{}', stderr: '', exitCode: 0 };
+    execute: async (_vars, selected) => {
+      assert.equal(selected, operation);
+      calls.push('execute-and-push');
+    },
+    complete: async (_run, selected) => {
+      assert.equal(selected, operation);
+      calls.push('renew');
+      return undefined;
+    },
+    retire: async (_run, selected) => {
+      assert.equal(selected, operation);
+      calls.push('retire');
     },
   };
   return { deps, calls };
 }
 
-test('catch-up reconciles a verified pending merge without sending another update', async () => {
+test('catch-up executes the pinned SDK merge and renews only after its leased push', async () => {
   const { deps, calls } = dependencies();
-  const result = await updateStackedPrBranch(run, deps);
-  assert.match(result.result, /reconciled main/);
-  assert.deepEqual(calls, []);
-});
-
-test('catch-up leases the exact child and polls until asynchronous merge verifies', async () => {
-  const { deps, calls } = dependencies();
-  let attempts = 0;
-  deps.complete = async (_run, selected) => {
-    assert.equal(selected, operation, 'polls retain the pinned operation');
-    if (++attempts < 3) throw new MaintenanceRefusal('GRAPH_UPDATE_PENDING');
-    return undefined;
-  };
   assert.match((await updateStackedPrBranch(run, deps)).result, /merged main/);
-  assert.equal(attempts, 3);
-  assert.deepEqual(calls, [
-    [
-      '-X',
-      'PUT',
-      'repos/example/repo/pulls/7/update-branch',
-      '-f',
-      `expected_head_sha=${operation.remoteHeadSha}`,
-    ],
-  ]);
+  assert.deepEqual(calls, ['execute-and-push', 'renew']);
 });
 
-test('a changed merge or target refuses before another remote mutation', async () => {
+test('a merge conflict retires the input and preserves the existing worker fallback', async () => {
+  const { deps, calls } = dependencies();
+  deps.execute = async () => {
+    throw new MaintenanceRefusal('GRAPH_MERGE_CONFLICT');
+  };
+  assert.match((await updateStackedPrBranch(run, deps)).result, /conflict/);
+  assert.deepEqual(calls, ['retire']);
+});
+
+test('a changed target retires before refusing so a graph retry can prepare new input', async () => {
+  const { deps, calls } = dependencies();
+  deps.execute = async () => {
+    throw new MaintenanceRefusal('TARGET_CHANGED');
+  };
+  await assert.rejects(updateStackedPrBranch(run, deps), /TARGET_CHANGED/);
+  assert.deepEqual(calls, ['retire']);
+});
+
+test('an uncertain pushed merge never renews or retires publication authority', async () => {
   const { deps, calls } = dependencies();
   deps.complete = async () => {
     throw new MaintenanceRefusal('GRAPH_MERGE_CHANGED');
   };
   await assert.rejects(updateStackedPrBranch(run, deps), /GRAPH_MERGE_CHANGED/);
-  assert.deepEqual(calls, []);
+  assert.deepEqual(calls, ['execute-and-push']);
 });

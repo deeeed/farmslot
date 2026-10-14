@@ -134,8 +134,8 @@ test('a stacked dev run gets the golden document plus only a Stack section', asy
   );
 });
 
-test('branch-maintenance task uses the publication base while the freshness probe keeps main', async (t) => {
-  const run = {
+test('stacked maintenance without retained publication ownership refuses before task handoff', async () => {
+  const run: Run = {
     ...goldenRun('pr-complete'),
     stack: {
       upstreamNodeId: 'upstream',
@@ -146,13 +146,7 @@ test('branch-maintenance task uses the publication base while the freshness prob
       resolvedSha: 'a'.repeat(40),
     },
   };
-  const task = await writeTaskFile(run, { skipCollisionCheck: true });
-  t.after(() => rm(path.dirname(task), { recursive: true, force: true }));
-  const document = await readFile(task, 'utf8');
-  const checklist = await readFile(path.join(path.dirname(task), 'CHECKLIST.md'), 'utf8');
-  assert.match(document, /PUBLICATION_BASE: feat\/upstream/);
-  assert.match(document, /Branch updates target `origin\/feat\/upstream`/);
-  assert.match(checklist, /git fetch origin main/);
-  assert.match(checklist, /rebase onto `origin\/feat\/upstream`/);
-  assert.doesNotMatch(checklist, /git rebase origin\/main/);
+  // Real ownership, PUBLICATION_BASE rendering and default freshness remain in
+  // the manual production-gateway stack-base-consumers proof.
+  await assert.rejects(writeTaskFile(run, { skipCollisionCheck: true }), /PARENT_BOUNDARY_MISSING/);
 });

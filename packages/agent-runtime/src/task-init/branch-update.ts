@@ -39,7 +39,14 @@ interface BranchUpdateReceipt {
   sourceHeadSha: string;
   replayHeadSha: string;
   boundarySha: string;
-  phase: 'prepared' | 'rebasing' | 'completed';
+  phase: 'prepared' | 'rebasing' | 'completed' | 'retired';
+  retiredReason?: string;
+  recovery?: {
+    previousHeadSha: string;
+    recoveredHeadSha: string;
+    comparisonBaseSha: string;
+    targetSha: string;
+  };
   observedHeadSha?: string;
   resultHeadSha?: string;
   rebaseResultSha?: string;
@@ -67,9 +74,10 @@ export function normalizeMaintenanceBranch(value: string): string {
   return value.replace(/^(?:refs\/remotes\/origin\/|refs\/heads\/|origin\/)/, '');
 }
 
-function git(repo: string, args: string[], input?: string): string {
+function git(repo: string, args: string[], input?: string, authorEnv?: NodeJS.ProcessEnv): string {
   return execFileSync('git', args, {
     cwd: repo,
+    ...(authorEnv ? { env: { ...process.env, ...authorEnv } } : {}),
     encoding: 'utf8',
     stdio: ['pipe', 'pipe', 'pipe'],
     input,
@@ -142,20 +150,9 @@ export function inspectBranchMaintenance(
     preparedAt: new Date().toISOString(),
   };
   assertSource(operation, sourceHeadSha);
-  if (!request.expectedCheckpoint) {
-    // Recorded prepare provenance prevents a rewound parent's live merge-base from
-    // reclassifying removed parent commits as child work.
-    if (
-      ancestor(request.repo, operation.replayBoundarySha, operation.comparisonBaseSha) &&
-      ancestor(request.repo, operation.comparisonBaseSha, sourceHeadSha)
-    )
-      operation.replayBoundarySha = operation.comparisonBaseSha;
-    else operation.comparisonBaseSha = operation.replayBoundarySha;
-    if (request.upstreamMergeSha && ancestor(request.repo, request.upstreamMergeSha, sourceHeadSha))
-      operation.comparisonBaseSha = sha(
-        git(request.repo, ['merge-base', targetSha, sourceHeadSha]).trim(),
-      );
-  }
+  // Gateway supplies the settled immutable contribution comparison. Its tree
+  // may be synthetic and need not be an ancestor of the recorded replay boundary.
+  // Never replace that authority with a live merge-base or the replay boundary.
   if (request.upstreamMergeSha && !ancestor(request.repo, request.upstreamMergeSha, targetSha))
     refuse('RETARGET_PROVENANCE_MISSING');
   return operation;
@@ -184,7 +181,8 @@ function readReceipt(operation: BranchMaintenanceOperation): BranchUpdateReceipt
   assertSource(operation, sha(value.sourceHeadSha));
   sha(value.replayHeadSha);
   sha(value.boundarySha);
-  if (!['prepared', 'rebasing', 'completed'].includes(value.phase)) refuse('RECEIPT_INVALID');
+  if (!['prepared', 'rebasing', 'completed', 'retired'].includes(value.phase))
+    refuse('RECEIPT_INVALID');
   return value;
 }
 
@@ -257,7 +255,10 @@ function prepareReceipt(operation: BranchMaintenanceOperation, head: string): Br
   assertSource(operation, head);
   let boundary = operation.replayBoundarySha;
   let replay = head;
-  if (git(repo, ['rev-list', '--merges', `${boundary}..${head}`])) {
+  if (
+    operation.ownerRunId !== 'ordinary' &&
+    git(repo, ['rev-list', '--merges', `${boundary}..${head}`])
+  ) {
     // A single committed child delta preserves merge resolutions without
     // replaying inherited squash/default commits removed by the new target.
     boundary = operation.comparisonBaseSha;
@@ -291,10 +292,93 @@ function prepareReceipt(operation: BranchMaintenanceOperation, head: string): Br
   return receipt;
 }
 
+function assertGraphResult(operation: BranchMaintenanceOperation, head: string): void {
+  if (!ancestor(operation.repo, operation.targetSha, head)) refuse('RESULT_TARGET_MISSING');
+  if (head === operation.remoteHeadSha) return;
+  const parents = git(operation.repo, ['rev-list', '--parents', '-n', '1', head])
+    .split(/\s+/)
+    .slice(1);
+  if (
+    parents.length !== 2 ||
+    parents[0] !== operation.remoteHeadSha ||
+    parents[1] !== operation.targetSha
+  )
+    refuse('GRAPH_MERGE_CHANGED');
+  const tree = cleanMergeTree(operation.repo, operation.remoteHeadSha, operation.targetSha);
+  if (git(operation.repo, ['rev-parse', `${head}^{tree}`]).trim() !== tree)
+    refuse('GRAPH_MERGE_TREE_CHANGED');
+}
+
+function cleanMergeTree(repo: string, left: string, right: string, base?: string): string {
+  try {
+    return sha(
+      git(repo, [
+        'merge-tree',
+        '--write-tree',
+        ...(base ? ['--merge-base', base] : []),
+        left,
+        right,
+      ]).trim(),
+    );
+  } catch (error) {
+    throw new BranchMaintenanceRefusal('MERGE_CONFLICT', error);
+  }
+}
+
+function executeGraphMaintenance(operation: BranchMaintenanceOperation): string {
+  const receipt = readReceipt(operation);
+  if (receipt?.phase === 'retired') refuse('OPERATION_RETIRED');
+  const remote = fenceTarget(operation);
+  if (receipt?.resultHeadSha && receipt.phase === 'completed') {
+    if (remote !== operation.remoteHeadSha && remote !== receipt.resultHeadSha)
+      refuse('REMOTE_CHILD_CHANGED');
+    assertGraphResult(operation, receipt.resultHeadSha);
+    return receipt.resultHeadSha;
+  }
+  if (remote !== operation.remoteHeadSha) refuse('REMOTE_CHILD_CHANGED');
+  assertSource(operation, remote);
+  const prepared: BranchUpdateReceipt = {
+    operationHash: operationHash(operation),
+    operation,
+    sourceHeadSha: remote,
+    replayHeadSha: remote,
+    boundarySha: operation.replayBoundarySha,
+    phase: 'prepared',
+  };
+  recordReceipt(operation, prepared);
+  let result = remote;
+  if (!ancestor(operation.repo, operation.targetSha, remote)) {
+    let tree: string;
+    try {
+      tree = cleanMergeTree(operation.repo, remote, operation.targetSha);
+    } catch (error) {
+      throw new BranchMaintenanceRefusal('GRAPH_MERGE_CONFLICT', error);
+    }
+    try {
+      result = sha(
+        git(
+          operation.repo,
+          ['commit-tree', '-S', tree, '-p', remote, '-p', operation.targetSha],
+          'fix: merge the pinned publication base into the stacked branch\n',
+        ).trim(),
+      );
+    } catch (error) {
+      throw new BranchMaintenanceRefusal('GRAPH_SIGNING_REFUSED', error);
+    }
+  }
+  assertGraphResult(operation, result);
+  const prefix = `refs/farmslot/branch-maintenance/${operationHash(operation)}`;
+  git(operation.repo, ['update-ref', `${prefix}/source`, remote]);
+  git(operation.repo, ['update-ref', `${prefix}/result`, result]);
+  recordReceipt(operation, { ...prepared, phase: 'completed', resultHeadSha: result });
+  return result;
+}
+
 export function executeBranchMaintenance(operation: BranchMaintenanceOperation): string {
-  if (operation.kind !== 'rebase') refuse('WRONG_OPERATION_KIND');
+  if (operation.kind === 'graph-merge') return executeGraphMaintenance(operation);
   const repo = operation.repo;
   let receipt = readReceipt(operation);
+  if (receipt?.phase === 'retired') refuse('OPERATION_RETIRED');
   const remote = fenceTarget(operation);
   if (remote !== operation.remoteHeadSha && remote !== receipt?.resultHeadSha)
     refuse('REMOTE_CHILD_CHANGED');
@@ -355,8 +439,11 @@ export function pushBranchMaintenance(operation: BranchMaintenanceOperation): vo
   let receipt = readReceipt(operation);
   const remote = fenceTarget(operation);
   if (!receipt?.resultHeadSha || receipt.phase !== 'completed') refuse('GUARDED_RESULT_MISSING');
-  assertCheckout(operation);
-  const head = sha(git(operation.repo, ['rev-parse', 'HEAD']).trim());
+  if (operation.kind === 'rebase') assertCheckout(operation);
+  const head =
+    operation.kind === 'graph-merge'
+      ? receipt.resultHeadSha
+      : sha(git(operation.repo, ['rev-parse', 'HEAD']).trim());
   if (remote !== operation.remoteHeadSha && remote !== head) refuse('REMOTE_CHILD_CHANGED');
   if (head !== receipt.resultHeadSha) {
     if (
@@ -370,7 +457,8 @@ export function pushBranchMaintenance(operation: BranchMaintenanceOperation): vo
     assertOwnedResult(operation, receipt, head);
     recordReceipt(operation, receipt);
   }
-  assertOwnedResult(operation, receipt, head);
+  if (operation.kind === 'graph-merge') assertGraphResult(operation, head);
+  else assertOwnedResult(operation, receipt, head);
   if (remote === head) {
     recordReceipt(operation, { ...receipt, pushedHeadSha: head });
     return;
@@ -393,7 +481,7 @@ export function verifyBranchMaintenance(operation: BranchMaintenanceOperation): 
   headSha: string;
   replayBoundarySha: string;
 } {
-  const receipt = operation.kind === 'rebase' ? readReceipt(operation) : undefined;
+  const receipt = readReceipt(operation);
   fetchHeads(operation.repo, operation.branch, operation.baseRef);
   const headSha = ref(operation.repo, operation.branch);
   const targetChanged = ref(operation.repo, operation.baseRef) !== operation.targetSha;
@@ -401,26 +489,8 @@ export function verifyBranchMaintenance(operation: BranchMaintenanceOperation): 
     if (headSha === operation.remoteHeadSha) {
       if (targetChanged) refuse('TARGET_CHANGED');
       if (!ancestor(operation.repo, operation.targetSha, headSha)) refuse('GRAPH_UPDATE_PENDING');
-      return { headSha, replayBoundarySha: operation.replayBoundarySha };
     }
-    if (!ancestor(operation.repo, operation.targetSha, headSha)) refuse('RESULT_TARGET_MISSING');
-    const parents = git(operation.repo, ['rev-list', '--parents', '-n', '1', headSha])
-      .split(/\s+/)
-      .slice(1);
-    if (
-      parents.length !== 2 ||
-      parents[0] !== operation.remoteHeadSha ||
-      parents[1] !== operation.targetSha
-    )
-      refuse('GRAPH_MERGE_CHANGED');
-    const expectedTree = git(operation.repo, [
-      'merge-tree',
-      '--write-tree',
-      operation.remoteHeadSha,
-      operation.targetSha,
-    ]).trim();
-    if (git(operation.repo, ['rev-parse', `${headSha}^{tree}`]).trim() !== expectedTree)
-      refuse('GRAPH_MERGE_TREE_CHANGED');
+    assertGraphResult(operation, headSha);
     return { headSha, replayBoundarySha: operation.replayBoundarySha };
   }
   if (!receipt?.resultHeadSha || receipt.phase !== 'completed') {
@@ -442,6 +512,229 @@ export function verifyBranchMaintenance(operation: BranchMaintenanceOperation): 
   return { headSha, replayBoundarySha: operation.targetSha };
 }
 
+export interface BranchMaintenanceValidation {
+  status: 'pending' | 'pushed' | 'stale';
+  reason?: 'TARGET_CHANGED' | 'REMOTE_CHILD_CHANGED' | 'OPERATION_RETIRED';
+}
+
+/** Inspect retained input without changing the checkout or replacing its pins. */
+export function validateBranchMaintenance(
+  operation: BranchMaintenanceOperation,
+): BranchMaintenanceValidation {
+  const receipt = readReceipt(operation);
+  if (receipt?.phase === 'retired') return { status: 'stale', reason: 'OPERATION_RETIRED' };
+  fetchHeads(operation.repo, operation.branch, operation.baseRef);
+  const remote = ref(operation.repo, operation.branch);
+  if (
+    receipt?.phase === 'completed' &&
+    receipt.resultHeadSha === remote &&
+    (remote !== operation.remoteHeadSha || receipt.pushedHeadSha === remote)
+  ) {
+    verifyBranchMaintenance(operation);
+    return { status: 'pushed' };
+  }
+  if (ref(operation.repo, operation.baseRef) !== operation.targetSha)
+    return { status: 'stale', reason: 'TARGET_CHANGED' };
+  if (remote !== operation.remoteHeadSha)
+    return { status: 'stale', reason: 'REMOTE_CHILD_CHANGED' };
+  return { status: 'pending' };
+}
+
+export interface BranchMaintenanceRetirement {
+  status: 'retired';
+  recoveredHeadSha?: string;
+}
+
+function assertRecoveryCheckout(
+  operation: BranchMaintenanceOperation,
+  recovery: NonNullable<BranchUpdateReceipt['recovery']>,
+): void {
+  const repo = operation.repo;
+  if (git(repo, ['branch', '--show-current']).trim() !== operation.branch) refuse('BRANCH_CHANGED');
+  if (git(repo, ['ls-files', '--others', '--exclude-standard'])) refuse('UNCOMMITTED_CHANGES');
+  const matches = (head: string): boolean => {
+    try {
+      git(repo, ['diff', '--quiet', head, '--']);
+      git(repo, ['diff', '--cached', '--quiet', head, '--']);
+      return true;
+    } catch (error) {
+      if ((error as { status?: number }).status === 1) return false;
+      throw error;
+    }
+  };
+  if (!matches(recovery.previousHeadSha) && !matches(recovery.recoveredHeadSha))
+    refuse('UNCOMMITTED_CHANGES');
+}
+
+/** Explicitly retire stale input. Preserve every source/result before local recovery. */
+export function retireBranchMaintenance(
+  operation: BranchMaintenanceOperation,
+  recoverLocal = false,
+): BranchMaintenanceRetirement {
+  let receipt = readReceipt(operation);
+  if (receipt?.phase === 'retired')
+    return { status: 'retired', recoveredHeadSha: receipt.recovery?.recoveredHeadSha };
+  const validation = validateBranchMaintenance(operation);
+  if (validation.status === 'pushed') refuse('OPERATION_ALREADY_PUSHED');
+  const repo = operation.repo;
+  if (operation.kind === 'graph-merge') {
+    recordReceipt(operation, {
+      ...(receipt ?? {
+        operationHash: operationHash(operation),
+        operation,
+        sourceHeadSha: operation.sourceHeadSha,
+        replayHeadSha: operation.sourceHeadSha,
+        boundarySha: operation.replayBoundarySha,
+      }),
+      phase: 'retired',
+      retiredReason: validation.reason ?? 'OPERATION_CANCELLED',
+    });
+    return { status: 'retired' };
+  }
+  if (!receipt) {
+    // Inspect can run before slot prepare. No local replay receipt means this
+    // operation has not changed that checkout, so cancellation needs no reset.
+    recordReceipt(operation, {
+      operationHash: operationHash(operation),
+      operation,
+      sourceHeadSha: operation.sourceHeadSha,
+      replayHeadSha: operation.sourceHeadSha,
+      boundarySha: operation.replayBoundarySha,
+      phase: 'retired',
+      retiredReason: validation.reason ?? 'OPERATION_CANCELLED',
+    });
+    return { status: 'retired' };
+  }
+  if (rebaseActive(repo)) refuse('RESOLVE_REBASE_CONFLICT');
+  if (receipt?.recovery) assertRecoveryCheckout(operation, receipt.recovery);
+  else assertCheckout(operation);
+  const head = sha(git(repo, ['rev-parse', 'HEAD']).trim());
+  if (head === receipt.sourceHeadSha) {
+    recordReceipt(operation, {
+      ...receipt,
+      phase: 'retired',
+      retiredReason: validation.reason ?? 'OPERATION_CANCELLED',
+    });
+    return { status: 'retired' };
+  }
+  if (ref(repo, operation.branch) !== operation.remoteHeadSha) refuse('REMOTE_CHILD_CHANGED');
+  if (!recoverLocal) refuse('LOCAL_RECOVERY_REQUIRED');
+  let recovery = receipt.recovery;
+  if (!recovery) {
+    const originalTree = git(repo, ['rev-parse', `${receipt.sourceHeadSha}^{tree}`]).trim();
+    const unstartedReplay =
+      receipt.phase !== 'completed' &&
+      head === receipt.replayHeadSha &&
+      git(repo, ['rev-parse', `${head}^{tree}`]).trim() === originalTree;
+    let recoveredHeadSha = receipt.sourceHeadSha;
+    if (!unstartedReplay) {
+      if (receipt.phase === 'rebasing' && receipt.observedHeadSha === head) {
+        assertOwnedResult(operation, receipt, head);
+        receipt = { ...receipt, phase: 'completed', resultHeadSha: head, rebaseResultSha: head };
+        recordReceipt(operation, receipt);
+      }
+      if (receipt.phase !== 'completed' || !receipt.resultHeadSha)
+        refuse('REBASE_RESULT_UNVERIFIED');
+      if (
+        !ancestor(repo, receipt.resultHeadSha, head) ||
+        git(repo, ['rev-list', '--merges', `${receipt.resultHeadSha}..${head}`])
+      )
+        refuse('LOCAL_RESULT_CHANGED');
+      const continued = { ...receipt, resultHeadSha: head };
+      assertOwnedResult(operation, continued, head);
+      // Apply only the recorded target-to-child delta onto the old verified
+      // comparison. Inherited target bytes disappear; child work appears once.
+      const guardedHead = receipt.rebaseResultSha ?? receipt.resultHeadSha;
+      const tree = cleanMergeTree(
+        repo,
+        operation.comparisonBaseSha,
+        guardedHead,
+        operation.targetSha,
+      );
+      if (tree !== originalTree) {
+        const signing =
+          git(repo, [
+            'config',
+            '--type=bool',
+            '--default=false',
+            '--get',
+            'commit.gpgsign',
+          ]).trim() === 'true';
+        recoveredHeadSha = sha(
+          git(
+            repo,
+            ['commit-tree', tree, '-p', receipt.sourceHeadSha, ...(signing ? ['-S'] : [])],
+            'fix: retain child resolutions while retiring stale branch maintenance\n',
+          ).trim(),
+        );
+      }
+    }
+    if (!unstartedReplay) {
+      const guardedHead = receipt.rebaseResultSha ?? receipt.resultHeadSha!;
+      for (const commit of git(repo, ['rev-list', '--reverse', `${guardedHead}..${head}`])
+        .split('\n')
+        .filter(Boolean)) {
+        const parent = sha(git(repo, ['rev-parse', `${commit}^`]).trim());
+        const tree = cleanMergeTree(repo, recoveredHeadSha, commit, parent);
+        const [name, email, date] = git(repo, [
+          'show',
+          '-s',
+          '--format=%an%x00%ae%x00%aI',
+          commit,
+        ]).split('\0');
+        const signing =
+          git(repo, [
+            'config',
+            '--type=bool',
+            '--default=false',
+            '--get',
+            'commit.gpgsign',
+          ]).trim() === 'true';
+        recoveredHeadSha = sha(
+          git(
+            repo,
+            ['commit-tree', tree, '-p', recoveredHeadSha, ...(signing ? ['-S'] : [])],
+            git(repo, ['show', '-s', '--format=%B', commit]) + '\n',
+            { GIT_AUTHOR_NAME: name, GIT_AUTHOR_EMAIL: email, GIT_AUTHOR_DATE: date },
+          ).trim(),
+        );
+      }
+    }
+    recovery = {
+      previousHeadSha: head,
+      recoveredHeadSha,
+      comparisonBaseSha: operation.comparisonBaseSha,
+      targetSha: operation.targetSha,
+    };
+    const prefix = `refs/farmslot/branch-maintenance/${operationHash(operation)}`;
+    git(repo, ['update-ref', `${prefix}/source`, receipt.sourceHeadSha]);
+    git(repo, ['update-ref', `${prefix}/result`, head]);
+    git(repo, ['update-ref', `${prefix}/recovered`, recoveredHeadSha]);
+    receipt = { ...receipt, recovery };
+    recordReceipt(operation, receipt);
+  }
+  fetchHeads(repo, operation.branch, operation.baseRef);
+  if (ref(repo, operation.branch) !== operation.remoteHeadSha) refuse('REMOTE_CHILD_CHANGED');
+  if (head !== recovery.previousHeadSha && head !== recovery.recoveredHeadSha)
+    refuse('LOCAL_RESULT_CHANGED');
+  if (head === recovery.previousHeadSha) {
+    git(repo, [
+      'update-ref',
+      `refs/heads/${operation.branch}`,
+      recovery.recoveredHeadSha,
+      recovery.previousHeadSha,
+    ]);
+    // retire is the explicit recovery action; both old and new trees are retained.
+  }
+  git(repo, ['reset', '--hard', recovery.recoveredHeadSha]);
+  recordReceipt(operation, {
+    ...receipt,
+    phase: 'retired',
+    retiredReason: validation.reason ?? 'OPERATION_CANCELLED',
+  });
+  return { status: 'retired', recoveredHeadSha: recovery.recoveredHeadSha };
+}
+
 function ordinaryIdentity(
   request: OrdinaryBranchMaintenanceRequest,
 ): Pick<BranchMaintenanceOperation, 'repo' | 'id'> {
@@ -460,18 +753,30 @@ export function executeOrdinaryBranchMaintenance(
     const saved = JSON.parse(readFileSync(file, 'utf8')) as BranchUpdateReceipt;
     if (saved.operation.id !== identity.id || saved.operation.repo !== identity.repo)
       refuse('OPERATION_CHANGED');
-    // An unfinished attempt keeps its original lease and target. A completed,
-    // published attempt may start a subsequent normal maintenance operation.
-    if (saved.phase !== 'completed' || rebaseActive(request.repo))
-      return executeBranchMaintenance(saved.operation);
     fetchHeads(request.repo, saved.operation.branch, saved.operation.baseRef);
-    if (
-      ref(request.repo, saved.operation.baseRef) === saved.operation.targetSha &&
-      git(request.repo, ['rev-parse', 'HEAD']).trim() === saved.resultHeadSha
-    )
-      return executeBranchMaintenance(saved.operation);
-    if (ref(request.repo, saved.operation.branch) !== saved.resultHeadSha)
-      refuse('REMOTE_CHILD_CHANGED');
+    const remote = ref(request.repo, saved.operation.branch);
+    const head = sha(git(request.repo, ['rev-parse', 'HEAD']).trim());
+    const published =
+      saved.phase === 'completed' &&
+      !!saved.resultHeadSha &&
+      (saved.pushedHeadSha === saved.resultHeadSha ||
+        (remote === saved.resultHeadSha && remote !== saved.operation.remoteHeadSha));
+    if (published) {
+      if (!ancestor(request.repo, saved.resultHeadSha!, remote)) refuse('REMOTE_CHILD_CHANGED');
+      if (!ancestor(request.repo, remote, head)) refuse('REMOTE_CHILD_COMMITS_MISSING');
+      if (
+        remote === saved.resultHeadSha &&
+        head === remote &&
+        ref(request.repo, saved.operation.baseRef) === saved.operation.targetSha
+      )
+        return executeBranchMaintenance(saved.operation);
+      // A completed published attempt no longer binds a later child's lease.
+    } else if (saved.phase !== 'retired') {
+      const validation = validateBranchMaintenance(saved.operation);
+      if (validation.status === 'pending') return executeBranchMaintenance(saved.operation);
+      if (validation.status === 'pushed') return saved.resultHeadSha!;
+      retireBranchMaintenance(saved.operation, true);
+    }
   }
   const branch = normalizeMaintenanceBranch(request.branch);
   const baseRef = normalizeMaintenanceBranch(request.baseRef);

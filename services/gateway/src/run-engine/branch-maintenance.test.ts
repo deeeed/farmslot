@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -8,8 +8,10 @@ import {
   type BranchMaintenanceCheckpoint,
   type BranchMaintenanceOperation,
   PipelineSteps,
+  type ReadyGatePrPackage,
 } from '@farmslot/protocol';
 
+import { computeReadyGatePackageHash } from '../run-completion/ready-gate-package.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
 const directory = await mkdtemp(path.join(os.tmpdir(), 'branch-maintenance-store-'));
@@ -79,11 +81,14 @@ async function fixture(t: TestContext) {
   let inspections = 0;
   const deps: NonNullable<Parameters<typeof maintenance.completeBranchMaintenance>[2]> = {
     loadSlot: async () => makeVars(),
+    comparison: async () => initial.baseSha!,
     runtime: async <T>(_vars: unknown, phase: string): Promise<T> => {
       if (phase === 'inspect') {
         inspections++;
         return operation as T;
       }
+      if (phase === 'validate') return { status: 'pending' } as T;
+      if (phase === 'retire') return { retired: true } as T;
       assert.equal(phase, 'verify');
       return { headSha: 'd'.repeat(40), replayBoundarySha: operation.targetSha } as T;
     },
@@ -278,5 +283,124 @@ test('write-task replay keeps immutable input while clearing ordinary telemetry'
   assert.equal(
     await maintenance.prepareBranchMaintenance(worker, makeVars(), 'main', 'rebase', deps),
     operation,
+  );
+});
+
+test('a stale target retires its input and replay pins a fresh target without changing authority', async (t) => {
+  const { owner, worker, operation, deps } = await fixture(t);
+  await maintenance.prepareBranchMaintenance(worker, makeVars(), 'main', 'rebase', deps);
+  const replacement = { ...operation, id: 'fresh-operation', targetSha: 'e'.repeat(40) };
+  const phases: string[] = [];
+  deps.runtime = async <T>(_vars: unknown, phase: string): Promise<T> => {
+    phases.push(phase);
+    if (phase === 'validate') return { status: 'stale', reason: 'TARGET_CHANGED' } as T;
+    if (phase === 'retire') return { retired: true } as T;
+    assert.equal(phase, 'inspect');
+    assert.equal(
+      worker.steps.find((step) => step.name === PipelineSteps.WRITE_TASK)!.outputs!
+        .branchMaintenanceOperation,
+      undefined,
+    );
+    return replacement as T;
+  };
+  assert.equal(
+    await maintenance.prepareBranchMaintenance(worker, makeVars(), 'main', 'rebase', deps),
+    replacement,
+  );
+  assert.deepEqual(phases, ['validate', 'validate', 'retire', 'inspect']);
+  assert.deepEqual(owner.engineState!.publishGate!.maintainedSnapshot, initial);
+  const stored = JSON.parse(await readFile(runs.runRecordPath(worker.id), 'utf8'));
+  assert.equal(
+    stored.steps.find((step: { name: string }) => step.name === PipelineSteps.WRITE_TASK).outputs
+      .branchMaintenanceOperation.id,
+    replacement.id,
+  );
+});
+
+test('failed retirement preserves the pending input and prior checkpoint', async (t) => {
+  const { owner, worker, operation, deps } = await fixture(t);
+  await maintenance.prepareBranchMaintenance(worker, makeVars(), 'main', 'rebase', deps);
+  deps.runtime = async <T>(_vars: unknown, phase: string): Promise<T> => {
+    if (phase === 'validate') return { status: 'stale', reason: 'REMOTE_CHILD_CHANGED' } as T;
+    throw new maintenance.MaintenanceRefusal('LOCAL_RECOVERY_UNCERTAIN');
+  };
+  await assert.rejects(
+    maintenance.prepareBranchMaintenance(worker, makeVars(), 'main', 'rebase', deps),
+    /LOCAL_RECOVERY_UNCERTAIN/,
+  );
+  assert.equal(
+    worker.steps.find((step) => step.name === PipelineSteps.WRITE_TASK)!.outputs!
+      .branchMaintenanceOperation,
+    operation,
+  );
+  assert.deepEqual(owner.engineState!.publishGate!.maintainedSnapshot, initial);
+});
+
+test('a terminal no-change retirement clears only its own operation and does not renew', async (t) => {
+  const { owner, worker, deps } = await fixture(t);
+  await maintenance.prepareBranchMaintenance(worker, makeVars(), 'main', 'rebase', deps);
+  await maintenance.retireBranchMaintenance(worker, undefined, deps);
+  assert.equal(
+    worker.steps.find((step) => step.name === PipelineSteps.WRITE_TASK)!.outputs!
+      .branchMaintenanceOperation,
+    undefined,
+  );
+  assert.deepEqual(owner.engineState!.publishGate!.maintainedSnapshot, initial);
+});
+
+test('initial comparison consumes the settled immutable publication head instead of its live merge-base', async (t) => {
+  const { owner, worker, operation, deps } = await fixture(t);
+  const taskDir = path.join(directory, owner.id);
+  await mkdir(path.join(taskDir, 'artifacts'), { recursive: true });
+  const prepared: ReadyGatePrPackage = {
+    id: 'frozen-initial-package',
+    packageHash: '',
+    artifactPath: 'artifacts/pr-package.json',
+    branch: 'child',
+    headSha: initial.headSha!,
+    diffStat: { files: 2, additions: 2, deletions: 0 },
+    reviewSnapshot: { ...initial, baseSha: 'f'.repeat(40) },
+    draftTitle: 'fix: child contribution',
+    draftBody: '',
+    reviewArtifactIds: [],
+    gatePolicy: {
+      owner: 'human',
+      dispatchMode: 'interactive',
+      publishAuthority: 'human',
+      reason: 'test',
+    },
+    publicationTarget: 'ready',
+    publicationStatus: 'not_published',
+    createdAt: initial.capturedAt,
+  };
+  prepared.packageHash = computeReadyGatePackageHash(prepared);
+  await writeFile(path.join(taskDir, prepared.artifactPath), JSON.stringify(prepared));
+  runs.updateRun(owner.id, {
+    taskFile: path.join(taskDir, 'TASK.md'),
+    engineState: { publishGate: { packageHash: prepared.packageHash } },
+  });
+  let compared = false;
+  deps.comparison = async (_vars, selectedOwner, selectedStack, _defaultBranch, head) => {
+    assert.equal(selectedOwner.id, owner.id);
+    assert.equal(selectedStack.resolvedSha, initial.replayBoundarySha);
+    assert.equal(head, prepared.headSha);
+    compared = true;
+    return 'e'.repeat(40);
+  };
+  deps.runtime = async <T>(_vars: unknown, phase: string, request: unknown): Promise<T> => {
+    assert.equal(phase, 'inspect');
+    assert.ok(request && typeof request === 'object' && 'authority' in request);
+    assert.deepEqual(request.authority, {
+      headSha: initial.headSha,
+      comparisonBaseSha: 'e'.repeat(40),
+      replayBoundarySha: initial.replayBoundarySha,
+    });
+    return operation as T;
+  };
+  await maintenance.prepareBranchMaintenance(worker, makeVars(), 'main', 'rebase', deps);
+  assert.equal(compared, true);
+  assert.deepEqual(
+    JSON.parse(await readFile(path.join(taskDir, prepared.artifactPath), 'utf8')),
+    prepared,
   );
 });

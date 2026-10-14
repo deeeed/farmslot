@@ -37,7 +37,7 @@ STATUS: pending
 - [ ] **1. Update Status** — `STATUS: working` in Task block, then `{{TASK_DIR}}/mark --checklist CI-FIX.md start`, then `{{TASK_DIR}}/mark --checklist CI-FIX.md 1`.
 - [ ] **2. Fetch full context:**
   - If review comments: `unset GH_TOKEN && gh api "repos/{{GH_REPO}}/pulls/{{PR_NUMBER}}/comments" --jq '.[] | select(.in_reply_to_id == null) | {id: .id, author: .user.login, body: .body, path: .path, line: .line}'`
-  - Before changing code, fetch `{{PUBLICATION_BASE}}` and rebase onto `origin/{{PUBLICATION_BASE}}`. Follow the branch-update lease guard above, retaining the remote PR-head SHA for the final leased push.
+  - Before changing code, run the generated shared operation from TASK.md or the branch-update instructions above. It performs the verified rebase onto the pinned publication base; do not run a second rebase.
   - If CI failures: `unset GH_TOKEN && gh pr checks {{PR_NUMBER}} --repo {{GH_REPO}} 2>&1 | grep -iE 'fail|error'`
 
 ### Fix (steps 3-4)
@@ -78,9 +78,7 @@ STATUS: pending
   # Do NOT use `git add -A` — auto-fixers may have modified unrelated files.
   git add <file1> <file2> ...
   git commit -m "fix: address CI feedback"
-  # Use the exact remote PR-head SHA recorded before the rebase.
-  expected_remote_sha="$(cat "{{TASK_DIR}}/artifacts/pre-rebase-remote-sha.txt")"
-  test -n "$expected_remote_sha" && git push origin HEAD:refs/heads/{{BRANCH}} --force-with-lease=refs/heads/{{BRANCH}}:"$expected_remote_sha"
+  {{BRANCH_UPDATE_PUSH_CMD}}
   ```
 - [ ] **8. Reply to each bot comment thread** (skip if CI-failures-only):
   ```bash

@@ -771,14 +771,10 @@ export async function executeWriteTaskStep(
       inputs,
       outputs: {
         taskFile: taskFilePath,
-        ...(afterWrite.steps.find((step) => step.name === S.WRITE_TASK)?.outputs
-          ?.branchMaintenanceOperation
-          ? {
-              branchMaintenanceOperation: afterWrite.steps.find(
-                (step) => step.name === S.WRITE_TASK,
-              )!.outputs!.branchMaintenanceOperation,
-            }
-          : {}),
+        ...retainedMaintenanceStepOutputs(
+          S.WRITE_TASK,
+          afterWrite.steps.find((step) => step.name === S.WRITE_TASK)?.outputs,
+        ),
         templateName: resolvedTemplateName,
         taskRelDir,
         branch: afterWrite.branch || undefined,

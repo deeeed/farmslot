@@ -27,7 +27,11 @@ import {
 } from '../runs/store.js';
 import { agentRuntimeScriptForSlot } from '../tasks/agent-runtime-script.js';
 
-import { contributionLineage } from './diff-artifacts.js';
+import {
+  contributionDiffBaseSpec,
+  contributionLineage,
+  settleStackedDiffBase,
+} from './diff-artifacts.js';
 import { publicationBaseForRun } from './stack-base.js';
 
 async function runtimeOperation<T>(vars: SlotVars, phase: string, input: unknown): Promise<T> {
@@ -38,7 +42,7 @@ async function runtimeOperation<T>(vars: SlotVars, phase: string, input: unknown
     { timeout: 60_000, maxBuffer: 1024 * 1024 },
   );
   if (result.exitCode !== 0) {
-    const detail = result.stderr.trim();
+    const detail = result.stderr.trim().split('\n').at(-1) ?? '';
     let refusal: { code?: string; message?: string } | undefined;
     try {
       refusal = JSON.parse(detail);
@@ -63,14 +67,51 @@ interface MaintenanceDependencies {
   runtime: typeof runtimeOperation;
   loadSlot: typeof loadSlotVars;
   capture: typeof captureCurrentReviewSnapshot;
+  comparison: typeof initialComparisonBase;
 }
+
+async function initialComparisonBase(
+  vars: SlotVars,
+  owner: Run,
+  stack: NonNullable<Run['stack']>,
+  defaultBranch: string,
+  headSha: string,
+): Promise<string> {
+  const exec = (command: string) => execOnSlot(vars, command, { timeout: 15_000 });
+  const base = await settleStackedDiffBase(
+    exec,
+    defaultBranch,
+    contributionDiffBaseSpec({ startRef: owner.startRef, stack }, defaultBranch),
+    headSha,
+  );
+  if (base.diffFrom) return base.diffFrom;
+  const resolved = await exec(
+    `git merge-base ${shellQuote(base.commitish)} ${shellQuote(headSha)}`,
+  );
+  if (resolved.exitCode !== 0 || !resolved.stdout.trim())
+    throw new MaintenanceRefusal(
+      'PARENT_BOUNDARY_MISSING',
+      'Initial child comparison is unavailable.',
+    );
+  return resolved.stdout.trim();
+}
+
 const defaultDependencies: MaintenanceDependencies = {
   runtime: runtimeOperation,
   loadSlot: loadSlotVars,
   capture: captureCurrentReviewSnapshot,
+  comparison: initialComparisonBase,
 };
 
-function operationFor(run: Run): BranchMaintenanceOperation | undefined {
+interface MaintenanceValidation {
+  status: 'pending' | 'pushed' | 'stale';
+  reason?: string;
+}
+
+export function pendingBranchMaintenance(
+  run: Run | undefined,
+): BranchMaintenanceOperation | undefined {
+  if (!run) return undefined;
   if (run.ciWatchState?.branchMaintenanceOperation)
     return run.ciWatchState.branchMaintenanceOperation;
   const output = run.steps.find((step) => step.name === PipelineSteps.WRITE_TASK)?.outputs;
@@ -94,6 +135,63 @@ export function retainedMaintenanceStepOutputs(
   };
 }
 
+/** Retire only this input. The previous publishing checkpoint remains authoritative. */
+export async function retireBranchMaintenance(
+  run: Run,
+  explicitOperation?: BranchMaintenanceOperation,
+  deps: MaintenanceDependencies = defaultDependencies,
+): Promise<void> {
+  const operation = explicitOperation ?? pendingBranchMaintenance(getRun(run.id) ?? run);
+  if (!operation) return;
+  if (!run.slotId) throw new MaintenanceRefusal('MAINTENANCE_SLOT_MISSING');
+  const vars = await deps.loadSlot(run.slotId);
+  if (vars.remoteRepo !== operation.repo)
+    throw new MaintenanceRefusal('MAINTENANCE_CHECKOUT_CHANGED');
+  const validation = await deps.runtime<MaintenanceValidation>(vars, 'validate', operation);
+  if (validation.status === 'pushed') {
+    await completeBranchMaintenance(run, operation, deps);
+    return;
+  }
+  // The SDK preserves verified local work before an input can be replaced.
+  await deps.runtime(vars, 'retire', { operation, recoverLocal: true });
+  const latest = getRun(run.id);
+  if (!latest) throw new MaintenanceRefusal('MAINTENANCE_RUN_MISSING');
+  await persistRunNow(
+    updateRun(run.id, {
+      ...(latest.ciWatchState?.branchMaintenanceOperation?.id === operation.id
+        ? { ciWatchState: { ...latest.ciWatchState, branchMaintenanceOperation: undefined } }
+        : {}),
+      steps: latest.steps.map((step) =>
+        step.name === PipelineSteps.WRITE_TASK &&
+        (step.outputs?.branchMaintenanceOperation as BranchMaintenanceOperation | undefined)?.id ===
+          operation.id
+          ? {
+              ...step,
+              outputs: {
+                ...step.outputs,
+                branchMaintenanceOperation: undefined,
+                branchMaintenanceCompleted: false,
+              },
+            }
+          : step,
+      ),
+    }),
+    'maintenance input retired',
+  );
+}
+
+/** Graph transport uses the same pinned execution and exact lease as worker maintenance. */
+export async function executeBranchMaintenance(
+  vars: SlotVars,
+  operation: BranchMaintenanceOperation,
+  deps: MaintenanceDependencies = defaultDependencies,
+): Promise<void> {
+  const validation = await deps.runtime<MaintenanceValidation>(vars, 'validate', operation);
+  if (validation.status === 'pushed') return;
+  await deps.runtime(vars, 'execute', operation);
+  await deps.runtime(vars, 'push', operation);
+}
+
 /** One input owner for maintenance tasks, inline fixes and graph catch-up. */
 export async function prepareBranchMaintenance(
   run: Run,
@@ -109,14 +207,28 @@ export async function prepareBranchMaintenance(
   if (stack.retargetedTo && !stack.upstreamMergeSha)
     throw new MaintenanceRefusal('RETARGET_PROVENANCE_MISSING');
   const baseRef = await publicationBaseForRun(getRun(run.id) ?? run, defaultBranch);
-  const pending = operationFor(getRun(run.id) ?? run);
+  const pending = pendingBranchMaintenance(getRun(run.id) ?? run);
   if (pending) {
     if (pending.repo !== vars.remoteRepo)
       throw new MaintenanceRefusal('MAINTENANCE_CHECKOUT_CHANGED');
-    if (pending.project !== run.project || pending.baseRef !== normalizeMaintenanceBranch(baseRef))
-      throw new MaintenanceRefusal('MAINTENANCE_BASE_CHANGED');
-    if (pending.kind !== kind) throw new MaintenanceRefusal('MAINTENANCE_OPERATION_PENDING');
-    return pending;
+    if (pending.project !== run.project) throw new MaintenanceRefusal('MAINTENANCE_BASE_CHANGED');
+    const validation = await deps.runtime<MaintenanceValidation>(vars, 'validate', pending);
+    if (validation.status === 'pushed') {
+      // A replay of the same task retains its exact command input. Complete
+      // reconciles that verified push; changing the input would strand its receipt.
+      if (pending.kind === kind && pending.baseRef === normalizeMaintenanceBranch(baseRef))
+        return pending;
+      await completeBranchMaintenance(run, pending, deps);
+      return prepareBranchMaintenance(getRun(run.id) ?? run, vars, defaultBranch, kind, deps);
+    } else if (
+      validation.status === 'stale' ||
+      pending.baseRef !== normalizeMaintenanceBranch(baseRef)
+    ) {
+      await retireBranchMaintenance(run, pending, deps);
+    } else {
+      if (pending.kind !== kind) throw new MaintenanceRefusal('MAINTENANCE_OPERATION_PENDING');
+      return pending;
+    }
   }
   let owner: Run | undefined;
   let checkpoint: BranchMaintenanceCheckpoint | undefined;
@@ -149,7 +261,9 @@ export async function prepareBranchMaintenance(
       continue;
     owner = candidate;
     headSha = prepared.headSha ?? undefined;
-    comparisonBaseSha = prepared.reviewSnapshot?.baseSha ?? undefined;
+    comparisonBaseSha = headSha
+      ? await deps.comparison(vars, candidate, stack, defaultBranch, headSha)
+      : undefined;
     replayBoundarySha = stack.resolvedSha;
     break;
   }
@@ -169,7 +283,7 @@ export async function prepareBranchMaintenance(
   });
   const latest = getRun(run.id);
   if (!latest) throw new Error('Maintenance run is no longer active.');
-  const raced = operationFor(latest);
+  const raced = pendingBranchMaintenance(latest);
   if (raced) {
     if (raced.kind !== kind) throw new MaintenanceRefusal('MAINTENANCE_OPERATION_PENDING');
     return raced;
@@ -220,17 +334,23 @@ export async function completeBranchMaintenance(
   explicitOperation?: BranchMaintenanceOperation,
   deps: MaintenanceDependencies = defaultDependencies,
 ): Promise<BranchMaintenanceCheckpoint | undefined> {
-  const operation = explicitOperation ?? operationFor(getRun(run.id) ?? run);
+  const operation = explicitOperation ?? pendingBranchMaintenance(getRun(run.id) ?? run);
   if (!operation) return undefined;
   if (!run.slotId) throw new Error('Maintenance result has no retained slot.');
   const vars = await deps.loadSlot(run.slotId);
   if (vars.remoteRepo !== operation.repo)
     throw new MaintenanceRefusal('MAINTENANCE_CHECKOUT_CHANGED');
-  const verified = await deps.runtime<{ headSha: string; replayBoundarySha: string }>(
-    vars,
-    'verify',
-    operation,
-  );
+  let verified: { headSha: string; replayBoundarySha: string };
+  try {
+    verified = await deps.runtime(vars, 'verify', operation);
+  } catch (error) {
+    if (
+      error instanceof MaintenanceRefusal &&
+      ['TARGET_CHANGED', 'REMOTE_CHILD_CHANGED', 'REMOTE_RESULT_CHANGED'].includes(error.code)
+    )
+      await retireBranchMaintenance(run, operation, deps);
+    throw error;
+  }
   const owner = await getRunWithArchived(operation.ownerRunId);
   if (
     !owner ||

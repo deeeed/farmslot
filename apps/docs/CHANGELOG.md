@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document the shared verified branch-maintenance guard and leased push commands.
 - Link onboarding to the shared person, service and node credential reference.
 
 - Document doctor recording controls in the generated recipe CLI reference.

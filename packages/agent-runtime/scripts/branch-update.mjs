@@ -23,6 +23,9 @@ try {
         ? sdk.pushOrdinaryBranchMaintenance(value)
         : sdk.pushBranchMaintenance(value);
   else if (phase === 'verify') result = sdk.verifyBranchMaintenance(value);
+  else if (phase === 'validate') result = sdk.validateBranchMaintenance(value);
+  else if (phase === 'retire')
+    result = sdk.retireBranchMaintenance(value.operation ?? value, value.recoverLocal === true);
   else throw new Error('Unknown internal branch-maintenance operation.');
   process.stdout.write(JSON.stringify(result ?? null) + '\n');
 } catch (error) {

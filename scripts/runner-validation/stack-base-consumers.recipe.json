@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "FARMSLOT_STACK_BASE_PROOF_ONLY=maintenance TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/stack-base-consumers.mts",
         "timeout_ms": 300000,
-        "intent": "Verify pre-prepare input pinning, two child rebases, retargeted and ordinary commands, restart after lease push and the publishing-owner checkpoint through public completion replay. Preserve task bytes and grant no approval.",
+        "intent": "Verify pinned handoff, stale-parent refusal followed by supported replay, frozen merged-publication child ownership, repeated rebases, restart after push and owner renewal. Preserve task and package bytes; grant no approval.",
         "next": "ci_watch"
       },
       "ci_watch": {
@@ -17,11 +17,18 @@
         "cmd": "FARMSLOT_STACK_BASE_PROOF_ONLY=inline TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/stack-base-consumers.mts",
         "timeout_ms": 300000,
         "intent": "Drive the native CI-fix writer through public CI-watch replay for default and token-less templates, both stacked and retargeted. Preserve retained TASK.md and require the current publication base and lease guard.",
-        "next": "done"
+        "next": "inline_terminal"
       },
       "done": {
         "action": "end",
         "status": "pass"
+      },
+      "inline_terminal": {
+        "action": "command",
+        "cmd": "FARMSLOT_STACK_BASE_PROOF_ONLY=inline-terminal TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/stack-base-consumers.mts",
+        "timeout_ms": 300000,
+        "intent": "Use an isolated native worker to hold after guarded execute, prove HEAD movement remains pending, then push and emit its own terminal mark. Require the publishing checkpoint to renew before CI-fix context completes.",
+        "next": "done"
       }
     }
   }

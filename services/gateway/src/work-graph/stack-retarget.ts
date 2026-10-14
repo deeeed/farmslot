@@ -10,8 +10,10 @@ import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.j
 import { ghRequest } from '../integrations/github-client.js';
 import {
   completeBranchMaintenance,
+  executeBranchMaintenance,
   MaintenanceRefusal,
   prepareBranchMaintenance,
+  retireBranchMaintenance,
 } from '../run-engine/branch-maintenance.js';
 
 /** Whole-call deadline, including the wait for a gh concurrency slot. */
@@ -124,7 +126,8 @@ interface StackUpdateDependencies {
   loadSlot: typeof loadSlotVars;
   prepare: typeof prepareBranchMaintenance;
   complete: typeof completeBranchMaintenance;
-  github: typeof ghApi;
+  execute: typeof executeBranchMaintenance;
+  retire: typeof retireBranchMaintenance;
 }
 
 export async function updateStackedPrBranch(
@@ -134,51 +137,32 @@ export async function updateStackedPrBranch(
     loadSlot: loadSlotVars,
     prepare: prepareBranchMaintenance,
     complete: completeBranchMaintenance,
-    github: ghApi,
+    execute: executeBranchMaintenance,
+    retire: retireBranchMaintenance,
   },
 ): Promise<StackRetargetResult> {
-  const { repo, base } = await deps.project(run.project);
+  const { base } = await deps.project(run.project);
   if (!run.prNumber) return { base, result: 'update-branch:no-pr' };
   if (!run.slotId)
     throw new Error('Stack catch-up has no retained slot for provenance verification');
-  const operation = await deps.prepare(run, await deps.loadSlot(run.slotId), base, 'graph-merge');
+  const vars = await deps.loadSlot(run.slotId);
+  const operation = await deps.prepare(run, vars, base, 'graph-merge');
   if (!operation) throw new MaintenanceRefusal('PARENT_BOUNDARY_MISSING');
-  // An interrupted successful update renews its retained operation before another PUT.
   try {
+    // The SDK pins both ordered parents and the clean merge tree. Its durable
+    // receipt reconciles a push interrupted before checkpoint renewal.
+    await deps.execute(vars, operation);
     await deps.complete(run, operation);
-    return { base, result: `update-branch:#${run.prNumber} reconciled ${base}` };
   } catch (error) {
-    if (!(error instanceof MaintenanceRefusal) || error.code !== 'GRAPH_UPDATE_PENDING')
-      throw error;
-  }
-  try {
-    await deps.github(
-      [
-        '-X',
-        'PUT',
-        `repos/${repo}/pulls/${run.prNumber}/update-branch`,
-        '-f',
-        `expected_head_sha=${operation.remoteHeadSha}`,
-      ],
-      `updating PR #${run.prNumber}`,
-    );
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (!/conflict/i.test(message)) throw err;
-    return { base, result: `update-branch:#${run.prNumber} conflict` };
-  }
-  // GitHub accepts this update asynchronously. Renewal waits for the exact verified merge.
-  const deadline = Date.now() + 30_000;
-  for (;;) {
-    try {
-      await deps.complete(run, operation);
-      break;
-    } catch (error) {
-      if (!(error instanceof MaintenanceRefusal) || error.code !== 'GRAPH_UPDATE_PENDING')
-        throw error;
-      if (Date.now() >= deadline) throw new MaintenanceRefusal('GRAPH_UPDATE_PENDING');
-      await new Promise((resolve) => setTimeout(resolve, 100));
+    if (
+      error instanceof MaintenanceRefusal &&
+      ['GRAPH_MERGE_CONFLICT', 'TARGET_CHANGED', 'REMOTE_CHILD_CHANGED'].includes(error.code)
+    ) {
+      await deps.retire(run, operation);
+      if (error.code === 'GRAPH_MERGE_CONFLICT')
+        return { base, result: `update-branch:#${run.prNumber} conflict` };
     }
+    throw error;
   }
   return { base, result: `update-branch:#${run.prNumber} merged ${base}` };
 }

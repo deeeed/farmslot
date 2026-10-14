@@ -13,6 +13,8 @@ import {
   pushBranchMaintenance,
   verifyBranchMaintenance,
   executeOrdinaryBranchMaintenance,
+  validateBranchMaintenance,
+  retireBranchMaintenance,
   pushOrdinaryBranchMaintenance,
 } from '../src/task-init/branch-update.js';
 
@@ -41,6 +43,8 @@ function fixture(t: test.TestContext) {
   git('config', 'user.name', 'Fixture');
   git('config', 'user.email', 'fixture@example.invalid');
   git('config', 'commit.gpgsign', 'false');
+  git('config', 'gpg.format', 'ssh');
+  git('config', 'user.signingkey', path.join(root, 'missing-signing-key'));
   const commit = (name: string, value: string) => {
     writeFileSync(path.join(repo, name), value);
     git('add', '--', name);
@@ -74,7 +78,7 @@ function fixture(t: test.TestContext) {
 test('prepare provenance prevents a live merge-base from replaying a removed parent', (t) => {
   const f = fixture(t);
   f.git('push', 'origin', `${f.first}:refs/heads/parent`, '--force');
-  const operation = f.inspect(f.first);
+  const operation = f.inspect(f.boundary);
   assert.equal(operation.comparisonBaseSha, f.boundary);
   executeBranchMaintenance(operation);
   pushBranchMaintenance(operation);
@@ -393,14 +397,6 @@ test('merged history retains owned merge resolutions after a main rollback', (t)
   f.git('revert', '--no-edit', upstream);
   f.git('push', 'origin', 'main');
   f.git('checkout', 'child');
-  f.git('checkout', '-b', 'ordinary', source);
-  f.git('push', 'origin', 'ordinary');
-  const ordinary = { kind: 'ordinary' as const, repo: f.repo, branch: 'ordinary', baseRef: 'main' };
-  executeOrdinaryBranchMaintenance(ordinary);
-  pushOrdinaryBranchMaintenance(ordinary);
-  assert.equal(readFileSync(path.join(f.repo, 'base'), 'utf8'), 'owned merge resolution');
-  assert.throws(() => readFileSync(path.join(f.repo, 'parent-one')));
-  f.git('checkout', 'child');
   const operation = inspectBranchMaintenance({
     id: 'merge-resolution',
     ownerRunId: 'owner',
@@ -605,4 +601,328 @@ test('an unpushed no-op cannot renew after a parent advance', (t) => {
   f.git('push', 'origin', 'parent');
   f.git('checkout', 'child');
   assert.throws(() => verifyBranchMaintenance(operation), /TARGET_CHANGED/);
+});
+
+function signingFixture(f: ReturnType<typeof fixture>): void {
+  const key = path.join(f.root, 'signing-key');
+  execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', key]);
+  const allowed = path.join(f.root, 'allowed-signers');
+  writeFileSync(allowed, 'fixture@example.invalid ' + readFileSync(key + '.pub', 'utf8'));
+  f.git('config', 'gpg.format', 'ssh');
+  f.git('config', 'user.signingkey', key);
+  f.git('config', 'gpg.ssh.allowedSignersFile', allowed);
+}
+
+function graphRequest(f: ReturnType<typeof fixture>, id = 'graph-runtime') {
+  return {
+    id,
+    ownerRunId: 'owner',
+    project: 'fixture',
+    repo: f.repo,
+    branch: 'child',
+    baseRef: 'parent',
+    kind: 'graph-merge' as const,
+    authority: { headSha: f.source, comparisonBaseSha: f.boundary, replayBoundarySha: f.boundary },
+  };
+}
+
+test('graph runtime signs the exact pinned merge and pushes without touching a dirty slot checkout', (t) => {
+  const f = fixture(t);
+  signingFixture(f);
+  f.git('checkout', 'parent');
+  f.commit('parent-next', 'next');
+  f.git('push', 'origin', 'parent');
+  f.git('checkout', 'main');
+  writeFileSync(path.join(f.repo, 'base'), 'slot work');
+  const beforeHead = f.git('rev-parse', 'HEAD');
+  const beforeStatus = f.git('status', '--porcelain');
+  const operation = inspectBranchMaintenance(graphRequest(f));
+  assert.deepEqual(validateBranchMaintenance(operation), { status: 'pending' });
+  const result = executeBranchMaintenance(operation);
+  f.git('verify-commit', result);
+  assert.deepEqual(f.git('rev-list', '--parents', '-n', '1', result).split(' '), [
+    result,
+    operation.remoteHeadSha,
+    operation.targetSha,
+  ]);
+  assert.equal(executeBranchMaintenance(operation), result);
+  pushBranchMaintenance(operation);
+  pushBranchMaintenance(operation);
+  assert.deepEqual(validateBranchMaintenance(operation), { status: 'pushed' });
+  assert.deepEqual(verifyBranchMaintenance(operation), {
+    headSha: result,
+    replayBoundarySha: f.boundary,
+  });
+  assert.equal(f.git('rev-parse', 'HEAD'), beforeHead);
+  assert.equal(f.git('status', '--porcelain'), beforeStatus);
+  assert.equal(readFileSync(path.join(f.repo, 'base'), 'utf8'), 'slot work');
+});
+
+test('graph target advance retires the unchanged lease then executes a fresh pinned context', (t) => {
+  const f = fixture(t);
+  signingFixture(f);
+  f.git('checkout', 'parent');
+  f.commit('parent-next', 'next');
+  f.git('push', 'origin', 'parent');
+  f.git('checkout', 'child');
+  const operation = inspectBranchMaintenance(graphRequest(f));
+  const result = executeBranchMaintenance(operation);
+  f.git('checkout', 'parent');
+  const nextTarget = f.commit('parent-later', 'later');
+  f.git('push', 'origin', 'parent');
+  f.git('checkout', 'child');
+  assert.throws(() => pushBranchMaintenance(operation), /TARGET_CHANGED/);
+  assert.deepEqual(validateBranchMaintenance(operation), {
+    status: 'stale',
+    reason: 'TARGET_CHANGED',
+  });
+  assert.deepEqual(retireBranchMaintenance(operation), { status: 'retired' });
+  assert.equal(f.git('rev-parse', 'HEAD'), f.source);
+  assert.equal(f.git('rev-parse', result), result);
+  const fresh = inspectBranchMaintenance(graphRequest(f, 'graph-fresh'));
+  executeBranchMaintenance(fresh);
+  pushBranchMaintenance(fresh);
+  assert.equal(verifyBranchMaintenance(fresh).headSha, f.git('rev-parse', 'origin/child'));
+  assert.equal(f.git('rev-list', '--parents', '-n', '1', 'origin/child').split(' ')[2], nextTarget);
+});
+
+test('graph conflicts and missing signing authority leave branch, checkout and remote unchanged', (t) => {
+  const f = fixture(t);
+  f.git('checkout', 'parent');
+  f.commit('parent-next', 'next');
+  f.git('push', 'origin', 'parent');
+  f.git('checkout', 'child');
+  const unsigned = inspectBranchMaintenance(graphRequest(f, 'unsigned'));
+  assert.throws(() => executeBranchMaintenance(unsigned), /GRAPH_SIGNING_REFUSED/);
+  assert.equal(f.git('rev-parse', 'HEAD'), f.source);
+  assert.equal(f.raw(['rev-parse', 'refs/heads/child'], f.remote), f.source);
+  const child = f.commit('base', 'child edit');
+  f.git('push', 'origin', 'child');
+  f.git('checkout', 'parent');
+  f.commit('base', 'parent edit');
+  f.git('push', 'origin', 'parent');
+  f.git('checkout', 'child');
+  const conflict = inspectBranchMaintenance({
+    ...graphRequest(f, 'conflict'),
+    authority: { headSha: child, comparisonBaseSha: f.boundary, replayBoundarySha: f.boundary },
+  });
+  assert.throws(() => executeBranchMaintenance(conflict), /GRAPH_MERGE_CONFLICT/);
+  assert.equal(f.git('rev-parse', 'HEAD'), child);
+  assert.equal(f.raw(['rev-parse', 'refs/heads/child'], f.remote), child);
+});
+
+test('ordinary published receipts allow a later pushed child fix with a fresh lease', (t) => {
+  const f = fixture(t);
+  const request = { kind: 'ordinary' as const, repo: f.repo, branch: 'child', baseRef: 'parent' };
+  executeOrdinaryBranchMaintenance(request);
+  pushOrdinaryBranchMaintenance(request);
+  const fix = f.commit('child-fix', 'fix');
+  f.git('push', 'origin', 'child');
+  assert.equal(executeOrdinaryBranchMaintenance(request), fix);
+  pushOrdinaryBranchMaintenance(request);
+  f.git('checkout', 'parent');
+  const target = f.commit('parent-next', 'next');
+  f.git('push', 'origin', 'parent');
+  f.git('checkout', 'child');
+  executeOrdinaryBranchMaintenance(request);
+  pushOrdinaryBranchMaintenance(request);
+  assert.equal(f.git('rev-list', '--count', `${target}..HEAD`), '2');
+  assert.equal(readFileSync(path.join(f.repo, 'child-fix'), 'utf8'), 'fix');
+});
+
+test('ordinary merged history preserves each non-merge author, message and trailer', (t) => {
+  const f = fixture(t);
+  f.git('checkout', 'child');
+  writeFileSync(path.join(f.repo, 'owned-two'), 'two');
+  f.git('add', 'owned-two');
+  f.git(
+    '-c',
+    'user.name=Original Author',
+    '-c',
+    'user.email=original@example.invalid',
+    'commit',
+    '-m',
+    'feat: second child\n\nSigned-off-by: Original Author <original@example.invalid>',
+  );
+  f.git('checkout', 'parent');
+  f.commit('parent-next', 'next');
+  f.git('push', 'origin', 'parent');
+  f.git('checkout', 'child');
+  f.git('merge', '--no-ff', 'parent', '-m', 'sync parent');
+  f.git('push', 'origin', 'child');
+  const before = f.git(
+    'log',
+    '--no-merges',
+    '--format=%an <%ae>%n%B',
+    `${f.git('rev-parse', 'parent')}..HEAD`,
+  );
+  f.git('checkout', 'parent');
+  const target = f.commit('parent-later', 'later');
+  f.git('push', 'origin', 'parent');
+  f.git('checkout', 'child');
+  const request = { kind: 'ordinary' as const, repo: f.repo, branch: 'child', baseRef: 'parent' };
+  executeOrdinaryBranchMaintenance(request);
+  pushOrdinaryBranchMaintenance(request);
+  assert.equal(f.git('log', '--no-merges', '--format=%an <%ae>%n%B', `${target}..HEAD`), before);
+  assert.equal(f.git('rev-list', '--count', `${target}..HEAD`), '2');
+});
+
+test('stale local ordinary rebase recovers its child delta and worker fix without inherited target bytes', (t) => {
+  const f = fixture(t);
+  f.git('checkout', 'parent');
+  const obsolete = f.commit('old-target-only', 'obsolete');
+  f.git('push', 'origin', 'parent');
+  f.git('checkout', 'child');
+  const request = { kind: 'ordinary' as const, repo: f.repo, branch: 'child', baseRef: 'parent' };
+  const replayed = executeOrdinaryBranchMaintenance(request);
+  writeFileSync(path.join(f.repo, 'worker-fix'), 'keep');
+  f.git('add', 'worker-fix');
+  f.git(
+    '-c',
+    'user.name=Worker Author',
+    '-c',
+    'user.email=worker@example.invalid',
+    'commit',
+    '-m',
+    'fix: retained worker delta\n\nSigned-off-by: Worker Author <worker@example.invalid>',
+  );
+  const fixed = f.git('rev-parse', 'HEAD');
+  const fixedMetadata = f.git('show', '-s', '--format=%an <%ae>%n%B', fixed);
+  f.git('checkout', 'parent');
+  f.git('revert', '--no-edit', obsolete);
+  const target = f.commit('fresh-target', 'fresh');
+  f.git('push', 'origin', 'parent');
+  f.git('checkout', 'child');
+  assert.throws(() => pushOrdinaryBranchMaintenance(request), /TARGET_CHANGED/);
+  executeOrdinaryBranchMaintenance(request);
+  pushOrdinaryBranchMaintenance(request);
+  assert.equal(readFileSync(path.join(f.repo, 'worker-fix'), 'utf8'), 'keep');
+  assert.equal(readFileSync(path.join(f.repo, 'child-only'), 'utf8'), 'child');
+  assert.equal(readFileSync(path.join(f.repo, 'fresh-target'), 'utf8'), 'fresh');
+  assert.throws(() => readFileSync(path.join(f.repo, 'old-target-only')));
+  assert.equal(f.git('rev-parse', fixed), fixed);
+  assert.equal(f.git('rev-parse', replayed), replayed);
+  assert.equal(f.git('rev-list', '--count', `${target}..HEAD`), '2');
+  assert.equal(f.git('show', '-s', '--format=%an <%ae>%n%B', 'HEAD'), fixedMetadata);
+});
+
+test('stale locally replayed input refuses changed remote ownership and preserves all work', (t) => {
+  const f = fixture(t);
+  f.git('checkout', 'parent');
+  f.commit('parent-next', 'next');
+  f.git('push', 'origin', 'parent');
+  f.git('checkout', 'child');
+  const operation = f.inspect();
+  const result = executeBranchMaintenance(operation);
+  f.git('checkout', '-b', 'foreign', f.source);
+  const foreign = f.commit('foreign', 'remote');
+  f.git('push', 'origin', `${foreign}:refs/heads/child`);
+  f.git('checkout', 'child');
+  const before = readFileSync(receiptFile(f.repo), 'utf8');
+  assert.throws(() => retireBranchMaintenance(operation, true), /REMOTE_CHILD_CHANGED/);
+  assert.equal(f.git('rev-parse', 'HEAD'), result);
+  assert.equal(readFileSync(receiptFile(f.repo), 'utf8'), before);
+  assert.equal(readFileSync(path.join(f.repo, 'child-only'), 'utf8'), 'child');
+});
+
+test('stale unstarted input retires and reinspects after parent or child advances', (t) => {
+  const f = fixture(t);
+  const first = f.inspect();
+  f.git('checkout', 'parent');
+  f.commit('parent-next', 'next');
+  f.git('push', 'origin', 'parent');
+  f.git('checkout', 'child');
+  assert.deepEqual(validateBranchMaintenance(first), { status: 'stale', reason: 'TARGET_CHANGED' });
+  retireBranchMaintenance(first);
+  assert.throws(() => executeBranchMaintenance(first), /OPERATION_RETIRED/);
+  const fix = f.commit('child-fix', 'fix');
+  f.git('push', 'origin', 'child');
+  const second = inspectBranchMaintenance({
+    ...graphRequest(f, 'new-rebase'),
+    kind: 'rebase',
+    authority: { headSha: f.source, comparisonBaseSha: f.boundary, replayBoundarySha: f.boundary },
+  });
+  executeBranchMaintenance(second);
+  pushBranchMaintenance(second);
+  assert.equal(readFileSync(path.join(f.repo, 'child-fix'), 'utf8'), 'fix');
+  assert.equal(f.git('merge-base', fix, f.source), f.source);
+});
+
+test('initial settled comparison stays authoritative when its synthetic base is not in child history', (t) => {
+  const f = fixture(t);
+  f.git('checkout', 'main');
+  const main = f.commit('unrelated-default', 'default');
+  f.git('push', 'origin', 'main');
+  f.git('checkout', 'child');
+  f.git('merge', '--no-ff', 'main', '-m', 'inherited default');
+  const source = f.git('rev-parse', 'HEAD');
+  f.git('push', 'origin', 'child');
+  const tree = f.git('merge-tree', '--write-tree', f.boundary, main);
+  const comparison = f.git(
+    'commit-tree',
+    tree,
+    '-p',
+    f.boundary,
+    '-m',
+    'settled contribution comparison',
+  );
+  f.git('push', 'origin', `${f.first}:refs/heads/parent`, '--force');
+  const operation = inspectBranchMaintenance({
+    ...graphRequest(f, 'settled'),
+    kind: 'rebase',
+    authority: { headSha: source, comparisonBaseSha: comparison, replayBoundarySha: f.boundary },
+  });
+  assert.equal(operation.comparisonBaseSha, comparison);
+  assert.equal(operation.replayBoundarySha, f.boundary);
+  executeBranchMaintenance(operation);
+  pushBranchMaintenance(operation);
+  assert.equal(readFileSync(path.join(f.repo, 'child-only'), 'utf8'), 'child');
+  assert.throws(() => readFileSync(path.join(f.repo, 'parent-two')));
+  assert.throws(() => readFileSync(path.join(f.repo, 'unrelated-default')));
+});
+
+test('pending cancellation preserves the local source and allows a fresh context', (t) => {
+  const f = fixture(t);
+  const operation = f.inspect();
+  assert.deepEqual(validateBranchMaintenance(operation), { status: 'pending' });
+  f.git('checkout', 'main');
+  assert.deepEqual(retireBranchMaintenance(operation), { status: 'retired' });
+  f.git('checkout', 'child');
+  assert.equal(f.git('rev-parse', 'HEAD'), f.source);
+  assert.equal(readFileSync(path.join(f.repo, 'child-only'), 'utf8'), 'child');
+  assert.throws(() => executeBranchMaintenance(operation), /OPERATION_RETIRED/);
+  const fresh = inspectBranchMaintenance({ ...graphRequest(f, 'after-cancel'), kind: 'rebase' });
+  executeBranchMaintenance(fresh);
+  pushBranchMaintenance(fresh);
+  assert.deepEqual(validateBranchMaintenance(fresh), { status: 'pushed' });
+  assert.throws(() => retireBranchMaintenance(fresh), /OPERATION_ALREADY_PUSHED/);
+});
+
+test('recovery is explicit and its journal safely resumes after guarded ref mutation', (t) => {
+  const f = fixture(t);
+  f.git('checkout', 'parent');
+  f.commit('parent-next', 'next');
+  f.git('push', 'origin', 'parent');
+  f.git('checkout', 'child');
+  const operation = f.inspect();
+  executeBranchMaintenance(operation);
+  const result = f.commit('worker-fix', 'keep');
+  f.git('checkout', 'parent');
+  f.commit('parent-later', 'later');
+  f.git('push', 'origin', 'parent');
+  f.git('checkout', 'child');
+  assert.throws(() => retireBranchMaintenance(operation), /LOCAL_RECOVERY_REQUIRED/);
+  assert.equal(f.git('rev-parse', 'HEAD'), result);
+  const retired = retireBranchMaintenance(operation, true);
+  const file = receiptFile(f.repo);
+  const receipt = JSON.parse(readFileSync(file, 'utf8'));
+  receipt.phase = 'completed';
+  writeFileSync(file, JSON.stringify(receipt));
+  // Model interruption after CAS changed HEAD but before index/worktree update.
+  f.git('read-tree', '--reset', '-u', result);
+  assert.notEqual(f.git('status', '--porcelain'), '');
+  assert.deepEqual(retireBranchMaintenance(operation, true), retired);
+  assert.equal(f.git('status', '--porcelain'), '');
+  assert.equal(readFileSync(path.join(f.repo, 'worker-fix'), 'utf8'), 'keep');
+  assert.equal(f.git('rev-parse', result), result);
 });

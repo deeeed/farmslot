@@ -54,6 +54,7 @@ import {
 } from '../review/worker-lifecycle.js';
 import {
   completeBranchMaintenance,
+  pendingBranchMaintenance,
   prepareBranchMaintenance,
 } from '../run-engine/branch-maintenance.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
@@ -1200,6 +1201,19 @@ async function attemptInlineCIFix(
             return blockInlineFix(blockedReason, currentSha, lastSignalAt, fixProgress);
           }
           if (ws.status !== 'failed') {
+            try {
+              const latest = getRun(runId);
+              if (latest) await completeBranchMaintenance(latest);
+            } catch (error) {
+              return blockInlineFix(
+                `Branch maintenance push verification failed: ${(error as Error).message}`,
+                currentSha,
+                lastSignalAt,
+                fixProgress,
+              );
+            }
+          }
+          if (ws.status !== 'failed') {
             mutateDedup(runId, (s) => {
               s.consecutiveAttempts = 0;
             });
@@ -1237,7 +1251,7 @@ async function attemptInlineCIFix(
       }
 
       const currentSha = await getSlotHeadSha(slotId);
-      if (currentSha && currentSha !== beforeSha) {
+      if (currentSha && currentSha !== beforeSha && !pendingBranchMaintenance(getRun(runId))) {
         mutateDedup(runId, (s) => {
           s.consecutiveAttempts = 0;
         });
@@ -1430,10 +1444,6 @@ export async function tryInlineCIFix(
     ciRepo,
     signal,
   );
-  if (result?.success) {
-    const run = getRun(runId);
-    if (run) await completeBranchMaintenance(run);
-  }
   return result;
 }
 

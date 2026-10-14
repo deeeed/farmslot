@@ -544,8 +544,10 @@ export async function settleStackedDiffBase(
   exec: GitExec,
   defaultBranch: string,
   baseSpec: DiffBaseSpec,
+  head: string = 'HEAD',
 ): Promise<DiffBaseSpec> {
   if (!baseSpec.baseRef.startsWith('stack:')) return baseSpec;
+  const headRef = head === 'HEAD' ? 'HEAD' : shellQuote(head);
   const remote = `origin/${defaultBranch}`;
   let branchPoint = baseSpec.commitish;
   const plain = { baseRef: remote, commitish: remote };
@@ -563,7 +565,7 @@ export async function settleStackedDiffBase(
       // A failed fetch (the branch deleted after its merge) keeps the
       // remote-tracking ref, which still holds the head this checkout took.
       await exec(`git fetch origin ${shellQuote(remoteBranchRefspec(baseSpec.stackBranch))}`);
-      const taken = await exec(`git merge-base HEAD ${shellQuote(upstream)}`);
+      const taken = await exec(`git merge-base ${headRef} ${shellQuote(upstream)}`);
       const newer = taken.exitCode === 0 ? taken.stdout.trim() : '';
       // Adopt it when it is upstream-only (the default branch lacks it) and
       // not already behind the recorded point: an advance, or a force-pushed
@@ -578,17 +580,19 @@ export async function settleStackedDiffBase(
       }
     }
     // Rebased off the stack (say the upstream was reverted): an ordinary branch now.
-    const stacked = await exec(`git merge-base --is-ancestor ${shellQuote(branchPoint)} HEAD`);
+    const stacked = await exec(
+      `git merge-base --is-ancestor ${shellQuote(branchPoint)} ${headRef}`,
+    );
     if (stacked.exitCode !== 0) return plain;
     // The checkout took the upstream in through the default branch: whatever the
     // default branch did since (a revert included) is not this run's either.
     if (baseSpec.upstreamMergeSha) {
       const integrated = await exec(
-        `git merge-base --is-ancestor ${shellQuote(baseSpec.upstreamMergeSha)} HEAD`,
+        `git merge-base --is-ancestor ${shellQuote(baseSpec.upstreamMergeSha)} ${headRef}`,
       );
       if (integrated.exitCode === 0) return plain;
     }
-    const mergeBase = await exec(`git merge-base HEAD ${shellQuote(remote)}`);
+    const mergeBase = await exec(`git merge-base ${headRef} ${shellQuote(remote)}`);
     const taken = mergeBase.stdout.trim();
     if (mergeBase.exitCode !== 0 || !taken) return { ...baseSpec, commitish: branchPoint };
     const stillStacked = await exec(
