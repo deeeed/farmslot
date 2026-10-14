@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Preserve configured remote hook execution timeouts after support-bundle resolution, while retaining bounded delivery refusals.
+
 - Render remote-run PR bodies with the gateway host's declared provider root from its pool, refusing missing or conflicting roots instead of using a remote path or ambient harness selection.
 
 - Preserve the selected device capabilities across find-slot replay and refuse unsupported slots before selection or claim.
