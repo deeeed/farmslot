@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-node` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.1.19 - 2026-10-14
+
+- Align the headless adapter with adapter-sdk 0.13.0 for the shared recipe provider contract.
+
 ## 0.1.18 - 2026-10-14
 
 - Align runtime dependencies with recipe-runner 0.34.1 so installed adapters and recipe hosts use one engine version.
