@@ -142,11 +142,16 @@ try {
       `import { testGatewayIdentity } from ${JSON.stringify(new URL('../lib/test-gateway-identity-source.mjs', import.meta.url).href)};
        if (typeof testGatewayIdentity !== 'function') throw new Error('Missing typed helper');
        const { createWebSocketServer } = await import(${JSON.stringify(new URL('../../services/gateway/src/server.js', import.meta.url).href)});
-       if (typeof createWebSocketServer !== 'function') throw new Error('Missing dynamic gateway import');`,
+       if (typeof createWebSocketServer !== 'function') throw new Error('Missing dynamic gateway import');
+       process.exit(0);`,
     ],
     {
       cwd: scratch,
-      env: { ...env, TSX_TSCONFIG_PATH: join(source, 'services/gateway/tsconfig.json') },
+      env: {
+        ...env,
+        NODE_TEST_CONTEXT: '1',
+        TSX_TSCONFIG_PATH: join(source, 'services/gateway/tsconfig.json'),
+      },
       encoding: 'utf8',
       timeout: 15_000,
     },
