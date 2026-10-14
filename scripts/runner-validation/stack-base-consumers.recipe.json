@@ -43,20 +43,6 @@
         "timeout_ms": 300000,
         "intent": "A command worker executes the shared leased push, then fails. Public completion replay must reconcile that real pushed result before retiring terminal input; preserve the failed disposition and grant no approval.",
         "next": "done"
-      },
-      "attachment": {
-        "action": "command",
-        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/stack-base-consumers.mts attachment",
-        "timeout_ms": 180000,
-        "intent": "Attach an actual ordinary retained standalone run through the typed CLI. Refuse a changed head, preserve task and engine evidence, verify idempotency and prove no new run is created. Requires explicit live proof inputs.",
-        "next": "done"
-      },
-      "attachment_restart": {
-        "action": "command",
-        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/stack-base-consumers.mts attachment-after-restart",
-        "timeout_ms": 180000,
-        "intent": "After restarting the owned candidate gateway, reuse the same retained run and public RPC to verify the durable relationship and original task/evidence bytes without dispatching work.",
-        "next": "done"
       }
     }
   }

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Retained-run stack attachment",
+  "description": "Manual public CLI/RPC proof on an ordinary retained standalone run with real pushed upstream work. Supply FARMSLOT_STACK_ATTACHMENT_PROOF_CONFIG and select attachment or attachment-after-restart after restarting the owned candidate gateway. Missing inputs refuse; no run or stack is seeded.",
+  "workflow": {
+    "entry": "attachment",
+    "nodes": {
+      "attachment": {
+        "action": "command",
+        "cmd": "case \"${FARMSLOT_STACK_ATTACHMENT_PROOF_STAGE:-attachment}\" in attachment|attachment-after-restart) TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/stack-base-consumers.mts \"${FARMSLOT_STACK_ATTACHMENT_PROOF_STAGE:-attachment}\" ;; *) printf \"%s\\n\" \"Select attachment or attachment-after-restart\" >&2; exit 2 ;; esac",
+        "timeout_ms": 180000,
+        "intent": "Retained work keeps its run identity, source, task and engine evidence when linked to the declared upstream, including after a gateway restart.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}
