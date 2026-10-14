@@ -1620,3 +1620,40 @@ raw environment-secret presentation have no compatibility fallback.
 
 The [principal implementation spec](../plans/principal-core-implementation-spec.md)
 owns the validation, transaction and lifecycle requirements.
+
+## Amendment 2: migrate stored credential origins, 2026-10-14
+
+**Status:** Accepted. The owner approved this bounded upgrade repair on
+2026-10-14. Implementation PR and rollout are tracked separately.
+
+### Decision
+
+Before validating a stored credential snapshot, the shared loader migrates
+`env-migrated` origin metadata to `issued` under the existing credential lock.
+It rereads the file after acquiring the lock, validates the entire migrated
+snapshot and saves through the atomic store writer. No other field changes.
+Already-issued stores remain unchanged; later loads do not repeat the write.
+
+### Rationale
+
+Removing an authentication method must not prevent a gateway from loading its
+existing identities. Amendment 1's strict cutover requirement crashed gateways
+whose stores still contained historical origin metadata. This migration lets
+operators verify replacement logins before retiring old credentials.
+
+### Consequences
+
+Credential ids, principal ids, secret hashes, roles, native-owner assignments,
+activation and revocation timestamps remain intact. Unknown origins and
+malformed records still fail validation without a write. Issued and paired
+wire credentials retain their existing behavior; raw environment-token
+presentation remains removed. This supersedes Amendment 1's refusal to load
+unretired `env-migrated` records, not its explicit retirement requirements.
+
+### Public surface
+
+There is no new command, flag, RPC or authentication method. The existing
+`@farmslot/credential-store` loader owns the migration for gateway startup,
+CLI reads and writer transactions. Harnesses inherit the same store contract.
+The [principal implementation spec](../plans/principal-core-implementation-spec.md)
+owns locking, validation, persistence and regression requirements.
