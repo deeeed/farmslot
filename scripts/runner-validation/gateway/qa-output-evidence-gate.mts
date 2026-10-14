@@ -23,7 +23,7 @@ import { promisify } from 'node:util';
 import { NativeSessionClient, type NativeWorkerTarget } from '@farmslot/agent-runtime/native';
 import { matchesProcess } from '@farmslot/agent-runtime/native/storage';
 import { NativeProcessTree } from '@farmslot/agent-runtime/native/process-tree';
-import type { NativeWorkerSessionBinding, Run } from '@farmslot/protocol';
+import { isRecord, type NativeWorkerSessionBinding, type Run } from '@farmslot/protocol';
 
 const source = fileURLToPath(new URL('../../../', import.meta.url));
 type ProofWorker = NativeWorkerSessionBinding & NativeWorkerTarget;
@@ -99,6 +99,7 @@ if (process.argv[2] === 'serve') {
   }).trim();
   const sourceFiles = [
     'services/gateway/src/run-engine/gate-prerequisites.ts',
+    'services/gateway/src/run-engine/post-dispatch-steps.ts',
     'services/gateway/src/run-engine/recorded-evidence-sources.ts',
     'services/gateway/src/run-completion/output.ts',
     'services/gateway/src/run-completion/output-close.ts',
@@ -186,6 +187,15 @@ if (process.argv[2] === 'serve') {
     });
     cpSync(input.taskDir, workerDir, { recursive: true });
     cpSync(input.taskDir, retained, { recursive: true });
+    // The copied run belongs to the disposable project. Keep its frozen task
+    // identity consistent without changing the original contract or artifacts.
+    for (const copiedTask of [workerDir, retained]) {
+      const handoffPath = path.join(copiedTask, 'inputs/handoff.json');
+      const handoff: unknown = JSON.parse(readFileSync(handoffPath, 'utf8'));
+      assert.ok(isRecord(handoff));
+      assert.equal(handoff.attemptId, original.id);
+      json(handoffPath, { ...handoff, project });
+    }
     symlinkSync(path.join(source, 'scripts'), path.join(root, 'scripts'), 'dir');
     writeFileSync(path.join(root, 'CLAUDE.md'), '# Disposable retained QA regression\n');
     json(path.join(root, 'services/gateway/package.json'), { name: 'fixture', version: '0.0.0' });
@@ -285,6 +295,7 @@ if (process.argv[2] === 'serve') {
     const hold = path.join(out, 'hold-progress');
     const checkpoint = path.join(out, 'progress-checkpoint');
     const release = path.join(out, 'release-progress');
+    const finishTurn = path.join(out, 'finish-native-turn');
     const failTransfer = path.join(out, 'fail-transfer');
     const failPersistence = path.join(out, 'fail-close-persistence');
     const register = path.join(scratch, 'proof-register.mjs');
@@ -342,6 +353,15 @@ if (process.argv[2] === 'serve') {
       }
       if (url.endsWith('/run-engine/post-dispatch-steps.ts')) {
         let text = String(result.source);
+        if (process.env.FARMSLOT_COMPLETION_IDLE_NEGATIVE === '1') {
+          const target = 'if (!(error instanceof RunGateNotReadyError) || !error.workProgressingOnly) throw error;';
+          if (!text.includes(target)) throw new Error('Completion idle negative target changed');
+          const changed = text.replace(target, 'throw error;');
+          writeFileSync(${JSON.stringify(path.join(out, 'negative-idle-mutation.json'))}, JSON.stringify({url,
+            beforeHash:createHash('sha256').update(text).digest('hex'),
+            loadedHash:createHash('sha256').update(changed).digest('hex')}));
+          text = changed;
+        }
         if (${JSON.stringify(negative)} === 'claim-policy') {
           const call = ${/\(current,\s*null,\s*["']complete["']\)/u};
           if (!call.test(text)) throw new Error('QA completion policy control target changed');
@@ -360,6 +380,9 @@ if (process.argv[2] === 'serve') {
         const target = ${/const\s+progress\s*=\s*await\s+source\.progress\(run\);/u};
         if (!target.test(text)) throw new Error('Progress checkpoint target changed');
         result.source = text.replace(target, match => match + ${JSON.stringify(`
+          if (process.env.FARMSLOT_RUN_STATE_PROOF === '1')
+            reasons.push({ code: 'evidence-validation-unavailable', prerequisite: 'evidence',
+              message: 'Controlled evidence unavailable during final turn.', actionId: 'hold' });
           const proofFs = await import('node:fs');
           if (proofFs.existsSync(${JSON.stringify(hold)})) {
             proofFs.writeFileSync(${JSON.stringify(checkpoint)}, 'observed');
@@ -447,12 +470,76 @@ if (process.argv[2] === 'serve') {
     };
     if (process.env.FARMSLOT_RUN_STATE_PROOF === '1')
       env.FARMSLOT_RUN_STATE_NEGATIVE = 'completion';
+    if (process.env.FARMSLOT_COMPLETION_IDLE_PROOF === '1')
+      env.FARMSLOT_COMPLETION_IDLE_NEGATIVE = '1';
     await startGateway();
     if (process.env.FARMSLOT_QA_OUTPUT_PROOF_SIGNAL === 'SIGTERM')
       process.kill(process.pid, 'SIGTERM');
     if (process.env.FARMSLOT_QA_OUTPUT_PROOF_SIGNAL === 'SIGINT')
       process.kill(process.pid, 'SIGINT');
-    if (process.env.FARMSLOT_RUN_STATE_PROOF === '1') {
+    if (process.env.FARMSLOT_COMPLETION_IDLE_PROOF === '1') {
+      await rpc('run.refreshMirror', { runId: run.id });
+      const beforeTurn = await readRun();
+      const acceptance = await native.sendWorker(
+        'test-automation',
+        binding!,
+        randomUUID(),
+        `Run exactly one shell command: node -e 'const fs=require("node:fs");const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(finishTurn)})){clearInterval(timer);process.exit(0)}},50);setTimeout(()=>process.exit(2),60000).unref()'. Then reply READY. Do not read or change other files.`,
+      );
+      json(path.join(out, 'active-command.json'), acceptance);
+      const nativeState = async () =>
+        (await native.readWorker('test-automation', binding!.sessionId, binding!.leaseId)).session
+          .state;
+      await waitFor(async () => (await nativeState()) === 'running', 'native final turn is active');
+      const broken = await replay();
+      assert.match(broken.error ?? '', /Run work is still progressing/);
+      assert.equal(broken.status, 'failed');
+      assert.ok(existsSync(path.join(out, 'negative-idle-mutation.json')));
+      assert.equal(await nativeState(), 'running');
+      json(path.join(out, 'negative-idle.json'), broken);
+      await stop(gateway);
+      env.FARMSLOT_COMPLETION_IDLE_NEGATIVE = '';
+      await startGateway();
+      await rpc('run.replayStep', { runId: run.id, stepName: 'complete' });
+      await waitFor(
+        async () =>
+          (await readRun()).steps.some(
+            (step) =>
+              step.name === 'complete' &&
+              step.status === 'running' &&
+              step.detail?.includes('native turn'),
+          ),
+        'completion waits on native progress',
+      );
+      const waiting = await readRun();
+      assert.equal(waiting.status, 'completing');
+      assert.equal(waiting.error, undefined);
+      assert.equal(await nativeState(), 'running');
+      assert.equal(waiting.slotId, beforeTurn.slotId);
+      assert.equal(waiting.output?.manifestDigest, beforeTurn.output?.manifestDigest);
+      assert.ok(
+        waiting.decisions.some(
+          (decision) => !decision.resolvedAt && decision.payload?.kind === 'output-review',
+        ),
+      );
+      json(path.join(out, 'waiting-native-turn.json'), waiting);
+      writeFileSync(finishTurn, 'finish the owned native turn');
+      await waitFor(async () => (await nativeState()) === 'idle', 'owned native turn finishes');
+      const advanced = await settleReplay();
+      assert.equal(
+        advanced.error,
+        barrier,
+        'completion advances through both guards without another replay',
+      );
+      assert.equal(advanced.output?.manifestDigest, beforeTurn.output?.manifestDigest);
+      checks.push(
+        'negative control terminally fails during a real native turn; fixed completion waits with slot and output gate retained',
+      );
+      checks.push(
+        'native idle advances the same completion attempt through canonical gate and QA guards without replay or output acknowledgement',
+      );
+      json(path.join(out, 'advanced-after-idle.json'), advanced);
+    } else if (process.env.FARMSLOT_RUN_STATE_PROOF === '1') {
       await rpc('run.refreshMirror', { runId: run.id });
       const activeCommand = randomUUID();
       const acceptance = await native.sendWorker(
@@ -484,7 +571,7 @@ if (process.argv[2] === 'serve') {
       env.FARMSLOT_RUN_STATE_NEGATIVE = '';
       await startGateway();
       const refused = await replay();
-      assert.match(refused.error ?? '', /Run work is still progressing/);
+      assert.match(refused.error ?? '', /Controlled evidence unavailable during final turn/);
       assert.equal(
         (await native.readWorker('test-automation', binding!.sessionId, binding!.leaseId)).session
           .state,
