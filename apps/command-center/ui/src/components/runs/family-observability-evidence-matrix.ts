@@ -86,7 +86,13 @@ function emptyMatrix(): EvidenceMatrix {
 }
 
 function humanizeStem(stem: string): string {
-  return stem.replace(/[-_.]+/g, ' ').trim() || stem;
+  const name = stem.split('/').pop() ?? stem;
+  return (
+    name
+      .replace(/\.[^/.]+$/u, '')
+      .replace(/[-_]+/g, ' ')
+      .trim() || name
+  );
 }
 
 function cellKind(artifact: FamilyObservabilityArtifact): 'image' | 'video' {
@@ -116,8 +122,6 @@ export function buildEvidenceComparisonMatrix(
     const stem = artifactStem(artifact.path);
     const key = stem;
     const group = byScreen.get(key) ?? { displayStem: stem, perRun: new Map() };
-    // Prefer the longest stem as the human label (most descriptive screen name).
-    if (stem.length > group.displayStem.length) group.displayStem = stem;
     const captures = group.perRun.get(runId) ?? {};
     const slot = captureSlot(artifact);
     // First write wins per slot so a run's canonical 'after' isn't clobbered.

@@ -726,6 +726,8 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       !pkg ||
       !input.visualReviewContext ||
       !authority ||
+      authority.historical ||
+      input.gateDecision?.resolvedAt ||
       authority.recipeRunId !== packageClaims?.recipeRunId ||
       authority.closureIdentity !== recordedEvidenceClosureIdentity(pkg) ||
       !reviewableClaims.some((claim) => claim.id === claimId)

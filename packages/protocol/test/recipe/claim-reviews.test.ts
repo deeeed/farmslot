@@ -66,6 +66,33 @@ test('delegated receipts bind own identity, policy, parent restrictions and chec
   assert.equal(result[0]!.actor, 'lead-reviewer');
   assert.ok(delegated.reviewedFiles!.length);
   assert.deepEqual(recordedVisualJudgments(input, authority([delegated])), []);
+  const changedPolicy = {
+    ...policy,
+    delegatedReviewerPrincipalIds: [...policy.delegatedReviewerPrincipalIds, 'unrelated-reviewer'],
+  };
+  assert.deepEqual(
+    recordedVisualJudgments(input, { ...authorized, projectPolicy: changedPolicy }),
+    [],
+  );
+  assert.equal(
+    recordedVisualJudgments(input, {
+      ...authorized,
+      projectPolicy: changedPolicy,
+      historical: true,
+    }).length,
+    1,
+  );
+  assert.deepEqual(
+    recordedVisualJudgments(
+      {
+        ...input,
+        artifactDigests: { ...input.artifactDigests, 'video.mp4': 'sha256:' + 'b'.repeat(64) },
+      },
+      { ...authorized, projectPolicy: changedPolicy, historical: true },
+    ),
+    [],
+  );
+
   for (const patch of [
     { reviewerSubjectKind: 'person' as const },
     { reviewedFiles: [] },

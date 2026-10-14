@@ -21,11 +21,13 @@ export function visualReviewAuthority(
   input: RecordedEvidencePackageInput,
   capturedIds?: readonly string[],
   projectPolicy?: ProjectVisualClaimReviewPolicy,
+  historical = false,
 ): RecipeVisualReviewAuthority {
   return {
     runId: run.id,
     recipeRunId: input.claims!.recipeRunId,
     closureIdentity: recordedEvidenceClosureIdentity(input),
+    ...(historical ? { historical: true } : {}),
     ...(projectPolicy ? { projectPolicy } : {}),
     receipts: (run.visualJudgmentReceipts ?? []).filter(
       (receipt) => capturedIds === undefined || capturedIds.includes(receipt.id),

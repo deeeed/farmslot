@@ -432,6 +432,21 @@ export function EvidenceReviewWorkspace({
                     })}
                   </View>
                 )}
+                {[...row.before, ...row.after]
+                  .filter((media) => !media.eligible)
+                  .map((media) => (
+                    <Pressable
+                      key={media.identity}
+                      onPress={() => {
+                        evidenceModel.selectComparisonMedia(media.identity);
+                        open(media.artifactPath);
+                      }}
+                    >
+                      <Text style={styles.deltaActionText}>
+                        {media.name} · {media.limitation ?? 'Unavailable for comparison'}
+                      </Text>
+                    </Pressable>
+                  ))}
                 {row.review.map((media) => (
                   <Pressable
                     key={media.identity}

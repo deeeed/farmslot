@@ -133,6 +133,7 @@ export async function readRunRecordedEvidence(
                       ? (payload.visualJudgmentReceiptIds ?? [])
                       : [],
                 await readVisualReviewPolicy(run),
+                Boolean(frozen && decision?.resolvedAt),
               ),
               // This hint fences a future write. Only the writer qualifies QA
               // registration; missing registration must not hide readable history.

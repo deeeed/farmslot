@@ -55,6 +55,7 @@ import { gatewayFetch } from '../../lib/gateway-http-auth';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
 import { runRefreshEventMatches } from '../../lib/run-refresh';
 import { baseStyles, spacing } from '../../lib/theme';
+import { selectReadyWorkspaceDecision } from '../../lib/workspace-decisions';
 import {
   artifactWorkspaceNavCurrent,
   targetWorkspaceRouteContextParams,
@@ -145,6 +146,19 @@ export default function ArtifactViewerScreen() {
   const recipeCompletionRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { recipeRuns, gatewaySelectedRecipeRunId } = recipeRunSelection;
+  const frozenDecision = useMemo(() => {
+    const explicit = routeParamString(evidenceDecision).trim();
+    if (explicit) return run?.decisions.find((decision) => decision.id === explicit);
+    return routeParamString(recipeRun) === DECISION_EVIDENCE_RECIPE_RUN_PARAM && run
+      ? selectReadyWorkspaceDecision(run)
+      : undefined;
+  }, [evidenceDecision, recipeRun, run]);
+  const frozenHash =
+    frozenDecision?.payload?.kind === 'ready'
+      ? frozenDecision.payload.prPackage?.packageHash
+      : frozenDecision?.payload?.kind === 'output-review'
+        ? frozenDecision.payload.manifestDigest
+        : undefined;
   const acceptanceViewer = useAcceptanceEvidenceViewer({
     client,
     run,
@@ -228,6 +242,9 @@ export default function ArtifactViewerScreen() {
         const result = await client.request<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
           runId,
           includeRecordedEvidence: true,
+          ...(frozenDecision
+            ? { decisionId: frozenDecision.id, evidenceSnapshotHash: frozenHash }
+            : {}),
           ...(requestedRecipeRunId && requestedRecipeRunId !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
             ? { recipeRunId: requestedRecipeRunId }
             : {}),
@@ -251,7 +268,7 @@ export default function ArtifactViewerScreen() {
         setError(`Failed to refresh recipe runs after ${reason}: ${(err as Error).message}`);
       }
     },
-    [client, requestedRecipeRunId, runId],
+    [client, requestedRecipeRunId, runId, frozenDecision?.id, frozenHash],
   );
 
   useEffect(() => {
@@ -353,9 +370,17 @@ export default function ArtifactViewerScreen() {
       : selectedRecipeRunId;
   const manifest = useMemo(() => {
     if (awaitingRequestedRecipeRun) return [];
+    if (frozenDecision?.payload?.kind === 'ready')
+      return (
+        frozenDecision.payload.prPackage?.evidenceManifest ??
+        frozenDecision.payload.artifactManifest ??
+        []
+      );
+    if (frozenDecision?.payload?.kind === 'output-review')
+      return run?.output?.artifactManifest ?? [];
     if (selectedRecipeRun) return artifactsForRecipeRun(selectedRecipeRun);
     return run ? extractRunArtifactManifest(run) : [];
-  }, [awaitingRequestedRecipeRun, run, selectedRecipeRun]);
+  }, [awaitingRequestedRecipeRun, run, selectedRecipeRun, frozenDecision]);
   const artifactUrlFor = useCallback(
     (entry: ArtifactManifestEntry) =>
       artifactUrlForEntry(gatewayUrl, runId ?? '', entry, artifactMirrorEpoch),
@@ -365,6 +390,7 @@ export default function ArtifactViewerScreen() {
     () =>
       createEvidenceReviewModel({
         context: 'artifact',
+        gateDecision: frozenDecision ?? undefined,
         comparisonSnapshot: recordedEvidence?.comparisonSnapshot,
         artifacts: manifest,
         package: recordedEvidence?.input,
@@ -373,7 +399,7 @@ export default function ArtifactViewerScreen() {
         artifactPrefix: recordedEvidence?.artifactPrefix,
         packagePath: recordedEvidence?.packagePath,
       }),
-    [recordedEvidence, manifest],
+    [recordedEvidence, manifest, frozenDecision],
   );
   const visualPairCount = useMemo(
     () => countVisualArtifactPairs(manifest, evidenceModel),

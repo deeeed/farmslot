@@ -884,6 +884,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
           runId: presentation.runId,
           ...decisionRouteContext,
           recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+          evidenceDecision: decision?.id,
           artifact: artifact.path,
           filter:
             artifactFilterParamForArtifactPath(artifact.path) ??
@@ -891,7 +892,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
         },
       });
     },
-    [decisionRouteContext, openDiffArtifact, presentation?.runId, router],
+    [decisionRouteContext, openDiffArtifact, presentation?.runId, router, decision?.id],
   );
 
   const rememberSection = useCallback(

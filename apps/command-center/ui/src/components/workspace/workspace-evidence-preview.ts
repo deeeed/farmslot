@@ -312,6 +312,12 @@ function renderComparisonPreview(input: WorkspaceEvidenceComparison): TemplateRe
               ? 'Choose a capture to compare'
               : `No qualified ${role} capture`}
           </div>`}
+      ${candidates.some((media) => !media.eligible)
+        ? html`<details>
+            <summary>Recorded ${role} media unavailable for comparison</summary>
+            ${candidates.filter((media) => !media.eligible).map(card)}
+          </details>`
+        : nothing}
     </div>`;
   };
   return html`<section

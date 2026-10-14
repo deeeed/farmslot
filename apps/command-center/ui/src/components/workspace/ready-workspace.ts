@@ -1,6 +1,6 @@
 // <ready-workspace> — Rich human-gate workspace for fix-bug/dev flows (D8)
 // Shows worker report, diff, recipe, artifacts, and review verdict.
-import { nothing } from 'lit';
+import { html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
 import {
@@ -629,7 +629,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       artifacts,
       selectionToolbar: this._renderEvidenceSelectionToolbar(payload),
       artifactGroups: this._evidenceModel
-        ? renderWorkspaceEvidencePreview({
+        ? html`${renderWorkspaceEvidencePreview({
             title: 'Compare by AC',
             items: [],
             comparison: {
@@ -655,7 +655,12 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
                 this._openComparisonSelection(true);
               },
             },
-          })
+          })}${payload.prPackage && !this.decision?.resolvedAt
+            ? html`<details class="rdy-publish-file-selection">
+                <summary>Choose files to include in PR</summary>
+                ${this._renderArtifactGroups(artifacts, payload, { publishSelectable: true })}
+              </details>`
+            : nothing}`
         : this._renderArtifactGroups(artifacts, payload, {
             publishSelectable: !!payload.prPackage,
           }),

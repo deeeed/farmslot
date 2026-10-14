@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
+import { createEvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import type { ArtifactRef } from '@farmslot/protocol';
+import {
+  isRecord,
+  recipeTraceEntries,
+  type RecordedEvidencePackageInput,
+} from '@farmslot/protocol';
 
 import {
   dedupeWorkspaceEvidenceArtifacts,
@@ -91,4 +98,58 @@ test('renderWorkspaceEvidencePreview discloses sliced preview overflow', () => {
   const text = litText(rendered);
   assert.match(text, /2 of 3/);
   assert.match(text, /\+1 more visual artifact/);
+});
+
+test('an unqualified capture keeps its original and limitation browsable', () => {
+  const fixture: { input: RecordedEvidencePackageInput } = JSON.parse(
+    readFileSync(
+      new URL(
+        '../../../../../../packages/recipe-runner/test/fixtures/visual-review-package.json',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  );
+  const pkg = fixture.input;
+  assert.ok(pkg.claims && isRecord(pkg.manifest) && Array.isArray(pkg.manifest.artifacts));
+  const claim = pkg.claims.criteria.find((row) => row.id === 'check-1')!;
+  const moment = claim.moments[0];
+  assert.ok(moment);
+  const index = moment.traceIndex;
+  const trace = recipeTraceEntries(pkg.trace);
+  assert.ok(trace);
+  const node = trace[index];
+  assert.ok(isRecord(node) && typeof node.nodeId === 'string');
+  const still = pkg.manifest.artifacts.find(
+    (entry) => isRecord(entry) && entry.type === 'screenshot',
+  );
+  assert.ok(isRecord(still));
+  still.capture = {
+    ac: claim.id,
+    role: 'after',
+    recipeRunId: pkg.claims.recipeRunId,
+    traceIndex: index,
+    nodeId: node.nodeId,
+    sourceCommit: 'a'.repeat(40),
+    sourceDirty: false,
+  };
+  const model = createEvidenceReviewModel({ package: pkg });
+  const row = model.comparisons.find((row) => row.claim.id === claim.id)!;
+  assert.equal(row.after.length, 1);
+  assert.equal(row.selectedAfter, undefined);
+  const text = litText(
+    renderWorkspaceEvidencePreview({
+      title: 'Evidence',
+      items: [],
+      comparison: {
+        model,
+        artifactUrl: (path) => path,
+        openMedia() {},
+        openMoment() {},
+        changed() {},
+      },
+    }),
+  );
+  assert.ok(text.includes(row.after[0]!.name));
+  assert.ok(text.includes(row.after[0]!.limitation!));
 });

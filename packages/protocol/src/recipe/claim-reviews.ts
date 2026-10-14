@@ -112,6 +112,8 @@ export interface RecipeVisualReviewAuthority {
   closureIdentity: string;
   receipts: readonly RecipeVisualJudgmentReceipt[];
   projectPolicy?: ProjectVisualClaimReviewPolicy;
+  /** Read-only frozen projection retains the policy qualification recorded by its receipts. */
+  historical?: boolean;
 }
 
 export interface QualifiedRecipeVisualJudgment extends RecipeVisualJudgment {
@@ -157,15 +159,18 @@ export function recordedVisualJudgments(
           digestRecipeDocument(reviewedVisualFiles(input, receipt.claimId))) ||
       (delegated &&
         (!receipt.reviewedFiles?.length ||
-          !delegatedVisualClaimAllowed(
-            input,
-            receipt.claimId,
-            receipt.approver.principalId,
-            authority.projectPolicy,
-          ) ||
-          receipt.delegation?.principalId !== authority.projectPolicy?.delegatorPrincipalId ||
+          !receipt.delegation?.principalId.trim() ||
           !receipt.delegation?.displayName.trim() ||
-          receipt.delegation.policyDigest !== digestRecipeDocument(authority.projectPolicy)))
+          !/^sha256:[a-f0-9]{64}$/u.test(receipt.delegation.policyDigest) ||
+          (!authority.historical &&
+            (!delegatedVisualClaimAllowed(
+              input,
+              receipt.claimId,
+              receipt.approver.principalId,
+              authority.projectPolicy,
+            ) ||
+              receipt.delegation.principalId !== authority.projectPolicy?.delegatorPrincipalId ||
+              receipt.delegation.policyDigest !== digestRecipeDocument(authority.projectPolicy)))))
     )
       return [];
     return [

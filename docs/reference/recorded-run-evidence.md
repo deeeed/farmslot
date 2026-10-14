@@ -976,6 +976,8 @@ and MUST NOT invent a seek range. Existing padding and segment rules apply.
 
 ### Frozen selection and publication
 
+A resolved captured view MUST retain the stored receipt's recorded policy qualification. It is read-only. Active gate qualification MUST use the current project policy; changing policy cannot grant a historical view publication authority.
+
 The selected head execution remains the claim/verdict authority. Baseline and
 review captures from another execution MUST be explicit comparison dependencies
 of that selected evidence, using the existing manifest and closure reader. Freeze
