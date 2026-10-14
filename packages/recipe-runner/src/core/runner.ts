@@ -134,6 +134,7 @@ interface ResolvedRecipeRun {
   executionPlan: RecipeExecutionPlan;
   runLogPaths: ReadonlySet<string>;
   evidencePlan: RecipeEvidencePlan;
+  uiNodeIds: ReadonlySet<string>;
   recordingRequired: boolean;
   videoOptions: RecipeVideoRecordingOptions & { mode: 'off' | 'full-run' };
 }
@@ -330,7 +331,12 @@ class DefaultRecipeRunner implements RecipeRunner {
       ),
       request.claims,
     );
-    const needsUi = [...evidencePlan.nodes.values()].some((node) => node.action.startsWith('ui.'));
+    const uiNodeIds = new Set(
+      [...evidencePlan.nodes]
+        .filter(([, node]) => node.action.startsWith('ui.'))
+        .map(([nodeId]) => nodeId),
+    );
+    const needsUi = uiNodeIds.size > 0;
     const videoOptions = normalizeVideoRecordingOptions(
       request.recordVideo,
       needsUi,
@@ -366,6 +372,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       executionPlan,
       runLogPaths,
       evidencePlan,
+      uiNodeIds,
       recordingRequired: needsUi,
       videoOptions,
     };
@@ -385,6 +392,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       executionPlan,
       runLogPaths,
       evidencePlan,
+      uiNodeIds,
       recordingRequired,
       videoOptions,
     } = await this.#resolveRequest(request);
@@ -417,6 +425,15 @@ class DefaultRecipeRunner implements RecipeRunner {
     const segments: RecordingSegmentRef[] = [];
     const timelines = new Map<string, RecipeRecordingTimelineDocument>();
     const videoRecorder = videoOptions.mode !== 'off' ? this.#videoRecorder() : undefined;
+    const startRunRecording = (recorder: VideoRecorder) =>
+      this.#startRunVideoRecording({
+        recorder,
+        videoOptions,
+        recipe,
+        projectRoot,
+        artifactsDir,
+        env,
+      });
     let runRecording: RunVideoRecording | undefined;
     let captureInterruption: RecipeRunCaptureInterruption | undefined;
     let completionHudFailure: TraceEntry | undefined;
@@ -424,14 +441,16 @@ class DefaultRecipeRunner implements RecipeRunner {
     let canExecute = true;
     if (videoRecorder) {
       try {
-        runRecording = await this.#startRunVideoRecording({
-          recorder: videoRecorder,
-          videoOptions,
-          recipe,
-          projectRoot,
-          artifactsDir,
-          env,
-        });
+        const doctor = await videoRecorder.doctor?.();
+        if (doctor && !doctor.ok) {
+          throw new RecipeExecutionError(
+            'environment',
+            `${videoRecorder.name} doctor ${doctor.code}: ${doctor.message}${doctor.suggestedFix ? ` Suggested fix: ${doctor.suggestedFix}` : ''}`,
+          );
+        }
+        // Session setup can launch or replace a browser. Bind only after setup,
+        // before the first UI action; explicit non-UI recording keeps its run-start boundary.
+        if (!recordingRequired) runRecording = await startRunRecording(videoRecorder);
       } catch (error) {
         const message = errorMessage(error);
         const causeClass = recipeFailureCause(error, 'harness');
@@ -466,6 +485,19 @@ class DefaultRecipeRunner implements RecipeRunner {
           claimProjections: evidencePlan.nodes,
           logger: this.#logger,
           defaultObserverRefs: this.#defaultObserverRefs,
+          prepareNode: async (nodeId) => {
+            if (videoRecorder && !runRecording && uiNodeIds.has(nodeId)) {
+              try {
+                runRecording = await startRunRecording(videoRecorder);
+              } catch (error) {
+                throw new RecipeExecutionError(
+                  'environment',
+                  `record.video start failed: ${errorMessage(error)}`,
+                  { cause: error },
+                );
+              }
+            }
+          },
           createContext: (nodeId, activeRecipe, activeOutputs, getOutput) =>
             this.#createExecutionContext({
               nodeId,
@@ -966,15 +998,6 @@ class DefaultRecipeRunner implements RecipeRunner {
     artifactsDir: string;
     env: Record<string, string | undefined>;
   }): Promise<RunVideoRecording> {
-    const doctor = await recorder.doctor?.();
-    if (doctor && !doctor.ok) {
-      throw new RecipeExecutionError(
-        'environment',
-        `${recorder.name} doctor ${doctor.code}: ${doctor.message}${
-          doctor.suggestedFix ? ` Suggested fix: ${doctor.suggestedFix}` : ''
-        }`,
-      );
-    }
     const node = {
       action: 'record.video',
       intent: 'Record the recipe run when motion proof is useful',

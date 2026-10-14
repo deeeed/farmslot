@@ -123,8 +123,12 @@ measured timelines. Restart gaps or held-frame padding are not captured proof;
 an affected visual moment is outside recording. A continuous segment boundary
 may yield ordered moment references. Export reads only those source segments.
 
-**Timing rule:** Capture starts before the first UI proof node and stops after the
-final HUD outcome. Play `[startRangeMs[0] - 1000, endRangeMs[1] + 1000]`, using one
+**Timing rule:** Capture starts after non-UI session setup, before the first UI
+proof node, including a node inside a called recipe, and stops after the final
+HUD outcome. Recorder readiness is checked before setup; target resolution and
+admission bind the process that setup leaves running. Explicit recording for a
+recipe without UI nodes starts at run entry. Play
+`[startRangeMs[0] - 1000, endRangeMs[1] + 1000]`, using one
 shared `EVIDENCE_PADDING_MS = 1000` constant and limiting padding to available
 media. Do not trim an out-of-span proof into valid evidence: a proof node outside
 the captured span is `outside recording`. If its range was not measured, show
