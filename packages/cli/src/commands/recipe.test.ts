@@ -10,6 +10,8 @@ import { Command } from 'commander';
 
 import { shellQuote } from '@farmslot/recipe-cli/harness';
 
+import { fixtureHarness } from '../../test/helpers/project-doctor.js';
+
 import { registerDoctorCommand } from './doctor.js';
 import { projectRecipeHostOptions } from './recipe-project.js';
 
@@ -189,7 +191,7 @@ function callFixture(t: TestContext, cleanup = true) {
           runtimeStatus: async () => ({decision:'ready', reasons:[]}),
           resolveSlotPorts() {}, logSources: () => [], appLogSource: () => null,
           devServer: {}, hints: {launch:'unused',relaunch:'unused',runtimeProbeRecovery:()=>''},
-          harness: {}, runtimeContext: {forbiddenFields:[]}, launch: async () => 0,
+          harness: ${fixtureHarness(pack)}, runtimeContext: {forbiddenFields:[]}, launch: async () => 0,
           actions: {manifestPath: () => new URL('./manifest.json', import.meta.url).pathname, semantic: [], cdpTarget: {transport:'none'}},
         },
         cancel: async () => {
@@ -585,7 +587,10 @@ for (const operation of ['run', 'call'] as const) {
       fs
         .readFileSync(provider, 'utf8')
         .replace('headless: true', 'headless: false')
-        .replace('harness: {}', `harness: ${JSON.stringify(harness)}`),
+        .replace(
+          `harness: ${fixtureHarness(path.dirname(provider))}`,
+          `harness: {...${fixtureHarness(path.dirname(provider))}, install: ${JSON.stringify(harness.install)}}`,
+        ),
     );
     const result = callPublic(
       root,

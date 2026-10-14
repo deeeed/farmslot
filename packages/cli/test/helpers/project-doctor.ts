@@ -28,6 +28,17 @@ export const manifest = JSON.parse(
   ),
 );
 
+/** Test-only overlay contract; real lifecycle behavior is supplied by each test. */
+export function fixtureHarness(root: string): string {
+  const lifecycle = path.join(root, 'fixture-harness.mjs');
+  fs.writeFileSync(lifecycle, 'throw new Error("Unexpected fixture harness lifecycle");');
+  const leaf = JSON.stringify({ entry: lifecycle, fallback: lifecycle, node: true });
+  return `{
+    verify: target => ({command: process.execPath, prefixArgs: ['-e', 'require("node:fs").accessSync(process.argv[1])', target]}),
+    install: ${leaf}, cleanup: ${leaf}
+  }`;
+}
+
 export function fixture(t: TestContext, missing = false) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'project-doctor-')));
   t.after(() => {
@@ -86,7 +97,7 @@ export function fixture(t: TestContext, missing = false) {
         runtimeStatus: async () => ({decision:'ready', reasons:[]}),
         resolveSlotPorts() {}, logSources: () => [], appLogSource: () => null,
         launch: async () => { throw new Error('doctor launched the app'); },
-        devServer: {}, hints: {}, harness: {}, runtimeContext: {},
+        devServer: {}, hints: {}, harness: ${fixtureHarness(root)}, runtimeContext: {},
         actions: {
           manifestPath: () => path.join(root, 'manifests/headless.action-manifest.json'),
           semantic: [], cdpTarget: {transport:'none'},

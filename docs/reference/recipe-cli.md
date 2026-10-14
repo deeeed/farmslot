@@ -441,10 +441,6 @@ Options:
 
 ## farmslot doctor
 
-For local live validation, use `--record-video=off` with `--recording-reason`.
-Captures tied to the smoke and authored cleanup remain required on headed runtimes.
-The HUD stays on and recommended; missing HUD observations produce a warning.
-
 ```text
 Usage: farmslot doctor [options] [checkout]
 
