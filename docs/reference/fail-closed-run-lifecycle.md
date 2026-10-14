@@ -218,6 +218,102 @@ RPC/state/ownership receipts and visible HUD evidence where supported. Make a
 negative control fail before restoring each claimed behavior. No fixture-only
 result counts as live acceptance.
 
+## Human publication adoption
+
+**Status:** Proposed under ADR-065 Amendment 2. Acceptance is required before implementation.
+
+`run.adoptPublishedPr` records a human-reviewed revision already published outside
+the run's normal gate. It MUST NOT create, push, promote, rewrite or comment on a
+PR. It MUST NOT force-complete the run, manufacture evidence/review results or
+reset review budgets. This operation serves `dev` and `fix-bug` publication runs;
+QA, review-only, PR-bound and artifact-only runs MUST be refused.
+
+### Request and verification
+
+The operator CLI is `farmslot run adopt-published-pr <runId> --pr <url>
+--head <full-sha> --reason <text> --attest-reviewed-publication`. Its typed request
+contains `runId`, `prRef`, `headSha`, a written `reason`, and
+`attestReviewedPublication: true`. No client actor identity confers authority.
+
+Reuse the credential-backed person/global-admin authorizer for existing human
+attestations. Missing credentials, synthetic loopback identities, services, nodes,
+background callers, blank reasons and absent explicit attestation MUST refuse.
+The person attests that this exact head was reviewed and its publication was
+approved, including any external review used after the pipeline's round cap.
+
+The gateway MUST verify the PR against the run's declared repository and branch,
+using retained project/source context without requiring its old slot. The full
+supplied commit MUST equal the observed PR head or be verifiably in that PR's
+history. In the historical case, record the newer observed head separately;
+ancestry does not transfer approval to it. Unavailable or inconsistent GitHub
+facts, foreign repositories/branches, unrelated commits and conflicting existing
+PR/publication identity MUST refuse before mutation. Another in-flight publication
+MUST be reconciled before adoption.
+
+An older frozen package or exhausted internal review budget MUST remain visible.
+They MUST NOT be rewritten to match the attested head, counted as external
+approvals, or treated as a package approved for that head. The receipt records
+their available identities as prior context. Normal gate approval remains subject
+to its existing prerequisites.
+
+### Receipt, persistence and lifecycle
+
+`HumanPublicationAdoptionReceipt` MUST retain its schema version, run/generation
+identity, trusted approver and credential identifiers, reason, adoption time,
+canonical repository/PR URL/number, exact reviewed/published head, observed PR
+head/branch and draft state, and available prior gate/package identity.
+Derive `published_draft` or `published_ready` from the verified PR state. These
+describe publication, not proof that the current PR head or worker is complete.
+
+The existing publication owner MUST durably record the receipt, publication
+status and PR linkage together, through the run store and serialized lifecycle
+route. Normal publication and adoption MUST share that recorder. Recheck the
+run's generation, archival location and publication identity after asynchronous
+verification. Persistence failure MUST leave no published projection or started
+continuation. Retries of the same run/repository/PR/head MUST return the first
+receipt without recounting publication or changing its approver/time. A different
+tuple MUST refuse rather than replace provenance. Surface projection failures
+through existing repair/effect reporting.
+
+Archived runs MUST remain archived, with execution status, completion time,
+generation, sources, steps, packages and reviews preserved. Adoption MUST NOT
+claim a slot, restart an engine/worker, or overwrite a successor's backlog/graph
+association. Publish/link projections MUST respect their existing ownership guards.
+
+For active runs, acknowledge the publication wait through existing lifecycle
+entry points. Continuation MUST retain progress and resource guards; publication
+does not establish idle, resolve other waits or release ownership. CI-watch and
+review-fix target selection MUST use the canonical adopted repository/PR.
+Archived history may supply this target to normal follow-up flows, without
+replaying or reviving its retired execution.
+
+Adoption grants no evidence/body/title refresh authority. Such operations MUST
+have their own package/head authorization and freshness checks; an older frozen
+package MUST NOT overwrite a manually published or newer PR. Later commits need
+their own reviews and evidence. Existing PR-link repair remains repair of an
+already trusted publication, not an unauthenticated adoption fallback.
+
+### Public contract and acceptance
+
+`@farmslot/protocol` owns the request/result/receipt and method registry;
+`@farmslot/cli` owns the operator command. `RunAdoptPublishedPrResult` exposes the
+retained receipt, canonical PR target, updated active/archived run and existing
+effect/continuation refusals. The gateway owns the only verifier and writer.
+These additive experimental contracts ship with coordinated minor versions.
+Harnesses and existing clients consume the canonical run identity; no new
+harness hook, verdict writer or parallel package format is introduced.
+
+Regression coverage MUST exercise authenticated active/archived adoption,
+historical head with an older package and exhausted budget, unauthorized callers,
+foreign/mismatched PR identity, same-tuple retry, concurrency/persistence refusal,
+retained successor ownership, protected QA/evidence, and canonical CI/fix target
+selection. Use isolated stores and structured GitHub/runtime fixtures; no real
+tmux server or worker. Live acceptance MUST apply the public action to the
+retained reported run and real PR at the explicitly attested head, read back the
+durable publication/link and preserved execution/package state, and show that
+follow-up target resolution uses that PR. A newer PR head MUST remain distinct
+from the historical attestation. Never recreate the run for this proof.
+
 ## Pipeline settlement
 
 Pipeline entry and restart recovery MUST use the same step-to-status projection.
