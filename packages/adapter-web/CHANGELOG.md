@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.8.2 - 2026-10-14
+
+- Use the coordinated recipe release for content-based dependency readiness and engine-owned evidence manifests.
+
 ## 0.8.1 - 2026-10-14
 
 - Use the coordinated recipe-engine release for immutable package closeout and engine-owned publication manifests.

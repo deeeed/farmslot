@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.20.1 - 2026-10-14
+
+- Use the coordinated recipe release for content-based dependency readiness and engine-owned evidence manifests.
+
 ## 0.20.0 - 2026-10-14
 
 - Show the supplied publication base and leased rebase instructions for branch-maintenance tasks.
