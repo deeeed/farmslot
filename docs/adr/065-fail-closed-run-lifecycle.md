@@ -171,7 +171,13 @@ its verified historical head; approval does not extend to its newer commits.
 The operation supports active and archived publication runs. Archive adoption
 keeps the record archived and its execution status unchanged. It must not revive
 the worker, take its old slot or replace a successor's backlog/graph ownership.
-Active continuations use existing lifecycle guards and the adopted PR target.
+For an active run, adoption is an explicit authenticated exception to normal
+publication readiness for an already fulfilled publication wait. The serialized
+decision resolver records unmet prerequisites and supersedes only that publish
+decision. Other waits and worker/resource guards remain intact. Finalization
+recognizes the verified external publication without publishing the old package;
+CI and review-fix use the adopted PR target. Ordinary publication still requires
+its normal readiness and package approval.
 
 ### Rationale and consequences
 

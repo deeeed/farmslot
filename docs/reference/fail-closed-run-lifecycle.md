@@ -262,6 +262,9 @@ to its existing prerequisites.
 identity, trusted approver and credential identifiers, reason, adoption time,
 canonical repository/PR URL/number, exact reviewed/published head, observed PR
 head/branch and draft state, and available prior gate/package identity.
+For active gate adoption it MUST also retain the pending decision identity and
+the typed unmet-prerequisite findings from its readiness evaluation. Unavailable
+evaluation MUST remain an explicit unknown finding, not an empty passing list.
 Derive `published_draft` or `published_ready` from the verified PR state. These
 describe publication, not proof that the current PR head or worker is complete.
 
@@ -281,10 +284,25 @@ generation, sources, steps, packages and reviews preserved. Adoption MUST NOT
 claim a slot, restart an engine/worker, or overwrite a successor's backlog/graph
 association. Publish/link projections MUST respect their existing ownership guards.
 
-For active runs, acknowledge the publication wait through existing lifecycle
-entry points. Continuation MUST retain progress and resource guards; publication
-does not establish idle, resolve other waits or release ownership. CI-watch and
-review-fix target selection MUST use the canonical adopted repository/PR.
+For active runs, adoption is an explicit authenticated exception to ordinary
+publication readiness because the verified PR already exists. Inside the existing
+serialized decision-resolution route, it MUST supersede only the pending
+`engine_human_gate` publication decision with
+`superseded-by-publication-adoption`, retaining that decision and its unmet
+prerequisite findings in the receipt. It MUST NOT call the ordinary
+`approve-publish` action, relabel its old package approved, leave that publication
+decision available for a second approval, or resolve unrelated waits.
+
+Existing post-publication entry points MUST recognize the receipt as fulfilment
+of the publication stage. They MUST skip creation, promotion, body/title/media
+mutation and old-package approval checks that would repeat that stage. All
+unrelated source, progress, resource and continuation guards remain enforced;
+publication does not establish worker idle/completion or release ownership.
+When these guards prevent continuation, expose that refusal with the PR linkage
+retained. Ordinary approval and finalization without an adoption receipt keep
+their existing prerequisite evaluator and package-approval requirements.
+
+CI-watch and review-fix target selection MUST use the canonical adopted repository/PR.
 Archived history may supply this target to normal follow-up flows, without
 replaying or reviving its retired execution.
 
@@ -314,6 +332,11 @@ retained reported run and real PR at the explicitly attested head, read back the
 durable publication/link and preserved execution/package state, and show that
 follow-up target resolution uses that PR. A newer PR head MUST remain distinct
 from the historical attestation. Never recreate the run for this proof.
+
+The active exhausted-budget case MUST verify that unmet findings are retained,
+only its publication wait is superseded, ordinary publication is never invoked,
+other waits remain pending and unconfirmed work/ownership stays guarded. Its
+post-publication target MUST be the adopted PR without reuse of the older package.
 
 ## Pipeline settlement
 
