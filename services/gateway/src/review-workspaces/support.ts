@@ -234,8 +234,9 @@ async function gatewayBundle(
   fingerprint: string,
   deps: ReviewWorkspaceSupportDependencies,
 ): Promise<Manifest> {
-  return shared(`source:${deps.cacheRoot()}:${fingerprint}`, async () => {
-    const indexFile = path.join(deps.cacheRoot(), 'sources', `${fingerprint}.json`);
+  // New admissions use the public-bin producer; existing admission digests stay valid.
+  const indexFile = path.join(deps.cacheRoot(), 'sources-v2', `${fingerprint}.json`);
+  return shared(`source:${indexFile}`, async () => {
     const existing = await optionalJson<{ digest: string }>(indexFile);
     if (existing) {
       if (!/^[a-f0-9]{64}$/.test(existing.digest))
