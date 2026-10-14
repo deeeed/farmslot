@@ -4,6 +4,8 @@ All notable changes to `@farmslot/credential-store` are tracked here.
 
 ## Unreleased
 
+- Migrate stored `env-migrated` credential metadata under the existing lock before validation so upgrades preserve gateway startup and existing credentials.
+
 - Remove environment-secret identities and retire revoked principals through guarded transactions that reserve ids and preserve surviving admins.
 
 - fix(auth): a credential store that is not valid JSON fails with `Unable to load credential store <path>: not valid JSON` instead of the parse message, which quoted part of the file.

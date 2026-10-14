@@ -1624,7 +1624,7 @@ owns the validation, transaction and lifecycle requirements.
 ## Amendment 2: migrate stored credential origins, 2026-10-14
 
 **Status:** Accepted. The owner approved this bounded upgrade repair on
-2026-10-14. Implementation PR and rollout are tracked separately.
+2026-10-14. Implementation is tracked in [PR #1070](https://github.com/deeeed/farmslot/pull/1070); rollout is pending.
 
 ### Decision
 
