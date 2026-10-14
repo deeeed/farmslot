@@ -129,7 +129,15 @@ async function main() {
   const runtimeRoots = input.runtimeRoots.map((root) =>
     root.replace(/^~(?=\/|$)/, process.env.HOME),
   );
-  const guard = await sandbox(policy, runtimeRoots);
+  const {
+    workspaceTrustByRunner,
+    reviewConfigurationRootsByRunner,
+  } = require('./workspace-trust.cjs');
+  const guard = await sandbox(
+    policy,
+    runtimeRoots,
+    reviewConfigurationRootsByRunner[input.runner]?.(cwd) ?? [],
+  );
   const promptFile = path.join(task, '.terminal-prompt.txt');
   fs.writeFileSync(promptFile, input.prompt, { mode: 0o600 });
   const environment = {
@@ -148,10 +156,12 @@ async function main() {
   ])
     delete environment[key];
   environment.FARMSLOT_SIGNAL_ATTEMPT_ID = require('node:crypto').randomUUID();
-  if (input.setup)
-    check(
-      cp.spawnSync('/bin/sh', ['-c', input.setup], { cwd, env: environment, encoding: 'utf8' }),
-    );
+  // This helper accepts only the gateway's farm review launch, after identity and source-policy checks.
+  workspaceTrustByRunner[input.runner]?.(cwd, environment, undefined, {
+    executable: input.executable,
+    processSandbox: guard.sandbox,
+    inspectionCwd: guard.temporaryDirectory,
+  });
   const commandFile = path.join(task, '.terminal-start.cjs');
   const record = {
     runId: input.runId,

@@ -11,6 +11,7 @@ const implementation = createRequire(import.meta.url)('../../scripts/review-file
   sandbox(
     policy: NativeWorkerFilesystemPolicy,
     runtimeRoots: string[],
+    configurationRoots?: string[],
   ): Promise<{ sandbox: NativeProcessSandbox; temporaryDirectory: string }>;
 };
 export const hostReviewSandboxAvailable = implementation.available;

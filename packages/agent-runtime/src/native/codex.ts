@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 
 import type { NativeSessionResponse } from '@farmslot/protocol';
@@ -7,6 +8,10 @@ import type { NativeSessionResponse } from '@farmslot/protocol';
 import { JsonLineProcess } from './process.js';
 import type { NativeAdapter, NativeEventInput } from './types.js';
 import { validateNativeWorkerFilesystemPolicy } from './worker-launch.js';
+
+const { codexWorkspaceTrustConfig } = createRequire(import.meta.url)(
+  '../../scripts/workspace-trust.cjs',
+) as { codexWorkspaceTrustConfig(cwd: string, trust: 'trusted' | 'untrusted'): string };
 
 const READ_ONLY_PROFILE = 'farmslot-read-only-source';
 
@@ -94,7 +99,13 @@ export const codexNativeAdapter: NativeAdapter = {
     const pendingTools = new Map<string, NonNullable<NativeEventInput['tool']>>();
     const process = new JsonLineProcess(
       options.executable,
-      ['app-server'],
+      [
+        // A read-only PR cannot start repository MCP processes outside tool permissions.
+        ...(options.filesystemPolicy
+          ? ['--config', codexWorkspaceTrustConfig(options.cwd, 'untrusted')]
+          : []),
+        'app-server',
+      ],
       options,
       (message) => {
         const params = wireObject(message.params ?? {});

@@ -158,7 +158,15 @@ test('remote observability install falls back when an immutable bundle is incomp
     mkdirSync(path.join(supportRoot, 'scripts/lib'), { recursive: true });
     mkdirSync(path.join(supportRoot, 'scripts/runners'), { recursive: true });
     writeFileSync(path.join(supportRoot, 'scripts/lib/provider-accounts.mjs'), 'dependency\n');
-    writeFileSync(path.join(supportRoot, 'scripts/lib/toml-scan.mjs'), 'dependency\n');
+    mkdirSync(path.join(supportRoot, 'packages/agent-runtime/scripts'), { recursive: true });
+    writeFileSync(
+      path.join(supportRoot, 'packages/agent-runtime/scripts/toml-scan.cjs'),
+      'dependency\n',
+    );
+    writeFileSync(
+      path.join(supportRoot, 'packages/agent-runtime/scripts/workspace-trust.cjs'),
+      'dependency\n',
+    );
     writeFileSync(
       path.join(supportRoot, 'scripts/runners/pi-farmslot-observability.ts'),
       'extension\n',

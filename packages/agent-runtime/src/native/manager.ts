@@ -498,12 +498,25 @@ export class NativeSessionManager {
         ? await reviewProcessSandbox(
             filesystemPolicy,
             transport.reviewRuntimeRoots?.(environment) ?? [],
+            transport.reviewConfigurationRoots?.(params.cwd) ?? [],
           )
         : undefined;
     if (relocation) {
       const unavailable = transport.adapter.workspaceResumeUnavailableReason?.(resolved.version);
       if (unavailable) throw new Error(unavailable);
     }
+    // A private worker source policy identifies a farm-created review workspace.
+    // Ordinary native conversations never write trust into the operator's configuration.
+    const runnerEnvironment = nativeEnvironment(resolved.executable, {
+      ...environment,
+      ...(hostProtection ? { TMPDIR: hostProtection.temporaryDirectory } : {}),
+    });
+    if (filesystemPolicy)
+      transport.trustWorkspace?.(params.cwd, runnerEnvironment, ownerPrincipalId, {
+        executable: resolved.executable,
+        processSandbox: hostProtection?.sandbox,
+        inspectionCwd: hostProtection?.temporaryDirectory,
+      });
     // Validation above awaits filesystem/process probes. Recheck synchronously before reservation.
     assertResumeCurrent?.();
     if (profile) assertNativeProfileCurrent(profile);
@@ -617,10 +630,7 @@ export class NativeSessionManager {
             }
           },
           executable: resolved.executable,
-          env: nativeEnvironment(resolved.executable, {
-            ...environment,
-            ...(hostProtection ? { TMPDIR: hostProtection.temporaryDirectory } : {}),
-          }),
+          env: runnerEnvironment,
           processSandbox: hostProtection?.sandbox,
           ...(workerLaunch
             ? { effort: workerLaunch.effort, safetyTier: workerLaunch.safetyTier, filesystemPolicy }

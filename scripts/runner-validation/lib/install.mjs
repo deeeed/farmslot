@@ -8,7 +8,7 @@ import {
   tomlBareStringValue,
   tomlDottedParts,
   tomlSectionHeaderIndexes,
-} from '../../lib/toml-scan.mjs';
+} from '../../../packages/agent-runtime/scripts/toml-scan.cjs';
 
 import { ROOT } from './common.mjs';
 

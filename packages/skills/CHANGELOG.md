@@ -8,6 +8,10 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 - Keep lane terminals after runner exit, show retained session IDs and support guarded resume with skip-only startup updates.
 
+## 0.6.5 - 2026-10-14
+
+- Use agent-runtime 0.21.3 for guarded farm review startup.
+
 ## 0.6.4 - 2026-10-10
 
 - Publish with agent-runtime 0.17.4 so consumers share one dependency copy. No code change.

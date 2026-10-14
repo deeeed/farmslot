@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,14 +11,47 @@ import { claudeNativeAdapter } from './claude.js';
 import { codexNativeAdapter } from './codex.js';
 import { cursorNativeAdapter } from './cursor.js';
 import { grokNativeAdapter } from './grok.js';
-import { hostReviewSandboxAvailable } from './review-sandbox.js';
+import { hostReviewSandboxAvailable, type NativeProcessSandbox } from './review-sandbox.js';
 import type { NativeAdapter } from './types.js';
+
+export interface NativeWorkspaceTrustOptions {
+  executable?: string;
+  processSandbox?: NativeProcessSandbox;
+  inspectionCwd?: string;
+}
+
+export const {
+  workspaceTrustByRunner,
+  codexWorkspaceTrustConfig,
+  reviewConfigurationRootsByRunner,
+} = createRequire(import.meta.url)('../../scripts/workspace-trust.cjs') as {
+  reviewConfigurationRootsByRunner: Record<string, (cwd: string) => string[]>;
+  codexWorkspaceTrustConfig(cwd: string, trust: 'trusted' | 'untrusted'): string;
+  workspaceTrustByRunner: Record<
+    string,
+    (
+      cwd: string,
+      environment: NodeJS.ProcessEnv,
+      owner?: string,
+      launch?: NativeWorkspaceTrustOptions,
+    ) => void
+  >;
+};
 
 export interface NativeRunnerDefinition {
   adapter: NativeAdapter;
   binary: string;
   supportsWorkers?: boolean;
+  /** Only farm-created worker workspaces may receive a persisted native trust decision. */
+  trustWorkspace?: (
+    cwd: string,
+    environment: NodeJS.ProcessEnv,
+    owner?: string,
+    launch?: NativeWorkspaceTrustOptions,
+  ) => void;
   supportsReadOnlyWorkspace?: boolean;
+  /** Repository startup configuration cannot execute inside a read-only review. Git blobs stay readable. */
+  reviewConfigurationRoots?: (cwd: string) => string[];
   reviewRuntimeRoots?: (environment: NodeJS.ProcessEnv) => string[];
   /** Default for new standalone conversations; worker launch settings stay authoritative. */
   defaultEffort?: string;
@@ -32,6 +66,7 @@ export interface NativeRunnerDefinition {
 /** Native profile mechanics stay with the runner definition, not client workflows. */
 export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
   codex: {
+    trustWorkspace: workspaceTrustByRunner.codex,
     adapter: codexNativeAdapter,
     binary: 'codex',
     supportsWorkers: true,
@@ -45,6 +80,8 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     },
   },
   claude: {
+    reviewConfigurationRoots: reviewConfigurationRootsByRunner.claude,
+    trustWorkspace: workspaceTrustByRunner.claude,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
     reviewRuntimeRoots: (env) => [
       env.CLAUDE_CONFIG_DIR ?? join(env.HOME ?? homedir(), '.claude'),
@@ -69,6 +106,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     },
   },
   cursor: {
+    reviewConfigurationRoots: reviewConfigurationRootsByRunner.cursor,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
     reviewRuntimeRoots: (env) => [
       join(env.HOME ?? homedir(), '.cursor'),
@@ -98,6 +136,8 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     },
   },
   grok: {
+    reviewConfigurationRoots: reviewConfigurationRootsByRunner.grok,
+    trustWorkspace: workspaceTrustByRunner.grok,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
     reviewRuntimeRoots: (env) => [env.GROK_HOME ?? join(env.HOME ?? homedir(), '.grok')],
     adapter: grokNativeAdapter,

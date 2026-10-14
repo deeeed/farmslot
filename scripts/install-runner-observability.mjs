@@ -6,13 +6,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { resolveProviderAccountForSlot } from './lib/provider-accounts.mjs';
 import {
   scanTomlLine,
   tomlBareStringValue,
   tomlDottedParts,
   tomlSectionHeaderIndexes,
-} from './lib/toml-scan.mjs';
+} from '../packages/agent-runtime/scripts/toml-scan.cjs';
+import { trustGrokFolders } from '../packages/agent-runtime/scripts/workspace-trust.cjs';
+
+import { resolveProviderAccountForSlot } from './lib/provider-accounts.mjs';
 
 const HOOK_SCRIPT = `import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -315,14 +317,6 @@ function escapeTomlBasicString(value) {
       /[\u0000-\u001f\u007f]/g,
       (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`,
     );
-}
-
-function unescapeTomlBasicString(value) {
-  return value.replace(/\\(u([0-9a-fA-F]{4})|U([0-9a-fA-F]{8})|.)/g, (match, body, u4, u8) => {
-    if (u4) return String.fromCodePoint(parseInt(u4, 16));
-    if (u8) return String.fromCodePoint(parseInt(u8, 16));
-    return { b: '\b', t: '\t', n: '\n', f: '\f', r: '\r', '"': '"', '\\': '\\' }[body] ?? match;
-  });
 }
 
 function normalizedCommandHookIdentity(eventName, entry, hook) {
@@ -1255,28 +1249,6 @@ async function installCodex({ repo, runtimeDir = '.agent', slotId, authSource, a
   }
 }
 
-const GROK_TRUSTED_FOLDERS_FILE = 'trusted_folders.toml';
-
-// Grok writes one `[folders."<path>"]` table per decision; the key is a TOML
-// basic string, so the path is read back through the string grammar (quotes,
-// `]`, `#` and control characters inside it are content, not syntax).
-const GROK_TRUSTED_FOLDER_HEADER = /^\s*\[\s*folders\s*\.\s*"((?:[^"\\]|\\.)*)"\s*\]\s*(?:#.*)?$/;
-
-function grokTrustedFolderPaths(content) {
-  const trusted = new Set();
-  for (const line of content.split(/\r?\n/)) {
-    const match = line.match(GROK_TRUSTED_FOLDER_HEADER);
-    if (match) trusted.add(unescapeTomlBasicString(match[1]));
-  }
-  return trusted;
-}
-
-/**
- * Grok Build asks "Do you trust the contents of this directory?" the first time
- * it starts in a checkout and records the answer in ~/.grok/trusted_folders.toml.
- * Seed that record for the slot checkout so a fresh slot launches straight to the
- * composer; a TUI prompt is never answered from pane text.
- */
 const PI_XAI_CLIENT_ID = 'b1a00492-073a-47ea-816f-4c329264a828';
 
 function jwtExpMs(token) {
@@ -1380,11 +1352,6 @@ function installPi({ repo, runtimeDir, slotId }) {
 
 function installGrok({ repo }) {
   if (!repo) throw new Error('missing --repo');
-  const grokDir = process.env.GROK_HOME?.trim() || path.join(os.homedir(), '.grok');
-  fs.mkdirSync(grokDir, { recursive: true });
-  const trustedPath = path.join(grokDir, GROK_TRUSTED_FOLDERS_FILE);
-  const content = fs.existsSync(trustedPath) ? fs.readFileSync(trustedPath, 'utf8') : '';
-  const trusted = grokTrustedFolderPaths(content);
   const gitCommonDir = fs.existsSync(path.join(repo, '.git'))
     ? execFileSync('git', ['-C', repo, 'rev-parse', '--git-common-dir'], {
         encoding: 'utf8',
@@ -1395,16 +1362,7 @@ function installGrok({ repo }) {
       ? realRepoPath(path.dirname(path.resolve(repo, gitCommonDir)))
       : null;
   const wanted = [...new Set([path.resolve(repo), realRepoPath(repo), gitRoot].filter(Boolean))];
-  const missing = wanted.filter((folder) => !trusted.has(folder));
-  if (missing.length === 0) return { trustedPath, added: [] };
-  const decidedAt = Math.floor(Date.now() / 1000);
-  const blocks = missing.map(
-    (folder) =>
-      `[folders."${escapeTomlBasicString(folder)}"]\ntrusted = true\ndecided_at = ${decidedAt}\n`,
-  );
-  const merged = [content.trimEnd(), ...blocks].filter(Boolean).join('\n\n') + '\n';
-  fs.writeFileSync(trustedPath, merged.replace(/^\n+/, ''));
-  return { trustedPath, added: missing };
+  return trustGrokFolders(wanted);
 }
 
 async function install(args) {

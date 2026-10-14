@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.21.3 - 2026-10-14
+
+- Prepare native workspace decisions in the selected account home before farm reviews. Refuse Grok reviews with account hooks or unverifiable hook safety. Suppress repository startup automation, preserve Git-readable content and enforce source write restrictions.
+
 ## 0.21.2 - 2026-10-14
 
 - Align task helpers with adapter-sdk 0.13.0 so recipe hosts use one SDK version.

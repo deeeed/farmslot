@@ -18,7 +18,8 @@ export const RUNNER_OBSERVABILITY_COPY_PATHS = [
 export const RUNNER_OBSERVABILITY_SUPPORT_PATHS = [
   INSTALLER_RELATIVE_PATH,
   'scripts/lib/provider-accounts.mjs',
-  'scripts/lib/toml-scan.mjs',
+  'packages/agent-runtime/scripts/toml-scan.cjs',
+  'packages/agent-runtime/scripts/workspace-trust.cjs',
   ...RUNNER_OBSERVABILITY_COPY_PATHS,
 ] as const;
 export const NODE_SUPPORT_HASH_FILENAME = 'node-support-hash';

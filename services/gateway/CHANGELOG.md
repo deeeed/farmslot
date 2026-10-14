@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Prepare native workspace decisions in the selected account home before farm reviews. Verify hook safety using the selected runner executable, suppress repository startup automation, preserve Git-readable content and enforce source write restrictions.
+
 - Allow valid artifact-only QA output with unresolved engine claims to finish execution for review, preserving its claim gaps and all publication, registration and integrity checks.
 
 - Allow a durably replayed run to reacquire capabilities after its previous terminal cleanup, while retaining fences for settled owners, unrecovered siblings and later cleanup.

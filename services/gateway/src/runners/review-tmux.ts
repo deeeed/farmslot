@@ -16,7 +16,6 @@ import { upsertAgentContext } from '../agents/contexts.js';
 import { loadMachinePool, loadProjectVars } from '../core/config.js';
 import { execFileArgv } from '../core/exec.js';
 import { resolveProjectCommandEnv } from '../core/project-env.js';
-import { shellQuote } from '../core/tmux.js';
 import { WarmReviewRefusal } from '../review/session-mode.js';
 import { bindReviewWorkspaceSupportValue } from '../review-workspaces/skills.js';
 import { getAllRuns, getRun, persistRunNow } from '../runs/store.js';
@@ -25,6 +24,7 @@ import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 import { execNativeNodeArgv } from './native/node.js';
 import {
   buildInteractiveRefinementRunnerCommand,
+  interactiveRunnerExecutable,
   workspaceTerminalSessionCreateArgv,
 } from './launch-command.js';
 import { getRunnerDefinition } from './registry.js';
@@ -219,8 +219,10 @@ export async function reviewTmuxOperation(
   if (action === 'launch') {
     const pool = await loadMachinePool(w.machine);
     const environment = await reviewEnvironment(run);
+    const executable = interactiveRunnerExecutable({ runner, machine: pool });
     const command = buildInteractiveRefinementRunnerCommand({
       runner,
+      binary: executable,
       machine: pool,
       model: run.metrics.model,
       promptPath: path.posix.join(w.taskPath, '.terminal-prompt.txt'),
@@ -250,12 +252,11 @@ export async function reviewTmuxOperation(
       safetyTier: 'dangerous',
     });
     if (!command) throw new Error('Runner does not support terminal review');
-    const trustSeed = getRunnerDefinition(runner).reviewWorkspaceTrustSeed?.(w.checkoutPath);
     Object.assign(input, {
       command,
+      executable,
       prompt,
       environment,
-      ...(trustSeed ? { setup: `node -e ${shellQuote(trustSeed)}` } : {}),
       support: w.support?.path,
       runtimeRoots: nativeRunnerDefinitions[runner]?.reviewRuntimeRoots?.({ HOME: '~' }) ?? [
         '~/.codex',

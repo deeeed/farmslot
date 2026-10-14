@@ -5,7 +5,10 @@ import type { Run } from '@farmslot/protocol';
 
 import type { RawPoolJson } from '../core/config.js';
 
-import { buildInteractiveRefinementRunnerCommand } from './launch-command.js';
+import {
+  buildInteractiveRefinementRunnerCommand,
+  interactiveRunnerExecutable,
+} from './launch-command.js';
 import {
   REVIEW_STARTUP_TIMEOUT_MS,
   reviewTmuxStartupState,
@@ -37,12 +40,17 @@ test('interactive launch honors each machine runner executable and explicit over
     pi: machine.pi_path,
   })) {
     const options = { runner, repo: '/tmp/review', promptPath: '/tmp/prompt', machine };
+    assert.equal(interactiveRunnerExecutable(options), binary);
     assert.ok(buildInteractiveRefinementRunnerCommand(options)?.includes(binary!), runner);
     assert.ok(
       buildInteractiveRefinementRunnerCommand({ ...options, binary: '/override/runner' })?.includes(
         '/override/runner',
       ),
       runner,
+    );
+    assert.equal(
+      interactiveRunnerExecutable({ ...options, binary: '/override/runner' }),
+      '/override/runner',
     );
   }
 });
@@ -201,4 +209,19 @@ test('terminal WARM reservation requires exact PR, lineage, session and reviewed
     }),
     undefined,
   );
+});
+
+test('read-only Grok review stays inside its own sandbox instead of a shared leader', () => {
+  const options = {
+    runner: 'grok',
+    repo: '/tmp/review',
+    promptPath: '/tmp/task/prompt.txt',
+    model: 'grok-4.7',
+  };
+  const review = buildInteractiveRefinementRunnerCommand({
+    ...options,
+    workspaceTrust: 'untrusted',
+  });
+  assert.ok(review?.includes('--no-leader'));
+  assert.ok(!buildInteractiveRefinementRunnerCommand(options)?.includes('--no-leader'));
 });
