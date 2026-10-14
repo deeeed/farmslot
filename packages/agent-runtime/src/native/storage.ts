@@ -12,6 +12,8 @@ import {
 } from 'node:fs';
 import { dirname } from 'node:path';
 
+import type { ProcessIdentity } from './process-tree.js';
+
 /** Drop only an incomplete final write before any recovery reader or writer proceeds. */
 export function readJournal(path: string): string[] {
   const fd = openSync(path, 'r+');
@@ -107,6 +109,23 @@ export function processIdentityAlive(pid: number, identity: string): boolean {
     if ((error as { status?: number }).status === 1) return true;
     throw error;
   }
+}
+
+/** A different leader birth proves numeric group reuse; orphaned or unreadable groups block. */
+export function recordedProcessGroupAlive(
+  pid: number,
+  identity?: string,
+  snapshot?: ReadonlyMap<number, ProcessIdentity>,
+): boolean {
+  if (snapshot) {
+    if (![...snapshot.values()].some((entry) => entry.group === pid)) return false;
+    const leader = snapshot.get(pid);
+    return !identity || !leader || leader.identity.trim() === identity.trim();
+  }
+  if (!processGroupAlive(pid)) return false;
+  // PID allocation reserves live group IDs. A reused live leader cannot own the old group.
+  if (identity && alive(pid) && !processIdentityAlive(pid, identity) && alive(pid)) return false;
+  return true;
 }
 
 /** Structured process argv evidence, never runner stdout or a terminal rendering. */

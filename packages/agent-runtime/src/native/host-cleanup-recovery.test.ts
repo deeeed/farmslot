@@ -59,8 +59,10 @@ function fixture(t: TestContext) {
   let censusError: Error | undefined;
   let beforeCensus: (() => void) | undefined;
   const live = new Set<number>();
-  t.mock.method(childProcess, 'execFileSync', () => {
+  const birth = new Map<number, string>();
+  t.mock.method(childProcess, 'execFileSync', (_file: string, args: string[]) => {
     if (censusError) throw censusError;
+    if (args.includes('lstart=')) return birth.get(Number(args[1])) ?? 'unknown';
     beforeCensus?.();
     return census;
   });
@@ -80,6 +82,7 @@ function fixture(t: TestContext) {
     info,
     journal,
     live,
+    birth,
     setCensus: (value: string) => {
       census = value;
     },
@@ -108,18 +111,17 @@ test('recovers the stopped-host timeout shape and preserves native journals and 
     receipt.journalSha256['session.journal'],
     createHash('sha256').update(f.journal).digest('hex'),
   );
-  assert.deepEqual(receipt.verifiedEmptyGroups, [supervisor, runner]);
+  assert.deepEqual(receipt.verifiedStoppedGroups, [supervisor, runner]);
   assert.equal(readdirSync(join(f.root, 'cleanup-recoveries')).length, 1);
 });
 
-for (const kind of ['host', 'supervisor', 'runner', 'descendant-group', 'pid-reuse'] as const) {
+for (const kind of ['host', 'supervisor', 'runner', 'descendant-group'] as const) {
   test(`refuses surviving ${kind} without clearing cleanup or writing a receipt`, (t) => {
     const f = fixture(t);
-    const id =
-      kind === 'host' || kind === 'pid-reuse' ? host : kind === 'supervisor' ? supervisor : runner;
+    const id = kind === 'host' ? host : kind === 'supervisor' ? supervisor : runner;
     const group = kind === 'descendant-group' ? supervisor : id;
     f.setCensus(
-      `${process.pid} 1 ${process.pid} inspector\n${kind === 'descendant-group' ? runner + 1 : id} 1 ${group} unrelated or surviving start\n`,
+      `${process.pid} 1 ${process.pid} inspector\n${kind === 'descendant-group' ? runner + 1 : id} 1 ${group} ${kind === 'host' ? 'old host start' : 'surviving start'}\n`,
     );
     assert.throws(
       () => recoverStoppedNativeHost(f.root, supervisor, host),
@@ -136,6 +138,77 @@ test('fresh census failure and independently living groups stay unconfirmed', (t
   f.failCensus(Object.assign(new Error('Census timed out'), { code: 'ETIMEDOUT' }));
   assert.throws(() => recoverStoppedNativeHost(f.root, supervisor, host), /Census timed out/);
   assert.equal(readFileSync(join(f.root, 'cleanup.json'), 'utf8'), JSON.stringify(marker));
+});
+
+for (const sameIdentity of [true, false]) {
+  test(`${sameIdentity ? 'original' : 'reused'} runner PID and group are distinguished by birth identity`, (t) => {
+    const f = fixture(t);
+    const saved = { pid: runner, parent: host, group: runner, identity: 'old runner birth' };
+    writeFileSync(
+      join(f.root, 'sessions/session.journal'),
+      f.journal + JSON.stringify({ processes: [saved] }) + '\n',
+    );
+    const current = sameIdentity ? saved.identity : 'new unrelated birth';
+    f.setCensus(`${process.pid} 1 ${process.pid} inspector\n${runner} 1 ${runner} ${current}\n`);
+    f.live.add(runner);
+    f.live.add(-runner);
+    f.birth.set(runner, current);
+    if (sameIdentity)
+      assert.throws(() => recoverStoppedNativeHost(f.root, supervisor, host), /surviving/);
+    else {
+      recoverStoppedNativeHost(f.root, supervisor, host);
+      assert.equal(
+        JSON.parse(readFileSync(join(f.root, 'cleanup.json'), 'utf8')).state,
+        'complete',
+      );
+    }
+  });
+}
+
+for (const historical of ['older-host', 'older-generation'] as const) {
+  test(`ignores confirmed stopped ${historical} observations while preserving their journal`, (t) => {
+    const f = fixture(t);
+    const historicalPid = runner + 20;
+    const old =
+      JSON.stringify({
+        info: {
+          ...f.info,
+          hostPid: historical === 'older-host' ? host - 1 : host,
+          generation: 'old',
+          processPid: historicalPid,
+        },
+        processes: [
+          { pid: historicalPid, parent: host - 1, group: historicalPid, identity: 'old birth' },
+        ],
+      }) + '\n';
+    const path =
+      historical === 'older-host' ? 'sessions/older.journal' : 'sessions/session.journal';
+    const bytes = historical === 'older-host' ? old : old + f.journal;
+    writeFileSync(join(f.root, path), bytes, { mode: 0o600 });
+    f.live.add(historicalPid);
+    f.live.add(-historicalPid);
+    f.setCensus(
+      `${process.pid} 1 ${process.pid} inspector\n${historicalPid} 1 ${historicalPid} new birth\n`,
+    );
+    recoverStoppedNativeHost(f.root, supervisor, host);
+    assert.equal(readFileSync(join(f.root, path), 'utf8'), bytes);
+  });
+}
+
+test('an orphaned runner group still refuses when its leader is absent', (t) => {
+  const f = fixture(t);
+  writeFileSync(
+    join(f.root, 'sessions/session.journal'),
+    f.journal +
+      JSON.stringify({
+        processes: [{ pid: runner, parent: host, group: runner, identity: 'old runner birth' }],
+      }) +
+      '\n',
+  );
+  f.setCensus(
+    `${process.pid} 1 ${process.pid} inspector\n${runner + 1} 1 ${runner} orphan birth\n`,
+  );
+  assert.throws(() => recoverStoppedNativeHost(f.root, supervisor, host), /surviving/);
 });
 
 test('independent process-group probe catches a survivor absent from the census', (t) => {

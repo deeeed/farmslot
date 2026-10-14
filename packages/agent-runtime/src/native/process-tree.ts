@@ -6,6 +6,35 @@ export interface ProcessIdentity {
   group: number;
   identity: string;
 }
+export interface ProcessJournalEntry {
+  info?: { generation: string };
+  processes?: ProcessIdentity[];
+  processesAdded?: ProcessIdentity[];
+}
+
+/** Process observations belong to one native generation, including delta journal writes. */
+export function journalProcesses(
+  entries: readonly ProcessJournalEntry[],
+): ProcessIdentity[] | undefined {
+  let generation: string | undefined;
+  let processes: ProcessIdentity[] | undefined;
+  for (const entry of entries) {
+    if (entry.info) {
+      if (generation !== entry.info.generation) processes = undefined;
+      generation = entry.info.generation;
+    }
+    processes = entry.processes ?? processes;
+    if (entry.processesAdded) {
+      const identities = new Map(
+        (processes ?? []).map((process) => [`${process.pid}:${process.identity}`, process]),
+      );
+      for (const process of entry.processesAdded)
+        identities.set(`${process.pid}:${process.identity}`, process);
+      processes = [...identities.values()];
+    }
+  }
+  return processes;
+}
 const columns = 'pid=,ppid=,pgid=,lstart=';
 const censusTimeoutMs = 5_000;
 function parseProcesses(output: string): Map<number, ProcessIdentity> {

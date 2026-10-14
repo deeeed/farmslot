@@ -2,8 +2,20 @@ import { createHash, randomUUID } from 'node:crypto';
 import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { readNativeProcessSnapshot } from './process-tree.js';
-import { alive, durableWrite, privateDirectory, processGroupAlive, readJson } from './storage.js';
+import {
+  journalProcesses,
+  type ProcessIdentity,
+  type ProcessJournalEntry,
+  readNativeProcessSnapshot,
+} from './process-tree.js';
+import {
+  alive,
+  durableWrite,
+  privateDirectory,
+  processIdentityAlive,
+  readJson,
+  recordedProcessGroupAlive,
+} from './storage.js';
 
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -19,6 +31,18 @@ function privateBytes(file: string): Buffer {
 }
 function digest(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
+}
+function processEvidence(entry: unknown): ProcessIdentity {
+  if (
+    !object(entry) ||
+    !pid(entry.pid) ||
+    !pid(entry.parent) ||
+    !pid(entry.group) ||
+    typeof entry.identity !== 'string' ||
+    !entry.identity.trim()
+  )
+    throw new Error('Native cleanup recovery has malformed process evidence');
+  return { pid: entry.pid, parent: entry.parent, group: entry.group, identity: entry.identity };
 }
 
 /** Called only by the supervisor while holding its exclusive startup claim. */
@@ -42,23 +66,16 @@ export function recoverStoppedNativeHost(
     throw new Error('Native cleanup recovery requires matching recorded host evidence');
   const pids = new Set([supervisorPid, hostPid]);
   const groups = new Set([supervisorPid]);
-  const observe = (entry: unknown) => {
-    if (
-      !object(entry) ||
-      !pid(entry.pid) ||
-      !pid(entry.parent) ||
-      !pid(entry.group) ||
-      typeof entry.identity !== 'string' ||
-      !entry.identity.trim()
-    )
-      throw new Error('Native cleanup recovery has malformed process evidence');
+  const identities = new Map<number, string>();
+  const observe = (entry: ProcessIdentity) => {
     pids.add(entry.pid);
     groups.add(entry.group);
+    identities.set(entry.pid, entry.identity);
     return entry;
   };
   let hostObserved = false;
   for (const entry of cleanup.observedProcesses) {
-    const observed = observe(entry);
+    const observed = observe(processEvidence(entry));
     if (observed.pid === hostPid && observed.parent === supervisorPid) hostObserved = true;
   }
   if (!hostObserved) throw new Error('Native cleanup recovery cannot identify the old host');
@@ -69,45 +86,55 @@ export function recoverStoppedNativeHost(
     if (!bytes.length || bytes.at(-1) !== 10)
       throw new Error('Native cleanup recovery refuses an incomplete session journal');
     let info: Record<string, unknown> | undefined;
+    const entries: ProcessJournalEntry[] = [];
     for (const line of bytes.toString().split('\n').filter(Boolean)) {
       const entry: unknown = JSON.parse(line);
       if (!object(entry)) throw new Error('Native cleanup recovery has malformed session evidence');
+      const projected: ProcessJournalEntry = {};
       if (entry.info !== undefined) {
-        if (!object(entry.info))
+        if (!object(entry.info) || typeof entry.info.generation !== 'string')
           throw new Error('Native cleanup recovery has malformed session identity');
         info = entry.info;
+        projected.info = { generation: entry.info.generation };
       }
       // Include detached descendants retained in journals, not only runner leaders.
-      for (const key of ['processes', 'processesAdded']) {
+      for (const key of ['processes', 'processesAdded'] as const) {
         if (entry[key] === undefined) continue;
         if (!Array.isArray(entry[key]))
           throw new Error('Native cleanup recovery has malformed process evidence');
-        for (const observed of entry[key]) observe(observed);
+        projected[key] = entry[key].map(processEvidence);
       }
+      entries.push(projected);
     }
     if (!info || !['closed', 'failed'].includes(String(info.state)) || info.processStopped !== true)
       throw new Error('Native cleanup recovery requires terminal, confirmed-stopped sessions');
-    if (info.processPid !== undefined) {
+    if (info.hostPid === hostPid && info.processPid !== undefined) {
       if (!pid(info.processPid))
         throw new Error('Native cleanup recovery has malformed runner identity');
       pids.add(info.processPid);
       groups.add(info.processPid);
+      for (const observed of journalProcesses(entries) ?? []) observe(observed);
     }
     journals[name] = digest(bytes);
   }
   const snapshot = readNativeProcessSnapshot();
   if (!snapshot.has(process.pid))
     throw new Error('Native cleanup recovery process census is incomplete');
-  for (const entry of snapshot.values()) {
-    if (pids.has(entry.pid) || groups.has(entry.group))
+  for (const value of pids) {
+    const entry = snapshot.get(value);
+    const identity = identities.get(value);
+    if (entry && (!identity || entry.identity.trim() === identity.trim()))
       throw new Error('Native cleanup recovery found a surviving process or group');
   }
+  for (const value of groups)
+    if (recordedProcessGroupAlive(value, identities.get(value), snapshot))
+      throw new Error('Native cleanup recovery found a surviving process or group');
   // Recheck absence independently after the census. Permission denial is still alive.
   for (const value of pids)
-    if (alive(value))
+    if (identities.has(value) ? processIdentityAlive(value, identities.get(value)!) : alive(value))
       throw new Error('Native cleanup recovery cannot confirm a recorded process stopped');
   for (const value of groups)
-    if (processGroupAlive(value))
+    if (recordedProcessGroupAlive(value, identities.get(value)))
       throw new Error('Native cleanup recovery cannot confirm a recorded group stopped');
   if (
     !privateBytes(cleanupPath).equals(original) ||
@@ -129,8 +156,9 @@ export function recoverStoppedNativeHost(
     originalCleanup: cleanup,
     originalCleanupSha256: digest(original),
     journalSha256: journals,
-    verifiedAbsentPids: [...pids],
-    verifiedEmptyGroups: [...groups],
+    verifiedStoppedPids: [...pids],
+    verifiedStoppedGroups: [...groups],
+    recordedProcessIdentities: Object.fromEntries(identities),
   });
   durableWrite(cleanupPath, {
     ...cleanup,

@@ -120,7 +120,10 @@ Gateway intelligence can explicitly select the `codex-lb` provider in LLM settin
 The existing native-host startup may reconcile a retained failed cleanup marker
 under its exclusive startup claim. It requires a fresh OS census, absent recorded
 supervisor/host processes and groups, and terminal session journals with confirmed
-process stops and empty runner groups. Missing, malformed or unreadable evidence
+process stops and stopped original runner groups. Journal observations are scoped
+to the failed host's latest generations; OS birth identities distinguish unrelated
+PID/group reuse. Orphaned or unreadable groups remain blocked.
+Missing, malformed or unreadable evidence
 and any surviving process keep ownership blocked. Recovery never signals a process.
 
 Archive the original cleanup record and a durable verification receipt before

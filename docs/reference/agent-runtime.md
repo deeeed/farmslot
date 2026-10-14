@@ -20,11 +20,17 @@ owns recovery of a stopped host whose cleanup marker remains unresolved.
   or reclaiming an old host lock. A live supervisor or host MUST block recovery.
 - An unresolved marker MUST identify the recorded host and its observed process
   identities/groups. Recovery MUST obtain a successful fresh OS census and verify
-  that every recorded PID and group is absent. Failed probes remain unknown.
+  that the failed host's recorded processes and groups are stopped. Failed probes
+  remain unknown. Live supervisor or host PIDs retain the existing startup refusal.
 - Every retained session journal MUST be complete and readable. Its latest state
   MUST be closed or failed, its process stop confirmed, and its runner group absent.
   Recorded detached descendants and their groups MUST also be absent.
   Malformed, torn, active or unconfirmed records MUST refuse recovery.
+- Journal process observations MUST come from the failed host's latest session
+  generations, using the normal journal process projection. Older confirmed stops
+  MUST NOT block because an unrelated process reused a historical PID. A different
+  OS birth identity proves process reuse; a different living group leader proves
+  group reuse. Orphaned groups and unreadable identities MUST remain blocked.
 - Before reclaiming the host lock, the runtime MUST durably archive the original
   cleanup marker, journal hashes and verification facts under `cleanup-recoveries/`.
   It MUST preserve journal bytes, session/native IDs, generations, command outcomes,
