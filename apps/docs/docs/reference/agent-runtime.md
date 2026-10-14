@@ -97,7 +97,10 @@ ledger into `artifacts/acceptance-status.json`; this task-namespace projection i
 transport, never an independent reducer or a recorded package.
 
 `farmslot-agent ac list` reads the registered criteria and verdicts; `ac render`
-prints structured coverage. `ac set` is removed and refuses without writing.
+prints structured coverage. When a recipe exists, the terminal contract still
+requires `artifacts/recipe-coverage.md`. Render it through the supplied `ac render`
+command; it is a display artifact, never acceptance authority.
+`ac set` is removed and refuses without writing.
 Non-UI claims use eligible recipe assertions over actual command results or
 file/log observations. A manual actor string grants no override authority.
 
