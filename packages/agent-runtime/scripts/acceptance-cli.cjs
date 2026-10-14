@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * `farmslot-agent ac`: record and read the acceptance-criteria ledger
- * (`artifacts/acceptance-status.json`), the one writer of that file.
+ * `farmslot-agent ac`: read the engine-owned acceptance-criteria projection
+ * (`artifacts/acceptance-status.json`). Retained schema-1 data is display only.
  *
  * The ids come from `inputs/handoff.json`, which task init fills from the
  * criteria it received; this CLI never invents an id or a criterion text.
@@ -10,14 +10,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const {
-  ACCEPTANCE_PROOF_MODES,
-  ACCEPTANCE_VERDICTS,
   AcceptanceRefusal,
   acceptanceStatusList,
   handoffAcceptanceCriteria,
   renderAcceptanceCoverage,
   readAcceptanceLedger,
-  setAcceptanceVerdict,
 } = require('./acceptance-ledger.cjs');
 
 const HANDOFF_INPUT = path.join('inputs', 'handoff.json');
@@ -25,12 +22,6 @@ const HANDOFF_INPUT = path.join('inputs', 'handoff.json');
 const USAGE = [
   'usage: farmslot-agent ac <command> [--task-dir <path>]',
   '',
-  `  ac set <AC-N> <${ACCEPTANCE_VERDICTS.join('|')}> [options]`,
-  `      --proof-mode <${ACCEPTANCE_PROOF_MODES.join('|')}>   how the criterion is proven`,
-  '      --evidence <task-dir relative path>   repeatable; the file must exist',
-  '      --recipe-node <id>                    repeatable; recipe node proving it',
-  '      --actor <identity>                     required for an automatic-ledger override',
-  '      --note "..."                          why, especially for untestable',
   '  ac list      every criterion with its current verdict (JSON, verdict null when unrecorded)',
   '  ac render    the coverage table, ending with the Overall recipe coverage line',
   '',
@@ -52,20 +43,10 @@ function parseArgs(argv) {
   const opts = {
     taskDir: null,
     positional: [],
-    proofMode: undefined,
-    evidence: [],
-    recipeNodes: [],
-    note: undefined,
-    actor: undefined,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--task-dir') opts.taskDir = takeValue(argv, i++, arg);
-    else if (arg === '--proof-mode') opts.proofMode = takeValue(argv, i++, arg);
-    else if (arg === '--evidence') opts.evidence.push(takeValue(argv, i++, arg));
-    else if (arg === '--recipe-node') opts.recipeNodes.push(takeValue(argv, i++, arg));
-    else if (arg === '--actor') opts.actor = takeValue(argv, i++, arg);
-    else if (arg === '--note') opts.note = takeValue(argv, i++, arg);
     else if (arg === '-h' || arg === '--help') usage(0);
     else if (arg.startsWith('-')) throw new AcceptanceRefusal(`unknown option ${arg}`, 2);
     else opts.positional.push(arg);
@@ -86,27 +67,14 @@ function resolveTaskDir(explicit) {
 function main(argv) {
   const [command, ...rest] = argv;
   if (!command || command === '-h' || command === '--help') usage(command ? 0 : 2);
+  if (command === 'set') {
+    throw new AcceptanceRefusal(
+      'Verdicts are engine-owned. Run eligible recipe assertions; a verified person uses farmslot run gate --action mark-untestable for an exception.',
+    );
+  }
   const opts = parseArgs(rest);
   const taskDir = resolveTaskDir(opts.taskDir);
 
-  if (command === 'set') {
-    const [id, verdict, ...extra] = opts.positional;
-    if (!id || !verdict || extra.length > 0) {
-      throw new AcceptanceRefusal('usage: ac set <AC-N> <verdict> [options]', 2);
-    }
-    const ledger = setAcceptanceVerdict(taskDir, {
-      id,
-      verdict,
-      proofMode: opts.proofMode,
-      evidence: opts.evidence,
-      recipeNodes: opts.recipeNodes,
-      note: opts.note,
-      actor: opts.actor,
-    });
-    const entry = ledger.criteria.find((criterion) => criterion.id === id);
-    console.log(`${id}: ${entry.verdict}${entry.proofMode ? ` (${entry.proofMode})` : ''}`);
-    return;
-  }
   if (opts.positional.length > 0) {
     throw new AcceptanceRefusal(`ac ${command} takes no positional arguments`, 2);
   }
@@ -118,11 +86,15 @@ function main(argv) {
     const ledger = readAcceptanceLedger(taskDir);
     if (!ledger) {
       throw new AcceptanceRefusal(
-        'no acceptance ledger yet — record verdicts with `farmslot-agent ac set <id> <verdict>`',
+        'no acceptance ledger yet. Run the task recipe to derive engine verdicts.',
       );
     }
     // The registered criteria, not just the recorded rows: a partial ledger must
     // not report 1/1 when the task has three criteria.
+    if (ledger.schemaVersion === 1)
+      process.stdout.write(
+        'Legacy schema-1 ledger: retained display only; no measured recipe proof.\n\n',
+      );
     process.stdout.write(renderAcceptanceCoverage(ledger, handoffAcceptanceCriteria(taskDir)));
     return;
   }

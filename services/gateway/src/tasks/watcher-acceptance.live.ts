@@ -4,7 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
 
-import type { Run, TaskProgressResult } from '@farmslot/protocol';
+import type { TaskProgressResult } from '@farmslot/protocol';
+
+import '../runtime/mock-pty.test-support.js';
 
 // Same fixture shape as watcher-subtask.test.ts: mock.module replaces a module
 // wholesale, so the real namespaces are spread in and only the fixtures these
@@ -13,6 +15,7 @@ import type { Run, TaskProgressResult } from '@farmslot/protocol';
 import * as realConfig from '../core/config.js';
 import * as realState from '../core/state.js';
 import * as realFleetState from '../fleet/state.js';
+import { makeRun } from '../run-engine/test-fixtures.js';
 import * as realRunStore from '../runs/store.js';
 
 const SLOT_ID = 'slot-watch-acceptance';
@@ -37,7 +40,7 @@ function taskDirAbs(): string {
 }
 
 const activeRun = () =>
-  ({
+  makeRun({
     id: RUN_ID,
     slotId: SLOT_ID,
     flowType: 'dev',
@@ -46,8 +49,7 @@ const activeRun = () =>
     taskFile: path.join(taskDirAbs(), 'TASK.md'),
     steps: [],
     decisions: [],
-    metrics: { nudgeCount: 0 },
-  }) as unknown as Run;
+  });
 
 mock.module('../core/config.js', {
   namedExports: {
@@ -128,11 +130,11 @@ function writeTaskDir(): string {
   return root;
 }
 
-/** What `farmslot-agent ac set` leaves on disk. */
+/** A synthetic selected-engine projection on disk. */
 function writeLedger(dir: string, criteria: Array<Record<string, unknown>>): void {
   writeFileSync(
     path.join(dir, 'artifacts', 'acceptance-status.json'),
-    `${JSON.stringify({ schemaVersion: 1, criteria }, null, 2)}\n`,
+    `${JSON.stringify({ schemaVersion: 2, recipeRunId: 'test-execution', recording: { status: 'not-required', segments: [] }, criteria }, null, 2)}\n`,
   );
 }
 
@@ -141,18 +143,30 @@ function criterion(id: string, verdict: string): Record<string, unknown> {
     id,
     text: `criterion ${id}`,
     verdict,
+    kind: 'acceptance',
+    proofMode: 'state',
+    assertionIndices: [],
+    moments: [],
     evidence: [],
     recipeNodes: [],
     updatedAt: new Date().toISOString(),
   };
 }
 
-/**
- * Quiet window longer than the watcher's 1s debounce plus a progress read, so an
- * emission that was going to happen has happened before a count is asserted.
- */
+/** Poll until the event stream is stable beyond its debounce; fail if it never settles. */
 async function settle(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 3000));
+  const deadline = Date.now() + 10_000;
+  let size = emitted.length;
+  let unchangedSince = Date.now();
+  while (Date.now() < deadline) {
+    if (emitted.length !== size) {
+      size = emitted.length;
+      unchangedSince = Date.now();
+    }
+    if (Date.now() - unchangedSince > 1250) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error('Acceptance events did not settle within the bounded observation window.');
 }
 
 /** Wait for an emitted update that satisfies `predicate`, or fail with what arrived. */
@@ -226,6 +240,10 @@ test('other files in artifacts/ never drive a progress update', async () => {
     writeFileSync(path.join(artifacts, 'report.md'), '# Report\n');
     writeFileSync(path.join(artifacts, 'after.png'), 'png-bytes');
     writeFileSync(path.join(artifacts, 'recipe.json'), '{}\n');
+    writeFileSync(
+      path.join(artifacts, 'evidence-manifest.json'),
+      JSON.stringify({ standalone: [{ covers: ['AC-1'], file: 'after.png' }] }),
+    );
     await settle();
     assert.equal(emitted.length, 0, `worker artifacts emitted: ${emitted.length}`);
 
@@ -234,41 +252,6 @@ test('other files in artifacts/ never drive a progress update', async () => {
     await waitFor('the ledger', (entry) => entry.progress.acceptanceStatus?.criteria.length === 1);
     await settle();
     assert.equal(emitted.length, 1);
-  } finally {
-    await unwatchSlot(SLOT_ID);
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('the evidence manifest drives a progress update, like the ledger', async () => {
-  const root = writeTaskDir();
-  mkdirSync(path.join(taskDirAbs(), 'inputs'), { recursive: true });
-  writeFileSync(
-    path.join(taskDirAbs(), 'inputs', 'handoff.json'),
-    `${JSON.stringify({ task: { acceptanceCriteria: ['criterion AC-1'] } })}\n`,
-  );
-  emitted.length = 0;
-  try {
-    await watchSlot(SLOT_ID, { runId: RUN_ID });
-    // With no ledger the manifest is the panel's fallback, so a write reaches clients.
-    // A write that lands while macOS is still arming the directory watch can go
-    // unreported (the other tests here race the same way), so the write is
-    // repeated a bounded number of times; a routing bug fails every attempt.
-    const manifestPath = path.join(taskDirAbs(), 'artifacts', 'evidence-manifest.json');
-    const linked = (entry: Emitted) => entry.progress.acceptanceEvidenceLinks?.[0]?.id === 'AC-1';
-    for (let attempt = 0; attempt < 3 && !emitted.some(linked); attempt += 1) {
-      writeFileSync(
-        manifestPath,
-        JSON.stringify({ standalone: [{ label: 'Shot', covers: ['ac1'], file: 'after.png' }] }),
-      );
-      await waitFor('the manifest links', linked, 1_500).catch(() => undefined);
-    }
-    await waitFor('the manifest links', linked, 1_500);
-    const afterManifest = emitted.length;
-    writeLedger(taskDirAbs(), [criterion('AC-1', 'proven')]);
-    await waitFor('the ledger', (entry) => entry.progress.acceptanceStatus?.criteria.length === 1);
-    // One more update for the ledger: it is not reported twice.
-    assert.equal(emitted.length, afterManifest + 1);
   } finally {
     await unwatchSlot(SLOT_ID);
     rmSync(root, { recursive: true, force: true });
@@ -304,7 +287,7 @@ test('the watcher emits the acceptance ledger as verdicts land, without a parent
   try {
     await watchSlot(SLOT_ID, { runId: RUN_ID });
 
-    // First verdict: the ledger file appears mid-run, like `ac set` writes it.
+    // First verdict: the ledger file appears mid-run, when engine selection advances.
     writeLedger(taskDirAbs(), [criterion('AC-1', 'proven')]);
     const first = await waitFor(
       'the first verdict',

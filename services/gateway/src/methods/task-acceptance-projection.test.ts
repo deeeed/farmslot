@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
 
+import '../runtime/mock-pty.test-support.js';
+
 // Same fixture shape as task-subtask-projection.test.ts: mock.module replaces a
 // module wholesale, so the real namespaces are spread in and only the slot/run
 // lookups these tests need are overridden.
@@ -151,7 +153,7 @@ test('an unreadable ledger leaves progress intact instead of failing the call', 
   }
 });
 
-test('with no ledger, manifest links ride in their own field and never as a verdict', async () => {
+test('with no ledger, manifest covers cannot supply task acceptance links', async () => {
   const fixture = writeFixture(null);
   try {
     writeFileSync(
@@ -160,10 +162,8 @@ test('with no ledger, manifest links ride in their own field and never as a verd
     );
     const result = await progressFor(fixture);
     assert.equal(result.acceptanceStatus, undefined, 'the ledger field stays empty');
-    assert.equal(result.acceptanceSource, 'evidence-manifest');
-    assert.deepEqual(result.acceptanceEvidenceLinks, [
-      { id: 'AC-2', evidence: ['artifacts/after.png'] },
-    ]);
+    assert.equal(result.acceptanceSource, undefined);
+    assert.equal(result.acceptanceEvidenceLinks, undefined);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -205,9 +205,7 @@ test('a finished run whose slot no longer holds its task reads its recorded task
   try {
     const result = await taskProgress({ slotId: 'slot-acceptance', runId: 'run-released' });
     assert.equal(result.acceptanceCriteria?.length, 3);
-    assert.deepEqual(result.acceptanceEvidenceLinks, [
-      { id: 'AC-1', evidence: ['artifacts/teardown.png'] },
-    ]);
+    assert.equal(result.acceptanceEvidenceLinks, undefined);
     assert.equal(result.structured?.totalSteps, 2);
     assert.equal(
       result.structured?.completedSteps,
@@ -232,7 +230,7 @@ test('without the worker mirror a recorded run reports acceptance data and no st
     const result = await taskProgress({ slotId: 'slot-acceptance', runId: 'run-released' });
     assert.equal(result.structured, undefined, 'the unchecked template is never shown as progress');
     assert.equal(result.acceptanceCriteria?.length, 3);
-    assert.equal(result.acceptanceEvidenceLinks?.length, 1);
+    assert.equal(result.acceptanceEvidenceLinks, undefined);
   } finally {
     runs.delete('run-released');
     rmSync(fixture.root, { recursive: true, force: true });

@@ -543,14 +543,12 @@ function defaultPublicationTarget(run: Run): PublicationTarget {
 async function readValidationSummary(
   run: Run,
 ): Promise<{ path: string | null; text: string | null; hash: string | null }> {
-  // The acceptance ledger takes the place `recipe-coverage.md` holds: it says the
-  // same thing with structure behind it (ADR-060 phase 5). Everything else in the
-  // order is unchanged, and a run without a ledger reads exactly as before.
+  // Coverage comes from the engine ledger. Other candidates are report transport;
+  // a worker-authored coverage file cannot replace structured verdicts.
   const candidates = [
     'validation-summary.md',
     'validation.md',
     ACCEPTANCE_STATUS_FILENAME,
-    'recipe-coverage.md',
     'report.md',
   ];
   for (const name of candidates) {

@@ -26,6 +26,7 @@ interface RecipeQualityEvaluationInput {
   run: Pick<Run, 'id' | 'flowType' | 'project' | 'taskFile' | 'slotId'>;
   workerReport?: string | null;
   recipeJson?: string | null;
+  /** Coverage rendered from schema-2 engine claims; never worker-authored prose. */
   recipeCoverage?: string | null;
   /**
    * Artifacts directory to read recipe-quality.json from. Defaults to the run's
@@ -347,7 +348,7 @@ function buildFallbackEvaluation(
     artifactRequired,
   } = input;
   const sourceSignals: string[] = [];
-  if (recipeCoverage) sourceSignals.push('recipe-coverage.md');
+  if (recipeCoverage) sourceSignals.push('acceptance-status.json');
   if (recipeJson) sourceSignals.push('recipe.json');
   if (workerReport) sourceSignals.push('report.md');
 
@@ -355,10 +356,10 @@ function buildFallbackEvaluation(
     const artifact = buildArtifact({
       verdict: 'warn',
       reasons: [
-        'Recipe quality was derived from current recipe-coverage.md; no gateway-owned recipe-quality artifact was available.',
+        'Recipe quality uses structured engine coverage; no gateway-owned recipe-quality artifact was available.',
       ],
       betterVersionGuidance: [
-        'Keep recipe.json and recipe-coverage.md complete; the gateway derives recipe quality from those current sources.',
+        'Run the task recipe to retain engine claims beside its authored structure.',
       ],
       producer: 'fallback:recipe-coverage',
       fallbackSource: 'fallback:recipe-coverage',
@@ -369,8 +370,8 @@ function buildFallbackEvaluation(
       dimensions: {
         evidence_contract_basics: {
           status: 'warn',
-          reason: 'Legacy fallback signal used instead of canonical artifact.',
-          evidence: ['recipe-coverage.md'],
+          reason: 'Engine coverage supplied without a canonical recipe-quality artifact.',
+          evidence: ['acceptance-status.json'],
         },
       },
       proofMode: 'mixed',
@@ -388,7 +389,7 @@ function buildFallbackEvaluation(
       verdict: 'pass',
       reasons: ['Recipe quality derived from recipe structure (gateway sole producer).'],
       betterVersionGuidance: [
-        'Keep recipe.json + recipe-coverage.md complete so structure fully proves the claim.',
+        'Keep the recipe and its engine claims together for quality evaluation.',
       ],
       producer: 'fallback:recipe-json',
       fallbackSource: 'fallback:recipe-json',
@@ -414,9 +415,7 @@ function buildFallbackEvaluation(
       reasons: [
         'Only report.md was available; no structured recipe-quality artifact or recipe evidence was present.',
       ],
-      betterVersionGuidance: [
-        'Add recipe.json + recipe-coverage.md so quality derives from real proof, not prose.',
-      ],
+      betterVersionGuidance: ['Add the recipe and its engine claims for quality evaluation.'],
       producer: 'fallback:report',
       fallbackSource: 'fallback:report',
       legacyTask,

@@ -6,6 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Allow a durably replayed run to reacquire capabilities after its previous terminal cleanup, while retaining fences for settled owners, unrecovered siblings and later cleanup.
 - Adopt attested human-published PRs through durable publication recording, preserving archived execution and enforcing active continuation guards.
+- Read acceptance from the selected engine ledger, removing manifest-cover and coverage-file fallbacks from progress, gate and publication summaries.
 
 - Bind frozen runtime package commands to the captured compiled entry and refresh new admissions across producer upgrades, preserving arguments and already-admitted snapshots without source bootstrap or ambient selectors.
 

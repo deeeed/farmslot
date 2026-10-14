@@ -367,12 +367,18 @@ async function main(): Promise<void> {
   writeFileSync(
     path.join(taskPath, 'artifacts', 'acceptance-status.json'),
     `${JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: 2,
+      recipeRunId: 'subtask-test-execution',
+      recording: { status: 'not-required', segments: [] },
       criteria: [
         {
           id: 'AC-1',
           text: 'Every blocking finding is named.',
           verdict: 'proven',
+          kind: 'acceptance',
+          proofMode: 'state',
+          assertionIndices: [],
+          moments: [],
           evidence: ['artifacts/review.md'],
           recipeNodes: [],
           updatedAt: new Date().toISOString(),

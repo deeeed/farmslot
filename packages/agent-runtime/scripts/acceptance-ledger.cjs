@@ -6,11 +6,10 @@ const { atomicWrite, readJson } = require('./mark-io.cjs');
 // Acceptance-criteria ledger (ADR-060; contract in docs/reference/agent-runtime.md
 // and docs/reference/task-directory-contract.md).
 //
-// This module is the only writer of artifacts/acceptance-status.json, the way
-// `mark` is the only writer of SIGNAL.json. Two commands call it: `farmslot-agent ac`
-// and a recipe run with a task dir, which records its proof targets
-// (@farmslot/recipe-cli). The ids come from task init, which records the criteria in
-// inputs/handoff.json; this module never invents one.
+// The engine derives schema-2 verdicts. This module transfers the selected engine
+// ledger into the task namespace; `farmslot-agent ac` only reads it. Retained
+// schema-1 ledgers remain display input, never current completion proof. The ids
+// come from task init in inputs/handoff.json; this module never invents one.
 //
 // Portable contract helpers are shared with protocol clients, including unbuilt slot scripts.
 
@@ -114,6 +113,11 @@ function readAcceptanceLedger(taskDir) {
 }
 
 function writeAcceptanceLedger(taskDir, ledger) {
+  if (ledger?.schemaVersion !== 2) {
+    throw new AcceptanceRefusal(
+      'Only schema-2 engine claims may be written; schema-1 ledgers are retained display only.',
+    );
+  }
   const issues = validateAcceptanceStatusLedger(ledger);
   if (issues.length > 0) {
     throw new AcceptanceRefusal(
@@ -136,70 +140,6 @@ function assertEvidencePath(taskDir, rawPath) {
     throw new AcceptanceRefusal(`evidence path does not exist: ${normalized}`);
   }
   return normalized;
-}
-
-/**
- * Record one verdict. The criterion must be one task init registered: the ledger
- * carries exactly the handoff ids, never an id the worker made up.
- */
-function setAcceptanceVerdict(taskDir, input) {
-  const criteria = handoffAcceptanceCriteria(taskDir);
-  if (criteria.length === 0) {
-    throw new AcceptanceRefusal(
-      `${HANDOFF_INPUT} lists no acceptance criteria; there is no ledger to write`,
-    );
-  }
-  const criterion = criteria.find((entry) => entry.id === input.id);
-  if (!criterion) {
-    throw new AcceptanceRefusal(
-      `unknown acceptance criterion ${input.id}; ${HANDOFF_INPUT} lists ${criteria
-        .map((entry) => entry.id)
-        .join(', ')}`,
-    );
-  }
-  if (!ACCEPTANCE_VERDICTS.includes(input.verdict)) {
-    throw new AcceptanceRefusal(
-      `unknown verdict ${input.verdict}; expected one of ${ACCEPTANCE_VERDICTS.join(', ')}`,
-    );
-  }
-  if (input.proofMode !== undefined && !ACCEPTANCE_PROOF_MODES.includes(input.proofMode)) {
-    throw new AcceptanceRefusal(
-      `unknown proof mode ${input.proofMode}; expected one of ${ACCEPTANCE_PROOF_MODES.join(', ')}`,
-    );
-  }
-  const evidence = (input.evidence ?? []).map((entry) => assertEvidencePath(taskDir, entry));
-  const stored = readAcceptanceLedger(taskDir);
-  if (stored) {
-    const issues = validateAcceptanceStatusLedger(stored);
-    if (issues.length > 0) {
-      throw new AcceptanceRefusal(
-        `${ACCEPTANCE_STATUS_ARTIFACT} does not match the ledger contract:\n- ${issues.join('\n- ')}`,
-      );
-    }
-  }
-  if (stored?.schemaVersion === 2) {
-    throw new AcceptanceRefusal(
-      'Automatic verdicts are engine-owned. Request human review; a verified person uses farmslot run gate --action mark-untestable.',
-    );
-  }
-  const byId = new Map((stored?.criteria ?? []).map((entry) => [entry.id, entry]));
-  byId.set(criterion.id, {
-    id: criterion.id,
-    text: criterion.text,
-    verdict: input.verdict,
-    ...(input.proofMode ? { proofMode: input.proofMode } : {}),
-    evidence,
-    recipeNodes: [...(input.recipeNodes ?? [])],
-    ...(input.note ? { note: input.note } : {}),
-    updatedAt: input.now ?? new Date().toISOString(),
-  });
-  // Handoff order, so the ledger and the rendered table always read like TASK.md.
-  const ledger = {
-    schemaVersion: 1,
-    criteria: criteria.map((entry) => byId.get(entry.id)).filter(Boolean),
-  };
-  writeAcceptanceLedger(taskDir, ledger);
-  return ledger;
 }
 
 /** Transfer one engine-owned execution. Never aggregate sibling attempts. */
@@ -268,24 +208,26 @@ function acceptanceContractIssues(taskDir, options = {}) {
   if (!stored) {
     return [
       `${ACCEPTANCE_STATUS_ARTIFACT} is missing but ${HANDOFF_INPUT} lists ${criteria.length} ` +
-        'acceptance criteria — record a verdict for each with `farmslot-agent ac set <id> <verdict>`',
+        'acceptance criteria. Run the task recipe with an eligible assertion for each criterion.',
+    ];
+  }
+  if (stored.schemaVersion !== 2) {
+    return [
+      `${ACCEPTANCE_STATUS_ARTIFACT}: legacy schema-1 verdicts are display only. Run the task recipe to obtain schema-2 engine claims.`,
     ];
   }
   const issues = validateAcceptanceStatusLedger(stored);
   if (issues.length > 0) return issues;
   const known = new Set(criteria.map((criterion) => criterion.id));
   for (const entry of stored.criteria) {
-    if (
-      !known.has(entry.id) &&
-      (stored.schemaVersion === 1 || ACCEPTANCE_CRITERION_ID_PATTERN.test(entry.id))
-    ) {
+    if (!known.has(entry.id) && ACCEPTANCE_CRITERION_ID_PATTERN.test(entry.id)) {
       issues.push(
         `${ACCEPTANCE_STATUS_ARTIFACT}: ${entry.id} is not an acceptance criterion of this task`,
       );
     }
   }
   const byId = new Map(stored.criteria.map((entry) => [entry.id, entry]));
-  if (stored.schemaVersion === 2 && stored.criteria.some((entry) => entry.overrides !== undefined))
+  if (stored.criteria.some((entry) => entry.overrides !== undefined))
     issues.push(
       'Unverified local overrides require a canonical engine projection; they grant no review authority.',
     );
@@ -293,21 +235,18 @@ function acceptanceContractIssues(taskDir, options = {}) {
     const entry = byId.get(criterion.id);
     if (!entry) {
       issues.push(
-        `${criterion.id} has no verdict — run \`farmslot-agent ac set ${criterion.id} <verdict>\``,
+        `${criterion.id} has no engine verdict. Run the task recipe with an eligible assertion for this criterion.`,
       );
       continue;
     }
     if (
-      !(stored.schemaVersion === 2 && options.deferClaimVerdicts === true) &&
+      options.deferClaimVerdicts !== true &&
       (entry.verdict === 'failed' ||
         entry.verdict === 'awaiting-review' ||
         (!options.allowWeak && (entry.verdict === 'missing' || entry.verdict === 'weak')))
     ) {
       issues.push(
-        stored.schemaVersion === 2
-          ? `${criterion.id} is ${entry.verdict}: run an eligible recipe assertion or request human evidence review.`
-          : `${criterion.id} is ${entry.verdict}: prove it, or record \`untestable\` with a note ` +
-              '(a flow may waive this with worker_terminal.acceptance.allowWeak)',
+        `${criterion.id} is ${entry.verdict}: run an eligible recipe assertion or request human evidence review.`,
       );
     }
   }
@@ -328,7 +267,6 @@ module.exports = {
   requireHandoffAcceptanceCriteria,
   readAcceptanceLedger,
   renderAcceptanceCoverage,
-  setAcceptanceVerdict,
   setDerivedClaims,
   summarizeAcceptanceStatus,
   validateAcceptanceStatusLedger,

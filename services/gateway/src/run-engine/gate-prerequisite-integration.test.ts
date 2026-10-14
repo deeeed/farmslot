@@ -13,13 +13,13 @@ const { makeRun, deleteTestRunIfPresent } = await import('./test-fixtures.js');
 const { createRun, getRun, updateRun } = await import('../runs/store.js');
 const { resolveWorkerTerminalContract } = await import('../tasks/worker-terminal-contract.js');
 const require = createRequire(import.meta.url);
-const { setAcceptanceVerdict } =
-  require('@farmslot/agent-runtime/scripts/acceptance-ledger.cjs') as {
-    setAcceptanceVerdict(
-      taskDir: string,
-      input: { id: string; verdict: string; proofMode: string; evidence: string[] },
-    ): void;
-  };
+const {
+  setDerivedClaims,
+  writeAcceptanceLedger,
+  readAcceptanceLedger,
+  acceptanceContractIssues,
+} = require('@farmslot/agent-runtime/scripts/acceptance-ledger.cjs');
+const { engineClaims } = require('../../../../packages/agent-runtime/test/acceptance-fixtures.cjs');
 
 async function fixture(t: TestContext) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'gate-authority-'));
@@ -78,15 +78,7 @@ async function fixture(t: TestContext) {
       acceptance: { ...contract.acceptance, allowWeak: false },
     }),
   };
-  const proveAll = () => {
-    for (let index = 1; index <= 11; index++)
-      setAcceptanceVerdict(taskDir, {
-        id: `AC-${index}`,
-        verdict: 'proven',
-        proofMode: 'state',
-        evidence: ['artifacts/output.json'],
-      });
-  };
+  const proveAll = () => setDerivedClaims(taskDir, engineClaims(criteria));
   return { run, taskDir, sources, proveAll };
 }
 
@@ -126,16 +118,15 @@ test('missing current registration does not erase the original task criteria', a
   assert.match(result.error ?? '', /registration is missing or changed/);
 });
 
-test('weak verdicts use the existing frozen flow exception', async (t) => {
+test('weak engine verdicts defer to package review while terminal checks preserve the frozen flow exception', async (t) => {
   const f = await fixture(t);
   f.proveAll();
-  setAcceptanceVerdict(f.taskDir, {
-    id: 'AC-1',
-    verdict: 'weak',
-    proofMode: 'state',
-    evidence: ['artifacts/output.json'],
-  });
-  assert.ok((await readGateAcceptance(f.run, f.sources)).issues.length);
+  const claims = readAcceptanceLedger(f.taskDir);
+  claims.criteria[0].verdict = 'weak';
+  writeAcceptanceLedger(f.taskDir, claims);
+  assert.ok(acceptanceContractIssues(f.taskDir, { require: true, allowWeak: false }).length);
+  assert.deepEqual((await readGateAcceptance(f.run, f.sources)).issues, []);
+  assert.deepEqual(acceptanceContractIssues(f.taskDir, { require: true, allowWeak: true }), []);
   const permitted = await readGateAcceptance(f.run, {
     ...f.sources,
     contract: async () => {

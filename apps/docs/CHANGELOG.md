@@ -5,6 +5,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 ## Unreleased
 
 - Document attested human-published PR adoption and its protocol contract.
+- Document the single engine-ledger cutover, read-only acceptance CLI and retained-data limits.
 
 - Document authenticated visual claim review in the generated gateway API reference.
 

@@ -96,9 +96,10 @@ first applicable result in this order: failed, missing, weak, awaiting-review,
 untestable. Untimed media remains visible and its timing limitation is separate
 from the claim's semantic verdict. A passed action, screenshot or overall gate
 acknowledgment is never a substitute for the eligible assertion/visual judgment.
-Manual `ac set` becomes an untestable override only, with actor, reason and prior
-state; it cannot set a normal proven verdict. The proposed [verified override
-contract](#verified-claim-overrides) replaces local actor strings as authority.
+`farmslot-agent ac` is read-only after cutover; local verdict writing is removed.
+Only the Accepted [verified override contract](#verified-claim-overrides) grants
+an untestable exception through a credential-backed gateway receipt. It never
+changes the immutable engine ledger or manufactures a proven verdict.
 
 Examples the reducer MUST satisfy: failed then passed in one declared retry group
 uses the final result and retains both; a failed independent iteration still
@@ -303,9 +304,19 @@ ledger relationship to remain available to publication consumers.
 
 ## Migration and conformance
 
-Until engine derivation passes conformance, manual verdict steps remain the sole
-normal writer path. Then cut over once and remove those steps; never enable two
-normal paths. Convert verified relationships once and retain other historical
+The coordinated writer cutover follows engine conformance and consumer/adopter
+migration. The engine is then the sole normal verdict writer; task copies are
+selected-execution transport. Task writes and current completion MUST reject
+schema 1; local normal verdict and override writing MUST be removed. Current
+coverage MUST come from structured engine claims, never manifest `covers` or a
+`recipe-coverage.md` fallback.
+
+The one-time retained-data migration labels schema-1 ledgers as display only
+through the shared model's limitation caption and existing pre-cutover run version.
+It MUST preserve original ledger bytes and frozen inventory/decision identity.
+Do not backfill `recordedEvidenceContractVersion`, convert schema 1 to a recipe
+package, infer claim bindings or timestamps, or sign old override chains. Existing
+retained links remain visible without deriving new manifest relationships. Convert verified relationships once and retain other historical
 media as explicitly untimed. Delete replaced external recorders, PID/signal/trap/
 moov steps, manual linking, video-only promotion and private timestamp logic.
 Specific adopter files and release coordination stay outside this public spec.
@@ -662,7 +673,8 @@ policy findings; integrity and unrelated prerequisites still block.
    the failed summary and missing later claims; a separate passing execution
    must satisfy the implementation's positive claims. Freeze the declaration
    with the existing gate evidence inputs, not in a new evidence store.
-2. **Retained inspection.** A schema-v1 task ledger's inspected `proven` row may
+2. **Retained inspection, pre-cutover only.** This rule applies only to runs
+   without a gateway-stamped `recordedEvidenceContractVersion`. A schema-v1 task ledger's inspected `proven` row may
    satisfy a schema-v2 visual/mixed claim's `awaiting-review` policy only when
    registered ID/text and cited evidence bind to the same selected execution's
    frozen closure. No evidence or a different attempt cannot bridge the verdict.
@@ -672,7 +684,8 @@ policy findings; integrity and unrelated prerequisites still block.
    Trim/collapse whitespace and remove only a leading `AC<n>:` label whose ID
    matches that criterion. The remaining text MUST match exactly. Do not ignore
    changed meaning, a different AC label or mismatched IDs.
-4. **Non-recipe proof.** Task-declared unit/revert-test evidence may satisfy its
+4. **Non-recipe proof, pre-cutover only.** For an unversioned retained run,
+   task-declared unit/revert-test evidence may satisfy its
    applicable state criterion through its retained successful result and checked
    citations. Do not require a fabricated recipe claim. Missing/failed results,
    uncited files or unit-only evidence for a visual criterion remain unsatisfied.

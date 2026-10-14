@@ -1,17 +1,11 @@
 import * as contract from '../../scripts/acceptance.mjs';
 import type { EvidenceMomentRef, RecipeClaimKind } from '../recipe/evidence.js';
 
-// Acceptance-criteria ledger (ADR-060): one verdict per criterion, with the
-// evidence that proves it.
-//
-// Task init assigns the ids (`AC-<N>`, N the 1-based position of the criterion in
-// `inputs/handoff.json` `task.acceptanceCriteria`). One module writes
-// `artifacts/acceptance-status.json` (agent-runtime's acceptance-ledger.cjs), for
-// `farmslot-agent ac` and for recipe runs with a task dir. The markdown coverage
-// table workers hand-write today is a rendering of this file, so the terminal
-// contract check, the PR body, and the run-detail panel all read one source.
+// ADR-062 engine claims are the normal verdict authority. Task init assigns
+// positional AC ids; selected recipe execution transfers a schema-2 projection
+// into the task namespace. Schema 1 survives only as retained display input.
 
-/** Task-dir relative path of the ledger. Written by `farmslot-agent ac` and recipe runs. */
+/** Task-relative path of the selected engine-ledger projection. */
 export const ACCEPTANCE_STATUS_ARTIFACT: string = contract.ACCEPTANCE_STATUS_ARTIFACT;
 
 export const ACCEPTANCE_VERDICTS = contract.ACCEPTANCE_VERDICTS;
@@ -61,8 +55,8 @@ export interface AcceptanceStatusLedger {
 /**
  * One criterion as task init registered it: the id and the text, with no verdict.
  * Clients pair this with the ledger so a criterion the worker has not judged yet is
- * visible as awaiting a verdict rather than missing from the panel — the ledger
- * holds only what `ac set` recorded, and nothing may invent a verdict for the rest.
+ * visible as awaiting a verdict rather than missing from the panel. The ledger
+ * carries assessed engine claims; nothing invents a verdict for unassessed rows.
  */
 export interface AcceptanceCriterionRef {
   id: string;
@@ -86,15 +80,14 @@ export const acceptanceCriteriaView: (
 
 /**
  * Where a run's acceptance panel data came from. Only `ledger` carries verdicts;
- * `evidence-manifest` is the display fallback for a run that wrote no ledger.
+ * `evidence-manifest` identifies retained historical data, never current fallback derivation.
  */
 export type AcceptanceStatusSource = 'ledger' | 'evidence-manifest';
 
 /**
- * A criterion that one or more `artifacts/evidence-manifest.json` entries list in
- * `covers`, with the task-dir relative files those entries link. Shown only when
- * the run has no ledger. It says evidence exists, never that the criterion is
- * proven, so nothing may count it as a verdict.
+ * Explicitly retained historical criterion links in the task namespace. Current
+ * readers do not derive them from manifest covers. Links establish neither
+ * verdicts nor a recording timeline and remain display only.
  */
 export interface AcceptanceEvidenceLink {
   /** `AC-<N>`, a criterion the handoff registered. */

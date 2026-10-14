@@ -24,7 +24,7 @@ Neither document claims the complete feature is shipped.
 ### Hard design principles
 
 - **P1 Transparent to the agent.** Execution automatically produces recording, markers, padded clips, stills, HUD captions and evidence links. Authors write no recording, timestamp or linking code.
-- **P2 Automatic claim evidence.** Nodes declare which claims they prove through eligible expectations. The engine derives verdicts and moments; manual `ac set` is only an audited untestable override after cutover.
+- **P2 Automatic claim evidence.** Nodes declare which claims they prove through eligible expectations. The engine derives verdicts and moments; verified human untestable exceptions use gateway receipts, never local verdict writes.
 - **P3 Cheap by default.** UI recording is on with bounded CPU, disk, time and transfer cost. Virtual clips are immediate; separate encoded clips are produced only on demand.
 - **P4 Harness-level integration.** One RecipeEngine and provider contract own lifecycle and evidence. Custom harnesses inherit this behavior without recording implementations.
 - **P5 Weak-model proof.** A basic recipe author gets a complete review package from ordinary assertions without extra evidence instructions. Action-only false claims fail closed.
@@ -289,7 +289,7 @@ contracts, concepts and declarative-adoption guidance with implementation.
 
 1. Complete shared engine derivation, assertion/segment contracts and public APIs through the existing canonical work. Pass conformance before changing normal verdict ownership.
 2. Adopt the shared model and immutable package selection in clients/publication. Migrate verified legacy relationships once; retain other historical media as explicitly untimed.
-3. Cut over each adopter with its own coordinated change linking this ADR. The intended pre-cutover policy keeps manual verdict steps until engine derivation passes. Today both manual verdicts and engine projections are live through one task-ledger file writer; this is a migration gap, not two approved permanent authorities. Then remove those steps in one cutover: never run two normal paths or writers. Delete replaced recorders, orchestration, link plumbing and imports; no shims.
+3. Cut over each adopter with its own coordinated change linking this ADR. The intended pre-cutover policy keeps manual verdict steps until engine derivation passes. The pre-cutover overlap of manual verdicts and engine projections was a migration gap, not two approved permanent authorities. Remove manual steps and writing in one coordinated cutover: never run two normal paths or writers. Delete replaced recorders, orchestration, link plumbing and imports; no shims.
 
 Specific repositories, files and rollout coordination belong in separate adoption
 records, not these public framework documents.
@@ -394,7 +394,7 @@ in the same cutover so workers request human review rather than writing override
 
 **Status:** Accepted, 2026-10-14
 **Specification:** [Selected evidence run contract](../reference/recorded-run-evidence.md#selected-evidence-run-contract).
-**Implementation:** [#1030](https://github.com/deeeed/farmslot/pull/1030), pending review and delivery.
+**Implementation:** [#1030](https://github.com/deeeed/farmslot/pull/1030), merged; package publication and rollout remain separate.
 
 ### Decision
 

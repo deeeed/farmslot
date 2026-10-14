@@ -1,6 +1,6 @@
 // The acceptance-criteria ledger (ADR-060 phase 5) as the gateway sees it: one
-// JSON artifact beside a task directory's checklist, written only by
-// `farmslot-agent ac`. The gateway observes it — it never records a verdict.
+// JSON projection beside a task directory's checklist, transferred from the
+// selected engine execution. The gateway observes it; it never records a verdict.
 //
 // This module is the single read layer. The watcher uses it to know which file to
 // watch, `taskProgress` to put the ledger on the progress result every client
@@ -21,7 +21,6 @@ import {
 } from '@farmslot/protocol';
 
 import { slotFileExists, type SlotLocality, slotReadFile } from '../core/slot-io.js';
-import { normalizeEvidenceManifestArtifactPath } from '../run-completion/evidence-manifest.js';
 
 /** Absolute path of a task directory's acceptance ledger. */
 export function acceptanceStatusPathFor(taskDir: string): string {
@@ -29,8 +28,8 @@ export function acceptanceStatusPathFor(taskDir: string): string {
 }
 
 /**
- * Parse a ledger file. Throws on any deviation from the contract: `ac` is the
- * only writer and validates before writing, so a malformed ledger is a real
+ * Parse a current projection or a retained display ledger. Throws on contract
+ * deviation: the engine transfer validates before writing, so malformed data is a real
  * failure an operator must see, never a reason to report a run with no verdicts.
  */
 export function parseAcceptanceStatusLedger(
@@ -141,93 +140,6 @@ export async function handoffListsAcceptanceCriteria(
   return (await readHandoffAcceptanceCriteria(ctx, taskDir)).length > 0;
 }
 
-/** Evidence manifest basename; the watcher re-emits acceptance when it changes. */
-export const EVIDENCE_MANIFEST_FILENAME = 'evidence-manifest.json';
-
-/** Task-dir relative path of the evidence manifest, the ledger-less fallback's source. */
-const EVIDENCE_MANIFEST_ARTIFACT = `artifacts/${EVIDENCE_MANIFEST_FILENAME}`;
-
-/** `ac1`, `AC1`, `AC-1`, `ac-1`, `AC 1`, `ac_1`: how manifests spell a criterion. */
-const COVER_CRITERION_PATTERN = /^ac[\s_-]?([1-9][0-9]*)$/i;
-
-/**
- * The `AC-<N>` id a manifest `covers` entry names, or null when it names anything
- * else. Only a whole criterion reference counts: `AC8b`, `ac-tp8` or `flag-off`
- * are sub-cases and recipe targets, not criteria.
- */
-export function acceptanceIdFromCover(cover: string): string | null {
-  const match = COVER_CRITERION_PATTERN.exec(cover.trim());
-  return match ? `AC-${match[1]}` : null;
-}
-
-/**
- * The ledger-less fallback: each registered criterion that manifest entries list
- * in `covers`, with the task-dir relative files those entries link. Ids the
- * handoff does not register are ignored, never invented as criteria, and an entry
- * with no linkable file links nothing. Throws when the text is not JSON.
- */
-export function acceptanceEvidenceLinksFromManifest(
-  text: string,
-  criteria: ReadonlyArray<AcceptanceCriterionRef>,
-): AcceptanceEvidenceLink[] {
-  const manifest: unknown = JSON.parse(text);
-  if (!manifest || typeof manifest !== 'object') return [];
-  const { before_after_pairs: pairs, standalone } = manifest as Record<string, unknown>;
-  const registered = new Set(criteria.map((criterion) => criterion.id));
-  const linked = new Map<string, Set<string>>();
-  const entries: unknown[] = [
-    ...(Array.isArray(pairs) ? pairs : []),
-    ...(Array.isArray(standalone) ? standalone : []),
-  ];
-  for (const entry of entries) {
-    if (!entry || typeof entry !== 'object') continue;
-    const { covers, before, after, file } = entry as Record<string, unknown>;
-    if (!Array.isArray(covers)) continue;
-    const files = [before, after, file]
-      .map((value) =>
-        typeof value === 'string'
-          ? normalizeEvidenceManifestArtifactPath(value, { mediaOnly: false })
-          : null,
-      )
-      .filter((value): value is string => value !== null);
-    if (files.length === 0) continue;
-    for (const cover of covers) {
-      const id = typeof cover === 'string' ? acceptanceIdFromCover(cover) : null;
-      if (!id || !registered.has(id)) continue;
-      const evidence = linked.get(id) ?? new Set<string>();
-      for (const evidencePath of files) evidence.add(evidencePath);
-      linked.set(id, evidence);
-    }
-  }
-  return criteria.flatMap((criterion) => {
-    const evidence = linked.get(criterion.id);
-    return evidence ? [{ id: criterion.id, evidence: [...evidence] }] : [];
-  });
-}
-
-/**
- * The fallback links for a task directory with no ledger. A missing manifest links
- * nothing. An unreadable one links nothing too, but says why in `error`, so a client
- * can tell "the manifest could not be read" from "the manifest covers nothing".
- */
-async function readAcceptanceEvidenceLinks(
-  ctx: SlotLocality,
-  taskDir: string,
-  criteria: ReadonlyArray<AcceptanceCriterionRef>,
-): Promise<{ links: AcceptanceEvidenceLink[]; error?: string }> {
-  if (criteria.length === 0) return { links: [] };
-  const manifestPath = path.join(taskDir, EVIDENCE_MANIFEST_ARTIFACT);
-  try {
-    if (!(await slotFileExists(ctx, manifestPath))) return { links: [] };
-    return {
-      links: acceptanceEvidenceLinksFromManifest(await slotReadFile(ctx, manifestPath), criteria),
-    };
-  } catch (err) {
-    console.warn(`[acceptance] ignoring ${manifestPath}: ${(err as Error).message}`);
-    return { links: [], error: `${EVIDENCE_MANIFEST_ARTIFACT}: ${(err as Error).message}` };
-  }
-}
-
 export interface AcceptanceStatusRead {
   /** Registered criteria; empty when the task has none or when the read failed. */
   criteria: AcceptanceCriterionRef[];
@@ -235,11 +147,11 @@ export interface AcceptanceStatusRead {
   ledger: AcceptanceStatusLedger | null;
   /** Why the ledger or the criteria could not be read; clients show this. */
   error?: string;
-  /** `ledger` when one was read; `evidence-manifest` when `evidenceLinks` stands in. */
+  /** Only the ledger supplies current acceptance data. */
   source?: AcceptanceStatusSource;
-  /** Manifest-linked criteria, only when there is no ledger. Never a verdict. */
+  /** Explicitly retained historical links; current readers never derive manifest covers. */
   evidenceLinks?: AcceptanceEvidenceLink[];
-  /** Why the manifest the fallback reads could not be read; not a ledger error. */
+  /** A retained historical link-read caption, never derived by current readers. */
   evidenceLinksError?: string;
 }
 
@@ -270,11 +182,7 @@ export async function readAcceptanceStatusForDisplay(
     console.warn(`[acceptance] ${message}`);
     return { criteria, ledger: null, error: message };
   }
-  const fallback = await readAcceptanceEvidenceLinks(ctx, taskDir, criteria);
-  if (fallback.error) return { criteria, ledger: null, evidenceLinksError: fallback.error };
-  return fallback.links.length > 0
-    ? { criteria, ledger: null, source: 'evidence-manifest', evidenceLinks: fallback.links }
-    : { criteria, ledger: null };
+  return { criteria, ledger: null };
 }
 
 /** Ledger basename, for the `readTaskArtifactText(taskFile, name)` readers. */
@@ -333,17 +241,11 @@ export function handoffCriteriaFromText(text: string | null | undefined): {
   };
 }
 
-/**
- * Coverage markdown for the gate summary and the PR body: the ledger rendered
- * through the protocol renderer, or null when the run has no verdicts, so the
- * caller keeps its existing `recipe-coverage.md` behaviour. Farm templates still
- * write that file until they move onto `ac` (phase 4), so this is a preference,
- * never a replacement.
- */
+/** Render structured engine coverage; retained task verdicts stay display only. */
 export function acceptanceCoverageMarkdown(
   ledger: AcceptanceStatusLedger | null,
   criteria: ReadonlyArray<AcceptanceCriterionRef> = ledger?.criteria ?? [],
 ): string | null {
-  if (!ledger || ledger.criteria.length === 0) return null;
+  if (!ledger || ledger.schemaVersion !== 2 || ledger.criteria.length === 0) return null;
   return renderAcceptanceCoverage(ledger, criteria.length > 0 ? criteria : ledger.criteria);
 }

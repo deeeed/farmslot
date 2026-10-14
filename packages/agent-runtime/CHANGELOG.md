@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- **BREAKING:** Make acceptance commands read-only, transfer only schema-2 engine claims, and refuse retained schema-1 verdicts for current completion.
 
 ## 0.20.1 - 2026-10-14
 

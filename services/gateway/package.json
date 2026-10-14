@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit --project tsconfig.json",
     "test": "yarn workspace @farmslot/protocol build && node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json --workers 4 src",
     "quality": "yarn typecheck && yarn test",
-    "postinstall": "node scripts/fix-node-pty-spawn-helper.mjs"
+    "postinstall": "node scripts/fix-node-pty-spawn-helper.mjs",
+    "test:acceptance-watch-live": "node --import tsx --experimental-test-module-mocks src/tasks/watcher-acceptance.live.ts"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.82.1",

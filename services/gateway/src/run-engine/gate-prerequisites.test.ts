@@ -520,8 +520,8 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
     ),
     [{ id: 'hold' }],
   );
-  // Older retained executions have valid v1 files but no automatic claim identity.
-  // They may receive a human policy attestation, never invented moments/verdicts.
+  // Retained schema-1 task verdicts remain display only. A current gate must not
+  // use them to bypass engine execution identity, even with a policy attestation.
   const legacy = {
     ...retained,
     claims: undefined,
@@ -557,12 +557,12 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
     recordedEvidence: async () => [legacy],
   });
   assert.deepEqual(
-    legacyGate.reasons.map((reason) => reason.evidencePolicy),
-    ['claim-verdict', 'criterion-binding'],
+    legacyGate.reasons.map((reason) => reason.code),
+    ['evidence-execution-mismatch'],
   );
   assert.deepEqual(
     gateActionsForReadiness([{ id: 'approve-publish-evidence-attested' }], legacyGate),
-    [{ id: 'approve-publish-evidence-attested' }],
+    [],
   );
   const partial = {
     ...retained,

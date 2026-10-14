@@ -19,8 +19,10 @@ import {
 
 const require = createRequire(import.meta.url);
 const shared = require('@farmslot/agent-runtime/scripts/acceptance-ledger.cjs') as {
-  setAcceptanceVerdict(taskDir: string, input: Record<string, unknown>): RecipeClaimLedger;
   validateAcceptanceStatusLedger(value: unknown): string[];
+};
+const acceptanceCli = require('@farmslot/agent-runtime/scripts/acceptance-cli.cjs') as {
+  main(argv: string[]): void;
 };
 const criteria = ['The command observes one.', 'A second expectation is required.'];
 const manifest: RecipeActionManifestDocument = {
@@ -129,29 +131,21 @@ test('failed actual assertion stays failed and cannot be overwritten manually as
   const run = await execute(t, 'two');
   recordRecipeAcceptance(run.taskDir, run.target, run.result);
   assert.equal(run.result.claims.criteria[0]?.verdict, 'failed');
-  assert.throws(
-    () => shared.setAcceptanceVerdict(run.taskDir, { id: 'AC-1', verdict: 'proven' }),
-    /engine-owned/,
-  );
-  assert.throws(
-    () =>
-      shared.setAcceptanceVerdict(run.taskDir, {
-        id: 'AC-1',
-        verdict: 'untestable',
-        note: 'External verification needed.',
-      }),
-    /verified person/,
-  );
-  assert.throws(
-    () =>
-      shared.setAcceptanceVerdict(run.taskDir, {
-        id: 'AC-1',
-        verdict: 'untestable',
-        note: 'External verification needed.',
-        actor: 'operator',
-      }),
-    /verified person/,
-  );
+  for (const verdict of ['proven', 'untestable']) {
+    assert.throws(
+      () =>
+        acceptanceCli.main([
+          'set',
+          'AC-1',
+          verdict,
+          '--task-dir',
+          run.taskDir,
+          '--actor',
+          'operator',
+        ]),
+      /engine-owned.*verified person/,
+    );
+  }
   assert.equal(
     JSON.parse(fs.readFileSync(path.join(run.taskDir, 'artifacts/acceptance-status.json'), 'utf8'))
       .criteria[0].verdict,
