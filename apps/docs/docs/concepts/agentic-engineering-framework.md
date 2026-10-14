@@ -23,8 +23,8 @@ Project providers implement their domain behavior and inherit the shared engine,
 CLI handlers and artifact validator. Clients render shared facts rather than
 recomputing gate eligibility or proof from file presence.
 
-During the current ledger transition, workers may still record manual task
-verdicts. The approved single-writer end state assigns normal recipe verdicts to
-the engine. See [Recipe evidence loop](./recipe-evidence-loop.md) for that boundary
+The recipe engine is the sole normal verdict authority. Workers execute eligible
+assertions; task ledgers transfer the selected schema-2 engine claims and `ac`
+only reads them. Retained schema-1 ledgers stay display only. See [Recipe evidence loop](./recipe-evidence-loop.md) for that boundary
 and [Protocol boundaries](../architecture/protocol-boundaries.md) for the package
 contracts.

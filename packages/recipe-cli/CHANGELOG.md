@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Verify engine claim transport preserves verdicts and refuses manual proof and local untestable overrides.
 
 ## 0.16.2 - 2026-10-14
 

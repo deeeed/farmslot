@@ -1,453 +1,288 @@
 #!/usr/bin/env tsx
-/**
- * E2E for the gateway side of the acceptance ledger (ADR-060 phase 5).
- *
- * A REAL dispatch (`dispatchExecute`) puts a REAL task directory on a local pool
- * slot, a project-owned `scripted` command records verdicts through the REAL
- * `farmslot-agent ac` entry point, and the gateway's own methods are called
- * in-process against the live files while the worker runs:
- *
- *   - `taskProgress` must carry `acceptanceStatus` as each verdict lands, and the
- *     ledger must never change the parent step projection;
- *   - `validateTerminalSignalArtifacts` must refuse a terminal signal while a
- *     criterion has no verdict, and again while one is `weak`, then accept once
- *     every criterion is proven or recorded untestable — proving a signal written
- *     around the mark engine cannot skip the ledger.
- *
- * Worker and gateway hand off through ack files so each phase is observed
- * deterministically instead of by sleeping.
- */
+/** Manual public-RPC proof. Disposable inputs are seeded before startup; no runner is launched. */
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { once } from 'node:events';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from 'node:fs';
+import { createServer } from 'node:net';
+import { hostname, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import type { AcceptanceStatusLedger } from '@farmslot/protocol';
+import { createEvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
+import type { RunRecipeRunsForRunResult, TaskProgressResult } from '@farmslot/protocol';
+import { criteria, proveLedgerCutover } from './e2e-acceptance-ledger.mjs';
 
-import { dispatchExecute } from '../services/gateway/src/methods/dispatch/execute.js';
-import { taskProgress } from '../services/gateway/src/methods/task.js';
-import { unwatchSlot } from '../services/gateway/src/tasks/watcher.js';
-import { validateTerminalSignalArtifacts } from '../services/gateway/src/tasks/worker-terminal-contract.js';
-
-const root = process.cwd();
-const stamp = `${process.pid}-${Date.now()}`;
-const slotId = `acceptance-gw-${stamp}`;
-const projectName = `acceptance-gw-${stamp}`;
-const session = slotId;
-const poolFile = path.join(root, 'pool', `${slotId}.json`);
-const projectDir = path.join(root, 'projects', projectName);
-const taskName = `acceptance-gateway-${stamp}`;
-/** The orchestrator task root the gateway derives for a project (projects/<name>/tasks). */
-const sourceTaskDir = path.join(projectDir, 'tasks', 'dev', taskName);
-const workerTaskRel = path.join('.task', 'dev', taskName);
-const workerTaskDir = path.join(root, workerTaskRel);
-const driverScript = path.join(projectDir, 'drive-acceptance.mjs');
-const agentBin = path.join(root, 'packages', 'agent-runtime', 'bin', 'farmslot-agent.mjs');
-const previousNodeTestContext = process.env.NODE_TEST_CONTEXT;
-
-const CRITERIA = [
-  'The run detail panel lists every criterion with its verdict.',
-  'A weak verdict blocks the terminal signal.',
-  'The biometric fallback matches platform guidance.',
-];
-
-const CHECKLIST = [
-  '# Worker: dev',
-  '',
-  '## Work',
-  '',
-  '- [ ] **1. record the verdicts**',
-  '- [ ] **2. write the terminal signal**',
-  '',
-].join('\n');
-
-function run(command: string, args: string[], options: { ignoreFailure?: boolean } = {}) {
-  const result = spawnSync(command, args, { cwd: root, stdio: 'pipe', encoding: 'utf-8' });
-  if (result.error) throw result.error;
-  if (!options.ignoreFailure && result.status !== 0) {
-    throw new Error(`${command} ${args.join(' ')} failed: ${result.stderr || result.stdout}`);
-  }
-  return result;
+const source = fileURLToPath(new URL('../', import.meta.url));
+const work =
+  process.env.FARMSLOT_LEDGER_PROOF_ROOT ??
+  mkdtempSync(path.join(tmpdir(), 'ledger-gateway-proof-'));
+const root = path.join(work, 'root');
+const checkout = path.join(root, 'checkout');
+const project = 'ledger-proof';
+const runsDir = path.join(root, '.runs');
+const retainedRunFile = existsSync(runsDir)
+  ? readdirSync(runsDir).find((file) => /^[a-f0-9-]{36}\.json$/.test(file))
+  : undefined;
+const runId = retainedRunFile ? retainedRunFile.slice(0, -5) : randomUUID();
+const slotId = 'ledger-proof-slot';
+const taskDir = path.join(checkout, 'tasks/current');
+const retained = path.join(root, 'projects', project, 'tasks/current');
+const out = path.resolve(process.env.FARMSLOT_LEDGER_PROOF_OUT ?? 'temp/ledger-cutover-proof');
+let child: ChildProcess | undefined;
+const writeJson = (file: string, value: unknown) => {
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify(value, null, 2) + '\n');
+};
+async function freePort() {
+  const server = createServer();
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  await new Promise<void>((resolve, reject) =>
+    server.close((error) => (error ? reject(error) : resolve())),
+  );
+  return address.port;
 }
-
-function ackPath(phase: string): string {
-  return path.join(workerTaskDir, 'artifacts', `ack-${phase}`);
-}
-
-function phasePath(phase: string): string {
-  return path.join(workerTaskDir, 'artifacts', `phase-${phase}`);
-}
-
-function workerLog(): string {
-  const parts: string[] = [];
-  for (const file of ['driver.log', 'scripted-command.stdout.txt', 'scripted-command.stderr.txt']) {
-    const full = path.join(workerTaskDir, 'artifacts', file);
-    if (existsSync(full)) parts.push(`--- ${file} ---\n${readFileSync(full, 'utf-8')}`);
-  }
-  const pane = run('tmux', ['capture-pane', '-p', '-t', session, '-S', '-80'], {
-    ignoreFailure: true,
-  });
-  parts.push(`--- tmux pane ---\n${pane.stdout || pane.stderr}`);
-  return parts.join('\n\n');
-}
-
-async function waitFor(label: string, ready: () => boolean, timeoutMs = 90_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
+async function waitFor(ready: () => boolean, timeout = 30_000) {
+  const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     if (ready()) return;
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error(`Timed out waiting for ${label}\n\n${workerLog()}`);
+  throw new Error('Gateway did not become ready. Inspect the retained gateway log.');
 }
-
-/** The ledger as the gateway projects it onto the progress result. */
-async function ledgerFromGateway(): Promise<AcceptanceStatusLedger | undefined> {
-  const progress = await taskProgress({
-    slotId,
-    taskFile: path.join(workerTaskRel, 'CHECKLIST.md'),
+try {
+  mkdirSync(checkout, { recursive: true });
+  const proof = retainedRunFile
+    ? {
+        claims: JSON.parse(
+          readFileSync(path.join(taskDir, 'artifacts/acceptance-status.json'), 'utf8'),
+        ),
+      }
+    : await proveLedgerCutover(taskDir, checkout);
+  for (const directory of [root, checkout]) {
+    if (!existsSync(path.join(directory, '.git/refs/heads/proof'))) {
+      execFileSync('git', ['init', '--quiet', directory]);
+      execFileSync('git', [
+        '-C',
+        directory,
+        'fetch',
+        '--quiet',
+        '--update-shallow',
+        source,
+        'HEAD',
+      ]);
+      execFileSync('git', ['-C', directory, 'symbolic-ref', 'HEAD', 'refs/heads/proof']);
+      execFileSync('git', ['-C', directory, 'update-ref', 'refs/heads/proof', 'FETCH_HEAD']);
+    }
+  }
+  writeJson(path.join(root, 'services/gateway/package.json'), { name: 'proof', version: '0.0.0' });
+  writeFileSync(path.join(root, 'CLAUDE.md'), '# Disposable ledger proof\n');
+  mkdirSync(path.join(root, 'scripts'), { recursive: true });
+  writeFileSync(path.join(root, 'scripts/dev.sh'), '#!/bin/sh\n');
+  writeJson(path.join(root, 'projects', project, 'project.json'), {
+    name: project,
+    runtime_dir: 'tasks',
+    task_dir_name: 'tasks',
+    hooks: {},
   });
-  // The ledger is task-directory state: it must never move a step.
-  assert.equal(progress.structured?.totalSteps, 2, 'the parent checklist still enumerates 2 steps');
-  return progress.acceptanceStatus;
-}
-
-async function waitForVerdicts(expected: Array<string | null>): Promise<AcceptanceStatusLedger> {
-  let seen: AcceptanceStatusLedger | undefined;
-  const deadline = Date.now() + 90_000;
-  const want = JSON.stringify(expected);
-  while (Date.now() < deadline) {
-    seen = await ledgerFromGateway();
-    const verdicts = CRITERIA.map(
-      (_text, index) =>
-        seen?.criteria.find((entry) => entry.id === `AC-${index + 1}`)?.verdict ?? null,
-    );
-    if (JSON.stringify(verdicts) === want) return seen as AcceptanceStatusLedger;
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  throw new Error(
-    `Timed out waiting for verdicts ${want}; last read ${JSON.stringify(seen)}\n\n${workerLog()}`,
-  );
-}
-
-/** A terminal `complete` signal as a runner writing around `mark` would leave it. */
-async function terminalVerdict() {
-  return validateTerminalSignalArtifacts(
-    slotId,
-    path.join(workerTaskDir, 'SIGNAL.json'),
-    { status: 'complete', outcome: 'success', timestamp: new Date().toISOString() },
-    path.join(workerTaskDir, 'CHECKLIST.md'),
-  );
-}
-
-/**
- * The worker side, run by the project-owned scripted command. It records verdicts
- * only through `farmslot-agent ac` — never by writing the ledger — and blocks on
- * an ack file after each phase so the gateway can observe it.
- */
-function writeDriverScript(): void {
-  writeFileSync(
-    driverScript,
-    `import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
-
-const taskDir = process.argv[2];
-const agentBin = process.argv[3];
-const log = path.join(taskDir, 'artifacts', 'driver.log');
-
-function note(line) {
-  appendFileSync(log, \`\${new Date().toISOString()} \${line}\\n\`);
-}
-
-function ac(args) {
-  const result = spawnSync(process.execPath, [agentBin, 'ac', args[0], '--task-dir', taskDir, ...args.slice(1)], {
-    cwd: taskDir,
-    encoding: 'utf-8',
-  });
-  const output = \`\${result.stdout ?? ''}\${result.stderr ?? ''}\`;
-  note(\`ac \${args.join(' ')} -> exit \${result.status}\\n\${output}\`);
-  assert.equal(result.status, 0, \`ac \${args.join(' ')} failed: \${output}\`);
-  return output;
-}
-
-async function waitForAck(phase) {
-  writeFileSync(path.join(taskDir, 'artifacts', \`phase-\${phase}\`), phase);
-  const ack = path.join(taskDir, 'artifacts', \`ack-\${phase}\`);
-  const deadline = Date.now() + 90_000;
-  while (Date.now() < deadline) {
-    if (existsSync(ack)) return;
-    await new Promise((resolve) => setTimeout(resolve, 150));
-  }
-  throw new Error(\`worker timed out waiting for the gateway ack '\${phase}'\`);
-}
-
-async function main() {
-  writeFileSync(path.join(taskDir, 'artifacts', 'after-unlock.png'), 'png-bytes');
-  // One verdict at a time, each observed by the gateway before the next.
-  ac(['set', 'AC-1', 'proven', '--proof-mode', 'visual', '--evidence', 'artifacts/after-unlock.png', '--recipe-node', 'assert-single-prompt']);
-  await waitForAck('first');
-
-  ac(['set', 'AC-2', 'weak', '--note', 'Unit test only; the cancel path is not wired yet.']);
-  await waitForAck('weak');
-
-  ac(['set', 'AC-2', 'proven', '--proof-mode', 'state', '--recipe-node', 'assert-vault-locked']);
-  ac(['set', 'AC-3', 'untestable', '--note', 'No simulator path reaches the biometric prompt.']);
-  const listed = JSON.parse(ac(['list']));
-  assert.deepEqual(
-    listed.map((row) => row.verdict),
-    ['proven', 'proven', 'untestable'],
-    'ac list must report what ac set wrote',
-  );
-  const rendered = ac(['render']);
-  assert.match(rendered, /Overall recipe coverage: 2\\/3 ACs PROVEN \\(untestable: AC-3, weak: 0, missing: 0\\)/);
-  writeFileSync(path.join(taskDir, 'artifacts', 'coverage.md'), rendered);
-  writeFileSync(path.join(taskDir, 'artifacts', 'pr-description.md'), '# Acceptance ledger E2E\\n\\nVerdicts recorded.\\n');
-  writeFileSync(path.join(taskDir, 'artifacts', 'learnings.md'), '- The ledger is the proof record.\\n');
-  writeFileSync(path.join(taskDir, 'artifacts', 'phase-done'), 'done');
-  note('driver finished');
-}
-
-await main();
-`,
-    'utf-8',
-  );
-}
-
-function writeTempProject(): void {
-  mkdirSync(projectDir, { recursive: true });
-  writeFileSync(
-    path.join(projectDir, 'project.json'),
-    `${JSON.stringify(
+  writeJson(path.join(root, 'pool/local.json'), {
+    schema_version: 2,
+    machine: hostname(),
+    host: 'localhost',
+    ssh_user: userInfo().username,
+    os: process.platform,
+    project,
+    platform: 'cli',
+    slots: [
       {
-        name: projectName,
-        paths: { runtime_dir: '.agent', artifact_dir: '.task' },
-        scripted: {
-          commands: {
-            'drive-acceptance': {
-              // A project-owned command ref, as the scripted-runner contract
-              // requires: the gateway never takes a command from the dispatch.
-              command: `node ${JSON.stringify(driverScript)} ${JSON.stringify(workerTaskDir)} ${JSON.stringify(agentBin)}`,
-              timeout_ms: 240_000,
-            },
-          },
-        },
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  writeDriverScript();
-}
-
-function writeTempPool(): void {
-  mkdirSync(path.dirname(poolFile), { recursive: true });
-  writeFileSync(
-    poolFile,
-    `${JSON.stringify(
-      {
-        machine: 'acceptance-gw-e2e',
-        project: projectName,
+        id: slotId,
+        project,
         platform: 'cli',
-        host: 'localhost',
-        ssh_user: process.env.USER || 'dev',
-        os: process.platform === 'darwin' ? 'darwin' : 'linux',
-        slots: [
-          {
-            id: slotId,
-            enabled: true,
-            repo: '.',
-            session,
-            resources: { 'dev-server': { port: 7879 } },
-          },
-        ],
+        repo: checkout,
+        session: slotId,
+        enabled: true,
+        mode: 'dispatch',
       },
-      null,
-      2,
-    )}\n`,
-  );
-}
-
-/**
- * The task directory as task init writes it, with acceptance criteria in the
- * handoff — the ids the ledger uses come from that array and nowhere else.
- */
-function writeSourceTaskDir(): void {
-  mkdirSync(path.join(sourceTaskDir, 'inputs'), { recursive: true });
-  mkdirSync(path.join(sourceTaskDir, 'artifacts'), { recursive: true });
-  writeFileSync(
-    path.join(sourceTaskDir, 'TASK.md'),
-    [
-      '# Worker: dev',
-      '',
-      '- Task profile: dev',
-      '**Runner:** scripted',
-      '',
-      'Record a verdict for every acceptance criterion (ADR-060 phase 5).',
-      '',
-      '## Acceptance Criteria',
-      '',
-      ...CRITERIA.map((criterion) => `- ${criterion}`),
-      '',
-      'Execution checklist: `CHECKLIST.md`.',
-      '',
-    ].join('\n'),
-  );
-  writeFileSync(path.join(sourceTaskDir, 'CHECKLIST.md'), CHECKLIST);
-  const markEngine = path.join(
-    root,
-    'packages',
-    'agent-runtime',
-    'scripts',
-    'mark-checklist-step.cjs',
-  );
-  writeFileSync(
-    path.join(sourceTaskDir, 'mark'),
-    [
-      '#!/usr/bin/env bash',
-      'set -euo pipefail',
-      'DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
-      `exec \${FARMSLOT_MARK_CMD:-node "${markEngine}"} "$DIR" "$@"`,
-      '',
-    ].join('\n'),
-    { mode: 0o755 },
-  );
-  writeFileSync(
-    path.join(sourceTaskDir, 'inputs', 'handoff.json'),
-    `${JSON.stringify(
+    ],
+  });
+  writeJson(path.join(root, 'pool/status-local.json'), {
+    slots: [{ slot: slotId, lifecycle: 'held', phase: 'occupied', current_run_id: runId }],
+  });
+  const { cpSync } = await import('node:fs');
+  cpSync(taskDir, retained, { recursive: true });
+  const now = new Date().toISOString();
+  writeJson(path.join(root, '.runs', `${runId}.json`), {
+    id: runId,
+    familyId: randomUUID(),
+    parentRunId: null,
+    familyRootTicketOrPr: 'LEDGER-PROOF',
+    lane: 'production',
+    variant: null,
+    flowType: 'ci-fix',
+    mode: 'interactive',
+    status: 'done',
+    project,
+    ticketOrPr: 'LEDGER-PROOF',
+    slotId,
+    branch: 'fix/ledger-proof',
+    recordedEvidenceContractVersion: 1,
+    taskFile: path.join(retained, 'TASK.md'),
+    createdAt: now,
+    updatedAt: now,
+    ticketData: {
+      title: 'Ledger proof',
+      description: '',
+      source: 'manual',
+      acceptanceCriteria: criteria,
+    },
+    metrics: {
+      runner: 'scripted',
+      model: null,
+      nudgeCount: 0,
+      runnerSessionId: null,
+      runnerSessionPath: null,
+    },
+    steps: [],
+    decisions: [],
+    agentContexts: [
       {
-        schemaVersion: 1,
-        attemptId: stamp,
-        surface: 'test',
-        project: projectName,
-        domain: '',
-        flow: 'dev',
-        task: { title: 'Acceptance ledger gateway E2E', acceptanceCriteria: CRITERIA },
-        taskDocument: 'TASK.md',
-        report: 'artifacts/pr-description.md',
-        learnings: 'artifacts/learnings.md',
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  writeFileSync(
-    path.join(sourceTaskDir, 'inputs', 'worker-terminal-contract.json'),
-    `${JSON.stringify(
-      {
-        schemaVersion: 1,
-        flowType: 'dev',
-        requireSignal: true,
-        // What a project declares as `worker_terminal.acceptance.require`:
-        // enforcement is opt-in, and this scenario is about the enforcement.
-        acceptance: { require: true },
-        commands: {
-          complete: {
-            report: 'artifacts/pr-description.md',
-            artifacts: ['artifacts/learnings.md', 'artifacts/pr-description.md'],
-          },
-          'no-change': { artifacts: [] },
-          blocked: { artifacts: [] },
-        },
-        whenPresent: [],
-        resolvedAt: new Date().toISOString(),
-        source: 'builtin',
-      },
-      null,
-      2,
-    )}\n`,
-  );
-}
-
-async function main(): Promise<void> {
-  process.env.NODE_TEST_CONTEXT = '1';
-  writeTempPool();
-  writeTempProject();
-  writeSourceTaskDir();
-  run('tmux', ['kill-session', '-t', session], { ignoreFailure: true });
-  run('tmux', ['new-session', '-d', '-s', session, '-c', root]);
-
-  try {
-    const dispatch = await dispatchExecute(
-      {
+        id: 'primary',
+        role: 'primary',
+        runId,
         slotId,
-        taskFile: path.join(sourceTaskDir, 'TASK.md'),
-        mode: 'validation',
+        label: 'Worker',
+        status: 'complete',
+        taskFile: 'tasks/current/TASK.md',
         runner: 'scripted',
-        skipPrepare: true,
-        force: true,
-        scripted: { mode: 'command', commandRef: 'drive-acceptance' },
       },
-      () => {},
+    ],
+  });
+  const port = await freePort();
+  const env = {
+    ...process.env,
+    FARMSLOT_ROOT: root,
+    FARMSLOT_HOME: path.join(work, 'home'),
+    FARMSLOT_PROJECTS_DIR: path.join(root, 'projects'),
+    FARMSLOT_POOL_DIR: path.join(root, 'pool'),
+    FARMSLOT_RUNS_DIR: path.join(root, '.runs'),
+    FARMSLOT_CAPABILITY_STORE_FILE: path.join(root, '.runs/capabilities.json'),
+    FARMSLOT_GATEWAY: `ws://127.0.0.1:${port}`,
+    FARMSLOT_GATEWAY_TOKEN: randomUUID(),
+    FARMSLOT_GATEWAY_PASSWORD: '',
+    GATEWAY_HOST: '127.0.0.1',
+    GATEWAY_PORT: String(port),
+    FARMSLOT_DISABLE_ORCHESTRATION: '1',
+    FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
+    FARMSLOT_DEMO_POOL: '0',
+    NODE_TEST_CONTEXT: '1',
+    TSX_TSCONFIG_PATH: path.join(source, 'services/gateway/tsconfig.json'),
+  };
+  mkdirSync(out, { recursive: true });
+  const logFile = path.join(out, 'gateway.log');
+  const { openSync, closeSync } = await import('node:fs');
+  const log = openSync(logFile, 'w');
+  try {
+    child = spawn(
+      process.execPath,
+      [
+        '--import',
+        'tsx',
+        '--experimental-test-module-mocks',
+        '--import',
+        path.join(source, 'services/gateway/src/runtime/mock-pty.test-support.ts'),
+        path.join(source, 'services/gateway/src/index.ts'),
+      ],
+      { cwd: source, env, stdio: ['ignore', log, log] },
     );
-    assert.equal(dispatch.dispatched, true);
-    console.log(`[e2e] dispatched scripted command run onto ${slotId}`);
-
-    // ── 1. The first verdict reaches the gateway; the others are still unrecorded ──
-    await waitFor('the worker to record the first verdict', () => existsSync(phasePath('first')));
-    const first = await waitForVerdicts(['proven', null, null]);
-    assert.equal(first.criteria.length, 1, 'only the recorded criterion is in the ledger');
-    assert.equal(first.criteria[0].text, CRITERIA[0], 'the text comes from the handoff array');
-    assert.deepEqual(first.criteria[0].evidence, ['artifacts/after-unlock.png']);
-    assert.deepEqual(first.criteria[0].recipeNodes, ['assert-single-prompt']);
-    assert.equal(first.criteria[0].proofMode, 'visual');
-    console.log('[e2e] partial: AC-1 proven with evidence, AC-2 and AC-3 unrecorded');
-
-    // A terminal signal written around `mark` must not pass with criteria open.
-    const openVerdict = await terminalVerdict();
-    assert.equal(openVerdict.ok, false);
-    assert.equal(openVerdict.ok === false && openVerdict.kind, 'artifact');
-    assert.match(openVerdict.ok === false ? openVerdict.message : '', /AC-2 has no verdict/);
-    assert.match(openVerdict.ok === false ? openVerdict.message : '', /AC-3 has no verdict/);
-    console.log('[e2e] terminal check refused a complete signal with unrecorded criteria');
-    writeFileSync(ackPath('first'), 'go');
-
-    // ── 2. A weak verdict is recorded and still refused ──
-    await waitFor('the worker to record the weak verdict', () => existsSync(phasePath('weak')));
-    const weak = await waitForVerdicts(['proven', 'weak', null]);
-    assert.equal(weak.criteria[1].note, 'Unit test only; the cancel path is not wired yet.');
-    const weakVerdict = await terminalVerdict();
-    assert.equal(weakVerdict.ok, false);
-    assert.match(weakVerdict.ok === false ? weakVerdict.message : '', /AC-2 is weak/);
-    console.log('[e2e] terminal check refused a complete signal with a weak verdict');
-    writeFileSync(ackPath('weak'), 'go');
-
-    // ── 3. Every criterion settled: the same signal is accepted ──
-    await waitFor('the worker to finish', () => existsSync(phasePath('done')), 120_000);
-    const settled = await waitForVerdicts(['proven', 'proven', 'untestable']);
-    assert.equal(settled.criteria.length, 3);
-    assert.equal(
-      settled.criteria[1].note,
-      undefined,
-      'the weak note does not survive the new verdict',
-    );
-    assert.equal(settled.criteria[2].note, 'No simulator path reaches the biometric prompt.');
-    const settledVerdict = await terminalVerdict();
-    assert.equal(
-      settledVerdict.ok,
-      true,
-      `the terminal check must pass once every criterion is settled: ${
-        settledVerdict.ok === false ? settledVerdict.message : ''
-      }`,
-    );
-    console.log('[e2e] terminal check accepted the signal with 2/3 proven and 1 untestable');
-
-    // The rendered coverage table the worker wrote from the ledger.
-    const coverage = readFileSync(path.join(workerTaskDir, 'artifacts', 'coverage.md'), 'utf-8');
-    assert.match(
-      coverage.trimEnd().split('\n').pop() ?? '',
-      /^Overall recipe coverage: 2\/3 ACs PROVEN \(untestable: AC-3, weak: 0, missing: 0\)$/,
-    );
-    console.log('e2e:acceptance-gateway ok — 3 criteria observed through the gateway');
   } finally {
-    await unwatchSlot(slotId);
-    run('tmux', ['kill-session', '-t', session], { ignoreFailure: true });
-    rmSync(poolFile, { force: true });
-    rmSync(projectDir, { recursive: true, force: true });
-    rmSync(workerTaskDir, { recursive: true, force: true });
-    if (previousNodeTestContext === undefined) delete process.env.NODE_TEST_CONTEXT;
-    else process.env.NODE_TEST_CONTEXT = previousNodeTestContext;
+    closeSync(log);
   }
+  await waitFor(() => {
+    if (child?.exitCode !== null)
+      throw new Error('Gateway exited: ' + readFileSync(logFile, 'utf8'));
+    return readFileSync(logFile, 'utf8').includes('Gateway daemon listening');
+  });
+  const rpc = (method: string, params: unknown) =>
+    JSON.parse(
+      execFileSync(
+        process.execPath,
+        [
+          path.join(source, 'apps/command-center/scripts/cdp.mjs'),
+          'gateway',
+          method,
+          JSON.stringify(params),
+        ],
+        { cwd: source, env, encoding: 'utf8', timeout: 30_000 },
+      ),
+    );
+  const progress = rpc('task.progress', { slotId, runId }) as TaskProgressResult;
+  assert.equal(progress.acceptanceStatus?.schemaVersion, 2);
+  assert.deepEqual(
+    progress.acceptanceCriteria?.map((row) => row.id),
+    ['AC-1', 'AC-2', 'AC-3'],
+  );
+  assert.deepEqual(
+    progress.acceptanceStatus?.criteria.map((row) => row.verdict),
+    ['proven', 'proven', 'proven'],
+  );
+  assert.equal(progress.acceptanceEvidenceLinks, undefined);
+  const evidence = rpc('run.recipeRunsForRun', {
+    runId,
+    includeRecordedEvidence: true,
+  }) as RunRecipeRunsForRunResult;
+  assert.ok(evidence.recordedEvidence?.input, JSON.stringify(evidence));
+  const model = createEvidenceReviewModel({
+    contractVersion: evidence.recordedEvidence.contractVersion,
+    package: evidence.recordedEvidence.input,
+    criteria: progress.acceptanceCriteria,
+    ledger: progress.acceptanceStatus,
+    artifactPrefix: evidence.recordedEvidence.artifactPrefix,
+    readErrors: evidence.recordedEvidence.errors,
+  });
+  assert.deepEqual(model.errors, []);
+  assert.equal(model.packageStatus?.status, 'Valid');
+  assert.equal(model.summary.proven, 3);
+  assert.equal(model.claims[0].status?.verdict, 'proven');
+  writeJson(path.join(out, 'result.json'), {
+    status: 'pass',
+    runId,
+    selectedRecipeRunId: proof.claims.recipeRunId,
+    sourceHead: execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: source,
+      encoding: 'utf8',
+    }).trim(),
+    checks: [
+      'public CLI negative assertion fails',
+      'missing engine claim refuses completion',
+      'manual writes refuse without changing bytes',
+      'schema2 complete accepted',
+      'public task.progress preserves the engine projection',
+      'public run.recipeRunsForRun validates selected package',
+    ],
+    recording: proof.claims.recording.status,
+    root,
+    out,
+  });
+  console.log(JSON.stringify({ status: 'pass', runId, out, root }, null, 2));
+} finally {
+  if (child && child.exitCode === null && child.signalCode === null) {
+    child.kill('SIGTERM');
+    await Promise.race([once(child, 'exit'), new Promise((resolve) => setTimeout(resolve, 900))]);
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGKILL');
+      await once(child, 'exit');
+    }
+  }
+  // Retain this manual proof directory for inspection. It belongs only to this isolated validation run.
 }
-
-await main();

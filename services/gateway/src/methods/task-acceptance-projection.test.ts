@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
+
+import '../runtime/mock-pty.test-support.js';
 
 // Same fixture shape as task-subtask-projection.test.ts: mock.module replaces a
 // module wholesale, so the real namespaces are spread in and only the slot/run
@@ -48,6 +51,12 @@ mock.module('../runs/store.js', {
 });
 
 const { taskProgress } = await import('./task.js');
+const {
+  importRetainedAcceptanceLinks,
+  RETAINED_LINK_SOURCE,
+  RETAINED_LINK_HELPER_SHA256,
+  retainedAcceptanceLinksPath,
+} = await import('../tasks/retained-acceptance-links.js');
 
 const CHECKLIST = ['# Worker', '', '- [x] **1. build it**', '- [ ] **2. prove it**', ''].join('\n');
 
@@ -105,6 +114,52 @@ async function progressFor(fixture: { taskFileRel: string }) {
   return taskProgress({ slotId: 'slot-acceptance', taskFile: fixture.taskFileRel });
 }
 
+test('task.progress preserves imported historical links without a verdict or timeline', async () => {
+  const fixture = writeFixture(null);
+  const taskDir = path.dirname(path.join(fixture.root, fixture.taskFileRel));
+  const sha256 = (value: Buffer | string) => createHash('sha256').update(value).digest('hex');
+  const manifestPath = path.join(taskDir, 'artifacts/evidence-manifest.json');
+  const manifest = JSON.stringify({
+    standalone: [{ file: 'artifacts/retained.png', covers: ['AC-1'] }],
+  });
+  writeFileSync(manifestPath, manifest);
+  writeFileSync(path.join(taskDir, 'artifacts/retained.png'), 'retained bytes');
+  const links = [{ id: 'AC-1', evidence: ['artifacts/retained.png'] }];
+  const inventory = {
+    frozenSource: RETAINED_LINK_SOURCE,
+    helperSha256: RETAINED_LINK_HELPER_SHA256,
+    records: [
+      {
+        task: path.relative(fixture.root, taskDir),
+        handoffSha256: sha256(readFileSync(path.join(taskDir, 'inputs/handoff.json'))),
+        manifestSha256: sha256(manifest),
+        links,
+        refs: [
+          {
+            path: 'artifacts/retained.png',
+            sha256: sha256('retained bytes'),
+            contained: true,
+            present: true,
+          },
+        ],
+      },
+    ],
+  };
+  try {
+    await importRetainedAcceptanceLinks(Buffer.from(JSON.stringify(inventory)), fixture.root);
+    const result = await progressFor(fixture);
+    assert.deepEqual(result.acceptanceEvidenceLinks, links);
+    assert.equal(result.acceptanceStatus, undefined);
+    assert.equal(result.acceptanceSource, undefined);
+    assert.equal(result.acceptanceStatusError, undefined);
+    assert.equal(result.acceptanceEvidenceLinksError, undefined);
+    assert.deepEqual(readFileSync(manifestPath), Buffer.from(manifest));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+    rmSync(retainedAcceptanceLinksPath(taskDir), { force: true });
+  }
+});
+
 test('task.progress carries the acceptance ledger beside the step projection', async () => {
   const fixture = writeFixture(`${JSON.stringify(LEDGER, null, 2)}\n`);
   try {
@@ -151,7 +206,7 @@ test('an unreadable ledger leaves progress intact instead of failing the call', 
   }
 });
 
-test('with no ledger, manifest links ride in their own field and never as a verdict', async () => {
+test('with no ledger, manifest covers cannot supply task acceptance links', async () => {
   const fixture = writeFixture(null);
   try {
     writeFileSync(
@@ -160,10 +215,8 @@ test('with no ledger, manifest links ride in their own field and never as a verd
     );
     const result = await progressFor(fixture);
     assert.equal(result.acceptanceStatus, undefined, 'the ledger field stays empty');
-    assert.equal(result.acceptanceSource, 'evidence-manifest');
-    assert.deepEqual(result.acceptanceEvidenceLinks, [
-      { id: 'AC-2', evidence: ['artifacts/after.png'] },
-    ]);
+    assert.equal(result.acceptanceSource, undefined);
+    assert.equal(result.acceptanceEvidenceLinks, undefined);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -205,9 +258,7 @@ test('a finished run whose slot no longer holds its task reads its recorded task
   try {
     const result = await taskProgress({ slotId: 'slot-acceptance', runId: 'run-released' });
     assert.equal(result.acceptanceCriteria?.length, 3);
-    assert.deepEqual(result.acceptanceEvidenceLinks, [
-      { id: 'AC-1', evidence: ['artifacts/teardown.png'] },
-    ]);
+    assert.equal(result.acceptanceEvidenceLinks, undefined);
     assert.equal(result.structured?.totalSteps, 2);
     assert.equal(
       result.structured?.completedSteps,
@@ -232,7 +283,7 @@ test('without the worker mirror a recorded run reports acceptance data and no st
     const result = await taskProgress({ slotId: 'slot-acceptance', runId: 'run-released' });
     assert.equal(result.structured, undefined, 'the unchecked template is never shown as progress');
     assert.equal(result.acceptanceCriteria?.length, 3);
-    assert.equal(result.acceptanceEvidenceLinks?.length, 1);
+    assert.equal(result.acceptanceEvidenceLinks, undefined);
   } finally {
     runs.delete('run-released');
     rmSync(fixture.root, { recursive: true, force: true });

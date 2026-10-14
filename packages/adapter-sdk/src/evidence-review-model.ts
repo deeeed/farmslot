@@ -231,6 +231,15 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
         }),
       }
     : (input.ledger ?? null);
+  if (input.ledger?.schemaVersion === 1 && !packageClaims) {
+    warnings.push(
+      'Legacy schema-1 task verdicts are retained display only; they establish no recorded recipe proof.',
+    );
+    if (input.contractVersion === 1)
+      errors.push(
+        'Current run evidence requires schema-2 engine claims and their selected execution package.',
+      );
+  }
   if (input.ledger?.schemaVersion === 2 && !pkg)
     errors.push('Recorded claim evidence requires its retained execution package.');
   if (

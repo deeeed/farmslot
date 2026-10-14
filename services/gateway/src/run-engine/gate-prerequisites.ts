@@ -422,7 +422,7 @@ export async function collectRunGateReadiness(
           inputs.every((input) => validateRecordedEvidencePackage(input).status === 'valid');
         const projectedRunId = acceptance.ledger?.recipeRunId;
         const projectedIdentityMatches =
-          (!qaOutput && acceptance.ledger?.schemaVersion !== 2) ||
+          (!qaOutput && acceptance.criteria.length === 0) ||
           (acceptance.ledger?.schemaVersion === 2 &&
             typeof projectedRunId === 'string' &&
             projectedRunId.length > 0 &&
@@ -451,21 +451,17 @@ export async function collectRunGateReadiness(
                 acceptance.criteria.some(
                   (criterion) =>
                     criterion.id === claim.id &&
-                    (acceptance.ledger?.schemaVersion !== 2 ||
-                      input.claims?.recipeRunId === projectedRunId) &&
-                    ((acceptance.ledger?.schemaVersion !== 2 &&
-                      acceptance.ledger?.criteria.find((row) => row.id === criterion.id)
-                        ?.verdict === claim.verdict) ||
-                      (input.claims &&
-                        acceptance.ledger?.criteria.some(
-                          (row) =>
-                            row.id === criterion.id &&
-                            isAuthorizedOverride(
-                              row,
-                              input.claims!.criteria.find(({ id }) => id === claim.id)!,
-                              claimOverrideAuthority(run, input),
-                            ),
-                        ))) &&
+                    input.claims?.recipeRunId === projectedRunId &&
+                    input.claims &&
+                    acceptance.ledger?.criteria.some(
+                      (row) =>
+                        row.id === criterion.id &&
+                        isAuthorizedOverride(
+                          row,
+                          input.claims!.criteria.find(({ id }) => id === claim.id)!,
+                          claimOverrideAuthority(run, input),
+                        ),
+                    ) &&
                     acceptance.issues.length === 0,
                 ),
             ),
@@ -473,8 +469,7 @@ export async function collectRunGateReadiness(
         const bound = acceptance.criteria.every((criterion) =>
           inputs.some(
             (input, index) =>
-              (acceptance.ledger?.schemaVersion !== 2 ||
-                input.claims?.recipeRunId === projectedRunId) &&
+              input.claims?.recipeRunId === projectedRunId &&
               reviewed[index]?.some(
                 (claim) =>
                   claim.id === criterion.id &&

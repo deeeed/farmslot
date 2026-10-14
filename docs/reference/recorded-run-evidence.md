@@ -96,9 +96,10 @@ first applicable result in this order: failed, missing, weak, awaiting-review,
 untestable. Untimed media remains visible and its timing limitation is separate
 from the claim's semantic verdict. A passed action, screenshot or overall gate
 acknowledgment is never a substitute for the eligible assertion/visual judgment.
-Manual `ac set` becomes an untestable override only, with actor, reason and prior
-state; it cannot set a normal proven verdict. The proposed [verified override
-contract](#verified-claim-overrides) replaces local actor strings as authority.
+`farmslot-agent ac` is read-only after cutover; local verdict writing is removed.
+Only the Accepted [verified override contract](#verified-claim-overrides) grants
+an untestable exception through a credential-backed gateway receipt. It never
+changes the immutable engine ledger or manufactures a proven verdict.
 
 Examples the reducer MUST satisfy: failed then passed in one declared retry group
 uses the final result and retains both; a failed independent iteration still
@@ -303,10 +304,22 @@ ledger relationship to remain available to publication consumers.
 
 ## Migration and conformance
 
-Until engine derivation passes conformance, manual verdict steps remain the sole
-normal writer path. Then cut over once and remove those steps; never enable two
-normal paths. Convert verified relationships once and retain other historical
-media as explicitly untimed. Delete replaced external recorders, PID/signal/trap/
+The task-ledger source cutover is tracked by [#1044](https://github.com/deeeed/farmslot/pull/1044),
+pending review and merge. Package publication and adopter rollout remain separate.
+
+The coordinated writer cutover follows engine conformance and consumer/adopter
+migration. The engine is then the sole normal verdict writer; task copies are
+selected-execution transport. Task writes and current completion MUST reject
+schema 1; local normal verdict and override writing MUST be removed. Current
+coverage MUST come from structured engine claims, never manifest `covers` or a
+`recipe-coverage.md` fallback.
+
+The one-time retained-data migration labels schema-1 ledgers as display only
+through the shared model's limitation caption and existing pre-cutover run version.
+It MUST preserve original ledger bytes and frozen inventory/decision identity.
+Do not backfill `recordedEvidenceContractVersion`, convert schema 1 to a recipe
+package, infer claim bindings or timestamps, or sign old override chains. Existing
+retained links remain visible without deriving new manifest relationships. Convert verified relationships once through the [retained criterion-link migration](#retained-criterion-link-migration) and retain other historical media as explicitly untimed. Delete replaced external recorders, PID/signal/trap/
 moov steps, manual linking, video-only promotion and private timestamp logic.
 Specific adopter files and release coordination stay outside this public spec.
 
@@ -662,7 +675,8 @@ policy findings; integrity and unrelated prerequisites still block.
    the failed summary and missing later claims; a separate passing execution
    must satisfy the implementation's positive claims. Freeze the declaration
    with the existing gate evidence inputs, not in a new evidence store.
-2. **Retained inspection.** A schema-v1 task ledger's inspected `proven` row may
+2. **Retained inspection, pre-cutover only.** This rule applies only to runs
+   without a gateway-stamped `recordedEvidenceContractVersion`. A schema-v1 task ledger's inspected `proven` row may
    satisfy a schema-v2 visual/mixed claim's `awaiting-review` policy only when
    registered ID/text and cited evidence bind to the same selected execution's
    frozen closure. No evidence or a different attempt cannot bridge the verdict.
@@ -672,7 +686,8 @@ policy findings; integrity and unrelated prerequisites still block.
    Trim/collapse whitespace and remove only a leading `AC<n>:` label whose ID
    matches that criterion. The remaining text MUST match exactly. Do not ignore
    changed meaning, a different AC label or mismatched IDs.
-4. **Non-recipe proof.** Task-declared unit/revert-test evidence may satisfy its
+4. **Non-recipe proof, pre-cutover only.** For an unversioned retained run,
+   task-declared unit/revert-test evidence may satisfy its
    applicable state criterion through its retained successful result and checked
    citations. Do not require a fabricated recipe claim. Missing/failed results,
    uncited files or unit-only evidence for a visual criterion remain unsatisfied.
@@ -1051,3 +1066,84 @@ The real ticket gate demo MUST show the complete one-screen review, including a
 matched pair or honest single-proof fallback for each AC, timestamp navigation,
 agent/person review labels, head-bound independent review and CI, open requirements
 and the correct single next action. No tab-hunting or inferred screenshot binding.
+
+## Retained criterion-link migration
+
+Status: Proposed under ADR-062 Amendment 8. Implementation and rollout in #1044
+remain pending.
+
+This finite migration preserves existing display relationships before the normal
+manifest-cover reader is removed. Eligibility MUST come from an explicit,
+operator-reviewed frozen task inventory. Missing Run records, filenames and dates
+MUST NOT establish age or a run contract version. Do not add or backfill a Run.
+
+### Storage and identity
+
+The gateway stores one version-1 snapshot at
+`.runs/retained-acceptance-links/<task-identity-sha256>.json`, under its existing
+configured Run persistence root. It MUST NOT change a task artifact, ledger,
+recipe package, publication manifest, frozen inventory or decision. The storage
+subdirectory MUST NOT be loaded as Run records. Use the existing atomic JSON writer
+with private file permissions.
+
+This import covers gateway-local retained task roots. A snapshot's `taskDir` is
+the exact normalized absolute task directory. Its filename hashes that UTF-8
+identity with SHA256. Remote slot paths and relocated task copies do not inherit
+it. No alias search or automatic identity repair is allowed.
+
+The snapshot contains only `schemaVersion: 1`, `taskDir`, provenance
+`source: {commit, helperSha256, inventorySha256}`, `handoffSha256`,
+`manifestSha256`, registered `criteria`, existing `links: AcceptanceEvidenceLink[]`
+and `refs: {path, sha256}[]`. Provenance identifies the frozen relationship reader
+and the exact imported inventory bytes. It MUST contain no verdict, proof mode,
+run version, timestamp, marker, moment or invented criterion binding.
+
+### Import and refusal
+
+The gateway maintenance script
+`services/gateway/scripts/migrate-retained-acceptance-links.ts` takes a verified
+inventory JSON file and the original local task-root directory. Use the workspace
+`tsx` runtime. The inventory names `frozenSource`, `helperSha256` and `records`;
+each record contains a task-root-relative `task`, `handoffSha256`,
+`manifestSha256`, retained `links` and `refs` with `path`, `sha256`, `contained`
+and `present`. Source identity MUST match the frozen released reader used for this
+cutover, commit `5d57e6675a3f86ebc21ae9a41072b61fb958e418` and helper digest
+`93b9b04c76a37fff11b8ce0e6e5026cd9c111618f310ff6f1a41c9219b633b43`.
+This script imports relationships already reviewed in that inventory. It MUST NOT
+parse `covers`, derive relationships from file extensions or scan for new tasks.
+
+Before persisting any record, verify the whole inventory and every original byte
+digest. Register criterion IDs from the checked handoff and reject unknown or
+duplicate IDs, missing or extra references, noncanonical paths, task/asset symlink
+escapes, missing files, digest mismatches and any existing task ledger. Paths MUST
+remain canonical task-relative `artifacts/…` paths. The file-reference set MUST
+exactly match the retained links. Check each manifest as bytes without parsing it.
+
+Retries with an identical snapshot MUST leave its bytes unchanged. A different
+snapshot at the same storage identity MUST refuse replacement. Validation failure
+MUST write no snapshot. Persistence failure MUST surface an error; an identical
+retry may finish an interrupted import. Preserve original media and metadata bytes.
+
+### Reads, authority and public surface
+
+The existing gateway acceptance display reader MUST prefer any task ledger. When
+there is no ledger, it may read only the snapshot for that exact local task
+identity. It MUST validate the snapshot and check the original handoff, manifest
+and linked-file digests and containment before returning its existing DTO links.
+It MUST NOT interpret manifest contents. No snapshot means no historical link
+fallback and no manifest read. Missing, invalid or changed retained data produces
+`acceptanceEvidenceLinksError`, separate from the ledger's
+`acceptanceStatusError`. Normal completion and gate checks MUST NOT read snapshots.
+
+Both clients consume the existing `TaskProgressResult` fields and shared
+experimental `@farmslot/adapter-sdk/evidence` input. Links remain visible as
+unassessed, untimed files. They establish no criterion verdict or recording
+availability and grant no approval, publication or completion authority. Artifact
+transport and players remain unchanged. This is an operator import, not a new
+public CLI family, SDK export, RPC or provider contract.
+
+Conformance MUST show an identical retry, failure before writes, changed-byte and
+identity refusal, unknown criterion/path refusal, separate error captions, ledger
+precedence, no parsing for uninventoried tasks and unchanged original bytes. The
+retained inventory's relationships MUST survive through the actual display reader,
+`task.progress` and shared model without fabricated status or timeline fields.

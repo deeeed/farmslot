@@ -210,13 +210,12 @@ export async function executeReviewGate(runId: string): Promise<void> {
   }
 
   const recipeJson = await readTaskArtifactText(current.taskFile, 'recipe.json');
-  // Ledger first, recipe-coverage.md unchanged when the run kept none (ADR-060).
-  const recipeCoverage =
-    acceptanceCoverageMarkdown(
-      ledgerFromArtifactText(
-        await readTaskArtifactText(current.taskFile, ACCEPTANCE_STATUS_FILENAME),
-      ),
-    ) ?? (await readTaskArtifactText(current.taskFile, 'recipe-coverage.md'));
+  // Coverage is a structured engine projection; worker prose is not a verdict.
+  const recipeCoverage = acceptanceCoverageMarkdown(
+    ledgerFromArtifactText(
+      await readTaskArtifactText(current.taskFile, ACCEPTANCE_STATUS_FILENAME),
+    ),
+  );
   const workerReport = await readTaskArtifactText(current.taskFile, 'report.md');
   const workerLearnings = await readTaskArtifactText(current.taskFile, 'learnings.md');
 

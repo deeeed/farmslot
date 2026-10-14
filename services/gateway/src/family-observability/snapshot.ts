@@ -224,7 +224,9 @@ async function resolveHistoricalRecipeProvenance(
     run: sourceRun,
     workerReport,
     recipeJson,
-    recipeCoverage: await readRunArtifactText(sourceRun, 'recipe-coverage.md'),
+    recipeCoverage: acceptanceCoverageMarkdown(
+      ledgerFromArtifactText(await readRunArtifactText(sourceRun, ACCEPTANCE_STATUS_FILENAME)),
+    ),
   });
   const recoveredSourceArtifacts = (await buildRunArtifacts(sourceRun)).map((artifact) => ({
     ...artifact,
@@ -629,9 +631,8 @@ async function buildRunSummary(
   const artifacts = dedupeArtifacts([...ownArtifacts.artifacts, ...recoveredArtifactsForRun]);
   const learnings = await buildRunLearnings(run);
   const review = buildReview(run);
-  // Coverage for this run's quality signal comes from the acceptance ledger when
-  // it kept one, else recipe-coverage.md as before (ADR-060 phase 5). The ledger
-  // itself travels on the summary so retrospectives can count proven / total.
+  // Coverage comes from the engine ledger. The retained ledger also travels on
+  // the summary, with its shared-model limitations and supplied-ledger totals.
   const acceptanceStatus = taskDir
     ? ledgerFromArtifactText(
         await readTextIfExists(path.join(taskDir, 'artifacts', ACCEPTANCE_STATUS_FILENAME)),
@@ -670,11 +671,7 @@ async function buildRunSummary(
     run,
     workerReport: effectiveWorkerReport,
     recipeJson: effectiveRecipeJson,
-    recipeCoverage:
-      acceptanceCoverageMarkdown(acceptanceStatus, acceptanceCriteria) ??
-      (taskDir
-        ? await readTextIfExists(path.join(taskDir, 'artifacts', 'recipe-coverage.md'))
-        : null),
+    recipeCoverage: acceptanceCoverageMarkdown(acceptanceStatus, acceptanceCriteria),
   });
   const recipeQualityEvaluation =
     !recipeJson && resolvedRecovery

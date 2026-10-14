@@ -40,7 +40,7 @@ farmslot-agent mark <task-dir> --checklist TASK.md complete --mark-last
 farmslot-agent artifact-check <task-dir> --require-recipe-quality-if-recipe
 farmslot-agent recipe-quality build --input recipe-quality-input.json --output artifacts/recipe-quality.json
 farmslot-agent contract resolve --flow fix-bug
-farmslot-agent ac set AC-1 proven --evidence artifacts/after.png --recipe-node assert-order-sheet
+farmslot-agent ac list
 farmslot-agent ac render
 ```
 
@@ -88,21 +88,34 @@ Ownership rules, all enforced by `mark`:
 
 ## Acceptance-criteria ledger
 
-This remains a transitional contract. Manual schema-1 task verdicts and recipe-derived schema-2 projections are both live through one file writer. [ADR-062](../adr/062-recorded-run-evidence.md) assigns the eventual sole normal verdict path to the engine after conformance and adopter migration. A task ledger without its recorded package is not measured recording proof.
+[ADR-062](../adr/062-recorded-run-evidence.md) owns the sole normal verdict
+writer: the recipe engine. A successful selected attempt transfers its schema-2
+ledger into `artifacts/acceptance-status.json`; this task-namespace projection is
+transport, never an independent reducer or a recorded package.
 
-`farmslot-agent ac` and a recipe run with a task dir write
-`artifacts/acceptance-status.json`, through one module. `ac set` records one
-verdict per criterion (`proven`, `weak`, `missing`, `untestable`)
-with evidence paths and recipe nodes, and `ac render` prints the coverage table
-the PR body reads. Successful completion requires every registered criterion to have a verdict,
-including contracts without an opt-in. Missing ledgers or unreadable handoffs
-refuse, and weak or missing verdicts refuse unless `acceptance.allowWeak` is set.
-No-change and self-review keep their existing outcome contracts. The legacy
-`acceptance.require` setting requests explicit checking from older callers;
-it cannot turn off current successful-completion enforcement.
+`farmslot-agent ac list` reads the registered criteria and verdicts; `ac render`
+prints structured coverage. When a recipe exists, the terminal contract still
+requires `artifacts/recipe-coverage.md`. Render it through the supplied `ac render`
+command; it is a display artifact, never acceptance authority.
+`ac set` is removed and refuses without writing.
+Non-UI claims use eligible recipe assertions over actual command results or
+file/log observations. A manual actor string grants no override authority.
 
-Schema-2 verdicts are engine-owned. Local `ac set` refuses every schema-2 change,
-including an actor-labelled untestable override. A gateway-generated
+Task-ledger writes and current successful completion reject schema 1. Retained
+schema-1 ledgers remain display only, with their original bytes, verdicts and
+explicit limitation caption. The shared review model uses the existing run
+contract version to reserve Legacy for pre-cutover records; a newer run without
+valid engine evidence is Invalid. A video or manifest alone proves no criterion
+and supplies no measured timeline. Current readers do not derive AC links from
+manifest `covers` or read `recipe-coverage.md` as a coverage fallback.
+
+Successful completion requires every registered criterion to have an engine
+verdict, including contracts without an opt-in. Missing ledgers or unreadable
+handoffs refuse. Weak or missing engine verdicts refuse unless
+`acceptance.allowWeak` is set. No-change and self-review keep their existing
+outcome contracts. `acceptance.require` cannot disable successful-completion
+enforcement. Schema-2 verdicts are engine-owned. Local commands refuse every
+change, including an actor-labelled untestable override. A gateway-generated
 `claimReviewGate` contract lets ordinary completion reach human review after the
 canonical SDK reader validates and binds the selected package. Unresolved verdicts
 still block approval. A credential-backed person uses `farmslot run gate <runId>

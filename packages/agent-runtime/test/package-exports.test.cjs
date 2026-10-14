@@ -64,7 +64,8 @@ assert.match(result.stdout, /task init <task-dir>/);
 // `ac` is reachable through the published bin, the way a worker invokes it.
 result = spawnSync(process.execPath, [cli, 'ac', '--help'], { encoding: 'utf8' });
 assert.equal(result.status, 0, result.stderr);
-assert.match(result.stdout, /ac set <AC-N>/);
+assert.match(result.stdout, /ac list/);
+assert.doesNotMatch(result.stdout, /ac set/);
 
 const templateRoot = mkdtempSync(path.join(tmpdir(), 'farmslot-agent-template-'));
 mkdirSync(path.join(templateRoot, 'dev'));

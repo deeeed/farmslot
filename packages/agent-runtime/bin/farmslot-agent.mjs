@@ -16,7 +16,7 @@ function usage(exitCode = 0) {
     '  mark <task-md> <signal-json> <args...>',
     '  mark <task-dir> sub <start <id> --step N --from src | <id> <n> | <id> complete | <id> blocked | <id> status>',
     '  artifact-check <task-dir> [args...]',
-    '  ac <set <AC-N> <verdict> [--proof-mode m] [--evidence path]... | list | render> [--task-dir path]',
+    '  ac <list | render> [--task-dir path]',
     '  task init <task-dir> --flow f --platform p --template id --title t [--run-mode m] [options]',
     '  recipe-quality build [--input input.json] [--output artifacts/recipe-quality.json]',
     '    (flags override top-level input fields; training fields are merged)',

@@ -37,7 +37,7 @@ export interface TaskProgressResult {
   acceptanceStatusError?: string;
   /**
    * `ledger` when `acceptanceStatus` is present; `evidence-manifest` when the run
-   * has no ledger and `acceptanceEvidenceLinks` was derived from the manifest's
+   * retains historical `acceptanceEvidenceLinks` from the manifest's
    * `covers`. Absent when neither applies.
    */
   acceptanceSource?: import('../contracts/index.js').AcceptanceStatusSource;

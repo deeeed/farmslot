@@ -4,7 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
 
-import type { Run, TaskProgressResult } from '@farmslot/protocol';
+import type { RecipeClaimLedger, Run, TaskProgressResult } from '@farmslot/protocol';
+
+import '../runtime/mock-pty.test-support.js';
 
 // See replay-step-nested-checklist.test.ts: mock.module replaces a module
 // wholesale, so the real namespaces are spread in and only the fixtures these
@@ -234,6 +236,14 @@ function watchedPathsUnder(dir: string): string[] {
     .sort();
 }
 
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 4000;
+  while (!predicate() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.ok(predicate(), 'remote watcher update arrives within the bounded window');
+}
+
 test('a remote watch registers the registry and every child file, and unwatch stops each id', async () => {
   const root = writeTaskDir();
   const dir = taskDirAbs();
@@ -254,7 +264,6 @@ test('a remote watch registers the registry and every child file, and unwatch st
       'CHECKLIST.md',
       'SIGNAL.json',
       'artifacts/acceptance-status.json',
-      'artifacts/evidence-manifest.json',
       'artifacts/operations-updated.json',
       'subtasks/index.json',
       'subtasks/perps-review-SIGNAL.json',
@@ -275,7 +284,9 @@ test('a remote watch registers the registry and every child file, and unwatch st
       path: childSignalCall.path,
       content: '{"status":"running","timestamp":"y"}',
     });
-    await new Promise((resolve) => setTimeout(resolve, 1600));
+    await waitFor(() =>
+      progressUpdates.some((update) => update.parentChecklist === 'CHECKLIST.md'),
+    );
     assert.ok(
       progressUpdates.some((update) => update.parentChecklist === 'CHECKLIST.md'),
       'a remote child event emits a child-tagged progress update',
@@ -290,7 +301,7 @@ test('a remote watch registers the registry and every child file, and unwatch st
       path: operationCall.path,
       content: '{}',
     });
-    await new Promise((resolve) => setTimeout(resolve, 1600));
+    await waitFor(() => progressUpdates.some((update) => !update.parentChecklist));
     assert.ok(
       progressUpdates.some((update) => !update.parentChecklist),
       'remote operation notifications emit parent task progress',
@@ -316,7 +327,7 @@ test('a remote watch registers the registry and every child file, and unwatch st
       path: registryCall.path,
       content: nextRegistry,
     });
-    await new Promise((resolve) => setTimeout(resolve, 1600));
+    await waitFor(() => watchCalls.length === 4);
 
     // The rebind stopped the previous unit watches and opened four: two per unit.
     for (const requestId of firstChildIds) {
@@ -360,7 +371,7 @@ test('a remote watch registers the registry and every child file, and unwatch st
   }
 });
 
-test('a remote evidence manifest event updates acceptance once, and nothing routes after unwatch', async () => {
+test('a remote engine ledger event updates acceptance once, and nothing routes after unwatch', async () => {
   const root = writeTaskDir();
   const dir = taskDirAbs();
   mkdirSync(path.join(dir, 'inputs'), { recursive: true });
@@ -375,31 +386,48 @@ test('a remote evidence manifest event updates acceptance once, and nothing rout
   const warnings: string[] = [];
   try {
     await watchSlot(SLOT_ID, { runId: RUN_ID });
-    const manifestCall = watchCalls.find((call) => call.path.endsWith('evidence-manifest.json'));
-    assert.ok(manifestCall, 'the manifest is watched on the node');
-    const manifest = JSON.stringify({
-      standalone: [{ label: 'Shot', covers: ['ac1'], file: 'after.png' }],
-    });
-    writeFileSync(manifestCall.path, manifest);
+    assert.equal(
+      watchCalls.some((call) => call.path.endsWith('evidence-manifest.json')),
+      false,
+      'a current manifest does not drive acceptance progress',
+    );
+    const ledgerCall = watchCalls.find((call) => call.path.endsWith('acceptance-status.json'));
+    assert.ok(ledgerCall, 'the engine ledger is watched on the node');
+    const ledger: RecipeClaimLedger = {
+      schemaVersion: 2,
+      recipeRunId: 'test-execution',
+      recording: { status: 'not-required', segments: [] },
+      criteria: [
+        {
+          id: 'AC-1',
+          text: 'criterion AC-1',
+          verdict: 'proven',
+          kind: 'acceptance',
+          proofMode: 'state',
+          assertionIndices: [],
+          moments: [],
+          evidence: ['artifacts/after.png'],
+          recipeNodes: [],
+        },
+      ],
+    };
+    const content = JSON.stringify(ledger);
+    writeFileSync(ledgerCall.path, content);
     const event = {
-      requestId: manifestCall.requestId,
+      requestId: ledgerCall.requestId,
       machine: MACHINE,
-      path: manifestCall.path,
-      content: manifest,
+      path: ledgerCall.path,
+      content,
     };
     handleAgentFsChanged(event);
-    const deadline = Date.now() + 10_000;
-    while (!progressUpdates.length && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
+    await waitFor(() => progressUpdates.length > 0);
     assert.equal(progressUpdates.length, 1, 'one event, one update');
-    assert.deepEqual(progressUpdates[0].progress.acceptanceEvidenceLinks, [
-      { id: 'AC-1', evidence: ['artifacts/after.png'] },
-    ]);
+    assert.deepEqual(progressUpdates[0].progress.acceptanceStatus, ledger);
+    assert.equal(progressUpdates[0].progress.acceptanceEvidenceLinks, undefined);
     assert.equal(progressUpdates[0].parentChecklist, undefined, 'a parent-level update');
 
     await unwatchSlot(SLOT_ID);
-    assert.ok(stopCalls.includes(manifestCall.requestId), 'unwatch stops the manifest watch');
+    assert.ok(stopCalls.includes(ledgerCall.requestId), 'unwatch stops the ledger watch');
     // A late node event for the stopped watch is refused on the spot, so no
     // update can be scheduled for it.
     console.warn = (...args: unknown[]) => warnings.push(args.join(' '));

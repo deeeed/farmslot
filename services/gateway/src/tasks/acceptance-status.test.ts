@@ -6,15 +6,15 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import type { AcceptanceStatusLedger } from '@farmslot/protocol';
+import type { RecipeClaimLedger } from '@farmslot/protocol';
+
+import '../runtime/mock-pty.test-support.js';
 
 import type { SlotLocality } from '../core/slot-io.js';
 
 import {
   ACCEPTANCE_STATUS_FILENAME,
   acceptanceCoverageMarkdown,
-  acceptanceEvidenceLinksFromManifest,
-  acceptanceIdFromCover,
   AcceptanceReadError,
   acceptanceStatusPathFor,
   handoffCriteriaFromText,
@@ -32,26 +32,33 @@ const LOCAL: SlotLocality = {
   sshTarget: '',
 };
 
-const LEDGER: AcceptanceStatusLedger = {
-  schemaVersion: 1,
+const LEDGER: RecipeClaimLedger = {
+  schemaVersion: 2,
+  recipeRunId: 'test-execution',
+  recording: { status: 'not-required', segments: [] },
   criteria: [
     {
       id: 'AC-1',
       text: 'The panel lists every criterion',
       verdict: 'proven',
+      kind: 'acceptance',
+      assertionIndices: [0],
+      moments: [],
       proofMode: 'visual',
       evidence: ['artifacts/after-panel.png'],
       recipeNodes: ['assert-panel'],
-      updatedAt: '2026-09-19T10:00:00.000Z',
     },
     {
       id: 'AC-2',
       text: 'A weak verdict blocks the mark',
       verdict: 'untestable',
+      kind: 'acceptance',
+      proofMode: 'state',
+      assertionIndices: [],
+      moments: [],
       evidence: [],
       recipeNodes: [],
       note: 'No client reaches it yet.',
-      updatedAt: '2026-09-19T10:05:00.000Z',
     },
   ],
 };
@@ -136,9 +143,9 @@ test('coverage markdown comes from the ledger, and only when it has criteria', (
     rendered.trimEnd().split('\n').pop() ?? '',
     /^Overall recipe coverage: 1\/2 ACs PROVEN \(untestable: AC-2, weak: 0, missing: 0\)$/,
   );
-  // No ledger and an empty ledger both mean "keep reading recipe-coverage.md".
+  // Missing structured verdicts never fall back to worker-authored coverage prose.
   assert.equal(acceptanceCoverageMarkdown(null), null);
-  assert.equal(acceptanceCoverageMarkdown({ schemaVersion: 1, criteria: [] }), null);
+  assert.equal(acceptanceCoverageMarkdown({ schemaVersion: 1, criteria: LEDGER.criteria }), null);
 });
 
 test('the handoff read fails closed for the terminal check and open for display', async () => {
@@ -200,7 +207,7 @@ test('handoff criteria parsed from text mirror the slot read, errors included', 
 });
 
 test('coverage markdown counts the registered criteria, not the recorded rows', () => {
-  const partial = { schemaVersion: 1 as const, criteria: [LEDGER.criteria[0]] };
+  const partial = { ...LEDGER, criteria: [LEDGER.criteria[0]] };
   const rendered = acceptanceCoverageMarkdown(partial, [
     { id: 'AC-1', text: LEDGER.criteria[0].text },
     { id: 'AC-2', text: 'Not judged yet' },
@@ -235,53 +242,14 @@ function writeManifest(taskDir: string, body: string): void {
   writeFileSync(path.join(taskDir, 'artifacts', 'evidence-manifest.json'), body);
 }
 
-test('covers ids match a criterion only when they name one whole', () => {
-  for (const cover of ['ac1', 'AC1', 'AC-1', 'ac-1', 'AC 1', 'ac_1', ' AC1 ']) {
-    assert.equal(acceptanceIdFromCover(cover), 'AC-1', cover);
-  }
-  assert.equal(acceptanceIdFromCover('ac12'), 'AC-12');
-  for (const cover of [
-    'ac-tp8',
-    'AC8b',
-    'AC7-current',
-    'assert-ac1-exit',
-    'flag-off',
-    'AC0',
-    'C1',
-  ]) {
-    assert.equal(acceptanceIdFromCover(cover), null, cover);
-  }
-});
-
-test('the manifest links registered criteria to their files and invents none', () => {
-  const criteria = ['AC-1', 'AC-2', 'AC-3', 'AC-4'].map((id) => ({ id, text: id }));
-  assert.deepEqual(acceptanceEvidenceLinksFromManifest(MANIFEST, criteria), [
-    {
-      id: 'AC-1',
-      evidence: ['artifacts/before-sheet.png', 'artifacts/run-2/screenshots/after-sheet.png'],
-    },
-    { id: 'AC-3', evidence: ['artifacts/trace/state.json'] },
-  ]);
-  // AC-9 is covered but not registered; it stays out rather than becoming a row.
-  assert.deepEqual(acceptanceEvidenceLinksFromManifest(MANIFEST, criteria.slice(0, 2)), [
-    {
-      id: 'AC-1',
-      evidence: ['artifacts/before-sheet.png', 'artifacts/run-2/screenshots/after-sheet.png'],
-    },
-  ]);
-});
-
-test('with no ledger the display read falls back to the evidence manifest', async () => {
+test('with no ledger manifest covers cannot supply acceptance links', async () => {
   const taskDir = taskDirWith(null, FOUR_CRITERIA);
   try {
     writeManifest(taskDir, MANIFEST);
     const read = await readAcceptanceStatusForDisplay(LOCAL, taskDir);
     assert.equal(read.ledger, null, 'the fallback is never a ledger');
-    assert.equal(read.source, 'evidence-manifest');
-    assert.deepEqual(
-      read.evidenceLinks?.map((link) => link.id),
-      ['AC-1', 'AC-3'],
-    );
+    assert.equal(read.source, undefined);
+    assert.equal(read.evidenceLinks, undefined);
     assert.equal(read.criteria.length, 4, 'AC-2 and AC-4 stay as not assessed rows');
   } finally {
     rmSync(taskDir, { recursive: true, force: true });
@@ -316,8 +284,7 @@ test('no ledger and no usable manifest leave every criterion not assessed', asyn
     assert.equal(broken.source, undefined);
     assert.equal(broken.error, undefined, 'a broken manifest is not a ledger read failure');
     assert.equal(broken.evidenceLinks, undefined);
-    // Unreadable is not the same as "covers nothing": the reason travels apart.
-    assert.match(broken.evidenceLinksError ?? '', /^artifacts\/evidence-manifest\.json: /);
+    assert.equal(broken.evidenceLinksError, undefined);
   } finally {
     rmSync(taskDir, { recursive: true, force: true });
   }
@@ -338,7 +305,7 @@ test('a malformed ledger reports its error and never falls back to the manifest'
 });
 
 test('manifest coverage of every criterion never satisfies the terminal acceptance gate', () => {
-  // The fallback is display-only: the checker `mark complete` runs under
+  // A media inventory supplies no AC relationships: the checker `mark complete` runs under
   // `acceptance.require` reads the ledger file alone, so a manifest that covers
   // every criterion still leaves the run unproven.
   const taskDir = taskDirWith(null, FOUR_CRITERIA);

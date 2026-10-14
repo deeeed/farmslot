@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import acceptanceCli from '../scripts/acceptance-cli.cjs';
 import ledgerWriter from '../scripts/acceptance-ledger.cjs';
 
 test('schema-2 local actor strings cannot change engine verdicts', (t) => {
@@ -38,12 +39,17 @@ test('schema-2 local actor strings cannot change engine verdicts', (t) => {
   const before = readFileSync(file);
   assert.throws(
     () =>
-      ledgerWriter.setAcceptanceVerdict(task, {
-        id: 'AC-1',
-        verdict: 'untestable',
-        actor: 'operator',
-        note: 'Unavailable.',
-      }),
+      acceptanceCli.main([
+        'set',
+        'AC-1',
+        'untestable',
+        '--task-dir',
+        task,
+        '--actor',
+        'operator',
+        '--note',
+        'Unavailable.',
+      ]),
     /verified person/,
   );
   assert.deepEqual(readFileSync(file), before);

@@ -909,3 +909,49 @@ test('authenticated review uses one engine projection in every view and preserve
   }
   assert.equal(JSON.stringify(input), original);
 });
+
+for (const { name, count, evidence } of [
+  { name: 'task beside a recorded attempt', count: 4, evidence: ['artifacts/state.json'] },
+  {
+    name: 'summary without claim package',
+    count: 3,
+    evidence: ['artifacts/recipe-run/summary.json'],
+  },
+  {
+    name: 'media without claim package',
+    count: 3,
+    evidence: ['artifacts/recipe-run/videos/recording.mp4'],
+  },
+]) {
+  test(`retained ${name} is display only across the cutover`, () => {
+    const ledger = {
+      schemaVersion: 1 as const,
+      criteria: Array.from({ length: count }, (_, index) => ({
+        id: `AC-${index + 1}`,
+        text: `Registered behavior ${index + 1}`,
+        verdict: 'proven' as const,
+        evidence,
+        recipeNodes: [],
+        updatedAt: '2026-10-12T00:00:00.000Z',
+      })),
+    };
+    const historical = createEvidenceReviewModel({ ledger, contractVersion: 0 });
+    assert.equal(historical.packageStatus, null, 'a task ledger alone is not a package');
+    assert.ok(historical.warnings.some((warning) => warning.includes('retained display only')));
+    assert.equal(
+      historical.summary.proven,
+      count,
+      'totals describe the supplied historical ledger',
+    );
+    assert.ok(
+      historical.claims.every(
+        (claim) =>
+          historical.selectClaim(claim.id)?.timing === 'untimed' && claim.moments.length === 0,
+      ),
+    );
+    const current = createEvidenceReviewModel({ ledger, contractVersion: 1 });
+    assert.equal(current.packageStatus?.status, 'Invalid');
+    assert.ok(current.claims.every((claim) => claim.moments.length === 0));
+    assert.equal(ledger.criteria[0]?.updatedAt, '2026-10-12T00:00:00.000Z');
+  });
+}

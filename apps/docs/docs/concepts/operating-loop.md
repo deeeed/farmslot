@@ -63,14 +63,13 @@ Interactive development is operator-driven and may create its own draft PR.
 
 ## Evidence and the current transition
 
-ADR-062 assigns normal recipe verdicts to the engine. That cutover is not complete:
-workers can still record task verdicts with `farmslot-agent ac set`, and recipe
-runs can project derived claims through the same task-ledger file writer. Those
-are two verdict-producing paths today. A schema-1 task ledger is not a schema-2
-recorded recipe package and provides no recording timeline by itself.
+ADR-062 assigns normal verdicts to the recipe engine. Task ledgers transfer one
+selected schema-2 execution; `farmslot-agent ac` only lists and renders those
+claims. Current writes and completion reject schema 1. Retained schema-1 rows
+remain display only, with a limitation caption and no inferred recording timeline.
 
-Workers also write the evidence selection list that the gateway freezes. The
-approved target is one engine-owned immutable package per attempt, with reruns
+The engine also produces the selected attempt's evidence inventory, which the
+gateway freezes with its execution closure. Each attempt is immutable, with reruns
 retaining earlier attempts. Package immutability and single-writer migration
 remain pending work; do not treat the target as a guarantee of current outputs.
 See [Recipe evidence loop](./recipe-evidence-loop.md) for the proof contract.

@@ -1,74 +1,54 @@
 #!/usr/bin/env tsx
-/**
- * E2E for the acceptance-criteria ledger (ADR-060 phase 5): a REAL task directory
- * written by `task init` from the repository's own worker template with three
- * acceptance criteria, every verdict recorded through the real `farmslot-agent ac`
- * entry point, and the terminal gate driven through the task dir's own `./mark`
- * shim — never the engine path directly.
- *
- * Assertions read files and CLI output only (handoff.json, the ledger, SIGNAL.json),
- * the way the gateway and every client observe a run.
- */
+/** Manual cutover proof through the checkout CLI and task's own terminal command. */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Repo root from this file's location, not cwd: the package `test` script runs it
-// from packages/agent-runtime, and `yarn e2e:acceptance-ledger` from the root.
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const agentBin = path.join(root, 'packages', 'agent-runtime', 'bin', 'farmslot-agent.mjs');
-const agentRuntimeDist = path.join(root, 'packages', 'agent-runtime', 'dist', 'index.js');
+import { readRecordedEvidencePackage } from '@farmslot/adapter-sdk';
+import { createRecipeRunner, createStandardCoreAdapters } from '@farmslot/recipe-runner';
+import { recordRecipeAcceptance } from '../packages/recipe-cli/src/harness/acceptance-ledger.js';
+
+const source = fileURLToPath(new URL('../', import.meta.url));
+const agent = path.join(source, 'packages/agent-runtime/bin/farmslot-agent.mjs');
+const cli = path.join(source, 'packages/cli/bin/farmslot.mjs');
 const require = createRequire(import.meta.url);
-const { enumerateChecklistCheckboxes } = require(
-  path.join(root, 'packages', 'agent-runtime', 'scripts', 'checklist-target.cjs'),
-) as { enumerateChecklistCheckboxes: (markdown: string) => unknown[] };
-
-const CRITERIA = [
-  'The lint gate fails the build when a file regresses.',
-  'The failure names the offending file.',
-  'The fix is covered by a regression test.',
+const {
+  enumerateChecklistCheckboxes,
+} = require('@farmslot/agent-runtime/scripts/checklist-target.cjs');
+const {
+  recordRecipeAttemptSelection,
+} = require('@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs');
+export const criteria = [
+  'The command exits successfully.',
+  'The observed output names the checked file.',
+  'The file retains the expected observation.',
 ];
-
-function run(command: string, args: string[]) {
-  return spawnSync(command, args, { cwd: root, encoding: 'utf-8', stdio: 'pipe' });
-}
-
-function ok(command: string, args: string[], label: string) {
-  const result = run(command, args);
-  assert.equal(
-    result.status,
-    0,
-    `${label} must succeed: exit ${result.status}\n${result.stderr}${result.stdout}`,
-  );
+function invoke(args: string[], expected = 0) {
+  const result = spawnSync(process.execPath, args, {
+    cwd: source,
+    encoding: 'utf8',
+    timeout: 60_000,
+  });
+  if (result.error) throw result.error;
+  assert.equal(result.status, expected, `${args[1]}: ${result.stderr}\n${result.stdout}`);
   return result;
 }
+const json = (file: string) => JSON.parse(readFileSync(file, 'utf8'));
+const writeJson = (file: string, value: unknown) => {
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify(value, null, 2) + '\n');
+};
 
-function refused(command: string, args: string[], pattern: RegExp, label: string) {
-  const result = run(command, args);
-  assert.notEqual(
-    result.status,
-    0,
-    `${label} must be refused, but it succeeded:\n${result.stdout}`,
-  );
-  assert.match(`${result.stderr}${result.stdout}`, pattern, `${label} refusal message`);
-  return result;
-}
-
-function readJson(file: string): Record<string, unknown> {
-  return JSON.parse(readFileSync(file, 'utf-8')) as Record<string, unknown>;
-}
-
-/** The `task init` command for a task dir, three acceptance criteria included. */
-function taskInitArgs(dir: string, title: string): string[] {
-  return [
-    agentBin,
+export async function proveLedgerCutover(taskDir: string, projectRoot: string) {
+  invoke([
+    agent,
     'task',
     'init',
-    dir,
+    taskDir,
     '--flow',
     'ci-fix',
     '--platform',
@@ -76,265 +56,281 @@ function taskInitArgs(dir: string, title: string): string[] {
     '--template',
     'ci-fix/default',
     '--project-worker',
-    path.join('templates', 'worker'),
+    path.join(source, 'templates/worker'),
     '--title',
-    title,
+    'Engine ledger cutover',
     '--task-text',
-    'Record a verdict for every acceptance criterion through `farmslot-agent ac`.',
-    ...CRITERIA.flatMap((criterion) => ['--acceptance', criterion]),
+    'Prove each criterion with recipe assertions.',
+    ...criteria.flatMap((criterion) => ['--acceptance', criterion]),
     '--surface',
     'test',
     '--project',
-    'farmslot',
+    'ledger-proof',
     '--var',
     'PR_NUMBER=1',
     '--var',
-    'GH_REPO=deeeed/farmslot',
+    'GH_REPO=example/project',
     '--var',
-    'BRANCH=feat/subtask-observability-phase5',
+    'BRANCH=fix/ledger-proof',
     '--var',
     'PUBLICATION_BASE=main',
     '--var',
     'CI_ISSUE_TYPE=lint',
     '--var',
-    'CI_ISSUES=- lint failed on one file',
+    'CI_ISSUES=- lint failed',
     '--var',
-    `REPO=${root}`,
-  ];
+    `REPO=${projectRoot}`,
+  ]);
+  const artifacts = path.join(taskDir, 'artifacts');
+  const projection = path.join(artifacts, 'acceptance-status.json');
+  const mark = path.join(taskDir, 'mark');
+  const ac = (...args: string[]) => [agent, 'ac', args[0], '--task-dir', taskDir, ...args.slice(1)];
+  assert.deepEqual(
+    json(path.join(taskDir, 'inputs/handoff.json')).task.acceptanceCriteria,
+    criteria,
+  );
+  assert.deepEqual(
+    JSON.parse(invoke(ac('list')).stdout).map((row: { verdict: unknown }) => row.verdict),
+    [null, null, null],
+  );
+  for (const verdict of ['proven', 'weak', 'missing', 'failed', 'awaiting-review', 'untestable']) {
+    assert.match(
+      invoke(ac('set', 'AC-1', verdict, '--actor', 'operator'), 1).stderr,
+      /engine-owned.*verified person/,
+    );
+  }
+  writeFileSync(path.join(projectRoot, 'observation.txt'), 'src/checked.ts\n');
+  const manifestFile = path.join(projectRoot, 'actions.json');
+  writeJson(manifestFile, {
+    $schema: 'https://farmslot.io/schemas/action-manifest-v1.schema.json',
+    actions: {
+      command: {
+        description: 'Read the observation.',
+        schema: {
+          type: 'object',
+          properties: { cmd: { type: 'string' } },
+          required: ['cmd'],
+          additionalProperties: false,
+        },
+        examples: [{ action: 'command', cmd: 'true', intent: 'Read state', next: 'done' }],
+      },
+      assert_output: {
+        description: 'Check the observed output.',
+        schema: {
+          type: 'object',
+          properties: {
+            source: { type: 'string' },
+            contains: { type: 'string' },
+            assert: { type: 'object' },
+          },
+          required: ['source'],
+          additionalProperties: false,
+        },
+        examples: [
+          {
+            action: 'assert_output',
+            source: 'observe',
+            contains: 'checked',
+            intent: 'Check state',
+            next: 'done',
+          },
+        ],
+      },
+      assert_file: {
+        description: 'Check a file observation.',
+        schema: {
+          type: 'object',
+          properties: { path: { type: 'string' }, contains: { type: 'string' } },
+          required: ['path'],
+          additionalProperties: false,
+        },
+        examples: [
+          {
+            action: 'assert_file',
+            path: 'observation.txt',
+            contains: 'checked',
+            intent: 'Check the file',
+            next: 'done',
+          },
+        ],
+      },
+      end: { description: 'Finish.', examples: [{ action: 'end', status: 'pass' }] },
+    },
+  });
+  async function execute(name: string, all: boolean, expected = 'src/checked.ts') {
+    const recipeFile = path.join(projectRoot, `${name}.recipe.json`);
+    const attemptDir = path.join(artifacts, 'recipe-runs', name);
+    writeJson(recipeFile, {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      title: 'Ledger cutover conformance',
+      proofTargets: criteria.slice(0, all ? 3 : 2).map((claim, index) => ({
+        id: `AC-${index + 1}`,
+        claim,
+        proofMode: 'state',
+      })),
+      workflow: {
+        entry: 'observe',
+        nodes: {
+          observe: {
+            action: 'command',
+            cmd: 'cat observation.txt',
+            intent: 'Read the real file',
+            next: 'exit',
+          },
+          exit: {
+            action: 'assert_output',
+            source: 'observe',
+            assert: { path: '$.exitCode', operator: 'eq', value: 0 },
+            proves: ['AC-1'],
+            intent: 'Require successful execution',
+            next: 'output',
+          },
+          output: {
+            action: 'assert_output',
+            source: 'observe',
+            contains: expected,
+            proves: ['AC-2'],
+            intent: 'Check the actual output',
+            next: all ? 'file' : 'done',
+          },
+          ...(all
+            ? {
+                file: {
+                  action: 'assert_file',
+                  path: 'observation.txt',
+                  contains: expected,
+                  proves: ['AC-3'],
+                  intent: 'Check retained file content',
+                  next: 'done',
+                },
+              }
+            : {}),
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    });
+    if (all)
+      invoke(
+        [
+          cli,
+          '--json',
+          'recipe',
+          'run',
+          recipeFile,
+          '--project-root',
+          projectRoot,
+          '--action-manifest',
+          manifestFile,
+          '--artifacts-dir',
+          attemptDir,
+          '--source-trust',
+          'trusted',
+          '--source-kind',
+          'operator',
+        ],
+        expected === 'src/checked.ts' ? 0 : 1,
+      );
+    else {
+      // Public engine registration retains unexecuted task claims as missing.
+      const engine = createRecipeRunner({
+        actionManifest: json(manifestFile),
+        adapters: createStandardCoreAdapters({ actions: Object.keys(json(manifestFile).actions) }),
+        defaultSource: { kind: 'operator', trust: 'trusted', name: 'ledger-proof' },
+      });
+      const result = await engine.run({
+        recipePath: recipeFile,
+        projectRoot,
+        artifactsDir: attemptDir,
+        claims: criteria.map((claim, index) => ({ id: `AC-${index + 1}`, claim })),
+      });
+      assert.equal(result.status, 'pass');
+    }
+    const loaded = await readRecordedEvidencePackage(attemptDir);
+    assert.ok(
+      loaded.checks.every((check) => check.status === 'pass'),
+      JSON.stringify(loaded.checks),
+    );
+    const claims = loaded.input.claims!;
+    if (expected !== 'src/checked.ts') {
+      assert.equal(
+        claims.criteria[1].verdict,
+        'failed',
+        'the assertion can fail on actual observed state',
+      );
+      return { attemptDir, claims };
+    }
+    assert.equal(recordRecipeAttemptSelection(taskDir, attemptDir), true);
+    recordRecipeAcceptance(taskDir, projectRoot, {
+      tracePath: path.join(attemptDir, 'trace.json'),
+      recipePath: recipeFile,
+      claimsPath: path.join(attemptDir, 'acceptance-status.json'),
+    });
+    assert.equal(json(projection).recipeRunId, claims.recipeRunId);
+    return { attemptDir, claims };
+  }
+  // Negative control and missing-claim control precede the passing selected execution.
+  await execute('negative', true, 'absent-observation');
+  const partial = await execute('partial', false);
+  assert.equal(partial.claims.criteria[2].verdict, 'missing');
+  invoke([
+    path.join(source, 'packages/agent-runtime/scripts/mark-checklist-step.cjs'),
+    taskDir,
+    'start',
+  ]);
+  const steps = enumerateChecklistCheckboxes(
+    readFileSync(path.join(taskDir, 'CHECKLIST.md'), 'utf8'),
+  ).length;
+  for (let step = 1; step < steps; step++)
+    invoke([
+      path.join(source, 'packages/agent-runtime/scripts/mark-checklist-step.cjs'),
+      taskDir,
+      String(step),
+    ]);
+  writeFileSync(path.join(artifacts, 'report.md'), '# Proof\n\nEngine claims verified.\n');
+  writeFileSync(path.join(artifacts, 'learnings.md'), '- Task ledgers transfer engine claims.\n');
+  const finish = () =>
+    spawnSync(mark, ['complete', '--mark-last'], { cwd: projectRoot, encoding: 'utf8' });
+  let terminal = finish();
+  assert.notEqual(terminal.status, 0);
+  assert.match(terminal.stderr, /AC-3 is missing/);
+  const settled = await execute('complete', true);
+  assert.deepEqual(
+    settled.claims.criteria.map((claim) => claim.verdict),
+    ['proven', 'proven', 'proven'],
+  );
+  const original = readFileSync(projection, 'utf8');
+  assert.match(
+    invoke(ac('set', 'AC-1', 'untestable', '--actor', 'operator'), 1).stderr,
+    /engine-owned/,
+  );
+  assert.equal(readFileSync(projection, 'utf8'), original);
+  terminal = finish();
+  assert.equal(terminal.status, 0, terminal.stderr);
+  assert.equal(json(path.join(taskDir, 'SIGNAL.json')).status, 'complete');
+  assert.match(invoke(ac('render')).stdout, /Overall recipe coverage: 3\/3 ACs PROVEN/);
+  return { taskDir, projection, ...settled };
 }
 
-function main() {
-  if (!existsSync(agentRuntimeDist)) {
-    console.log('[e2e] building @farmslot/agent-runtime (task init needs dist/)');
-    ok('yarn', ['workspace', '@farmslot/agent-runtime', 'build'], 'agent-runtime build');
-  }
-
-  const work = mkdtempSync(path.join(tmpdir(), 'farmslot-e2e-acceptance-'));
-  const taskDir = path.join(work, 'temp', 'tasks', 'ci-fix', 'acceptance-e2e');
-  const mark = path.join(taskDir, 'mark');
-  const ac = (...args: string[]) => [
-    agentBin,
-    'ac',
-    args[0],
-    '--task-dir',
-    taskDir,
-    ...args.slice(1),
-  ];
-
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const work = mkdtempSync(path.join(tmpdir(), 'ledger-cutover-proof-'));
   try {
-    // 1. A real task directory with three acceptance criteria.
-    ok('node', taskInitArgs(taskDir, 'Acceptance ledger E2E'), 'task init');
-    // Ledger enforcement is opt-in per project (`worker_terminal.acceptance`), and
-    // this scenario proves the enforcement, so the run's own contract asks for it —
-    // the same file a project with that config produces.
-    const contractPath = path.join(taskDir, 'inputs', 'worker-terminal-contract.json');
-    writeFileSync(
-      contractPath,
-      `${JSON.stringify({ ...readJson(contractPath), acceptance: { require: true } }, null, 2)}\n`,
-    );
-
-    const handoff = readJson(path.join(taskDir, 'inputs', 'handoff.json'));
-    assert.deepEqual(
-      (handoff.task as { acceptanceCriteria: string[] }).acceptanceCriteria,
-      CRITERIA,
-      'task init records the criteria in order — that order is the AC-<N> id',
-    );
-    const taskMarkdown = readFileSync(path.join(taskDir, 'TASK.md'), 'utf-8');
-    for (const criterion of CRITERIA) {
-      assert.ok(taskMarkdown.includes(`- ${criterion}`), 'TASK.md still renders the AC list');
-    }
-    assert.doesNotMatch(taskMarkdown, /- \[[ xX]\]/, 'TASK.md carries no checkbox');
-
-    // 2. Nothing is recorded until `ac set` runs, and `render` says so.
-    const listed = ok('node', ac('list'), 'ac list');
-    const rows = JSON.parse(listed.stdout) as Array<{ id: string; verdict: string | null }>;
-    assert.deepEqual(
-      rows.map((row) => row.id),
-      ['AC-1', 'AC-2', 'AC-3'],
-    );
-    assert.deepEqual(
-      rows.map((row) => row.verdict),
-      [null, null, null],
-    );
-    refused('node', ac('render'), /no acceptance ledger yet/, 'ac render before any verdict');
-
-    // 3. Real evidence files, then two of the three verdicts.
-    const artifacts = path.join(taskDir, 'artifacts');
-    mkdirSync(artifacts, { recursive: true });
-    writeFileSync(path.join(artifacts, 'after-lint-gate.png'), 'png-bytes');
-    writeFileSync(path.join(artifacts, 'lint-failure.log'), 'src/app.ts: 1 problem\n');
-    refused(
-      'node',
-      ac('set', 'AC-1', 'proven', '--evidence', 'artifacts/not-captured.png'),
-      /evidence path does not exist: artifacts\/not-captured\.png/,
-      'a verdict pointing at evidence that was never captured',
-    );
-    ok(
-      'node',
-      ac(
-        'set',
-        'AC-1',
-        'proven',
-        '--proof-mode',
-        'visual',
-        '--evidence',
-        'artifacts/after-lint-gate.png',
-        '--recipe-node',
-        'assert-lint-gate',
-      ),
-      'ac set AC-1',
-    );
-    ok(
-      'node',
-      ac(
-        'set',
-        'AC-2',
-        'proven',
-        '--proof-mode',
-        'state',
-        '--evidence',
-        'artifacts/lint-failure.log',
-        '--recipe-node',
-        'assert-failure-names-file',
-      ),
-      'ac set AC-2',
-    );
-
-    // 4. Walk the checklist and try to finish with AC-3 unrecorded.
-    ok(mark, ['start'], 'mark start');
-    const checklistPath = path.join(taskDir, 'CHECKLIST.md');
-    const totalSteps = enumerateChecklistCheckboxes(readFileSync(checklistPath, 'utf-8')).length;
-    assert.ok(totalSteps > 1, 'the worker template enumerates steps');
-    for (let step = 1; step < totalSteps; step += 1) ok(mark, [String(step)], `mark ${step}`);
-    writeFileSync(path.join(artifacts, 'report.md'), '# Report\n\nLint parity restored.\n');
-    writeFileSync(path.join(artifacts, 'learnings.md'), '- Ledger before the terminal mark.\n');
-    refused(
-      mark,
-      ['complete', '--mark-last'],
-      /AC-3 has no verdict/,
-      'parent complete with one criterion unrecorded',
-    );
-    assert.notEqual(readJson(path.join(taskDir, 'SIGNAL.json')).status, 'complete');
-
-    // 5. A `missing` verdict is a refusal too: recording one is not proving it.
-    ok(
-      'node',
-      ac('set', 'AC-3', 'missing', '--note', 'No regression test yet.'),
-      'ac set AC-3 missing',
-    );
-    refused(
-      mark,
-      ['complete', '--mark-last'],
-      /AC-3 is missing: prove it, or record `untestable` with a note/,
-      'parent complete with a missing verdict',
-    );
-    assert.notEqual(readJson(path.join(taskDir, 'SIGNAL.json')).status, 'complete');
-
-    // 6. With every criterion proven the terminal path runs as usual.
-    ok(
-      'node',
-      ac(
-        'set',
-        'AC-3',
-        'proven',
-        '--proof-mode',
-        'state',
-        '--recipe-node',
-        'assert-regression-test',
-      ),
-      'ac set AC-3 proven',
-    );
-    ok(mark, ['complete', '--mark-last'], 'parent complete');
-    const signal = readJson(path.join(taskDir, 'SIGNAL.json'));
-    assert.equal(signal.status, 'complete');
-    assert.equal(signal.outcome, 'success');
-
-    // 7. The ledger is the one writer's file, and `render` is its table.
-    const ledger = readJson(path.join(taskDir, 'artifacts', 'acceptance-status.json')) as {
-      schemaVersion: number;
-      criteria: Array<Record<string, unknown>>;
-    };
-    assert.equal(ledger.schemaVersion, 1);
-    assert.deepEqual(
-      ledger.criteria.map((criterion) => criterion.id),
-      ['AC-1', 'AC-2', 'AC-3'],
-    );
-    assert.deepEqual(
-      ledger.criteria.map((criterion) => criterion.verdict),
-      ['proven', 'proven', 'proven'],
-    );
-    assert.equal(
-      ledger.criteria[2].note,
-      undefined,
-      'the missing-verdict note does not survive the new verdict',
-    );
-    const rendered = ok('node', ac('render'), 'ac render').stdout;
-    const expected = [
-      '## Recipe coverage',
-      '',
-      '| AC | Criterion | Verdict | Proof mode | Recipe nodes | Evidence | Note |',
-      '| --- | --- | --- | --- | --- | --- | --- |',
-      `| AC-1 | ${CRITERIA[0]} | PROVEN | visual | assert-lint-gate | artifacts/after-lint-gate.png | - |`,
-      `| AC-2 | ${CRITERIA[1]} | PROVEN | state | assert-failure-names-file | artifacts/lint-failure.log | - |`,
-      `| AC-3 | ${CRITERIA[2]} | PROVEN | state | assert-regression-test | - | - |`,
-      '',
-      'Overall recipe coverage: 3/3 ACs PROVEN (untestable: none, weak: 0, missing: 0)',
-      '',
-    ].join('\n');
-    assert.equal(rendered, expected, 'ac render prints the coverage table');
-
-    // 8. An older contract without an opt-in still refuses unassessed criteria.
-    const optOutDir = path.join(work, 'temp', 'tasks', 'ci-fix', 'acceptance-opt-out');
-    ok('node', taskInitArgs(optOutDir, 'Acceptance ledger opt-out'), 'task init (no opt-in)');
-    const optOutMark = path.join(optOutDir, 'mark');
-    // The contract task init writes carries no `acceptance` block at all.
-    const optOutContract = readJson(
-      path.join(optOutDir, 'inputs', 'worker-terminal-contract.json'),
-    );
-    assert.equal(optOutContract.acceptance, undefined, 'the builtin contract opts into nothing');
-    ok(optOutMark, ['start'], 'mark start (no opt-in)');
-    const optOutSteps = enumerateChecklistCheckboxes(
-      readFileSync(path.join(optOutDir, 'CHECKLIST.md'), 'utf-8'),
-    ).length;
-    for (let step = 1; step < optOutSteps; step += 1) {
-      ok(optOutMark, [String(step)], `mark ${step} (no opt-in)`);
-    }
-    const optOutArtifacts = path.join(optOutDir, 'artifacts');
-    mkdirSync(optOutArtifacts, { recursive: true });
-    writeFileSync(path.join(optOutArtifacts, 'report.md'), '# Report\n\nDone.\n');
-    writeFileSync(
-      path.join(optOutArtifacts, 'learnings.md'),
-      '- Registered criteria need verdicts.\n',
-    );
-    // One verdict recorded, two criteria still unjudged: the ledger is written and
-    // readable, but incomplete verdicts still gate this run.
-    ok(
-      'node',
-      [agentBin, 'ac', 'set', 'AC-1', 'proven', '--task-dir', optOutDir, '--proof-mode', 'state'],
-      'ac set AC-1 (no opt-in)',
-    );
-    refused(
-      optOutMark,
-      ['complete', '--mark-last'],
-      /AC-2 has no verdict/,
-      'parent complete without opt-in and unassessed criteria',
-    );
-    assert.notEqual(readJson(path.join(optOutDir, 'SIGNAL.json')).status, 'complete');
-    const optOutLedger = readJson(path.join(optOutDir, 'artifacts', 'acceptance-status.json')) as {
-      criteria: Array<Record<string, unknown>>;
-    };
-    assert.equal(optOutLedger.criteria.length, 1, 'the ledger holds only the recorded verdict');
+    const result = await proveLedgerCutover(path.join(work, 'tasks/current'), work);
     console.log(
-      'e2e:acceptance-ledger ok — 3 criteria, every refusal observed on files, including a contract without an opt-in',
+      JSON.stringify(
+        {
+          status: 'pass',
+          recipeRunId: result.claims.recipeRunId,
+          criteria: result.claims.criteria.length,
+          negativeControl: 'failed',
+          missingControl: 'refused',
+          completion: 'accepted',
+          recording: result.claims.recording.status,
+        },
+        null,
+        2,
+      ),
     );
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
-}
-
-try {
-  main();
-} catch (error) {
-  console.error(error);
-  process.exitCode = 1;
 }

@@ -324,12 +324,11 @@ test('isRecipeQualityArtifact rejects invalid nested contract fields', () => {
   );
 });
 
-test('loadRecipeQualityEvaluation warns when legacy recipe coverage exists without canonical artifact', async () => {
+test('loadRecipeQualityEvaluation uses supplied engine coverage without reading a coverage file', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'recipe-quality-legacy-'));
   const taskDir = path.join(base, 'task');
   const taskFile = await writeTaskFile(taskDir, '# Legacy task\n');
   await mkdir(path.join(taskDir, 'artifacts'), { recursive: true });
-  await writeFile(path.join(taskDir, 'artifacts', 'recipe-coverage.md'), '24/25 passed\n', 'utf-8');
 
   const evaluation = await loadRecipeQualityEvaluation({
     run: makeRun({ taskFile, project: 'example-browser-farm', flowType: 'update-branch' }),
@@ -339,6 +338,7 @@ test('loadRecipeQualityEvaluation warns when legacy recipe coverage exists witho
   assert.equal(evaluation.artifact.verdict, 'warn');
   assert.equal(evaluation.artifact.meta.artifact_required, false);
   assert.equal(evaluation.signal.source, 'recipe-coverage');
+  assert.deepEqual(evaluation.artifact.meta.source_signals, ['acceptance-status.json']);
   await assert.rejects(readFile(path.join(taskDir, 'artifacts', 'recipe-quality.json'), 'utf-8'));
 });
 

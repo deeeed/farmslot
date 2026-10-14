@@ -6,6 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Allow a durably replayed run to reacquire capabilities after its previous terminal cleanup, while retaining fences for settled owners, unrecovered siblings and later cleanup.
 - Adopt attested human-published PRs through durable publication recording, preserving archived execution and enforcing active continuation guards.
+- Read acceptance from the selected engine ledger, removing manifest-cover and coverage-file fallbacks from progress, gate and publication summaries. Preserve inventoried historical criterion links as untimed display snapshots without changing original evidence bytes.
 
 - Reuse matching artifact mirror files by size and hash, and reject missing selected publication manifests before transferring artifacts on gate replay or package refresh.
 

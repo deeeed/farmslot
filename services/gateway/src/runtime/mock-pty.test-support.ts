@@ -9,7 +9,8 @@ const forbidden = (): never => {
 };
 mock.module('./pty-stream.js', {
   namedExports: {
-    onPtyExit: forbidden,
+    // Startup may register an exit listener; registration launches no PTY or tmux process.
+    onPtyExit: () => {},
     ptyExitHandlerCountForTests: forbidden,
     subscribePty: forbidden,
     unsubscribePty: forbidden,

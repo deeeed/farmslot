@@ -960,9 +960,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
         ];
 
   const recipeJson = await readTaskArtifactText(current.taskFile, 'recipe.json');
-  // Coverage for the quality derivation: the acceptance ledger when the run kept
-  // one (structure, not a hand-written table), else the worker's
-  // recipe-coverage.md exactly as before (ADR-060 phase 5).
+  // Coverage is rendered from the engine ledger. Worker prose cannot replace it.
   const acceptanceLedgerText = await readTaskArtifactText(
     current.taskFile,
     ACCEPTANCE_STATUS_FILENAME,
@@ -978,9 +976,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
     (acceptanceLedgerText?.trim() && !acceptanceStatus
       ? `invalid ${ACCEPTANCE_STATUS_ARTIFACT_REL}`
       : undefined);
-  const recipeCoverage =
-    acceptanceCoverageMarkdown(acceptanceStatus, acceptanceHandoff.criteria) ??
-    (await readTaskArtifactText(current.taskFile, 'recipe-coverage.md'));
+  const recipeCoverage = acceptanceCoverageMarkdown(acceptanceStatus, acceptanceHandoff.criteria);
 
   // Scan artifact manifest
   let artifactManifest: EvidenceManifestEntry[] | undefined;

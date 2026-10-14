@@ -9,7 +9,11 @@
 
 ## Acceptance-ledger transition
 
-The ledger ownership decision is superseded in design by [ADR-062](062-recorded-run-evidence.md) and its [migration and conformance contract](../reference/recorded-run-evidence.md#migration-and-conformance). The cutover has not shipped. Today manual `ac set` and recipe-derived projection are both normal verdict producers through one physical task-ledger writer. Preserve the current completion guard until the engine path and adopters pass conformance, then remove the manual normal path in the coordinated cutover. Child checklist ownership in this ADR is unchanged.
+The ledger ownership decision is superseded by [ADR-062](062-recorded-run-evidence.md)
+and its [migration and conformance contract](../reference/recorded-run-evidence.md#migration-and-conformance).
+The dated [ownership update](#acceptance-ledger-ownership-update-2026-10-14)
+records the coordinated source cutover. Package publication and adopter rollout
+remain separate delivery steps. Child checklist ownership in this ADR is unchanged.
 
 ## Context
 
@@ -69,3 +73,19 @@ Acceptance criteria stay out of the checklist (a box in `TASK.md` is never a ste
 - Cross-run children (a child unit lives inside its parent task directory).
 - Token or cost attribution per child (per-model capture lane).
 - Replacing the gateway-driven role switch for self-review, self-review-fix, and ci-fix.
+
+## Acceptance ledger ownership update (2026-10-14)
+
+[ADR-062](062-recorded-run-evidence.md) supersedes the manual writer described
+above. After engine conformance and consumer migration, the recipe engine is the
+sole normal verdict authority. Agent-runtime only transfers a selected schema-2
+projection and exposes read-only `ac list` and `ac render`. Current writes and
+completion reject schema 1; retained ledgers remain explicitly display only.
+Verified human exceptions use the existing gateway receipt contract, leaving
+engine/task bytes and frozen history intact. The owning
+[recorded-evidence specification](../reference/recorded-run-evidence.md#migration-and-conformance)
+defines the cutover and its separate implementation/publication status.
+
+The source cutover is tracked by [#1044](https://github.com/deeeed/farmslot/pull/1044),
+pending review and merge. This records implementation separately from package
+publication and adopter rollout.

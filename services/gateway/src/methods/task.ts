@@ -229,14 +229,14 @@ async function attachAcceptanceStatus(
 ): Promise<void> {
   // Both halves: the criteria the task registered, and the verdicts recorded so
   // far. A client needs the first to show a criterion still awaiting a verdict —
-  // the ledger holds only what `ac set` wrote — and the read error when neither
+  // the ledger transfers the selected engine claims, with the read error when neither
   // can be read, so the panel says "unreadable" instead of quietly showing nothing.
   const read = await readAcceptanceStatusForDisplay(vars, path.dirname(effectiveMdPath));
   if (read.criteria.length > 0) result.acceptanceCriteria = read.criteria;
   if (read.ledger) result.acceptanceStatus = read.ledger;
   if (read.error) result.acceptanceStatusError = read.error;
-  // Display-only: the manifest fallback rides in its own field so nothing that
-  // reads `acceptanceStatus` can mistake "evidence linked" for a verdict.
+  // Explicitly retained historical links remain separate from verdicts. Current
+  // readers never derive new acceptance relationships from manifest covers.
   if (read.source) result.acceptanceSource = read.source;
   if (read.evidenceLinks) result.acceptanceEvidenceLinks = read.evidenceLinks;
   if (read.evidenceLinksError) result.acceptanceEvidenceLinksError = read.evidenceLinksError;

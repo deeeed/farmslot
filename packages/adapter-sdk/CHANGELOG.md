@@ -4,7 +4,7 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Caption retained schema-1 task verdicts as display only and reject them as current run evidence without a selected engine package.
 
 ## 0.12.0 - 2026-10-14
 

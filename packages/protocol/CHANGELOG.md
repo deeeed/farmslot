@@ -7,6 +7,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 - Add attested exact-head human PR adoption receipts and the run RPC contract.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Clarify engine ownership of current acceptance projections and display-only retention of historical verdicts and links.
 
 ## 0.43.0 - 2026-10-14
 

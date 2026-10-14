@@ -46,7 +46,6 @@ When `artifacts/recipe.json` exists, also write:
 
 | Artifact                           | When                                                                                       |
 | ---------------------------------- | ------------------------------------------------------------------------------------------ |
-| `artifacts/recipe-coverage.md`     | Recipe maps to acceptance criteria                                                         |
 | `artifacts/evidence-manifest.json` | Visual evidence for PR embed                                                               |
 | `artifacts/recipe-quality.json`    | Project/template expects quality gate; generate with `farmslot-agent recipe-quality build` |
 

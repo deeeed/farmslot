@@ -33,11 +33,7 @@ import { clearTaskProgressOverlay, loadFleetStatus } from '../fleet/state.js';
 import { taskProgress } from '../methods/task.js';
 import { listRuns } from '../runs/store.js';
 
-import {
-  ACCEPTANCE_STATUS_FILENAME,
-  acceptanceStatusPathFor,
-  EVIDENCE_MANIFEST_FILENAME,
-} from './acceptance-status.js';
+import { ACCEPTANCE_STATUS_FILENAME, acceptanceStatusPathFor } from './acceptance-status.js';
 import { hashChecklistCheckboxes } from './checklist-hash.js';
 import {
   resolveTaskProgressMarkdownPath,
@@ -427,7 +423,7 @@ export async function watchSlot(
 
         // Acceptance ledger (ADR-060 phase 5). The DIRECTORY is the watch subject
         // for the same reason as `subtasks/` below: the ledger does not exist
-        // until the first `ac set`, and a per-file watch on a missing path works
+        // until the first selected engine projection, and a per-file watch on a missing path works
         // on macOS but not on Linux. `artifacts/` is part of the task directory
         // contract, so it is created first and nothing is written into it.
         await ensureArtifactsDir(sw, contextTaskPath);
@@ -438,15 +434,12 @@ export async function watchSlot(
           depth: 0,
         });
         // Everything else in `artifacts/` is worker output this watch does not
-        // report: only the ledger, the evidence manifest (the panel's fallback
-        // when there is no ledger) and operation notices drive a progress update.
+        // report: only the engine ledger and operation notices drive a progress update.
         const onArtifactsEntry = (entryPath: string) => {
           if (
-            ![
-              ACCEPTANCE_STATUS_FILENAME,
-              EVIDENCE_MANIFEST_FILENAME,
-              'operations-updated.json',
-            ].includes(path.basename(entryPath))
+            ![ACCEPTANCE_STATUS_FILENAME, 'operations-updated.json'].includes(
+              path.basename(entryPath),
+            )
           )
             return;
           if (path.basename(entryPath) === 'operations-updated.json') throttledOperationUpdate(key);
@@ -506,7 +499,7 @@ export async function watchSlot(
         );
         // Same for a ledger that already exists: `ignoreInitial: true` reports
         // nothing for it, so a gateway restart mid-run would otherwise show no
-        // verdicts until the next `ac set`.
+        // verdicts until the next engine projection.
         emitExistingAcceptanceLedger(key, sw);
         // A registry that already exists when the watch arms — a gateway restart
         // mid-run, or a worker that registered before this point — produced no
@@ -570,10 +563,6 @@ export async function watchSlot(
             }
           };
           await registerAcceptanceWatch(sw.acceptanceStatusFilePath, 'acceptance ledger');
-          await registerAcceptanceWatch(
-            path.join(path.dirname(sw.acceptanceStatusFilePath), EVIDENCE_MANIFEST_FILENAME),
-            'evidence manifest',
-          );
           await sendNodeRequest(
             node,
             'fs.watch',
@@ -950,7 +939,7 @@ function debouncedSubtaskUpdate(key: string): void {
  * Deliver a ledger that was already on disk when the watch attached. Neither
  * primitive reports it: the node's fs.watch reports changes only, and the local
  * directory watch runs with `ignoreInitial: true`. Without this a verdict recorded
- * before a gateway restart would stay invisible until the next `ac set`.
+ * before a gateway restart would stay invisible until the next engine projection.
  */
 function emitExistingAcceptanceLedger(key: string, sw: SlotWatch): void {
   void (async () => {
