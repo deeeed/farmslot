@@ -85,7 +85,8 @@ mock.module('./pr-template.js', {
     },
   },
 });
-const { prepareCompletionPackage, renderCurrentDescription } = await import('./orchestrator.js');
+const { prepareCompletionPackage, renderCurrentDescription, runCompletionPipeline } =
+  await import('./orchestrator.js');
 const { publicationBaseForRun, stackPrBase } = await import('../run-engine/stack-base.js');
 const { parseGitNumstat } = await import('../run-engine/diff-artifacts.js');
 const { captureCurrentReviewSnapshot } = await import('../review/snapshots.js');
@@ -200,6 +201,18 @@ test('a required publish mirror accepts zero transfers and forwards publication 
   assert.equal(completion.completion.artifactsCopied, true);
   assert.equal(completion.prPackage.headSha, headSha);
   assert.deepEqual(mirrorOptions, { requireSourceArtifacts: true, forPublication: true });
+});
+
+test('no-code completion mirrors without requesting publication preflight', async () => {
+  resetRun();
+  run.recordedEvidenceContractVersion = 1;
+  run.metrics.disposition = 'already_fixed';
+  const completion = await runCompletionPipeline(run.id, {
+    suppressPrMutation: true,
+    skipRetrospective: true,
+  });
+  assert.equal(completion.artifactsCopied, true);
+  assert.notEqual(mirrorOptions?.forPublication, true);
 });
 
 test('stacked package and preview exclude the upstream nine files', async () => {

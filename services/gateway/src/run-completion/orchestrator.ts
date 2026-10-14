@@ -642,6 +642,7 @@ export async function prepareCompletionPackage(
   const completion = await runCompletionPipeline(runId, {
     skipRetrospective: true,
     suppressPrMutation: true,
+    forPublication: !isArtifactOnlyRun(before),
     requireArtifactMirror: options?.requireArtifactMirror,
   });
   const run = getRun(runId)!;
@@ -851,6 +852,7 @@ export async function runCompletionPipeline(
   options?: {
     skipRetrospective?: boolean;
     suppressPrMutation?: boolean;
+    forPublication?: boolean;
     requireArtifactMirror?: boolean;
   },
 ): Promise<CompletionResult> {
@@ -881,7 +883,7 @@ export async function runCompletionPipeline(
     try {
       await refreshArtifactMirror(run, {
         requireSourceArtifacts: options?.requireArtifactMirror,
-        forPublication: options?.suppressPrMutation && !isArtifactOnlyRun(run),
+        forPublication: options?.forPublication,
       });
       flags.artifactsCopied = true;
     } catch (err) {

@@ -539,6 +539,9 @@ test('publication preflight refuses a missing selected engine manifest before to
   );
   assert.equal(await readFile(retained, 'utf8'), 'previous mirror');
   assert.equal(existsSync(path.join(taskDir, 'artifacts/latest-valid-recipe-run.json')), false);
+  // No-code completion still captures the fresh report for an inspectable gate.
+  assert.ok(await refreshArtifactMirror({ ...run, recordedEvidenceContractVersion: 1 }));
+  assert.equal(await readFile(retained, 'utf8'), 'fresh report');
 });
 
 test('refreshArtifactMirror collects named, step-dir and top-level text and media files, not scratch trees', async (t) => {
@@ -639,7 +642,10 @@ test('refreshArtifactMirror keeps subdirectory media the PR body cites without a
 });
 
 test('refreshArtifactMirror retains selected screenshots and both referenced attempt packages', async (t) => {
-  const { taskDir, put, run } = await publishPackageFixture(t, 'mirror-selected-attempts');
+  const { taskDir, workerArtifacts, put, run } = await publishPackageFixture(
+    t,
+    'mirror-selected-attempts',
+  );
   for (const id of ['first', 'second']) {
     await put(`recipe-runs/${id}/artifact-manifest.json`, '{"version":1,"artifacts":[]}');
     await put(`recipe-runs/${id}/summary.json`, '{"status":"pass"}');
@@ -679,6 +685,20 @@ test('refreshArtifactMirror retains selected screenshots and both referenced att
     );
   }
   assert.equal(existsSync(path.join(taskDir, 'artifacts/recipe-runs/unselected')), false);
+  await put('recipe-runs/second/screenshots/new.png', 'new screenshot');
+  await put(
+    'evidence-manifest.json',
+    JSON.stringify({
+      standalone: [{ label: 'new', file: 'artifacts/recipe-runs/second/screenshots/new.png' }],
+    }),
+  );
+  await refreshArtifactMirror(run);
+  assert.ok(existsSync(path.join(taskDir, 'artifacts/recipe-runs/second/screenshots/new.png')));
+  assert.equal(
+    existsSync(path.join(taskDir, 'artifacts/recipe-runs/second/screenshots/result.png')),
+    false,
+  );
+  assert.ok(existsSync(path.join(workerArtifacts, 'recipe-runs/second/screenshots/result.png')));
 });
 
 test('refreshArtifactMirror keeps recipe packages whole by marker, within the depth bound', async (t) => {

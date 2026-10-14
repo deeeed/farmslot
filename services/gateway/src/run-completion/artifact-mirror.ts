@@ -480,9 +480,19 @@ export async function refreshArtifactMirror(
     );
   }
   const clearLocalRecipeRuns = shouldClearLocalRecipeRunCache(workerPointerExists, promotedPointer);
+  const explicitlyReferenced = new Set([...manifestPaths, ...citedPaths]);
   const pruneOptions = {
     preserveRecipeRuns: !clearLocalRecipeRuns,
-    retainedPaths: new Set([...packaged.entries, ...snapshotEntries].map((entry) => entry.path)),
+    retainedPaths: new Set(
+      [...packaged.entries, ...snapshotEntries]
+        .map((entry) => entry.path)
+        .filter(
+          (file) =>
+            (!file.startsWith('screenshots/') &&
+              !(snapshotRoot && file.startsWith(`${snapshotRoot}/screenshots/`))) ||
+            explicitlyReferenced.has(file),
+        ),
+    ),
   };
   await pruneWorkerOwnedArtifactMirror(localArtifactsDir, pruneOptions);
   const transferMeta = { runId: run.id, slotId: run.slotId ?? vars.slotId };
