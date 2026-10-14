@@ -87,3 +87,5 @@ ADR-062 includes accepted [completed evidence and storage](062-recorded-run-evid
 Its [verified-override amendment 4](062-recorded-run-evidence.md#amendment-4-2026-10-13-verified-untestable-overrides-and-selected-execution) is Accepted under [#1015](https://github.com/deeeed/farmslot/pull/1015); implementation is recorded separately.
 
 Its [selected-evidence amendment 5](062-recorded-run-evidence.md#amendment-5-2026-10-14-selected-evidence-and-run-contract-version) defines the creation-time run contract version and engine-derived publication selection.
+
+Its [authenticated-visual-review amendment 6](062-recorded-run-evidence.md#amendment-6-2026-10-14-authenticated-visual-review-and-qa-binding) is accepted and implemented in [#1037](https://github.com/deeeed/farmslot/pull/1037). Its [delegated-review and Compare by AC amendment 7](062-recorded-run-evidence.md#amendment-7-2026-10-14-delegated-visual-judgments-and-compare-by-ac) is accepted on 2026-10-14; delegated judgments ship first, then comparison. Implementation and live gate acceptance are pending.
