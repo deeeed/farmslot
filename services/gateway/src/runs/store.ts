@@ -1740,7 +1740,9 @@ export async function commitRunPublication(
     // Read the raw archive so load-time migrations do not rewrite historical execution.
     const run: Run = live ?? JSON.parse(await readFile(file, 'utf-8'));
     if (run.id !== id) throw new Error('Publication run identity changed');
-    assertCurrent(run);
+    const authority = live ?? structuredClone(run);
+    if (!live) normalizePersistedRun(authority);
+    assertCurrent(authority);
     const baseline = structuredClone(run);
     const patch = build(run);
     const snapshot: Run = {
@@ -1778,7 +1780,7 @@ export async function commitRunPublication(
       } finally {
         await handle.close();
       }
-      assertCurrent(run);
+      assertCurrent(authority);
       if (getRun(id)) throw new Error('Archived publication run was restored during persistence');
       await rename(temporary, file);
       invalidateArchivedRunsCache();

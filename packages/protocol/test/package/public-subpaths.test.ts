@@ -264,6 +264,7 @@ for (const [name, actual, expected] of [
       refreshPublishedEvidence: Methods.RUN_REFRESH_PUBLISHED_EVIDENCE,
       refreshMirror: Methods.RUN_REFRESH_MIRROR,
       rehydratePrNumber: Methods.RUN_REHYDRATE_PR_NUMBER,
+      adoptPublishedPr: Methods.RUN_ADOPT_PUBLISHED_PR,
       interactiveDevResolve: Methods.RUN_INTERACTIVE_DEV_RESOLVE,
       forSlot: Methods.RUN_FOR_SLOT,
       probeWorkerSignal: Methods.RUN_PROBE_WORKER_SIGNAL,

@@ -39,6 +39,7 @@ import { latestResolvedHumanGateDecision } from '../run-engine/decision-replay.j
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
 import { readFrozenRecordedEvidenceSources } from '../run-engine/recorded-evidence-sources.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
+import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
 import { getRun, updateRun } from '../runs/store.js';
 import {
@@ -621,18 +622,28 @@ function preserveSelectedEvidenceKeys(
  * captures branch/session/package metadata, and writes immutable package files.
  * It deliberately suppresses every GitHub PR mutation path.
  */
-export async function prepareCompletionPackage(
+export interface PrepareCompletionPackageOptions {
+  diffStat?: DiffStat;
+  publicationTarget?: PublicationTarget;
+  reviewPolicy?: ReviewPolicy;
+  selectedEvidenceKeys?: string[];
+  priorEvidenceManifest?: ArtifactRef[];
+  stampReviews?: boolean;
+  requireArtifactMirror?: boolean;
+  headSha?: string;
+}
+
+export function prepareCompletionPackage(
   runId: string,
-  options?: {
-    diffStat?: DiffStat;
-    publicationTarget?: PublicationTarget;
-    reviewPolicy?: ReviewPolicy;
-    selectedEvidenceKeys?: string[];
-    priorEvidenceManifest?: ArtifactRef[];
-    stampReviews?: boolean;
-    requireArtifactMirror?: boolean;
-    headSha?: string;
-  },
+  options?: PrepareCompletionPackageOptions,
+): Promise<PrepareCompletionPackageResult> {
+  return withRunTransition(runId, () => prepareCompletionPackageTransitionLocked(runId, options));
+}
+
+/** Package refresh already owns the lifecycle coordinator through its decision rewrite. */
+export async function prepareCompletionPackageTransitionLocked(
+  runId: string,
+  options?: PrepareCompletionPackageOptions,
 ): Promise<PrepareCompletionPackageResult> {
   const before = getRun(runId);
   if (!before) throw new Error(`Run not found: ${runId}`);

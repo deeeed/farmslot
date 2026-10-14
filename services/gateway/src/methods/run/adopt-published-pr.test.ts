@@ -538,3 +538,66 @@ test('verified draft, closed and merged PRs record their observed publication st
     assert.equal(result.receipt.observedState, state === 'draft' ? 'open' : state);
   }
 });
+
+test('legacy archive identity is checked after migration while raw history stays unchanged', async (t) => {
+  const run = fixture(t);
+  updateRun(run.id, {
+    project: 'farmslot',
+    flowType: 'feature' as never,
+    status: 'cancelled',
+    completedAt: new Date().toISOString(),
+  });
+  await persistRunNow(run);
+  await archiveRun(run.id);
+  const file = path.join(runsDirectory(), 'archive', `${run.id}.json`);
+  t.after(() => rm(file, { force: true }));
+  const before = JSON.parse(await readFile(file, 'utf8'));
+  const result = await runAdoptPublishedPr(request(run), noop, dependencies());
+  assert.equal(result.archived, true);
+  assert.equal(result.run.project, 'farmslot-farm');
+  assert.equal(result.run.flowType, 'dev');
+  const after = JSON.parse(await readFile(file, 'utf8'));
+  assert.equal(after.project, before.project);
+  assert.equal(after.flowType, before.flowType);
+  assert.deepEqual(after.decisions, before.decisions);
+  assert.deepEqual(after.steps, before.steps);
+  assert.equal(after.engineState.generation, before.engineState.generation);
+});
+
+test('adoption during progress observation cannot append a fresh publication gate', async (t) => {
+  const run = fixture(t);
+  const { createEngineDecision } = await import('../../run-engine/engine-decisions.js');
+  const payload = run.decisions[0].payload;
+  updateRun(run.id, { decisions: [] });
+  let entered!: () => void;
+  let release!: () => void;
+  const observed = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  t.after(release);
+  const gate = createEngineDecision(
+    run.id,
+    'human_gate',
+    'Publication wait',
+    [{ id: 'hold', label: 'Hold', style: 'secondary' }],
+    payload,
+    {
+      readProgress: async () => {
+        entered();
+        await barrier;
+        return { kind: 'idle' };
+      },
+    },
+  );
+  const refused = assert.rejects(gate, /does not own its continuation slot/);
+  await observed;
+  const result = await runAdoptPublishedPr(request(run), noop, dependencies());
+  assert.equal(result.receipt.priorGate?.decisionId, undefined);
+  release();
+  await refused;
+  assert.equal(run.decisions.length, 0);
+  assert.equal(run.engineState?.publishGate?.publicationStatus, 'published_ready');
+});

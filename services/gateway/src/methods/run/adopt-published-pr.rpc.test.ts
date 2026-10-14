@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,11 +9,15 @@ import { Methods, type RunAdoptPublishedPrResult } from '@farmslot/protocol';
 
 process.env.NODE_TEST_CONTEXT = '1';
 await import('../../runtime/mock-pty.test-support.js');
+let projectReadBarrier: (() => Promise<void>) | undefined;
 const config = await import('../../core/config.js');
 mock.module('../../core/config.js', {
   namedExports: {
     ...config,
-    loadProjectVars: async () => ({ projectJson: { ci: { repo: 'owner/repo' } } }),
+    loadProjectVars: async () => {
+      await projectReadBarrier?.();
+      return { projectJson: { ci: { repo: 'owner/repo' } } };
+    },
   },
 });
 const github = await import('../../integrations/github-client.js');
@@ -218,4 +222,94 @@ test('production WebSocket route accepts only a fixture person, preserves archiv
     personClient.call(Methods.RUN_ADOPT_PUBLISHED_PR, params),
     /authentication|Authenticate|Denied/,
   );
+});
+
+test('in-flight package preparation holds the lifecycle owner until its final package write', async (t) => {
+  const { prepareCompletionPackage } = await import('../../run-completion/orchestrator.js');
+  const { runAdoptPublishedPr } = await import('./adopt-published-pr.js');
+  const run = createRun({
+    flowType: 'dev',
+    project: 'fixture-project',
+    ticketOrPr: 'PROJ-186',
+    branch: 'fix/feature',
+  });
+  const task = await mkdtemp(path.join(os.tmpdir(), 'publication-package-race-'));
+  t.after(async () => {
+    await deleteTestRunIfPresent(run.id);
+    await rm(task, { recursive: true, force: true });
+  });
+  await mkdir(path.join(task, 'artifacts'));
+  await writeFile(path.join(task, 'TASK.md'), '# Fixture publication task\n');
+  await writeFile(
+    path.join(task, 'artifacts/pr-description.md'),
+    '## Summary\nFixture publication proof.\n',
+  );
+
+  updateRun(run.id, {
+    status: 'blocked',
+    taskFile: path.join(task, 'TASK.md'),
+    engineState: {
+      generation: 2,
+      publishGate: {
+        packageId: 'original-package',
+        packageHash: 'old-package',
+        publicationStatus: 'not_published',
+      },
+    },
+  });
+  let entered!: () => void;
+  let release!: () => void;
+  let verified!: () => void;
+  const reading = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const verifying = new Promise<void>((resolve) => {
+    verified = resolve;
+  });
+  projectReadBarrier = async () => {
+    entered();
+    await barrier;
+  };
+  t.after(() => {
+    release();
+    projectReadBarrier = undefined;
+  });
+  const preparation = prepareCompletionPackage(run.id, { headSha: 'c'.repeat(40) });
+  await reading;
+  const adoption = runAdoptPublishedPr(
+    {
+      runId: run.id,
+      prRef: 'https://github.com/owner/repo/pull/192',
+      headSha: reviewed,
+      reason: 'Fixture reviewed publication',
+      attestReviewedPublication: true,
+    },
+    () => {},
+    {
+      authorizeEvidenceAttestation: () => ({
+        principalId: 'fixture-person',
+        credentialId: 'fixture-credential',
+        displayName: 'Fixture person',
+      }),
+      repository: async () => 'owner/repo',
+      discover: async () => {
+        verified();
+        return 192;
+      },
+    },
+  );
+  const settledAdoption = Promise.allSettled([adoption]);
+  await verifying;
+  assert.equal(run.engineState?.publishGate?.humanPublicationAdoption, undefined);
+  release();
+  const prepared = await preparation;
+  const [stale] = await settledAdoption;
+  assert.equal(stale.status, 'rejected');
+  if (stale.status === 'rejected')
+    assert.match(stale.reason.message, /changed during verification/);
+  assert.equal(run.engineState?.publishGate?.packageHash, prepared.prPackage.packageHash);
+  assert.equal(run.engineState?.publishGate?.publicationStatus, 'not_published');
 });
