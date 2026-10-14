@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Completion waits for the worker's native idle",
+  "description": "Manual public RPC proof using copied artifact-only QA receipts. FARMSLOT_QA_OUTPUT_PROOF_INPUT supplies runSnapshot, taskDir and repo. Originals remain read-only. Uses a real native worker and a disposable gateway, with a teardown barrier after gate and QA validation.",
+  "workflow": {
+    "entry": "completion-idle",
+    "nodes": {
+      "completion-idle": {
+        "action": "command",
+        "cmd": "FARMSLOT_COMPLETION_IDLE_PROOF=1 TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/qa-output-evidence-gate.mts",
+        "timeout_ms": 300000,
+        "intent": "Reproduce the terminal final-turn failure, then prove the same completion attempt waits for native idle while retaining its slot and output review and advances without another replay.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

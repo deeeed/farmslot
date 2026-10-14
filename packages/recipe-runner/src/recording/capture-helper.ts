@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process';
-import { stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 import type { RecipeArtifactRecorderTarget } from '@farmslot/protocol';
 import { captureHelperPath } from '@farmslot/protocol/node/capture-helper-path';
 
+import { isRecord } from '../core/json.js';
 import type {
   ActiveVideoRecording,
   RecordingTarget,
@@ -40,6 +42,32 @@ export function createCaptureHelperVideoRecorder(
   options: CaptureHelperVideoRecorderOptions = {},
 ): VideoRecorder {
   return new CaptureHelperVideoRecorder(options);
+}
+
+interface CaptureHelperSnapshotResult {
+  data: Uint8Array;
+  metadata: Record<string, unknown>;
+}
+
+/** Unrecorded UI captures use the same native target and snapshot command as recordings. */
+export async function captureHelperSnapshot(
+  target: RecordingTarget,
+  options: { captureHelperPath?: string } = {},
+): Promise<CaptureHelperSnapshotResult> {
+  const staging = await mkdtemp(path.join(os.tmpdir(), 'farmslot-snapshot-'));
+  try {
+    const output = path.join(staging, 'frame.png');
+    const metadata = await snapshotTarget(
+      options.captureHelperPath ?? captureHelperPath(),
+      target,
+      output,
+    );
+    const data = await readFile(output);
+    if (!data.length) throw new Error('capture-helper snapshot produced an empty image.');
+    return { data, metadata };
+  } finally {
+    await rm(staging, { recursive: true, force: true });
+  }
 }
 
 class CaptureHelperVideoRecorder implements VideoRecorder {
@@ -372,6 +400,28 @@ async function standaloneSnapshot(
   outputPath: string,
   cause: string,
 ): Promise<Record<string, unknown>> {
+  let snapshot: Record<string, unknown>;
+  try {
+    snapshot = await snapshotTarget(helperPath, target, outputPath);
+  } catch (error) {
+    throw new Error(
+      `Recording stream was interrupted (${cause}) and the standalone snapshot failed: ${errorMessage(error)}`,
+    );
+  }
+  return {
+    ...snapshot,
+    fallbackFrom: 'record_session_snapshot',
+    fallbackReason: `recording stream interrupted: ${cause}`,
+    timingUnavailableReason:
+      'Taken after the recording stream was interrupted; not part of the video.',
+  };
+}
+
+async function snapshotTarget(
+  helperPath: string,
+  target: RecordingTarget,
+  outputPath: string,
+): Promise<Record<string, unknown>> {
   const result = await runCommand(
     helperPath,
     ['snapshot', ...targetArgs(target), '--output', outputPath],
@@ -379,15 +429,11 @@ async function standaloneSnapshot(
   );
   if (result.exitCode !== 0)
     throw new Error(
-      `Recording stream was interrupted (${cause}) and the standalone snapshot failed: ${result.stderr.trim() || `exit ${result.exitCode}`}`,
+      `capture-helper snapshot failed: ${result.stderr.trim() || `exit ${result.exitCode}`}`,
     );
-  return {
-    ...(JSON.parse(result.stdout) as Record<string, unknown>),
-    fallbackFrom: 'record_session_snapshot',
-    fallbackReason: `recording stream interrupted: ${cause}`,
-    timingUnavailableReason:
-      'Taken after the recording stream was interrupted; not part of the video.',
-  };
+  const snapshot: unknown = JSON.parse(result.stdout);
+  if (!isRecord(snapshot)) throw new Error('capture-helper snapshot returned an invalid document.');
+  return snapshot;
 }
 
 interface CommandResult {

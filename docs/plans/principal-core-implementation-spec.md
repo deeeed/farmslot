@@ -10,12 +10,22 @@
 This section governs the current implementation and replaces the environment
 authentication and retirement rules in this specification. The
 [operator reference](../reference/identity-and-credentials.md) owns login,
-rotation and recovery instructions; ADR-051 Amendment 1 owns this decision.
+rotation and recovery instructions; ADR-051 Amendments 1 and 2 own these decisions.
 
 1. Credential origins are `issued` and `paired`. Authentication accepts only
    the `fs_<credential-id>_<secret>` token grammar, resolves its credential and
    principal live, and rejects revoked or missing records. No process or
    checkout environment secret authenticates a caller or creates a principal.
+   Before validation, the shared loader converts stored `env-migrated` origin
+   metadata to `issued`. It takes the existing `credentials.lock` beside the
+   supplied store path, rereads under that lock, validates the entire result,
+   then persists through the atomic writer. An already-held writer lock is
+   reused. Only origins change; ids, hashes, roles, revocations, activation,
+   native-owner assignments and tombstones are preserved. Already-current
+   stores are not rewritten. Lock contention or invalid surviving data refuses
+   the load without a write. Unknown origins remain invalid. Boot regression
+   and live protocol proof must load historical records, check idempotence,
+   authenticate unaffected issued/paired credentials and reject raw secrets.
 2. CLI clients select credentials from a gateway profile matching the target
    URL. A missing profile credential cannot borrow a secret from an environment
    variable or checkout file. Scripts use an explicitly selected automation or
@@ -614,7 +624,8 @@ request-IP rules and solo-mode exposure protections remain in force. No raw-secr
 or environment-reconciliation writer is part of authentication.
 
 The explicit `principal.retire` and offline CLI operation follow the consolidation contract above.
-Runtime loading refuses unknown credential origins. Only the offline retirement transaction may
+Runtime loading migrates stored `env-migrated` origins as specified above and refuses all other
+unknown credential origins. Only the offline retirement transaction may
 read a revoked record with an old origin, remove it with its selected principal, validate the complete
 surviving store and save it under the ordinary lock. This is a cutover operation, never authentication.
 
@@ -960,8 +971,8 @@ nodes whose immutable native-owner binding refers to a principal being retired; 
 the binding. Stop every gateway in the identity home and retire revoked obsolete principals through
 the supported offline command before starting the new runtime. Keep a verified active admin.
 
-An existing store must use schema version 1 and current credential origins. Unknown origins are
-refused at runtime. A fresh store remains unwritten until explicit issuance or exposure activation.
+An existing store must use schema version 1. The loader migrates `env-migrated` metadata to
+`issued` under the ordinary lock before validation. Other unknown origins are refused at runtime. A fresh store remains unwritten until explicit issuance or exposure activation.
 Deployments sharing a home share its latch, principals, lock and presence directory.
 
 CLI and script callers select explicit gateway profiles. Noninteractive `farmslot up` requires a

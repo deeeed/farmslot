@@ -75,6 +75,7 @@ import {
   COMMAND_CENTER_SURFACES,
 } from '@farmslot/protocol/surfaces/command-center';
 import {
+  captureHelperSnapshot,
   createRecipeRunner,
   createStandardCoreAdapters,
   createStandardUiAdapters,
@@ -83,7 +84,7 @@ import {
 import { runRecipeRunnerCli } from '@farmslot/recipe-runner/cli';
 import { validateRecipeCliInput } from '@farmslot/recipe-runner/cli/support';
 import { JsonArtifactWriter } from '@farmslot/recipe-runner/writers';
-import { dataTestId } from '@farmslot/recipe-runner/runtime/cdp';
+import { dataTestId, type UiScreenshotCapture } from '@farmslot/recipe-runner/runtime/cdp';
 import { createReactNativeBridgeUiTransport } from '@farmslot/recipe-runner/runtime/react-native-bridge';
 import { FARMSLOT_SKILL_NAMES } from '@farmslot/skills';
 
@@ -102,11 +103,14 @@ const result = validateRecipeDocument({
 const runMethod: string = RunMethods.get;
 const maybeRun: Run | undefined = undefined;
 const adapters: ActionAdapter[] = createStandardCoreAdapters({ actions: ['wait'] });
+const screenshot: UiScreenshotCapture = { data: new Uint8Array([0]) };
 
 void result;
 void runMethod;
 void maybeRun;
 void adapters;
+void screenshot;
+void captureHelperSnapshot;
 void createRecipeRunner;
 void createStandardUiAdapters;
 void COMMAND_CENTER_SURFACES;

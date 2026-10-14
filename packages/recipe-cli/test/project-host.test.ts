@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import type { ProjectConfig } from '@farmslot/protocol';
 
+import { runTaskDir } from '../src/harness/acceptance-ledger.js';
 import { harnessAdapters } from '../src/harness/adapters.js';
 import {
   booleanOption,
@@ -575,6 +576,50 @@ test('recipe runtime defaults and overrides stay separate from farm state', asyn
       },
     );
   }
+});
+
+test('monorepo task binding uses the checkout boundary without changing the app target', async (t) => {
+  const options = fixture(t);
+  options.projects[0]!.config.apps = ['apps/ui'];
+  const app = path.join(options.cwd, 'apps/ui');
+  const task = path.join(options.cwd, '.task/qa/validation');
+  fs.mkdirSync(app, { recursive: true });
+  fs.mkdirSync(path.join(task, 'inputs'), { recursive: true });
+  fs.writeFileSync(
+    path.join(task, 'inputs/handoff.json'),
+    JSON.stringify({ task: { acceptanceCriteria: ['Observe the checkout task.'] } }),
+  );
+  const previous = process.env.RECIPE_TASK_DIR;
+  process.env.RECIPE_TASK_DIR = task;
+  t.after(() => {
+    if (previous === undefined) delete process.env.RECIPE_TASK_DIR;
+    else process.env.RECIPE_TASK_DIR = previous;
+  });
+  for (const command of ['run', 'call']) {
+    await withProjectRecipeHost(
+      { ...options, command, tokens: ['--app', 'apps/ui'] },
+      async ({ cli }) => {
+        assert.equal(cli.target, app);
+        const destination = resolveRecipeExecutionArtifacts(app, undefined, {
+          fresh: 'runs/one',
+          taskSubdir: 'recipe-runs/one',
+        });
+        assert.equal(destination.taskDir, task);
+        assert.equal(destination.artifactsDir, path.join(task, 'artifacts/recipe-runs/one'));
+        assert.deepEqual(destination.claims, [{ id: 'AC-1', claim: 'Observe the checkout task.' }]);
+        assert.equal(runTaskDir(app, true), task);
+        assert.throws(
+          () => runTaskDir(path.join(options.cwd, 'other')),
+          /inside the target checkout/,
+        );
+        process.env.RECIPE_TASK_DIR = path.join(options.cwd, '..', 'outside-task');
+        assert.throws(() => runTaskDir(app), /inside the target checkout/);
+        assert.equal(runTaskDir(app, true), null);
+        process.env.RECIPE_TASK_DIR = task;
+      },
+    );
+  }
+  assert.throws(() => runTaskDir(app), /inside the target checkout/);
 });
 
 test('app output exclusions use the checkout farm paths and preserve library provenance', async (t) => {

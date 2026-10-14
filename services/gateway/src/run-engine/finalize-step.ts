@@ -42,10 +42,10 @@ import {
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   assertPublicationReviewPolicySatisfied,
   CLOSE_AS_SHIPPED_ACTION,
-  isPublishApprovalAction,
   validatePackageApprovalSelection,
 } from './gate-policy.js';
 import { assertRunGateReady } from './gate-prerequisites.js';
+import { assertPublicationFinalization } from './publication-finalization.js';
 import { requiresPublicationApproval } from './publication-policy.js';
 import { runSupersededSince } from './run-generation.js';
 import { createSubStepCollector } from './sub-step-collector.js';
@@ -60,7 +60,6 @@ type LoadedProjectVars = { projectJson: Parameters<typeof getProjectField>[0] };
 
 export interface FinalizeStepContext {
   assertGatePrerequisites?: import('./gate-prerequisites.js').GatePrerequisiteAssertion;
-  blockedRunError: (message: string, reason: string) => Error;
   broadcastFn: BroadcastFn;
   latestResolvedHumanGateDecision: (
     decisions: RunDecision[],
@@ -115,7 +114,6 @@ export async function executeFinalizeStep(
   context: FinalizeStepContext,
 ): Promise<StepIO> {
   const {
-    blockedRunError,
     broadcastFn,
     latestResolvedHumanGateDecision,
     loadProjectVarsOrNull,
@@ -129,6 +127,9 @@ export async function executeFinalizeStep(
   const noCodeDisposition = isNoCodeTerminalDisposition(current.metrics.disposition);
   const artifactOnly = isArtifactOnlyRun(current);
   const publicationApprovalGate = requiresPublicationApproval(current);
+  // A continuation is not publication approval. Refuse before metrics, slot
+  // lifecycle or any other finalization effect, retaining the active worker.
+  assertPublicationFinalization(current, 'finalize');
   const adoption = current.engineState?.publishGate?.humanPublicationAdoption;
   if (adoption) {
     const { assertAdoptedPublicationContinuation } =
@@ -331,12 +332,7 @@ export async function executeFinalizeStep(
       });
     }
   } else if (publicationApprovalGate) {
-    if (!isPublishApprovalAction(resolvedAction)) {
-      throw blockedRunError(
-        'Local-first publication requires approve-publish before finalize',
-        resolvedAction ?? 'missing-approval',
-      );
-    }
+    assertPublicationFinalization(current, 'finalize');
     emitWithBroadcast('substep', {
       name: 'validate-approved-package',
       detail: 'Validating approved package + review policy',

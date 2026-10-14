@@ -691,6 +691,24 @@ function gateReasonsForAction(
   );
 }
 
+/** Retain the action-filtered refusal so completion does not duplicate gate policy. */
+export class RunGateNotReadyError extends GatewayMethodError {
+  readonly workProgressingOnly: boolean;
+
+  constructor(readiness: RunGateReadiness, reasons: RunGatePrerequisiteReason[]) {
+    super(
+      'RUN_GATE_NOT_READY',
+      reasons.map((reason) => reason.message).join(' ') || 'Run work is still progressing.',
+      {
+        details: { readiness },
+        userAction: 'Resolve the listed prerequisites, then refresh the gate.',
+      },
+    );
+    this.workProgressingOnly =
+      reasons.length > 0 && reasons.every((reason) => reason.code === 'run-work-progressing');
+  }
+}
+
 export async function assertRunGateReady(
   run: Run,
   preparedPackage: ReadyGatePrPackage | null,
@@ -719,14 +737,7 @@ export async function assertRunGateReady(
     (actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
       !evidenceAttestationAvailable(readiness))
   )
-    throw new GatewayMethodError(
-      'RUN_GATE_NOT_READY',
-      reasons.map((reason) => reason.message).join(' ') || 'Run work is still progressing.',
-      {
-        details: { readiness },
-        userAction: 'Resolve the listed prerequisites, then refresh the gate.',
-      },
-    );
+    throw new RunGateNotReadyError(readiness, reasons);
   return readiness;
 }
 

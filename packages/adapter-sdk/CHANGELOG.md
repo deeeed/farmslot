@@ -8,6 +8,14 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Show assertion and visual-review provenance in the shared evidence model and publication text.
 
+## 0.13.3 - 2026-10-15
+
+- Use the coordinated window screenshot engine dependency closure.
+
+## 0.13.2 - 2026-10-15
+
+- Align the installed worker dependency closure with protocol 0.44.0 and provenance-bound branch maintenance.
+
 ## 0.13.1 - 2026-10-14
 
 - Align public dependencies with protocol 0.43.1 and its optional HUD conformance guard.

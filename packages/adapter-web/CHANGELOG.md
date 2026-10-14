@@ -6,6 +6,14 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.10.0 - 2026-10-15
+
+- Include browser chrome and extension side panels in unrecorded web-dapp screenshots through the owned browser's native capture, with CDP fallback.
+
+## 0.9.2 - 2026-10-15
+
+- Align the installed worker dependency closure with protocol 0.44.0 and provenance-bound branch maintenance.
+
 ## 0.9.1 - 2026-10-14
 
 - Align public dependencies with protocol 0.43.1 and its optional HUD conformance guard.

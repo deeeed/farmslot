@@ -8,6 +8,22 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.17.5 - 2026-10-15
+
+- Use the coordinated window screenshot engine dependency closure.
+
+## 0.17.4 - 2026-10-15
+
+- Use agent-runtime 0.22.1 for verified stopped-host recovery while preserving native session journals.
+
+## 0.17.3 - 2026-10-15
+
+- Bind monorepo app recipe runs and calls to checkout-root tasks while preserving app execution and outside-checkout refusal.
+
+## 0.17.2 - 2026-10-15
+
+- Align the installed worker dependency closure with protocol 0.44.0 and provenance-bound branch maintenance.
+
 ## 0.17.1 - 2026-10-14
 
 - Keep nested app execution provenance scoped to Git source, so ignored native dependencies do not block recipe runs. Explicit provider, library, runner and helper inputs remain bound.

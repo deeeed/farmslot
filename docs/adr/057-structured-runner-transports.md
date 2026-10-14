@@ -110,3 +110,40 @@ Several profiles on one OS user belong to one trusted operator; each product use
 Native Codex keeps its configured provider and transport. With codex-lb, the native endpoint is `http://127.0.0.1:2455/backend-api/codex`; the client key comes from `CODEX_LB_API_KEY`. Native API-key authentication can use that client key without a direct ChatGPT OAuth login. Use a separate native configuration when establishing a different credential profile, and preserve existing conversation files.
 
 Gateway intelligence can explicitly select the `codex-lb` provider in LLM settings. PI uses the load balancer's SDK endpoint, `http://127.0.0.1:2455/v1`, with Astra/low defaults and the same environment key. It does not import upstream OAuth credentials or fall back to another provider when the key or request fails. Other saved provider choices remain authoritative. This HTTP/SSE route serves fresh intelligence requests; native agent sessions retain their configured WebSocket transport. API list prices are not reported as subscription charges.
+
+## Amendment 1: reconcile stopped native hosts, 2026-10-15
+
+**Status:** Proposed; lead-authorized scope, acceptance follows paired review.
+
+### Decision
+
+The existing native-host startup may reconcile a retained failed cleanup marker
+under its exclusive startup claim. It requires a fresh OS census, absent recorded
+supervisor/host processes and groups, and terminal session journals with confirmed
+process stops and stopped original runner groups. Journal observations are scoped
+to the failed host's latest generations; OS birth identities distinguish unrelated
+PID/group reuse. Orphaned or unreadable groups remain blocked.
+Missing, malformed or unreadable evidence
+and any surviving process keep ownership blocked. Recovery never signals a process.
+
+Archive the original cleanup record and a durable verification receipt before
+reclaiming the stale host lock. Preserve journals, native IDs, generations, command
+outcomes, pending requests, account configuration and run links. Starting the host
+does not resume a runner or resend a command. Normative rules live in
+[Agent runtime](../reference/agent-runtime.md#native-host-cleanup-recovery).
+
+### Rationale and consequences
+
+A process-census timeout can leave cleanup unknown after all owned processes stop.
+Fresh verification permits safe same-root recovery without deleting state or
+manually clearing the marker. Recovery adds a private historical receipt; uncertain
+cleanup continues to refuse startup.
+
+### Public surface
+
+Existing `native.session.list` and session/worker RPCs keep their ownership checks
+and `executionNodeId` selection. Their normal host startup invokes the recovery.
+No CLI flag or RPC is added. `@farmslot/agent-runtime` owns supervision, consumed by
+the gateway and execution-node `NativeSessionClient`; harnesses inherit it through
+those consumers. This ships as a runtime patch and requires the consuming node's
+runtime update.
