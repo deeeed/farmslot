@@ -69,6 +69,8 @@ export interface ExecuteRecipeOptions {
   claimProjections?: ReadonlyMap<string, { proves?: string[] }>;
   logger: RecipeLogger;
   defaultObserverRefs: DefaultObserverRefs;
+  /** Prepare engine-owned capture before the node's context and trace interval begin. */
+  prepareNode?(nodeId: string): Promise<void>;
   createContext(
     nodeId: string,
     recipe: unknown,
@@ -203,7 +205,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
       const action = String(node.action);
       const retryAttempt = (attempts.get(localNodeId) ?? 0) + 1;
       attempts.set(localNodeId, retryAttempt);
-      const startedAt = new Date();
+      let startedAt = new Date();
       if (action === 'end') {
         const authored = terminalStatus(node.status);
         // Reaching a terminal node during partial execution means the stop node never ran.
@@ -243,11 +245,16 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
         return 'fail';
       }
 
-      const context = {
-        ...options.createContext(namespacedNodeId, options.recipe, outputs, getOutput),
-        signal,
-      };
+      let context: ActionExecutionContext | undefined;
       try {
+        if (options.prepareNode) {
+          await options.prepareNode(namespacedNodeId);
+          startedAt = new Date();
+        }
+        context = {
+          ...options.createContext(namespacedNodeId, options.recipe, outputs, getOutput),
+          signal,
+        };
         const resolvedValidation = validateResolvedRecipeActionNode(node, options.actionManifest, {
           adapter: options.adapter,
         });
@@ -370,7 +377,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
         const failure = signal?.aborted ? recipeAbortError(signal) : error;
         const message = failure instanceof Error ? failure.message : String(failure);
         const causeClass = recipeFailureCause(failure);
-        if (options.publishHudProgress) {
+        if (options.publishHudProgress && context) {
           try {
             await options.publishHudProgress('fail', {
               nodeId: namespacedNodeId,
@@ -388,9 +395,10 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
             );
           }
         }
-        const failureStill = signal?.aborted
-          ? undefined
-          : await captureAutomaticStill(options, node, context, retryAttempt);
+        const failureStill =
+          signal?.aborted || !context
+            ? undefined
+            : await captureAutomaticStill(options, node, context, retryAttempt);
         options.traceWriter.record({
           nodeId: namespacedNodeId,
           action,
