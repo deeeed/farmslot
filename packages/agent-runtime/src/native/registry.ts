@@ -11,8 +11,14 @@ import { claudeNativeAdapter } from './claude.js';
 import { codexNativeAdapter } from './codex.js';
 import { cursorNativeAdapter } from './cursor.js';
 import { grokNativeAdapter } from './grok.js';
-import { hostReviewSandboxAvailable } from './review-sandbox.js';
+import { hostReviewSandboxAvailable, type NativeProcessSandbox } from './review-sandbox.js';
 import type { NativeAdapter } from './types.js';
+
+export interface NativeWorkspaceTrustOptions {
+  executable?: string;
+  processSandbox?: NativeProcessSandbox;
+  inspectionCwd?: string;
+}
 
 export const {
   workspaceTrustByRunner,
@@ -23,7 +29,12 @@ export const {
   codexWorkspaceTrustConfig(cwd: string, trust: 'trusted' | 'untrusted'): string;
   workspaceTrustByRunner: Record<
     string,
-    (cwd: string, environment: NodeJS.ProcessEnv, owner?: string) => void
+    (
+      cwd: string,
+      environment: NodeJS.ProcessEnv,
+      owner?: string,
+      launch?: NativeWorkspaceTrustOptions,
+    ) => void
   >;
 };
 
@@ -32,7 +43,12 @@ export interface NativeRunnerDefinition {
   binary: string;
   supportsWorkers?: boolean;
   /** Only farm-created worker workspaces may receive a persisted native trust decision. */
-  trustWorkspace?: (cwd: string, environment: NodeJS.ProcessEnv, owner?: string) => void;
+  trustWorkspace?: (
+    cwd: string,
+    environment: NodeJS.ProcessEnv,
+    owner?: string,
+    launch?: NativeWorkspaceTrustOptions,
+  ) => void;
   supportsReadOnlyWorkspace?: boolean;
   /** Repository startup configuration cannot execute inside a read-only review. Git blobs stay readable. */
   reviewConfigurationRoots?: (cwd: string) => string[];

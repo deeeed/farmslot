@@ -157,7 +157,10 @@ async function main() {
     delete environment[key];
   environment.FARMSLOT_SIGNAL_ATTEMPT_ID = require('node:crypto').randomUUID();
   // This helper accepts only the gateway's farm review launch, after identity and source-policy checks.
-  workspaceTrustByRunner[input.runner]?.(cwd, environment);
+  workspaceTrustByRunner[input.runner]?.(cwd, environment, undefined, {
+    processSandbox: guard.sandbox,
+    inspectionCwd: guard.temporaryDirectory,
+  });
   const commandFile = path.join(task, '.terminal-start.cjs');
   const record = {
     runId: input.runId,

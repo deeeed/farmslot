@@ -507,7 +507,16 @@ export class NativeSessionManager {
     }
     // A private worker source policy identifies a farm-created review workspace.
     // Ordinary native conversations never write trust into the operator's configuration.
-    if (filesystemPolicy) transport.trustWorkspace?.(params.cwd, environment, ownerPrincipalId);
+    const runnerEnvironment = nativeEnvironment(resolved.executable, {
+      ...environment,
+      ...(hostProtection ? { TMPDIR: hostProtection.temporaryDirectory } : {}),
+    });
+    if (filesystemPolicy)
+      transport.trustWorkspace?.(params.cwd, runnerEnvironment, ownerPrincipalId, {
+        executable: resolved.executable,
+        processSandbox: hostProtection?.sandbox,
+        inspectionCwd: hostProtection?.temporaryDirectory,
+      });
     // Validation above awaits filesystem/process probes. Recheck synchronously before reservation.
     assertResumeCurrent?.();
     if (profile) assertNativeProfileCurrent(profile);
@@ -621,10 +630,7 @@ export class NativeSessionManager {
             }
           },
           executable: resolved.executable,
-          env: nativeEnvironment(resolved.executable, {
-            ...environment,
-            ...(hostProtection ? { TMPDIR: hostProtection.temporaryDirectory } : {}),
-          }),
+          env: runnerEnvironment,
           processSandbox: hostProtection?.sandbox,
           ...(workerLaunch
             ? { effort: workerLaunch.effort, safetyTier: workerLaunch.safetyTier, filesystemPolicy }

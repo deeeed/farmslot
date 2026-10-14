@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
 
+import { nativeRunnerDefinitions } from './registry.js';
 import { hostReviewSandboxAvailable, reviewProcessSandbox } from './review-sandbox.js';
 
 const exec = promisify(execFile);
@@ -83,7 +84,7 @@ test(
     const { sandbox } = await reviewProcessSandbox(
       { readOnlyRoots: [source], writableRoots: [output] },
       [],
-      [join(source, '.grok')],
+      nativeRunnerDefinitions.grok.reviewConfigurationRoots!(await realpath(source)),
     );
     await assert.rejects(
       exec(sandbox.executable, [...sandbox.args, '/bin/cat', join(source, '.grok/config.toml')]),
