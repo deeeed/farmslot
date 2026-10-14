@@ -11,6 +11,33 @@
 | `@farmslot/agent-runtime` | Task-local marking, `SIGNAL.json`, checklist timing, worker terminal contract resolution, closeout artifact checks, and recipe-quality artifact building. |
 | `@farmslot/skills`        | Agent instructions and installer behavior; legacy runtime paths are shims.                                                                                |
 
+## Native host cleanup recovery
+
+[ADR-057 Amendment 1](../adr/057-structured-runner-transports.md#amendment-1-reconcile-stopped-native-hosts-2026-10-15)
+owns recovery of a stopped host whose cleanup marker remains unresolved.
+
+- The supervisor MUST hold the existing exclusive startup claim before checking
+  or reclaiming an old host lock. A live supervisor or host MUST block recovery.
+- An unresolved marker MUST identify the recorded host and its observed process
+  identities/groups. Recovery MUST obtain a successful fresh OS census and verify
+  that every recorded PID and group is absent. Failed probes remain unknown.
+- Every retained session journal MUST be complete and readable. Its latest state
+  MUST be closed or failed, its process stop confirmed, and its runner group absent.
+  Recorded detached descendants and their groups MUST also be absent.
+  Malformed, torn, active or unconfirmed records MUST refuse recovery.
+- Before reclaiming the host lock, the runtime MUST durably archive the original
+  cleanup marker, journal hashes and verification facts under `cleanup-recoveries/`.
+  It MUST preserve journal bytes, session/native IDs, generations, command outcomes,
+  pending requests, owner/account bindings and run links. It MUST NOT signal a
+  process, reset state, resume a runner or resend a command.
+
+### Public surface
+
+Retry the existing native RPC with the same owner and execution node. The gateway
+and node use `@farmslot/agent-runtime`'s existing `NativeSessionClient` startup;
+the supervisor and shared process census own reconciliation. There is no new CLI
+flag, RPC or harness configuration. A consuming runtime upgrade is required.
+
 ## Task Directory
 
 A runtime-compatible task directory contains:

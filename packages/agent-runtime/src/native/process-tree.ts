@@ -52,6 +52,11 @@ function processes(pid?: number): Map<number, ProcessIdentity> {
   return parseProcesses(output);
 }
 
+/** Shared OS census for stopped-host reconciliation; failed reads remain unknown. */
+export function readNativeProcessSnapshot(): Map<number, ProcessIdentity> {
+  return processes();
+}
+
 type Observer = { apply(snapshot: Map<number, ProcessIdentity>): void; failed(error: Error): void };
 const observers = new Map<symbol, Observer>();
 let censusTimer: NodeJS.Timeout | undefined;
