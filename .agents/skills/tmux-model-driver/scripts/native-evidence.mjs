@@ -48,8 +48,22 @@ export const hasSubmittedQueue = (runner, tail) =>
 export const paneIdentity = (meta) =>
   JSON.stringify([meta.pane_pid, meta.process_started_at, meta.runner_pids]);
 
+export function nativeProbeTimeoutMs() {
+  const timeout = Number(process.env.TMUX_MODEL_DRIVER_PROBE_TIMEOUT_MS ?? 10000);
+  if (!Number.isSafeInteger(timeout) || timeout <= 0 || timeout > 2147483647)
+    throw new Error(
+      'TMUX_MODEL_DRIVER_PROBE_TIMEOUT_MS must be a positive integer in milliseconds',
+    );
+  return timeout;
+}
+
 function runProbe(command, parse) {
-  return parse(execFileSync('bash', ['-c', command], { encoding: 'utf8', timeout: 3000 }));
+  return parse(
+    execFileSync('bash', ['-c', command], {
+      encoding: 'utf8',
+      timeout: nativeProbeTimeoutMs(),
+    }),
+  );
 }
 
 export function hookSnapshot(meta, runner, obsDir) {
@@ -141,16 +155,11 @@ function sessionBinding(meta, runner, obsDir) {
       if (/\/rollout-[^/]+\.jsonl$/.test(file)) paths.add(file);
     }
   }
-  const roots = [...paths]
-    .map((file) =>
-      runProbe(
-        buildCodexSessionBindingProbeCommand(file, undefined, true),
-        parseCodexSessionBindingProbe,
-      ),
-    )
-    .filter((binding) => binding.status === 'matched');
-  if (roots.length !== 1) return null;
-  const binding = roots[0];
+  if (!paths.size) return null;
+  const binding = runProbe(
+    buildCodexSessionBindingProbeCommand([...paths], undefined, true),
+    parseCodexSessionBindingProbe,
+  );
   return binding.status === 'matched'
     ? {
         sessionId: binding.sessionId,

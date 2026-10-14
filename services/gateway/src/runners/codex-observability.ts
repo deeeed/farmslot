@@ -541,7 +541,7 @@ PY`;
 }
 
 export function buildCodexSessionBindingProbeCommand(
-  sessionPath: string,
+  sessionPath: string | readonly string[],
   persistedSessionId?: string,
   rootOnly = false,
 ): string {
@@ -551,42 +551,43 @@ import json
 import os
 from pathlib import Path
 
-requested_path = Path(${JSON.stringify(sessionPath)})
+requested_paths = ${JSON.stringify(typeof sessionPath === 'string' ? [sessionPath] : sessionPath)}
 persisted_session_id = ${persistedSessionId === undefined ? 'None' : JSON.stringify(persistedSessionId)}
 root_only = ${rootOnly ? 'True' : 'False'}
-try:
-    session_path = Path(os.path.realpath(requested_path))
-    with session_path.open() as handle:
-        first = json.loads(handle.readline())
-    session_id = first.get('payload', {}).get('id') if first.get('type') == 'session_meta' else None
-except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-    print(json.dumps({'status': 'unavailable'}))
-    raise SystemExit(0)
 
-if not isinstance(session_id, str) or not session_id:
-    print(json.dumps({'status': 'unavailable'}))
-    raise SystemExit(0)
+def binding(requested):
+    requested_path = Path(requested)
+    try:
+        session_path = Path(os.path.realpath(requested_path))
+        with session_path.open() as handle:
+            first = json.loads(handle.readline())
+        session_id = first.get('payload', {}).get('id') if first.get('type') == 'session_meta' else None
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {'status': 'unavailable'}
+    if not isinstance(session_id, str) or not session_id:
+        return {'status': 'unavailable'}
+    source = first.get('payload', {}).get('source')
+    if root_only and isinstance(source, dict) and 'subagent' in source:
+        return {'status': 'unavailable'}
+    # Preserve the historical filename identity as well as the native id.
+    legacy_session_id = requested_path.name
+    if legacy_session_id.endswith('.jsonl'):
+        legacy_session_id = legacy_session_id[:-len('.jsonl')]
+    if persisted_session_id is not None and persisted_session_id not in (session_id, legacy_session_id):
+        return {'status': 'identity-mismatch'}
+    return {'status': 'matched', 'sessionId': session_id, 'sessionPath': str(session_path)}
 
-source = first.get('payload', {}).get('source')
-if root_only and isinstance(source, dict) and 'subagent' in source:
-    print(json.dumps({'status': 'unavailable'}))
-    raise SystemExit(0)
-
-# Before native Codex ids were read from session_meta, Farmslot persisted the
-# rollout filename (minus .jsonl). Accept exactly that historical format, then
-# upgrade both id and path to the current native/canonical binding.
-legacy_session_id = requested_path.name
-if legacy_session_id.endswith('.jsonl'):
-    legacy_session_id = legacy_session_id[:-len('.jsonl')]
-if persisted_session_id is not None and persisted_session_id not in (session_id, legacy_session_id):
-    print(json.dumps({'status': 'identity-mismatch'}))
-    raise SystemExit(0)
-
-print(json.dumps({
-    'status': 'matched',
-    'sessionId': session_id,
-    'sessionPath': str(session_path),
-}))
+results = [binding(requested) for requested in requested_paths]
+matched = [result for result in results if result['status'] == 'matched']
+# A batch still requires exactly one root; unreadable or subagent files cannot
+# establish ownership, and multiple parent sessions remain indeterminate.
+if len(results) == 1:
+    result = results[0]
+elif len(matched) == 1:
+    result = matched[0]
+else:
+    result = {'status': 'unavailable'}
+print(json.dumps(result))
 PY`;
 }
 
