@@ -34,7 +34,8 @@
     "./native/*": {
       "types": "./dist/native/*.d.ts",
       "import": "./dist/native/*.js"
-    }
+    },
+    "./scripts/branch-update.mjs": "./scripts/branch-update.mjs"
   },
   "scripts": {
     "typecheck": "yarn workspace @farmslot/protocol build && tsc --noEmit --project tsconfig.json",
@@ -47,7 +48,8 @@
     "build": "yarn workspace @farmslot/protocol build && rm -rf dist && tsc --project tsconfig.build.json",
     "prepack": "cd ../.. && node scripts/quality/check-farmslot-package-readiness.mjs --require-changelog --packages @farmslot/agent-runtime && yarn workspace @farmslot/agent-runtime build",
     "prepublishOnly": "node ../../scripts/quality/check-farmslot-package-readiness.mjs --publish --packages @farmslot/agent-runtime",
-    "test:acceptance-live": "node --import tsx ../../scripts/e2e-acceptance-ledger.mts"
+    "test:acceptance-live": "node --import tsx ../../scripts/e2e-acceptance-ledger.mts",
+    "test:branch-maintenance-live": "node --import tsx --test test/branch-maintenance-live.mts"
   },
   "dependencies": {
     "@farmslot/adapter-sdk": "workspace:*",

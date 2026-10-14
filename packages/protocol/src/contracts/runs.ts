@@ -449,6 +449,31 @@ export interface ReviewDiffSnapshot {
   error?: string;
 }
 
+/** Verified comparison and replay ownership for one publishing family. */
+export interface BranchMaintenanceCheckpoint extends ReviewDiffSnapshot {
+  replayBoundarySha: string;
+}
+
+/** Gateway-owned input retained before a branch-maintenance handoff. */
+export interface BranchMaintenanceOperation {
+  id: string;
+  ownerRunId: string;
+  project: string;
+  repo: string;
+  branch: string;
+  baseRef: string;
+  kind: 'rebase' | 'graph-merge';
+  sourceHeadSha: string;
+  remoteHeadSha: string;
+  targetSha: string;
+  comparisonBaseSha: string;
+  replayBoundarySha: string;
+  authorityHeadSha: string;
+  expectedCheckpoint?: BranchMaintenanceCheckpoint;
+  upstreamMergeSha?: string;
+  preparedAt: string;
+}
+
 export interface ReviewFixDeltaSnapshot extends ReviewDiffSnapshot {
   fixBaseSha?: string | null;
   fixHeadSha?: string | null;
@@ -2703,6 +2728,7 @@ export interface RunEngineState {
   intelligenceAuditDegraded?: boolean;
   /** Local-first publication gate metadata. Stored on the run JSON snapshot; no DB migration. */
   publishGate?: {
+    maintainedSnapshot?: BranchMaintenanceCheckpoint;
     humanPublicationAdoption?: import('./human-publication.js').HumanPublicationAdoptionReceipt;
     packageId?: string;
     packageHash?: string;
@@ -2762,6 +2788,7 @@ export interface RunEngineState {
  * and attempt counters survive gateway restart (ADR-027).
  */
 export interface RunCiWatchState {
+  branchMaintenanceOperation?: BranchMaintenanceOperation;
   /** Last successfully-dispatched fix fingerprint (bot-comment signature + HEAD sha). */
   dedup?: { signature: string; commitSha: string };
   /** When the current no-progress timeout window started. */

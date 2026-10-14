@@ -6,8 +6,15 @@
 
 import { DEFAULT_BRANCH, type Run } from '@farmslot/protocol';
 
-import { getProjectField, loadProjectVars } from '../core/config.js';
+import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
 import { ghRequest } from '../integrations/github-client.js';
+import {
+  completeBranchMaintenance,
+  executeBranchMaintenance,
+  MaintenanceRefusal,
+  prepareBranchMaintenance,
+  retireBranchMaintenance,
+} from '../run-engine/branch-maintenance.js';
 
 /** Whole-call deadline, including the wait for a gh concurrency slot. */
 const GH_DEADLINE_MS = 90_000;
@@ -114,18 +121,48 @@ export async function retargetStackedPr(run: Run): Promise<StackRetargetResult> 
  * family is active, so no warm worker holds a local branch that would diverge.
  * A conflict is left to the update-branch flow ci-watch dispatches.
  */
-export async function updateStackedPrBranch(run: Run): Promise<StackRetargetResult> {
-  const { repo, base } = await projectGitHub(run.project);
+interface StackUpdateDependencies {
+  project: typeof projectGitHub;
+  loadSlot: typeof loadSlotVars;
+  prepare: typeof prepareBranchMaintenance;
+  complete: typeof completeBranchMaintenance;
+  execute: typeof executeBranchMaintenance;
+  retire: typeof retireBranchMaintenance;
+}
+
+export async function updateStackedPrBranch(
+  run: Run,
+  deps: StackUpdateDependencies = {
+    project: projectGitHub,
+    loadSlot: loadSlotVars,
+    prepare: prepareBranchMaintenance,
+    complete: completeBranchMaintenance,
+    execute: executeBranchMaintenance,
+    retire: retireBranchMaintenance,
+  },
+): Promise<StackRetargetResult> {
+  const { base } = await deps.project(run.project);
   if (!run.prNumber) return { base, result: 'update-branch:no-pr' };
+  if (!run.slotId)
+    throw new Error('Stack catch-up has no retained slot for provenance verification');
+  const vars = await deps.loadSlot(run.slotId);
+  const operation = await deps.prepare(run, vars, base, 'graph-merge');
+  if (!operation) throw new MaintenanceRefusal('PARENT_BOUNDARY_MISSING');
   try {
-    await ghApi(
-      ['-X', 'PUT', `repos/${repo}/pulls/${run.prNumber}/update-branch`],
-      `updating PR #${run.prNumber}`,
-    );
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (!/conflict/i.test(message)) throw err;
-    return { base, result: `update-branch:#${run.prNumber} conflict` };
+    // The SDK pins both ordered parents and the clean merge tree. Its durable
+    // receipt reconciles a push interrupted before checkpoint renewal.
+    await deps.execute(vars, operation);
+    await deps.complete(run, operation);
+  } catch (error) {
+    if (
+      error instanceof MaintenanceRefusal &&
+      ['GRAPH_MERGE_CONFLICT', 'TARGET_CHANGED', 'REMOTE_CHILD_CHANGED'].includes(error.code)
+    ) {
+      await deps.retire(run, operation);
+      if (error.code === 'GRAPH_MERGE_CONFLICT')
+        return { base, result: `update-branch:#${run.prNumber} conflict` };
+    }
+    throw error;
   }
   return { base, result: `update-branch:#${run.prNumber} merged ${base}` };
 }

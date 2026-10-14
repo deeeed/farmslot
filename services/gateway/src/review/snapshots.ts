@@ -212,6 +212,8 @@ export interface ReviewSnapshotRange {
   mode?: ReviewMode;
   lastReviewedHeadSha?: string;
   baseRef?: string;
+  committedBaseSha?: string;
+  committedHeadSha?: string;
 }
 
 interface ReviewSnapshotDependencies {
@@ -225,9 +227,16 @@ export async function captureCurrentReviewSnapshot(
   deps: ReviewSnapshotDependencies = { resolveContext: resolveReviewContext, exec: execOnSlot },
 ): Promise<{ snapshot: ReviewDiffSnapshot; diffText?: string }> {
   try {
-    const immutableRange = range?.mode !== undefined;
-    const { baseRef, pathspecs } = await deps.resolveContext(vars, range?.baseRef);
-    const headResult = await deps.exec(vars, 'git rev-parse HEAD', { timeout: 10_000 });
+    const pinned = range?.committedBaseSha && range?.committedHeadSha;
+    const immutableRange = range?.mode !== undefined || !!pinned;
+    if (!!range?.committedBaseSha !== !!range?.committedHeadSha)
+      throw new Error('Both committed range endpoints are required');
+    const { baseRef, pathspecs } = pinned
+      ? { baseRef: range!.baseRef ?? range!.committedBaseSha!, pathspecs: ['.'] }
+      : await deps.resolveContext(vars, range?.baseRef);
+    const headResult = pinned
+      ? { exitCode: 0, stdout: range!.committedHeadSha!, stderr: '' }
+      : await deps.exec(vars, 'git rev-parse HEAD', { timeout: 10_000 });
     if (headResult.exitCode !== 0) {
       return {
         snapshot: unavailableReviewSnapshot(
@@ -236,11 +245,13 @@ export async function captureCurrentReviewSnapshot(
         ),
       };
     }
-    const baseResult = await deps.exec(
-      vars,
-      `git merge-base ${shellQuote(baseRef)} HEAD 2>/dev/null || git rev-parse --verify ${shellQuote(baseRef)} 2>/dev/null`,
-      { timeout: 10_000 },
-    );
+    const baseResult = pinned
+      ? { exitCode: 0, stdout: range!.committedBaseSha!, stderr: '' }
+      : await deps.exec(
+          vars,
+          `git merge-base ${shellQuote(baseRef)} HEAD 2>/dev/null || git rev-parse --verify ${shellQuote(baseRef)} 2>/dev/null`,
+          { timeout: 10_000 },
+        );
     if (baseResult.exitCode !== 0) {
       return {
         snapshot: unavailableReviewSnapshot(

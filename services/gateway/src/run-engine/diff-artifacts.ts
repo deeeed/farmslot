@@ -462,19 +462,31 @@ export function cappedRunSourceDiffCommand(
  * The stack a run's contribution is measured against: its own, or for a
  * follow-up (ci-fix, pr-complete) the stacked run it continues.
  */
+/** One lineage walk; strict consumers refuse unreadable archived authority. */
+export async function* contributionLineage<T extends Pick<Run, 'stack' | 'parentRunId'>>(
+  run: T,
+): AsyncGenerator<T | Run> {
+  let current: T | Run | undefined = run;
+  for (let hops = 0; current && hops < 20; hops += 1) {
+    yield current;
+    const parentId: Run['parentRunId'] = current.parentRunId;
+    current = parentId ? await getRunWithArchived(parentId) : undefined;
+    if (parentId && !current) throw new Error(`Contribution ancestor ${parentId} is unavailable`);
+  }
+  if (current) throw new Error('Contribution lineage exceeds the supported depth');
+}
+
 export async function contributionStack(
   run: Pick<Run, 'stack' | 'parentRunId'>,
 ): Promise<Run['stack']> {
-  // Walk the follow-up's own lineage: a family can hold candidates stacked on
-  // different upstream commits. Archived ancestors still count: the follow-up
-  // can outlive the stacked run it continues in the live store.
-  let current: Pick<Run, 'stack' | 'parentRunId'> | undefined = run;
-  for (let hops = 0; current && hops < 20; hops += 1) {
-    if (current.stack) return current.stack;
-    // An unreadable archive must not fail a diff capture: no stack is the old behaviour.
-    current = current.parentRunId
-      ? await getRunWithArchived(current.parentRunId).catch(() => undefined)
-      : undefined;
+  try {
+    for await (const current of contributionLineage(run)) {
+      if (current.stack) return current.stack;
+    }
+  } catch {
+    // Preserve the existing diff-only fallback for unreadable archives.
+    // Branch-maintenance admission uses the strict walker directly.
+    return undefined;
   }
   return undefined;
 }
@@ -532,8 +544,10 @@ export async function settleStackedDiffBase(
   exec: GitExec,
   defaultBranch: string,
   baseSpec: DiffBaseSpec,
+  head: string = 'HEAD',
 ): Promise<DiffBaseSpec> {
   if (!baseSpec.baseRef.startsWith('stack:')) return baseSpec;
+  const headRef = head === 'HEAD' ? 'HEAD' : shellQuote(head);
   const remote = `origin/${defaultBranch}`;
   let branchPoint = baseSpec.commitish;
   const plain = { baseRef: remote, commitish: remote };
@@ -551,7 +565,7 @@ export async function settleStackedDiffBase(
       // A failed fetch (the branch deleted after its merge) keeps the
       // remote-tracking ref, which still holds the head this checkout took.
       await exec(`git fetch origin ${shellQuote(remoteBranchRefspec(baseSpec.stackBranch))}`);
-      const taken = await exec(`git merge-base HEAD ${shellQuote(upstream)}`);
+      const taken = await exec(`git merge-base ${headRef} ${shellQuote(upstream)}`);
       const newer = taken.exitCode === 0 ? taken.stdout.trim() : '';
       // Adopt it when it is upstream-only (the default branch lacks it) and
       // not already behind the recorded point: an advance, or a force-pushed
@@ -566,17 +580,19 @@ export async function settleStackedDiffBase(
       }
     }
     // Rebased off the stack (say the upstream was reverted): an ordinary branch now.
-    const stacked = await exec(`git merge-base --is-ancestor ${shellQuote(branchPoint)} HEAD`);
+    const stacked = await exec(
+      `git merge-base --is-ancestor ${shellQuote(branchPoint)} ${headRef}`,
+    );
     if (stacked.exitCode !== 0) return plain;
     // The checkout took the upstream in through the default branch: whatever the
     // default branch did since (a revert included) is not this run's either.
     if (baseSpec.upstreamMergeSha) {
       const integrated = await exec(
-        `git merge-base --is-ancestor ${shellQuote(baseSpec.upstreamMergeSha)} HEAD`,
+        `git merge-base --is-ancestor ${shellQuote(baseSpec.upstreamMergeSha)} ${headRef}`,
       );
       if (integrated.exitCode === 0) return plain;
     }
-    const mergeBase = await exec(`git merge-base HEAD ${shellQuote(remote)}`);
+    const mergeBase = await exec(`git merge-base ${headRef} ${shellQuote(remote)}`);
     const taken = mergeBase.stdout.trim();
     if (mergeBase.exitCode !== 0 || !taken) return { ...baseSpec, commitish: branchPoint };
     const stillStacked = await exec(

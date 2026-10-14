@@ -903,7 +903,7 @@ flag. Harnesses continue through the existing backlog/queue dispatch contract.
 
 ## Amendment 4: verified branch-maintenance checkpoints (2026-10-14)
 
-Status: Proposed. Normative contract: [stacked-runs maintenance](../reference/stacked-runs.md#proposed-maintenance-checkpoint-contract).
+Status: Accepted (2026-10-14). Approved in [#1051](https://github.com/deeeed/farmslot/pull/1051). Normative contract: [stacked-runs maintenance](../reference/stacked-runs.md#maintenance-checkpoint-contract).
 
 ### Decision
 
@@ -911,7 +911,7 @@ Stacked branch maintenance uses one gateway-owned checkpoint in the publishing r
 
 Before dispatching maintenance, the gateway records the immutable target, selected checkpoint and exact remote child lease in existing maintenance step outputs or CI-watch state. The shared runtime guard checks that context, including before an up-to-date shortcut. For linear child-only history, a worker rebase uses `--onto` with the pinned target and verified replay boundary. For merged history, the same runtime operation filters inherited commits or reconstructs the verified committed child delta before rebasing; a raw boundary-to-head range is forbidden. Both paths push with the recorded lease. A verified child-only range permits a parent rebase or intentional rewind without replaying removed parent commits. Stale targets, missing ownership and omitted remote child commits refuse.
 
-pr-complete, update-branch, ci-fix, inline fixes and existing graph catch-up share one checkpoint writer. It verifies the result and uses compare-and-set against the expected prior checkpoint. Graph catch-up keeps its existing merge behavior and retained replay provenance; subsequent worker maintenance removes old parent ancestry through that provenance without replaying reverted upstream/default work or losing child merge resolutions. Once the physical ancestry is removed, ordinary maintenance checks apply. A successful push interrupted before renewal is reconciled from retained operation context, not worker prose.
+pr-complete, update-branch, ci-fix, inline fixes and existing graph catch-up share one checkpoint writer. It verifies the result and uses compare-and-set against the expected prior checkpoint. Graph catch-up keeps its existing merge behavior and retained replay provenance through a signed SDK merge of the pinned child and target with the captured lease, replacing the asynchronous update-branch transport; subsequent worker maintenance removes old parent ancestry through that provenance without replaying reverted upstream/default work or losing child merge resolutions. Once the physical ancestry is removed, ordinary maintenance checks apply. A successful push interrupted before renewal is reconciled from retained operation context, not worker prose.
 
 ### Rationale and consequences
 

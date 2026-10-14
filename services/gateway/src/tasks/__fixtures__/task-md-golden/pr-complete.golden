@@ -42,6 +42,18 @@ Render the task document for a run that is not stacked.
 The publication base is `main`. Branch updates target `origin/main`; follow the update method in the selected checklist. Follow-up runs use their contribution family's base; after retargeting they use the recorded retarget branch. Keep default-branch freshness checks separate.
 For a rebase, first fetch the PR head and record its exact remote SHA in `artifacts/pre-rebase-remote-sha.txt` under this task. Refuse an update if local HEAD omits remote commits. After conflict resolution and the required checks, push the rebased branch with an explicit lease against that recorded SHA. Never infer the update base from a PR body or replace it with the default branch while the upstream PR remains open.
 
+Run this shared operation before any rebase or up-to-date shortcut. It performs the verified rebase; do not run an additional rebase:
+
+```bash
+node '<FARMSLOT_ROOT>/packages/agent-runtime/scripts/branch-update.mjs' execute '{"kind":"ordinary","repo":"<FARMSLOT_ROOT>","branch":"feature/golden-pr","baseRef":"main"}'
+```
+
+After conflict resolution, required checks and any fix commits, use this shared leased push:
+
+```bash
+node '<FARMSLOT_ROOT>/packages/agent-runtime/scripts/branch-update.mjs' push '{"kind":"ordinary","repo":"<FARMSLOT_ROOT>","branch":"feature/golden-pr","baseRef":"main"}'
+```
+
 ## Recipe proof + acceptance review
 
 Prefix every task proof invocation with `RECIPE_TASK_DIR="$(cd ".sandbox/farmslot-farm/worker-task/fix/<TASK_ID>" && pwd)"` in the same shell call as the configured recipe command. A separate export does not survive a later shell call. Direct host invocations must use a fresh directory under `.sandbox/farmslot-farm/worker-task/fix/<TASK_ID>/artifacts/recipe-runs/`; fixed or diagnostic output directories do not select task proof. Independent diagnostics must omit task binding.

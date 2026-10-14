@@ -1,7 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { buildBranchUpdateInstructions } from '@farmslot/agent-runtime';
+import {
+  buildBranchUpdateGuardCommand,
+  buildBranchUpdateInstructions,
+} from '@farmslot/agent-runtime';
 import {
   type AgentContext,
   type BotComment,
@@ -49,6 +52,12 @@ import {
   ensureTmuxTargetReadyForRelaunch,
   rediscoverAcceptingWorkerPane,
 } from '../review/worker-lifecycle.js';
+import {
+  abandonBranchMaintenance,
+  completeBranchMaintenance,
+  pendingBranchMaintenance,
+  prepareBranchMaintenance,
+} from '../run-engine/branch-maintenance.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
 import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
 import { runnerActivityIsBusy } from '../runners/observability-files.js';
@@ -81,6 +90,7 @@ import {
 } from '../runners/session-record.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
+import { agentRuntimeScriptForSlot } from '../tasks/agent-runtime-script.js';
 import {
   CI_FIX_CHECKLIST,
   CI_FIX_CHECKLIST_TARGET,
@@ -576,6 +586,16 @@ async function writeCIFixTask(
       ? pv.projectJson.default_branch.trim()
       : DEFAULT_BRANCH;
   const publicationBase = await publicationBaseForRun(run, defaultBranch);
+  const operation = await prepareBranchMaintenance(run, vars, defaultBranch);
+  const guardVars = {
+    REPO: vars.remoteRepo,
+    BRANCH: branch,
+    PUBLICATION_BASE: publicationBase,
+    DEFAULT_BRANCH: defaultBranch,
+    BRANCH_UPDATE_SCRIPT: await agentRuntimeScriptForSlot(vars, 'branch-update.mjs'),
+    ...(operation ? { BRANCH_UPDATE_CONTEXT: JSON.stringify(operation) } : {}),
+  };
+  const guardCommand = buildBranchUpdateGuardCommand(guardVars);
   const ciReplacements: Record<string, string> = {
     CI_PARITY_CHECKLIST: CI_FIX_CHECKLIST_TARGET.checklist,
     TASK_DIR: taskDir,
@@ -584,7 +604,20 @@ async function writeCIFixTask(
     BRANCH: branch,
     DEFAULT_BRANCH: defaultBranch,
     PUBLICATION_BASE: publicationBase,
-    BRANCH_UPDATE_INSTRUCTIONS: buildBranchUpdateInstructions(publicationBase),
+    ...(operation
+      ? {
+          BRANCH_UPDATE_CONTEXT: JSON.stringify(operation),
+          PUBLICATION_PARENT_BASE_SHA: operation.replayBoundarySha,
+          PUBLICATION_PARENT_HEAD_SHA: operation.authorityHeadSha,
+        }
+      : {}),
+    BRANCH_UPDATE_PUSH_CMD: buildBranchUpdateGuardCommand(guardVars, 'push'),
+    BRANCH_UPDATE_GUARD_CMD: guardCommand,
+    BRANCH_UPDATE_INSTRUCTIONS: buildBranchUpdateInstructions(
+      publicationBase,
+      guardCommand,
+      buildBranchUpdateGuardCommand(guardVars, 'push'),
+    ),
     CI_ISSUES: ciIssues,
     CI_ISSUE_TYPE: ciIssueType,
   };
@@ -1169,6 +1202,22 @@ async function attemptInlineCIFix(
             return blockInlineFix(blockedReason, currentSha, lastSignalAt, fixProgress);
           }
           if (ws.status !== 'failed') {
+            try {
+              const latest = getRun(runId);
+              if (latest) {
+                if (validatedNoChange) await abandonBranchMaintenance(latest);
+                else await completeBranchMaintenance(latest);
+              }
+            } catch (error) {
+              return blockInlineFix(
+                `Branch maintenance push verification failed: ${(error as Error).message}`,
+                currentSha,
+                lastSignalAt,
+                fixProgress,
+              );
+            }
+          }
+          if (ws.status !== 'failed') {
             mutateDedup(runId, (s) => {
               s.consecutiveAttempts = 0;
             });
@@ -1206,7 +1255,7 @@ async function attemptInlineCIFix(
       }
 
       const currentSha = await getSlotHeadSha(slotId);
-      if (currentSha && currentSha !== beforeSha) {
+      if (currentSha && currentSha !== beforeSha && !pendingBranchMaintenance(getRun(runId))) {
         mutateDedup(runId, (s) => {
           s.consecutiveAttempts = 0;
         });
@@ -1390,7 +1439,16 @@ export async function tryInlineCIFix(
     }
   }
 
-  return attemptInlineCIFix(runId, slotId, comments, failedChecks, prNumber, ciRepo, signal);
+  const result = await attemptInlineCIFix(
+    runId,
+    slotId,
+    comments,
+    failedChecks,
+    prNumber,
+    ciRepo,
+    signal,
+  );
+  return result;
 }
 
 export async function rerunFailedChecks(prNumber: number, ciRepo: string): Promise<void> {

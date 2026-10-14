@@ -41,6 +41,7 @@ import { GatewayMethodError } from '../../core/method-error.js';
 import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
 import { refreshArtifactMirror } from '../../run-completion/artifact-mirror.js';
+import { retainedMaintenanceStepOutputs } from '../../run-engine/branch-maintenance.js';
 import {
   hasValidPrNumber,
   supersedeStaleHumanGateDecisions,
@@ -1643,7 +1644,7 @@ export async function runReplayStep(
         completedAt: undefined,
         durationMs: undefined,
         inputs: undefined,
-        outputs: undefined,
+        outputs: retainedMaintenanceStepOutputs(existing.steps[i].name, existing.steps[i].outputs),
         detail: undefined,
       });
     }
