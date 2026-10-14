@@ -159,14 +159,32 @@ function project(snapshot: WorkGraphRecord): WorkGraphProjection {
         ? { retryHistory: snapshot.graph.retryHistory.map((entry) => ({ ...entry })) }
         : {}),
     },
-    nodes: snapshot.nodes.map((node) => ({
-      ...node,
-      reference: node.reference ? cloneReference(node.reference) : undefined,
-      tags: node.tags ? [...node.tags] : undefined,
-      waitingOn: node.waitingOn.map((reason) => ({ ...reason })),
-      supersededFamilyIds: node.supersededFamilyIds ? [...node.supersededFamilyIds] : undefined,
-      upstreamBaseNodeIds: node.upstreamBaseNodeIds ? [...node.upstreamBaseNodeIds] : undefined,
-    })),
+    nodes: snapshot.nodes.map((node) => {
+      const projected: WorkNode = {
+        ...node,
+        reference: node.reference ? cloneReference(node.reference) : undefined,
+        tags: node.tags ? [...node.tags] : undefined,
+        waitingOn: node.waitingOn.map((reason) => ({ ...reason })),
+        supersededFamilyIds: node.supersededFamilyIds ? [...node.supersededFamilyIds] : undefined,
+        upstreamBaseNodeIds: node.upstreamBaseNodeIds ? [...node.upstreamBaseNodeIds] : undefined,
+      };
+      if (node.status === 'succeeded') {
+        const completion = snapshot.edges.filter(
+          (edge) => edge.toNodeId === node.id && edge.blocks === 'completion',
+        );
+        if (
+          completion.some(
+            (edge) => edge.required && edge.status !== 'satisfied' && edge.status !== 'waived',
+          )
+        ) {
+          // Execution can be complete while the graph's merge dependency remains open.
+          // Keep that hold in every public projection without rewriting the Run.
+          computeWaiting(projected, completion);
+          projected.status = 'waiting';
+        }
+      }
+      return projected;
+    }),
     edges: snapshot.edges.map((edge) => ({
       ...edge,
       evidence: edge.evidence ? { ...edge.evidence } : undefined,

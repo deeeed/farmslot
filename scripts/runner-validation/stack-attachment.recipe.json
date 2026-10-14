@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "case \"${FARMSLOT_STACK_ATTACHMENT_PROOF_STAGE:-attachment}\" in attachment|attachment-after-restart) TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/stack-base-consumers.mts \"${FARMSLOT_STACK_ATTACHMENT_PROOF_STAGE:-attachment}\" ;; *) printf \"%s\\n\" \"Select attachment or attachment-after-restart\" >&2; exit 2 ;; esac",
         "timeout_ms": 180000,
-        "intent": "Retained work keeps its run identity, source, task and engine evidence when linked to the declared upstream, including after a gateway restart.",
+        "intent": "Retained work keeps its identity, task and engine evidence after attachment and restart; the old-base publication approval refuses until its package is refreshed.",
         "next": "done"
       },
       "done": {

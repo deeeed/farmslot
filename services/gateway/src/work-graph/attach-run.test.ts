@@ -170,6 +170,30 @@ test('identical retry preserves the recorded upstream after merge and restart', 
   assert.equal(queue.getQueueSnapshot().length, 0);
 });
 
+test('completed retained work stays waiting on its required graph completion edge after restart', async () => {
+  const { params, run } = await fixture();
+  runs.updateRun(run.id, {
+    status: 'done',
+    metrics: { ...run.metrics, outcome: 'success' },
+  });
+  await runs.persistRunNow(run);
+  const before = structuredClone(run);
+  const attached = await graphs.attachWorkGraphRun(params, deps);
+  const child = attached.graph.nodes.find((node) => node.id === 'child')!;
+  assert.equal(child.status, 'waiting');
+  assert.equal(child.waitingOn.length, 1);
+  assert.equal(child.waitingOn[0]?.upstreamNodeId, 'parent');
+  assert.equal(attached.run.status, 'done');
+  assert.deepEqual(attached.run.metrics, before.metrics);
+  await runs.loadAllRuns();
+  await graphs.loadWorkGraphs();
+  const retried = await graphs.attachWorkGraphRun(params, deps);
+  assert.equal(retried.graph.nodes.find((node) => node.id === 'child')?.status, 'waiting');
+  assert.equal(retried.run.status, 'done');
+  assert.deepEqual(retried.run.metrics, before.metrics);
+  assert.equal(queue.getQueueSnapshot().length, 0);
+});
+
 test('progress and uncertain source refuse before any relationship writes', async () => {
   const { params, before, graphBefore } = await fixture();
   for (const kind of ['making-progress', 'unproven', 'awaiting-input'] as const) {

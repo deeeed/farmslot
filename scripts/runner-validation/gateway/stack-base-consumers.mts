@@ -1148,6 +1148,42 @@ async function proveRetainedAttachment(afterRestart: boolean): Promise<void> {
   assert.equal(result.run.familyId, before.familyId);
   assert.equal(result.run.taskFile, before.taskFile);
   assert.deepEqual(result.run.steps, before.steps);
+  const decision = before.decisions.find(
+    (entry) =>
+      !entry.resolvedAt &&
+      entry.type === 'engine_human_gate' &&
+      entry.payload?.kind === 'ready' &&
+      entry.payload.prPackage?.packageHash === frozen.packageHash,
+  );
+  assert.ok(decision, 'The unchanged old-base publication decision remains pending');
+  await assert.rejects(
+    client.call('run.resolveDecision', {
+      runId: params.runId,
+      decisionId: decision.id,
+      actionId: 'approve-publish',
+      selectionData: {
+        packageId: frozen.id,
+        packageHash: frozen.packageHash,
+        packageHeadSha: frozen.headSha,
+        selectedEvidenceKeys: frozen.selectedEvidenceKeys,
+      },
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /publication base changed/);
+      writeFileSync(
+        path.join(
+          out,
+          afterRestart ? 'old-base-refusal-after-restart.json' : 'old-base-refusal.json',
+        ),
+        JSON.stringify({ message: error.message, packageHash: frozen.packageHash }, null, 2) + '\n',
+      );
+      return true;
+    },
+  );
+  const refused = (await client.call<RunGetResult>('run.get', { runId: params.runId })).run;
+  assert.equal(refused.decisions.find((entry) => entry.id === decision.id)?.resolvedAt, undefined);
+  assert.ok(!refused.prNumber);
   assert.deepEqual(hashes(), previousFiles);
   assert.deepEqual(
     (await client.call<RunListResult>('run.list', { limit: 1000 })).runs

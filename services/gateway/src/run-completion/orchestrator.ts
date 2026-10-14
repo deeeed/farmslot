@@ -36,6 +36,7 @@ import { captureCurrentReviewSnapshot, unavailableReviewSnapshot } from '../revi
 import { appliedClaimOverrideReceiptIds } from '../run-engine/claim-overrides.js';
 import { appliedVisualJudgmentReceiptIds } from '../run-engine/claim-reviews.js';
 import { latestResolvedHumanGateDecision } from '../run-engine/decision-replay.js';
+import { contributionStack } from '../run-engine/diff-artifacts.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
 import { readFrozenRecordedEvidenceSources } from '../run-engine/recorded-evidence-sources.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
@@ -435,10 +436,29 @@ export async function renderCurrentDescription(
     current,
     report,
     artifacts ?? (await scanArtifacts(path.dirname(current.taskFile))),
-    await publicationBaseForRun(current, baseBranch),
+    await assertPreparedPublicationBaseCurrent(current, preparedPackage, baseBranch),
     { tolerateMissingSlot: Boolean(preparedPackage.headSha) },
   );
   return { draftTitle: buildDraftPrTitle(current), draftBody };
+}
+
+async function assertPreparedPublicationBaseCurrent(
+  run: Run,
+  preparedPackage: ReadyGatePrPackage,
+  defaultBranch?: string | null,
+): Promise<string> {
+  const base = await publicationBaseForRun(run, defaultBranch);
+  const capturedBase = preparedPackage.reviewSnapshot?.baseRef;
+  if (
+    capturedBase !== `origin/${base}` &&
+    (capturedBase !== undefined || (await contributionStack(run)))
+  ) {
+    throw packageChangedError(
+      run.id,
+      `publication base changed from ${capturedBase ?? 'unrecorded'} to origin/${base}; refresh the package`,
+    );
+  }
+  return base;
 }
 
 /**
@@ -733,6 +753,10 @@ export async function prepareCompletionPackageTransitionLocked(
     if (vars)
       reviewSnapshot = (await captureCurrentReviewSnapshot(vars, { baseRef: baseBranch })).snapshot;
   }
+  // The target is captured even when Git cannot supply a diff. This does not
+  // make the unavailable snapshot a passing review or bypass its explicit override.
+  if (reviewSnapshot.source === 'unavailable')
+    reviewSnapshot = { ...reviewSnapshot, baseRef: `origin/${baseBranch}` };
   const branch = run.branch ?? before.branch ?? '';
   const packageId = `pkg-${run.id.slice(0, 8)}-${Date.now().toString(36)}`;
   const artifactPath = 'artifacts/pr-package.json';
@@ -1063,6 +1087,12 @@ async function createPrFromApprovedPackage(
 ): Promise<number | null> {
   if (!run.slotId) throw new Error('cannot publish a local-first PR without an assigned slot');
   const vars = await loadSlotVars(run.slotId);
+  const pv = await loadProjectVars(run.project).catch(() => null);
+  const base = await assertPreparedPublicationBaseCurrent(
+    getRun(run.id) ?? run,
+    prPackage,
+    pv && getProjectField(pv.projectJson, 'default_branch'),
+  );
   if (prPackage.headSha) {
     const head = (
       await execOnSlot(vars, `git -C ${shellQuote(vars.remoteRepo)} rev-parse HEAD 2>/dev/null`, {
@@ -1084,11 +1114,6 @@ async function createPrFromApprovedPackage(
 
   const tmpFile = `/tmp/farmslot-pr-body-${run.id.slice(0, 8)}-${randomUUID()}.md`;
   await writeFile(tmpFile, pendingPublicationBody(prPackage), 'utf-8');
-  const pv = await loadProjectVars(run.project).catch(() => null);
-  const base = await publicationBaseForRun(
-    getRun(run.id) ?? run,
-    pv && getProjectField(pv.projectJson, 'default_branch'),
-  );
   const args = [
     'pr',
     'create',
@@ -1216,8 +1241,9 @@ export async function publishCompletionPackage(
     const ciRepo: string | null = (pv?.projectJson as any)?.ci?.repo ?? null;
     flags.ciRepo = ciRepo;
     if (!ciRepo) throw new Error('no ci.repo configured');
-    const baseBranch = await publicationBaseForRun(
+    const baseBranch = await assertPreparedPublicationBaseCurrent(
       run,
+      approvedPackage,
       pv && getProjectField(pv.projectJson, 'default_branch'),
     );
     // The approved body was completed against the slot's template at
