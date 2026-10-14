@@ -19,7 +19,7 @@ import test from 'node:test';
 import { WebSocket } from 'ws';
 
 import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
-import { handleNodeResponse } from '../fleet/node-rpc.js';
+import { handleNodeResponse, NodeTransportUnavailableError } from '../fleet/node-rpc.js';
 
 import {
   WORKER_ARTIFACT_COPY_EXCLUDES,
@@ -574,6 +574,36 @@ test('slotCopyDir reports the remote file path on per-file copy failure', async 
       err instanceof SlotCopyDirEntryError &&
       err.sourcePath === failingPath &&
       /EACCES/.test(err.message),
+  );
+});
+
+test('slotCopyDir preserves a typed lost transport so monitor observation can reconnect', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'slot-copy-reconnect-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const lost = new NodeTransportUnavailableError('copy-node', 'disconnected', 'connection lost');
+  const io = {
+    host: 'remote.invalid',
+    machine: 'copy-node',
+    sshTarget: '',
+    nodeRequest: async (method: string, params: unknown) => {
+      if (method === 'fs.exists') return { exists: true };
+      if (method === 'fs.lstat') return { isDirectory: true, isSymbolicLink: false };
+      if (method === 'fs.realpath') {
+        assert(params && typeof params === 'object' && 'root' in params && 'relPath' in params);
+        assert.equal(typeof params.root, 'string');
+        assert.equal(typeof params.relPath, 'string');
+        if (typeof params.root !== 'string' || typeof params.relPath !== 'string')
+          throw new Error('Invalid fixture path');
+        return { path: path.resolve(params.root, params.relPath) };
+      }
+      if (method === 'fs.list') return { entries: [{ name: 'report.md', type: 'file', size: 2 }] };
+      if (method === 'fs.readBase64') throw lost;
+      throw new Error(`Unexpected copy RPC ${method}`);
+    },
+  };
+  await assert.rejects(
+    slotCopyDir(io, '/task/artifacts', root),
+    (error: unknown) => error === lost,
   );
 });
 

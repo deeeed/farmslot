@@ -321,6 +321,11 @@ export function withNodeReconnectWait<T>(
   return reconnectWait.run({ assertCurrent }, operation);
 }
 
+/** Owned teardown must still run after forward execution was cancelled. */
+export function withoutNodeReconnectWait<T>(operation: () => Promise<T>): Promise<T> {
+  return reconnectWait.exit(operation);
+}
+
 /** Revalidate native authority after a pre-send reconnect, never retry a sent request. */
 export function resolveAfterNodeReconnect<T>(machine: string, resolve: () => T): T | Promise<T> {
   assertNodeReconnectCurrent();

@@ -32,8 +32,7 @@ import {
 } from '@farmslot/slot-config/sources';
 
 import { GatewayMethodError } from '../core/method-error.js';
-import { getNode } from '../fleet/machine-registry.js';
-import { sendNodeRequest } from '../fleet/node-rpc.js';
+import { assertNodeReconnectCurrent, sendNodeRequest, waitForNode } from '../fleet/node-rpc.js';
 import { loadFleetStatus, loadPoolConfigs, loadProjectConfig } from '../fleet/state.js';
 import type { RunCreateInternalOptions, RunCreationPlan } from '../methods/run.js';
 import { RunTransitionCoordinator } from '../run-lifecycle/transition-coordinator.js';
@@ -156,8 +155,8 @@ async function nodeMaterialization(
   nodeId: string,
   lock: SourceLock,
 ): Promise<SourceMaterialization> {
-  const node = getNode(nodeId);
-  if (!node) throw new Error(`Source execution node is disconnected: ${nodeId}`);
+  const node = await waitForNode(nodeId, 0);
+  assertNodeReconnectCurrent();
   const result = (await sendNodeRequest(
     node,
     'sources.materialize',
@@ -740,9 +739,10 @@ export async function verifyExecutionSources(
       await gateway.verify(materialization.lock);
       return;
     }
-    const node = getNode(nodeId);
-    if (!node || materialization.receipt.nodeId !== nodeId)
+    if (materialization.receipt.nodeId !== nodeId)
       throw new Error('Source execution ownership changed');
+    const node = await waitForNode(nodeId, 0);
+    assertNodeReconnectCurrent();
     await sendNodeRequest(
       node,
       'sources.verify',

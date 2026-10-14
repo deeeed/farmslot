@@ -27,7 +27,12 @@ import {
   type NodeFsReadChunkResult,
 } from '@farmslot/protocol';
 
-import { assertNodeReconnectCurrent, sendNodeRequest, waitForNode } from '../fleet/node-rpc.js';
+import {
+  assertNodeReconnectCurrent,
+  isNodeTransportUnavailableError,
+  sendNodeRequest,
+  waitForNode,
+} from '../fleet/node-rpc.js';
 
 import { isLocal } from './exec.js';
 import { sha256File } from './file-hash.js';
@@ -1005,6 +1010,7 @@ export async function slotCopyDir(
             continue;
           }
           aggregate.fail(entryError.message);
+          if (isNodeTransportUnavailableError(err)) throw err;
           throw entryError;
         }
         if (transferred) count++;

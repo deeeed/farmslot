@@ -4,8 +4,10 @@ import { test } from 'node:test';
 
 import { WebSocket } from 'ws';
 
+import type { SlotVars } from '../core/config.js';
 import { slotWriteFile } from '../core/slot-io.js';
 import { makeRun } from '../methods/run/test-fixtures.js';
+import { releasePrepareSentinel } from '../methods/slot/prepare-sentinel.js';
 import { captureRunSourceOwnerFence } from '../sources/run-fence.js';
 
 import { registerNode, unregisterByWs } from './machine-registry.js';
@@ -113,4 +115,57 @@ test('run cancellation after the ready-node read prevents the deferred send', as
   run.status = 'cancelled';
   await assert.rejects(pending, /Run ownership changed/);
   assert.equal(sent, 0);
+});
+
+test('cancelled preparation still releases its owned remote sentinel', async (t) => {
+  const machine = 'prepare-cleanup-node';
+  const commands: string[] = [];
+  const socket = Object.assign(new EventEmitter(), {
+    readyState: WebSocket.OPEN,
+    send(raw: string, callback?: () => void) {
+      const { id, params } = JSON.parse(raw);
+      commands.push(params.cmd);
+      callback?.();
+      handleNodeResponse(id, true, { exitCode: 0, stdout: '', stderr: '' });
+    },
+  });
+  const ws = socket as WebSocket;
+  registerNode(machine, 1, ws);
+  t.after(() => unregisterByWs(ws));
+  const vars: SlotVars = {
+    slotId: 'prepare-slot',
+    machine,
+    platform: 'cli',
+    host: 'remote.invalid',
+    sshUser: 'fixture',
+    osType: 'macos',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: '/source',
+    session: 'fixture',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: '',
+    remoteRepo: '/source',
+    projectName: 'fixture',
+    resourceVars: {},
+  };
+  await withNodeReconnectWait(
+    async () => {
+      await releasePrepareSentinel(
+        { vars, lockDir: '/source/.agent', lockPath: '/source/.agent/.preparing.lock' },
+        new Error('cancelled'),
+      );
+    },
+    () => {
+      throw new Error('Run stopped while awaiting its execution node');
+    },
+  );
+  assert.equal(commands.length, 1);
+  assert.match(commands[0], /rm -rf.*\.preparing\.lock/);
 });

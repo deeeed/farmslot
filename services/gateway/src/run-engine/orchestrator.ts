@@ -36,7 +36,7 @@ import {
   slotReleasingFenceFields,
   updateSlotStatusIf,
 } from '../core/state.js';
-import { withNodeReconnectWait } from '../fleet/node-rpc.js';
+import { withNodeReconnectWait, withoutNodeReconnectWait } from '../fleet/node-rpc.js';
 import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
 import { failedRunSlotCleanup, isSlotClaimRefusedError } from '../methods/dispatch/slot-scoring.js';
 import {
@@ -1620,10 +1620,22 @@ async function executeStep(runId: string, step: string, generation: number): Pro
     );
     try {
       const operation = () =>
-        withRunSources(run, () => executeSourcedStep(runId, step, generation), {
-          planning: step === S.FIND_SLOT && !run.reviewWorkspaceTarget,
-        });
-      if (step === S.WRITE_TASK || step === S.PREPARE || step === S.DISPATCH) {
+        withRunSources(
+          run,
+          () =>
+            step === S.MONITOR
+              ? withoutNodeReconnectWait(() => executeSourcedStep(runId, step, generation))
+              : executeSourcedStep(runId, step, generation),
+          {
+            planning: step === S.FIND_SLOT && !run.reviewWorkspaceTarget,
+          },
+        );
+      if (
+        step === S.WRITE_TASK ||
+        step === S.PREPARE ||
+        step === S.DISPATCH ||
+        step === S.MONITOR
+      ) {
         return await withNodeReconnectWait(operation, () => {
           const live = current();
           if (['blocked', 'done', 'failed', 'cancelled', 'paused'].includes(live.status))

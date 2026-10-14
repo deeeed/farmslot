@@ -24,6 +24,11 @@ mock.module('../fleet/node-rpc.js', {
     NodeRpcTimeoutError: class extends Error {},
     isNodeTransportUnavailableError: () => false,
     sendNodeRequest: async () => assert.fail('node RPC is not under test'),
+    waitForNode: async () => assert.fail('node reconnect is not under test'),
+    assertNodeReconnectCurrent: () => assert.fail('node reconnect is not under test'),
+    resolveAfterNodeReconnect: () => assert.fail('node reconnect is not under test'),
+    withNodeReconnectWait: () => assert.fail('node reconnect is not under test'),
+    withoutNodeReconnectWait: () => assert.fail('node reconnect is not under test'),
     getSlotLocality: async () => assert.fail('slot locality is not under test'),
   },
 });

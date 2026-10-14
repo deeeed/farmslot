@@ -4,6 +4,7 @@ import type { SlotPrepareParams } from '@farmslot/protocol';
 
 import { execOnSlot, isLocal, loadSlotVars, type SlotVars } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
+import { withoutNodeReconnectWait } from '../../fleet/node-rpc.js';
 import { loadFleetStatus } from '../../fleet/state.js';
 
 import { resolvePrepareRuntimeDir } from './prepare-command.js';
@@ -145,7 +146,9 @@ export async function releasePrepareSentinel(
   }
   let release: { stdout: string; stderr: string; exitCode: number };
   try {
-    release = await execOnSlot(lock.vars, `rm -rf ${shellQuote(lock.lockPath)}`);
+    release = await withoutNodeReconnectWait(() =>
+      execOnSlot(lock.vars, `rm -rf ${shellQuote(lock.lockPath)}`),
+    );
   } catch (error) {
     if (originalError) {
       // Preserve the prepare failure as the actionable root cause; the lock path is logged for manual cleanup.
