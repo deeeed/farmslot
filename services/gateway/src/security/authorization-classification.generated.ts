@@ -301,6 +301,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'run.rereviewLatestHead': { classification: 'admin' },
   'run.resolveDecision': { classification: 'admin' },
   'run.resume': { classification: 'admin' },
+  'run.reviewVisualClaim': { classification: 'admin' },
   'run.sessionCommand': { classification: 'admin' },
   'run.slotHistory': { classification: 'admin' },
   'run.tags.list': { classification: 'admin' },

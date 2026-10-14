@@ -6,6 +6,7 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
+import { reviewedRecipeClaims } from './claim-reviews.js';
 import type { GateAcceptanceRead } from './gate-prerequisites.js';
 
 export function claimOverrideAuthority(
@@ -52,6 +53,7 @@ export function projectGateAcceptance(
   );
   if (!input?.claims) return acceptance;
   const authority = claimOverrideAuthority(run, input);
+  const reviewed = reviewedRecipeClaims(run, input);
   return {
     ...acceptance,
     ledger: {
@@ -68,7 +70,7 @@ export function projectGateAcceptance(
         const projected = projectClaimUntestableOverride(claim, authority);
         return projected.verdict === 'untestable'
           ? { ...row, ...projected, evidence: row.evidence }
-          : row;
+          : { ...row, ...reviewed.find(({ id }) => id === row.id), evidence: row.evidence };
       }),
     },
   };

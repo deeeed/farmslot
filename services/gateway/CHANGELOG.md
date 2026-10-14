@@ -9,6 +9,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Preserve the selected device capabilities across find-slot replay and refuse unsupported slots before selection or claim.
 
 - Keep exact worker identities after deferred interactive terminal cleanup and retry through the recorded cleanup owner, while preserving successor and session ownership guards.
+- Bind QA criteria to engine claims and persist authenticated visual judgments over captured evidence.
+
 - Keep report and evidence reviews valid when completion adds or updates gateway-owned diff diagnostics; preserve strict checks on worker output.
 
 - Resolve worker rebase targets and review descriptions through the shared publication base while retaining default-branch freshness.

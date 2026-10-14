@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Retain device capability placement requirements in run engine state across slot re-selection.
+- Define authenticated, moment-bound visual review receipts and the public human review operation.
 
 - Share the publication evidence-manifest contract between the engine and publication consumers.
 - Define verified human claim-override receipts, selected-execution binding and shared review projections.

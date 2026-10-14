@@ -9,6 +9,7 @@ import {
   assertPRReviewOptions,
   buildRunDecisionActionRequest,
   buildRunResolveDecisionParams,
+  CONFIRM_VISUAL_CLAIM_ACTION,
   deriveRunLifecycleView,
   DISPATCHABLE_AGENT_ROLES,
   type EventFrame,
@@ -20,6 +21,7 @@ import {
   MARK_CLAIM_UNTESTABLE_ACTION,
   Methods,
   observedReviewSessionContinuity,
+  REJECT_VISUAL_CLAIM_ACTION,
   type ReviewChainEntry,
   reviewChainForRun,
   type ReviewMode,
@@ -34,6 +36,7 @@ import {
   type RunGetGradeResult,
   type RunGradeResult,
   type RunPauseResult,
+  type RunRecipeRunsForRunResult,
   type RunResumeResult,
   type RunSessionCommandResult,
   runStepExecutionMs,
@@ -782,12 +785,12 @@ export function registerRunCommand(program: Command): void {
     .description('List or resolve pending human-gate decisions for a run')
     .option(
       '--action <id>',
-      'Action to resolve with (approve-publish|approve-publish-unresolved|hold|close-as-shipped|…)',
+      'Gate action (approve-publish|hold|confirm-visual|reject-visual|mark-untestable|…)',
     )
     .option('--decision <id>', 'Decision id when several are pending')
-    .option('--reason <text>', 'Written reason for evidence attestation or mark-untestable')
-    .option('--claim <id>', 'Registered claim for mark-untestable')
-    .option('--recipe-run <id>', 'Selected recorded execution for mark-untestable')
+    .option('--reason <text>', 'Written reason for evidence attestation or human claim review')
+    .option('--claim <id>', 'Registered claim for human evidence review')
+    .option('--recipe-run <id>', 'Selected recorded execution for human evidence review')
     .option('--runner <runner>', 'Review runner for request-review')
     .option('--model <model>', 'Review model for request-review')
     .option('--effort <level>', 'Review reasoning effort for request-review')
@@ -832,6 +835,52 @@ export function registerRunCommand(program: Command): void {
           return;
         }
         const actionId = opts.action;
+        if ([CONFIRM_VISUAL_CLAIM_ACTION, REJECT_VISUAL_CLAIM_ACTION].includes(actionId)) {
+          if (!opts.claim?.trim() || !opts.recipeRun?.trim() || !opts.reason?.trim())
+            throw new Error('Visual review requires --claim, --recipe-run and --reason.');
+          const candidates = opts.decision
+            ? current.decisions.filter(({ id }) => id === opts.decision)
+            : current.decisions
+                .slice()
+                .reverse()
+                .filter(
+                  (value) =>
+                    value.payload?.kind === 'ready' || value.payload?.kind === 'output-review',
+                );
+          const contextDecision = candidates[0];
+          const snapshot =
+            contextDecision?.payload?.kind === 'ready'
+              ? contextDecision.payload.prPackage?.packageHash
+              : contextDecision?.payload?.kind === 'output-review'
+                ? contextDecision.payload.manifestDigest
+                : undefined;
+          const evidence = await client.call<RunRecipeRunsForRunResult>(
+            Methods.RUN_RECIPE_RUNS_FOR_RUN,
+            {
+              runId,
+              recordedRecipeRunId: opts.recipeRun,
+              includeRecordedEvidence: true,
+              ...(contextDecision && snapshot
+                ? { decisionId: contextDecision.id, evidenceSnapshotHash: snapshot }
+                : {}),
+            },
+          );
+          const review = evidence.recordedEvidence?.visualReviewContext;
+          if (!review || evidence.recordedEvidence?.errors.length)
+            throw new Error('Select valid captured evidence before visual review.');
+          emit.ok(
+            await client.call(Methods.RUN_REVIEW_VISUAL_CLAIM, {
+              runId,
+              decisionId: review.decisionId,
+              snapshotIdentity: review.snapshotIdentity,
+              claimId: opts.claim,
+              recipeRunId: opts.recipeRun,
+              reason: opts.reason,
+              verdict: actionId === CONFIRM_VISUAL_CLAIM_ACTION ? 'confirmed' : 'rejected',
+            }),
+          );
+          return;
+        }
         const decisionId = opts.decision ?? (pending.length === 1 ? pending[0].id : undefined);
         if (!decisionId) {
           throw Object.assign(new Error(`Run has ${pending.length} pending decisions.`), {

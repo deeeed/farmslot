@@ -16,6 +16,7 @@ import {
   type RecipeRecordingTimelineBinding,
   type RecipeRecordingTimelineDocument,
   recipeTraceEntries,
+  type RecipeVisualReviewAuthority,
   recordedEvidenceClosureIdentity,
   type RecordedEvidencePackageInput,
   type RecordingSegmentRef,
@@ -24,6 +25,7 @@ import {
   validateRecipeRecordingTimelineBinding,
 } from '@farmslot/protocol';
 import {
+  deriveReviewedRecipeClaims,
   indexRecordingTimelines,
   occurrenceRecordingCoverage,
   planRecipeEvidence,
@@ -50,6 +52,7 @@ export interface EvidenceReviewInput {
   /** Gateway run contract: 0 is retained pre-cutover data, 1 is selected-attempt evidence. */
   contractVersion?: number;
   claimOverrideAuthority?: ClaimOverrideAuthority;
+  visualReviewAuthority?: RecipeVisualReviewAuthority;
   context?: EvidenceReviewContext;
   readErrors?: readonly string[];
   /** Transport namespace; contract references stay relative to their recipe package. */
@@ -212,15 +215,22 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     input.claimOverrideAuthority.closureIdentity === recordedEvidenceClosureIdentity(pkg)
       ? input.claimOverrideAuthority
       : undefined;
-  const ledger =
-    packageClaims && overrideAuthority
-      ? {
-          ...packageClaims,
-          criteria: packageClaims.criteria.map((claim) =>
-            projectClaimUntestableOverride(claim, overrideAuthority),
-          ),
-        }
-      : (packageClaims ?? input.ledger ?? null);
+  const reviewed =
+    packageClaims && pkg && errors.length === 0
+      ? deriveReviewedRecipeClaims(pkg, input.visualReviewAuthority)
+      : packageClaims?.criteria;
+  const ledger = packageClaims
+    ? {
+        ...packageClaims,
+        criteria: (reviewed ?? []).map((claim) => {
+          const original = packageClaims.criteria.find(({ id }) => id === claim.id)!;
+          const override = overrideAuthority
+            ? projectClaimUntestableOverride(original, overrideAuthority)
+            : original;
+          return override !== original ? override : claim;
+        }),
+      }
+    : (input.ledger ?? null);
   if (input.ledger?.schemaVersion === 2 && !pkg)
     errors.push('Recorded claim evidence requires its retained execution package.');
   if (

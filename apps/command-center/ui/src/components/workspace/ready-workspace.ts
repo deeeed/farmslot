@@ -109,6 +109,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
         package: source.recordedEvidence?.input,
         contractVersion: source.recordedEvidence?.contractVersion,
         claimOverrideAuthority: source.recordedEvidence?.claimOverrideAuthority,
+        visualReviewAuthority: source.recordedEvidence?.visualReviewAuthority,
         artifactPrefix: source.recordedEvidence?.artifactPrefix,
         packagePath: source.recordedEvidence?.packagePath,
         readErrors: source.recordedEvidence?.errors,

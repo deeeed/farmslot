@@ -325,6 +325,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `run.rereviewLatestHead`                | run              | bounded-write | —      | —      | Run RereviewLatestHead gateway method.                |
 | `run.resolveDecision`                   | run              | high-impact   | —      | —      | Run ResolveDecision gateway method.                   |
 | `run.resume`                            | run              | lifecycle     | —      | —      | Run Resume gateway method.                            |
+| `run.reviewVisualClaim`                 | run              | bounded-write | —      | —      | Run ReviewVisualClaim gateway method.                 |
 | `run.sessionCommand`                    | run              | bounded-write | —      | —      | Run SessionCommand gateway method.                    |
 | `run.slotHistory`                       | run              | bounded-write | —      | —      | Run SlotHistory gateway method.                       |
 | `run.tags.list`                         | run              | read-only     | —      | —      | Run Tags List gateway method.                         |

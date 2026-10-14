@@ -5,6 +5,7 @@ export {
   validateRecipeArtifactPackage,
 } from './artifact.js';
 export * from './claim-overrides.js';
+export * from './claim-reviews.js';
 export {
   BUILT_IN_UI_OBSERVERS,
   type BuiltInUiObserverRef,

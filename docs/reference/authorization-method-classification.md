@@ -282,6 +282,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `run.rereviewLatestHead`                | admin          |                                                                                    |
 | `run.resolveDecision`                   | admin          |                                                                                    |
 | `run.resume`                            | admin          |                                                                                    |
+| `run.reviewVisualClaim`                 | admin          |                                                                                    |
 | `run.sessionCommand`                    | admin          |                                                                                    |
 | `run.slotHistory`                       | admin          |                                                                                    |
 | `run.tags.list`                         | admin          |                                                                                    |

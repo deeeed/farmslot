@@ -21,6 +21,11 @@ const reads: string[] = [];
 mock.module('../../core/config.js', {
   namedExports: { loadSlotVars: async () => ({ machine: 'test-node' }) },
 });
+mock.module('../../qa/completion.js', {
+  namedExports: {
+    parseQaResult: () => assert.fail('Display must not qualify visual-review registration'),
+  },
+});
 mock.module('../../fleet/machine-registry.js', { namedExports: { getNode: () => ({}) } });
 mock.module('../../fleet/node-rpc.js', {
   namedExports: {
@@ -211,12 +216,19 @@ test('QA output display uses the same frozen closure and refuses a changed repor
   assert.deepEqual(source.errors, []);
   assert.equal(source.artifactPrefix, prefix);
   const changed = await readRunRecordedEvidence(
+    // Writer eligibility must not hide otherwise readable QA history.
+    { ...sourceRun, flowType: 'qa' },
+    group,
+    binding,
+  );
+  assert.deepEqual(changed.errors, []);
+  const stale = await readRunRecordedEvidence(
     { ...sourceRun, output: { ...output, manifestDigest: 'refreshed-output' } },
     group,
     binding,
   );
-  assert.equal(changed.input, undefined);
-  assert.match(changed.errors.join(' '), /QA output snapshot changed/);
+  assert.equal(stale.input, undefined);
+  assert.match(stale.errors.join(' '), /QA output snapshot changed/);
 });
 
 test('package display paths use the selected artifact root even when the run task is an operator mirror', async (t) => {

@@ -3,10 +3,14 @@ import {
   isRecord,
   type RecipeArtifactManifestEntry,
   type RecipeClaimDeclaration,
+  type RecipeClaimEvidence,
   type RecipeResolutionDocument,
   type RecipeValidationFinding,
   type RecipeValidationResult,
+  type RecipeVisualJudgment,
+  type RecipeVisualReviewAuthority,
   type RecordedEvidencePackageInput,
+  recordedVisualJudgments,
   validateAcceptanceStatusLedger,
   validateRecipeArtifactPackage,
   validateRecipeRecordingTimelineBinding,
@@ -16,6 +20,52 @@ import type { ProofDocument, ProofTraceEntry } from './assertions.js';
 import { deriveRecipeClaims } from './claims.js';
 import { indexRecordingTimelines } from './moments.js';
 import { planRecipeEvidence } from './plan.js';
+
+/** The same engine derivation serves stored validation and authenticated review. */
+function deriveClaimsFromInput(
+  input: RecordedEvidencePackageInput,
+  judgments: readonly RecipeVisualJudgment[] = [],
+): RecipeClaimEvidence[] {
+  const resolution = input.recipeResolution as RecipeResolutionDocument;
+  const documents = new Map(
+    resolution.dependencies.map((dependency) => [
+      dependency.ref,
+      input.resolvedRecipes![dependency.digest] as ProofDocument,
+    ]),
+  );
+  const registered =
+    isRecord(input.invocation) && Array.isArray(input.invocation.claims)
+      ? (input.invocation.claims as RecipeClaimDeclaration[])
+      : undefined;
+  const plan = planRecipeEvidence(input.recipe as ProofDocument, documents, registered);
+  const trace = Array.isArray(input.trace)
+    ? input.trace
+    : isRecord(input.trace) && Array.isArray(input.trace.entries)
+      ? input.trace.entries
+      : [];
+  return deriveRecipeClaims({
+    recipeRunId: input.claims!.recipeRunId,
+    ...plan,
+    trace: trace as ProofTraceEntry[],
+    artifacts: (isRecord(input.manifest)
+      ? input.manifest.artifacts
+      : []) as RecipeArtifactManifestEntry[],
+    segments: input.claims!.recording.segments,
+    judgments,
+    timelines: indexRecordingTimelines(Object.values(input.timelines)),
+  });
+}
+
+/** Current human review is a projection; original package bytes and facts remain intact. */
+export function deriveReviewedRecipeClaims(
+  input: RecordedEvidencePackageInput,
+  authority?: RecipeVisualReviewAuthority,
+): RecipeClaimEvidence[] {
+  const validation = validateRecordedEvidencePackage(input);
+  if (validation.status !== 'valid' || !input.claims)
+    throw new TypeError('Visual review requires a valid retained engine claim package.');
+  return deriveClaimsFromInput(input, authority ? recordedVisualJudgments(input, authority) : []);
+}
 
 /** Validate actual package identities before consumers derive a moment or publish evidence. */
 export function validateRecordedEvidencePackage(
@@ -91,17 +141,6 @@ export function validateRecordedEvidencePackage(
     }
     if (base.status === 'valid' && input.recipe && isRecord(input.manifest)) {
       try {
-        const resolution = input.recipeResolution as RecipeResolutionDocument;
-        const documents = new Map(
-          resolution.dependencies.map((dependency) => [
-            dependency.ref,
-            input.resolvedRecipes![dependency.digest] as ProofDocument,
-          ]),
-        );
-        const registered =
-          isRecord(input.invocation) && Array.isArray(input.invocation.claims)
-            ? (input.invocation.claims as RecipeClaimDeclaration[])
-            : undefined;
         if (
           input.invocation &&
           (!isRecord(input.summary) ||
@@ -111,21 +150,7 @@ export function validateRecordedEvidencePackage(
             'recipe-invocation.json',
             'Claim registration does not match the retained execution inputs.',
           );
-        const plan = planRecipeEvidence(input.recipe as ProofDocument, documents, registered);
-        const trace = Array.isArray(input.trace)
-          ? input.trace
-          : isRecord(input.trace) && Array.isArray(input.trace.entries)
-            ? input.trace.entries
-            : [];
-        const derived = deriveRecipeClaims({
-          recipeRunId: recipeRunId ?? input.claims.recipeRunId,
-          ...plan,
-          trace: trace as ProofTraceEntry[],
-          artifacts: input.manifest.artifacts as RecipeArtifactManifestEntry[],
-          segments: input.claims.recording.segments,
-          judgments: input.claims.judgments,
-          timelines: indexRecordingTimelines(Object.values(input.timelines)),
-        });
+        const derived = deriveClaimsFromInput(input, input.claims.judgments);
         for (const actual of derived) {
           if (!input.claims.criteria.some((claim) => claim.id === actual.id))
             issue(`claims.${actual.id}`, 'Registered claim is missing from the stored ledger.');

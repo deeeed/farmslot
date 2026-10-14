@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Show authenticated visual claim reviews through the shared evidence model.
+
 - Use the shared run evidence contract in package status and recovery guidance.
 - Use shared verified claim overrides in publish and output review while preserving engine verdicts.
 

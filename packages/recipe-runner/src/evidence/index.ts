@@ -2,6 +2,6 @@
 export { proofDocument } from './assertions.js';
 export type { OccurrenceRecordingCoverage } from './moments.js';
 export { indexRecordingTimelines, occurrenceRecordingCoverage } from './moments.js';
-export { validateRecordedEvidencePackage } from './package.js';
+export { deriveReviewedRecipeClaims, validateRecordedEvidencePackage } from './package.js';
 export { planRecipeEvidence } from './plan.js';
 export type { RecordedEvidencePackageInput } from '@farmslot/protocol';
