@@ -464,7 +464,7 @@ until their coordinated release; no harness writer or compatibility path is adde
 
 ## Amendment 7 (2026-10-14): Delegated visual judgments and Compare by AC
 
-**Status:** Proposed.
+**Status:** Accepted (2026-10-14). Implementation and live gate acceptance are pending.
 **Specification:** [Delegated visual judgments](../reference/recorded-run-evidence.md#delegated-visual-judgments) and [Compare by AC](../reference/recorded-run-evidence.md#compare-by-ac).
 
 ### Decision

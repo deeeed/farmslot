@@ -32,7 +32,7 @@ The HUD uses traced intent. Remove independent publication `covers`, stored AC
 clock values and separate HUD captions; clients derive them from the claim/trace
 relationship. Internal validation dependencies are not automatically public.
 
-The proposed [Compare by AC](#compare-by-ac) amendment adds optional capture
+The accepted [Compare by AC](#compare-by-ac) amendment adds optional capture
 bindings. Publication `covers` and before/after pairs are derived from those
 bindings by the existing engine writer, never authored as another claim mapping.
 
@@ -830,7 +830,7 @@ CLI/RPC control MUST record a judgment and show its derived verdict at the gate.
 
 ## Delegated visual judgments
 
-**Status:** Proposed under [ADR-062 Amendment 7](../adr/062-recorded-run-evidence.md#amendment-7-2026-10-14-delegated-visual-judgments-and-compare-by-ac). Implement this part first.
+**Status:** Accepted under [ADR-062 Amendment 7](../adr/062-recorded-run-evidence.md#amendment-7-2026-10-14-delegated-visual-judgments-and-compare-by-ac). Implementation is pending; implement this part first.
 
 The existing gateway visual-review writer MUST support `person-reviewed` and
 `lead-agent-reviewed`. This extends the preceding person-only requirement for
@@ -894,7 +894,7 @@ requiring new captures or a comparison pair.
 
 ## Compare by AC
 
-**Status:** Proposed under the same Amendment 7. Implement after delegated visual judgments.
+**Status:** Accepted under the same Amendment 7. Implementation is pending; implement after delegated visual judgments.
 
 ### Capture binding and source
 
