@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Remove obsolete credential origins and expose guarded principal retirement and explicit HTTP credentials for transfer diagnostics.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.43.1 - 2026-10-14

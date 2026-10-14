@@ -190,6 +190,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `principal.create`                      | admin          |                                                                                    |
 | `principal.grant`                       | admin          |                                                                                    |
 | `principal.list`                        | admin          |                                                                                    |
+| `principal.retire`                      | admin          |                                                                                    |
 | `principal.revokeRole`                  | admin          |                                                                                    |
 | `providerAccounts.snapshot`             | admin          |                                                                                    |
 | `prPush.acknowledge`                    | admin          |                                                                                    |

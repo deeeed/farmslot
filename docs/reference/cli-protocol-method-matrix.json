@@ -1522,6 +1522,10 @@
       "surface": "typed-command",
       "command": "farmslot run adopt-published-pr",
       "note": "Credential-backed human attestation of an existing exact-head publication."
+    },
+    "principal.retire": {
+      "surface": "typed-command",
+      "command": "farmslot principal retire"
     }
   }
 }

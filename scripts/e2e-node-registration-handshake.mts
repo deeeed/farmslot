@@ -249,7 +249,7 @@ try {
         machine: 'proof-orphan',
         pid: process.pid,
         capabilities: [],
-        nativeSessions: { ownerPrincipalId: 'legacy-env' },
+        nativeSessions: { ownerPrincipalId: 'test-automation' },
       }),
     );
     const machines = (await listNodes()).map((node) => node.machine);

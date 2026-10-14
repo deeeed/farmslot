@@ -869,7 +869,7 @@ The existing gateway visual-review writer MUST support `person-reviewed` and
 the delegated kind. Person review retains its credential-backed person check.
 Agent review MUST use the reviewer's own active service principal/credential,
 with existing RPC permission and explicit authorization by the run project's
-operator-owned `visualClaimReview` policy. `legacy-env`, node identities, anonymous
+operator-owned `visualClaimReview` policy. Node identities, anonymous
 sessions and client actor strings grant neither kind. No agent may use a person's
 credential or be recorded as a person reviewer.
 
@@ -918,7 +918,7 @@ These contracts are experimental and ship through coordinated package versioning
 Required incompatible type changes use the existing breaking-release rule.
 Update the generated API/CLI reference and project-policy guide. Conformance MUST
 cover authorized own-agent review, absent/foreign-project delegation, person-only
-claims/parents, actor/person/legacy-env impersonation refusal, evidence mutation,
+claims/parents, actor/person impersonation refusal, evidence mutation,
 policy change, retry/restart, visible proof labels and unchanged publication gates.
 Prove this writer through public CLI/RPC and the shared gate before starting the
 comparison implementation. It MUST work with selected retained evidence without

@@ -170,7 +170,7 @@ if (phase === 'serve') {
         GATEWAY_PORT: String(port),
         FARMSLOT_GATEWAY_TOKEN: '',
         FARMSLOT_GATEWAY_PASSWORD: '',
-        FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'legacy-env',
+        FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'test-automation',
         FARMSLOT_DISABLE_ORCHESTRATION: '1',
         FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
       },

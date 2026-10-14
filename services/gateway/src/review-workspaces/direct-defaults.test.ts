@@ -196,7 +196,7 @@ test('farm pool selects an available host and queue admission retains the full d
   assert.equal(queued.item.reviewWorkspaceTarget?.machine, 'two');
   assert.deepEqual(queued.item.workflowExecution, execution);
   await queue.persistQueueNow();
-  await queue.loadQueue({ kind: 'principal', principalId: 'owner' });
+  await queue.loadQueue();
   assert.deepEqual(
     queue.getQueueSnapshot().find((item) => item.id === queued.item.id)?.workflowExecution,
     execution,
@@ -408,7 +408,7 @@ test('run and queued dispatch preserve primary and additional review context sep
   assert.deepEqual(queued.item.reviewContext, reviewContext);
   assert.deepEqual(queued.item.reviewSequenceContext, reviewSequenceContext);
   await queue.persistQueueNow();
-  await queue.loadQueue({ kind: 'principal', principalId: 'owner' });
+  await queue.loadQueue();
   const saved = queue.getQueueSnapshot().find((item) => item.id === queued.item.id)!;
   assert.deepEqual(saved.reviewContext, reviewContext);
   assert.deepEqual(saved.reviewSequenceContext, reviewSequenceContext);

@@ -456,7 +456,6 @@ export const KNOWN_TMPDIR_LEAKERS = new Set([
   'gateway/src/family-observability/provenance.test.ts',
   'gateway/src/family-observability/retrospective.test.ts',
   'gateway/src/family-observability/snapshot.test.ts',
-  'gateway/src/fleet/pairing.test.ts',
   'gateway/src/fleet/pressure-history-store.test.ts',
   'gateway/src/fleet/project-config-load.test.ts',
   'gateway/src/fleet/slot-storage-cleanup.test.ts',

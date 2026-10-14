@@ -14,16 +14,13 @@ import { GatewayMethodError } from '../core/method-error.js';
 import { authorizeGatewayHttp, type GatewayHttpResource } from './authorization.js';
 import { CredentialStoreRuntime } from './credential-store.js';
 import { CredentialStoreWriter } from './credential-store-writer.js';
-import { reconcileEnvironmentCredential } from './env-credential-migration.js';
 import { PrincipalResolver } from './principal-resolver.js';
 
 export type GatewayAuthMode = 'none' | 'token' | 'password';
 
 export interface ResolvedGatewayAuth {
   mode: GatewayAuthMode;
-  token?: string;
-  password?: string;
-  source: 'env' | 'explicit-none' | 'default-none';
+  source: 'store' | 'default-none';
 }
 
 export interface GatewayAuthSession {
@@ -66,7 +63,6 @@ const DEFAULT_RATE_LIMIT_MAX = 8;
 const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
 const AUTH_HEADER_PREFIX = 'Bearer ';
 const HTTP_AUTH_COOKIE = 'farmslot_gateway_credential';
-const HTTP_PASSWORD_COOKIE = 'farmslot_gateway_password';
 const TRUST_PROXY_HEADERS_ENV = 'FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS';
 
 interface RateLimitBucket {
@@ -115,22 +111,10 @@ export class GatewayAuthRateLimiter {
 }
 
 export function resolveGatewayAuth(env: NodeJS.ProcessEnv = process.env): ResolvedGatewayAuth {
-  const rawMode = env.FARMSLOT_GATEWAY_AUTH_MODE?.trim().toLowerCase();
-  const token = nonEmpty(env.FARMSLOT_GATEWAY_TOKEN);
-  const password = nonEmpty(env.FARMSLOT_GATEWAY_PASSWORD);
-
-  if (rawMode) {
-    if (!isGatewayAuthMode(rawMode)) {
-      throw new Error(
-        `Invalid FARMSLOT_GATEWAY_AUTH_MODE=${rawMode}; expected none, token, or password`,
-      );
-    }
-    return requireCredentialForMode({ mode: rawMode, token, password, source: 'env' });
-  }
-
-  if (password) return { mode: 'password', password, token, source: 'env' };
-  if (token) return { mode: 'token', token, password, source: 'env' };
-  return { mode: 'none', source: 'default-none' };
+  const store = new CredentialStoreRuntime(env);
+  return store.isActivated()
+    ? { mode: 'token', source: 'store' }
+    : { mode: 'none', source: 'default-none' };
 }
 
 export function createGatewayAuthRuntime(env: NodeJS.ProcessEnv = process.env): GatewayAuthRuntime {
@@ -158,12 +142,6 @@ export function initializeGatewayIdentity(
     bindIsLoopbackOnly: isLoopbackHost(params.host?.trim() || '127.0.0.1'),
     trustProxyHeaders: shouldTrustProxyHeaders(runtime.store.env),
     machine: params.machine ?? os.hostname().replace(/\.local$/u, ''),
-  });
-  reconcileEnvironmentCredential({
-    auth: runtime.auth,
-    writer: runtime.writer,
-    resolver: runtime.resolver,
-    log: params.log,
   });
 }
 
@@ -200,12 +178,12 @@ export function assertGatewayBindAllowed(params: {
   if (host && isLoopbackHost(host)) return;
   if (host && !isLoopbackHost(host)) {
     throw new Error(
-      `Refusing to bind unauthenticated gateway to ${host}:${params.port}; set FARMSLOT_GATEWAY_TOKEN or FARMSLOT_GATEWAY_PASSWORD, or explicitly bind to 127.0.0.1 for local-only dev`,
+      `Refusing to bind unauthenticated gateway to ${host}:${params.port}; issue an admin credential offline, or explicitly bind to 127.0.0.1 for local-only dev`,
     );
   }
   if (process.env.FARMSLOT_GATEWAY_ALLOW_UNAUTHENTICATED_ANY_HOST === '1') return;
   throw new Error(
-    `Refusing to bind unauthenticated gateway to all interfaces on port ${params.port}; set GATEWAY_HOST=127.0.0.1 for local-only dev, set FARMSLOT_GATEWAY_TOKEN/PASSWORD for remote access, or set FARMSLOT_GATEWAY_ALLOW_UNAUTHENTICATED_ANY_HOST=1 for explicit insecure dev`,
+    `Refusing to bind unauthenticated gateway to all interfaces on port ${params.port}; set GATEWAY_HOST=127.0.0.1 for local-only dev, issue an admin credential offline for remote access, or set FARMSLOT_GATEWAY_ALLOW_UNAUTHENTICATED_ANY_HOST=1 for explicit insecure dev`,
   );
 }
 
@@ -214,7 +192,7 @@ export function authenticateGatewayClient(params: {
   connectParams: GatewayAuthConnectParams;
   clientIp: string;
 }): GatewayAuthResult {
-  const { auth, limiter } = params.runtime;
+  const { limiter } = params.runtime;
   // A loopback client (the local browser or hosted Command Center connecting to
   // ws://localhost) already implies same-machine trust — a local process can read the
   // token file anyway. Rate-limiting it just locks out a *valid* token for the window
@@ -247,14 +225,10 @@ export function authenticateGatewayClient(params: {
       : { ok: false, reason: resolution.reason };
   }
 
-  const token = params.connectParams.token;
-  const password = params.connectParams.password;
-  const transport = token ? 'token' : password ? 'password' : undefined;
-  const presented = token ?? password;
-  if (!transport || !presented) {
-    return { ok: false, reason: `${auth.mode === 'password' ? 'password' : 'token'}_missing` };
-  }
-  const resolution = params.runtime.resolver.resolveSecret(presented, transport);
+  const presented = params.connectParams.token;
+  if (params.connectParams.password) return { ok: false, reason: 'credential_mismatch' };
+  if (!presented) return { ok: false, reason: 'token_missing' };
+  const resolution = params.runtime.resolver.resolveSecret(presented, 'token');
   if (!resolution.ok) {
     if (rateLimitApplies) limiter.recordFailure(params.clientIp);
     return { ok: false, reason: 'credential_mismatch' };
@@ -262,7 +236,7 @@ export function authenticateGatewayClient(params: {
   limiter.reset(params.clientIp);
   return {
     ok: true,
-    mode: transport,
+    mode: 'token',
     authentication: resolution.authentication,
     principal: resolution.principal,
   };
@@ -310,7 +284,6 @@ export function authorizeHttpRequest(params: {
       connectParams: {
         clientKind: 'companion',
         ...(credential?.transport === 'token' ? { token: credential.value } : {}),
-        ...(credential?.transport === 'password' ? { password: credential.value } : {}),
       },
       clientIp: resolveRequestIp(params.req, params.runtime.store.env),
     });
@@ -373,57 +346,30 @@ export function shouldTrustProxyHeaders(env: NodeJS.ProcessEnv = process.env): b
   return raw === '1' || raw === 'true' || raw === 'yes';
 }
 
-function requireCredentialForMode(auth: ResolvedGatewayAuth): ResolvedGatewayAuth {
-  if (auth.mode === 'none') return { ...auth, source: 'explicit-none' };
-  if (auth.mode === 'token' && !auth.token) {
-    throw new Error('FARMSLOT_GATEWAY_AUTH_MODE=token requires FARMSLOT_GATEWAY_TOKEN');
-  }
-  if (auth.mode === 'password' && !auth.password) {
-    throw new Error('FARMSLOT_GATEWAY_AUTH_MODE=password requires FARMSLOT_GATEWAY_PASSWORD');
-  }
-  return auth;
-}
-
 function nonEmpty(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
 }
 
-function isGatewayAuthMode(value: string): value is GatewayAuthMode {
-  return value === 'none' || value === 'token' || value === 'password';
-}
-
 export function getHttpCredential(
   req: IncomingMessage,
-): { value: string; transport: 'token' | 'password' } | undefined {
+): { value: string; transport: 'token' } | undefined {
   const auth = req.headers.authorization;
   if (typeof auth === 'string') {
     if (auth.startsWith(AUTH_HEADER_PREFIX)) {
       const value = nonEmpty(auth.slice(AUTH_HEADER_PREFIX.length));
       return value ? { value, transport: 'token' } : undefined;
     }
-    if (auth.startsWith('Basic ')) {
-      const decoded = Buffer.from(auth.slice('Basic '.length), 'base64').toString('utf8');
-      const separator = decoded.indexOf(':');
-      const value = nonEmpty(separator >= 0 ? decoded.slice(separator + 1) : decoded);
-      return value ? { value, transport: 'password' } : undefined;
-    }
+    return undefined;
   }
   const queryToken = getQueryCredential(req.url, 'token');
-  const queryPassword = getQueryCredential(req.url, 'password');
-  if (queryToken && queryPassword) return undefined;
   if (queryToken) return { value: queryToken, transport: 'token' };
-  if (queryPassword) return { value: queryPassword, transport: 'password' };
   const cookieToken = getCookieValue(req.headers.cookie, HTTP_AUTH_COOKIE);
-  const cookiePassword = getCookieValue(req.headers.cookie, HTTP_PASSWORD_COOKIE);
-  if (cookieToken && cookiePassword) return undefined;
-  if (cookieToken) return { value: cookieToken, transport: 'token' };
-  return cookiePassword ? { value: cookiePassword, transport: 'password' } : undefined;
+  return cookieToken ? { value: cookieToken, transport: 'token' } : undefined;
 }
 
 // Query-string credentials exist only for header-incapable resources. The
-// parameter name preserves the transport distinction: `token` can resolve issued
-// credentials, while `password` is legacy environment-password compatibility.
+// token parameter presents an issued or paired credential.
 // Query secrets are intrinsically more exposed than headers, so the gateway must
 // never log raw req.url and fetch-capable clients keep credentials in headers.
 function getQueryCredential(

@@ -1,9 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import fs from 'node:fs';
 import path from 'node:path';
 
 import WebSocket from 'ws';
 
+import { automationGatewayTarget } from '../../lib/gateway-profile.mjs';
 import { ROOT } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 
@@ -82,32 +82,10 @@ class GatewaySocket {
     this.events = [];
   }
 
-  static credential() {
-    const pick = (env) =>
-      env.FARMSLOT_GATEWAY_PASSWORD
-        ? { password: env.FARMSLOT_GATEWAY_PASSWORD }
-        : env.FARMSLOT_GATEWAY_TOKEN
-          ? { token: env.FARMSLOT_GATEWAY_TOKEN }
-          : null;
-    const fromProcess = pick(process.env);
-    if (fromProcess) return fromProcess;
-    for (const name of ['.env.local-auth', '.env']) {
-      const file = path.join(ROOT, name);
-      if (!fs.existsSync(file)) continue;
-      const parsed = {};
-      for (const rawLine of fs.readFileSync(file, 'utf8').split('\n')) {
-        const match = rawLine.trim().match(/^([A-Z0-9_]+)=(.*)$/);
-        if (match) parsed[match[1]] = match[2].replace(/^["']|["']$/g, '');
-      }
-      const fromFile = pick(parsed);
-      if (fromFile) return fromFile;
-    }
-    return null;
-  }
-
-  connect(timeoutMs = 15_000) {
-    const url = process.env.FARMSLOT_GATEWAY ?? 'ws://localhost:7777';
-    const credential = GatewaySocket.credential();
+  async connect(timeoutMs = 15_000) {
+    const target = await automationGatewayTarget();
+    if (!target) throw new Error('Select an authenticated validation gateway profile');
+    const { url, credential } = target;
     return new Promise((resolve, reject) => {
       const socket = new WebSocket(url);
       const timer = setTimeout(() => {

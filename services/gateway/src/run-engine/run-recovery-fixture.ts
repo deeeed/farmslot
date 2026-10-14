@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 
 import type { ExecResult, Run } from '@farmslot/protocol';
 
+import { testGatewayIdentity } from '../../../../scripts/lib/test-gateway-identity.mjs';
 import type { RawProjectJson, SlotVars } from '../core/config.js';
 
 const executeFile = promisify(execFile);
@@ -174,9 +175,8 @@ const { createWebSocketServer } = await import('../server.js');
 const auth = createGatewayAuthRuntime({
   FARMSLOT_HOME: environment.FARMSLOT_HOME,
   GATEWAY_HOST: '127.0.0.1',
-  FARMSLOT_GATEWAY_AUTH_MODE: 'token',
-  FARMSLOT_GATEWAY_TOKEN: 'fixture-only-token',
 });
+const fixtureToken = testGatewayIdentity(environment.FARMSLOT_HOME!);
 initializeGatewayIdentity(auth, { host: '127.0.0.1' });
 const server = createServer();
 const wss = createWebSocketServer(server, auth);
@@ -184,6 +184,8 @@ await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
 const address = server.address();
 assert.ok(address && typeof address !== 'string');
 const port = address.port;
+const { testGatewayProfile } = await import('../../../../scripts/lib/test-gateway-identity.mjs');
+testGatewayProfile(environment.FARMSLOT_HOME!, `ws://127.0.0.1:${port}`, fixtureToken);
 
 export async function rpc<T>(method: string, params: unknown): Promise<T> {
   const client = new URL('../../../../apps/command-center/scripts/cdp.mjs', import.meta.url);
@@ -194,7 +196,7 @@ export async function rpc<T>(method: string, params: unknown): Promise<T> {
       env: {
         ...process.env,
         FARMSLOT_GATEWAY: `ws://127.0.0.1:${port}`,
-        FARMSLOT_GATEWAY_TOKEN: 'fixture-only-token',
+        FARMSLOT_GATEWAY_PROFILE: 'proof',
         FARMSLOT_RPC_TIMEOUT_MS: '3000',
       },
       timeout: 4000,

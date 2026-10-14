@@ -40,8 +40,8 @@ function anonymousRpc(method, params) {
 
 // Use a separately activated validation gateway. Both accounts must authenticate;
 // the second account should also be admin so this proves native profile ownership.
-// FARMSLOT_GATEWAY_TOKEN is the owner. FARMSLOT_NATIVE_OTHER_TOKEN is the other admin.
-// Tokens are passed through the child environment, never CLI arguments or evidence.
+// Select separate owner and other-admin profiles in the isolated validation home.
+// FARMSLOT_GATEWAY_PROFILE and FARMSLOT_NATIVE_OTHER_PROFILE contain profile names.
 function rpc(token, method, params = {}) {
   try {
     const stdout = execFileSync(
@@ -56,7 +56,7 @@ function rpc(token, method, params = {}) {
         cwd: ROOT,
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, FARMSLOT_GATEWAY_TOKEN: token, FARMSLOT_GATEWAY_PASSWORD: '' },
+        env: { ...process.env, FARMSLOT_GATEWAY_PROFILE: token, FARMSLOT_GATEWAY_PASSWORD: '' },
       },
     );
     return { ok: true, payload: JSON.parse(stdout) };
@@ -81,8 +81,8 @@ export async function runScenario({ outDir }) {
     pass: false,
     error: null,
   };
-  const owner = process.env.FARMSLOT_GATEWAY_TOKEN;
-  const other = process.env.FARMSLOT_NATIVE_OTHER_TOKEN;
+  const owner = process.env.FARMSLOT_GATEWAY_PROFILE;
+  const other = process.env.FARMSLOT_NATIVE_OTHER_PROFILE;
   let session;
   try {
     assert.ok(report.gateway, 'Set FARMSLOT_GATEWAY to the isolated authorization gateway');

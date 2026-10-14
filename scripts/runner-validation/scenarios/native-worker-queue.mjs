@@ -80,16 +80,18 @@ export async function verifyNativeWorkerQueue({
         slotId,
         allowedSlots: [slotId],
       };
-      const ownerToken = process.env.FARMSLOT_GATEWAY_TOKEN;
+      const ownerToken = process.env.FARMSLOT_GATEWAY_PROFILE;
       try {
-        process.env.FARMSLOT_GATEWAY_TOKEN = fs
-          .readFileSync(path.join(ROOT, 'temp/native-validation/auth/other-token'), 'utf8')
-          .trim();
+        assert.ok(
+          process.env.FARMSLOT_NATIVE_OTHER_PROFILE,
+          'Select a separate other-admin profile',
+        );
+        process.env.FARMSLOT_GATEWAY_PROFILE = process.env.FARMSLOT_NATIVE_OTHER_PROFILE;
         assert.throws(() => rpc('dispatch.queue.add', params), /AUTH_FORBIDDEN/);
         assert.equal(rpc('dispatch.queue.list').items.length, 0);
       } finally {
-        if (ownerToken === undefined) delete process.env.FARMSLOT_GATEWAY_TOKEN;
-        else process.env.FARMSLOT_GATEWAY_TOKEN = ownerToken;
+        if (ownerToken === undefined) delete process.env.FARMSLOT_GATEWAY_PROFILE;
+        else process.env.FARMSLOT_GATEWAY_PROFILE = ownerToken;
       }
       item = rpc('dispatch.queue.add', params).item;
       itemId = item.id;

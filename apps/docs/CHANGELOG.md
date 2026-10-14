@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Link onboarding to the shared person, service and node credential reference.
+
 - Document doctor recording controls in the generated recipe CLI reference.
 - Document attested human-published PR adoption and its protocol contract.
 - Document the single engine-ledger cutover, read-only acceptance CLI and retained-data limits.

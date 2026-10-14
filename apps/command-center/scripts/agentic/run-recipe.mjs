@@ -503,17 +503,9 @@ export function gatewayTokenSeedScript(token) {
   return `try { localStorage.setItem('farmslot.gateway.authMode', 'token'); localStorage.setItem('farmslot.gateway.token', ${JSON.stringify(token)}); } catch (e) {}`;
 }
 
-async function resolveGatewayToken(projectRoot) {
-  const fromEnv = process.env.FARMSLOT_GATEWAY_TOKEN?.trim();
-  if (fromEnv) return fromEnv;
-  try {
-    const raw = await readFile(path.join(projectRoot, '.env.local-auth'), 'utf8');
-    const match = raw.match(/^FARMSLOT_GATEWAY_TOKEN=(.+)$/m);
-    if (match) return match[1].trim();
-  } catch {
-    // .env.local-auth is optional (gateway may run auth=none); fall through to no token.
-  }
-  return '';
+async function resolveGatewayToken() {
+  const { automationGatewayTarget } = await import('../../../../scripts/lib/gateway-profile.mjs');
+  return (await automationGatewayTarget())?.credential.token ?? '';
 }
 
 // The recipe Chrome's pid on its CDP port. lsof runs synchronously, so its wait is

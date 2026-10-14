@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+import { automationGatewayTarget } from './lib/gateway-profile.mjs';
 // Native quit confirmation and lifecycle proof. Uses a disposable profile and
 // real macOS keyboard/dialog actions, with only read-only gateway traffic.
 import assert from 'node:assert/strict';
@@ -19,9 +20,9 @@ await mkdir(evidence, { recursive: true });
 const profile = await mkdtemp(path.join(evidence, 'profile-'));
 const port = '9543';
 const inspector = '9544';
-const token = process.env.FARMSLOT_GATEWAY_TOKEN;
-assert(token, 'Set FARMSLOT_GATEWAY_TOKEN without printing it');
 const gateway = process.env.FARMSLOT_GATEWAY ?? 'ws://127.0.0.1:7801/ws';
+const token = (await automationGatewayTarget(gateway))?.credential.token;
+assert(token, 'Select an isolated FARMSLOT_GATEWAY_PROFILE');
 const app = path.resolve(
   process.env.FARMSLOT_DESKTOP_APP ??
     'apps/command-center-desktop/release-dev/mac-arm64/Farmslot Dev.app',

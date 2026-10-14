@@ -375,17 +375,13 @@ systemd_node_arguments() {
 
 # The token the service definition carries as FARMSLOT_NODE_TOKEN, and that the
 # shadowed-token check compares against.
-DEPLOYED_NODE_TOKEN="${FARMSLOT_NODE_TOKEN:-${FARMSLOT_GATEWAY_TOKEN:-}}"
+DEPLOYED_NODE_TOKEN="${FARMSLOT_NODE_TOKEN:-}"
 
 launchd_auth_env_xml() {
   if [[ -n "$DEPLOYED_NODE_TOKEN" ]]; then
     printf '        <key>FARMSLOT_NODE_TOKEN</key>
         <string>%s</string>
 ' "$(printf '%s' "$DEPLOYED_NODE_TOKEN" | xml_escape)"
-  elif [[ -n "${FARMSLOT_GATEWAY_PASSWORD:-}" ]]; then
-    printf '        <key>FARMSLOT_GATEWAY_PASSWORD</key>
-        <string>%s</string>
-' "$(printf '%s' "$FARMSLOT_GATEWAY_PASSWORD" | xml_escape)"
   fi
 }
 
@@ -393,9 +389,6 @@ systemd_auth_env_lines() {
   if [[ -n "$DEPLOYED_NODE_TOKEN" ]]; then
     printf 'Environment="FARMSLOT_NODE_TOKEN=%s"
 ' "$(printf '%s' "$DEPLOYED_NODE_TOKEN" | sed 's/\\/\\\\/g; s/"/\\"/g')"
-  elif [[ -n "${FARMSLOT_GATEWAY_PASSWORD:-}" ]]; then
-    printf 'Environment="FARMSLOT_GATEWAY_PASSWORD=%s"
-' "$(printf '%s' "$FARMSLOT_GATEWAY_PASSWORD" | sed 's/\\/\\\\/g; s/"/\\"/g')"
   fi
 }
 

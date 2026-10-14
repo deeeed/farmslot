@@ -799,16 +799,20 @@ test('deploy-node runs the native check through the login shell and still refuse
   assert.deepEqual(fixture.systemctl(), []);
 });
 
-// Without --node-token-file the service carries FARMSLOT_GATEWAY_TOKEN as its
-// node token, so that is what an env file must match.
+// Without --node-token-file the service uses only an explicit node credential.
 for (const [held, deploys] of [
-  ['fixture-operator-secret', true],
-  ['fixture-node-credential', false],
+  ['fixture-node-credential', true],
+  ['different-node-credential', false],
 ]) {
-  test(`deploy-node checks a gateway-token-only deploy against that token (${deploys ? 'matching' : 'differing'} file)`, (t) => {
+  test(`deploy-node checks a node-token-only deploy against that token (${deploys ? 'matching' : 'differing'} file)`, (t) => {
     const fixture = cliFixture(t);
     fixture.write('home/farmslot-node/.env.local-auth', `FARMSLOT_NODE_TOKEN=${held}\n`);
-    const deploy = () => fixture.deploy({ machine: localMachine(), nodeTokenFile: false });
+    const deploy = () =>
+      fixture.deploy({
+        machine: localMachine(),
+        nodeTokenFile: false,
+        env: { FARMSLOT_NODE_TOKEN: 'fixture-node-credential' },
+      });
     if (deploys) {
       assert.match(deploy(), /checking for an env file that shadows the node token/);
       assert.ok(fixture.systemctl().some((line) => line.includes('restart farmslot-node')));

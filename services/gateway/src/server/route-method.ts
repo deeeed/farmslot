@@ -129,6 +129,7 @@ import {
   type PrincipalBindNativeOwnerParams,
   type PrincipalCreateParams,
   type PrincipalGrantParams,
+  type PrincipalRetireParams,
   type PrincipalRevokeRoleParams,
   type PRListParams,
   PROTOCOL_VERSION,
@@ -420,6 +421,7 @@ import {
   principalCreate,
   principalGrant,
   principalList,
+  principalRetire,
   principalRevokeRole,
 } from '../methods/principal.js';
 import { providerAccountsSnapshot } from '../methods/provider-accounts.js';
@@ -735,6 +737,8 @@ async function routeAuthorizedMethod(
       return principalGrant(p as PrincipalGrantParams, authRuntime);
     case Methods.PRINCIPAL_REVOKE_ROLE:
       return principalRevokeRole(p as PrincipalRevokeRoleParams, authRuntime);
+    case Methods.PRINCIPAL_RETIRE:
+      return principalRetire(p as PrincipalRetireParams, authRuntime);
     case Methods.CREDENTIAL_ISSUE:
       return credentialIssue(p as CredentialIssueParams, authRuntime);
     case Methods.CREDENTIAL_LIST:

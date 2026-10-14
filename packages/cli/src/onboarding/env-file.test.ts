@@ -108,7 +108,7 @@ test('a present-but-unreadable env file throws instead of being silently skipped
   }
 });
 
-test('a checkout .env gateway secret reaches only loopback targets, never a remote GW_URL', () => {
+test('a checkout .env gateway secret never becomes a client credential', () => {
   const root = mkdtempSync(join(tmpdir(), 'fs-envfile-secret-'));
   writeFileSync(
     join(root, '.env'),
@@ -135,7 +135,7 @@ test('a checkout .env gateway secret reaches only loopback targets, never a remo
       /No stored gateway profile/,
     );
 
-    // Loopback targets still discover the same file through the cwd chain.
+    // Loopback configuration selects an address, never a file credential.
     process.chdir(root);
     writeFileSync(join(root, '.env.ports'), 'GATEWAY_PORT=7801\n');
     const sandboxEnv: NodeJS.ProcessEnv = {};
@@ -146,7 +146,7 @@ test('a checkout .env gateway secret reaches only loopback targets, never a remo
       timeout: 1000,
       credential: local.credential,
     });
-    assert.deepEqual(Reflect.get(client, 'credential'), { token: 'file-secret' });
+    assert.equal(Reflect.get(client, 'credential'), null);
   } finally {
     process.chdir(saved.cwd);
     if (saved.token !== undefined) process.env.FARMSLOT_GATEWAY_TOKEN = saved.token;

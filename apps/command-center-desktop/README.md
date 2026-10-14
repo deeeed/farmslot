@@ -62,7 +62,7 @@ Development links use `farmslot-dev://` with the same destinations as `farmslot:
 Each app registers only its own scheme. Choose different global shortcuts if running both at once.
 
 To reproduce the live check in a dedicated worktree, build both app profiles, export
-`FARMSLOT_GATEWAY` and `FARMSLOT_GATEWAY_TOKEN`, then run
+`FARMSLOT_GATEWAY` and `FARMSLOT_GATEWAY_PROFILE`, then run
 `node --import tsx scripts/e2e-desktop-live-ui.mts`. It owns ports 5186/9513/9514,
 creates a temporary profile, briefly edits and restores the worktree's UI title,
 and only reads the gateway. Screenshots and results go to `temp/desktop-live-ui/`.
@@ -139,7 +139,7 @@ The main process serves bundled assets on a loopback port under `/cc/`. First la
 ### Quit and relaunch validation
 
 With a built Dev app and an existing gateway, export `FARMSLOT_GATEWAY` and
-`FARMSLOT_GATEWAY_TOKEN`, then run `node --import tsx scripts/e2e-desktop-quit.mts`.
+`FARMSLOT_GATEWAY_PROFILE`, then run `node --import tsx scripts/e2e-desktop-quit.mts`.
 The [quit recipe](../../docs/examples/recipes/farmslot/desktop-quit.recipe.json)
 uses real macOS keyboard and dialog actions, so the terminal needs Accessibility permission.
 It creates its own profile on ports 9543/9544 and only reads gateway state. Set
@@ -152,7 +152,7 @@ Use a fresh, dedicated worktree. This fixture uses only ports 8977/9473 and its 
 ```sh
 python3 - <<'PY'
 from pathlib import Path
-import json, os, secrets, shlex
+import json, os, shlex
 root = Path.cwd()
 assert not (root / '.env.ports').exists(), 'Use a fresh validation worktree'
 assert not (root / '.env.local-auth').exists(), 'Use a fresh validation worktree'
@@ -170,20 +170,19 @@ values = {'FARMSLOT_ROOT': str(root), 'FARMSLOT_HOME': str(base / 'home'),
           'FARMSLOT_POOL_DIR': str(base / 'pool'), 'FARMSLOT_PROJECTS_DIR': str(base / 'projects'),
           'FARMSLOT_RUNS_DIR': str(base / 'runs'), 'FARMSLOT_DISABLE_ORCHESTRATION': '1',
           'GATEWAY_HOST': '127.0.0.1', 'GATEWAY_PORT': '8977',
-          'FARMSLOT_GATEWAY': 'ws://127.0.0.1:8977', 'FARMSLOT_CDP_PORT': '9473',
+          'FARMSLOT_GATEWAY': 'ws://127.0.0.1:8977', 'FARMSLOT_GATEWAY_PROFILE': 'proof',
+          'FARMSLOT_CDP_PORT': '9473',
           'FARMSLOT_DESKTOP_CDP_PORT': '9473',
           'FARMSLOT_DESKTOP_USER_DATA': str(base / 'desktop-profile')}
 (root / '.env.ports').write_text('\n'.join(k + '=' + shlex.quote(v) for k, v in values.items()) + '\n')
-with (root / '.env.local-auth').open('x') as auth:
-    os.chmod(auth.name, 0o600)
-    auth.write('FARMSLOT_GATEWAY_TOKEN=' + secrets.token_hex(32) + '\n')
 PY
-set -a; source .env.ports; source .env.local-auth; set +a
+set -a; source .env.ports; set +a
+node --import tsx --input-type=module -e 'import { testGatewayIdentity } from "./scripts/lib/test-gateway-identity.mjs"; testGatewayIdentity(process.env.FARMSLOT_HOME, process.env.FARMSLOT_GATEWAY);'
 tmux new-session -d -s farmslot-electron-validation -c "$PWD"
 yarn workspace @farmslot/gateway start
 ```
 
-In a second terminal at the same root, load the two env files as above, then build and start the desktop app. In a third terminal with the same environment:
+In a second terminal at the same root, load `.env.ports` as above, then build and start the desktop app. In a third terminal with the same environment:
 
 ```sh
 yarn workspace @farmslot/protocol build

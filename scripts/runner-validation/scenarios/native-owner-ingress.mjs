@@ -4,12 +4,15 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
+import { automationGatewayToken } from '../../lib/gateway-profile.mjs';
 import { ROOT } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 
 import { connect } from './native-node-broker-smoke.mjs';
 
 const { WebSocket } = createRequire(path.join(ROOT, 'services/gateway/package.json'))('ws');
+let gatewayToken;
+
 export const SCENARIO_ID = 'native-owner-ingress';
 export const RUNNER_AGNOSTIC = true;
 
@@ -122,6 +125,7 @@ function loadFixture() {
 /** Real production RPCs and a provisioned remote runner; the extra node only triggers broadcasts. */
 export async function runScenario({ outDir, explicit, timeoutMs = 180_000 }) {
   if (!explicit) return { scenario: SCENARIO_ID, runner: 'native', skipped: true, pass: true };
+  gatewayToken = await automationGatewayToken();
   const report = { runner: 'native', checks: [], pass: false, inferenceExpected: true };
   const clients = [];
   const credentials = [];
@@ -135,7 +139,7 @@ export async function runScenario({ outDir, explicit, timeoutMs = 180_000 }) {
     report.runner = fixture.runner;
     report.executionNodeId = fixture.executionNodeId;
     report.gateway = fixture.gateway;
-    admin = await connect(process.env.FARMSLOT_GATEWAY_TOKEN, 'ui');
+    admin = await connect(gatewayToken, 'ui');
     clients.push(admin);
     const principals = (await ok(admin, 'principal.list', {})).principals;
     const owner = principals.find((entry) => entry.id === fixture.ownerPrincipalId);

@@ -18,6 +18,10 @@ const body = readFileSync(source, 'utf-8')
     'https://github.com/deeeed/farmslot/blob/main/docs/reference/project-packs.md',
   )
   .replaceAll(
+    '../reference/identity-and-credentials.md',
+    'https://github.com/deeeed/farmslot/blob/main/docs/reference/identity-and-credentials.md',
+  )
+  .replaceAll(
     '](onboarding-flow.md)',
     '](https://github.com/deeeed/farmslot/blob/main/docs/operations/onboarding-flow.md)',
   );

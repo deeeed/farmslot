@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+import { testGatewayIdentity, testGatewayProfile } from './lib/test-gateway-identity.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -105,8 +106,9 @@ async function port() {
 }
 const gatewayPort = await port(),
   uiPort = await port();
-const token = randomBytes(32).toString('hex');
+const token = testGatewayIdentity(path.join(fixture, 'home'));
 const nativeRoot = path.join(fixture, 'home/native-sessions');
+testGatewayProfile(path.join(fixture, 'home'), `ws://127.0.0.1:${gatewayPort}`, token);
 const servers = startReviewInterfaceServers({
   root,
   evidence,
@@ -119,8 +121,8 @@ const servers = startReviewInterfaceServers({
     FARMSLOT_RUNS_DIR: path.join(fixture, 'runs'),
     FARMSLOT_DISPATCH_QUEUE_FILE: path.join(fixture, 'queue.json'),
     FARMSLOT_NATIVE_STATE_DIR: nativeRoot,
-    FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'legacy-env',
-    FARMSLOT_GATEWAY_TOKEN: token,
+    FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'test-automation',
+    FARMSLOT_GATEWAY_PROFILE: 'proof',
     GATEWAY_HOST: '127.0.0.1',
     GATEWAY_PORT: String(gatewayPort),
     VITE_PORT: String(uiPort),

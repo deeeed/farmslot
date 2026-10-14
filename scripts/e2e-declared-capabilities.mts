@@ -158,7 +158,7 @@ export async function prepareDeclaredCapabilityProof(input: Fixture & { writeJso
     mode: 'interactive',
     devInteractiveProfile: input.lightweight ? 'lightweight' : 'reviewed',
     transport: 'native',
-    nativeOwnerPrincipalId: 'legacy-env',
+    nativeOwnerPrincipalId: 'test-automation',
     safetyTier: 'full-auto',
     status: 'blocked',
     slotId,

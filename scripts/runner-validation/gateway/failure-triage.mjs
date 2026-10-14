@@ -5,6 +5,8 @@ import { once } from 'node:events';
 import { mkdir, open, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { testGatewayIdentity, testGatewayProfile } from '../../lib/test-gateway-identity.mts';
+
 assert.equal(process.env.FARMSLOT_ASSESSMENT_VALIDATION, '1');
 assert.ok(
   process.argv.slice(2).every((arg) => ['--keep', '--keep-no-call', '--live-smoke'].includes(arg)),
@@ -116,6 +118,7 @@ let source =
 await writeFile(sourcePath, source);
 await writeFile(path.join(out, 'mode'), 'valid');
 await writeFile(path.join(out, 'requests.jsonl'), '');
+const gatewayToken = testGatewayIdentity(home, `ws://127.0.0.1:${port}`);
 const env = {
   ...process.env,
   FARMSLOT_ROOT: root,
@@ -125,7 +128,7 @@ const env = {
   FARMSLOT_POOL_DIR: path.join(root, 'pool'),
   FARMSLOT_DISABLE_ORCHESTRATION: '1',
   FARMSLOT_GATEWAY_AUTH_MODE: 'token',
-  FARMSLOT_GATEWAY_TOKEN: randomUUID(),
+  FARMSLOT_GATEWAY_PROFILE: 'proof',
   GATEWAY_HOST: '127.0.0.1',
   GATEWAY_PORT: String(port),
   FARMSLOT_GATEWAY: `ws://127.0.0.1:${port}`,
@@ -140,13 +143,14 @@ delete env.TYPESCRIPT_API_KEY;
 delete env.FARMSLOT_EXTRA_LOG_DIRS;
 delete env.FARMSLOT_ASSESSMENT_MAX_STATE_BYTES;
 delete env.FARMSLOT_GATEWAY_PASSWORD;
-function rpc(method, params = {}, token = env.FARMSLOT_GATEWAY_TOKEN) {
+function rpc(method, params = {}, token = gatewayToken) {
+  testGatewayProfile(home, env.FARMSLOT_GATEWAY, token, 'actor');
   return JSON.parse(
     execFileSync(
       process.execPath,
       ['apps/command-center/scripts/cdp.mjs', 'gateway', method, JSON.stringify(params)],
       {
-        env: { ...env, FARMSLOT_GATEWAY_TOKEN: token },
+        env: { ...env, FARMSLOT_GATEWAY_PROFILE: 'actor' },
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
         maxBuffer: 8 * 1024 * 1024,
@@ -466,7 +470,6 @@ try {
     principalId: operator.id,
     displayName: 'triage-proof-operator',
   });
-  if (credential.adminGrant) env.FARMSLOT_GATEWAY_TOKEN = credential.adminGrant.secret;
   rpc('nodes.list', {}, credential.secret); // Prove this is an authenticated operator, not a bad token.
   assert.throws(() => rpc('intelligence.triage.get', { runId: id }, credential.secret));
   assert.throws(() =>
@@ -921,7 +924,6 @@ try {
       principalId: owner.id,
       displayName: 'triage-other-admin',
     });
-    if (otherCredential.adminGrant) env.FARMSLOT_GATEWAY_TOKEN = otherCredential.adminGrant.secret;
     assert.throws(
       () => rpc('run.resolveDecision', resolution, otherCredential.secret),
       /Assessment not found or expired/,
@@ -1014,7 +1016,7 @@ try {
       JSON.stringify({
         runId: id,
         gateway: env.FARMSLOT_GATEWAY,
-        token: env.FARMSLOT_GATEWAY_TOKEN,
+        token: gatewayToken,
         pid: gateway.pid,
       }),
       { mode: 0o600 },

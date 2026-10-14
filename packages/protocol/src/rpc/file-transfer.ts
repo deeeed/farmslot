@@ -138,6 +138,8 @@ export interface FileTransferSmokeResult {
 }
 
 export interface FileTransferRemoteE2eParams {
+  /** Explicit test credential for the HTTP self-proxy check; never returned. */
+  httpCredential?: string;
   /** Connected node machine id (default: first connected node). */
   machine?: string;
   /** Large fixture size (default: 3 chunks + a few bytes). */

@@ -209,6 +209,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'principal.create': { classification: 'admin' },
   'principal.grant': { classification: 'admin' },
   'principal.list': { classification: 'admin' },
+  'principal.retire': { classification: 'admin' },
   'principal.revokeRole': { classification: 'admin' },
   'providerAccounts.snapshot': { classification: 'admin' },
   'prPush.acknowledge': { classification: 'admin' },

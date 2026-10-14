@@ -138,7 +138,7 @@ test('an installed node with no env file token falls back to its own env', async
       token: 'service',
     },
   );
-  assert.deepEqual(installed.resolveGatewayCredential({}, install), { password: 'file-password' });
+  assert.deepEqual(installed.resolveGatewayCredential({}, install), null);
 });
 
 test('the deploy check fails naming the env file whose node token differs, and prints no token', (t) => {

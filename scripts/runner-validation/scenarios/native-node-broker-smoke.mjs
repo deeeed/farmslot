@@ -3,10 +3,13 @@ import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
+import { automationGatewayToken } from '../../lib/gateway-profile.mjs';
 import { ROOT } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 
 const { WebSocket } = createRequire(path.join(ROOT, 'services/gateway/package.json'))('ws');
+let gatewayToken;
+
 export const SCENARIO_ID = 'native-node-broker-smoke';
 export const RUNNER_AGNOSTIC = true;
 
@@ -80,13 +83,14 @@ export async function connect(
 
 /** Controlled node replies exercise the real broker trust boundary, not runner execution. */
 export async function runScenario({ outDir }) {
+  gatewayToken = await automationGatewayToken();
   const report = { runner: 'codex', checks: [], pass: false, inferenceExpected: false };
   const clients = [];
   try {
     assert.equal(process.env.FARMSLOT_GATEWAY, 'ws://127.0.0.1:18777');
     const token = process.env.FARMSLOT_NATIVE_BROKER_NODE_TOKEN;
     assert.ok(token, 'Supply a separately issued node credential for native-broker-validation');
-    const owner = await connect(process.env.FARMSLOT_GATEWAY_TOKEN, 'ui');
+    const owner = await connect(gatewayToken, 'ui');
     clients.push(owner);
     let payload;
     let failure;

@@ -4,12 +4,14 @@ import {
   CredentialStoreRuntime,
   CredentialStoreWriter,
   readCredentialStoreOffline,
+  retirePrincipalsOffline,
 } from '@farmslot/credential-store';
 import type {
   PrincipalBindNativeOwnerResult,
   PrincipalCreateResult,
   PrincipalGrantResult,
   PrincipalListResult,
+  PrincipalRetireResult,
   PrincipalRevokeRoleResult,
   PrincipalSubject,
   Role,
@@ -18,6 +20,7 @@ import type {
 
 import { resolveContext } from '../context.js';
 import { createEmitter } from '../envelope.js';
+import { OutputContext } from '../output.js';
 
 interface PrincipalCreateOptions {
   type: 'person' | 'service' | 'node';
@@ -99,6 +102,25 @@ export function registerPrincipalCommands(program: Command): void {
             );
           }
         }
+      } catch (error) {
+        emit.fail(error);
+      }
+    });
+
+  principal
+    .command('retire')
+    .argument('<principal-ids...>')
+    .description('Retire principals after their credentials are revoked')
+    .option('--offline', 'operate on the store while every gateway is stopped')
+    .action(async (principalIds: string[], opts: { offline?: boolean }, cmd: Command) => {
+      const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
+      const emit = createEmitter(output, cmd);
+      try {
+        const result: PrincipalRetireResult = opts.offline
+          ? retirePrincipalsOffline(principalIds)
+          : await resolveContext(cmd).client.call('principal.retire', { principalIds });
+        if (emit.machine) emit.ok(result);
+        else output.write(`Retired ${result.principalIds.join(', ')}.\n`);
       } catch (error) {
         emit.fail(error);
       }

@@ -42,8 +42,8 @@ export function parseEnvFile(text: string): Record<string, string> {
 }
 
 /**
- * File secrets stay available for explicit raw/default and local sandbox discovery.
- * They are not exported as shell credentials that could reach a different gateway.
+ * Obsolete raw auth keys never enter the CLI environment. Credentials come
+ * from the selected gateway profile.
  */
 const FILE_ONLY_KEYS = new Set(['FARMSLOT_GATEWAY_TOKEN', 'FARMSLOT_GATEWAY_PASSWORD']);
 

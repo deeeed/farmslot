@@ -1,3 +1,8 @@
+import { tsImport } from 'tsx/esm/api';
+const { testGatewayProfile } = await tsImport(
+  '../../lib/test-gateway-identity.mts',
+  import.meta.url,
+);
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -25,10 +30,12 @@ if (!recoverNoCall) {
 }
 const session = JSON.parse(await readFile(path.join(out, 'ui-session.json'), 'utf8'));
 const route = `run/${session.runId}?step=validation&proof=triage-browser-${Date.now()}`;
+testGatewayProfile(path.join(out, 'home'), session.gateway, session.token);
 const env = {
   ...process.env,
   FARMSLOT_GATEWAY: session.gateway,
-  FARMSLOT_GATEWAY_TOKEN: session.token,
+  FARMSLOT_HOME: path.join(out, 'home'),
+  FARMSLOT_GATEWAY_PROFILE: 'proof',
 };
 delete env.FARMSLOT_GATEWAY_PASSWORD;
 function cdp(...args) {

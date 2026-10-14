@@ -36,24 +36,6 @@ export function workAuthorshipNotice(
   );
 }
 
-export function migrationOriginator(runtime: GatewayAuthRuntime): WorkOriginator {
-  const bootResolution =
-    runtime.auth.mode === 'token' && runtime.auth.token
-      ? runtime.resolver.resolveSecret(runtime.auth.token, 'token')
-      : runtime.auth.mode === 'password' && runtime.auth.password
-        ? runtime.resolver.resolveSecret(runtime.auth.password, 'password')
-        : undefined;
-  if (bootResolution?.ok) {
-    return { kind: 'principal', principalId: bootResolution.principal.id };
-  }
-  const store = runtime.store.snapshot();
-  const migrated = store.credentials.find(
-    (credential) => credential.origin === 'env-migrated' && credential.revokedAt === null,
-  );
-  if (migrated) return { kind: 'principal', principalId: migrated.principalId };
-  return { kind: 'principal', principalId: 'local-admin' };
-}
-
 export function resolveWorkOriginator(
   runtime: GatewayAuthRuntime,
   originator: WorkOriginator | undefined,

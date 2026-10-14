@@ -1,3 +1,4 @@
+import { testGatewayProfile } from '../lib/test-gateway-identity.mjs';
 /** Manual Command Center diagnostic proof through the committed CDP helper. */
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
@@ -17,11 +18,14 @@ const code = fileURLToPath(new URL('../../', import.meta.url));
 const helper = path.join(code, 'apps/command-center/scripts/cdp.mjs');
 const hash = `config/settings?source-proof=${path.basename(root)}`;
 const route = `http://127.0.0.1:${webPort}/#${hash}`;
+testGatewayProfile(path.join(root, 'home'), `ws://127.0.0.1:${connection.port}`, connection.token);
 const env = {
   ...process.env,
   FARMSLOT_CDP_PORT: process.env.FARMSLOT_CDP_PORT ?? '19223',
   FARMSLOT_UI_URL: `http://127.0.0.1:${webPort}`,
-  FARMSLOT_GATEWAY_TOKEN: connection.token,
+  FARMSLOT_HOME: path.join(root, 'home'),
+  FARMSLOT_GATEWAY: `ws://127.0.0.1:${connection.port}`,
+  FARMSLOT_GATEWAY_PROFILE: 'proof',
   FARMSLOT_GATEWAY_PASSWORD: '',
   SOURCE_PROOF_ROOT: root,
 };

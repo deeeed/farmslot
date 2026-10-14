@@ -16,6 +16,7 @@ import {
   GatewayClient,
   GatewayConnectionError,
 } from '../../../../packages/cli/src/gateway-client.js';
+import { testGatewayIdentity } from '../../../../scripts/lib/test-gateway-identity.mjs';
 
 import { publishWorkspaceReview, type ReviewPublicationReceipt } from './provider.js';
 
@@ -316,7 +317,7 @@ test('production gateway publishes off-diff findings once through the publicatio
       teams: [
         {
           id: teamId,
-          ownerId: 'legacy-env',
+          ownerId: 'test-automation',
           revision: 1,
           createdAt: now,
           updatedAt: now,
@@ -357,8 +358,8 @@ test('production gateway publishes off-diff findings once through the publicatio
   const run = {
     ...f.input.run,
     project: 'review',
-    createdByPrincipalId: 'legacy-env',
-    nativeOwnerPrincipalId: 'legacy-env',
+    createdByPrincipalId: 'test-automation',
+    nativeOwnerPrincipalId: 'test-automation',
     familyId: f.input.run.id,
     parentRunId: null,
     lane: 'production',
@@ -374,7 +375,7 @@ test('production gateway publishes off-diff findings once through the publicatio
     reviewQaContract: { version: 1 },
     reviewPublication: {
       direct: {
-        ownerId: 'legacy-env',
+        ownerId: 'test-automation',
         pr: f.input.pr,
         requested: true,
         policy: { enabled: true, source: 'request', teamId, account },
@@ -393,7 +394,7 @@ test('production gateway publishes off-diff findings once through the publicatio
   await once(probe, 'listening');
   const port = (probe.address() as { port: number }).port;
   await new Promise<void>((resolve) => probe.close(() => resolve()));
-  const token = randomUUID();
+  const token = testGatewayIdentity(path.join(gatewayRoot, 'home'));
   let logs = '';
   const server = spawn('yarn', ['workspace', '@farmslot/gateway', 'start'], {
     cwd: repo,
@@ -404,9 +405,8 @@ test('production gateway publishes off-diff findings once through the publicatio
       FARMSLOT_ROOT: gatewayRoot,
       FARMSLOT_HOME: path.join(gatewayRoot, 'home'),
       FARMSLOT_RUNS_DIR: path.join(gatewayRoot, 'runs'),
-      FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'legacy-env',
+      FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'test-automation',
       FARMSLOT_DISABLE_ORCHESTRATION: '1',
-      FARMSLOT_GATEWAY_TOKEN: token,
       GATEWAY_HOST: '127.0.0.1',
       GATEWAY_PORT: String(port),
     },

@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+import { testGatewayIdentity, testGatewayProfile } from './lib/test-gateway-identity.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -72,7 +73,7 @@ assert(
 const fixture = await mkdtemp(path.join(tmpdir(), 'farmslot-workspace-admission-'));
 execFileSync('git', ['clone', '--shared', '--no-checkout', root, fixture], { stdio: 'pipe' });
 const log = path.join(fixture, 'gateway.log');
-const token = randomBytes(32).toString('hex');
+const token = testGatewayIdentity(path.join(fixture, 'home'));
 const probe = createServer();
 probe.listen(0, '127.0.0.1');
 await once(probe, 'listening');
@@ -123,6 +124,7 @@ for (const [machine, capacity] of [
 }
 const originalPools = await Promise.all(poolFiles.map((file) => readFile(file, 'utf8')));
 const output = openSync(log, 'w', 0o600);
+testGatewayProfile(path.join(fixture, 'home'), `ws://127.0.0.1:${port}`, token);
 const gateway = spawn('yarn', ['workspace', '@farmslot/gateway', 'start'], {
   cwd: root,
   detached: true,
@@ -137,10 +139,10 @@ const gateway = spawn('yarn', ['workspace', '@farmslot/gateway', 'start'], {
     FARMSLOT_DISPATCH_QUEUE_FILE: path.join(fixture, 'queue.json'),
     GATEWAY_HOST: '127.0.0.1',
     GATEWAY_PORT: String(port),
-    FARMSLOT_GATEWAY_TOKEN: token,
+    FARMSLOT_GATEWAY_PROFILE: 'proof',
     FARMSLOT_DISABLE_ORCHESTRATION: '1',
     FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
-    FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: scenario === 'missing-owner' ? '' : 'legacy-env',
+    FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: scenario === 'missing-owner' ? '' : 'test-automation',
   },
 });
 closeSync(output);

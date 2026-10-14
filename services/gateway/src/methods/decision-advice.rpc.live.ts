@@ -12,6 +12,10 @@ import { promisify } from 'node:util';
 
 import { type DecisionAdviceResult, Methods } from '@farmslot/protocol';
 
+import {
+  testGatewayIdentity,
+  testGatewayProfile,
+} from '../../../../scripts/lib/test-gateway-identity.mjs';
 import { beginAssessment, finishAssessment } from '../assessment/store.js';
 import {
   collisionDecisionActions,
@@ -29,12 +33,10 @@ test('decision advice gateway RPC gates on admission and refuses stale snapshots
   const previousEnabled = process.env.FARMSLOT_DECISION_ADVICE_ENABLED;
   process.env.FARMSLOT_HOME = home;
   process.env.FARMSLOT_DECISION_ADVICE_ENABLED = 'true';
-  const token = 'synthetic-only-gateway-proof';
+  const token = testGatewayIdentity(home);
   const runtime = createGatewayAuthRuntime({
     FARMSLOT_HOME: home,
     GATEWAY_HOST: '127.0.0.1',
-    FARMSLOT_GATEWAY_AUTH_MODE: 'token',
-    FARMSLOT_GATEWAY_TOKEN: token,
   });
   initializeGatewayIdentity(runtime, { host: '127.0.0.1' });
   const server = createServer();
@@ -68,6 +70,7 @@ test('decision advice gateway RPC gates on admission and refuses stale snapshots
       new URL('../../../../apps/command-center/scripts/cdp.mjs', import.meta.url),
     );
     const gatewayUrl = `ws://127.0.0.1:${address.port}`;
+    testGatewayProfile(home, gatewayUrl, token);
     const execute = promisify(execFile);
     const request = async (method: string, params: unknown): Promise<DecisionAdviceResult> => {
       const { stdout } = await execute(
@@ -78,7 +81,7 @@ test('decision advice gateway RPC gates on admission and refuses stale snapshots
           env: {
             ...process.env,
             FARMSLOT_GATEWAY: gatewayUrl,
-            FARMSLOT_GATEWAY_TOKEN: token,
+            FARMSLOT_GATEWAY_PROFILE: 'proof',
             FARMSLOT_RPC_TIMEOUT_MS: '15000',
           },
           timeout: 20_000,

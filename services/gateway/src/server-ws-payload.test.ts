@@ -1,3 +1,4 @@
+import { testGatewayIdentity } from '../../../scripts/lib/test-gateway-identity.mjs';
 // Proves oversized inbound WebSocket frames close the offending socket with
 // 1009 and do NOT crash the gateway process (unhandled 'error' on the socket).
 process.env.NODE_TEST_CONTEXT = '1';
@@ -67,10 +68,10 @@ test('credential-store refresh failure closes only the initializing websocket', 
   resetServerGlobalsForTests();
   const authRuntime = createGatewayAuthRuntime({
     FARMSLOT_HOME: mkdtempSync(join(tmpdir(), 'farmslot-ws-connect-fault-')),
-    FARMSLOT_GATEWAY_TOKEN: 'connect-fault-token',
     GATEWAY_HOST: '127.0.0.1',
   });
   initializeGatewayIdentity(authRuntime, { host: '127.0.0.1' });
+  testGatewayIdentity(authRuntime.store.env.FARMSLOT_HOME!);
   const originalStore = readFileSync(authRuntime.store.path, 'utf8');
   const httpServer = createServer();
   const wss = createWebSocketServer(httpServer, authRuntime);

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,242 +14,263 @@ import {
   resolveRequestIp,
 } from './auth.js';
 
-assert.deepEqual(resolveGatewayAuth({ FARMSLOT_GATEWAY_TOKEN: 'abc' }).mode, 'token');
-assert.deepEqual(resolveGatewayAuth({ FARMSLOT_GATEWAY_PASSWORD: 'pw' }).mode, 'password');
-assert.throws(() => resolveGatewayAuth({ FARMSLOT_GATEWAY_AUTH_MODE: 'token' }), /requires/);
+const homes: string[] = [];
+try {
+  const untouchedHome = mkdtempSync(join(tmpdir(), 'farmslot-auth-env-'));
+  homes.push(untouchedHome);
+  assert.equal(
+    resolveGatewayAuth({ FARMSLOT_HOME: untouchedHome, FARMSLOT_GATEWAY_TOKEN: 'abc' }).mode,
+    'none',
+  );
+  assert.equal(
+    resolveGatewayAuth({ FARMSLOT_HOME: untouchedHome, FARMSLOT_GATEWAY_PASSWORD: 'pw' }).mode,
+    'none',
+  );
+  const { runtime, secret } = createInitializedRuntime({});
+  assert.equal(
+    authenticateGatewayClient({
+      runtime,
+      connectParams: { clientKind: 'ui', token: 'wrong' },
+      clientIp: '1.2.3.4',
+    }).ok,
+    false,
+  );
+  assert.equal(
+    authenticateGatewayClient({
+      runtime,
+      connectParams: { clientKind: 'ui', token: secret },
+      clientIp: '1.2.3.4',
+    }).ok,
+    true,
+  );
 
-const runtime = createInitializedRuntime({ FARMSLOT_GATEWAY_TOKEN: 'abc' });
-assert.equal(
+  const limited = {
+    ...runtime,
+    limiter: new GatewayAuthRateLimiter(1, 60_000),
+  };
   authenticateGatewayClient({
-    runtime,
-    connectParams: { clientKind: 'ui', token: 'wrong' },
-    clientIp: '1.2.3.4',
-  }).ok,
-  false,
-);
-assert.equal(
-  authenticateGatewayClient({
-    runtime,
-    connectParams: { clientKind: 'ui', token: 'abc' },
-    clientIp: '1.2.3.4',
-  }).ok,
-  true,
-);
-
-const limited = {
-  ...runtime,
-  limiter: new GatewayAuthRateLimiter(1, 60_000),
-};
-authenticateGatewayClient({
-  runtime: limited,
-  connectParams: { clientKind: 'ui', token: 'bad' },
-  clientIp: '5.6.7.8',
-});
-const rateLimited = authenticateGatewayClient({
-  runtime: limited,
-  connectParams: { clientKind: 'ui', token: 'bad' },
-  clientIp: '5.6.7.8',
-});
-assert.equal(rateLimited.rateLimited, true);
-
-// Loopback clients bypass the rate limiter: a valid token authenticates even after a
-// prior failure that would lock out a remote IP (max=1). Covers the mapped IPv6 form.
-for (const ip of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) {
-  const loopbackLimited = { ...runtime, limiter: new GatewayAuthRateLimiter(1, 60_000) };
-  authenticateGatewayClient({
-    runtime: loopbackLimited,
+    runtime: limited,
     connectParams: { clientKind: 'ui', token: 'bad' },
-    clientIp: ip,
+    clientIp: '5.6.7.8',
   });
-  const loopbackOk = authenticateGatewayClient({
-    runtime: loopbackLimited,
-    connectParams: { clientKind: 'ui', token: 'abc' },
-    clientIp: ip,
+  const rateLimited = authenticateGatewayClient({
+    runtime: limited,
+    connectParams: { clientKind: 'ui', token: 'bad' },
+    clientIp: '5.6.7.8',
+  });
+  assert.equal(rateLimited.rateLimited, true);
+
+  // Loopback clients bypass the rate limiter: a valid token authenticates even after a
+  // prior failure that would lock out a remote IP (max=1). Covers the mapped IPv6 form.
+  for (const ip of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) {
+    const loopbackLimited = { ...runtime, limiter: new GatewayAuthRateLimiter(1, 60_000) };
+    authenticateGatewayClient({
+      runtime: loopbackLimited,
+      connectParams: { clientKind: 'ui', token: 'bad' },
+      clientIp: ip,
+    });
+    const loopbackOk = authenticateGatewayClient({
+      runtime: loopbackLimited,
+      connectParams: { clientKind: 'ui', token: secret },
+      clientIp: ip,
+    });
+    assert.equal(
+      loopbackOk.ok,
+      true,
+      `loopback ${ip} should auth with a valid token despite prior failure`,
+    );
+    assert.notEqual(loopbackOk.rateLimited, true, `loopback ${ip} should not be rate-limited`);
+  }
+
+  // With proxy headers trusted, clientIp comes from X-Forwarded-For — a forged loopback
+  // IP must NOT be exempt, so brute-force protection stays on for remote callers.
+  const { runtime: proxyRuntime, secret: proxySecret } = createInitializedRuntime({
+    FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS: '1',
+  });
+  const proxyLimited = { ...proxyRuntime, limiter: new GatewayAuthRateLimiter(1, 60_000) };
+  authenticateGatewayClient({
+    runtime: proxyLimited,
+    connectParams: { clientKind: 'ui', token: 'bad' },
+    clientIp: '127.0.0.1',
+  });
+  const forged = authenticateGatewayClient({
+    runtime: proxyLimited,
+    connectParams: { clientKind: 'ui', token: proxySecret },
+    clientIp: '127.0.0.1',
   });
   assert.equal(
-    loopbackOk.ok,
+    forged.rateLimited,
     true,
-    `loopback ${ip} should auth with a valid token despite prior failure`,
+    'forged loopback under proxy trust must stay rate-limited',
   );
-  assert.notEqual(loopbackOk.rateLimited, true, `loopback ${ip} should not be rate-limited`);
-}
 
-// With proxy headers trusted, clientIp comes from X-Forwarded-For — a forged loopback
-// IP must NOT be exempt, so brute-force protection stays on for remote callers.
-const proxyRuntime = createInitializedRuntime({
-  FARMSLOT_GATEWAY_TOKEN: 'abc',
-  FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS: '1',
-});
-const proxyLimited = { ...proxyRuntime, limiter: new GatewayAuthRateLimiter(1, 60_000) };
-authenticateGatewayClient({
-  runtime: proxyLimited,
-  connectParams: { clientKind: 'ui', token: 'bad' },
-  clientIp: '127.0.0.1',
-});
-const forged = authenticateGatewayClient({
-  runtime: proxyLimited,
-  connectParams: { clientKind: 'ui', token: 'abc' },
-  clientIp: '127.0.0.1',
-});
-assert.equal(forged.rateLimited, true, 'forged loopback under proxy trust must stay rate-limited');
-
-const cookieRuntime = createInitializedRuntime({ FARMSLOT_GATEWAY_TOKEN: 'cookie-token' });
-const cookieResponse = createFakeResponse();
-const cookieAuthorized = authorizeHttpRequest({
-  runtime: cookieRuntime,
-  req: createFakeRequest({
-    cookie: 'other=value; farmslot_gateway_credential=cookie-token',
-    remoteAddress: '127.0.0.1',
-  }),
-  res: cookieResponse,
-  resource: 'run-artifact',
-});
-assert.equal(cookieAuthorized, true);
-assert.equal(cookieResponse.statusCode, undefined);
-
-const encodedCookieResponse = createFakeResponse();
-const encodedCookieAuthorized = authorizeHttpRequest({
-  runtime: createInitializedRuntime({ FARMSLOT_GATEWAY_TOKEN: 'cookie token with spaces' }),
-  req: createFakeRequest({
-    cookie: `farmslot_gateway_credential=${encodeURIComponent('cookie token with spaces')}`,
-    remoteAddress: '127.0.0.1',
-  }),
-  res: encodedCookieResponse,
-  resource: 'run-artifact',
-});
-assert.equal(encodedCookieAuthorized, true);
-
-const queryTokenResponse = createFakeResponse();
-const queryTokenAuthorized = authorizeHttpRequest({
-  runtime: createInitializedRuntime({ FARMSLOT_GATEWAY_TOKEN: 'query token' }),
-  req: createFakeRequest({
-    url: `/api/run-artifact?runId=run-1&path=artifacts%2Fafter.png&token=${encodeURIComponent('query token')}`,
-    remoteAddress: '127.0.0.1',
-  }),
-  res: queryTokenResponse,
-  resource: 'run-artifact',
-});
-assert.equal(queryTokenAuthorized, true);
-
-const operator = cookieRuntime.writer.createPrincipal(
-  { type: 'person', displayName: 'http-operator' },
-  [{ role: 'operator', scope: { kind: 'global' } }],
-);
-const operatorIssue = cookieRuntime.writer.issueCredential(operator.id, 'http-operator');
-const operatorResponse = createFakeResponse();
-assert.equal(
-  authorizeHttpRequest({
+  const { runtime: cookieRuntime, secret: cookieSecret } = createInitializedRuntime({});
+  const cookieResponse = createFakeResponse();
+  const cookieAuthorized = authorizeHttpRequest({
     runtime: cookieRuntime,
     req: createFakeRequest({
-      cookie: `farmslot_gateway_credential=${operatorIssue.secret}`,
+      cookie: `other=value; farmslot_gateway_credential=${cookieSecret}`,
       remoteAddress: '127.0.0.1',
     }),
-    res: operatorResponse,
+    res: cookieResponse,
     resource: 'run-artifact',
-  }),
-  true,
-);
-assert.equal(operatorResponse.statusCode, undefined);
+  });
+  assert.equal(cookieAuthorized, true);
+  assert.equal(cookieResponse.statusCode, undefined);
 
-const operatorFileResponse = createFakeResponse();
-assert.equal(
-  authorizeHttpRequest({
+  const encodedCookieResponse = createFakeResponse();
+  const encodedCookieAuthorized = authorizeHttpRequest({
     runtime: cookieRuntime,
     req: createFakeRequest({
-      url: '/api/file?slotId=slot-1&path=.env.local-auth',
-      cookie: `farmslot_gateway_credential=${operatorIssue.secret}`,
+      cookie: `farmslot_gateway_credential=${encodeURIComponent(cookieSecret)}`,
       remoteAddress: '127.0.0.1',
     }),
-    res: operatorFileResponse,
-    resource: 'file',
-  }),
-  false,
-);
-assert.equal(operatorFileResponse.statusCode, 403);
+    res: encodedCookieResponse,
+    resource: 'run-artifact',
+  });
+  assert.equal(encodedCookieAuthorized, true);
 
-const resolverFailureResponse = createFakeResponse();
-const isSoloMode = cookieRuntime.resolver.isSoloMode;
-const consoleError = console.error;
-let resolverFailureLog = '';
-cookieRuntime.resolver.isSoloMode = () => {
-  throw new Error('credential store reload failed');
-};
-console.error = (...args: unknown[]) => {
-  resolverFailureLog = args.map(String).join(' ');
-};
-try {
+  const queryTokenResponse = createFakeResponse();
+  const queryTokenAuthorized = authorizeHttpRequest({
+    runtime: cookieRuntime,
+    req: createFakeRequest({
+      url: `/api/run-artifact?runId=run-1&path=artifacts%2Fafter.png&token=${encodeURIComponent(cookieSecret)}`,
+      remoteAddress: '127.0.0.1',
+    }),
+    res: queryTokenResponse,
+    resource: 'run-artifact',
+  });
+  assert.equal(queryTokenAuthorized, true);
+
+  const operator = cookieRuntime.writer.createPrincipal(
+    { type: 'service', displayName: 'http-operator' },
+    [{ role: 'operator', scope: { kind: 'global' } }],
+  );
+  const operatorIssue = cookieRuntime.writer.issueCredential(operator.id, 'http-operator');
+  const operatorResponse = createFakeResponse();
   assert.equal(
     authorizeHttpRequest({
       runtime: cookieRuntime,
       req: createFakeRequest({
-        cookie: 'farmslot_gateway_credential=cookie-token',
+        cookie: `farmslot_gateway_credential=${operatorIssue.secret}`,
         remoteAddress: '127.0.0.1',
       }),
-      res: resolverFailureResponse,
+      res: operatorResponse,
       resource: 'run-artifact',
+    }),
+    true,
+  );
+  assert.equal(operatorResponse.statusCode, undefined);
+
+  const operatorFileResponse = createFakeResponse();
+  assert.equal(
+    authorizeHttpRequest({
+      runtime: cookieRuntime,
+      req: createFakeRequest({
+        url: '/api/file?slotId=slot-1&path=.env.local-auth',
+        cookie: `farmslot_gateway_credential=${operatorIssue.secret}`,
+        remoteAddress: '127.0.0.1',
+      }),
+      res: operatorFileResponse,
+      resource: 'file',
     }),
     false,
   );
-} finally {
-  cookieRuntime.resolver.isSoloMode = isSoloMode;
-  console.error = consoleError;
-}
-assert.equal(resolverFailureResponse.statusCode, 500);
-assert.equal(resolverFailureResponse.body, JSON.stringify({ error: 'Internal error' }));
-assert.doesNotMatch(resolverFailureResponse.body, /credential store reload failed/u);
-assert.match(resolverFailureLog, /credential store reload failed/u);
+  assert.equal(operatorFileResponse.statusCode, 403);
 
-const missingCookieResponse = createFakeResponse();
-const missingCookieAuthorized = authorizeHttpRequest({
-  runtime: cookieRuntime,
-  req: createFakeRequest({ cookie: 'other=value', remoteAddress: '127.0.0.1' }),
-  res: missingCookieResponse,
-  resource: 'run-artifact',
-});
-assert.equal(missingCookieAuthorized, false);
-assert.equal(missingCookieResponse.statusCode, 401);
-
-const originalTrustProxyHeaders = process.env.FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS;
-try {
-  delete process.env.FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS;
-  assert.equal(
-    resolveRequestIp(
-      createFakeRequest({
-        remoteAddress: '10.0.0.10',
-        forwardedFor: '203.0.113.99, 10.0.0.1',
+  const resolverFailureResponse = createFakeResponse();
+  const isSoloMode = cookieRuntime.resolver.isSoloMode;
+  const consoleError = console.error;
+  let resolverFailureLog = '';
+  cookieRuntime.resolver.isSoloMode = () => {
+    throw new Error('credential store reload failed');
+  };
+  console.error = (...args: unknown[]) => {
+    resolverFailureLog = args.map(String).join(' ');
+  };
+  try {
+    assert.equal(
+      authorizeHttpRequest({
+        runtime: cookieRuntime,
+        req: createFakeRequest({
+          cookie: `farmslot_gateway_credential=${cookieSecret}`,
+          remoteAddress: '127.0.0.1',
+        }),
+        res: resolverFailureResponse,
+        resource: 'run-artifact',
       }),
-    ),
-    '10.0.0.10',
-  );
-
-  process.env.FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS = '1';
-  assert.equal(
-    resolveRequestIp(
-      createFakeRequest({
-        remoteAddress: '10.0.0.10',
-        forwardedFor: '203.0.113.99, 10.0.0.1',
-      }),
-    ),
-    '203.0.113.99',
-  );
-} finally {
-  if (originalTrustProxyHeaders === undefined) {
-    delete process.env.FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS;
-  } else {
-    process.env.FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS = originalTrustProxyHeaders;
+      false,
+    );
+  } finally {
+    cookieRuntime.resolver.isSoloMode = isSoloMode;
+    console.error = consoleError;
   }
-}
+  assert.equal(resolverFailureResponse.statusCode, 500);
+  assert.equal(resolverFailureResponse.body, JSON.stringify({ error: 'Internal error' }));
+  assert.doesNotMatch(resolverFailureResponse.body, /credential store reload failed/u);
+  assert.match(resolverFailureLog, /credential store reload failed/u);
 
-console.log('gateway auth tests passed');
+  const missingCookieResponse = createFakeResponse();
+  const missingCookieAuthorized = authorizeHttpRequest({
+    runtime: cookieRuntime,
+    req: createFakeRequest({ cookie: 'other=value', remoteAddress: '127.0.0.1' }),
+    res: missingCookieResponse,
+    resource: 'run-artifact',
+  });
+  assert.equal(missingCookieAuthorized, false);
+  assert.equal(missingCookieResponse.statusCode, 401);
+
+  const originalTrustProxyHeaders = process.env.FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS;
+  try {
+    delete process.env.FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS;
+    assert.equal(
+      resolveRequestIp(
+        createFakeRequest({
+          remoteAddress: '10.0.0.10',
+          forwardedFor: '203.0.113.99, 10.0.0.1',
+        }),
+      ),
+      '10.0.0.10',
+    );
+
+    process.env.FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS = '1';
+    assert.equal(
+      resolveRequestIp(
+        createFakeRequest({
+          remoteAddress: '10.0.0.10',
+          forwardedFor: '203.0.113.99, 10.0.0.1',
+        }),
+      ),
+      '203.0.113.99',
+    );
+  } finally {
+    if (originalTrustProxyHeaders === undefined) {
+      delete process.env.FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS;
+    } else {
+      process.env.FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS = originalTrustProxyHeaders;
+    }
+  }
+
+  console.log('gateway auth tests passed');
+} finally {
+  for (const home of homes) rmSync(home, { recursive: true, force: true });
+}
 
 function createInitializedRuntime(env: NodeJS.ProcessEnv) {
+  const home = mkdtempSync(join(tmpdir(), 'farmslot-auth-test-'));
+  homes.push(home);
   const runtime = createGatewayAuthRuntime({
     ...env,
-    FARMSLOT_HOME: mkdtempSync(join(tmpdir(), 'farmslot-auth-test-')),
+    FARMSLOT_HOME: home,
     GATEWAY_HOST: '127.0.0.1',
   });
   initializeGatewayIdentity(runtime, { host: '127.0.0.1' });
-  return runtime;
+  const admin = runtime.writer.createPrincipal(
+    { type: 'service', displayName: 'test-automation' },
+    [{ role: 'admin', scope: { kind: 'global' } }],
+  );
+  const issued = runtime.writer.issueCredential(admin.id, 'test-client');
+  return { runtime, secret: issued.secret };
 }
 
 function createFakeRequest(params: {

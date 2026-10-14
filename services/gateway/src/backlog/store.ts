@@ -1,6 +1,5 @@
 // backlog-store.ts — durable backlog intake layer with handoff into dispatch queue
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -200,7 +199,6 @@ function resolveBacklogFile(): string {
 }
 
 const BACKLOG_FILE = resolveBacklogFile();
-const BACKLOG_PROVENANCE_MARKER = `${BACKLOG_FILE}.provenance-v1`;
 const BACKLOG_SPEC_ROOT =
   process.env.FARMSLOT_BACKLOG_SPEC_DIR ?? path.join(farmslotRoot, '.backlog', 'specs');
 
@@ -1024,12 +1022,8 @@ async function clearUnclaimedReconcileMarkers(): Promise<void> {
   }
 }
 
-export async function loadBacklog(
-  legacyOriginator: WorkOriginator = { kind: 'principal', principalId: 'local-admin' },
-): Promise<void> {
+export async function loadBacklog(): Promise<void> {
   items.length = 0;
-  const migrationOpen = !existsSync(BACKLOG_PROVENANCE_MARKER);
-  let migrated = 0;
   try {
     const raw = await readFile(BACKLOG_FILE, 'utf-8');
     const parsed: unknown = JSON.parse(raw);
@@ -1037,19 +1031,11 @@ export async function loadBacklog(
     for (const entry of parsed) {
       const normalized = normalizeStoredItem(entry);
       if (normalized) {
-        if (migrationOpen && !normalized.originator) {
-          setBacklogOriginator(normalized, legacyOriginator);
-          migrated += 1;
-        }
         items.push(normalized);
       }
     }
     console.log(`[backlog] loaded ${items.length} items from disk`);
-    if (migrationOpen) {
-      await persistNow('provenance-migration');
-      await writeFile(BACKLOG_PROVENANCE_MARKER, 'provenance-v1\n', 'utf8');
-      console.log(`[provenance] backlog migrated ${migrated} item(s)`);
-    }
+
     if (await reconcileBacklogLinks()) schedulePersist('load-reconcile');
     await clearUnclaimedReconcileMarkers();
     const orphans = listOrphanedBacklogQueueItems();
@@ -1061,11 +1047,6 @@ export async function loadBacklog(
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') {
-      if (migrationOpen) {
-        await mkdir(path.dirname(BACKLOG_PROVENANCE_MARKER), { recursive: true });
-        await writeFile(BACKLOG_PROVENANCE_MARKER, 'provenance-v1\n', 'utf8');
-        console.log('[provenance] backlog migrated 0 item(s)');
-      }
       // No backlog file is the strongest form of "no item claims this run", so
       // the sweep matters MORE here, not less.
       await clearUnclaimedReconcileMarkers();

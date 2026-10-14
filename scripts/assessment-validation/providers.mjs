@@ -5,6 +5,8 @@ import { once } from 'node:events';
 import { mkdir, open, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { testGatewayIdentity } from '../lib/test-gateway-identity.mts';
+
 assert.equal(process.env.FARMSLOT_ASSESSMENT_VALIDATION, '1');
 assert.ok(process.argv.slice(2).every((a) => ['--keep', '--live-smoke'].includes(a)));
 const out = process.env.ASSESSMENT_PROVIDER_PROOF_OUT;
@@ -45,6 +47,7 @@ execFileSync(
   ],
   { stdio: 'pipe' },
 );
+const gatewayToken = testGatewayIdentity(home, `ws://127.0.0.1:${port}`);
 const env = {
   ...process.env,
   FARMSLOT_ROOT: root,
@@ -54,7 +57,7 @@ const env = {
   FARMSLOT_LOG_DIR: path.join(root, 'logs'),
   FARMSLOT_DISABLE_ORCHESTRATION: '1',
   FARMSLOT_GATEWAY_AUTH_MODE: 'token',
-  FARMSLOT_GATEWAY_TOKEN: randomUUID(),
+  FARMSLOT_GATEWAY_PROFILE: 'proof',
   GATEWAY_PORT: String(port),
   GATEWAY_HOST: '127.0.0.1',
   FARMSLOT_GATEWAY: `ws://127.0.0.1:${port}`,
@@ -348,7 +351,7 @@ try {
       path.join(out, 'ui-session.json'),
       JSON.stringify({
         gateway: env.FARMSLOT_GATEWAY,
-        token: env.FARMSLOT_GATEWAY_TOKEN,
+        token: gatewayToken,
         pid: child.pid,
         recordId: ordinary.assessmentId,
       }),

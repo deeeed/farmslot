@@ -2,8 +2,11 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { automationGatewayTarget } from '../../../scripts/lib/gateway-profile.mjs';
+
 const args = parseArgs(process.argv.slice(2));
 const gatewayUrl = required(args, 'gateway-url');
+const authTarget = await automationGatewayTarget(gatewayUrl);
 const slotId = required(args, 'slot-id');
 const ownerRunId = required(args, 'owner-run-id');
 const reportPath = path.resolve(args.report ?? 'reports/runtime-capability-smoke.json');
@@ -254,12 +257,7 @@ function connectGateway(url) {
         const auth = await call('auth.connect', {
           clientKind: 'ui',
           clientName: 'runtime-capability-smoke',
-          ...(process.env.FARMSLOT_GATEWAY_TOKEN
-            ? { token: process.env.FARMSLOT_GATEWAY_TOKEN }
-            : {}),
-          ...(process.env.FARMSLOT_GATEWAY_PASSWORD
-            ? { password: process.env.FARMSLOT_GATEWAY_PASSWORD }
-            : {}),
+          ...(authTarget?.credential ?? {}),
         });
         if (!auth) throw new Error('gateway authentication returned no result');
         resolve({ call, close: () => ws.close() });

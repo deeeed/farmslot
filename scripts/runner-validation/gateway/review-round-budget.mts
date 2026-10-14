@@ -1,3 +1,4 @@
+import { testGatewayIdentity } from '../../lib/test-gateway-identity.mjs';
 // Manual production-RPC/native reviewer proof. All recovery inputs precede startup.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
@@ -337,7 +338,7 @@ if (phase === 'serve') {
       createdAt: now,
       updatedAt: now,
       transport: 'native',
-      nativeOwnerPrincipalId: 'legacy-env',
+      nativeOwnerPrincipalId: 'test-automation',
       metrics: {
         runner: 'claude',
         model: 'sonnet',
@@ -383,6 +384,10 @@ if (phase === 'serve') {
       });
     const gatewayPort = await port();
     const uiPort = await port();
+    const proofToken = testGatewayIdentity(
+      path.join(temporary, 'home'),
+      `ws://127.0.0.1:${gatewayPort}`,
+    );
     env = {
       ...process.env,
       FARMSLOT_ROOT: root,
@@ -391,8 +396,8 @@ if (phase === 'serve') {
       FARMSLOT_RUNS_DIR: path.join(root, '.runs'),
       FARMSLOT_HOME: path.join(temporary, 'home'),
       FARMSLOT_NATIVE_STATE_DIR: path.join(temporary, 'native'),
-      FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'legacy-env',
-      FARMSLOT_GATEWAY_TOKEN: randomUUID(),
+      FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'test-automation',
+      FARMSLOT_GATEWAY_PROFILE: 'proof',
       FARMSLOT_GATEWAY_PASSWORD: '',
       FARMSLOT_GATEWAY: `ws://127.0.0.1:${gatewayPort}`,
       GATEWAY_HOST: '127.0.0.1',
@@ -676,7 +681,7 @@ registerHooks({load(url, context, nextLoad) {
           url: env.FARMSLOT_GATEWAY,
           kind: 'custom',
           authMode: 'token',
-          presetSecret: env.FARMSLOT_GATEWAY_TOKEN,
+          presetSecret: proofToken,
         },
       });
       metro = spawn(

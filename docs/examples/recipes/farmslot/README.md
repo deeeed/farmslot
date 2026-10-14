@@ -46,3 +46,32 @@ A real Farmslot runner may replace these fixture artifacts with live outputs, bu
 it should keep the same package shape: `summary.json`, `trace.json`,
 `artifact-manifest.json`, `recipe.json`, `recipe-resolution.json`, and any
 digest-keyed dependency recipes.
+
+## Identity and credential proof
+
+`identity-credentials.recipe.json` starts disposable service and node identities,
+checks RPC/HTTP authorization and retirement, then drives the browser login form.
+It needs Node 22, installed workspace dependencies and an agent-owned Chrome CDP
+endpoint selected by `FARMSLOT_CDP_PORT`. It does not change a live farm.
+
+From the checkout root, select the standard command actions from the shared
+catalog and run the recipe through the local CLI:
+
+```sh
+mkdir -p temp
+node --input-type=module -e '
+  import { readFileSync, writeFileSync } from "node:fs";
+  const catalog = JSON.parse(readFileSync("docs/examples/recipes/farmslot-v1.action-manifest.json", "utf8"));
+  catalog.actions = Object.fromEntries(["command", "end"].map(name => [name, catalog.actions[name]]));
+  delete catalog.observers;
+  writeFileSync("temp/identity-command.action-manifest.json", JSON.stringify(catalog));
+'
+node packages/cli/bin/farmslot.mjs --json recipe run \
+  docs/examples/recipes/farmslot/identity-credentials.recipe.json \
+  --project-root . --action-manifest temp/identity-command.action-manifest.json \
+  --artifacts-dir temp/identity-credentials-proof
+```
+
+Both scripts own their child processes and temporary state. Browser screenshots
+are written by the startup proof; the CLI retains command output and the recipe
+artifact package.

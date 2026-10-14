@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+import { testGatewayIdentity, testGatewayProfile } from './lib/test-gateway-identity.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -121,7 +122,7 @@ const fixture = await mkdtemp(path.join(tmpdir(), 'farmslot-review-qa-'));
 // Reuse existing objects without creating commits or checking out another copy of the source.
 execFileSync('git', ['clone', '--shared', '--no-checkout', root, fixture], { stdio: 'pipe' });
 const log = path.join(fixture, 'gateway.log');
-const token = randomBytes(32).toString('hex');
+const token = testGatewayIdentity(path.join(fixture, 'home'));
 const portProbe = createServer();
 portProbe.listen(0, '127.0.0.1');
 await once(portProbe, 'listening');
@@ -516,7 +517,7 @@ async function seedDepthRuns() {
       slotId,
       branch: 'fixture-change',
       taskFile,
-      createdByPrincipalId: 'legacy-env',
+      createdByPrincipalId: 'test-automation',
       steps,
       decisions: [],
       metrics: { runner: depthReviewer.runner, model: depthReviewer.model },
@@ -548,6 +549,7 @@ async function seedDepthRuns() {
 
 function launchGateway() {
   const output = openSync(log, 'a', 0o600);
+  testGatewayProfile(path.join(fixture, 'home'), `ws://127.0.0.1:${port}`, token);
   const processHandle = spawn('yarn', ['workspace', '@farmslot/gateway', 'start'], {
     cwd: root,
     detached: true,
@@ -566,8 +568,8 @@ function launchGateway() {
       FARMSLOT_DISPATCH_QUEUE_FILE: path.join(fixture, 'queue.json'),
       GATEWAY_HOST: '127.0.0.1',
       GATEWAY_PORT: String(port),
-      FARMSLOT_GATEWAY_TOKEN: token,
-      FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'legacy-env',
+      FARMSLOT_GATEWAY_PROFILE: 'proof',
+      FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'test-automation',
       FARMSLOT_DISABLE_ORCHESTRATION: [
         'automatic-qa',
         'publication-delivery',
@@ -585,9 +587,9 @@ function launchGateway() {
 if (scenario === 'linked-qa' || scenario === 'automatic-qa') {
   const now = new Date().toISOString();
   for (const [id, owner, head] of [
-    ['source-review', 'legacy-env', 'a'],
+    ['source-review', 'test-automation', 'a'],
     ['foreign-review', 'another-owner', 'a'],
-    ['stale-review', 'legacy-env', 'c'],
+    ['stale-review', 'test-automation', 'c'],
   ]) {
     await json(path.join(fixture, 'runs', id + '.json'), {
       id,
@@ -660,7 +662,7 @@ if (scenario === 'ready-gate-refusal') {
     slotId: 'first-disabled',
     branch: 'fixture-gate',
     taskFile: null,
-    createdByPrincipalId: 'legacy-env',
+    createdByPrincipalId: 'test-automation',
     steps: [],
     decisions: [readyGateDecision],
     metrics: {},
@@ -749,6 +751,7 @@ try {
     if (scenario === 'publication-direct') {
       const directRuns: any[] = [];
       const invoke = (flags: string[]) => {
+        testGatewayProfile(path.join(fixture, 'home'), `ws://127.0.0.1:${port}`, token);
         const child = spawnSync(
           'yarn',
           [
@@ -787,7 +790,7 @@ try {
             env: {
               ...process.env,
               FARMSLOT_HOME: path.join(fixture, 'home'),
-              FARMSLOT_GATEWAY_TOKEN: token,
+              FARMSLOT_GATEWAY_PROFILE: 'proof',
             },
             encoding: 'utf8',
           },

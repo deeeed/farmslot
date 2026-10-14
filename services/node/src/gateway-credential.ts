@@ -4,7 +4,6 @@ import { fileURLToPath } from 'node:url';
 
 export interface GatewayCredential {
   token?: string;
-  password?: string;
 }
 
 export interface NodeTokenEnvFile {
@@ -44,9 +43,8 @@ export function findNodeTokenEnvFile(
 function credentialFromEnv(
   env: NodeJS.ProcessEnv | Record<string, string>,
 ): GatewayCredential | null {
-  const token = nonEmpty(env.FARMSLOT_NODE_TOKEN) ?? nonEmpty(env.FARMSLOT_GATEWAY_TOKEN);
-  const password = nonEmpty(env.FARMSLOT_GATEWAY_PASSWORD);
-  if (token || password) return { ...(token ? { token } : {}), ...(password ? { password } : {}) };
+  const token = nonEmpty(env.FARMSLOT_NODE_TOKEN);
+  if (token) return { token };
   return null;
 }
 

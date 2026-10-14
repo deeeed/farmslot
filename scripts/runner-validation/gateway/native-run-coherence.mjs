@@ -28,6 +28,7 @@ import {
   prepareDeclaredCapabilityProof,
   proveDeclaredCapabilityAcquisition,
 } from '../../e2e-declared-capabilities.mts';
+import { testGatewayIdentity } from '../../lib/test-gateway-identity.mts';
 
 import {
   prepareCleanupGuards,
@@ -614,7 +615,7 @@ try {
     mode({ mode: 'complete' });
   }
   const port = await freePort();
-  const token = randomUUID();
+  testGatewayIdentity(path.join(temporary, 'home'), `ws://127.0.0.1:${port}`);
   env = {
     ...process.env,
     PATH: `${bin}${path.delimiter}${process.env.PATH}`,
@@ -625,8 +626,8 @@ try {
     FARMSLOT_RUNS_DIR: path.join(root, '.runs'),
     FARMSLOT_CAPABILITY_STORE_FILE: path.join(root, '.runs/capabilities.json'),
     FARMSLOT_NATIVE_STATE_DIR: path.join(temporary, 'native'),
-    FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'legacy-env',
-    FARMSLOT_GATEWAY_TOKEN: token,
+    FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'test-automation',
+    FARMSLOT_GATEWAY_PROFILE: 'proof',
     FARMSLOT_GATEWAY_PASSWORD: '',
     FARMSLOT_GATEWAY: `ws://127.0.0.1:${port}`,
     GW_URL: `ws://127.0.0.1:${port}`,

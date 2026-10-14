@@ -4,10 +4,13 @@ import path from 'node:path';
 
 import { Methods } from '@farmslot/protocol';
 
+import { automationGatewayToken } from '../../lib/gateway-profile.mjs';
 import { ROOT } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 
 import { connect } from './native-node-broker-smoke.mjs';
+
+let gatewayToken;
 
 export const SCENARIO_ID = 'native-additional-profiles';
 export const RUNNER_AGNOSTIC = true;
@@ -15,6 +18,7 @@ export const RUNNER_AGNOSTIC = true;
 /** Empty configuration profiles must report native login status without inheriting the ambient login. */
 export async function runScenario({ outDir, explicit }) {
   if (!explicit) return { scenario: SCENARIO_ID, runner: 'native', pass: true, skipped: true };
+  gatewayToken = await automationGatewayToken();
   const report = { runner: 'native', checks: [], pass: false, inferenceExpected: false };
   let client;
   const profiles = [];
@@ -24,7 +28,7 @@ export async function runScenario({ outDir, explicit }) {
       ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) && url.port && url.port !== '7777',
       'Use a private local gateway',
     );
-    client = await connect(process.env.FARMSLOT_GATEWAY_TOKEN, 'ui');
+    client = await connect(gatewayToken, 'ui');
     const ok = async (method, params) => {
       const r = await client.request(method, params, 90000);
       assert.equal(r.ok, true, `${method}: ${r.error?.code}`);

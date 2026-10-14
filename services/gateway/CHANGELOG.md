@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Authenticate explicit person, service and node credentials, remove environment-secret import, and retire revoked principals without resetting activation or admin protection.
 - Prepare native workspace decisions in the selected account home before farm reviews. Verify hook safety using the selected runner executable, suppress repository startup automation, preserve Git-readable content and enforce source write restrictions.
 - Preserve the complete frozen worker contract during role cleanup and restore the matching dispatch contract on retained replay, allowing pending visual claims to reach their intended review gate.
 

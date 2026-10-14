@@ -14,12 +14,14 @@ import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { isCredentialStoreLockHeld } from './credential-lock-state.js';
 
+export const VIRTUAL_PRINCIPAL_IDS = ['local-admin', 'local-node', 'system'] as const;
+
 export interface CredentialRecord {
   id: string;
   principalId: string;
   displayName: string;
   secret: StoredSecret;
-  origin: 'issued' | 'paired' | 'env-migrated';
+  origin: 'issued' | 'paired';
   createdAt: string;
   revokedAt: string | null;
 }
@@ -35,6 +37,8 @@ export interface CredentialStore {
   activatedAt: string | null;
   principals: Principal[];
   credentials: CredentialRecord[];
+  retiredPrincipalIds?: string[];
+  retiredCredentialIds?: string[];
 }
 
 export interface CredentialStoreChange {
@@ -164,7 +168,10 @@ export class CredentialStoreRuntime {
   }
 }
 
-function validateCredentialStore(value: unknown, path: string): asserts value is CredentialStore {
+export function validateCredentialStore(
+  value: unknown,
+  path: string,
+): asserts value is CredentialStore {
   if (!isRecord(value)) fail(path, 'expected an object');
   if (value.schemaVersion !== 1) {
     fail(path, `unsupported schemaVersion ${String(value.schemaVersion)}`);
@@ -182,6 +189,16 @@ function validateCredentialStore(value: unknown, path: string): asserts value is
   value.credentials.forEach((credential, index) => validateCredential(credential, path, index));
   assertUniqueIds(value.principals, path, 'principal');
   assertUniqueIds(value.credentials, path, 'credential');
+  for (const key of ['retiredPrincipalIds', 'retiredCredentialIds'] as const) {
+    const ids = value[key];
+    if (ids === undefined) continue;
+    if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string' || !id.trim()))
+      fail(path, `${key} must contain nonempty ids`);
+    if (new Set(ids).size !== ids.length) fail(path, `${key} contains duplicate ids`);
+    const records = key === 'retiredPrincipalIds' ? value.principals : value.credentials;
+    if (records.some((record: { id: string }) => ids.includes(record.id)))
+      fail(path, `${key} contains an id that still has a record`);
+  }
   const principals = value.principals as Principal[];
   const assignedMachines = new Set<string>();
   for (const principal of principals) {
@@ -213,7 +230,7 @@ function validatePrincipal(
   ) {
     fail(path, `principal[${index}] is invalid`);
   }
-  if (value.id === 'local-admin' || value.id === 'local-node' || value.id === 'system') {
+  if ((VIRTUAL_PRINCIPAL_IDS as readonly string[]).includes(value.id)) {
     fail(path, `principal[${index}] uses reserved virtual id '${value.id}'`);
   }
   validateSubject(value.subject, path, index);
@@ -262,7 +279,7 @@ function validateCredential(
     typeof value.id !== 'string' ||
     typeof value.principalId !== 'string' ||
     typeof value.displayName !== 'string' ||
-    (value.origin !== 'issued' && value.origin !== 'paired' && value.origin !== 'env-migrated') ||
+    (value.origin !== 'issued' && value.origin !== 'paired') ||
     typeof value.createdAt !== 'string' ||
     !isIsoUtc(value.createdAt) ||
     (value.revokedAt !== null &&
@@ -295,24 +312,26 @@ function stampsEqual(a: FreshnessStamp | null, b: FreshnessStamp | null): boolea
 }
 
 function diffStores(previous: CredentialStore, next: CredentialStore): CredentialStoreChange {
-  const previousCredentials = new Map(previous.credentials.map((record) => [record.id, record]));
   const previousPrincipals = new Map(
     previous.principals.map((principal) => [principal.id, principal]),
   );
+  const nextCredentials = new Map(next.credentials.map((record) => [record.id, record]));
+  const nextPrincipals = new Map(next.principals.map((principal) => [principal.id, principal]));
   return {
-    revokedCredentialIds: next.credentials
+    revokedCredentialIds: previous.credentials
       .filter(
         (record) =>
-          record.revokedAt !== null && previousCredentials.get(record.id)?.revokedAt === null,
+          !nextCredentials.has(record.id) ||
+          (record.revokedAt === null && nextCredentials.get(record.id)?.revokedAt !== null),
       )
       .map((record) => record.id),
-    changedPrincipalIds: next.principals
-      .filter(
-        (principal) =>
-          JSON.stringify(previousPrincipals.get(principal.id)?.roles ?? null) !==
-          JSON.stringify(principal.roles),
-      )
-      .map((principal) => principal.id),
+    changedPrincipalIds: [
+      ...new Set([...previousPrincipals.keys(), ...nextPrincipals.keys()]),
+    ].filter(
+      (id) =>
+        JSON.stringify(previousPrincipals.get(id) ?? null) !==
+        JSON.stringify(nextPrincipals.get(id) ?? null),
+    ),
     activationLatched: previous.activatedAt === null && next.activatedAt !== null,
   };
 }

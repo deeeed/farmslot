@@ -2,6 +2,10 @@
 
 **Status:** Accepted
 **Implementation:** Core principal and credential model shipped in [#509](https://github.com/deeeed/farmslot/pull/509), commit `30ea26b1b`. Deferred containment, scoping and other follow-on decisions below remain separate work.
+
+The [identity and credentials reference](../reference/identity-and-credentials.md)
+is the short operator guide. Amendment 1 below replaces the environment-secret
+authentication and reconciliation provisions in this ADR.
 **Date:** 2026-07-25
 **Relates to:** [ADR-036](036-cli-gateway-profiles.md) (supersedes its single-secret assumption), [ADR-046](046-mandatory-local-node.md), [ADR-008](008-remote-communication.md), [ADR-013](013-gateway-mediated-orchestration.md), [ADR-023](023-runner-agnostic-tui-execution.md) (safety tiers become an authorization axis), [ADR-037](037-prepare-profiles.md), [ADR-040](040-work-graph-orchestration.md)
 
@@ -1547,3 +1551,72 @@ Four decisions belong to the gateway's owner rather than to implementation.
    which makes
    store-file access equivalent to gateway ownership. Documenting it makes recovery reliable;
    leaving it undocumented keeps it from being treated as routine administration.
+
+## Amendment 1: explicit credentials, 2026-10-14
+
+**Status:** Accepted. The owner approved credential consolidation and retaining
+the person, service and node kinds on 2026-10-14. Implementation and rollout are
+pending.
+
+### Decision
+
+Use one person identity with a paired credential for each human device, one
+named `farm-automation` service credential for automation, and one active node
+credential per machine. Only a person can attest to publish gates and visual
+judgments. A node credential authorizes only node operations; remote file
+transfer uses that authenticated node connection. HTTP downloads require an
+authorized person or service credential.
+
+Remove environment-secret authentication, boot reconciliation, the imported
+credential origin and implicit credential discovery. Issued and paired
+`fs_<id>_<secret>` credentials remain the token transport. Clients select an
+explicit gateway profile or an isolated test credential; node agents receive
+only `FARMSLOT_NODE_TOKEN`. Solo mode, activation, live authorization and
+last-admin protection retain their existing rules.
+
+Retirement is an explicit store transaction. It refuses active credentials and
+remaining native-owner bindings, removes the selected principals and their
+revoked credential records, and reserves their ids as tombstones. Historic work
+keeps its original principal id and cannot gain authority through id reuse.
+Native owner bindings remain immutable; changing an owner requires verified
+node re-enrollment, followed by retirement of the old node identity.
+
+The offline retirement command is also the cutover operation for stores with
+records the new runtime no longer accepts. It requires every gateway sharing
+the identity home to be stopped, holds the existing credential lock, checks
+every selected credential is revoked, validates the complete remaining store,
+and preserves an active admin. It never authenticates an old secret or creates
+replacement authority. Runtime loading accepts only the current credential
+contract and fails closed on unretired records.
+
+### Rationale
+
+An environment secret hides the caller's identity and couples credential
+rotation to gateway configuration. Explicit credentials make attribution,
+revocation and the boundary between human judgment and automation visible.
+The [reference page](../reference/identity-and-credentials.md) documents this
+model, rotation and recovery in one place.
+
+### Consequences
+
+Move and verify callers before revoking their old credentials. Gateways retain
+their activation latch when secrets or principals are retired. Person pairing
+is performed by the person. Recovery uses the supported offline writer with all
+gateways stopped. Existing tokens remain individually revocable; password and
+raw environment-secret presentation have no compatibility fallback.
+
+### Public surface
+
+- `farmslot pair --principal <id>` and `farmslot login <profile> --code <code>`
+  serve human devices; `--gateway <profile>` selects stored client credentials.
+- `farmslot credential issue`, `credential revoke` and `principal retire
+<id...> [--offline]` serve operators maintaining automation and nodes.
+  Online retirement uses the admin-only `principal.retire` RPC.
+- `@farmslot/credential-store` owns locked retirement and offline cutover;
+  `@farmslot/protocol` owns retirement request and result types. These are
+  internal farm contracts, shipped together with their CLI and gateway callers.
+- Harnesses inherit the client's explicit identity and the gateway's
+  authorization checks. They receive no alternate authentication path.
+
+The [principal implementation spec](../plans/principal-core-implementation-spec.md)
+owns the validation, transaction and lifecycle requirements.

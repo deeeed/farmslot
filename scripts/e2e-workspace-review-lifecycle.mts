@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+import { testGatewayIdentity, testGatewayProfile } from './lib/test-gateway-identity.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -382,10 +383,11 @@ const port = (portProbe.address() as { port: number }).port;
 await new Promise<void>((resolve, reject) =>
   portProbe.close((error) => (error ? reject(error) : resolve())),
 );
-const token = randomBytes(32).toString('hex');
+const token = testGatewayIdentity(path.join(fixture, 'home'));
 const log = path.join(evidence, 'gateway.log');
 function startGateway(recovery = false) {
   const fd = openSync(log, 'a', 0o600);
+  testGatewayProfile(path.join(fixture, 'home'), `ws://127.0.0.1:${port}`, token);
   const processHandle = spawn('yarn', ['workspace', '@farmslot/gateway', 'start'], {
     cwd: root,
     detached: true,
@@ -401,8 +403,8 @@ function startGateway(recovery = false) {
       FARMSLOT_DISPATCH_QUEUE_FILE: path.join(fixture, 'queue.json'),
       GATEWAY_HOST: '127.0.0.1',
       GATEWAY_PORT: String(port),
-      FARMSLOT_GATEWAY_TOKEN: token,
-      FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'legacy-env',
+      FARMSLOT_GATEWAY_PROFILE: 'proof',
+      FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'test-automation',
       FARMSLOT_NATIVE_STATE_DIR: path.join(fixture, 'home/native-sessions'),
       FARMSLOT_DISABLE_ORCHESTRATION: recovery || scenario === 'tmux-fixture' ? '0' : '1',
       FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
@@ -672,7 +674,11 @@ async function openReviewUi(route: string) {
       {
         cwd: root,
         encoding: 'utf8',
-        env: { ...process.env, FARMSLOT_GATEWAY_TOKEN: token },
+        env: {
+          ...process.env,
+          FARMSLOT_HOME: path.join(fixture, 'home'),
+          FARMSLOT_GATEWAY_PROFILE: 'proof',
+        },
         timeout: 30000,
       },
     ).trim();

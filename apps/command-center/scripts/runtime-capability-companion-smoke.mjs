@@ -2,8 +2,11 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { automationGatewayTarget } from '../../../scripts/lib/gateway-profile.mjs';
+
 const args = parseArgs(process.argv.slice(2));
 const gatewayUrl = required('gateway-url');
+const authTarget = await automationGatewayTarget(gatewayUrl);
 const slotId = required('slot-id');
 const peerSlotId = required('peer-slot-id');
 const ownerRunId = required('owner-run-id');
@@ -189,12 +192,7 @@ function connectGateway(url) {
           await call('auth.connect', {
             clientKind: 'ui',
             clientName: 'runtime-capability-companion-smoke',
-            ...(process.env.FARMSLOT_GATEWAY_TOKEN
-              ? { token: process.env.FARMSLOT_GATEWAY_TOKEN }
-              : {}),
-            ...(process.env.FARMSLOT_GATEWAY_PASSWORD
-              ? { password: process.env.FARMSLOT_GATEWAY_PASSWORD }
-              : {}),
+            ...(authTarget?.credential ?? {}),
           });
           resolve({ call, close: () => socket.close() });
         } catch (error) {
