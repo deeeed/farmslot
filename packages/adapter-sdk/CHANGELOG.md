@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.13.3 - 2026-10-15
+
+- Use the coordinated window screenshot engine dependency closure.
+
 ## 0.13.2 - 2026-10-15
 
 - Align the installed worker dependency closure with protocol 0.44.0 and provenance-bound branch maintenance.
