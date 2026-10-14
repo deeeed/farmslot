@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.17.5 - 2026-10-15
+
+- Use the coordinated window screenshot engine dependency closure.
+
 ## 0.17.4 - 2026-10-15
 
 - Use agent-runtime 0.22.1 for verified stopped-host recovery while preserving native session journals.

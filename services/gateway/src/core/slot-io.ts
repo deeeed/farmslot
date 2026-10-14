@@ -27,8 +27,12 @@ import {
   type NodeFsReadChunkResult,
 } from '@farmslot/protocol';
 
-import { getNode } from '../fleet/machine-registry.js';
-import { sendNodeRequest } from '../fleet/node-rpc.js';
+import {
+  assertNodeReconnectCurrent,
+  isNodeTransportUnavailableError,
+  sendNodeRequest,
+  waitForNode,
+} from '../fleet/node-rpc.js';
 
 import { isLocal } from './exec.js';
 import { sha256File } from './file-hash.js';
@@ -111,16 +115,13 @@ function local(ctx: SlotLocality): boolean {
   return isLocal(ctx.host, ctx.machine);
 }
 
-function requireNode(machine: string) {
-  const node = getNode(machine);
-  if (!node) throw new Error(`No node connected for ${machine}`);
-  return node;
-}
-
 function requestFor(ctx: SlotLocality): NonNullable<SlotLocality['nodeRequest']> {
   if (ctx.nodeRequest) return ctx.nodeRequest;
-  const node = requireNode(ctx.machine);
-  return (method, params, options) => sendNodeRequest(node, method, params, options);
+  return async (method, params, options) => {
+    const node = await waitForNode(ctx.machine, 0);
+    assertNodeReconnectCurrent();
+    return sendNodeRequest(node, method, params, options);
+  };
 }
 
 function nodePathParams(fullPath: string): { root: string; relPath: string } {
@@ -996,7 +997,8 @@ export async function slotCopyDir(
             transferred && typeof entry.size === 'number' ? entry.size : 0,
           );
         } catch (err) {
-          const { FileTransferCancelledError } = await import('./file-transfer.js');
+          const { FileTransferCancelledError, FileTransferIdleTimeoutError } =
+            await import('./file-transfer.js');
           if (err instanceof FileTransferCancelledError || aggregate.signal.aborted) {
             aggregate.fail(err instanceof Error ? err.message : String(err));
             throw err instanceof FileTransferCancelledError
@@ -1009,6 +1011,12 @@ export async function slotCopyDir(
             continue;
           }
           aggregate.fail(entryError.message);
+          if (isNodeTransportUnavailableError(err)) throw err;
+          if (
+            err instanceof FileTransferIdleTimeoutError &&
+            isNodeTransportUnavailableError(err.cause)
+          )
+            throw err.cause;
           throw entryError;
         }
         if (transferred) count++;

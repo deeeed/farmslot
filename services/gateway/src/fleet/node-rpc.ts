@@ -1,5 +1,7 @@
 // node-rpc.ts — send RPC requests to connected nodes and await responses
 
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 import { WebSocket } from 'ws';
 
 import {
@@ -305,21 +307,61 @@ function sendNodeRequestStreaming(
   });
 }
 
-/**
- * Wait for a node to connect, allowing cancellation before any command is sent.
- */
-async function waitForNode(
+const reconnectWait = new AsyncLocalStorage<{ assertCurrent: () => void; deadline?: number }>();
+
+export function assertNodeReconnectCurrent(): void {
+  reconnectWait.getStore()?.assertCurrent();
+}
+
+/** Pipeline preparation waits for reconnect before sending, never by replaying a command. */
+export function withNodeReconnectWait<T>(
+  operation: () => Promise<T>,
+  assertCurrent: () => void,
+): Promise<T> {
+  return reconnectWait.run({ assertCurrent }, operation);
+}
+
+/** Owned teardown must still run after forward execution was cancelled. */
+export function withoutNodeReconnectWait<T>(operation: () => Promise<T>): Promise<T> {
+  return reconnectWait.exit(operation);
+}
+
+/** Revalidate native authority after a pre-send reconnect, never retry a sent request. */
+export function resolveAfterNodeReconnect<T>(machine: string, resolve: () => T): T | Promise<T> {
+  assertNodeReconnectCurrent();
+  try {
+    return resolve();
+  } catch (error) {
+    if (!reconnectWait.getStore() || !isNodeTransportUnavailableError(error)) throw error;
+    return waitForNode(machine).then(() => {
+      assertNodeReconnectCurrent();
+      return resolve();
+    });
+  }
+}
+
+export async function waitForNode(
   machine: string,
   timeoutMs = 15_000,
   signal?: AbortSignal,
 ): Promise<ConnectedNode> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  const scope = reconnectWait.getStore();
+  const check = () => {
+    scope?.assertCurrent();
     if (signal?.aborted) throw new Error('Remote execution cancelled before connecting.');
+  };
+  check();
+  const connected = getNode(machine);
+  if (connected?.ws.readyState === WebSocket.OPEN) return connected;
+  if (scope) timeoutMs = 120_000;
+  const deadline = scope ? (scope.deadline ??= Date.now() + timeoutMs) : Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    check();
     const node = getNode(machine);
     if (node && node.ws.readyState === WebSocket.OPEN) return node;
-    await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, Math.min(100, deadline - Date.now())));
   }
+  check();
   throw new NodeTransportUnavailableError(
     machine,
     'not-connected',
@@ -379,6 +421,7 @@ async function nodeExecRequest(
 ): Promise<ExecResult> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const node = await waitForNode(machine, 15_000, opts?.signal);
+    assertNodeReconnectCurrent();
     if (opts?.signal?.aborted) throw new Error('Remote execution cancelled before send.');
     if (opts?.signal && !node.execCancellation) {
       throw new Error(`Node ${machine} needs an update before it can run cancellable commands.`);

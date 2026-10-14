@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.22.2 - 2026-10-15
+
+- Use the coordinated window screenshot engine dependency closure.
+
 ## 0.22.1 - 2026-10-15
 
 - Recover stopped native hosts through fresh process verification and preserved cleanup receipts without resetting session journals.

@@ -200,10 +200,12 @@ export class FileTransferIdleTimeoutError extends Error {
     bytesTransferred: number;
     totalBytes: number;
     idleTimeoutMs: number;
+    cause?: unknown;
   }) {
     super(
       `File transfer idle timeout after ${args.idleTimeoutMs}ms ` +
         `(last progress ${args.bytesTransferred}/${args.totalBytes} bytes, id=${args.transferId})`,
+      { cause: args.cause },
     );
     this.name = 'FileTransferIdleTimeoutError';
     this.bytesTransferred = args.bytesTransferred;
@@ -377,12 +379,13 @@ export async function copyFileChunked(params: ChunkedCopyParams): Promise<Chunke
     }
   };
 
-  const idleTimeoutError = () =>
+  const idleTimeoutError = (cause?: unknown) =>
     new FileTransferIdleTimeoutError({
       transferId,
       bytesTransferred,
       totalBytes,
       idleTimeoutMs,
+      cause,
     });
 
   /** Reject if idle budget is already exhausted; race pending reads against the remainder. */
@@ -415,7 +418,7 @@ export async function copyFileChunked(params: ChunkedCopyParams): Promise<Chunke
         !(err instanceof FileTransferIdleTimeoutError) &&
         /timeout after \d+ms|Node mini timeout|RPC timeout|request timed out/i.test(message)
       ) {
-        throw idleTimeoutError();
+        throw idleTimeoutError(err);
       }
       throw err;
     } finally {
@@ -819,12 +822,13 @@ export async function readRemoteFileChunkedToBuffer(
     if (state === 'running') lastProgressAt = clock.now();
   };
 
-  const idleTimeoutError = () =>
+  const idleTimeoutError = (cause?: unknown) =>
     new FileTransferIdleTimeoutError({
       transferId,
       bytesTransferred,
       totalBytes,
       idleTimeoutMs,
+      cause,
     });
 
   const assertNotIdle = () => {
@@ -851,7 +855,7 @@ export async function readRemoteFileChunkedToBuffer(
         !(err instanceof FileTransferIdleTimeoutError) &&
         /timeout after \d+ms|Node mini timeout|RPC timeout|request timed out/i.test(message)
       ) {
-        throw idleTimeoutError();
+        throw idleTimeoutError(err);
       }
       throw err;
     } finally {
@@ -937,10 +941,14 @@ export async function readRemoteFileChunkedToBuffer(
       }
     }
     publish('done', { sha256 });
-    return { buffer: Buffer.concat(parts, bytesTransferred), sha256, transferId, size: bytesTransferred };
+    return {
+      buffer: Buffer.concat(parts, bytesTransferred),
+      sha256,
+      transferId,
+      size: bytesTransferred,
+    };
   } catch (err) {
-    const cancelled =
-      err instanceof FileTransferCancelledError || combinedSignal.aborted;
+    const cancelled = err instanceof FileTransferCancelledError || combinedSignal.aborted;
     const message = err instanceof Error ? err.message : String(err);
     publish(cancelled ? 'cancelled' : 'failed', { error: message });
     throw cancelled && !(err instanceof FileTransferCancelledError)

@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.0 - 2026-10-15
+
+- Allow platform screenshots to capture their native window before falling back to CDP, preserving rooted artifact writes, recorded snapshots and capture-provider metadata.
+
 ## 0.34.3 - 2026-10-15
 
 - Align the installed worker dependency closure with protocol 0.44.0 and provenance-bound branch maintenance.
