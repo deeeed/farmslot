@@ -4,6 +4,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- Allow platform screenshots to capture their native window before falling back to CDP, preserving rooted artifact writes, recorded snapshots and capture-provider metadata.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.34.3 - 2026-10-15
