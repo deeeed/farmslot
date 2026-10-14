@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.22.2 - 2026-10-14
+
+- Align runtime dependencies with recipe-runner 0.34.1 so installed adapters and recipe hosts use one engine version.
+
 ## 0.22.1 - 2026-10-14
 
 - Use the coordinated recipe release for content-based dependency readiness and engine-owned evidence manifests.
