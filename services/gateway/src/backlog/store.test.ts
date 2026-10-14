@@ -1032,6 +1032,41 @@ test('manual backlog run handoff normalizes manual refs', async () => {
   );
 });
 
+test('archived and adopted historical publication observations preserve ordinary and multi-PR successor ownership', async () => {
+  const { backlog } = await freshStores();
+  for (const multiPr of [false, true]) {
+    const created = await backlog.createBacklogItem(
+      {
+        project: 'farmslot-farm',
+        title: 'Publication successor',
+        sourceKind: 'manual',
+        flowType: 'dev',
+        status: 'ready',
+      },
+      { kind: 'system' },
+    );
+    backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+      item.status = 'running';
+      item.runId = 'successor';
+      item.multiPr = multiPr;
+    });
+    for (const archived of [false, true]) {
+      await backlog.markBacklogRunObserved({
+        id: 'historical',
+        status: 'cancelled',
+        backlogItemId: created.item.id,
+        ...(archived ? { archivedAt: '2026-10-14T00:00:00Z' } : {}),
+        engineState: { publishGate: { humanPublicationAdoption: { id: 'publication-receipt' } } },
+      } as never);
+      const item = backlog
+        .listBacklogItems({ includeArchived: true })
+        .items.find((entry) => entry.id === created.item.id);
+      assert.equal(item?.status, 'running');
+      assert.equal(item?.runId, 'successor');
+    }
+  }
+});
+
 test('run observation heals needs-attention when linked run completes', async () => {
   const { backlog } = await freshStores();
   const created = await backlog.createBacklogItem(

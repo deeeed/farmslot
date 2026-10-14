@@ -220,7 +220,7 @@ result counts as live acceptance.
 
 ## Human publication adoption
 
-**Status:** Proposed under ADR-065 Amendment 2. Acceptance is required before implementation.
+**Status:** Accepted under ADR-065 Amendment 2, 2026-10-14, following paired review in #1047.
 
 `run.adoptPublishedPr` records a human-reviewed revision already published outside
 the run's normal gate. It MUST NOT create, push, promote, rewrite or comment on a

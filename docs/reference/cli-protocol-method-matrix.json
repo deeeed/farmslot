@@ -1517,6 +1517,11 @@
       "surface": "typed-command",
       "command": "farmslot run gate --action confirm-visual|reject-visual",
       "note": "Record authenticated visual meaning for captured evidence without resolving the gate."
+    },
+    "run.adoptPublishedPr": {
+      "surface": "typed-command",
+      "command": "farmslot run adopt-published-pr",
+      "note": "Credential-backed human attestation of an existing exact-head publication."
     }
   }
 }

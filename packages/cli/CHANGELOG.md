@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Add `run adopt-published-pr` for linking a reviewed human publication without republishing.
+
 - Record confirmed or rejected visual claims through authenticated human gate actions.
 
 - Add run gate mark-untestable for one selected claim through the verified gateway operation.

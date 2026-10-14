@@ -676,6 +676,12 @@ export async function createEngineDecision(
 ): Promise<string> {
   const run = getRun(runId);
   if (!run) throw new Error('Run not found');
+  if (reason === 'human_gate' && run.engineState?.publishGate?.humanPublicationAdoption) {
+    const { assertAdoptedPublicationContinuation } =
+      await import('../run-completion/human-publication.js');
+    await assertAdoptedPublicationContinuation(run);
+    return 'superseded-by-publication-adoption';
+  }
 
   const generation = run.engineState?.generation ?? 0;
   if (runSupersededSince(run, generation) || isTerminalRunStatus(run.status))

@@ -158,10 +158,10 @@ test('publication records are idempotent and excluded from review/artifact-only 
       await deleteRun(run.id);
     }
   });
-  recordRunPRPublication(producer.id, 'owner/repo', 702);
-  recordRunPRPublication(producer.id, 'Owner/Repo', 702);
-  recordRunPRPublication(reviewer.id, 'owner/repo', 701);
-  recordRunPRPublication(artifact.id, 'owner/repo', 703);
+  await recordRunPRPublication(producer.id, 'owner/repo', 702);
+  await recordRunPRPublication(producer.id, 'Owner/Repo', 702);
+  await recordRunPRPublication(reviewer.id, 'owner/repo', 701);
+  await recordRunPRPublication(artifact.id, 'owner/repo', 703);
   assert.equal(getRun(producer.id)?.prPublications?.length, 1);
   assert.equal(getRun(reviewer.id)?.prPublications, undefined);
   assert.equal(getRun(artifact.id)?.prPublications, undefined);

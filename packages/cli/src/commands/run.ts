@@ -29,6 +29,7 @@ import {
   type ReviewRequestContext,
   type ReviewSequence,
   type Run,
+  type RunAdoptPublishedPrResult,
   type RunCancelEffect,
   type RunCreateParams,
   type RunDecision,
@@ -1023,6 +1024,49 @@ export function registerRunCommand(program: Command): void {
         emit.fail(err);
       }
     });
+
+  run
+    .command('adopt-published-pr <runId>')
+    .description('Attest and link an exact human-reviewed publication without republishing')
+    .requiredOption('--pr <url>', 'Published GitHub PR URL')
+    .requiredOption('--head <sha>', 'Full human-reviewed publication commit SHA')
+    .requiredOption('--reason <text>', 'Written publication attestation')
+    .requiredOption(
+      '--attest-reviewed-publication',
+      'Attest this exact head was reviewed and approved for publication',
+    )
+    .action(
+      async (
+        runId: string,
+        opts: { pr: string; head: string; reason: string; attestReviewedPublication: true },
+        cmd: Command,
+      ) => {
+        const { client, output } = resolveContext(cmd);
+        const emit = createEmitter(output, cmd);
+        try {
+          const result = await client.call<RunAdoptPublishedPrResult>(
+            Methods.RUN_ADOPT_PUBLISHED_PR,
+            {
+              runId,
+              prRef: opts.pr,
+              headSha: opts.head,
+              reason: opts.reason,
+              attestReviewedPublication: opts.attestReviewedPublication,
+            },
+          );
+          if (emit.machine) emit.ok(result);
+          else {
+            output.write(
+              `Adopted ${result.receipt.prUrl} at ${result.receipt.headSha}, ${result.continuation}\n`,
+            );
+            for (const refusal of result.refusals)
+              output.write(`  ${refusal.code}: ${refusal.message}\n`);
+          }
+        } catch (error) {
+          emit.fail(error);
+        }
+      },
+    );
 
   run
     .command('force-complete <runId>')

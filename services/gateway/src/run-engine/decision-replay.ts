@@ -1,8 +1,9 @@
-import type {
-  BranchAffinityNudgePayload,
-  DecisionAction,
-  FlowType,
-  RunDecision,
+import {
+  type BranchAffinityNudgePayload,
+  type DecisionAction,
+  type FlowType,
+  PUBLICATION_ADOPTION_ACTION,
+  type RunDecision,
 } from '@farmslot/protocol';
 
 import { CLOSE_AS_SHIPPED_ACTION, PUBLISH_APPROVAL_ACTIONS } from './gate-policy.js';
@@ -13,6 +14,7 @@ const HUMAN_GATE_APPROVAL_ACTIONS = new Set([
   // Close-as-shipped resolves the gate terminally (work already merged); finalize
   // must see it via latestResolvedHumanGateDecision(_, true) to take its bypass.
   CLOSE_AS_SHIPPED_ACTION,
+  PUBLICATION_ADOPTION_ACTION,
 ]);
 export const HUMAN_GATE_REVIEW_REQUEST_ACTIONS = new Set(['request-review']);
 const HUMAN_GATE_REVIEW_REQUEST_CONSUMED_CONTEXT_KEY = 'reviewRequestConsumedAt';
@@ -49,6 +51,7 @@ export function isReplayableResolvedHumanGateDecision(
 ): boolean {
   const actionId = decision.resolvedAction;
   if (!actionId) return false;
+  if (actionId === PUBLICATION_ADOPTION_ACTION) return true;
   if (actions.length > 0 && !actions.some((action) => action.id === actionId)) return false;
   if (HUMAN_GATE_APPROVAL_ACTIONS.has(actionId)) return true;
   if (!isHumanGateReviewRequestAction(actionId)) return false;

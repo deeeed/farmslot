@@ -300,14 +300,19 @@ export async function collectRunGateReadiness(
   run: Run,
   preparedPackage: ReadyGatePrPackage | null,
   overrides: Partial<GatePrerequisiteReaders> = {},
+  phase: 'publication' | 'post-publication' = 'publication',
 ): Promise<RunGateReadiness> {
+  const publicationFulfilled =
+    phase === 'post-publication' && Boolean(run.engineState?.publishGate?.humanPublicationAdoption);
+  if (phase === 'post-publication' && !publicationFulfilled)
+    throw new Error('Post-publication readiness requires a durable human publication receipt');
   const generation = run.engineState?.generation ?? 0;
   const outputDigest = isArtifactOnlyRun(run) ? run.output?.manifestDigest : undefined;
   const outputDecision = outputDigest ? capturedOutputReviewDecision(run) : undefined;
   const source = { ...readers, ...overrides };
   const reasons: RunGatePrerequisiteReason[] = [];
   const retainedPackageHash = run.engineState?.publishGate?.packageHash;
-  if (!preparedPackage && retainedPackageHash) {
+  if (!publicationFulfilled && !preparedPackage && retainedPackageHash) {
     try {
       const retained = await readReadyGatePreparedPackage(run);
       if (
@@ -371,7 +376,7 @@ export async function collectRunGateReadiness(
 
   const hasSelectedMedia = preparedPackage?.selectedEvidenceKeys?.length;
   const qaOutput = run.flowType === 'qa' && isArtifactOnlyRun(run) && !preparedPackage;
-  if (acceptance.criteria.length || hasSelectedMedia) {
+  if (!publicationFulfilled && (acceptance.criteria.length || hasSelectedMedia)) {
     if (!source.recordedEvidence) {
       reasons.push({
         code: 'evidence-validation-unavailable',
@@ -542,7 +547,7 @@ export async function collectRunGateReadiness(
       }
     }
   }
-  if (preparedPackage) {
+  if (!publicationFulfilled && preparedPackage) {
     try {
       await source.selectedEvidence(run, preparedPackage);
     } catch {

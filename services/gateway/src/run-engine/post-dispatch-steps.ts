@@ -878,6 +878,15 @@ export async function executeHumanGateStep(
     isHumanGateEnabled,
   } = context;
   const current = getRun(runId)!;
+  if (current.engineState?.publishGate?.humanPublicationAdoption) {
+    const { assertAdoptedPublicationContinuation } =
+      await import('../run-completion/human-publication.js');
+    await assertAdoptedPublicationContinuation(current);
+    return {
+      inputs: { publicationAdoption: current.engineState.publishGate.humanPublicationAdoption.id },
+      outputs: { resolvedAction: 'superseded-by-publication-adoption' },
+    };
+  }
   const gateType = current.flowType === 'review-pr' ? 'review' : 'ready';
   const noChangeGate = shouldForceNoChangeHumanGate(current);
   const publicationApprovalGate = requiresPublicationApproval(current);
@@ -1171,6 +1180,7 @@ export async function executeHumanGateStep(
     while (
       publicationApprovalGate &&
       !isPublishApprovalAction(gateAction) &&
+      gateAction !== 'superseded-by-publication-adoption' &&
       gateAction !== CLOSE_AS_SHIPPED_ACTION
     ) {
       if (gateAction === 'hold') {
@@ -1276,6 +1286,18 @@ export async function executeCompleteStep(
   const { broadcastFn, getDiffStat, refreshRunLinks } = context;
   const current = getRun(runId)!;
   const generation = current.engineState?.generation ?? 0;
+  if (current.engineState?.publishGate?.humanPublicationAdoption) {
+    const { assertAdoptedPublicationContinuation } =
+      await import('../run-completion/human-publication.js');
+    await assertAdoptedPublicationContinuation(current);
+    return {
+      inputs: { publicationAdoption: current.engineState.publishGate.humanPublicationAdoption.id },
+      outputs: {
+        publicationStatus: current.engineState.publishGate.publicationStatus,
+        prNumber: current.prNumber,
+      },
+    };
+  }
   if (!current.slotId) throw new Error('No slot assigned');
   if (!shouldPrepareLocalFirstPackage(current))
     await (context.assertGatePrerequisites ?? assertRunGateReady)(current, null);

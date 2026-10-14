@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  adoptedPublicationTarget,
   Events,
   PipelineSteps,
   type PublicationTarget,
@@ -128,6 +129,12 @@ export async function executeFinalizeStep(
   const noCodeDisposition = isNoCodeTerminalDisposition(current.metrics.disposition);
   const artifactOnly = isArtifactOnlyRun(current);
   const publicationApprovalGate = requiresPublicationApproval(current);
+  const adoption = current.engineState?.publishGate?.humanPublicationAdoption;
+  if (adoption) {
+    const { assertAdoptedPublicationContinuation } =
+      await import('../run-completion/human-publication.js');
+    await assertAdoptedPublicationContinuation(current);
+  }
   if (!publicationApprovalGate)
     await (context.assertGatePrerequisites ?? assertRunGateReady)(current, null);
   if (runSupersededSince(getRun(runId), generation))
@@ -271,7 +278,9 @@ export async function executeFinalizeStep(
   // 4. Publish approved local-first package for fix-bug. This is the
   // first point where public PR mutation is allowed.
   const pv = await loadProjectVarsOrNull(current.project, 'run step', current.id);
-  const ciRepo = pv ? getProjectField(pv.projectJson, 'ci.repo') || null : null;
+  const ciRepo =
+    adoptedPublicationTarget(current)?.repository ??
+    (pv ? getProjectField(pv.projectJson, 'ci.repo') || null : null);
   const gateDecision = latestResolvedHumanGateDecision(current.decisions, publicationApprovalGate);
   const resolvedAction = gateDecision?.resolvedAction;
   let publicationStatus = publicationStatusForRun(current);
@@ -280,7 +289,15 @@ export async function executeFinalizeStep(
   let publishedPrNumber: number | null = current.prNumber ?? null;
   let publishPackageHash: string | undefined;
   let publishBodyPostProcessed = false;
-  if (publicationApprovalGate && resolvedAction === CLOSE_AS_SHIPPED_ACTION) {
+  if (adoption) {
+    // The external publication is complete. Do not approve or republish the older package.
+    emitWithBroadcast('substep', {
+      name: 'human-publication-adopted',
+      detail: `Using attested PR #${adoption.prNumber}`,
+    });
+    publishedPrNumber = adoption.prNumber;
+    publicationStatus = adoption.publicationStatus;
+  } else if (publicationApprovalGate && resolvedAction === CLOSE_AS_SHIPPED_ACTION) {
     // Work already merged out-of-band: link the merged PR and skip publication
     // entirely — package-hash/HEAD verification would rightly fail here, and
     // there is nothing left to publish.
@@ -430,6 +447,7 @@ export async function executeFinalizeStep(
   let reviewRerequested: string[] = [];
   if (
     !artifactOnly &&
+    !adoption &&
     !noCodeDisposition &&
     ciRepo &&
     prNumber &&

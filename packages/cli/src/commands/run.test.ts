@@ -30,6 +30,18 @@ import {
   registerRunCommand,
 } from './run.js';
 
+test('adopt-published-pr CLI requires explicit attestation and full publication inputs', () => {
+  const program = new Command();
+  registerRunCommand(program);
+  const command = program.commands
+    .find((entry) => entry.name() === 'run')!
+    .commands.find((entry) => entry.name() === 'adopt-published-pr');
+  assert.ok(command);
+  for (const flag of ['--pr', '--head', '--reason', '--attest-reviewed-publication']) {
+    assert.equal(command.options.find((option) => option.long === flag)?.mandatory, true);
+  }
+});
+
 test('gate CLI serializes a written attestation reason with its visible package identity', () => {
   const decision = {
     id: 'gate',

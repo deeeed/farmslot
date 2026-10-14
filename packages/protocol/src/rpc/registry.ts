@@ -338,6 +338,7 @@ export const Methods = {
   RUN_REFRESH_PUBLISHED_EVIDENCE: 'run.refreshPublishedEvidence',
   RUN_REFRESH_MIRROR: 'run.refreshMirror',
   RUN_REHYDRATE_PR_NUMBER: 'run.rehydratePrNumber',
+  RUN_ADOPT_PUBLISHED_PR: 'run.adoptPublishedPr',
   RUN_INTERACTIVE_DEV_RESOLVE: 'run.interactiveDev.resolve',
   RUN_FOR_SLOT: 'run.forSlot',
   RUN_RESOLVE_DECISION: 'run.resolveDecision',

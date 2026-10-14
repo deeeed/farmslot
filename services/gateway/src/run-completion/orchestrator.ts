@@ -636,6 +636,10 @@ export async function prepareCompletionPackage(
 ): Promise<PrepareCompletionPackageResult> {
   const before = getRun(runId);
   if (!before) throw new Error(`Run not found: ${runId}`);
+  if (before.engineState?.publishGate?.humanPublicationAdoption)
+    throw new Error(
+      'Human publication adoption preserves the prior package; further work needs its own publication authorization',
+    );
 
   const deterministicChecks = await currentDeterministicChecks(before);
 
@@ -867,6 +871,8 @@ export async function runCompletionPipeline(
     retrospectiveCreated: false,
     artifacts: [],
   };
+  const adoption = run.engineState?.publishGate?.humanPublicationAdoption;
+  if (adoption) return { ...flags, prNumber: adoption.prNumber, ciRepo: adoption.repository };
 
   // For review-pr: artifacts + review posting are handled by the human-gate step.
   // The complete step only releases the slot and creates the retrospective.
@@ -1019,7 +1025,8 @@ export async function runCompletionPipeline(
     }
   }
 
-  if (!suppressPrMutation && ciRepo && prNumber) recordRunPRPublication(runId, ciRepo, prNumber);
+  if (!suppressPrMutation && ciRepo && prNumber)
+    await recordRunPRPublication(runId, ciRepo, prNumber);
 
   // 6. Create retrospective decision for user review
   //    Skipped when flow has ci-watch (retrospective moves there) or human-gate (serves as quality check)
@@ -1172,7 +1179,10 @@ export async function publishCompletionPackage(
     packageHash: approvedPackage.packageHash,
     bodyPostProcessed: false,
   };
-  if (isPublishedStatus(already) && run.prNumber) return flags;
+  if (isPublishedStatus(already) && run.prNumber) {
+    flags.ciRepo = run.engineState?.publishGate?.humanPublicationAdoption?.repository ?? null;
+    return flags;
+  }
 
   updateRun(runId, {
     engineState: {
@@ -1332,17 +1342,12 @@ export async function publishCompletionPackage(
     const publicationStatus: PublicationStatus =
       target === 'ready' ? 'published_ready' : 'published_draft';
     flags.publicationStatus = publicationStatus;
-    recordRunPRPublication(runId, ciRepo, prNumber);
-    updateRun(runId, {
-      engineState: {
-        ...getRun(runId)?.engineState,
-        publishGate: {
-          ...getRun(runId)?.engineState?.publishGate,
-          publicationTarget: target,
-          publicationStatus,
-          approvedPackageHash: approvedPackage.packageHash,
-          prNumber,
-        },
+    await recordRunPRPublication(runId, ciRepo, prNumber, {
+      gate: {
+        publicationTarget: target,
+        publicationStatus,
+        approvedPackageHash: approvedPackage.packageHash,
+        prNumber,
       },
     });
     return flags;

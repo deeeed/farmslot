@@ -1,4 +1,5 @@
 import {
+  adoptedPublicationTarget,
   Events,
   type Run,
   type RunCreateParams,
@@ -217,7 +218,9 @@ export async function executeCIWatchStep(
   await markSlotHeld(current.slotId, 'ci-watch');
 
   const pv = await loadProjectVarsOrNull(current.project, 'run step', current.id);
-  const ciRepo = pv ? getProjectField(pv.projectJson, 'ci.repo') : '';
+  const ciRepo =
+    adoptedPublicationTarget(current)?.repository ??
+    (pv ? getProjectField(pv.projectJson, 'ci.repo') : '');
   const ciEnabled = pv ? getProjectFieldRaw(pv.projectJson, 'ci.enabled') : undefined;
   if (ciEnabled === false) {
     console.log(`[run-engine] run ${runId.slice(0, 8)} — ci disabled, skipping ci-watch`);

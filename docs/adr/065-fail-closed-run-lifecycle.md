@@ -151,7 +151,7 @@ the gateway revision and has no independent compatibility contract.
 
 ## Amendment 2: attested human publication adoption, 2026-10-14
 
-**Status:** Proposed. Implementation requires maintainer acceptance after paired review.
+**Status:** Accepted, 2026-10-14. Maintainer accepted the paired-reviewed amendment in #1047 at `e596473a18c1f26e82668b97d101cf48adab734a`.
 **Specification:** [Human publication adoption](../reference/fail-closed-run-lifecycle.md#human-publication-adoption).
 
 ### Decision

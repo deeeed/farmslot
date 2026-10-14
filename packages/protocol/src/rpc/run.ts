@@ -36,6 +36,7 @@ export const RunMethods = {
   refreshPublishedEvidence: Methods.RUN_REFRESH_PUBLISHED_EVIDENCE,
   refreshMirror: Methods.RUN_REFRESH_MIRROR,
   rehydratePrNumber: Methods.RUN_REHYDRATE_PR_NUMBER,
+  adoptPublishedPr: Methods.RUN_ADOPT_PUBLISHED_PR,
   interactiveDevResolve: Methods.RUN_INTERACTIVE_DEV_RESOLVE,
   forSlot: Methods.RUN_FOR_SLOT,
   resolveDecision: Methods.RUN_RESOLVE_DECISION,
@@ -68,6 +69,23 @@ export type {
 export type { DecisionListResult, DecisionResolveParams } from './decisions.js';
 
 // ─── Run param/result types ───
+
+export interface RunAdoptPublishedPrParams {
+  runId: string;
+  prRef: string;
+  headSha: string;
+  reason: string;
+  attestReviewedPublication: true;
+}
+
+export interface RunAdoptPublishedPrResult {
+  run: Run;
+  archived: boolean;
+  receipt: import('../contracts/human-publication.js').HumanPublicationAdoptionReceipt;
+  target: { repository: string; prNumber: number };
+  continuation: 'archived' | 'waiting' | 'resumed' | 'refused';
+  refusals: import('../contracts/run-gate-readiness.js').RunGatePrerequisiteReason[];
+}
 
 export interface RunCreateParams {
   /** Atomic run-scoped selections, resolved before executable source planning. */
