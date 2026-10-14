@@ -27,6 +27,7 @@ const deps: AttachmentDependencies = {
   source: async () => ({
     headSha: childHead,
     upstreamSha: parentHead,
+    upstreamPrUrl: 'https://github.invalid/parent/pull/17',
     publicationRefreshRequired: true,
   }),
   progress: async () => ({ kind: 'idle' }),
@@ -136,6 +137,7 @@ test('publication-gate attachment preserves execution and proof while binding th
   const result = await graphs.attachWorkGraphRun(params, deps);
   assert.equal(result.run.stack?.resolvedSha, parentHead);
   assert.equal(result.run.stack?.baseBranch, 'feat/parent');
+  assert.equal(result.run.stack?.upstreamPrUrl, 'https://github.invalid/parent/pull/17');
   assert.equal(result.run.workGraphId, params.graphId);
   assert.equal(result.publicationRefreshRequired, true);
   const { workGraphId: _graph, workNodeId: _node, stack: _stack, ...execution } = result.run;

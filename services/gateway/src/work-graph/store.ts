@@ -1110,7 +1110,11 @@ export function attachWorkGraphRun(
         );
       const stack = selected.existing
         ? selected.stack
-        : { ...selected.stack, resolvedSha: source.upstreamSha };
+        : {
+            ...selected.stack,
+            resolvedSha: source.upstreamSha,
+            ...(source.upstreamPrUrl ? { upstreamPrUrl: source.upstreamPrUrl } : {}),
+          };
       const run = selected.existing
         ? current.run
         : await commitRunGraphAttachment(
