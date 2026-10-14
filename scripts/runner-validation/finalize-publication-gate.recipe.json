@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Finalization retains unapproved active work",
+  "description": "Manual disposable-gateway proof with a real native worker. Retains source/proof and refuses DONE through finalize and skipped CI-watch without publication approval. No existing farm run is changed.",
+  "workflow": {
+    "entry": "publication-guard",
+    "nodes": {
+      "publication-guard": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/finalize-publication-gate.mts",
+        "timeout_ms": 300000,
+        "intent": "Prove the public pipeline refuses unapproved finalization and terminal settlement while a real repair worker remains active with uncommitted source/proof and retains its slot.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

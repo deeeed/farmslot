@@ -109,6 +109,7 @@ import {
   executeReviewStep,
 } from './post-dispatch-steps.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
+import { assertPublicationFinalization } from './publication-finalization.js';
 import { setPublishPackageRefreshBroadcast } from './publish-package-refresh.js';
 import {
   executePublishGateReviewPlan,
@@ -429,6 +430,39 @@ async function runDeferredSlotRelease(release: SlotReleaseParams): Promise<void>
   if (!run || run.slotId !== release.slotId) return;
   const { releaseCompletedRunSlot } = await import('../methods/run/lifecycle-control.js');
   await releaseCompletedRunSlot(run);
+}
+
+/** Refused completion retains its workers and slot until supported recovery. */
+async function retainCompletionPrerequisiteFailure(
+  runId: string,
+  generation: number,
+  stepName: typeof S.COMPLETE | typeof S.FINALIZE,
+  error: GatewayMethodError,
+): Promise<void> {
+  const current = getRun(runId);
+  if (runSupersededSince(current, generation)) return;
+  updateRunStep(runId, stepName, {
+    status: 'failed',
+    detail: error.message,
+    outputs: { gatePrerequisiteRefusal: error.details ?? {} },
+  });
+  const steps = FLOW_STEPS[current!.flowType];
+  for (const next of steps.slice(steps.indexOf(stepName) + 1)) {
+    updateRunStep(runId, next, { status: 'skipped' });
+  }
+  const collaborators = terminalCollaborators(Events.RUN_UPDATED, null);
+  await routeAndRecordTerminalTransition({
+    runId,
+    kind: 'fail',
+    actor: 'engine',
+    patch: {
+      status: 'failed',
+      completedAt: new Date().toISOString(),
+      error: error.message,
+      metrics: { ...current!.metrics, outcome: 'partial' },
+    },
+    collaborators: { ...collaborators, cleanupEvalHarness: null, cleanupWorkspace: null },
+  });
 }
 
 /**
@@ -946,6 +980,10 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       if (err instanceof GatewayMethodError && err.code === 'RUN_GATE_NOT_READY') {
         const progress = await readRunProgress(interruptedRun);
         if (runSupersededSince(getRun(runId), myGen)) return;
+        if (stepName === S.COMPLETE || stepName === S.FINALIZE) {
+          await retainCompletionPrerequisiteFailure(runId, myGen, stepName, err);
+          return;
+        }
         updateRunStep(runId, stepName, {
           status: 'failed',
           detail: err.message,
@@ -955,31 +993,12 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
           updateRunStep(runId, steps[j], { status: 'skipped' });
         }
         const current = getRun(runId)!;
-        if (stepName === S.COMPLETE || stepName === S.FINALIZE) {
-          // The deterministic pipeline stopped. Primary runner activity must not
-          // keep a failed completion labelled as executing. Preserve all owned
-          // resources: a finishing or uncertain turn still needs reconciliation.
-          const collaborators = terminalCollaborators(Events.RUN_UPDATED, null);
-          await routeAndRecordTerminalTransition({
-            runId,
-            kind: 'fail',
-            actor: 'engine',
-            patch: {
-              status: 'failed',
-              completedAt: new Date().toISOString(),
-              error: err.message,
-              metrics: { ...current.metrics, outcome: 'partial' },
-            },
-            collaborators: { ...collaborators, cleanupEvalHarness: null, cleanupWorkspace: null },
-          });
-        } else {
-          updateRun(runId, {
-            status: runDecisionWaitingStatus(current, progress, 'blocked'),
-            error: err.message,
-            metrics: { ...current.metrics, outcome: 'partial' },
-          });
-          broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
-        }
+        updateRun(runId, {
+          status: runDecisionWaitingStatus(current, progress, 'blocked'),
+          error: err.message,
+          metrics: { ...current.metrics, outcome: 'partial' },
+        });
+        broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
         return;
       }
 
@@ -1195,10 +1214,20 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
   const finalRun = getRun(runId);
   if (
     finalRun &&
-    finalRun.status !== 'cancelled' &&
+    !runSupersededSince(finalRun, myGen) &&
     finalRun.status !== 'failed' &&
     finalRun.status !== 'blocked'
   ) {
+    // Historical recovery may have marked refused steps done. Do not turn
+    // those flags into publication authority or consume their deferred release.
+    try {
+      assertPublicationFinalization(finalRun, 'complete');
+    } catch (error) {
+      if (!(error instanceof GatewayMethodError) || error.code !== 'RUN_GATE_NOT_READY')
+        throw error;
+      await retainCompletionPrerequisiteFailure(runId, myGen, S.FINALIZE, error);
+      return;
+    }
     const durationMs = Date.now() - new Date(finalRun.createdAt).getTime();
     // The last step recorded the release it wanted rather than performing it, so
     // `done` is published first and tmux teardown follows as an after-effect. A
@@ -1732,7 +1761,6 @@ async function executeSourcedStep(
       });
     case S.FINALIZE:
       return executeFinalizeStep(runId, {
-        blockedRunError: (message, reason) => new BlockedRunError(message, reason),
         broadcastFn,
         latestResolvedHumanGateDecision,
         loadProjectVarsOrNull,
