@@ -531,6 +531,11 @@ dispatch contract after checking the task handoff's run/project/flow identity an
 the contract's flow/mode/version. A current run with a missing, unreadable or
 mismatched dispatch contract fails recovery. Replay does not infer policy from
 skipped downstream steps or change retained registration, claims or package bytes.
+This restoration applies to gateway-produced dispatch contracts. The existing
+write-task output marks adoption of an authored `run create --task` task with
+`skipped: true`; replay preserves that task's original identity, commands and
+runtime metadata. It does not downgrade the Run's evidence contract version or
+change gate evidence admission. A failed remote contract write MUST stop replay.
 
 ### Receipt and effective row
 

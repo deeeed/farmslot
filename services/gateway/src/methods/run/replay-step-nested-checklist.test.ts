@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
@@ -83,6 +83,8 @@ const { createRun, deleteRun, getRun, updateRun } = await import('../../runs/sto
 const { CHECKLIST_TARGET_BY_AGENT_ROLE, CHECKLIST_TARGET_MANIFEST } =
   await import('../../tasks/checklist-target.js');
 const { resolveWorkerTerminalContract } = await import('../../tasks/worker-terminal-contract.js');
+const { initializeExistingTaskRuntime } = await import('../../tasks/existing-runtime.js');
+const { buildHandoffMetadata, ensureTaskRuntime } = await import('@farmslot/agent-runtime');
 
 for (const stepName of [PS.MONITOR, PS.REVIEW]) {
   test(`runReplayStep ${stepName} restores frozen dispatch policy without changing evidence`, async (t) => {
@@ -193,5 +195,88 @@ for (const stepName of [PS.MONITOR, PS.REVIEW]) {
       existsSync(path.join(taskDirOnSlot, CHECKLIST_TARGET_MANIFEST)),
       stepName === PS.MONITOR,
     );
+  });
+}
+
+for (const authored of [false, true]) {
+  test(`monitor replay preserves ${authored ? 'task-init' : 'bare'} adopted-task metadata on a current run`, async (t) => {
+    workspace = await mkdtemp(path.join(os.tmpdir(), 'replay-authored-task-'));
+    orchestratorTaskRoot = path.join(workspace, 'orchestrator-tasks');
+    const taskFile = path.join(orchestratorTaskRoot, 'retained', 'TASK.md');
+    const workerTask = path.join(workspace, '.task', 'retained');
+    await mkdir(path.dirname(taskFile), { recursive: true });
+    const text = '# Authored task\n- [x] Retained work\n';
+    await writeFile(taskFile, text);
+    const run = createRun({
+      flowType: 'dev',
+      project: 'farmslot-farm',
+      taskFile,
+      ticketOrPr: `PROJ-${Date.now()}`,
+    });
+    t.after(async () => {
+      await rm(workspace, { recursive: true, force: true });
+      if (getRun(run.id)) {
+        updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+        await deleteRun(run.id);
+      }
+    });
+    if (authored) {
+      const terminalContract = {
+        ...resolveWorkerTerminalContract(null, run.flowType),
+        deterministicChecks: [
+          {
+            checklist: 'CHECKLIST.md',
+            stepNumber: 1,
+            reference: 'ci.local_check',
+            command: 'printf authored',
+          },
+        ],
+      };
+      await ensureTaskRuntime({
+        taskDir: path.dirname(taskFile),
+        checklistMarkdown: '# Authored checklist\n- [x] Retained work\n',
+        terminalContract,
+        handoff: buildHandoffMetadata({
+          attemptId: 'authored-task-identity',
+          surface: 'recipe-cook',
+          project: run.project,
+          flow: run.flowType,
+          title: 'Authored task',
+          sourceKind: 'text',
+          terminalContract,
+        }),
+      });
+    }
+    await initializeExistingTaskRuntime(run);
+    const contract = await readFile(
+      path.join(path.dirname(taskFile), 'inputs/worker-terminal-contract.json'),
+      'utf8',
+    );
+    const handoff = await readFile(
+      path.join(path.dirname(taskFile), 'inputs/handoff.json'),
+      'utf8',
+    );
+    assert.equal(JSON.parse(contract).recordedEvidenceContractVersion, undefined);
+    if (authored) assert.equal(JSON.parse(handoff).attemptId, 'authored-task-identity');
+    await cp(path.dirname(taskFile), workerTask, { recursive: true });
+    updateRun(run.id, {
+      status: 'failed',
+      slotId: 'macwork-ff-replay-checklist',
+      steps: run.steps.map((step) =>
+        step.name === PS.WRITE_TASK
+          ? { ...step, status: 'done', outputs: { taskFile, skipped: true } }
+          : new Set<string>([PS.FIND_SLOT, PS.PREPARE, PS.DISPATCH, PS.MONITOR]).has(step.name)
+            ? { ...step, status: 'done' }
+            : step,
+      ),
+    });
+    await runReplayStep({ runId: run.id, stepName: PS.MONITOR, triggeredBy: 'operator' }, () => {});
+    assert.equal(getRun(run.id)?.recordedEvidenceContractVersion, 1);
+    assert.equal(await readFile(taskFile, 'utf8'), text);
+    assert.equal(
+      await readFile(path.join(workerTask, 'inputs/worker-terminal-contract.json'), 'utf8'),
+      contract,
+    );
+    assert.equal(await readFile(path.join(workerTask, 'inputs/handoff.json'), 'utf8'), handoff);
   });
 }

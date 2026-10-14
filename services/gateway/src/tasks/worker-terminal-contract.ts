@@ -335,10 +335,21 @@ export async function syncTerminalContractForFlowOnSlot(
 export async function readFrozenWorkerTerminalContractForRun(
   run: Pick<
     Run,
-    'id' | 'project' | 'flowType' | 'mode' | 'taskFile' | 'recordedEvidenceContractVersion'
+    | 'id'
+    | 'project'
+    | 'flowType'
+    | 'mode'
+    | 'taskFile'
+    | 'recordedEvidenceContractVersion'
+    | 'steps'
   >,
 ): Promise<string | null> {
   if (!run.taskFile) return null;
+  // WRITE_TASK records this when it adopts an authored task instead of producing
+  // a dispatch contract. Its task-init identity and policy remain author-owned.
+  if (run.steps.some((step) => step.name === 'write-task' && step.outputs?.skipped === true)) {
+    return null;
+  }
   const taskDir = path.dirname(run.taskFile);
   let text: string;
   try {

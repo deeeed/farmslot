@@ -32,7 +32,12 @@ export async function writeTextFileOnSlot(
     `target.write_bytes(base64.b64decode(${JSON.stringify(payload)}))`,
     'PY',
   ].join('\n');
-  await execOnSlot(vars, remoteScript);
+  const result = await execOnSlot(vars, remoteScript);
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Cannot write ${targetPath}: remote command exited ${result.exitCode}. ${result.stderr || result.stdout}`,
+    );
+  }
 }
 
 /** Write a potentially multi-megabyte artifact without a shell-string or Python round-trip. */

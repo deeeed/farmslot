@@ -127,6 +127,7 @@ test('retained replay reads only the matching frozen dispatch contract', async (
     mode: 'autonomous' as const,
     taskFile: path.join(root, 'TASK.md'),
     recordedEvidenceContractVersion: 1,
+    steps: [],
   };
   const contractPath = path.join(root, 'inputs/worker-terminal-contract.json');
   const handoffPath = path.join(root, 'inputs/handoff.json');

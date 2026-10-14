@@ -28,8 +28,68 @@ async function hashes(root: string) {
   return result;
 }
 
+async function stop(child?: ChildProcess) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  const done = once(child, 'exit');
+  child.kill('SIGTERM');
+  await Promise.race([done, pause(5_000)]);
+  if (child.exitCode === null && child.signalCode === null) {
+    child.kill('SIGKILL');
+    await done;
+  }
+}
+
 if (process.argv[2] === 'serve') {
   await import('../../../services/gateway/src/runtime/mock-pty.test-support.js');
+  if (process.env.FARMSLOT_WORKER_CONTRACT_FAIL_WRITE === '1') {
+    const core = await import('../../../services/gateway/src/core/index.js');
+    const { mock } = await import('node:test');
+    let writingContract = false;
+    mock.module(
+      fileURLToPath(new URL('../../../services/gateway/src/core/index.ts', import.meta.url)),
+      {
+        namedExports: {
+          ...core,
+          isLocal: (...args: Parameters<typeof core.isLocal>) =>
+            writingContract ? false : core.isLocal(...args),
+          execOnSlot: async (...args: Parameters<typeof core.execOnSlot>) => {
+            if (!writingContract) return core.execOnSlot(...args);
+            const failed = spawnSync(
+              process.execPath,
+              ['-e', 'process.stderr.write("No space left on device"); process.exit(28)'],
+              { encoding: 'utf8', timeout: 5_000 },
+            );
+            return { exitCode: failed.status ?? -1, stdout: failed.stdout, stderr: failed.stderr };
+          },
+        },
+      },
+    );
+    const writer =
+      await import('../../../services/gateway/src/methods/dispatch/slot-file-write.js');
+    mock.module(
+      fileURLToPath(
+        new URL(
+          '../../../services/gateway/src/methods/dispatch/slot-file-write.ts',
+          import.meta.url,
+        ),
+      ),
+      {
+        namedExports: {
+          ...writer,
+          writeTextFileOnSlot: async (...args: Parameters<typeof writer.writeTextFileOnSlot>) => {
+            if (!args[1].endsWith('worker-terminal-contract.json'))
+              return writer.writeTextFileOnSlot(...args);
+            writingContract = true;
+            try {
+              await writer.writeTextFileOnSlot(...args);
+            } finally {
+              writingContract = false;
+            }
+          },
+        },
+      },
+    );
+  }
   await import('../../../services/gateway/src/index.js');
 } else {
   assert.ok(process.env.FARMSLOT_WORKER_CONTRACT_PROOF_INPUT, 'Provide a retained-task receipt.');
@@ -150,12 +210,11 @@ if (process.argv[2] === 'serve') {
       'utf8',
     );
     assert.equal(JSON.parse(frozen).claimReviewGate, true);
-    assert.equal(
-      JSON.parse(
-        await fs.readFile(path.join(workerTask, 'inputs/worker-terminal-contract.json'), 'utf8'),
-      ).claimReviewGate,
-      undefined,
+    const staleContract = await fs.readFile(
+      path.join(workerTask, 'inputs/worker-terminal-contract.json'),
+      'utf8',
     );
+    assert.equal(JSON.parse(staleContract).claimReviewGate, undefined);
     const handoff = JSON.parse(
       await fs.readFile(path.join(dispatchTask, 'inputs/handoff.json'), 'utf8'),
     );
@@ -194,37 +253,41 @@ if (process.argv[2] === 'serve') {
     );
     env.GATEWAY_PORT = String(address.port);
     await fs.mkdir(out, { recursive: true });
-    const log = await fs.open(path.join(out, 'gateway.log'), 'w');
-    child = spawn(
-      process.execPath,
-      [
-        '--experimental-test-module-mocks',
-        '--import',
-        'tsx',
-        fileURLToPath(import.meta.url),
-        'serve',
-      ],
-      { cwd: source, env, stdio: ['ignore', log.fd, log.fd] },
-    );
-    await log.close();
     const { GatewayClient, GatewayConnectionError } =
       await import('../../../packages/cli/src/gateway-client.js');
     const client = new GatewayClient({ url: `ws://127.0.0.1:${address.port}`, timeout: 30_000 });
-    const deadline = Date.now() + 90_000;
-    while (true) {
-      try {
-        await client.call('run.get', { runId: run.id });
-        break;
-      } catch (error) {
-        if (
-          !(error instanceof GatewayConnectionError) ||
-          Date.now() >= deadline ||
-          child.exitCode !== null
-        )
-          throw error;
-        await pause(100);
+    async function startGateway(logName: string) {
+      const log = await fs.open(path.join(out, logName), 'w');
+      const started = spawn(
+        process.execPath,
+        [
+          '--experimental-test-module-mocks',
+          '--import',
+          'tsx',
+          fileURLToPath(import.meta.url),
+          'serve',
+        ],
+        { cwd: source, env, stdio: ['ignore', log.fd, log.fd] },
+      );
+      child = started;
+      await log.close();
+      const deadline = Date.now() + 90_000;
+      while (true) {
+        try {
+          await client.call('run.get', { runId: run.id });
+          break;
+        } catch (error) {
+          if (
+            !(error instanceof GatewayConnectionError) ||
+            Date.now() >= deadline ||
+            started.exitCode !== null
+          )
+            throw error;
+          await pause(100);
+        }
       }
     }
+    await startGateway('gateway.log');
     await client.call('run.replayStep', {
       runId: run.id,
       stepName: 'complete',
@@ -261,6 +324,33 @@ if (process.argv[2] === 'serve') {
     assert.equal(noGate.status, 1);
     assert.match(noGate.stderr + noGate.stdout, /awaiting-review/);
     checks.push('A contract without review authority still refuses unresolved visual claims.');
+    await stop(child);
+    child = undefined;
+    await json(path.join(dispatchTask, 'inputs/handoff.json'), {
+      ...handoff,
+      attemptId: run.id,
+      project,
+    });
+    await fs.writeFile(
+      path.join(workerTask, 'inputs/worker-terminal-contract.json'),
+      staleContract,
+    );
+    await json(path.join(root, 'runs', `${run.id}.json`), run);
+    env.FARMSLOT_WORKER_CONTRACT_FAIL_WRITE = '1';
+    // Start the contained transport-failure scene with a fresh synthetic fleet.
+    await fs.rm(path.join(root, '.farm-status.json'), { force: true });
+    await startGateway('gateway-write-failure.log');
+    await assert.rejects(
+      client.call('run.replayStep', { runId: run.id, stepName: 'complete' }),
+      /remote command exited 28.*No space left/,
+    );
+    assert.equal(
+      await fs.readFile(path.join(workerTask, 'inputs/worker-terminal-contract.json'), 'utf8'),
+      staleContract,
+    );
+    checks.push(
+      'Contained nonzero remote-transport write failure rejects public replay and leaves the stale worker contract unchanged.',
+    );
     assert.deepEqual(await hashes(input.workerTask), before);
     assert.deepEqual(await hashes(input.dispatchTask), dispatchBefore);
     await json(path.join(out, 'receipt.json'), {
@@ -277,15 +367,7 @@ if (process.argv[2] === 'serve') {
     });
     console.log(JSON.stringify({ status: 'pass', checks }));
   } finally {
-    if (child && child.exitCode === null && child.signalCode === null) {
-      const done = once(child, 'exit');
-      child.kill('SIGTERM');
-      await Promise.race([done, pause(5_000)]);
-      if (child.exitCode === null && child.signalCode === null) {
-        child.kill('SIGKILL');
-        await done;
-      }
-    }
+    await stop(child);
     await fs.rm(scratch, { recursive: true, force: true });
   }
 }
