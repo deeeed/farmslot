@@ -179,9 +179,13 @@ worker. Existing artifact and terminal-contract checks still apply.
 
 The gateway MUST validate shape, freshness, role/context and execution attempt
 before accepting a wait. A valid wait is healthy operator dependency, not
-making-progress or worker-done. During it the monitor MUST keep observing the
-owned signal, retain the worker/slot, and suppress inactivity nudges,
-`monitor_max_nudges`, idle-exit handoff and elapsed execution timeout. Explicit
+making-progress or worker-done. The healthy waiting label and monitoring
+suspension also require structured confirmation that the same owned worker is
+still live. While both conditions hold the monitor MUST keep observing the
+owned signal and worker, retain the worker/slot, and suppress inactivity nudges,
+`monitor_max_nudges` and elapsed execution timeout. Worker failure, exit or
+uncertain liveness MUST retain existing guarded recovery and MUST NOT remain
+labelled healthy on the authority of a stored wait signal alone. Explicit
 cancellation and independent resource/credential safety checks remain available.
 Wait time MUST be excluded from the monitor's execution timeout, including
 across restart. Clearing it starts a fresh inactivity window while retaining

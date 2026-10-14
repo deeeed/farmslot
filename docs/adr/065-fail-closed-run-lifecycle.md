@@ -222,7 +222,9 @@ context and projects it into the shared lifecycle view. The execution keeps its
 current run status, worker and slot. The view says `Waiting on operator: <who>`.
 
 A validated wait suspends inactivity nudges, their escalation and the monitor's
-elapsed execution timeout. It does not count as worker progress. The existing
+elapsed execution timeout only while structured observation confirms the same
+owned worker remains live. It does not count as worker progress. Worker failure,
+exit and uncertain liveness retain existing guarded recovery. The existing
 monitor continues observing signals and cancellation. Resumed marks clear the
 wait; normal monitoring resumes with a fresh inactivity window and the remaining
 execution timeout. Restart reconstructs the wait from the same owned signal.
