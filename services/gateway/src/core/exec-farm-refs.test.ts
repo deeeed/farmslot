@@ -7,7 +7,8 @@ import { mock, test } from 'node:test';
 
 class NodeSupportPendingError extends Error {}
 const resolved: Array<{ cmd: string; budgetMs: number | undefined }> = [];
-let resolveDelayMs = 0;
+let resolveElapsedMs = 0;
+let now = 0;
 let pending = false;
 const sent: Array<{ cmd: string; timeout: number | undefined }> = [];
 
@@ -21,7 +22,7 @@ mock.module('../node-support/remote-command.js', {
     ) => {
       resolved.push({ cmd, budgetMs: options.budgetMs });
       if (pending) throw new NodeSupportPendingError('still being delivered');
-      await new Promise((resolve) => setTimeout(resolve, resolveDelayMs));
+      now += resolveElapsedMs;
       return cmd.replaceAll('~/farmslot-node/', '~/farmslot-node/support/h/');
     },
   },
@@ -48,7 +49,8 @@ const remote = {
 function reset(): void {
   resolved.length = 0;
   sent.length = 0;
-  resolveDelayMs = 0;
+  resolveElapsedMs = 0;
+  now = 0;
   pending = false;
 }
 
@@ -61,15 +63,23 @@ test('a remote hook that calls a farm script runs the resolved command', async (
     sent.map((call) => call.cmd),
     ['bash ~/farmslot-node/support/h/projects/x/scripts/unlock-wallet.sh'],
   );
-  assert.equal(resolved[0]!.budgetMs, 60_000, 'the delivery wait counts against the budget');
+  assert.equal(resolved[0]!.budgetMs, 60_000, 'delivery retains its configured wait budget');
 });
 
-test('time spent delivering the bundle comes off the command timeout', async () => {
-  reset();
-  resolveDelayMs = 200;
-  await execOnSlot(remote, 'bash ~/farmslot-node/scripts/x.sh', { timeout: 5_000 });
-  assert.ok(sent[0]!.timeout! <= 4_850, `remaining budget passed on: ${sent[0]!.timeout}`);
-});
+for (const elapsedMs of [0, 9_998, 9_999, 10_000, 54_524, 465_238]) {
+  test(`remote prepare retains its 10s command timeout after ${elapsedMs}ms of support resolution`, async (t) => {
+    reset();
+    resolveElapsedMs = elapsedMs;
+    t.mock.method(Date, 'now', () => now);
+    const result = await execOnSlot(remote, 'bash ~/farmslot-node/scripts/check-paths.sh', {
+      timeout: 10_000,
+      selectNodeSupport: false,
+    });
+    assert.equal(result.exitCode, 0);
+    assert.equal(resolved[0]!.budgetMs, 10_000);
+    assert.equal(sent[0]!.timeout, 10_000);
+  });
+}
 
 test('a probe whose budget runs out during delivery times out instead of hanging', async () => {
   reset();

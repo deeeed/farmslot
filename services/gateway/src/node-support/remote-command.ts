@@ -192,7 +192,7 @@ export async function resolveRemoteFarmCommand(
   command: string,
   options: {
     io?: NodeSupportIo;
-    /** Wall-clock the caller gave the whole command; the delivery wait counts against it. */
+    /** Maximum bundle delivery wait before the configured command timeout starts. */
     budgetMs?: number;
     /** Preserve the slot support pointer while checking prerequisites. */
     selectSlot?: boolean;

@@ -255,9 +255,8 @@ export async function execOnSlot(
   // Every remote command that calls a farm script runs it from the support
   // bundle matching this gateway's config, never from the node's last deploy
   // (ledger F15). Loaded lazily: node-support itself executes through here.
-  let timeout = opts.timeout;
+  const timeout = opts.timeout;
   if (cmd.includes('~/farmslot-node')) {
-    const startedAt = Date.now();
     const { NodeSupportPendingError, resolveRemoteFarmCommand } =
       await import('../node-support/remote-command.js');
     try {
@@ -271,8 +270,10 @@ export async function execOnSlot(
       if (!(error instanceof NodeSupportPendingError)) throw error;
       return { exitCode: EXEC_TIMEOUT_EXIT_CODE, stdout: '', stderr: error.message };
     }
-    if (timeout !== undefined) timeout = Math.max(1, timeout - (Date.now() - startedAt));
   }
+  // The timeout belongs to the command after its support bundle is ready,
+  // just as execLocal starts its timer at spawn. Resolution has its own
+  // bounded delivery wait; a slow local hash must not turn a hook into a 1ms exec.
   return nodeExec(slotVars.machine, cmd, cwd, {
     timeout,
     onOutput: opts.onOutput,
