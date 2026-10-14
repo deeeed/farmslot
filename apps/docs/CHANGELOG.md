@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document the typed retained-run stack attachment RPC and graph command.
+
 - Document the shared verified branch-maintenance guard and leased push commands.
 - Link onboarding to the shared person, service and node credential reference.
 

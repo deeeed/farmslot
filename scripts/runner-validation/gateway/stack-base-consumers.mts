@@ -1,14 +1,15 @@
 import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 // Manual gateway proof. Setup fixtures are isolated; derived task bytes are not injected.
 import assert from 'node:assert/strict';
-import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   writeFileSync,
   symlinkSync,
   realpathSync,
@@ -23,16 +24,28 @@ import type {
   BranchMaintenanceOperation,
   ReadyGatePrPackage,
   Run,
+  RunGetResult,
+  RunListResult,
+  WorkGraphAttachRunResult,
 } from '@farmslot/protocol';
+import { GatewayClient } from '../../../packages/cli/src/gateway-client.js';
+import { resolveGatewayTarget } from '../../../packages/cli/src/gateway-profiles.js';
+import { isRecord } from '@farmslot/protocol';
 import { shellQuote as shSingleQuote } from '../../../services/gateway/src/core/tmux.js';
 import { captureCurrentReviewSnapshot } from '../../../services/gateway/src/review/snapshots.js';
-import { computeReadyGatePackageHash } from '../../../services/gateway/src/run-completion/ready-gate-package.js';
+import {
+  computeReadyGatePackageHash,
+  readReadyGatePreparedPackage,
+} from '../../../services/gateway/src/run-completion/ready-gate-package.js';
+import { readFrozenRecordedEvidenceSources } from '../../../services/gateway/src/run-engine/recorded-evidence-sources.js';
 import { buildCodexExecLaunch } from '../../../services/gateway/src/runners/launch-command.js';
 import { makeVars } from '../../../services/gateway/src/runners/test-fixtures.js';
 
 const source = fileURLToPath(new URL('../../../', import.meta.url));
 if (process.argv[2] === 'serve') {
   await import('../../../services/gateway/src/index.js');
+} else if (process.argv[2] === 'attachment' || process.argv[2] === 'attachment-after-restart') {
+  await proveRetainedAttachment(process.argv[2] === 'attachment-after-restart');
 } else {
   execFileSync('tmux', ['-N', 'has-session']);
   const scratch = realpathSync(mkdtempSync(path.join(tmpdir(), 'stack-base-proof-')));
@@ -1006,4 +1019,168 @@ if (process.argv[2] === 'serve') {
     json(path.join(out, 'logs.json'), logs);
     // Retain isolated fixture input and packages for the receipt; no real checkouts changed.
   }
+}
+
+/** Public proof on an ordinary retained run; setup never supplies a stack record. */
+async function proveRetainedAttachment(afterRestart: boolean): Promise<void> {
+  const file = process.env.FARMSLOT_STACK_ATTACHMENT_PROOF_CONFIG;
+  assert.ok(file, 'Set FARMSLOT_STACK_ATTACHMENT_PROOF_CONFIG to the retained-run proof inputs');
+  const input: unknown = JSON.parse(readFileSync(file, 'utf8'));
+  assert.ok(isRecord(input));
+  const text = (name: string): string => {
+    const value = input[name];
+    assert.equal(typeof value, 'string', `Missing proof input ${name}`);
+    assert.ok(typeof value === 'string' && value.length > 0);
+    return value;
+  };
+  const params = {
+    graphId: text('graphId'),
+    nodeId: text('nodeId'),
+    runId: text('runId'),
+    expectedHeadSha: text('expectedHeadSha'),
+  };
+  assert.match(params.expectedHeadSha, /^[a-f0-9]{40}$/);
+  const upstreamBranch = text('upstreamBranch');
+  const upstreamSha = text('upstreamSha');
+  const out = path.resolve(text('outputDir'));
+  mkdirSync(out, { recursive: true });
+  const target = resolveGatewayTarget({
+    gateway: process.env.FARMSLOT_GATEWAY_PROFILE,
+    url: process.env.FARMSLOT_GATEWAY,
+  });
+  const client = new GatewayClient({
+    url: target.url,
+    credential: target.credential,
+    timeout: 60_000,
+  });
+  const before = (await client.call<RunGetResult>('run.get', { runId: params.runId })).run;
+  assert.ok(before.taskFile);
+  const taskFile = before.taskFile;
+  const taskDir = path.dirname(taskFile);
+  const frozen = await readReadyGatePreparedPackage(before);
+  assert.ok(frozen, 'The real retained run needs its captured publication inventory');
+  const evidence = await readFrozenRecordedEvidenceSources(
+    before,
+    frozen.evidenceManifest ?? [],
+    frozen.selectedEvidenceKeys ?? [],
+  );
+  assert.ok(evidence.length > 0, 'Require a real inventory-qualified execution package');
+  const inventoried = (frozen.evidenceManifest ?? []).map((ref) => {
+    const retained = path.resolve(taskDir, ref.path);
+    assert.ok(retained.startsWith(taskDir + path.sep));
+    return retained;
+  });
+  const files = (directory: string): string[] =>
+    !existsSync(directory)
+      ? []
+      : readdirSync(directory, { withFileTypes: true }).flatMap((entry) =>
+          entry.isDirectory()
+            ? files(path.join(directory, entry.name))
+            : entry.isFile()
+              ? [path.join(directory, entry.name)]
+              : [],
+        );
+  const hashes = (): Record<string, string> =>
+    Object.fromEntries(
+      [
+        taskFile,
+        ...inventoried,
+        path.join(taskDir, 'CHECKLIST.md'),
+        ...files(path.join(taskDir, 'inputs')),
+        ...files(path.join(taskDir, 'artifacts/recipe-runs')),
+      ]
+        .filter(existsSync)
+        .sort()
+        .map((name) => [
+          path.relative(taskDir, name),
+          createHash('sha256').update(readFileSync(name)).digest('hex'),
+        ]),
+    );
+  const previousFiles = hashes();
+  const beforeIds = (await client.call<RunListResult>('run.list', { limit: 1000 })).runs
+    .map((run) => run.id)
+    .sort();
+  const baseline = path.join(out, 'before-files.json');
+  if (afterRestart) {
+    assert.equal(before.workGraphId, params.graphId);
+    assert.equal(before.workNodeId, params.nodeId);
+    assert.deepEqual(previousFiles, JSON.parse(readFileSync(baseline, 'utf8')));
+  } else {
+    assert.equal(before.workGraphId, undefined);
+    assert.equal(before.stack, undefined);
+    assert.ok(!before.prNumber);
+    writeFileSync(baseline, JSON.stringify(previousFiles, null, 2) + '\n');
+    await assert.rejects(
+      client.call('workGraph.attachRun', { ...params, expectedHeadSha: '0'.repeat(40) }),
+      (error: unknown) => isRecord(error) && error.code === 'WORK_GRAPH_ATTACH_HEAD_CHANGED',
+    );
+    const refused = (await client.call<RunGetResult>('run.get', { runId: params.runId })).run;
+    assert.equal(refused.stack, undefined);
+    const cli = spawnSync(
+      process.execPath,
+      [
+        path.join(source, 'packages/cli/bin/farmslot.mjs'),
+        '--json',
+        '--url',
+        target.url,
+        'graph',
+        'attach-run',
+        params.graphId,
+        params.nodeId,
+        params.runId,
+        '--expected-head',
+        params.expectedHeadSha,
+      ],
+      {
+        cwd: source,
+        env: { ...process.env, TSX_TSCONFIG_PATH: path.join(source, 'packages/cli/tsconfig.json') },
+        encoding: 'utf8',
+        timeout: 90_000,
+      },
+    );
+    writeFileSync(path.join(out, 'cli.stdout.json'), cli.stdout);
+    writeFileSync(path.join(out, 'cli.stderr.log'), cli.stderr);
+    assert.equal(cli.status, 0, cli.stderr || cli.stdout);
+    assert.deepEqual(hashes(), previousFiles);
+  }
+  const result = await client.call<WorkGraphAttachRunResult>('workGraph.attachRun', params);
+  assert.equal(result.run.workGraphId, params.graphId);
+  assert.equal(result.run.workNodeId, params.nodeId);
+  assert.equal(result.run.stack?.baseBranch, upstreamBranch);
+  assert.equal(result.run.stack?.resolvedSha, upstreamSha);
+  assert.equal(result.run.id, before.id);
+  assert.equal(result.run.familyId, before.familyId);
+  assert.equal(result.run.taskFile, before.taskFile);
+  assert.deepEqual(result.run.steps, before.steps);
+  assert.deepEqual(hashes(), previousFiles);
+  assert.deepEqual(
+    (await client.call<RunListResult>('run.list', { limit: 1000 })).runs
+      .map((run) => run.id)
+      .sort(),
+    beforeIds,
+  );
+  writeFileSync(
+    path.join(out, afterRestart ? 'after-restart.json' : 'attachment.json'),
+    JSON.stringify(
+      {
+        params,
+        run: result.run,
+        graph: result.graph,
+        publicationRefreshRequired: result.publicationRefreshRequired,
+        taskAndEvidencePreserved: true,
+        noRunCreated: true,
+        afterRestart,
+      },
+      null,
+      2,
+    ) + '\n',
+  );
+  console.log(
+    JSON.stringify({
+      pass: true,
+      runId: params.runId,
+      afterRestart,
+      preservedFiles: Object.keys(previousFiles).length,
+    }),
+  );
 }
