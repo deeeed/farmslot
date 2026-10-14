@@ -45,6 +45,7 @@ if (process.argv[2] === 'serve') {
   const session = `stack-base-${randomUUID()}`;
   const slotId = `stack-base-${randomUUID()}`;
   const project = 'stack-base-proof';
+  const failAfterPush = process.env.FARMSLOT_STACK_BASE_PROOF_ONLY === 'pushed-terminal';
   const json = (file: string, value: unknown) => {
     mkdirSync(path.dirname(file), { recursive: true });
     writeFileSync(file, JSON.stringify(value, null, 2) + '\n');
@@ -175,6 +176,8 @@ if (process.argv[2] === 'serve') {
       workerScript,
       String.raw`import fs from 'node:fs';import path from 'node:path';import assert from 'node:assert/strict';import {execFileSync} from 'node:child_process';const dir=process.env.FARMSLOT_TASK_DIR;const task=fs.readFileSync(path.join(dir,'TASK.md'),'utf8');for(const phase of ['execute','push']){const command=task.split('\n').find(line=>line.startsWith('node ')&&line.includes('branch-update.mjs')&&line.includes(' '+phase+' '));assert.ok(command,'generated shared command missing');execFileSync('bash',['-eu','-c',command],{stdio:'pipe'});}fs.mkdirSync(path.join(dir,'artifacts'),{recursive:true});fs.writeFileSync(path.join(dir,'artifacts/comments-report.md'),'# Maintenance\n\nThe shared guard and leased push passed. No comment changes.\n');fs.writeFileSync(path.join(dir,'artifacts/learnings.md'),'# Maintenance contract\n\nThe generated guard reuses the pinned input; the shared push checks the exact captured child lease. Both commands passed in this attempt.\n');`,
     );
+    if (failAfterPush)
+      writeFileSync(workerScript, readFileSync(workerScript, 'utf8') + '\nprocess.exit(1);\n');
     const projectConfig = {
       name: project,
       task_dir: '.task',
@@ -592,7 +595,9 @@ if (process.argv[2] === 'serve') {
       process.env.FARMSLOT_STACK_BASE_PROOF_ONLY ?? '',
     )
       ? []
-      : cases) {
+      : failAfterPush
+        ? cases.slice(0, 1)
+        : cases) {
       if (entry.expected === 'feat/upstream') {
         git('checkout', 'feat/upstream');
         writeFileSync(path.join(repo, 'upstream-new.txt'), entry.id + '\n');
@@ -746,12 +751,37 @@ if (process.argv[2] === 'serve') {
         writeFileSync(path.join(out, entry.id + '.release'), 'superseded');
         await wait(() => {
           const current: Run = rpc('run.get', { runId: entry.id }).run;
-          if (current.status === 'failed') throw new Error(current.error ?? 'Worker failed');
+          if (current.status === 'failed' && !failAfterPush)
+            throw new Error(current.error ?? 'Worker failed');
           return (
+            (failAfterPush && current.status === 'failed') ||
             existsSync(path.join(out, entry.id + '.renewed')) ||
             existsSync(path.join(out, entry.id + '.pre-review'))
           );
         }, 'real scripted worker completion');
+        if (failAfterPush && !existsSync(path.join(out, entry.id + '.renewed'))) {
+          const failed: Run = rpc('run.get', { runId: entry.id }).run;
+          assert.equal(
+            failed.metrics.disposition,
+            'failed',
+            'actual command failure is recorded after its successful push',
+          );
+          assert.equal(
+            failed.steps.find((step) => step.name === 'write-task')?.outputs
+              ?.branchMaintenanceOperation !== undefined,
+            true,
+          );
+          rpc('run.replayStep', {
+            runId: entry.id,
+            stepName: 'complete',
+            triggeredBy: 'operator',
+            skipPrepare: true,
+          });
+          await wait(
+            () => existsSync(path.join(out, entry.id + '.renewed')),
+            'terminal failed work reconciles its real pushed result',
+          );
+        }
         if (existsSync(path.join(out, entry.id + '.pre-review'))) {
           rpc('run.replayStep', { runId: entry.id, stepName: 'complete', triggeredBy: 'operator' });
           await wait(
@@ -768,7 +798,7 @@ if (process.argv[2] === 'serve') {
         const commandResult = JSON.parse(
           readFileSync(path.join(workerDir, 'artifacts/scripted-command-result.json'), 'utf8'),
         );
-        assert.equal(commandResult.exitCode, 0);
+        assert.equal(commandResult.exitCode, failAfterPush ? 1 : 0);
         assert.equal(commandResult.timedOut, false);
         const owner: Run = rpc('run.get', { runId: entry.parentRunId }).run;
         const successor = owner.engineState?.publishGate?.maintainedSnapshot;
@@ -792,15 +822,17 @@ if (process.argv[2] === 'serve') {
       rpc('run.cancel', { runId: entry.id });
       writeFileSync(path.join(out, entry.id + '.release'), 'cancelled');
       await wait(() => rpc('run.get', { runId: entry.id }).run.status === 'cancelled', 'cancel');
-      await wait(() => {
-        const rows = JSON.parse(readFileSync(path.join(root, '.farm-status.json'), 'utf8')).slots;
-        const row = rows.find((candidate: { slot: string }) => candidate.slot === slotId);
-        return row?.lifecycle === 'ready' && row?.phase !== 'releasing' && !row?.current_run_id;
-      }, 'owned slot release');
+      if (!failAfterPush) {
+        await wait(() => {
+          const rows = JSON.parse(readFileSync(path.join(root, '.farm-status.json'), 'utf8')).slots;
+          const row = rows.find((candidate: { slot: string }) => candidate.slot === slotId);
+          return row?.lifecycle === 'ready' && row?.phase !== 'releasing' && !row?.current_run_id;
+        }, 'owned slot release');
+      }
       assert.equal(git('rev-list', '--count', `origin/${entry.expected}..HEAD`), '1');
     }
     const inlineResults = [];
-    if (process.env.FARMSLOT_STACK_BASE_PROOF_ONLY !== 'maintenance') {
+    if (!failAfterPush && process.env.FARMSLOT_STACK_BASE_PROOF_ONLY !== 'maintenance') {
       const workerTaskDir = path.join(scratch, 'scripted-worker');
       if (nativeInline) {
         const { installHooks } = await import('../lib/install.mjs');
@@ -954,7 +986,13 @@ if (process.argv[2] === 'serve') {
       checkpointRenewal: results.length > 0,
       restartAfterPush: results.length > 0,
       originalRunsUntouched: true,
+      failedAfterGuardedPush: failAfterPush,
       limits: [
+        ...(failAfterPush
+          ? [
+              'The deliberately failed worker remains held for inspection; this control proves terminal checkpoint reconciliation, not slot cleanup. Its isolated gateway and owned session are torn down.',
+            ]
+          : []),
         'Seeded immutable fixture input before gateway start; production replay RPC and writer derive task values.',
         'The scheduling checkpoint only holds after the native writer; no computed task or run result is substituted.',
         'Generated commands execute through the real scripted command runner. Public replay reaches the native completion writer after actual dispatch and monitor; scheduling stops immediately after checkpoint renewal. No review, acceptance or publication approval is supplied.',

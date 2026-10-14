@@ -185,9 +185,21 @@ async function retireMaintenanceInput(runId: string, operationId: string): Promi
 }
 
 /** Terminal work keeps its checkout for inspection; input retirement grants no approval. */
-export async function abandonBranchMaintenance(run: Run): Promise<void> {
+export async function abandonBranchMaintenance(
+  run: Run,
+  deps: MaintenanceDependencies = defaultDependencies,
+): Promise<void> {
   const operation = pendingBranchMaintenance(getRun(run.id) ?? run);
-  if (operation) await retireMaintenanceInput(run.id, operation.id);
+  if (!operation) return;
+  if (!run.slotId) throw new MaintenanceRefusal('MAINTENANCE_SLOT_MISSING');
+  const vars = await deps.loadSlot(run.slotId);
+  if (vars.remoteRepo !== operation.repo)
+    throw new MaintenanceRefusal('MAINTENANCE_CHECKOUT_CHANGED');
+  // A terminal disposition cannot discard a successful push. Validation and
+  // renewal only read Git; unpublished dirty work remains available for inspection.
+  const validation = await deps.runtime<MaintenanceValidation>(vars, 'validate', operation);
+  if (validation.status === 'pushed') await completeBranchMaintenance(run, operation, deps);
+  else await retireMaintenanceInput(run.id, operation.id);
 }
 
 /** Graph transport uses the same pinned execution and exact lease as worker maintenance. */

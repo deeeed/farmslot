@@ -405,11 +405,17 @@ test('initial comparison consumes the settled immutable publication head instead
   );
 });
 
-test('terminal abandonment persists input retirement without SDK lookup or checkout mutation', async (t) => {
+test('terminal unpublished work retires input with read-only validation and no checkout mutation', async (t) => {
   const { owner, worker, deps } = await fixture(t);
   await maintenance.prepareBranchMaintenance(worker, makeVars(), 'main', 'rebase', deps);
-  runs.updateRun(worker.id, { slotId: 'unavailable-node' });
-  await maintenance.abandonBranchMaintenance(worker);
+  const phases: string[] = [];
+  deps.runtime = async <T>(_vars: unknown, phase: string): Promise<T> => {
+    phases.push(phase);
+    assert.equal(phase, 'validate');
+    return { status: 'pending' } as T;
+  };
+  await maintenance.abandonBranchMaintenance(worker, deps);
+  assert.deepEqual(phases, ['validate']);
   assert.equal(maintenance.pendingBranchMaintenance(worker), undefined);
   assert.deepEqual(owner.engineState!.publishGate!.maintainedSnapshot, initial);
   const stored = JSON.parse(await readFile(runs.runRecordPath(worker.id), 'utf8'));
@@ -418,4 +424,20 @@ test('terminal abandonment persists input retirement without SDK lookup or check
       .branchMaintenanceOperation,
     undefined,
   );
+});
+
+test('a pushed terminal disposition renews before retiring its input without SDK checkout recovery', async (t) => {
+  const { owner, worker, operation, deps } = await fixture(t);
+  await maintenance.prepareBranchMaintenance(worker, makeVars(), 'main', 'rebase', deps);
+  const phases: string[] = [];
+  deps.runtime = async <T>(_vars: unknown, phase: string): Promise<T> => {
+    phases.push(phase);
+    if (phase === 'validate') return { status: 'pushed' } as T;
+    assert.equal(phase, 'verify');
+    return { headSha: 'd'.repeat(40), replayBoundarySha: operation.targetSha } as T;
+  };
+  await maintenance.abandonBranchMaintenance(worker, deps);
+  assert.deepEqual(phases, ['validate', 'verify']);
+  assert.equal(owner.engineState!.publishGate!.maintainedSnapshot!.headSha, 'd'.repeat(40));
+  assert.equal(maintenance.pendingBranchMaintenance(worker), undefined);
 });
