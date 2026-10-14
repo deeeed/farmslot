@@ -44,6 +44,7 @@ export const STEPS = [
       '.agents/skills/tmux-model-driver/tests/pane-state.test.mjs',
       '.agents/skills/tmux-model-driver/tests/send-and-verify.test.mjs',
       '.agents/skills/tmux-model-driver/tests/native-evidence.test.mjs',
+      '.agents/skills/tmux-model-driver/tests/probe-budget.test.mjs',
       '.agents/skills/tmux-model-driver/tests/midturn-send.test.mjs',
       '.agents/skills/tmux-model-driver/tests/wrappers.test.mjs',
       '.agents/skills/tmux-model-driver/tests/runner-launch.test.mjs',
