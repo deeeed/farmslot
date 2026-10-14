@@ -900,3 +900,29 @@ optional graph retry history. The gateway graph store owns its only writer;
 CLI and gateway clients consume the same projection. These are additive v1
 fields and methods, with no harness extension, recipe command or run lifecycle
 flag. Harnesses continue through the existing backlog/queue dispatch contract.
+
+## Amendment 4: verified branch-maintenance checkpoints (2026-10-14)
+
+Status: Proposed. Normative contract: [stacked-runs maintenance](../reference/stacked-runs.md#proposed-maintenance-checkpoint-contract).
+
+### Decision
+
+Stacked branch maintenance uses one gateway-owned checkpoint in the publishing run's existing `engineState.publishGate`. A named `BranchMaintenanceCheckpoint` extends `ReviewDiffSnapshot` with `replayBoundarySha`, separating the verified child-only replay boundary from the comparison base. Initial replay ownership comes from recorded stack provenance and the existing contribution algorithm; a live merge-base cannot establish it. Later operations consume the verified successor. Prepare's `Run.stack.resolvedSha` and frozen publication evidence remain unchanged.
+
+Before dispatching maintenance, the gateway records the immutable target, selected checkpoint and exact remote child lease in existing maintenance step outputs or CI-watch state. The shared runtime guard checks that context, including before an up-to-date shortcut. For linear child-only history, a worker rebase uses `--onto` with the pinned target and verified replay boundary. For merged history, the same runtime operation filters inherited commits or reconstructs the verified committed child delta before rebasing; a raw boundary-to-head range is forbidden. Both paths push with the recorded lease. A verified child-only range permits a parent rebase or intentional rewind without replaying removed parent commits. Stale targets, missing ownership and omitted remote child commits refuse.
+
+pr-complete, update-branch, ci-fix, inline fixes and existing graph catch-up share one checkpoint writer. It verifies the result and uses compare-and-set against the expected prior checkpoint. Graph catch-up keeps its existing merge behavior and retained replay provenance; subsequent worker maintenance removes old parent ancestry through that provenance without replaying reverted upstream/default work or losing child merge resolutions. Once the physical ancestry is removed, ordinary maintenance checks apply. A successful push interrupted before renewal is reconciled from retained operation context, not worker prose.
+
+### Rationale and consequences
+
+An exact child-head lease prevents overwriting remote edits but cannot prevent replaying removed parent commits. A publication snapshot's live merge-base may already omit that parent boundary, and its child head becomes stale after a valid rebase. One provenance-checked successor supports repeated maintenance and restart recovery without rewriting evidence.
+
+Per-pack ancestry logic and PR-body inference are rejected. Consumers use the same gateway context and runtime guard; mutable diagnostics cannot certify ownership. Missing legacy authority refuses. The approved worker rebase policy remains in force, existing graph merges are preserved, and a force-push prohibition is never bypassed. This amendment does not add retained-run attachment or change graph planning retry.
+
+### Public surface
+
+- Existing flows remain pr-complete, update-branch and ci-fix; no new CLI command, flag, RPC or store.
+- `@farmslot/protocol` owns the additive `BranchMaintenanceCheckpoint` type and optional Run field. Its release requires changelog entries and compatible dependent repins.
+- `@farmslot/agent-runtime` owns `buildBranchUpdateInstructions` and the proposed `buildBranchUpdateGuardCommand` export. Task generation and the inline CI-fix writer consume them. Pack templates and existing helpers execute the supplied guard rather than deriving parent history.
+- Proposed gateway variables `BRANCH_UPDATE_GUARD_CMD`, `PUBLICATION_PARENT_BASE_SHA` and `PUBLICATION_PARENT_HEAD_SHA` accompany `PUBLICATION_BASE`. They derive from verified metadata; pinned target and lease come from the same persisted context. Branch identities use one normalization.
+- Exports and generated variables are versioned public contracts. Additive protocol/runtime surfaces require minor releases under their owning package policy. Deploy the supplying gateway and compatible published closure before migrating packs; missing standalone stack context refuses. Implementation documents variables and proves consumers before cutover.
