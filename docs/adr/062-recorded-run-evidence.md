@@ -1,7 +1,7 @@
 # ADR-062: Recorded run evidence
 
 **Status:** Accepted
-**Revision:** Accepted amendments 1 and 2 consolidated on 2026-10-13; amendment 3 Accepted under #1011; amendment 4 Accepted under #1015; amendment 5 accepted on 2026-10-14. Historical/footprint implementation remains pending; curation delivery is recorded below.
+**Revision:** Accepted amendments 1 and 2 consolidated on 2026-10-13; amendment 3 Accepted under #1011; amendment 4 Accepted under #1015; amendments 5, 6 and 7 Accepted on 2026-10-14; amendment 8 Proposed. Historical/footprint implementation remains pending; curation delivery is recorded below.
 **Date:** 2026-10-12
 **Owner:** Farmslot maintainers
 **Scope:** Recipe execution, claim evidence, review gates, and public CLI/SDK
@@ -519,3 +519,47 @@ registration and publication derivation. The experimental
 transform state for both clients. Harnesses implement capture/target bindings and
 inherit recording, claim validation, comparison and publication. Migrate templates
 and consumers before removing their role guesses or pair-mapping copies.
+
+## Amendment 8 (2026-10-14): Retained criterion-link snapshots
+
+**Status:** Proposed, scoped by the lead to the #1044 implementation and review.
+**Specification:** [Retained criterion-link migration](../reference/recorded-run-evidence.md#retained-criterion-link-migration).
+**Implementation:** [#1044](https://github.com/deeeed/farmslot/pull/1044), pending review and merge.
+
+### Decision
+
+Preserve already verified historical criterion-to-file relationships once in a
+private gateway-owned snapshot outside the original task artifacts and frozen
+publication inventory. Explicitly inventoried task storage identities establish
+migration scope, including tasks with no retained Run record. Missing Run metadata
+does not establish age and MUST NOT be backfilled.
+
+The migration consumes a frozen, operator-reviewed relationship inventory and
+checks the original handoff, manifest and linked file digests. Normal readers
+consume the retained links without interpreting manifest `covers`. Existing
+engine-ledger reads retain precedence. Snapshot failures have a separate display
+caption and never supply a verdict, task binding, moment or gate prerequisite.
+
+### Rationale and consequences
+
+Deleting the old manifest-derived link reader would hide historical relationships
+whose tasks have no ledger. Keeping that reader would continue deriving new
+relationships after the writer cutover. A finite migration retains the existing
+relationships and original bytes while removing the ongoing parser.
+
+Snapshots bind exact task storage identity and original byte digests. They remain
+private display metadata, with the same retention ownership as their source task.
+Moving a task or changing its source bytes requires an explicit migration decision;
+the reader cannot guess or repair the identity. Completion and frozen decisions
+continue to use their existing engine and publication authority.
+
+### Public surface and migration
+
+Gateway maintenance operators run the one-time retained-link import described in
+the owning specification. It adds no RPC, recipe command, SDK export or harness
+writer. Existing `TaskProgressResult.acceptanceEvidenceLinks` and its error caption
+carry the display result to both clients; the experimental
+`@farmslot/adapter-sdk/evidence` model consumes the existing `evidenceLinks` input.
+Links stay task-relative and untimed. Providers and players inherit existing
+artifact transport. Import and verify snapshots before deploying #1044's reader
+cutover; package release and deployment remain separate delivery records.

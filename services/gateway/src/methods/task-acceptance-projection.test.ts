@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
@@ -50,6 +51,12 @@ mock.module('../runs/store.js', {
 });
 
 const { taskProgress } = await import('./task.js');
+const {
+  importRetainedAcceptanceLinks,
+  RETAINED_LINK_SOURCE,
+  RETAINED_LINK_HELPER_SHA256,
+  retainedAcceptanceLinksPath,
+} = await import('../tasks/retained-acceptance-links.js');
 
 const CHECKLIST = ['# Worker', '', '- [x] **1. build it**', '- [ ] **2. prove it**', ''].join('\n');
 
@@ -106,6 +113,52 @@ function writeFixture(ledgerBody: string | null): { root: string; taskFileRel: s
 async function progressFor(fixture: { taskFileRel: string }) {
   return taskProgress({ slotId: 'slot-acceptance', taskFile: fixture.taskFileRel });
 }
+
+test('task.progress preserves imported historical links without a verdict or timeline', async () => {
+  const fixture = writeFixture(null);
+  const taskDir = path.dirname(path.join(fixture.root, fixture.taskFileRel));
+  const sha256 = (value: Buffer | string) => createHash('sha256').update(value).digest('hex');
+  const manifestPath = path.join(taskDir, 'artifacts/evidence-manifest.json');
+  const manifest = JSON.stringify({
+    standalone: [{ file: 'artifacts/retained.png', covers: ['AC-1'] }],
+  });
+  writeFileSync(manifestPath, manifest);
+  writeFileSync(path.join(taskDir, 'artifacts/retained.png'), 'retained bytes');
+  const links = [{ id: 'AC-1', evidence: ['artifacts/retained.png'] }];
+  const inventory = {
+    frozenSource: RETAINED_LINK_SOURCE,
+    helperSha256: RETAINED_LINK_HELPER_SHA256,
+    records: [
+      {
+        task: path.relative(fixture.root, taskDir),
+        handoffSha256: sha256(readFileSync(path.join(taskDir, 'inputs/handoff.json'))),
+        manifestSha256: sha256(manifest),
+        links,
+        refs: [
+          {
+            path: 'artifacts/retained.png',
+            sha256: sha256('retained bytes'),
+            contained: true,
+            present: true,
+          },
+        ],
+      },
+    ],
+  };
+  try {
+    await importRetainedAcceptanceLinks(Buffer.from(JSON.stringify(inventory)), fixture.root);
+    const result = await progressFor(fixture);
+    assert.deepEqual(result.acceptanceEvidenceLinks, links);
+    assert.equal(result.acceptanceStatus, undefined);
+    assert.equal(result.acceptanceSource, undefined);
+    assert.equal(result.acceptanceStatusError, undefined);
+    assert.equal(result.acceptanceEvidenceLinksError, undefined);
+    assert.deepEqual(readFileSync(manifestPath), Buffer.from(manifest));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+    rmSync(retainedAcceptanceLinksPath(taskDir), { force: true });
+  }
+});
 
 test('task.progress carries the acceptance ledger beside the step projection', async () => {
   const fixture = writeFixture(`${JSON.stringify(LEDGER, null, 2)}\n`);

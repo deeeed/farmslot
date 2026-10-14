@@ -20,7 +20,10 @@ import {
   validateAcceptanceStatusLedger,
 } from '@farmslot/protocol';
 
+import { isLocal } from '../core/exec.js';
 import { slotFileExists, type SlotLocality, slotReadFile } from '../core/slot-io.js';
+
+import { readRetainedAcceptanceLinks } from './retained-acceptance-links.js';
 
 /** Absolute path of a task directory's acceptance ledger. */
 export function acceptanceStatusPathFor(taskDir: string): string {
@@ -182,7 +185,10 @@ export async function readAcceptanceStatusForDisplay(
     console.warn(`[acceptance] ${message}`);
     return { criteria, ledger: null, error: message };
   }
-  return { criteria, ledger: null };
+  const retained = isLocal(ctx.host, ctx.machine)
+    ? await readRetainedAcceptanceLinks(taskDir, criteria)
+    : {};
+  return { criteria, ledger: null, ...retained };
 }
 
 /** Ledger basename, for the `readTaskArtifactText(taskFile, name)` readers. */
