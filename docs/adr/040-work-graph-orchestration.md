@@ -900,3 +900,28 @@ optional graph retry history. The gateway graph store owns its only writer;
 CLI and gateway clients consume the same projection. These are additive v1
 fields and methods, with no harness extension, recipe command or run lifecycle
 flag. Harnesses continue through the existing backlog/queue dispatch contract.
+
+## Amendment 4: verified branch-maintenance checkpoints (2026-10-14)
+
+Status: Proposed. Normative contract: [stacked-runs maintenance](../reference/stacked-runs.md#proposed-maintenance-checkpoint-contract).
+
+### Decision
+
+Stacked branch maintenance uses one gateway-owned parent/child checkpoint in the publishing run's existing `engineState.publishGate`. It reuses `ReviewDiffSnapshot`: the resolved publication branch, verified parent boundary and child head remain bound together. The first operation consumes the frozen publication review snapshot; later operations consume the last verified maintenance snapshot. Prepare's `Run.stack.resolvedSha` and the frozen publication package remain unchanged.
+
+Before dispatching maintenance, the gateway records the operation's immutable target and remote child lease in the existing maintenance step outputs or CI-watch state. The shared runtime guard checks that authority, including before an up-to-date shortcut. A stacked rebase uses `--onto` with the verified target and previous parent boundary, then pushes with the exact recorded child-head lease. Successful pr-complete, update-branch, ci-fix and inline CI-fix paths renew the publishing ancestor's checkpoint only after verifying the pushed result. A worker report or a merge-base observed after the operation cannot supply that authority.
+
+Open-parent rewinds, missing authority, omitted remote child commits and ambiguous child history refuse before rebase. Retargeted stacks use their recorded upstream merge and the same publication-base resolver. Ordinary non-stacked runs keep their current maintenance behavior. The supported default-branch freshness checks remain separate.
+
+### Rationale and consequences
+
+An exact child-head lease prevents overwriting remote edits but does not prevent replaying parent commits removed by a parent rewrite. A frozen publication snapshot supplies the initial boundary, but its old child head stops matching after a valid rebase. Persisting one verified successor makes repeated maintenance and restart recovery possible without rewriting immutable evidence.
+
+Per-pack ancestry logic and PR-body inference are rejected: every consumer must use the same gateway-derived context and runtime guard. Mutable diff diagnostics cannot certify ownership. Missing legacy authority remains a refusal rather than an inferred boundary. This amendment does not add retained-run attachment or change graph planning retry.
+
+### Public surface
+
+- Existing CLI flows remain `pr-complete`, `update-branch` and `ci-fix`; no new command, flag, RPC or store.
+- `@farmslot/agent-runtime` owns `buildBranchUpdateInstructions` and the proposed `buildBranchUpdateGuardCommand` export. Task generation and the gateway's inline CI-fix writer consume them. Pack templates and existing rebase helpers execute the supplied guard instead of deriving parent history themselves.
+- Proposed gateway-supplied `BRANCH_UPDATE_GUARD_CMD`, `PUBLICATION_PARENT_BASE_SHA` and `PUBLICATION_PARENT_HEAD_SHA` accompany existing `PUBLICATION_BASE`. They come from verified run metadata, not user declarations. The operation's pinned target and lease come from the same persisted context.
+- The optional maintenance snapshot reuses the public protocol's `ReviewDiffSnapshot` and existing Run persistence. Gateway deployment and a compatible runtime release precede pack migration; older or standalone callers without required stack authority refuse. Implementation must document the generated variables and prove each consumer before cutover.
