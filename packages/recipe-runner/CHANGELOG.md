@@ -4,8 +4,11 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
-- Compare dependency staleness against recorded input content. Identical fixture copies and timestamp-only changes do not request reinstall; absent baselines remain explicit, and changed content needs a successful install record.
+- Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.34.0 - 2026-10-14
+
+- Compare dependency staleness against recorded input content. Identical fixture copies and timestamp-only changes do not request reinstall; absent baselines remain explicit, and changed content needs a successful install record.
 - Derive visual review outcomes through the existing engine without rewriting retained evidence.
 
 ## 0.33.0 - 2026-10-14

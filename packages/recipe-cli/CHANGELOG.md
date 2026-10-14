@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.16.1 - 2026-10-14
+
+- Use the coordinated recipe release for content-based dependency readiness and engine-owned evidence manifests.
+
 ## 0.16.0 - 2026-10-14
 
 - Verify wrapper reruns retain their engine-owned attempt manifests and original media.
