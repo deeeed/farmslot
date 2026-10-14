@@ -17,7 +17,7 @@ import { getNode } from '../../fleet/machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from '../../fleet/node-rpc.js';
 import { scanSlotArtifactRootDetailed } from '../../live-recipe/context.js';
 import { claimOverrideAuthority } from '../../run-engine/claim-overrides.js';
-import { visualReviewAuthority } from '../../run-engine/claim-reviews.js';
+import { readVisualReviewPolicy, visualReviewAuthority } from '../../run-engine/claim-reviews.js';
 import {
   readFrozenRecordedEvidenceSources,
   readGateRecordedEvidenceSources,
@@ -126,6 +126,7 @@ export async function readRunRecordedEvidence(
                     : payload?.kind === 'output-review'
                       ? (payload.visualJudgmentReceiptIds ?? [])
                       : [],
+                await readVisualReviewPolicy(run),
               ),
               // This hint fences a future write. Only the writer qualifies QA
               // registration; missing registration must not hide readable history.
@@ -189,7 +190,12 @@ export async function readRunRecordedEvidence(
       ...(errors.length === 0 && result.input.claims
         ? {
             claimOverrideAuthority: claimOverrideAuthority(run, result.input),
-            visualReviewAuthority: visualReviewAuthority(run, result.input),
+            visualReviewAuthority: visualReviewAuthority(
+              run,
+              result.input,
+              undefined,
+              await readVisualReviewPolicy(run),
+            ),
           }
         : {}),
     };

@@ -44,6 +44,11 @@ function writeProject(root: string, name: string, body: Record<string, unknown>)
 
 const ROOT = makeFakeRoot();
 writeProject(ROOT, 'opted-in', {
+  visual_claim_review: {
+    delegatedReviewerPrincipalIds: ['lead-reviewer'],
+    delegatorPrincipalId: 'person',
+    personOnlyClaimIds: ['ac1'],
+  },
   runtime_capabilities: {
     providers: { 'browser-cdp': provider },
     host_pressure_admission: { mode: 'refuse', cpu_critical_percent: 95 },
@@ -71,6 +76,11 @@ test('loadProjectConfigs produces runtimeCapabilities, including the pressure op
     mode: 'refuse',
     cpuCriticalPercent: 95,
   });
+  assert.deepEqual(optedIn.visualClaimReview, {
+    delegatedReviewerPrincipalIds: ['lead-reviewer'],
+    delegatorPrincipalId: 'person',
+    personOnlyClaimIds: ['AC-1'],
+  });
 });
 
 test('a project with no host_pressure_admission block leaves the field absent', async () => {
@@ -82,6 +92,7 @@ test('a project with no host_pressure_admission block leaves the field absent', 
     undefined,
     'absent stays absent so the gateway applies its own off default',
   );
+  assert.equal(plain?.visualClaimReview, undefined);
 });
 
 test('an unreadable project is skipped without dropping the readable ones', async () => {

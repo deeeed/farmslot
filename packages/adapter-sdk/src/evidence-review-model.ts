@@ -19,6 +19,7 @@ import {
   type RecipeVisualReviewAuthority,
   recordedEvidenceClosureIdentity,
   type RecordedEvidencePackageInput,
+  recordedVisualJudgments,
   type RecordingSegmentRef,
   type RunOutput,
   summarizeAcceptanceStatus,
@@ -41,6 +42,7 @@ import {
 export type EvidenceReviewContext = 'gate' | 'pr-preview' | 'run-detail' | 'artifact';
 export type EvidenceReviewTiming = 'measured' | 'untimed' | 'outside-recording';
 export type EvidenceReviewMediaType = 'image' | 'video' | 'document';
+export type EvidenceReviewProofKind = 'assertion' | 'agent-reviewed' | 'person-reviewed';
 
 /** Standalone players supply the same retained trace and checked video identity. */
 export interface EvidenceReviewRecordingInput extends RecipeRecordingTimelineBinding {
@@ -77,6 +79,8 @@ export interface EvidenceReviewArtifact {
 }
 
 export interface EvidenceReviewClaim extends AcceptanceCriterionView {
+  proofKinds: readonly EvidenceReviewProofKind[];
+  reviewLabels: readonly string[];
   kind: RecipeClaimKind;
   parentId?: string;
   caption: string;
@@ -135,6 +139,7 @@ export interface EvidenceReviewModel {
   readonly context: EvidenceReviewContext;
   readonly summary: AcceptanceStatusSummary;
   readonly claims: readonly EvidenceReviewClaim[];
+  readonly visualReviewMarkdown: string;
   readonly occurrences: readonly EvidenceReviewOccurrence[];
   readonly recordings: readonly RecipeRecordingTimelineDocument[];
   readonly errors: readonly string[];
@@ -282,11 +287,49 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       ? pkg.manifest.artifacts.filter(isRecord)
       : [];
   const links = new Map((input.evidenceLinks ?? []).map((link) => [link.id, link.evidence]));
+  const judgments =
+    pkg && input.visualReviewAuthority && !errors.length
+      ? recordedVisualJudgments(pkg, input.visualReviewAuthority)
+      : [];
+  const latestJudgments = new Map(judgments.map((judgment) => [judgment.claimId, judgment]));
+  function reviewContributions(id: string) {
+    if (!latestJudgments.size) return [];
+    const ids = new Set([id]);
+    for (const claim of packageClaims?.criteria ?? []) {
+      let parent = claim.parentId;
+      while (parent) {
+        if (parent === id) {
+          ids.add(claim.id);
+          break;
+        }
+        parent = packageClaims?.criteria.find((entry) => entry.id === parent)?.parentId;
+      }
+    }
+    return [...ids].flatMap((claimId) => {
+      const judgment = latestJudgments.get(claimId);
+      const claim = packageClaims?.criteria.find(({ id }) => id === claimId);
+      return judgment && claim?.verdict === 'awaiting-review' ? [judgment] : [];
+    });
+  }
   const claims: EvidenceReviewClaim[] = acceptanceCriteriaView(
     packageClaims?.criteria ?? input.criteria ?? ledger?.criteria ?? [],
     ledger,
   ).map((claim) => ({
     ...claim,
+    proofKinds: [
+      ...new Set<EvidenceReviewProofKind>([
+        ...(claim.status?.assertionIndices?.length ? ['assertion' as const] : []),
+        ...reviewContributions(claim.id).map((judgment) =>
+          judgment.kind === 'lead-agent-reviewed'
+            ? ('agent-reviewed' as const)
+            : ('person-reviewed' as const),
+        ),
+      ]),
+    ],
+    reviewLabels: reviewContributions(claim.id).map(
+      (judgment) =>
+        `${judgment.kind === 'lead-agent-reviewed' ? `agent-reviewed (delegated by ${judgment.delegation!.displayName})` : 'person-reviewed'} · ${judgment.reviewer.displayName}`,
+    ),
     kind: claim.status?.kind ?? 'acceptance',
     ...(claim.status?.parentId ? { parentId: claim.status.parentId } : {}),
     caption: claimCaption(claim),
@@ -490,6 +533,23 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     errors,
     input.contractVersion,
   );
+  const reviewedClaims = claims.filter((claim) => claim.reviewLabels.length);
+  const markdownCell = (value: string) =>
+    value.replace(/[\r\n]+/gu, ' ').replace(/[\\|`*_[\]<>]/gu, '\\$&');
+  const visualReviewMarkdown = reviewedClaims.length
+    ? [
+        '## Visual judgments',
+        '',
+        `Execution: ${markdownCell(recipeRunId ?? '')}`,
+        '',
+        '| Criterion | Verdict | Reviewed by |',
+        '| --- | --- | --- |',
+        ...reviewedClaims.map(
+          (claim) =>
+            `| ${markdownCell(`${claim.id}: ${claim.text}`)} | ${markdownCell(claim.status?.verdict ?? 'not assessed')} | ${claim.reviewLabels.map(markdownCell).join('; ')} |`,
+        ),
+      ].join('\n')
+    : '';
   return {
     context: input.context ?? 'artifact',
     claimOverrideCandidate(id) {
@@ -508,6 +568,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       claims,
     ),
     claims,
+    visualReviewMarkdown,
     occurrences,
     recordings: recordings.map((recording) => recording.timeline),
     errors,

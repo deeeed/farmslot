@@ -637,6 +637,7 @@ export interface RunReviewVisualClaimParams {
   snapshotIdentity: string;
   verdict: 'confirmed' | 'rejected';
   reason: string;
+  kind?: import('../recipe/claim-reviews.js').RecipeVisualJudgmentKind;
 }
 
 export interface RunReviewVisualClaimResult {

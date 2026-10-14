@@ -1,6 +1,7 @@
 import {
   type ClaimOverrideAuthority,
   projectClaimUntestableOverride,
+  type ProjectVisualClaimReviewPolicy,
   recordedEvidenceClosureIdentity,
   type RecordedEvidencePackageInput,
   type Run,
@@ -46,6 +47,7 @@ export function projectGateAcceptance(
   acceptance: GateAcceptanceRead,
   run: Run,
   inputs: readonly RecordedEvidencePackageInput[],
+  policy?: ProjectVisualClaimReviewPolicy,
 ): GateAcceptanceRead {
   if (acceptance.ledger?.schemaVersion !== 2) return acceptance;
   const input = inputs.find(
@@ -53,7 +55,7 @@ export function projectGateAcceptance(
   );
   if (!input?.claims) return acceptance;
   const authority = claimOverrideAuthority(run, input);
-  const reviewed = reviewedRecipeClaims(run, input);
+  const reviewed = reviewedRecipeClaims(run, input, policy);
   return {
     ...acceptance,
     ledger: {

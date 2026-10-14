@@ -153,6 +153,18 @@ export function TaskAcceptancePanel({
                 ) : null}
               </View>
               <Text style={styles.text}>{criterion.text}</Text>
+              {review?.proofKinds.length ? (
+                <Text style={baseStyles.textMuted}>{review.proofKinds.join(' · ')}</Text>
+              ) : null}
+              {review?.reviewLabels.map((label) => (
+                <Text
+                  key={label}
+                  style={baseStyles.textMuted}
+                  testID="companion-visual-review-provenance"
+                >
+                  {label}
+                </Text>
+              ))}
               {criterion.status?.engineVerdict ? (
                 <Text style={baseStyles.textMuted}>
                   Engine verdict: {criterion.status.engineVerdict} · {criterion.status.note}

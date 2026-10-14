@@ -4,7 +4,7 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Show assertion and visual-review provenance in the shared evidence model and publication text.
 
 ## 0.13.1 - 2026-10-14
 

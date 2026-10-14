@@ -5,17 +5,25 @@ import {
   validateRecordedEvidencePackage,
 } from '@farmslot/adapter-sdk/evidence';
 import {
+  delegatedVisualClaimAllowed,
+  digestRecipeDocument,
   Events,
-  type EvidenceAttestationApprover,
   normalizeRecipeClaimId,
+  type ProjectVisualClaimReviewPolicy,
+  type RecipeVisualJudgmentKind,
+  type RecipeVisualReviewer,
   recordedEvidenceClosureIdentity,
+  reviewedVisualFiles,
   type Run,
   type RunReviewVisualClaimParams,
   type RunReviewVisualClaimResult,
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../../core/method-error.js';
-import { appliedVisualJudgmentReceiptIds } from '../../run-engine/claim-reviews.js';
+import {
+  appliedVisualJudgmentReceiptIds,
+  readVisualReviewPolicy,
+} from '../../run-engine/claim-reviews.js';
 import {
   readVisualReviewSource,
   visualReviewSnapshotIdentity,
@@ -23,7 +31,11 @@ import {
 import { commitRunVisualJudgment, getRun } from '../../runs/store.js';
 
 export interface VisualClaimReviewDependencies {
-  authorizeEvidenceAttestation?: () => EvidenceAttestationApprover;
+  authorizeVisualClaimReview?: (
+    kind: RecipeVisualJudgmentKind,
+    policy?: ProjectVisualClaimReviewPolicy,
+  ) => RecipeVisualReviewer;
+  policy?: typeof readVisualReviewPolicy;
   source?: typeof readVisualReviewSource;
 }
 
@@ -32,21 +44,41 @@ export async function runReviewVisualClaim(
   emit: (event: string, payload: unknown) => void,
   dependencies: VisualClaimReviewDependencies = {},
 ): Promise<RunReviewVisualClaimResult> {
-  if (!dependencies.authorizeEvidenceAttestation)
+  if (!dependencies.authorizeVisualClaimReview)
     throw new GatewayMethodError(
       'AUTH_FORBIDDEN',
-      'A credential-backed person must record visual review.',
+      'A credential-backed person or delegated service must record visual review.',
     );
-  const authorize = dependencies.authorizeEvidenceAttestation;
-  const approver = authorize();
+  const authorize = dependencies.authorizeVisualClaimReview;
+  const kind = params.kind ?? 'person-reviewed';
+  if (!['person-reviewed', 'lead-agent-reviewed'].includes(kind))
+    throw new Error('Unknown visual judgment kind.');
+  const delegated = kind === 'lead-agent-reviewed';
   const reason = params.reason?.trim();
   if (!reason || !['confirmed', 'rejected'].includes(params.verdict))
     throw new Error('Visual review requires confirmed/rejected and a written reason.');
-  if ('actor' in params || 'judgedAt' in params || 'moments' in params || 'approver' in params)
-    throw new Error('Person, time and reviewed moments are gateway-owned.');
+  if (
+    [
+      'actor',
+      'judgedAt',
+      'moments',
+      'approver',
+      'reviewerSubjectKind',
+      'reviewedFiles',
+      'delegation',
+      'projectPolicy',
+    ].some((key) => key in params)
+  )
+    throw new Error('Reviewer, time, delegation and reviewed evidence are gateway-owned.');
   const claimId = normalizeRecipeClaimId(params.claimId);
   const run = getRun(params.runId);
   if (!run || run.readOnly) throw new Error('The retained run is unavailable or read-only.');
+  const readPolicy = dependencies.policy ?? readVisualReviewPolicy;
+  const policy = delegated ? await readPolicy(run) : undefined;
+  const reviewer = authorize(kind, policy);
+  if (reviewer.subjectKind !== (delegated ? 'service' : 'person'))
+    throw new Error('The reviewer identity does not match the judgment kind.');
+  const { subjectKind, delegator, ...approver } = reviewer;
   const read = dependencies.source ?? readVisualReviewSource;
   const source = await read(run, params.decisionId);
   const matchingSources = source.sources.filter(
@@ -58,6 +90,11 @@ export async function runReviewVisualClaim(
   if (validateRecordedEvidencePackage(input).status !== 'valid')
     throw new Error('The selected recorded evidence failed integrity validation.');
   const claim = deriveReviewedRecipeClaims(input).find(({ id }) => id === claimId);
+  if (
+    delegated &&
+    (!delegator || !delegatedVisualClaimAllowed(input, claimId, approver.principalId, policy))
+  )
+    throw new Error('This project/claim requires person review or has no matching delegation.');
   if (
     !claim ||
     claim.verdict !== 'awaiting-review' ||
@@ -79,6 +116,12 @@ export async function runReviewVisualClaim(
     verdict: params.verdict,
     moments: claim.moments,
     approver,
+    kind,
+    reviewerSubjectKind: subjectKind,
+    reviewedFiles: reviewedVisualFiles(input, claim.id),
+    ...(delegated && delegator
+      ? { delegation: { ...delegator, policyDigest: digestRecipeDocument(policy) } }
+      : {}),
     reason,
     judgedAt: new Date().toISOString(),
   };
@@ -87,6 +130,7 @@ export async function runReviewVisualClaim(
     recipeRunId: params.recipeRunId,
     closureIdentity,
     receipts: [...(run.visualJudgmentReceipts ?? []), proposal],
+    ...(policy ? { projectPolicy: policy } : {}),
   }).find(({ id }) => id === claim.id);
   if (projected?.verdict !== (params.verdict === 'confirmed' ? 'proven' : 'failed'))
     throw new Error('Review derived parent checks individually.');
@@ -100,6 +144,9 @@ export async function runReviewVisualClaim(
         receipt.snapshotIdentity === params.snapshotIdentity &&
         receipt.verdict === params.verdict &&
         receipt.reason === reason &&
+        (receipt.kind ?? 'person-reviewed') === kind &&
+        digestRecipeDocument(receipt.delegation ?? null) ===
+          digestRecipeDocument(proposal.delegation ?? null) &&
         receipt.approver.principalId === approver.principalId,
     );
   const checked = await read(run, params.decisionId);
@@ -113,13 +160,17 @@ export async function runReviewVisualClaim(
     source.snapshotIdentity !== checked.snapshotIdentity
   )
     throw new Error('The selected visual evidence changed during review.');
-  const assertCurrent = (current: Run) => {
-    const person = authorize();
+  const assertCurrent = async (current: Run) => {
+    const currentPolicy = delegated ? await readPolicy(current) : undefined;
+    const person = authorize(kind, currentPolicy);
     if (
       getRun(current.id) !== current ||
       current.readOnly ||
       person.principalId !== approver.principalId ||
-      person.credentialId !== approver.credentialId
+      person.credentialId !== approver.credentialId ||
+      person.subjectKind !== subjectKind ||
+      digestRecipeDocument(currentPolicy ?? null) !== digestRecipeDocument(policy ?? null) ||
+      digestRecipeDocument(person.delegator ?? null) !== digestRecipeDocument(delegator ?? null)
     )
       throw new Error('The authenticated visual review identity changed.');
     if (visualReviewSnapshotIdentity(current, params.decisionId) !== checked.snapshotIdentity)
@@ -127,7 +178,7 @@ export async function runReviewVisualClaim(
     if (!cached(current) && params.snapshotIdentity !== checked.snapshotIdentity)
       throw new Error('The displayed visual review snapshot changed. Refresh before reviewing.');
   };
-  assertCurrent(run);
+  await assertCurrent(run);
   const receipt = await commitRunVisualJudgment(
     run.id,
     (current) => cached(current) ?? proposal,
@@ -136,6 +187,7 @@ export async function runReviewVisualClaim(
       appliedVisualJudgmentReceiptIds(
         snapshot,
         source.sources.map(({ input: value }) => value),
+        policy,
       ),
   );
   const updated = getRun(run.id)!;

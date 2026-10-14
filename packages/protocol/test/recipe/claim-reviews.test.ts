@@ -3,10 +3,13 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
+  digestRecipeDocument,
+  parseProjectVisualClaimReviewPolicy,
   type RecipeVisualJudgmentReceipt,
   recordedEvidenceClosureIdentity,
   type RecordedEvidencePackageInput,
   recordedVisualJudgments,
+  reviewedVisualFiles,
 } from '../../src/recipe/index.js';
 
 const input: RecordedEvidencePackageInput = JSON.parse(
@@ -33,6 +36,87 @@ const authority = (receipts: RecipeVisualJudgmentReceipt[]) => ({
   recipeRunId: receipt.recipeRunId,
   closureIdentity: receipt.closureIdentity,
   receipts,
+});
+
+test('delegated receipts bind own identity, policy, parent restrictions and checked visual bytes', () => {
+  const policy = parseProjectVisualClaimReviewPolicy({
+    delegatedReviewerPrincipalIds: ['lead-reviewer'],
+    delegatorPrincipalId: 'person-1',
+  })!;
+  const delegated: RecipeVisualJudgmentReceipt = {
+    ...receipt,
+    kind: 'lead-agent-reviewed',
+    reviewerSubjectKind: 'service',
+    approver: {
+      principalId: 'lead-reviewer',
+      credentialId: 'own-credential',
+      displayName: 'Lead reviewer',
+    },
+    reviewedFiles: reviewedVisualFiles(input, receipt.claimId),
+    delegation: {
+      principalId: 'person-1',
+      displayName: 'Operator',
+      policyDigest: digestRecipeDocument(policy),
+    },
+  };
+  const authorized = { ...authority([delegated]), projectPolicy: policy };
+  const result = recordedVisualJudgments(input, authorized);
+  assert.equal(result.length, 1);
+  assert.equal(result[0]!.kind, 'lead-agent-reviewed');
+  assert.equal(result[0]!.actor, 'lead-reviewer');
+  assert.ok(delegated.reviewedFiles!.length);
+  assert.deepEqual(recordedVisualJudgments(input, authority([delegated])), []);
+  for (const patch of [
+    { reviewerSubjectKind: 'person' as const },
+    { reviewedFiles: [] },
+    { reviewedFiles: [{ path: 'video.mp4', digest: `sha256:${'a'.repeat(64)}` }] },
+    { delegation: { ...delegated.delegation!, principalId: 'another-person' } },
+  ])
+    assert.deepEqual(
+      recordedVisualJudgments(input, { ...authorized, receipts: [{ ...delegated, ...patch }] }),
+      [],
+    );
+  for (const changed of [
+    { ...policy, delegatedReviewerPrincipalIds: ['foreign-reviewer'] },
+    { ...policy, personOnlyClaimIds: ['check-1'] },
+    { ...policy, personOnlyClaimIds: ['case-1'] },
+  ])
+    assert.deepEqual(
+      recordedVisualJudgments(input, {
+        ...authorized,
+        projectPolicy: changed,
+        receipts: [
+          {
+            ...delegated,
+            delegation: { ...delegated.delegation!, policyDigest: digestRecipeDocument(changed) },
+          },
+        ],
+      }),
+      [],
+    );
+});
+
+test('project review policy rejects malformed grants and normalizes claim identifiers', () => {
+  assert.equal(parseProjectVisualClaimReviewPolicy(undefined), undefined);
+  for (const policy of [
+    {},
+    { delegatorPrincipalId: '', delegatedReviewerPrincipalIds: [] },
+    { delegatorPrincipalId: 'person', delegatedReviewerPrincipalIds: [''] },
+    { delegatorPrincipalId: 'person', delegatedReviewerPrincipalIds: [], actor: 'spoof' },
+  ])
+    assert.throws(() => parseProjectVisualClaimReviewPolicy(policy), /Invalid project/);
+  assert.deepEqual(
+    parseProjectVisualClaimReviewPolicy({
+      delegatorPrincipalId: 'person',
+      delegatedReviewerPrincipalIds: ['lead', 'lead'],
+      personOnlyClaimIds: ['ac1'],
+    }),
+    {
+      delegatorPrincipalId: 'person',
+      delegatedReviewerPrincipalIds: ['lead'],
+      personOnlyClaimIds: ['AC-1'],
+    },
+  );
 });
 
 test('visual judgments use the gateway person and preserve recorded order', () => {

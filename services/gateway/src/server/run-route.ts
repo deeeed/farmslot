@@ -123,6 +123,7 @@ export interface RouteRunMethodContext {
   emit: (event: string, payload: unknown) => void;
   broadcast: (frame: EventFrame) => void;
   authorizeEvidenceAttestation?: () => EvidenceAttestationApprover;
+  authorizeVisualClaimReview?: import('../methods/run/claim-reviews.js').VisualClaimReviewDependencies['authorizeVisualClaimReview'];
 }
 
 export type RouteRunMethodResult = { handled: true; value: unknown } | { handled: false };
@@ -153,7 +154,7 @@ export async function routeRunMethod(
     case Methods.RUN_REVIEW_VISUAL_CLAIM:
       return handled(
         runReviewVisualClaim(p as import('@farmslot/protocol').RunReviewVisualClaimParams, emit, {
-          authorizeEvidenceAttestation: context.authorizeEvidenceAttestation,
+          authorizeVisualClaimReview: context.authorizeVisualClaimReview,
         }),
       );
     case Methods.RUN_OVERRIDE_CLAIM:

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Show the shared visual-review proof kind, delegation and reviewer identity.
+
 - Remove the generic gateway-token fallback from automation configuration.
 
 - Show authenticated visual claim reviews through the shared evidence model.

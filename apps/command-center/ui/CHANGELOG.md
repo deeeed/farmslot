@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show visual-review delegation and reviewer identity beside acceptance verdicts.
+
 - Require stored or explicitly supplied login credentials instead of build-time environment secrets.
 
 - Show authenticated visual claim reviews through the shared evidence model.

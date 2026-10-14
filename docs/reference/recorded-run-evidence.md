@@ -883,6 +883,17 @@ review RPC. The gateway rechecks policy and identity before persisting. It retai
 the checked policy digest with the receipt; changed policy holds current gates
 for refresh while historical review keeps its frozen policy/receipt references.
 
+The project JSON key is `visual_claim_review`; the gateway projects it to
+`ProjectConfig.visualClaimReview`. Managed packs use the existing operator
+`SourceRuntimeSettings` value through `readSourceRuntimeSettings` and
+`writeSourceRuntimeSettings` in `@farmslot/slot-config`. Pack bytes stay unchanged;
+a pack-embedded delegation grants no authority. Unmanaged projects use their
+operator-owned project JSON. The allowlist names the permitted service reviewer;
+the existing RPC also requires admin authority. This policy does not grant that
+role or change independent publication review. The visual-review operation adds
+no dispatcher/producer separation rule; keep delegate credentials out of worker
+inputs.
+
 Extend `RecipeVisualJudgmentReceipt` with the kind and gateway-stamped reviewer
 subject kind, delegation identity and policy digest. Both kinds retain the run,
 selected `recipeRunId`, claim, exact moments, closure identity, verdict, rationale
@@ -905,6 +916,7 @@ execution/head identity. Agent review is labeled
 For mixed claims, show the assertion and review contributions without changing
 the existing `state`/`visual`/`mixed` proof mode. A later valid receipt and retries
 follow the same stored-order and submission-snapshot rules as person review.
+`agent-reviewed` is the display projection of `lead-agent-reviewed`.
 
 ### Public surface and first implementation
 

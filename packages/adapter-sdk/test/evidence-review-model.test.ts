@@ -11,6 +11,7 @@ import {
   type RecipeVisualJudgmentReceipt,
   recordedEvidenceClosureIdentity,
   type RecordedEvidencePackageInput,
+  reviewedVisualFiles,
 } from '@farmslot/protocol';
 
 import type { TraceEntry } from '../../recipe-runner/src/core/types.js';
@@ -894,6 +895,50 @@ test('authenticated review uses one engine projection in every view and preserve
     });
     assert.deepEqual(confirmed.errors, []);
     assert.equal(confirmed.summary?.proven, 2);
+    assert.deepEqual(confirmed.claims.find(({ id }) => id === 'check-1')!.proofKinds, [
+      'assertion',
+      'person-reviewed',
+    ]);
+    const policy = { delegatedReviewerPrincipalIds: ['lead'], delegatorPrincipalId: 'person' };
+    const delegated = createEvidenceReviewModel({
+      package: input,
+      context,
+      visualReviewAuthority: {
+        ...authority,
+        projectPolicy: policy,
+        receipts: [
+          {
+            ...receipt,
+            kind: 'lead-agent-reviewed',
+            reviewerSubjectKind: 'service',
+            approver: {
+              principalId: 'lead',
+              credentialId: 'own-credential',
+              displayName: 'Lead reviewer',
+            },
+            reviewedFiles: reviewedVisualFiles(input, receipt.claimId),
+            delegation: {
+              principalId: 'person',
+              displayName: 'Operator',
+              policyDigest: digestRecipeDocument(policy),
+            },
+          },
+        ],
+      },
+    });
+    assert.equal(delegated.summary.proven, 2);
+    assert.match(delegated.visualReviewMarkdown, /agent-reviewed \(delegated by Operator\)/);
+    assert.doesNotMatch(delegated.visualReviewMarkdown, /human-reviewed/);
+    for (const claim of delegated.claims) {
+      assert.deepEqual(claim.proofKinds, ['assertion', 'agent-reviewed']);
+      assert.deepEqual(claim.reviewLabels, [
+        'agent-reviewed (delegated by Operator) · Lead reviewer',
+      ]);
+      assert.equal(
+        claim.reviewLabels.some((label) => label.includes('human')),
+        false,
+      );
+    }
     const rejected = createEvidenceReviewModel({
       package: input,
       context,
