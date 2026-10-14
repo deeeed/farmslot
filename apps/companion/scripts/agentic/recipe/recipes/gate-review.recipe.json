@@ -5,7 +5,7 @@
   "proofTargets": [
     {
       "id": "gate-review-screen",
-      "claim": "A gate review screen for an engine_human_gate decision shows the package summary, each reviewer's latest verdict, the acceptance criteria, an evidence strip and the decision's actions, reached from run detail and the decision workspace."
+      "claim": "A gate review screen for an engine_human_gate decision shows the package summary, each reviewer's latest verdict, the acceptance criteria, the shared evidence workspace and the decision's actions, reached from run detail and the decision workspace."
     },
     {
       "id": "approve-guard",
@@ -301,15 +301,14 @@
         "action": "ui.scroll",
         "direction": "down",
         "pixels": 320,
-        "intent": "Show the acceptance criteria and evidence strip below the summary.",
+        "intent": "Show the acceptance criteria and Compare by AC below the summary.",
         "next": "wait-strip"
       },
       "wait-strip": {
         "action": "ui.wait_for",
-        "test_id": "companion-gate-review-evidence-0",
-        "expected": "visible",
+        "text_contains": ["Compare by AC"],
         "timeout_ms": 10000,
-        "intent": "The evidence strip lists the proven criterion's files.",
+        "intent": "The shared evidence workspace lists the registered criteria.",
         "proves": ["gate-review-screen"],
         "next": "assert-unassessed"
       },
@@ -333,7 +332,7 @@
         "path": "screenshots/after-gate-review-criteria.png",
         "label": "Acceptance criteria and evidence strip",
         "covers": ["gate-review-screen", "approve-guard"],
-        "intent": "Record the criteria panel and evidence strip.",
+        "intent": "Record the criteria panel and Compare by AC.",
         "next": "open-evidence"
       },
       "open-evidence": {
