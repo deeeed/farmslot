@@ -50,15 +50,6 @@ function writeBaseline(target: string, name: string, value: Record<string, unkno
   fs.writeFileSync(path.join(dir, name), `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function newestMtime(target: string, rels: string[]): number {
-  let newest = 0;
-  for (const rel of rels) {
-    const abs = path.join(target, rel);
-    if (fs.existsSync(abs)) newest = Math.max(newest, fs.statSync(abs).mtimeMs);
-  }
-  return newest;
-}
-
 export function depsFingerprint(target: string, extraInputs: string[] = []): string {
   const hash = crypto.createHash('sha256');
   for (const rel of [...DEPS_INPUTS, ...extraInputs]) {
@@ -90,15 +81,6 @@ function installSurfaceMarkers(target: string): string[] {
   }
   if (linker === 'pnp') return ['.pnp.cjs'];
   return INSTALL_MARKERS;
-}
-
-function installFreshnessMarkers(target: string): string[] {
-  const linker = readYarnNodeLinker(target);
-  if (linker === 'node-modules') {
-    return ['node_modules/.yarn-state.yml'];
-  }
-  if (linker === 'pnp') return ['.pnp.cjs', '.yarn/install-state.gz'];
-  return [...INSTALL_MARKERS, '.yarn/install-state.gz'];
 }
 
 function hasInstallSurface(target: string): boolean {
@@ -137,7 +119,6 @@ export function clearDecisionState(target: string, name: string): void {
 export function depsCheck(target: string, options: { productMarkers?: string[] } = {}): DepsCheck {
   const productMarkers = options.productMarkers ?? [];
   const inputs = DEPS_INPUTS.filter((rel) => fs.existsSync(path.join(target, rel)));
-  const markers = installFreshnessMarkers(target);
   const installed = inputs.length > 0 && hasInstallSurface(target);
   if (!installed) return { installed: false, status: 'missing', hasBaseline: false };
 
@@ -158,11 +139,10 @@ export function depsCheck(target: string, options: { productMarkers?: string[] }
       ? rawBaseline
       : null;
   if (!baseline) {
-    const drift = newestMtime(target, inputs) > newestMtime(target, markers);
-    return { installed: true, status: drift ? 'stale' : 'current', hasBaseline: false };
+    // An install surface proves presence; timestamps cannot prove content drift.
+    return { installed: true, status: 'current', hasBaseline: false };
   }
   const fingerprintMatches = baseline.fingerprint === depsFingerprint(target);
-  const installedAfterInputs = newestMtime(target, markers) >= newestMtime(target, inputs);
-  const status = fingerprintMatches || installedAfterInputs ? 'current' : 'stale';
+  const status = fingerprintMatches ? 'current' : 'stale';
   return { installed: true, status, hasBaseline: true };
 }

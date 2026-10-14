@@ -505,7 +505,7 @@ test('depsCheck requires node_modules state for the node-modules linker', async 
   }
 });
 
-test('depsCheck uses node_modules state as the authoritative node-modules freshness marker', async () => {
+test('depsCheck does not infer content drift from node-modules timestamps', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'rh-deps-'));
   try {
     const lockfile = path.join(root, 'yarn.lock');
@@ -527,7 +527,7 @@ test('depsCheck uses node_modules state as the authoritative node-modules freshn
     await utimes(yarnInstallState, misleadingAt, misleadingAt);
 
     const check = depsCheck(root);
-    assert.equal(check.status, 'stale');
+    assert.equal(check.status, 'current');
     assert.equal(check.hasBaseline, false);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -572,7 +572,7 @@ test('depsCheck requires the pnp runtime loader, not Yarn install cache metadata
   }
 });
 
-test('depsCheck uses pnp install metadata only for freshness', async () => {
+test('depsCheck does not infer content drift from pnp timestamps', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'rh-deps-'));
   try {
     const lockfile = path.join(root, 'yarn.lock');
@@ -590,7 +590,7 @@ test('depsCheck uses pnp install metadata only for freshness', async () => {
     await utimes(loader, staleAt, staleAt);
     await utimes(installState, staleAt, staleAt);
     await utimes(lockfile, inputAt, inputAt);
-    assert.equal(depsCheck(root).status, 'stale');
+    assert.equal(depsCheck(root).status, 'current');
 
     const installedAt = new Date(Date.now() + 5_000);
     await utimes(installState, installedAt, installedAt);
@@ -619,8 +619,36 @@ test('depsCheck ignores legacy baselines not certified by a dependency install',
     await utimes(lockfile, inputAt, inputAt);
 
     const check = depsCheck(root);
-    assert.equal(check.status, 'stale');
+    assert.equal(check.status, 'current');
     assert.equal(check.hasBaseline, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('identical dependency input bytes stay current after fixture-copy timestamp changes', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'rh-deps-copy-'));
+  try {
+    await writeFile(path.join(root, 'package.json'), '{"name":"stub"}\n');
+    await writeFile(path.join(root, '.yarnrc.yml'), 'nodeLinker: node-modules\n');
+    const versions = path.join(root, '.tool-versions');
+    await writeFile(versions, 'nodejs 22.15.1\n');
+    const marker = path.join(root, 'node_modules/.yarn-state.yml');
+    await mkdir(path.dirname(marker), { recursive: true });
+    await writeFile(marker, 'install\n');
+    const installedAt = new Date(Date.now());
+    await utimes(marker, installedAt, installedAt);
+    const fingerprint = depsFingerprint(root);
+    for (const recorded of [false, true]) {
+      if (recorded) recordDepsBaseline(root);
+      await writeFile(versions, 'nodejs 22.15.1\n');
+      const copiedAt = new Date(installedAt.getTime() + 10_000);
+      await utimes(versions, copiedAt, copiedAt);
+      assert.equal(depsFingerprint(root), fingerprint);
+      const check = depsCheck(root);
+      assert.equal(check.status, 'current');
+      assert.equal(check.hasBaseline, recorded);
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -644,7 +672,7 @@ test('depsCheck records and compares baseline fingerprint', async () => {
   }
 });
 
-test('depsCheck trusts install markers newer than a stale baseline', async () => {
+test('depsCheck requires matching content even when install markers are newer', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'rh-deps-'));
   try {
     const packageJson = path.join(root, 'package.json');
@@ -665,6 +693,8 @@ test('depsCheck trusts install markers newer than a stale baseline', async () =>
 
     const installedAt = new Date(Date.now() + 5_000);
     await utimes(installState, installedAt, installedAt);
+    assert.equal(depsCheck(root).status, 'stale');
+    recordDepsBaseline(root);
     assert.equal(depsCheck(root).status, 'current');
   } finally {
     await rm(root, { recursive: true, force: true });
