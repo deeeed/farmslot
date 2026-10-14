@@ -875,7 +875,7 @@ Operator steps: [Stacked work](../operations/stacked-work.md).
 
 ### Decision
 
-Add `workGraph.attachRun` to bind an existing, unpublished dev or fix-bug root run to its backlog node in the existing graph. The node's `published` edge determines the upstream; the caller supplies the expected child HEAD, not a base branch or stack record. The gateway verifies the retained branch, repository, open upstream PR and Git ancestry, then records the existing graph links and `Run.stack` together.
+Add `workGraph.attachRun` to bind an existing, unpublished dev or fix-bug root run to its backlog node in the existing graph. The node's `published` edge determines the upstream; the caller supplies the expected child HEAD, not a base branch or stack record. The gateway verifies the retained branch, repository, open upstream PR and Git ancestry while the graph is planning or paused, then records the existing graph links and `Run.stack` together. The verified upstream commit supplies `resolvedSha`; existing `contributionStack`, `publicationBaseForRun` and Amendment 4's checkpoint authority consume it. No new stack derivation or maintenance writer is added.
 
 Attachment preserves the run ID, family, task, source, evidence, worker binding, steps and review budget. It does not dispatch or prepare work. An identical attachment is idempotent; a competing binding or unverifiable source refuses before writing.
 
@@ -903,7 +903,7 @@ These are Proposed additive interfaces, enabled through the normal compatible pr
 
 ### Consequences
 
-Existing stores and stack retargeting maintain attached runs. No task or evidence rewrite is needed. A base change may require a fresh review under the existing budget, even when code has not changed. Keep the stacked root retained until its upstream merge and retarget are recorded. Implementation and live proof follow acceptance of this amendment.
+Existing stores and stack retargeting maintain attached runs. No task or evidence rewrite is needed. A base change may require a fresh review under the existing budget, even when code has not changed. Keep the stacked root retained until its upstream merge and retarget are recorded. Existing graph retry supplies stopped-plan authoring, followed by explicit activation. Implementation and live proof follow acceptance of this amendment.
 
 ## Amendment: graph-owned planning retry (2026-10-13)
 
