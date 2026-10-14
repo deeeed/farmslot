@@ -123,16 +123,18 @@ esac
 
 // The deploy only reads its checkout, so the render cases share one, built by
 // the first case to run; each case renders into its own directory.
-let renderCheckout;
-const sharedRenderCheckout = () => {
-  if (renderCheckout) return renderCheckout;
+const renderCheckouts = new Map();
+const sharedRenderCheckout = (nativeOwnerDefault) => {
+  if (renderCheckouts.has(nativeOwnerDefault)) return renderCheckouts.get(nativeOwnerDefault);
   const { root, write } = deployFixture(fileScope, 'node-deploy-render-');
   write('bin/ssh', RENDER_SSH, true);
   // These succeed doing nothing, as the bare binary: no shell to start per call.
   for (const command of ['rsync', 'yarn', 'sleep'])
     fs.symlinkSync('/usr/bin/true', path.join(root, 'bin', command));
+  if (nativeOwnerDefault !== undefined)
+    write('.env.local-auth', `FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID=${nativeOwnerDefault}\n`);
   commitFixture(root);
-  renderCheckout = root;
+  renderCheckouts.set(nativeOwnerDefault, root);
   return root;
 };
 
@@ -1173,14 +1175,27 @@ test('deploy-node fails with the fix when the node has only a Yarn 1 and no core
   assert.deepEqual(fixture.snapshotInstalls(), []);
 });
 
-for (const [name, explicit, expected, instance] of [
+for (const [name, explicit, expected, instance, authDefault, captureMode = 'retained'] of [
   ['retained prod', undefined, 'retained-owner', 'prod'],
   ['retained dev', undefined, 'retained-owner', 'dev'],
   ['explicit replacement', 'new-owner', 'new-owner', 'dev'],
   ['explicit disable', '', undefined, 'dev'],
+  ['retained prod over auth default', undefined, 'retained-owner', 'prod', 'stale-owner'],
+  ['retained dev over auth default', undefined, 'retained-owner', 'dev', 'stale-owner'],
+  ['explicit replacement over auth default', 'new-owner', 'new-owner', 'dev', 'stale-owner'],
+  ['explicit disable over auth default', '', undefined, 'dev', 'stale-owner'],
+  ['auth default on first install', undefined, 'default-owner', 'dev', 'default-owner', 'bundled'],
+  [
+    'auth default without prior owner',
+    undefined,
+    'default-owner',
+    'dev',
+    'default-owner',
+    'missing-key',
+  ],
 ]) {
   test(`deploy-node preserves existing native enrollment: ${name}`, (t) => {
-    const root = sharedRenderCheckout();
+    const root = sharedRenderCheckout(authDefault);
     const output = fs.mkdtempSync(path.join(os.tmpdir(), 'node-deploy-native-owner-'));
     t.after(() => fs.rmSync(output, { recursive: true, force: true }));
     const env = {
@@ -1188,8 +1203,8 @@ for (const [name, explicit, expected, instance] of [
       PATH: `${root}/bin:${process.env.PATH}`,
       RENDER_ROOT: output,
       RENDER_OS: 'Darwin',
-      RENDER_CAPTURE_MODE: 'retained',
-      RENDER_NATIVE_OWNER: 'retained-owner',
+      RENDER_CAPTURE_MODE: captureMode,
+      RENDER_NATIVE_OWNER: captureMode === 'retained' ? 'retained-owner' : '',
       FARMSLOT_NODE_PATH: '/opt/node/bin/node',
       FARMSLOT_NODE_INSTANCE: instance,
       CAPTURE_HELPER_PATH: '',
@@ -1211,7 +1226,7 @@ for (const [name, explicit, expected, instance] of [
     assert.equal(document.EnvironmentVariables.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID, expected);
     assert.equal(document.ProgramArguments[1] === '-lc', Boolean(expected));
     const probes = path.join(output, 'native-owner-probes');
-    if (explicit === undefined) {
+    if (explicit === undefined && captureMode !== 'bundled') {
       const query = fs.readFileSync(probes, 'utf8');
       assert.ok(query.includes(`com.farmslot.node${instance === 'dev' ? '.dev' : ''}.plist`));
     } else assert.equal(fs.existsSync(probes), false);
