@@ -48,8 +48,14 @@ test('a scripts-only frozen terminal bundle refuses unsafe account hooks before 
     `#!${process.execPath}\nconst fs=require('node:fs'),path=require('node:path');const action=process.argv[2];if(action==='has-session')process.exit(1);if(action!=='new-session')throw Error('Unexpected terminal operation');const text=fs.readFileSync(path.join(process.env.GROK_HOME,'trusted_folders.toml'),'utf8');if(!text.includes('trusted = true'))throw Error('Trust must precede launch');fs.writeFileSync(process.env.FIXTURE_LAUNCH,'verified');\n`,
   );
   await chmod(tmux, 0o700);
+  const executable = path.join(root, 'configured-grok');
   await writeFile(
     path.join(bin, 'grok'),
+    '#!/bin/sh\necho "Wrong executable on PATH" >&2\nexit 23\n',
+    { mode: 0o700 },
+  );
+  await writeFile(
+    executable,
     `#!${process.execPath}\nif(!process.argv.includes('inspect')||!process.argv.includes('--json'))throw Error('Expected account inspection');process.stdout.write(process.env.FIXTURE_INSPECTION);\n`,
     { mode: 0o700 },
   );
@@ -62,6 +68,7 @@ test('a scripts-only frozen terminal bundle refuses unsafe account hooks before 
         JSON.stringify({
           action: 'launch',
           runner: 'grok',
+          executable,
           model: 'fixture-model',
           runId: workspaceId,
           workspaceId,

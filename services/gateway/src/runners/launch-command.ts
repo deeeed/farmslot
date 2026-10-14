@@ -280,6 +280,30 @@ export function codexShellEnvironmentPolicy(names: string[]): string {
   return `shell_environment_policy={inherit="all",exclude=[],include_only=[${allowed.map((name) => JSON.stringify(name)).join(',')}],set={ZDOTDIR="/var/empty"}}`;
 }
 
+export function interactiveRunnerExecutable(options: {
+  runner: string;
+  binary?: string;
+  machine?: RawPoolJson;
+}): string {
+  const runnerId = options.runner.trim();
+  const machineBinaries: Record<string, string | undefined> = {
+    codex: options.machine?.codex_path,
+    claude: options.machine?.claude_path,
+    cursor: options.machine?.cursor_path,
+    grok: options.machine?.grok_path,
+    pi: options.machine?.pi_path,
+    opencode: options.machine?.opencode_path,
+  };
+  const binary = options.binary || machineBinaries[runnerId];
+  const resolver: Record<string, (preferred?: string | null) => string> = {
+    codex: resolveCodexBinary,
+    cursor: resolveCursorAgentBinary,
+    grok: resolveGrokBinary,
+    pi: resolvePiBinary,
+  };
+  return resolver[runnerId]?.(binary) ?? (binary || runnerId);
+}
+
 export function buildInteractiveRefinementRunnerCommand(options: {
   runner: string;
   model?: string | null;
@@ -305,22 +329,14 @@ export function buildInteractiveRefinementRunnerCommand(options: {
 }): string | null {
   const runnerId = options.runner.trim();
   if (!runnerId) return null;
-  const machineBinaries: Record<string, string | undefined> = {
-    codex: options.machine?.codex_path,
-    claude: options.machine?.claude_path,
-    cursor: options.machine?.cursor_path,
-    grok: options.machine?.grok_path,
-    pi: options.machine?.pi_path,
-    opencode: options.machine?.opencode_path,
-  };
-  const binary = options.binary || machineBinaries[runnerId];
+  const binary = interactiveRunnerExecutable(options);
   const modelFlag = options.model?.trim() ? ` --model ${shellQuote(options.model.trim())}` : '';
   const promptArg = `"$(cat ${shellQuote(options.promptPath)})"`;
   const safetyFlags = runnerFlagsForTier(runnerId, options.safetyTier).map(shellQuote).join(' ');
   if (runnerId === 'codex') {
     const codexSafety = safetyFlags || '--sandbox workspace-write --ask-for-approval on-request';
     return [
-      shellQuote(resolveCodexBinary(binary)),
+      shellQuote(binary),
       `--cd ${shellQuote(options.repo)}`,
       codexSafety,
       options.workspaceTrust
@@ -343,16 +359,16 @@ export function buildInteractiveRefinementRunnerCommand(options: {
     const resume = options.resumeSessionId
       ? ` --resume ${shellQuote(options.resumeSessionId)}`
       : '';
-    return `${shellQuote(resolveCursorAgentBinary(binary))}${options.trustWorkspace ? ' --trust' : ''} --workspace ${shellQuote(options.repo)}${flags}${modelFlag}${resume} ${promptArg}`;
+    return `${shellQuote(binary)}${options.trustWorkspace ? ' --trust' : ''} --workspace ${shellQuote(options.repo)}${flags}${modelFlag}${resume} ${promptArg}`;
   }
   if (runnerId === 'grok') {
     const isolated = options.workspaceTrust === 'untrusted' ? ' --no-leader' : '';
     const flags = safetyFlags ? ` ${safetyFlags}` : '';
-    return `${shellQuote(resolveGrokBinary(binary))}${isolated}${flags}${modelFlag} ${promptArg}`;
+    return `${shellQuote(binary)}${isolated}${flags}${modelFlag} ${promptArg}`;
   }
   if (runnerId === 'pi') {
     return `${buildPiLaunch({
-      binary: resolvePiBinary(binary),
+      binary,
       model: options.model,
       repo: options.repo,
       safetyTier: options.safetyTier,

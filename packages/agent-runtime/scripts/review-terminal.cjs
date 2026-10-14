@@ -158,6 +158,7 @@ async function main() {
   environment.FARMSLOT_SIGNAL_ATTEMPT_ID = require('node:crypto').randomUUID();
   // This helper accepts only the gateway's farm review launch, after identity and source-policy checks.
   workspaceTrustByRunner[input.runner]?.(cwd, environment, undefined, {
+    executable: input.executable,
     processSandbox: guard.sandbox,
     inspectionCwd: guard.temporaryDirectory,
   });

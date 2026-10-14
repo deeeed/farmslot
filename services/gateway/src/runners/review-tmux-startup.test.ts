@@ -5,7 +5,10 @@ import type { Run } from '@farmslot/protocol';
 
 import type { RawPoolJson } from '../core/config.js';
 
-import { buildInteractiveRefinementRunnerCommand } from './launch-command.js';
+import {
+  buildInteractiveRefinementRunnerCommand,
+  interactiveRunnerExecutable,
+} from './launch-command.js';
 import {
   REVIEW_STARTUP_TIMEOUT_MS,
   reviewTmuxStartupState,
@@ -37,12 +40,17 @@ test('interactive launch honors each machine runner executable and explicit over
     pi: machine.pi_path,
   })) {
     const options = { runner, repo: '/tmp/review', promptPath: '/tmp/prompt', machine };
+    assert.equal(interactiveRunnerExecutable(options), binary);
     assert.ok(buildInteractiveRefinementRunnerCommand(options)?.includes(binary!), runner);
     assert.ok(
       buildInteractiveRefinementRunnerCommand({ ...options, binary: '/override/runner' })?.includes(
         '/override/runner',
       ),
       runner,
+    );
+    assert.equal(
+      interactiveRunnerExecutable({ ...options, binary: '/override/runner' }),
+      '/override/runner',
     );
   }
 });
