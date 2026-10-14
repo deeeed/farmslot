@@ -85,3 +85,7 @@ Verified human exceptions use the existing gateway receipt contract, leaving
 engine/task bytes and frozen history intact. The owning
 [recorded-evidence specification](../reference/recorded-run-evidence.md#migration-and-conformance)
 defines the cutover and its separate implementation/publication status.
+
+The source cutover is tracked by [#1044](https://github.com/deeeed/farmslot/pull/1044),
+pending review and merge. This records implementation separately from package
+publication and adopter rollout.

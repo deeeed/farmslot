@@ -304,6 +304,9 @@ ledger relationship to remain available to publication consumers.
 
 ## Migration and conformance
 
+The task-ledger source cutover is tracked by [#1044](https://github.com/deeeed/farmslot/pull/1044),
+pending review and merge. Package publication and adopter rollout remain separate.
+
 The coordinated writer cutover follows engine conformance and consumer/adopter
 migration. The engine is then the sole normal verdict writer; task copies are
 selected-execution transport. Task writes and current completion MUST reject
