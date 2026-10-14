@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Complete a retained scripted command",
+  "description": "Set FARMSLOT_GATEWAY to an owned validation gateway and FARMSLOT_SCRIPTED_COMPLETION_RUN_ID to a retained command-mode run with successful worker receipts. Replays only COMPLETE, including a completed retained run for repair-delta validation. Run against the old gateway with FARMSLOT_SCRIPTED_COMPLETION_EXPECT=unconfirmed, then the repaired gateway with complete. The complete assertion must fail against the old gateway. Optional FARMSLOT_SCRIPTED_COMPLETION_OUT retains the before/after RPC snapshots. No live gateway or pool is changed by this recipe.",
+  "workflow": {
+    "entry": "complete-command",
+    "nodes": {
+      "complete-command": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/scripted-command-completion.mjs",
+        "timeout_ms": 180000,
+        "intent": "Current command receipts permit completion while dispatch, monitor and original receipt bytes remain unchanged.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

@@ -143,6 +143,24 @@ settled-blocked archive/release guards MUST refuse uncertain or progressing
 work. A fix result creates a new review/evidence identity as required by the
 owning contracts; it cannot silently reuse the prior ready approval.
 
+### Project-owned scripted command receipts
+
+The runner capability layer MAY establish idle for a completed command-mode task.
+It MUST read the current primary task's command result, runner provenance and
+terminal signal through the existing slot transport. Their project, command
+reference, checkout and task context MUST match the admitted execution. The
+provenance MUST be current for dispatch; the result MUST be newer than that
+invocation and precede its matching terminal signal. A successful result requires
+exit code zero, no signal and no timeout, together with the current monitor's
+terminal success receipt. Missing, malformed, stale, mismatched or unsuccessful
+evidence MUST remain unproven. Pane text and a worker success signal alone MUST
+NOT establish idle.
+
+This observation MUST pass through the existing aggregate run-progress reader,
+so another active or uncertain context retains its normal precedence. It MUST NOT
+bypass acceptance, evidence, deterministic checks or resource ownership. Scenario
+mode and runners without this capability retain their existing observations.
+
 ## Recovery invariants and six CI scenarios
 
 Slot re-selection MUST retain the device capabilities of the requested or previously

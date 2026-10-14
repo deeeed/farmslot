@@ -384,6 +384,81 @@ test('runForceComplete marks a blocked run done when its PR is already published
   assert.equal(getRun(run.id)?.steps[0]?.status, 'skipped');
 });
 
+test('runForceComplete settles a reconciling publication gate without manufacturing worker completion', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-force-reconciling`,
+  });
+  t.after(() => cleanupRun(run.id));
+  const proof = { recipeRunId: 'recorded-proof', passed: 120, total: 120 };
+  updateRun(run.id, {
+    status: 'reconciling',
+    engineState: { generation: 2 },
+    steps: [
+      { name: 'complete', status: 'done', outputs: proof },
+      { name: 'human-gate', status: 'running', detail: 'Waiting for operator decision' },
+    ],
+    decisions: [
+      {
+        id: 'publication-gate',
+        type: 'engine_human_gate',
+        title: 'Publication gate',
+        description: 'Worker progress is unproven',
+        actions: [],
+        createdAt: run.createdAt,
+      },
+    ],
+  });
+
+  const result = await runForceComplete({ runId: run.id, prNumber: 192 }, () => {});
+
+  assert.equal(result.run.status, 'done');
+  assert.equal(result.run.prNumber, 192);
+  assert.equal(result.run.engineState?.generation, 3);
+  assert.equal(result.run.engineState?.operatorForceCompleted, true);
+  assert.equal(result.run.recoveryProposal?.status, 'idle');
+  assert.equal(result.run.metrics.outcome, 'success');
+  assert.equal(result.run.decisions[0].resolvedAction, 'superseded');
+  assert.equal(result.run.decisions[0].context?.supersededBy, 'operator-force-complete');
+  assert.deepEqual(result.run.steps[0].outputs, proof, 'recorded proof stays intact');
+  assert.equal(result.run.steps[1].status, 'skipped');
+  assert.match(result.run.steps[1].detail ?? '', /reconciling run/);
+
+  updateRun(run.id, { status: 'human-gating' });
+  updateRunStep(run.id, 'human-gate', { status: 'running' });
+  assert.equal(getRun(run.id)?.status, 'done', 'late gate writes cannot reopen the override');
+  assert.equal(getRun(run.id)?.steps[1].status, 'skipped');
+});
+
+test('runForceComplete preserves a reconciling run without a valid published PR', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-reconciling-no-pr`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'reconciling',
+    prNumber: 0,
+    engineState: { generation: 2 },
+    steps: [{ name: 'human-gate', status: 'running' }],
+  });
+  const before = structuredClone(getRun(run.id));
+
+  await assert.rejects(
+    () => runForceComplete({ runId: run.id }, () => {}),
+    /is reconciling; force-complete requires a published PR number/,
+  );
+  for (const prNumber of [0, 1.5]) {
+    await assert.rejects(
+      () => runForceComplete({ runId: run.id, prNumber }, () => {}),
+      /prNumber must be a positive integer/,
+    );
+  }
+  assert.deepEqual(getRun(run.id), before, 'refused overrides preserve the uncertainty and gate');
+});
+
 test('runForceComplete ignores a stored 0 PR sentinel outside the blocked path', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',
@@ -415,28 +490,30 @@ test('runForceComplete rejects a blocked run whose stored PR is the 0 sentinel',
   );
 });
 
-test('runForceComplete uses the run own PR number when completing a blocked run', async (t) => {
-  const run = createRun({
-    flowType: 'fix-bug',
-    project: 'example-mobile-farm',
-    ticketOrPr: `PROJ-${Date.now()}-blocked-linked-pr`,
-  });
-  t.after(() => cleanupRun(run.id));
-  updateRun(run.id, {
-    status: 'blocked',
-    prNumber: 34865,
-    error: 'review finding requires an external dependency',
-    steps: [{ name: 'human-gate', status: 'running' }],
-  });
+for (const status of ['blocked', 'reconciling'] as const) {
+  test(`runForceComplete uses the run own PR number when completing a ${status} run`, async (t) => {
+    const run = createRun({
+      flowType: 'fix-bug',
+      project: 'example-mobile-farm',
+      ticketOrPr: `PROJ-${Date.now()}-blocked-linked-pr`,
+    });
+    t.after(() => cleanupRun(run.id));
+    updateRun(run.id, {
+      status,
+      prNumber: 34865,
+      error: 'review finding requires an external dependency',
+      steps: [{ name: 'human-gate', status: 'running' }],
+    });
 
-  // No prNumber in the params: the run is already linked to a published PR, so
-  // the caller must not have to resend the number it already owns.
-  const result = await runForceComplete({ runId: run.id }, () => {});
+    // No prNumber in the params: the run is already linked to a published PR, so
+    // the caller must not have to resend the number it already owns.
+    const result = await runForceComplete({ runId: run.id }, () => {});
 
-  assert.equal(result.run.status, 'done');
-  assert.equal(result.run.prNumber, 34865);
-  assert.equal(result.run.steps[0]?.status, 'skipped');
-});
+    assert.equal(result.run.status, 'done');
+    assert.equal(result.run.prNumber, 34865);
+    assert.equal(result.run.steps[0]?.status, 'skipped');
+  });
+}
 
 test('runForceComplete repairs a stale active status after an earlier force completion', async (t) => {
   const run = createRun({
@@ -1514,26 +1591,28 @@ test('a restore does not suppress anything when the run never chose free-slot', 
   );
 });
 
-test('QA cannot bypass runtime evidence through force completion', async (t) => {
-  const run = createRun(
-    { flowType: 'qa', project: 'example-mobile-farm', ticketOrPr: `QA-${Date.now()}` },
-    {
-      reviewQa: {
-        flowType: 'qa',
-        contract: { version: 1 },
-        qa: {
-          profile: { id: 'changes', title: 'Changes', template_id: 'validation/shared' },
-          inputs: {},
+for (const status of ['blocked', 'reconciling'] as const) {
+  test(`QA cannot bypass runtime evidence through force completion from ${status}`, async (t) => {
+    const run = createRun(
+      { flowType: 'qa', project: 'example-mobile-farm', ticketOrPr: `QA-${Date.now()}` },
+      {
+        reviewQa: {
+          flowType: 'qa',
+          contract: { version: 1 },
+          qa: {
+            profile: { id: 'changes', title: 'Changes', template_id: 'validation/shared' },
+            inputs: {},
+          },
         },
       },
-    },
-  );
-  updateRun(run.id, { status: 'blocked', prNumber: 42 });
-  t.after(() => cleanupRun(run.id));
-  await assert.rejects(
-    () => runForceComplete({ runId: run.id, prNumber: 42 }, () => {}),
-    /QA cannot be force-completed/,
-  );
-  assert.equal(getRun(run.id)?.status, 'blocked');
-  assert.notEqual(getRun(run.id)?.metrics.outcome, 'success');
-});
+    );
+    updateRun(run.id, { status, prNumber: 42 });
+    t.after(() => cleanupRun(run.id));
+    await assert.rejects(
+      () => runForceComplete({ runId: run.id, prNumber: 42 }, () => {}),
+      /QA cannot be force-completed/,
+    );
+    assert.equal(getRun(run.id)?.status, status);
+    assert.notEqual(getRun(run.id)?.metrics.outcome, 'success');
+  });
+}

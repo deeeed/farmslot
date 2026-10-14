@@ -103,6 +103,7 @@ is refused. Never clear the composer or resend an unverified prompt.
   Default is `<pane-current-path>/.agent/.observability`.
 - `TMUX_MODEL_DRIVER_STATE_DIR`: private receipt and lock directory.
 - `TMUX_MODEL_DRIVER_VERIFY_TIMEOUT_MS`: verification ceiling, default 3000 ms.
+- `TMUX_MODEL_DRIVER_PROBE_TIMEOUT_MS`: positive integer native shell-probe budget in milliseconds, default 10000. Pane state and send preflight use this same budget. Process-owned rollout headers are checked together; large histories retain their full native boundary and question checks. This is separate from the verification retry window. Lane callers must allow enough total time for startup and all probes.
 - `TMUX_MODEL_DRIVER_STAGE_ROOT`: directory for staged shell launch scripts.
 
 Use a private socket for tests and live validation. Never start or kill an

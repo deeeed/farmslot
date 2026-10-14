@@ -6,9 +6,15 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Bind frozen runtime package commands to the captured compiled entry and refresh new admissions across producer upgrades, preserving arguments and already-admitted snapshots without source bootstrap or ambient selectors.
 
+- Allow an operator to force-complete a reconciling non-QA run with its published PR number, preserving the terminal transition and recovery fences.
+
 - Preserve configured remote hook execution timeouts after support-bundle resolution, while retaining bounded delivery refusals.
 
+- Batch process-owned session-header checks in lane transport and allow an explicit native probe timeout, preserving session identity and delivery safeguards under host load.
+
 - Render remote-run PR bodies with the gateway host's declared provider root from its pool, refusing missing or conflicting roots instead of using a remote path or ambient harness selection.
+
+- Recognize current successful scripted command receipts at lifecycle gates while retaining uncertainty for missing or stale execution evidence.
 
 - Preserve the selected device capabilities across find-slot replay and refuse unsupported slots before selection or claim.
 

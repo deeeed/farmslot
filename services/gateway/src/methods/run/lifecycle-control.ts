@@ -170,23 +170,24 @@ export async function runForceCompleteTransitionLocked(
   assertNotMachineParkManaged(existing);
   const originalStatus = existing.status;
 
-  const completableStatuses = new Set(['ci-watching', 'failed', 'blocked']);
-  // Only the blocked path falls back to the run's own PR: it is the one status
-  // that requires a number, and making the caller resend a value the run already
-  // owns is what forced the CLI to repeat `--pr`. Every other status keeps the
+  const completableStatuses = new Set(['ci-watching', 'failed', 'blocked', 'reconciling']);
+  const requiresPublishedPr = originalStatus === 'blocked' || originalStatus === 'reconciling';
+  // These operator overrides require a published PR, including when runner
+  // progress is unproven. Keep that uncertainty until this terminal transition;
+  // do not relabel the run blocked just to make the override available.
+  // Reuse a PR the run already owns. Every other status keeps the
   // caller-supplied value, so a stored `0` sentinel (see `hasValidPrNumber`)
   // cannot fail an otherwise valid completion. `0` is never a usable fallback.
   const linkedPrNumber = hasValidPrNumber(existing) ? (existing.prNumber ?? null) : null;
-  const effectivePrNumber =
-    params.prNumber ?? (originalStatus === 'blocked' ? linkedPrNumber : null);
+  const effectivePrNumber = params.prNumber ?? (requiresPublishedPr ? linkedPrNumber : null);
   const repairsStaleForceCompletion =
     existing.engineState?.operatorForceCompleted === true && effectivePrNumber != null;
   if (!completableStatuses.has(originalStatus) && !repairsStaleForceCompletion) {
     throw new Error(`Run ${params.runId} cannot be force-completed in status: ${originalStatus}`);
   }
-  if (originalStatus === 'blocked' && effectivePrNumber == null) {
+  if (requiresPublishedPr && effectivePrNumber == null) {
     throw new Error(
-      `Run ${params.runId} is blocked; force-complete requires a published PR number`,
+      `Run ${params.runId} is ${originalStatus}; force-complete requires a published PR number`,
     );
   }
   if (effectivePrNumber != null) assertPositivePrNumber(effectivePrNumber);

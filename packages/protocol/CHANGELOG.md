@@ -4,18 +4,17 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Retain device capability placement requirements in run engine state across slot re-selection.
 - Define authenticated, moment-bound visual review receipts and the public human review operation.
 
+## 0.42.0 - 2026-10-14
+
+- Retain device capability placement requirements in run engine state across slot re-selection.
 - Share the publication evidence-manifest contract between the engine and publication consumers.
 - Define verified human claim-override receipts, selected-execution binding and shared review projections.
 - Validate enabled-state wait inputs through shared action relationships for recipe nodes and direct transports.
-
 - Treat file assertions as assertions for declared retry resolution; file-content proof still requires an executed non-blank expectation.
 - Expose scoped source selection contracts, shared status/picker state and a retry-safe source command client that retains partial-sync diagnostics.
 - Add graph-owned planning retry with typed request/result and retained retry reasons.
-
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.41.0 - 2026-10-13
 
