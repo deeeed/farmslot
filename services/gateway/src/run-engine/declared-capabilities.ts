@@ -6,9 +6,9 @@ import {
   EXECUTION_CHECKLIST_DOCUMENT,
   type ExecutionTemplateRunMode,
   isLightweightInteractiveDevRun,
-  isRuntimeCapabilityProofMode,
   isTerminalRunStatus,
   recipeFlowRequirements,
+  resolveRecipeProofRequirements,
   type Run,
   type RuntimeCapabilityProofRequirement,
   type RuntimeCapabilityStatusResult,
@@ -72,6 +72,7 @@ export async function prepareDeclaredRunCapabilities(
     status: (slotId) => getRuntimeCapabilityRegistry().status({ slotId }),
     prepare: prepareRunPostureForValidation,
   },
+  proofRequirements: readonly RuntimeCapabilityProofRequirement[] = [],
 ): Promise<PrepareRunPostureOutcome> {
   if (resources.length === 0) return { ok: true };
   const run = deps.getRun(runId);
@@ -97,23 +98,19 @@ export async function prepareDeclaredRunCapabilities(
   const status = await deps.status(slotId);
   if (!current()) return superseded();
   const plan = status.proofPlans[runId];
-  if (plan && (plan.ownerRunId !== runId || plan.slotId !== slotId))
-    return { ok: false, reason: 'The authored proof plan belongs to another run or slot.' };
-
-  for (const capabilityId of new Set(resources)) {
-    const matches = plan?.requirements.filter((item) => item.capabilityId === capabilityId) ?? [];
-    if (matches.length !== 1 || !isRuntimeCapabilityProofMode(matches[0]?.mode)) {
-      return {
-        ok: false,
-        reason:
-          `Declared capability '${capabilityId}' requires one authored proof mode in this run's ` +
-          'existing proof plan. The declaration owner must supply it before dispatch.',
-      };
-    }
+  let resolved;
+  try {
+    resolved = resolveRecipeProofRequirements({
+      required: { resources: [...resources], proofRequirements: [...proofRequirements] },
+      owner: { ownerRunId: runId, slotId },
+      plan,
+    });
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
-  const requirements = structuredClone(
-    plan!.requirements.filter((requirement) => resources.includes(requirement.capabilityId)),
-  );
+  if (resolved.missingRequirements.length)
+    return { ok: false, reason: resolved.diagnostics.join(' ') };
+  const requirements = resolved.requirements;
   const refusal = frozenParameterRefusal(status, runId, requirements);
   if (refusal) return { ok: false, reason: refusal };
   // Dependency parameters remain in the stored plan for the registry to consume.
@@ -172,13 +169,22 @@ export async function prepareDispatchRunCapabilities(
     await checkRecipeDispatchRequirements(project, slot, selected.entry, {
       app: input.app,
       domain: run?.domain ?? slot.domain,
+      runId: run?.id,
     }),
   );
   input.assertCurrent?.();
-  const resources = recipeFlowRequirements(selected.entry.frontmatter).resources;
+  const declared = recipeFlowRequirements(selected.entry.frontmatter);
+  const resources = declared.resources;
   if (resources.length) {
     if (!run) throw new Error('Declared resources require a persisted run owner.');
-    assertDeclaredCapabilityPreparation(await prepareDeclaredRunCapabilities(run.id, resources));
+    assertDeclaredCapabilityPreparation(
+      await prepareDeclaredRunCapabilities(
+        run.id,
+        resources,
+        undefined,
+        declared.proofRequirements,
+      ),
+    );
     input.assertCurrent?.();
   }
 }
@@ -224,6 +230,13 @@ export async function prepareRetainedRunCapabilities(
     ? run.taskFile
     : path.join(path.dirname(run.taskFile), EXECUTION_CHECKLIST_DOCUMENT);
   const snapshot = await readFile(document, 'utf8');
-  const resources = recipeFlowRequirements(parseMarkdownDocument(snapshot).frontmatter).resources;
-  assertDeclaredCapabilityPreparation(await prepareDeclaredRunCapabilities(runId, resources, deps));
+  const declared = recipeFlowRequirements(parseMarkdownDocument(snapshot).frontmatter);
+  assertDeclaredCapabilityPreparation(
+    await prepareDeclaredRunCapabilities(
+      runId,
+      declared.resources,
+      deps,
+      declared.proofRequirements,
+    ),
+  );
 }

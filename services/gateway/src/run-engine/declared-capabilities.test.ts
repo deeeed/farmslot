@@ -73,15 +73,20 @@ test('declared IDs consume frozen inputs and leave unrelated authored requiremen
 });
 
 test('missing, invalid, duplicate or foreign authored requirements refuse before acquiring', async () => {
-  for (const requirements of [
-    [],
-    [{ ...requirement, mode: 'capture' as never }],
-    [requirement, requirement],
+  const invalidMode: RuntimeCapabilityProofRequirement = {
+    ...requirement,
+    // @ts-expect-error capture is not a resource proof mode.
+    mode: 'capture',
+  };
+  for (const { requirements, reason } of [
+    { requirements: [], reason: /authored state\/visual\/mixed proof mode/ },
+    { requirements: [invalidMode], reason: /state\/visual\/mixed mode/ },
+    { requirements: [requirement, requirement], reason: /Duplicate resource proof requirement/ },
   ]) {
     const { deps, prepared } = fixture(requirements);
     const outcome = await prepareDeclaredRunCapabilities('run-a', ['device-client'], deps);
     assert.equal(outcome.ok, false);
-    if (!outcome.ok) assert.match(outcome.reason, /authored proof mode/);
+    if (!outcome.ok) assert.match(outcome.reason, reason);
     assert.equal(prepared.length, 0);
   }
   const { deps, status, prepared } = fixture([requirement]);
@@ -90,6 +95,44 @@ test('missing, invalid, duplicate or foreign authored requirements refuse before
   assert.equal(foreign.ok, false);
   if (!foreign.ok) assert.match(foreign.reason, /another run or slot/);
   assert.equal(prepared.length, 0);
+});
+
+test('first preparation acquires each declared proof mode without an existing plan', async () => {
+  for (const mode of ['state', 'visual', 'mixed'] as const) {
+    const declared: RuntimeCapabilityProofRequirement = { ...requirement, mode };
+    const { deps, prepared, status } = fixture();
+    assert.deepEqual(status.proofPlans, {});
+    assert.deepEqual(
+      await prepareDeclaredRunCapabilities('run-a', ['device-client'], deps, [declared]),
+      { ok: true },
+    );
+    assert.deepEqual(prepared, [[declared]]);
+    assert.notEqual(prepared[0]![0], declared);
+  }
+});
+
+test('stored retarget inputs remain authoritative over declared defaults', async () => {
+  const declared: RuntimeCapabilityProofRequirement = {
+    ...requirement,
+    parameters: { simulator: 'default-device', port: 9999 },
+  };
+  const { deps, prepared } = fixture([requirement]);
+  assert.deepEqual(
+    await prepareDeclaredRunCapabilities('run-a', ['device-client'], deps, [declared]),
+    { ok: true },
+  );
+  assert.deepEqual(prepared, [[requirement]]);
+  assert.equal(declared.parameters?.simulator, 'default-device');
+});
+
+test('a declared mode conflict refuses before existing acquisition', async () => {
+  const { deps, prepared } = fixture([requirement]);
+  const outcome = await prepareDeclaredRunCapabilities('run-a', ['device-client'], deps, [
+    { ...requirement, mode: 'state' },
+  ]);
+  assert.equal(outcome.ok, false);
+  if (!outcome.ok) assert.match(outcome.reason, /conflicts with its stored mixed proof mode/);
+  assert.deepEqual(prepared, []);
 });
 
 test('automatic preparation preserves a held target and refuses a changed frozen payload', async () => {
