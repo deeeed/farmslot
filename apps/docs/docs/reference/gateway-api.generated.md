@@ -403,6 +403,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `workGraph.activate`                    | workGraph        | bounded-write | —      | —      | WorkGraph Activate gateway method.                    |
 | `workGraph.addEdge`                     | workGraph        | bounded-write | —      | —      | WorkGraph AddEdge gateway method.                     |
 | `workGraph.addNode`                     | workGraph        | bounded-write | —      | —      | WorkGraph AddNode gateway method.                     |
+| `workGraph.attachRun`                   | workGraph        | bounded-write | —      | —      | WorkGraph AttachRun gateway method.                   |
 | `workGraph.create`                      | workGraph        | bounded-write | —      | —      | WorkGraph Create gateway method.                      |
 | `workGraph.gateResolve`                 | workGraph        | bounded-write | —      | —      | WorkGraph GateResolve gateway method.                 |
 | `workGraph.get`                         | workGraph        | read-only     | —      | —      | WorkGraph Get gateway method.                         |
