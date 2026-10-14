@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { hostname, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
@@ -11,6 +11,8 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { NativeSessionClient, type NativeWorkerTarget } from '@farmslot/agent-runtime/native';
+import { NativeProcessTree } from '@farmslot/agent-runtime/native/process-tree';
+import { matchesProcess } from '@farmslot/agent-runtime/native/storage';
 import { FLOW_STEPS, type NativeWorkerSessionBinding, type Run } from '@farmslot/protocol';
 
 import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
@@ -20,6 +22,7 @@ const source = fileURLToPath(new URL('../../../', import.meta.url));
 const execute = promisify(execFile);
 const interruption = new AbortController();
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+type ProofWorker = NativeWorkerSessionBinding & NativeWorkerTarget;
 async function waitFor(check: () => Promise<boolean>, label: string) {
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
@@ -32,6 +35,19 @@ async function waitFor(check: () => Promise<boolean>, label: string) {
 async function json(file: string, value: unknown) {
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, JSON.stringify(value, null, 2) + '\n');
+}
+
+async function stopTree(tree: NativeProcessTree) {
+  const stopped = async () => {
+    const deadline = Date.now() + 3_000;
+    while (!tree.empty() && Date.now() < deadline) await pause(50);
+    return tree.empty();
+  };
+  tree.stop();
+  if (!(await stopped())) {
+    tree.terminate();
+    if (!(await stopped())) throw new Error('Owned proof process did not stop');
+  }
 }
 
 if (process.argv[2] === 'serve') {
@@ -48,7 +64,8 @@ if (process.argv[2] === 'serve') {
     randomUUID(),
   );
   const native = new NativeSessionClient(path.join(scratch, 'native'));
-  let worker: (NativeWorkerSessionBinding & NativeWorkerTarget) | undefined;
+  let worker: ProofWorker | undefined;
+  let workerTree: NativeProcessTree | undefined;
   let gateway: ChildProcess | undefined;
   let proofFailure: unknown;
   let passed = false;
@@ -60,6 +77,11 @@ if (process.argv[2] === 'serve') {
   try {
     await mkdir(out, { recursive: true });
     await execute('git', ['clone', '--quiet', '--shared', '--sparse', source, root]);
+    await symlink(path.join(source, 'scripts'), path.join(root, 'scripts'), 'dir');
+    await json(path.join(root, 'services/gateway/package.json'), {
+      name: 'fixture',
+      version: '0.0.0',
+    });
     await mkdir(repo, { recursive: true });
     await execute('git', ['init', '--quiet', repo]);
     const wip = path.join(repo, 'uncommitted-proof.txt');
@@ -118,6 +140,7 @@ if (process.argv[2] === 'serve') {
       { leaseId: randomUUID(), safetyTier: 'full-auto', environment: { set: {}, unset: [] } },
     );
     assert.ok(session.workerLeaseId);
+    if (session.processPid) workerTree = new NativeProcessTree(session.processPid);
     const commandId = randomUUID();
     worker = {
       sessionId: session.id,
@@ -333,7 +356,24 @@ if (process.argv[2] === 'serve') {
     });
     await clean(() => writeFile(path.join(out, 'gateway.log'), logs.join('')));
     if (worker) await clean(() => native.closeWorker('test-automation', worker!));
-    await clean(() => native.shutdown());
+    await clean(async () => {
+      let host: unknown;
+      try {
+        host = JSON.parse(await readFile(path.join(native.root, 'host.json'), 'utf8'));
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return;
+        throw error;
+      }
+      if (
+        host &&
+        typeof host === 'object' &&
+        'pid' in host &&
+        typeof host.pid === 'number' &&
+        matchesProcess(host.pid, native.root)
+      )
+        await stopTree(new NativeProcessTree(host.pid));
+    });
+    if (workerTree) await clean(() => stopTree(workerTree!));
     if (!failures.length) await clean(() => rm(scratch, { recursive: true, force: true }));
     process.off('SIGINT', interrupt);
     process.off('SIGTERM', interrupt);
