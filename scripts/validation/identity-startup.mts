@@ -55,8 +55,10 @@ function cdp(...args: string[]): unknown {
     process.execPath,
     [join(source, 'apps/command-center/scripts/cdp.mjs'), ...args],
     {
-      cwd: source,
-      env,
+      // CI passes a checkout-relative TSX config; plain-node tooling must still
+      // resolve its profile from an unrelated working directory.
+      cwd: scratch,
+      env: { ...env, TSX_TSCONFIG_PATH: 'services/gateway/tsconfig.json' },
       encoding: 'utf8',
       timeout: 30_000,
     },
@@ -178,6 +180,10 @@ try {
     const result = await client.call<{ nodes: Array<{ machine: string }> }>('nodes.list', {});
     return result.nodes.some((node) => node.machine === 'transfer-proof');
   }, 'transfer node did not register');
+
+  const toolingNodes = cdp('gateway', 'nodes.list') as { nodes: Array<{ machine: string }> };
+  assert.ok(toolingNodes.nodes.some((node) => node.machine === 'transfer-proof'));
+  claims.push('explicit profile tooling authenticates from scratch cwd with inherited TSX config');
 
   const transfer = await client.call<{
     ok: boolean;

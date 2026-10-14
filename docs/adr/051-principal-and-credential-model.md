@@ -1555,8 +1555,8 @@ Four decisions belong to the gateway's owner rather than to implementation.
 ## Amendment 1: explicit credentials, 2026-10-14
 
 **Status:** Accepted. The owner approved credential consolidation and retaining
-the person, service and node kinds on 2026-10-14. Implementation and rollout are
-pending.
+the person, service and node kinds on 2026-10-14. Implementation is tracked in
+[PR #1064](https://github.com/deeeed/farmslot/pull/1064); rollout is pending.
 
 ### Decision
 

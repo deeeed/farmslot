@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Use explicit test gateway profiles in desktop validation instructions.
+
 - Docs refer to the recipe runner package as `@farmslot/recipe-runner` (renamed from `@farmslot/recipe-harness`).
 
 - Allow the isolated embedded HTML report viewer while retaining script and origin separation.
