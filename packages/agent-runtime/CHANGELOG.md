@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.21.2 - 2026-10-14
+
+- Align task helpers with adapter-sdk 0.13.0 so recipe hosts use one SDK version.
+
 ## 0.21.1 - 2026-10-14
 
 - Align runtime dependencies with recipe-runner 0.34.1 so installed adapters and recipe hosts use one engine version.
