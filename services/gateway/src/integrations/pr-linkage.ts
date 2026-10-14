@@ -5,11 +5,19 @@
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 
-import { Events, monitoredPRKey, PR_BOUND_FLOW_TYPES, type Run } from '@farmslot/protocol';
+import {
+  Events,
+  githubPullUrl,
+  type HumanPublicationAdoptionReceipt,
+  monitoredPRKey,
+  PR_BOUND_FLOW_TYPES,
+  PUBLICATION_ADOPTION_ACTION,
+  type Run,
+} from '@farmslot/protocol';
 
 import { isFollowUpFlow } from '../family-observability/context.js';
 import { refreshRunLinks } from '../run-engine/run-links.js';
-import { getRun, updateRun } from '../runs/store.js';
+import { commitRunPublication, getRun, getRunWithArchived, updateRun } from '../runs/store.js';
 
 import { getBinding, invalidateBinding, setBinding } from './github-bindings-cache.js';
 import { ghRequest } from './github-client.js';
@@ -228,14 +236,89 @@ export async function persistRunPrNumber(runId: string, prNumber: number): Promi
 }
 
 /** Called by publication paths, never by mere PR discovery or review intake. */
-export function recordRunPRPublication(runId: string, repo: string, number: number): void {
-  const run = getRun(runId);
+export async function recordRunPRPublication(
+  runId: string,
+  repo: string,
+  number: number,
+  options: {
+    gate?: Partial<NonNullable<NonNullable<Run['engineState']>['publishGate']>>;
+    adoption?: HumanPublicationAdoptionReceipt;
+    assertCurrent?: (run: Run) => void;
+    onProjectionFailure?: (error: unknown) => void;
+  } = {},
+): Promise<Run | undefined> {
+  const run = await getRunWithArchived(runId);
   if (!run || PR_BOUND_FLOW_TYPES.has(run.flowType) || run.completionPolicy === 'artifact-only')
     return;
   const pr = { host: 'github.com', repo, number };
-  if (run.prPublications?.some((entry) => monitoredPRKey(entry.pr) === monitoredPRKey(pr))) return;
-  updateRun(runId, {
-    prPublications: [...(run.prPublications ?? []), { pr, publishedAt: new Date().toISOString() }],
-  });
-  broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+  const committed = await commitRunPublication(
+    runId,
+    (current) => {
+      const prior = current.engineState?.publishGate?.humanPublicationAdoption;
+      if (
+        prior &&
+        (prior.repository.toLowerCase() !== repo.toLowerCase() ||
+          prior.prNumber !== number ||
+          (options.adoption && prior.headSha !== options.adoption.headSha))
+      )
+        throw new Error('Conflicting human publication adoption');
+      const publications = current.prPublications ?? [];
+      const adoption = prior ?? options.adoption;
+      return {
+        prNumber: number,
+        links: [
+          ...(current.links ?? []).filter((link) => link.label.toLowerCase() !== 'pr'),
+          { label: 'PR', url: githubPullUrl({ repo, number }) },
+        ],
+        prPublications: publications.some(
+          (entry) => monitoredPRKey(entry.pr) === monitoredPRKey(pr),
+        )
+          ? publications
+          : [...publications, { pr, publishedAt: adoption?.adoptedAt ?? new Date().toISOString() }],
+        ...(options.gate || adoption
+          ? {
+              publishGate: {
+                ...current.engineState?.publishGate,
+                ...options.gate,
+                prNumber: number,
+                ...(adoption
+                  ? {
+                      humanPublicationAdoption: adoption,
+                      publicationStatus: adoption.publicationStatus,
+                      publicationTarget: adoption.observedDraft
+                        ? ('draft' as const)
+                        : ('ready' as const),
+                    }
+                  : {}),
+              },
+            }
+          : {}),
+        ...(!current.archivedAt && adoption?.priorGate?.decisionId
+          ? {
+              decisions: current.decisions.map((decision) =>
+                decision.id === adoption.priorGate!.decisionId && !decision.resolvedAt
+                  ? {
+                      ...decision,
+                      resolvedAt: adoption.adoptedAt,
+                      resolvedAction: PUBLICATION_ADOPTION_ACTION,
+                    }
+                  : decision,
+              ),
+            }
+          : {}),
+      };
+    },
+    options.assertCurrent,
+  );
+  // Historical updates must not re-enter live execution/backlog event projections.
+  if (!committed.archivedAt) {
+    try {
+      broadcastFn(Events.RUN_UPDATED, { run: committed });
+    } catch (error) {
+      // The publication is durable. Adoption exposes this effect failure and retries its projection.
+      if (!options.onProjectionFailure) throw error;
+      options.onProjectionFailure(error);
+    }
+  }
+  return committed;
 }

@@ -2703,6 +2703,7 @@ export interface RunEngineState {
   intelligenceAuditDegraded?: boolean;
   /** Local-first publication gate metadata. Stored on the run JSON snapshot; no DB migration. */
   publishGate?: {
+    humanPublicationAdoption?: import('./human-publication.js').HumanPublicationAdoptionReceipt;
     packageId?: string;
     packageHash?: string;
     packageInputHash?: string;

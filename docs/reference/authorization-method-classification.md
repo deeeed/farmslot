@@ -245,6 +245,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `roadmap.save`                          | admin          |                                                                                    |
 | `run.activateOnSlot`                    | admin          |                                                                                    |
 | `run.adopt`                             | admin          |                                                                                    |
+| `run.adoptPublishedPr`                  | admin          |                                                                                    |
 | `run.archive`                           | admin          |                                                                                    |
 | `run.autoRecovery.stop`                 | admin          |                                                                                    |
 | `run.backfillSummaries`                 | admin          |                                                                                    |

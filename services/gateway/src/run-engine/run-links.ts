@@ -1,4 +1,10 @@
-import { githubPullUrl, parseGitHubRef, type Run, type RunLink } from '@farmslot/protocol';
+import {
+  adoptedPublicationTarget,
+  githubPullUrl,
+  parseGitHubRef,
+  type Run,
+  type RunLink,
+} from '@farmslot/protocol';
 
 import { loadProjectVars } from '../core/config.js';
 import { getRun, updateRun } from '../runs/store.js';
@@ -22,7 +28,8 @@ async function computeRunLinks(run: Run): Promise<RunLink[]> {
       `[run-engine] run link project config unavailable for ${run.id}: ${(err as Error).message.slice(0, 200)}`,
     );
   }
-  const ciRepo = projectJson?.ci?.repo; // e.g. "example-org/example-mobile"
+  const adopted = adoptedPublicationTarget(run);
+  const ciRepo = adopted?.repository ?? projectJson?.ci?.repo; // e.g. "example-org/example-mobile"
   const jiraBaseUrl = projectJson?.jira?.base_url;
   const jiraProject = projectJson?.jira?.project; // e.g. "PROJ"
   // Jira ticket link — validate key matches project prefix to avoid false matches from PR body
@@ -43,7 +50,12 @@ async function computeRunLinks(run: Run): Promise<RunLink[]> {
   // and prNumber is the PR (set during completion). When they match, ghIssueNum
   // might be a different PR (from chained flows with stale prNumber).
   const allNums = new Set([ticketNum, ghIssueNum, prNum].filter((n): n is number => n != null));
-  if (run.flowType === 'review-pr' && ticketNum) {
+  if (adopted) {
+    links.push({
+      label: 'PR',
+      url: githubPullUrl({ repo: adopted.repository, number: adopted.prNumber }),
+    });
+  } else if (run.flowType === 'review-pr' && ticketNum) {
     const repo = ticketRepo ?? ciRepo;
     if (repo) {
       links.push({ label: 'PR', url: githubPullUrl({ repo, number: ticketNum }) });

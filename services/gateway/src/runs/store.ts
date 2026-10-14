@@ -762,6 +762,8 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
     throw new Error('Run ownership cannot be supplied in run parameters');
   if ('reviewPublication' in params || 'directReviewPublication' in params)
     throw new Error('Publication authority cannot be supplied in run parameters');
+  if (params.engineState?.publishGate?.humanPublicationAdoption)
+    throw new Error('Human publication adoption receipts are gateway-owned');
   if (options?.directReviewPublication && params.flowType !== 'review-pr')
     throw new Error('Direct publication requires a direct static review');
   if ('qaAfterReview' in params)
@@ -1234,6 +1236,17 @@ export function updateRun(id: string, partial: Partial<Run>, authorization?: sym
   const run = runs.get(id);
   if (!run) throw new Error(`Run not found: ${id}`);
   if (
+    'engineState' in partial &&
+    !isDeepStrictEqual(
+      partial.engineState?.publishGate?.humanPublicationAdoption,
+      run.engineState?.publishGate?.humanPublicationAdoption,
+    )
+  )
+    throw new Error('Human publication adoption receipts require the verified publication writer');
+  const adopted = run.engineState?.publishGate?.humanPublicationAdoption;
+  if (adopted && partial.prNumber != null && partial.prNumber !== adopted.prNumber)
+    throw new Error('The attested publication PR identity is immutable');
+  if (
     'visualJudgmentReceipts' in partial &&
     !isDeepStrictEqual(partial.visualJudgmentReceipts, run.visualJudgmentReceipts)
   )
@@ -1704,6 +1717,83 @@ export async function updateReviewPublication(
       invalidateArchivedRunsCache();
     }
   });
+}
+
+export interface RunPublicationMutation {
+  prNumber: number;
+  links: Run['links'];
+  prPublications: Run['prPublications'];
+  publishGate?: NonNullable<Run['engineState']>['publishGate'];
+  decisions?: Run['decisions'];
+}
+
+/** Publication-only transaction. Archived execution is never loaded into the live map. */
+export async function commitRunPublication(
+  id: string,
+  build: (run: Run) => RunPublicationMutation,
+  assertCurrent: (run: Run) => void = () => {},
+): Promise<Run> {
+  let committed!: Run;
+  await enqueueRunWrite(id, async () => {
+    const live = getRun(id);
+    const file = path.join(ARCHIVE_DIR, `${id}.json`);
+    // Read the raw archive so load-time migrations do not rewrite historical execution.
+    const run: Run = live ?? JSON.parse(await readFile(file, 'utf-8'));
+    if (run.id !== id) throw new Error('Publication run identity changed');
+    const authority = live ?? structuredClone(run);
+    if (!live) normalizePersistedRun(authority);
+    assertCurrent(authority);
+    const baseline = structuredClone(run);
+    const patch = build(run);
+    const snapshot: Run = {
+      ...run,
+      prNumber: patch.prNumber,
+      links: patch.links,
+      prPublications: patch.prPublications,
+      ...(patch.publishGate
+        ? { engineState: { ...run.engineState, publishGate: patch.publishGate } }
+        : {}),
+      ...(patch.decisions ? { decisions: patch.decisions } : {}),
+    };
+    if (live && !isTerminalRunStatus(snapshot.status))
+      assertPRRunActivation(snapshot, getAllRuns());
+    if (live) {
+      await persistBody(live, snapshot, true);
+      try {
+        assertCurrent(live);
+        if (getRun(id) !== live || !isDeepStrictEqual(live, baseline))
+          throw new Error('Run changed during publication persistence');
+      } catch (error) {
+        // Keep the current execution authoritative if a runtime/auth change raced the write.
+        await persistBody(live, live, true);
+        throw error;
+      }
+      Object.assign(live, snapshot);
+      invalidateLiveRecipeContextMemo(id);
+      committed = live;
+    } else {
+      const temporary = `${file}.tmp.${randomUUID()}`;
+      await writeFile(temporary, JSON.stringify(snapshot, null, 2), { mode: 0o600 });
+      const handle = await open(temporary, 'r');
+      try {
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      assertCurrent(authority);
+      if (getRun(id)) throw new Error('Archived publication run was restored during persistence');
+      await rename(temporary, file);
+      invalidateArchivedRunsCache();
+      const directory = await open(ARCHIVE_DIR, 'r');
+      try {
+        await directory.sync();
+      } finally {
+        await directory.close();
+      }
+      committed = snapshot;
+    }
+  });
+  return committed;
 }
 
 export async function archiveRun(id: string): Promise<boolean> {

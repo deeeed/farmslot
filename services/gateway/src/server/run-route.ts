@@ -85,6 +85,7 @@ import {
   runSetTags,
 } from '../methods/run/admin.js';
 import { runAdopt } from '../methods/run/adopt.js';
+import { runAdoptPublishedPr } from '../methods/run/adopt-published-pr.js';
 import { runOverrideClaim } from '../methods/run/claim-overrides.js';
 import { runReviewVisualClaim } from '../methods/run/claim-reviews.js';
 import {
@@ -143,6 +144,12 @@ export async function routeRunMethod(
   };
 
   switch (method) {
+    case Methods.RUN_ADOPT_PUBLISHED_PR:
+      return handled(
+        runAdoptPublishedPr(p as import('@farmslot/protocol').RunAdoptPublishedPrParams, emit, {
+          authorizeEvidenceAttestation: context.authorizeEvidenceAttestation,
+        }),
+      );
     case Methods.RUN_REVIEW_VISUAL_CLAIM:
       return handled(
         runReviewVisualClaim(p as import('@farmslot/protocol').RunReviewVisualClaimParams, emit, {

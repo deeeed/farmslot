@@ -1,4 +1,5 @@
 import {
+  adoptedPublicationTarget,
   type FlowType,
   modeForFlow,
   PR_BOUND_FLOW_TYPES,
@@ -17,6 +18,7 @@ import { hasValidPrNumber } from './gate-policy.js';
 export function buildCIWatchChainedRunParams(
   current: Pick<
     Run,
+    | 'engineState'
     | 'project'
     | 'ticketOrPr'
     | 'slotId'
@@ -45,6 +47,8 @@ export function buildCIWatchChainedRunParams(
   updateFields: Partial<Run>;
   engineFlags: { skipPrepare?: true; warmSessionReuse?: true };
 } | null {
+  const adopted = adoptedPublicationTarget(current);
+  ciRepo = adopted?.repository ?? ciRepo;
   const flowType = resolveCIWatchChainFlowType(dispatchAction);
   if (!flowType) return null;
   // prNumber === 0 is the invalid sentinel (review-input capture rejects it);

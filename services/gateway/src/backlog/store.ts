@@ -2548,6 +2548,7 @@ export async function reconcileBacklogRun(
  * tick would then schedule against a backlog that never settled.
  */
 export async function markBacklogRunObserved(run: Run): Promise<void> {
+  if (run.archivedAt) return;
   await withBacklogMutation(async () => {
     const item =
       items.find((candidate) => candidate.runId === run.id) ??
@@ -2567,7 +2568,7 @@ export async function markBacklogRunObserved(run: Run): Promise<void> {
     // are never multi-PR (assertExecutionHintsCompatible), so their candidate
     // observation path is intentionally untouched here.
     if (
-      item.multiPr &&
+      (item.multiPr || run.engineState?.publishGate?.humanPublicationAdoption) &&
       item.runId !== run.id &&
       (item.queuedQueueItemId != null || item.runId != null)
     ) {

@@ -45,6 +45,8 @@ export async function refreshPublishedEvidence(
   const run = getRun(params.runId);
   if (!run) throw new Error(`Run not found: ${params.runId}`);
   if (run.readOnly) throw new Error('Imported runs cannot refresh published evidence');
+  if (run.engineState?.publishGate?.humanPublicationAdoption)
+    throw new Error('Human publication adoption grants no package or evidence refresh authority');
   if (!isPublishedStatus(publicationStatusForRun(run)) || !run.prNumber) {
     throw new Error('Evidence refresh requires an already published PR');
   }

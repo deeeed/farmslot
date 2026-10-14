@@ -657,6 +657,17 @@ export async function handleCollisionDecision(
   return 'create-new';
 }
 
+function adoptedHumanGateAction(reason: string, run: Run): Promise<string> | null {
+  if (reason !== 'human_gate' || !run.engineState?.publishGate?.humanPublicationAdoption)
+    return null;
+  return import('../run-completion/human-publication.js').then(
+    async ({ assertAdoptedPublicationContinuation }) => {
+      await assertAdoptedPublicationContinuation(run);
+      return 'superseded-by-publication-adoption';
+    },
+  );
+}
+
 export async function createEngineDecision(
   runId: string,
   reason: string,
@@ -676,6 +687,8 @@ export async function createEngineDecision(
 ): Promise<string> {
   const run = getRun(runId);
   if (!run) throw new Error('Run not found');
+  const adopted = adoptedHumanGateAction(reason, run);
+  if (adopted) return adopted;
 
   const generation = run.engineState?.generation ?? 0;
   if (runSupersededSince(run, generation) || isTerminalRunStatus(run.status))
@@ -731,6 +744,9 @@ export async function createEngineDecision(
   const current = getRun(runId);
   if (runSupersededSince(current, generation) || isTerminalRunStatus(current!.status))
     throw new Error(`Run ${runId.slice(0, 8)} changed during the progress observation`);
+  // No await separates an absent receipt from appending this decision.
+  const adoptedAfterRead = adoptedHumanGateAction(reason, current!);
+  if (adoptedAfterRead) return adoptedAfterRead;
 
   const decision: RunDecision = {
     id: randomUUID(),

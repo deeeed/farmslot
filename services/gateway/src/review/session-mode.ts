@@ -1,4 +1,5 @@
 import {
+  adoptedPublicationTarget,
   parseGitHubPullUrl,
   parseGitHubRef,
   prNumberFromRunInput,
@@ -51,12 +52,15 @@ const sessionKey = (scope: Pick<WarmReviewerScope, 'repository' | 'prNumber' | '
 
 export function reviewPRIdentity(
   run:
-    | (Pick<Run, 'ticketOrPr' | 'links' | 'prWork'> & Partial<Pick<Run, 'flowType' | 'prNumber'>>)
+    | (Pick<Run, 'ticketOrPr' | 'links' | 'prWork'> &
+        Partial<Pick<Run, 'flowType' | 'prNumber' | 'engineState'>>)
     | null
     | undefined,
   options: { requirePRContext?: boolean } = {},
 ): { repository: string; prNumber: number } | null {
   if (!run) return null;
+  const adopted = adoptedPublicationTarget(run);
+  if (adopted) return { repository: adopted.repository, prNumber: adopted.prNumber };
   const pr = run.prWork?.pr;
   if (pr) return { repository: pr.repo, prNumber: pr.number };
   const prLink = run.links?.find((link) => link.label.toLowerCase() === 'pr');

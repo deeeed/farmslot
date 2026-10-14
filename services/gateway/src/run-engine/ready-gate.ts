@@ -746,6 +746,12 @@ export function freedSlotGateResolutionBlocker(run: Run): BlockedRunError | null
 
 export async function executeReadyGate(runId: string): Promise<string> {
   const current = getRun(runId)!;
+  if (current.engineState?.publishGate?.humanPublicationAdoption) {
+    const { assertAdoptedPublicationContinuation } =
+      await import('../run-completion/human-publication.js');
+    await assertAdoptedPublicationContinuation(current);
+    return 'superseded-by-publication-adoption';
+  }
   const artifactOnly = isArtifactOnlyRun(current);
 
   // Find PR + CI repo
@@ -1164,6 +1170,12 @@ export async function executeReadyGate(runId: string): Promise<string> {
   // record, which a `failed` run refuses.
   const freedSlotBlocker = freedSlotGateResolutionBlocker(getRun(runId)!);
   if (freedSlotBlocker) throw freedSlotBlocker;
+  if (actionId === 'superseded-by-publication-adoption') {
+    const { assertAdoptedPublicationContinuation } =
+      await import('../run-completion/human-publication.js');
+    await assertAdoptedPublicationContinuation(getRun(runId)!);
+    return actionId;
+  }
   // F42: the evidence or HEAD changed while the gate was open and
   // review has not run again for it. Hold instead of approving: the gate
   // step re-runs review and presents the gate again.

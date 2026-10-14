@@ -19,10 +19,11 @@ import { getProjectField, loadProjectVars, loadSlotVars, SlotConfigError } from 
 import { reviewedInputsChanged } from '../review/reviewed-inputs.js';
 import { evidenceKeyVariants } from '../run-completion/evidence-paths.js';
 import {
-  prepareCompletionPackage,
+  prepareCompletionPackageTransitionLocked,
   publicationStatusForRun,
 } from '../run-completion/orchestrator.js';
 import { computeReadyGateReviewSubjectHash } from '../run-completion/ready-gate-package.js';
+import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import { getRun, updateRun } from '../runs/store.js';
 
 import {
@@ -147,7 +148,13 @@ function restampReviewsForRefreshedPackage(
   });
 }
 
-export async function refreshPublishPackage(params: {
+export function refreshPublishPackage(
+  params: Parameters<typeof refreshPublishPackageTransitionLocked>[0],
+): ReturnType<typeof refreshPublishPackageTransitionLocked> {
+  return withRunTransition(params.runId, () => refreshPublishPackageTransitionLocked(params));
+}
+
+async function refreshPublishPackageTransitionLocked(params: {
   runId: string;
   decisionId?: string;
   selectedEvidenceKeys?: string[];
@@ -212,7 +219,7 @@ export async function refreshPublishPackage(params: {
   // A refresh must describe the current HEAD, not the durable snapshot captured
   // before later review-fix commits changed the contribution.
   const diffStat = await getDiffStat(run, { fresh: true });
-  const prepared = await prepareCompletionPackage(params.runId, {
+  const prepared = await prepareCompletionPackageTransitionLocked(params.runId, {
     diffStat,
     publicationTarget: target,
     reviewPolicy: reviewPolicyForRefresh,

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document attested human-published PR adoption and its protocol contract.
+
 - Document authenticated visual claim review in the generated gateway API reference.
 
 - Document the resolved publication-base template variable and its separate freshness reference.
