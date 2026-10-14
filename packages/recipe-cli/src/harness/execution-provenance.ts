@@ -286,6 +286,7 @@ export function sourceSnapshot(
       sourceFingerprint: directoryFingerprint(root, excludedRoots, includedRoots),
     };
   }
+  // Product snapshots follow Git source selection; code inputs also bind ignored delivery bytes.
   const platformFingerprint = adapter ? harnessAdapter(adapter).sourceFingerprint : undefined;
   return {
     head: head.toString('utf8').trim() || null,
@@ -293,7 +294,9 @@ export function sourceSnapshot(
     sourceFingerprint:
       platformFingerprint && path.resolve(root) === git.topLevel
         ? platformFingerprint(root)
-        : nestedGitSourceFingerprint(root, git, pathspecs, excludedRoots, includedRoots, head),
+        : adapter
+          ? gitSourceFingerprint(git.topLevel, pathspecs, head)
+          : nestedGitSourceFingerprint(root, git, pathspecs, excludedRoots, includedRoots, head),
   };
 }
 
