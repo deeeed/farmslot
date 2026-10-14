@@ -16,7 +16,6 @@ import { upsertAgentContext } from '../agents/contexts.js';
 import { loadMachinePool, loadProjectVars } from '../core/config.js';
 import { execFileArgv } from '../core/exec.js';
 import { resolveProjectCommandEnv } from '../core/project-env.js';
-import { shellQuote } from '../core/tmux.js';
 import { WarmReviewRefusal } from '../review/session-mode.js';
 import { bindReviewWorkspaceSupportValue } from '../review-workspaces/skills.js';
 import { getAllRuns, getRun, persistRunNow } from '../runs/store.js';
@@ -227,7 +226,7 @@ export async function reviewTmuxOperation(
       repo: w.checkoutPath,
       effort: run.effort,
       trustWorkspace: true,
-      workspaceTrust: 'untrusted',
+      workspaceTrust: 'trusted',
       // A cached newer Codex version shows an "Update available" notice (a modal
       // without a prompt, a history banner with one), which the launch handshake
       // fails on as an unknown prompt.
@@ -250,12 +249,10 @@ export async function reviewTmuxOperation(
       safetyTier: 'dangerous',
     });
     if (!command) throw new Error('Runner does not support terminal review');
-    const trustSeed = getRunnerDefinition(runner).reviewWorkspaceTrustSeed?.(w.checkoutPath);
     Object.assign(input, {
       command,
       prompt,
       environment,
-      ...(trustSeed ? { setup: `node -e ${shellQuote(trustSeed)}` } : {}),
       support: w.support?.path,
       runtimeRoots: nativeRunnerDefinitions[runner]?.reviewRuntimeRoots?.({ HOME: '~' }) ?? [
         '~/.codex',

@@ -1,8 +1,8 @@
-export function isTomlSectionHeader(line) {
-  return /^\s*\[\[?[^\]]+\]\]?\s*(?:#.*)?$/.test(line);
+function isTomlSectionHeader(line) {
+  return /^\s*\[\[?(?:[^"'\]]+|"(?:[^"\\]|\\.)*"|'[^']*')+\]\]?\s*(?:#.*)?$/.test(line);
 }
 
-export function scanTomlLine(line, state) {
+function scanTomlLine(line, state) {
   let escaped = false;
   for (let index = 0; index < line.length; index += 1) {
     const char = line[index];
@@ -49,7 +49,7 @@ export function scanTomlLine(line, state) {
   if (state.quote === '"' || state.quote === "'") state.quote = null;
 }
 
-export function tomlSectionHeaderIndexes(lines) {
+function tomlSectionHeaderIndexes(lines) {
   const headers = new Set();
   const state = { arrayDepth: 0, quote: null };
   for (let index = 0; index < lines.length; index += 1) {
@@ -63,7 +63,7 @@ export function tomlSectionHeaderIndexes(lines) {
   return headers;
 }
 
-export function tomlBareStringValue(line, key) {
+function tomlBareStringValue(line, key) {
   const match = line.match(new RegExp(`^\\s*${key}\\s*=\\s*(.*)$`));
   if (!match) return null;
   const raw = match[1].trim();
@@ -85,7 +85,7 @@ export function tomlBareStringValue(line, key) {
   return raw.replace(/\s+#.*$/, '').trim() || null;
 }
 
-export function tomlDottedParts(section) {
+function tomlDottedParts(section) {
   const parts = [];
   let current = '';
   let quote = null;
@@ -118,3 +118,5 @@ export function tomlDottedParts(section) {
   parts.push(current.trim());
   return parts;
 }
+
+module.exports = { scanTomlLine, tomlBareStringValue, tomlDottedParts, tomlSectionHeaderIndexes };

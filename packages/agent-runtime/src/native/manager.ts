@@ -504,6 +504,9 @@ export class NativeSessionManager {
       const unavailable = transport.adapter.workspaceResumeUnavailableReason?.(resolved.version);
       if (unavailable) throw new Error(unavailable);
     }
+    // A private worker source policy identifies a farm-created review workspace.
+    // Ordinary native conversations never write trust into the operator's configuration.
+    if (filesystemPolicy) transport.trustWorkspace?.(params.cwd, environment, ownerPrincipalId);
     // Validation above awaits filesystem/process probes. Recheck synchronously before reservation.
     assertResumeCurrent?.();
     if (profile) assertNativeProfileCurrent(profile);

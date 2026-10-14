@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Record runner-native directory trust before launching farm-created review workspaces, preserving selected account homes, ownership checks and source write restrictions.
+
 - Allow valid artifact-only QA output with unresolved engine claims to finish execution for review, preserving its claim gaps and all publication, registration and integrity checks.
 
 - Allow a durably replayed run to reacquire capabilities after its previous terminal cleanup, while retaining fences for settled owners, unrecovered siblings and later cleanup.

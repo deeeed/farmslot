@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -13,10 +14,18 @@ import { grokNativeAdapter } from './grok.js';
 import { hostReviewSandboxAvailable } from './review-sandbox.js';
 import type { NativeAdapter } from './types.js';
 
+const workspaceTrust = createRequire(import.meta.url)('../../scripts/workspace-trust.cjs') as {
+  trustCodexWorkspace(cwd: string, environment: NodeJS.ProcessEnv, owner?: string): void;
+  trustClaudeWorkspace(cwd: string, environment: NodeJS.ProcessEnv, owner?: string): void;
+  trustGrokWorkspace(cwd: string, environment: NodeJS.ProcessEnv, owner?: string): void;
+};
+
 export interface NativeRunnerDefinition {
   adapter: NativeAdapter;
   binary: string;
   supportsWorkers?: boolean;
+  /** Only farm-created worker workspaces may receive a persisted native trust decision. */
+  trustWorkspace?: (cwd: string, environment: NodeJS.ProcessEnv, owner?: string) => void;
   supportsReadOnlyWorkspace?: boolean;
   reviewRuntimeRoots?: (environment: NodeJS.ProcessEnv) => string[];
   /** Default for new standalone conversations; worker launch settings stay authoritative. */
@@ -32,6 +41,7 @@ export interface NativeRunnerDefinition {
 /** Native profile mechanics stay with the runner definition, not client workflows. */
 export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
   codex: {
+    trustWorkspace: workspaceTrust.trustCodexWorkspace,
     adapter: codexNativeAdapter,
     binary: 'codex',
     supportsWorkers: true,
@@ -45,6 +55,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     },
   },
   claude: {
+    trustWorkspace: workspaceTrust.trustClaudeWorkspace,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
     reviewRuntimeRoots: (env) => [
       env.CLAUDE_CONFIG_DIR ?? join(env.HOME ?? homedir(), '.claude'),
@@ -98,6 +109,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     },
   },
   grok: {
+    trustWorkspace: workspaceTrust.trustGrokWorkspace,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
     reviewRuntimeRoots: (env) => [env.GROK_HOME ?? join(env.HOME ?? homedir(), '.grok')],
     adapter: grokNativeAdapter,

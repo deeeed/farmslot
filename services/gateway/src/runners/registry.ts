@@ -99,7 +99,6 @@ import {
   readLaunchAckSignalSnapshot,
   type RunnerHandoffAckProbe,
 } from './prompt-delivery-evidence.js';
-import { claudeReviewWorkspaceTrustSeed } from './review-trust.js';
 import { buildRunnerObservabilityInstallCommand } from './runner-observability.js';
 import {
   claudeSessionUsageProvider,
@@ -195,7 +194,6 @@ export interface RunnerDefinition {
    * runner without a flag (e.g. Claude's trust record lives in a JSON file, not
    * argv) returns a script here that pre-seeds trust before launch.
    */
-  reviewWorkspaceTrustSeed?: (checkoutPath: string) => string;
   id: string;
   defaultLaunchMode: 'interactive' | 'exec';
   headlessPrintExecutables?: readonly string[];
@@ -325,7 +323,6 @@ const CLAUDE_MODEL_PREFIXES = /^(claude|opus|sonnet|haiku|fable)\b/i;
 
 export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   claude: {
-    reviewWorkspaceTrustSeed: claudeReviewWorkspaceTrustSeed,
     supportsInitialPromptArg: true,
     id: 'claude',
     nativeTransport: 'claude-stream-json',

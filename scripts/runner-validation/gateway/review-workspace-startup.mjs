@@ -54,8 +54,12 @@ if (acceptance) {
 const launch = readFileSync(path.join(run.reviewWorkspace.taskPath, '.terminal-start.cjs'), 'utf8');
 const binary = process.env.FARMSLOT_REVIEW_EXPECT_BINARY;
 if (binary) assert.ok(launch.includes(binary), 'Launch must use the configured machine executable');
-assert.ok(launch.includes('untrusted'), 'Review checkout trust must be explicit');
+
 if (run.metrics.runner === 'codex') {
+  assert.ok(
+    launch.includes('trust_level=\\\"trusted\\\"'),
+    'The farm source trust must be explicit',
+  );
   assert.ok(
     launch.includes('check_for_update_on_startup=false'),
     'A Codex review launch must skip the startup update check',
