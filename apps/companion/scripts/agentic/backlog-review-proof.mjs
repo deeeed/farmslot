@@ -4,16 +4,11 @@
 // Companion UI; these phases only own the fixture gateway and read its persisted state.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-
-import { tsImport } from 'tsx/esm/api';
-
-const { testGatewayIdentity } = await tsImport(
-  '../../../../scripts/lib/test-gateway-identity.mts',
-  import.meta.url,
-);
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { testGatewayIdentity } from '../../../../scripts/lib/test-gateway-identity.mjs';
 
 import { openSimulatorDevClient } from './simulator-dev-client.mjs';
 
