@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const {
   expandedArtifactsForCommand,
+  resolveWorkerTerminalArtifactPath,
   deterministicChecks,
 } = require('./worker-terminal-contract.cjs');
 const { SUBTASK_INDEX_REL, openSubtaskUnits } = require('./subtask-unit.cjs');
@@ -164,18 +165,8 @@ function resolveTaskArtifactPath(rel) {
 }
 
 function publicationArtifactPath(rel) {
-  if (rel !== 'artifacts/evidence-manifest.json') return rel;
-  const pointerPath = path.join(taskDir, 'artifacts/latest-valid-recipe-run.json');
-  if (!existsSync(pointerPath)) return rel;
-  const pointer = recipeProtocol?.sanitizeLatestValidRecipeRunPointer?.(
-    JSON.parse(readFileSync(pointerPath, 'utf8')),
-  );
-  if (!pointer) throw new Error('latest-valid-recipe-run.json: invalid pointer.');
-  const selected = `artifacts/${pointer.relativeArtifactRoot}/evidence-manifest.json`;
   const version = terminalContract ? (terminalContract.recordedEvidenceContractVersion ?? 0) : 1;
-  if (version !== 0 && version !== 1) throw new Error('Unsupported recorded evidence contract.');
-  if (version === 0 && !existsSync(path.resolve(taskDir, selected))) return rel;
-  return selected;
+  return resolveWorkerTerminalArtifactPath(taskDir, rel, version);
 }
 
 function isRecord(value) {
