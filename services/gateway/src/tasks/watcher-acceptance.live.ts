@@ -96,6 +96,11 @@ mock.module('../core/state.js', {
   namedExports: { ...realState, updateSlotStatus: async () => {} },
 });
 
+// These disposable directories are watched immediately after creation. Native
+// filesystem notifications can coalesce that setup with the first file write.
+// Poll actual filesystem changes for this manual contract check; production
+// watcher configuration is unchanged.
+process.env.CHOKIDAR_USEPOLLING = '1';
 const { onTaskProgress, unwatchSlot, watchSlot } = await import('./watcher.js');
 
 const CHECKLIST_MARKDOWN = [
