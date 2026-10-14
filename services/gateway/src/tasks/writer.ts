@@ -7,6 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  buildBranchUpdateGuardCommand,
+  buildBranchUpdateInstructions,
   buildHandoffMetadata,
   buildTaskDocument,
   executionTemplateReference,
@@ -63,9 +65,10 @@ import {
 import { getPRRawData, parseJsonLines } from '../methods/pr/raw-cache.js';
 import { harnessRoot } from '../projects/harness-root.js';
 import { extractRecipeFromPRBody, materializeExtractedRecipe } from '../quality/pr-body-recipe.js';
+import { prepareBranchMaintenance } from '../run-engine/branch-maintenance.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
 
-import { agentRuntimeCommandsForSlot } from './agent-runtime-script.js';
+import { agentRuntimeCommandsForSlot, agentRuntimeScriptForSlot } from './agent-runtime-script.js';
 import {
   assertArtifactOnlyTaskGuard,
   evaluateArtifactOnlyTaskGuard,
@@ -1034,7 +1037,7 @@ export async function writeTaskFile(
   };
 
   const defaultBranch = projectVars.projectJson.default_branch || DEFAULT_BRANCH;
-  const publicationBase = ['pr-complete', 'update-branch'].includes(run.flowType)
+  const publicationBase = ['pr-complete', 'update-branch', 'ci-fix'].includes(run.flowType)
     ? await publicationBaseForRun(run, defaultBranch)
     : undefined;
   const branchReplacements: Record<string, string> = publicationBase
@@ -1254,6 +1257,23 @@ export async function writeTaskFile(
   });
   vars['ci.local_check'] = getProjectField(projectVars.projectJson, 'ci.local_check') || '';
   vars.CI_PARITY_CHECKLIST = splitChecklist ? EXECUTION_CHECKLIST_DOCUMENT : 'TASK.md';
+  if (publicationBase) {
+    const operation = await prepareBranchMaintenance(run, slotVars, defaultBranch);
+    vars.BRANCH_UPDATE_SCRIPT = await agentRuntimeScriptForSlot(slotVars, 'branch-update.mjs');
+    if (operation) {
+      vars.BRANCH_UPDATE_CONTEXT = JSON.stringify(operation);
+      vars.PUBLICATION_PARENT_BASE_SHA = operation.replayBoundarySha;
+      vars.PUBLICATION_PARENT_HEAD_SHA = operation.authorityHeadSha;
+    }
+    vars.BRANCH_UPDATE_GUARD_CMD = buildBranchUpdateGuardCommand(vars);
+    vars.BRANCH_UPDATE_PUSH_CMD = buildBranchUpdateGuardCommand(vars, 'push');
+    vars.BRANCH_UPDATE_INSTRUCTIONS = buildBranchUpdateInstructions(
+      publicationBase,
+      vars.BRANCH_UPDATE_GUARD_CMD,
+      vars.BRANCH_UPDATE_PUSH_CMD,
+    );
+  }
+
   const content = renderTemplatePlaceholders(
     template,
     vars,

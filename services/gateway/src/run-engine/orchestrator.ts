@@ -72,6 +72,7 @@ import { SourceAdmissionRefusal, SourcePlanRestart, withRunSources } from '../so
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 import { schedulerTick } from '../work-graph/store.js';
 
+import { retainedMaintenanceStepOutputs } from './branch-maintenance.js';
 import { buildCIWatchChainedRunParams } from './ci-watch-chain.js';
 import { executeCIWatchStep } from './ci-watch-step.js';
 import { latestResolvedHumanGateDecision, requiresCollisionPrecheck } from './decision-replay.js';
@@ -761,7 +762,9 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       status: 'running',
       startedAt: acknowledgedAt,
       detail: undefined,
-      outputs: resumedWorkerFinding ? { ...previousOutputs, awaitingOperator: false } : undefined,
+      outputs: resumedWorkerFinding
+        ? { ...previousOutputs, awaitingOperator: false }
+        : retainedMaintenanceStepOutputs(stepName, previousOutputs),
       completedAt: undefined,
       durationMs: undefined,
       ...stepEntryTiming(current, stepName),

@@ -8,6 +8,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+- Add provenance-bound branch-maintenance checkpoint and operation contracts for repeated stack updates and recovery.
+
 ## 0.43.1 - 2026-10-14
 
 - Treat live conformance HUD observations as advisory while retaining required capture, artifact and cleanup proof.

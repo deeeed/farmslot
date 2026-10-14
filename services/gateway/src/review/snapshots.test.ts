@@ -300,3 +300,36 @@ test('a base-only override preserves source pathspecs and untracked identities',
       .every((command) => command.includes("'src'")),
   );
 });
+
+test('a committed maintenance range never resolves or reads mutable endpoints', async () => {
+  const base = 'a'.repeat(40);
+  const head = 'b'.repeat(40);
+  const commands: string[] = [];
+  const result = await captureCurrentReviewSnapshot(
+    makeVars(),
+    {
+      baseRef: 'parent',
+      committedBaseSha: base,
+      committedHeadSha: head,
+    },
+    {
+      resolveContext: async () => {
+        throw new Error('Mutable base resolution must not run');
+      },
+      exec: async (_vars, command) => {
+        commands.push(command);
+        const stdout = command.includes('--abbrev-ref')
+          ? 'child'
+          : command.includes('--numstat')
+            ? '1\t0\towned.txt\n'
+            : 'verified committed diff\n';
+        return { exitCode: 0, stdout, stderr: '' };
+      },
+    },
+  );
+  assert.equal(result.snapshot.baseSha, base);
+  assert.equal(result.snapshot.headSha, head);
+  assert.equal(result.snapshot.baseRef, 'parent');
+  assert.ok(commands.some((command) => command.includes(`'${base}' '${head}' -- '.'`)));
+  assert.ok(commands.every((command) => !/merge-base|rev-parse HEAD|ls-files/.test(command)));
+});

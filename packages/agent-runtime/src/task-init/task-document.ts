@@ -11,13 +11,15 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  DEFAULT_BRANCH,
   EXECUTION_CHECKLIST_DOCUMENT,
   type ExecutionTemplateReference,
   type TemplateProvenance,
   type WorkerTerminalContractDocument,
 } from '@farmslot/protocol';
 
-import { installedTaskCommands } from './runtime-command.js';
+import { normalizeMaintenanceBranch } from './branch-update.js';
+import { installedRuntimeScriptCommand, installedTaskCommands } from './runtime-command.js';
 
 export const HANDOFF_INPUT = 'inputs/handoff.json';
 export const BUG_INPUT = 'inputs/bug-input.json';
@@ -25,13 +27,63 @@ export const BUG_INPUT = 'inputs/bug-input.json';
 export const TASK_DOCUMENT_ADDENDUM_TEMPLATE = 'task-document.md';
 
 /** Shared instructions for a maintenance task and an inline CI-fix checklist. */
-export function buildBranchUpdateInstructions(publicationBase: string): string {
+export function buildBranchUpdateInstructions(
+  publicationBase: string,
+  guardCommand?: string,
+  pushCommand?: string,
+): string {
   return [
     '## Branch update base',
     '',
     `The publication base is \`${publicationBase}\`. Branch updates target \`origin/${publicationBase}\`; follow the update method in the selected checklist. Follow-up runs use their contribution family's base; after retargeting they use the recorded retarget branch. Keep default-branch freshness checks separate.`,
     'For a rebase, first fetch the PR head and record its exact remote SHA in `artifacts/pre-rebase-remote-sha.txt` under this task. Refuse an update if local HEAD omits remote commits. After conflict resolution and the required checks, push the rebased branch with an explicit lease against that recorded SHA. Never infer the update base from a PR body or replace it with the default branch while the upstream PR remains open.',
+    ...(guardCommand
+      ? [
+          '',
+          'Run this shared operation before any rebase or up-to-date shortcut. It performs the verified rebase; do not run an additional rebase:',
+          '',
+          '```bash',
+          guardCommand,
+          '```',
+        ]
+      : []),
+    ...(pushCommand
+      ? [
+          '',
+          'After conflict resolution, required checks and any fix commits, use this shared leased push:',
+          '',
+          '```bash',
+          pushCommand,
+          '```',
+        ]
+      : []),
   ].join('\n');
+}
+
+/** The supplying runtime executes the captured operation, never a pack-owned ancestry parser. */
+export function buildBranchUpdateGuardCommand(
+  vars: Record<string, string>,
+  phase: 'execute' | 'push' = 'execute',
+): string {
+  if (
+    !vars.BRANCH_UPDATE_CONTEXT &&
+    normalizeMaintenanceBranch(vars.PUBLICATION_BASE || '') !==
+      normalizeMaintenanceBranch(vars.DEFAULT_BRANCH || DEFAULT_BRANCH)
+  )
+    return "printf '%s\\n' 'PARENT_BOUNDARY_MISSING' >&2; exit 2";
+  const quote = (value: string): string => "'" + value.replaceAll("'", "'\"'\"'") + "'";
+  const script = vars.BRANCH_UPDATE_SCRIPT
+    ? `node ${quote(vars.BRANCH_UPDATE_SCRIPT)}`
+    : installedRuntimeScriptCommand('branch-update.mjs');
+  const context =
+    vars.BRANCH_UPDATE_CONTEXT ||
+    JSON.stringify({
+      kind: 'ordinary',
+      repo: vars.REPO || '.',
+      branch: vars.PR_BRANCH || vars.BRANCH,
+      baseRef: vars.PUBLICATION_BASE,
+    });
+  return `${script} ${phase} ${quote(context)}`;
 }
 
 /**
@@ -155,7 +207,14 @@ export function buildTaskDocument(input: TaskDocumentInput): string {
     renderAcceptanceCriteria(input.acceptanceCriteria),
   );
   if (vars.PUBLICATION_BASE?.trim()) {
-    sections.push('', buildBranchUpdateInstructions(vars.PUBLICATION_BASE));
+    sections.push(
+      '',
+      buildBranchUpdateInstructions(
+        vars.PUBLICATION_BASE,
+        vars.BRANCH_UPDATE_GUARD_CMD || buildBranchUpdateGuardCommand(vars),
+        vars.BRANCH_UPDATE_PUSH_CMD || buildBranchUpdateGuardCommand(vars, 'push'),
+      ),
+    );
   }
   if (normalizeAcceptanceCriteria(input.acceptanceCriteria).length > 0) {
     const defaults = installedTaskCommands();

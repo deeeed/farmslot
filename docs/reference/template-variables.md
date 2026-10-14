@@ -14,7 +14,7 @@ Headings=phases; checkboxes=steps; pre-heading checkboxes=Checklist phase; skip 
 - **review-pr, pr-complete, update-branch:** `PR_NUMBER, PR_TITLE, PR_BRANCH, GH_REPO, PR_URL, PR_BODY, REVIEW_TIER, PR_MERGEABLE, PR_MERGE_STATE, PR_INTEGRATION_NOTE` (PR_INTEGRATION_NOTE is informational merge state; never blocks prepare.)
 - **review-pr:** `RECIPE_STRATEGY` (From dispatch extraVars when set.)
 - **pr-complete:** `COMMENT_SUMMARY, HAS_RECIPE, RECIPE_SOURCE`
-- **pr-complete, update-branch:** `PUBLICATION_BASE` (Resolved by publicationBaseForRun from contribution lineage and retargeting; worker rebase target, separate from DEFAULT_BRANCH freshness.)
+- **pr-complete, update-branch, inline ci-fix:** `PUBLICATION_BASE, PUBLICATION_PARENT_BASE_SHA, PUBLICATION_PARENT_HEAD_SHA, BRANCH_UPDATE_GUARD_CMD, BRANCH_UPDATE_PUSH_CMD` (The gateway captures stack ownership and the pinned operation in Run persistence. Shared runtime commands perform verified replay and exact-lease push; DEFAULT_BRANCH freshness remains separate.)
 - **update-branch:** `BRANCH_UPDATE_STRATEGY` (rebase | merge | project-default; project-default resolves against force-push policy at runtime.)
 - **project.json vars:** `any key` (Both double-brace key forms; expanded once, no nested re-expansion)
 

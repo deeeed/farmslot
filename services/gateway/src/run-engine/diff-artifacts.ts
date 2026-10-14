@@ -462,19 +462,31 @@ export function cappedRunSourceDiffCommand(
  * The stack a run's contribution is measured against: its own, or for a
  * follow-up (ci-fix, pr-complete) the stacked run it continues.
  */
+/** One lineage walk; strict consumers refuse unreadable archived authority. */
+export async function* contributionLineage<T extends Pick<Run, 'stack' | 'parentRunId'>>(
+  run: T,
+): AsyncGenerator<T | Run> {
+  let current: T | Run | undefined = run;
+  for (let hops = 0; current && hops < 20; hops += 1) {
+    yield current;
+    const parentId: Run['parentRunId'] = current.parentRunId;
+    current = parentId ? await getRunWithArchived(parentId) : undefined;
+    if (parentId && !current) throw new Error(`Contribution ancestor ${parentId} is unavailable`);
+  }
+  if (current) throw new Error('Contribution lineage exceeds the supported depth');
+}
+
 export async function contributionStack(
   run: Pick<Run, 'stack' | 'parentRunId'>,
 ): Promise<Run['stack']> {
-  // Walk the follow-up's own lineage: a family can hold candidates stacked on
-  // different upstream commits. Archived ancestors still count: the follow-up
-  // can outlive the stacked run it continues in the live store.
-  let current: Pick<Run, 'stack' | 'parentRunId'> | undefined = run;
-  for (let hops = 0; current && hops < 20; hops += 1) {
-    if (current.stack) return current.stack;
-    // An unreadable archive must not fail a diff capture: no stack is the old behaviour.
-    current = current.parentRunId
-      ? await getRunWithArchived(current.parentRunId).catch(() => undefined)
-      : undefined;
+  try {
+    for await (const current of contributionLineage(run)) {
+      if (current.stack) return current.stack;
+    }
+  } catch {
+    // Preserve the existing diff-only fallback for unreadable archives.
+    // Branch-maintenance admission uses the strict walker directly.
+    return undefined;
   }
   return undefined;
 }

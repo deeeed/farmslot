@@ -903,7 +903,7 @@ flag. Harnesses continue through the existing backlog/queue dispatch contract.
 
 ## Amendment 4: verified branch-maintenance checkpoints (2026-10-14)
 
-Status: Proposed. Normative contract: [stacked-runs maintenance](../reference/stacked-runs.md#proposed-maintenance-checkpoint-contract).
+Status: Accepted (2026-10-14). Approved in [#1051](https://github.com/deeeed/farmslot/pull/1051). Normative contract: [stacked-runs maintenance](../reference/stacked-runs.md#maintenance-checkpoint-contract).
 
 ### Decision
 

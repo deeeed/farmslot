@@ -53,6 +53,7 @@ import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { collectRunSubtaskMetrics, withSubtaskMetrics } from '../tasks/subtask-metrics.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
+import { completeBranchMaintenance } from './branch-maintenance.js';
 import {
   isHumanGateReviewRequestAction,
   markResolvedHumanGateReviewRequestConsumed,
@@ -1299,6 +1300,9 @@ export async function executeCompleteStep(
     };
   }
   if (!current.slotId) throw new Error('No slot assigned');
+  // Record the verified Git result independently of acceptance/publication approval.
+  // A refused completion must not strand a successful push behind stale ownership.
+  await completeBranchMaintenance(current);
   if (!shouldPrepareLocalFirstPackage(current))
     await (context.assertGatePrerequisites ?? assertRunGateReady)(current, null, 'complete');
   // Revalidate on completion/replay so a checklist or force-skipped monitor cannot supply QA proof.

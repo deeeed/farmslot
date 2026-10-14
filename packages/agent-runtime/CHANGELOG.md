@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Verify and execute provenance-bound branch maintenance with one shared guard and exact push leases.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.21.3 - 2026-10-14

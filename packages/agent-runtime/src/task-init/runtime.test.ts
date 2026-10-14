@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  buildBranchUpdateGuardCommand,
   buildBranchUpdateInstructions,
   buildHandoffMetadata,
   buildTaskDocument,
@@ -156,4 +157,34 @@ test('existing tasks receive the shared runtime without replacing author data', 
     await readFile(path.join(taskDir, 'CHECKLIST.md'), 'utf8'),
     '# Author checklist\n- [x] Prior work\n',
   );
+});
+
+test('maintenance commands reuse one captured operation and refuse missing stack ownership', () => {
+  const vars = {
+    PUBLICATION_BASE: 'parent',
+    DEFAULT_BRANCH: 'main',
+    REPO: '/product',
+    BRANCH: 'child',
+    BRANCH_UPDATE_SCRIPT: '/supplying/runtime/branch-update.mjs',
+    BRANCH_UPDATE_CONTEXT: JSON.stringify({ id: 'retained-operation', kind: 'rebase' }),
+  };
+  assert.equal(
+    buildBranchUpdateGuardCommand(vars),
+    `node '/supplying/runtime/branch-update.mjs' execute '${vars.BRANCH_UPDATE_CONTEXT}'`,
+  );
+  assert.equal(
+    buildBranchUpdateGuardCommand(vars, 'push'),
+    `node '/supplying/runtime/branch-update.mjs' push '${vars.BRANCH_UPDATE_CONTEXT}'`,
+  );
+  assert.match(
+    buildBranchUpdateGuardCommand({ ...vars, BRANCH_UPDATE_CONTEXT: '' }),
+    /PARENT_BOUNDARY_MISSING/,
+  );
+  const ordinary = buildBranchUpdateGuardCommand({
+    ...vars,
+    BRANCH_UPDATE_CONTEXT: '',
+    PUBLICATION_BASE: 'main',
+  });
+  assert.match(ordinary, /execute.*ordinary/);
+  assert.ok(ordinary.includes('"baseRef":"main"'));
 });

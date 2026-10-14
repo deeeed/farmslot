@@ -27,6 +27,7 @@ import type { ExecutionTemplateSource } from '../execution-template/types.js';
 
 import { installedTaskCommands } from './runtime-command.js';
 import {
+  buildBranchUpdateGuardCommand,
   buildBranchUpdateInstructions,
   buildHandoffMetadata,
   buildTaskDocument,
@@ -37,6 +38,7 @@ import {
 } from './task-document.js';
 import { writeTaskDir, type WrittenTaskDir } from './write.js';
 
+export * from './branch-update.js';
 export * from './discover.js';
 export * from './task-document.js';
 export * from './write.js';
@@ -143,7 +145,13 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
     ...(spec.vars ?? {}),
   };
   if (vars.PUBLICATION_BASE?.trim()) {
-    vars.BRANCH_UPDATE_INSTRUCTIONS = buildBranchUpdateInstructions(vars.PUBLICATION_BASE);
+    vars.BRANCH_UPDATE_GUARD_CMD = buildBranchUpdateGuardCommand(vars);
+    vars.BRANCH_UPDATE_PUSH_CMD = buildBranchUpdateGuardCommand(vars, 'push');
+    vars.BRANCH_UPDATE_INSTRUCTIONS = buildBranchUpdateInstructions(
+      vars.PUBLICATION_BASE,
+      vars.BRANCH_UPDATE_GUARD_CMD,
+      vars.BRANCH_UPDATE_PUSH_CMD,
+    );
   }
 
   const source = `Execution template ${selected.entry.id} (${selected.entry.sourceId})`;

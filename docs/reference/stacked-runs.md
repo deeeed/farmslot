@@ -33,12 +33,12 @@ Ci-watch records merges. An operator-targeted graph tick can discover a quiet up
 
 - Existing CLI: `farmslot graph add-edge` with `--condition published`; a merged completion edge uses `--blocks completion --unlock rebase-onto`. `farmslot graph tick <graphId>` retries maintenance. See [operator steps](../operations/stacked-work.md).
 - Gateway owner: internal `publicationBaseForRun` and `contributionStack`; no new RPC, store or SDK stack resolver. Existing `Run.stack` and graph records retain their formats.
-- Task consumers: the gateway supplies `PUBLICATION_BASE` to branch-maintenance tasks and CI-fix checklists. `@farmslot/agent-runtime` exports `buildBranchUpdateInstructions` for the task builder and gateway's inline CI-fix writer. Inline fixes receive current instructions independently of the retained TASK.md. Standalone callers must supply a resolved base when selecting a template that requires it.
+- Task consumers: the gateway supplies `PUBLICATION_BASE` to branch-maintenance tasks and CI-fix checklists. `@farmslot/agent-runtime` exports `buildBranchUpdateInstructions` and `buildBranchUpdateGuardCommand` for the task builder and gateway's inline CI-fix writer. The generated execute and push commands call its owned `scripts/branch-update.mjs`; the gateway uses the same inspection and verification module. Inline fixes receive current instructions independently of the retained TASK.md. Standalone callers must supply a resolved base when selecting a template that requires it.
 - Versioning: deploy the supplying gateway/task runtime before migrating pack templates or passing the value to existing rebase helpers. Public template variables are documented in the [generated catalog](template-variables.md); no new CLI flags are introduced.
 
-## Proposed maintenance checkpoint contract
+## Maintenance checkpoint contract
 
-Status: Proposed under [ADR-040 Amendment 4](../adr/040-work-graph-orchestration.md#amendment-4-verified-branch-maintenance-checkpoints-2026-10-14). This section is not a claim of deployed behavior.
+Status: Accepted (2026-10-14) under [ADR-040 Amendment 4](../adr/040-work-graph-orchestration.md#amendment-4-verified-branch-maintenance-checkpoints-2026-10-14).
 
 ### Authority and operation input
 

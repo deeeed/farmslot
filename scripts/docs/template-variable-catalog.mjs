@@ -30,9 +30,9 @@ export const WORKER_TASK = {
       vars: 'COMMENT_SUMMARY, HAS_RECIPE, RECIPE_SOURCE',
     },
     {
-      scope: 'pr-complete, update-branch',
-      vars: 'PUBLICATION_BASE',
-      note: 'Resolved by publicationBaseForRun from contribution lineage and retargeting; worker rebase target, separate from DEFAULT_BRANCH freshness.',
+      scope: 'pr-complete, update-branch, inline ci-fix',
+      vars: 'PUBLICATION_BASE, PUBLICATION_PARENT_BASE_SHA, PUBLICATION_PARENT_HEAD_SHA, BRANCH_UPDATE_GUARD_CMD, BRANCH_UPDATE_PUSH_CMD',
+      note: 'The gateway captures stack ownership and the pinned operation in Run persistence. Shared runtime commands perform verified replay and exact-lease push; DEFAULT_BRANCH freshness remains separate.',
     },
     {
       scope: 'update-branch',

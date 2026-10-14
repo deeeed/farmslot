@@ -54,6 +54,7 @@ import {
   writeTaskFile,
 } from '../tasks/writer.js';
 
+import { retainedMaintenanceStepOutputs } from './branch-maintenance.js';
 import { findLatestResolvedDecision, requiresCollisionPrecheck } from './decision-replay.js';
 import { captureReviewInputArtifactsForRun } from './diff-artifacts.js';
 import {
@@ -555,6 +556,10 @@ export async function executeWriteTaskStep(
       inputs,
       outputs: {
         taskFile: current.taskFile,
+        ...retainedMaintenanceStepOutputs(
+          S.WRITE_TASK,
+          current.steps.find((step) => step.name === S.WRITE_TASK)?.outputs,
+        ),
         templateName,
         taskRelDir,
         artifacts,
@@ -572,7 +577,13 @@ export async function executeWriteTaskStep(
     collector.emit(event, payload);
     const p = payload as { name?: string; detail?: string } | undefined;
     if (p?.name) {
-      const outputs: Record<string, unknown> = { subSteps: collector.snapshot() };
+      const outputs: Record<string, unknown> = {
+        subSteps: collector.snapshot(),
+        ...retainedMaintenanceStepOutputs(
+          S.WRITE_TASK,
+          getRun(runId)?.steps.find((step) => step.name === S.WRITE_TASK)?.outputs,
+        ),
+      };
       updateRunStep(runId, S.WRITE_TASK, { detail: p.detail || p.name, outputs });
       stepPartialIO.set(runId, { inputs, outputs });
       broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
@@ -760,6 +771,14 @@ export async function executeWriteTaskStep(
       inputs,
       outputs: {
         taskFile: taskFilePath,
+        ...(afterWrite.steps.find((step) => step.name === S.WRITE_TASK)?.outputs
+          ?.branchMaintenanceOperation
+          ? {
+              branchMaintenanceOperation: afterWrite.steps.find(
+                (step) => step.name === S.WRITE_TASK,
+              )!.outputs!.branchMaintenanceOperation,
+            }
+          : {}),
         templateName: resolvedTemplateName,
         taskRelDir,
         branch: afterWrite.branch || undefined,
