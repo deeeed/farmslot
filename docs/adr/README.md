@@ -92,4 +92,4 @@ Its [authenticated-visual-review amendment 6](062-recorded-run-evidence.md#amend
 
 Its [retained-link amendment 8](062-recorded-run-evidence.md#amendment-8-2026-10-14-retained-criterion-link-snapshots) is Proposed for the #1044 cutover. Import and rollout remain pending.
 
-ADR-040 has a [Proposed retained-run attachment amendment](040-work-graph-orchestration.md#amendment-3-retained-run-stack-attachment) and [normative specification](../reference/stacked-work.md). The base decision remains Accepted.
+ADR-040 has a [Accepted retained-run attachment amendment](040-work-graph-orchestration.md#amendment-3-retained-run-stack-attachment) and [normative specification](../reference/stacked-work.md). The base decision remains Accepted.

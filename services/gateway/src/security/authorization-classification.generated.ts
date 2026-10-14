@@ -391,6 +391,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'workGraph.activate': { classification: 'admin' },
   'workGraph.addEdge': { classification: 'admin' },
   'workGraph.addNode': { classification: 'admin' },
+  'workGraph.attachRun': { classification: 'admin' },
   'workGraph.create': { classification: 'admin' },
   'workGraph.gateResolve': { classification: 'admin' },
   'workGraph.get': { classification: 'operator' },

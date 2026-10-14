@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
   Events,
@@ -8,6 +9,7 @@ import {
   isSuccessfulRun,
   isTerminalRunStatus,
   normalizeRunTags,
+  parseGitHubPullUrl,
   type Run,
   type RunStack,
   type WaitingReason,
@@ -16,6 +18,8 @@ import {
   type WorkGraphActionLedgerEntry,
   type WorkGraphAddEdgeParams,
   type WorkGraphAddNodeParams,
+  type WorkGraphAttachRunParams,
+  type WorkGraphAttachRunResult,
   type WorkGraphCreateParams,
   type WorkGraphListRpcParams,
   type WorkGraphProjection,
@@ -44,9 +48,23 @@ import {
 } from '../backlog/store.js';
 import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { farmslotRoot } from '../fleet/state.js';
-import { getAllRuns, persistRunNow, updateRun } from '../runs/store.js';
+import { pendingBranchMaintenance } from '../run-engine/branch-maintenance.js';
+import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
+import {
+  commitRunGraphAttachment,
+  getAllRuns,
+  getRun,
+  persistRunNow,
+  updateRun,
+} from '../runs/store.js';
+import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 import { isWorkOriginator, type WorkOriginator } from '../security/work-originator.js';
 
+import {
+  type AttachmentDependencies,
+  attachmentDependencies,
+  attachmentRefusal,
+} from './attach-run.js';
 import {
   readUpstreamPr,
   retargetStackedPr,
@@ -934,6 +952,198 @@ export function stackBaseForNode(graphId: string, nodeId: string): StackBase | n
     upstreamPrNumber: published.run.prNumber,
     ...(downstream.length ? { downstream } : {}),
   };
+}
+
+interface AttachmentContext {
+  run: Run;
+  snapshot: WorkGraphRecord;
+  stack: RunStack;
+  existing: boolean;
+  family: Run[];
+}
+
+function attachmentContext(params: WorkGraphAttachRunParams): AttachmentContext {
+  if (
+    !params ||
+    Object.keys(params).some(
+      (key) => !['graphId', 'nodeId', 'runId', 'expectedHeadSha'].includes(key),
+    ) ||
+    ![params.graphId, params.nodeId, params.runId].every(
+      (value) => typeof value === 'string' && value.length > 0,
+    ) ||
+    typeof params.expectedHeadSha !== 'string' ||
+    !/^[a-f0-9]{40}$/.test(params.expectedHeadSha)
+  )
+    attachmentRefusal('INPUT_INVALID', 'Supply graph, node, run and a full child HEAD only.');
+  const snapshot = requireGraph(params.graphId);
+  const node = snapshot.nodes.find((candidate) => candidate.id === params.nodeId);
+  const run = getRun(params.runId);
+  if (!node || !run || !isBacklogNode(node))
+    attachmentRefusal(
+      'SUBJECT_MISSING',
+      'Attachment requires an existing retained run and backlog node.',
+    );
+  assertNativeRunOwner(run);
+  if (!run.backlogItemId || node.backlogItemId !== run.backlogItemId)
+    attachmentRefusal('BACKLOG_MISMATCH', 'The retained run must belong to the node backlog item.');
+  const backlog = getBacklogItemSnapshot(run.backlogItemId);
+  if (
+    !backlog ||
+    backlog.project !== run.project ||
+    (snapshot.graph.project && snapshot.graph.project !== run.project)
+  )
+    attachmentRefusal('PROJECT_MISMATCH', 'Run, node and graph must share the project.');
+  if (
+    (run.workGraphId && run.workGraphId !== params.graphId) ||
+    (run.workNodeId && run.workNodeId !== params.nodeId)
+  )
+    attachmentRefusal('BINDING_CONFLICT', 'The run already belongs to another graph or node.');
+  const upstreamId = stackUpstreamId(snapshot, node);
+  const completionEdge = snapshot.edges.some(
+    (edge) =>
+      edge.toNodeId === node.id &&
+      edge.fromNodeId === upstreamId &&
+      edge.condition.kind === 'merged' &&
+      edge.blocks === 'completion' &&
+      edge.unlock.kind === 'rebase-onto',
+  );
+  if (!upstreamId || !completionEdge)
+    attachmentRefusal(
+      'DECLARATION_MISSING',
+      'Declare published and merged completion/rebase edges from one upstream.',
+    );
+  const existing =
+    run.workGraphId === params.graphId && run.workNodeId === params.nodeId && Boolean(run.stack);
+  if (run.stack && (!existing || run.stack.upstreamNodeId !== upstreamId))
+    attachmentRefusal('BINDING_CONFLICT', 'The existing stack conflicts with this declaration.');
+  const family = getAllRuns().filter(
+    (candidate) => candidate.id === run.id || candidate.familyId === run.familyId,
+  );
+  if (existing) return { run, snapshot, stack: run.stack!, existing, family };
+  if (!['planning', 'paused'].includes(snapshot.graph.status))
+    attachmentRefusal('GRAPH_SCHEDULING', 'Pause the graph before attaching retained work.');
+  if (
+    run.parentRunId ||
+    !['dev', 'fix-bug'].includes(run.flowType) ||
+    !['human-gating', 'blocked', 'paused', 'done'].includes(run.status)
+  )
+    attachmentRefusal(
+      'RUN_ACTIVE',
+      'Attachment requires a quiescent retained dev or fix-bug root.',
+    );
+  if (
+    family.some(
+      (candidate) =>
+        candidate.prNumber ||
+        candidate.prPublications?.length ||
+        candidate.links?.some((link) => Boolean(parseGitHubPullUrl(link.url))),
+    )
+  )
+    attachmentRefusal('ALREADY_PUBLISHED', 'Attachment requires unpublished work.');
+  const attempts = getAllRuns()
+    .filter((candidate) => candidate.backlogItemId === run.backlogItemId && !candidate.parentRunId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  if (
+    attempts[0]?.id !== run.id ||
+    (backlog.runId && backlog.runId !== run.id) ||
+    getQueueSnapshot().some((item) => item.backlogItemId === run.backlogItemId) ||
+    (node.currentRootRunId && node.currentRootRunId !== run.id)
+  )
+    attachmentRefusal('ATTEMPT_CHANGED', 'Another attempt or queue entry owns this backlog node.');
+  if (
+    family.some(
+      (candidate) =>
+        candidate.id !== run.id &&
+        !['human-gating', 'blocked', 'paused', 'done', 'failed', 'cancelled'].includes(
+          candidate.status,
+        ),
+    )
+  )
+    attachmentRefusal('RUN_ACTIVE', 'Another family attempt is queued or running.');
+  if (family.some((candidate) => pendingBranchMaintenance(candidate)))
+    attachmentRefusal(
+      'MAINTENANCE_PENDING',
+      'Finish the retained family maintenance operation first.',
+    );
+  const stack = stackBaseForNode(params.graphId, params.nodeId);
+  if (!stack)
+    attachmentRefusal(
+      'UPSTREAM_UNAVAILABLE',
+      'The declared upstream is not an open published run.',
+    );
+  return { run, snapshot, stack, existing, family };
+}
+
+/** Reads external source outside the graph lock; the Run store commits the only binding. */
+export function attachWorkGraphRun(
+  params: WorkGraphAttachRunParams,
+  deps: AttachmentDependencies = attachmentDependencies,
+): Promise<WorkGraphAttachRunResult> {
+  if (!params?.runId) attachmentRefusal('INPUT_INVALID', 'A retained run ID is required.');
+  return withRunTransition(params.runId, async () => {
+    const selected = await withMutation(async () => structuredClone(attachmentContext(params)));
+    if (!selected.existing) {
+      const progress = await Promise.all(selected.family.map((run) => deps.progress(run)));
+      if (progress.some((observation) => observation.kind !== 'idle'))
+        attachmentRefusal(
+          'PROGRESS_UNCONFIRMED',
+          'The existing progress authority cannot confirm this family idle.',
+        );
+    }
+    const source = await deps.source(
+      selected.run,
+      selected.stack,
+      params.expectedHeadSha,
+      selected.existing,
+    );
+    if (source.headSha !== params.expectedHeadSha || (!selected.existing && !source.upstreamSha))
+      attachmentRefusal(
+        'SOURCE_UNVERIFIED',
+        'Source verification did not bind the expected child and upstream.',
+      );
+    return withMutation(async () => {
+      const current = attachmentContext(params);
+      if (!isDeepStrictEqual(current, selected))
+        attachmentRefusal(
+          'SUBJECT_CHANGED',
+          'Graph or retained run changed during source verification.',
+        );
+      const stack = selected.existing
+        ? selected.stack
+        : { ...selected.stack, resolvedSha: source.upstreamSha };
+      const run = selected.existing
+        ? current.run
+        : await commitRunGraphAttachment(
+            params.runId,
+            {
+              workGraphId: params.graphId,
+              workNodeId: params.nodeId,
+              stack,
+            },
+            (latest) => {
+              assertNativeRunOwner(latest);
+              if (!isDeepStrictEqual(latest, selected.run))
+                attachmentRefusal(
+                  'SUBJECT_CHANGED',
+                  'The retained run changed before its binding committed.',
+                );
+            },
+          );
+      // A failed graph write leaves the durable Run relationship authoritative.
+      // The same request reprojects it after restart without another run or queue entry.
+      const candidate = structuredClone(current.snapshot);
+      const node = candidate.nodes.find((item) => item.id === params.nodeId)!;
+      syncNodeFromBacklogQueueRuns(node, getAllRuns());
+      await persistNow(candidate);
+      graphs.set(params.graphId, candidate);
+      emit(candidate);
+      return {
+        graph: project(candidate),
+        run,
+        publicationRefreshRequired: source.publicationRefreshRequired,
+      };
+    });
+  });
 }
 
 type StackPrAction = (run: Run) => Promise<StackRetargetResult>;

@@ -363,6 +363,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `workGraph.activate`                    | admin          |                                                                                    |
 | `workGraph.addEdge`                     | admin          |                                                                                    |
 | `workGraph.addNode`                     | admin          |                                                                                    |
+| `workGraph.attachRun`                   | admin          |                                                                                    |
 | `workGraph.create`                      | admin          |                                                                                    |
 | `workGraph.gateResolve`                 | admin          |                                                                                    |
 | `workGraph.get`                         | operator       |                                                                                    |

@@ -2,6 +2,7 @@ import type {
   WorkGraphActivateParams,
   WorkGraphAddEdgeParams,
   WorkGraphAddNodeParams,
+  WorkGraphAttachRunParams,
   WorkGraphCreateParams,
   WorkGraphGateResolveParams,
   WorkGraphGetParams,
@@ -19,6 +20,7 @@ import {
   activateWorkGraph,
   addWorkGraphEdge,
   addWorkGraphNode,
+  attachWorkGraphRun,
   createWorkGraph,
   gateResolve,
   getWorkGraph,
@@ -57,6 +59,7 @@ export const workGraphPause = (params: WorkGraphPauseParams) =>
   pauseWorkGraph(params, currentSessionOriginator());
 export const workGraphRetry = (params: WorkGraphRetryParams) =>
   retryWorkGraph(params, currentSessionOriginator());
+export const workGraphAttachRun = (params: WorkGraphAttachRunParams) => attachWorkGraphRun(params);
 export const workGraphGateResolve = (params: WorkGraphGateResolveParams) =>
   gateResolve(params, currentSessionOriginator());
 // The RPC is the operator's `farmslot graph tick`; run events tick internally.

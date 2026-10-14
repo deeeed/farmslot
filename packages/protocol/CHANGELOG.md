@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add typed retained-run stack attachment to the existing work-graph RPC.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.44.0 - 2026-10-15
