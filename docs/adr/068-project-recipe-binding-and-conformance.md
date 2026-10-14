@@ -121,3 +121,25 @@ A first dispatch has no stored proof plan. Provider IDs alone cannot tell enforc
 ADR-068 owns template metadata, the protocol accessor, read-only admission and capability display. ADR-065's owner consumes that contract for acquisition, health, cleanup and recovery. Provider schemas, slot/device-target validation, authority and ownership remain in the existing catalog/registry path. No second proof-plan store, allocator, parser for acquire semantics, CLI flag or SDK host callback is added.
 
 The public addition is `RecipeFlowRequirements.proofRequirements` and the extended `recipeFlowRequirements`, owned by `@farmslot/protocol` and consumed by gateway admission and ADR-065 enforcement. Pack templates consume the metadata; thin clients consume the shared compatibility result. Project harnesses keep declaring provider schemas/actions and inherit dispatch mechanics. The pre-1.0 protocol addition requires a minor release and coordinated consumer pins under the existing release gates. IDs-only retained runs remain recoverable through their valid stored plans; IDs-only first dispatch without an authored mode refuses explicitly. Declaration availability is not acquired ownership or live proof.
+
+## Amendment 2: Built-in bridges, 2026-10-14
+
+**Status:** Proposed. The accepted base decision and Amendment 1 remain unchanged.
+
+### Decision
+
+Extend the existing SDK runtime's `harness` declaration with an explicit `kind: 'built-in'` for a bridge shipped in the application. It retains real bridge verification and has no checkout-overlay installer or cleanup leaf. The existing overlay contract retains its install, cleanup and verify requirements; an omitted kind still denotes that contract, never a built-in bridge inferred from missing fields.
+
+The SDK validates the declaration through its existing adapter registration path. Shared default healing skips overlay installation only for an explicit built-in bridge or the existing headless exemption. It does not claim that the app is ready. The normative [bridge installation contract](../reference/project-recipe-contract.md#bridge-installation-proposed-amendment-2) defines commands, validation and rollout.
+
+### Rationale
+
+A bridge compiled into an app needs no generated overlay, delegate stamp or installation script. Treating every UI runtime as an overlay makes default run/call dereference nonexistent installer fields. Dummy installers, marking a UI runtime headless, or silently disabling healing would conceal the missing distinction.
+
+### Consequences and public surface
+
+`@farmslot/adapter-sdk` owns the additive `AdapterHarness` declaration and validation through existing `defineAdapter` and registry registration. Audiolab's provider consumes the built-in form; existing overlay providers retain their behavior. `@farmslot/recipe-cli/harness` consumes it in healing and existing install/cleanup helpers. Public `farmslot recipe run`, `call`, `launch --verify` and doctor use the same provider; no command, flag, recorder or evidence model is added.
+
+Built-in install/cleanup reporting means no overlay operation is needed, not that verification passed. App lifecycle, resource ownership, cancellation, HUD, capture and evidence requirements remain unchanged. Existing overlay files are not deleted by selecting built-in mode.
+
+This is a pre-1.0 SDK/CLI addition requiring a coordinated minor release, exact provider dependency pins and installed-host qualification. The SDK ABI and artifact schema versions do not change; older hosts are not qualified to consume the new declaration. Implementation and publication are separate gates after amendment approval.
