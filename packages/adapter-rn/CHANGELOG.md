@@ -4,9 +4,11 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## Unreleased
 
-- Rotate Android capture at 180 seconds, retain ordered original segments and stop owned recorder processes on interruption.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.22.8 - 2026-10-15
+
+- Rotate Android capture at 180 seconds, retain ordered original segments and stop owned recorder processes on interruption.
 
 ## 0.22.7 - 2026-10-15
 
