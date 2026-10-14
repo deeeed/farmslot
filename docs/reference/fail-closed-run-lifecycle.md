@@ -269,7 +269,8 @@ The existing publication owner MUST durably record the receipt, publication
 status and PR linkage together, through the run store and serialized lifecycle
 route. Normal publication and adoption MUST share that recorder. Recheck the
 run's generation, archival location and publication identity after asynchronous
-verification. Persistence failure MUST leave no published projection or started
+verification, and reauthorize the person inside the serialized mutation.
+Persistence failure MUST leave no published projection or started
 continuation. Retries of the same run/repository/PR/head MUST return the first
 receipt without recounting publication or changing its approver/time. A different
 tuple MUST refuse rather than replace provenance. Surface projection failures
