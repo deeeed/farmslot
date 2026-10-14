@@ -27,6 +27,7 @@ import {
   type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 
+import { useRunAcceptance } from '../../hooks/useRunAcceptance';
 import {
   artifactsForRecipeRun,
   artifactUrlForEntry,
@@ -591,11 +592,20 @@ export function useSlotWorkspaceController() {
   const currentDiffAvailable = currentRun
     ? hasRunWorkspaceDiff(currentRun, currentWorkspaceGates[0] ?? null)
     : undefined;
+  const currentAcceptance = useRunAcceptance(client, currentRun, {
+    ...(selectedRecipeRunId
+      ? { recipeRunId: selectedRecipeRunId }
+      : primaryDecision?.payload?.kind === 'ready'
+        ? { decisionId: primaryDecision.id }
+        : {}),
+  });
+  const currentEvidenceModel = currentAcceptance.evidenceModel;
   const currentCompareTarget = currentRun
     ? selectSlotCompareTarget({
         runArtifacts: extractRunArtifactManifest(currentRun),
         recipeRuns: currentRecipeRuns,
         selectedRecipeRunId,
+        evidenceModel: currentEvidenceModel,
       })
     : null;
   const workspaceNavProps = {
@@ -643,6 +653,7 @@ export function useSlotWorkspaceController() {
     currentRun,
     currentRecipeRuns,
     currentRecipeRunsLoaded,
+    currentEvidenceModel,
     familySnapshot,
     selectedRecipeRunId,
     slotHistory,

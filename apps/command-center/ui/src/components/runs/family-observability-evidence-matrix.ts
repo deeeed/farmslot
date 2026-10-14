@@ -6,7 +6,7 @@ import {
 } from '@farmslot/protocol';
 
 import { artifactKind } from '../../utils/artifact-kind.js';
-import { acceptanceCriteriaKey, artifactStem } from '../../utils/artifact-pairs.js';
+import { artifactStem } from '../../utils/artifact-pairs.js';
 
 import { comparisonRuns, familyRunLabel } from './family-observability-compare-model.js';
 
@@ -114,7 +114,7 @@ export function buildEvidenceComparisonMatrix(
     const runId = artifact.sourceRunId ?? artifact.runId;
     if (!runIds.has(runId)) continue;
     const stem = artifactStem(artifact.path);
-    const key = acceptanceCriteriaKey(artifact.path) ?? stem;
+    const key = stem;
     const group = byScreen.get(key) ?? { displayStem: stem, perRun: new Map() };
     // Prefer the longest stem as the human label (most descriptive screen name).
     if (stem.length > group.displayStem.length) group.displayStem = stem;

@@ -22,6 +22,7 @@ import {
   readFrozenRecordedEvidenceSources,
   readGateRecordedEvidenceSources,
   readVisualReviewSource,
+  recordedEvidenceInventoryMismatch,
   visualReviewSnapshotIdentity,
 } from '../../run-engine/recorded-evidence-sources.js';
 import {
@@ -113,6 +114,11 @@ export async function readRunRecordedEvidence(
       return {
         ...source,
         contractVersion,
+        ...(payload?.kind === 'ready' && payload.prPackage?.reviewSnapshot
+          ? { comparisonSnapshot: payload.prPackage.reviewSnapshot }
+          : payload?.kind === 'output-review' && run.qaSource
+            ? { comparisonSnapshot: run.qaSource }
+            : {}),
         ...(source.input.claims
           ? {
               claimOverrideAuthority: claimOverrideAuthority(run, source.input),
@@ -183,6 +189,9 @@ export async function readRunRecordedEvidence(
     return {
       input: result.input,
       contractVersion,
+      ...(errors.length === 0
+        ? { comparisonSnapshot: retainedComparisonSnapshot(run, result.input, packagePath) }
+        : {}),
       artifactPrefix,
       packagePath,
       errors,
@@ -216,4 +225,37 @@ function reviewValidationErrors(input: RecordedEvidencePackageInput): string[] {
   return validateRecordedEvidencePackage(input)
     .findings.filter((finding) => finding.severity === 'error')
     .map((finding) => finding.message);
+}
+
+/** A historical viewer can compare only the exact execution retained by a ready package. */
+export function retainedComparisonSnapshot(
+  run: Run,
+  input: RecordedEvidencePackageInput,
+  packagePath: string | undefined,
+): RunRecordedEvidenceReview['comparisonSnapshot'] {
+  const recipeRunId = input.claims?.recipeRunId;
+  const summaryDigest = input.artifactDigests['summary.json']?.replace(/^sha256:/u, '');
+  if (!recipeRunId || !summaryDigest || !packagePath) return undefined;
+  for (const decision of [...run.decisions].reverse()) {
+    const payload = decision.payload;
+    if (
+      payload?.kind !== 'ready' ||
+      payload.acceptanceStatus?.schemaVersion !== 2 ||
+      payload.acceptanceStatus.recipeRunId !== recipeRunId
+    )
+      continue;
+    const inventory = new Map(
+      (payload.prPackage?.evidenceManifest ?? []).flatMap((artifact) =>
+        artifact.sha256 ? [[artifact.path, artifact.sha256] as const] : [],
+      ),
+    );
+    const root = `artifacts/${packagePath === '.' ? '' : packagePath}`;
+    if (
+      inventory.get(`${root.replace(/\/$/u, '')}/summary.json`)?.replace(/^sha256:/u, '') ===
+        summaryDigest &&
+      !recordedEvidenceInventoryMismatch(input, root, inventory)
+    )
+      return payload.prPackage?.reviewSnapshot;
+  }
+  return undefined;
 }

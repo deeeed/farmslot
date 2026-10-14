@@ -309,15 +309,26 @@ export async function readFrozenRecordedEvidenceSources(
     if (failed.length) throw new Error(failed.map((check) => check.message).join(' '));
     // Every file the owner reader consumed must match the inventory frozen at
     // preparation. A changed invocation, trace or judgment needs a package refresh.
-    for (const file of result.input.artifactPaths ?? []) {
-      const expected = inventory.get(path.posix.join(root, file));
-      const actual = result.input.artifactDigests[file];
-      if (!expected || expected.replace(/^sha256:/u, '') !== actual?.replace(/^sha256:/u, ''))
-        throw new Error(
-          `Evidence closure is missing or changed in the gate package: ${root}/${file}`,
-        );
-    }
+    const mismatch = recordedEvidenceInventoryMismatch(result.input, root, inventory);
+    if (mismatch)
+      throw new Error(`Evidence closure is missing or changed in the gate package: ${mismatch}`);
     inputs.push({ input: result.input, artifactPrefix: `${root}/` });
   }
   return inputs;
+}
+
+/** Shared byte qualification for a reader result and its retained comparison revision. */
+export function recordedEvidenceInventoryMismatch(
+  input: RecordedEvidencePackageInput,
+  root: string,
+  inventory: ReadonlyMap<string, string | undefined>,
+): string | undefined {
+  for (const file of input.artifactPaths ?? []) {
+    const key = path.posix.join(root, file);
+    const expected = inventory.get(key);
+    const actual = input.artifactDigests[file];
+    if (!expected || expected.replace(/^sha256:/u, '') !== actual?.replace(/^sha256:/u, ''))
+      return key;
+  }
+  return undefined;
 }

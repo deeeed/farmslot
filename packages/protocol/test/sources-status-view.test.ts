@@ -54,6 +54,26 @@ test('unknown selection metadata stays unknown and missing revisions disable mut
   assert.deepEqual(deriveSourceStatusView(original, context).actions, []);
 });
 
+test('read-only source context has one explanation and preserves the reported refusal', () => {
+  const original = status();
+  original.configured = false;
+  const context = { actions: [] };
+  assert.equal(
+    deriveSourceStatusView(original, context).readOnlyReason,
+    'Source authority is not configured. Retained inputs are read-only.',
+  );
+  original.runSource = {
+    runId: 'retained',
+    state: 'locked',
+    canSelectSources: false,
+    selectionRefusal: 'Sources are not configured; retained inputs are read-only.',
+  };
+  const view = deriveSourceStatusView(original, context);
+  assert.equal(view.readOnlyReason, original.runSource.selectionRefusal);
+  assert.equal(view.editable, false);
+  assert.deepEqual(view.actions, []);
+});
+
 test('admitted and historical inputs remain visible after their declaration is removed', () => {
   const original = status();
   original.declarations = [];

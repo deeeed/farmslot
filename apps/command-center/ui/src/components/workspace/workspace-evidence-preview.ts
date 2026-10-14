@@ -5,7 +5,7 @@ import type {
   EvidenceReviewComparisonMedia,
   EvidenceReviewModel,
 } from '@farmslot/adapter-sdk/evidence';
-import type { ArtifactRef } from '@farmslot/protocol';
+import type { ArtifactRef, SelfPrincipalSummary } from '@farmslot/protocol';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
@@ -57,14 +57,21 @@ export function dedupeWorkspaceEvidenceArtifacts(artifacts: readonly ArtifactRef
   return deduped;
 }
 
+export interface WorkspaceEvidenceComparison {
+  model: EvidenceReviewModel;
+  reviewer?: SelfPrincipalSummary | null;
+  reviewing?: boolean;
+  reviewReason?(claimId: string): string;
+  changeReviewReason?(claimId: string, reason: string): void;
+  recordReview?(claimId: string, verdict: 'confirmed' | 'rejected'): void | Promise<void>;
+  artifactUrl(path: string): string;
+  openMedia(media: EvidenceReviewComparisonMedia, clipIndex?: number): void;
+  openMoment(claimId: string, index: number): void;
+  changed(): void;
+}
+
 export function renderWorkspaceEvidencePreview(input: {
-  comparison?: {
-    model: EvidenceReviewModel;
-    artifactUrl(path: string): string;
-    openMedia(media: EvidenceReviewComparisonMedia, clipIndex?: number): void;
-    openMoment(claimId: string, index: number): void;
-    changed(): void;
-  };
+  comparison?: WorkspaceEvidenceComparison;
   title: string;
   subtitle?: string;
   hideHeader?: boolean;
@@ -200,9 +207,7 @@ export function renderWorkspaceEvidencePreview(input: {
   `;
 }
 
-function renderComparisonPreview(
-  input: NonNullable<Parameters<typeof renderWorkspaceEvidencePreview>[0]['comparison']>,
-): TemplateResult {
+function renderComparisonPreview(input: WorkspaceEvidenceComparison): TemplateResult {
   const { model } = input;
   const filters: readonly EvidenceReviewComparisonFilter[] = [
     'all',
@@ -316,7 +321,8 @@ function renderComparisonPreview(
   >
     <style>
       .ws-compare-by-ac button,
-      .ws-compare-by-ac select {
+      .ws-compare-by-ac select,
+      .ws-compare-by-ac textarea {
         border: 1px solid ${colors.bgCardHover};
         background: ${colors.bgSurface};
         color: ${colors.textSecondary};
@@ -342,11 +348,13 @@ function renderComparisonPreview(
           style="padding:10px;border:1px solid ${colors.bgCardHover};border-radius:6px;background:${colors.bgCard};font-size:12px;"
         >
           <div>Review head <code>${model.gateSnapshot.headSha ?? 'not captured'}</code></div>
+          <div>${model.gateSnapshot.reviewRequirement.label}</div>
           <div>Own review: ${model.gateSnapshot.ownReviewVerdict ?? 'not captured'}</div>
           ${model.gateSnapshot.reviews.map(
             (review) =>
               html`<div>
-                ${review.mode} · ${review.verdict}${review.stale ? ' · stale' : ''} · head
+                Review history: ${review.mode} · ${review.verdict}${review.stale ? ' · stale' : ''}
+                · head
                 <code
                   >${review.reviewedHeadSha ??
                   review.reviewSnapshot?.headSha ??
@@ -499,6 +507,52 @@ function renderComparisonPreview(
             ? html`<p style="color:${colors.textMuted};font-size:12px;">
                 No AC-bound capture. Retained unbound media is in Unassigned.
               </p>`
+            : nothing}
+          ${model.pendingVisualClaimIds.includes(row.claim.id)
+            ? model.visualReviewKind(row.claim.id, input.reviewer ?? null) && input.recordReview
+              ? html`<div
+                  data-visual-review=${row.claim.id}
+                  style="display:flex;flex-direction:column;gap:8px;"
+                >
+                  <strong
+                    >${model.visualReviewKind(row.claim.id, input.reviewer ?? null) ===
+                    'lead-agent-reviewed'
+                      ? 'Delegated visual review'
+                      : 'Person visual review'}
+                    · ${input.reviewer?.displayName}</strong
+                  >
+                  <label
+                    >What did you inspect?
+                    <textarea
+                      aria-label=${`Visual review rationale for ${row.claim.id}`}
+                      .value=${input.reviewReason?.(row.claim.id) ?? ''}
+                      ?disabled=${input.reviewing}
+                      @input=${(event: Event) =>
+                        input.changeReviewReason?.(
+                          row.claim.id,
+                          (event.currentTarget as HTMLTextAreaElement).value,
+                        )}
+                    ></textarea>
+                  </label>
+                  <div>
+                    ${(['confirmed', 'rejected'] as const).map(
+                      (verdict) =>
+                        html`<button
+                          type="button"
+                          data-review-verdict=${verdict}
+                          ?disabled=${input.reviewing || !input.reviewReason?.(row.claim.id).trim()}
+                          @click=${() => input.recordReview?.(row.claim.id, verdict)}
+                        >
+                          ${verdict === 'confirmed'
+                            ? 'Confirm visual proof'
+                            : 'Reject visual proof'}
+                        </button>`,
+                    )}
+                  </div>
+                </div>`
+              : html`<p>
+                  Sign in with an authorized reviewer account to record a visual judgment.
+                </p>`
             : nothing}
         </article>`,
     )}

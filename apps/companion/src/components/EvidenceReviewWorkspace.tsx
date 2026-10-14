@@ -1,10 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Image, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Image, Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type {
   EvidenceReviewComparisonFilter,
   EvidenceReviewModel,
 } from '@farmslot/adapter-sdk/evidence';
+import type { SelfPrincipalSummary } from '@farmslot/protocol';
 
 import {
   type ArtifactHttpHeaders,
@@ -32,6 +33,13 @@ interface EvidenceReviewWorkspaceProps {
   artifacts: ArtifactManifestEntry[];
   pairs: VisualArtifactPair[];
   evidenceModel?: EvidenceReviewModel | null;
+  reviewer?: SelfPrincipalSummary | null;
+  onRecordVisualReview?(
+    claimId: string,
+    verdict: 'confirmed' | 'rejected',
+    reason: string,
+  ): Promise<void>;
+  onFocusClaim?(offset: number): void;
   onOpenRecordedEvidence?(model: EvidenceReviewModel, path: string): void;
   onOpenVisual: (uri: string) => void;
   onOpenDocument: (artifact: ArtifactManifestEntry) => void;
@@ -42,6 +50,16 @@ interface EvidenceReviewWorkspaceProps {
 }
 
 type ReviewArtifact = ArtifactManifestEntry & { url: string };
+interface VisualReviewFailure {
+  claimId: string;
+  message: string;
+}
+interface ComparisonLayouts {
+  workspace: number;
+  rail: number;
+  rows: Record<string, number>;
+  pending?: string;
+}
 
 const EVIDENCE_FILTERS: Array<{ id: ArtifactWorkspaceFilter; label: string }> = [
   { id: 'all', label: 'All' },
@@ -60,6 +78,9 @@ export function EvidenceReviewWorkspace({
   artifacts,
   pairs,
   evidenceModel,
+  reviewer,
+  onRecordVisualReview,
+  onFocusClaim,
   onOpenRecordedEvidence,
   onOpenVisual,
   onOpenDocument,
@@ -69,6 +90,22 @@ export function EvidenceReviewWorkspace({
   authHeaders,
 }: EvidenceReviewWorkspaceProps) {
   const [, refreshComparisons] = useState(0);
+  const layouts = useRef<ComparisonLayouts>({ workspace: 0, rail: 0, rows: {} });
+  const [reviewReasons, setReviewReasons] = useState<Record<string, string>>({});
+  const [reviewing, setReviewing] = useState(false);
+  const [reviewError, setReviewError] = useState<VisualReviewFailure | null>(null);
+  const recordReview = async (claimId: string, verdict: 'confirmed' | 'rejected') => {
+    if (!onRecordVisualReview || reviewing) return;
+    setReviewing(true);
+    setReviewError(null);
+    try {
+      await onRecordVisualReview(claimId, verdict, reviewReasons[claimId] ?? '');
+    } catch (error) {
+      setReviewError({ claimId, message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setReviewing(false);
+    }
+  };
   const [evidenceFilter, setEvidenceFilter] = useState<ArtifactWorkspaceFilter>('all');
   const artifactCounts = useMemo(() => buildArtifactWorkspaceCounts(artifacts), [artifacts]);
   const filteredArtifacts = useMemo(
@@ -112,21 +149,56 @@ export function EvidenceReviewWorkspace({
   }, [compareIdentity]);
 
   return (
-    <View style={styles.workspace}>
+    <View
+      style={styles.workspace}
+      onLayout={(event) => {
+        layouts.current.workspace = event.nativeEvent.layout.y;
+      }}
+    >
       {evidenceModel ? (
-        <View style={styles.railSection}>
+        <View
+          style={styles.railSection}
+          onLayout={(event) => {
+            layouts.current.rail = event.nativeEvent.layout.y;
+          }}
+        >
           <Text style={styles.railTitle}>Compare by AC</Text>
+          {evidenceModel.pendingVisualClaimIds.length > 0 && (
+            <View style={styles.deltaActionRow}>
+              {evidenceModel.pendingVisualClaimIds.map((id) => (
+                <Pressable
+                  key={id}
+                  onPress={() => {
+                    const offset = layouts.current.rows[id];
+                    if (evidenceModel.comparisonFilter === 'all' && typeof offset === 'number')
+                      onFocusClaim?.(layouts.current.workspace + layouts.current.rail + offset);
+                    else {
+                      layouts.current.pending = id;
+                      evidenceModel.setComparisonFilter('all');
+                      refreshComparisons((value) => value + 1);
+                    }
+                  }}
+                >
+                  <Text style={styles.deltaActionText}>{id}</Text>
+                </Pressable>
+              ))}
+              <Text style={styles.railSubtitle}>need a visual judgment.</Text>
+            </View>
+          )}
           {evidenceModel.gateSnapshot ? (
             <View style={styles.largeCard}>
               <Text style={styles.railSubtitle}>
                 Review head {evidenceModel.gateSnapshot.headSha ?? 'not captured'}
               </Text>
               <Text style={styles.railSubtitle}>
+                {evidenceModel.gateSnapshot.reviewRequirement.label}
+              </Text>
+              <Text style={styles.railSubtitle}>
                 Own review: {evidenceModel.gateSnapshot.ownReviewVerdict ?? 'not captured'}
               </Text>
               {evidenceModel.gateSnapshot.reviews.map((review) => (
                 <Text key={review.id} style={styles.railSubtitle}>
-                  {review.mode} · {review.verdict} · head{' '}
+                  Review history: {review.mode} · {review.verdict} · head{' '}
                   {review.reviewedHeadSha ?? review.reviewSnapshot?.headSha ?? 'not captured'}
                   {review.stale ? ' · stale' : ''}
                 </Text>
@@ -211,7 +283,19 @@ export function EvidenceReviewWorkspace({
                     artifactUrlForEntry(gatewayUrl, runId, { path, purpose: 'evidence' }),
                   );
             return (
-              <View key={row.claim.id} style={styles.largeCard}>
+              <View
+                key={row.claim.id}
+                style={styles.largeCard}
+                onLayout={(event) => {
+                  layouts.current.rows[row.claim.id] = event.nativeEvent.layout.y;
+                  if (layouts.current.pending === row.claim.id) {
+                    layouts.current.pending = undefined;
+                    onFocusClaim?.(
+                      layouts.current.workspace + layouts.current.rail + event.nativeEvent.layout.y,
+                    );
+                  }
+                }}
+              >
                 <Text style={styles.railTitle}>
                   {row.claim.id}: {row.claim.text}
                 </Text>
@@ -226,6 +310,59 @@ export function EvidenceReviewWorkspace({
                     <Text style={styles.deltaActionText}>Original Jira AC</Text>
                   </Pressable>
                 ) : null}
+                {evidenceModel.pendingVisualClaimIds.includes(row.claim.id) &&
+                  (evidenceModel.visualReviewKind(row.claim.id, reviewer ?? null) &&
+                  onRecordVisualReview ? (
+                    <View>
+                      <Text style={styles.railSubtitle}>
+                        {evidenceModel.visualReviewKind(row.claim.id, reviewer ?? null) ===
+                        'lead-agent-reviewed'
+                          ? 'Delegated visual review'
+                          : 'Person visual review'}{' '}
+                        · {reviewer?.displayName}
+                      </Text>
+                      <TextInput
+                        accessibilityLabel={`Visual review rationale for ${row.claim.id}`}
+                        placeholder="What did you inspect?"
+                        placeholderTextColor={colors.textMuted}
+                        value={reviewReasons[row.claim.id] ?? ''}
+                        editable={!reviewing}
+                        multiline
+                        style={{
+                          color: colors.textPrimary,
+                          backgroundColor: colors.bgCard,
+                          borderColor: colors.textMuted,
+                          borderWidth: 1,
+                          padding: 8,
+                        }}
+                        onChangeText={(reason) =>
+                          setReviewReasons((current) => ({ ...current, [row.claim.id]: reason }))
+                        }
+                      />
+                      {(['confirmed', 'rejected'] as const).map((verdict) => (
+                        <Pressable
+                          key={verdict}
+                          disabled={reviewing || !reviewReasons[row.claim.id]?.trim()}
+                          onPress={() => void recordReview(row.claim.id, verdict)}
+                        >
+                          <Text style={styles.deltaActionText}>
+                            {verdict === 'confirmed'
+                              ? 'Confirm visual proof'
+                              : 'Reject visual proof'}
+                          </Text>
+                        </Pressable>
+                      ))}
+                      {reviewError?.claimId === row.claim.id && (
+                        <Text accessibilityRole="alert" style={styles.railSubtitle}>
+                          {reviewError.message}
+                        </Text>
+                      )}
+                    </View>
+                  ) : (
+                    <Text style={styles.railSubtitle}>
+                      Sign in with an authorized reviewer account to record a visual judgment.
+                    </Text>
+                  ))}
                 {(['before', 'after'] as const).map((role) =>
                   row[role].length > 1 ? (
                     <View key={role}>

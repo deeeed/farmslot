@@ -56,6 +56,18 @@ export function readyWorkspaceLightStyles(): string {
         color: ${colors.statusFail};
       }
       ready-workspace .rdy-spacer { flex: 1; }
+      ready-workspace .rdy-attestation-field {
+        display: flex; flex-direction: column; gap: ${spacing.xs};
+        color: ${colors.textSecondary}; font-size: ${fonts.sizeXs};
+      }
+      ready-workspace .rdy-attestation-reason {
+        font: inherit; color: ${colors.textPrimary}; background: ${colors.bgSurface};
+        border: 1px solid ${colors.bgCardHover}; border-radius: ${radii.md};
+        padding: ${spacing.sm}; min-height: 56px; resize: vertical;
+      }
+      ready-workspace .rdy-attestation-reason:focus-visible {
+        outline: 2px solid ${colors.accent}; outline-offset: 2px;
+      }
       ready-workspace .rdy-btn {
         font-family: ${fonts.mono}; font-size: 12px; font-weight: 600;
         padding: 6px 16px; border-radius: ${radii.md};

@@ -30,6 +30,10 @@ import {
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
 import { readyReviewRequestProgress } from '../workspace/ready-workspace-review-request-model.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
+import {
+  renderWorkspaceEvidencePreview,
+  type WorkspaceEvidenceComparison,
+} from '../workspace/workspace-evidence-preview.js';
 
 import { supportsDecisionAdvice } from './decision-advice-model.js';
 import {
@@ -105,6 +109,8 @@ function withGraftedGateSummary(
 }
 
 export interface RunDecisionRenderContext {
+  comparison?: WorkspaceEvidenceComparison;
+  visualReviewMessage?: string;
   evidenceModel?: EvidenceReviewModel | null;
   openOutputReport?: () => void;
   openEvidence?: (open: AcceptanceEvidenceOpen) => void;
@@ -212,16 +218,25 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
         ${run.metrics.outcome ?? 'unknown'} result and any gaps remain unchanged.
       </p>
       <p>Report snapshot ${pending.payload.manifestDigest}</p>
-      ${context.evidenceModel
-        ? renderAcceptancePanel(
-            { schemaVersion: 1, criteria: [] },
-            {
-              evidenceModel: context.evidenceModel,
-              openEvidence: context.openEvidence,
-              evidenceHref: (path) => `#run/${run.id}?artifact=${encodeURIComponent(path)}`,
-            },
-          )
+      ${context.visualReviewMessage
+        ? html`<p role="status">${context.visualReviewMessage}</p>`
         : nothing}
+      ${context.comparison
+        ? renderWorkspaceEvidencePreview({
+            title: 'Compare by AC',
+            items: [],
+            comparison: context.comparison,
+          })
+        : context.evidenceModel
+          ? renderAcceptancePanel(
+              { schemaVersion: 1, criteria: [] },
+              {
+                evidenceModel: context.evidenceModel,
+                openEvidence: context.openEvidence,
+                evidenceHref: (path) => `#run/${run.id}?artifact=${encodeURIComponent(path)}`,
+              },
+            )
+          : nothing}
       <div class="evidence-actions">
         <a
           class="evidence-link"

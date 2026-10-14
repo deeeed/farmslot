@@ -22,6 +22,7 @@ import {
   type OutputReviewPayload,
   type Run,
   type RunRecipeRunsForRunResult,
+  type SelfPrincipalSummary,
   type TaskProgressResult,
   type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
@@ -36,6 +37,12 @@ import { useConnectedTransport } from './useConnectedTransport';
 
 export interface RunAcceptance {
   evidenceModel: EvidenceReviewModel | null;
+  reviewer: SelfPrincipalSummary | null;
+  recordVisualReview(
+    claimId: string,
+    verdict: 'confirmed' | 'rejected',
+    reason: string,
+  ): Promise<void>;
   recipeRunId: string | null;
   acceptanceStatus: AcceptanceStatusLedger | null;
   acceptanceCriteria: AcceptanceCriterionRef[] | null;
@@ -196,7 +203,9 @@ export function useRunAcceptance(
               ? gate.payload.artifactManifest
               : run?.output?.artifactManifest,
           comparisonSnapshot:
-            gate?.payload?.kind === 'ready' ? gate.payload.prPackage?.reviewSnapshot : undefined,
+            gate?.payload?.kind === 'ready'
+              ? gate.payload.prPackage?.reviewSnapshot
+              : evidence?.recordedEvidence?.comparisonSnapshot,
           criterionSourceUrl: run?.links?.find((link) => link.label === 'Jira')?.url,
           ledger: acceptanceStatus,
           criteria: acceptanceCriteria ?? undefined,
@@ -205,6 +214,7 @@ export function useRunAcceptance(
           contractVersion: evidence?.recordedEvidence?.contractVersion,
           claimOverrideAuthority: evidence?.recordedEvidence?.claimOverrideAuthority,
           visualReviewAuthority: evidence?.recordedEvidence?.visualReviewAuthority,
+          visualReviewContext: evidence?.recordedEvidence?.visualReviewContext,
           readErrors: evidence?.recordedEvidence?.errors,
           artifactPrefix: evidence?.recordedEvidence?.artifactPrefix,
           packagePath: evidence?.recordedEvidence?.packagePath,
@@ -214,6 +224,19 @@ export function useRunAcceptance(
       : null;
     return {
       evidenceModel,
+      reviewer: client?.authenticatedPrincipal ?? null,
+      async recordVisualReview(claimId, verdict, reason) {
+        if (!client || !evidenceModel) throw new Error('The evidence review is unavailable.');
+        const params = evidenceModel.visualReviewRequest(
+          claimId,
+          client.authenticatedPrincipal,
+          verdict,
+          reason,
+        );
+        if (params.runId !== runId) throw new Error('The run changed. Refresh the evidence.');
+        await client.request(Methods.RUN_REVIEW_VISUAL_CLAIM, params);
+        setBroadcasts((value) => value + 1);
+      },
       recipeRunId: evidence?.selectedRecipeRunId ?? null,
       acceptanceStatus,
       acceptanceCriteria,
@@ -229,6 +252,8 @@ export function useRunAcceptance(
       error,
     };
   }, [
+    client,
+    runId,
     data,
     evidence,
     noSurface,

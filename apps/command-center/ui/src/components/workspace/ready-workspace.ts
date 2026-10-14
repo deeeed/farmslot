@@ -14,6 +14,7 @@ import {
   buildRunDecisionActionRequest,
   isInternalRunArtifactPath,
   MARK_CLAIM_UNTESTABLE_ACTION,
+  Methods,
   type ReadyGatePayload,
 } from '@farmslot/protocol';
 import { resolveReviewDispatchDefaults } from '@farmslot/review-dispatch';
@@ -42,6 +43,10 @@ import {
   renderReadyWorkspaceEmpty,
   renderReadyWorkspaceFrame,
 } from './ready-workspace-frame-renderers.js';
+import {
+  readyWorkspaceLightboxItems,
+  readyWorkspaceLightboxPairs,
+} from './ready-workspace-lightbox.js';
 import {
   renderReadyInputArtifactViewer,
   renderReadyReviewFlowModal,
@@ -78,6 +83,7 @@ import { renderWorkspaceEvidencePreview } from './workspace-evidence-preview.js'
 export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   @state() private _claimOverrideId: string | null = null;
   @state() private _claimOverrideReason = '';
+  @state() private _visualReviewReasons: Record<string, string> = {};
   @state() private _evidenceModel: EvidenceReviewModel | null = null;
   private _evidenceRequest = 0;
   private _evidenceScope = '';
@@ -94,6 +100,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       this._evidenceModel = null;
       this._claimOverrideId = null;
       this._claimOverrideReason = '';
+      this._visualReviewReasons = {};
       this._evidenceScope = scope;
       this._evidenceItems = null;
       this._lightboxOpen = false;
@@ -124,6 +131,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
         contractVersion: source.recordedEvidence?.contractVersion,
         claimOverrideAuthority: source.recordedEvidence?.claimOverrideAuthority,
         visualReviewAuthority: source.recordedEvidence?.visualReviewAuthority,
+        visualReviewContext: source.recordedEvidence?.visualReviewContext,
         artifactPrefix: source.recordedEvidence?.artifactPrefix,
         packagePath: source.recordedEvidence?.packagePath,
         readErrors: source.recordedEvidence?.errors,
@@ -205,6 +213,30 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
         },
       },
     );
+  }
+  private async _recordVisualReview(
+    claimId: string,
+    verdict: 'confirmed' | 'rejected',
+  ): Promise<void> {
+    const model = this._evidenceModel;
+    if (!model || this._acting) return;
+    this._acting = true;
+    try {
+      const params = model.visualReviewRequest(
+        claimId,
+        gateway.authenticatedPrincipal,
+        verdict,
+        this._visualReviewReasons[claimId] ?? '',
+      );
+      if (params.runId !== this.runId) throw new Error('The run changed. Refresh the evidence.');
+      await gateway.request(Methods.RUN_REVIEW_VISUAL_CLAIM, params);
+      await this._loadReviewEvidence();
+      this._actionMessage = 'Visual judgment recorded.';
+    } catch (error) {
+      this._actionMessage = error instanceof Error ? error.message : String(error);
+    } finally {
+      this._acting = false;
+    }
   }
   override updated(changed: Map<string, unknown>): void {
     super.updated(changed);
@@ -389,6 +421,17 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       openDiff: (title, artifact) => this._openDiffModal(title, artifact),
       openReviewRequestModal: () => this._openReviewRequestModal(),
       confirmAction: (actionId) => this._confirmAction(actionId),
+      pendingVisualClaimIds: this._evidenceModel?.pendingVisualClaimIds,
+      focusClaim: async (id) => {
+        this._setActiveTab('evidence');
+        this._evidenceModel?.setComparisonFilter('all');
+        this._evidenceModel?.selectClaim(id);
+        this.requestUpdate();
+        await this.updateComplete;
+        this.renderRoot
+          ?.querySelector(`[data-ac="${CSS.escape(id)}"]`)
+          ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      },
     });
   }
 
@@ -555,6 +598,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     return renderReadySelectedRecipeRunArtifacts({
       group,
       artifacts,
+      evidenceModel: this._evidenceModel,
       evidenceCollapsed: this._recipePackageEvidenceCollapsed,
       toggleEvidenceCollapsed: () => {
         this._recipePackageEvidenceCollapsed = !this._recipePackageEvidenceCollapsed;
@@ -590,6 +634,13 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
             items: [],
             comparison: {
               model: this._evidenceModel,
+              reviewer: gateway.authenticatedPrincipal,
+              reviewReason: (id) => this._visualReviewReasons[id] ?? '',
+              changeReviewReason: (id, reason) => {
+                this._visualReviewReasons = { ...this._visualReviewReasons, [id]: reason };
+              },
+              reviewing: this._acting,
+              recordReview: (id, verdict) => this._recordVisualReview(id, verdict),
               artifactUrl: (path) => this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
               changed: () => this.requestUpdate(),
               openMedia: (media, clipIndex) => {
@@ -635,6 +686,22 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     this._lightboxOpen = true;
   }
 
+  override _lightboxItems(payload: ReadyGatePayload) {
+    return readyWorkspaceLightboxItems(
+      this._lightboxSourceArtifacts(payload),
+      (artifact) => this._lightboxArtifactUrl(artifact),
+      this._evidenceModel,
+    );
+  }
+
+  override _lightboxPairs(payload: ReadyGatePayload) {
+    return readyWorkspaceLightboxPairs(
+      this._lightboxSourceArtifacts(payload),
+      (artifact) => this._lightboxArtifactUrl(artifact),
+      this._evidenceModel,
+    );
+  }
+
   private _renderEvidenceSelectionToolbar(payload: ReadyGatePayload) {
     if (this.decision?.resolvedAt) return nothing;
     return renderReadyEvidenceSelectionToolbar({
@@ -660,6 +727,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   ) {
     return renderReadyArtifactGroups({
       artifacts,
+      evidenceModel: this._evidenceModel,
       artifactFilter: this._artifactFilter,
       artifactTypeFilter: this._artifactTypeFilter,
       hideFilter: options.hideFilter,

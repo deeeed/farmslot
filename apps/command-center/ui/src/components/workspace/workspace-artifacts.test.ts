@@ -14,7 +14,6 @@ import {
   runArtifactUrl,
   workspaceArtifactBasename,
   workspaceArtifactGroup,
-  workspaceArtifactGroupLabel,
   workspaceArtifactType,
   workspaceArtifactTypeBadge,
   workspaceArtifactTypeLabel,
@@ -117,123 +116,24 @@ test('recipeRunArtifactUrl uses size cache busting for current artifacts without
   );
 });
 
-test('workspaceArtifactGroup classifies stage and review artifacts', () => {
-  assert.equal(
-    workspaceArtifactGroup({ path: 'shots/before-home.png', purpose: 'Screenshot' }),
-    'before',
+test('unbound legacy names and purposes never supply an AC role or comparison pair', () => {
+  const artifacts = [
+    { path: 'shots/before-home.png', purpose: 'Screenshot' },
+    { path: 'shots/after-home.png', purpose: 'Screenshot' },
+    { path: 'artifacts/before-ac1-proof.png', purpose: 'screenshot-before' },
+    { path: 'artifacts/after-ac1-other-proof.png', purpose: 'screenshot' },
+    { path: 'artifacts/before-shared-baseline.png', purpose: 'screenshot' },
+  ];
+  assert.deepEqual(
+    artifacts.map((artifact) => workspaceArtifactGroup(artifact)),
+    artifacts.map(() => 'other'),
   );
-  assert.equal(
-    workspaceArtifactGroup({ path: 'shots/after-home.png', purpose: 'Screenshot' }),
-    'after',
-  );
-  assert.equal(
-    workspaceArtifactGroup({
-      path: 'artifacts/screenshots/live-home-before.png',
-      purpose: 'debug-screenshot',
-    }),
-    'before',
-  );
-  assert.equal(
-    workspaceArtifactGroup({
-      path: 'artifacts/screenshots/live-home-after.png',
-      purpose: 'debug-screenshot',
-    }),
-    'after',
-  );
+  assert.deepEqual(buildBeforeAfterPairs(artifacts), []);
   assert.equal(
     workspaceArtifactGroup({ path: 'reviews/notes.md', purpose: 'Review output' }),
     'review',
   );
   assert.equal(workspaceArtifactGroup({ path: 'logs/run.txt', purpose: 'Log' }), 'other');
-  assert.equal(workspaceArtifactGroupLabel('review'), 'Review artifacts');
-});
-
-test('before/after pairing accepts trailing filename markers', () => {
-  assert.deepEqual(
-    buildBeforeAfterPairs([
-      { path: 'artifacts/screenshots/live-home-before.png', purpose: 'debug-screenshot' },
-      { path: 'artifacts/screenshots/live-home-after.png', purpose: 'debug-screenshot' },
-    ]).map((pair) => pair.stem),
-    ['live-home'],
-  );
-});
-
-test('before/after pairing falls back to unique acceptance criteria ids', () => {
-  assert.deepEqual(
-    buildBeforeAfterPairs([
-      { path: 'artifacts/before-ac1-market-detail-no-liq-distance.png', purpose: 'screenshot' },
-      { path: 'artifacts/after-ac1-market-detail-liq-distance.png', purpose: 'screenshot' },
-      { path: 'artifacts/before-ac2-positions-tab-no-liq-distance.png', purpose: 'screenshot' },
-      { path: 'artifacts/after-ac2-positions-tab-liq-distance.png', purpose: 'screenshot' },
-      { path: 'artifacts/before-ac3-no-position.png', purpose: 'screenshot' },
-      { path: 'artifacts/after-ac3-no-position-no-liq-distance.png', purpose: 'screenshot' },
-    ]).map((pair) => pair.stem),
-    ['ac1', 'ac2', 'ac3'],
-  );
-});
-
-test('before/after acceptance criteria fallback chooses the most specific duplicate capture', () => {
-  const pairs = buildBeforeAfterPairs([
-    { path: 'artifacts/before-evidence-ac2-market-list-leverage.png', purpose: 'screenshot' },
-    { path: 'artifacts/after-ac2-market-list-origin.png', purpose: 'screenshot' },
-    { path: 'artifacts/after-ac2-market-list-leverage.png', purpose: 'screenshot' },
-  ]);
-  assert.deepEqual(
-    pairs.map((pair) => [pair.before.path, pair.after.path]),
-    [
-      [
-        'artifacts/before-evidence-ac2-market-list-leverage.png',
-        'artifacts/after-ac2-market-list-leverage.png',
-      ],
-    ],
-  );
-});
-
-test('before/after pairing falls back to a shared baseline before with AC-specific after captures', () => {
-  assert.deepEqual(
-    buildBeforeAfterPairs([
-      { path: 'artifacts/before-autoclose-baseline.png', purpose: 'screenshot' },
-      { path: 'artifacts/probe-run/before-autoclose-baseline.png', purpose: 'screenshot' },
-      { path: 'artifacts/after-ac1-default-signs.png', purpose: 'screenshot' },
-      { path: 'artifacts/after-ac2-tp-filled-plus.png', purpose: 'screenshot' },
-      { path: 'artifacts/recipe-run/after-ac1-default-signs.png', purpose: 'screenshot' },
-    ]).map((pair) => [pair.stem, pair.before.path, pair.after.path]),
-    [
-      ['ac1', 'artifacts/before-autoclose-baseline.png', 'artifacts/after-ac1-default-signs.png'],
-      ['ac2', 'artifacts/before-autoclose-baseline.png', 'artifacts/after-ac2-tp-filled-plus.png'],
-    ],
-  );
-});
-
-test('shared baseline pairing stays scoped by runId and media extension', () => {
-  assert.deepEqual(
-    buildBeforeAfterPairs([
-      {
-        path: 'artifacts/run-a/before-baseline.png',
-        purpose: 'screenshot',
-        runId: 'run-a',
-      },
-      {
-        path: 'artifacts/run-b/before-baseline.png',
-        purpose: 'screenshot',
-        runId: 'run-b',
-      },
-      {
-        path: 'artifacts/run-a/after-ac1-proof.png',
-        purpose: 'screenshot',
-        runId: 'run-a',
-      },
-      {
-        path: 'artifacts/run-b/after-ac1-proof.png',
-        purpose: 'screenshot',
-        runId: 'run-b',
-      },
-    ]).map((pair) => [pair.before.path, pair.after.path, pair.stem]),
-    [
-      ['artifacts/run-a/before-baseline.png', 'artifacts/run-a/after-ac1-proof.png', 'ac1'],
-      ['artifacts/run-b/before-baseline.png', 'artifacts/run-b/after-ac1-proof.png', 'ac1'],
-    ],
-  );
 });
 
 test('workspaceArtifactType classifies filters and labels', () => {

@@ -1,7 +1,7 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
-import type { GateSummary } from '@farmslot/protocol';
+import type { GateSummary, ReviewRequirementDisplay } from '@farmslot/protocol';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { gateSummaryDisplay } from '../../utils/review-gate-display.js';
@@ -31,6 +31,8 @@ function verdictColor(verdict: string): string {
 @customElement('gate-summary-panel')
 export class GateSummaryPanel extends LitElement {
   @property({ attribute: false }) summary?: GateSummary;
+  @property({ attribute: false }) reviewRequirement?: ReviewRequirementDisplay;
+  @property({ type: Boolean }) compact = false;
 
   static styles = css`
     :host {
@@ -141,8 +143,8 @@ export class GateSummaryPanel extends LitElement {
 
   render() {
     if (!this.summary) return nothing;
-    const d = gateSummaryDisplay(this.summary);
-    return html`
+    const d = gateSummaryDisplay(this.summary, this.reviewRequirement);
+    const rendered = html`
       <div class="gs-panel">
         <div class="gs-headline">${d.headline}</div>
         <div class="gs-meta">
@@ -150,7 +152,7 @@ export class GateSummaryPanel extends LitElement {
           ${d.policyLabel ? html`<span>Gate: ${d.policyLabel}</span>` : nothing}
         </div>
 
-        <div class="gs-section-title">Reviews</div>
+        <div class="gs-section-title">${this.reviewRequirement ? 'Review history' : 'Reviews'}</div>
         ${d.review
           ? html`<div class="gs-row">
               <span
@@ -166,7 +168,7 @@ export class GateSummaryPanel extends LitElement {
               (r) =>
                 html`<div class="gs-row">
                   <span class="gs-badge" style="color:${verdictColor(r.verdict)}"
-                    >${r.label} ${r.verdict}</span
+                    >${this.reviewRequirement ? 'Historical ' : ''}${r.label} ${r.verdict}</span
                   >
                   <span class="gs-dim"
                     >${r.attempts} attempt${r.attempts === 1 ? '' : 's'} · ${r.unresolvedCount}
@@ -278,6 +280,12 @@ export class GateSummaryPanel extends LitElement {
           : nothing}
       </div>
     `;
+    return this.compact
+      ? html`<details>
+          <summary>Execution and review history</summary>
+          ${rendered}
+        </details>`
+      : rendered;
   }
 }
 

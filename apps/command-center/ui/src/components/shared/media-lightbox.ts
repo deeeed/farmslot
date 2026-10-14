@@ -180,7 +180,7 @@ export class MediaLightbox extends MediaLightboxState {
     if (this._kindFilter === 'all') return this.items.map((_, i) => i);
     const want = this._kindFilter;
     return this.items
-      .map((item, i) => ({ i, kind: artifactKind(item.path, item.purpose) }))
+      .map((item, i) => ({ i, kind: artifactKind(item.path, item.purpose, item.evidenceModel) }))
       .filter(({ kind }) => kind === want)
       .map(({ i }) => i);
   }
@@ -635,7 +635,13 @@ export class MediaLightbox extends MediaLightboxState {
             )
           : null;
       video.currentTime = (selectedMoment ?? clip.startMs) / 1000;
-      if (this._resumeEvidencePlayback || item.evidenceModel) {
+      if (
+        item.fullscreen &&
+        item.initialTraceIndex !== undefined &&
+        !this._resumeEvidencePlayback
+      ) {
+        video.pause();
+      } else if (this._resumeEvidencePlayback || item.evidenceModel) {
         this._resumeEvidencePlayback = false;
         void video.play().catch((error: Error) => {
           this._videoPlayError = `Playback paused: ${error.message}`;

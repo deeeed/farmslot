@@ -361,11 +361,31 @@ export default function ArtifactViewerScreen() {
       artifactUrlForEntry(gatewayUrl, runId ?? '', entry, artifactMirrorEpoch),
     [artifactMirrorEpoch, gatewayUrl, runId],
   );
-  const visualPairCount = useMemo(() => countVisualArtifactPairs(manifest), [manifest]);
-  const artifactCounts = useMemo(() => buildArtifactWorkspaceCounts(manifest), [manifest]);
+  const evidenceModel = useMemo(
+    () =>
+      createEvidenceReviewModel({
+        context: 'artifact',
+        comparisonSnapshot: recordedEvidence?.comparisonSnapshot,
+        artifacts: manifest,
+        package: recordedEvidence?.input,
+        contractVersion: recordedEvidence?.contractVersion,
+        readErrors: recordedEvidence?.errors,
+        artifactPrefix: recordedEvidence?.artifactPrefix,
+        packagePath: recordedEvidence?.packagePath,
+      }),
+    [recordedEvidence, manifest],
+  );
+  const visualPairCount = useMemo(
+    () => countVisualArtifactPairs(manifest, evidenceModel),
+    [manifest, evidenceModel],
+  );
+  const artifactCounts = useMemo(
+    () => buildArtifactWorkspaceCounts(manifest, evidenceModel),
+    [manifest, evidenceModel],
+  );
   const filteredSingles = useMemo(
-    () => filterArtifactWorkspace(manifest, artifactFilter, artifactQuery),
-    [artifactFilter, artifactQuery, manifest],
+    () => filterArtifactWorkspace(manifest, artifactFilter, artifactQuery, evidenceModel),
+    [artifactFilter, artifactQuery, manifest, evidenceModel],
   );
   const availableFilters = useMemo(
     () =>
@@ -463,18 +483,6 @@ export default function ArtifactViewerScreen() {
     return () => clearTimeout(timer);
   }, [artifactMirrorFeedback]);
 
-  const evidenceModel = useMemo(
-    () =>
-      createEvidenceReviewModel({
-        context: 'artifact',
-        package: recordedEvidence?.input,
-        contractVersion: recordedEvidence?.contractVersion,
-        readErrors: recordedEvidence?.errors,
-        artifactPrefix: recordedEvidence?.artifactPrefix,
-        packagePath: recordedEvidence?.packagePath,
-      }),
-    [recordedEvidence],
-  );
   const openVisualArtifact = useCallback(
     (uri: string) => {
       evidenceModel.clearSelection();

@@ -573,6 +573,11 @@ export interface RunRecipeRunsForRunParams {
 }
 
 export interface RunRecordedEvidenceReview {
+  /** Source revisions from a retained ready package for this exact checked execution. */
+  comparisonSnapshot?: Pick<
+    import('../contracts/runs.js').ReviewDiffSnapshot,
+    'baseSha' | 'headSha'
+  >;
   visualReviewAuthority?: import('../recipe/claim-reviews.js').RecipeVisualReviewAuthority;
   /** Frozen source identity for the authenticated human writer; never a latest pointer. */
   visualReviewContext?: { snapshotIdentity: string; decisionId?: string };

@@ -7,6 +7,7 @@ import {
   type AcceptanceStatusSummary,
   type ArtifactRef,
   type ClaimOverrideAuthority,
+  delegatedVisualClaimAllowed,
   type DeterministicChecklistCheck,
   EVIDENCE_PADDING_MS,
   type EvidenceMomentRef,
@@ -18,16 +19,21 @@ import {
   type RecipeRecordingTimelineBinding,
   type RecipeRecordingTimelineDocument,
   recipeTraceEntries,
+  type RecipeVisualJudgmentKind,
   type RecipeVisualReviewAuthority,
   recordedEvidenceClosureIdentity,
   type RecordedEvidencePackageInput,
   recordedVisualJudgments,
   type RecordingSegmentRef,
   type ReviewDiffSnapshot,
+  type ReviewRequirementDisplay,
+  reviewRequirementDisplay,
   type ReviewStatus,
   type RunDecision,
   type RunGatePrerequisiteReason,
   type RunOutput,
+  type RunReviewVisualClaimParams,
+  type SelfPrincipalSummary,
   summarizeAcceptanceStatus,
   validateRecipeRecordingTimelineBinding,
 } from '@farmslot/protocol';
@@ -74,6 +80,7 @@ export interface EvidenceReviewRecordingInput extends RecipeRecordingTimelineBin
 
 export interface EvidenceReviewGateSnapshot {
   headSha?: string | null;
+  reviewRequirement: ReviewRequirementDisplay;
   reviews: readonly Pick<
     ReviewStatus,
     'id' | 'mode' | 'verdict' | 'stale' | 'reviewedHeadSha' | 'reviewSnapshot'
@@ -86,6 +93,7 @@ export interface EvidenceReviewGateSnapshot {
 }
 
 export interface EvidenceReviewInput {
+  visualReviewContext?: { snapshotIdentity: string; decisionId?: string };
   gateDecision?: RunDecision;
   artifacts?: readonly ArtifactRef[];
   comparisonSnapshot?: Pick<ReviewDiffSnapshot, 'baseSha' | 'headSha'>;
@@ -115,6 +123,12 @@ export interface EvidenceReviewArtifact {
   artifactPath: string;
   name: string;
   mediaType: EvidenceReviewMediaType;
+}
+
+export interface EvidenceReviewArtifactPair<T> {
+  before: T;
+  after: T;
+  claimId: string;
 }
 
 export interface EvidenceReviewClaim extends AcceptanceCriterionView {
@@ -174,6 +188,21 @@ export interface EvidenceReviewPlaybackEffect {
 }
 
 export interface EvidenceReviewModel {
+  artifactRole(path: string): 'before' | 'after' | 'review' | null;
+  pairedArtifacts<T extends { path: string }>(
+    artifacts: readonly T[],
+  ): EvidenceReviewArtifactPair<T>[];
+  readonly pendingVisualClaimIds: readonly string[];
+  visualReviewKind(
+    claimId: string,
+    principal: SelfPrincipalSummary | null,
+  ): RecipeVisualJudgmentKind | null;
+  visualReviewRequest(
+    claimId: string,
+    principal: SelfPrincipalSummary | null,
+    verdict: 'confirmed' | 'rejected',
+    reason: string,
+  ): RunReviewVisualClaimParams;
   readonly gateSnapshot: EvidenceReviewGateSnapshot | null;
   readonly comparisons: readonly EvidenceReviewComparisonRow[];
   readonly unassigned: readonly EvidenceReviewComparisonMedia[];
@@ -475,7 +504,10 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     claims,
     input.artifactPrefix ?? '',
     input.artifacts ?? [],
-    input.comparisonSnapshot,
+    input.comparisonSnapshot ??
+      (input.gateDecision?.payload?.kind === 'ready'
+        ? input.gateDecision.payload.prPackage?.reviewSnapshot
+        : undefined),
     input.criterionSourceUrl,
     errors.length > 0,
   );
@@ -669,9 +701,46 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
   const offeredNext = nextReason?.actionId
     ? input.gateDecision?.actions.find((action) => action.id === nextReason.actionId)
     : undefined;
+  const reviewableClaims =
+    pkg && !errors.length
+      ? deriveReviewedRecipeClaims(pkg).filter(
+          (claim) =>
+            claim.verdict === 'awaiting-review' &&
+            ['visual', 'mixed'].includes(claim.proofMode) &&
+            claim.assertionIndices.length,
+        )
+      : [];
+  const pendingVisualClaimIds = claims
+    .filter(
+      (claim) =>
+        claim.status?.verdict === 'awaiting-review' &&
+        reviewableClaims.some((raw) => raw.id === claim.id),
+    )
+    .map((claim) => claim.id);
+  const visualReviewKind = (
+    claimId: string,
+    principal: SelfPrincipalSummary | null,
+  ): RecipeVisualJudgmentKind | null => {
+    const authority = input.visualReviewAuthority;
+    if (
+      !pkg ||
+      !input.visualReviewContext ||
+      !authority ||
+      authority.recipeRunId !== packageClaims?.recipeRunId ||
+      authority.closureIdentity !== recordedEvidenceClosureIdentity(pkg) ||
+      !reviewableClaims.some((claim) => claim.id === claimId)
+    )
+      return null;
+    if (principal?.subjectKind === 'person') return 'person-reviewed';
+    return principal?.subjectKind === 'service' &&
+      delegatedVisualClaimAllowed(pkg, claimId, principal.id, authority.projectPolicy)
+      ? 'lead-agent-reviewed'
+      : null;
+  };
   const gateSnapshot: EvidenceReviewGateSnapshot | null = gatePayload
     ? {
         headSha: gatePayload.prPackage?.reviewSnapshot?.headSha ?? gatePayload.headSha,
+        reviewRequirement: reviewRequirementDisplay(gatePayload),
         reviews: gatePayload.reviews ?? [],
         ci: gatePayload.prPackage?.deterministicChecks ?? [],
         ciChecks: gatePayload.ciChecks ?? [],
@@ -683,6 +752,41 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       }
     : null;
   return {
+    artifactRole(path) {
+      const media = comparison.media.find((entry) => entry.artifactPath === path && entry.eligible);
+      return media?.capture?.role ?? null;
+    },
+    pairedArtifacts(artifacts) {
+      return comparison.rows.flatMap((row) => {
+        const before = row.selectedBefore?.eligible
+          ? artifacts.find((artifact) => artifact.path === row.selectedBefore?.artifactPath)
+          : undefined;
+        const after = row.selectedAfter?.eligible
+          ? artifacts.find((artifact) => artifact.path === row.selectedAfter?.artifactPath)
+          : undefined;
+        return before && after ? [{ before, after, claimId: row.claim.id }] : [];
+      });
+    },
+    pendingVisualClaimIds,
+    visualReviewKind,
+    visualReviewRequest(claimId, principal, verdict, reason) {
+      const kind = visualReviewKind(claimId, principal);
+      if (!kind || !input.visualReviewContext || !input.visualReviewAuthority || !packageClaims)
+        throw new Error(
+          'This claim requires an authorized reviewer and a captured evidence selection.',
+        );
+      if (!reason.trim()) throw new Error('Describe the visual proof you inspected.');
+      return {
+        runId: input.visualReviewAuthority.runId,
+        decisionId: input.visualReviewContext.decisionId,
+        snapshotIdentity: input.visualReviewContext.snapshotIdentity,
+        recipeRunId: packageClaims.recipeRunId,
+        claimId,
+        kind,
+        verdict,
+        reason: reason.trim(),
+      };
+    },
     gateSnapshot,
     comparisonErrors: comparison.media
       .filter((media) => media.limitationCode === 'comparison-source-mismatch')

@@ -6,6 +6,7 @@ import type {
   GatewayAuthConnectResult,
   RequestFrame,
   ResponseFrame,
+  SelfPrincipalSummary,
 } from '@farmslot/protocol';
 import { Methods, workspaceAccessFromAuth } from '@farmslot/protocol';
 
@@ -184,7 +185,7 @@ export class GatewayClient {
   private wsAbort: AbortController | null = null;
   private state: ConnectionState = 'disconnected';
   private epoch = 0;
-  private principalId: string | null = null;
+  private principal: SelfPrincipalSummary | null = null;
   private adminRole = false;
   private access: 'farm' | 'native' | 'none' = 'none';
   private reqId = 0;
@@ -231,7 +232,11 @@ export class GatewayClient {
   }
 
   get authenticatedPrincipalId(): string | null {
-    return this.state === 'connected' ? this.principalId : null;
+    return this.authenticatedPrincipal?.id ?? null;
+  }
+
+  get authenticatedPrincipal(): SelfPrincipalSummary | null {
+    return this.state === 'connected' ? this.principal : null;
   }
 
   get isGlobalAdmin(): boolean {
@@ -398,7 +403,7 @@ export class GatewayClient {
       ...this.auth,
     });
     if (!result.ok) throw new Error('Gateway authentication failed');
-    this.principalId = result.principal?.id ?? null;
+    this.principal = result.principal ?? null;
     this.adminRole =
       result.principal?.roles.some(
         ({ role, scope }) => role === 'admin' && scope.kind === 'global',

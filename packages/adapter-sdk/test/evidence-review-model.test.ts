@@ -12,6 +12,7 @@ import {
   recordedEvidenceClosureIdentity,
   type RecordedEvidencePackageInput,
   reviewedVisualFiles,
+  type SelfPrincipalSummary,
 } from '@farmslot/protocol';
 
 import type { TraceEntry } from '../../recipe-runner/src/core/types.js';
@@ -955,6 +956,78 @@ test('authenticated review uses one engine projection in every view and preserve
   assert.equal(JSON.stringify(input), original);
 });
 
+test('the shared visual review request binds an eligible claim to its captured source and own identity', () => {
+  const input: RecordedEvidencePackageInput = JSON.parse(
+    readFileSync(
+      new URL('../../recipe-runner/test/fixtures/visual-review-package.json', import.meta.url),
+      'utf8',
+    ),
+  ).input;
+  const original = JSON.stringify(input);
+  const lead: SelfPrincipalSummary = {
+    id: 'lead',
+    displayName: 'Own reviewer',
+    subjectKind: 'service',
+    roles: [],
+  };
+  const authority = {
+    runId: 'run',
+    recipeRunId: input.claims!.recipeRunId,
+    closureIdentity: recordedEvidenceClosureIdentity(input),
+    receipts: [],
+    projectPolicy: { delegatedReviewerPrincipalIds: ['lead'], delegatorPrincipalId: 'person' },
+  };
+  const model = createEvidenceReviewModel({
+    package: input,
+    visualReviewAuthority: authority,
+    visualReviewContext: { snapshotIdentity: 'frozen', decisionId: 'gate' },
+  });
+  assert.deepEqual(model.errors, []);
+  assert(model.pendingVisualClaimIds.includes('check-1'));
+  const request = model.visualReviewRequest(
+    'check-1',
+    lead,
+    'confirmed',
+    ' Observed the recorded view. ',
+  );
+  assert.deepEqual(request, {
+    runId: 'run',
+    decisionId: 'gate',
+    snapshotIdentity: 'frozen',
+    recipeRunId: input.claims!.recipeRunId,
+    claimId: 'check-1',
+    kind: 'lead-agent-reviewed',
+    verdict: 'confirmed',
+    reason: 'Observed the recorded view.',
+  });
+  assert.equal(model.visualReviewKind('check-1', { ...lead, id: 'other' }), null);
+  assert.throws(
+    () => model.visualReviewRequest('check-1', lead, 'confirmed', ''),
+    /Describe the visual proof/,
+  );
+  const personOnly = createEvidenceReviewModel({
+    package: input,
+    visualReviewAuthority: {
+      ...authority,
+      projectPolicy: { ...authority.projectPolicy, personOnlyClaimIds: ['check-1'] },
+    },
+    visualReviewContext: { snapshotIdentity: 'frozen' },
+  });
+  assert.equal(personOnly.visualReviewKind('check-1', lead), null);
+  assert.equal(
+    personOnly.visualReviewKind('check-1', { ...lead, subjectKind: 'person' }),
+    'person-reviewed',
+  );
+  assert.equal(
+    createEvidenceReviewModel({
+      package: input,
+      visualReviewAuthority: authority,
+    }).visualReviewKind('check-1', lead),
+    null,
+  );
+  assert.equal(JSON.stringify(input), original);
+});
+
 for (const { name, count, evidence } of [
   { name: 'task beside a recorded attempt', count: 4, evidence: ['artifacts/state.json'] },
   {
@@ -1123,6 +1196,16 @@ test('comparison roles retain original executions, exact claim rows, independent
   model.setComparisonFilter('unassigned');
   assert.equal(model.comparisonView.rows.length, 0);
   assert.equal(model.comparisonView.unassigned.length, 2); // Original full-run videos have no authored role.
+  const selected = [row.selectedBefore!, row.selectedAfter!].map((media) => ({
+    path: media.artifactPath,
+    purpose: 'screenshot',
+  }));
+  assert.equal(model.pairedArtifacts(selected).length, 1);
+  assert.equal(model.artifactRole(selected[0]!.path), 'before');
+  assert.equal(model.artifactRole(selected[1]!.path), 'after');
+  assert.equal(model.pairedArtifacts(selected.slice(1)).length, 0);
+  assert.equal(model.artifactRole('before-AC1.png'), null);
+
   const mismatched = createEvidenceReviewModel({
     package: source,
     comparisonSnapshot: { baseSha: '3'.repeat(40), headSha },

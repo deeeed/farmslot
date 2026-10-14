@@ -147,14 +147,7 @@ export function SourceStatusSection(props: SourceStatusSectionProps) {
           </Pressable>
         </>
       )}
-      {view && !view.configured && (
-        <Text style={baseStyles.textSecondary}>
-          Source authority is not configured. Retained inputs are read-only.
-        </Text>
-      )}
-      {view?.runSource?.selectionRefusal && (
-        <Text style={baseStyles.textSecondary}>{view.runSource.selectionRefusal}</Text>
-      )}
+      {view?.readOnlyReason && <Text style={baseStyles.textSecondary}>{view.readOnlyReason}</Text>}
       {view?.rows.map((row) => (
         <SourceRow key={row.declaration.id} row={row} snapshot={snapshot} controller={controller} />
       ))}
