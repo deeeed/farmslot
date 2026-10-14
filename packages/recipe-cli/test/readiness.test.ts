@@ -19,6 +19,7 @@ import {
   type DoctorCommandOptions,
   handleChecklist,
   handleDoctor,
+  handleHarness,
   handleLogs,
   handlePrepare,
   handleRecipeQuality,
@@ -520,6 +521,64 @@ describe('the doctor report', () => {
 });
 
 describe('doctor', () => {
+  test('built-in overlay operations leave files and installer overrides untouched; verify stays real', async () => {
+    const target = tempRoot();
+    const retained = path.join(target, 'existing-overlay.txt');
+    fs.writeFileSync(retained, 'retained');
+    let ready = false;
+    let verified = 0;
+    const surface = fakeAdapter('shop', {
+      harness: {
+        kind: 'built-in',
+        verify: () => ({
+          inProcess: async () => async () => {
+            verified++;
+            return ready ? 0 : 1;
+          },
+        }),
+      },
+    });
+    useAdapters(surface);
+    const install = () => {
+      throw new Error('installer override must not run');
+    };
+    for (const action of ['install', 'cleanup']) {
+      const result = await capture(() =>
+        handleHarness([action, '--adapter', 'shop', '--target', target, '--json'], { install }),
+      );
+      assert.equal(result.result, 0);
+      assert.match(JSON.parse(result.stdout).message, /Readiness was not checked/);
+      assert.deepEqual(fs.readdirSync(target), ['existing-overlay.txt']);
+      assert.equal(fs.readFileSync(retained, 'utf8'), 'retained');
+    }
+    const verify = () =>
+      capture(() => handleHarness(['verify', '--adapter', 'shop', '--target', target, '--json']));
+    assert.equal((await verify()).result, 1);
+    ready = true;
+    assert.equal((await verify()).result, 0);
+    assert.equal(verified, 2);
+  });
+
+  test('doctor --fix does not install an overlay for a built-in bridge', async () => {
+    shopHost();
+    const target = doctorTarget();
+    useAdapters(
+      fakeAdapter('shop', {
+        harness: { kind: 'built-in', verify: () => ({ error: 'bridge unavailable' }) },
+      }),
+    );
+    process.env.SHOP_HARNESS_INSTALL_BIN = path.join(target, 'must-not-run');
+    const fixed = await capture(() =>
+      handleDoctor(parseArgs(['--adapter', 'shop', '--target', target, '--fix', '--json']), {
+        manifest: manifestOk,
+      }),
+    );
+    const report = JSON.parse(fixed.stdout);
+    assert.equal(report.failed.includes('overlay'), false);
+    assert.equal(report.fixed.includes('overlay'), false);
+    assert.equal(fs.existsSync(path.join(target, 'temp/recipe/harness')), false);
+  });
+
   function doctorTarget(): string {
     const target = tempRoot();
     process.env.RECIPE_RUNTIME_DIR = 'temp/recipe/runtime';

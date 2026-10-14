@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Skip checkout overlay installation for declared built-in bridges during default run/call healing and doctor repair; keep real verification and report install/cleanup as unnecessary.
 
 ## 0.16.3 - 2026-10-14
 

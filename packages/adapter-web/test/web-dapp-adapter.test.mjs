@@ -13,6 +13,8 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { defineAdapter } from '@farmslot/adapter-sdk';
+
 import {
   accountName,
   appPort,
@@ -101,6 +103,17 @@ describe('web-dapp adapter shape', () => {
     assert.equal(adapter.harness.restart, 'host launch');
     assert.equal(typeof adapter.harness.install.entry, 'string');
     assert.equal(typeof adapter.reload, 'function');
+  });
+
+  it('registers a built-in bridge without inheriting overlay installer leaves', () => {
+    const verify = () => ({ command: 'host-verify', prefixArgs: [] });
+    const adapter = defineAdapter(
+      createWebDappAdapter({ hooks: { harness: { kind: 'built-in', verify } } }),
+    );
+    assert.equal(adapter.harness.kind, 'built-in');
+    assert.equal(adapter.harness.verify, verify);
+    assert.equal('install' in adapter.harness, false);
+    assert.equal('cleanup' in adapter.harness, false);
   });
 });
 

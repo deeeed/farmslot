@@ -1652,6 +1652,42 @@ describe('recipe child executable', () => {
 });
 
 describe('run', () => {
+  for (const command of ['run', 'call'] as const) {
+    test(`default ${command} on a built-in bridge skips overlay files and installer overrides`, async () => {
+      const target = checkout();
+      const registry = createAdapterRegistry();
+      registry.register({
+        ...webAdapter(calls),
+        harness: { kind: 'built-in', verify: () => ({ error: 'verification is separate' }) },
+      });
+      configureHarnessAdapters(registry);
+      process.env.SHOP_HARNESS_INSTALL_BIN = path.join(target, 'must-not-run');
+      const flags = ['--adapter', 'web', '--target', target, '--json'];
+      const result = await capture(() =>
+        command === 'call'
+          ? handleCall(['shop.ping', 'mode=fast', ...flags], callOptions)
+          : handleRun(
+              [
+                recipeFile(target, {
+                  ping: {
+                    action: 'shop.ping',
+                    mode: 'fast',
+                    intent: 'Observe the bridge.',
+                    next: 'done',
+                  },
+                  done: { action: 'end', status: 'pass' },
+                }),
+                ...flags,
+              ],
+              runOptions,
+            ),
+      );
+      assert.equal(result.value, 0, result.stderr.join('\n'));
+      assert.deepEqual(lastJson(result.stdout).mutations, []);
+      assert.equal(fs.existsSync(path.join(target, 'temp/recipe/harness')), false);
+    });
+  }
+
   test('lists evidence produced through a fallback provider in json, stream and human output', async () => {
     const target = checkout();
     const recipe = recipeFile(target, {
