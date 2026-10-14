@@ -4,6 +4,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Bind monorepo app recipe runs and calls to checkout-root tasks while preserving app execution and outside-checkout refusal.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.17.1 - 2026-10-14
