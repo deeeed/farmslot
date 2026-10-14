@@ -8,7 +8,13 @@ import { Command } from 'commander';
 
 import { fileFingerprint, recipeOutputRoots, sourceSnapshot } from '@farmslot/recipe-cli/harness';
 
-import { environment, fixture, run, runProcess } from '../../test/helpers/project-doctor.js';
+import {
+  environment,
+  fixture,
+  run,
+  runProcess,
+  uiRecordingFixture,
+} from '../../test/helpers/project-doctor.js';
 import { OutputContext } from '../output.js';
 
 import { registerDoctorCommand } from './doctor.js';
@@ -30,6 +36,21 @@ test('conformance options without the switch refuse instead of running installat
     'example',
     '--recipe',
     'smoke',
+  ]);
+  assert.equal(result.status, 1);
+  assert.equal(result.envelope.error.code, 'CONFORMANCE_REQUIRED');
+  assert.equal(fs.existsSync(`${root}.imported`), false);
+});
+
+test('doctor recording controls require conformance before provider import', async (t) => {
+  const { root } = fixture(t);
+  const result = await run(t, root, [], {}, [
+    '--json',
+    'doctor',
+    root,
+    '--record-video=off',
+    '--recording-reason',
+    'Local validation',
   ]);
   assert.equal(result.status, 1);
   assert.equal(result.envelope.error.code, 'CONFORMANCE_REQUIRED');
@@ -535,6 +556,14 @@ test('live doctor refuses missing authority and missing proof declarations befor
       (entry: { status: string }) => entry.status === 'fail',
     ),
   );
+});
+
+test('live doctor still refuses UI recording off without its required reason', async (t) => {
+  const { root, flags } = uiRecordingFixture(t);
+  const result = await run(t, root, flags);
+  assert.equal(result.status, 1);
+  assert.match(JSON.stringify(result.envelope), /Disabling UI recording requires recordingReason/);
+  assert.equal(fs.existsSync(path.join(root, 'artifacts', 'captured')), false);
 });
 
 test('ordinary project doctor probes readiness without preflighting every recipe', async (t) => {
