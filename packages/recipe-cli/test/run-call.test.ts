@@ -1604,6 +1604,53 @@ describe('network observation', () => {
   });
 });
 
+describe('recipe child executable', () => {
+  for (const command of ['run', 'call'] as const) {
+    for (const locked of [false, true]) {
+      test(`${command} transports the ${locked ? 'wrapper-locked' : 'configured'} executable without changing the parent environment`, async () => {
+        const target = checkout();
+        const expected = locked
+          ? path.join(target, 'locked', 'bin', 'shop-harness')
+          : path.join(harnessHost().packageRoot, harnessHost().bin);
+        if (locked) process.env.SHOP_HARNESS_EXECUTABLE = expected;
+        else delete process.env.SHOP_HARNESS_EXECUTABLE;
+        const before = process.env.SHOP_HARNESS_EXECUTABLE;
+        const cmd = 'printf "%s" "$SHOP_HARNESS_EXECUTABLE"';
+        const flags = ['--adapter', 'api', '--target', target, '--heal', 'off', '--json'];
+        const result = await capture(() =>
+          command === 'call'
+            ? handleCall(['command', `cmd=${cmd}`, ...flags], callOptions)
+            : handleRun(
+                [
+                  recipeFile(target, {
+                    read: {
+                      action: 'command',
+                      cmd,
+                      intent: 'Read the selected host executable.',
+                      next: 'done',
+                    },
+                    done: { action: 'end', status: 'pass' },
+                  }),
+                  ...flags,
+                ],
+                runOptions,
+              ),
+        );
+        assert.equal(result.value, 0, result.stderr.join('\n'));
+        const envelope = lastJson(result.stdout);
+        const output =
+          command === 'call'
+            ? envelope.output
+            : JSON.parse(
+                fs.readFileSync((envelope.result as { tracePath: string }).tracePath, 'utf8'),
+              ).entries.find((entry: { nodeId: string }) => entry.nodeId === 'read').output;
+        assert.equal((output as { stdout: string }).stdout, expected);
+        assert.equal(process.env.SHOP_HARNESS_EXECUTABLE, before);
+      });
+    }
+  }
+});
+
 describe('run', () => {
   test('lists evidence produced through a fallback provider in json, stream and human output', async () => {
     const target = checkout();

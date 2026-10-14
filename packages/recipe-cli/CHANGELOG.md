@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.16.2 - 2026-10-14
+
+- Forward the selected provider executable to recipe children in shared run and call commands, preserving wrapper-locked installations.
+
 ## 0.16.1 - 2026-10-14
 
 - Use the coordinated recipe release for content-based dependency readiness and engine-owned evidence manifests.
