@@ -154,7 +154,7 @@ export class GitHeadCache {
         });
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
-        if (!['ENOENT', 'ENOTDIR', 'EACCES', 'ENOSPC'].includes(code ?? '')) throw error;
+        if (!metadataUnavailable(error) && code !== 'ENOSPC') throw error;
         // The bounded filesystem recheck still observes HEAD when watching is unavailable.
       }
     }

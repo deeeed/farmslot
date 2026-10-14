@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import fsCallbacks, { existsSync } from 'node:fs';
 import fs, { chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
@@ -204,6 +204,22 @@ test('unavailable metadata on one cwd preserves the healthy inventory branches',
     const branches = await Promise.all([f.cache.read(badCwd), f.cache.read(f.repo)]);
     assert.deepEqual(branches, [undefined, 'main'], code);
   }
+});
+
+test('TCC-refused directory watching preserves the bounded HEAD polling fallback', async (t) => {
+  const f = await fixture(t);
+  const mocked = mock.method(fsCallbacks, 'watch', () => {
+    throw Object.assign(new Error('directory watching refused'), { code: 'EPERM' });
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    mocked.mock.restore();
+    syncBuiltinESMExports();
+  });
+  assert.equal(await f.cache.read(f.repo), 'main');
+  f.git('checkout', '-qb', 'feature/unwatched');
+  f.tick();
+  assert.equal(await f.cache.read(f.repo), 'feature/unwatched');
 });
 
 test('shutdown kills only its pending query and waits until the child is reaped', async (t) => {
