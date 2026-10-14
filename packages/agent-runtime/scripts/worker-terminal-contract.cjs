@@ -174,6 +174,7 @@ const BUILTIN_FLOW_COMMANDS = {
 const DEFAULT_WHEN_PRESENT = [
   {
     path: 'artifacts/recipe.json',
+    // The manifest requirement resolves to the selected engine attempt, not a root copy.
     alsoRequire: ['artifacts/recipe-coverage.md', 'artifacts/evidence-manifest.json'],
     requireRecipeQuality: true,
     requireRecipeCoverage: true,
@@ -431,6 +432,21 @@ function expandedArtifactsForCommand(contract, command, fileExists) {
 }
 
 const DETERMINISTIC_REFERENCE = /\[DETERMINISTIC:\s*([A-Za-z_][A-Za-z0-9_.]*)\s*\]/;
+
+/** Resolve the logical manifest requirement through the existing retained selection. */
+function resolveWorkerTerminalArtifactPath(taskDir, relPath, recordedEvidenceContractVersion = 1) {
+  if (relPath !== 'artifacts/evidence-manifest.json') return relPath;
+  if (!fs.existsSync(path.join(taskDir, 'artifacts/latest-valid-recipe-run.json'))) return relPath;
+  const { readRecipeAttemptSelection } = require('./retained-recipe-attempt.cjs');
+  const pointer = readRecipeAttemptSelection(taskDir);
+  if (!pointer) throw new Error('Invalid retained recipe attempt selection.');
+  const selected = `artifacts/${pointer.relativeArtifactRoot}/evidence-manifest.json`;
+  if (recordedEvidenceContractVersion !== 0 && recordedEvidenceContractVersion !== 1)
+    throw new Error('Unsupported recorded evidence contract.');
+  if (recordedEvidenceContractVersion === 0 && !fs.existsSync(path.resolve(taskDir, selected)))
+    return relPath;
+  return selected;
+}
 
 function deterministicDeclarations(markdown, checklist) {
   return enumerateChecklistCheckboxes(markdown).flatMap((item) => {
@@ -770,5 +786,6 @@ module.exports = {
   templateTerminalCommands,
   templateBodyScope,
   expandedArtifactsForCommand,
+  resolveWorkerTerminalArtifactPath,
   deterministicChecks,
 };

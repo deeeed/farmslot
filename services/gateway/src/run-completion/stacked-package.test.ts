@@ -23,6 +23,8 @@ let run: Run;
 let lineageParent: Run | null = null;
 let repo = '';
 const templateBases: string[] = [];
+let mirrorCopied = 1;
+let mirrorOptions: Parameters<typeof nativeMirror.refreshArtifactMirror>[1];
 const vars = () =>
   makeVars({ slotId: 'stack-fixture', projectName: 'stack-fixture', remoteRepo: repo, repo });
 mock.module('../core/config.js', {
@@ -59,7 +61,13 @@ mock.module('../runs/store.js', {
   },
 });
 mock.module('./artifact-mirror.js', {
-  namedExports: { ...nativeMirror, refreshArtifactMirror: async () => 1 },
+  namedExports: {
+    ...nativeMirror,
+    refreshArtifactMirror: async (_run: Run, options: typeof mirrorOptions) => {
+      mirrorOptions = options;
+      return mirrorCopied;
+    },
+  },
 });
 mock.module('../runners/session-process.js', {
   namedExports: { ...nativeSession, resolveRunnerSessionForRun: async () => null },
@@ -77,7 +85,8 @@ mock.module('./pr-template.js', {
     },
   },
 });
-const { prepareCompletionPackage, renderCurrentDescription } = await import('./orchestrator.js');
+const { prepareCompletionPackage, renderCurrentDescription, runCompletionPipeline } =
+  await import('./orchestrator.js');
 const { publicationBaseForRun, stackPrBase } = await import('../run-engine/stack-base.js');
 const { parseGitNumstat } = await import('../run-engine/diff-artifacts.js');
 const { captureCurrentReviewSnapshot } = await import('../review/snapshots.js');
@@ -178,6 +187,33 @@ function resetRun(currentStack?: RunStack) {
 
 // The file's elapsed time includes setup; each case times its assertions separately.
 await prepareFixture();
+
+test('a required publish mirror accepts zero transfers and forwards publication preflight', async (t) => {
+  resetRun();
+  mirrorCopied = 0;
+  t.after(() => {
+    mirrorCopied = 1;
+  });
+  const completion = await prepareCompletionPackage(run.id, {
+    requireArtifactMirror: true,
+    reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+  });
+  assert.equal(completion.completion.artifactsCopied, true);
+  assert.equal(completion.prPackage.headSha, headSha);
+  assert.deepEqual(mirrorOptions, { requireSourceArtifacts: true, forPublication: true });
+});
+
+test('no-code completion mirrors without requesting publication preflight', async () => {
+  resetRun();
+  run.recordedEvidenceContractVersion = 1;
+  run.metrics.disposition = 'already_fixed';
+  const completion = await runCompletionPipeline(run.id, {
+    suppressPrMutation: true,
+    skipRetrospective: true,
+  });
+  assert.equal(completion.artifactsCopied, true);
+  assert.notEqual(mirrorOptions?.forPublication, true);
+});
 
 test('stacked package and preview exclude the upstream nine files', async () => {
   resetRun(stack);

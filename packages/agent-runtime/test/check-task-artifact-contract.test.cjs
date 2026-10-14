@@ -168,7 +168,7 @@ try {
   );
   selectedResult = spawnSync(process.execPath, [checker, selectedTask], { encoding: 'utf8' });
   assert.equal(selectedResult.status, 1);
-  assert.match(selectedResult.stderr, /invalid pointer/);
+  assert.match(selectedResult.stderr, /Invalid retained recipe attempt selection/);
   console.log(
     `retained-attempt selection cases: ${(performance.now() - selectionStarted).toFixed(1)} ms`,
   );
