@@ -6,6 +6,8 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Project verified visual judgments in the shared evidence review model.
 
+## 0.11.0 - 2026-10-14
+
 - Classify retained evidence with the gateway run contract version so newer invalid packages cannot appear as Legacy.
 - Show verified untestable overrides with the original engine verdict through the shared evidence review model.
 

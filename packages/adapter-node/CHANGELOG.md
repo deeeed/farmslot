@@ -4,6 +4,12 @@ All notable changes to `@farmslot/adapter-node` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.1.16 - 2026-10-14
+
+- Use the coordinated recipe-engine release for immutable package closeout and engine-owned publication manifests.
+
 ## 0.1.15 - 2026-10-13
 
 - Refresh recipe dependencies for retained task attempts.
