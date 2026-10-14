@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
 
-import type { AcceptanceStatusLedger, Run, TaskProgressResult } from '@farmslot/protocol';
+import type { RecipeClaimLedger, Run, TaskProgressResult } from '@farmslot/protocol';
 
 import '../runtime/mock-pty.test-support.js';
 
@@ -393,7 +393,7 @@ test('a remote engine ledger event updates acceptance once, and nothing routes a
     );
     const ledgerCall = watchCalls.find((call) => call.path.endsWith('acceptance-status.json'));
     assert.ok(ledgerCall, 'the engine ledger is watched on the node');
-    const ledger: AcceptanceStatusLedger = {
+    const ledger: RecipeClaimLedger = {
       schemaVersion: 2,
       recipeRunId: 'test-execution',
       recording: { status: 'not-required', segments: [] },
@@ -408,7 +408,6 @@ test('a remote engine ledger event updates acceptance once, and nothing routes a
           moments: [],
           evidence: ['artifacts/after.png'],
           recipeNodes: [],
-          updatedAt: '2026-10-14T00:00:00Z',
         },
       ],
     };
