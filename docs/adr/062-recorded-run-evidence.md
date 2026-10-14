@@ -426,3 +426,37 @@ types. The existing recipe artifact CLI, runner writer and SDK review model expo
 them with default execution behavior; no additional command family or flag is
 needed. Gateway reads, both clients and historical projections consume this one
 contract. Implementation and package publication are recorded separately.
+
+## Amendment 6 (2026-10-14): Authenticated visual review and QA binding
+
+**Status:** Proposed, approved for the single step 7 implementation/review PR.
+**Specification:** [Authenticated visual review](../reference/recorded-run-evidence.md#authenticated-visual-review).
+
+### Decision
+
+The gateway records a credential-backed person's visual judgment in the existing
+Run store. It binds the judgment to one selected execution, its checked input
+closure and the engine's exact moment references. Actor and time come from the
+gateway. Confirming or rejecting a visual claim feeds the existing engine reducer;
+it never changes retained package or task-ledger bytes.
+
+QA gates bind task criteria to schema-2 engine claims and their execution identity.
+Remove the schema-1 file-reference binding. State assertions, pending visual
+claims and authorized untestable exceptions keep their existing rules.
+
+### Rationale and consequences
+
+A worker note or actor string cannot authenticate a visual verdict. One persisted
+human fact and one engine reducer preserve the original recording while making
+the review reproducible. Selected captured output can be reviewed after a run
+ends; this records evidence meaning and grants no publication or gate approval.
+Historical gate snapshots keep their captured judgments and remain read-only.
+
+### Public surface
+
+Use the existing `farmslot run gate` actions `confirm-visual` and `reject-visual`,
+with its claim, execution and reason selectors. `RunRpc.reviewVisualClaim` exposes
+the same authenticated operation. Protocol owns receipt/request types; the runner
+owns `deriveReviewedRecipeClaims` and the SDK re-exports it through `/evidence`. The shared
+review model supplies both clients. These additive contracts are experimental
+until their coordinated release; no harness writer or compatibility path is added.

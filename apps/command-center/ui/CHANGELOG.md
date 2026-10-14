@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show authenticated visual claim reviews through the shared evidence model.
+
 - Use the shared run evidence contract in package status and recovery guidance.
 - Review and record verified untestable exceptions without resolving the evidence gate.
 

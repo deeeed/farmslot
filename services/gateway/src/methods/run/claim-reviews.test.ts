@@ -1,0 +1,469 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import fsPromises, { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
+import os from 'node:os';
+import path from 'node:path';
+import test, { type TestContext } from 'node:test';
+
+import { readRecordedEvidencePackage } from '@farmslot/adapter-sdk';
+import {
+  deriveReviewedRecipeClaims,
+  validateRecordedEvidencePackage,
+} from '@farmslot/adapter-sdk/evidence';
+import type { ArtifactRef, RunDecision, RunReviewVisualClaimParams } from '@farmslot/protocol';
+
+await import('../../runtime/mock-pty.test-support.js');
+const { createRun, updateRun, getRun, runsDirectory } = await import('../../runs/store.js');
+const { runReviewVisualClaim } = await import('./claim-reviews.js');
+const { visualReviewSnapshotIdentity, readVisualReviewSource } =
+  await import('../../run-engine/recorded-evidence-sources.js');
+const { visualReviewAuthority } = await import('../../run-engine/claim-reviews.js');
+const { deleteTestRunIfPresent, makeReadyGatePackage } =
+  await import('../../run-engine/test-fixtures.js');
+const { computeReadyGatePackageHash } = await import('../../run-completion/ready-gate-package.js');
+const { collectRunGateReadiness } = await import('../../run-engine/gate-prerequisites.js');
+const { readRunRecordedEvidence } = await import('./evidence-review.js');
+
+async function fixture(t: TestContext) {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'visual-claim-review-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { files } = JSON.parse(
+    await readFile(
+      new URL(
+        '../../../../../packages/recipe-runner/test/fixtures/visual-review-package.json',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  ) as { files: Record<string, string> };
+  const prefix = 'artifacts/recipe-runs/attempt/';
+  const inventory: ArtifactRef[] = [];
+  for (const [file, bytes] of Object.entries({
+    ...Object.fromEntries(Object.entries(files).map(([file, bytes]) => [prefix + file, bytes])),
+    'artifacts/latest-valid-recipe-run.json': JSON.stringify({
+      version: 1,
+      relativeArtifactRoot: 'recipe-runs/attempt',
+    }),
+  })) {
+    await mkdir(path.dirname(path.join(root, file)), { recursive: true });
+    await writeFile(path.join(root, file), bytes);
+    inventory.push({
+      path: file,
+      purpose: 'evidence',
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    });
+  }
+  const directory = path.join(root, prefix);
+  const input = (await readRecordedEvidencePackage(directory)).input;
+  assert.equal(validateRecordedEvidencePackage(input).status, 'valid');
+  const prepared = makeReadyGatePackage({ evidenceManifest: inventory, selectedEvidenceKeys: [] });
+  prepared.packageHash = computeReadyGatePackageHash(prepared);
+  const run = createRun({
+    flowType: 'dev',
+    project: 'test-project',
+    ticketOrPr: 'UNIT-VISUAL-CLAIM',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  const decision: RunDecision = {
+    id: 'gate',
+    type: 'engine_human_gate',
+    title: 'Review',
+    description: 'Review retained proof',
+    createdAt: '2026-10-14T00:00:00Z',
+    actions: [],
+    payload: {
+      kind: 'ready',
+      prNumber: null,
+      repo: null,
+      workerReport: 'Finished',
+      branch: prepared.branch,
+      diffStat: prepared.diffStat,
+      prPackage: prepared,
+    },
+  };
+  updateRun(run.id, {
+    taskFile: path.join(root, 'TASK.md'),
+    status: 'human-gating',
+    decisions: [decision],
+  });
+  const params: RunReviewVisualClaimParams = {
+    runId: run.id,
+    decisionId: decision.id,
+    claimId: 'check-1',
+    recipeRunId: input.claims!.recipeRunId,
+    snapshotIdentity: visualReviewSnapshotIdentity(run, decision.id),
+    verdict: 'confirmed',
+    reason: 'The recorded view shows the expected value.',
+  };
+  const person = { principalId: 'person', credentialId: 'credential', displayName: 'Reviewer' };
+  const dependencies = { authorizeEvidenceAttestation: () => person };
+  return { run, decision, params, dependencies, input, prepared, directory, person, inventory };
+}
+
+test('durable visual review derives parent/check verdicts, retries once and preserves original bytes', async (t) => {
+  const f = await fixture(t);
+  const before = await readFile(path.join(f.directory, 'acceptance-status.json'));
+  const result = await runReviewVisualClaim(f.params, () => {}, f.dependencies);
+  assert.equal(result.receipt.approver.principalId, 'person');
+  assert.deepEqual(
+    result.receipt.moments,
+    f.input.claims!.criteria.find(({ id }) => id === 'check-1')!.moments,
+  );
+  assert.deepEqual(
+    deriveReviewedRecipeClaims(f.input, visualReviewAuthority(f.run, f.input)).map(
+      ({ verdict }) => verdict,
+    ),
+    ['proven', 'proven'],
+  );
+  assert.deepEqual(await readFile(path.join(f.directory, 'acceptance-status.json')), before);
+  assert.equal(f.decision.resolvedAt, undefined);
+  const stored = JSON.parse(await readFile(path.join(runsDirectory(), `${f.run.id}.json`), 'utf8'));
+  assert.equal(stored.visualJudgmentReceipts[0].id, result.receipt.id);
+  assert.deepEqual(
+    deriveReviewedRecipeClaims(f.input, visualReviewAuthority(stored, f.input)),
+    deriveReviewedRecipeClaims(f.input, visualReviewAuthority(f.run, f.input)),
+  );
+  assert.equal(
+    (await runReviewVisualClaim(f.params, () => {}, f.dependencies)).receipt.id,
+    result.receipt.id,
+  );
+  assert.equal(f.run.visualJudgmentReceipts?.length, 1);
+  const rejected = await runReviewVisualClaim(
+    {
+      ...f.params,
+      snapshotIdentity: visualReviewSnapshotIdentity(f.run, f.decision.id),
+      verdict: 'rejected',
+      reason: 'The value is wrong.',
+    },
+    () => {},
+    f.dependencies,
+  );
+  assert.notEqual(rejected.receipt.id, result.receipt.id);
+  assert.deepEqual(
+    deriveReviewedRecipeClaims(f.input, visualReviewAuthority(f.run, f.input)).map(
+      ({ verdict }) => verdict,
+    ),
+    ['failed', 'failed'],
+  );
+  assert.deepEqual(
+    deriveReviewedRecipeClaims(
+      f.input,
+      visualReviewAuthority(f.run, f.input, [result.receipt.id]),
+    ).map(({ verdict }) => verdict),
+    ['proven', 'proven'],
+  );
+  assert.equal(
+    (await runReviewVisualClaim(f.params, () => {}, f.dependencies)).receipt.id,
+    result.receipt.id,
+  );
+  assert.equal(f.run.visualJudgmentReceipts?.length, 2);
+  const fresh = await runReviewVisualClaim(
+    {
+      ...f.params,
+      snapshotIdentity: visualReviewSnapshotIdentity(f.run, f.decision.id),
+    },
+    () => {},
+    f.dependencies,
+  );
+  assert.notEqual(fresh.receipt.id, result.receipt.id);
+  assert.deepEqual(
+    deriveReviewedRecipeClaims(f.input, visualReviewAuthority(f.run, f.input)).map(
+      ({ verdict }) => verdict,
+    ),
+    ['proven', 'proven'],
+  );
+  assert.equal(f.run.visualJudgmentReceipts?.length, 3);
+});
+
+test('unauthenticated, spoofed, stale, wrong-execution and derived-parent requests record nothing', async (t) => {
+  const f = await fixture(t);
+  await assert.rejects(
+    runReviewVisualClaim(f.params, () => {}),
+    /credential-backed person/,
+  );
+  await assert.rejects(
+    runReviewVisualClaim(f.params, () => {}, {
+      authorizeEvidenceAttestation: () => {
+        throw new Error('Service credentials cannot attest');
+      },
+    }),
+    /Service credentials/,
+  );
+  for (const patch of [
+    { reason: ' ' },
+    { snapshotIdentity: 'old' },
+    { recipeRunId: 'other' },
+    { claimId: 'case-1' },
+    { actor: 'operator' },
+    { moments: [] },
+    { judgedAt: '2026-10-14' },
+  ])
+    await assert.rejects(runReviewVisualClaim({ ...f.params, ...patch }, () => {}, f.dependencies));
+  assert.equal(f.run.visualJudgmentReceipts, undefined);
+  assert.throws(
+    () => updateRun(f.run.id, { visualJudgmentReceipts: [] }),
+    /verified gateway writer/,
+  );
+});
+
+test('a changed retained file remains an integrity refusal, even with a person', async (t) => {
+  const f = await fixture(t);
+  await writeFile(path.join(f.directory, 'video.mp4'), 'changed recording');
+  await assert.rejects(
+    runReviewVisualClaim(f.params, () => {}, f.dependencies),
+    /missing or changed/,
+  );
+  assert.equal(f.run.visualJudgmentReceipts, undefined);
+});
+
+test('source and person races between reads refuse before persistence', async (t) => {
+  const f = await fixture(t);
+  let reads = 0;
+  await assert.rejects(
+    runReviewVisualClaim(f.params, () => {}, {
+      ...f.dependencies,
+      source: async (...args) => {
+        const source = await readVisualReviewSource(...args);
+        if (++reads === 2) f.prepared.packageHash = 'changed';
+        return source;
+      },
+    }),
+    /selection changed/,
+  );
+  f.prepared.packageHash = computeReadyGatePackageHash(f.prepared);
+  let authorizations = 0;
+  await assert.rejects(
+    runReviewVisualClaim(f.params, () => {}, {
+      authorizeEvidenceAttestation: () =>
+        ++authorizations === 1 ? f.person : { ...f.person, credentialId: 'replaced' },
+    }),
+    /identity changed/,
+  );
+  assert.equal(f.run.visualJudgmentReceipts, undefined);
+});
+
+test('failed persistence and revocation during persistence expose no receipt after reload', async (t) => {
+  const f = await fixture(t);
+  const write = fsPromises.writeFile;
+  let mode = 'fail';
+  let revoked = false;
+  const handle = t.mock.method(
+    fsPromises,
+    'writeFile',
+    async (...args: Parameters<typeof write>) => {
+      if (String(args[0]).includes(`${f.run.id}.json.tmp`) && mode === 'fail')
+        throw new Error('Storage failed');
+      const result = await write(...args);
+      if (String(args[0]).includes(`${f.run.id}.json.tmp`) && mode === 'revoke') revoked = true;
+      return result;
+    },
+  );
+  syncBuiltinESMExports();
+  t.after(() => {
+    handle.mock.restore();
+    syncBuiltinESMExports();
+  });
+  await assert.rejects(
+    runReviewVisualClaim(f.params, () => {}, f.dependencies),
+    /Storage failed/,
+  );
+  assert.equal(f.run.visualJudgmentReceipts, undefined);
+  mode = 'revoke';
+  await assert.rejects(
+    runReviewVisualClaim(f.params, () => {}, {
+      authorizeEvidenceAttestation: () => {
+        if (revoked) throw new Error('Credential revoked');
+        return f.person;
+      },
+    }),
+    /Credential revoked/,
+  );
+  assert.equal(getRun(f.run.id)?.visualJudgmentReceipts, undefined);
+  const stored = JSON.parse(await readFile(path.join(runsDirectory(), `${f.run.id}.json`), 'utf8'));
+  assert.equal(stored.visualJudgmentReceipts, undefined);
+});
+
+test('cancelled retained evidence can be reviewed without changing its historical gate or reopening the run', async (t) => {
+  const f = await fixture(t);
+  f.decision.resolvedAt = '2026-10-14T00:01:00Z';
+  updateRun(f.run.id, { status: 'cancelled' });
+  const historical = JSON.stringify(f.decision);
+  await runReviewVisualClaim(f.params, () => {}, f.dependencies);
+  assert.equal(f.run.status, 'cancelled');
+  assert.equal(JSON.stringify(f.decision), historical);
+  updateRun(f.run.id, { readOnly: true });
+  await assert.rejects(
+    runReviewVisualClaim(f.params, () => {}, f.dependencies),
+    /read-only/,
+  );
+});
+
+test('output review updates receipt references while preserving report and artifact identities', async (t) => {
+  const f = await fixture(t);
+  f.decision.payload = {
+    kind: 'output-review',
+    manifestDigest: 'captured',
+    reportPath: 'artifacts/report.html',
+  };
+  updateRun(f.run.id, {
+    output: {
+      workerFinished: true,
+      capturedAt: '2026-10-14T00:00:00Z',
+      manifestDigest: 'captured',
+      reportPath: 'artifacts/report.html',
+      artifactManifest: f.inventory,
+    },
+  });
+  const output = JSON.stringify(f.run.output);
+  const result = await runReviewVisualClaim(
+    { ...f.params, snapshotIdentity: visualReviewSnapshotIdentity(f.run, f.decision.id) },
+    () => {},
+    f.dependencies,
+  );
+  assert.deepEqual(f.run.decisions[0]!.payload, {
+    kind: 'output-review',
+    manifestDigest: 'captured',
+    reportPath: 'artifacts/report.html',
+    visualJudgmentReceiptIds: [result.receipt.id],
+  });
+  assert.equal(JSON.stringify(f.run.output), output);
+  assert.equal(f.run.decisions[0]!.resolvedAt, undefined);
+});
+
+test('publication freezes qualified reviews and rejected evidence stays blocked after refresh', async (t) => {
+  const f = await fixture(t);
+  f.prepared.reviewPolicy = { minimumReviews: 0, requestedBy: 'dispatch' };
+  f.prepared.packageHash = computeReadyGatePackageHash(f.prepared);
+  f.params.snapshotIdentity = visualReviewSnapshotIdentity(f.run, f.decision.id);
+  const sources = {
+    acceptance: async () => ({
+      criteria: f.input.claims!.criteria.map(({ id, text }) => ({ id, text })),
+      ledger: f.input.claims!,
+      issues: [],
+    }),
+    deterministic: async () => {},
+    selectedEvidence: async () => {},
+    progress: async () => ({ kind: 'idle' as const }),
+    recordedEvidence: async () => [f.input],
+  };
+  const confirmed = await runReviewVisualClaim(f.params, () => {}, f.dependencies);
+  const stale = await collectRunGateReadiness(f.run, f.prepared, sources);
+  assert.ok(stale.reasons.some(({ code }) => code === 'evidence-override-refresh-required'));
+  f.prepared.visualJudgmentReceiptIds = [confirmed.receipt.id];
+  f.prepared.packageHash = computeReadyGatePackageHash(f.prepared);
+  const refreshed = await collectRunGateReadiness(f.run, f.prepared, sources);
+  assert.equal(refreshed.state, 'ready', JSON.stringify(refreshed.reasons));
+  const rejected = await runReviewVisualClaim(
+    {
+      ...f.params,
+      snapshotIdentity: visualReviewSnapshotIdentity(f.run, f.decision.id),
+      verdict: 'rejected',
+      reason: 'The recorded value is wrong.',
+    },
+    () => {},
+    f.dependencies,
+  );
+  f.prepared.visualJudgmentReceiptIds.push(rejected.receipt.id);
+  const blocked = await collectRunGateReadiness(f.run, f.prepared, sources);
+  assert.ok(blocked.reasons.some(({ evidencePolicy }) => evidencePolicy === 'claim-verdict'));
+});
+
+test('QA review consumes only frozen case registration, even when another retained package is valid', async (t) => {
+  const f = await fixture(t);
+  const root = path.dirname(f.run.taskFile!);
+  const history = path.join(root, 'artifacts/recipe-runs/history');
+  await cp(f.directory, history, { recursive: true });
+  const inventory = [
+    ...f.inventory,
+    ...f.inventory
+      .filter(({ path: file }) => file.startsWith('artifacts/recipe-runs/attempt/'))
+      .map((file) => ({
+        ...file,
+        path: file.path.replace('artifacts/recipe-runs/attempt/', 'artifacts/recipe-runs/history/'),
+      })),
+  ];
+  const qa = {
+    profile: { id: 'changes', title: 'Changed behavior', template_id: 'validation/shared' },
+    inputs: { scope: 'pr' },
+  };
+  const index = {
+    version: 1,
+    runId: f.run.id,
+    qa,
+    source: { headSha: 'a'.repeat(40), baseSha: 'b'.repeat(40) },
+    suitePath: 'qa-suite',
+    scope: {
+      path: 'qa-scope.json',
+      digest: `sha256:${'c'.repeat(64)}`,
+      suiteDigest: `sha256:${'d'.repeat(64)}`,
+    },
+    packages: { smoke: 'recipe-runs/attempt' },
+    smoke: { caseId: 'smoke', proofTarget: 'check-1' },
+  };
+  const bytes = JSON.stringify(index);
+  const indexPath = path.join(path.dirname(f.run.taskFile!), 'artifacts/qa-result.json');
+  await writeFile(indexPath, bytes);
+  inventory.push({
+    path: 'artifacts/qa-result.json',
+    purpose: 'json',
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+  });
+  f.decision.payload = {
+    kind: 'output-review',
+    manifestDigest: 'captured-qa',
+    reportPath: 'artifacts/report.html',
+  };
+  updateRun(f.run.id, {
+    flowType: 'qa',
+    qa,
+    qaSource: index.source,
+    output: {
+      capturedAt: '2026-10-14T00:00:00Z',
+      workerFinished: true,
+      manifestDigest: 'captured-qa',
+      reportPath: 'artifacts/report.html',
+      artifactManifest: inventory,
+    },
+  });
+  const source = await readVisualReviewSource(f.run, f.decision.id);
+  assert.deepEqual(
+    source.sources.map(({ artifactPrefix }) => artifactPrefix),
+    ['artifacts/recipe-runs/attempt/'],
+  );
+  const display = await readRunRecordedEvidence(
+    f.run,
+    undefined,
+    { decisionId: f.decision.id, packageHash: 'captured-qa' },
+    f.input.claims!.recipeRunId,
+  );
+  assert.deepEqual(display.errors, []);
+  assert.equal(display.input?.claims?.recipeRunId, f.input.claims!.recipeRunId);
+  const unavailable = await readRunRecordedEvidence(
+    f.run,
+    undefined,
+    { decisionId: f.decision.id, packageHash: 'captured-qa' },
+    'unregistered-corrected-execution',
+  );
+  assert.equal(unavailable.input, undefined);
+  await assert.rejects(
+    runReviewVisualClaim(
+      {
+        ...f.params,
+        snapshotIdentity: source.snapshotIdentity,
+        recipeRunId: 'unregistered-corrected-execution',
+      },
+      () => {},
+      f.dependencies,
+    ),
+    /Select one execution/,
+  );
+  assert.equal(f.run.visualJudgmentReceipts, undefined);
+  const originalIndex = await readFile(indexPath);
+  await runReviewVisualClaim(
+    { ...f.params, snapshotIdentity: source.snapshotIdentity },
+    () => {},
+    f.dependencies,
+  );
+  assert.deepEqual(await readFile(indexPath), originalIndex);
+});

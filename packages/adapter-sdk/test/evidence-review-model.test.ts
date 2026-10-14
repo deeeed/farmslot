@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -7,6 +8,7 @@ import {
   digestRecipeDocument,
   type RecipeClaimDeclaration,
   type RecipeRecordingTimelineDocument,
+  type RecipeVisualJudgmentReceipt,
   recordedEvidenceClosureIdentity,
   type RecordedEvidencePackageInput,
 } from '@farmslot/protocol';
@@ -853,4 +855,57 @@ test('new unverifiable packages never inherit a Legacy label and future run cont
   assert.equal(future.markerSeekMs('video.mp4', 0, 'start'), null);
   assert.equal(future.adjacentFrameMs('video.mp4', 100, 1), null);
   assert.equal(future.displayedFrameRangeMs('video.mp4', 100), null);
+});
+
+test('authenticated review uses one engine projection in every view and preserves source bytes', () => {
+  const input: RecordedEvidencePackageInput = JSON.parse(
+    readFileSync(
+      new URL('../../recipe-runner/test/fixtures/visual-review-package.json', import.meta.url),
+      'utf8',
+    ),
+  ).input;
+  const original = JSON.stringify(input);
+  const receipt: RecipeVisualJudgmentReceipt = {
+    id: 'review',
+    runId: 'run',
+    snapshotIdentity: 'captured',
+    recipeRunId: input.claims!.recipeRunId,
+    claimId: 'check-1',
+    closureIdentity: recordedEvidenceClosureIdentity(input),
+    verdict: 'confirmed',
+    moments: input.claims!.criteria.find(({ id }) => id === 'check-1')!.moments,
+    approver: { principalId: 'person', credentialId: 'credential', displayName: 'Reviewer' },
+    reason: 'Observed the expected view.',
+    judgedAt: '2026-10-14T00:00:00Z',
+  };
+  const authority = {
+    runId: 'run',
+    recipeRunId: receipt.recipeRunId,
+    closureIdentity: receipt.closureIdentity,
+    receipts: [receipt],
+  };
+  for (const context of ['gate', 'pr-preview', 'run-detail', 'artifact'] as const) {
+    const pending = createEvidenceReviewModel({ package: input, context });
+    assert.equal(pending.summary?.proven, 0);
+    const confirmed = createEvidenceReviewModel({
+      package: input,
+      context,
+      visualReviewAuthority: authority,
+    });
+    assert.deepEqual(confirmed.errors, []);
+    assert.equal(confirmed.summary?.proven, 2);
+    const rejected = createEvidenceReviewModel({
+      package: input,
+      context,
+      visualReviewAuthority: {
+        ...authority,
+        receipts: [
+          receipt,
+          { ...receipt, id: 'rejection', verdict: 'rejected', judgedAt: '2026-10-13T00:00:00Z' },
+        ],
+      },
+    });
+    assert.equal(rejected.summary?.failed, 2);
+  }
+  assert.equal(JSON.stringify(input), original);
 });

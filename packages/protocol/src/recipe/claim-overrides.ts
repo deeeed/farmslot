@@ -14,6 +14,9 @@ export function runClaimOverrideSnapshotIdentity(decision: Pick<RunDecision, 'pa
     return digestRecipeDocument({
       manifestDigest: payload.manifestDigest,
       receipts: payload.claimOverrideReceiptIds ?? [],
+      ...(payload.visualJudgmentReceiptIds?.length
+        ? { visualJudgments: payload.visualJudgmentReceiptIds }
+        : {}),
     });
   throw new TypeError('A frozen ready or output-review snapshot is required.');
 }

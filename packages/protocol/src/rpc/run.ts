@@ -40,6 +40,7 @@ export const RunMethods = {
   forSlot: Methods.RUN_FOR_SLOT,
   resolveDecision: Methods.RUN_RESOLVE_DECISION,
   overrideClaim: Methods.RUN_OVERRIDE_CLAIM,
+  reviewVisualClaim: Methods.RUN_REVIEW_VISUAL_CLAIM,
   probeWorkerSignal: Methods.RUN_PROBE_WORKER_SIGNAL,
   sessionCommand: Methods.RUN_SESSION_COMMAND,
   grade: Methods.RUN_GRADE,
@@ -546,12 +547,18 @@ export interface RunRecipeRunsForRunParams {
   /** Load validated metadata for only this displayed recipe group. No media bytes. */
   includeRecordedEvidence?: boolean;
   recipeRunId?: string;
+  /** Select an execution from captured evidence, independently of display-group discovery. */
+  recordedRecipeRunId?: string;
   /** Bind gate/PR-preview metadata to the decision's captured package, never latest artifacts. */
   decisionId?: string;
   evidenceSnapshotHash?: string;
 }
 
 export interface RunRecordedEvidenceReview {
+  visualReviewAuthority?: import('../recipe/claim-reviews.js').RecipeVisualReviewAuthority;
+  /** Frozen source identity for the authenticated human writer; never a latest pointer. */
+  visualReviewContext?: { snapshotIdentity: string; decisionId?: string };
+
   /** 0 identifies retained pre-cutover runs; newer/unknown contracts cannot become Legacy. */
   contractVersion: number;
   failureCode?: import('../recipe/run-contract.js').RecordedEvidenceReadFailureCode;
@@ -601,6 +608,22 @@ export interface RunOverrideClaimParams {
   recipeRunId: string;
   snapshotIdentity: string;
   reason: string;
+}
+
+/** Record evidence meaning without resolving a gate or changing the original package. */
+export interface RunReviewVisualClaimParams {
+  runId: string;
+  decisionId?: string;
+  claimId: string;
+  recipeRunId: string;
+  snapshotIdentity: string;
+  verdict: 'confirmed' | 'rejected';
+  reason: string;
+}
+
+export interface RunReviewVisualClaimResult {
+  run: Run;
+  receipt: import('../recipe/claim-reviews.js').RecipeVisualJudgmentReceipt;
 }
 
 export interface RunOverrideClaimResult {

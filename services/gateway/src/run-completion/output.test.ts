@@ -184,6 +184,18 @@ test('an override arriving during output verification invalidates both confirmat
     assert.equal(getRun(run.id)!.decisions[0].resolvedAt, undefined);
     assert.equal(getRun(run.id)!.status, 'blocked');
   }
+  for (const actionId of ['mark-reviewed', 'close-run']) {
+    const staleRequest = buildRunResolveDecisionParams({ runId: run.id, decision, actionId });
+    const current = structuredClone(decision);
+    if (current.payload?.kind === 'output-review')
+      current.payload.visualJudgmentReceiptIds = ['new-visual-review'];
+    updateRun(run.id, { decisions: [current] });
+    await assert.rejects(
+      runResolveDecision(staleRequest, () => {}),
+      /claim override review changed/,
+    );
+    assert.equal(getRun(run.id)!.decisions[0].resolvedAt, undefined);
+  }
 });
 
 test('report review applies across projects and flows without changing outcome', () => {
@@ -201,8 +213,14 @@ test('report review applies across projects and flows without changing outcome',
     assert.equal(outputReviewDecisions({ ...run, decisions }, output).length, 1);
     decisions[0].resolvedAt = new Date().toISOString();
     decisions[0].resolvedAction = 'mark-reviewed';
+    assert.equal(decisions[0].payload?.kind, 'output-review');
+    if (decisions[0].payload?.kind === 'output-review') {
+      decisions[0].payload.visualJudgmentReceiptIds = ['qualified-review'];
+      decisions[0].payload.claimOverrideReceiptIds = ['qualified-override'];
+    }
     const acknowledged = outputReviewDecisions({ ...run, decisions }, output);
     assert.equal(acknowledged.length, 2);
+    assert.deepEqual(acknowledged[1].payload, decisions[0].payload);
     assert.deepEqual(
       acknowledged[1].actions.map((action) => action.id),
       ['close-run'],
@@ -213,6 +231,10 @@ test('report review applies across projects and flows without changing outcome',
       { ...output, manifestDigest: 'new' },
     );
     assert.equal(changed.filter((decision) => !decision.resolvedAt).length, 1);
+    const payload = changed.at(-1)?.payload;
+    assert.equal(payload?.kind, 'output-review');
+    if (payload?.kind === 'output-review')
+      assert.equal(payload.visualJudgmentReceiptIds, undefined);
   }
 });
 

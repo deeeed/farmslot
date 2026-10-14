@@ -615,22 +615,10 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
 
   const qaRun = createRun({ flowType: 'dev', project: 'generic-project', ticketOrPr: 'QA-OUTPUT' });
   t.after(() => deleteTestRunIfPresent(qaRun.id));
-  const qaCriterion = {
-    id: 'AC-1',
-    text: 'The task discovery output identifies the configured provider.',
-  };
+  const qaCriterion = { id: declaration.id, text: declaration.claim };
   const qaLedger = {
-    schemaVersion: 1 as const,
-    criteria: [
-      {
-        ...qaCriterion,
-        verdict: 'proven' as const,
-        proofMode: 'state' as const,
-        evidence: ['artifacts/discovery.json'],
-        recipeNodes: [],
-        updatedAt: invocation.startedAt,
-      },
-    ],
+    ...claims,
+    criteria: [{ ...claims.criteria[0]!, evidence: ['artifacts/proof/trace.json'] }],
   };
   await writeFile(path.join(root, 'artifacts/acceptance-status.json'), JSON.stringify(qaLedger));
   await writeFile(
@@ -659,6 +647,15 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
   const qaReady = await qaCheck();
   assert.equal(qaReady.state, 'ready', JSON.stringify(qaReady.reasons));
   assert.equal(getRun(qaRun.id)?.decisions.at(-1)?.payload?.kind, 'output-review');
+  const wrongExecution = await collectRunGateReadiness(getRun(qaRun.id)!, null, {
+    ...qaSources,
+    acceptance: async () => ({
+      criteria: [qaCriterion],
+      ledger: { ...qaLedger, recipeRunId: 'unselected-corrected-attempt' },
+      issues: [],
+    }),
+  });
+  assert.ok(wrongExecution.reasons.some((reason) => reason.code === 'evidence-execution-mismatch'));
   const untestableLedger = {
     ...qaLedger,
     criteria: [
@@ -679,7 +676,8 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
     ...qaSources,
     acceptance: async () => ({ criteria: [qaCriterion], ledger: untestableLedger, issues: [] }),
   });
-  assert.equal(untestable.state, 'ready', JSON.stringify(untestable.reasons));
+  assert.equal(untestable.state, 'not-ready');
+  assert.ok(untestable.reasons.some((reason) => reason.code === 'evidence-invalid'));
   const mixedLedger = {
     ...qaLedger,
     criteria: [{ ...qaLedger.criteria[0], proofMode: 'mixed' as const }],
@@ -690,7 +688,7 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
     ...qaSources,
     acceptance: async () => ({ criteria: [qaCriterion], ledger: mixedLedger, issues: [] }),
   });
-  assert.ok(missingVisual.reasons.some((reason) => reason.code === 'evidence-invalid'));
+  assert.equal(missingVisual.state, 'ready', JSON.stringify(missingVisual.reasons)); // Engine mode owns proof; task transport cannot change it.
   await writeFile(path.join(root, 'artifacts/acceptance-status.json'), JSON.stringify(qaLedger));
   await captureRunOutput(qaRun.id, false, true);
   const refreshedDuringProgress = await collectRunGateReadiness(getRun(qaRun.id)!, null, {
@@ -756,9 +754,16 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
     ...qaSources,
     acceptance: async () => ({ criteria: [qaCriterion], ledger: missingStateEvidence, issues: [] }),
   });
-  assert.ok(uncaptured.reasons.some((reason) => reason.code === 'evidence-invalid'));
-  const changedLedger = await qaCheck();
-  assert.ok(changedLedger.reasons.some((reason) => reason.code === 'evidence-invalid'));
+  assert.equal(uncaptured.state, 'ready', JSON.stringify(uncaptured.reasons)); // Canonical frozen engine evidence is authoritative.
+  const changedLedger = await collectRunGateReadiness(getRun(qaRun.id)!, null, {
+    ...qaSources,
+    acceptance: async () => ({
+      criteria: [qaCriterion],
+      ledger: { schemaVersion: 1, criteria: [] },
+      issues: [],
+    }),
+  });
+  assert.ok(changedLedger.reasons.some((reason) => reason.code === 'evidence-execution-mismatch'));
 
   await writeFile(
     path.join(directory, 'recipe-invocation.json'),

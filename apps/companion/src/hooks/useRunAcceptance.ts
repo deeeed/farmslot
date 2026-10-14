@@ -196,6 +196,7 @@ export function useRunAcceptance(
           package: evidence?.recordedEvidence?.input,
           contractVersion: evidence?.recordedEvidence?.contractVersion,
           claimOverrideAuthority: evidence?.recordedEvidence?.claimOverrideAuthority,
+          visualReviewAuthority: evidence?.recordedEvidence?.visualReviewAuthority,
           readErrors: evidence?.recordedEvidence?.errors,
           artifactPrefix: evidence?.recordedEvidence?.artifactPrefix,
           packagePath: evidence?.recordedEvidence?.packagePath,

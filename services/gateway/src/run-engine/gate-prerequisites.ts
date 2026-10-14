@@ -48,7 +48,6 @@ import {
 import { getRun, updateRun } from '../runs/store.js';
 import {
   type AcceptanceStatusRead,
-  parseAcceptanceStatusLedger,
   readAcceptanceStatusForDisplay,
 } from '../tasks/acceptance-status.js';
 import { agentRuntimeScriptForSlot } from '../tasks/agent-runtime-script.js';
@@ -63,6 +62,7 @@ import {
   claimOverrideAuthority,
   projectGateAcceptance,
 } from './claim-overrides.js';
+import { appliedVisualJudgmentReceiptIds, reviewedRecipeClaims } from './claim-reviews.js';
 import { readReviewInputSnapshot } from './diff-artifacts.js';
 import {
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
@@ -398,13 +398,28 @@ export async function collectRunGateReadiness(
             message: 'Human claim overrides changed. Refresh and review the gate package.',
             actionId: 'hold',
           });
+        const visualReceipts = appliedVisualJudgmentReceiptIds(run, inputs);
+        const frozenVisualReceipts =
+          preparedPackage?.visualJudgmentReceiptIds ??
+          (outputDecision?.payload?.kind === 'output-review'
+            ? outputDecision.payload.visualJudgmentReceiptIds
+            : undefined) ??
+          [];
+        if (!isDeepStrictEqual(visualReceipts, [...frozenVisualReceipts].sort()))
+          reasons.push({
+            code: 'evidence-override-refresh-required',
+            prerequisite: 'evidence',
+            actionId: 'hold',
+            message: 'Human visual review changed. Refresh and review the gate package.',
+          });
         const valid =
           inputs.length > 0 &&
           inputs.every((input) => validateRecordedEvidencePackage(input).status === 'valid');
         const projectedRunId = acceptance.ledger?.recipeRunId;
         const projectedIdentityMatches =
-          acceptance.ledger?.schemaVersion !== 2 ||
-          (typeof projectedRunId === 'string' &&
+          (!qaOutput && acceptance.ledger?.schemaVersion !== 2) ||
+          (acceptance.ledger?.schemaVersion === 2 &&
+            typeof projectedRunId === 'string' &&
             projectedRunId.length > 0 &&
             inputs.some((input) => input.claims?.recipeRunId === projectedRunId));
         const executionSatisfied = inputs.every(
@@ -413,11 +428,14 @@ export async function collectRunGateReadiness(
             input.summary.status === 'pass' &&
             input.summary.stopAfterNode === undefined,
         );
+        const reviewed = inputs.map((input) =>
+          valid && input.claims ? reviewedRecipeClaims(run, input) : (input.claims?.criteria ?? []),
+        );
         const claimsSatisfied = inputs.every(
-          (input) =>
+          (input, index) =>
             input.claims &&
             ['complete', 'not-required'].includes(input.claims.recording.status) &&
-            input.claims.criteria.every(
+            reviewed[index]!.every(
               (claim) =>
                 claim.verdict === 'proven' ||
                 // An output review retains unreviewed visual claims for its
@@ -437,18 +455,22 @@ export async function collectRunGateReadiness(
                         acceptance.ledger?.criteria.some(
                           (row) =>
                             row.id === criterion.id &&
-                            isAuthorizedOverride(row, claim, claimOverrideAuthority(run, input)),
+                            isAuthorizedOverride(
+                              row,
+                              input.claims!.criteria.find(({ id }) => id === claim.id)!,
+                              claimOverrideAuthority(run, input),
+                            ),
                         ))) &&
                     acceptance.issues.length === 0,
                 ),
             ),
         );
-        let bound = acceptance.criteria.every((criterion) =>
+        const bound = acceptance.criteria.every((criterion) =>
           inputs.some(
-            (input) =>
+            (input, index) =>
               (acceptance.ledger?.schemaVersion !== 2 ||
                 input.claims?.recipeRunId === projectedRunId) &&
-              input.claims?.criteria.some(
+              reviewed[index]?.some(
                 (claim) =>
                   claim.id === criterion.id &&
                   claim.text.trim() === criterion.text.trim() &&
@@ -457,49 +479,16 @@ export async function collectRunGateReadiness(
                     acceptance.ledger?.criteria.some(
                       (row) =>
                         row.id === criterion.id &&
-                        isAuthorizedOverride(row, claim, claimOverrideAuthority(run, input)),
+                        isAuthorizedOverride(
+                          row,
+                          input.claims!.criteria.find(({ id }) => id === claim.id)!,
+                          claimOverrideAuthority(run, input),
+                        ),
                     )),
               ),
           ),
         );
-        if (qaOutput && acceptance.ledger?.schemaVersion === 1) {
-          // Task AC ids and QA recipe proof-target ids are separate contracts.
-          // Task ACs retain their owner's verdicts and exact captured files;
-          // applicable QA cases still require canonical complete recipe proof.
-          const retained = await readTaskArtifactText(run.taskFile, 'acceptance-status.json');
-          const inventory = new Set(
-            run.output?.artifactManifest.filter((file) => file.sha256).map((file) => file.path),
-          );
-          bound =
-            Boolean(retained) &&
-            isDeepStrictEqual(parseAcceptanceStatusLedger(retained!), acceptance.ledger) &&
-            acceptance.criteria.every((criterion) => {
-              const row = acceptance.ledger?.criteria.find((entry) => entry.id === criterion.id);
-              if (
-                !row ||
-                row.text.trim() !== criterion.text.trim() ||
-                !row.evidence.every((file) => inventory.has(file))
-              )
-                return false;
-              if (row.verdict === 'untestable') return Boolean(row.note?.trim());
-              return (
-                row.evidence.length > 0 &&
-                (row.proofMode === 'state' ||
-                  (row.proofMode &&
-                    ['visual', 'mixed'].includes(row.proofMode) &&
-                    inputs.some((input, index) =>
-                      input.claims?.criteria.some(
-                        (claim) =>
-                          ['visual', 'mixed'].includes(claim.proofMode) &&
-                          ['proven', 'awaiting-review'].includes(claim.verdict) &&
-                          row.evidence.some((file) =>
-                            file.startsWith(`artifacts/${qa?.packages[index]?.path}/`),
-                          ),
-                      ),
-                    )))
-              );
-            });
-        }
+
         if (
           !valid ||
           !projectedIdentityMatches ||

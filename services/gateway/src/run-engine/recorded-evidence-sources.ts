@@ -4,6 +4,8 @@ import path from 'node:path';
 import { readRecordedEvidencePackage } from '@farmslot/adapter-sdk';
 import {
   type ArtifactRef,
+  digestRecipeDocument,
+  isRecord,
   type ReadyGatePrPackage,
   type RecordedEvidencePackageInput,
   RecordedEvidenceReadError,
@@ -11,6 +13,7 @@ import {
   sanitizeLatestValidRecipeRunPointer,
 } from '@farmslot/protocol';
 
+import { parseQaResult } from '../qa/completion.js';
 import {
   resolveSelectedEvidenceRef,
   verifyReadyGatePackageHash,
@@ -20,6 +23,101 @@ import {
 export interface RecordedEvidenceSource {
   input: RecordedEvidencePackageInput;
   artifactPrefix: string;
+}
+
+export interface RecordedVisualReviewSource {
+  snapshotIdentity: string;
+  decisionId?: string;
+  sources: RecordedEvidenceSource[];
+}
+
+function visualReviewDecision(run: Run, decisionId?: string) {
+  return decisionId
+    ? run.decisions.find(({ id }) => id === decisionId)
+    : run.decisions
+        .slice()
+        .reverse()
+        .find((candidate) =>
+          candidate.payload?.kind === 'ready' && candidate.payload.prPackage
+            ? candidate.payload.prPackage.packageHash === run.engineState?.publishGate?.packageHash
+            : candidate.payload?.kind === 'output-review' &&
+              candidate.payload.manifestDigest === run.output?.manifestDigest,
+        );
+}
+
+/** Pure metadata fence, usable inside the serialized write after all async reads. */
+export function visualReviewSnapshotIdentity(run: Run, decisionId?: string): string {
+  const decision = visualReviewDecision(run, decisionId);
+  const captured =
+    decision?.payload?.kind === 'ready'
+      ? decision.payload.prPackage?.packageHash
+      : run.output?.manifestDigest;
+  if (!captured || (decisionId && !decision))
+    throw new Error('The selected captured evidence review is unavailable.');
+  return digestRecipeDocument({
+    captured,
+    decisionId: decision?.id,
+    taskFile: run.taskFile,
+    ...(decision?.payload?.kind === 'ready'
+      ? {}
+      : {
+          reportPath: run.output?.reportPath,
+          inventory: run.output?.artifactManifest,
+          captureError: run.output?.captureError,
+        }),
+    judgments: run.visualJudgmentReceipts?.map(({ id }) => id) ?? [],
+  });
+}
+
+/** Human meaning is bound to an existing captured selection, including retained output. */
+export async function readVisualReviewSource(
+  run: Run,
+  decisionId?: string,
+): Promise<RecordedVisualReviewSource> {
+  const decision = visualReviewDecision(run, decisionId);
+  const snapshotIdentity = visualReviewSnapshotIdentity(run, decisionId);
+  let sources: RecordedEvidenceSource[];
+  if (decision?.payload?.kind === 'ready' && decision.payload.prPackage) {
+    sources = await readGateRecordedEvidenceSources(run, decision.payload.prPackage);
+  } else {
+    const output = run.output;
+    if (!output || output.captureError || !run.taskFile)
+      throw new Error('A captured evidence selection is required for visual review.');
+    if (decisionId && (!decision || decision.payload?.kind !== 'output-review'))
+      throw new Error('The selected captured output review is unavailable.');
+    if (
+      decision?.payload?.kind === 'output-review' &&
+      (decision.payload.manifestDigest !== output.manifestDigest ||
+        decision.payload.reportPath !== output.reportPath)
+    )
+      throw new Error('The captured output review changed.');
+    let inventory = output.artifactManifest;
+    if (run.flowType === 'qa') {
+      const indexPath = 'artifacts/qa-result.json';
+      await verifyReadyGateSelectedEvidenceFiles(run, { evidenceManifest: inventory }, [indexPath]);
+      const value: unknown = JSON.parse(
+        await readFile(path.join(path.dirname(run.taskFile), indexPath), 'utf8'),
+      );
+      const head =
+        run.qaSource?.headSha ??
+        run.prWork?.headSha ??
+        (isRecord(value) && isRecord(value.source) && typeof value.source.headSha === 'string'
+          ? value.source.headSha
+          : '');
+      const result = parseQaResult(value, run, head);
+      inventory = inventory.filter((file) =>
+        Object.values(result.packages).some((root) => file.path.startsWith(`artifacts/${root}/`)),
+      );
+    }
+    sources = await readFrozenRecordedEvidenceSources(run, inventory);
+  }
+  if (snapshotIdentity !== visualReviewSnapshotIdentity(run, decisionId))
+    throw new Error('Captured visual review changed while its evidence was read.');
+  return {
+    snapshotIdentity,
+    decisionId: decision?.id,
+    sources,
+  };
 }
 
 /** Media belongs to its nearest retained execution root, not an unrelated prior attempt. */

@@ -760,6 +760,8 @@ export interface GateTokenSummary {
 export interface ReadyGatePrPackage {
   /** Gateway override receipts applied when this package was prepared. */
   claimOverrideReceiptIds?: string[];
+  /** Authenticated visual judgments captured by this review snapshot. */
+  visualJudgmentReceiptIds?: string[];
   id: string;
   packageHash: string;
   packageInputHash?: string;
@@ -1217,6 +1219,8 @@ export type RunDecisionPayload =
 export interface OutputReviewPayload {
   kind: 'output-review';
   claimOverrideReceiptIds?: string[];
+  /** Authenticated visual judgments captured by this review snapshot. */
+  visualJudgmentReceiptIds?: string[];
   manifestDigest: string;
   reportPath: string;
 }
@@ -2397,6 +2401,7 @@ export interface Run {
   recordedEvidenceContractVersion?: number;
   /** Append-only gateway-authorised human exceptions; engine evidence stays immutable. */
   claimOverrideReceipts?: import('../recipe/claim-overrides.js').ClaimUntestableOverrideReceipt[];
+  visualJudgmentReceipts?: import('../recipe/claim-reviews.js').RecipeVisualJudgmentReceipt[];
   /** ADR-069 provisional inputs. These never claim an execution receipt. */
   sourcePlan?: import('../sources/contracts.js').RunSourcePlan;
   /** Gateway-owned caller choices for revalidation before source-dependent effects. */

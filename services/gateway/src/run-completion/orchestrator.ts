@@ -34,6 +34,7 @@ import {
 import { inferReviewSourceKind } from '../quality/review-sources.js';
 import { captureCurrentReviewSnapshot, unavailableReviewSnapshot } from '../review/snapshots.js';
 import { appliedClaimOverrideReceiptIds } from '../run-engine/claim-overrides.js';
+import { appliedVisualJudgmentReceiptIds } from '../run-engine/claim-reviews.js';
 import { latestResolvedHumanGateDecision } from '../run-engine/decision-replay.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
 import { readFrozenRecordedEvidenceSources } from '../run-engine/recorded-evidence-sources.js';
@@ -759,11 +760,15 @@ export async function prepareCompletionPackage(
     publicationStatus: 'not_published',
     createdAt: new Date().toISOString(),
   };
-  if (run.claimOverrideReceipts?.length) {
+  if (run.claimOverrideReceipts?.length || run.visualJudgmentReceipts?.length) {
     const sources = await readFrozenRecordedEvidenceSources(
       run,
       evidenceManifest,
       basePackage.selectedEvidenceKeys,
+    );
+    basePackage.visualJudgmentReceiptIds = appliedVisualJudgmentReceiptIds(
+      run,
+      sources.map(({ input }) => input),
     );
     basePackage.claimOverrideReceiptIds = appliedClaimOverrideReceiptIds(
       run,

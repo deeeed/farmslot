@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import { digestRecipeDocument } from '@farmslot/protocol';
+import {
+  digestRecipeDocument,
+  recordedEvidenceClosureIdentity,
+  type RecordedEvidencePackageInput,
+} from '@farmslot/protocol';
 
 import {
   executedProofIndex,
@@ -9,7 +14,10 @@ import {
   type ProofNode,
 } from '../src/evidence/assertions.js';
 import { deriveRecipeClaims, type DeriveRecipeClaimsInput } from '../src/evidence/claims.js';
-import { validateRecordedEvidencePackage } from '../src/evidence/package.js';
+import {
+  deriveReviewedRecipeClaims,
+  validateRecordedEvidencePackage,
+} from '../src/evidence/package.js';
 import { planRecipeEvidence } from '../src/evidence/plan.js';
 
 const nodes = new Map<string, ProofNode>([
@@ -35,6 +43,58 @@ const base: DeriveRecipeClaimsInput = {
   artifacts: [],
   segments: [],
 };
+
+test('review projection uses the same reducer, preserves bytes and refuses invalid engine inputs', () => {
+  const { input } = JSON.parse(
+    readFileSync(new URL('./fixtures/visual-review-package.json', import.meta.url), 'utf8'),
+  ) as { input: RecordedEvidencePackageInput };
+  const before = JSON.stringify(input);
+  const claim = input.claims!.criteria.find(({ id }) => id === 'check-1')!;
+  const closureIdentity = recordedEvidenceClosureIdentity(input);
+  const receipt = {
+    id: 'review',
+    runId: 'run',
+    claimId: claim.id,
+    recipeRunId: input.claims!.recipeRunId,
+    closureIdentity,
+    snapshotIdentity: 'captured',
+    verdict: 'confirmed' as const,
+    moments: claim.moments,
+    approver: { principalId: 'person', credentialId: 'credential', displayName: 'Reviewer' },
+    reason: 'The view matches the expectation.',
+    judgedAt: '2026-10-14T00:00:00Z',
+  };
+  const authority = {
+    runId: 'run',
+    recipeRunId: receipt.recipeRunId,
+    closureIdentity,
+    receipts: [receipt],
+  };
+  assert.deepEqual(
+    deriveReviewedRecipeClaims(input).map(({ verdict }) => verdict),
+    ['awaiting-review', 'awaiting-review'],
+  );
+  assert.deepEqual(
+    deriveReviewedRecipeClaims(input, authority).map(({ verdict }) => verdict),
+    ['proven', 'proven'],
+  );
+  assert.deepEqual(
+    deriveReviewedRecipeClaims(input, {
+      ...authority,
+      receipts: [{ ...receipt, verdict: 'rejected' }],
+    }).map(({ verdict }) => verdict),
+    ['failed', 'failed'],
+  );
+  assert.deepEqual(
+    deriveReviewedRecipeClaims(input, { ...authority, recipeRunId: 'other' }).map(
+      ({ verdict }) => verdict,
+    ),
+    ['awaiting-review', 'awaiting-review'],
+  );
+  const invalid = { ...input, summary: { ...(input.summary as object), recipeRunId: 'other' } };
+  assert.throws(() => deriveReviewedRecipeClaims(invalid, authority), /valid retained engine/);
+  assert.equal(JSON.stringify(input), before);
+});
 
 test('file-content proof uses its executed read without an indexed artifact', () => {
   const fileNodes = new Map<string, ProofNode>([

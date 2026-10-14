@@ -766,3 +766,60 @@ second producer, selected-only reads despite corrupt unrelated packages, immutab
 headless consumption, no fallback after missing/corrupt selection, and identical
 Legacy/Invalid status in both clients. A minimal author supplies only a recipe;
 the publish gate receives the complete engine evidence package.
+
+## Authenticated visual review
+
+The gateway MUST authenticate a credential-backed person with the existing human
+evidence-review authority. It MUST record a visual judgment in the existing Run
+store, bound to the run, selected `recipeRunId`, checked input closure and exact
+engine-derived moments. The gateway supplies actor, receipt ID and time. A worker
+note, task verdict or client actor string grants no visual authority.
+
+The writer MUST use the canonical reader and validator against the frozen ready
+package or captured output inventory. QA selection comes from its captured
+canonical case index; unregistered history cannot become a selected case. Missing,
+changed or invalid bytes refuse the write. A retained completed or cancelled run
+MAY receive a judgment for its selected captured evidence; this MUST NOT reopen
+the run, resolve a gate, register another package or approve publication.
+
+The existing engine reducer MUST consume the authenticated judgment. Confirmation
+can prove an eligible visual/mixed expectation whose assertions passed; rejection
+fails it. A judgment cannot repair an assertion failure, missing proof or invalid
+package. Parent outcomes derive from their checks. Retained trace, media, manifests
+and claim/task files MUST remain byte-identical. The shared SDK model supplies
+the effective review verdict to both clients; no second verdict reducer is allowed.
+
+Writes MUST recheck person and snapshot identity after reads and before persistence.
+Retries MUST reuse an already recorded identical judgment. The last matching Run
+receipt determines the current visual review, using stored order rather than
+clock precision. Gates MUST freeze the receipt IDs they reviewed; changed judgments
+require a refreshed publication package. Output review updates its human receipt
+references without changing captured artifact/report identity. Historical snapshots
+retain their captured references. Recording a judgment grants no gate approval.
+
+QA task binding MUST require schema-2 engine claims with the selected execution ID,
+matching registered IDs/text and engine-derived verdicts or authorized untestable
+exceptions. Remove schema-1 file-reference binding without a compatibility writer.
+An output-review gate preserves eligible visual claims as awaiting review until a
+person judges them; execution completion does not confirm their visual meaning.
+
+Public human commands use `farmslot run gate <run> --action confirm-visual|reject-visual
+--claim <id> --recipe-run <execution> --reason <text>`. The existing CLI owns this
+human gate operation; recipe execution and artifact commands keep their single
+family. Its reader uses the existing `RunRpc.recipeRunsForRun` execution selector
+`recordedRecipeRunId` against captured registration, without requiring a display
+artifact group. `RunRpc.reviewVisualClaim` and its request/receipt types belong to
+`@farmslot/protocol`. Runner derivation and the portable SDK projection serve the
+gateway, CLI and shared review model through
+`deriveReviewedRecipeClaims(input, authority?) -> RecipeClaimEvidence[]`, exported
+by `@farmslot/recipe-runner/evidence` and `@farmslot/adapter-sdk/evidence`.
+`RecipeVisualJudgmentReceipt` and `RecipeVisualReviewAuthority` belong to protocol;
+the gateway loads that authority from its Run store. These additive APIs are experimental and
+ship in a coordinated minor release; providers inherit them without review code.
+Generate CLI/API reference entries from their owning command definitions.
+
+Conformance MUST cover state-only schema-2 QA, pending visual output, confirmed and
+rejected visual claims, parent derivation, service/actor spoofing refusal, changed
+execution/moments/bytes, stale snapshot/person races, restart and lost-response
+retry, retained cancelled evidence, and unchanged package bytes. A real public
+CLI/RPC control MUST record a judgment and show its derived verdict at the gate.

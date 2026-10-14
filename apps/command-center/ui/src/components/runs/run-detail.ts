@@ -176,6 +176,7 @@ export class RunDetail extends RunDetailState {
         package: this._recordedEvidence?.input,
         contractVersion: this._recordedEvidence?.contractVersion,
         claimOverrideAuthority: this._recordedEvidence?.claimOverrideAuthority,
+        visualReviewAuthority: this._recordedEvidence?.visualReviewAuthority,
         readErrors: this._recordedEvidence?.errors,
         artifactPrefix: this._recordedEvidence?.artifactPrefix,
         packagePath: this._recordedEvidence?.packagePath,

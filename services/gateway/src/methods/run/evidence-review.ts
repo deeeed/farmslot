@@ -17,9 +17,12 @@ import { getNode } from '../../fleet/machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from '../../fleet/node-rpc.js';
 import { scanSlotArtifactRootDetailed } from '../../live-recipe/context.js';
 import { claimOverrideAuthority } from '../../run-engine/claim-overrides.js';
+import { visualReviewAuthority } from '../../run-engine/claim-reviews.js';
 import {
   readFrozenRecordedEvidenceSources,
   readGateRecordedEvidenceSources,
+  readVisualReviewSource,
+  visualReviewSnapshotIdentity,
 } from '../../run-engine/recorded-evidence-sources.js';
 import {
   resolveRemoteRecipeArtifactRoot,
@@ -31,6 +34,7 @@ export async function readRunRecordedEvidence(
   run: Run,
   group: RecipeRunArtifactGroup | undefined,
   frozen?: { decisionId: string; packageHash?: string },
+  recordedRecipeRunId?: string,
 ): Promise<RunRecordedEvidenceReview> {
   const artifactPrefix = 'artifacts/';
   const contractVersion = run.recordedEvidenceContractVersion ?? 0;
@@ -46,7 +50,7 @@ export async function readRunRecordedEvidence(
       failureCode: 'evidence-contract-unsupported',
       errors: ['The recorded run evidence contract is unsupported.'],
     };
-  if (!frozen && !group?.artifactRoot)
+  if (!frozen && !recordedRecipeRunId && !group?.artifactRoot)
     return contractVersion === 1 && TERMINAL_RUN_STATUSES.includes(run.status)
       ? {
           artifactPrefix,
@@ -56,39 +60,53 @@ export async function readRunRecordedEvidence(
         }
       : { artifactPrefix, contractVersion, errors: [] };
   try {
-    if (frozen) {
-      const decision = run.decisions.find(({ id }) => id === frozen.decisionId);
+    if (frozen || recordedRecipeRunId) {
+      const captured = recordedRecipeRunId
+        ? await readVisualReviewSource(run, frozen?.decisionId)
+        : undefined;
+      const decisionId = frozen?.decisionId ?? captured?.decisionId;
+      const decision = run.decisions.find(({ id }) => id === decisionId);
       const payload = decision?.payload;
       let sources;
       if (payload?.kind === 'ready' && payload.prPackage) {
-        if (!frozen.packageHash || payload.prPackage.packageHash !== frozen.packageHash)
+        if (frozen && (!frozen.packageHash || payload.prPackage.packageHash !== frozen.packageHash))
           throw new Error('The displayed gate package changed. Refresh the decision.');
-        sources = await readGateRecordedEvidenceSources(run, payload.prPackage);
-      } else if (payload?.kind === 'output-review' && run.output) {
+        sources =
+          captured?.sources ?? (await readGateRecordedEvidenceSources(run, payload.prPackage));
+      } else if (run.output && (payload?.kind === 'output-review' || (captured && !frozen))) {
         if (
-          run.output.manifestDigest !== payload.manifestDigest ||
-          run.output.reportPath !== payload.reportPath ||
-          frozen.packageHash !== payload.manifestDigest
+          (payload?.kind === 'output-review' &&
+            (run.output.manifestDigest !== payload.manifestDigest ||
+              run.output.reportPath !== payload.reportPath)) ||
+          (frozen && frozen.packageHash !== run.output.manifestDigest)
         )
           throw new Error('The displayed QA output snapshot changed. Refresh the decision.');
-        sources = await readFrozenRecordedEvidenceSources(run, run.output.artifactManifest);
+        sources =
+          captured?.sources ??
+          (await readFrozenRecordedEvidenceSources(run, run.output.artifactManifest));
       } else throw new Error('The gate has no frozen recipe evidence package.');
       const retainedRunId =
-        payload.kind === 'ready' && payload.acceptanceStatus?.schemaVersion === 2
+        recordedRecipeRunId ??
+        (payload?.kind === 'ready' && payload.acceptanceStatus?.schemaVersion === 2
           ? payload.acceptanceStatus.recipeRunId
-          : group?.recipeRunId;
+          : group?.recipeRunId);
       const prefix =
         group?.artifactRoot && run.taskFile
           ? `${path.relative(path.dirname(run.taskFile), group.artifactRoot).split(path.sep).join('/')}/`
           : undefined;
       const source =
-        (payload.kind === 'ready' &&
+        (payload?.kind === 'ready' &&
         sources.length === 1 &&
         (!retainedRunId || sources[0]?.input.claims?.recipeRunId === retainedRunId)
           ? sources[0]
           : undefined) ??
         sources.find(({ input, artifactPrefix }) =>
-          retainedRunId ? input.claims?.recipeRunId === retainedRunId : artifactPrefix === prefix,
+          recordedRecipeRunId ||
+          (payload?.kind === 'ready' && payload.acceptanceStatus?.schemaVersion === 2)
+            ? input.claims?.recipeRunId === retainedRunId
+            : prefix
+              ? artifactPrefix === prefix
+              : input.claims?.recipeRunId === retainedRunId,
         ) ??
         (!retainedRunId && sources.length === 1 ? sources[0] : undefined);
       if (!source) throw new Error('Select a retained recipe execution from the gate package.');
@@ -96,7 +114,27 @@ export async function readRunRecordedEvidence(
         ...source,
         contractVersion,
         ...(source.input.claims
-          ? { claimOverrideAuthority: claimOverrideAuthority(run, source.input) }
+          ? {
+              claimOverrideAuthority: claimOverrideAuthority(run, source.input),
+              visualReviewAuthority: visualReviewAuthority(
+                run,
+                source.input,
+                !frozen
+                  ? undefined
+                  : payload?.kind === 'ready'
+                    ? (payload.prPackage?.visualJudgmentReceiptIds ?? [])
+                    : payload?.kind === 'output-review'
+                      ? (payload.visualJudgmentReceiptIds ?? [])
+                      : [],
+              ),
+              // This hint fences a future write. Only the writer qualifies QA
+              // registration; missing registration must not hide readable history.
+              visualReviewContext: {
+                snapshotIdentity:
+                  captured?.snapshotIdentity ?? visualReviewSnapshotIdentity(run, decisionId),
+                decisionId,
+              },
+            }
           : {}),
         packagePath: source.artifactPrefix.replace(/^artifacts\//u, '').replace(/\/$/u, '') || '.',
         errors: reviewValidationErrors(source.input),
@@ -149,7 +187,10 @@ export async function readRunRecordedEvidence(
       errors,
       ...(errors.length ? { failureCode: 'evidence-package-unverifiable' as const } : {}),
       ...(errors.length === 0 && result.input.claims
-        ? { claimOverrideAuthority: claimOverrideAuthority(run, result.input) }
+        ? {
+            claimOverrideAuthority: claimOverrideAuthority(run, result.input),
+            visualReviewAuthority: visualReviewAuthority(run, result.input),
+          }
         : {}),
     };
   } catch (error) {

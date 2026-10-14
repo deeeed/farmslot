@@ -270,6 +270,7 @@ for (const [name, actual, expected] of [
       sessionCommand: Methods.RUN_SESSION_COMMAND,
       resolveDecision: Methods.RUN_RESOLVE_DECISION,
       overrideClaim: Methods.RUN_OVERRIDE_CLAIM,
+      reviewVisualClaim: Methods.RUN_REVIEW_VISUAL_CLAIM,
       grade: Methods.RUN_GRADE,
       getGrade: Methods.RUN_GET_GRADE,
       proposeImprovement: Methods.RUN_PROPOSE_IMPROVEMENT,

@@ -1,0 +1,306 @@
+{
+  "input": {
+    "recipe": {
+      "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+      "description": "Review composed QA cases.",
+      "proofTargets": [
+        {
+          "id": "case-1",
+          "claim": "Case 1 succeeds.",
+          "kind": "qa-case",
+          "proofMode": "state"
+        },
+        {
+          "id": "check-1",
+          "claim": "Value 1 is observed.",
+          "kind": "qa-check",
+          "parentId": "case-1",
+          "proofMode": "visual"
+        }
+      ],
+      "workflow": {
+        "entry": "read-1",
+        "nodes": {
+          "read-1": {
+            "action": "state_read",
+            "intent": "Read value 1.",
+            "next": "assert-1"
+          },
+          "assert-1": {
+            "action": "assert_output",
+            "source": "read-1",
+            "intent": "Verify value 1.",
+            "assert": {
+              "path": "$.count",
+              "operator": "eq",
+              "value": 1
+            },
+            "proves": ["check-1"],
+            "next": "done"
+          },
+          "done": {
+            "action": "end",
+            "status": "pass"
+          }
+        }
+      }
+    },
+    "trace": {
+      "metadata": {
+        "recipeRunId": "qa-attempt"
+      },
+      "entries": [
+        {
+          "nodeId": "read-1",
+          "action": "state_read",
+          "intent": "Read value 1.",
+          "ok": true,
+          "startedAt": "2026-01-01T00:00:00.200Z",
+          "endedAt": "2026-01-01T00:00:00.300Z",
+          "durationMs": 100,
+          "next": "assert-1",
+          "output": {
+            "count": 1
+          }
+        },
+        {
+          "nodeId": "assert-1",
+          "action": "assert_output",
+          "intent": "Verify value 1.",
+          "ok": true,
+          "startedAt": "2026-01-01T00:00:00.400Z",
+          "endedAt": "2026-01-01T00:00:00.700Z",
+          "durationMs": 300,
+          "next": "done",
+          "proves": ["check-1"],
+          "output": {
+            "source": "read-1",
+            "assertion": {
+              "path": "$.count",
+              "operator": "eq",
+              "value": 1
+            }
+          }
+        },
+        {
+          "nodeId": "done",
+          "action": "end",
+          "ok": true,
+          "startedAt": "2026-01-01T00:00:01.800Z",
+          "endedAt": "2026-01-01T00:00:01.800Z",
+          "durationMs": 0,
+          "status": "pass"
+        }
+      ]
+    },
+    "invocation": {
+      "version": 1,
+      "recipeRunId": "qa-attempt",
+      "recipeDigest": "sha256:2f5a63b6184eece3bcd409cbe4b7a2931c6a8bd3f2d05e15d0d1b61edc8716a8",
+      "startedAt": "2026-01-01T00:00:00.000Z",
+      "params": {},
+      "redactedPaths": []
+    },
+    "recipeRunId": "qa-attempt",
+    "claims": {
+      "schemaVersion": 2,
+      "recipeRunId": "qa-attempt",
+      "criteria": [
+        {
+          "id": "case-1",
+          "text": "Case 1 succeeds.",
+          "kind": "qa-case",
+          "proofMode": "state",
+          "verdict": "awaiting-review",
+          "recipeNodes": ["assert-1"],
+          "assertionIndices": [1],
+          "evidence": ["video.mp4", "stills/1.png"],
+          "timing": "measured",
+          "moments": [
+            {
+              "recipeRunId": "qa-attempt",
+              "videoDigest": "sha256:b9847a4fdf31702fb60bd2f225b53a79a922bd6c6f9a1a5f88f21c4a12134d2d",
+              "traceIndex": 1
+            }
+          ]
+        },
+        {
+          "id": "check-1",
+          "text": "Value 1 is observed.",
+          "kind": "qa-check",
+          "parentId": "case-1",
+          "proofMode": "visual",
+          "verdict": "awaiting-review",
+          "recipeNodes": ["assert-1"],
+          "assertionIndices": [1],
+          "evidence": ["video.mp4", "stills/1.png"],
+          "timing": "measured",
+          "moments": [
+            {
+              "recipeRunId": "qa-attempt",
+              "videoDigest": "sha256:b9847a4fdf31702fb60bd2f225b53a79a922bd6c6f9a1a5f88f21c4a12134d2d",
+              "traceIndex": 1
+            }
+          ]
+        }
+      ],
+      "recording": {
+        "status": "complete",
+        "segments": [
+          {
+            "videoPath": "video.mp4",
+            "videoDigest": "sha256:b9847a4fdf31702fb60bd2f225b53a79a922bd6c6f9a1a5f88f21c4a12134d2d",
+            "timelinePath": "timeline.json"
+          }
+        ]
+      }
+    },
+    "summary": {
+      "recipeRunId": "qa-attempt",
+      "status": "pass",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "cause_counts": {
+        "subject": 0,
+        "harness": 0,
+        "environment": 0,
+        "unknown": 0
+      },
+      "invocationDigest": "sha256:4ac622610c496ceaeca27751c4fd376c996d7b8480d501625fb78ee26fd66f2c"
+    },
+    "recipeResolution": {
+      "schema_version": 1,
+      "root": {
+        "ref": "$root",
+        "digest": "sha256:2f5a63b6184eece3bcd409cbe4b7a2931c6a8bd3f2d05e15d0d1b61edc8716a8"
+      },
+      "dependencies": [],
+      "edges": []
+    },
+    "resolvedRecipes": {},
+    "manifest": {
+      "version": 1,
+      "runStatus": "pass",
+      "artifacts": [
+        {
+          "path": "recipe.json",
+          "type": "recipe"
+        },
+        {
+          "path": "trace.json",
+          "type": "trace"
+        },
+        {
+          "path": "summary.json",
+          "type": "summary"
+        },
+        {
+          "path": "acceptance-status.json",
+          "type": "json"
+        },
+        {
+          "path": "video.mp4",
+          "type": "video",
+          "timelinePath": "timeline.json"
+        },
+        {
+          "path": "timeline.json",
+          "type": "json"
+        },
+        {
+          "path": "stills/1.png",
+          "type": "screenshot",
+          "nodeId": "assert-1",
+          "metadata": {
+            "recordedEvidence": {
+              "videoPath": "video.mp4",
+              "videoDigest": "sha256:b9847a4fdf31702fb60bd2f225b53a79a922bd6c6f9a1a5f88f21c4a12134d2d",
+              "traceIndex": 1
+            }
+          }
+        }
+      ]
+    },
+    "artifactPaths": [
+      "recipe.json",
+      "trace.json",
+      "summary.json",
+      "acceptance-status.json",
+      "video.mp4",
+      "timeline.json",
+      "stills/1.png",
+      "artifact-manifest.json",
+      "recipe-resolution.json",
+      "recipe-invocation.json"
+    ],
+    "artifactDigests": {
+      "recipe.json": "sha256:00dcd9a375982840d59033e2dd3c9a164e21bd5044c0a5399e5a9fcea0617cfe",
+      "summary.json": "sha256:089f8915a0e912f0aa82403029b232fb2a068683335c8562a665a7ff02cc5700",
+      "trace.json": "sha256:7eadda5301f2eda6d59c74ef62f306f40f6d7b563a95508e07461573960a4fb7",
+      "artifact-manifest.json": "sha256:f4fd02cbc49672f84ea0ea7e150e5cd62194e21997bb2f228ac5fbdb92cda9a2",
+      "recipe-invocation.json": "sha256:2f7dd7b64d15d20d3732cda06a5a6009209ceb5d857727b061938bdde8dd9ce9",
+      "recipe-resolution.json": "sha256:0a9a5b2f708ac063746bf02e1b1d84159d5514281aedd8ddd0a0ed9d8adac632",
+      "acceptance-status.json": "sha256:ff92ae5312db447c5f7129ffc3c2bafb8d01d28907fe34b9b9dd1c04908bef08",
+      "timeline.json": "sha256:f40bffebe2b9e2e177bfd5697401dce96bcf915c1b8c1d56b1ba4b82bd4f9d06",
+      "video.mp4": "sha256:b9847a4fdf31702fb60bd2f225b53a79a922bd6c6f9a1a5f88f21c4a12134d2d",
+      "stills/1.png": "sha256:f63fd7bf6a93fc662967ca37553293aebd48f641d3876df3a6048fb4a64e94b8"
+    },
+    "timelines": {
+      "timeline.json": {
+        "version": 1,
+        "videoPath": "video.mp4",
+        "videoDigest": "sha256:b9847a4fdf31702fb60bd2f225b53a79a922bd6c6f9a1a5f88f21c4a12134d2d",
+        "traceDigest": "sha256:901aec5ec5379874d4653bb8e6655333e7753d6e162b083db8c579568fea4313",
+        "durationMs": 3000,
+        "framesMs": [0, 200, 300, 400, 700, 1800],
+        "clock": {
+          "source": "fixture",
+          "earliestZeroUnixMs": 1767225600000,
+          "latestZeroUnixMs": 1767225600000
+        },
+        "markers": [
+          {
+            "traceIndex": 0,
+            "nodeId": "read-1",
+            "action": "state_read",
+            "ok": true,
+            "intent": "Read value 1.",
+            "startRangeMs": [200, 200],
+            "endRangeMs": [300, 300]
+          },
+          {
+            "traceIndex": 1,
+            "nodeId": "assert-1",
+            "action": "assert_output",
+            "ok": true,
+            "intent": "Verify value 1.",
+            "proves": ["check-1"],
+            "startRangeMs": [400, 400],
+            "endRangeMs": [700, 700]
+          },
+          {
+            "traceIndex": 2,
+            "nodeId": "done",
+            "action": "end",
+            "ok": true,
+            "startRangeMs": [1800, 1800],
+            "endRangeMs": [1800, 1800]
+          }
+        ]
+      }
+    }
+  },
+  "files": {
+    "recipe.json": "{\"$schema\":\"https://farmslot.io/schemas/recipe-v1.schema.json\",\"description\":\"Review composed QA cases.\",\"proofTargets\":[{\"id\":\"case-1\",\"claim\":\"Case 1 succeeds.\",\"kind\":\"qa-case\",\"proofMode\":\"state\"},{\"id\":\"check-1\",\"claim\":\"Value 1 is observed.\",\"kind\":\"qa-check\",\"parentId\":\"case-1\",\"proofMode\":\"visual\"}],\"workflow\":{\"entry\":\"read-1\",\"nodes\":{\"read-1\":{\"action\":\"state_read\",\"intent\":\"Read value 1.\",\"next\":\"assert-1\"},\"assert-1\":{\"action\":\"assert_output\",\"source\":\"read-1\",\"intent\":\"Verify value 1.\",\"assert\":{\"path\":\"$.count\",\"operator\":\"eq\",\"value\":1},\"proves\":[\"check-1\"],\"next\":\"done\"},\"done\":{\"action\":\"end\",\"status\":\"pass\"}}}}",
+    "summary.json": "{\"recipeRunId\":\"qa-attempt\",\"status\":\"pass\",\"total\":3,\"passed\":3,\"failed\":0,\"cause_counts\":{\"subject\":0,\"harness\":0,\"environment\":0,\"unknown\":0},\"invocationDigest\":\"sha256:4ac622610c496ceaeca27751c4fd376c996d7b8480d501625fb78ee26fd66f2c\"}",
+    "trace.json": "{\"metadata\":{\"recipeRunId\":\"qa-attempt\"},\"entries\":[{\"nodeId\":\"read-1\",\"action\":\"state_read\",\"intent\":\"Read value 1.\",\"ok\":true,\"startedAt\":\"2026-01-01T00:00:00.200Z\",\"endedAt\":\"2026-01-01T00:00:00.300Z\",\"durationMs\":100,\"next\":\"assert-1\",\"output\":{\"count\":1}},{\"nodeId\":\"assert-1\",\"action\":\"assert_output\",\"intent\":\"Verify value 1.\",\"ok\":true,\"startedAt\":\"2026-01-01T00:00:00.400Z\",\"endedAt\":\"2026-01-01T00:00:00.700Z\",\"durationMs\":300,\"next\":\"done\",\"proves\":[\"check-1\"],\"output\":{\"source\":\"read-1\",\"assertion\":{\"path\":\"$.count\",\"operator\":\"eq\",\"value\":1}}},{\"nodeId\":\"done\",\"action\":\"end\",\"ok\":true,\"startedAt\":\"2026-01-01T00:00:01.800Z\",\"endedAt\":\"2026-01-01T00:00:01.800Z\",\"durationMs\":0,\"status\":\"pass\"}]}",
+    "artifact-manifest.json": "{\"version\":1,\"runStatus\":\"pass\",\"artifacts\":[{\"path\":\"recipe.json\",\"type\":\"recipe\"},{\"path\":\"trace.json\",\"type\":\"trace\"},{\"path\":\"summary.json\",\"type\":\"summary\"},{\"path\":\"acceptance-status.json\",\"type\":\"json\"},{\"path\":\"video.mp4\",\"type\":\"video\",\"timelinePath\":\"timeline.json\"},{\"path\":\"timeline.json\",\"type\":\"json\"},{\"path\":\"stills/1.png\",\"type\":\"screenshot\",\"nodeId\":\"assert-1\",\"metadata\":{\"recordedEvidence\":{\"videoPath\":\"video.mp4\",\"videoDigest\":\"sha256:b9847a4fdf31702fb60bd2f225b53a79a922bd6c6f9a1a5f88f21c4a12134d2d\",\"traceIndex\":1}}}]}",
+    "recipe-invocation.json": "{\"version\":1,\"recipeRunId\":\"qa-attempt\",\"recipeDigest\":\"sha256:2f5a63b6184eece3bcd409cbe4b7a2931c6a8bd3f2d05e15d0d1b61edc8716a8\",\"startedAt\":\"2026-01-01T00:00:00.000Z\",\"params\":{},\"redactedPaths\":[]}",
+    "recipe-resolution.json": "{\"schema_version\":1,\"root\":{\"ref\":\"$root\",\"digest\":\"sha256:2f5a63b6184eece3bcd409cbe4b7a2931c6a8bd3f2d05e15d0d1b61edc8716a8\"},\"dependencies\":[],\"edges\":[]}",
+    "acceptance-status.json": "{\"schemaVersion\":2,\"recipeRunId\":\"qa-attempt\",\"criteria\":[{\"id\":\"case-1\",\"text\":\"Case 1 succeeds.\",\"kind\":\"qa-case\",\"proofMode\":\"state\",\"verdict\":\"awaiting-review\",\"recipeNodes\":[\"assert-1\"],\"assertionIndices\":[1],\"evidence\":[\"video.mp4\",\"stills/1.png\"],\"timing\":\"measured\",\"moments\":[{\"recipeRunId\":\"qa-attempt\",\"videoDigest\":\"sha256:b9847a4fdf31702fb60bd2f225b53a79a922bd6c6f9a1a5f88f21c4a12134d2d\",\"traceIndex\":1}]},{\"id\":\"check-1\",\"text\":\"Value 1 is observed.\",\"kind\":\"qa-check\",\"parentId\":\"case-1\",\"proofMode\":\"visual\",\"verdict\":\"awaiting-review\",\"recipeNodes\":[\"assert-1\"],\"assertionIndices\":[1],\"evidence\":[\"video.mp4\",\"stills/1.png\"],\"timing\":\"measured\",\"moments\":[{\"recipeRunId\":\"qa-attempt\",\"videoDigest\":\"sha256:b9847a4fdf31702fb60bd2f225b53a79a922bd6c6f9a1a5f88f21c4a12134d2d\",\"traceIndex\":1}]}],\"recording\":{\"status\":\"complete\",\"segments\":[{\"videoPath\":\"video.mp4\",\"videoDigest\":\"sha256:b9847a4fdf31702fb60bd2f225b53a79a922bd6c6f9a1a5f88f21c4a12134d2d\",\"timelinePath\":\"timeline.json\"}]}}",
+    "timeline.json": "{\"version\":1,\"videoPath\":\"video.mp4\",\"videoDigest\":\"sha256:b9847a4fdf31702fb60bd2f225b53a79a922bd6c6f9a1a5f88f21c4a12134d2d\",\"traceDigest\":\"sha256:901aec5ec5379874d4653bb8e6655333e7753d6e162b083db8c579568fea4313\",\"durationMs\":3000,\"framesMs\":[0,200,300,400,700,1800],\"clock\":{\"source\":\"fixture\",\"earliestZeroUnixMs\":1767225600000,\"latestZeroUnixMs\":1767225600000},\"markers\":[{\"traceIndex\":0,\"nodeId\":\"read-1\",\"action\":\"state_read\",\"ok\":true,\"intent\":\"Read value 1.\",\"startRangeMs\":[200,200],\"endRangeMs\":[300,300]},{\"traceIndex\":1,\"nodeId\":\"assert-1\",\"action\":\"assert_output\",\"ok\":true,\"intent\":\"Verify value 1.\",\"proves\":[\"check-1\"],\"startRangeMs\":[400,400],\"endRangeMs\":[700,700]},{\"traceIndex\":2,\"nodeId\":\"done\",\"action\":\"end\",\"ok\":true,\"startRangeMs\":[1800,1800],\"endRangeMs\":[1800,1800]}]}",
+    "video.mp4": "original recording",
+    "stills/1.png": "stills/1.png"
+  }
+}

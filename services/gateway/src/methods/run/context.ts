@@ -183,6 +183,7 @@ export async function runRecipeRunsForRun(
             params.decisionId
               ? { decisionId: params.decisionId, packageHash: params.evidenceSnapshotHash }
               : undefined,
+            params.recordedRecipeRunId,
           )
       : undefined;
   if (recordedEvidence && run.output)

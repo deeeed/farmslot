@@ -86,6 +86,7 @@ import {
 } from '../methods/run/admin.js';
 import { runAdopt } from '../methods/run/adopt.js';
 import { runOverrideClaim } from '../methods/run/claim-overrides.js';
+import { runReviewVisualClaim } from '../methods/run/claim-reviews.js';
 import {
   runForSlot,
   runGet,
@@ -142,6 +143,12 @@ export async function routeRunMethod(
   };
 
   switch (method) {
+    case Methods.RUN_REVIEW_VISUAL_CLAIM:
+      return handled(
+        runReviewVisualClaim(p as import('@farmslot/protocol').RunReviewVisualClaimParams, emit, {
+          authorizeEvidenceAttestation: context.authorizeEvidenceAttestation,
+        }),
+      );
     case Methods.RUN_OVERRIDE_CLAIM:
       return handled(
         runOverrideClaim(p as import('@farmslot/protocol').RunOverrideClaimParams, emit, {

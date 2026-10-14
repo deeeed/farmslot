@@ -21,4 +21,7 @@ export type {
 export { loadRecordingEvidenceReview, readEvidenceReviewReport } from './evidence-review-source.js';
 export type { EvidenceReviewIssue, EvidenceReviewPackageStatus } from './evidence-review-status.js';
 export type { RecipeValidationResult, RecordedEvidencePackageInput } from '@farmslot/protocol';
-export { validateRecordedEvidencePackage } from '@farmslot/recipe-runner/evidence';
+export {
+  deriveReviewedRecipeClaims,
+  validateRecordedEvidencePackage,
+} from '@farmslot/recipe-runner/evidence';

@@ -365,26 +365,35 @@ export async function persistRunNow(run: Run, reason = 'explicit'): Promise<void
 }
 
 /** Commit the receipt before publishing its effective row. Shares the existing per-run write queue. */
-export async function commitRunClaimOverride(
+type RunEvidenceReceipt =
+  | import('@farmslot/protocol').ClaimUntestableOverrideReceipt
+  | import('@farmslot/protocol').RecipeVisualJudgmentReceipt;
+
+async function commitRunEvidenceReceipt<R extends RunEvidenceReceipt>(
   id: string,
-  build: (run: Run) => import('@farmslot/protocol').ClaimUntestableOverrideReceipt,
+  field: 'claimOverrideReceipts' | 'visualJudgmentReceipts',
+  outputField: 'claimOverrideReceiptIds' | 'visualJudgmentReceiptIds',
+  build: (run: Run) => R,
   assertCurrent: (run: Run) => void,
   outputReceiptIds?: (snapshot: Run) => string[],
-): Promise<import('@farmslot/protocol').ClaimUntestableOverrideReceipt> {
-  let receipt: import('@farmslot/protocol').ClaimUntestableOverrideReceipt | undefined;
+): Promise<R> {
+  let receipt: R | undefined;
   await enqueueRunWrite(id, async () => {
     const run = runs.get(id);
     if (!run) throw new Error('Run is unavailable');
     assertCurrent(run);
     receipt = build(run);
-    if (run.claimOverrideReceipts?.some((entry) => entry.id === receipt!.id)) return;
-    const receipts = [...(run.claimOverrideReceipts ?? []), receipt];
-    const snapshot: Run = { ...run, claimOverrideReceipts: receipts };
+    const prior: readonly RunEvidenceReceipt[] = run[field] ?? [];
+    if (prior.some((entry) => entry.id === receipt!.id)) return;
+    const receipts = [...prior, receipt];
+    const snapshot: Run = { ...run, [field]: receipts };
     if (outputReceiptIds) {
       const ids = outputReceiptIds(snapshot);
       snapshot.decisions = run.decisions.map((decision) =>
-        decision.id === receipt!.decisionId && decision.payload?.kind === 'output-review'
-          ? { ...decision, payload: { ...decision.payload, claimOverrideReceiptIds: ids } }
+        decision.id === receipt!.decisionId &&
+        !decision.resolvedAt &&
+        decision.payload?.kind === 'output-review'
+          ? { ...decision, payload: { ...decision.payload, [outputField]: ids } }
           : decision,
       );
     }
@@ -392,24 +401,23 @@ export async function commitRunClaimOverride(
     try {
       assertCurrent(run);
     } catch (error) {
-      // A decision/auth change during disk IO must not expose a stale receipt on restart.
+      // A stale person/source must not expose an accepted receipt after restart.
       await persistBody(run);
       throw error;
     }
-    run.claimOverrideReceipts = receipts;
+    Object.assign(run, { [field]: receipts });
     if (outputReceiptIds) {
       const projected = snapshot.decisions.find(
-        (decision) => decision.id === receipt!.decisionId,
+        ({ id: decisionId }) => decisionId === receipt!.decisionId,
       )?.payload;
       if (projected?.kind === 'output-review')
         run.decisions = run.decisions.map((decision) =>
-          decision.id === receipt!.decisionId && decision.payload?.kind === 'output-review'
+          decision.id === receipt!.decisionId &&
+          !decision.resolvedAt &&
+          decision.payload?.kind === 'output-review'
             ? {
                 ...decision,
-                payload: {
-                  ...decision.payload,
-                  claimOverrideReceiptIds: projected.claimOverrideReceiptIds,
-                },
+                payload: { ...decision.payload, [outputField]: projected[outputField] },
               }
             : decision,
         );
@@ -417,6 +425,38 @@ export async function commitRunClaimOverride(
     updateRun(id, {});
   });
   return receipt!;
+}
+
+export function commitRunClaimOverride(
+  id: string,
+  build: (run: Run) => import('@farmslot/protocol').ClaimUntestableOverrideReceipt,
+  assertCurrent: (run: Run) => void,
+  outputReceiptIds?: (snapshot: Run) => string[],
+): Promise<import('@farmslot/protocol').ClaimUntestableOverrideReceipt> {
+  return commitRunEvidenceReceipt(
+    id,
+    'claimOverrideReceipts',
+    'claimOverrideReceiptIds',
+    build,
+    assertCurrent,
+    outputReceiptIds,
+  );
+}
+
+export function commitRunVisualJudgment(
+  id: string,
+  build: (run: Run) => import('@farmslot/protocol').RecipeVisualJudgmentReceipt,
+  assertCurrent: (run: Run) => void,
+  outputReceiptIds?: (snapshot: Run) => string[],
+): Promise<import('@farmslot/protocol').RecipeVisualJudgmentReceipt> {
+  return commitRunEvidenceReceipt(
+    id,
+    'visualJudgmentReceipts',
+    'visualJudgmentReceiptIds',
+    build,
+    assertCurrent,
+    outputReceiptIds,
+  );
 }
 
 /**
@@ -1193,6 +1233,11 @@ export function recordAdoptedTmuxWorker(id: string, partial: Partial<Run>): Run 
 export function updateRun(id: string, partial: Partial<Run>, authorization?: symbol): Run {
   const run = runs.get(id);
   if (!run) throw new Error(`Run not found: ${id}`);
+  if (
+    'visualJudgmentReceipts' in partial &&
+    !isDeepStrictEqual(partial.visualJudgmentReceipts, run.visualJudgmentReceipts)
+  )
+    throw new Error('Visual judgment receipts require the verified gateway writer');
   if (
     'claimOverrideReceipts' in partial &&
     !isDeepStrictEqual(partial.claimOverrideReceipts, run.claimOverrideReceipts)
