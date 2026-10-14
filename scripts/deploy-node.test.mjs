@@ -10,6 +10,20 @@ import { fileURLToPath } from 'node:url';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+// Both the platform matrix and owner cases read generated plists on Linux CI.
+const readRenderedPlist = (file) =>
+  JSON.parse(
+    execFileSync(
+      'python3',
+      [
+        '-c',
+        'import plistlib,json,sys; print(json.dumps(plistlib.load(open(sys.argv[1],"rb"))))',
+        file,
+      ],
+      { encoding: 'utf8' },
+    ),
+  );
+
 // A checkout copy holding the deploy script, the worker prefix it reads, and
 // the workspace packages the node bundles. It is removed when its scope (a test,
 // or the file for a shared one) ends, however that ends.
@@ -174,17 +188,7 @@ for (const platform of ['Darwin', 'Linux']) {
         let args;
         let servicePath;
         if (platform === 'Darwin') {
-          const document = JSON.parse(
-            execFileSync(
-              'python3',
-              [
-                '-c',
-                'import plistlib,json,sys; print(json.dumps(plistlib.load(open(sys.argv[1],"rb"))))',
-                path.join(output, 'service.plist'),
-              ],
-              { encoding: 'utf8' },
-            ),
-          );
+          const document = readRenderedPlist(path.join(output, 'service.plist'));
           assert.equal(
             document.EnvironmentVariables.CAPTURE_HELPER_PATH,
             captureMode === 'override'
@@ -1203,13 +1207,7 @@ for (const [name, explicit, expected, instance] of [
       ],
       { cwd: root, env, stdio: 'pipe' },
     );
-    const document = JSON.parse(
-      execFileSync(
-        '/usr/bin/plutil',
-        ['-convert', 'json', '-o', '-', path.join(output, 'service.plist')],
-        { encoding: 'utf8' },
-      ),
-    );
+    const document = readRenderedPlist(path.join(output, 'service.plist'));
     assert.equal(document.EnvironmentVariables.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID, expected);
     assert.equal(document.ProgramArguments[1] === '-lc', Boolean(expected));
     const probes = path.join(output, 'native-owner-probes');
