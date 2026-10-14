@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { recoverStoppedNativeHost } from './host-cleanup-recovery.js';
 import { socketDirectory } from './ipc.js';
 import { NativeProcessTree } from './process-tree.js';
 import {
@@ -42,10 +43,13 @@ try {
       if (previousHost && alive(previousHost.pid))
         throw new Error('Native host survived its supervisor; refusing competing ownership');
       const cleanupPath = join(root, 'cleanup.json');
-      if (existsSync(cleanupPath) && readJson<{ state: string }>(cleanupPath).state !== 'complete')
-        throw new Error(
-          'Previous native cleanup is unresolved; verify owned processes before recovery',
-        );
+      if (
+        existsSync(cleanupPath) &&
+        readJson<{ state: string }>(cleanupPath).state !== 'complete'
+      ) {
+        if (!previousHost) throw new Error('Previous native cleanup has no recorded host identity');
+        recoverStoppedNativeHost(root, previous.pid, previousHost.pid);
+      }
       rmSync(lock, { recursive: true });
     }
   }

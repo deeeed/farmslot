@@ -30,7 +30,7 @@ import {
   nativeProfileEnvironment,
   requireNativeProfile,
 } from './account-profiles.js';
-import type { ProcessIdentity } from './process-tree.js';
+import { journalProcesses, type ProcessIdentity } from './process-tree.js';
 import { nativeRunnerDefinitions as adapters } from './registry.js';
 import { hostReviewSandboxAvailable, reviewProcessSandbox } from './review-sandbox.js';
 import {
@@ -38,10 +38,10 @@ import {
   durableWrite,
   matchesProcess,
   privateDirectory,
-  processGroupAlive,
   processIdentityAlive,
   readJournal,
   readJson,
+  recordedProcessGroupAlive,
 } from './storage.js';
 import type { NativeAdapterSession, NativeEventInput } from './types.js';
 import { NativeWorkerHistory } from './worker-history.js';
@@ -217,25 +217,15 @@ export class NativeSessionManager {
       if (!entries.length) continue;
       let info: NativeSessionInfo | undefined;
       let context: Record<string, string> | undefined;
-      let processes: ProcessIdentity[] | undefined;
+      const processes = journalProcesses(entries);
       let pending: NativeSessionEvent[] = [];
       const commands = new Map<string, StoredCommand>();
       const events: NativeSessionEvent[] = [];
       const workerHistory = new NativeWorkerHistory();
       for (const entry of entries) {
         workerHistory.observe(entry);
-        if (entry.info && info && entry.info.generation !== info.generation) processes = undefined;
         info = entry.info ?? info;
         context = entry.context ?? context;
-        processes = entry.processes ?? processes;
-        if (entry.processesAdded) {
-          const identities = new Map(
-            (processes ?? []).map((process) => [`${process.pid}:${process.identity}`, process]),
-          );
-          for (const process of entry.processesAdded)
-            identities.set(`${process.pid}:${process.identity}`, process);
-          processes = [...identities.values()];
-        }
         pending = entry.pending ?? pending;
         for (const command of entry.commands ?? []) commands.set(command.commandId, command);
         if (entry.event) events.push(entry.event);
@@ -747,13 +737,9 @@ export class NativeSessionManager {
 
   private recordedGroupAlive(record: SessionRecord): boolean {
     const pid = record.info.processPid;
-    if (!pid || !processGroupAlive(pid)) return false;
+    if (!pid) return false;
     const leader = record.processes?.find((process) => process.pid === pid);
-    // A new kernel birth identity proves PID reuse. PID allocation reserves
-    // live group/session IDs, so this current group cannot be the old group.
-    // A changed argv/environment token alone cannot prove this: exec keeps its PID.
-    if (leader && alive(pid) && !processIdentityAlive(pid, leader.identity) && alive(pid))
-      return false;
+    if (!recordedProcessGroupAlive(pid, leader?.identity)) return false;
     // Positive attribution to another native generation distinguishes a reused
     // numeric group. Unknown groups still block; neither case receives a signal.
     for (const candidate of this.sessions.values()) {

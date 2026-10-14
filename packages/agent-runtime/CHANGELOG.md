@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Recover stopped native hosts through fresh process verification and preserved cleanup receipts without resetting session journals.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.22.0 - 2026-10-15
