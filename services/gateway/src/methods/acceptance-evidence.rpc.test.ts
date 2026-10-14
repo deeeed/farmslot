@@ -1,7 +1,7 @@
 import {
   testGatewayIdentity,
   testGatewayProfile,
-} from '../../../../scripts/lib/test-gateway-identity.mjs';
+} from '../../../../scripts/lib/test-gateway-identity-source.mjs';
 process.env.NODE_TEST_CONTEXT = '1';
 
 import assert from 'node:assert/strict';

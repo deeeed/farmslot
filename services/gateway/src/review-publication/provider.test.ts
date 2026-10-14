@@ -16,7 +16,7 @@ import {
   GatewayClient,
   GatewayConnectionError,
 } from '../../../../packages/cli/src/gateway-client.js';
-import { testGatewayIdentity } from '../../../../scripts/lib/test-gateway-identity.mjs';
+import { testGatewayIdentity } from '../../../../scripts/lib/test-gateway-identity-source.mjs';
 
 import { publishWorkspaceReview, type ReviewPublicationReceipt } from './provider.js';
 

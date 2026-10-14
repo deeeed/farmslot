@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-import { testGatewayIdentity, testGatewayProfile } from './lib/test-gateway-identity.mjs';
+import { testGatewayIdentity, testGatewayProfile } from './lib/test-gateway-identity-source.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';

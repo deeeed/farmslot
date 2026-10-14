@@ -177,7 +177,7 @@ values = {'FARMSLOT_ROOT': str(root), 'FARMSLOT_HOME': str(base / 'home'),
 (root / '.env.ports').write_text('\n'.join(k + '=' + shlex.quote(v) for k, v in values.items()) + '\n')
 PY
 set -a; source .env.ports; set +a
-node --import tsx --input-type=module -e 'import { testGatewayIdentity } from "./scripts/lib/test-gateway-identity.mjs"; testGatewayIdentity(process.env.FARMSLOT_HOME, process.env.FARMSLOT_GATEWAY);'
+node --input-type=module -e 'import { testGatewayIdentity } from "./scripts/lib/test-gateway-identity.mjs"; testGatewayIdentity(process.env.FARMSLOT_HOME, process.env.FARMSLOT_GATEWAY);'
 tmux new-session -d -s farmslot-electron-validation -c "$PWD"
 yarn workspace @farmslot/gateway start
 ```

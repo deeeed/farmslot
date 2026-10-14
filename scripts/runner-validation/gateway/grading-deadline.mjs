@@ -1,8 +1,3 @@
-import { tsImport } from 'tsx/esm/api';
-const { testGatewayIdentity } = await tsImport(
-  '../../lib/test-gateway-identity.mjs',
-  import.meta.url,
-);
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -23,6 +18,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { FLOW_STEPS } from '@farmslot/protocol';
+
+import { testGatewayIdentity } from '../../lib/test-gateway-identity.mjs';
 
 const sourceRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'farmslot-grading-deadline-'));

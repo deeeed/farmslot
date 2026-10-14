@@ -1,4 +1,4 @@
-import { testGatewayIdentity } from '../../lib/test-gateway-identity.mjs';
+import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 // Manual production gateway intake proof. Uses an existing tmux server only.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';

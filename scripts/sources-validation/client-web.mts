@@ -1,4 +1,4 @@
-import { testGatewayProfile } from '../lib/test-gateway-identity.mjs';
+import { testGatewayProfile } from '../lib/test-gateway-identity-source.mjs';
 /** Manual Command Center diagnostic proof through the committed CDP helper. */
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';

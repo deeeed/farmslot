@@ -97,6 +97,11 @@ case $command in
   *'which yarn'*) echo no ;;
   'test -d '*) exit 1 ;;
   'test -f '*.plist*) [[ $RENDER_CAPTURE_MODE =~ ^(retained|missing-key|corrupt)$ ]] ;;
+  '/usr/bin/plutil -extract EnvironmentVariables.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID '*)
+    printf '%s\n' "$command" >> "$RENDER_ROOT/native-owner-probes"
+    [ -n "$RENDER_NATIVE_OWNER" ] || exit 1
+    [[ $command == *' -o /dev/null '* ]] || printf '%s\n' "$RENDER_NATIVE_OWNER"
+    ;;
   '/usr/bin/plutil -lint '*) [ "$RENDER_CAPTURE_MODE" != corrupt ] ;;
   '/usr/bin/plutil -extract '*) [ "$RENDER_CAPTURE_MODE" = retained ] && echo /opt/homebrew/bin/capture-helper ;;
 esac
@@ -1163,3 +1168,54 @@ test('deploy-node fails with the fix when the node has only a Yarn 1 and no core
   assert.equal(fs.existsSync(fixture.snapshot), false);
   assert.deepEqual(fixture.snapshotInstalls(), []);
 });
+
+for (const [name, explicit, expected, instance] of [
+  ['retained prod', undefined, 'retained-owner', 'prod'],
+  ['retained dev', undefined, 'retained-owner', 'dev'],
+  ['explicit replacement', 'new-owner', 'new-owner', 'dev'],
+  ['explicit disable', '', undefined, 'dev'],
+]) {
+  test(`deploy-node preserves existing native enrollment: ${name}`, (t) => {
+    const root = sharedRenderCheckout();
+    const output = fs.mkdtempSync(path.join(os.tmpdir(), 'node-deploy-native-owner-'));
+    t.after(() => fs.rmSync(output, { recursive: true, force: true }));
+    const env = {
+      ...process.env,
+      PATH: `${root}/bin:${process.env.PATH}`,
+      RENDER_ROOT: output,
+      RENDER_OS: 'Darwin',
+      RENDER_CAPTURE_MODE: 'retained',
+      RENDER_NATIVE_OWNER: 'retained-owner',
+      FARMSLOT_NODE_PATH: '/opt/node/bin/node',
+      FARMSLOT_NODE_INSTANCE: instance,
+      CAPTURE_HELPER_PATH: '',
+    };
+    if (explicit === undefined) delete env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = explicit;
+    execFileSync(
+      'bash',
+      [
+        path.join(root, 'scripts/deploy-node.sh'),
+        'fixture-machine',
+        '127.0.0.1',
+        '--node-token-file',
+        path.join(root, 'node-token'),
+      ],
+      { cwd: root, env, stdio: 'pipe' },
+    );
+    const document = JSON.parse(
+      execFileSync(
+        '/usr/bin/plutil',
+        ['-convert', 'json', '-o', '-', path.join(output, 'service.plist')],
+        { encoding: 'utf8' },
+      ),
+    );
+    assert.equal(document.EnvironmentVariables.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID, expected);
+    assert.equal(document.ProgramArguments[1] === '-lc', Boolean(expected));
+    const probes = path.join(output, 'native-owner-probes');
+    if (explicit === undefined) {
+      const query = fs.readFileSync(probes, 'utf8');
+      assert.ok(query.includes(`com.farmslot.node${instance === 'dev' ? '.dev' : ''}.plist`));
+    } else assert.equal(fs.existsSync(probes), false);
+  });
+}

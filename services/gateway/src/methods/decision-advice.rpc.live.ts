@@ -15,7 +15,7 @@ import { type DecisionAdviceResult, Methods } from '@farmslot/protocol';
 import {
   testGatewayIdentity,
   testGatewayProfile,
-} from '../../../../scripts/lib/test-gateway-identity.mjs';
+} from '../../../../scripts/lib/test-gateway-identity-source.mjs';
 import { beginAssessment, finishAssessment } from '../assessment/store.js';
 import {
   collisionDecisionActions,

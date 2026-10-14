@@ -1,4 +1,4 @@
-import { testGatewayIdentity } from '../../../scripts/lib/test-gateway-identity.mjs';
+import { testGatewayIdentity } from '../../../scripts/lib/test-gateway-identity-source.mjs';
 // Proves oversized inbound WebSocket frames close the offending socket with
 // 1009 and do NOT crash the gateway process (unhandled 'error' on the socket).
 process.env.NODE_TEST_CONTEXT = '1';

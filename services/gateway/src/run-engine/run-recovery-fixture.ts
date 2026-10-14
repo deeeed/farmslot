@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 
 import type { ExecResult, Run } from '@farmslot/protocol';
 
-import { testGatewayIdentity } from '../../../../scripts/lib/test-gateway-identity.mjs';
+import { testGatewayIdentity } from '../../../../scripts/lib/test-gateway-identity-source.mjs';
 import type { RawProjectJson, SlotVars } from '../core/config.js';
 
 const executeFile = promisify(execFile);

@@ -1,4 +1,4 @@
-import { testGatewayIdentity } from '../../lib/test-gateway-identity.mjs';
+import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 // Manual public-RPC regression proof from a retained QA receipt. Originals are read-only.
 import assert from 'node:assert/strict';
 import { execFile, execFileSync, spawn, type ChildProcess } from 'node:child_process';

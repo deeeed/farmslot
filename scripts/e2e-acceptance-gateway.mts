@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-import { testGatewayIdentity } from './lib/test-gateway-identity.mjs';
+import { testGatewayIdentity } from './lib/test-gateway-identity-source.mjs';
 /** Manual public-RPC proof. Disposable inputs are seeded before startup; no runner is launched. */
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';

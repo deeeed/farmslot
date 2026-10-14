@@ -1,4 +1,4 @@
-import { testGatewayIdentity } from '../../lib/test-gateway-identity.mjs';
+import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 // Manual proof against an existing tmux server. Never starts or kills the server.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';

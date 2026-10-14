@@ -1,4 +1,4 @@
-import { testGatewayIdentity } from '../../lib/test-gateway-identity.mjs';
+import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 // Manual production-RPC/native reviewer proof. All recovery inputs precede startup.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';

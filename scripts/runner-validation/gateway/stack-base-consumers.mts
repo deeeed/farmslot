@@ -1,4 +1,4 @@
-import { testGatewayIdentity } from '../../lib/test-gateway-identity.mjs';
+import { testGatewayIdentity } from '../../lib/test-gateway-identity-source.mjs';
 // Manual gateway proof. Setup fixtures are isolated; derived task bytes are not injected.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';

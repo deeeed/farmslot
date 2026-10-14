@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { GatewayClient } from '../../packages/cli/src/gateway-client.js';
-import { testGatewayIdentity, testGatewayProfile } from '../lib/test-gateway-identity.mjs';
+import { testGatewayIdentity, testGatewayProfile } from '../lib/test-gateway-identity-source.mjs';
 
 const source = fileURLToPath(new URL('../../', import.meta.url));
 const scratch = await mkdtemp(join(tmpdir(), 'identity-startup-proof-'));
@@ -114,6 +114,45 @@ try {
     FARMSLOT_GATEWAY: url,
     FARMSLOT_GATEWAY_PROFILE: 'local',
   };
+  const companionImports = spawnSync(
+    process.execPath,
+    [
+      join(source, 'apps/companion/scripts/agentic/backlog-review-proof.mjs'),
+      'identity-import-check',
+    ],
+    {
+      cwd: scratch,
+      env: { ...env, TSX_TSCONFIG_PATH: 'services/gateway/tsconfig.json' },
+      encoding: 'utf8',
+      timeout: 10_000,
+    },
+  );
+  // Reaching the phase guard proves the actual entrypoint loaded. This phase
+  // performs no fixture, gateway, simulator or browser action.
+  assert.notEqual(companionImports.status, 0);
+  assert.match(companionImports.stderr, /Unknown phase identity-import-check/);
+  claims.push('plain Node loads the Companion proof entrypoint with inherited TSX config');
+  const typedImports = spawnSync(
+    process.execPath,
+    [
+      '--import',
+      join(source, 'node_modules/tsx/dist/loader.mjs'),
+      '--input-type=module',
+      '-e',
+      `import { testGatewayIdentity } from ${JSON.stringify(new URL('../lib/test-gateway-identity-source.mjs', import.meta.url).href)};
+       if (typeof testGatewayIdentity !== 'function') throw new Error('Missing typed helper');
+       const { createWebSocketServer } = await import(${JSON.stringify(new URL('../../services/gateway/src/server.js', import.meta.url).href)});
+       if (typeof createWebSocketServer !== 'function') throw new Error('Missing dynamic gateway import');`,
+    ],
+    {
+      cwd: scratch,
+      env: { ...env, TSX_TSCONFIG_PATH: join(source, 'services/gateway/tsconfig.json') },
+      encoding: 'utf8',
+      timeout: 15_000,
+    },
+  );
+  assert.equal(typedImports.status, 0, typedImports.stderr);
+  claims.push('typed identity helper preserves subsequent TSX dynamic gateway imports');
   const fresh = cli('up', '--port', String(port), '--no-open', '--no-node');
   assert.notEqual(fresh.status, 0);
   assert.match(fresh.stdout + fresh.stderr, /verified local profile/);

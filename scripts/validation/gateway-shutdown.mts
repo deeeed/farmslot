@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 import { gatewayPresenceDirectory } from '@farmslot/credential-store';
 
-import { testGatewayIdentity } from '../lib/test-gateway-identity.mjs';
+import { testGatewayIdentity } from '../lib/test-gateway-identity-source.mjs';
 
 const scratch = await mkdtemp(join(tmpdir(), 'credential-shutdown-proof-'));
 const root = fileURLToPath(new URL('../../', import.meta.url));
