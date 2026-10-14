@@ -11,6 +11,7 @@ import {
   type SlotVars,
 } from '../../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
+import { withoutNodeReconnectWait } from '../../fleet/node-rpc.js';
 import { resolveWorkspaceRoot } from '../../projects/repo-root.js';
 
 import { DEFAULT_GATEWAY_PORT, sanitizePhaseName } from './shared.js';
@@ -740,9 +741,11 @@ export async function runPrepareCommand(
     { cwd: opts?.cwd, timeout: 10_000 },
   );
   const killPrepareWindowsByName = () =>
-    exec(buildPrepareKillWindowsByNameCommand(sessionName, windowName), {
-      timeout: 10_000,
-    });
+    withoutNodeReconnectWait(() =>
+      exec(buildPrepareKillWindowsByNameCommand(sessionName, windowName), {
+        timeout: 10_000,
+      }),
+    );
   if (remainR.exitCode !== 0) {
     await killPrepareWindowsByName();
     return failSetup('tmux remain-on-exit', remainR);
@@ -885,16 +888,22 @@ export async function runPrepareCommand(
   let exitCode: number | null = null;
   while (true) {
     if (opts?.signal?.aborted) {
-      await killWindow();
       tailAborted = true;
-      await tailPromise.catch(() => undefined);
+      try {
+        await killWindow();
+      } finally {
+        await tailPromise.catch(() => undefined);
+      }
       // Closing the window leaves the nohup'd holder (and anything else in the
       // group that ignores SIGHUP) running in the slot repository.
       if (opts.prepareScope && !useLocal) {
-        await reapSlotPrepareScope(vars, {
-          identityPath: opts.prepareScope.identityPath,
-          expectedScope: opts.prepareScope.token,
-        }).catch((error: unknown) =>
+        const prepareScope = opts.prepareScope;
+        await withoutNodeReconnectWait(() =>
+          reapSlotPrepareScope(vars, {
+            identityPath: prepareScope.identityPath,
+            expectedScope: prepareScope.token,
+          }),
+        ).catch((error: unknown) =>
           console.warn(
             `[prepare] aborted prepare scope cleanup failed: ${preparePollErrorMessage(error)}`,
           ),
@@ -903,9 +912,12 @@ export async function runPrepareCommand(
       return { stdout: '', stderr: 'aborted', exitCode: 130 };
     }
     if (opts?.timeout && Date.now() - startTime > opts.timeout) {
-      await killWindow();
       tailAborted = true;
-      await tailPromise.catch(() => undefined);
+      try {
+        await killWindow();
+      } finally {
+        await tailPromise.catch(() => undefined);
+      }
       return { stdout: '', stderr: `timed out after ${opts.timeout}ms`, exitCode: 124 };
     }
     const checkR = await pollExec(

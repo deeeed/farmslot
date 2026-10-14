@@ -997,7 +997,8 @@ export async function slotCopyDir(
             transferred && typeof entry.size === 'number' ? entry.size : 0,
           );
         } catch (err) {
-          const { FileTransferCancelledError } = await import('./file-transfer.js');
+          const { FileTransferCancelledError, FileTransferIdleTimeoutError } =
+            await import('./file-transfer.js');
           if (err instanceof FileTransferCancelledError || aggregate.signal.aborted) {
             aggregate.fail(err instanceof Error ? err.message : String(err));
             throw err instanceof FileTransferCancelledError
@@ -1011,6 +1012,11 @@ export async function slotCopyDir(
           }
           aggregate.fail(entryError.message);
           if (isNodeTransportUnavailableError(err)) throw err;
+          if (
+            err instanceof FileTransferIdleTimeoutError &&
+            isNodeTransportUnavailableError(err.cause)
+          )
+            throw err.cause;
           throw entryError;
         }
         if (transferred) count++;

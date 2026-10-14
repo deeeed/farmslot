@@ -12,6 +12,8 @@ import {
   FILE_TRANSFER_SMALL_FILE_THRESHOLD_BYTES,
 } from '@farmslot/protocol';
 
+import { NodeRpcTimeoutError } from '../fleet/node-rpc.js';
+
 import {
   cancelTransfer,
   copyFileChunked,
@@ -24,6 +26,27 @@ import {
   writeTransferFixture,
 } from './file-transfer.js';
 import { FILE_TRANSFER_CHUNK_MAX_BYTES as SLOT_CHUNK } from './slot-io.js';
+
+test('chunk readers retain typed RPC timeout as the idle snapshot cause', async () => {
+  const { readRemoteFileChunkedToBuffer } = await import('./file-transfer.js');
+  const timeout = new NodeRpcTimeoutError('transfer-node', 60_000);
+  const params = {
+    path: '/remote/report',
+    phase: 'mirror' as const,
+    totalBytes: 300_000,
+    readChunk: async () => {
+      throw timeout;
+    },
+  };
+  for (const read of [copyFileChunked, readRemoteFileChunkedToBuffer]) {
+    await assert.rejects(read(params), (error: unknown) => {
+      assert(error instanceof FileTransferIdleTimeoutError);
+      assert.equal(error.cause, timeout);
+      assert.equal(error.bytesTransferred, 0);
+      return true;
+    });
+  }
+});
 
 test('CHUNK_MAX_BYTES is exported and stays well under the 100 MiB WS payload budget', () => {
   assert.equal(FILE_TRANSFER_CHUNK_MAX_BYTES, SLOT_CHUNK);
@@ -315,16 +338,18 @@ test('cancelTransfer aborts a running multi-chunk copy', async (t) => {
   });
 
   await assert.rejects(copyPromise, (err: unknown) => {
-    assert.ok(err instanceof FileTransferCancelledError || (err as Error).name === 'FileTransferCancelledError');
+    assert.ok(
+      err instanceof FileTransferCancelledError ||
+        (err as Error).name === 'FileTransferCancelledError',
+    );
     return true;
   });
   assert.ok(transferId);
 });
 
 test('size-scaled idle timeout grows with totalBytes', async () => {
-  const { fileTransferIdleTimeoutMs, FILE_TRANSFER_IDLE_TIMEOUT_MS } = await import(
-    '@farmslot/protocol'
-  );
+  const { fileTransferIdleTimeoutMs, FILE_TRANSFER_IDLE_TIMEOUT_MS } =
+    await import('@farmslot/protocol');
   assert.ok(fileTransferIdleTimeoutMs(10 * 1024 * 1024) > FILE_TRANSFER_IDLE_TIMEOUT_MS);
 });
 
