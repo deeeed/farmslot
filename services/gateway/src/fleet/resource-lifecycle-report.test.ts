@@ -67,8 +67,10 @@ const realExec = await import('../core/exec.js');
 mock.module('../core/exec.js', {
   namedExports: {
     ...realExec,
-    execLocal: async () => {
-      if (holdHook) await holdHook();
+    execLocal: async (command: string) => {
+      // Immediate health re-polls must not take the boot hook's release callback.
+      if (holdHook && (command === 'start-it' || command.endsWith(' && start-it')))
+        await holdHook();
       return { stdout: 'booted', stderr: '', exitCode };
     },
   },
