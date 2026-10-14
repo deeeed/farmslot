@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import {
   closeSync,
   constants,
@@ -57,6 +58,124 @@ test('owned remote file operations use their supplied transport and never fall b
     /Owner revoked/,
   );
   assert.deepEqual(calls, ['fs.exists', 'fs.writeFiles', 'fs.writeChunk']);
+});
+
+test('incremental remote copy skips verified bytes and repairs same-size or resized changes', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'incremental-slot-file-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const destination = path.join(dir, 'report.md');
+  let content = Buffer.from('first');
+  const calls: string[] = [];
+  const ctx = {
+    host: 'remote.invalid',
+    machine: 'incremental-remote',
+    sshTarget: '',
+    nodeRequest: async (method: string) => {
+      calls.push(method);
+      if (method === 'fs.stat') return { size: content.length, isFile: true };
+      if (method === 'fs.hash')
+        return { size: content.length, sha256: createHash('sha256').update(content).digest('hex') };
+      if (method === 'fs.readBase64') return { content: content.toString('base64') };
+      throw new Error(`Unexpected RPC ${method}`);
+    },
+  };
+  await writeFile(destination, content);
+  assert.equal(
+    await slotCopyFile(ctx, '/task/report.md', destination, { skipUnchanged: true }),
+    false,
+  );
+  assert.deepEqual(calls, ['fs.stat', 'fs.hash']);
+  content = Buffer.from('other');
+  assert.equal(
+    await slotCopyFile(ctx, '/task/report.md', destination, { skipUnchanged: true }),
+    true,
+  );
+  assert.deepEqual(await readFile(destination), content);
+  content = Buffer.from('longer report');
+  assert.equal(
+    await slotCopyFile(ctx, '/task/report.md', destination, { skipUnchanged: true }),
+    true,
+  );
+  assert.deepEqual(await readFile(destination), content);
+  await writeFile(destination, Buffer.alloc(content.length, 'x'));
+  assert.equal(
+    await slotCopyFile(ctx, '/task/report.md', destination, { skipUnchanged: true }),
+    true,
+  );
+  assert.deepEqual(await readFile(destination), content);
+});
+
+test('incremental directory copy returns zero for matches and retains normal copy defaults', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'incremental-slot-dir-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const source = path.join(dir, 'source');
+  const destination = path.join(dir, 'destination');
+  await mkdir(source);
+  await writeFile(path.join(source, 'report.md'), 'first');
+  const ctx = { host: 'localhost', machine: 'incremental-local', sshTarget: 'localhost' };
+  assert.equal(await slotCopyDir(ctx, source, destination, { skipUnchanged: true }), 1);
+  assert.equal(await slotCopyDir(ctx, source, destination, { skipUnchanged: true }), 0);
+  await writeFile(path.join(source, 'report.md'), 'other');
+  assert.equal(await slotCopyDir(ctx, source, destination, { skipUnchanged: true }), 1);
+  assert.equal(await slotCopyDir(ctx, source, destination), 1);
+});
+
+test('incremental copy preserves the destination when its source hash cannot be verified', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'incremental-slot-denied-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const destination = path.join(dir, 'report.md');
+  await writeFile(destination, 'first');
+  const calls: string[] = [];
+  const ctx = {
+    host: 'remote.invalid',
+    machine: 'incremental-denied',
+    sshTarget: '',
+    nodeRequest: async (method: string) => {
+      calls.push(method);
+      if (method === 'fs.stat') return { size: 5, isFile: true };
+      throw new Error('Source disappeared during refresh');
+    },
+  };
+  await assert.rejects(
+    slotCopyFile(ctx, '/task/report.md', destination, { skipUnchanged: true }),
+    /Source disappeared during refresh/,
+  );
+  assert.deepEqual(calls, ['fs.stat', 'fs.hash']);
+  assert.equal(await readFile(destination, 'utf8'), 'first');
+});
+
+test('incremental remote directory progress reports no transferred bytes for matches', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'incremental-slot-progress-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const content = Buffer.from('verified report');
+  await writeFile(path.join(dir, 'report.md'), content);
+  const calls: string[] = [];
+  const ctx = {
+    host: 'remote.invalid',
+    machine: 'incremental-progress',
+    sshTarget: '',
+    nodeRequest: async (method: string, input: unknown) => {
+      const params = input as { root: string; relPath: string };
+      calls.push(method);
+      if (method === 'fs.exists') return { exists: true };
+      if (method === 'fs.realpath') return { path: path.resolve(params.root, params.relPath) };
+      if (method === 'fs.list')
+        return { entries: [{ name: 'report.md', type: 'file', size: content.length }] };
+      if (method === 'fs.stat') return { size: content.length, isFile: true };
+      if (method === 'fs.hash')
+        return { size: content.length, sha256: createHash('sha256').update(content).digest('hex') };
+      throw new Error(`Unexpected RPC ${method}`);
+    },
+  };
+  const events: Array<{ state: string; bytesTransferred: number; filesCompleted?: number }> = [];
+  setFileTransferBroadcast((_event, payload) => events.push(payload as (typeof events)[number]));
+  t.after(() => setFileTransferBroadcast(() => {}));
+  assert.equal(await slotCopyDir(ctx, '/task/artifacts', dir, { skipUnchanged: true }), 0);
+  assert.equal(calls.includes('fs.readBase64'), false);
+  assert.equal(calls.includes('fs.readChunk'), false);
+  assert.equal(events.at(-1)?.state, 'done');
+  assert.equal(events.at(-1)?.filesCompleted, 1);
+  assert.equal(events.at(-1)?.bytesTransferred, 0);
 });
 
 class FakeNodeWebSocket {

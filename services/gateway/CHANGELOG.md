@@ -7,6 +7,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Allow a durably replayed run to reacquire capabilities after its previous terminal cleanup, while retaining fences for settled owners, unrecovered siblings and later cleanup.
 - Adopt attested human-published PRs through durable publication recording, preserving archived execution and enforcing active continuation guards.
 
+- Reuse matching artifact mirror files by size and hash, and reject missing selected publication manifests before transferring artifacts on gate replay or package refresh.
+
 - Bind frozen runtime package commands to the captured compiled entry and refresh new admissions across producer upgrades, preserving arguments and already-admitted snapshots without source bootstrap or ambient selectors.
 
 - Allow an operator to force-complete a reconciling non-QA run with its published PR number, preserving the terminal transition and recovery fences.

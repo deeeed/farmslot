@@ -657,6 +657,7 @@ export async function prepareCompletionPackageTransitionLocked(
   const completion = await runCompletionPipeline(runId, {
     skipRetrospective: true,
     suppressPrMutation: true,
+    forPublication: !isArtifactOnlyRun(before),
     requireArtifactMirror: options?.requireArtifactMirror,
   });
   const run = getRun(runId)!;
@@ -866,6 +867,7 @@ export async function runCompletionPipeline(
   options?: {
     skipRetrospective?: boolean;
     suppressPrMutation?: boolean;
+    forPublication?: boolean;
     requireArtifactMirror?: boolean;
   },
 ): Promise<CompletionResult> {
@@ -896,10 +898,10 @@ export async function runCompletionPipeline(
   //    client instead of continuing when the mirror is incomplete.
   if (!isReviewPR) {
     try {
-      const copied = await refreshArtifactMirror(run);
-      if (options?.requireArtifactMirror && copied === 0) {
-        throw new Error('artifact mirror refresh copied no files');
-      }
+      await refreshArtifactMirror(run, {
+        requireSourceArtifacts: options?.requireArtifactMirror,
+        forPublication: options?.forPublication,
+      });
       flags.artifactsCopied = true;
     } catch (err) {
       if (options?.requireArtifactMirror) {

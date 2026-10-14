@@ -49,6 +49,7 @@ import {
   setRunFlags,
   startRun,
 } from '../../run-engine/orchestrator.js';
+import { requiresPublicationApproval } from '../../run-engine/publication-policy.js';
 import {
   probeWorkerSignalForRun,
   signalMatchesMonitorContext,
@@ -1415,7 +1416,9 @@ export async function runReplayStep(
     ) {
       assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
       assertNativeReplayCurrent();
-      const copied = await refreshArtifactMirror(runBeforeGateReplay);
+      const copied = await refreshArtifactMirror(runBeforeGateReplay, {
+        forPublication: requiresPublicationApproval(runBeforeGateReplay),
+      });
       console.log(
         `[run] replay from ${replayStepName} — refreshed ${copied} worker artifact(s) before rebuilding the gate`,
       );
