@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.21.1 - 2026-10-14
+
+- Align runtime dependencies with recipe-runner 0.34.1 so installed adapters and recipe hosts use one engine version.
+
 ## 0.21.0 - 2026-10-14
 
 - **BREAKING:** Make acceptance commands read-only, transfer only schema-2 engine claims, and refuse retained schema-1 verdicts for current completion.
