@@ -1,5 +1,12 @@
 const assert = require('node:assert/strict');
-const { existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } = require('node:fs');
+const {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  rmSync,
+} = require('node:fs');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
@@ -454,3 +461,108 @@ result = spawnSync(process.execPath, [helper, acSkewDir, 'complete', '--mark-las
 assert.equal(result.status, 0, result.stderr);
 acSkewContent = readFileSync(acSkewTask, 'utf8');
 assert.match(acSkewContent, /- \[ \] Informational AC two/, 'AC boxes stay unchecked at complete');
+
+// A frozen review-fix contract may still name the logical task-root manifest.
+// Completion must resolve it exactly as artifact-check does, without a link/copy.
+const selectedStarted = performance.now();
+const selectedDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-selected-manifest-'));
+try {
+  writeManifest(selectedDir, 'REVIEW-FIX.md');
+  writeFileSync(
+    path.join(selectedDir, 'REVIEW-FIX.md'),
+    '# Worker: review-fix\n\n- [x] Fix findings\n',
+  );
+  const artifacts = path.join(selectedDir, 'artifacts');
+  const inputs = path.join(selectedDir, 'inputs');
+  const attempt = path.join(artifacts, 'recipe-runs', 'selected');
+  mkdirSync(attempt, { recursive: true });
+  mkdirSync(inputs, { recursive: true });
+  writeFileSync(path.join(artifacts, 'report.md'), '# Report\n\nThe fix and validation passed.\n');
+  writeFileSync(
+    path.join(artifacts, 'recipe-coverage.md'),
+    'The selected execution is retained.\n',
+  );
+  const recipe = {
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    description: 'Retain the selected execution.',
+    workflow: { entry: 'done', nodes: { done: { action: 'end', status: 'pass' } } },
+  };
+  const { digestRecipeDocument } = require('@farmslot/protocol/recipe');
+  writeFileSync(path.join(artifacts, 'recipe.json'), JSON.stringify(recipe));
+  writeFileSync(path.join(attempt, 'recipe.json'), JSON.stringify(recipe));
+  writeFileSync(
+    path.join(attempt, 'recipe-resolution.json'),
+    JSON.stringify({
+      schema_version: 1,
+      root: { ref: 'task', digest: digestRecipeDocument(recipe) },
+      dependencies: [],
+      edges: [],
+    }),
+  );
+  writeFileSync(
+    path.join(attempt, 'artifact-manifest.json'),
+    '{"version":1,"runStatus":"pass","artifacts":[]}',
+  );
+  writeFileSync(path.join(attempt, 'trace.json'), '[{"nodeId":"done","action":"end","ok":true}]');
+  writeFileSync(
+    path.join(attempt, 'summary.json'),
+    JSON.stringify({
+      status: 'pass',
+      total: 1,
+      passed: 1,
+      failed: 0,
+      cause_counts: { subject: 0, harness: 0, environment: 0, unknown: 0 },
+    }),
+  );
+  const manifestPath = path.join(attempt, 'evidence-manifest.json');
+  const manifestBytes = '{"version":1,"standalone":[]}\n';
+  writeFileSync(manifestPath, manifestBytes);
+  const { recordRecipeAttemptSelection } = require('../scripts/retained-recipe-attempt.cjs');
+  assert.equal(recordRecipeAttemptSelection(selectedDir, attempt), true);
+  const pointerPath = path.join(artifacts, 'latest-valid-recipe-run.json');
+  const pointerBytes = readFileSync(pointerPath);
+  writeFileSync(
+    path.join(inputs, 'worker-terminal-contract.review-fix.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      flowType: 'review-fix',
+      recordedEvidenceContractVersion: 1,
+      commands: { complete: { report: 'artifacts/report.md', artifacts: ['artifacts/report.md'] } },
+      whenPresent: [
+        {
+          path: 'artifacts/recipe.json',
+          alsoRequire: ['artifacts/recipe-coverage.md', 'artifacts/evidence-manifest.json'],
+        },
+      ],
+    }),
+  );
+  const complete = () =>
+    spawnSync(process.execPath, [helper, selectedDir, 'complete', '--mark-last'], {
+      encoding: 'utf8',
+    });
+  let completed = complete();
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(existsSync(path.join(artifacts, 'evidence-manifest.json')), false);
+  assert.deepEqual(readFileSync(manifestPath), Buffer.from(manifestBytes));
+  assert.deepEqual(readFileSync(pointerPath), pointerBytes);
+  assert.equal(
+    JSON.parse(readFileSync(path.join(selectedDir, 'REVIEW-FIX-SIGNAL.json'), 'utf8')).status,
+    'complete',
+  );
+  // A stale root declaration must never rescue a missing current selected manifest.
+  rmSync(manifestPath);
+  writeFileSync(path.join(artifacts, 'evidence-manifest.json'), manifestBytes);
+  completed = complete();
+  assert.notEqual(completed.status, 0);
+  assert.match(completed.stderr, /recipe-runs\/selected\/evidence-manifest\.json/);
+  writeFileSync(manifestPath, manifestBytes);
+  writeFileSync(pointerPath, '{"version":1,"relativeArtifactRoot":"../outside"}');
+  completed = complete();
+  assert.notEqual(completed.status, 0);
+  assert.match(completed.stderr, /Invalid retained recipe attempt selection/);
+} finally {
+  rmSync(selectedDir, { recursive: true, force: true });
+}
+console.log(
+  `Selected-manifest completion regression: ${(performance.now() - selectedStarted).toFixed(0)}ms`,
+);

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Resolve completion's evidence-manifest requirement through the selected engine attempt, matching artifact validation without a root copy or symlink.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.20.1 - 2026-10-14

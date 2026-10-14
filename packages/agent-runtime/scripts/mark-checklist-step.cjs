@@ -6,6 +6,7 @@ const { spawnSync } = require('node:child_process');
 const {
   expandedArtifactsForCommand,
   resolveWorkerTerminalContract,
+  resolveWorkerTerminalArtifactPath,
   deterministicChecks,
 } = require('./worker-terminal-contract.cjs');
 const {
@@ -225,7 +226,14 @@ function assertRequiredArtifacts(taskDir, terminalCommand, contract) {
   );
   for (const storedPath of expanded.artifacts) {
     if (storedPath === LEARNINGS_ARTIFACT && opts['skip-learnings']) continue;
-    assertArtifactFile(taskDir, storedPath);
+    assertArtifactFile(
+      taskDir,
+      resolveWorkerTerminalArtifactPath(
+        taskDir,
+        storedPath,
+        contract.recordedEvidenceContractVersion ?? 0,
+      ),
+    );
   }
 }
 
