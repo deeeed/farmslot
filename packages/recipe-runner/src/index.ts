@@ -133,6 +133,7 @@ export { digestFileWithinRoot } from './file-digest.js';
 export { createAndroidMirrorVideoRecorder } from './recording/android-mirror.js';
 export type { CaptureHelperVideoRecorderOptions } from './recording/capture-helper.js';
 export {
+  captureHelperSnapshot,
   createCaptureHelperVideoRecorder,
   errorMessage,
   manifestTarget,

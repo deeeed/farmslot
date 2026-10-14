@@ -3,7 +3,7 @@ import * as timersPromises from 'node:timers/promises';
 
 import WebSocket from 'ws';
 
-import type { UiObserverRef } from '@farmslot/protocol';
+import type { RecipeArtifactManifestEntry, UiObserverRef } from '@farmslot/protocol';
 import {
   HUD_PANEL_BOUNDS,
   hudIntentDisplay,
@@ -1077,19 +1077,7 @@ export class CdpWebPage {
     if (!result.data) throw new Error('CDP screenshot did not return data.');
     if (!context) return result.data;
     const relativePath = relPath ?? `screenshots/${context.nodeId}.png`;
-    await writeFileWithinRoot(
-      context.artifactsDir,
-      relativePath,
-      Buffer.from(result.data, 'base64'),
-    );
-    return {
-      path: relativePath,
-      type: 'screenshot',
-      nodeId: context.nodeId,
-      label: typeof metadata.label === 'string' ? metadata.label : undefined,
-      category: typeof metadata.category === 'string' ? metadata.category : 'evidence',
-      mimeType: 'image/png',
-    };
+    return writeScreenshot(context, relativePath, Buffer.from(result.data, 'base64'), metadata);
   }
 
   async #observeHud(): Promise<unknown> {
@@ -1209,7 +1197,19 @@ export interface CdpWebUiTransportInput {
   context: ActionExecutionContext;
 }
 
+export interface UiScreenshotProvider {
+  name: string;
+  capture(input: CdpWebUiTransportInput): Promise<UiScreenshotCapture>;
+}
+
+export interface UiScreenshotCapture {
+  data: Buffer;
+  metadata?: Record<string, unknown>;
+}
+
 export interface CreateCdpWebUiTransportOptions {
+  /** A platform's whole-window screenshot; CDP remains the fallback and full-surface capture. */
+  screenshotProvider?: UiScreenshotProvider;
   getPage?(input: CdpWebUiTransportInput): Promise<CdpWebPage>;
   withPage?<T>(
     input: CdpWebUiTransportInput,
@@ -1231,6 +1231,36 @@ export function createCdpWebUiTransport(
           );
       }
       const input = { action, node, context };
+      const screenshotProvider = options.screenshotProvider;
+      if (action === 'ui.screenshot' && node.fullPage !== true && screenshotProvider) {
+        let capture: Awaited<ReturnType<UiScreenshotProvider['capture']>>;
+        try {
+          capture = await screenshotProvider.capture(input);
+        } catch (error) {
+          // Native capture may be unavailable or held by another recording.
+          // Retain the refusal and use the existing CDP screenshot path.
+          context.signal?.throwIfAborted();
+          return withCdpWebPage(options, input, (page) =>
+            captureCdpScreenshot(page, node, context, false, {
+              captureProvider: 'cdp',
+              fallbackFrom: screenshotProvider.name,
+              fallbackReason: error instanceof Error ? error.message : String(error),
+            }),
+          );
+        }
+        context.signal?.throwIfAborted();
+        return publishUiScreenshot(
+          node,
+          context,
+          (artifactPath, metadata) =>
+            writeScreenshot(context, artifactPath, capture.data, metadata),
+          false,
+          {
+            ...capture.metadata,
+            captureProvider: screenshotProvider.name,
+          },
+        );
+      }
       return withCdpWebPage(options, input, async (page) => {
         switch (action) {
           case 'ui.navigate': {
@@ -1312,7 +1342,7 @@ export function createCdpWebUiTransport(
               node,
             );
           case 'ui.screenshot':
-            return captureCdpScreenshot(page, node, context);
+            return captureCdpScreenshot(page, node, context, node.fullPage === true);
           case 'ui.capture_surface':
             return captureCdpScreenshot(page, node, context, true);
           case 'app.status':
@@ -1638,6 +1668,43 @@ async function captureCdpScreenshot(
   node: Record<string, unknown>,
   context: ActionExecutionContext,
   fullPage = false,
+  captureMetadata?: Record<string, unknown>,
+): Promise<UiTransportResult> {
+  return publishUiScreenshot(
+    node,
+    context,
+    (artifactPath, metadata) => page.screenshot(context, artifactPath, metadata),
+    fullPage,
+    captureMetadata,
+  );
+}
+
+async function writeScreenshot(
+  context: ActionExecutionContext,
+  relativePath: string,
+  data: Buffer,
+  metadata: Record<string, unknown>,
+) {
+  await writeFileWithinRoot(context.artifactsDir, relativePath, data);
+  return {
+    path: relativePath,
+    type: 'screenshot',
+    nodeId: context.nodeId,
+    label: typeof metadata.label === 'string' ? metadata.label : undefined,
+    category: typeof metadata.category === 'string' ? metadata.category : 'evidence',
+    mimeType: 'image/png',
+  };
+}
+
+async function publishUiScreenshot(
+  node: Record<string, unknown>,
+  context: ActionExecutionContext,
+  capture: (
+    artifactPath: string,
+    metadata: Record<string, unknown>,
+  ) => ReturnType<CdpWebPage['screenshot']>,
+  fullPage: boolean,
+  captureMetadata?: Record<string, unknown>,
 ): Promise<UiTransportResult> {
   const action = fullPage ? 'ui.capture_surface' : 'ui.screenshot';
   const artifactPath = asOptionalString(node.path, `${action}.path`) ?? `${context.nodeId}.png`;
@@ -1645,14 +1712,14 @@ async function captureCdpScreenshot(
   const label =
     asOptionalString(node.label, `${action}.label`) ??
     (fullPage ? 'Full UI surface' : 'UI screenshot');
-  const captured = await page.screenshot(context, normalizedPath, {
+  const captured = await capture(normalizedPath, {
     label,
     category: asOptionalString(node.category, `${action}.category`) ?? 'evidence',
     fullPage,
     timeoutMs:
       node.timeout_ms == null ? undefined : asNumber(node.timeout_ms, `${action}.timeout_ms`),
   });
-  const artifact =
+  const artifact: RecipeArtifactManifestEntry =
     typeof captured === 'object' && captured !== null
       ? captured
       : {
@@ -1662,6 +1729,7 @@ async function captureCdpScreenshot(
           mimeType: 'image/png',
           label,
         };
+  if (captureMetadata) artifact.metadata = captureMetadata;
   context.registerArtifact(artifact);
   return {
     kind: 'ui-transport-result',
