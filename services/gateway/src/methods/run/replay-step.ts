@@ -39,6 +39,7 @@ import { GatewayMethodError } from '../../core/method-error.js';
 import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
 import { refreshArtifactMirror } from '../../run-completion/artifact-mirror.js';
+import { isArtifactOnlyRun } from '../../run-completion/orchestrator.js';
 import {
   hasValidPrNumber,
   supersedeStaleHumanGateDecisions,
@@ -1415,7 +1416,9 @@ export async function runReplayStep(
     ) {
       assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
       assertNativeReplayCurrent();
-      const copied = await refreshArtifactMirror(runBeforeGateReplay);
+      const copied = await refreshArtifactMirror(runBeforeGateReplay, {
+        forPublication: !isArtifactOnlyRun(runBeforeGateReplay),
+      });
       console.log(
         `[run] replay from ${replayStepName} — refreshed ${copied} worker artifact(s) before rebuilding the gate`,
       );

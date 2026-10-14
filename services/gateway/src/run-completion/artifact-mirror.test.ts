@@ -8,8 +8,10 @@ import {
   mkdtemp,
   readFile,
   rm,
+  stat,
   symlink,
   truncate,
+  utimes,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir, userInfo } from 'node:os';
@@ -492,6 +494,52 @@ function captureWarnings(t: test.TestContext): string[] {
   });
   return warnings;
 }
+
+test('incremental mirror keeps matches, removes stale files and accepts a zero-transfer refresh', async (t) => {
+  const { taskDir, workerArtifacts, put, run } = await publishPackageFixture(
+    t,
+    'mirror-incremental',
+  );
+  await put('report.md', 'first');
+  await put('evidence/keep.log', 'kept');
+  await put('evidence/removed.log', 'old');
+  const options = { requireSourceArtifacts: true };
+  assert.equal(await refreshArtifactMirror(run, options), 3);
+  const artifacts = path.join(taskDir, 'artifacts');
+  const kept = path.join(artifacts, 'evidence/keep.log');
+  await utimes(kept, 1, 1);
+  await writeFile(path.join(artifacts, 'pr-package.json'), 'gateway-owned');
+  await rm(path.join(workerArtifacts, 'evidence/removed.log'));
+  await put('report.md', 'other');
+  assert.equal(await refreshArtifactMirror(run, options), 1);
+  assert.equal((await stat(kept)).mtimeMs, 1000);
+  assert.equal(existsSync(path.join(artifacts, 'evidence/removed.log')), false);
+  assert.equal(await readFile(path.join(artifacts, 'pr-package.json'), 'utf8'), 'gateway-owned');
+  assert.equal(await refreshArtifactMirror(run, options), 0);
+  await writeFile(path.join(artifacts, 'report.md'), 'wrong');
+  assert.equal(await refreshArtifactMirror(run, options), 1);
+  assert.equal(await readFile(path.join(artifacts, 'report.md'), 'utf8'), 'other');
+});
+
+test('publication preflight refuses a missing selected engine manifest before touching the mirror', async (t) => {
+  const { taskDir, put, run } = await publishPackageFixture(t, 'mirror-preflight');
+  const attempt = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  await put(
+    'latest-valid-recipe-run.json',
+    JSON.stringify({ version: 1, runId: attempt, relativeArtifactRoot: `recipe-runs/${attempt}` }),
+  );
+  await put(`recipe-runs/${attempt}/summary.json`, '{}');
+  await put('report.md', 'fresh report');
+  await mkdir(path.join(taskDir, 'artifacts'), { recursive: true });
+  const retained = path.join(taskDir, 'artifacts/report.md');
+  await writeFile(retained, 'previous mirror');
+  await assert.rejects(
+    refreshArtifactMirror({ ...run, recordedEvidenceContractVersion: 1 }, { forPublication: true }),
+    (error: unknown) => (error as { code?: string }).code === 'evidence-selection-missing',
+  );
+  assert.equal(await readFile(retained, 'utf8'), 'previous mirror');
+  assert.equal(existsSync(path.join(taskDir, 'artifacts/latest-valid-recipe-run.json')), false);
+});
 
 test('refreshArtifactMirror collects named, step-dir and top-level text and media files, not scratch trees', async (t) => {
   const { taskDir, workerArtifacts, put, run } = await publishPackageFixture(t, 'mirror-scope');

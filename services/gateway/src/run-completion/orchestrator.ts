@@ -879,10 +879,10 @@ export async function runCompletionPipeline(
   //    client instead of continuing when the mirror is incomplete.
   if (!isReviewPR) {
     try {
-      const copied = await refreshArtifactMirror(run);
-      if (options?.requireArtifactMirror && copied === 0) {
-        throw new Error('artifact mirror refresh copied no files');
-      }
+      await refreshArtifactMirror(run, {
+        requireSourceArtifacts: options?.requireArtifactMirror,
+        forPublication: options?.suppressPrMutation && !isArtifactOnlyRun(run),
+      });
       flags.artifactsCopied = true;
     } catch (err) {
       if (options?.requireArtifactMirror) {

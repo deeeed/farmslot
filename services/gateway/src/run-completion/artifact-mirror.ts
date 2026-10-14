@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { type Dirent, existsSync } from 'node:fs';
 import { lstat, mkdir, readdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -145,25 +145,41 @@ export function shouldClearLocalRecipeRunCache(
 
 // ─── Artifact copy ───
 
-async function clearWorkerOwnedArtifactMirror(
+async function pruneWorkerOwnedArtifactMirror(
   localArtifactsDir: string,
-  options: { preserveRecipeRuns: boolean },
+  options: { preserveRecipeRuns: boolean; retainedPaths: ReadonlySet<string> },
+  relativeDir = '',
 ): Promise<void> {
-  let entries: string[];
+  let entries: Dirent[];
   try {
-    entries = await readdir(localArtifactsDir);
+    entries = await readdir(path.join(localArtifactsDir, relativeDir), { withFileTypes: true });
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
     throw err;
   }
-  await Promise.all(
-    entries
-      .filter((name) => {
-        if (options.preserveRecipeRuns && name === 'recipe-runs') return false;
-        return !isGatewayOwnedArtifactMirrorEntry(name);
-      })
-      .map((name) => rm(path.join(localArtifactsDir, name), { recursive: true, force: true })),
-  );
+  for (const entry of entries) {
+    if (!relativeDir && isGatewayOwnedArtifactMirrorEntry(entry.name)) continue;
+    if (!relativeDir && options.preserveRecipeRuns && entry.name === 'recipe-runs') continue;
+    const relativePath = path.posix.join(relativeDir, entry.name);
+    if (entry.isFile() && options.retainedPaths.has(relativePath)) continue;
+    if (
+      entry.isDirectory() &&
+      [...options.retainedPaths].some((file) => file.startsWith(`${relativePath}/`))
+    ) {
+      await pruneWorkerOwnedArtifactMirror(localArtifactsDir, options, relativePath);
+    } else {
+      await rm(path.join(localArtifactsDir, relativePath), { recursive: true, force: true });
+    }
+  }
+}
+
+function workerPublicationReadIO(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+): PublicationManifestReadIO {
+  return {
+    readText: async (file) =>
+      (await slotFileExists(vars, file)) ? slotReadFile(vars, file) : null,
+  };
 }
 
 // Paths (relative to artifacts/) named by the worker's evidence manifest, of
@@ -185,10 +201,10 @@ async function workerEvidenceManifestPaths(
     : [];
   let manifest: EvidenceManifest | null;
   try {
-    manifest = await readSelectedPublicationManifest(path.dirname(workerArtifactsDir), {
-      readText: async (file) =>
-        (await slotFileExists(vars, file)) ? slotReadFile(vars, file) : null,
-    });
+    manifest = await readSelectedPublicationManifest(
+      path.dirname(workerArtifactsDir),
+      workerPublicationReadIO(vars),
+    );
   } catch (error) {
     if (!(error instanceof RecordedEvidenceReadError)) throw error;
     console.warn(`[artifact-mirror] ${error.code}: ${error.message}`);
@@ -282,13 +298,16 @@ async function copyEvidenceManifestReferencedArtifacts(
     }
     const localPath = path.join(localArtifactsDir, relativePath);
     await mkdir(path.dirname(localPath), { recursive: true });
-    await slotCopyFile(vars, workerPath, localPath, {
-      phase: 'mirror',
-      runId: progress?.runId,
-      slotId: progress?.slotId ?? vars.slotId,
-      label: relativePath,
-    });
-    copied += 1;
+    if (
+      await slotCopyFile(vars, workerPath, localPath, {
+        skipUnchanged: true,
+        phase: 'mirror',
+        runId: progress?.runId,
+        slotId: progress?.slotId ?? vars.slotId,
+        label: relativePath,
+      })
+    )
+      copied += 1;
   }
   return copied;
 }
@@ -296,8 +315,22 @@ async function copyEvidenceManifestReferencedArtifacts(
 // Sync slot-side artifacts -> orchestrator mirror. Throws on copy failure so
 // explicit user-triggered callers (run.refreshMirror) can surface the error.
 // Best-effort callers must wrap in their own try/catch (see complete()).
-export async function refreshArtifactMirror(run: Run): Promise<number> {
-  if (!run.slotId || !run.taskFile) return 0;
+export interface ArtifactMirrorOptions {
+  /** Completion requires source artifacts even when none need transferring. */
+  requireSourceArtifacts?: boolean;
+  /** Publication callers validate the same selected attempt before any copy. */
+  forPublication?: boolean;
+}
+
+export async function refreshArtifactMirror(
+  run: Run,
+  options: ArtifactMirrorOptions = {},
+): Promise<number> {
+  if (!run.slotId || !run.taskFile) {
+    if (options.requireSourceArtifacts)
+      throw new Error('artifact mirror refresh has no source artifacts');
+    return 0;
+  }
 
   const vars = await loadSlotVars(run.slotId);
   const taskDir = path.dirname(run.taskFile);
@@ -306,12 +339,24 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
     run.taskFile,
     getOrchestratorTaskRoot(run.project, pv?.projectJson ?? null),
   );
-  if (taskRelDir === null) return 0;
+  if (taskRelDir === null) {
+    if (options.requireSourceArtifacts)
+      throw new Error('artifact mirror refresh has no source artifacts');
+    return 0;
+  }
 
   const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
   const workerTaskDir = path.join(vars.remoteRepo, taskDirName, taskRelDir);
   const workerArtifactsDir = path.join(workerTaskDir, 'artifacts');
   const localArtifactsDir = path.join(taskDir, 'artifacts');
+  if (options.forPublication) {
+    await resolvePublicationManifest(
+      workerTaskDir,
+      workerPublicationReadIO(vars),
+      workerArtifactsDir,
+      run.recordedEvidenceContractVersion ?? 0,
+    );
+  }
   const workerPointerPath = path.join(workerArtifactsDir, 'latest-valid-recipe-run.json');
   const workerPointerExists = await slotFileExists(vars, workerPointerPath);
   let promotedPointer: LatestValidRecipeRunPointer | null = null;
@@ -419,6 +464,9 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
   assertPublishPackageWithinCaps([...packaged.entries, ...snapshotEntries], workerArtifactsDir, {
     truncated: scan.truncated,
   });
+  if (options.requireSourceArtifacts && packaged.entries.length + snapshotEntries.length === 0) {
+    throw new Error('artifact mirror refresh has no source artifacts');
+  }
   const packagedPaths = new Set(packaged.entries.map((entry) => entry.path));
   const skippedLinks = scan.links.filter(
     (link) => !inSnapshot(link) && !manifestPaths.includes(link) && !packagedPaths.has(link),
@@ -432,9 +480,11 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
     );
   }
   const clearLocalRecipeRuns = shouldClearLocalRecipeRunCache(workerPointerExists, promotedPointer);
-  await clearWorkerOwnedArtifactMirror(localArtifactsDir, {
+  const pruneOptions = {
     preserveRecipeRuns: !clearLocalRecipeRuns,
-  });
+    retainedPaths: new Set([...packaged.entries, ...snapshotEntries].map((entry) => entry.path)),
+  };
+  await pruneWorkerOwnedArtifactMirror(localArtifactsDir, pruneOptions);
   const transferMeta = { runId: run.id, slotId: run.slotId ?? vars.slotId };
   const manifestNamed = new Set(manifestPaths);
   let copied = 0;
@@ -443,20 +493,23 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
     if (manifestNamed.has(entry.path)) continue;
     const localPath = path.join(localArtifactsDir, entry.path);
     await mkdir(path.dirname(localPath), { recursive: true });
-    await slotCopyFile(
-      vars,
-      entry.sourcePath ?? path.join(workerArtifactsDir, entry.path),
-      localPath,
-      {
-        phase: 'mirror',
-        ...transferMeta,
-        label: `artifacts/${entry.path}`,
-      },
-    );
-    copied += 1;
+    if (
+      await slotCopyFile(
+        vars,
+        entry.sourcePath ?? path.join(workerArtifactsDir, entry.path),
+        localPath,
+        {
+          skipUnchanged: true,
+          phase: 'mirror',
+          ...transferMeta,
+          label: `artifacts/${entry.path}`,
+        },
+      )
+    )
+      copied += 1;
   }
   // Defensive cleanup for stale local mirrors created before screenshots/ was excluded.
-  await removeStaleArtifactDirectory(path.join(localArtifactsDir, 'screenshots'));
+  // Pruning above retains only explicitly selected raw files, not the spool.
   if (promotedPointer) {
     const promotedLocalRoot = path.join(localArtifactsDir, promotedPointer.relativeArtifactRoot);
     // Promoted snapshot copy failures also reject so callers never publish a
@@ -467,13 +520,18 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
       promotedLocalRoot,
       {
         excludeTopLevel: ['screenshots'],
+        skipUnchanged: true,
         phase: 'mirror',
         ...transferMeta,
         labelPrefix: promotedPointer.relativeArtifactRoot,
       },
     );
     // Defensive cleanup for stale promoted mirrors created before screenshots/ was excluded.
-    await removeStaleArtifactDirectory(path.join(promotedLocalRoot, 'screenshots'));
+    await pruneWorkerOwnedArtifactMirror(
+      localArtifactsDir,
+      pruneOptions,
+      `${promotedPointer.relativeArtifactRoot}/screenshots`,
+    );
   } else if (clearLocalRecipeRuns) {
     await removeStaleArtifactDirectory(path.join(localArtifactsDir, 'recipe-runs'));
   }
@@ -512,6 +570,7 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
     const workerDocument = path.join(workerTaskDir, document);
     if (!(await slotFileExists(vars, workerDocument))) continue;
     await slotCopyFile(vars, workerDocument, path.join(taskDir, `${document}.worker`), {
+      skipUnchanged: true,
       phase: 'mirror',
       ...transferMeta,
       label: `${document}.worker`,
@@ -592,12 +651,15 @@ export async function mirrorWorkerSubtasks(
       continue;
     }
     const destination = destinationName(entry);
-    await slotCopyFile(vars, workerPath, path.join(localSubtasksDir, destination), {
-      phase: 'mirror',
-      ...transferMeta,
-      label: `${SUBTASKS_DIR}/${destination}`,
-    });
-    copied += 1;
+    if (
+      await slotCopyFile(vars, workerPath, path.join(localSubtasksDir, destination), {
+        skipUnchanged: true,
+        phase: 'mirror',
+        ...transferMeta,
+        label: `${SUBTASKS_DIR}/${destination}`,
+      })
+    )
+      copied += 1;
   }
   return copied;
 }

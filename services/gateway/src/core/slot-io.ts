@@ -31,6 +31,7 @@ import { getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 
 import { isLocal } from './exec.js';
+import { sha256File } from './file-hash.js';
 import {
   AggregateTransferSession,
   copyFileChunked,
@@ -52,6 +53,8 @@ export interface SlotLocality {
 }
 
 export interface SlotCopyDirOptions {
+  /** Artifact refresh keeps matching files instead of downloading them again. */
+  skipUnchanged?: boolean;
   excludeTopLevel?: string[];
   excludeRelativePaths?: string[];
   /**
@@ -287,6 +290,8 @@ export async function slotStat(ctx: SlotLocality, targetPath: string): Promise<S
 // go through chunked fs.readChunk with progress events and idle-based timeouts.
 
 export interface SlotCopyFileOptions {
+  /** Artifact refresh skips only when destination size and SHA-256 both match. */
+  skipUnchanged?: boolean;
   label?: string;
   phase?: FileTransferPhase;
   runId?: string;
@@ -307,26 +312,60 @@ export interface SlotCopyFileOptions {
   abortSignal?: AbortSignal;
 }
 
+interface SlotFileFingerprint {
+  sha256: string;
+  size: number;
+}
+
+async function existingSlotFileMatches(
+  ctx: SlotLocality,
+  sourcePath: string,
+  destinationPath: string,
+  sourceSize: number,
+): Promise<boolean> {
+  let destination: Awaited<ReturnType<typeof lstat>>;
+  try {
+    destination = await lstat(destinationPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+  if (!destination.isFile() || destination.size !== sourceSize) return false;
+  const source: SlotFileFingerprint = local(ctx)
+    ? { sha256: await sha256File(sourcePath), size: sourceSize }
+    : ((await requestFor(ctx)('fs.hash', nodePathParams(sourcePath), {
+        timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
+      })) as SlotFileFingerprint);
+  return source.size === destination.size && source.sha256 === (await sha256File(destinationPath));
+}
+
 export async function slotCopyFile(
   ctx: SlotLocality,
   remotePath: string,
   localPath: string,
   options: SlotCopyFileOptions = {},
-): Promise<void> {
+): Promise<boolean> {
   if (local(ctx)) {
+    if (
+      options.skipUnchanged &&
+      (await existingSlotFileMatches(ctx, remotePath, localPath, (await stat(remotePath)).size))
+    )
+      return false;
     await copyFile(remotePath, localPath);
-    return;
+    return true;
   }
   const request = requestFor(ctx);
   const pathParams = nodePathParams(remotePath);
   const threshold = options.smallFileThresholdBytes ?? FILE_TRANSFER_SMALL_FILE_THRESHOLD_BYTES;
 
   let size = 0;
+  let sizeKnown = false;
   try {
     const st = (await request('fs.stat', pathParams, {
       timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
     })) as { size: number; isFile: boolean };
     size = st.size;
+    sizeKnown = true;
     if (!st.isFile) {
       // Authoritative metadata — never fall through to one-shot file read.
       throw new Error(`slotCopyFile remote path is not a file: ${remotePath}`);
@@ -337,13 +376,20 @@ export async function slotCopyFile(
     if (options.forceChunked || message.includes('is not a file')) throw err;
   }
 
+  if (
+    options.skipUnchanged &&
+    sizeKnown &&
+    (await existingSlotFileMatches(ctx, remotePath, localPath, size))
+  )
+    return false;
+
   const useChunked = options.forceChunked || size > threshold;
   if (!useChunked) {
     const result = (await request('fs.readBase64', pathParams, {
       timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
     })) as { content: string };
     await fsWriteFile(localPath, Buffer.from(result.content, 'base64'));
-    return;
+    return true;
   }
 
   const verifyHash = options.verifyRemoteHash !== false;
@@ -379,6 +425,7 @@ export async function slotCopyFile(
       return chunk;
     },
   });
+  return true;
 }
 
 export type SlotReadFileTransportMode = 'local' | 'oneshot' | 'chunked';
@@ -658,6 +705,7 @@ function skipLink(options: SlotCopyDirOptions, sourcePath: string, reason: strin
 }
 
 async function copyLocalRecursive(
+  ctx: SlotLocality,
   rootDir: string,
   sourceDir: string,
   targetDir: string,
@@ -704,6 +752,7 @@ async function copyLocalRecursive(
     if (isDirectory) {
       await mkdir(targetPath, { recursive: true });
       count += await copyLocalRecursive(
+        ctx,
         rootDir,
         sourcePath,
         targetPath,
@@ -717,8 +766,10 @@ async function copyLocalRecursive(
     }
     if (isFile) {
       try {
-        await copyFile(sourcePath, targetPath);
-        count += 1;
+        if (
+          await slotCopyFile(ctx, sourcePath, targetPath, { skipUnchanged: options.skipUnchanged })
+        )
+          count += 1;
       } catch (err) {
         const entryError = new SlotCopyDirEntryError(sourcePath, targetPath, err);
         if (options.onEntryFailure) {
@@ -769,6 +820,7 @@ export async function slotCopyDir(
     );
     await mkdir(localDir, { recursive: true });
     return copyLocalRecursive(
+      ctx,
       remoteDir,
       remoteDir,
       localDir,
@@ -907,6 +959,7 @@ export async function slotCopyDir(
       }
       if (entry.type === 'file') {
         const copyOptions: SlotCopyFileOptions = {
+          skipUnchanged: options.skipUnchanged,
           phase: options.phase ?? 'download',
           label: options.labelPrefix
             ? `${options.labelPrefix}/${path.relative(remoteDir, sourcePath)}`
@@ -923,9 +976,10 @@ export async function slotCopyDir(
             }
           },
         };
+        let transferred = false;
         try {
           try {
-            await slotCopyFile(ctx, sourcePath, targetPath, copyOptions);
+            transferred = await slotCopyFile(ctx, sourcePath, targetPath, copyOptions);
           } catch (err) {
             // The node refuses to read through a final-component symlink. Only
             // then ask where the entry leads, so plain files cost no extra call.
@@ -936,9 +990,11 @@ export async function slotCopyDir(
               skipLink(options, sourcePath, target.reason);
               continue;
             }
-            await slotCopyFile(ctx, target.realPath, targetPath, copyOptions);
+            transferred = await slotCopyFile(ctx, target.realPath, targetPath, copyOptions);
           }
-          aggregate.noteFileComplete(typeof entry.size === 'number' ? entry.size : 0);
+          aggregate.noteFileComplete(
+            transferred && typeof entry.size === 'number' ? entry.size : 0,
+          );
         } catch (err) {
           const { FileTransferCancelledError } = await import('./file-transfer.js');
           if (err instanceof FileTransferCancelledError || aggregate.signal.aborted) {
@@ -955,7 +1011,7 @@ export async function slotCopyDir(
           aggregate.fail(entryError.message);
           throw entryError;
         }
-        count++;
+        if (transferred) count++;
         continue;
       }
 
