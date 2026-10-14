@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.22.6 - 2026-10-15
+
+- Use agent-runtime 0.22.1 for verified stopped-host recovery while preserving native session journals.
+
 ## 0.22.5 - 2026-10-15
 
 - Align the installed worker dependency closure with protocol 0.44.0 and provenance-bound branch maintenance.

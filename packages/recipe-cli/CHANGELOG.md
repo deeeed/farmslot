@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.17.4 - 2026-10-15
+
+- Use agent-runtime 0.22.1 for verified stopped-host recovery while preserving native session journals.
+
 ## 0.17.3 - 2026-10-15
 
 - Bind monorepo app recipe runs and calls to checkout-root tasks while preserving app execution and outside-checkout refusal.
