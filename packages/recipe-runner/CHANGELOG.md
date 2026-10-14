@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.34.3 - 2026-10-15
+
+- Align the installed worker dependency closure with protocol 0.44.0 and provenance-bound branch maintenance.
+
 ## 0.34.2 - 2026-10-14
 
 - Align public dependencies with protocol 0.43.1 and its optional HUD conformance guard.
