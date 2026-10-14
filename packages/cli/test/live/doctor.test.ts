@@ -3,7 +3,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { fixture, manifest, run, runProcess } from '../helpers/project-doctor.js';
+import { validateRecipeArtifactDirectory } from '../../src/commands/recipe.js';
+import {
+  fixture,
+  manifest,
+  run,
+  runProcess,
+  uiRecordingFixture,
+} from '../helpers/project-doctor.js';
 
 test('public conformance reuses identical parameters and refuses a changed invocation', (t) => {
   const { root, write } = fixture(t);
@@ -157,4 +164,38 @@ test('public live doctor retains real smoke and cleanup proof for one disposable
   assert.equal(stale.status, 1);
   assert.match(stale.envelope.error.message, /evidence changed/u);
   assert.deepEqual(JSON.parse(fs.readFileSync(reportPath, 'utf8')), report);
+});
+
+test('live doctor forwards recording off to UI proof and retains its still', async (t) => {
+  const { root, flags } = uiRecordingFixture(t);
+  const result = await run(t, root, [
+    ...flags,
+    '--recording-reason',
+    'Validate before the recorded proof',
+  ]);
+  assert.equal(result.status, 0, JSON.stringify(result.envelope));
+  const report = result.envelope.data.report;
+  assert.equal(report.mode, 'live');
+  assert.equal(report.status, 'pass');
+  const evidence = report.checks[0].evidence.live;
+  const ledger = JSON.parse(
+    fs.readFileSync(path.join(evidence.artifactDir, 'acceptance-status.json'), 'utf8'),
+  );
+  assert.equal(ledger.recording.status, 'explicit-off');
+  assert.equal(ledger.recording.reason, 'Validate before the recorded proof');
+  assert.ok(evidence.artifacts.some((entry: { path: string }) => entry.path === 'proof.png'));
+  assert.equal(fs.existsSync(path.join(root, 'artifacts', 'captured')), true);
+  const advisory = await validateRecipeArtifactDirectory(evidence.artifactDir, {
+    requireRunnerProvenance: true,
+    liveProof: {
+      smokeTarget: 'smoke',
+      teardownTarget: 'cleanup',
+      captureRequired: true,
+      hudRequired: true,
+    },
+  });
+  assert.equal(advisory.status, 'pass');
+  assert.equal(advisory.liveEvidence?.hudRequired, false);
+  assert.deepEqual(advisory.liveEvidence?.captures, ['proof.png']);
+  assert.ok(advisory.warnings?.some((message) => /HUD/.test(message)));
 });

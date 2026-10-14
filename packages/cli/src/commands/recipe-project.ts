@@ -43,6 +43,12 @@ export function recipeProjectOptions(command: Command): Command {
     .option('--library <name=path>', 'Override a recipe library', collectRecipeOption, []);
 }
 
+export function recipeRecordingOptions(command: Command): Command {
+  return command
+    .addOption(new Option('--record-video [mode]', 'Record evidence').choices(['full-run', 'off']))
+    .option('--recording-reason <text>', 'Explain an explicit recording opt-out');
+}
+
 /** Commander consumes host options; provider flags remain for strict validation after import. */
 export function projectCommandInvocation(
   cmd: Command,
@@ -80,27 +86,27 @@ export function registerProjectExecutionCommand(
   operation: 'run' | 'call',
   standalone?: (recipePath: string, params: string[], command: Command) => Promise<void>,
 ): void {
-  const command = recipeProjectOptions(
-    recipe
-      .command(operation)
-      .description(
-        `Run ${operation === 'run' ? 'a recipe' : 'one action'} through the selected project provider`,
-      )
-      .argument(
-        '[args...]',
-        `${operation === 'run' ? 'Recipe' : 'Action'} followed by key=value inputs`,
-      )
-      .allowUnknownOption(),
-  )
-    .option('--target <path>', 'Checkout to execute against')
-    .option('--artifacts-dir <path>', 'Checkout-relative artifact directory')
-    .option('--action-manifest <path>', 'Select an action manifest')
-    .addOption(
-      new Option('--heal <policy>', 'Healing policy').choices(['off', 'infra-only', 'auto']),
+  const command = recipeRecordingOptions(
+    recipeProjectOptions(
+      recipe
+        .command(operation)
+        .description(
+          `Run ${operation === 'run' ? 'a recipe' : 'one action'} through the selected project provider`,
+        )
+        .argument(
+          '[args...]',
+          `${operation === 'run' ? 'Recipe' : 'Action'} followed by key=value inputs`,
+        )
+        .allowUnknownOption(),
     )
-    .addOption(new Option('--hud <mode>', 'Evidence HUD').choices(['show', 'hide']))
-    .addOption(new Option('--record-video [mode]', 'Record evidence').choices(['full-run', 'off']))
-    .option('--recording-reason <text>', 'Explain an explicit recording opt-out')
+      .option('--target <path>', 'Checkout to execute against')
+      .option('--artifacts-dir <path>', 'Checkout-relative artifact directory')
+      .option('--action-manifest <path>', 'Select an action manifest')
+      .addOption(
+        new Option('--heal <policy>', 'Healing policy').choices(['off', 'infra-only', 'auto']),
+      )
+      .addOption(new Option('--hud <mode>', 'Evidence HUD').choices(['show', 'hide'])),
+  )
     .option('--source-trust <trust>', 'Explicit recipe source trust')
     .option('--source-kind <kind>', 'Explicit recipe source kind')
     .option('--source-name <name>', 'Recipe source name')

@@ -441,6 +441,10 @@ Options:
 
 ## farmslot doctor
 
+For local live validation, use `--record-video=off` with `--recording-reason`.
+Captures tied to the smoke and authored cleanup remain required on headed runtimes.
+The HUD stays on and recommended; missing HUD observations produce a warning.
+
 ```text
 Usage: farmslot doctor [options] [checkout]
 
@@ -463,6 +467,8 @@ Options:
   --cdp-port <port>              Select the CDP transport port
   --runtime-dir <path>           Target-relative recipe runtime directory
   --library <name=path>          Override a recipe library (default: [])
+  --record-video [mode]          Record evidence (choices: "full-run", "off")
+  --recording-reason <text>      Explain an explicit recording opt-out
   --target <path>                Checkout to inspect; alternative to the checkout
                                  argument
   --fix                          Repair declared project readiness problems

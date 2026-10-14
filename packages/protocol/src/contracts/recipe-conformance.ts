@@ -106,7 +106,6 @@ export function conformanceChecksPass(
   const captureRequired = checks.some(
     (check) => check.id === 'capture.support' && check.status === 'pass',
   );
-  const hudRequired = checks.some((check) => check.id === 'hud.support' && check.status === 'pass');
   return (
     required.length > 0 &&
     required.every((check) => {
@@ -124,8 +123,7 @@ export function conformanceChecksPass(
         live.teardownTarget &&
         live.artifacts.length &&
         (!captureRequired || live.captureRequired === true) &&
-        (!hudRequired || live.hudRequired === true) &&
-        (!(captureRequired || hudRequired || live.captureRequired || live.hudRequired) || captured),
+        (!(captureRequired || live.captureRequired) || captured),
       );
     })
   );

@@ -107,6 +107,29 @@ test('live conformance requires retained smoke and authored teardown evidence', 
   );
   assert.equal(
     conformanceChecksPass([withLive({ ...captured, hudRequired: false }), ...supported], 'live'),
+    true,
+  );
+  assert.equal(
+    conformanceChecksPass(
+      [
+        withLive({ ...captured, hudRequired: false }),
+        ...supported,
+        {
+          id: 'hud.observation',
+          status: 'missing',
+          required: false,
+          message: 'Warning: HUD is recommended',
+        },
+      ],
+      'live',
+    ),
+    true,
+  );
+  assert.equal(
+    conformanceChecksPass(
+      [withLive({ ...captured, captureRequired: false }), ...supported],
+      'live',
+    ),
     false,
   );
 });
