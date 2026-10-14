@@ -1,15 +1,16 @@
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, type FSWatcher, watch } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
 import type { NodeTmuxPane, NodeTmuxPaneSignals } from '@farmslot/protocol';
 
+import { GitHeadCache } from './git-head-cache.js';
+
 const execFileAsync = promisify(execFile);
 const TMUX_INVENTORY_CACHE_MS = 3_000;
-const GIT_BRANCH_CACHE_MS = 10_000;
 
 interface PaneCacheEntry {
   signature: string;
@@ -22,8 +23,12 @@ const paneChangeCache = new Map<string, PaneCacheEntry>();
 export function getCachedTmuxPanePids(): number[] {
   return paneInventoryCache?.panes.flatMap((pane) => (pane.pid ? [pane.pid] : [])) ?? [];
 }
-const gitBranchCache = new Map<string, { observedAt: number; branch?: string }>();
-const gitBranchWatchers = new Map<string, FSWatcher[]>();
+let paneInventoryPending: Promise<NodeTmuxPane[]> | null = null;
+let inventoryVersion = 0;
+const gitHeads = new GitHeadCache(() => {
+  inventoryVersion++;
+  paneInventoryCache = null;
+});
 
 interface ProcessRow {
   pid: number;
@@ -331,87 +336,6 @@ function attachPaneChangeMetadata(panes: NodeTmuxPane[], observedAt: number): No
   return enriched;
 }
 
-async function resolveGitBranch(
-  cwd: string | undefined,
-  observedAt: number,
-): Promise<string | undefined> {
-  if (!cwd) return undefined;
-  const cached = gitBranchCache.get(cwd);
-  if (cached && observedAt - cached.observedAt <= GIT_BRANCH_CACHE_MS) return cached.branch;
-  try {
-    const { stdout } = await execFileAsync(
-      'git',
-      ['-C', cwd, 'symbolic-ref', '--quiet', '--short', 'HEAD'],
-      { timeout: 1000 },
-    );
-    const branch = stdout.trim() || undefined;
-    gitBranchCache.set(cwd, { observedAt, branch });
-    await ensureGitBranchWatch(cwd);
-    return branch;
-  } catch {
-    // Detached HEADs or non-git directories are expected for arbitrary tmux panes.
-    try {
-      const { stdout } = await execFileAsync('git', ['-C', cwd, 'rev-parse', '--short', 'HEAD'], {
-        timeout: 1000,
-      });
-      const branch = stdout.trim() || undefined;
-      gitBranchCache.set(cwd, { observedAt, branch });
-      await ensureGitBranchWatch(cwd);
-      return branch;
-    } catch {
-      // Plain shell panes often run outside a git worktree; cache the miss briefly.
-      gitBranchCache.set(cwd, { observedAt, branch: undefined });
-      return undefined;
-    }
-  }
-}
-
-function invalidateGitBranchCache(cwd: string): void {
-  gitBranchCache.delete(cwd);
-  paneInventoryCache = null;
-}
-
-function watchGitBranchTarget(cwd: string, targetPath: string, watchers: FSWatcher[]): void {
-  try {
-    watchers.push(
-      watch(targetPath, { persistent: false }, () => {
-        invalidateGitBranchCache(cwd);
-      }),
-    );
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    // Git refs can be packed or absent for detached/non-standard worktrees. The TTL cache
-    // remains the fallback, so watcher setup failure should not hide the pane.
-    if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
-  }
-}
-
-async function resolveGitDir(cwd: string): Promise<string | undefined> {
-  try {
-    const { stdout } = await execFileAsync('git', ['-C', cwd, 'rev-parse', '--absolute-git-dir'], {
-      timeout: 1000,
-    });
-    return stdout.trim() || undefined;
-  } catch {
-    // Non-git panes are expected in the all-tmux inventory; they just have no branch watcher.
-    return undefined;
-  }
-}
-
-async function ensureGitBranchWatch(cwd: string): Promise<void> {
-  if (gitBranchWatchers.has(cwd)) return;
-  const gitDir = await resolveGitDir(cwd);
-  if (!gitDir) {
-    gitBranchWatchers.set(cwd, []);
-    return;
-  }
-
-  const watchers: FSWatcher[] = [];
-  watchGitBranchTarget(cwd, path.join(gitDir, 'HEAD'), watchers);
-  watchGitBranchTarget(cwd, path.join(gitDir, 'refs', 'heads'), watchers);
-  gitBranchWatchers.set(cwd, watchers);
-}
-
 function parseOptionalInteger(value: string | undefined): number | undefined {
   if (!value) return undefined;
   const parsed = Number.parseInt(value, 10);
@@ -489,7 +413,7 @@ async function samplePanes(): Promise<NodeTmuxPane[]> {
           ? (signalCache.get(pane.cwd) ??
             signalCache.set(pane.cwd, readPaneSignals(pane.cwd)).get(pane.cwd)!)
           : undefined,
-        resolveGitBranch(pane.cwd, observedAt),
+        gitHeads.read(pane.cwd),
       ]);
       const processSignal = processSignalForPane(pane, processRows, observedAt);
       const mergedSignals =
@@ -511,7 +435,21 @@ export async function listPanes(): Promise<NodeTmuxPane[]> {
   if (paneInventoryCache && now - paneInventoryCache.observedAt <= TMUX_INVENTORY_CACHE_MS) {
     return paneInventoryCache.panes;
   }
-  const panes = await samplePanes();
-  paneInventoryCache = { observedAt: now, panes };
-  return panes;
+  if (paneInventoryPending) return paneInventoryPending;
+  const version = inventoryVersion;
+  paneInventoryPending = samplePanes()
+    .then((panes) => {
+      if (version === inventoryVersion) paneInventoryCache = { observedAt: now, panes };
+      return panes;
+    })
+    .finally(() => {
+      paneInventoryPending = null;
+    });
+  return paneInventoryPending;
+}
+
+export async function closeTmuxObservation(): Promise<void> {
+  await gitHeads.close();
+  // Inventory's tmux/ps children are also awaited before the daemon exits.
+  await paneInventoryPending;
 }
