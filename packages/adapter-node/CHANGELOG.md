@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-node` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.1.22 - 2026-10-15
+
+- Use the coordinated window screenshot engine dependency closure.
+
 ## 0.1.21 - 2026-10-15
 
 - Align the installed worker dependency closure with protocol 0.44.0 and provenance-bound branch maintenance.
