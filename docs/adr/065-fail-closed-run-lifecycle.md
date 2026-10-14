@@ -148,3 +148,61 @@ run, gate and replay RPCs and their CLI clients inherit the result. No public DT
 SDK export, command or flag changes. Harnesses keep using their declared project
 command references and existing task artifacts. The internal adapter ships with
 the gateway revision and has no independent compatibility contract.
+
+## Amendment 2: attested human publication adoption, 2026-10-14
+
+**Status:** Proposed. Implementation requires maintainer acceptance after paired review.
+**Specification:** [Human publication adoption](../reference/fail-closed-run-lifecycle.md#human-publication-adoption).
+
+### Decision
+
+Allow a credential-backed person with the existing human-attestation authority
+to adopt an already published PR for a run. Verify the repository, branch and
+exact human-reviewed commit through GitHub. Record the trusted person, written
+reason, reviewed/published head and observed PR identity in existing run
+provenance, then link the PR through the canonical publication owner.
+
+This records an external publication fact. It neither publishes code nor grants
+the run a fabricated passing review, completed worker, reset review budget or
+approved evidence package. Preserve the original gate/package and review
+history when they describe an older revision. An advanced PR may be adopted for
+its verified historical head; approval does not extend to its newer commits.
+
+The operation supports active and archived publication runs. Archive adoption
+keeps the record archived and its execution status unchanged. It must not revive
+the worker, take its old slot or replace a successor's backlog/graph ownership.
+For an active run, adoption is an explicit authenticated exception to normal
+publication readiness for an already fulfilled publication wait. The serialized
+decision resolver records unmet prerequisites and supersedes only that publish
+decision. Other waits and worker/resource guards remain intact. Finalization
+recognizes the verified external publication without publishing the old package;
+CI and review-fix use the adopted PR target. Ordinary publication still requires
+its normal readiness and package approval.
+
+### Rationale and consequences
+
+An operator can publish a reviewed revision after the internal review budget is
+exhausted. PR discovery cannot authorize publication, while force-completion
+marks execution terminal and disables normal recovery without recording the
+publication. A distinct, authenticated receipt preserves both the external fact
+and the original incomplete pipeline. CI and review-fix consumers use the linked
+PR; current-head checks remain authoritative for later work.
+
+Normal publication and adoption share one publication recorder. Existing
+evidence/review writers, frozen package formats and slot cleanup remain unchanged.
+Adoption does not authorize editing PR content or reusing an older package for a
+newer head. Exact retries retain the first receipt; conflicting adoption refuses.
+
+### Public surface
+
+- `farmslot run adopt-published-pr <runId> --pr <url> --head <full-sha>
+--reason <text> --attest-reviewed-publication` is the operator CLI consumer.
+- `run.adoptPublishedPr` and proposed `RunAdoptPublishedPrParams`,
+  `RunAdoptPublishedPrResult`, and `HumanPublicationAdoptionReceipt` belong to
+  `@farmslot/protocol`. The CLI and existing gateway-client RPC transport consume
+  them; the gateway owns verification, authorization and persistence.
+- These are additive experimental contracts, versioned with protocol and CLI
+  minor releases after implementation. Consumers must check method support.
+  Existing readers tolerate the optional receipt without changing old records.
+- Harnesses inherit the published PR identity through normal run/CI/follow-up
+  APIs. They add no recorder, recipe action, hook or local publication authority.
