@@ -22,6 +22,7 @@ import { createRun, getRun, updateRun } from '../runs/store.js';
 
 import {
   baseReviewPolicy,
+  executeCompleteStep,
   executeHumanGateStep,
   executeReviewStep,
   holdInteractiveCompletionForOperator,
@@ -58,6 +59,29 @@ function restartReplayContext(): PostDispatchStepContext {
     deferTerminalSlotRelease: () => {},
   };
 }
+
+test('artifact-only QA complete identifies execution completion to the canonical gate guard', async (t) => {
+  const run = createRun({ flowType: 'dev', project: 'generic-project', ticketOrPr: 'QA-GAPS' });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  updateRun(run.id, {
+    flowType: 'qa',
+    status: 'completing',
+    completionPolicy: 'artifact-only',
+    slotId: 'qa-guard-test-slot',
+  });
+  await assert.rejects(
+    executeCompleteStep(run.id, {
+      ...restartReplayContext(),
+      assertGatePrerequisites: async (checked, prepared, action) => {
+        assert.equal(checked.id, run.id);
+        assert.equal(prepared, null);
+        assert.equal(action, 'complete');
+        throw new Error('Stop before resource or completion side effects');
+      },
+    }),
+    /Stop before resource or completion side effects/,
+  );
+});
 
 test('interactive completion hold persists operator state without completing monitor', async (t) => {
   const run = createRun({

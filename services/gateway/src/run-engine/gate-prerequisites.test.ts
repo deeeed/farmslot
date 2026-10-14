@@ -647,6 +647,109 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
   const qaReady = await qaCheck();
   assert.equal(qaReady.state, 'ready', JSON.stringify(qaReady.reasons));
   assert.equal(getRun(qaRun.id)?.decisions.at(-1)?.payload?.kind, 'output-review');
+  // Valid retained packages may carry task state ACs with no executed prover,
+  // as in launch/doctor/CI criteria beside a successful smoke execution.
+  const missingTargets = [1, 4, 5].map((index) => ({
+    id: `AC-${index}`,
+    claim: `External task check ${index}`,
+    proofMode: 'state' as const,
+  }));
+  const smokeTarget = { ...declaration, id: 'smoke' };
+  const unresolvedRecipe = {
+    ...recipe,
+    proofTargets: [smokeTarget],
+    workflow: {
+      ...recipe.workflow,
+      nodes: {
+        ...recipe.workflow.nodes,
+        assert: { ...recipe.workflow.nodes.assert, proves: ['smoke'] },
+      },
+    },
+  };
+  const unresolvedInvocation = {
+    ...invocation,
+    recipeDigest: digestRecipeDocument(unresolvedRecipe),
+    claims: [smokeTarget, ...missingTargets],
+  };
+  const unresolvedClaims: RecipeClaimLedger = {
+    ...claims,
+    criteria: [
+      { ...claims.criteria[0]!, id: 'smoke' },
+      ...missingTargets.map((target) => ({
+        id: target.id,
+        text: target.claim,
+        kind: 'acceptance' as const,
+        proofMode: target.proofMode,
+        verdict: 'missing' as const,
+        recipeNodes: [],
+        assertionIndices: [],
+        moments: [],
+        evidence: [],
+      })),
+    ],
+  };
+  const unresolvedDirectory = path.join(root, 'artifacts/unresolved');
+  await mkdir(unresolvedDirectory);
+  for (const [name, value] of Object.entries({
+    ...documents,
+    'recipe.json': unresolvedRecipe,
+    'recipe-invocation.json': unresolvedInvocation,
+    'summary.json': {
+      ...documents['summary.json'],
+      invocationDigest: digestRecipeDocument(unresolvedInvocation),
+    },
+    'recipe-resolution.json': {
+      ...documents['recipe-resolution.json'],
+      root: { ref: '$root', digest: digestRecipeDocument(unresolvedRecipe) },
+    },
+    'acceptance-status.json': unresolvedClaims,
+  }))
+    await writeFile(path.join(unresolvedDirectory, name), JSON.stringify(value));
+  const unresolvedRead = await readRecordedEvidencePackage(unresolvedDirectory);
+  assert.ok(unresolvedRead.checks.every(({ status }) => status === 'pass'));
+  assert.equal(
+    validateRecordedEvidencePackage(unresolvedRead.input).status,
+    'valid',
+    JSON.stringify(validateRecordedEvidencePackage(unresolvedRead.input).findings),
+  );
+  const unresolvedSources = {
+    ...qaSources,
+    acceptance: async () => ({
+      criteria: [
+        { id: smokeTarget.id, text: smokeTarget.claim },
+        ...missingTargets.map(({ id, claim }) => ({ id, text: claim })),
+      ],
+      ledger: unresolvedClaims,
+      issues: [],
+    }),
+    recordedEvidence: async () => [unresolvedRead.input],
+  };
+  await captureRunOutput(qaRun.id, false, true);
+  const gaps = await collectRunGateReadiness(getRun(qaRun.id)!, null, unresolvedSources);
+  assert.equal(gaps.state, 'not-ready');
+  assert.deepEqual(
+    gaps.reasons.map(({ code, evidencePolicy }) => ({ code, evidencePolicy })),
+    [{ code: 'evidence-policy-unsatisfied', evidencePolicy: 'claim-verdict' }],
+  );
+  assert.deepEqual(
+    gateActionsForReadiness(
+      [{ id: 'approve-publish' }, { id: 'close-run' }, { id: 'mark-reviewed' }],
+      gaps,
+    ),
+    [{ id: 'close-run' }, { id: 'mark-reviewed' }],
+  );
+  assert.deepEqual(
+    unresolvedRead.input.claims?.criteria.slice(1).map(({ verdict }) => verdict),
+    ['missing', 'missing', 'missing'],
+  );
+  const changedRegistration = await collectRunGateReadiness(getRun(qaRun.id)!, null, {
+    ...unresolvedSources,
+    acceptance: async () => ({
+      ...(await unresolvedSources.acceptance()),
+      criteria: [{ id: 'AC-4', text: 'A different requirement' }],
+    }),
+  });
+  assert.ok(changedRegistration.reasons.some(({ code }) => code === 'evidence-invalid'));
   const wrongExecution = await collectRunGateReadiness(getRun(qaRun.id)!, null, {
     ...qaSources,
     acceptance: async () => ({

@@ -291,7 +291,15 @@ if (process.argv[2] === 'serve') {
     // pass. This proves admission without publishing or releasing resources.
     const negative = process.env.FARMSLOT_QA_OUTPUT_NEGATIVE ?? '';
     assert.ok(
-      ['', 'reader', 'applicability', 'binding', 'mirror', 'refresh-fence'].includes(negative),
+      [
+        '',
+        'reader',
+        'applicability',
+        'binding',
+        'mirror',
+        'refresh-fence',
+        'claim-policy',
+      ].includes(negative),
     );
     json(path.join(out, 'input-receipt.json'), {
       originalRunId: original.id,
@@ -332,7 +340,16 @@ if (process.argv[2] === 'serve') {
           ${JSON.stringify(`if (reason === 'operator closed execution with recorded outcome' && (await import('node:fs')).existsSync(${JSON.stringify(failPersistence)})) throw new Error('Controlled ENOSPC before output close');`)} + text.slice(body+1);
       }
       if (url.endsWith('/run-engine/post-dispatch-steps.ts')) {
-        const text = String(result.source);
+        let text = String(result.source);
+        if (${JSON.stringify(negative)} === 'claim-policy') {
+          const call = "(current, null, 'complete')";
+          if (!text.includes(call)) throw new Error('QA completion policy control target changed');
+          const changed = text.replace(call, '(current, null)');
+          writeFileSync(${JSON.stringify(path.join(out, 'source-mutation.json'))}, JSON.stringify({mode:'claim-policy',url,
+            beforeHash:createHash('sha256').update(text).digest('hex'),
+            loadedHash:createHash('sha256').update(changed).digest('hex')}));
+          text = changed;
+        }
         const target = "if (current.flowType === 'qa') await assertQaCompletion(current);";
         if (!text.includes(target)) throw new Error('Completion proof barrier target changed');
         return {...result, source: text.replace(target, target + " throw new (await import('../core/method-error.js')).GatewayMethodError('RUN_GATE_NOT_READY','${barrier}');")};
@@ -357,7 +374,7 @@ if (process.argv[2] === 'serve') {
         if (!text.includes(target)) throw new Error('Transfer failure checkpoint target changed');
         result.source = text.replace(target, ${JSON.stringify(`if ((await import('node:fs')).existsSync(${JSON.stringify(failTransfer)})) throw new Error('Controlled mirror transfer failure'); `)} + target);
       }
-      if (${JSON.stringify(negative)} !== '' && (url.endsWith('/run-engine/gate-prerequisites.ts') ||
+      if (${JSON.stringify(negative)} !== '' && ${JSON.stringify(negative)} !== 'claim-policy' && (url.endsWith('/run-engine/gate-prerequisites.ts') ||
           url.endsWith('/run-completion/artifact-mirror.ts'))) {
         const text = String(result.source);
         const mode = ${JSON.stringify(negative)};

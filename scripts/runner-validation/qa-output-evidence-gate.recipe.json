@@ -9,7 +9,14 @@
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/qa-output-evidence-gate.mts",
         "timeout_ms": 300000,
-        "intent": "Refuse stale QA output, recapture through public RPC, validate applicable headless proof and reject changed report bytes.",
+        "intent": "Allow valid selected QA output with missing state claims to reach review while retaining verdicts; refuse stale or changed evidence through public RPC.",
+        "next": "checked"
+      },
+      "checked": {
+        "action": "assert_output",
+        "source": "gate",
+        "assert": { "path": "$.exitCode", "operator": "eq", "value": 0 },
+        "intent": "Verify the public replay and retained-evidence guards passed.",
         "next": "done"
       },
       "done": { "action": "end", "status": "pass" }
