@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.9.1 - 2026-10-14
+
+- Align public dependencies with protocol 0.43.1 and its optional HUD conformance guard.
+
 ## 0.9.0 - 2026-10-14
 
 - Preserve explicit built-in bridge declarations without adding overlay installer leaves, while retaining verification and existing overlay defaults.

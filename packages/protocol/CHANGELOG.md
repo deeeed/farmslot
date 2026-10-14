@@ -11,6 +11,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 - Active-development baseline; add user-facing changes here before release or package publication.
 - Clarify engine ownership of current acceptance projections and display-only retention of historical verdicts and links.
 
+## 0.43.1 - 2026-10-14
+
+- Honor optional HUD declarations in public conformance reports while still requiring capture, artifact and cleanup checks.
+
 ## 0.43.0 - 2026-10-14
 
 - Define authenticated, moment-bound visual review receipts and the public human review operation.
