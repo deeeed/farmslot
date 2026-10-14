@@ -4,7 +4,7 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Preserve explicit built-in bridge declarations without adding overlay installer leaves, while retaining verification and existing overlay defaults.
 
 ## 0.8.3 - 2026-10-14
 

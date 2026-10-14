@@ -288,7 +288,8 @@ const flag = (options, key) => options[key] === true;
 
 /**
  * @typedef {Partial<Omit<import('@farmslot/adapter-sdk').PlatformAdapter, 'id' | 'sdkVersion' | 'harness'>> & {
- *   harness?: Partial<import('@farmslot/adapter-sdk').AdapterHarness>,
+ *   harness?: Partial<Extract<import('@farmslot/adapter-sdk').AdapterHarness, { kind?: 'overlay' }>> |
+ *     Extract<import('@farmslot/adapter-sdk').AdapterHarness, { kind: 'built-in' }>,
  * }} WebDappAdapterHooks
  */
 
@@ -320,6 +321,16 @@ export function createWebDappAdapter(factoryOptions = {}) {
   const resolveSigners = async () =>
     loadSigners(signerModule ? { ...process.env, [SIGNER_MODULE_ENV]: signerModule } : process.env);
   const venueHint = `pass --adapter <the adapter that extends ${id}>, e.g. --adapter terminal, with its recipe library on RECIPE_LIBRARY_PATH`;
+  const harnessVerification = {
+    verify: () => ({
+      command: process.execPath,
+      prefixArgs: [
+        webDappLeafPath('verify'),
+        ...(signerModule ? ['--signer-module', signerModule] : []),
+      ],
+    }),
+    restart: `${cli} launch`,
+  };
 
   return {
     id,
@@ -534,28 +545,24 @@ export function createWebDappAdapter(factoryOptions = {}) {
       cdpTarget: { transport: 'chrome-cdp', probePath: 'json/version' },
     },
 
-    // The overlay and slot: install/verify/cleanup leaves.
-    harness: {
-      install: {
-        entry: webDappLeafPath('inject'),
-        fallback: webDappLeafPath('inject'),
-        node: true,
-      },
-      cleanup: {
-        entry: webDappLeafPath('cleanup'),
-        fallback: webDappLeafPath('cleanup'),
-        node: true,
-      },
-      verify: () => ({
-        command: process.execPath,
-        prefixArgs: [
-          webDappLeafPath('verify'),
-          ...(signerModule ? ['--signer-module', signerModule] : []),
-        ],
-      }),
-      restart: `${cli} launch`,
-      ...harness,
-    },
+    // Built-in bridges inherit verification, without overlay installer leaves.
+    harness:
+      harness?.kind === 'built-in'
+        ? { ...harnessVerification, ...harness, kind: 'built-in' }
+        : {
+            install: {
+              entry: webDappLeafPath('inject'),
+              fallback: webDappLeafPath('inject'),
+              node: true,
+            },
+            cleanup: {
+              entry: webDappLeafPath('cleanup'),
+              fallback: webDappLeafPath('cleanup'),
+              node: true,
+            },
+            ...harnessVerification,
+            ...harness,
+          },
 
     // An agentic-runtime.json whose ports all belong to the slot (never claimed here).
     runtimeContext: {
