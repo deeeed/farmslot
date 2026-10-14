@@ -44,6 +44,34 @@ SIGINT, SIGTERM and SIGHUP MUST reach owned execution children. Cancellation MUS
 
 Status MUST retain readiness, latest command and latest execution evidence pointers. A later plan or stop MUST NOT hide the latest recipe evidence. Failure evidence remains evidence of failure, never a success badge.
 
+### Bridge installation (proposed Amendment 2)
+
+**Status:** Proposed by [ADR-068 Amendment 2](../adr/068-project-recipe-binding-and-conformance.md#amendment-2-built-in-bridges-2026-10-14). This section is not a shipped capability until the amendment, implementation and coordinated release are accepted.
+
+The existing `PlatformAdapter.harness` / `AdapterHarness` declaration in `@farmslot/adapter-sdk` MUST distinguish these forms:
+
+| Declaration                                                 | Required members                                           | Meaning                                                               |
+| ----------------------------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------- |
+| `kind: 'overlay'`, or the existing declaration with no kind | Existing `install`, `cleanup`, `verify` members            | The bridge uses the existing checkout overlay lifecycle.              |
+| `kind: 'built-in'`                                          | Existing `verify` member; no `install` or `cleanup` member | The bridge ships in the application and requires no checkout overlay. |
+
+Both forms retain existing verification arguments and restart behavior where declared. The SDK MUST validate through the existing `defineAdapter` / registry registration checks, including providers that return plain objects. Unknown kinds, a built-in declaration with installer/cleanup leaves, and incomplete overlay declarations MUST refuse before overlay effects. Missing members MUST NOT imply built-in mode. Headless runtimes retain their existing overlay exemption; built-in mode MUST NOT turn a UI runtime into a headless one.
+
+For a built-in bridge:
+
+- Default run/call healing MUST bypass only overlay-file installation. It MUST NOT create an overlay directory, delegate stamp or dummy installer, invoke an installer override, or rewrite the healing policy to `off`.
+- Readiness and explicit verification MUST still observe the real runtime through the declared verifier and existing runtime checks. A missing or failed bridge MUST remain a failure; declaration alone is not live proof.
+- Existing shared install/cleanup helpers, when exposed by a host, MUST report that no checkout overlay operation is needed and perform no file mutation. They MUST NOT certify runtime readiness or remove a prior overlay. No new public install/cleanup command is introduced.
+- Launch, reload, owned stop, signals, cancellation, diagnostics, resource leases, recording and HUD behavior MUST retain their existing contracts. Capture still requires the recorder for the declared target; this declaration supplies no recorder or evidence exemption.
+
+Overlay runtimes MUST retain existing installation, delegate validation, cleanup and bounded healing. Explicit `--heal off` retains its reproduction-preserving behavior for either form; it is not the default-healing compatibility test.
+
+The public addition is the `AdapterHarness` discriminator in `@farmslot/adapter-sdk`, consumed by project providers and shared CLI handlers. Existing `defineAdapter` and `createAdapterRegistry().register` validate the same contract; no second parser, registry, host callback or CLI flag is added. Audiolab consumes the built-in form. Project providers remain responsible for bridge implementation and verification; shared code owns orchestration.
+
+The SDK and CLI MUST ship compatible pre-1.0 minor versions before a provider adopts the new form. Providers MUST pin the qualified package versions, and rollout MUST qualify the actual shared host as well as the provider installation. The SDK ABI and artifact schema remain unchanged; old hosts are not certified for built-in providers. No SDK rename, compatibility alias or recorder migration belongs to this amendment.
+
+Acceptance MUST prove default run and call on a real built-in UI bridge without overlay mutation, real verification failure when that bridge is unavailable, existing overlay install/cleanup and default-healing parity, malformed-declaration refusal, and unchanged explicit heal-off behavior. Use the public project loader and a registered owned target, then verify the released package/host combination. Unit tests alone do not close the live gate. The shared engine remains the sole trace, claim and artifact writer.
+
 ### Log view composition
 
 `ProjectProvider.commandOptions.logs` MAY supply `LogsCommandOptions` from `@farmslot/recipe-cli/harness`. Its consumers are the shared `handleLogs` and project provider composition. The public types are:
