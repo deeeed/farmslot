@@ -588,16 +588,28 @@ export type AdapterHarnessVerify =
     }
   | { error: string };
 
-export interface AdapterHarness {
-  install: AdapterHarnessLeaf;
-  // fromInstalledRunner: cleanup runs the copy the checkout's overlay records.
-  cleanup: AdapterHarnessLeaf & { fromInstalledRunner?: boolean };
+interface AdapterHarnessVerification {
   verify(target: string): AdapterHarnessVerify;
   // The environment and args verify runs with (runtime identity, CDP port).
   verifyArgs?(target: string, args: string[]): string[];
   // How to (re)start the runtime after a failure. Absent: headless.
   restart?: string;
 }
+
+export type AdapterHarness = AdapterHarnessVerification &
+  (
+    | {
+        kind?: 'overlay';
+        install: AdapterHarnessLeaf;
+        // Cleanup runs the copy the checkout's overlay records when requested.
+        cleanup: AdapterHarnessLeaf & { fromInstalledRunner?: boolean };
+      }
+    | {
+        kind: 'built-in';
+        install?: never;
+        cleanup?: never;
+      }
+  );
 
 export interface AdapterRuntimeContextSpec {
   // Fields this platform's context must not carry.

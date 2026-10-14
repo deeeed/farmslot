@@ -69,13 +69,25 @@ test('registries are independent', () => {
 
 test('refuses an adapter written for another SDK version or without an id', () => {
   const registry = createAdapterRegistry();
-  const future = { ...adapter('next'), sdkVersion: 2 } as unknown as PlatformAdapter;
-  assert.throws(() => registry.register(future), {
-    message: "adapter 'next' targets adapter SDK 2; this host implements 1",
-  });
-  assert.throws(() => defineAdapter(future), {
-    message: "adapter 'next' targets adapter SDK 2; this host implements 1",
-  });
+  const future = { ...adapter('next'), sdkVersion: 2 };
+  assert.throws(
+    () => {
+      // @ts-expect-error Exercise rejection of another SDK version from a JavaScript provider.
+      registry.register(future);
+    },
+    {
+      message: "adapter 'next' targets adapter SDK 2; this host implements 1",
+    },
+  );
+  assert.throws(
+    () => {
+      // @ts-expect-error The runtime check must enforce the same SDK version as the type.
+      defineAdapter(future);
+    },
+    {
+      message: "adapter 'next' targets adapter SDK 2; this host implements 1",
+    },
+  );
   assert.throws(() => registry.register(adapter(' ')), {
     message: 'adapter id must be a non-empty string',
   });
@@ -93,6 +105,66 @@ test('defineAdapter keeps the host-specific members of an extended adapter type'
   });
   registry.register(host);
   assert.deepEqual(registry.get('host').fixtures.operations, ['init']);
+});
+
+test('built-in bridges require verification and omit checkout overlay leaves', () => {
+  const bridge = adapter('built-in', {
+    headless: false,
+    harness: { kind: 'built-in', verify: () => ({ error: 'bridge unavailable' }) },
+  });
+  assert.equal(defineAdapter(bridge), bridge);
+  const registry = createAdapterRegistry();
+  registry.register(bridge);
+  assert.equal(registry.get('built-in'), bridge);
+  for (const invalid of [
+    { ...bridge.harness, install: { entry: 'install.sh', fallback: '' } },
+    { ...bridge.harness, cleanup: { entry: 'cleanup.sh', fallback: '' } },
+    { kind: 'built-in' },
+    { ...bridge.harness, kind: 'unknown' },
+  ]) {
+    const runtime = { ...bridge, harness: invalid };
+    assert.throws(() => {
+      // @ts-expect-error Deliberately malformed JavaScript provider declaration.
+      defineAdapter(runtime);
+    }, /harness/);
+    assert.throws(() => {
+      // @ts-expect-error Registration must also reject that malformed declaration.
+      createAdapterRegistry().register(runtime);
+    }, /harness/);
+  }
+});
+
+test('UI overlay declarations cannot infer built-in mode from missing leaves', () => {
+  const complete = adapter('overlay', { headless: false });
+  if (complete.harness.kind === 'built-in') throw new Error('Expected the overlay fixture');
+  for (const kind of [undefined, 'overlay'] as const) {
+    const runtime: PlatformAdapter = { ...complete, harness: { ...complete.harness, kind } };
+    assert.equal(defineAdapter(runtime), runtime);
+    for (const missing of ['install', 'cleanup'] as const) {
+      const harness: Record<string, unknown> = { ...runtime.harness };
+      delete harness[missing];
+      assert.throws(
+        () => {
+          // @ts-expect-error Exercise the runtime refusal after removing a required overlay leaf.
+          createAdapterRegistry().register({ ...runtime, harness });
+        },
+        new RegExp(`overlay harness must declare ${missing}`),
+      );
+    }
+  }
+});
+
+test('headless runtimes retain their checkout overlay exemption', () => {
+  const runtime = {
+    ...adapter('headless'),
+    harness: { verify: () => ({ error: 'nothing to verify' }) },
+  };
+  // @ts-expect-error Retained headless JavaScript providers omit unused overlay leaves.
+  assert.equal(defineAdapter(runtime), runtime);
+  const registry = createAdapterRegistry();
+  // @ts-expect-error The existing headless registration exemption remains supported at runtime.
+  registry.register(runtime);
+  assert.equal(registry.get('headless'), runtime);
 });
 
 test('an adapter with its own run options and browser record fits a plain registry', async () => {

@@ -4,7 +4,7 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Declare app-built-in bridges explicitly and validate overlay requirements without adding installer stubs.
 
 ## 0.12.1 - 2026-10-14
 
