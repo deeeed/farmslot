@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Retain optional AC/role capture annotations and original execution/source identities with immutable comparison dependencies.
+
 - Add project-authorized delegated visual judgments with checked media and person-only claim policy.
 
 - Remove obsolete credential origins and expose guarded principal retirement and explicit HTTP credentials for transfer diagnostics.

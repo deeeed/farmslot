@@ -952,7 +952,7 @@ proof-eligible or change the engine verdict.
 
 The engine MUST record the observed source commit as `sourceCommit` with the
 capture, using the existing source/checkout authority. Worker-supplied SHA strings
-are not observations. The existing frozen `ReviewDiffSnapshot.baseSha` and
+are not observations. Trusted SDK hosts may supply that frozen identity as `RecipeRunRequest.comparisonSnapshot`; authored parameters cannot replace it. Without a frozen snapshot, the writer keeps standalone captures and their source limitation. The existing frozen `ReviewDiffSnapshot.baseSha` and
 `headSha` define the compared revisions, not a later branch tip or recomputed
 merge-base. Check `before`/`after` against that snapshot during finalization and
 review projection. A changed snapshot yields a typed source mismatch and requires
@@ -1041,6 +1041,8 @@ At a gate, show one screen with each AC's text, verdict and proof kind. When bot
 sides exist, show the matched before/after pair and source SHAs so the change
 relevant to that AC is visible; otherwise show the AC's available visual proof
 with the missing side stated. Unrelated captures MUST NOT fill a missing side.
+The same factory exposes optional `gateSnapshot` facts from the existing `gateDecision`: recorded head, reviews, CI, prerequisite reasons and the existing next action. It grants no approval authority.
+
 Each capture opens its own measured
 video timestamp in one interaction. Untimed evidence keeps its explicit no-seek
 state. On this same screen show own and independent review verdicts with the

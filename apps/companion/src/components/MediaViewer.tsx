@@ -495,8 +495,15 @@ function FullscreenVideo({
     const cue = () => {
       if (!active || !model?.selection?.clips.length) return;
       const clip = model.playback.clip;
-      if (clip?.videoPath !== videoPath) return;
-      applyPlayback({ ...model.playback, seekMs: clip.startMs });
+      if (!clip || clip.videoPath !== videoPath) return;
+      applyPlayback({
+        ...model.playback,
+        seekMs:
+          item.initialTraceIndex === clip.traceIndex
+            ? (model.markerSeekMs(videoPath ?? clip.videoPath, item.initialTraceIndex, 'start') ??
+              clip.startMs)
+            : clip.startMs,
+      });
       if (resumePlayback.current) {
         resumePlayback.current = false;
         player.play();

@@ -129,7 +129,11 @@ export function recordedEvidenceRoots(
   const roots = [
     ...new Set(
       inventory
-        .filter((file) => path.posix.basename(file.path) === 'summary.json')
+        .filter(
+          (file) =>
+            path.posix.basename(file.path) === 'summary.json' &&
+            !file.path.split('/').includes('comparison-dependencies'),
+        )
         .map((file) => path.posix.dirname(file.path)),
     ),
   ];
@@ -163,6 +167,16 @@ export async function readGateRecordedEvidenceSources(
     preparedPackage.selectedEvidenceKeys ?? [],
   );
   if (!sources.length) throw new Error('The gate package has no retained recipe evidence closure.');
+  for (const source of sources) {
+    const mismatch = validateRecordedEvidencePackage(
+      source.input,
+      preparedPackage.reviewSnapshot,
+    ).findings.find((finding) => finding.code === 'comparison-source-mismatch');
+    if (mismatch)
+      throw new Error(
+        `comparison-source-mismatch: ${mismatch.path}: ${mismatch.message}. Refresh the gate package or select another capture.`,
+      );
+  }
   return sources;
 }
 

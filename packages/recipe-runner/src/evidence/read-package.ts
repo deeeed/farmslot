@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import {
   isRecord,
+  recordedEvidenceClosureIdentity,
   type RecordedEvidencePackageInput,
   resolvedRecipeArtifactPath,
 } from '@farmslot/protocol';
@@ -76,6 +77,13 @@ export async function readRecordedEvidencePackage(
     readJson: (relativePath) => readRecipeCliJsonFileWithinRoot(artifactDir, relativePath),
     digestFile: (relativePath) => digestFileWithinRoot(artifactDir, relativePath),
   },
+): Promise<RecordedEvidencePackageReadResult> {
+  return readPackage(io, new Set());
+}
+
+async function readPackage(
+  io: RecordedEvidencePackageReadIO,
+  ancestors: ReadonlySet<string>,
 ): Promise<RecordedEvidencePackageReadResult> {
   const checks: RecordedEvidencePackageReadCheck[] = [];
   const availablePaths = await io.listPaths();
@@ -197,6 +205,71 @@ export async function readRecordedEvidencePackage(
         (read.value === undefined ? `Missing declared timeline ${file}.` : `${file} is readable.`),
     );
   }
+  const comparisonDependencies: NonNullable<
+    RecordedEvidencePackageInput['comparisonDependencies']
+  >[number][] = [];
+  const declaredDependencies =
+    isRecord(manifest) && Array.isArray(manifest.comparisonDependencies)
+      ? manifest.comparisonDependencies
+      : [];
+  const executionId =
+    isRecord(claims) && typeof claims.recipeRunId === 'string' ? claims.recipeRunId : '';
+  const nextAncestors = new Set([...ancestors, executionId]);
+  for (const dependency of declaredDependencies) {
+    if (
+      !isRecord(dependency) ||
+      typeof dependency.artifactRoot !== 'string' ||
+      typeof dependency.recipeRunId !== 'string' ||
+      dependency.artifactRoot !== `comparison-dependencies/${dependency.recipeRunId}` ||
+      !/^[A-Za-z0-9._-]+$/u.test(dependency.recipeRunId) ||
+      ['.', '..'].includes(dependency.recipeRunId) ||
+      nextAncestors.has(dependency.recipeRunId) ||
+      ancestors.size >= 16
+    ) {
+      addReadCheck(checks, 'comparison.root', 'fail', 'Invalid or cyclic comparison dependency.');
+      continue;
+    }
+    const prefix = `${dependency.artifactRoot}/`;
+    const child = await readPackage(
+      {
+        listPaths: async () =>
+          availablePaths
+            .filter((file) => file.startsWith(prefix))
+            .map((file) => file.slice(prefix.length)),
+        readJson: (file) => io.readJson(`${prefix}${file}`),
+        digestFile: (file) => io.digestFile(`${prefix}${file}`),
+      },
+      nextAncestors,
+    );
+    checks.push(
+      ...child.checks.map((check) => ({
+        ...check,
+        id: `${prefix}${check.id}`,
+        message: `${dependency.artifactRoot}: ${check.message}`,
+      })),
+    );
+    for (const file of child.input.artifactPaths ?? []) consumedPaths.add(`${prefix}${file}`);
+    try {
+      if (
+        child.input.claims?.recipeRunId !== dependency.recipeRunId ||
+        recordedEvidenceClosureIdentity(child.input) !== dependency.closureIdentity
+      )
+        addReadCheck(
+          checks,
+          `${prefix}identity`,
+          'fail',
+          'Comparison dependency no longer matches its retained closure.',
+        );
+    } catch (error) {
+      addReadCheck(
+        checks,
+        `${prefix}identity`,
+        'fail',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    comparisonDependencies.push({ artifactRoot: dependency.artifactRoot, input: child.input });
+  }
   // A task-bound execution may share artifacts/ with gateway reports/packages.
   // Its manifest and consumed metadata, not every sibling file, own its closure.
   const artifactPaths = availablePaths.filter((file) => consumedPaths.has(file));
@@ -228,6 +301,7 @@ export async function readRecordedEvidencePackage(
       claims: claims as RecordedEvidencePackageInput['claims'],
       timelines: timelines as RecordedEvidencePackageInput['timelines'],
       artifactDigests,
+      ...(comparisonDependencies.length ? { comparisonDependencies } : {}),
     },
     checks,
   };

@@ -1,5 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+
+import type {
+  EvidenceReviewComparisonFilter,
+  EvidenceReviewModel,
+} from '@farmslot/adapter-sdk/evidence';
 
 import {
   type ArtifactHttpHeaders,
@@ -26,6 +31,8 @@ interface EvidenceReviewWorkspaceProps {
   gatewayUrl: string;
   artifacts: ArtifactManifestEntry[];
   pairs: VisualArtifactPair[];
+  evidenceModel?: EvidenceReviewModel | null;
+  onOpenRecordedEvidence?(model: EvidenceReviewModel, path: string): void;
   onOpenVisual: (uri: string) => void;
   onOpenDocument: (artifact: ArtifactManifestEntry) => void;
   onOpenDiff?: (path: string) => void;
@@ -52,6 +59,8 @@ export function EvidenceReviewWorkspace({
   gatewayUrl,
   artifacts,
   pairs,
+  evidenceModel,
+  onOpenRecordedEvidence,
   onOpenVisual,
   onOpenDocument,
   onOpenDiff,
@@ -59,6 +68,7 @@ export function EvidenceReviewWorkspace({
   onOpenCompareArtifactWorkspace,
   authHeaders,
 }: EvidenceReviewWorkspaceProps) {
+  const [, refreshComparisons] = useState(0);
   const [evidenceFilter, setEvidenceFilter] = useState<ArtifactWorkspaceFilter>('all');
   const artifactCounts = useMemo(() => buildArtifactWorkspaceCounts(artifacts), [artifacts]);
   const filteredArtifacts = useMemo(
@@ -103,15 +113,269 @@ export function EvidenceReviewWorkspace({
 
   return (
     <View style={styles.workspace}>
-      <EvidenceCompletenessCard
-        summary={evidenceSummary}
-        onOpenDiff={
-          packageDiffArtifactPath && onOpenDiff
-            ? () => onOpenDiff(packageDiffArtifactPath)
-            : undefined
-        }
-      />
-      {pairs.length > 0 && (
+      {evidenceModel ? (
+        <View style={styles.railSection}>
+          <Text style={styles.railTitle}>Compare by AC</Text>
+          {evidenceModel.gateSnapshot ? (
+            <View style={styles.largeCard}>
+              <Text style={styles.railSubtitle}>
+                Review head {evidenceModel.gateSnapshot.headSha ?? 'not captured'}
+              </Text>
+              <Text style={styles.railSubtitle}>
+                Own review: {evidenceModel.gateSnapshot.ownReviewVerdict ?? 'not captured'}
+              </Text>
+              {evidenceModel.gateSnapshot.reviews.map((review) => (
+                <Text key={review.id} style={styles.railSubtitle}>
+                  {review.mode} · {review.verdict} · head{' '}
+                  {review.reviewedHeadSha ?? review.reviewSnapshot?.headSha ?? 'not captured'}
+                  {review.stale ? ' · stale' : ''}
+                </Text>
+              ))}
+              <Text style={styles.railSubtitle}>
+                CI parity{' '}
+                {evidenceModel.gateSnapshot.ci.length
+                  ? evidenceModel.gateSnapshot.ci
+                      .map((check) => `${check.reference}: ${check.status}`)
+                      .join('; ')
+                  : 'not captured for this head'}
+              </Text>
+              {evidenceModel.gateSnapshot.requirements.map((reason, index) => (
+                <Text key={index} style={styles.railSubtitle}>
+                  {reason.message}
+                </Text>
+              ))}
+              <Text style={styles.railSubtitle}>
+                CI:{' '}
+                {evidenceModel.gateSnapshot.ciChecks.length
+                  ? evidenceModel.gateSnapshot.ciChecks
+                      .map((check) => `${check.name}: ${check.conclusion ?? check.status}`)
+                      .join('; ')
+                  : 'not captured for this head'}
+              </Text>
+              <Text style={styles.railTitle}>
+                Next action: {evidenceModel.gateSnapshot.nextAction}
+              </Text>
+            </View>
+          ) : null}
+          <View style={styles.evidenceFilterWrap}>
+            {(
+              [
+                'all',
+                'before',
+                'after',
+                'review',
+                'screenshots',
+                'moments',
+                'unassigned',
+              ] satisfies EvidenceReviewComparisonFilter[]
+            ).map((filter) => (
+              <Pressable
+                key={filter}
+                style={styles.evidenceFilterChip}
+                accessibilityState={{ selected: evidenceModel.comparisonFilter === filter }}
+                onPress={() => {
+                  evidenceModel.setComparisonFilter(filter);
+                  refreshComparisons((value) => value + 1);
+                }}
+              >
+                <Text style={styles.evidenceFilterText}>
+                  {filter === 'moments' ? 'Video moments' : filter}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+          {evidenceModel.comparisonView.rows.map((row) => {
+            const convert = (media: NonNullable<typeof row.selectedBefore>) => ({
+              ...media,
+              purpose: media.capture?.role ?? 'evidence',
+              url: artifactUrlForEntry(gatewayUrl, runId, {
+                path: media.artifactPath,
+                purpose: 'evidence',
+              }),
+              path: media.artifactPath,
+            });
+            const before =
+              row.selectedBefore &&
+              row.before.some((media) => media.identity === row.selectedBefore?.identity)
+                ? convert(row.selectedBefore)
+                : undefined;
+            const after =
+              row.selectedAfter &&
+              row.after.some((media) => media.identity === row.selectedAfter?.identity)
+                ? convert(row.selectedAfter)
+                : undefined;
+            const open = (path: string) =>
+              onOpenRecordedEvidence
+                ? onOpenRecordedEvidence(evidenceModel, path)
+                : onOpenVisual(
+                    artifactUrlForEntry(gatewayUrl, runId, { path, purpose: 'evidence' }),
+                  );
+            return (
+              <View key={row.claim.id} style={styles.largeCard}>
+                <Text style={styles.railTitle}>
+                  {row.claim.id}: {row.claim.text}
+                </Text>
+                <Text style={styles.railSubtitle}>
+                  {row.claim.status?.verdict ?? 'not assessed'} ·{' '}
+                  {row.claim.status?.proofMode ?? 'no proof mode'} ·{' '}
+                  {row.claim.proofKinds.join(', ') || 'no recorded proof'} ·{' '}
+                  {row.claim.reviewLabels.join('; ')}
+                </Text>
+                {row.sourceUrl ? (
+                  <Pressable onPress={() => Linking.openURL(row.sourceUrl!)}>
+                    <Text style={styles.deltaActionText}>Original Jira AC</Text>
+                  </Pressable>
+                ) : null}
+                {(['before', 'after'] as const).map((role) =>
+                  row[role].length > 1 ? (
+                    <View key={role}>
+                      <Text style={styles.railSubtitle}>Choose {role}</Text>
+                      {row[role].map((media) => (
+                        <Pressable
+                          key={media.identity}
+                          onPress={() => {
+                            evidenceModel.chooseComparisonMedia(row.claim.id, role, media.identity);
+                            refreshComparisons((value) => value + 1);
+                          }}
+                        >
+                          <Text style={styles.deltaActionText}>{media.name}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  ) : null,
+                )}
+                {before && after ? (
+                  <BeforeAfterPreview
+                    evidenceModel={evidenceModel}
+                    pair={{ before, after, stem: row.claim.id }}
+                    authHeaders={authHeaders}
+                    title={row.claim.text}
+                    allowFullscreen={false}
+                    onOpenArtifact={(path) => {
+                      const media = [row.selectedBefore, row.selectedAfter].find(
+                        (entry) => entry?.artifactPath === path,
+                      );
+                      if (media) evidenceModel.selectComparisonMedia(media.identity);
+                      open(path);
+                    }}
+                  />
+                ) : (
+                  <View style={styles.deltaActionRow}>
+                    {(['before', 'after'] as const).map((role) => {
+                      const media = role === 'before' ? row.selectedBefore : row.selectedAfter;
+                      return (
+                        <View key={role} style={{ flex: 1 }}>
+                          <Text style={styles.railTitle}>
+                            {role === 'before' ? 'Before' : 'After'}
+                          </Text>
+                          {media ? (
+                            <Pressable
+                              onPress={() => {
+                                evidenceModel.selectComparisonMedia(media.identity);
+                                open(media.artifactPath);
+                              }}
+                            >
+                              <Image
+                                source={artifactSource(
+                                  artifactUrlForEntry(gatewayUrl, runId, {
+                                    path: media.artifactPath,
+                                    purpose: 'evidence',
+                                  }),
+                                  authHeaders,
+                                )}
+                                style={{ width: '100%', height: 180 }}
+                                resizeMode="contain"
+                              />
+                            </Pressable>
+                          ) : (
+                            <Text style={styles.railSubtitle}>No qualified {role} capture</Text>
+                          )}
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+                {row.review.map((media) => (
+                  <Pressable
+                    key={media.identity}
+                    onPress={() => {
+                      evidenceModel.selectComparisonMedia(media.identity);
+                      open(media.artifactPath);
+                    }}
+                  >
+                    <Text style={styles.deltaActionText}>
+                      {media.name} · {media.limitation ?? 'Review'}
+                    </Text>
+                  </Pressable>
+                ))}
+                {[...row.before, ...row.after, ...row.review].flatMap((media) =>
+                  media.clips.map((clip, index) => (
+                    <Pressable
+                      key={`${media.identity}:${index}`}
+                      onPress={() => {
+                        evidenceModel.selectComparisonMedia(media.identity);
+                        evidenceModel.cueClip(index);
+                        open(evidenceModel.artifactPath(clip.videoPath));
+                      }}
+                    >
+                      <Text style={styles.deltaActionText}>
+                        Video {((clip.momentMs ?? clip.startMs) / 1000).toFixed(3)}s · {media.name}
+                      </Text>
+                    </Pressable>
+                  )),
+                )}
+                {row.claim.clips.map((clip, index) => (
+                  <Pressable
+                    key={`${clip.videoDigest}:${clip.traceIndex}`}
+                    onPress={() => {
+                      evidenceModel.selectClaim(row.claim.id);
+                      evidenceModel.cueClip(index);
+                      open(evidenceModel.artifactPath(clip.videoPath));
+                    }}
+                  >
+                    <Text style={styles.deltaActionText}>
+                      Video {((clip.momentMs ?? clip.startMs) / 1000).toFixed(3)}s · {clip.caption}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            );
+          })}
+          {evidenceModel.comparisonView.unassigned.length > 0 ? (
+            <View>
+              <Text style={styles.railTitle}>
+                Unassigned ({evidenceModel.comparisonView.unassigned.length})
+              </Text>
+              <Text style={styles.railSubtitle}>No recorded AC and role binding</Text>
+              {evidenceModel.comparisonView.unassigned.map((media) => (
+                <Pressable
+                  key={media.identity}
+                  onPress={() =>
+                    onOpenVisual(
+                      artifactUrlForEntry(gatewayUrl, runId, {
+                        path: media.artifactPath,
+                        purpose: 'evidence',
+                      }),
+                    )
+                  }
+                >
+                  <Text style={styles.deltaActionText}>{media.name}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+        </View>
+      ) : (
+        <EvidenceCompletenessCard
+          summary={evidenceSummary}
+          onOpenDiff={
+            packageDiffArtifactPath && onOpenDiff
+              ? () => onOpenDiff(packageDiffArtifactPath)
+              : undefined
+          }
+        />
+      )}
+      {!evidenceModel && pairs.length > 0 && (
         <View style={styles.railSection}>
           <RailHeader
             title="Before → After Compare"
@@ -142,7 +406,7 @@ export function EvidenceReviewWorkspace({
         </View>
       )}
 
-      {pairs.length === 0 && (
+      {!evidenceModel && pairs.length === 0 && (
         <MissingEvidenceCard
           summary={evidenceSummary}
           onOpenDiff={

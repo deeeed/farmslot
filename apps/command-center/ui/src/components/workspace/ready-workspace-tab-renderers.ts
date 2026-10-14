@@ -131,7 +131,7 @@ export function renderReadyEvidenceTab(input: {
   payload: ReadyGatePayload;
   artifacts: ArtifactRef[];
   selectionToolbar: TemplateResult | typeof nothing;
-  artifactGroups: TemplateResult;
+  artifactGroups: TemplateResult | typeof nothing;
 }) {
   if (input.artifacts.length === 0) return html`<div class="rdy-tab-empty">No evidence</div>`;
   return html`

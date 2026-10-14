@@ -8,9 +8,11 @@ import {
   digestRecipeDocument,
   getRecipeActionManifestActionNames,
   hasUnresolvedRecipeFailure,
+  RECIPE_ASSERTION_ACTIONS,
   type RecipeActionManifestDocument,
   type RecipeArtifactManifestEntry,
   type RecipeClaimLedger,
+  type RecipeEvidenceCaptureBinding,
   type RecipeExecutionPlan,
   type RecipeRecordingTimelineDocument,
   type RecipeVideoTiming,
@@ -20,6 +22,11 @@ import {
 
 import { proofDocument } from '../evidence/assertions.js';
 import { deriveRecipeClaims } from '../evidence/claims.js';
+import {
+  observeRecipeCaptureSource,
+  refreshRetainedComparisons,
+  retainRecipeComparisons,
+} from '../evidence/comparisons.js';
 import { occurrenceRecordingCoverage } from '../evidence/moments.js';
 import { validateRecordedEvidencePackage } from '../evidence/package.js';
 import { planRecipeEvidence, type RecipeEvidencePlan } from '../evidence/plan.js';
@@ -416,7 +423,28 @@ class DefaultRecipeRunner implements RecipeRunner {
       request.claims,
       recipeRunId,
     );
+    const totalByteBudget = videoOptions.maxBytes ?? DEFAULT_RECORDED_EVIDENCE_POLICY.maxBytes;
+    const comparisons = await retainRecipeComparisons(
+      request.comparisonDependencies ?? [],
+      artifactsDir,
+      recipeRunId,
+      totalByteBudget,
+    );
+    if (comparisons.retainedBytes)
+      videoOptions.maxBytes = totalByteBudget - comparisons.retainedBytes;
+    if (comparisons.references.length) invocation.comparisonDependencies = comparisons.references;
     await artifactWriter.writeInvocation(invocation);
+    const captures = new Map<string, RecipeEvidenceCaptureBinding>();
+    const registerCapture = (entry: RecipeArtifactManifestEntry, nodeId?: string) => {
+      // Capture authority belongs to the engine, even when a provider supplies metadata.
+      const { capture: _providerBinding, ...artifact } = entry;
+      artifactWriter.register({
+        ...artifact,
+        ...((artifact.type === 'screenshot' || artifact.type === 'video') && nodeId
+          ? { capture: captures.get(nodeId), nodeId }
+          : {}),
+      });
+    };
     for (const dependency of dependencyResolution.recipes.values()) {
       await artifactWriter.copyResolvedRecipe(dependency.provenance.digest!, dependency.document);
     }
@@ -485,7 +513,37 @@ class DefaultRecipeRunner implements RecipeRunner {
           claimProjections: evidencePlan.nodes,
           logger: this.#logger,
           defaultObserverRefs: this.#defaultObserverRefs,
-          prepareNode: async (nodeId) => {
+          prepareNode: async (nodeId, node) => {
+            if (
+              node.ac !== undefined &&
+              !evidencePlan.declarations.some((claim) => claim.id === node.ac)
+            )
+              throw new RecipeExecutionError(
+                'harness',
+                `Unknown capture claim ${String(node.ac)}.`,
+              );
+            if (
+              node.role !== undefined &&
+              node.role !== 'before' &&
+              node.role !== 'after' &&
+              node.role !== 'review'
+            )
+              throw new RecipeExecutionError('harness', 'Invalid capture role.');
+            captures.set(nodeId, {
+              recipeRunId,
+              nodeId,
+              traceIndex: traceWriter.list().length,
+              ...(typeof node.ac === 'string' ? { ac: node.ac } : {}),
+              ...(node.role === 'before' || node.role === 'after' || node.role === 'review'
+                ? { role: node.role }
+                : {}),
+              ...(node.ac !== undefined ||
+              node.role !== undefined ||
+              String(node.action).startsWith('ui.') ||
+              RECIPE_ASSERTION_ACTIONS.has(String(node.action))
+                ? await observeRecipeCaptureSource(projectRoot)
+                : {}),
+            });
             if (videoRecorder && !runRecording && uiNodeIds.has(nodeId)) {
               try {
                 runRecording = await startRunRecording(videoRecorder);
@@ -507,12 +565,32 @@ class DefaultRecipeRunner implements RecipeRunner {
               env,
               outputs: activeOutputs,
               getOutput,
-              artifactWriter,
+              registerArtifact: (entry) => registerCapture(entry, nodeId),
               runFileOffsets,
               recording: runRecording,
             }),
-          registerArtifacts: (artifacts) => {
-            for (const artifact of artifacts) artifactWriter.register(artifact);
+          bindArtifactOccurrence: (nodeId, traceIndex) => {
+            const capture = captures.get(nodeId);
+            if (capture) capture.traceIndex = traceIndex;
+          },
+          registerArtifacts: async (artifacts, nodeId) => {
+            const capture = nodeId ? captures.get(nodeId) : undefined;
+            if (capture) capture.traceIndex = traceWriter.list().length;
+            if (capture?.sourceCommit) {
+              let source;
+              try {
+                source = await observeRecipeCaptureSource(projectRoot);
+              } catch (error) {
+                capture.sourceDirty = true;
+                throw error;
+              }
+              if (
+                source.sourceCommit !== capture.sourceCommit ||
+                source.sourceDirty !== capture.sourceDirty
+              )
+                capture.sourceDirty = true;
+            }
+            for (const artifact of artifacts) registerCapture(artifact, nodeId);
           },
           publishHudProgress: (hudStatus, event) => {
             if (
@@ -816,7 +894,13 @@ class DefaultRecipeRunner implements RecipeRunner {
       'recipeSelection',
       'stopAfterNode',
     ]);
-    const manifestFields = new Set(['version', 'runStatus', 'provenance', 'artifacts']);
+    const manifestFields = new Set([
+      'version',
+      'runStatus',
+      'provenance',
+      'artifacts',
+      'comparisonDependencies',
+    ]);
     let finalizing = true;
     const assertFinalizing = () => {
       if (!finalizing) throw new Error('Recipe artifact finalization has closed.');
@@ -855,17 +939,31 @@ class DefaultRecipeRunner implements RecipeRunner {
     } finally {
       finalizing = false;
     }
+    comparisons.inputs = await refreshRetainedComparisons(comparisons.references, artifactsDir);
     await summaryWriter.write(summary);
-    await artifactWriter.writeEvidenceManifest(claims);
+    await artifactWriter.writeEvidenceManifest(
+      claims,
+      comparisons.inputs,
+      request.comparisonSnapshot,
+    );
+    if (comparisons.references.length)
+      manifestMetadata.comparisonDependencies = comparisons.references;
     await artifactWriter.write(status, this.#runnerProvenance, manifestMetadata);
 
     const packageValidation = validateRecordedEvidencePackage({
+      comparisonDependencies: comparisons.inputs,
       invocation,
       recipeRunId,
       claims,
-      artifactDigests: Object.fromEntries(
-        segments.map((segment) => [segment.videoPath, segment.videoDigest]),
-      ),
+      artifactDigests: Object.fromEntries([
+        ...segments.map((segment) => [segment.videoPath, segment.videoDigest]),
+        ...(comparisons.inputs ?? []).flatMap((child) =>
+          Object.entries(child.input.artifactDigests).map(([file, digest]) => [
+            `${child.artifactRoot}/${file}`,
+            digest,
+          ]),
+        ),
+      ]),
       timelines: Object.fromEntries(
         segments
           .filter((segment) => segment.timelinePath)
@@ -894,9 +992,23 @@ class DefaultRecipeRunner implements RecipeRunner {
         'trace.json',
         'artifact-manifest.json',
         'recipe-resolution.json',
+        ...(comparisons.inputs ?? []).flatMap((child) =>
+          (child.input.artifactPaths ?? []).map((file) => `${child.artifactRoot}/${file}`),
+        ),
         ...artifactWriter.list().map((entry) => entry.path),
       ],
     });
+    let retainedPackageBytes = 0;
+    if (comparisons.references.length)
+      for (const file of new Set([
+        ...artifactWriter.list().map((entry) => entry.path),
+        'artifact-manifest.json',
+      ]))
+        retainedPackageBytes += (await statFileWithinRoot(artifactsDir, file)).size;
+    if (retainedPackageBytes + comparisons.retainedBytes > totalByteBudget)
+      throw new Error(
+        'The selected package and comparison dependencies exceed the execution byte budget.',
+      );
     if (packageValidation.status === 'invalid') {
       throw new Error(
         `Generated artifact package is invalid: ${packageValidation.findings
@@ -917,7 +1029,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     env,
     outputs,
     getOutput,
-    artifactWriter,
+    registerArtifact,
     runFileOffsets,
     recording,
   }: {
@@ -928,7 +1040,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     env: Record<string, string | undefined>;
     outputs: ReadonlyMap<string, unknown>;
     getOutput: (nodeId: string) => unknown;
-    artifactWriter: JsonArtifactWriter;
+    registerArtifact(entry: RecipeArtifactManifestEntry): void;
     runFileOffsets: ReadonlyMap<string, number>;
     recording?: RunVideoRecording;
   }): Parameters<ActionAdapter['execute']>[1] {
@@ -973,7 +1085,7 @@ class DefaultRecipeRunner implements RecipeRunner {
         return runFileOffsets.get(normalizeRelativePath(relativePath).split(path.sep).join('/'));
       },
       registerArtifact(entry: RecipeArtifactManifestEntry) {
-        artifactWriter.register(entry);
+        registerArtifact(entry);
       },
       logger: this.#logger,
     };

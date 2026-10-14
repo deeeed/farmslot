@@ -9,6 +9,7 @@ import {
 } from '@farmslot/adapter-sdk/evidence';
 import type { RunRecipeRunsForRunResult } from '@farmslot/protocol';
 import {
+  acceptanceCriterionId,
   type ArtifactRef,
   buildRunDecisionActionRequest,
   isInternalRunArtifactPath,
@@ -71,6 +72,7 @@ import {
   MEDIA_EXTS,
   workspaceArtifactBasename,
 } from './workspace-artifacts.js';
+import { renderWorkspaceEvidencePreview } from './workspace-evidence-preview.js';
 
 @customElement('ready-workspace')
 export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
@@ -93,8 +95,9 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       this._claimOverrideId = null;
       this._claimOverrideReason = '';
       this._evidenceScope = scope;
+      this._evidenceItems = null;
+      this._lightboxOpen = false;
     }
-    this._evidenceItems = null;
     if (!this.runId || this.mockData) return;
     try {
       const source = await gateway.request<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
@@ -106,6 +109,17 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       if (request !== this._evidenceRequest || !this.isConnected) return;
       this._evidenceModel = createEvidenceReviewModel({
         context: 'pr-preview',
+        gateDecision: this.decision,
+        criteria:
+          this._payload?.acceptanceStatus?.criteria ??
+          this._payload?.acceptanceCriteria?.map((text, index) => ({
+            id: acceptanceCriterionId(index),
+            text,
+          })),
+        ledger: this._payload?.acceptanceStatus,
+        artifacts: this._payload ? this._evidenceArtifacts(this._payload) : [],
+        comparisonSnapshot: this._payload?.prPackage?.reviewSnapshot,
+        criterionSourceUrl: this.run?.links?.find((link) => link.label === 'Jira')?.url,
         package: source.recordedEvidence?.input,
         contractVersion: source.recordedEvidence?.contractVersion,
         claimOverrideAuthority: source.recordedEvidence?.claimOverrideAuthority,
@@ -118,6 +132,16 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     } catch (error) {
       if (request === this._evidenceRequest && this.isConnected)
         this._evidenceModel = createEvidenceReviewModel({
+          gateDecision: this.decision,
+          criteria:
+            this._payload?.acceptanceStatus?.criteria ??
+            this._payload?.acceptanceCriteria?.map((text, index) => ({
+              id: acceptanceCriterionId(index),
+              text,
+            })),
+          ledger: this._payload?.acceptanceStatus,
+          artifacts: this._payload ? this._evidenceArtifacts(this._payload) : [],
+          criterionSourceUrl: this.run?.links?.find((link) => link.label === 'Jira')?.url,
           readErrors: [error instanceof Error ? error.message : String(error)],
         });
     }
@@ -139,28 +163,31 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
             this._claimOverrideReason = reason;
           },
         },
-        markUntestable: async (claimId, reason) => {
-          if (!this.decision || this._acting) return;
-          const candidate = model.claimOverrideCandidate(claimId);
-          if (!candidate) return;
-          this._acting = true;
-          try {
-            const request = buildRunDecisionActionRequest({
-              runId: this.runId,
-              decision: this.decision,
-              actionId: MARK_CLAIM_UNTESTABLE_ACTION,
-              ...candidate,
-              claimOverrideReason: reason,
-            });
-            await gateway.request(request.method, request.params);
-            await this._loadReviewEvidence();
-            this._actionMessage = 'Claim marked untestable. Refresh and review the gate package.';
-          } catch (error) {
-            this._actionMessage = error instanceof Error ? error.message : String(error);
-          } finally {
-            this._acting = false;
-          }
-        },
+        markUntestable: this.decision?.resolvedAt
+          ? undefined
+          : async (claimId, reason) => {
+              if (!this.decision || this._acting) return;
+              const candidate = model.claimOverrideCandidate(claimId);
+              if (!candidate) return;
+              this._acting = true;
+              try {
+                const request = buildRunDecisionActionRequest({
+                  runId: this.runId,
+                  decision: this.decision,
+                  actionId: MARK_CLAIM_UNTESTABLE_ACTION,
+                  ...candidate,
+                  claimOverrideReason: reason,
+                });
+                await gateway.request(request.method, request.params);
+                await this._loadReviewEvidence();
+                this._actionMessage =
+                  'Claim marked untestable. Refresh and review the gate package.';
+              } catch (error) {
+                this._actionMessage = error instanceof Error ? error.message : String(error);
+              } finally {
+                this._acting = false;
+              }
+            },
         evidenceHref: (path) => this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
         openEvidence: ({ criterion, evidence, index }) => {
           this._lightboxRecipeRunId = this._evidenceRecipeRunId;
@@ -557,13 +584,59 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       payload,
       artifacts,
       selectionToolbar: this._renderEvidenceSelectionToolbar(payload),
-      artifactGroups: this._renderArtifactGroups(artifacts, payload, {
-        publishSelectable: !!payload.prPackage,
-      }),
+      artifactGroups: this._evidenceModel
+        ? renderWorkspaceEvidencePreview({
+            title: 'Compare by AC',
+            items: [],
+            comparison: {
+              model: this._evidenceModel,
+              artifactUrl: (path) => this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
+              changed: () => this.requestUpdate(),
+              openMedia: (media, clipIndex) => {
+                const model = this._evidenceModel!;
+                model.selectComparisonMedia(media.identity);
+                if (clipIndex !== undefined) model.cueClip(clipIndex);
+                this._openComparisonSelection(clipIndex !== undefined, media.artifactPath);
+              },
+              openMoment: (claimId, index) => {
+                this._evidenceModel!.selectClaim(claimId);
+                this._evidenceModel!.cueClip(index);
+                this._openComparisonSelection(true);
+              },
+            },
+          })
+        : this._renderArtifactGroups(artifacts, payload, {
+            publishSelectable: !!payload.prPackage,
+          }),
     });
   }
 
+  private _openComparisonSelection(video: boolean, mediaPath?: string): void {
+    const model = this._evidenceModel;
+    if (!model?.selection) return;
+    const clip = model.playback.clip;
+    const path = video && clip ? model.artifactPath(clip.videoPath) : mediaPath;
+    if (!path) return;
+    this._lightboxRecipeRunId = this._evidenceRecipeRunId;
+    this._evidenceItems = [
+      {
+        path,
+        purpose: 'evidence',
+        caption: model.selection.caption,
+        url: this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
+        evidenceModel: model,
+        fullscreen: video,
+        ...(video && clip ? { initialTraceIndex: clip.traceIndex } : {}),
+        resolveArtifactUrl: (path) => this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
+      },
+    ];
+    this._lightboxIndex = 0;
+    this._lightboxMode = 'single';
+    this._lightboxOpen = true;
+  }
+
   private _renderEvidenceSelectionToolbar(payload: ReadyGatePayload) {
+    if (this.decision?.resolvedAt) return nothing;
     return renderReadyEvidenceSelectionToolbar({
       publishEvidence: this._publishEvidenceArtifacts(payload),
       selected: this._publishEvidenceSet(payload),

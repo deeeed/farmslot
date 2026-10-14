@@ -1,5 +1,10 @@
 import { html, nothing, type TemplateResult } from 'lit';
 
+import type {
+  EvidenceReviewComparisonFilter,
+  EvidenceReviewComparisonMedia,
+  EvidenceReviewModel,
+} from '@farmslot/adapter-sdk/evidence';
 import type { ArtifactRef } from '@farmslot/protocol';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
@@ -53,6 +58,13 @@ export function dedupeWorkspaceEvidenceArtifacts(artifacts: readonly ArtifactRef
 }
 
 export function renderWorkspaceEvidencePreview(input: {
+  comparison?: {
+    model: EvidenceReviewModel;
+    artifactUrl(path: string): string;
+    openMedia(media: EvidenceReviewComparisonMedia, clipIndex?: number): void;
+    openMoment(claimId: string, index: number): void;
+    changed(): void;
+  };
   title: string;
   subtitle?: string;
   hideHeader?: boolean;
@@ -62,6 +74,7 @@ export function renderWorkspaceEvidencePreview(input: {
   compact?: boolean;
   empty?: TemplateResult | typeof nothing;
 }): TemplateResult | typeof nothing {
+  if (input.comparison) return renderComparisonPreview(input.comparison);
   if (input.items.length === 0) return input.empty ?? nothing;
   const totalCount = input.totalCount ?? input.items.length;
   const hiddenCount = Math.max(totalCount - input.items.length, 0);
@@ -185,4 +198,324 @@ export function renderWorkspaceEvidencePreview(input: {
         : nothing}
     </section>
   `;
+}
+
+function renderComparisonPreview(
+  input: NonNullable<Parameters<typeof renderWorkspaceEvidencePreview>[0]['comparison']>,
+): TemplateResult {
+  const { model } = input;
+  const filters: readonly EvidenceReviewComparisonFilter[] = [
+    'all',
+    'before',
+    'after',
+    'review',
+    'screenshots',
+    'moments',
+    'unassigned',
+  ];
+  const view = model.comparisonView;
+  const transform = model.comparisonTransform;
+  const updateTransform = (scale: number, x = transform.x, y = transform.y) => {
+    model.setComparisonTransform({ scale, x, y });
+    input.changed();
+  };
+  const card = (media: EvidenceReviewComparisonMedia) =>
+    html` <div class="ws-ac-media" style="min-width:0;">
+      <button
+        type="button"
+        @click=${() => input.openMedia(media)}
+        style="width:100%;height:230px;background:${colors.bgBase};border:1px solid ${colors.bgCardHover};overflow:hidden;cursor:zoom-in;"
+        aria-label=${`Open ${media.name}`}
+        @wheel=${(event: WheelEvent) => {
+          event.preventDefault();
+          updateTransform(transform.scale + (event.deltaY < 0 ? 0.25 : -0.25));
+        }}
+        @pointermove=${(event: PointerEvent) => {
+          if (event.buttons !== 1) return;
+          const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+          updateTransform(
+            transform.scale,
+            (event.clientX - rect.left) / rect.width,
+            (event.clientY - rect.top) / rect.height,
+          );
+        }}
+      >
+        ${media.mediaType === 'image'
+          ? html`<img
+              src=${input.artifactUrl(media.artifactPath)}
+              alt=${media.name}
+              loading="lazy"
+              style=${`width:100%;height:100%;object-fit:contain;transform:scale(${transform.scale});transform-origin:${transform.x * 100}% ${transform.y * 100}%;`}
+            />`
+          : html`<span>Open video fullscreen</span>`}
+      </button>
+      <div style="color:${colors.textMuted};font-size:11px;overflow-wrap:anywhere;">
+        ${media.capture?.role ?? 'Unassigned'} ·
+        ${media.capture?.sourceCommit?.slice(0, 8) ?? 'source unknown'} · ${media.originalPath}
+      </div>
+      ${media.limitation
+        ? html`<div style="color:${colors.textSecondary};font-size:11px;">${media.limitation}</div>`
+        : nothing}
+      ${media.clips.map(
+        (clip, index) =>
+          html`<button
+            type="button"
+            @click=${() => input.openMedia(media, index)}
+            aria-label=${`Video moment for ${media.name}`}
+          >
+            Video ${formatMoment(clip.momentMs ?? clip.startMs)}
+          </button>`,
+      )}
+    </div>`;
+  const side = (row: EvidenceReviewModel['comparisons'][number], role: 'before' | 'after') => {
+    const candidates = row[role];
+    const selected = role === 'before' ? row.selectedBefore : row.selectedAfter;
+    const visibleSelected =
+      selected && candidates.some((entry) => entry.identity === selected.identity)
+        ? selected
+        : undefined;
+    return html`<div style="min-width:0;">
+      <strong>${role === 'before' ? 'Before' : 'After'}</strong>
+      ${candidates.length > 1
+        ? html`<select
+            aria-label=${`Select ${role} for ${row.claim.id}`}
+            @change=${(event: Event) => {
+              model.chooseComparisonMedia(
+                row.claim.id,
+                role,
+                (event.currentTarget as HTMLSelectElement).value,
+              );
+              input.changed();
+            }}
+            .value=${selected?.identity ?? ''}
+          >
+            <option value="">Choose a capture</option>
+            ${candidates.map(
+              (media) =>
+                html`<option value=${media.identity} ?disabled=${!media.eligible}>
+                  ${media.name}${media.limitation ? ` (${media.limitation})` : ''}
+                </option>`,
+            )}
+          </select>`
+        : nothing}
+      ${visibleSelected
+        ? card(visibleSelected)
+        : html`<div
+            style="padding:24px;color:${colors.textMuted};border:1px dashed ${colors.bgCardHover};"
+          >
+            ${candidates.length > 1
+              ? 'Choose a capture to compare'
+              : `No qualified ${role} capture`}
+          </div>`}
+    </div>`;
+  };
+  return html`<section
+    class="ws-compare-by-ac"
+    data-testid="compare-by-ac"
+    style="display:flex;flex-direction:column;gap:16px;"
+  >
+    <style>
+      .ws-compare-by-ac button,
+      .ws-compare-by-ac select {
+        border: 1px solid ${colors.bgCardHover};
+        background: ${colors.bgSurface};
+        color: ${colors.textSecondary};
+        border-radius: 4px;
+        padding: 5px 8px;
+        font: inherit;
+        font-size: 11px;
+        cursor: pointer;
+      }
+      .ws-compare-by-ac button[aria-pressed='true'] {
+        color: ${colors.accent};
+        border-color: ${colors.accent};
+        background: ${colors.accent}18;
+      }
+      .ws-compare-by-ac a {
+        color: ${colors.accent};
+        font-size: 12px;
+        white-space: nowrap;
+      }
+    </style>
+    ${model.gateSnapshot
+      ? html`<div
+          style="padding:10px;border:1px solid ${colors.bgCardHover};border-radius:6px;background:${colors.bgCard};font-size:12px;"
+        >
+          <div>Review head <code>${model.gateSnapshot.headSha ?? 'not captured'}</code></div>
+          <div>Own review: ${model.gateSnapshot.ownReviewVerdict ?? 'not captured'}</div>
+          ${model.gateSnapshot.reviews.map(
+            (review) =>
+              html`<div>
+                ${review.mode} · ${review.verdict}${review.stale ? ' · stale' : ''} · head
+                <code
+                  >${review.reviewedHeadSha ??
+                  review.reviewSnapshot?.headSha ??
+                  'not captured'}</code
+                >
+              </div>`,
+          )}
+          <div>
+            CI parity
+            ${model.gateSnapshot.ci.length
+              ? model.gateSnapshot.ci
+                  .map((check) => `${check.reference}: ${check.status}`)
+                  .join('; ')
+              : 'not captured for this head'}
+          </div>
+          ${model.gateSnapshot.requirements.length
+            ? html`<details>
+                <summary>Open requirements (${model.gateSnapshot.requirements.length})</summary>
+                ${model.gateSnapshot.requirements.map((reason) => html`<p>${reason.message}</p>`)}
+              </details>`
+            : nothing}
+          <strong>Next action: ${model.gateSnapshot.nextAction}</strong>
+        </div>`
+      : nothing}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <strong>Compare by AC</strong>
+      ${filters.map(
+        (filter) =>
+          html`<button
+            type="button"
+            data-comparison-filter=${filter}
+            aria-pressed=${model.comparisonFilter === filter}
+            @click=${() => {
+              model.setComparisonFilter(filter);
+              input.changed();
+            }}
+          >
+            ${filter === 'moments'
+              ? 'Video moments'
+              : filter === 'unassigned'
+                ? `Unassigned (${model.unassigned.length})`
+                : filter[0]!.toUpperCase() + filter.slice(1)}
+          </button>`,
+      )}
+      <button
+        type="button"
+        @click=${() => updateTransform(transform.scale - 0.25)}
+        aria-label="Zoom out"
+      >
+        −</button
+      ><span>${Math.round(transform.scale * 100)}%</span>
+      <button
+        type="button"
+        @click=${() => updateTransform(transform.scale + 0.25)}
+        aria-label="Zoom in"
+      >
+        +
+      </button>
+      <button
+        type="button"
+        @click=${() => {
+          model.resetComparisonTransform();
+          input.changed();
+        }}
+      >
+        Reset zoom
+      </button>
+    </div>
+    ${model.packageStatus
+      ? html`<div>
+          ${model.packageStatus.status} · ${model.packageStatus.path} ·
+          ${model.packageStatus.summary}
+        </div>`
+      : nothing}
+    ${model.comparisonErrors.map(
+      (issue) =>
+        html`<p style="color:${colors.statusFail};">
+          ${issue.code}: ${issue.artifactPath} · ${issue.message}. Refresh the gate package or
+          select another capture.
+        </p>`,
+    )}
+    ${view.rows.map(
+      (row) =>
+        html`<article
+          data-ac=${row.claim.id}
+          style="border:1px solid ${colors.bgCardHover};border-radius:${radii.md};padding:12px;background:${colors.bgCard};"
+        >
+          <div style="display:flex;justify-content:space-between;gap:12px;">
+            <strong>${row.claim.id}: ${row.claim.text}</strong> ${row.sourceUrl
+              ? html`<a href=${row.sourceUrl} target="_blank" rel="noopener">Original Jira AC</a>`
+              : nothing}
+          </div>
+          <div style="margin:8px 0;color:${colors.textSecondary};">
+            ${row.claim.status?.verdict ?? 'not assessed'} ·
+            ${row.claim.status?.proofMode ?? 'no proof mode'} ·
+            ${row.claim.proofKinds.join(', ') || 'no recorded proof'}
+            ${row.claim.reviewLabels.join('; ')}
+          </div>
+          <div
+            style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:12px;"
+          >
+            ${side(row, 'before')}${side(row, 'after')}
+          </div>
+          ${!row.selectedBefore && !row.selectedAfter && row.claim.clips[0]
+            ? html`<div style="margin-top:12px;">
+                <strong>AC proof · recorded moment</strong
+                ><button
+                  style="display:block;width:100%;height:210px;margin-top:8px;background:${colors.bgBase};"
+                  @click=${() => input.openMoment(row.claim.id, 0)}
+                  aria-label=${`Open fullscreen proof for ${row.claim.id}`}
+                >
+                  <video
+                    src=${input.artifactUrl(model.artifactPath(row.claim.clips[0]!.videoPath))}
+                    muted
+                    preload="metadata"
+                    style="width:100%;height:100%;object-fit:contain;"
+                    @loadedmetadata=${(event: Event) => {
+                      const video = event.currentTarget as HTMLVideoElement;
+                      const clip = row.claim.clips[0]!;
+                      video.currentTime = (clip.momentMs ?? clip.startMs) / 1000;
+                    }}
+                  ></video>
+                </button>
+              </div>`
+            : nothing}
+          ${row.review.length
+            ? html`<details>
+                <summary>Review media (${row.review.length})</summary>
+                <div
+                  style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;"
+                >
+                  ${row.review.map(card)}
+                </div>
+              </details>`
+            : nothing}
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+            ${row.claim.clips.map(
+              (clip, index) =>
+                html`<button
+                  type="button"
+                  data-video-claim=${row.claim.id}
+                  data-video-moment=${index}
+                  @click=${() => input.openMoment(row.claim.id, index)}
+                >
+                  Video ${formatMoment(clip.momentMs ?? clip.startMs)} · ${clip.caption}
+                </button>`,
+            )}
+          </div>
+          ${!row.claim.clips.length && !row.before.length && !row.after.length && !row.review.length
+            ? html`<p style="color:${colors.textMuted};font-size:12px;">
+                No AC-bound capture. Retained unbound media is in Unassigned.
+              </p>`
+            : nothing}
+        </article>`,
+    )}
+    ${view.unassigned.length
+      ? html`<details open=${model.comparisonFilter === 'unassigned' || nothing}>
+          <summary>Unassigned (${view.unassigned.length})</summary>
+          <p>These files have no recorded AC and role binding.</p>
+          <div
+            style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;"
+          >
+            ${view.unassigned.map(card)}
+          </div>
+        </details>`
+      : nothing}
+  </section>`;
+}
+
+function formatMoment(ms: number): string {
+  return `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}.${String(Math.floor(ms % 1000)).padStart(3, '0')}`;
 }

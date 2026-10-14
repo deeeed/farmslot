@@ -19,6 +19,7 @@ import {
   runOutputCloseUnavailableReason,
   type SlotPickerPayload,
   slotPickerViewModel,
+  TERMINAL_RUN_STATUSES,
 } from '@farmslot/protocol';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
@@ -157,10 +158,42 @@ export function publicationGateWaitingTitle(decision: Pick<RunDecision, 'actions
   return 'Action required';
 }
 
+/** Inspect a retained gate without reopening its decision or running slot recovery. */
+export function retainedEvidenceGate(
+  run: Pick<Run, 'status' | 'decisions'>,
+): RunDecision | undefined {
+  if (
+    !TERMINAL_RUN_STATUSES.includes(run.status) ||
+    run.decisions.some((decision) => !decision.resolvedAt)
+  )
+    return undefined;
+  return [...run.decisions]
+    .reverse()
+    .find((decision) => decision.resolvedAt && decision.payload?.kind === 'ready');
+}
+
 export function renderRunGateSection(run: Run, context: RunDecisionRenderContext) {
   // Show gate section for ANY unresolved decision (not just ones with payload)
   const rawPending = run.decisions.find((d) => !d.resolvedAt);
   if (!rawPending) {
+    const retained = retainedEvidenceGate(run);
+    if (retained)
+      return html`<section class="gate-section" data-testid="retained-evidence-gate">
+        <details open>
+          <summary data-testid="open-retained-evidence">Review saved gate evidence</summary>
+          <p class="gate-description">
+            Read-only · ${retained.resolvedAction ?? 'resolved'} · ${retained.resolvedAt}
+          </p>
+          <ready-workspace
+            .runId=${run.id}
+            .decision=${retained}
+            .run=${run}
+            .recipeRuns=${context.recipeRuns}
+            selectedRecipeRunId=${context.selectedRecipeRunId}
+            .hideRecipeTab=${true}
+          ></ready-workspace>
+        </details>
+      </section>`;
     const progress = readyReviewRequestProgress(run);
     return progress
       ? html`<section class="gate-section" role="status" data-testid="rdy-review-progress">
@@ -353,22 +386,24 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                       ></review-workspace>
                     `
                   : html`
-                      <ready-workspace
-                        .runId=${run.id}
-                        .decision=${pending}
-                        .run=${run}
-                        .recipeRuns=${context.recipeRuns}
-                        selectedRecipeRunId=${context.selectedRecipeRunId}
-                        slotId=${run.slotId ?? ''}
-                        branch=${run.branch ?? ''}
-                        runner=${run.metrics.runner ?? ''}
-                        .resourcePosture=${context.posture.choice}
-                        .postureBlockedReason=${context.postureBlockedReason}
-                        @recipe-complete=${(event: CustomEvent<RecipeCompleteDetail>) =>
-                          context.handleRecipeRunArtifacts(run, event.detail, true)}
-                        @recipe-artifacts-request=${(event: CustomEvent<RecipeCompleteDetail>) =>
-                          context.handleRecipeRunArtifacts(run, event.detail, false)}
-                      ></ready-workspace>
+                      <div class="gate-workspace">
+                        <ready-workspace
+                          .runId=${run.id}
+                          .decision=${pending}
+                          .run=${run}
+                          .recipeRuns=${context.recipeRuns}
+                          selectedRecipeRunId=${context.selectedRecipeRunId}
+                          slotId=${run.slotId ?? ''}
+                          branch=${run.branch ?? ''}
+                          runner=${run.metrics.runner ?? ''}
+                          .resourcePosture=${context.posture.choice}
+                          .postureBlockedReason=${context.postureBlockedReason}
+                          @recipe-complete=${(event: CustomEvent<RecipeCompleteDetail>) =>
+                            context.handleRecipeRunArtifacts(run, event.detail, true)}
+                          @recipe-artifacts-request=${(event: CustomEvent<RecipeCompleteDetail>) =>
+                            context.handleRecipeRunArtifacts(run, event.detail, false)}
+                        ></ready-workspace>
+                      </div>
                     `}
               </div>
             `

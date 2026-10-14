@@ -137,6 +137,7 @@ export class MediaLightbox extends MediaLightboxState {
     )
       void this._loadActiveVideoTimeline();
     if (changed.has('open') && this.open) {
+      if (this.items[this.selectedIndex]?.fullscreen) this._maximized = true;
       this.updateComplete.then(() => {
         this.renderRoot.querySelector<HTMLElement>('.ml-modal')?.focus();
       });
@@ -624,7 +625,16 @@ export class MediaLightbox extends MediaLightboxState {
       const key = this._evidenceCueKey();
       if (key === this._appliedVideoMarker || clip?.videoPath !== data.videoPath) return;
       this._appliedVideoMarker = key;
-      video.currentTime = clip.startMs / 1000;
+      const selectedMoment =
+        item.initialTraceIndex === clip.traceIndex && !this._resumeEvidencePlayback
+          ? model.markerSeekMs(
+              data.videoPath,
+              clip.traceIndex,
+              item.initialTracePhase ?? 'start',
+              video.duration * 1000,
+            )
+          : null;
+      video.currentTime = (selectedMoment ?? clip.startMs) / 1000;
       if (this._resumeEvidencePlayback || item.evidenceModel) {
         this._resumeEvidencePlayback = false;
         void video.play().catch((error: Error) => {

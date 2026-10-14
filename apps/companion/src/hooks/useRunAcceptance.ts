@@ -46,7 +46,7 @@ export interface RunAcceptance {
 }
 
 export type RunAcceptanceSource = Pick<Run, 'id' | 'slotId' | 'reviewWorkspace' | 'updatedAt'> &
-  Partial<Pick<Run, 'output' | 'decisions' | 'recordedEvidenceContractVersion'>>;
+  Partial<Pick<Run, 'output' | 'decisions' | 'recordedEvidenceContractVersion' | 'links'>>;
 
 type AcceptanceData = Pick<
   TaskProgressResult,
@@ -190,6 +190,14 @@ export function useRunAcceptance(
     const evidenceModel = data
       ? createEvidenceReviewModel({
           context: 'gate',
+          gateDecision: gate,
+          artifacts:
+            gate?.payload?.kind === 'ready'
+              ? gate.payload.artifactManifest
+              : run?.output?.artifactManifest,
+          comparisonSnapshot:
+            gate?.payload?.kind === 'ready' ? gate.payload.prPackage?.reviewSnapshot : undefined,
+          criterionSourceUrl: run?.links?.find((link) => link.label === 'Jira')?.url,
           ledger: acceptanceStatus,
           criteria: acceptanceCriteria ?? undefined,
           evidenceLinks: acceptanceEvidenceLinks ?? undefined,
@@ -220,5 +228,14 @@ export function useRunAcceptance(
         : null,
       error,
     };
-  }, [data, evidence, noSurface, requestError, run?.output, options.reportSnapshot]);
+  }, [
+    data,
+    evidence,
+    noSurface,
+    requestError,
+    run?.output,
+    run?.links,
+    gate,
+    options.reportSnapshot,
+  ]);
 }

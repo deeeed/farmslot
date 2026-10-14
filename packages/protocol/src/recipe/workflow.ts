@@ -36,6 +36,8 @@ const CORE_NODE_FIELDS = new Set([
   'cases',
   'default',
   'proves',
+  'ac',
+  'role',
   'visual_review',
   'retryGroup',
   'retryAttempts',
@@ -278,6 +280,26 @@ function validateVisualReviewMetadata(
   node: Record<string, unknown>,
   path: string,
 ): void {
+  if (node.ac !== undefined && !isNonEmptyString(node.ac))
+    addFinding(
+      ctx,
+      'error',
+      'workflow.invalid_capture_ac',
+      `${path}.ac`,
+      'ac must name a registered claim.',
+    );
+  if (
+    node.role !== undefined &&
+    !(typeof node.role === 'string' && hasRecipeTemplate(node.role)) &&
+    !['before', 'after', 'review'].includes(String(node.role))
+  )
+    addFinding(
+      ctx,
+      'error',
+      'workflow.invalid_capture_role',
+      `${path}.role`,
+      'role must be before, after or review.',
+    );
   if (!hasOwn(node, 'visual_review')) return;
   if (!VISUAL_REVIEW_CAPTURE_ACTIONS.has(String(node.action))) {
     addFinding(

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
+- Group evidence by registered criterion with explicit Before/After selections, independent video moments, filters and shared normalized zoom.
+
 - Show assertion and visual-review provenance in the shared evidence model and publication text.
 
 ## 0.13.1 - 2026-10-14

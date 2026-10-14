@@ -944,6 +944,9 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const priorityCompareRecipeRunId = primaryPairIsRecipeFallback
     ? recipeRunIdForVisualPair(recipeRuns, primaryPair)
     : DECISION_EVIDENCE_RECIPE_RUN_PARAM;
+  const [comparisonViewerItems, setComparisonViewerItems] = useState<
+    import('../../components/MediaViewer').MediaViewerItem[] | null
+  >(null);
   const visualViewerItems = useMemo(() => {
     if (!presentation?.runId) return [];
     const runId = presentation.runId;
@@ -1577,6 +1580,29 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
               gatewayUrl={gatewayUrl}
               artifacts={presentation.artifactManifest}
               pairs={pairs}
+              evidenceModel={humanGate?.acceptance.evidenceModel ?? outputAcceptance.evidenceModel}
+              onOpenRecordedEvidence={(model, path) => {
+                const uri = artifactUrlForEntry(gatewayUrl, presentation.runId!, {
+                  path,
+                  purpose: 'evidence',
+                });
+                setComparisonViewerItems([
+                  {
+                    uri,
+                    path,
+                    title: model.selection?.caption,
+                    evidenceModel: model,
+                    initialTraceIndex: model.playback.clip?.traceIndex,
+                    authHeaders: artifactAuthHeaders,
+                    resolveArtifactUrl: (path) =>
+                      artifactUrlForEntry(gatewayUrl, presentation.runId!, {
+                        path,
+                        purpose: 'evidence',
+                      }),
+                  },
+                ]);
+                setViewerUri(uri);
+              }}
               authHeaders={artifactAuthHeaders}
               onOpenVisual={setViewerUri}
               onOpenDocument={openDocumentArtifact}
@@ -1874,10 +1900,13 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
           testID="companion-artifact-media-viewer"
           visible={isFocused && canShowViewer}
           uri={viewerUri}
-          items={visualViewerItems}
+          items={comparisonViewerItems ?? visualViewerItems}
           authHeaders={artifactAuthHeaders}
           initialIndex={Math.max(0, viewerIndex)}
-          onClose={() => setViewerUri(null)}
+          onClose={() => {
+            setViewerUri(null);
+            setComparisonViewerItems(null);
+          }}
         />
         <DocumentViewer
           visible={isFocused && !!documentViewer}

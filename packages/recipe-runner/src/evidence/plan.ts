@@ -86,6 +86,10 @@ export function planRecipeEvidence(
     for (const [localId, node] of Object.entries(document.workflow.nodes)) {
       const id = prefix + localId;
       const qualified = nodes.get(id)!;
+      qualified.captureClaimBindings = Object.fromEntries([
+        ...ids,
+        ...(!prefix ? [...taskClaims.keys()].map((key) => [key, key] as const) : []),
+      ]);
       qualified.proves = node.proves?.map((claim) => {
         const mapped = ids.get(normalizeRecipeClaimId(claim));
         if (!mapped) throw new Error(`Unknown claim ${claim} at ${id}.`);
