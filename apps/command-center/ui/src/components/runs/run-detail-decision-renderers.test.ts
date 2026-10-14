@@ -68,7 +68,7 @@ test('a settled run exposes its latest saved gate without changing the retained 
   const earlier = { ...saved, id: 'earlier' };
   assert.equal(retainedEvidenceGate({ status: 'cancelled', decisions: [earlier, saved] }), saved);
   assert.equal(saved.resolvedAction, 'superseded');
-  assert.equal(retainedEvidenceGate({ status: 'running', decisions: [saved] }), undefined);
+  assert.equal(retainedEvidenceGate({ status: 'monitoring', decisions: [saved] }), undefined);
   assert.equal(
     retainedEvidenceGate({
       status: 'cancelled',
