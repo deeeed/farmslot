@@ -797,6 +797,7 @@ async function shutdown(): Promise<void> {
   stopAllResourceWatches();
   stopTmuxWorkerWatch();
   ws?.close();
+  await tmux.closeTmuxObservation();
   process.exit(0);
 }
 
