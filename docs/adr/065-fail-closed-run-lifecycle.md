@@ -122,3 +122,29 @@ This design is Accepted. Delivery is incremental; acceptance does not certify al
 - Guessing visual correctness from artifact existence or transport success.
 - Destructive automatic recovery, operator lease stealing or global process cleanup.
 - A new workflow engine, combinatorial test matrix or fleet deployment before approval.
+
+## Amendment 1: scripted command completion, 2026-10-14
+
+**Status:** Accepted by the lead, 2026-10-14. Delivery is included in
+[PR #1035](https://github.com/deeeed/farmslot/pull/1035), with paired review required.
+
+The runner capability layer may establish idle for a project-owned scripted
+command from its current task's structured execution receipt. The command result,
+runner provenance and terminal signal must agree with the admitted command,
+project, checkout and current dispatch. Missing, stale, mismatched, failed or
+incomplete receipts remain unproven. A worker success assertion alone cannot
+establish idle. Other active contexts still prevent completion.
+
+This repairs command-mode completion under the existing lifecycle gate. It does
+not approve task acceptance or evidence, change scenario-mode execution, or add
+a completion bypass. Existing gate prerequisites and resource ownership remain
+authoritative.
+
+### Public surface
+
+`@farmslot/gateway` owns the internal `RunnerDefinition.taskProgress` capability
+and `readRunnerTaskProgress` adapter, consumed by `readRunProgress`. Existing
+run, gate and replay RPCs and their CLI clients inherit the result. No public DTO,
+SDK export, command or flag changes. Harnesses keep using their declared project
+command references and existing task artifacts. The internal adapter ships with
+the gateway revision and has no independent compatibility contract.

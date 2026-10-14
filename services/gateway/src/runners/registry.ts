@@ -89,6 +89,8 @@ import type {
   RunnerActivity,
   RunnerObservability,
   RunnerSessionDeliveryState,
+  RunnerTaskProgressInput,
+  RunnerTaskProgressReader,
 } from './observability-types.js';
 import { lineHasAuthBlockerPhrase, readPaneStateFromCapture } from './pane-state-script.js';
 import {
@@ -172,6 +174,8 @@ export interface RunnerGracefulExitCapability {
 }
 
 export interface RunnerDefinition {
+  /** Structured execution receipts for finite project-owned tasks. */
+  taskProgress?: RunnerTaskProgressReader;
   /** Empty-session reservation and explicit resume are available for managed worktree terminals. */
   workspaceTerminalSession?: 'create-chat';
   /** Opt-in native protocol. Missing means structured sessions are unavailable. */
@@ -646,6 +650,9 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   },
   scripted: {
     id: 'scripted',
+    // Receipt IO must not preload resource-control consumers during registry initialization.
+    taskProgress: async (input) =>
+      (await import('./scripted-progress.js')).readScriptedCommandProgress(input),
     defaultLaunchMode: 'exec',
     processMatchers: ['farmslot scripted-runner', 'scripted-runner'],
     supportsInteractivePrompt: false,
@@ -685,6 +692,11 @@ const KNOWN_RUNNER_OBSERVABILITY: Record<string, RunnerObservability> = {
 export function getRunnerObservability(runnerId?: string | null): RunnerObservability | null {
   if (!runnerId) return null;
   return KNOWN_RUNNER_OBSERVABILITY[normalizeRunner(runnerId)] ?? null;
+}
+
+export async function readRunnerTaskProgress(input: RunnerTaskProgressInput) {
+  const runner = normalizeRunner(input.context?.runner ?? input.run.metrics.runner);
+  return (await getRunnerDefinition(runner).taskProgress?.(input)) ?? null;
 }
 
 /** Bounded transcript accounting is a static runner capability. */

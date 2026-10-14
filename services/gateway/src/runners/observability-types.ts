@@ -1,4 +1,8 @@
+import type { AgentContext, Run } from '@farmslot/protocol';
+
 import type { loadSlotVars } from '../core/config.js';
+
+import type { MonitorProgressKind } from './observability-progress.js';
 
 export type ObservabilitySource = 'hook' | 'statusline' | 'signal' | 'pane' | 'unknown';
 export type ObservabilityConfidence = 'high' | 'medium' | 'low';
@@ -23,6 +27,17 @@ export type RunnerSessionDeliveryState = 'idle' | 'active' | 'unknown';
 export type ObservabilityScope = 'event-driven' | 'pane-only' | 'none';
 
 export type SlotVars = Awaited<ReturnType<typeof loadSlotVars>>;
+
+export interface RunnerTaskProgressInput {
+  run: Run;
+  context: AgentContext | undefined;
+  vars: SlotVars;
+}
+
+/** Null means this execution mode uses the runner's ordinary observations. */
+export type RunnerTaskProgressReader = (
+  input: RunnerTaskProgressInput,
+) => Promise<MonitorProgressKind | null>;
 
 export interface HookRecord {
   schemaVersion?: number;
