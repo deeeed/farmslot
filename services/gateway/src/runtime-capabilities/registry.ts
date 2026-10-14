@@ -184,6 +184,8 @@ export interface RuntimeCapabilityRegistryOptions {
    * tests and validation gateways that have no run store.
    */
   isTerminalOwner?: (ownerRunId: string) => boolean;
+  /** Latest durable replay of a live run. Older cleanup fences belong to its prior attempt. */
+  recoveryStartedAtForRun?: (ownerRunId: string) => number | undefined;
 
   onEvent?: (event: RuntimeCapabilityLifecycleEvent) => void;
   /**
@@ -617,6 +619,9 @@ export class RuntimeCapabilityRegistry {
     const events = this.pendingEvents;
     this.pendingEvents = [];
     this.pruneExpiredFences();
+    for (const [ownerRunId, at] of this.terminatedOwners) {
+      if (this.recoveredAfterCleanup(ownerRunId, at)) this.terminatedOwners.delete(ownerRunId);
+    }
     // Stamped on every write, so the terminal fence lands in the SAME replace as
     // the release that armed it. A separate write would leave a window where the
     // providers were stopped but the fence was not durable yet.
@@ -2804,15 +2809,17 @@ export class RuntimeCapabilityRegistry {
   // archiving has already deleted, so the run-store fallback meant to cover
   // eviction was blind precisely where eviction bit.
   private fenceOwner(ownerRunId: string): void {
-    if (!this.terminatedOwners.has(ownerRunId)) {
-      this.terminatedOwners.set(ownerRunId, this.timestamp());
-    }
+    this.terminatedOwners.set(ownerRunId, this.timestamp());
   }
 
   private fenceFamily(familyId: string): void {
-    if (!this.terminatedFamilies.has(familyId)) {
-      this.terminatedFamilies.set(familyId, this.timestamp());
-    }
+    this.terminatedFamilies.set(familyId, this.timestamp());
+  }
+
+  private recoveredAfterCleanup(ownerRunId: string, at: string): boolean {
+    if (this.options.isTerminalOwner?.(ownerRunId) !== false) return false;
+    const recoveredAt = this.options.recoveryStartedAtForRun?.(ownerRunId);
+    return recoveredAt !== undefined && recoveredAt > Date.parse(at);
   }
 
   /**
@@ -2841,7 +2848,10 @@ export class RuntimeCapabilityRegistry {
     ownerRunId: string,
     familyId?: string,
   ): { scope: 'owner' | 'family'; id: string } | null {
-    if (this.terminatedOwners.has(ownerRunId)) return { scope: 'owner', id: ownerRunId };
+    const ownerCleanupAt = this.terminatedOwners.get(ownerRunId);
+    if (ownerCleanupAt && !this.recoveredAfterCleanup(ownerRunId, ownerCleanupAt)) {
+      return { scope: 'owner', id: ownerRunId };
+    }
     // The owner predicate is a SUPPLEMENT, not the authority: it answers for a
     // run the store still has, and the durable entries answer for the rest.
     // Correct at owner scope because a terminal run must never reacquire under
@@ -2855,7 +2865,11 @@ export class RuntimeCapabilityRegistry {
     // shares its parent's family, so the parent reaching `done` refused its own
     // child at PREPARE. Only a family-scope cleanup writes this, and only that
     // is read back.
-    if (this.terminatedFamilies.has(familyId)) return { scope: 'family', id: familyId };
+    const familyCleanupAt = this.terminatedFamilies.get(familyId);
+    // Replay revives only this owner, never every sibling in its family.
+    if (familyCleanupAt && !this.recoveredAfterCleanup(ownerRunId, familyCleanupAt)) {
+      return { scope: 'family', id: familyId };
+    }
     return null;
   }
 
