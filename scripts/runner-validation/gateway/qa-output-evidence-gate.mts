@@ -291,7 +291,15 @@ if (process.argv[2] === 'serve') {
     // pass. This proves admission without publishing or releasing resources.
     const negative = process.env.FARMSLOT_QA_OUTPUT_NEGATIVE ?? '';
     assert.ok(
-      ['', 'reader', 'applicability', 'binding', 'mirror', 'refresh-fence'].includes(negative),
+      [
+        '',
+        'reader',
+        'applicability',
+        'binding',
+        'mirror',
+        'refresh-fence',
+        'claim-policy',
+      ].includes(negative),
     );
     json(path.join(out, 'input-receipt.json'), {
       originalRunId: original.id,
@@ -332,20 +340,30 @@ if (process.argv[2] === 'serve') {
           ${JSON.stringify(`if (reason === 'operator closed execution with recorded outcome' && (await import('node:fs')).existsSync(${JSON.stringify(failPersistence)})) throw new Error('Controlled ENOSPC before output close');`)} + text.slice(body+1);
       }
       if (url.endsWith('/run-engine/post-dispatch-steps.ts')) {
-        const text = String(result.source);
-        const target = "if (current.flowType === 'qa') await assertQaCompletion(current);";
-        if (!text.includes(target)) throw new Error('Completion proof barrier target changed');
-        return {...result, source: text.replace(target, target + " throw new (await import('../core/method-error.js')).GatewayMethodError('RUN_GATE_NOT_READY','${barrier}');")};
+        let text = String(result.source);
+        if (${JSON.stringify(negative)} === 'claim-policy') {
+          const call = ${/\(current,\s*null,\s*["']complete["']\)/u};
+          if (!call.test(text)) throw new Error('QA completion policy control target changed');
+          const changed = text.replace(call, '(current, null)');
+          writeFileSync(${JSON.stringify(path.join(out, 'source-mutation.json'))}, JSON.stringify({mode:'claim-policy',url,
+            beforeHash:createHash('sha256').update(text).digest('hex'),
+            loadedHash:createHash('sha256').update(changed).digest('hex')}));
+          text = changed;
+        }
+        const target = ${/if\s*\(current\.flowType\s*===\s*["']qa["']\)\s*await\s+assertQaCompletion\(current\);/u};
+        if (!target.test(text)) throw new Error('Completion proof barrier target changed');
+        return {...result, source: text.replace(target, match => match + " throw new (await import('../core/method-error.js')).GatewayMethodError('RUN_GATE_NOT_READY','${barrier}');")};
       }
       if (url.endsWith('/run-engine/gate-prerequisites.ts')) {
         const text = String(result.source);
-        const target = 'const progress = await source.progress(run);';
-        if (!text.includes(target)) throw new Error('Progress checkpoint target changed');
-        result.source = text.replace(target, target + ${JSON.stringify(`
-          if (require('node:fs').existsSync(${JSON.stringify(hold)})) {
-            require('node:fs').writeFileSync(${JSON.stringify(checkpoint)}, 'observed');
+        const target = ${/const\s+progress\s*=\s*await\s+source\.progress\(run\);/u};
+        if (!target.test(text)) throw new Error('Progress checkpoint target changed');
+        result.source = text.replace(target, match => match + ${JSON.stringify(`
+          const proofFs = await import('node:fs');
+          if (proofFs.existsSync(${JSON.stringify(hold)})) {
+            proofFs.writeFileSync(${JSON.stringify(checkpoint)}, 'observed');
             const deadline = Date.now()+90000;
-            while(!require('node:fs').existsSync(${JSON.stringify(release)})) {
+            while(!proofFs.existsSync(${JSON.stringify(release)})) {
               if(Date.now()>deadline) throw new Error('Proof progress checkpoint was not released');
               await new Promise(resolve=>setTimeout(resolve,50));
             }
@@ -353,11 +371,11 @@ if (process.argv[2] === 'serve') {
       }
       if (url.endsWith('/run-completion/artifact-mirror.ts')) {
         const text = String(result.source);
-        const target = 'const workerArtifactsExist = await slotFileExists(vars, workerArtifactsDir);';
-        if (!text.includes(target)) throw new Error('Transfer failure checkpoint target changed');
-        result.source = text.replace(target, ${JSON.stringify(`if ((await import('node:fs')).existsSync(${JSON.stringify(failTransfer)})) throw new Error('Controlled mirror transfer failure'); `)} + target);
+        const target = ${/const\s+workerArtifactsExist\s*=\s*await\s+slotFileExists\(vars,\s*workerArtifactsDir\);/u};
+        if (!target.test(text)) throw new Error('Transfer failure checkpoint target changed');
+        result.source = text.replace(target, match => ${JSON.stringify(`if ((await import('node:fs')).existsSync(${JSON.stringify(failTransfer)})) throw new Error('Controlled mirror transfer failure'); `)} + match);
       }
-      if (${JSON.stringify(negative)} !== '' && (url.endsWith('/run-engine/gate-prerequisites.ts') ||
+      if (${JSON.stringify(negative)} !== '' && ${JSON.stringify(negative)} !== 'claim-policy' && (url.endsWith('/run-engine/gate-prerequisites.ts') ||
           url.endsWith('/run-completion/artifact-mirror.ts'))) {
         const text = String(result.source);
         const mode = ${JSON.stringify(negative)};

@@ -489,11 +489,7 @@ export async function collectRunGateReadiness(
           ),
         );
 
-        if (
-          !valid ||
-          !projectedIdentityMatches ||
-          (qaOutput && (!executionSatisfied || !claimsSatisfied || !bound))
-        ) {
+        if (!valid || !projectedIdentityMatches || (qaOutput && (!executionSatisfied || !bound))) {
           reasons.push({
             code:
               valid && !projectedIdentityMatches
@@ -693,7 +689,22 @@ export async function assertRunGateReady(
   actionId?: string,
 ): Promise<RunGateReadiness> {
   const readiness = await collectRunGateReadiness(run, preparedPackage);
-  const reasons = gateReasonsForAction(readiness, actionId);
+  // Artifact-only QA completion presents its unresolved claims for review.
+  // This defers only their verdict policy, never package or execution integrity.
+  const outputCompletion =
+    actionId === 'complete' &&
+    run.flowType === 'qa' &&
+    isArtifactOnlyRun(run) &&
+    !preparedPackage &&
+    !readiness.identity.packageHash;
+  const reasons = gateReasonsForAction(readiness, actionId).filter(
+    (reason) =>
+      !(
+        outputCompletion &&
+        reason.code === 'evidence-policy-unsatisfied' &&
+        reason.evidencePolicy === 'claim-verdict'
+      ),
+  );
   if (
     reasons.length ||
     readiness.state === 'collecting' ||

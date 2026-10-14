@@ -1300,7 +1300,7 @@ export async function executeCompleteStep(
   }
   if (!current.slotId) throw new Error('No slot assigned');
   if (!shouldPrepareLocalFirstPackage(current))
-    await (context.assertGatePrerequisites ?? assertRunGateReady)(current, null);
+    await (context.assertGatePrerequisites ?? assertRunGateReady)(current, null, 'complete');
   // Revalidate on completion/replay so a checklist or force-skipped monitor cannot supply QA proof.
   if (current.flowType === 'qa') await assertQaCompletion(current);
   if (runSupersededSince(getRun(runId), generation))
