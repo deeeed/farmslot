@@ -82,6 +82,7 @@ import {
 } from './pr-template.js';
 import {
   postProcessPRBody,
+  publicationBaselineContext,
   publishSelectedEvidence,
   readEvidenceManifest,
   scanArtifacts,
@@ -670,6 +671,7 @@ export async function prepareCompletionPackageTransitionLocked(
     artifacts,
     runEvidenceManifest,
     run.recordedEvidenceContractVersion ?? 0,
+    publicationBaselineContext(run),
   );
   const validation = await readValidationSummary(run);
   const projectVars = await loadProjectVars(run.project);

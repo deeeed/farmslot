@@ -128,7 +128,8 @@ async function descriptionCheckSection(
     run,
     projectJson ? getProjectField(projectJson, 'default_branch') : undefined,
   );
-  const { resolvePublicationManifest } = await import('../run-completion/publication-artifacts.js');
+  const { resolvePublicationManifest, publicationBaselineContext } =
+    await import('../run-completion/publication-artifacts.js');
   let publication;
   let selectionError: string | undefined;
   try {
@@ -139,6 +140,7 @@ async function descriptionCheckSection(
       },
       undefined,
       run.recordedEvidenceContractVersion ?? 0,
+      publicationBaselineContext(run),
     );
   } catch (error) {
     // An unavailable pre-check still produces the review document with an explicit diagnostic.

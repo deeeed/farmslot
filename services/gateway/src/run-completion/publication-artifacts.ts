@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import {
   type ArtifactRef,
+  isRecord,
   RecordedEvidenceReadError,
   type Run,
   validateArtifactManifestDocument,
@@ -781,6 +782,21 @@ export interface ResolvedPublicationManifest {
   selectedArtifactRoot?: string;
   pointerPath?: string;
   pointerBytes?: string;
+  beforeArtifactRoots?: string[];
+}
+
+/** Existing run capture authority, separate from the selected head's claims. */
+export interface PublicationBaselineContext {
+  baseSha?: string;
+  branch?: string | null;
+  inventory: readonly ArtifactRef[];
+}
+
+export function publicationBaselineContext(
+  run: Run,
+  inventory = run.output?.artifactManifest ?? [],
+): PublicationBaselineContext {
+  return { baseSha: run.worktreeHeadAtDispatch ?? undefined, branch: run.branch, inventory };
 }
 
 export interface PublicationManifestReadIO {
@@ -798,12 +814,33 @@ const localPublicationManifestReadIO: PublicationManifestReadIO = {
   },
 };
 
-async function assertPublicationManifestOwnership(
+export async function assertPublicationManifestOwnership(
   manifest: EvidenceManifest,
   artifactRoot: string,
   artifactsDir: string,
-  io: PublicationManifestReadIO,
-): Promise<void> {
+  io: PublicationManifestReadIO = localPublicationManifestReadIO,
+  baseline?: PublicationBaselineContext,
+): Promise<string[]> {
+  const before = new Set(
+    evidenceManifestArtifactPaths({
+      before_after_pairs: manifest.before_after_pairs?.map((pair) => ({
+        ...pair,
+        after: undefined,
+      })),
+      videos: { before: manifest.videos?.before },
+    }),
+  );
+  const other = new Set(
+    evidenceManifestArtifactPaths({
+      before_after_pairs: manifest.before_after_pairs?.map((pair) => ({
+        ...pair,
+        before: undefined,
+      })),
+      standalone: manifest.standalone,
+      videos: { after: manifest.videos?.after },
+    }),
+  );
+  const beforeRoots = new Set<string>();
   const retainedManifests = new Map<string, Promise<string | null>>();
   for (const file of evidenceManifestArtifactPaths(manifest)) {
     const relativeFile = file.slice('artifacts/'.length);
@@ -818,6 +855,14 @@ async function assertPublicationManifestOwnership(
           io.readText(path.join(artifactsDir, directory, 'artifact-manifest.json')),
         );
       const manifestBytes = await retainedManifests.get(directory);
+      const capturedRecipe = baseline?.inventory.some(
+        (artifact) => artifact.path === `artifacts/${directory}/summary.json`,
+      );
+      if (directory !== artifactRoot && capturedRecipe && manifestBytes == null)
+        throw new RecordedEvidenceReadError(
+          'evidence-package-unverifiable',
+          `The captured baseline artifact-manifest.json is missing for ${file}.`,
+        );
       if (manifestBytes !== null && manifestBytes !== undefined) {
         let retained: unknown;
         try {
@@ -836,17 +881,59 @@ async function assertPublicationManifestOwnership(
           );
         const entries = (retained as { artifacts: Array<{ path: string }> }).artifacts;
         if (entries.some((entry) => entry.path === path.posix.relative(directory, relativeFile))) {
-          if (directory !== artifactRoot)
-            throw new RecordedEvidenceReadError(
-              'evidence-selection-invalid',
-              `Publication declaration ${file} belongs to another recipe attempt. Select evidence from the current attempt.`,
+          if (directory !== artifactRoot) {
+            const capturedDigest = (relative: string) =>
+              baseline?.inventory
+                .find((artifact) => artifact.path === `artifacts/${directory}/${relative}`)
+                ?.sha256?.replace(/^sha256:/u, '');
+            const provenanceBytes = await io.readText(
+              path.join(artifactsDir, directory, 'product-provenance.json'),
             );
+            let provenance: unknown;
+            if (provenanceBytes !== null) {
+              try {
+                provenance = JSON.parse(provenanceBytes);
+              } catch (cause) {
+                throw new RecordedEvidenceReadError(
+                  'evidence-package-unverifiable',
+                  `Invalid baseline product provenance for ${file}.`,
+                  { cause },
+                );
+              }
+            }
+            if (
+              !before.has(file) ||
+              other.has(file) ||
+              !baseline?.baseSha ||
+              capturedDigest('artifact-manifest.json') !==
+                createHash('sha256').update(manifestBytes).digest('hex') ||
+              !capturedDigest(path.posix.relative(directory, relativeFile)) ||
+              !provenanceBytes ||
+              capturedDigest('product-provenance.json') !==
+                createHash('sha256').update(provenanceBytes).digest('hex') ||
+              !isRecord(provenance) ||
+              provenance.git_ref !== baseline.baseSha ||
+              provenance.dirty !== false ||
+              (baseline.branch && provenance.branch !== baseline.branch)
+            )
+              throw new RecordedEvidenceReadError(
+                'evidence-selection-invalid',
+                `Publication declaration ${file} belongs to another recipe attempt. Before evidence must be captured by this run on its unchanged baseline.`,
+              );
+            beforeRoots.add(directory);
+          }
           break;
         }
+        if (directory !== artifactRoot && capturedRecipe)
+          throw new RecordedEvidenceReadError(
+            'evidence-selection-invalid',
+            `The captured baseline does not declare ${file}.`,
+          );
       }
       if (directory === '.') break;
     }
   }
+  return [...beforeRoots];
 }
 
 /** Preserve presentation and non-recipe captures without selecting another execution. */
@@ -855,9 +942,11 @@ async function includePublicationDeclarations(
   artifactRoot: string,
   artifactsDir: string,
   io: PublicationManifestReadIO,
+  baseline?: PublicationBaselineContext,
 ): Promise<{
   manifest: EvidenceManifest;
   declarationSources?: ResolvedPublicationManifest['declarationSources'];
+  beforeArtifactRoots?: string[];
 }> {
   const declarationPath = path.join(artifactsDir, 'evidence-manifest.json');
   const bytes = await io.readText(declarationPath);
@@ -869,7 +958,13 @@ async function includePublicationDeclarations(
       'The publication declarations are invalid. Correct evidence-manifest.json.',
     );
 
-  await assertPublicationManifestOwnership(declaration.manifest, artifactRoot, artifactsDir, io);
+  const beforeArtifactRoots = await assertPublicationManifestOwnership(
+    declaration.manifest,
+    artifactRoot,
+    artifactsDir,
+    io,
+    baseline,
+  );
   const declaredFiles = new Set(evidenceManifestArtifactPaths(declaration.manifest));
   return {
     manifest: {
@@ -886,6 +981,7 @@ async function includePublicationDeclarations(
       omit: [...(selected.omit ?? []), ...(declaration.manifest.omit ?? [])],
     },
     declarationSources: [{ file: 'artifacts/evidence-manifest.json', bytes }],
+    beforeArtifactRoots,
   };
 }
 
@@ -976,6 +1072,7 @@ export async function resolvePublicationManifest(
   io: PublicationManifestReadIO = localPublicationManifestReadIO,
   artifactsDir = path.join(taskDir, 'artifacts'),
   contractVersion = 1,
+  baseline?: PublicationBaselineContext,
 ): Promise<ResolvedPublicationManifest | null> {
   if (contractVersion !== 0 && contractVersion !== 1)
     throw new RecordedEvidenceReadError(
@@ -1017,10 +1114,17 @@ export async function resolvePublicationManifest(
         selected.artifactRoot,
         artifactsDir,
         io,
+        baseline,
       );
     const declarations =
       resolved && artifactRoot
-        ? await includePublicationDeclarations(resolved.manifest, artifactRoot, artifactsDir, io)
+        ? await includePublicationDeclarations(
+            resolved.manifest,
+            artifactRoot,
+            artifactsDir,
+            io,
+            baseline,
+          )
         : null;
     return resolved
       ? {
@@ -1048,6 +1152,7 @@ export async function readEvidenceManifest(run: Run): Promise<EvidenceManifest |
           undefined,
           undefined,
           run.recordedEvidenceContractVersion ?? 0,
+          publicationBaselineContext(run),
         )
       )?.manifest ?? null)
     : null;
