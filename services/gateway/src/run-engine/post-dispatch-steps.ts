@@ -1,3 +1,5 @@
+import { setTimeout as delay } from 'node:timers/promises';
+
 import {
   type ArtifactRef,
   type DiffStat,
@@ -69,7 +71,7 @@ import {
   stampPublishGateReviewStatusForPackage,
   supersedeStaleHumanGateDecisions,
 } from './gate-policy.js';
-import { assertRunGateReady } from './gate-prerequisites.js';
+import { assertRunGateReady, RunGateNotReadyError } from './gate-prerequisites.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
 import {
   publicationReviewPolicyForRun,
@@ -144,6 +146,7 @@ type MonitorTerminalErrorArgs = {
 
 export interface PostDispatchStepContext {
   assertGatePrerequisites?: typeof assertRunGateReady;
+  waitForCompletionProgress?: () => Promise<void>;
   activeMonitors: Map<string, AbortController>;
   blockedRunError: (message: string, reason: string) => Error;
   broadcastFn: BroadcastFn;
@@ -1285,7 +1288,7 @@ export async function executeCompleteStep(
   context: PostDispatchStepContext,
 ): Promise<StepIO> {
   const { broadcastFn, getDiffStat, refreshRunLinks } = context;
-  const current = getRun(runId)!;
+  let current = getRun(runId)!;
   const generation = current.engineState?.generation ?? 0;
   if (current.engineState?.publishGate?.humanPublicationAdoption) {
     const { assertAdoptedPublicationContinuation } =
@@ -1306,9 +1309,31 @@ export async function executeCompleteStep(
   if (noCodeDisposition || ['blocked', 'failed'].includes(current.metrics.disposition ?? ''))
     await abandonBranchMaintenance(current);
   else await completeBranchMaintenance(current);
-  if (!shouldPrepareLocalFirstPackage(current))
-    await (context.assertGatePrerequisites ?? assertRunGateReady)(current, null, 'complete');
+  if (!shouldPrepareLocalFirstPackage(current)) {
+    // SIGNAL.json can precede the worker's final native turn completion. Keep
+    // this engine attempt alive while that is the only unmet prerequisite.
+    for (;;) {
+      const latest = getRun(runId);
+      if (runSupersededSince(latest, generation))
+        throw new Error('Completion was superseded while waiting for worker idle');
+      current = latest!;
+      try {
+        await (context.assertGatePrerequisites ?? assertRunGateReady)(current, null, 'complete');
+        break;
+      } catch (error) {
+        if (runSupersededSince(getRun(runId), generation))
+          throw new Error('Completion was superseded during gate validation');
+        if (!(error instanceof RunGateNotReadyError) || !error.workProgressingOnly) throw error;
+        updateRunStep(runId, S.COMPLETE, {
+          detail: 'Waiting for worker to finish its native turn...',
+        });
+        broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+        await (context.waitForCompletionProgress?.() ?? delay(1_000));
+      }
+    }
+  }
   // Revalidate on completion/replay so a checklist or force-skipped monitor cannot supply QA proof.
+  if (!current.slotId) throw new Error('No slot assigned');
   if (current.flowType === 'qa') await assertQaCompletion(current);
   if (runSupersededSince(getRun(runId), generation))
     throw new Error('Completion was superseded during gate validation');

@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Persist and reconcile one verified stack-maintenance checkpoint across worker rebases and graph catch-up without changing retained evidence. Install the compatible task runtime before deploying enforcement or migrating pack templates; stacked lint fixes require retained publication ownership too. Graph catch-up requires a configured signing key; local recovery requires Git 2.40 or later.
+- Wait for confirmed worker progress to reach idle before completing a run, preserving prerequisite refusals and operator pause, cancellation and replay ownership.
 - Authenticate explicit person, service and node credentials, remove environment-secret import, and retire revoked principals without resetting activation or admin protection.
 - Prepare native workspace decisions in the selected account home before farm reviews. Verify hook safety using the selected runner executable, suppress repository startup automation, preserve Git-readable content and enforce source write restrictions.
 - Preserve the complete frozen worker contract during role cleanup and restore the matching dispatch contract on retained replay, allowing pending visual claims to reach their intended review gate.

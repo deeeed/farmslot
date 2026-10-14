@@ -9,6 +9,7 @@ import type {
   PublicationReviewLaunchRejection,
   ReviewSelection,
   Run,
+  RunGatePrerequisiteReason,
 } from '@farmslot/protocol';
 import { reviewRequestFromSequence } from '@farmslot/review-dispatch';
 
@@ -20,6 +21,7 @@ import {
 } from '../run-completion/ready-gate-package.js';
 import { createRun, getRun, updateRun } from '../runs/store.js';
 
+import { RunGateNotReadyError } from './gate-prerequisites.js';
 import {
   baseReviewPolicy,
   executeCompleteStep,
@@ -82,6 +84,107 @@ test('artifact-only QA complete identifies execution completion to the canonical
     /Stop before resource or completion side effects/,
   );
 });
+
+function completionRefusal(
+  run: Run,
+  codes: RunGatePrerequisiteReason['code'][] = ['run-work-progressing'],
+) {
+  const reasons: RunGatePrerequisiteReason[] = codes.map((code) => ({
+    code,
+    prerequisite: 'lifecycle',
+    message: code,
+    actionId: 'hold',
+  }));
+  return new RunGateNotReadyError(
+    { state: 'collecting', identity: { runId: run.id, generation: 0 }, reasons },
+    reasons,
+  );
+}
+
+test('completion waits through the final native turn and then revalidates QA', async (t) => {
+  const run = createRun({ flowType: 'dev', project: 'generic-project', ticketOrPr: 'QA-IDLE' });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  updateRun(run.id, { flowType: 'qa', status: 'completing', slotId: 'qa-idle-test-slot' });
+  let checked = 0;
+  let waits = 0;
+  await assert.rejects(
+    executeCompleteStep(run.id, {
+      ...restartReplayContext(),
+      assertGatePrerequisites: async (current, prepared, action) => {
+        assert.equal(prepared, null);
+        assert.equal(action, 'complete');
+        if (++checked < 3) throw completionRefusal(current);
+        return { state: 'ready', identity: { runId: current.id, generation: 0 }, reasons: [] };
+      },
+      waitForCompletionProgress: async () => {
+        waits++;
+        assert.equal(getRun(run.id)?.status, 'completing');
+        assert.match(
+          getRun(run.id)?.steps.find(({ name }) => name === 'complete')?.detail ?? '',
+          /native turn/,
+        );
+      },
+    }),
+    /QA evidence incomplete/,
+  );
+  assert.equal(checked, 3, 'the canonical guard is rerun after native progress');
+  assert.equal(waits, 2);
+  assert.equal(getRun(run.id)?.slotId, 'qa-idle-test-slot');
+});
+
+for (const interruption of ['paused', 'cancelled', 'replayed'] as const) {
+  test(`completion wait preserves operator ${interruption} ownership`, async (t) => {
+    const run = createRun({ flowType: 'dev', project: 'generic-project', ticketOrPr: 'QA-IDLE' });
+    t.after(() => deleteTestRunIfPresent(run.id));
+    updateRun(run.id, { status: 'completing', slotId: 'qa-idle-test-slot' });
+    let checked = 0;
+    await assert.rejects(
+      executeCompleteStep(run.id, {
+        ...restartReplayContext(),
+        assertGatePrerequisites: async (current) => {
+          checked++;
+          throw completionRefusal(current);
+        },
+        waitForCompletionProgress: async () => {
+          updateRun(
+            run.id,
+            interruption === 'replayed'
+              ? { engineState: { ...getRun(run.id)?.engineState, generation: 1 } }
+              : { status: interruption },
+          );
+        },
+      }),
+      /Completion was superseded/,
+    );
+    assert.equal(checked, 1);
+    assert.equal(getRun(run.id)?.status, interruption === 'replayed' ? 'completing' : interruption);
+    assert.equal(getRun(run.id)?.slotId, 'qa-idle-test-slot');
+  });
+}
+
+for (const codes of [
+  ['run-progress-unconfirmed'],
+  ['run-work-progressing', 'evidence-selection-invalid'],
+] satisfies RunGatePrerequisiteReason['code'][][]) {
+  test(`completion does not retry prerequisite refusal ${codes.join(', ')}`, async (t) => {
+    const run = createRun({ flowType: 'dev', project: 'generic-project', ticketOrPr: 'QA-IDLE' });
+    t.after(() => deleteTestRunIfPresent(run.id));
+    updateRun(run.id, { status: 'completing', slotId: 'qa-idle-test-slot' });
+    const refusal = completionRefusal(run, codes);
+    await assert.rejects(
+      executeCompleteStep(run.id, {
+        ...restartReplayContext(),
+        assertGatePrerequisites: async () => {
+          throw refusal;
+        },
+        waitForCompletionProgress: async () => {
+          assert.fail('non-progress prerequisites must not wait');
+        },
+      }),
+      (error) => error === refusal,
+    );
+  });
+}
 
 test('interactive completion hold persists operator state without completing monitor', async (t) => {
   const run = createRun({
