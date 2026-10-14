@@ -346,8 +346,9 @@ export function buildInteractiveRefinementRunnerCommand(options: {
     return `${shellQuote(resolveCursorAgentBinary(binary))}${options.trustWorkspace ? ' --trust' : ''} --workspace ${shellQuote(options.repo)}${flags}${modelFlag}${resume} ${promptArg}`;
   }
   if (runnerId === 'grok') {
+    const isolated = options.workspaceTrust === 'untrusted' ? ' --no-leader' : '';
     const flags = safetyFlags ? ` ${safetyFlags}` : '';
-    return `${shellQuote(resolveGrokBinary(binary))}${flags}${modelFlag} ${promptArg}`;
+    return `${shellQuote(resolveGrokBinary(binary))}${isolated}${flags}${modelFlag} ${promptArg}`;
   }
   if (runnerId === 'pi') {
     return `${buildPiLaunch({

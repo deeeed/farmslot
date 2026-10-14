@@ -498,6 +498,7 @@ export class NativeSessionManager {
         ? await reviewProcessSandbox(
             filesystemPolicy,
             transport.reviewRuntimeRoots?.(environment) ?? [],
+            transport.reviewConfigurationRoots?.(params.cwd) ?? [],
           )
         : undefined;
     if (relocation) {

@@ -14,9 +14,12 @@ import { grokNativeAdapter } from './grok.js';
 import { hostReviewSandboxAvailable } from './review-sandbox.js';
 import type { NativeAdapter } from './types.js';
 
-export const { workspaceTrustByRunner, codexWorkspaceTrustConfig } = createRequire(import.meta.url)(
-  '../../scripts/workspace-trust.cjs',
-) as {
+export const {
+  workspaceTrustByRunner,
+  codexWorkspaceTrustConfig,
+  reviewConfigurationRootsByRunner,
+} = createRequire(import.meta.url)('../../scripts/workspace-trust.cjs') as {
+  reviewConfigurationRootsByRunner: Record<string, (cwd: string) => string[]>;
   codexWorkspaceTrustConfig(cwd: string, trust: 'trusted' | 'untrusted'): string;
   workspaceTrustByRunner: Record<
     string,
@@ -31,6 +34,8 @@ export interface NativeRunnerDefinition {
   /** Only farm-created worker workspaces may receive a persisted native trust decision. */
   trustWorkspace?: (cwd: string, environment: NodeJS.ProcessEnv, owner?: string) => void;
   supportsReadOnlyWorkspace?: boolean;
+  /** Repository startup configuration cannot execute inside a read-only review. Git blobs stay readable. */
+  reviewConfigurationRoots?: (cwd: string) => string[];
   reviewRuntimeRoots?: (environment: NodeJS.ProcessEnv) => string[];
   /** Default for new standalone conversations; worker launch settings stay authoritative. */
   defaultEffort?: string;
@@ -59,6 +64,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     },
   },
   claude: {
+    reviewConfigurationRoots: reviewConfigurationRootsByRunner.claude,
     trustWorkspace: workspaceTrustByRunner.claude,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
     reviewRuntimeRoots: (env) => [
@@ -84,6 +90,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     },
   },
   cursor: {
+    reviewConfigurationRoots: reviewConfigurationRootsByRunner.cursor,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
     reviewRuntimeRoots: (env) => [
       join(env.HOME ?? homedir(), '.cursor'),
@@ -113,6 +120,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     },
   },
   grok: {
+    reviewConfigurationRoots: reviewConfigurationRootsByRunner.grok,
     trustWorkspace: workspaceTrustByRunner.grok,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
     reviewRuntimeRoots: (env) => [env.GROK_HOME ?? join(env.HOME ?? homedir(), '.grok')],

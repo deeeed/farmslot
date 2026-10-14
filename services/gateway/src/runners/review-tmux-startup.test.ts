@@ -202,3 +202,18 @@ test('terminal WARM reservation requires exact PR, lineage, session and reviewed
     undefined,
   );
 });
+
+test('read-only Grok review stays inside its own sandbox instead of a shared leader', () => {
+  const options = {
+    runner: 'grok',
+    repo: '/tmp/review',
+    promptPath: '/tmp/task/prompt.txt',
+    model: 'grok-4.7',
+  };
+  const review = buildInteractiveRefinementRunnerCommand({
+    ...options,
+    workspaceTrust: 'untrusted',
+  });
+  assert.ok(review?.includes('--no-leader'));
+  assert.ok(!buildInteractiveRefinementRunnerCommand(options)?.includes('--no-leader'));
+});

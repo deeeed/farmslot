@@ -6,7 +6,7 @@
 
 ## 0.21.2 - 2026-10-14
 
-- Prepare runner-native trust before farm review launches in the selected account home. Keep read-only Codex project configuration disabled and source write restrictions enforced.
+- Prepare native workspace decisions in the selected account home before farm reviews. Suppress repository startup automation, preserve Git-readable content and enforce source write restrictions.
 
 ## 0.21.1 - 2026-10-14
 

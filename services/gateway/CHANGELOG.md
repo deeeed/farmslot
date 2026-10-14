@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Prepare runner-native trust before farm review launches in the selected account home. Keep read-only Codex project configuration disabled and source write restrictions enforced.
+- Prepare native workspace decisions in the selected account home before farm reviews. Suppress repository startup automation, preserve Git-readable content and enforce source write restrictions.
 
 - Allow valid artifact-only QA output with unresolved engine claims to finish execution for review, preserving its claim gaps and all publication, registration and integrity checks.
 

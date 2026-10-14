@@ -195,7 +195,31 @@ function trustClaudeWorkspace(cwd, env = process.env, owner) {
 function codexWorkspaceTrustConfig(cwd, trust) {
   return `projects={${JSON.stringify(cwd)}={trust_level=${JSON.stringify(trust)}}}`;
 }
+const reviewConfigurationRoots = (cwd) =>
+  [
+    '.grok/config.toml',
+    '.grok/hooks',
+    '.grok/lsp.json',
+    '.grok/plugins',
+    '.grok/agents',
+    '.claude/settings.json',
+    '.claude/settings.local.json',
+    '.claude/plugins',
+    '.cursor/hooks.json',
+    '.cursor/mcp.json',
+    '.cursor/plugins',
+    '.mcp.json',
+    '.lsp.json',
+    '.envrc',
+  ].map((name) => path.join(fs.realpathSync(cwd), name));
+const reviewConfigurationRootsByRunner = {
+  grok: reviewConfigurationRoots,
+  claude: reviewConfigurationRoots,
+  cursor: reviewConfigurationRoots,
+};
+
 module.exports = {
+  reviewConfigurationRootsByRunner,
   codexWorkspaceTrustConfig,
   trustGrokFolders,
   trustGrokWorkspace,
