@@ -101,7 +101,6 @@ import {
 } from './prompt-delivery-evidence.js';
 import { claudeReviewWorkspaceTrustSeed } from './review-trust.js';
 import { buildRunnerObservabilityInstallCommand } from './runner-observability.js';
-import { readScriptedCommandProgress } from './scripted-progress.js';
 import {
   claudeSessionUsageProvider,
   codexSessionUsageProvider,
@@ -651,7 +650,9 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   },
   scripted: {
     id: 'scripted',
-    taskProgress: readScriptedCommandProgress,
+    // Receipt IO must not preload resource-control consumers during registry initialization.
+    taskProgress: async (input) =>
+      (await import('./scripted-progress.js')).readScriptedCommandProgress(input),
     defaultLaunchMode: 'exec',
     processMatchers: ['farmslot scripted-runner', 'scripted-runner'],
     supportsInteractivePrompt: false,

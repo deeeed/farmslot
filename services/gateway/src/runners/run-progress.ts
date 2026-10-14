@@ -16,12 +16,8 @@ import { runnerTurnLeaseIsActive } from '../review/worker-lifecycle.js';
 import { readReviewWorkspaceWorker } from './native/review-workspace.js';
 import { nativeWorkerLiveStatus, readNativeWorkerSnapshot } from './native/worker-control.js';
 import { classifyMonitorProgress, type MonitorProgressKind } from './observability-progress.js';
-import type { ObservabilityReading } from './observability-types.js';
-import {
-  readRunnerActivityFromObservability,
-  readRunnerTaskProgress,
-  readRunnerTurnState,
-} from './registry.js';
+import type { ObservabilityReading, RunnerTaskProgressReader } from './observability-types.js';
+import { readRunnerActivityFromObservability, readRunnerTurnState } from './registry.js';
 import { reviewWorkspaceRunnerVars } from './review-startup.js';
 
 export interface RunProgressObservation {
@@ -77,7 +73,7 @@ interface RunProgressReaders {
   activity: typeof readRunnerActivityFromObservability;
   turn: typeof readRunnerTurnState;
   turnActive: typeof runnerTurnLeaseIsActive;
-  taskProgress: typeof readRunnerTaskProgress;
+  taskProgress: RunnerTaskProgressReader;
 }
 
 const progressReaders: RunProgressReaders = {
@@ -90,7 +86,8 @@ const progressReaders: RunProgressReaders = {
   activity: readRunnerActivityFromObservability,
   turn: readRunnerTurnState,
   turnActive: runnerTurnLeaseIsActive,
-  taskProgress: readRunnerTaskProgress,
+  // Registry and lifecycle consumers form a cycle; look up this capability after initialization.
+  taskProgress: async (input) => (await import('./registry.js')).readRunnerTaskProgress(input),
 };
 
 async function observeContext(
