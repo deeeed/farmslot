@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -165,6 +165,27 @@ test('concurrent reviews publish once, and warm/restarted runs reuse verified ca
   assert.equal((await ensureReviewWorkspaceSupport(c.id, () => {}, f.deps))?.sha256, first.sha256);
   assert.equal(f.counts.collect, 1);
   assert.equal(f.counts.writes, writes);
+});
+
+test('new admissions recollect past a legacy source index while admitted reviews retain their bytes', async (t) => {
+  const f = await fixture(t);
+  const prior = await f.addRun('review-prior-producer');
+  const admitted = await ensureReviewWorkspaceSupport(prior.id, () => {}, f.deps);
+  const cache = path.join(f.root, 'gateway-cache');
+  const currentIndex = path.join(cache, 'sources-v2');
+  const [filename] = await readdir(currentIndex);
+  assert.ok(filename);
+  const legacyIndex = path.join(cache, 'sources', filename);
+  await mkdir(path.dirname(legacyIndex));
+  await rename(path.join(currentIndex, filename), legacyIndex);
+  const legacyBytes = await readFile(legacyIndex);
+  assert.deepEqual(await ensureReviewWorkspaceSupport(prior.id, () => {}, f.deps), admitted);
+  assert.equal(f.counts.collect, 1, 'an admitted review keeps its frozen bytes');
+  const fresh = await f.addRun('review-new-producer');
+  await ensureReviewWorkspaceSupport(fresh.id, () => {}, f.deps);
+  assert.equal(f.counts.collect, 2, 'an old source index cannot skip the new producer');
+  assert.deepEqual(await readFile(legacyIndex), legacyBytes);
+  assert.equal((await readdir(currentIndex)).length, 1);
 });
 
 test('a blocked run stamped with cleanedAt still reuses its admitted support', async (t) => {

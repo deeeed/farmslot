@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -118,6 +127,146 @@ test('frozen canonical skills, dependencies and library work offline after origi
     library: 'Library version one.\n',
     args: ['checklist', '--out', path.join(output, 'checklist.md')],
   });
+});
+
+for (const format of [
+  { type: 'module', bin: { 'review-tool': 'bin/review-tool' }, command: 'bin/review-tool' },
+  {
+    type: 'commonjs',
+    bin: { 'review-tool': 'bin/review-tool.cjs' },
+    command: 'bin/review-tool.cjs',
+  },
+  { type: 'module', bin: './commands/run.mjs', command: 'commands/run.mjs' },
+]) {
+  test(`root-selected public bin executes the frozen entry with unchanged argv: ${format.command}`, async (t) => {
+    const f = await fixture(t);
+    const entry = format.type === 'commonjs' ? 'dist/cli.mjs' : 'dist/cli.js';
+    const original = await readFile(path.join(f.runtime, 'dist/cli.js'), 'utf8');
+    const compiled = original.replace(
+      'args:process.argv.slice(2)',
+      'entry:process.argv[1],args:process.argv.slice(2)',
+    );
+    await writeFile(path.join(f.runtime, entry), compiled);
+    const metadata = JSON.parse(await readFile(path.join(f.runtime, 'package.json'), 'utf8'));
+    await writeFile(
+      path.join(f.runtime, 'package.json'),
+      JSON.stringify({ ...metadata, type: format.type, bin: format.bin }),
+    );
+    await mkdir(path.dirname(path.join(f.runtime, format.command)), { recursive: true });
+    await writeFile(
+      path.join(f.runtime, format.command),
+      '#!/usr/bin/env node\nprocess.exit(91);\n',
+    );
+    await chmod(path.join(f.runtime, format.command), 0o755);
+    const config = {
+      ...f.config,
+      runtime: { ...f.config.runtime!, entry },
+      environment: {
+        ...f.config.environment,
+        MM_HARNESS_PACKAGE_ROOT: '{{support}}/runtime/package',
+      },
+    };
+    const support = await collectReviewWorkspaceSupport(f.project, config, { env: f.env });
+    const immutable = path.join(f.root, 'frozen support');
+    await materialize(support, immutable);
+    verifyReviewWorkspaceSupport(support, support.manifest.sha256);
+    const capturedRoot = path.join(immutable, 'runtime/package');
+    assert.equal(await readFile(path.join(capturedRoot, entry), 'utf8'), compiled);
+    assert.deepEqual(
+      JSON.parse(await readFile(path.join(capturedRoot, 'package.json'), 'utf8')).bin,
+      format.bin,
+    );
+    assert.equal(
+      support.manifest.sources.find((source) => source.kind === 'runtime')?.packages?.length,
+      2,
+    );
+    await rm(f.runtime, { recursive: true });
+    const environment = reviewWorkspaceSupportEnvironment(
+      support,
+      immutable,
+      [path.join(f.root, 'task')],
+      process.env.PATH!,
+    );
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...environment.set,
+      MM_HARNESS_BIN: '/missing/legacy-bin',
+      MM_HARNESS_ENTRY: '/missing/legacy-entry',
+      MM_HARNESS_EXEC_WRAPPER: '/missing/legacy-wrapper',
+    };
+    for (const key of environment.unset) delete env[key];
+    const args = [
+      'checklist',
+      '--out',
+      'directory with spaces/checklist.md',
+      '',
+      'quote" and \\ and λ',
+      '--',
+      '--literal-flag',
+    ];
+    assert.equal(env.MM_HARNESS_PACKAGE_ROOT, capturedRoot);
+    const result = await exec(path.join(env.MM_HARNESS_PACKAGE_ROOT!, format.command), args, {
+      env,
+      timeout: 2_000,
+    });
+    const expected = {
+      value: 'offline dependency',
+      library: 'Library version one.\n',
+      entry: await realpath(path.join(capturedRoot, entry)),
+      args,
+    };
+    assert.deepEqual(JSON.parse(result.stdout), expected);
+    const standalone = await exec(path.join(immutable, 'bin/review-tool'), args, {
+      env,
+      timeout: 2_000,
+    });
+    assert.deepEqual(JSON.parse(standalone.stdout), expected);
+    const tampered = structuredClone(support);
+    tampered.files.find(
+      (file) => file.relativePath === `runtime/package/${format.command}`,
+    )!.contentBase64 = Buffer.from('changed public bin').toString('base64');
+    assert.throws(
+      () => verifyReviewWorkspaceSupport(tampered, support.manifest.sha256),
+      /recorded bytes/,
+    );
+  });
+}
+
+test('a public bin already selecting the compiled entry preserves those source bytes', async (t) => {
+  const f = await fixture(t);
+  const metadata = JSON.parse(await readFile(path.join(f.runtime, 'package.json'), 'utf8'));
+  await writeFile(
+    path.join(f.runtime, 'package.json'),
+    JSON.stringify({ ...metadata, bin: { 'review-tool': 'dist/cli.js' } }),
+  );
+  const compiled =
+    '#!/usr/bin/env node\n' + (await readFile(path.join(f.runtime, 'dist/cli.js'), 'utf8'));
+  await writeFile(path.join(f.runtime, 'dist/cli.js'), compiled);
+  await chmod(path.join(f.runtime, 'dist/cli.js'), 0o755);
+  const support = await collectReviewWorkspaceSupport(f.project, f.config, { env: f.env });
+  const captured = support.files.find(
+    (file) => file.relativePath === 'runtime/package/dist/cli.js',
+  )!;
+  assert.equal(Buffer.from(captured.contentBase64, 'base64').toString(), compiled);
+  assert.equal(captured.mode, 0o755);
+});
+
+test('public bin traversal and symlinks fail closed before replacing captured files', async (t) => {
+  const f = await fixture(t);
+  const metadata = JSON.parse(await readFile(path.join(f.runtime, 'package.json'), 'utf8'));
+  const writeBin = (bin: string) =>
+    writeFile(path.join(f.runtime, 'package.json'), JSON.stringify({ ...metadata, bin }));
+  await writeBin('../outside.js');
+  await assert.rejects(
+    collectReviewWorkspaceSupport(f.project, f.config, { env: f.env }),
+    /confined relative file/,
+  );
+  await symlink(path.join(f.runtime, 'dist/cli.js'), path.join(f.runtime, 'public-bin'));
+  await writeBin('public-bin');
+  await assert.rejects(
+    collectReviewWorkspaceSupport(f.project, f.config, { env: f.env }),
+    /cannot traverse a symlink/,
+  );
 });
 
 test('library changes and environment binding changes each produce a different immutable identity', async (t) => {
