@@ -25,7 +25,11 @@ export function publicationFinalizationAction(run: Run): string | undefined {
 export function assertPublicationFinalization(run: Run, phase: 'finalize' | 'complete'): void {
   if (!requiresPublicationApproval(run)) return;
   const action = publicationFinalizationAction(run);
-  const publicationStatus = publicationStatusForRun(run);
+  // Gate replay clears the package's projection but preserves this attested
+  // publication. Its immutable receipt remains the publication authority.
+  const publicationStatus =
+    run.engineState?.publishGate?.humanPublicationAdoption?.publicationStatus ??
+    publicationStatusForRun(run);
   const missingApproval = !action;
   if (
     missingApproval ||
