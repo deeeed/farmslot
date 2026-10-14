@@ -23,7 +23,7 @@ import { promisify } from 'node:util';
 import { NativeSessionClient, type NativeWorkerTarget } from '@farmslot/agent-runtime/native';
 import { matchesProcess } from '@farmslot/agent-runtime/native/storage';
 import { NativeProcessTree } from '@farmslot/agent-runtime/native/process-tree';
-import type { NativeWorkerSessionBinding, Run } from '@farmslot/protocol';
+import { isRecord, type NativeWorkerSessionBinding, type Run } from '@farmslot/protocol';
 
 const source = fileURLToPath(new URL('../../../', import.meta.url));
 type ProofWorker = NativeWorkerSessionBinding & NativeWorkerTarget;
@@ -187,6 +187,15 @@ if (process.argv[2] === 'serve') {
     });
     cpSync(input.taskDir, workerDir, { recursive: true });
     cpSync(input.taskDir, retained, { recursive: true });
+    // The copied run belongs to the disposable project. Keep its frozen task
+    // identity consistent without changing the original contract or artifacts.
+    for (const copiedTask of [workerDir, retained]) {
+      const handoffPath = path.join(copiedTask, 'inputs/handoff.json');
+      const handoff: unknown = JSON.parse(readFileSync(handoffPath, 'utf8'));
+      assert.ok(isRecord(handoff));
+      assert.equal(handoff.attemptId, original.id);
+      json(handoffPath, { ...handoff, project });
+    }
     symlinkSync(path.join(source, 'scripts'), path.join(root, 'scripts'), 'dir');
     writeFileSync(path.join(root, 'CLAUDE.md'), '# Disposable retained QA regression\n');
     json(path.join(root, 'services/gateway/package.json'), { name: 'fixture', version: '0.0.0' });
