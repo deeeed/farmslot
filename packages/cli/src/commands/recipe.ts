@@ -114,6 +114,7 @@ interface ArtifactValidationResult {
   checks: ArtifactValidationCheck[];
   recipe: RecipeValidationResult;
   liveEvidence?: RecipeConformanceLiveEvidence;
+  warnings?: string[];
 }
 
 const TERMINAL_RECIPE_STATUSES = new Set(['pass', 'fail', 'unknown']);
@@ -202,6 +203,7 @@ export async function validateRecipeArtifactDirectory(
     recipe: recorded ? retained.recipe : recipe,
   });
   let captures: string[] = [];
+  const warnings: string[] = [];
   if (opts.liveProof) {
     const { validateRuntimeProof } = await import('@farmslot/recipe-cli/harness');
     try {
@@ -209,7 +211,7 @@ export async function validateRecipeArtifactDirectory(
         bundle,
         opts.liveProof.smokeTarget,
         opts.liveProof.teardownTarget,
-        opts.liveProof,
+        { ...opts.liveProof, hudRequired: false },
       );
       addArtifactCheck(
         checks,
@@ -217,6 +219,20 @@ export async function validateRecipeArtifactDirectory(
         'pass',
         'Runtime effect and authored teardown assertions passed.',
       );
+      if (opts.liveProof.hudRequired) {
+        // The same immutable bundle already passed state, capture and cleanup checks.
+        // HUD observations are advisory; their absence cannot invalidate that proof.
+        try {
+          validateRuntimeProof(
+            bundle,
+            opts.liveProof.smokeTarget,
+            opts.liveProof.teardownTarget,
+            opts.liveProof,
+          );
+        } catch (error) {
+          warnings.push(error instanceof Error ? error.message : String(error));
+        }
+      }
     } catch (error) {
       addArtifactCheck(
         checks,
@@ -286,6 +302,7 @@ export async function validateRecipeArtifactDirectory(
     status === 'pass' && opts.liveProof
       ? {
           ...opts.liveProof,
+          hudRequired: false,
           ...(opts.liveProof.captureRequired || opts.liveProof.hudRequired ? { captures } : {}),
           artifactDir,
           artifacts: await Promise.all(
@@ -302,6 +319,7 @@ export async function validateRecipeArtifactDirectory(
     checks,
     recipe: recipeValidation,
     ...(liveEvidence ? { liveEvidence } : {}),
+    ...(warnings.length ? { warnings } : {}),
   };
 }
 
@@ -314,6 +332,7 @@ function formatArtifactValidationResult(result: ArtifactValidationResult): strin
   for (const check of result.checks) {
     lines.push(`- ${runStatusLabel(check.status)} ${check.id}: ${check.message}`);
   }
+  for (const warning of result.warnings ?? []) lines.push(`- WARN ${warning}`);
   for (const finding of result.recipe.findings) {
     lines.push(`- ${findingLabel(finding)}`);
   }

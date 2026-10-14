@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Treat live conformance HUD observations as advisory while retaining required capture, artifact and cleanup proof.
+
 - Add attested exact-head human PR adoption receipts and the run RPC contract.
 
 - Active-development baseline; add user-facing changes here before release or package publication.

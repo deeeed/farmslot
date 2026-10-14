@@ -28,6 +28,17 @@ export const manifest = JSON.parse(
   ),
 );
 
+/** Test-only overlay contract; real lifecycle behavior is supplied by each test. */
+export function fixtureHarness(root: string): string {
+  const lifecycle = path.join(root, 'fixture-harness.mjs');
+  fs.writeFileSync(lifecycle, 'throw new Error("Unexpected fixture harness lifecycle");');
+  const leaf = JSON.stringify({ entry: lifecycle, fallback: lifecycle, node: true });
+  return `{
+    verify: target => ({command: process.execPath, prefixArgs: ['-e', 'require("node:fs").accessSync(process.argv[1])', target]}),
+    install: ${leaf}, cleanup: ${leaf}
+  }`;
+}
+
 export function fixture(t: TestContext, missing = false) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'project-doctor-')));
   t.after(() => {
@@ -86,7 +97,7 @@ export function fixture(t: TestContext, missing = false) {
         runtimeStatus: async () => ({decision:'ready', reasons:[]}),
         resolveSlotPorts() {}, logSources: () => [], appLogSource: () => null,
         launch: async () => { throw new Error('doctor launched the app'); },
-        devServer: {}, hints: {}, harness: {}, runtimeContext: {},
+        devServer: {}, hints: {}, harness: ${fixtureHarness(root)}, runtimeContext: {},
         actions: {
           manifestPath: () => path.join(root, 'manifests/headless.action-manifest.json'),
           semantic: [], cdpTarget: {transport:'none'},
@@ -97,6 +108,109 @@ export function fixture(t: TestContext, missing = false) {
   `,
   );
   return { root, write };
+}
+
+export function uiRecordingFixture(t: TestContext) {
+  const { root, write } = fixture(t);
+  const declared = JSON.parse(
+    fs.readFileSync(path.join(root, 'manifests/headless.action-manifest.json'), 'utf8'),
+  );
+  declared.actions = { ...manifest.actions, ...declared.actions };
+  declared.actions['ui.screenshot'] = {
+    description: 'Retain a test still.',
+    execution_capabilities: ['host-read-export'],
+    examples: [{ action: 'ui.screenshot', intent: 'Retain the observed state', next: 'done' }],
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+  };
+  write('manifests/headless.action-manifest.json', declared);
+  write('recipes/headless/observation.recipe.json', {
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    workflow: {
+      entry: 'read',
+      nodes: {
+        read: { action: 'example.read', intent: 'Observe runtime state', next: 'assert' },
+        assert: {
+          action: 'assert_output',
+          source: 'read',
+          assert: { path: '$.ready', operator: 'eq', value: true },
+          intent: 'Verify readiness',
+          next: 'capture',
+        },
+        capture: { action: 'ui.screenshot', intent: 'Retain the observed state', next: 'done' },
+        done: { action: 'end', status: 'pass' },
+      },
+    },
+  });
+  write('recipes/headless/smoke.recipe.json', {
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    proofTargets: [
+      { id: 'smoke', claim: 'The runtime is ready' },
+      { id: 'cleanup', claim: 'The runtime stays ready' },
+    ],
+    workflow: {
+      entry: 'observe',
+      teardown: 'read-after',
+      nodes: {
+        observe: {
+          action: 'call',
+          ref: 'observation',
+          proves: ['smoke'],
+          intent: 'Observe and retain runtime readiness',
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
+        'read-after': {
+          action: 'example.read',
+          intent: 'Observe retained state',
+          next: 'assert-after',
+        },
+        'assert-after': {
+          action: 'assert_output',
+          source: 'read-after',
+          assert: { path: '$.ready', operator: 'eq', value: true },
+          proves: ['cleanup'],
+          intent: 'Verify retained readiness',
+          next: 'closed',
+        },
+        closed: { action: 'end', status: 'pass' },
+      },
+    },
+  });
+  const provider = fs.readFileSync(path.join(root, 'provider.mjs'), 'utf8');
+  write(
+    'provider.mjs',
+    provider.replace('headless: true,', 'headless: true, run: { autoHud: () => false },').replace(
+      "[{action:'example.read', execute:async () => {throw new Error('doctor executed an action');}}]",
+      `[
+      {action:'example.read', execute:async () => ({output:{ready:true}})},
+      {action:'ui.screenshot', execute:async (_node, context) => {
+        fs.writeFileSync(path.join(root, 'artifacts', 'captured'), 'yes');
+        fs.writeFileSync(path.join(context.artifactsDir, 'proof.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jT1kAAAAASUVORK5CYII=', 'base64'));
+        return {artifacts:[{path:'proof.png',type:'screenshot',nodeId:context.nodeId}]};
+      }}
+    ]`,
+    ),
+  );
+  return {
+    root,
+    flags: [
+      '--authorize-provider',
+      path.join(root, 'provider.mjs'),
+      '--live',
+      '--disposable',
+      '--recipe',
+      'smoke',
+      '--smoke-target',
+      'smoke',
+      '--teardown-target',
+      'cleanup',
+      '--source-kind',
+      'operator',
+      '--source-trust',
+      'trusted',
+      '--record-video=off',
+    ],
+  };
 }
 
 export function environment(root: string, overrides: Record<string, string>) {

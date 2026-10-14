@@ -467,6 +467,8 @@ Options:
   --cdp-port <port>              Select the CDP transport port
   --runtime-dir <path>           Target-relative recipe runtime directory
   --library <name=path>          Override a recipe library (default: [])
+  --record-video [mode]          Record evidence (choices: "full-run", "off")
+  --recording-reason <text>      Explain an explicit recording opt-out
   --target <path>                Checkout to inspect; alternative to the checkout
                                  argument
   --fix                          Repair declared project readiness problems

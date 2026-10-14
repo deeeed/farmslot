@@ -8,6 +8,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type { Command } from 'commander';
 
 import {
+  type RecipeConformanceCheck,
   type RecipeConformanceReport,
   validateRecipeActionManifestDocument,
 } from '@farmslot/protocol';
@@ -34,14 +35,17 @@ import {
   projectCommandInvocation,
   projectRecipeHostOptions,
   recipeProjectOptions,
+  recipeRecordingOptions,
 } from './recipe-project.js';
 
 export function registerDoctorCommand(program: Command): void {
-  recipeProjectOptions(
-    program
-      .command('doctor')
-      .description('Check installation or a checkout project and recipe conformance')
-      .argument('[checkout]', 'Checkout to inspect'),
+  recipeRecordingOptions(
+    recipeProjectOptions(
+      program
+        .command('doctor')
+        .description('Check installation or a checkout project and recipe conformance')
+        .argument('[checkout]', 'Checkout to inspect'),
+    ),
   )
     .option('--target <path>', 'Checkout to inspect; alternative to the checkout argument')
     .option('--fix', 'Repair declared project readiness problems')
@@ -89,6 +93,8 @@ export function registerDoctorCommand(program: Command): void {
         return;
       }
       const conformanceOnly = [
+        'recordVideo',
+        'recordingReason',
         'domain',
         'artifactsDir',
         'reportName',
@@ -272,7 +278,7 @@ async function prepareProjectConformance(
     checkOptions: RecipeConformanceOptions;
     headless: boolean;
     captureRequired: boolean;
-    hudRequired: boolean;
+    hudSupported: boolean;
   }
 > {
   const shared = await import('@farmslot/recipe-cli/harness');
@@ -374,9 +380,9 @@ async function prepareProjectConformance(
         binding.checkoutRoot,
         shared.recipeRunOptionsFromCli(provider.runtime.id, cli),
       );
-      let hudRequired: boolean;
+      let hudSupported: boolean;
       try {
-        hudRequired = captureRequired && provider.runtime.run?.autoHud?.() !== false;
+        hudSupported = captureRequired && provider.runtime.run?.autoHud?.() !== false;
       } finally {
         restoreVisualEnvironment();
       }
@@ -390,8 +396,8 @@ async function prepareProjectConformance(
         {
           id: 'hud.support',
           required: false,
-          status: hudRequired ? 'pass' : 'unsupported',
-          message: hudRequired ? 'supported' : provider.runtime.headless ? 'headless' : 'opaque',
+          status: hudSupported ? 'pass' : 'unsupported',
+          message: hudSupported ? 'supported' : provider.runtime.headless ? 'headless' : 'opaque',
         },
       );
       const saved = shared.optionString(options, 'checkReport');
@@ -409,7 +415,7 @@ async function prepareProjectConformance(
         checkOptions,
         headless: provider.runtime.headless,
         captureRequired,
-        hudRequired,
+        hudSupported,
       };
     },
   );
@@ -466,7 +472,7 @@ export async function runProjectConformance(
             smokeTarget: evidence.smokeTarget,
             teardownTarget: evidence.teardownTarget,
             captureRequired: prepared.captureRequired,
-            hudRequired: prepared.hudRequired,
+            hudRequired: prepared.hudSupported,
           },
         });
         if (current.status !== 'pass' || !isDeepStrictEqual(current.liveEvidence, evidence)) {
@@ -481,6 +487,7 @@ export async function runProjectConformance(
   if (!live) return { context: prepared.context, report, reportPath: prepared.reportPath };
   const { checkOptions } = prepared;
   let started = false;
+  let hudWarnings: string[] = [];
   try {
     if (report.status !== 'pass')
       throw new Error('Live smoke refused because conformance preflight failed.');
@@ -517,7 +524,7 @@ export async function runProjectConformance(
                   json: true,
                   jsonStream: true,
                   heal: 'off',
-                  captureHudEvidence: prepared.hudRequired,
+                  captureHudEvidence: prepared.hudSupported,
                 },
               };
               const exitCode = await shared.withCommandJournal(
@@ -544,7 +551,7 @@ export async function runProjectConformance(
                   smokeTarget: smokeTarget!,
                   teardownTarget: teardownTarget!,
                   captureRequired: prepared.captureRequired,
-                  hudRequired: prepared.hudRequired,
+                  hudRequired: prepared.hudSupported,
                 },
               });
               if (!validated.liveEvidence || validated.status !== 'pass') {
@@ -555,6 +562,7 @@ export async function runProjectConformance(
                     .join('; ')}`,
                 );
               }
+              hudWarnings = validated.warnings ?? [];
               shared.assertConformanceReportCurrent(
                 report,
                 await shared.recipeConformanceIdentity(engine, currentOptions),
@@ -569,11 +577,21 @@ export async function runProjectConformance(
       ...report,
       mode: 'live',
       checkedAt: new Date().toISOString(),
-      checks: report.checks.map((check) =>
-        check.required && check.evidence
-          ? { ...check, evidence: { ...check.evidence, live: evidence } }
-          : check,
-      ),
+      checks: [
+        ...report.checks.map((check) =>
+          check.required && check.evidence
+            ? { ...check, evidence: { ...check.evidence, live: evidence } }
+            : check,
+        ),
+        ...hudWarnings.map(
+          (message, index): RecipeConformanceCheck => ({
+            id: `hud.observation.${index + 1}`,
+            status: 'missing',
+            required: false,
+            message: `Warning: ${message}`,
+          }),
+        ),
+      ],
       capabilities: [
         ...report.capabilities,
         { name: 'recipe.execution', status: 'verified' },
@@ -632,7 +650,7 @@ async function renderProjectConformance(checkout: string | undefined, cmd: Comma
       output.write(`${providerIdentityText(result.context.project!.provider)}\n`);
       for (const check of result.report.checks) {
         output.write(
-          `${check.status === 'pass' ? green('[OK]') : red('[FAIL]')} ${check.id}: ${check.message}\n`,
+          `${check.status === 'pass' ? green('[OK]') : check.required ? red('[FAIL]') : yellow('[WARN]')} ${check.id}: ${check.message}\n`,
         );
         if (check.userAction) output.write(`  ${check.userAction}\n`);
       }
