@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Allow a durably replayed run to reacquire capabilities after its previous terminal cleanup, while retaining fences for settled owners, unrecovered siblings and later cleanup.
+
 - Bind frozen runtime package commands to the captured compiled entry and refresh new admissions across producer upgrades, preserving arguments and already-admitted snapshots without source bootstrap or ambient selectors.
 
 - Allow an operator to force-complete a reconciling non-QA run with its published PR number, preserving the terminal transition and recovery fences.

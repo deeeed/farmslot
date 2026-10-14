@@ -233,6 +233,9 @@ async function fixture(
     onEvent?: (event: RuntimeCapabilityLifecycleEvent) => void;
     storeFactory?: (storePath: string) => RuntimeCapabilityStore;
     isTerminalOwner?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['isTerminalOwner'];
+    recoveryStartedAtForRun?: ConstructorParameters<
+      typeof RuntimeCapabilityRegistry
+    >[0]['recoveryStartedAtForRun'];
     /** Machine each slot runs on, so `machine`-scoped claims can be exercised. */
     machineFor?: (slotId: string) => string | undefined;
     onClaimGranted?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['onClaimGranted'];
@@ -285,6 +288,9 @@ async function fixture(
     ...(options.familyForRun ? { familyForRun: options.familyForRun } : {}),
     ...(options.onEvent ? { onEvent: options.onEvent } : {}),
     ...(options.isTerminalOwner ? { isTerminalOwner: options.isTerminalOwner } : {}),
+    ...(options.recoveryStartedAtForRun
+      ? { recoveryStartedAtForRun: options.recoveryStartedAtForRun }
+      : {}),
     ...(options.assertTargetAvailable
       ? { assertTargetAvailable: options.assertTargetAvailable }
       : {}),
@@ -1355,6 +1361,86 @@ test('a run that already had terminal cleanup cannot acquire again', async (t) =
   // Another run is unaffected by the fence.
   const other = await acquire(registry, 'browser', 'run-b');
   assert.equal(other.ok, true);
+});
+
+test('a durable same-run replay retires prior cleanup after an empty supported release', async (t) => {
+  let now = new Date('2026-08-11T00:00:00Z');
+  let recoveredAt: number | undefined;
+  let terminal = false;
+  const recoveryStartedAtForRun = (id: string) => (id === 'run-a' ? recoveredAt : undefined);
+  const { registry, store, actions } = await fixture(t, [entry('browser')], {
+    now: () => now,
+    isTerminalOwner: () => terminal,
+    recoveryStartedAtForRun,
+  });
+  await registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
+  assert.equal((await acquire(registry, 'browser', 'run-a', 'fam-a')).ok, false);
+  now = new Date(now.getTime() + 1000);
+  recoveredAt = now.getTime();
+  const release = await registry.release({
+    slotId: SLOT,
+    ownerRunId: 'run-a',
+    capabilityId: 'browser',
+    keepWarm: false,
+  });
+  assert.equal(release.ok, true);
+  assert.deepEqual(release.released, []);
+  assert.deepEqual(store.snapshot().terminalOwnerEntries, []);
+  assert.deepEqual(actions, []);
+
+  const restarted = new RuntimeCapabilityRegistry({
+    store: new RuntimeCapabilityStore(store.path),
+    catalogForSlot: async (slotId) => ({
+      slotId,
+      project: 'test-project',
+      capabilities: [entry('browser')],
+    }),
+    runAction: async () => ({ ok: true }),
+    isTerminalOwner: () => terminal,
+    recoveryStartedAtForRun,
+    now: () => now,
+  });
+  assert.equal((await acquire(restarted, 'browser', 'run-sibling', 'fam-a')).ok, false);
+  assert.equal((await acquire(restarted, 'browser', 'run-a', 'fam-a')).ok, true);
+  now = new Date(now.getTime() + 1000);
+  terminal = true;
+  await restarted.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
+  terminal = false;
+  assert.equal(
+    (await acquire(restarted, 'browser', 'run-a', 'fam-a')).ok,
+    false,
+    'cleanup after replay must re-arm the fence even before terminal status lands',
+  );
+});
+
+test('release cannot retire a terminal or unknown owner fence, or bypass failed cleanup', async (t) => {
+  let terminal = false;
+  let recoveredAt: number | undefined;
+  let failCleanup = true;
+  const { registry, store } = await fixture(t, [entry('browser')], {
+    isTerminalOwner: () => terminal,
+    recoveryStartedAtForRun: () => recoveredAt,
+    runAction: async (_slot, action) =>
+      action.kind === 'slot-action' && action.actionId === 'browser.release' && failCleanup
+        ? { ok: false, detail: 'provider ownership unconfirmed' }
+        : { ok: true },
+  });
+  assert.equal((await acquire(registry, 'browser', 'run-a')).ok, true);
+  await registry.releaseRunTerminal(SLOT, 'run-a');
+  const release = () => registry.release({ slotId: SLOT, ownerRunId: 'run-a', keepWarm: false });
+  await release();
+  assert.equal(store.snapshot().terminalOwnerEntries?.length, 1, 'missing replay is not recovery');
+  recoveredAt = Date.parse('2026-08-11T00:00:01Z');
+  terminal = true;
+  await release();
+  assert.equal((await acquire(registry, 'browser', 'run-a')).ok, false);
+  assert.equal(store.snapshot().terminalOwnerEntries?.length, 1);
+  terminal = false;
+  const refused = await acquire(registry, 'browser', 'run-a');
+  assert.equal(refused.ok, false, 'replay must not override unresolved provider cleanup');
+  failCleanup = false;
+  assert.equal((await release()).ok, true);
+  assert.equal((await acquire(registry, 'browser', 'run-a')).ok, true);
 });
 
 test('an expired fence retires from memory on the same write that retires it on disk', async (t) => {

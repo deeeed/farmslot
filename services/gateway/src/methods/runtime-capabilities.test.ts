@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { RuntimeCapabilityLease } from '@farmslot/protocol';
+import type { Run, RuntimeCapabilityLease } from '@farmslot/protocol';
+
+import '../runtime/mock-pty.test-support.js';
 
 import type { WarmSweepSummary } from '../runtime-capabilities/registry.js';
 
@@ -9,10 +11,48 @@ import {
   assertDeviceTargetAvailable,
   completeGrantedClaim,
   type DeviceTargetGuardDeps,
+  hasHadTerminalCleanup,
   reservationSettlement,
+  runtimeCapabilityRecoveryStartedAt,
   runtimeCapabilityStopWarm,
   stopWarmResultFromSummary,
 } from './runtime-capabilities.js';
+
+test('same-run prepare replay supersedes stale terminal posture without reviving settled runs', () => {
+  const run = {
+    status: 'blocked',
+    resourcePosture: { posture: 'terminal', updatedAt: '2026-10-14T00:58:10.275Z' },
+    recoveryAttempts: [
+      {
+        stepName: 'prepare',
+        startedAt: '2026-10-14T03:25:47.581Z',
+        status: 'failed',
+        triggeredBy: 'operator',
+      },
+    ],
+  } as Run;
+  assert.equal(hasHadTerminalCleanup(run), false);
+  assert.equal(runtimeCapabilityRecoveryStartedAt(run), Date.parse('2026-10-14T03:25:47.581Z'));
+  for (const status of ['done', 'failed', 'cancelled', 'paused'] as const) {
+    assert.equal(runtimeCapabilityRecoveryStartedAt({ ...run, status }), undefined);
+    assert.equal(hasHadTerminalCleanup({ ...run, status }), true);
+  }
+  assert.equal(hasHadTerminalCleanup({ ...run, recoveryAttempts: [] }), true);
+  assert.equal(
+    hasHadTerminalCleanup({
+      ...run,
+      resourcePosture: { ...run.resourcePosture!, updatedAt: '2026-10-14T03:25:48Z' },
+    }),
+    true,
+  );
+  assert.equal(
+    hasHadTerminalCleanup({
+      ...run,
+      recoveryAttempts: [{ ...run.recoveryAttempts![0]!, startedAt: 'invalid' }],
+    }),
+    true,
+  );
+});
 
 const PARAMS = { slotId: 'slot-a', capabilityId: 'metro' };
 

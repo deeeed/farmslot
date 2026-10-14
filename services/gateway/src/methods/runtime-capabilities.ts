@@ -495,11 +495,20 @@ async function pressureFor(
  * reconciler records when it stops a run's providers, and it can land before
  * the run itself settles.
  */
+export function runtimeCapabilityRecoveryStartedAt(run: Run): number | undefined {
+  if (isTerminalRunStatus(run.status) || run.status === 'paused') return undefined;
+  const latest = run.recoveryAttempts?.at(-1);
+  if (!latest) return undefined;
+  const at = Date.parse(latest.startedAt);
+  return Number.isFinite(at) ? at : undefined;
+}
+
 export function hasHadTerminalCleanup(run: Run): boolean {
-  return (
-    (isTerminalRunStatus(run.status) && !isCompletionPrerequisiteFailure(run)) ||
-    run.resourcePosture?.posture === 'terminal'
-  );
+  if (isTerminalRunStatus(run.status) && !isCompletionPrerequisiteFailure(run)) return true;
+  if (run.resourcePosture?.posture !== 'terminal') return false;
+  const recoveredAt = runtimeCapabilityRecoveryStartedAt(run);
+  // replayStep durably revives the run but retains its earlier posture history.
+  return !(recoveredAt !== undefined && recoveredAt > Date.parse(run.resourcePosture.updatedAt));
 }
 
 const registry = new RuntimeCapabilityRegistry({
@@ -519,6 +528,10 @@ const registry = new RuntimeCapabilityRegistry({
     const run = getCachedRunWithArchived(ownerRunId);
     if (!run) return false;
     return hasHadTerminalCleanup(run);
+  },
+  recoveryStartedAtForRun: (ownerRunId) => {
+    const run = getRun(ownerRunId);
+    return run ? runtimeCapabilityRecoveryStartedAt(run) : undefined;
   },
   // No family predicate on purpose. There is no run-store question that answers
   // "did a family-scope cleanup run": asking whether any member is terminal
