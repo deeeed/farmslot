@@ -5,9 +5,15 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import type { ProjectVars, RawPoolJson, SlotVars } from '../core/config.js';
 import type { ExecResult } from '../core/exec.js';
 
-import { type PrBodyRenderDeps, renderPrBody } from './pr-body-render.js';
+import {
+  type PrBodyRenderDeps,
+  type PrBodyRendererConfigDeps,
+  renderPrBody,
+  resolvePackRenderer,
+} from './pr-body-render.js';
 import { makeRun } from './test-fixtures.js';
 
 async function makeTaskDir(withProse = true): Promise<string> {
@@ -29,7 +35,7 @@ function deps(overrides: Partial<PrBodyRenderDeps> & { calls: string[] }): PrBod
     },
     resolveRenderer: async () => ({
       command: 'mm-harness pr-body render',
-      machineEnv: { MM_HARNESS_BIN: '/opt/mm-harness' },
+      machineEnv: { MM_HARNESS_PACKAGE_ROOT: '/opt/provider' },
     }),
     ...overrides,
   };
@@ -52,7 +58,7 @@ test('renderPrBody runs the pack renderer with the machine env and returns the b
     const command = calls[0];
     assert.match(
       command,
-      /^export MM_HARNESS_BIN='\/opt\/mm-harness' && mm-harness pr-body render '/,
+      /^export MM_HARNESS_PACKAGE_ROOT='\/opt\/provider' && mm-harness pr-body render '/,
     );
     assert.ok(command.includes(`'${root}'`), 'task dir passed');
     const out = / --out '([^']+)' --json$/.exec(command)?.[1];
@@ -162,4 +168,103 @@ test('renderPrBody skips a run without a slot through the real pack lookup', asy
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+function rendererConfig(
+  local: boolean,
+  pools: RawPoolJson[],
+  provider = true,
+): PrBodyRendererConfigDeps {
+  return {
+    loadSlotVars: async (): Promise<SlotVars> => ({
+      slotId: 'fixture-slot',
+      machine: local ? 'controller' : 'worker',
+      platform: 'headless',
+      host: local ? 'localhost' : 'worker.invalid',
+      sshUser: 'fixture',
+      osType: 'darwin',
+      claudePath: '',
+      codexPath: '',
+      opencodePath: '',
+      cursorPath: '',
+      grokPath: '',
+      dispatchCmd: '',
+      recycleCmd: '',
+      repo: '/repo',
+      session: 'fixture-session',
+      slotMode: 'dispatch',
+      slotEnabled: true,
+      sshTarget: '',
+      remoteRepo: '/repo',
+      projectName: 'example',
+      resourceVars: {},
+      machineEnv: {
+        PROVIDER_ROOT: local ? '/host/provider' : '/worker/provider',
+        PRIVATE_NODE_ENV: 'worker-only',
+      },
+    }),
+    loadProjectVars: async (): Promise<ProjectVars> => ({
+      projectName: 'example',
+      projectConfig: '/pack/project.json',
+      projectFixturesDir: '/pack/fixtures',
+      projectTemplatesDir: '/pack/templates',
+      runtimeDir: '.agent',
+      artifactDir: '.task',
+      projectJson: {
+        vars: { pr_body_cmd: 'node "$PROVIDER_ROOT/cli.mjs" pr-body render' },
+        ...(provider
+          ? { recipe: { provider: { module: 'example/provider', root: { env: 'PROVIDER_ROOT' } } } }
+          : {}),
+      },
+    }),
+    readPools: () => pools,
+  };
+}
+const hostPool = (root?: string): RawPoolJson => ({
+  project: 'example',
+  platform: 'headless',
+  os: 'darwin',
+  ssh_user: 'fixture',
+  host: 'localhost',
+  machine: 'controller',
+  slots: [],
+  ...(root ? { env: { PROVIDER_ROOT: root } } : {}),
+});
+
+test('remote pack rendering uses the host pool root and excludes remote node environment', async () => {
+  const result = await resolvePackRenderer(
+    makeRun({ slotId: 'worker-slot' }),
+    rendererConfig(false, [
+      hostPool('/host/provider'),
+      { ...hostPool('/worker/provider'), host: 'worker.invalid', machine: 'worker' },
+    ]),
+  );
+  assert.ok(typeof result !== 'string');
+  assert.deepEqual(result.machineEnv, {
+    PROVIDER_ROOT: '/host/provider',
+  });
+});
+
+test('local rendering keeps its validated local pool environment', async () => {
+  const result = await resolvePackRenderer(
+    makeRun({ slotId: 'host-slot' }),
+    rendererConfig(true, []),
+  );
+  assert.ok(typeof result !== 'string');
+  assert.equal(result.machineEnv?.PROVIDER_ROOT, '/host/provider');
+});
+
+test('declared provider rendering refuses missing or conflicting host roots before command execution', async () => {
+  for (const pools of [[], [hostPool()], [hostPool('/host/one'), hostPool('/host/two')]]) {
+    await assert.rejects(
+      resolvePackRenderer(makeRun({ slotId: 'worker-slot' }), rendererConfig(false, pools)),
+      /one gateway-host provider root/,
+    );
+  }
+  const plain = await resolvePackRenderer(
+    makeRun({ slotId: 'worker-slot' }),
+    rendererConfig(false, [], false),
+  );
+  assert.ok(typeof plain !== 'string');
+  assert.equal(plain.machineEnv, undefined);
 });
