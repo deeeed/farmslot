@@ -13,6 +13,7 @@ import {
   handleNodeResponse,
   isNodeTransportUnavailableError,
   NodeRpcTimeoutError,
+  withNodeReconnectWait,
 } from '../../fleet/node-rpc.js';
 import { createGatewayAuthRuntime } from '../../security/auth.js';
 
@@ -58,6 +59,49 @@ const permanent = (error: unknown) => {
   assert.equal(isNodeTransportUnavailableError(error), false);
   return true;
 };
+
+test('pipeline native requests wait for issued nodes and recheck authority before the only send', async (t) => {
+  const f = issuedFixture();
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() });
+  let sent = 0;
+  const ws = {
+    readyState: WebSocket.OPEN,
+    send(raw: string) {
+      sent++;
+      handleNodeResponse(JSON.parse(raw).id, true, { sessions: [] }, undefined, undefined, ws);
+    },
+  } as WebSocket;
+  try {
+    for (const mismatch of [false, true]) {
+      unregisterByWs(ws);
+      const pending = withNodeReconnectWait(
+        () =>
+          routeNativeExecution(f.owner.id, Methods.NATIVE_SESSION_LIST, {
+            executionNodeId: f.machine,
+          }),
+        () => {},
+      );
+      t.mock.timers.tick(20_000);
+      await Promise.resolve();
+      registerNode(
+        f.machine,
+        1,
+        ws,
+        undefined,
+        undefined,
+        { ownerPrincipalId: mismatch ? 'other-owner' : f.owner.id },
+        { principalId: f.node.id, valid: () => true },
+      );
+      t.mock.timers.tick(100);
+      if (mismatch) await assert.rejects(pending, permanent);
+      else assert.deepEqual(await pending, { sessions: [] });
+    }
+    assert.equal(sent, 1);
+  } finally {
+    unregisterByWs(ws);
+    f.cleanup();
+  }
+});
 
 test('filesystem commands reject missing capabilities, revoked owners and foreign replies', async () => {
   const machine = 'owned-filesystem-fixture';
