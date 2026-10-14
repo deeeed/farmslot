@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
@@ -82,57 +82,116 @@ const { runReplayStep } = await import('./replay-step.js');
 const { createRun, deleteRun, getRun, updateRun } = await import('../../runs/store.js');
 const { CHECKLIST_TARGET_BY_AGENT_ROLE, CHECKLIST_TARGET_MANIFEST } =
   await import('../../tasks/checklist-target.js');
+const { resolveWorkerTerminalContract } = await import('../../tasks/worker-terminal-contract.js');
 
-test('runReplayStep restores worker checklist-target when replaying from review', async (t) => {
-  workspace = await mkdtemp(path.join(os.tmpdir(), 'replay-nested-checklist-'));
-  orchestratorTaskRoot = path.join(workspace, 'orchestrator-tasks');
-  const taskRel = 'fix/replay-reset';
-  const taskDirOnSlot = path.join(workspace, '.task', taskRel);
-  const taskFile = path.join(orchestratorTaskRoot, taskRel, 'TASK.md');
+for (const stepName of [PS.MONITOR, PS.REVIEW]) {
+  test(`runReplayStep ${stepName} restores frozen dispatch policy without changing evidence`, async (t) => {
+    workspace = await mkdtemp(path.join(os.tmpdir(), 'replay-nested-checklist-'));
+    orchestratorTaskRoot = path.join(workspace, 'orchestrator-tasks');
+    const taskRel = 'fix/replay-reset';
+    const taskDirOnSlot = path.join(workspace, '.task', taskRel);
+    const taskFile = path.join(orchestratorTaskRoot, taskRel, 'TASK.md');
 
-  await mkdir(taskDirOnSlot, { recursive: true });
-  await mkdir(path.dirname(taskFile), { recursive: true });
-  await writeFile(taskFile, '# worker\n');
-  await writeFile(path.join(taskDirOnSlot, 'CHECKLIST.md'), '# checklist\n');
+    await mkdir(taskDirOnSlot, { recursive: true });
+    await mkdir(path.dirname(taskFile), { recursive: true });
+    await writeFile(taskFile, '# worker\n');
+    await writeFile(path.join(taskDirOnSlot, 'CHECKLIST.md'), '# checklist\n');
 
-  const review = CHECKLIST_TARGET_BY_AGENT_ROLE['review'];
-  await writeFile(path.join(taskDirOnSlot, review.checklist), '# review\n');
-  await writeFile(
-    path.join(taskDirOnSlot, CHECKLIST_TARGET_MANIFEST),
-    `${JSON.stringify({ checklist: review.checklist }, null, 2)}\n`,
-  );
+    const review = CHECKLIST_TARGET_BY_AGENT_ROLE['review'];
+    await writeFile(path.join(taskDirOnSlot, review.checklist), '# review\n');
+    await writeFile(
+      path.join(taskDirOnSlot, CHECKLIST_TARGET_MANIFEST),
+      `${JSON.stringify({ checklist: review.checklist }, null, 2)}\n`,
+    );
 
-  const run = createRun({
-    flowType: 'fix-bug',
-    project: 'farmslot-farm',
-    ticketOrPr: `PROJ-${Date.now()}`,
-  });
-  updateRun(run.id, {
-    status: 'failed',
-    slotId: 'macwork-ff-replay-checklist',
-    taskFile,
-    steps: run.steps.map((step) => {
-      if (['find-slot', 'write-task', 'prepare', 'dispatch', 'monitor'].includes(step.name)) {
-        return { ...step, status: 'done' };
+    const run = createRun({
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      ticketOrPr: `PROJ-${Date.now()}`,
+    });
+    const frozen = JSON.stringify({
+      ...resolveWorkerTerminalContract({ acceptance: { require: true } }, run.flowType),
+      claimReviewGate: true,
+      recordedEvidenceContractVersion: run.recordedEvidenceContractVersion,
+      deterministicChecks: [
+        {
+          checklist: 'CHECKLIST.md',
+          stepNumber: 1,
+          reference: 'ci.local_check',
+          command: 'printf frozen',
+        },
+      ],
+    });
+    await mkdir(path.join(path.dirname(taskFile), 'inputs'));
+    await writeFile(
+      path.join(path.dirname(taskFile), 'inputs/worker-terminal-contract.json'),
+      frozen,
+    );
+    await writeFile(
+      path.join(path.dirname(taskFile), 'inputs/handoff.json'),
+      JSON.stringify({
+        attemptId: run.id,
+        project: run.project,
+        flow: run.flowType,
+      }),
+    );
+    await mkdir(path.join(taskDirOnSlot, 'inputs'));
+    await writeFile(
+      path.join(taskDirOnSlot, 'inputs/worker-terminal-contract.json'),
+      JSON.stringify(resolveWorkerTerminalContract(null, run.flowType)),
+    );
+    const retained = {
+      recipeRunId: 'retained-recipe',
+      claims: [{ id: 'AC-1', verdict: 'awaiting-review' }],
+    };
+    const evidence = JSON.stringify(retained);
+    await writeFile(path.join(taskDirOnSlot, 'retained-evidence.json'), evidence);
+    updateRun(run.id, {
+      status: 'failed',
+      slotId: 'macwork-ff-replay-checklist',
+      taskFile,
+      steps: run.steps.map((step) => {
+        if (['find-slot', 'write-task', 'prepare', 'dispatch', 'monitor'].includes(step.name)) {
+          return { ...step, status: 'done' };
+        }
+        if (step.name === 'review') {
+          return { ...step, status: 'failed' };
+        }
+        return step;
+      }),
+    });
+
+    t.after(async () => {
+      await rm(workspace, { recursive: true, force: true });
+      if (getRun(run.id)) {
+        updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+        await deleteRun(run.id);
       }
-      if (step.name === 'review') {
-        return { ...step, status: 'failed' };
-      }
-      return step;
-    }),
+    });
+
+    await runReplayStep({ runId: run.id, stepName, triggeredBy: 'operator' }, () => {});
+
+    assert.equal(
+      await readFile(path.join(taskDirOnSlot, 'inputs/worker-terminal-contract.json'), 'utf8'),
+      frozen,
+    );
+    assert.equal(
+      await readFile(path.join(taskDirOnSlot, 'retained-evidence.json'), 'utf8'),
+      evidence,
+    );
+    assert.equal(
+      await readFile(
+        path.join(path.dirname(taskFile), 'inputs/worker-terminal-contract.json'),
+        'utf8',
+      ),
+      frozen,
+    );
+
+    // Restoring the worker target removes the role switch's manifest: absent
+    // means CHECKLIST.md + SIGNAL.json to the mark engine.
+    assert.equal(
+      existsSync(path.join(taskDirOnSlot, CHECKLIST_TARGET_MANIFEST)),
+      stepName === PS.MONITOR,
+    );
   });
-
-  t.after(async () => {
-    await rm(workspace, { recursive: true, force: true });
-    if (getRun(run.id)) {
-      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
-    }
-  });
-
-  await runReplayStep({ runId: run.id, stepName: PS.REVIEW, triggeredBy: 'operator' }, () => {});
-
-  // Restoring the worker target removes the role switch's manifest: absent
-  // means CHECKLIST.md + SIGNAL.json to the mark engine.
-  assert.equal(existsSync(path.join(taskDirOnSlot, CHECKLIST_TARGET_MANIFEST)), false);
-});
+}

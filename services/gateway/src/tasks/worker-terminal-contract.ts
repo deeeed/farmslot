@@ -299,6 +299,11 @@ export async function syncTerminalContractForFlowOnSlot(
   checklistBasename?: string,
   additionalArtifactPaths: readonly string[] = [],
 ): Promise<void> {
+  const fullTaskDir = `${vars.remoteRepo}/${taskDirRelPath(taskDir, '')}`;
+  const parentContractPath = `${fullTaskDir}/${WORKER_TERMINAL_CONTRACT_INPUT}`;
+  // Role cleanup restores the initialized parent, including its gateway policy
+  // and frozen CI commands. Project defaults must never replace that contract.
+  if (!checklistBasename && (await slotFileExists(vars, parentContractPath))) return;
   const projectVars = await loadProjectVars(vars.projectName);
   let contract = resolveWorkerTerminalContract(
     readWorkerTerminalProjectConfig(projectVars.projectJson as Record<string, unknown>),
@@ -307,18 +312,7 @@ export async function syncTerminalContractForFlowOnSlot(
   );
   if (reportPath) contract = withTerminalReportPath(contract, reportPath, additionalArtifactPaths);
   const localCheck = getProjectField(projectVars.projectJson, 'ci.local_check');
-  const fullTaskDir = `${vars.remoteRepo}/${taskDirRelPath(taskDir, '')}`;
-  const parentContractPath = `${fullTaskDir}/${WORKER_TERMINAL_CONTRACT_INPUT}`;
-  if (!checklistBasename && (await slotFileExists(vars, parentContractPath))) {
-    // Role cleanup restores the initialized parent's command, including TASK.md
-    // for interactive dev. Current project configuration must not rewrite it.
-    const initialized = JSON.parse(
-      await slotReadFile(vars, parentContractPath),
-    ) as WorkerTerminalContractDocument;
-    if (initialized.deterministicChecks) {
-      contract = { ...contract, deterministicChecks: initialized.deterministicChecks };
-    }
-  } else if (localCheck) {
+  if (localCheck) {
     const checklist = checklistBasename ?? 'CHECKLIST.md';
     const markdown = await slotReadFile(vars, `${fullTaskDir}/${checklist}`);
     contract = deterministicChecks.freeze(contract, markdown, checklist, {
@@ -335,6 +329,56 @@ export async function syncTerminalContractForFlowOnSlot(
     ),
     `${JSON.stringify(contract, null, 2)}\n`,
   );
+}
+
+/** Replay restores dispatch authority; it never derives a new verdict policy. */
+export async function readFrozenWorkerTerminalContractForRun(
+  run: Pick<
+    Run,
+    'id' | 'project' | 'flowType' | 'mode' | 'taskFile' | 'recordedEvidenceContractVersion'
+  >,
+): Promise<string | null> {
+  if (!run.taskFile) return null;
+  const taskDir = path.dirname(run.taskFile);
+  let text: string;
+  try {
+    text = await readFile(path.join(taskDir, WORKER_TERMINAL_CONTRACT_INPUT), 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    if (!run.recordedEvidenceContractVersion) return null;
+    throw new Error(
+      'The frozen dispatch terminal contract is missing. Restore the retained task before replay.',
+    );
+  }
+  const contract: unknown = JSON.parse(text);
+  const handoff: unknown = JSON.parse(
+    await readFile(path.join(taskDir, 'inputs/handoff.json'), 'utf8'),
+  );
+  if (
+    !handoff ||
+    typeof handoff !== 'object' ||
+    !('attemptId' in handoff) ||
+    handoff.attemptId !== run.id ||
+    !('project' in handoff) ||
+    handoff.project !== run.project ||
+    !('flow' in handoff) ||
+    handoff.flow !== run.flowType ||
+    !contract ||
+    typeof contract !== 'object' ||
+    !('schemaVersion' in contract) ||
+    contract.schemaVersion !== 1 ||
+    !('flowType' in contract) ||
+    contract.flowType !== run.flowType ||
+    ('mode' in contract ? contract.mode : null) !== (run.mode ?? null) ||
+    ('recordedEvidenceContractVersion' in contract
+      ? contract.recordedEvidenceContractVersion
+      : 0) !== (run.recordedEvidenceContractVersion ?? 0)
+  ) {
+    throw new Error(
+      'The frozen dispatch terminal contract does not belong to this run. Restore the retained task before replay.',
+    );
+  }
+  return text;
 }
 
 export async function loadTerminalContractForRun(

@@ -1547,6 +1547,8 @@ test('runReplayStep normalizes stale earlier steps when replaying from a later s
     ticketOrPr: `PROJ-${Date.now()}`,
   });
   updateRun(run.id, {
+    // Lifecycle-only retained fixture predates frozen dispatch contracts.
+    recordedEvidenceContractVersion: 0,
     status: 'blocked',
     error: 'monitor timed out',
     taskFile,
@@ -1603,6 +1605,8 @@ test('runReplayStep can replace an exhausted runner before review', async (t) =>
     model: 'grok-4.6',
   });
   updateRun(run.id, {
+    // Lifecycle-only retained fixture predates frozen dispatch contracts.
+    recordedEvidenceContractVersion: 0,
     status: 'blocked',
     taskFile,
     metrics: {
@@ -2500,6 +2504,8 @@ test('runReplayStep preserves worker session state when replaying monitor only',
     model: 'grok-4.6',
   });
   updateRun(run.id, {
+    // Lifecycle-only retained fixture predates frozen dispatch contracts.
+    recordedEvidenceContractVersion: 0,
     status: 'failed',
     slotId: 'macwork-ff-4',
     taskFile: '/tmp/TASK.md',

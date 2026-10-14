@@ -524,6 +524,14 @@ before deferring verdict checks. The monitor calls that same checker. Flows with
 no applicable human gate keep their completion refusal; projects expose no
 verdict-waiver flag.
 
+Role cleanup MUST preserve the entire initialized worker terminal contract,
+including gateway review policy, run contract version and frozen deterministic
+commands. Retained `run.replayStep` from monitor or later restores the original
+dispatch contract after checking the task handoff's run/project/flow identity and
+the contract's flow/mode/version. A current run with a missing, unreadable or
+mismatched dispatch contract fails recovery. Replay does not infer policy from
+skipped downstream steps or change retained registration, claims or package bytes.
+
 ### Receipt and effective row
 
 The existing Run store owns append-only `ClaimUntestableOverrideReceipt` records.

@@ -21,6 +21,8 @@ import {
   type RunStatus,
   type RuntimeCapabilityStatusResult,
   staticReviewReplayBlock,
+  taskDirRelPath,
+  WORKER_TERMINAL_CONTRACT_INPUT,
   type WorkerSignal,
 } from '@farmslot/protocol';
 
@@ -74,6 +76,8 @@ import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { withRunSources } from '../../sources/runtime.js';
 import { resolveContextFilePath } from '../../tasks/watcher.js';
 import { normalizeWorkerSignal, parseStrictIsoMs } from '../../tasks/worker-signals.js';
+import { readFrozenWorkerTerminalContractForRun } from '../../tasks/worker-terminal-contract.js';
+import { writeTextFileOnSlot } from '../dispatch/slot-file-write.js';
 import { isActiveSlotHolder, slotClaimBlockedByRelease } from '../dispatch/slot-scoring.js';
 import { validateTicketRef } from '../dispatch/ticket-ref.js';
 import { slotOwnershipFieldsForRun } from '../fleet.js';
@@ -1473,16 +1477,19 @@ export async function runReplayStep(
       );
     }
 
-    // Replaying from review or later must clear nested-loop artifacts and active task variants.
+    // Restore the dispatch contract before resuming a retained worker. Role cleanup
+    // may have stripped its gateway policy; skipped downstream steps are not policy.
     if (
       effectiveSlotId &&
       existing.taskFile &&
       targetIdx >= 0 &&
-      reviewIdx >= 0 &&
-      targetIdx >= reviewIdx
+      monitorIdx >= 0 &&
+      targetIdx >= monitorIdx
     ) {
       assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
       assertNativeReplayCurrent();
+      const frozenWorkerContract = await readFrozenWorkerTerminalContractForRun(existing);
+      let contractRestored = !frozenWorkerContract;
       try {
         const {
           loadSlotVars,
@@ -1497,54 +1504,72 @@ export async function runReplayStep(
           existing.taskFile,
           getOrchestratorTaskRoot(existing.project, pv?.projectJson ?? null),
         );
+        if (frozenWorkerContract && taskRelDir === null) {
+          throw new Error('The retained worker task is outside this project task root.');
+        }
         if (taskRelDir !== null) {
           const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
           const taskDirRel = `${taskDirName}/${taskRelDir}`;
           const workerTaskDir = `${vars.remoteRepo}/${taskDirRel}`;
-          const preserveReviewFix = hasActiveReviewFix(getRun(params.runId) ?? existing);
-          const {
-            CHECKLIST_TARGET_BY_AGENT_ROLE,
-            restoreWorkerChecklistTargetFromSlot,
-            syncChecklistTargetForRole,
-          } = await import('../../tasks/checklist-target.js');
-          const reviewTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['review'];
-          const reviewFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['review-fix'];
-          const ciFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['ci-fix'];
-          const nestedFiles = [
-            `${workerTaskDir}/${reviewTarget.checklist}`,
-            `${workerTaskDir}/${reviewTarget.signal}`,
-            ...(preserveReviewFix
-              ? []
-              : [
-                  `${workerTaskDir}/${reviewFixTarget.checklist}`,
-                  `${workerTaskDir}/${reviewFixTarget.signal}`,
-                ]),
-            `${workerTaskDir}/${ciFixTarget.checklist}`,
-            `${workerTaskDir}/${ciFixTarget.signal}`,
-          ];
-          assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
-          assertNativeReplayCurrent();
-          await execOnSlot(
-            vars,
-            `rm -f ${nestedFiles.map(shellQuote).join(' ')} 2>/dev/null`,
-            vars.remoteRepo,
-          );
-          assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
-          assertNativeReplayCurrent();
-          if (preserveReviewFix) {
-            await syncChecklistTargetForRole(vars, taskDirRel, 'review-fix');
-          } else {
-            await restoreWorkerChecklistTargetFromSlot(vars, taskDirRel, {
-              flowType: existing.flowType,
-              mode: existing.mode ?? undefined,
-            });
+          if (frozenWorkerContract) {
+            assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+            assertNativeReplayCurrent();
+            await writeTextFileOnSlot(
+              vars,
+              taskDirRelPath(taskDirRel, WORKER_TERMINAL_CONTRACT_INPUT),
+              frozenWorkerContract,
+            );
+            assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+            assertNativeReplayCurrent();
           }
-          console.log(
-            `[run] replay from ${replayStepName} — cleared nested-loop task artifacts in ${workerTaskDir}${preserveReviewFix ? ' (preserved active review-fix)' : ''}`,
-          );
+          contractRestored = true;
+          // Review and later replays also clear nested-loop task variants.
+          if (reviewIdx >= 0 && targetIdx >= reviewIdx) {
+            const preserveReviewFix = hasActiveReviewFix(getRun(params.runId) ?? existing);
+            const {
+              CHECKLIST_TARGET_BY_AGENT_ROLE,
+              restoreWorkerChecklistTargetFromSlot,
+              syncChecklistTargetForRole,
+            } = await import('../../tasks/checklist-target.js');
+            const reviewTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['review'];
+            const reviewFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['review-fix'];
+            const ciFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['ci-fix'];
+            const nestedFiles = [
+              `${workerTaskDir}/${reviewTarget.checklist}`,
+              `${workerTaskDir}/${reviewTarget.signal}`,
+              ...(preserveReviewFix
+                ? []
+                : [
+                    `${workerTaskDir}/${reviewFixTarget.checklist}`,
+                    `${workerTaskDir}/${reviewFixTarget.signal}`,
+                  ]),
+              `${workerTaskDir}/${ciFixTarget.checklist}`,
+              `${workerTaskDir}/${ciFixTarget.signal}`,
+            ];
+            assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+            assertNativeReplayCurrent();
+            await execOnSlot(
+              vars,
+              `rm -f ${nestedFiles.map(shellQuote).join(' ')} 2>/dev/null`,
+              vars.remoteRepo,
+            );
+            assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+            assertNativeReplayCurrent();
+            if (preserveReviewFix) {
+              await syncChecklistTargetForRole(vars, taskDirRel, 'review-fix');
+            } else {
+              await restoreWorkerChecklistTargetFromSlot(vars, taskDirRel, {
+                flowType: existing.flowType,
+                mode: existing.mode ?? undefined,
+              });
+            }
+            console.log(
+              `[run] replay from ${replayStepName} — cleared nested-loop task artifacts in ${workerTaskDir}${preserveReviewFix ? ' (preserved active review-fix)' : ''}`,
+            );
+          }
         }
       } catch (err) {
-        if (isReplayOwnershipError(err)) throw err;
+        if (!contractRestored || isReplayOwnershipError(err)) throw err;
         console.warn(`[run] nested-loop cleanup failed (${(err as Error).message})`);
       }
     }

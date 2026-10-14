@@ -1,0 +1,25 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Retained worker review contract recovery",
+  "description": "Manual copied-task proof. FARMSLOT_WORKER_CONTRACT_PROOF_INPUT supplies the retained run snapshot, worker task and dispatch task.",
+  "workflow": {
+    "entry": "recover",
+    "nodes": {
+      "recover": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/worker-claim-review-contract.mts",
+        "timeout_ms": 300000,
+        "intent": "Recover the original frozen review contract through public replay and verify retained evidence and refusal controls.",
+        "next": "checked"
+      },
+      "checked": {
+        "action": "assert_output",
+        "source": "recover",
+        "assert": { "path": "$.exitCode", "operator": "eq", "value": 0 },
+        "intent": "Verify recovery, integrity and unchanged-original checks passed.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

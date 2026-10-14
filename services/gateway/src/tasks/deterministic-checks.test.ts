@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -9,6 +9,8 @@ import type { Run } from '@farmslot/protocol';
 
 import {
   deterministicChecklistTaskFileForPublication,
+  readFrozenWorkerTerminalContractForRun,
+  resolveWorkerTerminalContract,
   syncTerminalContractForFlowOnSlot,
   validateDeterministicChecksForRun,
 } from './worker-terminal-contract.js';
@@ -75,13 +77,22 @@ test('publication uses the last completed source-fix checklist after role cleanu
   assert.equal(deterministicChecklistTaskFileForPublication(run), run.activeTaskFile);
 });
 
-test('restoring an interactive parent preserves its initialized TASK.md command', async (t) => {
+test('role cleanup preserves the entire frozen parent contract byte for byte', async (t) => {
   const { root } = await task(t);
   const contractFile = path.join(root, 'inputs', 'worker-terminal-contract.json');
   const checks = [
     { checklist: 'TASK.md', stepNumber: 1, reference: 'ci.local_check', command: 'printf frozen' },
   ];
-  await writeFile(contractFile, JSON.stringify({ deterministicChecks: checks }));
+  const initialized = JSON.stringify({
+    ...resolveWorkerTerminalContract({ acceptance: { require: true } }, 'dev', {
+      mode: 'interactive',
+      now: '2026-01-01T00:00:00Z',
+    }),
+    claimReviewGate: true,
+    recordedEvidenceContractVersion: 1,
+    deterministicChecks: checks,
+  });
+  await writeFile(contractFile, initialized);
   await writeFile(path.join(root, 'CHECKLIST.md'), '- [ ] Operator plan\n');
   const vars = {
     projectName: 'farmslot-farm',
@@ -90,8 +101,7 @@ test('restoring an interactive parent preserves its initialized TASK.md command'
     machine: 'local',
   } as Parameters<typeof syncTerminalContractForFlowOnSlot>[0];
   await syncTerminalContractForFlowOnSlot(vars, path.basename(root), 'dev', 'interactive');
-  const { readFile } = await import('node:fs/promises');
-  assert.deepEqual(JSON.parse(await readFile(contractFile, 'utf8')).deterministicChecks, checks);
+  assert.equal(await readFile(contractFile, 'utf8'), initialized);
   await writeFile(path.join(root, 'REVIEW-FIX.md'), '- [ ] CI [DETERMINISTIC: ci.local_check]\n');
   await syncTerminalContractForFlowOnSlot(
     vars,
@@ -106,6 +116,56 @@ test('restoring an interactive parent preserves its initialized TASK.md command'
   );
   assert.equal(role.deterministicChecks[0].checklist, 'REVIEW-FIX.md');
   assert.equal(role.deterministicChecks[0].command, 'yarn ci:local');
+});
+
+test('retained replay reads only the matching frozen dispatch contract', async (t) => {
+  const { root } = await task(t);
+  const run = {
+    id: 'retained-run',
+    project: 'farmslot-farm',
+    flowType: 'dev' as const,
+    mode: 'autonomous' as const,
+    taskFile: path.join(root, 'TASK.md'),
+    recordedEvidenceContractVersion: 1,
+  };
+  const contractPath = path.join(root, 'inputs/worker-terminal-contract.json');
+  const handoffPath = path.join(root, 'inputs/handoff.json');
+  const contract = {
+    ...resolveWorkerTerminalContract(null, 'dev', { mode: run.mode }),
+    claimReviewGate: true,
+    recordedEvidenceContractVersion: 1,
+  };
+  const handoff = { attemptId: run.id, project: run.project, flow: run.flowType };
+  await assert.rejects(
+    readFrozenWorkerTerminalContractForRun(run),
+    /dispatch terminal contract is missing/,
+  );
+  assert.equal(
+    await readFrozenWorkerTerminalContractForRun({ ...run, recordedEvidenceContractVersion: 0 }),
+    null,
+  );
+  await writeFile(contractPath, JSON.stringify(contract));
+  await writeFile(handoffPath, JSON.stringify(handoff));
+  assert.equal(await readFrozenWorkerTerminalContractForRun(run), JSON.stringify(contract));
+  await writeFile(handoffPath, JSON.stringify({ ...handoff, attemptId: 'another-run' }));
+  await assert.rejects(readFrozenWorkerTerminalContractForRun(run), /does not belong to this run/);
+  await writeFile(handoffPath, JSON.stringify(handoff));
+  for (const different of [
+    { ...contract, flowType: 'qa' },
+    { ...contract, mode: 'interactive' },
+    { ...contract, recordedEvidenceContractVersion: 0 },
+  ]) {
+    await writeFile(contractPath, JSON.stringify(different));
+    await assert.rejects(
+      readFrozenWorkerTerminalContractForRun(run),
+      /does not belong to this run/,
+    );
+  }
+  await writeFile(contractPath, '{broken');
+  await assert.rejects(readFrozenWorkerTerminalContractForRun(run), SyntaxError);
+  const noGate = JSON.stringify({ ...contract, claimReviewGate: false });
+  await writeFile(contractPath, noGate);
+  assert.equal(await readFrozenWorkerTerminalContractForRun(run), noGate);
 });
 
 test('a removed slot preserves legacy refresh but refuses retained deterministic declarations', async (t) => {
@@ -124,7 +184,16 @@ test('a removed slot preserves legacy refresh but refuses retained deterministic
   `;
   const result = spawnSync(
     process.execPath,
-    ['--import', 'tsx', '--input-type=module', '-e', script],
+    [
+      '--import',
+      'tsx',
+      '--experimental-test-module-mocks',
+      '--import',
+      new URL('../runtime/mock-pty.test-support.ts', import.meta.url).href,
+      '--input-type=module',
+      '-e',
+      script,
+    ],
     {
       env: { ...process.env, FARMSLOT_POOL_DIR: pool },
       encoding: 'utf8',
