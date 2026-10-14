@@ -13,6 +13,7 @@ import type { Principal, PrincipalSubject, RoleBinding } from '@farmslot/protoco
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { isCredentialStoreLockHeld } from './credential-lock-state.js';
+import { withCredentialLock } from './credential-store-lock.js';
 
 export const VIRTUAL_PRINCIPAL_IDS = ['local-admin', 'local-node', 'system'] as const;
 
@@ -71,6 +72,33 @@ export function loadCredentialStore(path = credentialStorePath()): CredentialSto
   } catch {
     // A JSON.parse message quotes the input around the error: never echo it.
     throw new Error(`Unable to load credential store ${path}: not valid JSON`);
+  }
+  if (
+    isRecord(parsed) &&
+    Array.isArray(parsed.credentials) &&
+    parsed.credentials.some((record) => isRecord(record) && record.origin === 'env-migrated')
+  ) {
+    const lockPath = join(dirname(path), 'credentials.lock');
+    if (!isCredentialStoreLockHeld(lockPath)) {
+      // Reread under the ordinary writer lock; a competing writer may have
+      // changed more than the origin since the first read. Use this path's home.
+      return withCredentialLock(() => loadCredentialStore(path), {
+        FARMSLOT_HOME: dirname(path),
+      });
+    }
+    const migrated = {
+      ...parsed,
+      credentials: parsed.credentials.map((record) =>
+        isRecord(record) && record.origin === 'env-migrated'
+          ? { ...record, origin: 'issued' }
+          : record,
+      ),
+    };
+    // Validate the whole candidate before writing; malformed survivors are not
+    // repaired. This changes metadata only, never the accepted wire grammar.
+    validateCredentialStore(migrated, path);
+    saveCredentialStore(migrated, path);
+    return migrated;
   }
   validateCredentialStore(parsed, path);
   return parsed;

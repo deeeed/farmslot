@@ -89,3 +89,10 @@ If `farm-automation` does not exist, create it first with
 
 See [ADR-051](../adr/051-principal-and-credential-model.md) for the authorization
 and store invariants.
+
+On upgrade, the store loader converts historical `env-migrated` origin metadata
+to `issued` once under the credential lock. Ids, secret hashes, roles and
+revocations stay intact. Existing issued and paired device logins keep working;
+raw environment-token logins must pair or select an issued profile. Keep old
+credentials until replacement logins are verified, then revoke and retire them
+through the commands above.

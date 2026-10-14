@@ -1,6 +1,6 @@
 // Manual protocol proof. Uses an isolated identity home and service/node credentials only.
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -58,7 +58,30 @@ try {
     { role: 'admin', scope: { kind: 'global' } },
   ]);
   const admin = writer.issueCredential('farm-automation', 'test-automation');
+  const paired = writer.issueCredential('farm-automation', 'test-paired-device', 'paired');
+  const revoked = writer.issueCredential('farm-automation', 'test-revoked-legacy');
+  writer.revokeCredential(revoked.record.id);
+  const expectedStore = structuredClone(store.snapshot());
+  const historicalStore = {
+    ...expectedStore,
+    credentials: expectedStore.credentials.map((record) => ({
+      ...record,
+      origin:
+        record.id === admin.record.id || record.id === revoked.record.id
+          ? 'env-migrated'
+          : record.origin,
+    })),
+  };
+  await writeFile(store.path, JSON.stringify(historicalStore));
   const runtime = createGatewayAuthRuntime();
+  assert.deepEqual(runtime.store.snapshot(), expectedStore);
+  assert.deepEqual(JSON.parse(await readFile(store.path, 'utf8')), expectedStore);
+  const migratedBytes = await readFile(store.path);
+  const migratedStamp = await stat(store.path);
+  createGatewayAuthRuntime();
+  assert.deepEqual(await readFile(store.path), migratedBytes);
+  assert.equal((await stat(store.path)).ino, migratedStamp.ino);
+  assert.equal((await stat(store.path)).mtimeMs, migratedStamp.mtimeMs);
   initializeGatewayIdentity(runtime, { host: '127.0.0.1' });
   const httpServer = createServer((req, res) => {
     if (authorizeHttpRequest({ runtime, req, res, resource: 'file' })) {
@@ -85,7 +108,30 @@ try {
     port: address.port,
   });
   const client = new GatewayClient({ url, timeout: 5000, credential: { token: admin.secret } });
-  const claims: string[] = [];
+  const claims: string[] = [
+    'historical origins migrate at boot with every other field preserved; repeat boot does not rewrite',
+  ];
+  const pairedClient = new GatewayClient({
+    url,
+    timeout: 5000,
+    credential: { token: paired.secret },
+  });
+  await pairedClient.call('principal.list', {});
+  const revokedClient = new GatewayClient({
+    url,
+    timeout: 5000,
+    credential: { token: revoked.secret },
+  });
+  await assert.rejects(revokedClient.call('principal.list', {}));
+  const rawHistorical = new GatewayClient({
+    url,
+    timeout: 5000,
+    credential: { token: admin.secret.slice(admin.secret.indexOf('_', 3) + 1) },
+  });
+  await assert.rejects(rawHistorical.call('principal.list', {}));
+  claims.push(
+    'paired device credential survives; migrated revocations and raw-secret denial remain enforced',
+  );
   const started = performance.now();
 
   const listed = await client.call<{ principals: Array<{ id: string }> }>('principal.list', {});
@@ -150,6 +196,7 @@ try {
   assert.notEqual(replacement.principal.id, created.principal.id);
   assert.ok(runtime.store.snapshot().activatedAt);
   claims.push('revocation and retirement take effect; ids and activation remain reserved');
+  await client.call('credential.revoke', { credentialId: paired.record.id });
   await assert.rejects(client.call('credential.revoke', { credentialId: admin.record.id }));
   assert.throws(() => retirePrincipalsOffline([replacement.principal.id]), /gateway|stopped/i);
   claims.push('last admin and live-gateway offline guards refuse unsafe writes');
