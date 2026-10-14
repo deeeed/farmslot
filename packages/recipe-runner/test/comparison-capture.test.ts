@@ -229,3 +229,69 @@ test('canonical reader refuses escaping and cyclic comparison declarations using
     );
   }
 });
+
+test('existing target roles remain action inputs rather than capture annotations', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'capture-role-input-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let observedRole: unknown;
+  const runner = createRecipeRunner({
+    defaultSource: { kind: 'operator', trust: 'trusted' },
+    actionManifest: {
+      ...manifest,
+      actions: {
+        end: manifest.actions.end!,
+        'cdp.target': {
+          description: 'Select the runtime target.',
+          schema: {
+            type: 'object',
+            properties: { role: { type: 'string' } },
+            additionalProperties: false,
+          },
+          examples: [
+            {
+              action: 'cdp.target',
+              intent: 'Select the extension target for this control.',
+              role: 'extension',
+              next: 'done',
+            },
+          ],
+        },
+      },
+    },
+    adapters: [
+      {
+        action: 'cdp.target',
+        source: { kind: 'bundled', trust: 'trusted' },
+        async execute(node) {
+          observedRole = node.role;
+          return {};
+        },
+      },
+    ],
+  });
+  const result = await runner.run({
+    projectRoot: root,
+    artifactsDir: path.join(root, 'artifacts'),
+    recordVideo: false,
+    recordingReason: 'Nonvisual parameter control.',
+    recipeDocument: {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      title: 'Target role control',
+      description: 'Keep existing action role parameters.',
+      workflow: {
+        entry: 'target',
+        nodes: {
+          target: {
+            action: 'cdp.target',
+            intent: 'Select the extension target for this control.',
+            role: 'extension',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  });
+  assert.equal(result.status, 'pass', JSON.stringify(result));
+  assert.equal(observedRole, 'extension');
+});

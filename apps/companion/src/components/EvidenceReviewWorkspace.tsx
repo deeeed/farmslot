@@ -109,8 +109,8 @@ export function EvidenceReviewWorkspace({
   const [evidenceFilter, setEvidenceFilter] = useState<ArtifactWorkspaceFilter>('all');
   const artifactCounts = useMemo(() => buildArtifactWorkspaceCounts(artifacts), [artifacts]);
   const filteredArtifacts = useMemo(
-    () => filterArtifactWorkspace(artifacts, evidenceFilter, ''),
-    [artifacts, evidenceFilter],
+    () => filterArtifactWorkspace(artifacts, evidenceFilter, '', evidenceModel),
+    [artifacts, evidenceFilter, evidenceModel],
   );
   const reviewArtifacts = useMemo(
     () =>

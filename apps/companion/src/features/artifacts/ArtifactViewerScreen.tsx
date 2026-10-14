@@ -55,7 +55,7 @@ import { gatewayFetch } from '../../lib/gateway-http-auth';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
 import { runRefreshEventMatches } from '../../lib/run-refresh';
 import { baseStyles, spacing } from '../../lib/theme';
-import { selectReadyWorkspaceDecision } from '../../lib/workspace-decisions';
+import { selectArtifactWorkspaceDecision } from '../../lib/workspace-decisions';
 import {
   artifactWorkspaceNavCurrent,
   targetWorkspaceRouteContextParams,
@@ -146,13 +146,15 @@ export default function ArtifactViewerScreen() {
   const recipeCompletionRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { recipeRuns, gatewaySelectedRecipeRunId } = recipeRunSelection;
-  const frozenDecision = useMemo(() => {
-    const explicit = routeParamString(evidenceDecision).trim();
-    if (explicit) return run?.decisions.find((decision) => decision.id === explicit);
-    return routeParamString(recipeRun) === DECISION_EVIDENCE_RECIPE_RUN_PARAM && run
-      ? selectReadyWorkspaceDecision(run)
-      : undefined;
-  }, [evidenceDecision, recipeRun, run]);
+  const frozenDecision = useMemo(
+    () =>
+      selectArtifactWorkspaceDecision(
+        run,
+        routeParamString(recipeRun),
+        routeParamString(evidenceDecision).trim(),
+      ),
+    [evidenceDecision, recipeRun, run],
+  );
   const frozenHash =
     frozenDecision?.payload?.kind === 'ready'
       ? frozenDecision.payload.prPackage?.packageHash
@@ -167,7 +169,7 @@ export default function ArtifactViewerScreen() {
         ? recipeRun
         : undefined,
     criterionId: routeParamString(ac).trim(),
-    decisionId: routeParamString(evidenceDecision).trim() || undefined,
+    decisionId: frozenDecision?.id,
     evidencePath: routeParamString(evidence).trim(),
     gatewayUrl,
     authHeaders: artifactAuthHeaders,
@@ -569,6 +571,8 @@ export default function ArtifactViewerScreen() {
       router.setParams({
         artifact: undefined,
         filter: undefined,
+        ac: undefined,
+        evidence: undefined,
         recipeRun: recipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
       });
     },

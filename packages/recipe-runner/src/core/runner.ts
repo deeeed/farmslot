@@ -8,6 +8,7 @@ import {
   digestRecipeDocument,
   getRecipeActionManifestActionNames,
   hasUnresolvedRecipeFailure,
+  isRecipeVisualCaptureAction,
   RECIPE_ASSERTION_ACTIONS,
   type RecipeActionManifestDocument,
   type RecipeArtifactManifestEntry,
@@ -514,7 +515,9 @@ class DefaultRecipeRunner implements RecipeRunner {
           logger: this.#logger,
           defaultObserverRefs: this.#defaultObserverRefs,
           prepareNode: async (nodeId, node) => {
+            const captureAnnotations = isRecipeVisualCaptureAction(node.action);
             if (
+              captureAnnotations &&
               node.ac !== undefined &&
               !evidencePlan.declarations.some((claim) => claim.id === node.ac)
             )
@@ -523,6 +526,7 @@ class DefaultRecipeRunner implements RecipeRunner {
                 `Unknown capture claim ${String(node.ac)}.`,
               );
             if (
+              captureAnnotations &&
               node.role !== undefined &&
               node.role !== 'before' &&
               node.role !== 'after' &&
@@ -533,12 +537,12 @@ class DefaultRecipeRunner implements RecipeRunner {
               recipeRunId,
               nodeId,
               traceIndex: traceWriter.list().length,
-              ...(typeof node.ac === 'string' ? { ac: node.ac } : {}),
-              ...(node.role === 'before' || node.role === 'after' || node.role === 'review'
+              ...(captureAnnotations && typeof node.ac === 'string' ? { ac: node.ac } : {}),
+              ...(captureAnnotations &&
+              (node.role === 'before' || node.role === 'after' || node.role === 'review')
                 ? { role: node.role }
                 : {}),
-              ...(node.ac !== undefined ||
-              node.role !== undefined ||
+              ...((captureAnnotations && (node.ac !== undefined || node.role !== undefined)) ||
               String(node.action).startsWith('ui.') ||
               RECIPE_ASSERTION_ACTIONS.has(String(node.action))
                 ? await observeRecipeCaptureSource(projectRoot)

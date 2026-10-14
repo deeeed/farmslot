@@ -62,7 +62,7 @@ import { documentTitle, presentDecision } from '../../lib/decision-presentation'
 import { decisionResolveRequest } from '../../lib/decision-resolve';
 import { decisionRunId, enrichDecisionWithRunContext } from '../../lib/decision-run-context';
 import { diffArtifactCandidate } from '../../lib/diff';
-import { evidenceMediaItems } from '../../lib/evidence-media-items';
+import { evidenceMediaItems, selectedEvidenceMediaItem } from '../../lib/evidence-media-items';
 import { gateReviewHref, HUMAN_GATE_DECISION_TYPE } from '../../lib/gate-review';
 import { gatewayFetch } from '../../lib/gateway-http-auth';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
@@ -1610,19 +1610,16 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
                   purpose: 'evidence',
                 });
                 setComparisonViewerItems([
-                  {
-                    uri,
+                  selectedEvidenceMediaItem(
+                    model,
                     path,
-                    title: model.selection?.caption,
-                    evidenceModel: model,
-                    initialTraceIndex: model.playback.clip?.traceIndex,
-                    authHeaders: artifactAuthHeaders,
-                    resolveArtifactUrl: (path) =>
+                    (path) =>
                       artifactUrlForEntry(gatewayUrl, presentation.runId!, {
                         path,
                         purpose: 'evidence',
                       }),
-                  },
+                    artifactAuthHeaders,
+                  ),
                 ]);
                 setViewerUri(uri);
               }}

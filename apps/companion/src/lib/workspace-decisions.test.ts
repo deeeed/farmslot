@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { RunDecision } from '@farmslot/protocol';
 
 import {
+  selectArtifactWorkspaceDecision,
   selectPrimaryWorkspaceDecision,
   selectReadyWorkspaceDecision,
   selectRetrospectiveWorkspaceDecision,
@@ -11,6 +12,27 @@ import {
   selectReviewWorkspaceDecision,
   workspaceDecisionKind,
 } from './workspace-decisions';
+
+test('choosing another attempt drops the retained decision inventory', () => {
+  const gate = decision({
+    id: 'frozen-gate',
+    payload: {
+      kind: 'ready',
+      prNumber: 1,
+      repo: 'owner/repo',
+      diffStat: { files: 1, additions: 1, deletions: 0 },
+      workerReport: 'Ready.',
+      branch: 'feature/test',
+      artifactManifest: [],
+      publicationStatus: 'published_draft',
+    },
+  });
+  const run = { decisions: [gate] };
+  assert.equal(selectArtifactWorkspaceDecision(run, 'decision-evidence', gate.id), gate);
+  assert.equal(selectArtifactWorkspaceDecision(run, 'decision-evidence', ''), gate);
+  assert.equal(selectArtifactWorkspaceDecision(run, 'another-attempt', gate.id), undefined);
+  assert.equal(selectArtifactWorkspaceDecision(run, 'current-artifacts', gate.id), undefined);
+});
 
 function decision(overrides: Partial<RunDecision>): RunDecision {
   return {

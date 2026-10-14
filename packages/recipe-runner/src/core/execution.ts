@@ -1,4 +1,5 @@
 import {
+  isRecipeVisualCaptureAction,
   normalizeRecipeClaimId,
   normalizeRecipeRef,
   RECIPE_ASSERTION_ACTIONS,
@@ -210,7 +211,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
       }
 
       const node = resolvedNode;
-      if (typeof node.ac === 'string') {
+      if (isRecipeVisualCaptureAction(node.action) && typeof node.ac === 'string') {
         const bindings = options.claimProjections?.get(namespacedNodeId)?.captureClaimBindings;
         node.ac =
           bindings?.[normalizeRecipeClaimId(node.ac.trim())] ??

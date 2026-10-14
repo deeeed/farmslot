@@ -56,6 +56,7 @@ test('recipe module exposes only the public recipe protocol surface', async () =
     'hudSecondaryText',
     'isAuthorizedOverride',
     'isDynamicRecipeRef',
+    'isRecipeVisualCaptureAction',
     'isRecord',
     'mergeRecipeValidationResults',
     'normalizeRecipeClaimId',

@@ -14,6 +14,11 @@ import { findUnsupportedRecipeTemplates, hasRecipeTemplate } from './template.js
 
 const NODE_ID_PATTERN = /^[A-Za-z0-9_-]+$/u;
 const VISUAL_REVIEW_CAPTURE_ACTIONS = new Set(['ui.capture_surface', 'ui.screenshot']);
+
+/** Capture annotations never replace another action's existing input parameters. */
+export function isRecipeVisualCaptureAction(action: unknown): boolean {
+  return VISUAL_REVIEW_CAPTURE_ACTIONS.has(String(action));
+}
 const VISUAL_REVIEW_TRANSITIONS = new Set(['tab', 'push', 'in-place', 'modal', 'replace']);
 
 export interface WorkflowGraph {
@@ -112,7 +117,8 @@ export function getRecipeActionParams(node: Record<string, unknown>): Record<str
   return Object.fromEntries(
     Object.entries(node).filter(
       ([field]) =>
-        !CORE_NODE_FIELDS.has(field) &&
+        (!CORE_NODE_FIELDS.has(field) ||
+          ((field === 'ac' || field === 'role') && !isRecipeVisualCaptureAction(node.action))) &&
         !(node.action === 'call' && (field === 'ref' || field === 'params')) &&
         !(node.action === 'end' && field === 'status'),
     ),
@@ -280,7 +286,11 @@ function validateVisualReviewMetadata(
   node: Record<string, unknown>,
   path: string,
 ): void {
-  if (node.ac !== undefined && !isNonEmptyString(node.ac))
+  if (
+    isRecipeVisualCaptureAction(node.action) &&
+    node.ac !== undefined &&
+    !isNonEmptyString(node.ac)
+  )
     addFinding(
       ctx,
       'error',
@@ -289,6 +299,7 @@ function validateVisualReviewMetadata(
       'ac must name a registered claim.',
     );
   if (
+    isRecipeVisualCaptureAction(node.action) &&
     node.role !== undefined &&
     !(typeof node.role === 'string' && hasRecipeTemplate(node.role)) &&
     !['before', 'after', 'review'].includes(String(node.role))
