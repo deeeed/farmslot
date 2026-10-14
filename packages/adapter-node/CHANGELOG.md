@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-node` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.1.20 - 2026-10-14
+
+- Align public dependencies with protocol 0.43.1 and its optional HUD conformance guard.
+
 ## 0.1.19 - 2026-10-14
 
 - Align the headless adapter with adapter-sdk 0.13.0 for the shared recipe provider contract.

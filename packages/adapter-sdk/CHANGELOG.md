@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.13.1 - 2026-10-14
+
+- Align public dependencies with protocol 0.43.1 and its optional HUD conformance guard.
+
 ## 0.13.0 - 2026-10-14
 
 - **BREAKING:** Declare app-built-in bridges explicitly and validate overlay requirements without adding installer stubs. Typed consumers must narrow the harness kind before using overlay install/cleanup leaves.

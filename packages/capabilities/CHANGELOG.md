@@ -6,6 +6,10 @@ All notable changes to `@farmslot/capabilities` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.1.7 - 2026-10-14
+
+- Align public dependencies with protocol 0.43.1 and its optional HUD conformance guard.
+
 ## 0.1.6 - 2026-10-10
 
 - Publish with protocol 0.36.0 so consumers share one dependency copy. No code change.
