@@ -1365,11 +1365,32 @@ function installGrok({ repo }) {
   return trustGrokFolders(wanted);
 }
 
+function installCursor() {
+  const configDir =
+    process.env.CURSOR_CONFIG_DIR?.trim() ||
+    (process.env.XDG_CONFIG_HOME?.trim()
+      ? path.join(process.env.XDG_CONFIG_HOME.trim(), 'cursor')
+      : path.join(os.homedir(), '.cursor'));
+  const configPath = path.join(configDir, 'cli-config.json');
+  const config = fs.existsSync(configPath)
+    ? JSON.parse(fs.readFileSync(configPath, 'utf8'))
+    : { version: 1, editor: { vimMode: false }, permissions: { allow: [], deny: [] } };
+  if (!config || typeof config !== 'object' || Array.isArray(config))
+    throw new Error('Invalid runner CLI config');
+  if (config.attribution?.attributeCommitsToAgent === false) return;
+  config.attribution = { ...config.attribution, attributeCommitsToAgent: false };
+  fs.mkdirSync(configDir, { recursive: true, mode: 0o700 });
+  const temporary = `${configPath}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(temporary, configPath);
+}
+
 async function install(args) {
   const runner = args.runner || 'claude';
   if (runner === 'claude') installClaude(args);
   else if (runner === 'codex') await installCodex(args);
   else if (runner === 'grok') installGrok(args);
+  else if (runner === 'cursor') installCursor();
   else if (runner === 'pi') installPi(args);
   else throw new Error(`unsupported runner for observability install: ${runner}`);
 }

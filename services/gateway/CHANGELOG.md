@@ -181,6 +181,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Allow managed runner resumes to suppress startup update checks.
 - Preserve advisory inline comments on passing static reviews while refusing blocking comments and mismatched issue reviews.
 
+- Disable automatic commit attribution during required worker launch preparation, including pool-defined launches and respawns.
+
 ## 0.21.0 - 2026-10-10
 
 - The accompanying private CLI/node revision includes stored-secret error redaction, a separate browser-open status line, and matching environment-root handling for deployment checks and services.

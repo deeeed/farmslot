@@ -1967,21 +1967,33 @@ describe('buildLaunchCommand', () => {
   });
 
   describe('cursor runner', () => {
+    for (const dispatchCmd of ['', 'cd {repo} && {runner_path} {safety_flags}; printf launched']) {
+      it(`requires attribution setup before launch with ${dispatchCmd ? 'a pool template' : 'inline argv'}`, () => {
+        const command = buildLaunchCommand(makeVars({ dispatchCmd }), 'cursor', null, PROMPT);
+        assert.match(command, /install-runner-observability\.mjs.*--runner 'cursor'/);
+        assert.match(command, /\) && \{ cd /);
+        assert.ok(command.indexOf('--runner') < command.indexOf('Read TASK.md'));
+        assert.ok(command.endsWith('; }'));
+      });
+    }
+
     it('falls back to bare `cursor-agent` on PATH when no cursor_path is configured', () => {
       const vars = makeVars({ dispatchCmd: '', cursorPath: '' });
       const cmd = buildLaunchCommand(vars, 'cursor', null, PROMPT);
-      assert.equal(
-        cmd,
-        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && cursor-agent --sandbox enabled --model ${DEFAULT_CURSOR_MODEL} 'Read TASK.md and execute.'`,
+      assert.ok(
+        cmd.endsWith(
+          `cd '/tmp/repo' && cursor-agent --sandbox enabled --model ${DEFAULT_CURSOR_MODEL} 'Read TASK.md and execute.'; }`,
+        ),
       );
     });
 
     it('falls back to inline Cursor Agent launcher with the shared default model', () => {
       const vars = makeVars({ dispatchCmd: '', cursorPath: '/usr/local/bin/cursor-agent' });
       const cmd = buildLaunchCommand(vars, 'cursor', null, PROMPT);
-      assert.equal(
-        cmd,
-        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /usr/local/bin/cursor-agent --sandbox enabled --model ${DEFAULT_CURSOR_MODEL} 'Read TASK.md and execute.'`,
+      assert.ok(
+        cmd.endsWith(
+          `cd '/tmp/repo' && /usr/local/bin/cursor-agent --sandbox enabled --model ${DEFAULT_CURSOR_MODEL} 'Read TASK.md and execute.'; }`,
+        ),
       );
       assert.match(cmd, /Read TASK/);
       assert.doesNotMatch(cmd, /--print/);
@@ -1996,9 +2008,10 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'cursor', 'sonnet-4', PROMPT, {
         safetyTier: 'full-auto',
       });
-      assert.equal(
-        cmd,
-        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /opt/cursor/bin/agent --force --sandbox enabled --model sonnet-4 'Read TASK.md and execute.'`,
+      assert.ok(
+        cmd.endsWith(
+          `cd '/tmp/repo' && /opt/cursor/bin/agent --force --sandbox enabled --model sonnet-4 'Read TASK.md and execute.'; }`,
+        ),
       );
       assert.match(cmd, /Read TASK/);
       assert.doesNotMatch(cmd, /--print/);
@@ -2062,7 +2075,7 @@ describe('buildLaunchCommand', () => {
       assert.match(
         cmd,
         new RegExp(
-          `cd /tmp/repo && /usr/local/bin/cursor-agent --force --sandbox disabled --model ${DEFAULT_CURSOR_MODEL} Read TASK\\.md and execute\\.$`,
+          `cd /tmp/repo && /usr/local/bin/cursor-agent --force --sandbox disabled --model ${DEFAULT_CURSOR_MODEL} Read TASK\\.md and execute\\.; \}`,
         ),
       );
       assert.match(cmd, /Read TASK\.md and execute\./);
