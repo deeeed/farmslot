@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Preserve the frozen run review policy in nested role contracts so valid pending visual claims reach their human gate without weakening evidence or CI checks.
+
 - Wait up to two minutes for node reconnection during task writing, preparation and dispatch; reattach static-review monitors after gateway restarts, retaining the exact worker command and reservation when observation remains unavailable.
 - Keep publication gates open across review-fix recovery and retain workers, slots and evidence when finalization lacks approval or publication; completed step flags cannot bypass publication before DONE.
 - Persist and reconcile one verified stack-maintenance checkpoint across worker rebases and graph catch-up without changing retained evidence. Install the compatible task runtime before deploying enforcement or migrating pack templates; stacked lint fixes require retained publication ownership too. Graph catch-up requires a configured signing key; local recovery requires Git 2.40 or later.
