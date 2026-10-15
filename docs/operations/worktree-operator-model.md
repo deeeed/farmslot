@@ -95,18 +95,20 @@ farmslot runs export <candidateRunId> --as-package /tmp/candidate.result-package
 
 Real production history stays on main unless you explicitly import with `--keep-ids --force`.
 
-Dev gateway/node stacks load auth from their own `.env.local-auth` or `.env`.
-The Companion wrapper reads `.env.local-auth`. Inherited
-node/gateway credentials, auth mode and bind host are cleared before checkout
-configuration is loaded; shell-exported credentials do not configure a new stack.
+Each sandbox has its own gateway credential store under its isolated
+`FARMSLOT_HOME`. Pair person devices to that gateway and give automation a
+separate service profile. Do not copy the operator gateway's credentials or put
+gateway login tokens in `.env.local-auth`, Companion build settings or templates.
+See [Identity and credentials](../reference/identity-and-credentials.md).
 
-For physical-device LAN mode, each sandbox needs its own token and bind settings
-in `.env.local-auth`; it cannot borrow the operator gateway's credentials.
-A sandbox with no local auth file binds loopback and does not support LAN
-Companion connections. Health checks on loopback do not prove LAN connectivity.
-Slot-local LAN credential provisioning remains a rollout prerequisite.
+Dev stacks clear inherited credentials, auth mode and bind host before loading
+checkout configuration. `.env.local-auth` can supply the local node's machine
+credential and its server-assigned native owner, plus unrelated private provider
+settings. Remote node deployment retains the installed node's owner unless the
+caller explicitly replaces it.
 
-Standalone gateway hints accept shell exports. When starting through
-`yarn farmdev`, put those same token/password and `GATEWAY_HOST` settings in
-this checkout's `.env.local-auth` or `.env.ports` instead of exporting them.
-An explicit loopback bind belongs in those files too, even with local auth.
+For physical-device LAN mode, set `GATEWAY_HOST=0.0.0.0` in the checkout's
+`.env.ports` and activate its credential store before pairing Companion. A sandbox
+without local configuration binds loopback; health checks on loopback do not prove
+LAN connectivity. Put an explicit loopback bind in `.env.ports` when LAN access
+is unwanted.
