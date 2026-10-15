@@ -15,6 +15,8 @@ import type {
   PrincipalListResult,
   PrincipalRetireParams,
   PrincipalRetireResult,
+  PrincipalReuseRetiredIdParams,
+  PrincipalReuseRetiredIdResult,
   PrincipalRevokeRoleParams,
   PrincipalRevokeRoleResult,
   PrincipalSubject,
@@ -40,6 +42,20 @@ export function principalCreate(
 
 export function principalList(runtime: GatewayAuthRuntime): PrincipalListResult {
   return { principals: structuredClone(runtime.store.snapshot().principals) };
+}
+
+export function principalReuseRetiredId(
+  params: PrincipalReuseRetiredIdParams,
+  runtime: GatewayAuthRuntime,
+): PrincipalReuseRetiredIdResult {
+  validatePrincipalId(params?.principalId);
+  const subject = validateSubject(params?.subject);
+  const roles = validateRoles(params?.roles);
+  return {
+    principal: translateWriterError(() =>
+      runtime.writer.createPrincipal(subject, roles, params.principalId, { reuseRetiredId: true }),
+    ),
+  };
 }
 
 export function principalBindNativeOwner(

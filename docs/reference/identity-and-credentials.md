@@ -96,3 +96,21 @@ revocations stay intact. Existing issued and paired device logins keep working;
 raw environment-token logins must pair or select an issued profile. Keep old
 credentials until replacement logins are verified, then revoke and retire them
 through the commands above.
+
+## Replace a retired identity at its exact id
+
+Revoke the obsolete identity's credentials and retire it first. An admin may
+then explicitly create its replacement at that retired id:
+
+```bash
+farmslot principal create --reuse-retired-id <retired-id> \
+  --type person --name <person-name> --role admin
+```
+
+The replacement needs fresh credentials. Old work stays bound to its original
+identity generation and cannot adopt replacement authority. Re-author automation
+under its service identity; authenticated new queued work receives the current
+generation. Old credential ids remain reserved,
+old secrets cannot authenticate, and the store records the reuse. Ordinary
+creation never reuses a retired id. Offline replacement requires all gateways
+sharing the identity home to be stopped.

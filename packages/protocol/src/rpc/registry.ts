@@ -16,6 +16,7 @@ export const Methods = {
   PAIRING_CANDIDATES: 'pairing.candidates',
   PAIRING_EXCHANGE: 'pairing.exchange',
   PRINCIPAL_CREATE: 'principal.create',
+  PRINCIPAL_REUSE_RETIRED_ID: 'principal.reuseRetiredId',
   PRINCIPAL_BIND_NATIVE_OWNER: 'principal.bindNativeOwner',
   PRINCIPAL_LIST: 'principal.list',
   PRINCIPAL_GRANT: 'principal.grant',

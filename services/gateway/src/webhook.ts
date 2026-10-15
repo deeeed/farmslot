@@ -9,7 +9,7 @@ import type { FlowType, MonitoredPRIdentity, Principal, ProjectConfig } from '@f
 import { addItem } from './backlog/dispatch-queue.js';
 import { loadProjectConfigs } from './fleet/state.js';
 import { isAdminPrincipal } from './security/authorization.js';
-import type { WorkOriginator } from './security/work-originator.js';
+import { principalWorkOriginator, type WorkOriginator } from './security/work-originator.js';
 
 export type WebhookProvider = 'github' | 'jira';
 export type WebhookPrincipalResolver = (principalId: string) => Principal | null;
@@ -50,7 +50,7 @@ export function resolveWebhookWorkOriginator(
       message: `${configKey} must name a service principal with admin/global authority`,
     };
   }
-  return { ok: true, originator: { kind: 'principal', principalId: principal.id } };
+  return { ok: true, originator: principalWorkOriginator(principal) };
 }
 
 function webhookOriginatorOrReject(

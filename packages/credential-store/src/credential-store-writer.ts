@@ -48,29 +48,54 @@ export class CredentialStoreWriter {
     subject: PrincipalSubject,
     roles: RoleBinding[],
     requestedId?: string,
+    options: { reuseRetiredId?: boolean } = {},
   ): Principal {
     validateNodeRoles(subject, roles);
     const result = this.mutate((store) => {
       const id = requestedId ?? uniquePrincipalId(store, subject.displayName);
+      if (options.reuseRetiredId && !requestedId) {
+        throw new CredentialStoreRefusalError('Reuse requires an explicit retired principal id');
+      }
       if ((VIRTUAL_PRINCIPAL_IDS as readonly string[]).includes(id)) {
         throw new CredentialStoreRefusalError(
           `Principal id '${id}' is reserved for a virtual principal`,
         );
       }
-      if (store.retiredPrincipalIds?.includes(id)) {
+      const retired = store.retiredPrincipalIds?.includes(id) === true;
+      if (retired && !options.reuseRetiredId) {
         throw new CredentialStoreRefusalError(`Principal '${id}' has been retired`);
       }
       if (store.principals.some((principal) => principal.id === id)) {
         throw new CredentialStoreRefusalError(`Principal '${id}' already exists`);
       }
+      if (options.reuseRetiredId && !retired) {
+        throw new CredentialStoreRefusalError(`Principal '${id}' has not been retired`);
+      }
+      const generation =
+        (store.principalIdReuses ?? []).filter((entry) => entry.principalId === id).length + 1;
       const principal: Principal = {
         id,
         subject: structuredClone(subject),
         roles: cloneRoles(roles),
+        ...(options.reuseRetiredId ? { generation } : {}),
       };
       validateNativeOwner(store, principal);
       return {
-        next: { ...store, principals: [...store.principals, principal] },
+        next: {
+          ...store,
+          principals: [...store.principals, principal],
+          ...(options.reuseRetiredId
+            ? {
+                retiredPrincipalIds: (store.retiredPrincipalIds ?? []).filter(
+                  (entry) => entry !== id,
+                ),
+                principalIdReuses: [
+                  ...(store.principalIdReuses ?? []),
+                  { principalId: id, generation, reusedAt: new Date().toISOString() },
+                ],
+              }
+            : {}),
+        },
         result: principal,
       };
     });
