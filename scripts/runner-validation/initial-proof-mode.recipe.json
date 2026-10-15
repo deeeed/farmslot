@@ -1,0 +1,35 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Initial resource proof declarations",
+  "description": "Exercise first acquisition through the production consumer and real private provider hooks. No active slot or worker.",
+  "proofTargets": [
+    {
+      "id": "initial-acquisition",
+      "claim": "Declared proof modes acquire an owned provider without a prior plan and release it.",
+      "proofMode": "state"
+    }
+  ],
+  "workflow": {
+    "entry": "acquire",
+    "nodes": {
+      "acquire": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/initial-proof-mode.mts",
+        "intent": "Acquire and release private providers from authored initial proof modes.",
+        "next": "verify"
+      },
+      "verify": {
+        "action": "assert_output",
+        "source": "acquire",
+        "contains": "INITIAL_PROOF_MODE_PASS",
+        "intent": "Verify first acquisition and observed provider cleanup.",
+        "proves": ["initial-acquisition"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}
