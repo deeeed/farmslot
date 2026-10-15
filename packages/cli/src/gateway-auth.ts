@@ -8,6 +8,7 @@ import type {
 } from '@farmslot/protocol';
 
 import {
+  forgetRejectedPersonCredential,
   GatewayClient,
   GatewayConnectionError,
   type GatewayCredential,
@@ -50,10 +51,19 @@ export async function probeGatewayAuth(
       ...(current?.token ? { token: current.token } : {}),
       ...(current?.password ? { password: current.password } : {}),
     });
+    if (result.principal?.subjectKind === 'person' && credential?.forgetLegacyPerson) {
+      await credential.forgetLegacyPerson();
+      return {
+        state: 'inactive',
+        detail: 'Sign in again using your person credential or a pairing code.',
+        errorCode: 'AUTH_PERSON_SESSION_REQUIRED',
+      };
+    }
     return result.authMode === 'none'
       ? { state: 'no-auth', authMode: 'none', principal: result.principal }
       : { state: 'authenticated', authMode: result.authMode, principal: result.principal };
   } catch (err) {
+    await forgetRejectedPersonCredential(err, credential);
     const detail = err instanceof Error ? err.message : String(err);
     // Typed transport failure = unreachable; anything else came back from the
     // gateway and means the credential was rejected/missing.

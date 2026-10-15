@@ -15,6 +15,15 @@ export interface PersonSessionStorage {
   save(value: PersonSessionAuth | null): Promise<void>;
 }
 
+/** Interactive transports keep these fields out of auth.connect serialization. */
+export interface InteractiveGatewayCredentials {
+  token?: string;
+  password?: string;
+  sessionStorage?: PersonSessionStorage;
+  explicitPersonSignIn?: boolean;
+  personSessionRequired?: boolean;
+}
+
 export interface PersonSessionClientOptions {
   storage: PersonSessionStorage;
   /** The optional access token authenticates this request, never the refresh token. */

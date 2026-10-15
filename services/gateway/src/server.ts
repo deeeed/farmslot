@@ -661,6 +661,14 @@ async function handleMessage(
     state.authMode = result.mode ?? authRuntime.auth.mode;
     state.authenticatedAt = Date.now();
     state.authentication = result.authentication;
+    let gatewayPing = true;
+    try {
+      authorizeGatewayMethod(authRuntime, state, Methods.GATEWAY_PING);
+    } catch (error) {
+      if (!(error instanceof GatewayMethodError) || error.code !== 'AUTH_FORBIDDEN') throw error;
+      // Capabilities describe this account's existing permission, not a guard exemption.
+      gatewayPing = false;
+    }
     console.log(`[auth] ${clientKind} authenticated using ${state.authMode}`);
     sendResponse(state.ws, frame.id, true, {
       ok: true,
@@ -671,7 +679,7 @@ async function handleMessage(
         httpBearerAuth: !authRuntime.resolver.isSoloMode(),
         personSessions: true,
         voiceInstructionFormatting: true,
-        gatewayPing: true,
+        gatewayPing,
         workspaceAccess: gatewayWorkspaceAccess(
           result.principal,
           authRuntime.store.snapshot().principals,

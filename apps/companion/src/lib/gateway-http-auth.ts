@@ -1,7 +1,6 @@
-export interface GatewayAuthCredentials {
-  token?: string;
-  password?: string;
-}
+import type { InteractiveGatewayCredentials } from '@farmslot/protocol';
+
+export type GatewayAuthCredentials = InteractiveGatewayCredentials;
 
 export type GatewayHttpAuthHeaders = Record<string, string>;
 

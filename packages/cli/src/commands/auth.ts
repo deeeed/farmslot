@@ -21,6 +21,7 @@ import {
   loadProfilesOrExit,
   profileCredential,
   saveProfiles,
+  storedProfileCredential,
 } from '../gateway-profiles.js';
 import { OutputContext } from '../output.js';
 import { withProgress } from '../progress.js';
@@ -147,7 +148,11 @@ export function registerAuthCommands(program: Command): void {
           () =>
             probeGatewayAuth(
               profile.url,
-              personAccess ? { token: personAccess } : profileCredential(profile),
+              personAccess
+                ? { token: personAccess }
+                : flagCount === 0
+                  ? storedProfileCredential(name, profile)
+                  : profileCredential(profile),
             ),
           !isMachineMode(output),
         );
@@ -155,11 +160,6 @@ export function registerAuthCommands(program: Command): void {
           if (opts.token) {
             personAccess = await exchangePerson(profile, profiles, { credential: opts.token });
             probe = await probeGatewayAuth(profile.url, { token: personAccess });
-          } else {
-            // Only this server verdict identifies a legacy person secret. Never guess by grammar.
-            delete profile.secret;
-            delete profile.authMode;
-            saveProfiles(profiles);
           }
         }
         if (
@@ -167,11 +167,6 @@ export function registerAuthCommands(program: Command): void {
           probe.principal?.subjectKind === 'person' &&
           !profile.personSession
         ) {
-          if (flagCount === 0) {
-            delete profile.secret;
-            delete profile.authMode;
-            saveProfiles(profiles);
-          }
           throw new Error(
             'Person access tokens are not saved. Sign in with a person credential or a pairing code.',
           );
@@ -289,7 +284,10 @@ export function registerAuthCommands(program: Command): void {
           Promise.all(
             names.map(async (name) => {
               const profile = profiles.gateways[name];
-              const probe = await probeGatewayAuth(profile.url, profileCredential(profile));
+              const probe = await probeGatewayAuth(
+                profile.url,
+                storedProfileCredential(name, profile),
+              );
               return { name, profile, probe };
             }),
           ),

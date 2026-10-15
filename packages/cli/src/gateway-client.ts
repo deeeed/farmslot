@@ -3,6 +3,7 @@ import { WebSocket as NodeWebSocket } from 'ws';
 import {
   type EventFrame,
   type Frame,
+  hasAuthErrorCode,
   type PersonSessionAuth,
   PersonSessionClient,
   type ResponseFrame,
@@ -68,6 +69,15 @@ export interface GatewayCredential {
   password?: string;
   personSession?: PersonSessionAuth;
   persistPersonSession?: (value: PersonSessionAuth | null) => Promise<void>;
+  forgetLegacyPerson?: () => Promise<void>;
+}
+
+export async function forgetRejectedPersonCredential(
+  error: unknown,
+  credential: GatewayCredential | null | undefined,
+): Promise<void> {
+  if (hasAuthErrorCode(error, 'AUTH_PERSON_SESSION_REQUIRED'))
+    await credential?.forgetLegacyPerson?.();
 }
 
 export class GatewayClient {
@@ -238,6 +248,7 @@ export class GatewayClient {
       // socket so the process does not stay alive on a dead connection.
       closed = true;
       ws.close();
+      await forgetRejectedPersonCredential(err, this.credential);
       throw err;
     } finally {
       pending.delete(authId);
@@ -316,7 +327,12 @@ export class GatewayClient {
       return this.personClient.withAccess((token) =>
         this.callWithCredential<T>(method, params, onEvent, { token }),
       );
-    return this.callWithCredential<T>(method, params, onEvent, credential);
+    try {
+      return await this.callWithCredential<T>(method, params, onEvent, credential);
+    } catch (error) {
+      await forgetRejectedPersonCredential(error, this.credential);
+      throw error;
+    }
   }
 
   private callWithCredential<T>(

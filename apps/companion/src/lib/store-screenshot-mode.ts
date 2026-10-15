@@ -114,7 +114,7 @@ function createScreenshotGatewayClient(fixtures: StoreScreenshotFixtures): Gatew
   client.onConnectionChange = () => () => {};
   client.connect = () => undefined;
   client.disconnect = () => undefined;
-  client.setConnection = () => undefined;
+  client.setConnection = async () => undefined;
   return client;
 }
 

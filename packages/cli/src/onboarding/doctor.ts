@@ -13,7 +13,7 @@ import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { probeGatewayAuth } from '../gateway-auth.js';
 import { probeLocalGatewayListen } from '../gateway-health.js';
-import { loadProfiles, profileCredential, profilesPath } from '../gateway-profiles.js';
+import { loadProfiles, profilesPath, storedProfileCredential } from '../gateway-profiles.js';
 
 import { readPool } from './pool-config.js';
 import { checkPrereqs, commandPath, detectRunners, runnerHint } from './prereqs.js';
@@ -572,7 +572,7 @@ async function gatewaySection(): Promise<DoctorSection> {
   const checks: DoctorCheck[] = await Promise.all(
     names.map(async (name): Promise<DoctorCheck> => {
       const profile = profiles.gateways[name];
-      const probe = await probeGatewayAuth(profile.url, profileCredential(profile));
+      const probe = await probeGatewayAuth(profile.url, storedProfileCredential(name, profile));
       const label = profiles.active === name ? `${name} (active)` : name;
       switch (probe.state) {
         case 'authenticated':

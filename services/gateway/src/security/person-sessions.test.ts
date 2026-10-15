@@ -19,14 +19,17 @@ import {
 } from '@farmslot/credential-store';
 import {
   type GatewayAuthConnectResult,
+  hasAuthErrorCode,
   Methods,
   type PairingCreateResult,
+  type PersonSessionAuth,
   PersonSessionEndedError,
   type PersonSessionGrant,
   type PersonSessionListResult,
   type PersonSessionRevokeResult,
 } from '@farmslot/protocol';
 
+import { testGatewayConnection as testCompanionGatewayConnection } from '../../../../apps/companion/src/lib/gateway-connection-test.js';
 import { registerAuthCommands } from '../../../../packages/cli/src/commands/auth.js';
 import { GatewayClient, GatewayRpcError } from '../../../../packages/cli/src/gateway-client.js';
 import {
@@ -609,4 +612,43 @@ test('CLI person pairing consumes its invitation once and saves a refresh-only d
     f.client().call(Methods.AUTH_SESSION_EXCHANGE, { code: pairing.code, ...f.device }),
     rpcCode('PAIRING_FAILED'),
   );
+});
+
+test('the Companion transport exchanges, renews and clears person authority through the public gateway', async (t) => {
+  const f = await rpcFixture(t);
+  let saved: PersonSessionAuth | null = null;
+  const sessionStorage = {
+    load: async () => saved,
+    save: async (value: PersonSessionAuth | null) => {
+      saved = value;
+    },
+  };
+  const first = await testCompanionGatewayConnection(f.url, {
+    token: f.credential.secret,
+    explicitPersonSignIn: true,
+    sessionStorage,
+  });
+  assert.equal(first.principal?.id, f.person.id);
+  assert.equal(first.gatewayPingSupported, false);
+  const administrator = await testCompanionGatewayConnection(f.url, {
+    token: f.adminCredential.secret,
+  });
+  assert.equal(administrator.gatewayPingSupported, true);
+  assert.ok(saved);
+  const snapshot = await sessionStorage.load();
+  assert.ok(snapshot);
+  assert.ok(!JSON.stringify(snapshot).includes('fsa_'));
+  assert.ok(!JSON.stringify(snapshot).includes(f.credential.secret));
+  const second = await testCompanionGatewayConnection(f.url, {
+    sessionStorage,
+    personSessionRequired: true,
+  });
+  assert.equal(second.principal?.id, f.person.id);
+  const access = f.writer.refreshPersonSession(snapshot.refreshToken);
+  f.writer.revokePersonSession(authority(access), access.session.id);
+  await assert.rejects(
+    testCompanionGatewayConnection(f.url, { sessionStorage, personSessionRequired: true }),
+    (error: unknown) => hasAuthErrorCode(error, 'AUTH_SESSION_ENDED'),
+  );
+  assert.equal(await sessionStorage.load(), null);
 });

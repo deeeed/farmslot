@@ -173,7 +173,50 @@ export function profileCredential(
   return profile.authMode === 'password' ? { password: profile.secret } : { token: profile.secret };
 }
 
+/** Persist only the selected profile; a late response cannot overwrite a new login or URL. */
+export function storedProfileCredential(
+  name: string,
+  profile: GatewayProfile,
+  path = profilesPath(),
+): GatewayCredential | undefined {
+  const credential = profileCredential(profile, async (value) => {
+    const current = loadProfiles(path);
+    const selected = matchingProfile(current, name, profile);
+    if (selected.personSession?.refreshToken !== profile.personSession?.refreshToken)
+      throw new PersonSessionChangedError();
+    if (value) selected.personSession = value;
+    else delete selected.personSession;
+    saveProfiles(current, path);
+  });
+  if (credential && !profile.personSession && profile.secret) {
+    const presented = profile.secret;
+    credential.forgetLegacyPerson = async () => {
+      const current = loadProfiles(path);
+      const selected = matchingProfile(current, name, profile);
+      if (selected.secret !== presented || selected.personSession)
+        throw new PersonSessionChangedError();
+      delete selected.secret;
+      delete selected.authMode;
+      saveProfiles(current, path);
+      delete profile.secret;
+      delete profile.authMode;
+    };
+  }
+  return credential;
+}
+
+function matchingProfile(
+  profiles: GatewayProfilesFile,
+  name: string,
+  expected: GatewayProfile,
+): GatewayProfile {
+  const selected = profiles.gateways[name];
+  if (!selected || selected.url !== expected.url) throw new PersonSessionChangedError();
+  return selected;
+}
+
 /** Scheme, host, explicit-or-default port and path without a trailing slash. */
+
 function comparableGatewayUrl(raw: string): string | undefined {
   try {
     const url = new URL(raw);
@@ -236,24 +279,7 @@ export function resolveGatewayTarget(
   const path = profilesPath();
   const getProfiles = (): GatewayProfilesFile => profilesOverride ?? loadProfiles(path);
   const credentialFor = (name: string, profile: GatewayProfile): GatewayCredential | undefined =>
-    profileCredential(
-      profile,
-      profilesOverride
-        ? undefined
-        : async (value) => {
-            const current = loadProfiles(path);
-            const selected = current.gateways[name];
-            if (
-              !selected ||
-              selected.url !== profile.url ||
-              selected.personSession?.refreshToken !== profile.personSession?.refreshToken
-            )
-              throw new PersonSessionChangedError();
-            if (value) selected.personSession = value;
-            else delete selected.personSession;
-            saveProfiles(current, path);
-          },
-    );
+    profilesOverride ? profileCredential(profile) : storedProfileCredential(name, profile, path);
 
   if (opts.url) {
     let profiles: GatewayProfilesFile;

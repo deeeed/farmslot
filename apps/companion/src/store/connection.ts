@@ -9,6 +9,8 @@ import {
   Methods,
   type MonitorViolationPayload,
   type PendingDecision,
+  type PersonDeviceSession,
+  type PersonSessionAuth,
   type PRListUpdatedPayload,
   type PRUpdatedPayload,
   type Run,
@@ -38,6 +40,7 @@ import {
   GatewayClient,
   type GatewayHttpAuthHeaders,
   gatewayHttpAuthHeaders,
+  testGatewayConnection,
 } from '../lib/gateway-client';
 import {
   gatewayProfileForConnection,
@@ -50,16 +53,15 @@ import {
 import {
   DEFAULT_GATEWAY_PROFILES,
   DEFAULT_GATEWAY_URL,
+  forgetGatewayProfileSecret,
   type GatewayProfile,
   type GatewayProfileAuthMode,
   isLegacyPresetGatewayUrl,
   mergeGatewayProfiles,
+  prepareGatewayProfileLogin,
   profileIdForUrl,
   profileSecretStorageKey,
-  readGatewayProfileSecret,
-  rememberedSessionForProfile,
-  seedPresetGatewayProfileSecrets,
-  writeGatewayProfileSecret,
+  readGatewayProfilePersonSession,
 } from '../lib/gateway-profiles';
 import { fetchActiveRuns, fetchRecentRunHistory } from '../lib/gateway-run-sync';
 import { notifyDecision, notifyRunCompleted, notifyViolation } from '../lib/notifications';
@@ -93,7 +95,7 @@ type DecisionNewEventPayload = {
 interface ConnectionStore {
   status: ConnectionState;
   signedOut: boolean;
-  sessionExpiresAt: number | null;
+  personSession: PersonDeviceSession | null;
   signOut: () => Promise<void>;
   principalId: string | null;
   workspaceAccess: WorkspaceAccess;
@@ -117,7 +119,11 @@ interface ConnectionStore {
   init: () => Promise<void>;
   setGatewayUrl: (url: string) => Promise<void>;
   setActiveProfile: (profileId: string) => Promise<void>;
-  saveProfile: (profile: GatewayProfile, secret?: string) => Promise<void>;
+  saveProfile: (
+    profile: GatewayProfile,
+    secret?: string,
+    personSession?: PersonSessionAuth,
+  ) => Promise<void>;
   setProfileAuth: (
     profileId: string,
     authMode: GatewayProfileAuthMode,
@@ -137,7 +143,7 @@ interface ConnectionStore {
 export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   status: 'disconnected',
   signedOut: false,
-  sessionExpiresAt: null,
+  personSession: null,
   principalId: null,
   workspaceAccess: 'none',
   authorityEpoch: 0,
@@ -166,7 +172,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       const saved = await AsyncStorage.getItem(GATEWAY_URL_KEY);
       const savedProfiles = await readSavedProfiles();
       const profiles = mergeGatewayProfiles(savedProfiles);
-      if (!signedOut) await seedPresetGatewayProfileSecrets(profiles);
       const savedActiveProfileId = await AsyncStorage.getItem(ACTIVE_GATEWAY_PROFILE_KEY);
       const savedUrl = saved && !isLegacyPresetGatewayUrl(saved) ? saved : null;
       const { profile: activeProfile, url } = selectInitialGatewayConnection(
@@ -178,10 +183,8 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       const auth =
         !signedOut && activeProfile ? await authCredentialsForProfile(activeProfile) : {};
       const client = new GatewayClient(url, auth);
-      const session = await configureRememberedSession(
-        client,
-        signedOut ? undefined : (activeProfile ?? undefined),
-      );
+      const session =
+        !signedOut && activeProfile ? await readGatewayProfilePersonSession(activeProfile) : null;
 
       // Subscribe to fleet events
       client.subscribe(Events.FLEET_UPDATED, (payload) => {
@@ -364,6 +367,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       });
 
       client.onConnectionChange((status) => {
+        if (get().client !== client) return;
         const principalId = client.authenticatedPrincipal?.id ?? null;
         const workspaceAccess = client.workspaceAccess;
         const authorityChanged =
@@ -384,6 +388,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           principalId,
           workspaceAccess,
           activeProfileHttpAuthHeaders: client.httpAuthHeaders,
+          personSession: client.personDeviceSession,
           authorityEpoch: get().authorityEpoch + (authorityChanged ? 1 : 0),
           ...(authorityChanged
             ? { lastSyncError: null, gatewayCompatibilityHint: null, probeInProgress: false }
@@ -448,7 +453,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
 
       set({
         signedOut,
-        sessionExpiresAt: session?.expiresAt ?? null,
+        personSession: session?.session ?? null,
         gatewayUrl: url,
         profiles,
         activeProfileId: activeProfile?.id ?? '',
@@ -514,8 +519,8 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       probeAttemptTracker.invalidate();
       livenessController?.reset();
     }
-    await configureRememberedSession(state.client, profile);
-    state.client?.setConnection(url, auth, transition.changed);
+
+    await state.client?.setConnection(url, auth, transition.changed);
     if (transition.changed) void livenessController?.probeFresh();
   },
 
@@ -548,12 +553,16 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       probeAttemptTracker.invalidate();
       livenessController?.reset();
     }
-    await configureRememberedSession(state.client, profile);
-    state.client?.setConnection(profile.url, auth, transition.changed);
+
+    await state.client?.setConnection(profile.url, auth, transition.changed);
     if (transition.changed) void livenessController?.probeFresh();
   },
 
-  saveProfile: async (profile: GatewayProfile, secret?: string) => {
+  saveProfile: async (
+    profile: GatewayProfile,
+    secret?: string,
+    personSession?: PersonSessionAuth,
+  ) => {
     const normalizedProfile: GatewayProfile = {
       ...profile,
       authMode: profile.authMode ?? 'none',
@@ -562,8 +571,17 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           ? (profile.secretStorageKey ?? profileSecretStorageKey(profile.id))
           : undefined,
     };
-    if (secret !== undefined && normalizedProfile.authMode !== 'none') {
-      await writeGatewayProfileSecret(normalizedProfile, secret);
+    const login = await prepareGatewayProfileLogin(normalizedProfile, secret, personSession);
+    if (personSession) {
+      const current = await readGatewayProfilePersonSession(normalizedProfile);
+      if (current && current.session.id !== personSession.session.id)
+        throw new Error('Sign out this device before replacing its person login.');
+      await login.credentials.sessionStorage.save(personSession);
+      const result = await testGatewayConnection(normalizedProfile.url, login.credentials);
+      await login.commitVerifiedCredential(result);
+    } else if (secret?.trim() && normalizedProfile.authMode !== 'none') {
+      const result = await testGatewayConnection(normalizedProfile.url, login.credentials);
+      await login.commitVerifiedCredential(result);
     }
     const profiles = mergeGatewayProfiles([
       ...get().profiles.filter((candidate) => candidate.id !== normalizedProfile.id),
@@ -616,8 +634,8 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         probeAttemptTracker.invalidate();
         livenessController?.reset();
       }
-      await configureRememberedSession(state.client, updated);
-      state.client?.setConnection(updated.url, auth, transition.changed);
+
+      await state.client?.setConnection(updated.url, auth, transition.changed);
       if (transition.changed) void livenessController?.probeFresh();
     }
   },
@@ -625,6 +643,8 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   deleteProfile: async (profileId: string) => {
     const profile = get().profiles.find((candidate) => candidate.id === profileId);
     if (!profile || profile.readonly) return;
+    if (await readGatewayProfilePersonSession(profile))
+      throw new Error('Sign out this device before deleting its profile.');
     const profiles = mergeGatewayProfiles(
       get().profiles.filter((candidate) => candidate.id !== profileId),
     );
@@ -632,7 +652,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       GATEWAY_PROFILES_KEY,
       JSON.stringify(sanitizeGatewayProfilesForStorage(profiles)),
     );
-    await writeGatewayProfileSecret(profile, '');
+    await forgetGatewayProfileSecret(profile);
     if (profileId !== get().activeProfileId) {
       set({ profiles });
       return;
@@ -658,9 +678,9 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       probeAttemptTracker.invalidate();
       livenessController?.reset();
       resetFarmState();
-      state.client?.setAccountSession(null);
-      set({ sessionExpiresAt: null });
-      state.client?.setConnection('', {});
+
+      set({ personSession: null });
+      await state.client?.setConnection('', {});
       return;
     }
     await AsyncStorage.setItem(ACTIVE_GATEWAY_PROFILE_KEY, nextProfile.id);
@@ -687,8 +707,8 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       probeAttemptTracker.invalidate();
       livenessController?.reset();
     }
-    await configureRememberedSession(state.client, nextProfile);
-    state.client?.setConnection(nextProfile.url, auth, transition.changed);
+
+    await state.client?.setConnection(nextProfile.url, auth, transition.changed);
     if (transition.changed) void livenessController?.probeFresh();
   },
 
@@ -700,11 +720,14 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       ),
     );
     const rawSavedProfiles = await readSavedProfiles();
+    const personLogins = await Promise.all(get().profiles.map(readGatewayProfilePersonSession));
+    if (personLogins.some(Boolean))
+      throw new Error('Sign out person profiles before resetting saved profiles.');
     const removableProfiles = [...get().profiles, ...rawSavedProfiles].filter(
       (profile) =>
         !preservedSecretKeys.has(profile.secretStorageKey ?? profileSecretStorageKey(profile.id)),
     );
-    await Promise.all(removableProfiles.map((profile) => writeGatewayProfileSecret(profile, '')));
+    await Promise.all(removableProfiles.map((profile) => forgetGatewayProfileSecret(profile)));
     await AsyncStorage.removeItem(GATEWAY_PROFILES_KEY);
 
     const nextProfile = profiles[0] ?? null;
@@ -728,9 +751,9 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       probeAttemptTracker.invalidate();
       livenessController?.reset();
       resetFarmState();
-      state.client?.setAccountSession(null);
-      set({ sessionExpiresAt: null });
-      state.client?.setConnection('', {});
+
+      set({ personSession: null });
+      await state.client?.setConnection('', {});
       return;
     }
 
@@ -758,8 +781,8 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       probeAttemptTracker.invalidate();
       livenessController?.reset();
     }
-    await configureRememberedSession(state.client, nextProfile);
-    state.client?.setConnection(nextProfile.url, auth, transition.changed);
+
+    await state.client?.setConnection(nextProfile.url, auth, transition.changed);
     if (transition.changed) void livenessController?.probeFresh();
   },
 
@@ -768,7 +791,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       forgetLogin: async () => {
         const profile = get().profiles.find((p) => p.id === get().activeProfileId);
         await get().client?.clearAccountSession();
-        if (profile) await writeGatewayProfileSecret(profile, '');
+        if (profile) await forgetGatewayProfileSecret(profile);
         await AsyncStorage.setItem(SIGNED_OUT_KEY, 'true');
       },
       closeSession: () => {
@@ -780,7 +803,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         resetFarmState();
         set((state) => ({
           signedOut: true,
-          sessionExpiresAt: null,
+          personSession: null,
           client: null,
           principalId: null,
           workspaceAccess: 'none',
@@ -963,15 +986,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
 }));
 
 async function authCredentialsForProfile(profile: GatewayProfile): Promise<GatewayAuthCredentials> {
-  if (profile.authMode === 'token') {
-    const token = await readGatewayProfileSecret(profile);
-    return token ? { token } : {};
-  }
-  if (profile.authMode === 'password') {
-    const password = await readGatewayProfileSecret(profile);
-    return password ? { password } : {};
-  }
-  return {};
+  return (await prepareGatewayProfileLogin(profile)).credentials;
 }
 
 async function readSavedProfiles(): Promise<GatewayProfile[]> {
@@ -1054,18 +1069,4 @@ function connectionIdentityTransition(
         }
       : {},
   };
-}
-
-async function configureRememberedSession(
-  client: GatewayClient | null,
-  profile: GatewayProfile | undefined,
-) {
-  const session = await rememberedSessionForProfile(profile, (expiry) => {
-    const current = useConnectionStore.getState();
-    if (current.client === client && current.activeProfileId === profile?.id)
-      useConnectionStore.setState({ sessionExpiresAt: expiry });
-  });
-  client?.setAccountSession(session);
-  useConnectionStore.setState({ sessionExpiresAt: session?.expiresAt ?? null });
-  return session;
 }

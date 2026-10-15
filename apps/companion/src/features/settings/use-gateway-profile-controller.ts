@@ -14,8 +14,7 @@ import {
   type GatewayProfile,
   type GatewayProfileAuthMode,
   mobileGatewayProfileUrlError,
-  readGatewayProfileSecret,
-  seedPresetGatewayProfileSecrets,
+  prepareGatewayProfileLogin,
 } from '../../lib/gateway-profiles';
 import { useConnectionStore } from '../../store/connection';
 
@@ -60,7 +59,7 @@ export function useGatewayProfileController(options: GatewayProfileControllerOpt
     setGatewayUrl,
     signOut,
     signedOut,
-    sessionExpiresAt,
+    personSession,
   } = useConnectionStore();
   const [signingOut, setSigningOut] = useState(false);
   const [manualUrlValidationInProgress, setManualUrlValidationInProgress] = useState(false);
@@ -74,11 +73,9 @@ export function useGatewayProfileController(options: GatewayProfileControllerOpt
 
   const testProfileConnection = async (
     profile: GatewayProfile,
-    restorePresetSecret = false,
   ): Promise<ProfileConnectionTestState> => {
     try {
       // Explicit selection can restore a bundled preset after local sign-out.
-      if (restorePresetSecret) await seedPresetGatewayProfileSecrets([profile]);
       const auth = await authCredentialsForProfile(profile);
       if (profile.authMode !== 'none' && Object.keys(auth).length === 0) {
         throw new Error(`No ${profile.authMode} credential is saved for this profile.`);
@@ -148,7 +145,7 @@ export function useGatewayProfileController(options: GatewayProfileControllerOpt
       ...current,
       [profile.id]: testingState(profile, 'Validating'),
     }));
-    const result = await testProfileConnection(profile, true);
+    const result = await testProfileConnection(profile);
     setProfileConnectionTests((current) => ({ ...current, [profile.id]: result }));
     if (result.status !== 'healthy') {
       Alert.alert(
@@ -255,7 +252,7 @@ export function useGatewayProfileController(options: GatewayProfileControllerOpt
 
   return {
     signOutCurrentAccount,
-    sessionExpiresAt,
+    personSession,
     signingOut,
     signedOut,
     activateProfile,
@@ -370,8 +367,7 @@ function testingState(profile: GatewayProfile, verb: string): ProfileConnectionT
 }
 
 async function authCredentialsForProfile(profile: GatewayProfile): Promise<GatewayAuthCredentials> {
-  const secret = await readGatewayProfileSecret(profile);
-  return authCredentialsForSecret(profile, secret ?? '');
+  return (await prepareGatewayProfileLogin(profile)).credentials;
 }
 
 function authCredentialsForSecret(profile: GatewayProfile, secret: string): GatewayAuthCredentials {
