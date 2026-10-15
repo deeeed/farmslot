@@ -970,6 +970,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     null,
   );
   const openVisualArtifact = (uri: string) => {
+    checkedEvidenceModel?.clearSelection();
     setComparisonViewerItems(null);
     setViewerUri(uri);
   };

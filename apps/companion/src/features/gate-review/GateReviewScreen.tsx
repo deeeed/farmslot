@@ -89,6 +89,7 @@ export function GateReviewScreen({
         authHeaders={viewModel.authHeaders}
       />
       <MediaViewer
+        testID="companion-artifact-media-viewer"
         visible={Boolean(viewModel.media)}
         items={viewModel.media?.items ?? []}
         uri={viewModel.media?.uri ?? null}

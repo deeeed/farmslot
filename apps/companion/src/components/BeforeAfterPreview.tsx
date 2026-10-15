@@ -202,6 +202,7 @@ export function BeforeAfterPreview<T extends ArtifactManifestEntry = ArtifactMan
                 >
                   <CompareMedia
                     artifact={pair[role]}
+                    testIdPrefix={`${resolvedTestIdPrefix}-${role}`}
                     authHeaders={authHeaders}
                     height={imageHeight}
                     active={playVideo}
@@ -454,19 +455,24 @@ export function CompareMedia<T extends ArtifactManifestEntry>({
   height,
   active,
   imageStyle,
+  testIdPrefix,
 }: {
   artifact: T & { url: string };
   authHeaders?: ArtifactHttpHeaders;
   height: number;
   active: boolean;
   imageStyle?: StyleProp<ImageStyle>;
+  testIdPrefix?: string;
 }) {
   const mediaType = classifyArtifact(artifact);
   if (mediaType === 'video') {
     return active ? (
       <ComparisonVideo artifact={artifact} authHeaders={authHeaders} height={height} />
     ) : (
-      <View style={[styles.document, { height }]}>
+      <View
+        testID={testIdPrefix ? `${testIdPrefix}-video` : undefined}
+        style={[styles.document, { height }]}
+      >
         <Text style={styles.documentKind}>VIDEO</Text>
       </View>
     );

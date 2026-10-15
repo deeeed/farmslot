@@ -432,6 +432,7 @@ export function EvidenceReviewWorkspace({
                             >
                               <CompareMedia
                                 artifact={convert(media)}
+                                testIdPrefix={`companion-evidence-comparison-${row.claim.id}-${role}`}
                                 authHeaders={authHeaders}
                                 height={180}
                                 active={false}
@@ -947,7 +948,11 @@ function CompactArtifactRow({
   };
 
   return (
-    <Pressable style={styles.compactArtifactRow} onPress={openArtifact}>
+    <Pressable
+      testID={`companion-evidence-artifact-${artifact.path}`}
+      style={styles.compactArtifactRow}
+      onPress={openArtifact}
+    >
       <CompactArtifactPreview
         artifact={artifact}
         mediaType={mediaType}

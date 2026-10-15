@@ -1,20 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Companion native comparison media",
-  "description": "On an isolated connected renderer fixture, inspect paired and single videos, then open ordinary evidence. No gate resolution or product visual approval. Shut down and delete owned proof resources after retaining receipts.",
-  "paramsSchema": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": ["run_id", "decision_id"],
-    "properties": {
-      "run_id": {
-        "type": "string"
-      },
-      "decision_id": {
-        "type": "string"
-      }
-    }
-  },
+  "description": "On an owned simulator connected to an isolated fixture gateway, finish client onboarding and open the full gate review with its comparison cards visible before starting. Inspect paired and single videos, then ordinary evidence. No gate resolution or visual approval. Delete proof resources after receipts.",
   "proofTargets": [
     {
       "id": "video-previews",
@@ -30,29 +17,31 @@
     }
   ],
   "workflow": {
-    "entry": "open",
+    "entry": "paired-before-video",
     "nodes": {
-      "open": {
-        "action": "command",
-        "cmd": "xcrun simctl openurl \"${IOS_SIMULATOR:-$SIMULATOR}\" \"farmslot-development:///decision/{{params.decision_id}}?runId={{params.run_id}}\"",
-        "intent": "Open the selected renderer fixture through its native decision route.",
+      "paired-before-video": {
+        "action": "ui.wait_for",
+        "test_id": "companion-evidence-comparison-AC-1-before-video",
+        "expected": "visible",
+        "timeout_ms": 30000,
+        "intent": "Identify the Before capture as a video.",
         "next": "paired-video"
       },
       "paired-video": {
         "action": "ui.wait_for",
-        "test_id": "companion-evidence-comparison-AC-1-after",
-        "text_contains": ["VIDEO"],
+        "test_id": "companion-evidence-comparison-AC-1-after-video",
         "timeout_ms": 30000,
         "intent": "Identify both paired captures as videos.",
-        "next": "single-video"
+        "next": "single-video",
+        "expected": "visible"
       },
       "single-video": {
         "action": "ui.wait_for",
-        "test_id": "companion-evidence-comparison-AC-2-after",
-        "text_contains": ["VIDEO"],
+        "test_id": "companion-evidence-comparison-AC-2-after-video",
         "proves": ["video-previews"],
         "intent": "Identify the unpaired capture as a video.",
-        "next": "capture-previews"
+        "next": "hud-capture-previews",
+        "expected": "visible"
       },
       "capture-previews": {
         "action": "ui.screenshot",
@@ -63,25 +52,27 @@
       },
       "open-paired-after": {
         "action": "ui.press",
-        "test_id": "companion-evidence-comparison-AC-1-after",
+        "test_id": "companion-evidence-comparison-AC-1-after-video",
         "intent": "Open the selected After capture from its own comparison list.",
         "next": "paired-title"
       },
       "paired-title": {
         "action": "ui.wait_for",
         "test_id": "companion-artifact-media-viewer-title",
-        "text_contains": ["after.mp4"],
         "proves": ["comparison-viewer"],
         "intent": "Confirm the viewer opened the selected After video.",
-        "next": "paired-index"
+        "next": "paired-index",
+        "text": "after.mp4",
+        "expected": "visible"
       },
       "paired-index": {
         "action": "ui.wait_for",
         "test_id": "companion-artifact-media-viewer-index",
-        "text_contains": ["1/1"],
         "proves": ["comparison-viewer"],
         "intent": "Use the same one-item list for visibility and navigation.",
-        "next": "capture-paired"
+        "next": "hud-capture-paired",
+        "text": "1/1",
+        "expected": "visible"
       },
       "capture-paired": {
         "action": "ui.screenshot",
@@ -94,27 +85,29 @@
         "action": "ui.press",
         "test_id": "companion-artifact-media-viewer-close",
         "intent": "Return to the decision without changing its evidence.",
-        "next": "show-raw"
+        "next": "scroll-raw-toggle"
       },
       "show-raw": {
         "action": "ui.press",
         "test_id": "companion-raw-artifacts",
         "intent": "Expand supporting files for the ordinary image.",
-        "next": "open-ordinary"
+        "next": "scroll-raw"
       },
       "open-ordinary": {
         "action": "ui.press",
-        "text": "ordinary.png",
         "intent": "Open an ordinary image after viewing comparison media.",
-        "next": "ordinary-title"
+        "next": "ordinary-title",
+        "test_id": "companion-evidence-artifact-artifacts/recipe-runs/head/ordinary.png"
       },
       "ordinary-title": {
         "action": "ui.wait_for",
         "test_id": "companion-artifact-media-viewer-title",
-        "text_contains": ["ordinary.png"],
         "proves": ["ordinary-viewer"],
         "intent": "Confirm the ordinary image uses its own artifact gallery.",
-        "next": "capture-ordinary"
+        "next": "hud-capture-ordinary",
+        "text": "ordinary.png",
+        "expected": "visible",
+        "timeout_ms": 10000
       },
       "capture-ordinary": {
         "action": "ui.screenshot",
@@ -127,21 +120,22 @@
         "action": "ui.press",
         "test_id": "companion-artifact-media-viewer-close",
         "intent": "Return to the existing decision.",
-        "next": "open-single"
+        "next": "scroll-back"
       },
       "open-single": {
         "action": "ui.press",
-        "test_id": "companion-evidence-comparison-AC-2-after",
+        "test_id": "companion-evidence-comparison-AC-2-after-video",
         "intent": "Open the unpaired After video from its existing card.",
         "next": "single-title"
       },
       "single-title": {
         "action": "ui.wait_for",
         "test_id": "companion-artifact-media-viewer-title",
-        "text_contains": ["single.mp4"],
         "proves": ["comparison-viewer"],
         "intent": "Confirm the unpaired video opens from the selected list.",
-        "next": "close-single"
+        "next": "close-single",
+        "text": "single.mp4",
+        "expected": "visible"
       },
       "close-single": {
         "action": "ui.press",
@@ -152,6 +146,53 @@
       "done": {
         "action": "end",
         "status": "pass"
+      },
+      "hud-capture-previews": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Record video previews in the existing comparison cards.",
+        "next": "capture-previews"
+      },
+      "hud-capture-paired": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Record the selected After video in the native viewer.",
+        "next": "capture-paired"
+      },
+      "hud-capture-ordinary": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Record the ordinary image after the comparison viewer closes.",
+        "next": "capture-ordinary"
+      },
+      "scroll-raw": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 650,
+        "intent": "The ordinary image and its retained artifact path are visible.",
+        "next": "open-ordinary"
+      },
+      "scroll-back": {
+        "action": "ui.scroll",
+        "direction": "up",
+        "pixels": 650,
+        "intent": "Return to the single-video comparison card.",
+        "next": "open-single"
+      },
+      "scroll-raw-toggle": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 650,
+        "intent": "The supporting artifact disclosure is visible.",
+        "next": "wait-raw"
+      },
+      "wait-raw": {
+        "action": "ui.wait_for",
+        "test_id": "companion-raw-artifacts",
+        "expected": "visible",
+        "timeout_ms": 10000,
+        "intent": "The supporting artifact disclosure is ready after the viewer closes.",
+        "next": "show-raw"
       }
     }
   }
