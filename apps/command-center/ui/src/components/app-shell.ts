@@ -31,6 +31,11 @@ import {
   isTerminalRunStatus,
   Methods,
 } from '@farmslot/protocol';
+import {
+  accountSessionCaption,
+  accountSignOutConfirmation,
+  confirmAccountSignOut,
+} from '@farmslot/review-dispatch';
 
 import './shared/summary-bar.js';
 import './shared/global-filter-bar.js';
@@ -904,11 +909,16 @@ export class FarmApp extends LitElement {
     this.signingOut = true;
     this.authSaveError = '';
     try {
-      await gateway.signOut();
-      this.authSecret = '';
-      this.pairingOpen = false;
-      this.pairingQrDataUrl = '';
-      this.navigate('fleet');
+      await confirmAccountSignOut(
+        () => this.confirmSignOut(),
+        async () => {
+          await gateway.signOut();
+          this.authSecret = '';
+          this.pairingOpen = false;
+          this.pairingQrDataUrl = '';
+          this.navigate('fleet');
+        },
+      );
     } catch (error) {
       this.authSaveError = error instanceof Error ? error.message : 'Unable to sign out.';
     } finally {
@@ -916,17 +926,122 @@ export class FarmApp extends LitElement {
     }
   }
 
+  private confirmSignOut(): Promise<boolean> {
+    const dialog = this.querySelector<HTMLDialogElement>(
+      '[data-testid="account-sign-out-confirmation"]',
+    );
+    if (!dialog) throw new Error('Sign-out confirmation is unavailable.');
+    return new Promise((resolve) => {
+      dialog.addEventListener('close', () => resolve(dialog.returnValue === 'sign-out'), {
+        once: true,
+      });
+      dialog.returnValue = '';
+      dialog.showModal();
+    });
+  }
+
   private renderAccountControl() {
-    return html`<button
-        type="button"
-        data-testid="account-sign-out"
-        ?disabled=${this.signingOut}
-        title=${ACCOUNT_SESSION_CONTROL.description}
-        @click=${() => void this.signOut()}
+    const confirmation = accountSignOutConfirmation('Command Center');
+    return html` <style>
+        .fa-account-menu summary {
+          list-style: none;
+          cursor: pointer;
+          color: var(--color-text-muted, #92929f);
+          font-size: 18px;
+          padding: 8px;
+        }
+        .fa-account-menu summary::-webkit-details-marker {
+          display: none;
+        }
+        .fa-account-options {
+          position: fixed;
+          bottom: 16px;
+          left: ${this._sidebarExpanded ? this._sidebarWidth + 8 : 56}px;
+          z-index: 100;
+          min-width: 200px;
+          padding: 14px;
+          border: 1px solid var(--color-border, #393945);
+          border-radius: 8px;
+          background: var(--color-bg-surface, #181820);
+          color: var(--color-text-primary, #e8e8ee);
+          box-shadow: 0 8px 24px #0005;
+        }
+        .fa-account-options p {
+          font-size: 12px;
+          margin: 0 0 10px;
+        }
+        .fa-account-options button,
+        .fa-account-confirm button {
+          background: transparent;
+          color: inherit;
+          border: 1px solid var(--color-border, #494955);
+          border-radius: 6px;
+          padding: 6px 10px;
+          cursor: pointer;
+        }
+        .fa-account-confirm {
+          margin: auto;
+          max-width: 360px;
+          padding: 24px;
+          background: var(--color-bg-surface, #181820);
+          color: var(--color-text-primary, #e8e8ee);
+          border: 1px solid var(--color-border, #494955);
+          border-radius: 10px;
+        }
+        .fa-account-confirm::backdrop {
+          background: #0009;
+        }
+        .fa-account-confirm h2 {
+          margin: 0;
+          font-size: 18px;
+        }
+        .fa-account-confirm p {
+          font-size: 14px;
+          line-height: 1.5;
+        }
+        .fa-account-confirm form {
+          display: flex;
+          gap: 8px;
+          justify-content: flex-end;
+        }
+        .fa-account-confirm button[value='sign-out'] {
+          color: #f59b98;
+        }
+      </style>
+      <details class="fa-account-menu">
+        <summary class="fa-nav-btn" aria-label="Account" title="Account" data-testid="account-menu">
+          ⋯
+        </summary>
+        <div class="fa-account-options">
+          <p>${accountSessionCaption(gateway.sessionExpiresAt) || 'Account'}</p>
+          <button
+            type="button"
+            data-testid="account-sign-out"
+            ?disabled=${this.signingOut}
+            title=${ACCOUNT_SESSION_CONTROL.description}
+            @click=${() => void this.signOut()}
+          >
+            Sign out…
+          </button>
+          ${this.authSaveError ? html`<p role="alert">${this.authSaveError}</p>` : nothing}
+        </div>
+      </details>
+      <dialog
+        class="fa-account-confirm"
+        data-testid="account-sign-out-confirmation"
+        aria-labelledby="sign-out-title"
       >
-        ${ACCOUNT_SESSION_CONTROL.label}
-      </button>
-      ${this.authSaveError ? html`<p role="alert">${this.authSaveError}</p>` : nothing}`;
+        <h2 id="sign-out-title">${confirmation.title}</h2>
+        <p>${confirmation.message}</p>
+        <form method="dialog">
+          <button value="cancel" autofocus data-testid="account-sign-out-cancel">
+            ${confirmation.cancel}
+          </button>
+          <button value="sign-out" data-testid="account-sign-out-confirm">
+            ${confirmation.confirm}
+          </button>
+        </form>
+      </dialog>`;
   }
 
   private openPairingPanel() {
@@ -2087,7 +2202,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
         )}
         <div class="fa-sidebar-resize" @pointerdown=${this.onSidebarResizeStart}></div>
         <div style="flex:1"></div>
-        ${this.renderVersionFooter()}
+        ${this.renderAccountControl()} ${this.renderVersionFooter()}
         <button
           class="fa-nav-btn ${this.chatOpen ? 'active' : ''}"
           title="Co-Pilot (Cmd+K)"
@@ -2125,7 +2240,6 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
           @connection-details=${() => this.openPairingPanel()}
         >
         </fleet-summary-bar>
-        ${this.renderAccountControl()}
         <global-filter-bar .slots=${this.fleetSlots}> </global-filter-bar>
         ${this.renderMainContent()}
       </div>

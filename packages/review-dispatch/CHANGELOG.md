@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Share client sign-in expiry and sign-out confirmation across operator apps.
+
 - Resolve review mode once across explicit selections, recorded run/PR options and project defaults.
 
 - Keep project review policy fields out of review selections while preserving configured defaults.

@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ACCOUNT_SESSION_CONTROL } from '@farmslot/protocol';
+import { accountSessionCaption } from '@farmslot/review-dispatch';
 
 import voiceAsrTestClipAssetModule from '../../../assets/asr/voice-command-status.wav';
 import { AppEnvironmentCard } from '../../components/AppEnvironmentCard';
@@ -140,6 +141,7 @@ export default function SettingsScreen() {
   const {
     signOutCurrentAccount,
     signingOut,
+    sessionExpiresAt,
     signedOut,
     activateProfile: handleActivateProfile,
     connectionTestsInProgress,
@@ -687,15 +689,18 @@ export default function SettingsScreen() {
       ) : null}
 
       <View style={styles.infoSection}>
-        <Text style={styles.helperTextNoMargin}>{ACCOUNT_SESSION_CONTROL.description}</Text>
+        <Text style={styles.sectionTitle}>Account</Text>
+        {sessionExpiresAt !== null ? (
+          <Text style={styles.helperTextNoMargin}>{accountSessionCaption(sessionExpiresAt)}</Text>
+        ) : null}
         <Pressable
           testID="account-sign-out"
           accessibilityRole="button"
-          style={styles.button}
+          style={[styles.button, styles.secondaryButton, styles.compactButton]}
           onPress={() => void signOutCurrentAccount()}
           disabled={signedOut || signingOut || connectionTestsInProgress}
         >
-          <Text style={styles.buttonText}>{ACCOUNT_SESSION_CONTROL.label}</Text>
+          <Text style={styles.buttonText}>Sign out…</Text>
         </Pressable>
         {signedOut ? (
           <Text style={styles.helperTextNoMargin}>{ACCOUNT_SESSION_CONTROL.signedOut}</Text>

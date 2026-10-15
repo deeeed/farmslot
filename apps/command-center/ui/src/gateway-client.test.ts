@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { initializeDesktopConnection } from './desktop-connection.js';
-import { GATEWAY_SIGNED_OUT_STORAGE_KEY, GATEWAY_TOKEN_STORAGE_KEY } from './gateway-url.js';
+import {
+  GATEWAY_SESSION_EXPIRY_STORAGE_KEY,
+  GATEWAY_SIGNED_OUT_STORAGE_KEY,
+  GATEWAY_TOKEN_STORAGE_KEY,
+} from './gateway-url.js';
 
 test('sign-out disconnects, rejects pending work, survives refresh and allows deliberate login', async (t) => {
   const keys = ['window', 'localStorage', 'location', 'document', 'WebSocket'] as const;
@@ -14,6 +18,8 @@ test('sign-out disconnects, rejects pending work, survives refresh and allows de
     static OPEN = 1;
     static CONNECTING = 0;
     static instances: Socket[] = [];
+    static holdAuth = false;
+    static tokens: unknown[] = [];
     readyState = 0;
     constructor() {
       super();
@@ -26,6 +32,8 @@ test('sign-out disconnects, rejects pending work, survives refresh and allows de
     send(text: string) {
       const request = JSON.parse(text);
       if (request.method !== 'auth.connect') return;
+      Socket.tokens.push(request.params?.token);
+      if (Socket.holdAuth) return;
       queueMicrotask(() =>
         this.dispatchEvent(
           new MessageEvent('message', {
@@ -50,6 +58,10 @@ test('sign-out disconnects, rejects pending work, survives refresh and allows de
     close() {
       this.readyState = 3;
     }
+    gatewayRestart() {
+      this.readyState = 3;
+      this.dispatchEvent(new Event('close'));
+    }
   }
   const values = {
     window: {},
@@ -71,7 +83,7 @@ test('sign-out disconnects, rejects pending work, survives refresh and allows de
     }
   });
   const { GatewayClient, gateway } = await import('./gateway-client.js');
-  const client = new GatewayClient();
+  let client = new GatewayClient();
   t.after(() => {
     client.disconnect();
     gateway.disconnect();
@@ -85,6 +97,33 @@ test('sign-out disconnects, rejects pending work, survives refresh and allows de
   client.connect();
   await connected;
   assert.equal(client.authenticatedPrincipalId, 'operator');
+  const originalExpiry = store.get(GATEWAY_SESSION_EXPIRY_STORAGE_KEY);
+  assert.ok(Number(originalExpiry) > Date.now());
+  // Reload/browser restart creates a fresh client from durable storage.
+  client.disconnect();
+  client = new GatewayClient();
+  client.connect();
+  const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+  await flush();
+  assert.equal(client.connectionState, 'connected');
+  assert.equal(Socket.tokens.at(-1), 'first-device-secret');
+  assert.equal(store.get(GATEWAY_SESSION_EXPIRY_STORAGE_KEY), originalExpiry);
+  // A gateway deploy can interrupt auth.connect itself, not just an established socket.
+  Socket.holdAuth = true;
+  Socket.instances.at(-1)!.gatewayRestart();
+  client.reconnect();
+  await flush();
+  assert.equal(client.connectionState, 'connecting');
+  Socket.instances.at(-1)!.gatewayRestart();
+  await flush();
+  Socket.holdAuth = false;
+  client.reconnect();
+  await flush();
+  assert.equal(client.connectionState, 'connected');
+  assert.equal(client.authenticatedPrincipalId, 'operator');
+  assert.equal(Socket.tokens.at(-1), 'first-device-secret');
+  assert.equal(store.get(GATEWAY_SESSION_EXPIRY_STORAGE_KEY), originalExpiry);
+  const socketCountBeforeSignOut = Socket.instances.length;
   const pending = assert.rejects(client.request('pending.work'), /Signed out/);
   await client.signOut();
   await pending;
@@ -93,15 +132,16 @@ test('sign-out disconnects, rejects pending work, survives refresh and allows de
   assert.equal(client.workspaceAccess, 'none');
   assert.equal(Socket.instances[0].readyState, 3);
   assert.equal(store.has(GATEWAY_TOKEN_STORAGE_KEY), false);
+  assert.equal(store.has(GATEWAY_SESSION_EXPIRY_STORAGE_KEY), false);
   assert.equal(store.get(GATEWAY_SIGNED_OUT_STORAGE_KEY), 'true');
   client.connect();
   client.reconnect();
-  assert.equal(Socket.instances.length, 1);
+  assert.equal(Socket.instances.length, socketCountBeforeSignOut);
   const refreshed = new GatewayClient();
   t.after(() => refreshed.disconnect());
   refreshed.connect();
   assert.equal(refreshed.connectionState, 'auth_required');
-  assert.equal(Socket.instances.length, 1);
+  assert.equal(Socket.instances.length, socketCountBeforeSignOut);
   await refreshed.setAuthCredentials({ token: 'replacement-device-secret' });
   const reconnected = new Promise<void>((resolve) =>
     refreshed.onConnectionChange((s) => {
@@ -111,6 +151,15 @@ test('sign-out disconnects, rejects pending work, survives refresh and allows de
   refreshed.connect();
   await reconnected;
   assert.equal(refreshed.authenticatedPrincipalId, 'operator');
+  const validExpiry = store.get(GATEWAY_SESSION_EXPIRY_STORAGE_KEY)!;
+  store.set(GATEWAY_SESSION_EXPIRY_STORAGE_KEY, String(Date.now() - 1));
+  const expired = new GatewayClient();
+  t.after(() => expired.disconnect());
+  expired.connect();
+  assert.equal(expired.connectionState, 'auth_required');
+  assert.match(expired.authError?.message ?? '', /expired/);
+  assert.equal(store.get(GATEWAY_TOKEN_STORAGE_KEY), 'replacement-device-secret');
+  store.set(GATEWAY_SESSION_EXPIRY_STORAGE_KEY, validExpiry);
   // Desktop secure-store failure must leave the authenticated session intact.
   Object.defineProperty(globalThis, 'window', {
     configurable: true,
