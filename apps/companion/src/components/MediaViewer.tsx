@@ -25,6 +25,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import {
   type EvidenceReviewModel,
   type EvidenceReviewPlaybackEffect,
+  formatEvidenceReviewVideoTime,
   loadRecordingEvidenceReview,
 } from '@farmslot/adapter-sdk/evidence';
 
@@ -42,7 +43,7 @@ import {
   textPreviewChunks,
   textPreviewTotalBytes,
 } from '../lib/text-preview';
-import { fonts } from '../lib/theme';
+import { colors, fonts } from '../lib/theme';
 
 export interface MediaViewerItem {
   uri: string;
@@ -394,6 +395,9 @@ function FullscreenVideo({
   height: number;
 }) {
   const [model, setModel] = useState<EvidenceReviewModel | null>(item.evidenceModel ?? null);
+  const [openGroups, setOpenGroups] = useState<ReadonlyMap<string, boolean>>(() => new Map());
+  const groupScrolls = useRef(new Map<string, ScrollView>());
+  const focusedFailures = useRef(new Set<string>());
   const [error, setError] = useState<string | null>(null);
   const [uri, setUri] = useState(item.uri);
   const resumePlayback = useRef(Boolean(item.evidenceModel?.selection?.clips.length));
@@ -536,6 +540,7 @@ function FullscreenVideo({
   }, [applyPlayback, model, player, uri, videoPath]);
 
   const timeline = model?.recordings.find((recording) => recording.videoPath === videoPath);
+  const groups = model?.timelineGroups(videoPath, undefined, durationMs) ?? [];
   return (
     <View style={[styles.media, { width, height }]}>
       <VideoView
@@ -555,25 +560,101 @@ function FullscreenVideo({
           <Text style={styles.detailText}>{model.selection.message}</Text>
         ) : null}
         {timeline ? (
-          <ScrollView horizontal contentContainerStyle={{ gap: 8 }}>
-            {timeline.markers.map((marker) => {
-              const seek = model?.markerSeekMs(videoPath, marker.traceIndex, 'start', durationMs);
+          <ScrollView horizontal contentContainerStyle={{ gap: 8, alignItems: 'flex-start' }}>
+            {groups.map((group) => {
+              const expanded = openGroups.get(group.id) ?? group.defaultOpen;
               return (
-                <Pressable
-                  key={marker.traceIndex}
-                  style={styles.navButton}
-                  disabled={seek === null || seek === undefined}
-                  testID={`evidence-marker-${marker.traceIndex}`}
-                  onPress={() => {
-                    resumePlayback.current = true;
-                    model?.selectOccurrence(marker.traceIndex);
-                    if (model) applyPlayback(model.cueClip(0));
-                    updateSelection((value) => value + 1);
-                    player.play();
-                  }}
-                >
-                  <Text style={styles.detailText}>{marker.intent ?? marker.nodeId}</Text>
-                </Pressable>
+                <View key={group.id} style={styles.timelineGroup}>
+                  <Pressable
+                    style={[styles.navButton, group.failed > 0 && styles.failedMarker]}
+                    disabled={group.startMs === null}
+                    testID="evidence-timeline-group"
+                    onPress={() => {
+                      if (!model) return;
+                      const effect = model.selectTimelineGroup(videoPath, group.id, durationMs);
+                      if (effect.seekMs === null) return;
+                      resumePlayback.current = true;
+                      applyPlayback(effect);
+                      updateSelection((value) => value + 1);
+                      player.play();
+                    }}
+                  >
+                    <Text style={styles.detailText}>{group.summary}</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded }}
+                    onPress={() =>
+                      setOpenGroups((previous) => new Map(previous).set(group.id, !expanded))
+                    }
+                  >
+                    <Text style={styles.detailText}>{expanded ? 'Hide nodes' : 'Show nodes'}</Text>
+                  </Pressable>
+                  {expanded ? (
+                    <ScrollView
+                      nestedScrollEnabled
+                      style={{ maxHeight: height * 0.32 }}
+                      ref={(scroll) => {
+                        if (scroll) groupScrolls.current.set(group.id, scroll);
+                        else groupScrolls.current.delete(group.id);
+                      }}
+                    >
+                      {group.markers.map((marker) => {
+                        const seek = model?.markerSeekMs(
+                          videoPath,
+                          marker.traceIndex,
+                          'start',
+                          durationMs,
+                        );
+                        return (
+                          <View
+                            key={marker.traceIndex}
+                            onLayout={
+                              marker.traceIndex === group.firstFailureTraceIndex
+                                ? (event) => {
+                                    const scroll = groupScrolls.current.get(group.id);
+                                    if (scroll && !focusedFailures.current.has(group.id)) {
+                                      focusedFailures.current.add(group.id);
+                                      scroll.scrollTo({
+                                        y: event.nativeEvent.layout.y,
+                                        animated: false,
+                                      });
+                                    }
+                                  }
+                                : undefined
+                            }
+                          >
+                            <Pressable
+                              style={[styles.navButton, !marker.ok && styles.failedMarker]}
+                              disabled={seek === null || seek === undefined}
+                              testID={`evidence-marker-${marker.traceIndex}`}
+                              onPress={() => {
+                                if (
+                                  !model?.selectOccurrence(marker.traceIndex, {
+                                    videoPath,
+                                    mediaDurationMs: durationMs,
+                                  })
+                                )
+                                  return;
+                                resumePlayback.current = true;
+                                applyPlayback(model.cueClip(0));
+                                updateSelection((value) => value + 1);
+                                player.play();
+                              }}
+                            >
+                              <Text style={styles.detailText}>
+                                {seek == null
+                                  ? 'Unrecorded'
+                                  : formatEvidenceReviewVideoTime(seek / 1000)}{' '}
+                                · {marker.intent ?? marker.nodeId}
+                              </Text>
+                            </Pressable>
+                          </View>
+                        );
+                      })}
+                    </ScrollView>
+                  ) : null}
+                </View>
               );
             })}
           </ScrollView>
@@ -651,6 +732,8 @@ function TextSlide({ uri, width, height, authHeaders, isActive }: TextSlideProps
 }
 
 const styles = StyleSheet.create({
+  timelineGroup: { maxWidth: 340, gap: 6 },
+  failedMarker: { borderLeftWidth: 3, borderLeftColor: colors.statusFail },
   modalRoot: {
     flex: 1,
   },

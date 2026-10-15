@@ -7,6 +7,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 - Show WARM/COLD review mode as visible segmented buttons beside the shared execution choices.
 
 - Keep report and evidence links bound to their gateway-retained snapshot, including read-only stale reports.
+- Show one recording timeline chip per AC or setup/teardown group, with collapsed time-ordered nodes and visible failures.
 - Describe LAN binding through credential-store activation instead of the retired checkout auth file.
 
 - Use one compact worker checklist in pipeline, step inspection and slot views.
