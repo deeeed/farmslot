@@ -38,11 +38,11 @@ function isolatedProfileArgs(platform = process.platform) {
 // Keep requestAnimationFrame, transitions, and input hit testing alive when the
 // slot-owned browser is occluded by the operator's other windows.
 function automationRuntimeArgs() {
-  return [
+  return disableMacCodeSignClone([
     '--disable-background-timer-throttling',
     '--disable-backgrounding-occluded-windows',
     '--disable-renderer-backgrounding',
-  ];
+  ]);
 }
 
 /**
