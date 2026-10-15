@@ -107,19 +107,19 @@ export function EvidenceReviewWorkspace({
     }
   };
   const [evidenceFilter, setEvidenceFilter] = useState<ArtifactWorkspaceFilter>('all');
+  const [showRawArtifacts, setShowRawArtifacts] = useState(false);
+  useEffect(() => setShowRawArtifacts(false), [runId]);
   const artifactCounts = useMemo(() => buildArtifactWorkspaceCounts(artifacts), [artifacts]);
   const filteredArtifacts = useMemo(
     () => filterArtifactWorkspace(artifacts, evidenceFilter, '', evidenceModel),
     [artifacts, evidenceFilter, evidenceModel],
   );
-  const reviewArtifacts = useMemo(
-    () =>
-      sortReviewArtifacts(filteredArtifacts).map((artifact) => ({
-        ...artifact,
-        url: artifactUrlForEntry(gatewayUrl, runId, artifact),
-      })),
-    [filteredArtifacts, gatewayUrl, runId],
-  );
+  const reviewArtifacts = sortReviewArtifacts(
+    evidenceModel ? [...evidenceModel.rawArtifacts(filteredArtifacts)] : filteredArtifacts,
+  ).map((artifact) => ({
+    ...artifact,
+    url: artifactUrlForEntry(gatewayUrl, runId, artifact),
+  }));
   const evidenceSummary = useMemo(
     () => summarizeEvidenceCompleteness(artifacts, pairs.length),
     [artifacts, pairs.length],
@@ -257,6 +257,7 @@ export function EvidenceReviewWorkspace({
             ))}
           </View>
           {evidenceModel.comparisonView.rows.map((row) => {
+            const primaryClip = row.primaryClip;
             const convert = (media: NonNullable<typeof row.selectedBefore>) => ({
               ...media,
               purpose: media.capture?.role ?? 'evidence',
@@ -476,7 +477,7 @@ export function EvidenceReviewWorkspace({
                     </Pressable>
                   )),
                 )}
-                {row.claim.clips.map((clip, index) => (
+                {(primaryClip ? [primaryClip] : []).map((clip, index) => (
                   <Pressable
                     key={`${clip.videoDigest}:${clip.traceIndex}`}
                     onPress={() => {
@@ -493,7 +494,8 @@ export function EvidenceReviewWorkspace({
               </View>
             );
           })}
-          {evidenceModel.comparisonView.unassigned.length > 0 ? (
+          {evidenceModel.comparisonFilter === 'unassigned' &&
+          evidenceModel.comparisonView.unassigned.length > 0 ? (
             <View>
               <Text style={styles.railTitle}>
                 Unassigned ({evidenceModel.comparisonView.unassigned.length})
@@ -570,44 +572,58 @@ export function EvidenceReviewWorkspace({
       )}
 
       <View style={styles.railSection}>
-        <RailHeader
-          title="Evidence"
-          subtitle="Filter the gate package, then tap a file to inspect it"
-          index={0}
-          total={reviewArtifacts.length}
-          rightLabel={`${reviewArtifacts.length}/${artifacts.length}`}
-        />
-        <View style={styles.evidenceFilterWrap}>
-          {visibleEvidenceFilters.map((filter) => {
-            const active = filter.id === evidenceFilter;
-            return (
-              <Pressable
-                key={filter.id}
-                style={[styles.evidenceFilterChip, active && styles.evidenceFilterChipActive]}
-                onPress={() => setEvidenceFilter(filter.id)}
-              >
-                <Text
-                  style={[styles.evidenceFilterText, active && styles.evidenceFilterTextActive]}
-                >
-                  {filter.label} {artifactCounts[filter.id]}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-        <View style={styles.compactEvidenceList}>
-          {reviewArtifacts.map((artifact) => (
-            <CompactArtifactRow
-              key={artifact.path}
-              artifact={artifact}
-              onOpenVisual={onOpenVisual}
-              onOpenDocument={onOpenDocument}
-              onOpenDiff={onOpenDiff}
-              onOpenArtifactWorkspace={onOpenArtifactWorkspace}
-              authHeaders={authHeaders}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded: showRawArtifacts }}
+          testID="companion-raw-artifacts"
+          onPress={() => setShowRawArtifacts((previous) => !previous)}
+        >
+          <Text style={styles.railTitle}>
+            {showRawArtifacts ? 'Hide ' : ''}raw artifacts ({reviewArtifacts.length})
+          </Text>
+        </Pressable>
+        {showRawArtifacts ? (
+          <>
+            <RailHeader
+              title="Evidence"
+              subtitle="Filter the gate package, then tap a file to inspect it"
+              index={0}
+              total={reviewArtifacts.length}
+              rightLabel={`${reviewArtifacts.length}/${artifacts.length}`}
             />
-          ))}
-        </View>
+            <View style={styles.evidenceFilterWrap}>
+              {visibleEvidenceFilters.map((filter) => {
+                const active = filter.id === evidenceFilter;
+                return (
+                  <Pressable
+                    key={filter.id}
+                    style={[styles.evidenceFilterChip, active && styles.evidenceFilterChipActive]}
+                    onPress={() => setEvidenceFilter(filter.id)}
+                  >
+                    <Text
+                      style={[styles.evidenceFilterText, active && styles.evidenceFilterTextActive]}
+                    >
+                      {filter.label} {artifactCounts[filter.id]}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <View style={styles.compactEvidenceList}>
+              {reviewArtifacts.map((artifact) => (
+                <CompactArtifactRow
+                  key={artifact.path}
+                  artifact={artifact}
+                  onOpenVisual={onOpenVisual}
+                  onOpenDocument={onOpenDocument}
+                  onOpenDiff={onOpenDiff}
+                  onOpenArtifactWorkspace={onOpenArtifactWorkspace}
+                  authHeaders={authHeaders}
+                />
+              ))}
+            </View>
+          </>
+        ) : null}
       </View>
     </View>
   );

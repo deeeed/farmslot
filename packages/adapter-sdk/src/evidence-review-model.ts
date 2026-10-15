@@ -198,7 +198,20 @@ export interface EvidenceReviewRecordingSelection {
   phase?: 'start' | 'end';
 }
 
+export interface EvidenceReviewClaimDisplay {
+  selected: readonly EvidenceReviewArtifact[];
+  raw: readonly EvidenceReviewArtifact[];
+  clip: EvidenceReviewClip | null;
+}
+
+export interface EvidenceReviewComparisonViewRow extends EvidenceReviewComparisonRow {
+  primaryClip: EvidenceReviewClip | null;
+}
+
 export interface EvidenceReviewModel {
+  readonly artifactInventory: readonly ArtifactRef[];
+  claimDisplay(claimId: string): EvidenceReviewClaimDisplay;
+  rawArtifacts<T extends { path: string }>(inventory: readonly T[]): readonly T[];
   artifactRole(path: string): 'before' | 'after' | 'review' | null;
   pairedArtifacts<T extends { path: string }>(
     artifacts: readonly T[],
@@ -225,7 +238,7 @@ export interface EvidenceReviewModel {
   readonly comparisonFilter: EvidenceReviewComparisonFilter;
   readonly comparisonTransform: EvidenceReviewComparisonTransform;
   readonly comparisonView: {
-    rows: readonly EvidenceReviewComparisonRow[];
+    rows: readonly EvidenceReviewComparisonViewRow[];
     unassigned: readonly EvidenceReviewComparisonMedia[];
   };
   setComparisonFilter(filter: EvidenceReviewComparisonFilter): void;
@@ -862,7 +875,48 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
         }))
       : [];
   };
+  const claimDisplay = (claimId: string): EvidenceReviewClaimDisplay => {
+    const claim = byClaim.get(claimId);
+    const row = comparison.rows.find((entry) => entry.claim.id === claimId);
+    const captures = [row?.selectedBefore, row?.selectedAfter].filter(
+      (media): media is EvidenceReviewComparisonMedia => Boolean(media?.eligible),
+    );
+    const selectedKeys = gatePayload?.prPackage?.selectedEvidenceKeys;
+    const clip = claim?.clips[0] ?? null;
+    const selected =
+      selectedKeys !== undefined
+        ? (claim?.evidence.filter((file) => selectedKeys.includes(file.artifactPath)) ?? [])
+        : captures.filter((media) =>
+            claim?.evidence.some((file) => file.artifactPath === media.artifactPath),
+          );
+    const paths = new Set(selected.map((file) => file.artifactPath));
+    if (clip) paths.add(`${input.artifactPrefix ?? ''}${clip.videoPath}`);
+    return {
+      selected,
+      raw: claim?.evidence.filter((file) => !paths.has(file.artifactPath)) ?? [],
+      clip,
+    };
+  };
   return {
+    artifactInventory: input.artifacts ?? [],
+    claimDisplay,
+    rawArtifacts(inventory) {
+      const paths = new Set([
+        ...comparison.rows.flatMap((row) =>
+          [row.selectedBefore, row.selectedAfter].flatMap((media) =>
+            media?.eligible ? [media.artifactPath] : [],
+          ),
+        ),
+        ...claims.flatMap((claim) => {
+          const display = claimDisplay(claim.id);
+          return [
+            ...display.selected.map((file) => file.artifactPath),
+            ...(display.clip ? [`${input.artifactPrefix ?? ''}${display.clip.videoPath}`] : []),
+          ];
+        }),
+      ]);
+      return inventory.filter((file) => !paths.has(file.path));
+    },
     artifactRole(path) {
       const media = comparison.media.find((entry) => entry.artifactPath === path && entry.eligible);
       return media?.capture?.role ?? null;
@@ -923,6 +977,10 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
             ? []
             : comparison.rows.map((row) => ({
                 ...row,
+                primaryClip:
+                  comparisonFilter === 'all' || comparisonFilter === 'moments'
+                    ? claimDisplay(row.claim.id).clip
+                    : null,
                 claim: {
                   ...row.claim,
                   clips:

@@ -2,11 +2,13 @@
 export type {
   EvidenceReviewArtifact,
   EvidenceReviewClaim,
+  EvidenceReviewClaimDisplay,
   EvidenceReviewClip,
   EvidenceReviewComparisonFilter,
   EvidenceReviewComparisonMedia,
   EvidenceReviewComparisonRow,
   EvidenceReviewComparisonTransform,
+  EvidenceReviewComparisonViewRow,
   EvidenceReviewContext,
   EvidenceReviewGateSnapshot,
   EvidenceReviewInput,

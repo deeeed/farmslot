@@ -380,9 +380,9 @@ export function runAcceptanceCriterionEvidence(
 
 function renderRow(
   { view, link, evidence }: AcceptanceEvidenceRow,
+  model: EvidenceReviewModel,
   evidenceHref?: (evidencePath: string) => string,
   openEvidence?: (open: AcceptanceEvidenceOpen) => void,
-  model?: EvidenceReviewModel,
   markUntestable?: (id: string, reason: string) => void,
   editor?: AcceptanceClaimOverrideEditor,
 ): TemplateResult {
@@ -391,6 +391,36 @@ function renderRow(
   // must show what still has to be judged, and must not imply a verdict.
   const verdict = criterion?.verdict ?? (link ? 'evidence-linked' : 'none');
   const recipeNodes = criterion?.recipeNodes ?? [];
+  const display = model.claimDisplay(view.id);
+  const renderFiles = (files: typeof display.selected) =>
+    html` <div class="ac-meta">
+      ${files.map(({ artifactPath: evidencePath }) =>
+        evidenceHref
+          ? html`<a
+              class="ac-evidence"
+              data-testid="acceptance-evidence"
+              href=${evidenceHref(evidencePath)}
+              title=${evidencePath}
+              target="_blank"
+              rel="noreferrer"
+              @click=${(event: MouseEvent) => {
+                if (!openEvidence || !isPlainClick(event)) return;
+                event.preventDefault();
+                model.selectClaim(view.id, evidencePath);
+                openEvidence({
+                  criterion: view,
+                  evidence,
+                  index: evidence.indexOf(evidencePath),
+                  evidenceModel: model,
+                });
+              }}
+              >${evidenceLabel(evidencePath)}</a
+            >`
+          : html`<span class="ac-evidence" title=${evidencePath}
+              >${evidenceLabel(evidencePath)}</span
+            >`,
+      )}
+    </div>`;
   return html`
     <div
       class="ac-row ac-${verdict}"
@@ -400,7 +430,7 @@ function renderRow(
     >
       <span class="ac-id">${view.id}</span>
       <span class="ac-text">${view.text}</span>
-      ${view.moments.length && !model?.errors.length && openEvidence
+      ${display.clip && !model?.errors.length && openEvidence
         ? html`<button
             class="ac-evidence"
             data-testid="acceptance-clip"
@@ -431,45 +461,28 @@ function renderRow(
     ${view.reviewLabels.map(
       (label) => html`<div class="ac-meta" data-testid="visual-review-provenance">${label}</div>`,
     )}
-    ${evidence.length > 0 || recipeNodes.length > 0
-      ? html`
-          <div class="ac-meta">
-            ${evidence.map((evidencePath, index) =>
-              evidenceHref
-                ? html`<a
-                    class="ac-evidence"
-                    data-testid="acceptance-evidence"
-                    href=${evidenceHref(evidencePath)}
-                    title=${evidencePath}
-                    target="_blank"
-                    rel="noreferrer"
-                    @click=${(event: MouseEvent) => {
-                      if (!openEvidence || !isPlainClick(event)) return;
-                      event.preventDefault();
-                      model?.selectClaim(view.id, evidencePath);
-                      openEvidence({ criterion: view, evidence, index, evidenceModel: model });
-                    }}
-                    >${evidenceLabel(evidencePath)}</a
-                  >`
-                : html`<span class="ac-evidence" title=${evidencePath}
-                    >${evidenceLabel(evidencePath)}</span
-                  >`,
-            )}
-            ${recipeNodes.map((node) => html`<span>${node}</span>`)}
-          </div>
-        `
+    ${display.selected.length ? renderFiles(display.selected) : nothing}
+    ${display.raw.length
+      ? html`<details class="ac-meta" data-testid="acceptance-raw-artifacts">
+          <summary>raw artifacts (${display.raw.length})</summary>
+          ${renderFiles(display.raw)}
+        </details>`
       : nothing}
-    ${model?.claims
-      .find((claim) => claim.id === view.id)
-      ?.occurrences.map(
-        (occurrence) =>
-          html`<div class="ac-meta">
-            <span>${occurrence.intent}</span>
-            ${occurrence.expectation
-              ? html`<code>${JSON.stringify(occurrence.expectation)}</code>`
-              : nothing}
-          </div>`,
-      )}
+    ${recipeNodes.length || view.occurrences.length
+      ? html`<details class="ac-meta" data-testid="acceptance-check-details">
+          <summary>Check details</summary>
+          ${recipeNodes.map((node) => html`<span>${node}</span>`)}
+          ${view.occurrences.map(
+            (occurrence) =>
+              html`<div class="ac-meta">
+                <span>${occurrence.intent}</span>
+                ${occurrence.expectation
+                  ? html`<code>${JSON.stringify(occurrence.expectation)}</code>`
+                  : nothing}
+              </div>`,
+          )}
+        </details>`
+      : nothing}
     ${criterion?.note ? html`<div class="ac-note">${criterion.note}</div>` : nothing}
     ${criterion?.engineVerdict
       ? html`<div class="ac-note">Engine verdict: ${criterion.engineVerdict}</div>`
@@ -599,9 +612,9 @@ export function renderAcceptancePanel(
         ${rows.map((row) =>
           renderRow(
             row,
+            model,
             options.evidenceHref,
             options.openEvidence,
-            model,
             options.markUntestable,
             options.overrideEditor,
           ),

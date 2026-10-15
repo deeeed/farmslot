@@ -12,6 +12,7 @@ import {
   recordedEvidenceClosureIdentity,
   type RecordedEvidencePackageInput,
   reviewedVisualFiles,
+  type RunDecision,
   type SelfPrincipalSummary,
 } from '@farmslot/protocol';
 
@@ -36,6 +37,157 @@ const entry = (nodeId: string, start: number, end: number) => ({
   startedAt: at(start),
   endedAt: at(end),
   durationMs: end - start,
+});
+
+function recordedGate(selectedEvidenceKeys: string[]): RunDecision {
+  const diffStat = { files: 0, additions: 0, deletions: 0 };
+  return {
+    id: 'gate',
+    type: 'engine_human_gate',
+    title: 'Review',
+    description: '',
+    actions: [],
+    createdAt: at(0),
+    payload: {
+      kind: 'ready',
+      prNumber: null,
+      repo: null,
+      diffStat,
+      workerReport: '',
+      branch: 'review',
+      prPackage: {
+        id: 'package',
+        packageHash: digest('package'),
+        artifactPath: 'artifacts/pr-package.json',
+        branch: 'review',
+        diffStat,
+        draftTitle: 'Review',
+        draftBody: '',
+        reviewArtifactIds: [],
+        gatePolicy: {
+          owner: 'human',
+          dispatchMode: 'autonomous',
+          publishAuthority: 'human',
+          reason: 'Review the proof.',
+        },
+        publicationTarget: 'ready',
+        publicationStatus: 'not_published',
+        createdAt: at(0),
+        selectedEvidenceKeys,
+      },
+    },
+  };
+}
+
+test('the display uses recorded publication selections and retains every remaining artifact without changing claims', () => {
+  const evidence = ['artifacts/proof.png', 'artifacts/still.png', 'artifacts/log.txt'];
+  const ledger: AcceptanceStatusLedger = {
+    schemaVersion: 1,
+    criteria: [
+      {
+        id: 'AC-1',
+        text: 'Inspect the result.',
+        verdict: 'weak',
+        evidence,
+        recipeNodes: [],
+        updatedAt: at(0),
+      },
+    ],
+  };
+  const inventory = [...evidence, 'artifacts/summary.json'].map((path) => ({
+    path,
+    purpose: 'evidence',
+  }));
+  const model = createEvidenceReviewModel({
+    ledger,
+    artifacts: inventory,
+    gateDecision: recordedGate(['artifacts/proof.png']),
+  });
+  const original = structuredClone(model.claims);
+  const display = model.claimDisplay('AC-1');
+  assert.deepEqual(
+    display.selected.map((file) => file.artifactPath),
+    evidence.slice(0, 1),
+  );
+  assert.deepEqual(
+    display.raw.map((file) => file.artifactPath),
+    evidence.slice(1),
+  );
+  assert.deepEqual(
+    model.rawArtifacts(inventory).map((file) => file.path),
+    [...evidence.slice(1), 'artifacts/summary.json'],
+  );
+  assert.deepEqual(model.claims, original);
+  assert.deepEqual(ledger.criteria[0]?.evidence, evidence);
+  assert.equal(model.selection, null);
+  assert.deepEqual(
+    createEvidenceReviewModel({ ledger, gateDecision: recordedGate([]) }).claimDisplay('AC-1')
+      .selected,
+    [],
+  );
+  assert.deepEqual(createEvidenceReviewModel({ ledger }).claimDisplay('AC-1').selected, []);
+});
+
+test('a measured proof stays primary while its supporting stills remain raw and filterable', () => {
+  const source = qaPackage(2);
+  const before = JSON.stringify(source);
+  const model = createEvidenceReviewModel({
+    package: source,
+    artifactPrefix: 'artifacts/selected/',
+  });
+  assert.deepEqual(model.errors, []);
+  const claim = model.claims.find((row) => row.id === 'check-1');
+  assert.ok(claim);
+  const display = model.claimDisplay(claim.id);
+  assert.equal(display.clip, claim.clips[0]);
+  assert.deepEqual(display.selected, []);
+  assert.deepEqual(
+    display.raw.map((file) => file.artifactPath),
+    ['artifacts/selected/stills/1.png'],
+  );
+  const inventory = [
+    ...claim.evidence.map((file) => ({ path: file.artifactPath, purpose: 'evidence' })),
+    { path: 'artifacts/selected/summary.json', purpose: 'summary' },
+  ];
+  assert.deepEqual(model.rawArtifacts(inventory), inventory.slice(1));
+  model.setComparisonFilter('before');
+  assert.ok(model.comparisonView.rows.every((row) => row.primaryClip === null));
+  model.setComparisonFilter('moments');
+  assert.equal(
+    model.comparisonView.rows.find((row) => row.claim.id === claim.id)?.primaryClip,
+    display.clip,
+  );
+  assert.equal(JSON.stringify(source), before);
+});
+
+test('selected before and after captures are excluded from raw inventory without losing their source bindings', () => {
+  const baseSha = '1'.repeat(40),
+    headSha = '2'.repeat(40);
+  const source = withComparison(
+    boundComparisonPackage('head', 'after', headSha),
+    boundComparisonPackage('baseline', 'before', baseSha),
+  );
+  const model = createEvidenceReviewModel({
+    package: source,
+    artifactPrefix: 'artifacts/selected/',
+    comparisonSnapshot: { baseSha, headSha },
+  });
+  assert.deepEqual(model.errors, []);
+  const row = model.comparisons.find((row) => row.claim.id === 'check-1');
+  assert.ok(row?.selectedBefore && row.selectedAfter);
+  const inventory = [row.selectedBefore, row.selectedAfter].map((file) => ({
+    path: file.artifactPath,
+    purpose: 'evidence',
+  }));
+  const supporting = { path: 'artifacts/selected/summary.json', purpose: 'summary' };
+  assert.deepEqual(model.rawArtifacts([...inventory, supporting]), [supporting]);
+  assert.ok(
+    model
+      .claimDisplay('check-1')
+      .selected.some((file) => file.artifactPath === row.selectedAfter?.artifactPath),
+  );
+  assert.equal(row.selectedBefore.recipeRunId, 'baseline');
+  assert.equal(row.selectedAfter.recipeRunId, 'head');
 });
 
 function groupedRecording(path = 'video.mp4') {

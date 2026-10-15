@@ -13,6 +13,29 @@ import {
   taskStepStatusColor,
 } from './task-progress-view';
 
+test('native AC rows share the primary/raw display while retaining the full viewer inventory', () => {
+  const source = ledger();
+  const first = source.criteria[0];
+  assert.ok(first);
+  first.evidence = ['artifacts/proof.png', 'artifacts/still.png', 'artifacts/trace.json'];
+  const view = acceptanceLedgerView(source);
+  const row = view.rows.find((entry) => entry.criterion.id === first.id);
+  assert.ok(row);
+  assert.deepEqual(
+    row.display.selected.map((file) => file.artifactPath),
+    [],
+  );
+  assert.deepEqual(
+    row.display.raw.map((file) => file.artifactPath),
+    first.evidence,
+  );
+  assert.deepEqual(
+    row.evidence.map((file) => file.path),
+    first.evidence,
+  );
+  assert.equal(row.verdict, first.verdict);
+});
+
 function unit(overrides: Partial<TaskStepSubtaskProgress> = {}): TaskStepSubtaskProgress {
   return {
     id: 'perps-review',
