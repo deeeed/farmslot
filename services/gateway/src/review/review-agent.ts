@@ -1,8 +1,8 @@
 // review/review-agent.ts — launch and collect the independent review runner.
-
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
+import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import {
   type AgentContext,
   allocateReviewerContext,
@@ -257,7 +257,7 @@ This is an incremental continuation of the same review, not a new full-branch re
 - Prior review artifacts: \`${params.priorArtifactDir}\`
 
 This scope overrides generic full-branch diff instructions below. When the exact range is
-available, inspect \`git diff --stat ${reviewRange}\` and \`git diff ${reviewRange}\` instead of
+available, inspect \`${GIT_DIFF_COMMAND} --stat ${reviewRange}\` and \`${GIT_DIFF_COMMAND} ${reviewRange}\` instead of
 \`main...HEAD\`. Recheck the prior findings and validate affected surfaces only. Expand beyond
 that range only when the delta invalidates a prior assumption, and explain why in the report.
 `;

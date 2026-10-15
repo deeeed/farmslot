@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, rename, rm, stat as fsStat } from 'node:fs/promises';
 import path from 'node:path';
 
+import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import {
   type ArtifactRef,
   DEFAULT_BRANCH,
@@ -111,7 +112,7 @@ export function resolveReviewInputCaptureTimeoutMs(
   if (raw > REVIEW_INPUT_CAPTURE_TIMEOUT_MAX_MS) return REVIEW_INPUT_CAPTURE_TIMEOUT_MAX_MS;
   return raw;
 }
-const GIT_DIFF_NO_QUOTE_PATH = 'git -c core.quotePath=false diff --binary --full-index';
+const GIT_DIFF_BINARY = `${GIT_DIFF_COMMAND} --binary --full-index`;
 // Sentinel exit code returned by `cappedGitDiffCommand`'s bash script when the
 // captured diff exceeds MAX_DIFF_ARTIFACT_BYTES. 42 is chosen to avoid clashing
 // with git's documented exit codes (0=no-diff, 1=diff, 128=error) and the
@@ -351,7 +352,7 @@ export function cappedGitDiffCommand(range: string, pathspecs: readonly string[]
     'export LC_ALL=C',
     'tmp=$(mktemp "${TMPDIR:-/tmp}/farmslot-diff.XXXXXX")',
     'trap \'rm -f "$tmp"\' EXIT',
-    `${GIT_DIFF_NO_QUOTE_PATH} ${range} ${pathspecArgs} > "$tmp"`,
+    `${GIT_DIFF_BINARY} ${range} ${pathspecArgs} > "$tmp"`,
     'bytes=$(stat -f%z "$tmp" 2>/dev/null || stat -c%s "$tmp")',
     `if [ "$bytes" -gt ${MAX_DIFF_ARTIFACT_BYTES} ]; then printf 'farmslot-diff-bytes=%s\\n' "$bytes" >&2; exit ${GIT_DIFF_TOO_LARGE_EXIT_CODE}; fi`,
     'cat "$tmp"',
@@ -372,7 +373,7 @@ export function runSourceDiffNumstatCommand(
     'set -euo pipefail',
     'export LC_ALL=C',
     `tracked_base=${shellQuote(trackedDiffBase)}`,
-    `git -c core.quotePath=false diff --no-ext-diff --no-textconv --numstat "$tracked_base" ${pathspecClause}`,
+    `${GIT_DIFF_COMMAND} --numstat "$tracked_base" ${pathspecClause}`,
     'untracked=$(mktemp "${TMPDIR:-/tmp}/farmslot-untracked.XXXXXX")',
     'trap \'rm -f "$untracked"\' EXIT',
     `git -c core.quotePath=false ls-files --others --exclude-standard -z ${pathspecClause} > "$untracked"`,
@@ -441,11 +442,11 @@ export function cappedRunSourceDiffCommand(
     `tracked_base=${shellQuote(trackedDiffBase)}`,
     `git -c core.quotePath=false ls-files --others --exclude-standard -z ${pathspecClause} > "$untracked"`,
     '{',
-    `  ${GIT_DIFF_NO_QUOTE_PATH} "$tracked_base" ${pathspecClause}`,
+    `  ${GIT_DIFF_BINARY} "$tracked_base" ${pathspecClause}`,
     "  while IFS= read -r -d '' file; do",
     '    [ -f "$file" ] || continue',
     '    set +e',
-    '    git -c core.quotePath=false diff --binary --full-index --no-index -- /dev/null "$file"',
+    `    ${GIT_DIFF_BINARY} --no-index -- /dev/null "$file"`,
     '    code=$?',
     '    set -e',
     '    if [ "$code" -ne 0 ] && [ "$code" -ne 1 ]; then exit "$code"; fi',

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import type { ExecResult, Run } from '@farmslot/protocol';
 
 import { completionVerificationMode, inspectWorktreePublishState } from './push-verification.js';
@@ -81,8 +82,8 @@ test('worktree inspection counts actual content changes and untracked files NUL-
   });
   assert.deepEqual(script.commands.slice(0, 4), [
     'git rev-parse --verify --quiet HEAD',
-    'git diff --name-only -z HEAD --',
-    'git diff --cached --name-only -z HEAD --',
+    `${GIT_DIFF_COMMAND} --name-only -z HEAD --`,
+    `${GIT_DIFF_COMMAND} --cached --name-only -z HEAD --`,
     'git ls-files --others --exclude-standard -z',
   ]);
 });
@@ -106,7 +107,7 @@ test('worktree inspection supports a repository with no HEAD commit yet', async 
     unpushedCommits: 1,
   });
   assert.equal(script.commands[1], 'git ls-files --cached -z');
-  assert.ok(!script.commands.some((command) => command.includes('git diff --cached')));
+  assert.ok(!script.commands.some((command) => command.includes(`${GIT_DIFF_COMMAND} --cached`)));
 });
 
 test('worktree inspection compares an existing feature remote with the local branch', async () => {

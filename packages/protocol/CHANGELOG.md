@@ -4,16 +4,18 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Expose scoped review-budget grants and the effective review limit.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+- Expose verified review exceptions so publication actions match their gate prerequisites.
+- Expose scoped review-budget grants and the effective review limit.
 - Resolve QA profiles from an explicit or policy id, an optional project default, or the sole profile; return typed choices for ambiguous requests.
+
+- Add the shared Sign out / switch account control to forget this device login and disconnect until explicit login or pairing.
 
 ## 0.45.0 - 2026-10-15
 
 - Add typed retained-run stack attachment to the existing work-graph RPC.
 - Expose explicit retired principal-id replacement and identity generations while retaining retired credential ids.
-
 - Retain optional AC/role capture annotations and original execution/source identities with immutable comparison dependencies.
 - Add project-authorized delegated visual judgments with checked media and person-only claim policy.
 

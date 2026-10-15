@@ -1,6 +1,6 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
-  "title": "Scoped native review budget extension",
+  "title": "Scoped reviews and honest publication gates",
   "description": "Manual local native reviewer and gateway recovery proof. Set FARMSLOT_CDP_PORT for the owned browser; use a fresh artifact directory.",
   "workflow": {
     "entry": "round-budget",
@@ -9,10 +9,13 @@
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/review-round-budget.mts --ui --extend",
         "timeout_ms": 600000,
-        "intent": "The gateway records a bounded extension, admits native sixth/seventh reviews and retains N/L through restart.",
+        "intent": "The gateway refuses stale approval without consuming the gate, records an extension, admits native sixth/seventh reviews and retains N/L through restart.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
     }
   }
 }

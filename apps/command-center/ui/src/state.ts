@@ -182,7 +182,7 @@ function filtersEqual(a: GlobalFilters, b: GlobalFilters): boolean {
 }
 
 const state: AppState = {
-  connection: 'disconnected',
+  connection: gateway.connectionState,
   hydrated: { ...EMPTY_HYDRATED },
   bootstrapFailed: { ...EMPTY_HYDRATED },
   fleet: null,
