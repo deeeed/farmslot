@@ -4,8 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Confirm idle workers after long or compacted sessions by streaming native background-task history with bounded record reads.
-- Keep autonomous workers monitoring while native background tasks run; require confirmed idle work before raising a missing-signal handoff.
+- Keep autonomous workers monitoring while native background tasks run, and confirm idle after long sessions, reordered completion notifications or successful native task stops using bounded history reads.
 - Reclaim retired review support caches through run cleanup, preserve held or retained task evidence, and let global maintenance handle released data from retired native owners.
 - Deliver frozen evidence for adopted publications only at the attested head, preserving human PR content and archived execution records, including historical task pointers.
 - Resolve task and reviewer pack commands from the connected node installation instead of a guessed deployment directory.

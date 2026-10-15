@@ -31,7 +31,10 @@ def unknown():
     raise SystemExit(0)
 if os.path.basename(transcript) != session + '.jsonl':
     unknown()
-pending = {}
+launched = set()
+finished = set()
+stop_calls = set()
+stop_results = set()
 matched_session = False
 try:
     with open(transcript, 'rb') as stream:
@@ -51,15 +54,33 @@ try:
             if not isinstance(record, dict) or record.get('sessionId') != session:
                 continue
             matched_session = True
+            message = record.get('message')
+            content = message.get('content', []) if isinstance(message, dict) else []
+            blocks = content if isinstance(content, list) else []
+            if record.get('type') == 'assistant':
+                for block in blocks:
+                    if not isinstance(block, dict) or block.get('type') != 'tool_use' or block.get('name') != 'TaskStop':
+                        continue
+                    tool = block.get('id')
+                    inputs = block.get('input')
+                    task = inputs.get('task_id') if isinstance(inputs, dict) else None
+                    if isinstance(tool, str) and tool and isinstance(task, str) and task:
+                        stop_calls.add((tool, task))
             result = record.get('toolUseResult')
             if record.get('type') == 'user' and isinstance(result, dict):
+                tools = [block for block in blocks if isinstance(block, dict) and block.get('type') == 'tool_result']
                 task = result.get('backgroundTaskId') or (result.get('agentId') if result.get('isAsync') is True else None)
                 if isinstance(task, str) and task:
-                    content = record.get('message', {}).get('content', [])
-                    tools = [block.get('tool_use_id') for block in content if isinstance(block, dict) and block.get('type') == 'tool_result'] if isinstance(content, list) else []
-                    if len(tools) != 1 or not isinstance(tools[0], str):
+                    if len(tools) != 1 or not isinstance(tools[0].get('tool_use_id'), str) or not tools[0]['tool_use_id']:
                         unknown()
-                    pending[task] = tools[0]
+                    launched.add((task, tools[0]['tool_use_id']))
+                task = result.get('task_id')
+                task_type = result.get('task_type')
+                if isinstance(task, str) and task and isinstance(task_type, str) and task_type and len(tools) == 1:
+                    tool = tools[0].get('tool_use_id')
+                    # Native successful TaskStop results omit is_error or set it to false.
+                    if isinstance(tool, str) and tool and ('is_error' not in tools[0] or tools[0]['is_error'] is False):
+                        stop_results.add((tool, task))
             if record.get('type') == 'queue-operation' and record.get('operation') == 'enqueue':
                 content = record.get('content')
                 if not isinstance(content, str):
@@ -72,8 +93,8 @@ try:
                     continue
                 task = notification.findtext('task-id')
                 tool = notification.findtext('tool-use-id')
-                if task in pending and pending[task] == tool and notification.findtext('status') in ('completed', 'failed', 'killed'):
-                    del pending[task]
+                if task and tool and notification.findtext('status') in ('completed', 'failed', 'killed'):
+                    finished.add((task, tool))
         after = os.fstat(stream.fileno())
 except OSError:
     unknown()
@@ -81,6 +102,8 @@ if consumed != before.st_size or (before.st_size, before.st_mtime_ns) != (after.
     unknown()
 if not matched_session:
     unknown()
+stopped = {task for tool, task in stop_calls & stop_results}
+pending = any(task not in stopped and (task, tool) not in finished for task, tool in launched)
 print(json.dumps({'state': 'active' if pending else 'idle', 'observedAt': before.st_mtime_ns / 1000000}))
 PY`;
 }

@@ -37,6 +37,31 @@ function completed(task = 'background-1', tool = 'tool-1', status = 'completed')
     content: `<task-notification><task-id>${task}</task-id><tool-use-id>${tool}</tool-use-id><status>${status}</status></task-notification>`,
   };
 }
+function stopCall(task = 'background-1', tool = 'stop-1') {
+  return {
+    type: 'assistant',
+    sessionId,
+    message: {
+      content: [{ type: 'tool_use', id: tool, name: 'TaskStop', input: { task_id: task } }],
+    },
+  };
+}
+function stopResult(task = 'background-1', tool = 'stop-1', isError?: boolean) {
+  return {
+    type: 'user',
+    sessionId,
+    message: {
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: tool,
+          ...(isError === undefined ? {} : { is_error: isError }),
+        },
+      ],
+    },
+    toolUseResult: { task_id: task, task_type: 'local_bash' },
+  };
+}
 async function transcript(t: TestContext) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'claude-background-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -131,6 +156,86 @@ test('compaction does not erase an unfinished task across bounded record reads',
   assert.equal(f.read(1024).state, 'active');
   await f.write([...records, completed()]);
   assert.equal(f.read(1024).state, 'idle');
+});
+
+test('terminal notifications reconcile before launch and cannot be undone by duplicate launches', async (t) => {
+  const f = await transcript(t);
+  for (const records of [
+    [completed(), launch()],
+    [launch(), completed(), launch()],
+    [completed('background-1', 'tool-1', 'failed'), launch()],
+    [completed('background-1', 'tool-1', 'killed'), launch()],
+  ]) {
+    await f.write(records);
+    assert.equal(f.read().state, 'idle');
+  }
+  await f.write([completed('background-1', 'other-tool'), launch()]);
+  assert.equal(f.read().state, 'active');
+  await f.write([completed(), launch(), launch('background-2', 'tool-2')]);
+  assert.equal(f.read().state, 'active');
+});
+
+test('a matched successful TaskStop settles only its target, including reordered native records', async (t) => {
+  const f = await transcript(t);
+  for (const error of [undefined, false]) {
+    await f.write([launch(), stopCall(), stopResult('background-1', 'stop-1', error)]);
+    assert.equal(f.read().state, 'idle');
+  }
+  await f.write([stopResult(), stopCall(), launch()]);
+  assert.equal(f.read().state, 'idle');
+  await f.write([launch(), launch('background-2', 'tool-2'), stopCall(), stopResult()]);
+  assert.equal(f.read().state, 'active');
+  await f.write([
+    launch(),
+    launch('background-2', 'tool-2'),
+    stopCall(),
+    stopResult(),
+    stopCall('background-2', 'stop-2'),
+    stopResult('background-2', 'stop-2'),
+  ]);
+  assert.equal(f.read().state, 'idle');
+});
+
+test('failed, mismatched or unproven stop receipts cannot erase live background work', async (t) => {
+  const f = await transcript(t);
+  const cases = [
+    [stopCall()],
+    [stopResult()],
+    [stopCall(), stopResult('background-1', 'stop-1', true)],
+    [stopCall(), stopResult('other-task')],
+    [stopCall(), stopResult('background-1', 'other-call')],
+    [stopCall('other-task'), stopResult()],
+    [stopCall(), { ...stopResult(), sessionId: 'foreign' }],
+    [{ ...stopCall(), sessionId: 'foreign' }, stopResult()],
+    [
+      stopCall(),
+      {
+        ...stopResult(),
+        message: { content: [{ type: 'tool_result', tool_use_id: 'stop-1', is_error: 'false' }] },
+      },
+    ],
+    [stopCall(), { ...stopResult(), toolUseResult: { task_id: 'background-1' } }],
+    [
+      {
+        ...stopCall(),
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: 'stop-1',
+              name: 'TaskOutput',
+              input: { task_id: 'background-1' },
+            },
+          ],
+        },
+      },
+      stopResult(),
+    ],
+  ];
+  for (const records of cases) {
+    await f.write([launch(), ...records]);
+    assert.equal(f.read().state, 'active');
+  }
 });
 
 test('incomplete, oversized and unattributed native evidence never proves idle', async (t) => {
