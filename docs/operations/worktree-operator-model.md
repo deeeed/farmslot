@@ -104,11 +104,18 @@ See [Identity and credentials](../reference/identity-and-credentials.md).
 Dev stacks clear inherited credentials, auth mode and bind host before loading
 checkout configuration. `.env.local-auth` can supply the local node's machine
 credential and its server-assigned native owner, plus unrelated private provider
-settings. Remote node deployment retains the installed node's owner unless the
+settings. On macOS, remote node deployment retains the installed node's owner unless the
 caller explicitly replaces it.
 
-For physical-device LAN mode, set `GATEWAY_HOST=0.0.0.0` in the checkout's
-`.env.ports` and activate its credential store before pairing Companion. A sandbox
-without local configuration binds loopback; health checks on loopback do not prove
-LAN connectivity. Put an explicit loopback bind in `.env.ports` when LAN access
-is unwanted.
+Slot-local credential provisioning remains a rollout prerequisite for
+physical-device LAN mode. Start a new sandbox on loopback first, then provision
+its own admin credential through that loopback gateway or the supported offline
+commands with the sandbox's isolated `FARMSLOT_HOME` at `<runtime>/home`. See
+[Identity and credentials](../reference/identity-and-credentials.md) for issuance
+and offline recovery. Stop the sandbox before offline writes.
+
+Only after the store is activated, restart the sandbox and pair Companion.
+With `GATEWAY_HOST` unset, `dev.sh` binds an activated store to `0.0.0.0`, otherwise
+to loopback. Setting `GATEWAY_HOST=0.0.0.0` before activation makes the gateway
+refuse to start. Put `GATEWAY_HOST=127.0.0.1` in `.env.ports` when LAN access is
+unwanted. Health checks on loopback do not prove LAN connectivity.

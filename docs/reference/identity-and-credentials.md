@@ -73,10 +73,11 @@ outside the allowed principals, not retained revoked records.
 Back up private auth files before removing obsolete copies. Keep the active
 person device login, separate automation CLI profiles and the gateway's
 hash-only store. A local node reads its credential from the gitignored startup
-file or private cache; a remote node reads its installed service declaration.
+file, `.env` fallback or private cache; a remote node reads its installed service declaration.
 Never embed person or service secrets in tracked samples, build environments or
-node startup declarations. Tests
-use credentials issued into an isolated test home, never a person's profile.
+node startup declarations.
+
+Tests use credentials issued into an isolated test home, never a person's profile.
 
 ## Recover admin access
 
