@@ -17,6 +17,7 @@ import { buildRetrospectivePayload } from '../run-completion/orchestrator.js';
 import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
 import { refreshRunGateReadiness } from '../run-engine/gate-prerequisites.js';
 import { enrichDecisionsWithGateSummary } from '../run-engine/gate-summary.js';
+import { reconcilePublicationPackageForInspection } from '../run-engine/publish-package-refresh.js';
 import { listRuns } from '../runs/store.js';
 
 import { runResolveDecision } from './run.js';
@@ -46,7 +47,9 @@ export async function decisionList(): Promise<DecisionListResult> {
     // Lazy gate-summary backfill so historical gate/retrospective decisions
     // carry the consolidated narrative without a migration.
     const enrichedRun = enrichDecisionsWithGateSummary(
-      await attachReviewRoundBudget(await refreshRunGateReadiness(run)),
+      await attachReviewRoundBudget(
+        await reconcilePublicationPackageForInspection(await refreshRunGateReadiness(run)),
+      ),
     );
     for (const d of enrichedRun.decisions) {
       if (d.resolvedAt) continue;

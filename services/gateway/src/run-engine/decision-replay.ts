@@ -32,6 +32,7 @@ export function latestResolvedHumanGateDecision(
     // Supersession is a replay barrier. Looking past it can resurrect the
     // approval whose stale waiter was deliberately invalidated.
     if (decision.resolvedAction === 'superseded') return undefined;
+    if (decision.resolvedAction === 'superseded-by-package-refresh') continue;
     // So is a held approval: the operator decides again after the re-review.
     if (typeof decision.context?.[HUMAN_GATE_APPROVAL_HELD_CONTEXT_KEY] === 'string')
       return undefined;
@@ -47,7 +48,12 @@ export function hasHeldPublicationApproval(run: Pick<Run, 'decisions'>): boolean
   for (const decision of [...run.decisions].reverse()) {
     if (decision.type !== 'engine_human_gate' || !decision.resolvedAt) continue;
     // Re-presenting or holding the wait grants no review/fix authority.
-    if (decision.resolvedAction === 'superseded' || decision.resolvedAction === 'hold') continue;
+    if (
+      decision.resolvedAction === 'superseded' ||
+      decision.resolvedAction === 'superseded-by-package-refresh' ||
+      decision.resolvedAction === 'hold'
+    )
+      continue;
     return typeof decision.context?.[HUMAN_GATE_APPROVAL_HELD_CONTEXT_KEY] === 'string';
   }
   return false;

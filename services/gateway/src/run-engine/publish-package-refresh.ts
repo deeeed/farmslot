@@ -5,6 +5,7 @@ import {
   effectiveRequiredReviewCount,
   Events,
   GATE_SUMMARY_KINDS,
+  isPublishApprovalAction,
   latestExhaustedReview,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
@@ -22,15 +23,21 @@ import {
   prepareCompletionPackageTransitionLocked,
   publicationStatusForRun,
 } from '../run-completion/orchestrator.js';
-import { computeReadyGateReviewSubjectHash } from '../run-completion/ready-gate-package.js';
+import { capturePublicationSource } from '../run-completion/publication-source.js';
+import {
+  computeReadyGateReviewSubjectHash,
+  readReadyGatePreparedPackage,
+} from '../run-completion/ready-gate-package.js';
 import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
-import { getRun, updateRun } from '../runs/store.js';
+import { readRunProgress, type RunProgressObservation } from '../runners/run-progress.js';
+import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 
 import {
   applyBranchFreshnessToReadyGatePayload,
   probeSlotBranchFreshness,
   resolveBranchUpdateStrategy,
 } from './branch-freshness.js';
+import { BlockedRunError } from './errors.js';
 import {
   buildEvidenceRefreshAction,
   countStalePublicationReviews,
@@ -53,6 +60,124 @@ let broadcastFn: BroadcastFn = () => {};
 
 export function setPublishPackageRefreshBroadcast(broadcast: BroadcastFn): void {
   broadcastFn = broadcast;
+}
+
+async function currentPublicationHead(run: Run): Promise<string | null> {
+  return (await capturePublicationSource(run)).headSha;
+}
+
+/** The gate loop and inspection share the existing package writer. */
+export async function ensureCurrentPublishPackage(
+  runId: string,
+): Promise<ReadyGatePrPackage | undefined> {
+  return withRunTransition(runId, async () => {
+    const run = getRun(runId);
+    if (!run || publicationStatusForRun(run) !== 'not_published') return undefined;
+    const prepared = await readReadyGatePreparedPackage(run);
+    const head = await currentPublicationHead(run);
+    if (!head)
+      throw new BlockedRunError(
+        'Publication source HEAD is unavailable; restore the owned source before approval',
+      );
+    const ids = (run.engineState?.publishGate?.reviews ?? [])
+      .flatMap((review) => review.artifactPaths ?? [review.id])
+      .sort();
+    if (
+      prepared?.headSha === head &&
+      JSON.stringify([...prepared.reviewArtifactIds].sort()) === JSON.stringify(ids)
+    )
+      return prepared;
+    await refreshPublishPackageTransitionLocked({ runId }, true);
+    return readReadyGatePreparedPackage(getRun(runId)!);
+  });
+}
+
+interface PublicationInspectionReaders {
+  head: typeof currentPublicationHead;
+  progress: (run: Run) => Promise<RunProgressObservation>;
+  refresh: (runId: string, decisionId: string) => Promise<Run>;
+}
+
+const inspectionRefreshes = new Map<string, Promise<Run>>();
+
+/** Coalesce polling readers, and never snapshot a worker that is still progressing. */
+export function reconcilePublicationPackageForInspection(
+  run: Run,
+  overrides: Partial<PublicationInspectionReaders> = {},
+): Promise<Run> {
+  const pending = run.decisions.find(
+    (entry) => !entry.resolvedAt && entry.payload?.kind === 'ready',
+  );
+  if (
+    !pending ||
+    !['dev', 'fix-bug'].includes(run.flowType) ||
+    run.readOnly ||
+    publicationStatusForRun(run) !== 'not_published'
+  )
+    return Promise.resolve(run);
+  const existing = inspectionRefreshes.get(run.id);
+  if (existing) return existing;
+  const readers: PublicationInspectionReaders = {
+    head: currentPublicationHead,
+    progress: readRunProgress,
+    refresh: async (runId, decisionId) => (await refreshPublishPackage({ runId, decisionId })).run,
+    ...overrides,
+  };
+  const collecting = (message: string, head?: string | null): Run => ({
+    ...(getRun(run.id) ?? run),
+    decisions: (getRun(run.id) ?? run).decisions.map((entry) =>
+      entry.id !== pending.id || entry.resolvedAt || entry.payload?.kind !== 'ready'
+        ? entry
+        : {
+            ...entry,
+            actions: entry.actions.filter((action) => !isPublishApprovalAction(action.id)),
+            description: message,
+            payload: {
+              ...entry.payload,
+              headSha: head ?? entry.payload.headSha,
+              stale: true,
+              gateReadiness: {
+                state: 'collecting',
+                identity: { runId: run.id, generation: run.engineState?.generation ?? 0 },
+                reasons: [
+                  {
+                    code: 'publication-package-refresh-pending',
+                    prerequisite: 'lifecycle',
+                    message,
+                    actionId: 'hold',
+                  },
+                ],
+              },
+            },
+          },
+    ),
+  });
+  const operation = (async () => {
+    try {
+      const head = await readers.head(run);
+      if (!head)
+        return collecting(
+          'Publication source HEAD is unavailable; retain the gate and restore source access.',
+        );
+      if (pending.payload?.kind === 'ready' && pending.payload.prPackage?.headSha === head)
+        return getRun(run.id) ?? run;
+      const progress = await readers.progress(getRun(run.id) ?? run);
+      if (progress.kind !== 'idle')
+        return collecting(
+          'Publication HEAD changed; waiting for the owned worker to be idle before refreshing its package.',
+          head,
+        );
+      return await readers.refresh(run.id, pending.id);
+    } catch (error) {
+      return collecting(
+        `Publication package refresh could not finish: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      inspectionRefreshes.delete(run.id);
+    }
+  })();
+  inspectionRefreshes.set(run.id, operation);
+  return operation;
 }
 
 export function summarizePublishPackageRefreshEvidence(
@@ -150,16 +275,24 @@ function restampReviewsForRefreshedPackage(
 
 export function refreshPublishPackage(
   params: Parameters<typeof refreshPublishPackageTransitionLocked>[0],
+  readers: { progress?: typeof readRunProgress; source?: typeof capturePublicationSource } = {},
 ): ReturnType<typeof refreshPublishPackageTransitionLocked> {
-  return withRunTransition(params.runId, () => refreshPublishPackageTransitionLocked(params));
+  return withRunTransition(params.runId, () =>
+    refreshPublishPackageTransitionLocked(params, false, readers.progress, readers.source),
+  );
 }
 
-async function refreshPublishPackageTransitionLocked(params: {
-  runId: string;
-  decisionId?: string;
-  selectedEvidenceKeys?: string[];
-  publicationTarget?: 'draft' | 'ready';
-}): Promise<{
+async function refreshPublishPackageTransitionLocked(
+  params: {
+    runId: string;
+    decisionId?: string;
+    selectedEvidenceKeys?: string[];
+    publicationTarget?: 'draft' | 'ready';
+  },
+  allowHistorical = false,
+  progressReader: typeof readRunProgress = readRunProgress,
+  sourceReader: typeof capturePublicationSource = capturePublicationSource,
+): Promise<{
   run: Run;
   packageId: string;
   packageHash: string;
@@ -178,25 +311,33 @@ async function refreshPublishPackageTransitionLocked(params: {
       d.type === 'engine_human_gate' &&
       !d.resolvedAt &&
       (!params.decisionId || d.id === params.decisionId) &&
-      (d.payload as ReadyGatePayload | undefined)?.kind === 'ready' &&
-      Boolean((d.payload as ReadyGatePayload | undefined)?.prPackage),
+      (d.payload as ReadyGatePayload | undefined)?.kind === 'ready',
   );
-  if (!decision) throw new Error('No pending ready publish package decision to refresh');
+  if (!decision && !allowHistorical)
+    throw new Error(
+      'No pending ready publish package decision; replay complete on this run to restore its gate',
+    );
   const status = publicationStatusForRun(run);
   if (status !== 'not_published') {
     throw new Error(`Cannot refresh publish package while publication status is ${status}`);
   }
 
-  const oldPayload = decision.payload as ReadyGatePayload;
-  const selectedBefore =
-    params.selectedEvidenceKeys ??
-    oldPayload.prPackage?.selectedEvidenceKeys ??
-    oldPayload.prPackage?.evidenceManifest?.map((artifact) => artifact.path) ??
-    [];
-  const target =
-    params.publicationTarget === 'draft' || params.publicationTarget === 'ready'
-      ? params.publicationTarget
-      : (oldPayload.publicationTarget ?? oldPayload.prPackage?.publicationTarget ?? 'ready');
+  const oldPayload: ReadyGatePayload =
+    decision?.payload?.kind === 'ready'
+      ? {
+          ...decision.payload,
+          prPackage: decision.payload.prPackage ?? (await readReadyGatePreparedPackage(run)),
+        }
+      : {
+          kind: 'ready',
+          prNumber: null,
+          repo: null,
+          branch: run.branch ?? '',
+          diffStat: { files: 0, additions: 0, deletions: 0 },
+          workerReport: '',
+          prPackage: await readReadyGatePreparedPackage(run),
+          reviewPolicy: run.engineState?.publishGate?.reviewPolicy,
+        };
   let slotAvailable = false;
   if (run.slotId) {
     try {
@@ -206,6 +347,27 @@ async function refreshPublishPackageTransitionLocked(params: {
       if (!(error instanceof SlotConfigError) || error.code !== 'SLOT_NOT_FOUND') throw error;
     }
   }
+  const generation = run.engineState?.generation ?? 0;
+  const source = slotAvailable ? await sourceReader(run) : null;
+  const head = source?.headSha ?? oldPayload.prPackage?.headSha;
+  if (!head)
+    throw new Error(
+      'Current publication HEAD is unknown; retain the gate and restore source access',
+    );
+  const progress = slotAvailable ? await progressReader(run) : null;
+  if (progress && progress.kind !== 'idle')
+    throw new BlockedRunError(
+      'Wait for the owned worker to be idle before refreshing its publication package',
+    );
+  const selectedBefore =
+    params.selectedEvidenceKeys ??
+    oldPayload.prPackage?.selectedEvidenceKeys ??
+    oldPayload.prPackage?.evidenceManifest?.map((artifact) => artifact.path) ??
+    [];
+  const target =
+    params.publicationTarget === 'draft' || params.publicationTarget === 'ready'
+      ? params.publicationTarget
+      : (oldPayload.publicationTarget ?? oldPayload.prPackage?.publicationTarget ?? 'ready');
   const projectConfig =
     oldPayload.reviewPolicy?.requestedBy === 'human-gate'
       ? (await loadProjectVars(run.project)).projectJson
@@ -227,7 +389,20 @@ async function refreshPublishPackageTransitionLocked(params: {
     priorEvidenceManifest: oldPayload.prPackage?.evidenceManifest,
     stampReviews: false,
     requireArtifactMirror: slotAvailable,
-    headSha: oldPayload.prPackage?.headSha,
+    ...(slotAvailable ? { expectedHeadSha: head } : { headSha: head }),
+    deferCommit: true,
+    assertSourceCurrent: async () => {
+      const current = getRun(params.runId);
+      if (
+        !current ||
+        (current.engineState?.generation ?? 0) !== generation ||
+        current.slotId !== run.slotId ||
+        current.branch !== run.branch
+      )
+        throw new Error('Run ownership changed during gate refresh');
+      if (source && JSON.stringify(await sourceReader(current)) !== JSON.stringify(source))
+        throw new Error('Run ownership or HEAD changed during gate refresh');
+    },
   });
   const refreshedRun = getRun(params.runId)!;
   const prPackage = prepared.prPackage;
@@ -344,20 +519,45 @@ async function refreshPublishPackageTransitionLocked(params: {
     },
     freshness,
   );
-  const nextDecision: RunDecision = {
-    ...decision,
-    actions,
-    context: { ...decision.context, gateActions: actions },
-    payload: nextPayload,
-    description: `**Package:** ${prPackage.id}\n**Target:** ${prPackage.publicationTarget}\n**Branch:** ${prPackage.branch || refreshedRun.branch || 'unknown'}\n**Files:** ${prPackage.diffStat.files} (+${prPackage.diffStat.additions} -${prPackage.diffStat.deletions})${freshnessLine}${exhaustedReview ? `\n**Review retries exhausted:** ${reviewRetryCapReason(exhaustedReview)}` : ''}\n\nPackage refreshed. Review the local package before public PR publication.`,
-  };
+  // The preparation owner commits the package only after all projection I/O.
+  // A late source refusal therefore preserves the previous canonical pointer.
+  await prepared.commit!();
+  const nextDecision: RunDecision | undefined = decision
+    ? {
+        ...decision,
+        actions,
+        context: { ...decision.context, gateActions: actions },
+        payload: nextPayload,
+        description: `**Package:** ${prPackage.id}\n**Target:** ${prPackage.publicationTarget}\n**Branch:** ${prPackage.branch || refreshedRun.branch || 'unknown'}\n**Files:** ${prPackage.diffStat.files} (+${prPackage.diffStat.additions} -${prPackage.diffStat.deletions})${freshnessLine}${exhaustedReview ? `\n**Review retries exhausted:** ${reviewRetryCapReason(exhaustedReview)}` : ''}\n\nPackage refreshed. Review the local package before public PR publication.`,
+      }
+    : undefined;
   updateRun(params.runId, {
-    engineState: nextEngineState,
-    decisions: refreshedRun.decisions.map((entry) =>
-      entry.id === nextDecision.id ? nextDecision : entry,
-    ),
+    engineState: {
+      ...getRun(params.runId)!.engineState,
+      publishGate: { ...getRun(params.runId)!.engineState?.publishGate, reviews },
+    },
+    decisions: [
+      ...refreshedRun.decisions.map((entry) =>
+        nextDecision && entry.id === nextDecision.id ? nextDecision : entry,
+      ),
+      ...(decision && oldPayload.prPackage && oldPayload.prPackage.id !== prPackage.id
+        ? [
+            {
+              ...decision,
+              id: `${decision.id}-snapshot-${oldPayload.prPackage.id}`,
+              resolvedAt: new Date().toISOString(),
+              resolvedAction: 'superseded-by-package-refresh',
+              payload: {
+                ...oldPayload,
+                prPackage: { ...oldPayload.prPackage, supersededByPackageId: prPackage.id },
+              },
+            },
+          ]
+        : []),
+    ],
   });
   await refreshRunGateReadiness(getRun(params.runId)!);
+  await persistRunNow(getRun(params.runId)!, 'publication package refresh');
   broadcastFn(Events.RUN_UPDATED, { run: getRun(params.runId) });
   console.log(
     `[run-engine] run ${params.runId.slice(0, 8)} — publish package refreshed (${prPackage.id}/${prPackage.packageHash.slice(0, 12)})`,

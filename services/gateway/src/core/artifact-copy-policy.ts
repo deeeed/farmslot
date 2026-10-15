@@ -81,6 +81,7 @@ export function isGatewayOwnedArtifactMirrorEntry(name: string): boolean {
     /^publication-gate-[a-z0-9-]+\.md$/i.test(name) ||
     /^pr-package\.(json|md)$/.test(name) ||
     name === 'workflow.mmd' ||
+    name === 'publication-packages' ||
     name === PUBLICATION_SELECTION_DIR
   );
 }
@@ -91,6 +92,10 @@ export function isGatewayOwnedArtifactPath(artifactPath: string): boolean {
   const artifactName = normalized.slice('artifacts/'.length);
   const [topLevel, ...rest] = artifactName.split('/');
   if (rest.length > 0)
-    return topLevel === PUBLICATION_SELECTION_DIR || isGatewayOwnedReviewDirName(topLevel);
+    return (
+      topLevel === PUBLICATION_SELECTION_DIR ||
+      topLevel === 'publication-packages' ||
+      isGatewayOwnedReviewDirName(topLevel)
+    );
   return isGatewayOwnedArtifactMirrorEntry(artifactName);
 }
