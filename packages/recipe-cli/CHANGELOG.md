@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Use the plain SDK contracts throughout provider loading and recipe execution.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.18.3 - 2026-10-15

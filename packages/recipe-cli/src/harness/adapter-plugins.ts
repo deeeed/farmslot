@@ -19,7 +19,7 @@ import { pathToFileURL } from 'node:url';
 import {
   ADAPTER_SDK_VERSION,
   type AdapterDoctorCheck,
-  type PlatformAdapter,
+  type ProjectRuntime,
 } from '@farmslot/adapter-sdk';
 import {
   digestLibraryAdapter,
@@ -104,7 +104,7 @@ export interface AdapterLoadOptions extends AdapterLibraryOptions {
    * Turns a loaded adapter into the host's adapter, e.g. defaults for members
    * the host's registry requires beyond the SDK. Called before registration.
    */
-  adopt?(adapter: PlatformAdapter): PlatformAdapter;
+  adopt?(adapter: ProjectRuntime): ProjectRuntime;
 }
 
 /**
@@ -215,7 +215,7 @@ async function load(
   declared: readonly DeclaredAdapter[],
   options: AdapterLoadOptions,
   chain: readonly string[],
-): Promise<PlatformAdapter> {
+): Promise<ProjectRuntime> {
   const registry = harnessAdapters();
   if (registry.has(id)) {
     const claims = declared.filter((d) => d.id === id);
@@ -283,7 +283,7 @@ async function pluginDigest(
   return `sha256:${createHash('sha256').update(identity).digest('hex')}`;
 }
 
-async function importDeclared(declaration: DeclaredAdapter): Promise<PlatformAdapter> {
+async function importDeclared(declaration: DeclaredAdapter): Promise<ProjectRuntime> {
   // recipe-library.json validation already proved the module resolves inside the root.
   const file = fs.realpathSync(path.resolve(declaration.root, declaration.module));
   if (!canFencePluginImports())
@@ -351,7 +351,7 @@ async function importDeclared(declaration: DeclaredAdapter): Promise<PlatformAda
       `adapter '${declaration.id}' extends '${String(value.extends)}' in code but '${declaration.extends ?? 'nothing'}' in ${RECIPE_LIBRARY_MANIFEST_FILE}.`,
       `make "extends" in ${RECIPE_LIBRARY_MANIFEST_FILE} match the adapter`,
     );
-  return value as unknown as PlatformAdapter;
+  return value as unknown as ProjectRuntime;
 }
 
 /**
@@ -360,10 +360,10 @@ async function importDeclared(declaration: DeclaredAdapter): Promise<PlatformAda
  * the action implementations (`actions.adapters`) and the doctor checks (`doctor`).
  * `readiness` merges member by member, so a child that sets one keeps the rest.
  */
-export function composeAdapter(parent: PlatformAdapter, child: PlatformAdapter): PlatformAdapter {
+export function composeAdapter(parent: ProjectRuntime, child: ProjectRuntime): ProjectRuntime {
   const parentActions = parent.actions;
-  const childActions: Partial<PlatformAdapter['actions']> = child.actions ?? {};
-  const manifestPaths = (actions: Partial<PlatformAdapter['actions']>): readonly string[] =>
+  const childActions: Partial<ProjectRuntime['actions']> = child.actions ?? {};
+  const manifestPaths = (actions: Partial<ProjectRuntime['actions']>): readonly string[] =>
     actions.manifestPaths?.() ?? (actions.manifestPath ? [actions.manifestPath()] : []);
   const readiness =
     parent.readiness || child.readiness ? { ...parent.readiness, ...child.readiness } : undefined;
@@ -404,7 +404,7 @@ const REQUIRED_FUNCTIONS = [
 ] as const;
 const REQUIRED_OBJECTS = ['devServer', 'hints', 'actions', 'harness', 'runtimeContext'] as const;
 
-function assertAdapterMembers(adapter: PlatformAdapter, declaration: DeclaredAdapter): void {
+function assertAdapterMembers(adapter: ProjectRuntime, declaration: DeclaredAdapter): void {
   const record = adapter as unknown as Record<string, unknown>;
   const actions = isRecord(record.actions) ? record.actions : {};
   const missing = [

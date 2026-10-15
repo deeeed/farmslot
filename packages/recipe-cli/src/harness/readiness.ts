@@ -1,7 +1,7 @@
 // What `doctor` and `status` take from the host beyond the platform adapters:
 // the checkout view, how feature-flag records read, and the device preview.
 
-import type { AdapterPinnedFlags, AdapterReadiness, PlatformAdapter } from '@farmslot/adapter-sdk';
+import type { AdapterPinnedFlags, AdapterReadiness, ProjectRuntime } from '@farmslot/adapter-sdk';
 
 import type { CliOptions } from './parse-args.js';
 
@@ -36,7 +36,7 @@ export interface ReadinessViewOptions {
   previewDevice?: DevicePreview;
 }
 
-export function adapterReadiness(adapter: PlatformAdapter): AdapterReadiness {
+export function adapterReadiness(adapter: ProjectRuntime): AdapterReadiness {
   return adapter.readiness ?? {};
 }
 

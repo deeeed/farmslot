@@ -1,5 +1,5 @@
 // @ts-check
-// The generic web-dapp lifecycle as an adapter-sdk PlatformAdapter: a web app
+// The generic web-dapp lifecycle as an adapter-sdk ProjectRuntime: a web app
 // under test whose dev server the slot owns; the adapter owns the slot browser
 // (an extension signer or the injected strict wallet) and its wallet host. What
 // it knows about the app's venue comes from the venue policy of the adapter that
@@ -288,7 +288,7 @@ const str = (options, key) => (typeof options[key] === 'string' ? options[key] :
 const flag = (options, key) => options[key] === true;
 
 /**
- * @typedef {Partial<Omit<import('@farmslot/adapter-sdk').PlatformAdapter, 'id' | 'sdkVersion' | 'harness'>> & {
+ * @typedef {Partial<Omit<import('@farmslot/adapter-sdk').ProjectRuntime, 'id' | 'sdkVersion' | 'harness'>> & {
  *   harness?: Partial<Extract<import('@farmslot/adapter-sdk').AdapterHarness, { kind?: 'overlay' }>> |
  *     Extract<import('@farmslot/adapter-sdk').AdapterHarness, { kind: 'built-in' }>,
  * }} WebDappAdapterHooks
@@ -302,14 +302,14 @@ const flag = (options, key) => options[key] === true;
  *   loads it in this process and launch, verify and the wallet host load it in theirs.
  * @property {string} [cli] The host's bin name, for `Next:` lines. farmslot-recipe by default.
  * @property {WebDappAdapterHooks} [hooks]
- *   Anything of the PlatformAdapter the host supplies or replaces. `actions` is
+ *   Anything of the ProjectRuntime the host supplies or replaces. `actions` is
  *   required in practice (web-dapp ships no action manifest); `diagnostics`,
  *   `readiness` and `harness` merge over the generic members, the rest replace.
  */
 
 /**
  * @param {WebDappAdapterOptions} [factoryOptions]
- * @returns {import('@farmslot/adapter-sdk').PlatformAdapter}
+ * @returns {import('@farmslot/adapter-sdk').ProjectRuntime}
  */
 export function createWebDappAdapter(factoryOptions = {}) {
   if ('signers' in factoryOptions) {

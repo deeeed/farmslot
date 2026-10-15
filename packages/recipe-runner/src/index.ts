@@ -78,7 +78,7 @@ export {
 } from './core/library-manifest.js';
 export { resolveRecipeParams, resolveRecipeValue } from './core/parameters.js';
 export { RecipeResolutionError } from './core/resolution-error.js';
-export { createRecipeRunner, defineActionAdapter } from './core/runner.js';
+export { createRecipeRunner, defineActionHandler } from './core/runner.js';
 export {
   isVisibleWithin,
   parseUiScrollToRequest,

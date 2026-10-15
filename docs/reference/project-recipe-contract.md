@@ -48,7 +48,7 @@ Status MUST retain readiness, latest command and latest execution evidence point
 
 **Status:** Proposed by [ADR-068 Amendment 2](../adr/068-project-recipe-binding-and-conformance.md#amendment-2-built-in-bridges-2026-10-14). This section is not a shipped capability until the amendment, implementation and coordinated release are accepted.
 
-The existing `PlatformAdapter.harness` / `AdapterHarness` declaration in `@farmslot/adapter-sdk` MUST distinguish these forms:
+The existing `ProjectRuntime.harness` / `AdapterHarness` declaration in `@farmslot/adapter-sdk` MUST distinguish these forms:
 
 | Declaration                                                 | Required members                                           | Meaning                                                               |
 | ----------------------------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------- |
@@ -262,7 +262,7 @@ Acceptance MUST cover a first dispatch with no pre-created plan, each authored m
 
 The final composed-library interface MUST resolve `<library>/<ref>` to the named library. A bare ref MUST resolve only when unique across the composed set; ambiguity MUST list candidates. Exact qualified-ref overrides follow declared source precedence and MUST retain winners and shadows in describe/conformance/provenance. Cross-library dependency closure, version requirements and trust MUST be checked before effects.
 
-The final SDK names are `ProjectRuntime`, `ActionCatalog`, `ActionHandler` and `RecipeEngine`. The first three replace `PlatformAdapter`, `AdapterActions` and `ActionAdapter` in one coordinated cutover of exports, imports and documentation. Type renames MUST NOT independently rename protocol action IDs or unrelated wire fields. Compatibility aliases and deprecation shims MUST NOT remain.
+The SDK contracts are `ProjectRuntime`, `ActionCatalog`, `ActionHandler` and `RecipeEngine`. Exports, imports and documentation MUST use these names consistently. Type renames MUST NOT independently rename protocol action IDs or unrelated wire fields. Compatibility aliases and deprecation shims MUST NOT remain.
 
 Before deleting old binaries or command glue, every moved/removed command, flag, export, doctor check, environment variable and script MUST have an old-to-new mapping with parameter translation and a tested consumer, or an unused-reference proof. Project authorization, plugin fencing, device targeting, source/artifact checks, closeout and signal teardown MUST have provider/engine homes first.
 

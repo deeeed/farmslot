@@ -4,6 +4,8 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## Unreleased
 
+- Consume the plain `ActionHandler` contract.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.22.12 - 2026-10-15

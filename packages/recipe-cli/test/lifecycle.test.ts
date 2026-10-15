@@ -9,7 +9,7 @@ import {
   ADAPTER_SDK_VERSION,
   type AdapterLaunchContext,
   createAdapterRegistry,
-  type PlatformAdapter,
+  type ProjectRuntime,
 } from '@farmslot/adapter-sdk';
 
 import {
@@ -57,7 +57,7 @@ function tempRoot(): string {
 }
 
 // A minimal platform adapter; tests override what they exercise.
-function fakeAdapter(id: string, extra: Partial<PlatformAdapter> = {}): PlatformAdapter {
+function fakeAdapter(id: string, extra: Partial<ProjectRuntime> = {}): ProjectRuntime {
   return {
     id,
     sdkVersion: ADAPTER_SDK_VERSION,
@@ -92,7 +92,7 @@ function fakeAdapter(id: string, extra: Partial<PlatformAdapter> = {}): Platform
   };
 }
 
-function useAdapters(...adapters: PlatformAdapter[]): void {
+function useAdapters(...adapters: ProjectRuntime[]): void {
   const registry = createAdapterRegistry();
   for (const adapter of adapters) registry.register(adapter);
   configureHarnessAdapters(registry);

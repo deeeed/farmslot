@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { AdapterPrepare, PlatformAdapter } from '@farmslot/adapter-sdk';
+import type { AdapterPrepare, ProjectRuntime } from '@farmslot/adapter-sdk';
 import { READINESS_RECORD, type ReadinessRecord, type ReadinessStep } from '@farmslot/protocol';
 import { OperationOutputTail } from '@farmslot/recipe-runner/runtime/operation';
 
@@ -453,7 +453,7 @@ function resolvePlatform(
   requested: string | undefined,
   target: string,
   usage: string,
-): { surface: PlatformAdapter; prepare: AdapterPrepare } {
+): { surface: ProjectRuntime; prepare: AdapterPrepare } {
   const platform = requested ?? contextAdapter(target);
   const surface =
     platform && harnessAdapters().has(platform) ? harnessAdapter(platform) : undefined;
