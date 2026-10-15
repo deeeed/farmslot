@@ -13,6 +13,36 @@ import {
   terminalWorkerSignalFromRaw,
 } from './worker-signals.js';
 
+test('operator waits require a running owned attempt and ordered bounded timestamps', () => {
+  const signal = {
+    status: 'running',
+    attemptId: 'owned-attempt',
+    timestamp: '2026-10-15T00:00:20.000Z',
+    waitingForOperator: {
+      who: 'operator',
+      reason: 'approach review',
+      since: '2026-10-15T00:00:10.000Z',
+    },
+  };
+  assert.equal(normalizeWorkerSignal(signal).ok, true);
+  for (const invalid of [
+    { ...signal, status: 'complete' },
+    { ...signal, attemptId: undefined },
+    { ...signal, waitingForOperator: { ...signal.waitingForOperator, who: '' } },
+    {
+      ...signal,
+      waitingForOperator: { ...signal.waitingForOperator, since: '2026-10-15T00:00:21.000Z' },
+    },
+    {
+      ...signal,
+      operatorWaitIntervals: [
+        { since: '2026-10-15T00:00:08.000Z', until: '2026-10-15T00:00:11.000Z' },
+      ],
+    },
+  ])
+    assert.equal(normalizeWorkerSignal(invalid).ok, false);
+});
+
 test('terminalWorkerSignalFromRaw parses only terminal worker signals', () => {
   assert.equal(
     isTerminalWorkerSignal({ status: 'complete', timestamp: '2026-05-05T01:00:00Z' }),

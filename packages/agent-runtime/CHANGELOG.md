@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Support explicit operator wait and resume marks without settling the worker or changing its checklist.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.23.3 - 2026-10-15

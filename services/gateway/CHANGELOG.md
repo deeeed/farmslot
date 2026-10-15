@@ -9,6 +9,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Load development provider settings separately from node credentials and stop loading the retired checkout auth file.
 
 - Refuse stale publication approvals before resolving their gate, and retain accepted approvals and their exact package through recovery without restarting reviews.
+- Retain live workers waiting for an operator and suspend inactivity monitoring until the same execution resumes.
 
 - Preserve unfinished reviewer requests during recovery, restore current-head review progress on replay, and record a COLD fallback when WARM lineage is unavailable.
 

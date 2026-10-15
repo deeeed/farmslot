@@ -9,6 +9,24 @@ const ready: RunGateReadiness = {
   reasons: [],
 };
 
+test('operator activity names the dependency without authorizing a gate transition', () => {
+  const waitingForOperator = {
+    who: 'release owner',
+    reason: 'Review the approach before continuing',
+    since: '2026-10-15T00:00:00.000Z',
+  };
+  const view = deriveRunLifecycleView({
+    status: 'monitoring',
+    waitingForOperator,
+    gateReadiness: ready,
+  });
+  assert.equal(view.activityLabel, 'Waiting on operator: release owner');
+  assert.equal(view.status, 'monitoring');
+  assert.equal(view.canAdvance, false);
+  for (const status of ['done', 'failed', 'cancelled', 'blocked'] as const)
+    assert.equal(deriveRunLifecycleView({ status, waitingForOperator }).activityLabel, undefined);
+});
+
 test('a retained ready snapshot cannot expose advancement during a correction or uncertain delivery', () => {
   for (const status of ['fixing', 'reviewing', 'reconciling', 'review-failed'] as const) {
     const view = deriveRunLifecycleView({ status, gateReadiness: ready });
