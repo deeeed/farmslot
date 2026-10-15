@@ -138,6 +138,7 @@ export {
   type RecipeQualityCommandOptions,
 } from './commands/recipe-quality.js';
 export { handleReload } from './commands/reload.js';
+export { handleReview, type ReviewCommandOptions } from './commands/review.js';
 export {
   type DeviceTargeting,
   handleRun,
@@ -156,7 +157,11 @@ export {
   type StatusWatchOptions,
 } from './commands/status-watch.js';
 export { handleStop, type StopCommandOptions, type StoppedCompanion } from './commands/stop.js';
-export { handleTaskInit, type TaskInitCommandOptions } from './commands/task-init.js';
+export {
+  handleTaskInit,
+  type ProjectTaskCommandOptions,
+  type TaskInitCommandOptions,
+} from './commands/task-init.js';
 export {
   assertConformanceReportCurrent,
   checkRecipeConformance,
@@ -324,6 +329,11 @@ export {
   parseProjectInvocation,
   type ProjectCommandInvocation,
 } from './project-command.js';
+export {
+  projectTaskExecution,
+  verifySelectedTask,
+  withTaskProjectHost,
+} from './project-helpers.js';
 export {
   type ProjectRecipeHost,
   type ProjectRecipeHostOptions,

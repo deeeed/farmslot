@@ -340,9 +340,9 @@ The target matrix MUST cover each declared project runtime and target independen
 
 Unit/fixture tests support regression diagnosis but cannot replace those live rows. Default tests must stay under five seconds each and suites under five minutes; longer runtime proof belongs in the manual live tier. Tests MUST NOT start or kill a real tmux server. No shared build output may be rewritten under readers.
 
-## Proposed helper cutover
+## Shared helper commands
 
-**Status:** Proposed, under ADR-068 Amendment 3. Existing published behavior remains authoritative until implementation and release.
+**Status:** Accepted under ADR-068 Amendment 3. Implementation: [#1136](https://github.com/deeeed/farmslot/pull/1136). Installed consumers require the matching shared-package release.
 
 ### Public surface
 

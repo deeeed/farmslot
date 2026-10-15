@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Add canonical task, review and recipe quality commands with strict grammar and project helper composition.
+
 - Add runs bundle retain for captured reports and evidence; portable export reads retained snapshots and import retains them in the target store.
 - Provision node credentials through --secret-file; remove the checkout auth-env writer.
 - Show validated operator waits in run listings and slot-bound run inspection.

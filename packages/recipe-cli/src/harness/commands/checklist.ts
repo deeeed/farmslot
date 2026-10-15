@@ -58,6 +58,11 @@ const CHECKLIST_VALUE_OPTIONS = new Set([
   '--config',
   '--destination',
   '--metadata',
+  '--who',
+  '--report',
+  '--var',
+  '--step',
+  '--from',
 ]);
 
 /** A checklist row whose label matches `label` cannot be marked until `ready`. */
