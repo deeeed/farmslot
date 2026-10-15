@@ -1,6 +1,11 @@
 import type { RecipeExecutionPlan } from '../recipe/index.js';
 
-import type { RuntimeCapabilityCatalogEntry } from './runtime-capabilities.js';
+import {
+  isRuntimeCapabilityProofMode,
+  type RuntimeCapabilityCatalogEntry,
+  type RuntimeCapabilityProofPlan,
+  type RuntimeCapabilityProofRequirement,
+} from './runtime-capabilities.js';
 
 export interface RecipeConformanceSource {
   head: string | null;
@@ -80,6 +85,19 @@ export interface RecipeFlowRequirements {
   capture: boolean;
   hud: boolean;
   resources: string[];
+  proofRequirements: RuntimeCapabilityProofRequirement[];
+}
+
+export interface RecipeProofRequirementResolution {
+  requirements: RuntimeCapabilityProofRequirement[];
+  missingRequirements: string[];
+  diagnostics: string[];
+}
+
+export interface RecipeProofRequirementInput {
+  required: Pick<RecipeFlowRequirements, 'resources' | 'proofRequirements'>;
+  owner?: Pick<RuntimeCapabilityProofPlan, 'ownerRunId' | 'slotId'>;
+  plan?: RuntimeCapabilityProofPlan;
 }
 
 export interface RecipeProjectCompatibility {
@@ -164,14 +182,37 @@ export function recipeFlowRequirements(
       throw new Error('Template recipe_params must contain one JSON object.');
     params = decoded as Record<string, unknown>;
   }
-  const requirements = {
+  const requirements: RecipeFlowRequirements = {
     recipes: list('recipe_checks'),
     params,
     actions: list('recipe_actions'),
     capture: flag('recipe_capture'),
     hud: flag('recipe_hud'),
     resources: list('runtime_capabilities'),
+    proofRequirements: [],
   };
+  if (metadata?.runtime_capability_requirements !== undefined) {
+    const value = metadata.runtime_capability_requirements;
+    if (typeof value !== 'string')
+      throw new Error(
+        'Template runtime_capability_requirements must be a JSON array in a scalar string.',
+      );
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(value);
+    } catch {
+      throw new Error('Template runtime_capability_requirements must contain valid JSON.');
+    }
+    requirements.proofRequirements = validateRecipeProofRequirements(decoded);
+    const ids = new Set(requirements.proofRequirements.map((entry) => entry.capabilityId));
+    if (
+      ids.size !== requirements.resources.length ||
+      requirements.resources.some((id) => !ids.has(id))
+    )
+      throw new Error(
+        'Template runtime_capability_requirements must exactly cover runtime_capabilities.',
+      );
+  }
   if (
     (requirements.actions.length ||
       requirements.capture ||
@@ -184,6 +225,84 @@ export function recipeFlowRequirements(
     );
   }
   return requirements;
+}
+
+function validateRecipeProofRequirements(value: unknown): RuntimeCapabilityProofRequirement[] {
+  if (!Array.isArray(value)) throw new Error('Resource proof requirements must be an array.');
+  const ids = new Set<string>();
+  for (const entry of value) {
+    if (
+      !entry ||
+      typeof entry !== 'object' ||
+      Array.isArray(entry) ||
+      Object.keys(entry).some(
+        (key) => !['capabilityId', 'reason', 'mode', 'parameters'].includes(key),
+      ) ||
+      typeof entry.capabilityId !== 'string' ||
+      !entry.capabilityId.trim() ||
+      entry.capabilityId !== entry.capabilityId.trim() ||
+      typeof entry.reason !== 'string' ||
+      !entry.reason.trim() ||
+      entry.reason !== entry.reason.trim() ||
+      !isRuntimeCapabilityProofMode(entry.mode) ||
+      (entry.parameters !== undefined &&
+        (!entry.parameters ||
+          typeof entry.parameters !== 'object' ||
+          Array.isArray(entry.parameters)))
+    )
+      throw new Error(
+        'Resource proof requirements need a capabilityId, reason, state/visual/mixed mode and optional object parameters.',
+      );
+    if (ids.has(entry.capabilityId))
+      throw new Error(`Duplicate resource proof requirement '${entry.capabilityId}'.`);
+    ids.add(entry.capabilityId);
+  }
+  return value as RuntimeCapabilityProofRequirement[];
+}
+
+/** Pure declaration/stored-plan precedence, shared by admission and owned acquisition. */
+export function resolveRecipeProofRequirements(
+  input: RecipeProofRequirementInput,
+): RecipeProofRequirementResolution {
+  const { required, owner, plan } = input;
+  const result: RecipeProofRequirementResolution = {
+    requirements: [],
+    missingRequirements: [],
+    diagnostics: [],
+  };
+  let stored: RuntimeCapabilityProofRequirement[] = [];
+  if (plan) {
+    if (
+      !owner ||
+      plan.version !== 1 ||
+      plan.ownerRunId !== owner.ownerRunId ||
+      plan.slotId !== owner.slotId
+    )
+      throw new Error(
+        'The resource proof plan belongs to another run or slot, or has an unsupported version.',
+      );
+    stored = validateRecipeProofRequirements(plan.requirements);
+  }
+  for (const id of required.resources) {
+    const declared = required.proofRequirements.find((entry) => entry.capabilityId === id);
+    const retained = stored.find((entry) => entry.capabilityId === id);
+    const effective = retained ?? declared;
+    if (!effective) {
+      result.missingRequirements.push(`resource.${id}.proof-mode`);
+      result.diagnostics.push(
+        `Declared capability '${id}' requires an authored state/visual/mixed proof mode before dispatch.`,
+      );
+    } else if (declared && retained && declared.mode !== retained.mode) {
+      result.missingRequirements.push(`resource.${id}.proof-mode`);
+      result.diagnostics.push(
+        `Declared capability '${id}' conflicts with its stored ${retained.mode} proof mode. Use explicit target recovery.`,
+      );
+    } else {
+      // Retargeted acquire inputs stay authoritative. Never merge template defaults.
+      result.requirements.push(structuredClone(effective));
+    }
+  }
+  return result;
 }
 
 function reportScope(identity: RecipeConformanceScope): RecipeConformanceScope {
@@ -203,6 +322,7 @@ export function recipeProjectCompatibility(input: {
   required: RecipeFlowRequirements;
   report?: RecipeConformanceReport;
   resources: readonly RuntimeCapabilityCatalogEntry[];
+  proof?: RecipeProofRequirementResolution;
 }): RecipeProjectCompatibility {
   const { scope, registered, required, report } = input;
   const matches =
@@ -258,6 +378,15 @@ export function recipeProjectCompatibility(input: {
       'declared',
     );
   }
+  const proof = input.proof ?? resolveRecipeProofRequirements({ required });
+  for (const requirement of proof.requirements)
+    add(
+      `resource.${requirement.capabilityId}.proof-mode.${requirement.mode}`,
+      true,
+      'unknown',
+      'declared',
+    );
+  for (const missing of proof.missingRequirements) add(missing, false, 'failed');
   return {
     scope,
     registered,
@@ -266,6 +395,7 @@ export function recipeProjectCompatibility(input: {
     missingRequirements: requirements
       .filter((check) => check.status === 'failed' || check.status === 'unknown')
       .map((check) => check.name),
+    ...(proof.diagnostics.length ? { diagnostics: proof.diagnostics } : {}),
     ...(report
       ? {
           checked: {

@@ -129,6 +129,7 @@ test('missing handlers and selected smoke checks cannot be hidden by declaration
     'capture',
     'hud',
     'resource.device',
+    'resource.device.proof-mode',
   ]);
   const staticReport = recipeProjectCompatibility({
     scope,

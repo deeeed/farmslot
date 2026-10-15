@@ -6,6 +6,7 @@ import test, { type TestContext } from 'node:test';
 
 import {
   recordingTargetClaimKey,
+  resolveRecipeProofRequirements,
   type RuntimeCapabilityAcquireParams,
   type RuntimeCapabilityCatalogEntry,
   type RuntimeCapabilityLifecycleEvent,
@@ -445,6 +446,53 @@ test('acquire is idempotent and exclusive conflicts expose owner and reason', as
   if (conflict.conflict.kind !== 'lease-conflict') return;
   assert.equal(conflict.conflict.owner.runId, 'run-a');
   assert.match(conflict.conflict.reason, /owned by run-a/);
+});
+
+test('explicit dependency requirements survive successful idempotent acquisition', async (t) => {
+  for (const revalidateHealth of [false, true]) {
+    const { registry } = await fixture(t, [entry('client', 'exclusive', ['sim']), entry('sim')]);
+    assert.equal((await acquire(registry, 'client', 'run-a')).ok, true);
+    const before = (await registry.status({ slotId: SLOT })).proofPlans['run-a']!;
+    assert.deepEqual(
+      before.requirements.map((item) => item.capabilityId),
+      ['client'],
+    );
+    const request: RuntimeCapabilityAcquireParams = {
+      slotId: SLOT,
+      capabilityId: 'sim',
+      ownerRunId: 'run-a',
+      proofRequirement: { capabilityId: 'sim', mode: 'mixed', reason: 'Observe simulator state' },
+      revalidateHealth,
+    };
+    const explicit = await registry.acquire(request);
+    assert.equal(explicit.ok, true);
+    if (!explicit.ok) return;
+    assert.equal(explicit.idempotent, true);
+    const plan = (await registry.status({ slotId: SLOT })).proofPlans['run-a']!;
+    assert.deepEqual(plan.requirements, [...before.requirements, request.proofRequirement]);
+    assert.deepEqual(
+      resolveRecipeProofRequirements({
+        required: { resources: ['client', 'sim'], proofRequirements: [] },
+        owner: { ownerRunId: 'run-a', slotId: SLOT },
+        plan,
+      }).missingRequirements,
+      [],
+    );
+
+    assert.equal(
+      (
+        await registry.acquire({
+          ...request,
+          proofRequirement: { ...request.proofRequirement, reason: 'A later default' },
+        })
+      ).ok,
+      true,
+    );
+    assert.deepEqual((await registry.status({ slotId: SLOT })).proofPlans['run-a'], plan);
+    const changed = await registry.acquire({ ...request, parameters: { target: 'different' } });
+    assert.equal(changed.ok, false);
+    assert.deepEqual((await registry.status({ slotId: SLOT })).proofPlans['run-a'], plan);
+  }
 });
 
 test('acquire validates typed parameters before running provider actions', async (t) => {

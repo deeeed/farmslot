@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Declare initial resource proof modes in selected templates and share read-only admission with stored-plan precedence.
 
 ## 0.46.0 - 2026-10-15
 
