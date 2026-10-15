@@ -10,6 +10,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 - Describe LAN binding through credential-store activation instead of the retired checkout auth file.
 
 - Use one compact worker checklist in pipeline, step inspection and slot views.
+- Show who an active run is waiting on using the shared lifecycle activity label.
 
 - Move sign-out into the account menu with confirmation; retain sign-in for 30 days and reconnect through gateway restarts.
 

@@ -7,6 +7,7 @@
 ```text
 TICKET: GOLDEN-DEV
 TITLE: Golden task document
+MODE: autonomous
 RUN_ID: run-golden-dev
 FAMILY_ID: family-golden-dev
 BRANCH: golden/dev

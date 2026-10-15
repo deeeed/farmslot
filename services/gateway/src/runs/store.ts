@@ -559,6 +559,11 @@ function isRunStoreLeak(run: Run): boolean {
  */
 export function normalizePersistedRun(run: Run): boolean {
   let changed = false;
+  // Healthy waiting is a live monitor projection, never a cached liveness fact.
+  if (run.waitingForOperator) {
+    delete run.waitingForOperator;
+    changed = true;
+  }
   // Normalize legacy flow-type names at load so the UI never surfaces a
   // pre-rename value ('feature' → 'dev', 'merge-main' → 'update-branch').
   const normalizedFlow = normalizeFlowType((run as { flowType?: string }).flowType);

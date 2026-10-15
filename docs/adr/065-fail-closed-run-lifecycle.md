@@ -208,6 +208,50 @@ newer head. Exact retries retain the first receipt; conflicting adoption refuses
 - Harnesses inherit the published PR identity through normal run/CI/follow-up
   APIs. They add no recorder, recipe action, hook or local publication authority.
 
+## Amendment 3: explicit operator wait, 2026-10-15
+
+**Status:** Accepted by lead, 2026-10-15, after paired review at `918415164e639f4a7c0a751cd04a7ee96353b825`.
+**Specification:** [Waiting for an operator](../reference/fail-closed-run-lifecycle.md#waiting-for-an-operator).
+**Related:** [ADR-045](045-worker-terminal-contract.md).
+
+### Decision
+
+A worker may declare a nonterminal wait for a named operator through the existing
+task signal writer. The gateway validates the signal against its current worker
+context and projects it into the shared lifecycle view. The execution keeps its
+current run status, worker and slot. The view says `Waiting on operator: <who>`.
+
+A validated wait suspends inactivity nudges, their escalation and the monitor's
+elapsed execution timeout only while structured observation confirms the same
+owned worker remains live. It does not count as worker progress. Worker failure,
+exit and uncertain liveness retain existing guarded recovery. The existing
+monitor continues observing signals and cancellation. Resumed marks clear the
+wait; normal monitoring resumes with a fresh inactivity window and the remaining
+execution timeout. Restart reconstructs the wait from the same owned signal.
+
+### Rationale and consequences
+
+Interactive work can correctly stop at an approach gate until a person responds.
+An idle native turn alone cannot distinguish this from a stuck worker. An
+explicit, owned signal records the dependency without ending execution or
+inventing progress. Missing, stale or foreign signals retain normal monitoring.
+Waiting grants no gate approval, completion, publication or resource authority.
+
+### Public surface
+
+- `@farmslot/agent-runtime` adds `./mark wait --who <name> --reason <text>` and
+  `./mark resume`. Interactive task workers consume both. Numeric checklist
+  marks, `start` and terminal marks also clear the wait without ticking an extra
+  checklist row or rewriting evidence.
+- `@farmslot/protocol` owns `WorkerOperatorWait` and optional
+  `WorkerSignal.waitingForOperator` and `Run.waitingForOperator`. The existing
+  task watcher and monitor validate/project the signal. `deriveRunLifecycleView`
+  supplies the activity label to the CLI, Command Center and Companion.
+- These additive experimental contracts ship through coordinated runtime,
+  protocol, gateway and client releases. Older records with no wait field keep
+  their existing meaning. Harnesses use the shared mark command and signal
+  contract; no new recipe action, heartbeat or local monitor is introduced.
+
 ## Amendment 4: current-head publication recovery, 2026-10-15
 
 **Status:** Accepted (lead, 2026-10-15).

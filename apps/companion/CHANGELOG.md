@@ -8,6 +8,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 - Stop loading checkout authentication in Companion development scripts.
 
 - Use the shared compact worker checklist view and preserve child-unit expansion.
+- Show who an active run is waiting on in run lists and detail status.
 
 - Confirm the secondary Settings sign-out action and retain sign-in with the shared 30-day expiry policy.
 

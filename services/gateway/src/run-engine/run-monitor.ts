@@ -106,6 +106,7 @@ import {
   formatUsageBudgetMessage,
   hasUsageBudget,
 } from './flow-usage-budget.js';
+import { operatorWaitDurationMs } from './operator-wait.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 
@@ -377,6 +378,8 @@ interface MonitorState {
   lastStructuredProgressAt: number;
   lastStepCount: number;
   startedAt: number;
+  operatorWaitMs: number;
+  operatorResumedAt: number;
   /** The soft-budget guard's delivery state — see budget-delivery-state.ts. */
   delivery: BudgetDeliveryState;
   /** Runner id the guard's current verdict was reached about. */
@@ -783,20 +786,6 @@ export async function probeWorkerSignalForRun(
     }
 
     const sig = normalized.signal;
-    if (!isTerminalWorkerSignal(sig)) {
-      const message = isLightweightInteractiveDevRun(run)
-        ? `SIGNAL.json exists but status is "${sig.status}". After the operator approves publication, create and push the PR, then run \`./mark complete --mark-last\` to open the Farmslot completion handoff.`
-        : `SIGNAL.json exists but status is "${sig.status}". Run \`./mark complete\` when done.`;
-      return {
-        ok: false,
-        code: 'non_terminal',
-        message,
-        signalFile: displayPath,
-        status: sig.status,
-        signal: sig,
-      };
-    }
-
     const boundSig = bindSignalToMonitorContext(sig, ctx);
     if (!signalMatchesMonitorContext(boundSig, ctx)) {
       return {
@@ -815,6 +804,33 @@ export async function probeWorkerSignalForRun(
         ok: false,
         code: 'stale',
         message: 'SIGNAL.json is older than this run — write a fresh terminal signal.',
+        signalFile: displayPath,
+        status: boundSig.status,
+        signal: boundSig,
+      };
+    }
+
+    if (
+      (boundSig.waitingForOperator || boundSig.operatorWaitIntervals) &&
+      ctx?.signalAttemptId &&
+      boundSig.attemptId !== ctx.signalAttemptId
+    ) {
+      return {
+        ok: false,
+        code: 'context_mismatch',
+        message: 'Operator wait belongs to another worker attempt.',
+        signalFile: displayPath,
+      };
+    }
+
+    if (!isTerminalWorkerSignal(boundSig)) {
+      const message = isLightweightInteractiveDevRun(run)
+        ? `SIGNAL.json exists but status is "${boundSig.status}". After the operator approves publication, create and push the PR, then run \`./mark complete --mark-last\` to open the Farmslot completion handoff.`
+        : `SIGNAL.json exists but status is "${boundSig.status}". Run \`./mark complete\` when done.`;
+      return {
+        ok: false,
+        code: 'non_terminal',
+        message,
         signalFile: displayPath,
         status: boundSig.status,
         signal: boundSig,
@@ -1005,15 +1021,25 @@ export function restoreBudgetUsageState(
     : emptyBudgetUsageSampleState();
 }
 
+export interface MonitorObservations {
+  workerStatus?: typeof checkAgentLive;
+  waitForWorker?: typeof waitForWorkerStart;
+  violations?: typeof detectViolations;
+}
+
 export async function monitorRun(
   runId: string,
   slotId: string,
   signal: AbortSignal,
+  observations: MonitorObservations = {},
 ): Promise<MonitorResult> {
   const run = getRun(runId);
   if (!run) throw new Error(`Run not found: ${runId}`);
   const initialRun = run;
   const generation = run.engineState?.generation ?? 0;
+  const observeWorker = observations.workerStatus ?? checkAgentLive;
+  const waitForWorker = observations.waitForWorker ?? waitForWorkerStart;
+  const observeViolations = observations.violations ?? detectViolations;
   const createMonitorDecision = (
     id: string,
     reason: string,
@@ -1054,6 +1080,10 @@ export async function monitorRun(
         lastStructuredProgressAt: restoreStructuredProgressAtMs(persisted),
         lastStepCount: 0,
         startedAt: new Date(persisted.startedAt).getTime(),
+        operatorWaitMs: persisted.operatorWaitMs ?? 0,
+        operatorResumedAt: persisted.operatorResumedAt
+          ? Date.parse(persisted.operatorResumedAt)
+          : 0,
         delivery: restoreBudgetDeliveryState(persisted),
         budgetUsage: restoredBudgetUsage,
       }
@@ -1063,6 +1093,8 @@ export async function monitorRun(
         lastStructuredProgressAt: now,
         lastStepCount: 0,
         startedAt: now,
+        operatorWaitMs: 0,
+        operatorResumedAt: 0,
         delivery: initialBudgetDeliveryState(),
         budgetUsage: emptyBudgetUsageSampleState(),
       };
@@ -1073,6 +1105,8 @@ export async function monitorRun(
 
   // Subscribe to push-based worker signals (SIGNAL.json via task-watcher)
   let pushedTerminalSignal = false;
+  let latestSignal: WorkerSignal | undefined;
+  let projectedWait: Run['waitingForOperator'];
   let signalResolve: (() => void) | undefined;
   let signalPromise: Promise<void> = Promise.resolve();
   const armSignalPromise = () => {
@@ -1094,7 +1128,7 @@ export async function monitorRun(
     const ctx = currentMonitorContext();
     const bound = bindSignalToMonitorContext(normalized.signal, ctx);
     if (!signalMatchesMonitorContext(bound, ctx)) return;
-    if (isTerminalWorkerSignal(bound)) {
+    if (isTerminalWorkerSignal(bound) || bound.waitingForOperator || bound.operatorWaitIntervals) {
       const latestRun = getRun(runId) ?? initialRun;
       if (!isWorkerSignalFreshForRun(latestRun, bound)) {
         console.log(
@@ -1114,6 +1148,53 @@ export async function monitorRun(
   console.log(
     `[run-monitor] started for run ${runId.slice(0, 8)} slot=${slotId} poll=${config.pollIntervalMs / 60000}min${persisted ? ' (recovered)' : ''}`,
   );
+
+  // The monitor owns this projection; the raw signal alone never establishes health.
+  function recordOperatorWait(alive: boolean): boolean {
+    const current = getRun(runId);
+    if (signal.aborted || !current || (current.engineState?.generation ?? 0) !== generation)
+      return false;
+    const context = currentMonitorContext();
+    const ownedSignal =
+      latestSignal &&
+      context?.signalAttemptId &&
+      latestSignal.attemptId === context.signalAttemptId &&
+      signalMatchesMonitorContext(latestSignal, context) &&
+      isWorkerSignalFreshForRun(current, latestSignal)
+        ? latestSignal
+        : undefined;
+    const waiting =
+      alive &&
+      ['monitoring', 'reviewing', 'fixing'].includes(current.status) &&
+      context?.id &&
+      ownedSignal?.waitingForOperator
+        ? {
+            ...ownedSignal.waitingForOperator,
+            contextId: context.id,
+            attemptId: ownedSignal.attemptId!,
+          }
+        : undefined;
+    if (alive && ownedSignal) {
+      state.operatorWaitMs = operatorWaitDurationMs(ownedSignal, state.startedAt, Date.now());
+      const resumed = ownedSignal.operatorWaitIntervals?.at(-1);
+      if (resumed) {
+        const resumedAt = Date.parse(resumed.until);
+        if (resumedAt > state.operatorResumedAt) {
+          state.operatorResumedAt = resumedAt;
+          state.lastPaneChangeAt = Math.max(state.lastPaneChangeAt, resumedAt);
+        }
+      }
+    }
+    if (
+      JSON.stringify(current.waitingForOperator) !== JSON.stringify(waiting) ||
+      (waiting && current.waitingForOperator !== projectedWait)
+    ) {
+      updateRun(runId, { waitingForOperator: waiting });
+      broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+    }
+    projectedWait = getRun(runId)?.waitingForOperator;
+    return !!waiting;
+  }
 
   let warnedNoSignalPath = false;
   let lastArtifactContractMessage: string | null = null;
@@ -1135,6 +1216,10 @@ export async function monitorRun(
         return undefined;
       }
       const probe = await probeWorkerSignalForRun(runId, slotId, currentMonitorContext());
+      latestSignal = probe.ok || probe.code === 'non_terminal' ? probe.signal : undefined;
+      if (!latestSignal && getRun(runId)?.waitingForOperator) {
+        recordOperatorWait(false);
+      }
       if (!probe.ok && probe.code === 'artifact_contract') {
         console.warn(
           `[run-monitor] run ${runId.slice(0, 8)} — ${probe.message.replace(/\n/g, ' | ')}`,
@@ -1224,6 +1309,8 @@ export async function monitorRun(
       if (probe.ok) lastArtifactContractMessage = null;
       return probe.ok ? probe.signal : undefined;
     } catch (err) {
+      latestSignal = undefined;
+      recordOperatorWait(false);
       console.warn(
         `[run-monitor] failed to read SIGNAL.json for run ${runId.slice(0, 8)}: ${(err as Error).message}`,
       );
@@ -1247,10 +1334,11 @@ export async function monitorRun(
       };
     }
     let ctx = currentMonitorContext();
-    let startupAgent = await checkAgentLive(slotId, run.metrics.runner, runId, ctx?.role, ctx?.id);
+    let startupAgent = await observeWorker(slotId, run.metrics.runner, runId, ctx?.role, ctx?.id);
     if (startupAgent !== 'working') {
+      recordOperatorWait(false);
       ctx = currentMonitorContext();
-      startupAgent = await waitForWorkerStart(
+      startupAgent = await waitForWorker(
         slotId,
         run.metrics.runner,
         10_000,
@@ -1297,6 +1385,8 @@ export async function monitorRun(
         return { pollCount: 0, exitReason: 'worker-done', violations: allViolations, snapshots };
       }
     }
+
+    recordOperatorWait(startupAgent === 'working');
 
     while (!signal.aborted) {
       // Race: poll interval vs push signal vs abort
@@ -1362,7 +1452,7 @@ export async function monitorRun(
 
       // 1. Check if worker is done — live tmux pgrep (not .farm-status.json which is stale for gateway-dispatched runs)
       const liveContext = currentMonitorContext();
-      let agentStatus = await checkAgentLive(
+      let agentStatus = await observeWorker(
         slotId,
         run.metrics.runner,
         runId,
@@ -1370,8 +1460,9 @@ export async function monitorRun(
         liveContext?.id,
       );
       if (agentStatus !== 'working') {
+        recordOperatorWait(false);
         const recoveredContext = currentMonitorContext();
-        const recoveredStatus = await waitForWorkerStart(
+        const recoveredStatus = await waitForWorker(
           slotId,
           run.metrics.runner,
           5_000,
@@ -1423,16 +1514,23 @@ export async function monitorRun(
         agentStatus = recoveredStatus;
       }
 
+      if (signal.aborted) break;
+      const waitingForOperator = recordOperatorWait(true);
+
       // 2. Capture pane + detect violations
       const violationContext = currentMonitorContext();
-      const violations = await detectViolations(
-        runId,
-        slotId,
-        state,
-        config,
-        violationContext?.role,
-        violationContext?.id,
-      );
+      const violations = waitingForOperator
+        ? []
+        : await observeViolations(
+            runId,
+            slotId,
+            state,
+            config,
+            violationContext?.role,
+            violationContext?.id,
+          );
+
+      if (signal.aborted) break;
 
       // 2b. Soft budget: sample every poll until warned; after warn, retry nudge
       // delivery while unconfirmed, but only up to MAX_BUDGET_NUDGE_ATTEMPTS — each
@@ -1626,6 +1724,10 @@ export async function monitorRun(
             startedAt: new Date(state.startedAt).toISOString(),
             lastPaneHash: state.lastPaneHash,
             lastStructuredProgressAt: structuredProgressAt,
+            operatorWaitMs: state.operatorWaitMs,
+            ...(state.operatorResumedAt
+              ? { operatorResumedAt: new Date(state.operatorResumedAt).toISOString() }
+              : {}),
             // Not budgetDelivery: pollRunBudgetGuard is its sole writer. Merging a
             // second writer's value with Math.max hid a lost update rather than
             // preventing one — it cannot tell "someone got there first" from "mine is
@@ -1642,8 +1744,8 @@ export async function monitorRun(
       }
 
       // 5. Check total timeout
-      const elapsed = Date.now() - state.startedAt;
-      if (elapsed > config.totalTimeoutMs) {
+      const elapsed = Date.now() - state.startedAt - state.operatorWaitMs;
+      if (!waitingForOperator && elapsed > config.totalTimeoutMs) {
         console.log(
           `[run-monitor] run ${runId.slice(0, 8)} — total timeout (${config.totalTimeoutMs / 60000}min)`,
         );
@@ -1693,6 +1795,17 @@ export async function monitorRun(
     return { pollCount, exitReason, violations: allViolations, snapshots };
   } finally {
     unsubSignal();
+    const current = getRun(runId);
+    // A replacement monitor may own the same attempt at the same generation.
+    // Clear only the exact projection this instance published.
+    if (
+      projectedWait &&
+      current?.waitingForOperator === projectedWait &&
+      (current.engineState?.generation ?? 0) === generation
+    ) {
+      updateRun(runId, { waitingForOperator: undefined });
+      broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+    }
   }
 }
 
@@ -1717,7 +1830,8 @@ async function detectViolations(
       if (
         snapshot.session.state === 'idle' &&
         !snapshot.pendingRequests.length &&
-        now - state.lastStructuredProgressAt > config.stuckTimeoutMs
+        now - Math.max(state.lastStructuredProgressAt, state.operatorResumedAt) >
+          config.stuckTimeoutMs
       )
         violations.push({
           slotId,
@@ -1748,10 +1862,11 @@ async function detectViolations(
       target,
       runner,
       now,
-      lastProgressAt: state.lastStructuredProgressAt,
+      lastProgressAt: Math.max(state.lastStructuredProgressAt, state.operatorResumedAt),
       stuckTimeoutMs: config.stuckTimeoutMs,
     });
-    state.lastStructuredProgressAt = stuckState.lastProgressAt;
+    if (stuckState.kind === 'making-progress')
+      state.lastStructuredProgressAt = stuckState.lastProgressAt;
     if (stuckState.stuck) {
       const sinceProgress = now - stuckState.lastProgressAt;
       violations.push({

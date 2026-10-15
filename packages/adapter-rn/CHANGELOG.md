@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.22.14 - 2026-10-15
+
+- Use the operator-wait runtime and protocol dependency set.
+
 ## 0.22.13 - 2026-10-15
 
 - Consume the plain `ActionHandler` contract.

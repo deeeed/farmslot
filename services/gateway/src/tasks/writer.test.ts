@@ -856,6 +856,9 @@ test('writeTaskFile implicitly renders dev-interactive template for interactive 
   const checklist = await readFile(path.join(path.dirname(taskPath), 'CHECKLIST.md'), 'utf-8');
   assert.match(checklist, /Worker: Interactive Dev/);
   assert.match(rendered, /> Human-operated — pauses at HUMAN GATE steps for approval\./);
+  assert.match(rendered, /## Waiting for an operator/);
+  assert.match(rendered, /mark wait --who/);
+  assert.match(rendered, /mark resume/);
   assert.equal(provenance.templateName, 'dev-interactive.md');
   assert.equal(provenance.templateSelectionSource, 'implicit-interactive-dev');
   assert.match(provenance.templateSelectionReason ?? '', /interactive mode/);
@@ -1004,6 +1007,9 @@ test('lightweight interactive dev keeps the sidecar plan as CHECKLIST.md and the
   assert.doesNotMatch(checklist, /Worker: Interactive Dev/);
   const rendered = await readFile(taskPath, 'utf-8');
   assert.match(rendered, /Worker: Interactive Dev/);
+  assert.match(rendered, /## Waiting for an operator/);
+  assert.match(rendered, /mark wait --who/);
+  assert.match(rendered, /mark resume/);
   await assert.rejects(access(path.join(taskDir, 'checklist-target.json')));
   await access(path.join(taskDir, 'inputs', 'dev-intake.json'));
 });

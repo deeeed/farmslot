@@ -570,7 +570,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           : r.ticketOrPr}
       </h2>
       <span class="status-badge" style="border:1px solid ${sc}; color:${sc}"
-        >${deriveRunLifecycleView({ status: r.status }).activityLabel ?? r.status}</span
+        >${deriveRunLifecycleView(r).activityLabel ?? r.status}</span
       >
       ${disposition
         ? html`<span

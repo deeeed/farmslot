@@ -90,6 +90,56 @@ export function normalizeWorkerSignal(signal: unknown): WorkerSignalNormalizatio
     return { ok: false, reason: `unknown status: ${status}` };
   }
 
+  const signalAt = parseStrictIsoMs(workerSignal.timestamp);
+  const wait = workerSignal.waitingForOperator;
+  if (
+    wait !== undefined &&
+    (status !== 'running' ||
+      !wait ||
+      typeof wait !== 'object' ||
+      typeof wait.who !== 'string' ||
+      !wait.who.trim() ||
+      wait.who.length > 128 ||
+      typeof wait.reason !== 'string' ||
+      !wait.reason.trim() ||
+      wait.reason.length > 2048 ||
+      typeof wait.since !== 'string' ||
+      parseStrictIsoMs(wait.since) === null ||
+      signalAt === null ||
+      Date.parse(wait.since) > signalAt ||
+      typeof workerSignal.attemptId !== 'string' ||
+      !workerSignal.attemptId.trim())
+  )
+    return { ok: false, reason: 'invalid operator wait' };
+  const intervals = workerSignal.operatorWaitIntervals;
+  if (intervals !== undefined) {
+    if (!Array.isArray(intervals) || !workerSignal.attemptId || signalAt === null)
+      return { ok: false, reason: 'invalid operator wait intervals' };
+    let previousEnd = 0;
+    for (const interval of intervals) {
+      if (
+        !interval ||
+        typeof interval !== 'object' ||
+        typeof interval.since !== 'string' ||
+        typeof interval.until !== 'string'
+      )
+        return { ok: false, reason: 'invalid operator wait interval' };
+      const since = interval && parseStrictIsoMs(interval.since);
+      const until = interval && parseStrictIsoMs(interval.until);
+      if (
+        since == null ||
+        until == null ||
+        since < previousEnd ||
+        until < since ||
+        until > signalAt
+      )
+        return { ok: false, reason: 'invalid operator wait interval' };
+      previousEnd = until;
+    }
+    if (wait && Date.parse(wait.since) < previousEnd)
+      return { ok: false, reason: 'overlapping operator wait' };
+  }
+
   const disposition = workerSignal.disposition;
   if (
     disposition &&

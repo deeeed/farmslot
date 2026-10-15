@@ -153,7 +153,7 @@ export class RunPipeline extends LitElement {
   render() {
     if (!this.run) return nothing;
     const layout = computeLayout(this.run);
-    const activityLabel = deriveRunLifecycleView({ status: this.run.status }).activityLabel;
+    const activityLabel = deriveRunLifecycleView(this.run).activityLabel;
     const isActive = !['done', 'failed', 'cancelled'].includes(this.run.status);
     const recovery = this.run.engineState?.publishGate?.reviewRecovery;
     const showRecovery = Boolean(recovery && recovery.status !== 'recovered');
