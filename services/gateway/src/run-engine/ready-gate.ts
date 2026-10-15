@@ -794,9 +794,10 @@ export async function executeReadyGate(
         },
         { canReplay: () => false },
       );
-      // Inspection may restore this same pending gate. An approval must still
-      // traverse the normal package validation and publication-state writer.
-      return isPublishApprovalAction(action) ? 'hold' : action;
+      // Inspection can restore this same card. Every recovered action must
+      // pass the normal policy, lineage and consumed-receipt writer below.
+      if (action === 'abort') return action;
+      return executeReadyGate(runId, dependencies);
     }
   }
   const prNumber =

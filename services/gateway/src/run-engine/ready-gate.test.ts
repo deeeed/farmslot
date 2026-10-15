@@ -1,12 +1,19 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 
-import type { PublicationReviewLaunchRejection, Run } from '@farmslot/protocol';
+import {
+  Events,
+  type PublicationReviewLaunchRejection,
+  type ReviewRequestPayload,
+  type Run,
+  type RunDecision,
+} from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
 import { TerminalReviewArtifactError } from '../review/terminal-result.js';
 import { createRun, getRun, updateRun, updateRunStep } from '../runs/store.js';
 
+import { resolveEngineDecision, setEngineDecisionRuntime } from './engine-decisions.js';
 import { BlockedRunError } from './errors.js';
 import {
   executePublishGateReviewPlan,
@@ -16,7 +23,7 @@ import {
   reconcileReviewLaunchRejectionForCurrentHead,
   resumeInterruptedPublicationReview,
 } from './ready-gate.js';
-import { deleteTestRunIfPresent, makeRun } from './test-fixtures.js';
+import { deleteTestRunIfPresent, makeReadyGatePackage, makeRun } from './test-fixtures.js';
 
 test('localVideoProofWarning flags screenshot packages without local video proof', () => {
   assert.match(
@@ -568,54 +575,151 @@ test('WARM recheck updates its existing lineage and preserves attempt provenance
   assert.equal(reviews[0].reviewedHeadSha, 'new');
 });
 
-test('source-read failure keeps the publication wait and retained resources without approval actions', async (t) => {
+function sourceGateFixture(t: TestContext) {
   const run = createRun({
     flowType: 'dev',
     mode: 'autonomous',
     project: 'missing-source-proof',
     ticketOrPr: 'SOURCE-WAIT',
   });
-  t.after(() => deleteTestRunIfPresent(run.id));
   updateRun(run.id, {
     status: 'human-gating',
-    slotId: 'retained-source-slot',
+    slotId: null,
     steps: [
       { name: 'human-gate', status: 'running' },
       { name: 'finalize', status: 'pending' },
     ],
     engineState: { publishGate: { packageId: 'retained', packageHash: 'retained-hash' } },
   });
-  const before = structuredClone(getRun(run.id));
-  let waits = 0;
-  const action = await executeReadyGate(run.id, {
-    ensurePackage: async () => {
-      throw new Error('Owned source SSH connection unavailable');
+  let notify!: () => void;
+  const notice = () =>
+    new Promise<void>((resolve) => {
+      notify = resolve;
+    });
+  let announced = notice();
+  const executions: Promise<string>[] = [];
+  setEngineDecisionRuntime({
+    broadcast: (event) => {
+      if (event === Events.RUN_DECISION_NEW) notify();
     },
-    createDecision: async (id, reason, description, actions, payload, options) => {
-      assert.equal(id, run.id);
-      assert.equal(reason, 'human_gate');
-      assert.match(description, /SSH connection unavailable.*Restore the owned source/);
-      assert.deepEqual(
-        actions.map((entry) => entry.id),
-        ['hold'],
-      );
-      assert.ok(payload?.kind === 'ready' && payload.stale && !payload.prPackage);
-      assert.equal(
-        options?.canReplay?.({
-          id: 'old',
-          type: 'engine_human_gate',
-          title: '',
-          description: '',
-          actions: [],
-          createdAt: '',
-        }),
-        false,
-      );
-      waits++;
-      return 'hold';
-    },
+    stepToStatus: { 'human-gate': 'human-gating' },
   });
-  assert.equal(action, 'hold');
-  assert.equal(waits, 1);
-  assert.deepEqual(getRun(run.id), before);
-});
+  t.after(async () => {
+    updateRun(run.id, { status: 'cancelled' });
+    for (const decision of getRun(run.id)!.decisions)
+      if (!decision.resolvedAt) resolveEngineDecision(decision.id, 'abort');
+    await Promise.allSettled(executions);
+    await deleteTestRunIfPresent(run.id);
+    setEngineDecisionRuntime({ broadcast: () => {}, stepToStatus: {} });
+  });
+  return {
+    run,
+    next: async (execution: Promise<string>): Promise<RunDecision> => {
+      executions.push(execution);
+      await Promise.race([
+        announced,
+        execution.then((action) => {
+          throw new Error(`Gate returned ${action} before creating its wait`);
+        }),
+      ]);
+      announced = notice();
+      const decision = getRun(run.id)!.decisions.find((entry) => !entry.resolvedAt);
+      assert.ok(decision);
+      return decision;
+    },
+  };
+}
+
+test(
+  'source-read failure uses the real decision owner and retains its publication wait',
+  { timeout: 4000 },
+  async (t) => {
+    const { run, next } = sourceGateFixture(t);
+    updateRun(run.id, { slotId: 'retained-source-slot' });
+    const before = structuredClone(getRun(run.id)!);
+    const execution = executeReadyGate(run.id, {
+      ensurePackage: async () => {
+        throw new Error('Owned source SSH connection unavailable');
+      },
+    });
+    const card = await next(execution);
+    assert.match(card.description, /SSH connection unavailable.*Restore the owned source/);
+    assert.deepEqual(
+      card.actions.map((entry) => entry.id),
+      ['hold'],
+    );
+    assert.ok(card.payload?.kind === 'ready' && card.payload.stale && !card.payload.prPackage);
+    const held = getRun(run.id)!;
+    assert.equal(held.slotId, before.slotId);
+    assert.deepEqual(held.engineState, before.engineState);
+    assert.deepEqual(held.steps, before.steps);
+    assert.notEqual(held.status, 'failed');
+    assert.equal(resolveEngineDecision(card.id, 'abort'), true);
+    assert.equal(await execution, 'abort');
+  },
+);
+
+for (const mode of ['cold', 'warm'] as const) {
+  test(
+    `recovered source gate records one ${mode} review request with its lineage`,
+    { timeout: 4000 },
+    async (t) => {
+      const { run, next } = sourceGateFixture(t);
+      const prepared = makeReadyGatePackage({
+        reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+      });
+      let available = false;
+      const dependencies = {
+        ensurePackage: async () => {
+          if (!available) throw new Error('Source disconnected');
+          return prepared;
+        },
+      };
+      const execution = executeReadyGate(run.id, dependencies);
+      const card = await next(execution);
+      const request: ReviewRequestPayload = {
+        runner: 'codex',
+        model: null,
+        effort: null,
+        mode,
+        ...(mode === 'warm'
+          ? {
+              context: {
+                reviewLineages: [
+                  { repository: 'owner/repo', prNumber: 42, reviewId: 'retained-lineage' },
+                ],
+              },
+            }
+          : {}),
+      };
+      // Inspection restores the card. RPC consumption stores these typed fields
+      // before waking the real engine decision owner.
+      available = true;
+      card.payload = {
+        kind: 'ready',
+        prNumber: null,
+        repo: null,
+        workerReport: '',
+        branch: prepared.branch,
+        diffStat: prepared.diffStat,
+        prPackage: prepared,
+      };
+      card.resolvedAt = new Date().toISOString();
+      card.resolvedAction = 'request-review';
+      card.selectionData = { reviewRequest: request };
+      updateRun(run.id, { decisions: [card] });
+      assert.equal(resolveEngineDecision(card.id, 'request-review'), true);
+      assert.equal(await execution, 'request-review');
+      const after = getRun(run.id)!;
+      assert.equal(typeof after.decisions[0].context?.reviewRequestConsumedAt, 'string');
+      assert.equal(after.engineState?.publishGate?.reviewSequence?.length, 1);
+      assert.equal(after.engineState?.publishGate?.reviewSequence?.[0].mode, mode);
+      assert.deepEqual(after.engineState?.publishGate?.reviewSequenceContext, request.context);
+      const repeated = executeReadyGate(run.id, dependencies);
+      const nextCard = await next(repeated);
+      assert.notEqual(nextCard.id, card.id, 'consumed requests cannot replay a second review');
+      assert.equal(resolveEngineDecision(nextCard.id, 'abort'), true);
+      assert.equal(await repeated, 'abort');
+    },
+  );
+}
