@@ -155,7 +155,6 @@ from pathlib import Path
 import json, os, shlex
 root = Path.cwd()
 assert not (root / '.env.ports').exists(), 'Use a fresh validation worktree'
-assert not (root / '.env.local-auth').exists(), 'Use a fresh validation worktree'
 base = root / '.sandbox/electron'
 for name in ['home', 'pool', 'projects/desktop-validation', 'runs']:
     (base / name).mkdir(parents=True, exist_ok=True)

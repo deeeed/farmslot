@@ -159,7 +159,7 @@ cd apps/command-center && yarn farmslot <subcommand>
 node apps/command-center/scripts/cdp.mjs gateway <method> '<params-json>'
 ```
 
-`yarn farmdev` runs `scripts/dev.sh`, which loads `.env.ports` / `.env.local-auth`, then `yarn dev` (gateway `tsx watch` + Vite UI). **Gateway source edits auto-restart** — do not manually kill/restart the gateway when `farmdev` is already running. Pool JSON edits under `pool/` are hot-reloaded (chokidar → fleet refresh) without a restart.
+`yarn farmdev` runs `scripts/dev.sh`, which loads `.env.ports`, selected-home `providers.env` and a separate node credential, then `yarn dev` (gateway `tsx watch` + Vite UI). **Gateway source edits auto-restart** — do not manually kill/restart the gateway when `farmdev` is already running. Pool JSON edits under `pool/` are hot-reloaded (chokidar → fleet refresh) without a restart.
 
 ### Worktree slots — dispatch vs validation gateway — HARD RULE
 

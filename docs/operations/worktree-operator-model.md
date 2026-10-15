@@ -98,14 +98,21 @@ Real production history stays on main unless you explicitly import with `--keep-
 Each sandbox has its own gateway credential store under its isolated
 `FARMSLOT_HOME`. Pair person devices to that gateway and give automation a
 separate service profile. Do not copy the operator gateway's credentials or put
-gateway login tokens in `.env.local-auth`, Companion build settings or templates.
+gateway login tokens in checkout environment files, Companion build settings or templates.
 See [Identity and credentials](../reference/identity-and-credentials.md).
 
-Dev stacks clear inherited credentials, auth mode and bind host before loading
-checkout configuration. `.env.local-auth` can supply the local node's machine
-credential and its server-assigned native owner, plus unrelated private provider
-settings. On macOS, remote node deployment retains the installed node's owner unless the
-caller explicitly replaces it.
+Dev stacks clear inherited credentials before loading checkout configuration. The
+local development node reads its machine credential from
+`~/.farmslot-automation/<machine>-node-automation.secret` when using the default
+development home. Other stacks read only their own `FARMSLOT_HOME/node.secret`;
+sandboxes never borrow the operator credential. Credential files require mode 0600. Configure native enrollment explicitly with
+`FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID` in the stack's nonsecret port configuration.
+Remote macOS deployment retains the installed owner unless the caller explicitly
+replaces it.
+
+Keep private provider settings in `FARMSLOT_HOME/providers.env`, mode 0600.
+Only `TYPESAFE_API_KEY` and `FARMSLOT_ASSESSMENT_*` keys are accepted; this file
+cannot set gateway or node authentication. Shell expressions are read literally.
 
 Slot-local credential provisioning remains a rollout prerequisite for
 physical-device LAN mode. Start a new sandbox on loopback first, then provision

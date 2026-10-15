@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Start command-center dev servers using per-worktree port config.
-# Reads .env.ports for port overrides and .env.local-auth for optional local auth secrets.
+# Reads checkout ports, selected-home provider settings and a separate node credential.
 
 set -euo pipefail
 
 DEV_FRAMEWORK_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FARMSLOT_ROOT="${FARMSLOT_SLOT_REPO:-$DEV_FRAMEWORK_ROOT}"
 PORT_ENV_FILE="$FARMSLOT_ROOT/.env.ports"
-AUTH_ENV_FILE="$FARMSLOT_ROOT/.env.local-auth"
 
 load_simple_env_file() {
   local file="$1"
   local keep_existing="${2:-}"
+  local providers_only="${3:-}"
   local raw line key value
   while IFS= read -r raw || [ -n "$raw" ]; do
     line="${raw#"${raw%%[![:space:]]*}"}"
@@ -37,6 +37,12 @@ load_simple_env_file() {
     if [ "${#value}" -ge 2 ] && { [ "${value:0:1}" = '"' ] || [ "${value:0:1}" = "'" ]; } && [ "${value: -1}" = "${value:0:1}" ]; then
       value="${value:1:${#value}-2}"
     fi
+    if [ -n "$providers_only" ]; then
+      case "$key" in
+        TYPESAFE_API_KEY|FARMSLOT_ASSESSMENT_*) ;;
+        *) echo "[dev] ERROR: unsupported provider setting: $key" >&2; exit 1 ;;
+      esac
+    fi
     if [ -n "$keep_existing" ] && [ -n "${!key+x}" ]; then
       continue
     fi
@@ -61,13 +67,6 @@ fi
 if [ -n "$_gateway_override" ]; then export GATEWAY_PORT="$_gateway_override"; fi
 if [ -n "$_vite_override" ]; then export VITE_PORT="$_vite_override"; fi
 
-# Load optional local-only auth secrets. This file is gitignored and should contain
-# FARMSLOT_NODE_TOKEN for the local node; gateway identity lives in its credential store.
-if [ -f "$AUTH_ENV_FILE" ]; then
-  set -a; source "$AUTH_ENV_FILE"; set +a
-  echo "[dev] Loaded gateway auth from $AUTH_ENV_FILE"
-fi
-
 # Load the checkout's .env last, non-overriding (shell and the files above win) —
 # the same order the CLI's loadCheckoutEnv uses (.env.ports, then .env). The gateway
 # resolves execution-template source roots (CONSENSYS_RECIPE_COOK_ROOT,
@@ -88,7 +87,35 @@ fi
 pin_sandbox_home
 # Retired gateway env credentials must not reach co-launched clients even when
 # an old checkout file still contains them. Gateway identity is store-owned.
-unset FARMSLOT_GATEWAY_TOKEN FARMSLOT_GATEWAY_PASSWORD FARMSLOT_GATEWAY_AUTH_MODE
+unset FARMSLOT_NODE_TOKEN FARMSLOT_GATEWAY_TOKEN FARMSLOT_GATEWAY_PASSWORD FARMSLOT_GATEWAY_AUTH_MODE
+
+# Providers belong to this gateway home and cannot set identity or shell policy.
+DEV_HOME="$(cd "$DEV_FRAMEWORK_ROOT" && node --import tsx --input-type=module -e 'import { farmslotHome } from "@farmslot/protocol/node/farmslot-home"; process.stdout.write(farmslotHome())')"
+PROVIDER_ENV_FILE="$DEV_HOME/providers.env"
+NODE_TOKEN_FILE="$DEV_HOME/node.secret"
+if [ -z "${FARMSLOT_SANDBOX_HOME:-}" ] && [ "$DEV_HOME" = "$HOME/.farmslot-dev" ]; then
+  NODE_TOKEN_FILE="$HOME/.farmslot-automation/${MACHINE_NAME:-$(hostname -s)}-node-automation.secret"
+fi
+for private_file in "$PROVIDER_ENV_FILE" "$NODE_TOKEN_FILE"; do
+  if [ -f "$private_file" ]; then
+    private_mode="$(node -e 'process.stdout.write((require("node:fs").statSync(process.argv[1]).mode & 0o777).toString(8))' "$private_file")"
+    if [ "$private_mode" != 600 ]; then
+      echo "[dev] ERROR: private startup file must have mode 0600: $private_file" >&2
+      exit 1
+    fi
+  fi
+done
+if [ -f "$PROVIDER_ENV_FILE" ]; then
+  load_simple_env_file "$PROVIDER_ENV_FILE" '' providers-only
+fi
+if [ -f "$NODE_TOKEN_FILE" ]; then
+  FARMSLOT_NODE_TOKEN="$(cat "$NODE_TOKEN_FILE")"
+  if [[ -z "$FARMSLOT_NODE_TOKEN" || "$FARMSLOT_NODE_TOKEN" =~ [[:space:]] ]]; then
+    echo "[dev] ERROR: node credential must be one nonempty token: $NODE_TOKEN_FILE" >&2
+    exit 1
+  fi
+  export FARMSLOT_NODE_TOKEN
+fi
 
 if [[ ! "${GATEWAY_PORT:-}" =~ ^[0-9]+$ || ! "${VITE_PORT:-}" =~ ^[0-9]+$ ]]; then
   echo "[dev] ERROR: GATEWAY_PORT and VITE_PORT must come from .env.ports or explicit environment values." >&2
@@ -128,7 +155,7 @@ echo "[dev] Gateway: http://localhost:$GATEWAY_PORT (bind: $GATEWAY_HOST)"
 echo "[dev] UI:      http://localhost:$VITE_PORT"
 echo "[dev] Node:    $GATEWAY_URL (machine: $(hostname -s))"
 if [ "$GATEWAY_HOST" = "127.0.0.1" ] || [ "$GATEWAY_HOST" = "localhost" ]; then
-  echo "[dev] WARN: gateway is loopback-only — Companion LAN QR pairing needs GATEWAY_HOST=0.0.0.0 in this checkout's .env.ports or .env.local-auth"
+  echo "[dev] WARN: gateway is loopback-only — Companion LAN QR pairing needs GATEWAY_HOST=0.0.0.0 in this checkout's .env.ports"
 fi
 echo "[dev] Gateway auth: credential store, solo mode only before activation on loopback"
 

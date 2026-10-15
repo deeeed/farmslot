@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 import type { Command } from 'commander';
@@ -21,7 +21,6 @@ import type {
 import { resolveContext } from '../context.js';
 import { createEmitter } from '../envelope.js';
 import { loadProfiles, profileForUrl, saveProfiles } from '../gateway-profiles.js';
-import { repoRoot } from '../onboarding/workspace.js';
 
 export function registerCredentialCommands(program: Command): void {
   const credential = program.command('credential').description('Manage gateway credentials');
@@ -35,7 +34,6 @@ export function registerCredentialCommands(program: Command): void {
     .option('--native-owner <principal-id>', 'bind a new node to its native account owner')
     .option('--role <role>', 'grant admin or operator before issuance')
     .option('--scope <scope>', 'required with --role; only global is supported')
-    .option('--write-node-env', 'write the credential to FARMSLOT_NODE_TOKEN in .env.local-auth')
     .option(
       '--secret-file <path>',
       'write the raw secret to a new file (0600, refuses to overwrite) for scripted remote provisioning',
@@ -51,7 +49,6 @@ export function registerCredentialCommands(program: Command): void {
           nativeOwner?: string;
           role?: string;
           scope?: string;
-          writeNodeEnv?: boolean;
           secretFile?: string;
           offline?: boolean;
         },
@@ -72,7 +69,6 @@ export function registerCredentialCommands(program: Command): void {
                 principalId,
                 displayName,
               });
-          if (opts.writeNodeEnv) writeNodeCredential(issue.secret);
           let secretFilePath: string | undefined;
           if (opts.secretFile) {
             try {
@@ -364,16 +360,6 @@ export function writeSecretFile(requestedPath: string, secret: string): string {
   const absolute = resolve(requestedPath);
   writeFileSync(absolute, secret, { mode: 0o600, flag: 'wx' });
   return absolute;
-}
-
-function writeNodeCredential(secret: string): void {
-  const path = resolve(repoRoot, '.env.local-auth');
-  const lines = existsSync(path) ? readFileSync(path, 'utf8').split('\n') : [];
-  const filtered = lines.filter((line) => !/^\s*(?:export\s+)?FARMSLOT_NODE_TOKEN=/u.test(line));
-  filtered.push(`FARMSLOT_NODE_TOKEN=${secret}`);
-  const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, `${filtered.filter(Boolean).join('\n')}\n`, { mode: 0o600 });
-  renameSync(tmp, path);
 }
 
 export function persistOwnerCredential(

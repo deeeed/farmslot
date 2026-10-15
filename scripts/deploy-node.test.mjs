@@ -716,15 +716,12 @@ test('deploy-node verifies when the bash login profile never adds ~/.local/bin',
 
 // The node reads FARMSLOT_NODE_TOKEN from an env file in or above its install
 // dir ahead of the service's own: a stale one there (mini and macwork kept an
-// old ~/farmslot-node/.env.local-auth) left nodes failing auth after a deploy
+// old ~/farmslot-node/.env) left nodes failing auth after a deploy
 // that reported success.
 test('deploy-node fails before the service is reloaded when an env file shadows the node token', (t) => {
   const fixture = cliFixture(t);
-  const file = path.join(fixture.home, 'farmslot-node/.env.local-auth');
-  fixture.write(
-    'home/farmslot-node/.env.local-auth',
-    'FARMSLOT_NODE_TOKEN=stale-file-credential\n',
-  );
+  const file = path.join(fixture.home, 'farmslot-node/.env');
+  fixture.write('home/farmslot-node/.env', 'FARMSLOT_NODE_TOKEN=stale-file-credential\n');
   assert.throws(fixture.deploy, (error) => {
     assert.equal(error.status, 1);
     const stderr = String(error.stderr);
@@ -756,10 +753,7 @@ test('deploy-node fails before the service is reloaded when an env file shadows 
 // A local deploy (no ssh, no CLI refresh) runs the same check in the operator's shell.
 test('deploy-node deploys when the env file holds the deployed node token', (t) => {
   const fixture = cliFixture(t);
-  fixture.write(
-    'home/farmslot-node/.env.local-auth',
-    'FARMSLOT_NODE_TOKEN=fixture-node-credential\n',
-  );
+  fixture.write('home/farmslot-node/.env', 'FARMSLOT_NODE_TOKEN=fixture-node-credential\n');
 
   const output = fixture.deploy({ machine: localMachine() });
 
@@ -775,15 +769,12 @@ test('deploy-node deploys when the env file holds the deployed node token', (t) 
 // holds the deployed token and, searched first, would hide the stale one.
 test('deploy-node runs the native check through the login shell and still refuses a shadowing file', (t) => {
   const fixture = cliFixture(t);
-  fixture.write('home/decoy/.env.local-auth', 'FARMSLOT_NODE_TOKEN=fixture-node-credential\n');
+  fixture.write('home/decoy/.env', 'FARMSLOT_NODE_TOKEN=fixture-node-credential\n');
   fixture.write(
     'home/.bash_profile',
     'echo "login banner from the profile"\nexport FARMSLOT_ROOT="$HOME/decoy"\n',
   );
-  fixture.write(
-    'home/farmslot-node/.env.local-auth',
-    'FARMSLOT_NODE_TOKEN=stale-file-credential\n',
-  );
+  fixture.write('home/farmslot-node/.env', 'FARMSLOT_NODE_TOKEN=stale-file-credential\n');
   assert.throws(
     () => fixture.deploy({ env: { FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'fixture-owner' } }),
     (error) => {
@@ -792,7 +783,7 @@ test('deploy-node runs the native check through the login shell and still refuse
       const stderr = String(error.stderr);
       assert.ok(
         stderr.includes(
-          `[deploy] ERROR: ${fs.realpathSync(path.join(fixture.home, 'farmslot-node/.env.local-auth'))} sets FARMSLOT_NODE_TOKEN`,
+          `[deploy] ERROR: ${fs.realpathSync(path.join(fixture.home, 'farmslot-node/.env'))} sets FARMSLOT_NODE_TOKEN`,
         ),
         stderr,
       );
@@ -817,7 +808,7 @@ for (const [held, deploys] of [
 ]) {
   test(`deploy-node checks a node-token-only deploy against that token (${deploys ? 'matching' : 'differing'} file)`, (t) => {
     const fixture = cliFixture(t);
-    fixture.write('home/farmslot-node/.env.local-auth', `FARMSLOT_NODE_TOKEN=${held}\n`);
+    fixture.write('home/farmslot-node/.env', `FARMSLOT_NODE_TOKEN=${held}\n`);
     const deploy = () =>
       fixture.deploy({
         machine: localMachine(),
@@ -844,7 +835,7 @@ for (const [held, deploys] of [
 // With no token the service carries none for an env file to shadow.
 test('deploy-node skips the token check when it deploys no token', (t) => {
   const fixture = cliFixture(t);
-  fixture.write('home/farmslot-node/.env.local-auth', 'FARMSLOT_NODE_TOKEN=file-credential\n');
+  fixture.write('home/farmslot-node/.env', 'FARMSLOT_NODE_TOKEN=file-credential\n');
 
   const output = fixture.deploy({
     machine: localMachine(),
@@ -1177,6 +1168,14 @@ test('deploy-node fails with the fix when the node has only a Yarn 1 and no core
 
 for (const [name, explicit, expected, instance, authDefault, captureMode = 'retained'] of [
   ['retained prod', undefined, 'retained-owner', 'prod'],
+  [
+    'never source checkout auth',
+    undefined,
+    undefined,
+    'dev',
+    '$(touch "$RENDER_ROOT/legacy-auth-sourced")',
+    'bundled',
+  ],
   ['retained dev', undefined, 'retained-owner', 'dev'],
   ['explicit replacement', 'new-owner', 'new-owner', 'dev'],
   ['explicit disable', '', undefined, 'dev'],
@@ -1184,11 +1183,11 @@ for (const [name, explicit, expected, instance, authDefault, captureMode = 'reta
   ['retained dev over auth default', undefined, 'retained-owner', 'dev', 'stale-owner'],
   ['explicit replacement over auth default', 'new-owner', 'new-owner', 'dev', 'stale-owner'],
   ['explicit disable over auth default', '', undefined, 'dev', 'stale-owner'],
-  ['auth default on first install', undefined, 'default-owner', 'dev', 'default-owner', 'bundled'],
+  ['ignore auth default on first install', undefined, undefined, 'dev', 'default-owner', 'bundled'],
   [
-    'auth default without prior owner',
+    'ignore auth default without prior owner',
     undefined,
-    'default-owner',
+    undefined,
     'dev',
     'default-owner',
     'missing-key',
@@ -1224,6 +1223,7 @@ for (const [name, explicit, expected, instance, authDefault, captureMode = 'reta
     );
     const document = readRenderedPlist(path.join(output, 'service.plist'));
     assert.equal(document.EnvironmentVariables.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID, expected);
+    assert.equal(fs.existsSync(path.join(output, 'legacy-auth-sourced')), false);
     assert.equal(document.ProgramArguments[1] === '-lc', Boolean(expected));
     const probes = path.join(output, 'native-owner-probes');
     if (explicit === undefined && captureMode !== 'bundled') {

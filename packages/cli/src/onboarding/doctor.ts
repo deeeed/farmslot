@@ -530,7 +530,7 @@ function companionLanPairingCheck(listen: GatewayListenInfo): DoctorCheck {
       : `gateway listening on ${listen.host}:${listen.port} — phones on the LAN cannot connect`,
     hint: listen.remotePairingAllowed
       ? undefined
-      : 'Restart with GATEWAY_HOST=0.0.0.0 (yarn farmdev when .env.local-auth is present) or run farmslot up',
+      : 'Restart with GATEWAY_HOST=0.0.0.0 (yarn farmdev with an activated credential store) or run farmslot up',
   };
 }
 
