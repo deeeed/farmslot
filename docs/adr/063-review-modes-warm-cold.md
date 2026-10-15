@@ -178,3 +178,47 @@ does not grant publication, merge or dispatch authority.
 - Changing ADR-038's worker retention, slot ownership or publication authority.
 - Treating a fresh session, a different model or a changed runner as evidence
   that a review passed.
+
+## Amendment 1: scoped review-budget extensions, 2026-10-15
+
+**Status:** Proposed.
+**Specification:** [Round budget](../reference/review-modes-warm-cold.md#round-budget).
+**Related:** ADR-065's publication-package refresh amendment.
+
+### Decision
+
+Five reviewer attempts remain the default limit. A lead-authorized operator
+may raise the limit for the same run through an authenticated, audited gateway
+operation, recording the bounded new limit, current head and scope brief.
+The operation preserves every spent admission and review result. It grants
+only additional review attempts; publication still requires current reviews,
+evidence, deterministic checks and an explicit Approve Publish decision.
+
+The existing review admission owner consumes the extension. Other entry points,
+replay and PR-linked runs cannot reset the count or manufacture another budget.
+Additional reviews use the existing WARM/COLD session and range contracts and
+receive the approved scope brief with their ordinary review instructions.
+
+### Rationale
+
+An absolute stop after five attempts drove approved repair rounds outside the
+run, leaving the publication gate attached to an older package. A recorded,
+bounded exception keeps review provenance and publication in the original run.
+
+### Consequences
+
+The gate displays the effective limit and extension receipt. Unauthorized,
+stale or conflicting requests refuse before mutation. Failed and interrupted
+reviews still consume their admissions. Existing approval policy is unchanged.
+
+### Public surface
+
+- `run extend-review-budget <run-id> --limit <n> --head <sha> --scope <text>`
+  is the operator CLI consumer of the admin RPC `run.extendReviewBudget`.
+  The request supports an idempotency key and expected prior limit.
+- `@farmslot/protocol` owns the request, response, extension receipt and effective
+  `ReviewRoundBudget`. Existing CLI, Command Center and Companion run/gate views
+  consume the projection; the gateway owns authorization and admission.
+- This is an additive protocol capability. Runtime clients must use a matching
+  protocol version. Harnesses inherit the gateway policy without another review
+  command, reviewer dimension, package writer or permission bypass.

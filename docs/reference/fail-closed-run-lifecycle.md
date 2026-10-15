@@ -406,3 +406,54 @@ Acceptance requires the six CI scenarios, focused contract checks and live
 acceptance above, independent exact-head reviews and green relevant CI. An
 approved implementation head is frozen. Documentation approval alone authorizes
 none of implementation completion, publication, merging or rollout.
+
+## Current-head publication recovery
+
+**Status:** Proposed under ADR-065 Amendment 4, 2026-10-15.
+
+The existing package owner MUST reconcile the live owned branch head with the
+publication package at review completion, review-fix completion, gate refresh,
+gate inspection and approval. Every detected head change MUST prepare a new
+current package through the canonical preparation/refresh path. Reuse an
+unchanged package idempotently. Unknown head, missing ownership, ongoing work
+or failed preparation MUST show collecting/not-ready and refuse publication.
+
+Refresh MUST run under the existing lifecycle/decision coordinator. Recheck the
+run generation, ownership, source head and selected evidence after asynchronous
+reads and immediately before installing the package/decision. A concurrent
+head or evidence change MUST refuse or retry preparation, never install a
+package for a mixed snapshot. Persist the current package and decision before
+exposing an advancing action; restart reconstructs the same authoritative facts.
+
+Preserve prior packages, review attempts and gate decisions as provenance.
+Old-head reviews MUST remain stale. Rebind a review only when its validated
+immutable final snapshot matches the new package's review subject under existing
+rules. An old decision/package id submitted by a client MUST refuse and show
+the refreshed gate; its approval MUST NOT transfer to the replacement package.
+Approval rechecks live head, required reviews, deterministic receipts, selected
+evidence and package/body identity before any public PR mutation.
+
+An unpublished failed or interrupted run MAY replay review after its actual
+source/worker ownership and prerequisites are established. Use the same run,
+branch and retained review lineage, with ADR-063's persisted admissions and
+extension scope. No replacement run, invented completion, private state edits
+or out-of-band result import may establish success. If a recoverable gate lacks
+its package reference, canonical preparation MUST reconstruct it from current
+owned artifacts before offering publication. A missing source or artifact
+remains an explicit refusal; the receipt alone is not evidence of a current pass.
+
+The configured PR-body renderer MUST consume the existing canonical evidence
+declaration and selected recording. The artifacts owner uploads declared media,
+and the shared renderer embeds hosted per-AC before/after `<img>` tables and the
+video link. Missing or stale selected media MUST remain an explicit gap under
+the owning evidence policy; no fabricated baseline or sibling-run media may
+fill it. The package and published body MUST retain the selected evidence
+identity. Terminal consumes the same renderer/declaration as Mobile, with no
+parallel template, uploader or publication path.
+
+Validation MUST cover fix/Bugbot head changes, stale approval requests, refresh
+races and restart, an absent pending-package reference, same-run failed-review
+replay after a bounded budget extension, and current-head required reviews.
+Live acceptance MUST publish the original run through its gate, verify its
+linked PR head and hosted per-AC images/video, and retain all earlier attempts.
+No hand-created PR or adoption may substitute for that publication receipt.
