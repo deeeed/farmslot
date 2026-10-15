@@ -1,5 +1,14 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -7,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 import { Command } from 'commander';
 
+import { recordRecipeAttemptSelection } from '@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs';
 import { digestRecipeDocument } from '@farmslot/protocol';
 import { parseRecipeParamAssignments } from '@farmslot/recipe-runner/cli/support';
 
@@ -472,3 +482,59 @@ test('malformed present claims cannot disappear into legacy validation', async (
     result.checks.some((c) => c.id === 'file.acceptance-status.json' && c.status === 'fail'),
   );
 });
+
+for (const selectedState of ['present', 'missing', 'outside', 'nested'] as const) {
+  test(`task artifact inspection honors selected attempt (${selectedState}) over a legacy package`, async (t) => {
+    const task = await mkdtemp(path.join(os.tmpdir(), 'artifacts-selection-'));
+    const legacy = await createArtifactPackage({ metadata: { runner }, entries: [traceEntry] });
+    const selected = await createArtifactPackage({ metadata: { runner }, entries: [traceEntry] });
+    t.after(() => rm(task, { recursive: true, force: true }));
+    t.after(() => rm(legacy, { recursive: true, force: true }));
+    t.after(() => rm(selected, { recursive: true, force: true }));
+    await mkdir(path.join(task, 'artifacts/recipe-runs'), { recursive: true });
+    await rename(legacy, path.join(task, 'artifacts/recipe'));
+    const attempt = path.join(task, 'artifacts/recipe-runs/attempt-2');
+    await rename(selected, attempt);
+    assert.equal(recordRecipeAttemptSelection(task, attempt), true);
+    const pointer = path.join(task, 'artifacts/latest-valid-recipe-run.json');
+    const before = await readFile(pointer, 'utf8');
+    if (selectedState === 'nested') {
+      await mkdir(path.join(attempt, 'artifacts'));
+      await rename(path.join(task, 'artifacts/recipe'), path.join(attempt, 'artifacts/recipe'));
+      await rm(path.join(attempt, 'artifact-manifest.json'));
+    } else if (selectedState !== 'present') {
+      if (selectedState === 'outside') {
+        await rename(attempt, selected);
+        await symlink(selected, attempt);
+      } else await rm(attempt, { recursive: true });
+    }
+    let output = '';
+    t.mock.method(process.stdout, 'write', (chunk: string | Uint8Array) => {
+      output += chunk.toString();
+      return true;
+    });
+    const previousExit = process.exitCode;
+    t.after(() => {
+      process.exitCode = previousExit;
+    });
+    process.exitCode = 0;
+    const program = new Command().name('farmslot').option('--json').exitOverride();
+    registerRecipeCommand(program);
+    await program.parseAsync(['recipe', 'artifacts', task, '--json', '--validate'], {
+      from: 'user',
+    });
+    const result = JSON.parse(output);
+    if (selectedState === 'present') {
+      assert.equal(process.exitCode, 0, output);
+      assert.equal(result.artifactDir, attempt);
+      assert.equal(result.validation.status, 'pass');
+    } else {
+      assert.equal(process.exitCode, 1, output);
+      assert.match(
+        result.error.message,
+        selectedState === 'outside' ? /outside its root/ : /ENOENT/,
+      );
+    }
+    assert.equal(await readFile(pointer, 'utf8'), before);
+  });
+}

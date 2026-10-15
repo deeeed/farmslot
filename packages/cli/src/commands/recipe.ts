@@ -1,10 +1,12 @@
 import { existsSync } from 'node:fs';
+import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import { type Command, Option } from 'commander';
 
 import { readRecordedEvidencePackage } from '@farmslot/adapter-sdk';
 import { validateRecordedEvidencePackage } from '@farmslot/adapter-sdk/evidence';
+import { readRecipeAttemptSelection } from '@farmslot/agent-runtime/scripts/retained-recipe-attempt.cjs';
 import {
   digestRecipeDocument,
   getRecipeActionManifestActionNames,
@@ -452,17 +454,38 @@ export function registerRecipeCommand(program: Command): void {
           : await shared.resolveProjectContext(
               await projectRecipeHostOptions('artifacts', undefined, options),
             );
-        const candidates = directory
-          ? [path.resolve(directory)]
+        const taskDir = directory ? path.resolve(directory) : undefined;
+        const selection =
+          taskDir && !existsSync(path.join(taskDir, 'artifact-manifest.json'))
+            ? readRecipeAttemptSelection(taskDir)
+            : null;
+        const selectedDir =
+          taskDir && selection
+            ? path.join(taskDir, 'artifacts', selection.relativeArtifactRoot)
+            : undefined;
+        if (taskDir && selectedDir) {
+          const root = await realpath(path.join(taskDir, 'artifacts'));
+          const relative = path.relative(root, await realpath(selectedDir));
+          if (
+            relative === '..' ||
+            relative.startsWith(`..${path.sep}`) ||
+            path.isAbsolute(relative)
+          )
+            throw new Error('Selected recipe attempt resolves outside its root.');
+        }
+        const candidates = taskDir
+          ? [taskDir]
           : (shared.readLatestProofJournal(context!.target.value, context!.project!.runtimeDir)
               .record?.evidencePaths ?? []);
-        const packages = candidates
-          .flatMap((candidate) => [
-            candidate,
-            path.join(candidate, 'artifacts'),
-            path.join(candidate, 'artifacts/recipe'),
-          ])
-          .filter((candidate) => existsSync(path.join(candidate, 'artifact-manifest.json')));
+        const packages = selectedDir
+          ? [selectedDir]
+          : candidates
+              .flatMap((candidate) => [
+                candidate,
+                path.join(candidate, 'artifacts'),
+                path.join(candidate, 'artifacts/recipe'),
+              ])
+              .filter((candidate) => existsSync(path.join(candidate, 'artifact-manifest.json')));
         const distinct = [...new Set(packages)];
         if (distinct.length !== 1)
           throw new Error(
