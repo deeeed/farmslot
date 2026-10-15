@@ -88,7 +88,7 @@ function branchDiffDeps(outputs: {
       loadVars: async () => ({ host: 'localhost', machine: 'local', remoteRepo: '/repo' }) as any,
       runOnSlot: async (_vars: unknown, argv: string[]) => {
         argvLog.push(argv);
-        const sub = argv[1];
+        const sub = argv.includes('diff') ? 'diff' : argv[1];
         if (sub === 'rev-parse') {
           const remoteAvailable = !outputs.remoteMissing || remoteFetched;
           return remoteAvailable
@@ -126,7 +126,7 @@ test('gitBranchDiff default target diffs committed history only', async () => {
   assert.deepEqual(result.files, [
     { path: 'a.ts', status: 'M', additions: 3, deletions: 1, kind: 'code' },
   ]);
-  const diffArgs = argvLog.filter((argv) => argv[1] === 'diff');
+  const diffArgs = argvLog.filter((argv) => argv.includes('diff'));
   assert.ok(diffArgs.every((argv) => argv.includes('mb123..HEAD')));
   assert.ok(
     argvLog.some(
@@ -265,7 +265,7 @@ function exactSnapshotDeps(params: { available?: string[]; fetchError?: string }
       loadVars: async () => ({ host: 'localhost', machine: 'local', remoteRepo: '/repo' }) as any,
       runOnSlot: async (_vars: unknown, argv: string[]) => {
         argvLog.push(argv);
-        const sub = argv[1];
+        const sub = argv.includes('diff') ? 'diff' : argv[1];
         if (sub === 'rev-parse') {
           const ref = argv.at(-1)?.replace(/\^\{commit\}$/, '') ?? '';
           return available.has(ref)
@@ -323,7 +323,7 @@ test('gitDiff recovers a missing head for an exact review snapshot', async () =>
     argvLog.filter((argv) => argv[1] === 'fetch').map((argv) => argv.at(-1)),
     [head],
   );
-  assert.ok(argvLog.some((argv) => argv[1] === 'diff' && argv.includes(`${base}...${head}`)));
+  assert.ok(argvLog.some((argv) => argv.includes('diff') && argv.includes(`${base}...${head}`)));
 });
 
 test('gitBranchDiff reports an unavailable exact review commit after fetch fails', async () => {
@@ -335,7 +335,7 @@ test('gitBranchDiff reports an unavailable exact review commit after fetch fails
     gitBranchDiff({ slotId: 's', base, head }, deps),
     new RegExp(`Review commit ${base} is unavailable after fetch: origin offline`),
   );
-  assert.ok(!argvLog.some((argv) => argv[1] === 'diff'));
+  assert.ok(!argvLog.some((argv) => argv.includes('diff')));
 });
 
 test('real git: exact review diff restores a shallow merge base without changing triple-dot semantics', async (t) => {
@@ -464,7 +464,7 @@ test('gitDiff accepts a concurrent unshallow through a fetchable remote branch r
             ? { stdout: 'ancestor\n', stderr: '', exitCode: 0 }
             : { stdout: '', stderr: '', exitCode: 1 };
         }
-        if (argv[1] === 'diff') return { stdout: 'saved review diff', stderr: '', exitCode: 0 };
+        if (argv.includes('diff')) return { stdout: 'saved review diff', stderr: '', exitCode: 0 };
         return { stdout: '', stderr: '', exitCode: 0 };
       },
     },
@@ -503,7 +503,7 @@ test('gitDiff falls back to a local base branch when the remote ref is unavailab
         }
         if (argv[1] === 'rev-parse') return { stdout: 'local-base\n', stderr: '', exitCode: 0 };
         if (argv[1] === 'merge-base') return { stdout: 'mb-local\n', stderr: '', exitCode: 0 };
-        if (argv[1] === 'diff') return { stdout: 'diff body', stderr: '', exitCode: 0 };
+        if (argv.includes('diff')) return { stdout: 'diff body', stderr: '', exitCode: 0 };
         return { stdout: '', stderr: '', exitCode: 0 };
       },
     },
@@ -525,7 +525,7 @@ test('gitDiff uses an existing remote-tracking base when refresh is offline', as
         if (argv[1] === 'fetch') return { stdout: '', stderr: 'offline', exitCode: 1 };
         if (argv[1] === 'rev-parse') return { stdout: 'remote-base\n', stderr: '', exitCode: 0 };
         if (argv[1] === 'merge-base') return { stdout: 'mb-remote\n', stderr: '', exitCode: 0 };
-        if (argv[1] === 'diff') return { stdout: 'diff body', stderr: '', exitCode: 0 };
+        if (argv.includes('diff')) return { stdout: 'diff body', stderr: '', exitCode: 0 };
         return { stdout: '', stderr: '', exitCode: 0 };
       },
     },
@@ -594,7 +594,7 @@ test('gitBranchDiff worktree target diffs against the working tree and appends u
   });
   const result = await gitBranchDiff({ slotId: 's', base: 'main', target: 'worktree' }, deps);
   const listDiffArgs = argvLog.filter(
-    (argv) => argv[1] === 'diff' && !argv.includes('mb123..HEAD'),
+    (argv) => argv.includes('diff') && !argv.includes('mb123..HEAD'),
   );
   // Single-ref diff = merge-base vs working tree (committed + uncommitted).
   assert.ok(listDiffArgs.every((argv) => argv.includes('mb123')));

@@ -1,5 +1,6 @@
 // methods/git.ts — git.status, git.diff, git.log, git.show, git.files, git.stage, git.unstage, git.discard
 
+import { gitDiffArgs } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import {
   type BranchDiffStatus,
   classifyDiffFile,
@@ -70,10 +71,14 @@ export async function gitExec(
   if (deps.runCommand) return deps.runCommand(args);
   const repoPath = await (deps.resolveRepo ?? resolveRepoPath)(slotId);
   const slotVars = await (deps.loadVars ?? loadSlotVars)(slotId);
-  const result = await (deps.runOnSlot ?? execArgvOnSlot)(slotVars, ['git', ...args], {
-    cwd: repoPath,
-    maxBuffer: opts?.maxBuffer ?? 1024 * 1024,
-  });
+  const result = await (deps.runOnSlot ?? execArgvOnSlot)(
+    slotVars,
+    ['git', ...(args[0] === 'diff' ? gitDiffArgs(args.slice(1)) : args)],
+    {
+      cwd: repoPath,
+      maxBuffer: opts?.maxBuffer ?? 1024 * 1024,
+    },
+  );
   if (result.exitCode !== 0) {
     throw new Error(result.stderr.trim() || `git exited with code ${result.exitCode}`);
   }

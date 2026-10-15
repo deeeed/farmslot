@@ -1,3 +1,4 @@
+import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 // run-engine/push-verification.ts — verify a worker's terminal "complete"
 // signal is backed by a published branch before the run advances.
 //
@@ -10,7 +11,6 @@
 // the push is meant to happen. They ARE commit-verified: uncommitted work exists
 // only in the slot worktree and is destroyed when the slot is reclaimed, which is
 // a different failure from an unpushed commit and needs its own check.
-
 import { type ExecResult, isInteractiveDevRun, type Run } from '@farmslot/protocol';
 
 import { resolveAgentTarget, selectAgentContext } from '../agents/contexts.js';
@@ -109,11 +109,11 @@ export async function inspectWorktreePublishState(
   const headProbe = await execute('git rev-parse --verify --quiet HEAD');
   const hasHead = refExists(headProbe, 'HEAD probe');
   const worktree = await execute(
-    hasHead ? 'git diff --name-only -z HEAD --' : 'git ls-files --cached -z',
+    hasHead ? `${GIT_DIFF_COMMAND} --name-only -z HEAD --` : 'git ls-files --cached -z',
   );
   assertGitProbe(worktree, 'tracked-content diff');
   const staged = hasHead
-    ? await execute('git diff --cached --name-only -z HEAD --')
+    ? await execute(`${GIT_DIFF_COMMAND} --cached --name-only -z HEAD --`)
     : { stdout: '', stderr: '', exitCode: 0 };
   assertGitProbe(staged, 'staged-content diff');
   const untracked = await execute('git ls-files --others --exclude-standard -z');

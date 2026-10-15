@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import {
   DEFAULT_BRANCH,
   DEFAULT_TASK_DIR,
@@ -100,7 +101,7 @@ async function runDescriptionPreCheck(
     await inRepo(`git fetch origin ${shellQuote(remoteBranchRefspec(baseBranch))}`);
     // Through a file, not a pipe: `head` would hide a failing diff.
     const diff = await inRepo(
-      `t=$(mktemp) && { git diff --no-ext-diff --no-textconv ${shellQuote(`${base}...HEAD`)} > "$t"; s=$?; head -c ${PRE_CHECK_DIFF_BYTES} "$t"; rm -f "$t"; exit $s; }`,
+      `t=$(mktemp) && { ${GIT_DIFF_COMMAND} ${shellQuote(`${base}...HEAD`)} > "$t"; s=$?; head -c ${PRE_CHECK_DIFF_BYTES} "$t"; rm -f "$t"; exit $s; }`,
     );
     const log = await inRepo(`git log --format=%s ${shellQuote(`${base}..HEAD`)}`);
     if (diff.exitCode !== 0 || log.exitCode !== 0)

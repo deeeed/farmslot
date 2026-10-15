@@ -35,7 +35,11 @@
       "types": "./dist/native/*.d.ts",
       "import": "./dist/native/*.js"
     },
-    "./scripts/branch-update.mjs": "./scripts/branch-update.mjs"
+    "./scripts/branch-update.mjs": "./scripts/branch-update.mjs",
+    "./scripts/git-diff.cjs": {
+      "types": "./scripts/git-diff.d.cts",
+      "default": "./scripts/git-diff.cjs"
+    }
   },
   "scripts": {
     "typecheck": "yarn workspace @farmslot/protocol build && tsc --noEmit --project tsconfig.json",
@@ -91,7 +95,8 @@
     "scripts/**/*.cjs",
     "scripts/**/*.mjs",
     "scripts/retained-recipe-attempt.d.cts",
-    "scripts/execution-template-cli.mjs"
+    "scripts/execution-template-cli.mjs",
+    "scripts/git-diff.d.cts"
   ],
   "publishConfig": {
     "access": "public"
