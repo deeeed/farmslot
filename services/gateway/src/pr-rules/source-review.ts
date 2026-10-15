@@ -10,11 +10,6 @@ import {
 
 import { GatewayMethodError } from '../core/method-error.js';
 import { getRunWithArchived } from '../runs/store.js';
-import {
-  principalOwnerGeneration,
-  runPrincipalOwner,
-  samePrincipalOwner,
-} from '../security/work-originator.js';
 
 function invalid(message: string): never {
   throw new GatewayMethodError('REVIEW_QA_NEEDS_CONFIGURATION', message);
@@ -24,7 +19,6 @@ function invalid(message: string): never {
 type QaSourceReviewInput = {
   runId: string;
   ownerId: string;
-  ownerGeneration?: number;
   project?: string;
   pr: MonitoredPRIdentity;
   expected?: PRQaSourceReview;
@@ -47,14 +41,7 @@ export function validateQaSourceReviewRecord(
     run.nativeOwnerPrincipalId,
     run.prWork?.review?.ownerId,
   ].filter((owner): owner is string => owner !== undefined);
-  const generation = input.ownerGeneration ?? principalOwnerGeneration(input.ownerId);
-  const owner = runPrincipalOwner(run);
-  if (
-    !owner ||
-    owners.some((owner) => owner !== input.ownerId) ||
-    !samePrincipalOwner(owner, { ownerId: input.ownerId, ownerGeneration: generation }) ||
-    (run.prWork?.review && (run.prWork.review.ownerGeneration ?? 0) !== generation)
-  ) {
+  if (!owners.length || owners.some((owner) => owner !== input.ownerId)) {
     throw new GatewayMethodError('AUTH_FORBIDDEN', 'Source review is not owned by this principal');
   }
   if (!input.project || run.project !== input.project)

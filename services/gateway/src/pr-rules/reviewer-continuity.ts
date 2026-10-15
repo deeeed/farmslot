@@ -18,7 +18,6 @@ import {
   incrementalReviewAvailable,
 } from '../run-engine/engine-decisions.js';
 import { resolveRepeatReviewResumePlan } from '../run-engine/review-session-chain.js';
-import { runPrincipalOwner, samePrincipalOwner } from '../security/work-originator.js';
 
 /** Saved sessions do not reserve slots; each new round resolves its authorized pool again. */
 export function preferRetainedReviewer(
@@ -51,11 +50,7 @@ export function preferRetainedReviewer(
       review: { profile: intent.reviewProfile, ownerId: source.ownerId, options },
     },
   };
-  const ownedRuns = runs.filter((run) => {
-    const owner = runPrincipalOwner(run);
-    return owner && samePrincipalOwner(owner, source);
-  });
-  const prior = findLatestPriorReviewRun(identity, ownedRuns);
+  const prior = findLatestPriorReviewRun(identity, runs);
   if (!prior) return coldChoices;
   // Only picks a retained reviewer. The run's own context build confirms the
   // prior head is an ancestor before it settles on incremental scope.

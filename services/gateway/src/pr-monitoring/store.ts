@@ -15,11 +15,6 @@ import {
 } from '@farmslot/protocol';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
-import {
-  matchesPrincipalOwner,
-  principalOwnerGeneration,
-  principalOwnerStamp,
-} from '../security/work-originator.js';
 
 import { reconcilePRMonitorIncidents } from './incidents.js';
 import { type ManualRepairSelection, planMonitorRepair } from './repair-plan.js';
@@ -33,7 +28,6 @@ export interface PRMonitorStoreData {
   projectPolicies?: PRProjectMonitorPolicy[];
   publicationEnrollments?: {
     ownerId: string;
-    ownerGeneration?: number;
     project: string;
     runId: string;
     prKey: string;
@@ -41,15 +35,10 @@ export interface PRMonitorStoreData {
   }[];
 }
 
-function subscriptionKey(
-  ownerId: string,
-  config: PRMonitorConfig,
-  generation = principalOwnerGeneration(ownerId),
-): string {
+function subscriptionKey(ownerId: string, config: PRMonitorConfig): string {
   return JSON.stringify([
     monitoredPRKey(config.pr),
     ownerId,
-    generation,
     config.teamId ?? null,
     config.account.host.toLowerCase(),
     config.account.login.toLowerCase(),
@@ -81,14 +70,12 @@ export class PRMonitorStore {
   }
 
   list(ownerId: string): PRMonitor[] {
-    return structuredClone(
-      this.data.monitors.filter((monitor) => matchesPrincipalOwner(monitor, ownerId)),
-    );
+    return structuredClone(this.data.monitors.filter((monitor) => monitor.ownerId === ownerId));
   }
 
   projectPolicies(ownerId: string): PRProjectMonitorPolicy[] {
     return structuredClone(
-      (this.data.projectPolicies ?? []).filter((policy) => matchesPrincipalOwner(policy, ownerId)),
+      (this.data.projectPolicies ?? []).filter((policy) => policy.ownerId === ownerId),
     );
   }
 
@@ -107,7 +94,7 @@ export class PRMonitorStore {
     const settings = structuredClone(config);
     return this.change((data) => {
       const existing = data.projectPolicies?.find(
-        (policy) => policy.project === project && matchesPrincipalOwner(policy, ownerId),
+        (policy) => policy.project === project && policy.ownerId === ownerId,
       );
       if (existing && existing.revision !== revision)
         throw new Error('Project monitoring policy changed; refresh before editing');
@@ -116,7 +103,6 @@ export class PRMonitorStore {
       const now = new Date().toISOString();
       const policy: PRProjectMonitorPolicy = {
         ownerId,
-        ...principalOwnerStamp(ownerId),
         project,
         revision: (existing?.revision ?? 0) + 1,
         enabled,
@@ -125,7 +111,7 @@ export class PRMonitorStore {
         updatedAt: now,
       };
       data.projectPolicies = (data.projectPolicies ?? [])
-        .filter((item) => item.project !== project || !matchesPrincipalOwner(item, ownerId))
+        .filter((item) => item.project !== project || item.ownerId !== ownerId)
         .concat(policy);
       return policy;
     });
@@ -143,7 +129,7 @@ export class PRMonitorStore {
     const event = structuredClone(publication);
     return this.change((data) => {
       const policy = data.projectPolicies?.find(
-        (entry) => matchesPrincipalOwner(entry, ownerId) && entry.project === project,
+        (entry) => entry.ownerId === ownerId && entry.project === project,
       );
       if (
         !policy?.enabled ||
@@ -159,7 +145,7 @@ export class PRMonitorStore {
       const receipts = (data.publicationEnrollments ??= []);
       const existing = receipts.find(
         (entry) =>
-          matchesPrincipalOwner(entry, ownerId) &&
+          entry.ownerId === ownerId &&
           entry.project === project &&
           entry.runId === origin.id &&
           entry.prKey === prKey,
@@ -171,14 +157,7 @@ export class PRMonitorStore {
         { ...policy.config, project, pr: event.pr },
         origin.id,
       );
-      receipts.push({
-        ownerId,
-        ...principalOwnerStamp(ownerId),
-        project,
-        runId: origin.id,
-        prKey,
-        monitorId: monitor.id,
-      });
+      receipts.push({ ownerId, project, runId: origin.id, prKey, monitorId: monitor.id });
       return monitor;
     });
   }
@@ -227,7 +206,7 @@ export class PRMonitorStore {
     normalized.account.login = normalized.account.login.toLowerCase();
     const key = subscriptionKey(ownerId, normalized);
     const existing = data.monitors.find(
-      (item) => subscriptionKey(item.ownerId, item.config, item.ownerGeneration ?? 0) === key,
+      (item) => subscriptionKey(item.ownerId, item.config) === key,
     );
     if (existing) {
       if (originatingRunId && !existing.originatingRunIds.includes(originatingRunId)) {
@@ -241,7 +220,6 @@ export class PRMonitorStore {
       id: randomUUID(),
       revision: 1,
       ownerId,
-      ...principalOwnerStamp(ownerId),
       config: normalized,
       lifecycle: 'active',
       createdAt: now,
@@ -608,9 +586,7 @@ export class PRMonitorStore {
     ownerId: string,
     revision?: number,
   ): PRMonitor {
-    const monitor = data.monitors.find(
-      (item) => item.id === id && matchesPrincipalOwner(item, ownerId),
-    );
+    const monitor = data.monitors.find((item) => item.id === id && item.ownerId === ownerId);
     if (!monitor) throw new Error('Monitor not found');
     if (revision !== undefined && monitor.revision !== revision) {
       throw new Error('Monitor changed; refresh before editing');

@@ -7,11 +7,10 @@ import type { PRMonitoringService } from '../pr-monitoring/service.js';
 import { PRPushService } from '../pr-push/service.js';
 import { prPushSources } from '../pr-push/sources.js';
 import { assertPushRegistration, PRPushStore } from '../pr-push/store.js';
-import { teamNotificationAudience } from '../pr-rules/notification-audience.js';
 import type { PRRuleService } from '../pr-rules/service.js';
 import type { GatewayAuthRuntime } from '../security/auth.js';
 import { isAdminPrincipal } from '../security/authorization.js';
-import { currentSessionOriginator, principalOwnerGeneration } from '../security/work-originator.js';
+import { currentSessionOriginator } from '../security/work-originator.js';
 
 let service: PRPushService | undefined;
 export async function initPRPush(
@@ -22,8 +21,8 @@ export async function initPRPush(
   publish: (ownerId: string, event: string, payload: unknown) => void,
 ): Promise<void> {
   service?.stop();
-  const authorized = (id: string, generation = principalOwnerGeneration(id)) => {
-    const result = auth.resolver.resolvePrincipalId(id, generation);
+  const authorized = (id: string) => {
+    const result = auth.resolver.resolvePrincipalId(id);
     return result.ok && isAdminPrincipal(result.principal);
   };
   service = new PRPushService(
@@ -33,8 +32,10 @@ export async function initPRPush(
     undefined,
     (id, value) => publish(id, Events.PR_PUSH_UPDATED, value),
     () => [
-      ...monitors.store.snapshot().monitors,
-      ...teamNotificationAudience(rules.store.snapshot().teams),
+      ...monitors.store.snapshot().monitors.map((monitor) => monitor.ownerId),
+      ...rules.store
+        .snapshot()
+        .teams.flatMap((team) => [team.ownerId, ...team.config.notificationPrincipalIds]),
     ],
     async (ownerId, sourceId) => {
       if (sourceId.startsWith('rule:')) {

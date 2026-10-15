@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Allow admins to explicitly replace a retired principal id without restoring old credentials or stored-work authority; freshly authored work, PR notifications, monitors, rules and review follow-ups carry their identity generation.
+- Allow admins to explicitly replace a retired principal id without restoring old credentials or stored-work authority; freshly authored queued work carries its identity generation.
 - Preserve the frozen run review policy in nested role contracts so valid pending visual claims reach their human gate without weakening evidence or CI checks.
 
 - Wait up to two minutes for node reconnection during task writing, preparation and dispatch; reattach static-review monitors after gateway restarts, retaining the exact worker command and reservation when observation remains unavailable.

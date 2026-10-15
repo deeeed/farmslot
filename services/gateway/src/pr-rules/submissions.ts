@@ -12,8 +12,6 @@ import {
   samePRReviewOptions,
 } from '@farmslot/protocol';
 
-import { matchesPrincipalOwner, principalOwnerStamp } from '../security/work-originator.js';
-
 import {
   reconcileReviewIntent,
   reviewIntentId,
@@ -36,9 +34,7 @@ export function createReviewSubmission(
     repo: request.pr.repo.toLowerCase(),
   };
   const existing = data.submissions?.find(
-    (item) =>
-      matchesPrincipalOwner(item, ownerId) &&
-      item.request.idempotencyKey === request.idempotencyKey,
+    (item) => item.ownerId === ownerId && item.request.idempotencyKey === request.idempotencyKey,
   );
   if (existing) {
     if (!isDeepStrictEqual(existing.request, normalized))
@@ -47,9 +43,7 @@ export function createReviewSubmission(
   }
   if (request.sourceReviewRunId !== sourceReview?.runId)
     throw new Error('Linked QA requires gateway-verified source review provenance');
-  const team = data.teams.find(
-    (item) => item.id === request.teamId && matchesPrincipalOwner(item, ownerId),
-  );
+  const team = data.teams.find((item) => item.id === request.teamId && item.ownerId === ownerId);
   if (!team) throw new Error('Team profile not found');
   if (request.pr.host.toLowerCase() !== team.config.account.host.toLowerCase())
     throw new Error('Review PR host must match the team account');
@@ -57,7 +51,6 @@ export function createReviewSubmission(
   const submission: PRReviewSubmission = {
     id: randomUUID(),
     ownerId,
-    ...principalOwnerStamp(ownerId),
     revision: 1,
     request: normalized,
     ...(sourceReview ? { sourceReview: structuredClone(sourceReview) } : {}),
@@ -66,7 +59,7 @@ export function createReviewSubmission(
         (intent) =>
           intent.runId &&
           monitoredPRKey(intent.pr) === monitoredPRKey(normalized.pr) &&
-          intent.contributions.some((source) => matchesPrincipalOwner(source, ownerId)),
+          intent.contributions.some((source) => source.ownerId === ownerId),
       )
       .map((intent) => intent.id),
     createdAt: now,
@@ -86,12 +79,12 @@ export async function applyReviewSubmission(
   result: { item: PRRulePreviewItem } | { error: string },
 ): Promise<PRReviewSubmission> {
   const submission = data.submissions?.find(
-    (entry) => entry.id === id && matchesPrincipalOwner(entry, ownerId),
+    (entry) => entry.id === id && entry.ownerId === ownerId,
   );
   if (!submission) throw new Error('Review request not found');
   if (submission.cancelledAt) return submission;
   const team = data.teams.find(
-    (item) => item.id === submission.request.teamId && matchesPrincipalOwner(item, ownerId),
+    (item) => item.id === submission.request.teamId && item.ownerId === ownerId,
   );
   if (submission.revision !== revision || team?.revision !== teamRevision)
     throw new Error('Review request or team policy changed; refresh before admission');
@@ -147,11 +140,7 @@ export async function applyReviewSubmission(
                 isDeepStrictEqual(source.execution, item.execution) &&
                 samePRReviewOptions(source.review, item.review) &&
                 (item.review?.publishReview !== true ||
-                  samePublicationAuthority(
-                    source,
-                    { ownerId, ownerGeneration: submission.ownerGeneration, teamId: team.id },
-                    data.teams,
-                  )),
+                  samePublicationAuthority(source, { ownerId, teamId: team.id }, data.teams)),
             ),
       );
       let intent =
@@ -180,9 +169,6 @@ export async function applyReviewSubmission(
         submissionId: id,
         submissionRevision: submission.revision,
         ownerId,
-        ...(submission.ownerGeneration !== undefined
-          ? { ownerGeneration: submission.ownerGeneration }
-          : {}),
         teamId: team.id,
         teamRevision: team.revision,
         reasons: item.match.reasons,

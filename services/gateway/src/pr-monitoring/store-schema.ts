@@ -6,8 +6,6 @@ import {
   monitoredPRKey,
 } from '@farmslot/protocol';
 
-import { samePrincipalOwner } from '../security/work-originator.js';
-
 import type { PRMonitorStoreData } from './store.js';
 
 const timestamp = {
@@ -55,7 +53,6 @@ const validate = ajv.compile<PRMonitorStoreData>({
         ],
         properties: {
           ownerId: text,
-          ownerGeneration: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
           project: text,
           revision: { ...counter, minimum: 1 },
           enabled: { type: 'boolean' },
@@ -71,14 +68,7 @@ const validate = ajv.compile<PRMonitorStoreData>({
         type: 'object',
         additionalProperties: false,
         required: ['ownerId', 'project', 'runId', 'prKey', 'monitorId'],
-        properties: {
-          ownerId: text,
-          ownerGeneration: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
-          project: text,
-          runId: text,
-          prKey: text,
-          monitorId: text,
-        },
+        properties: { ownerId: text, project: text, runId: text, prKey: text, monitorId: text },
       },
     },
     monitors: {
@@ -102,7 +92,6 @@ const validate = ajv.compile<PRMonitorStoreData>({
           revision: { ...counter, minimum: 1 },
           observationGeneration: counter,
           ownerId: text,
-          ownerGeneration: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
           config: { type: 'object' },
           lifecycle: { enum: ['active', 'paused', 'stopped', 'finished'] },
           createdAt: timestamp,
@@ -244,7 +233,7 @@ export function decodeMonitorStore(value: unknown): PRMonitorStoreData {
       project: policy.project,
       pr: { host: policy.config.account?.host, repo: 'validation/validation', number: 1 },
     });
-    const key = JSON.stringify([policy.ownerId, policy.ownerGeneration ?? 0, policy.project]);
+    const key = JSON.stringify([policy.ownerId, policy.project]);
     if (policies.has(key)) throw new Error('Duplicate project monitoring policy');
     policies.add(key);
   }
@@ -265,7 +254,6 @@ export function decodeMonitorStore(value: unknown): PRMonitorStoreData {
     const key = JSON.stringify([
       monitoredPRKey(config.pr),
       monitor.ownerId,
-      monitor.ownerGeneration ?? 0,
       config.teamId ?? null,
       config.account.host.toLowerCase(),
       config.account.login.toLowerCase(),
@@ -282,19 +270,13 @@ export function decodeMonitorStore(value: unknown): PRMonitorStoreData {
   }
   const enrollments = new Set<string>();
   for (const entry of value.publicationEnrollments ?? []) {
-    const key = JSON.stringify([
-      entry.ownerId,
-      entry.ownerGeneration ?? 0,
-      entry.project,
-      entry.runId,
-      entry.prKey,
-    ]);
+    const key = JSON.stringify([entry.ownerId, entry.project, entry.runId, entry.prKey]);
     if (
       enrollments.has(key) ||
       !value.monitors.some(
         (monitor) =>
           monitor.id === entry.monitorId &&
-          samePrincipalOwner(monitor, entry) &&
+          monitor.ownerId === entry.ownerId &&
           monitoredPRKey(monitor.config.pr) === entry.prKey,
       )
     )

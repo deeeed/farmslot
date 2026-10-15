@@ -21,11 +21,6 @@ import {
 } from '@farmslot/protocol';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
-import {
-  matchesPrincipalOwner,
-  principalIdentityKey,
-  principalOwnerStamp,
-} from '../security/work-originator.js';
 
 import { admitRuleAction, withdrawRuleActions } from './actions.js';
 import {
@@ -52,7 +47,7 @@ export class PRRuleStore {
   async scheduleWebhookRefresh(
     expected: Pick<PRRuleStoreData, 'teams' | 'rules'>,
     matchedRuleIds: string[],
-    authorized: (ownerId: string, generation?: number) => boolean,
+    authorized: (ownerId: string) => boolean,
     relevantRuleIds: string[],
   ): Promise<boolean> {
     const revisions = (data: Pick<PRRuleStoreData, 'teams' | 'rules'>) => [
@@ -61,9 +56,7 @@ export class PRRuleStore {
     ];
     return this.change((data) => {
       if (!isDeepStrictEqual(revisions(data), revisions(expected))) return false;
-      const permitted = new Map(
-        data.rules.map((rule) => [rule.id, authorized(rule.ownerId, rule.ownerGeneration ?? 0)]),
-      );
+      const permitted = new Map(data.rules.map((rule) => [rule.id, authorized(rule.ownerId)]));
       const uncertain = data.rules.some(
         (rule) => relevantRuleIds.includes(rule.id) && !permitted.get(rule.id),
       );
@@ -98,57 +91,28 @@ export class PRRuleStore {
   snapshot(): PRRuleStoreData {
     return structuredClone(this.data);
   }
-
-  async withdrawUnauthorizedContributions(
-    authorized: (ownerId: string, generation?: number) => boolean,
-  ): Promise<void> {
-    if (
-      !this.data.intents.some((intent) =>
-        intent.contributions.some(
-          (source) => source.eligible && !authorized(source.ownerId, source.ownerGeneration ?? 0),
-        ),
-      )
-    )
-      return;
-    await this.change(async (data) => {
-      for (const intent of data.intents) {
-        for (const source of intent.contributions)
-          if (source.eligible && !authorized(source.ownerId, source.ownerGeneration ?? 0))
-            source.eligible = false;
-        await reconcileReviewIntent(intent, data.teams);
-      }
-    });
-  }
   list(ownerId: string): PRRuleStoreData {
     return structuredClone({
       version: 1,
-      teams: this.data.teams.filter((item) => matchesPrincipalOwner(item, ownerId)),
-      rules: this.data.rules.filter((item) => matchesPrincipalOwner(item, ownerId)),
-      submissions: this.data.submissions?.filter((item) => matchesPrincipalOwner(item, ownerId)),
-      actions: this.data.actions?.filter((item) => matchesPrincipalOwner(item, ownerId)),
+      teams: this.data.teams.filter((item) => item.ownerId === ownerId),
+      rules: this.data.rules.filter((item) => item.ownerId === ownerId),
+      submissions: this.data.submissions?.filter((item) => item.ownerId === ownerId),
+      actions: this.data.actions?.filter((item) => item.ownerId === ownerId),
       intents: this.data.intents
-        .filter((item) =>
-          item.contributions.some((source) => matchesPrincipalOwner(source, ownerId)),
-        )
+        .filter((item) => item.contributions.some((source) => source.ownerId === ownerId))
         .map((item) => ({
           ...item,
-          contributions: item.contributions.filter((source) =>
-            matchesPrincipalOwner(source, ownerId),
-          ),
+          contributions: item.contributions.filter((source) => source.ownerId === ownerId),
         })),
     });
   }
   team(id: string, ownerId: string): PRTeamProfile {
-    const team = this.data.teams.find(
-      (item) => item.id === id && matchesPrincipalOwner(item, ownerId),
-    );
+    const team = this.data.teams.find((item) => item.id === id && item.ownerId === ownerId);
     if (!team) throw new Error('Team profile not found');
     return structuredClone(team);
   }
   rule(id: string, ownerId: string): PRTriggerRule {
-    const rule = this.data.rules.find(
-      (item) => item.id === id && matchesPrincipalOwner(item, ownerId),
-    );
+    const rule = this.data.rules.find((item) => item.id === id && item.ownerId === ownerId);
     if (!rule) throw new Error('Rule not found');
     return structuredClone(rule);
   }
@@ -237,14 +201,12 @@ export class PRRuleStore {
     return this.change((data) => {
       const action = data.actions?.find((item) => item.id === id && item.kind === 'notify');
       if (!action || !canRead()) throw new Error('Notification is unavailable');
-      action.acknowledgedBy[principalIdentityKey(principalId)] ??= new Date().toISOString();
+      action.acknowledgedBy[principalId] ??= new Date().toISOString();
     });
   }
 
   submission(id: string, ownerId: string): PRReviewSubmission {
-    const found = this.data.submissions?.find(
-      (item) => item.id === id && matchesPrincipalOwner(item, ownerId),
-    );
+    const found = this.data.submissions?.find((item) => item.id === id && item.ownerId === ownerId);
     if (!found) throw new Error('Review request not found');
     return structuredClone(found);
   }
@@ -266,7 +228,7 @@ export class PRRuleStore {
   ): Promise<PRReviewSubmission> {
     return this.change(async (data) => {
       const submission = data.submissions?.find(
-        (item) => item.id === id && matchesPrincipalOwner(item, ownerId),
+        (item) => item.id === id && item.ownerId === ownerId,
       );
       if (!submission || submission.revision !== revision)
         throw new Error('Review request changed or is unavailable; refresh before cancelling');
@@ -307,16 +269,14 @@ export class PRRuleStore {
   ): Promise<PRReviewIntent> {
     return this.change(async (data) => {
       const intent = data.intents.find(
-        (item) =>
-          item.id === id &&
-          item.contributions.some((source) => matchesPrincipalOwner(source, ownerId)),
+        (item) => item.id === id && item.contributions.some((source) => source.ownerId === ownerId),
       );
       if (!intent) throw new Error('Review intent not found');
       assertMutable?.(intent.id);
       if (['running', 'completed', 'failed'].includes(intent.status))
         throw new Error('Use the linked run controls for a review that has already started');
       const owned = intent.contributions.filter(
-        (source) => matchesPrincipalOwner(source, ownerId) && source.eligible,
+        (source) => source.ownerId === ownerId && source.eligible,
       );
       if (!owned.length) throw new Error('No current matching rule authorizes this review');
       if (action === 'accept') {
@@ -373,24 +333,19 @@ export class PRRuleStore {
     config: PRTeamConfig,
     id?: string,
     revision?: number,
-    notificationPrincipalGenerations?: Record<string, number>,
   ): Promise<PRTeamProfile> {
     assertPRTeamConfig(config);
     const requested = structuredClone(config);
     return this.change(async (data) => {
       const existing = id
-        ? data.teams.find((item) => item.id === id && matchesPrincipalOwner(item, ownerId))
+        ? data.teams.find((item) => item.id === id && item.ownerId === ownerId)
         : undefined;
       if (id && (!existing || existing.revision !== revision))
         throw new Error('Team profile changed or is unavailable; refresh before editing');
       const now = new Date().toISOString();
       const team: PRTeamProfile = {
-        ...(notificationPrincipalGenerations && Object.keys(notificationPrincipalGenerations).length
-          ? { notificationPrincipalGenerations: structuredClone(notificationPrincipalGenerations) }
-          : {}),
         id: existing?.id ?? randomUUID(),
         ownerId,
-        ...principalOwnerStamp(ownerId),
         revision: (existing?.revision ?? 0) + 1,
         config: requested,
         createdAt: existing?.createdAt ?? now,
@@ -439,14 +394,10 @@ export class PRRuleStore {
     assertPRTriggerRuleConfig(config);
     const requested = structuredClone(config);
     return this.change(async (data) => {
-      if (
-        !data.teams.some(
-          (item) => item.id === config.teamId && matchesPrincipalOwner(item, ownerId),
-        )
-      )
+      if (!data.teams.some((item) => item.id === config.teamId && item.ownerId === ownerId))
         throw new Error('Team profile not found');
       const existing = id
-        ? data.rules.find((item) => item.id === id && matchesPrincipalOwner(item, ownerId))
+        ? data.rules.find((item) => item.id === id && item.ownerId === ownerId)
         : undefined;
       if (id && (!existing || existing.revision !== revision))
         throw new Error('Rule changed or is unavailable; refresh before editing');
@@ -456,7 +407,6 @@ export class PRRuleStore {
       const rule: PRTriggerRule = {
         id: existing?.id ?? randomUUID(),
         ownerId,
-        ...principalOwnerStamp(ownerId),
         revision: (existing?.revision ?? 0) + 1,
         config: requested,
         enabled: existing?.enabled ?? false,
@@ -498,9 +448,7 @@ export class PRRuleStore {
     return this.change(async (data) => {
       if (!authorized())
         throw new Error('Activation authority or source generation changed; preview again');
-      const rule = data.rules.find(
-        (item) => item.id === id && matchesPrincipalOwner(item, ownerId),
-      );
+      const rule = data.rules.find((item) => item.id === id && item.ownerId === ownerId);
       if (!rule || rule.revision !== revision)
         throw new Error('Rule changed or is unavailable; refresh before editing');
       if (
@@ -565,10 +513,10 @@ export class PRRuleStore {
     const preview = structuredClone(input);
     return this.change(async (data) => {
       const rule = data.rules.find(
-        (item) => item.id === preview.ruleId && matchesPrincipalOwner(item, ownerId),
+        (item) => item.id === preview.ruleId && item.ownerId === ownerId,
       );
       const team = data.teams.find(
-        (item) => item.id === preview.teamId && matchesPrincipalOwner(item, ownerId),
+        (item) => item.id === preview.teamId && item.ownerId === ownerId,
       );
       if (
         !authorized() ||
@@ -775,7 +723,6 @@ export class PRRuleStore {
           teamId: team.id,
           teamRevision: team.revision,
           ownerId,
-          ...(rule.ownerGeneration !== undefined ? { ownerGeneration: rule.ownerGeneration } : {}),
           reasons: item.match.reasons,
           project: item.project,
           execution: item.execution,

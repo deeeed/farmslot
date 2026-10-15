@@ -1654,14 +1654,12 @@ Only explicit reuse relaxes the principal-id reservation; credential-id
 reservations remain permanent. The store retains a dated reuse history and increments an identity generation.
 Stored work must match that generation before regaining authority. Id-only
 references remain bound to generation zero and cannot resolve a replacement.
-New authenticated work carries the replacement generation; old automation must
+New authenticated queued work carries the replacement generation; old automation must
 be explicitly re-authored. Automation ownership belongs to its service identity,
 not the replacement person.
-Fresh PR push, monitoring and rule records bind the authenticated identity's
-generation, including generated review work, publication and automatic QA.
-Background effects retain their stored generation and re-check authority. Old
-records and notification recipient lists never acquire the replacement's
-identity. Saving new configuration creates a new generation-bound interest.
+PR push, monitoring and rule ownership remains id-only and cannot resolve a reused
+identity. Supporting those features for reused ids needs a separate generation
+propagation change. Native id-only owner bindings must be retired before reuse.
 
 ### Public surface
 

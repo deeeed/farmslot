@@ -151,8 +151,7 @@ const {
   persistRunNow,
 } = await import('../runs/store.js');
 const { runCreate } = await import('../methods/run.js');
-const { runWithSessionOriginator, runWithPrincipalOwner, principalOwnerGeneration } =
-  await import('../security/work-originator.js');
+const { runWithSessionOriginator } = await import('../security/work-originator.js');
 const HEAD = 'a'.repeat(40);
 const pr = { host: 'github.com', repo: 'example/app', number: 42 };
 
@@ -176,7 +175,7 @@ function source(t: TestContext, enabled = true): Run {
   return run;
 }
 
-async function fixture(t: TestContext, generation?: number) {
+async function fixture(t: TestContext) {
   writeConfig();
   t.after(() => writeConfig());
   const file = path.join(root, `rules-${Math.random()}.json`);
@@ -201,8 +200,7 @@ async function fixture(t: TestContext, generation?: number) {
   const serviceFor = (current: typeof store) =>
     new PRRuleService(
       current,
-      (id, expected = principalOwnerGeneration(id)) =>
-        authorized && (generation === undefined || expected === generation),
+      () => authorized,
       () => {},
       collect,
       collect,
@@ -480,23 +478,4 @@ test('archived reviews retain automatic QA authority and serialized delivery sta
   assert.match(blocked.error ?? '', /disabled/);
   assert.equal(restarted.store.intent(blocked.intentId!)?.contributions[0].eligible, false);
   assert.equal(getRun(run.id), undefined);
-});
-
-test('automatic QA carries a replacement creator generation through background intake', async (t) => {
-  const owner = { ownerId: 'owner', ownerGeneration: 1 };
-  const f = await runWithPrincipalOwner(owner, () => fixture(t, 1));
-  const run = runWithPrincipalOwner(owner, () => source(t));
-  assert.equal(run.createdByPrincipalGeneration, 1);
-  await persistRunNow(run);
-  await runWithPrincipalOwner({ ownerId: 'owner', ownerGeneration: 2 }, () =>
-    f.service.reconcileQaAfterReviews(),
-  );
-  const receipt = f.store
-    .snapshot()
-    .submissions?.find((submission) => submission.request.sourceReviewRunId === run.id);
-  assert.ok(receipt);
-  assert.equal(receipt.ownerGeneration, 1);
-  assert.equal(receipt.error, undefined);
-  assert.equal(f.store.intent(receipt.intentId!)?.contributions[0].ownerGeneration, 1);
-  assert.equal(run.qaAfterReview?.state, 'submitted');
 });

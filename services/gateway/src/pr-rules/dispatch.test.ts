@@ -13,14 +13,9 @@ import {
 } from '@farmslot/protocol';
 import { executionModelFromSelection } from '@farmslot/review-dispatch';
 
-import {
-  getQueueSnapshot,
-  queueRecordOriginator,
-  removeQueueItemInternalNow,
-} from '../backlog/dispatch-queue.js';
+import { getQueueSnapshot, removeQueueItemInternalNow } from '../backlog/dispatch-queue.js';
 import { migrateQueuedReviewQa } from '../backlog/review-qa-migration.js';
 import { createRun, deleteRun, persistRunNow, updateRun } from '../runs/store.js';
-import { runWithPrincipalOwner } from '../security/work-originator.js';
 
 import { PRReviewDispatcher } from './dispatch.js';
 import { resolvePreviewQaPreset } from './qa-preset.js';
@@ -634,34 +629,4 @@ test('farm QA inputs stay identical through PR preview, queue migration and admi
     getQueueSnapshot().find((item) => item.prWork?.sourceId === queued.prWork?.sourceId)?.id,
     queued.id,
   );
-});
-
-test('replacement review dispatch preserves its generation under an unrelated waking caller', async (t) => {
-  const f = await runWithPrincipalOwner({ ownerId: 'owner', ownerGeneration: 1 }, () => fixture(t));
-  const dispatcher = new PRReviewDispatcher(
-    f.store,
-    new PRRuleService(
-      f.store,
-      () => true,
-      () => {},
-    ),
-    (id, generation) => id === 'owner' && generation === 1,
-    () => {},
-    async (_project, _repo, profiles) => ({
-      choices: intersectPRExecutionProfiles(profiles),
-      errors: [],
-    }),
-  );
-  await runWithPrincipalOwner({ ownerId: 'owner', ownerGeneration: 2 }, () =>
-    dispatcher.reconcile(),
-  );
-  const item = getQueueSnapshot().find((row) => row.prWork?.sourceId === f.intent.id);
-  assert.ok(item);
-  assert.equal(item.prWork?.review?.ownerGeneration, 1);
-  assert.deepEqual(queueRecordOriginator(item.id), {
-    kind: 'principal',
-    principalId: 'owner',
-    principalGeneration: 1,
-  });
-  assert.equal((await dispatcher.prepare(item)).ready, true);
 });

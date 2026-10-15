@@ -59,7 +59,6 @@ export function admitRuleAction(
       id,
       kind: action.kind,
       ownerId: rule.ownerId,
-      ...(rule.ownerGeneration !== undefined ? { ownerGeneration: rule.ownerGeneration } : {}),
       ruleId: rule.id,
       ruleRevision: rule.revision,
       ruleName: rule.config.name,

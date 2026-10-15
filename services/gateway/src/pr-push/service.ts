@@ -5,15 +5,6 @@ import type {
   PRPushRegisterParams,
 } from '@farmslot/protocol';
 
-import {
-  matchesPrincipalOwner,
-  type PrincipalOwner,
-  principalOwnerGeneration,
-  principalOwnerKey,
-  runWithPrincipalOwner,
-  runWithSystemOriginator,
-} from '../security/work-originator.js';
-
 import { ExpoPushProvider, type PRPushProvider, type PushResult } from './expo.js';
 import { PRPushStore, publicDevice, type StoredPushDevice } from './store.js';
 
@@ -25,11 +16,11 @@ export class PRPushService {
   private readonly published = new Map<string, string>();
   constructor(
     readonly store: PRPushStore,
-    private readonly authorized: (id: string, generation?: number) => boolean,
+    private readonly authorized: (id: string) => boolean,
     private readonly sources: SourceReader,
     private readonly provider: PRPushProvider = new ExpoPushProvider(),
     private readonly changed?: (id: string, value: PRPushListResult) => void,
-    private readonly audience: () => (string | PrincipalOwner)[] = () => [],
+    private readonly audience: () => string[] = () => [],
     private readonly acknowledgeSource?: (ownerId: string, sourceId: string) => Promise<void>,
   ) {}
   start(): void {
@@ -63,7 +54,7 @@ export class PRPushService {
   list(ownerId: string): PRPushListResult {
     if (!this.authorized(ownerId)) throw new Error('Notification access was revoked');
     const data = this.store.snapshot();
-    const devices = data.devices.filter((device) => matchesPrincipalOwner(device, ownerId));
+    const devices = data.devices.filter((device) => device.ownerId === ownerId);
     return {
       attention: this.attention(ownerId),
       devices: devices.map(publicDevice),
@@ -92,32 +83,25 @@ export class PRPushService {
     this.notify(ownerId);
   }
   private notify(ownerId: string): void {
-    const key = principalOwnerKey({ ownerId, ownerGeneration: principalOwnerGeneration(ownerId) });
     if (!this.changed) return;
     const result = this.authorized(ownerId)
       ? this.list(ownerId)
       : { attention: [], devices: [], deliveries: [] };
     const encoded = JSON.stringify(result);
-    if (this.published.get(key) === encoded) return;
-    this.published.set(key, encoded);
+    if (this.published.get(ownerId) === encoded) return;
+    this.published.set(ownerId, encoded);
     this.changed(ownerId, result);
   }
   tick(now = Date.now()): Promise<void> {
     if (this.work) return this.work;
-    this.work = runWithSystemOriginator(() => this.reconcile(now)).finally(() => {
+    this.work = this.reconcile(now).finally(() => {
       this.work = undefined;
-      const owners: PrincipalOwner[] = [
-        ...this.audience().map((owner) => (typeof owner === 'string' ? { ownerId: owner } : owner)),
-        ...this.store.snapshot().devices,
-        ...[...this.published.keys()].map((key) => {
-          const [ownerId, generation] = JSON.parse(key) as [string, number];
-          return { ownerId, ownerGeneration: generation > 0 ? generation : undefined };
-        }),
-      ];
-      for (const owner of new Map(
-        owners.map((owner) => [principalOwnerKey(owner), owner]),
-      ).values())
-        runWithPrincipalOwner(owner, () => this.notify(owner.ownerId));
+      for (const id of new Set([
+        ...this.audience(),
+        ...this.store.snapshot().devices.map((device) => device.ownerId),
+        ...this.published.keys(),
+      ]))
+        this.notify(id);
     });
     return this.work;
   }
@@ -126,18 +110,17 @@ export class PRPushService {
     if (
       !current?.enabled ||
       current.revision !== device.revision ||
-      !this.authorized(device.ownerId, device.ownerGeneration ?? 0)
+      !this.authorized(device.ownerId)
     )
       return undefined;
-    return runWithPrincipalOwner(device, () => this.attention(device.ownerId)).find(
+    return this.attention(device.ownerId).find(
       (item) => item.id === sourceId && item.current && !item.acknowledgedAt,
     );
   }
   private async reconcile(now: number): Promise<void> {
     for (const device of this.store.snapshot().devices) {
-      if (!device.enabled || !this.authorized(device.ownerId, device.ownerGeneration ?? 0))
-        continue;
-      for (const attention of runWithPrincipalOwner(device, () => this.attention(device.ownerId))) {
+      if (!device.enabled || !this.authorized(device.ownerId)) continue;
+      for (const attention of this.attention(device.ownerId)) {
         const existing = this.store
           .snapshot()
           .deliveries.find(

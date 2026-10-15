@@ -27,12 +27,7 @@ import { PRRuleStore } from '../pr-rules/store.js';
 import { setDirectPublicationAuthority } from '../review-publication/direct.js';
 import type { GatewayAuthRuntime } from '../security/auth.js';
 import { isAdminPrincipal } from '../security/authorization.js';
-import {
-  currentSessionOriginator,
-  principalOwnerGeneration,
-  runPrincipalOwner,
-  runWithPrincipalOwner,
-} from '../security/work-originator.js';
+import { currentSessionOriginator } from '../security/work-originator.js';
 
 let service: PRRuleService | undefined;
 let dispatcher: PRReviewDispatcher | undefined;
@@ -48,8 +43,8 @@ export function initPRRuleDispatch(
   dispatcher = new PRReviewDispatcher(
     rules.store,
     rules,
-    (id, generation = principalOwnerGeneration(id)) => {
-      const principal = auth.resolver.resolvePrincipalId(id, generation);
+    (id) => {
+      const principal = auth.resolver.resolvePrincipalId(id);
       return principal.ok && isAdminPrincipal(principal.principal);
     },
     () => {
@@ -73,8 +68,8 @@ export async function initPRRules(
   );
   service = new PRRuleService(
     store,
-    (id, generation = principalOwnerGeneration(id)) => {
-      const principal = auth.resolver.resolvePrincipalId(id, generation);
+    (id) => {
+      const principal = auth.resolver.resolvePrincipalId(id);
       return principal.ok && isAdminPrincipal(principal.principal);
     },
     (id) => {
@@ -87,19 +82,15 @@ export async function initPRRules(
     undefined,
     checkpoints,
     (run) => {
-      const owner = runPrincipalOwner(run);
-      if (owner)
-        runWithPrincipalOwner(owner, () => publish(owner.ownerId, Events.RUN_UPDATED, { run }));
-    },
-    (id) => {
-      auth.store.ensureFresh();
-      return auth.store.findPrincipal(id)?.generation ?? 0;
+      const ownerId =
+        run.createdByPrincipalId ?? run.nativeOwnerPrincipalId ?? run.prWork?.review?.ownerId;
+      if (ownerId) publish(ownerId, Events.RUN_UPDATED, { run });
     },
   );
   setDirectPublicationAuthority({
     teams: (ownerId) => store.list(ownerId).teams,
-    authorize: (ownerId, generation = principalOwnerGeneration(ownerId)) => {
-      const principal = auth.resolver.resolvePrincipalId(ownerId, generation);
+    authorize: (ownerId) => {
+      const principal = auth.resolver.resolvePrincipalId(ownerId);
       if (!principal.ok || !isAdminPrincipal(principal.principal))
         throw new Error('Publication owner no longer has automation authority');
     },

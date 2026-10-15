@@ -179,23 +179,6 @@ test('source validation rejects foreign, missing, wrong-target and unconfirmed r
   const run = sourceRun(t);
   const input = { runId: run.id, ownerId: 'owner', project: 'farm', pr };
   assert.deepEqual(await validateQaSourceReview(input), { runId: run.id, headSha: HEAD });
-  await assert.rejects(
-    validateQaSourceReview({ ...input, ownerGeneration: 1 }),
-    /not owned by this principal/,
-  );
-  // Native-only legacy runs have no generation-bound creator and remain generation zero.
-  delete run.createdByPrincipalId;
-  await assert.rejects(
-    validateQaSourceReview({ ...input, ownerGeneration: 1 }),
-    /not owned by this principal/,
-  );
-  run.createdByPrincipalId = 'owner';
-  run.createdByPrincipalGeneration = 1;
-  assert.deepEqual(await validateQaSourceReview({ ...input, ownerGeneration: 1 }), {
-    runId: run.id,
-    headSha: HEAD,
-  });
-  delete run.createdByPrincipalGeneration;
   for (const patch of [
     { runId: 'missing' },
     { ownerId: 'other' },

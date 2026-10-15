@@ -2,13 +2,12 @@ import type { PRPushAttention } from '@farmslot/protocol';
 
 import type { PRMonitoringService } from '../pr-monitoring/service.js';
 import type { PRRuleService } from '../pr-rules/service.js';
-import { matchesPrincipalOwner, principalOwnerGeneration } from '../security/work-originator.js';
 
 export function prPushSources(
   principalId: string,
   monitors: PRMonitoringService,
   rules: PRRuleService,
-  authorized: (id: string, generation?: number) => boolean,
+  authorized: (id: string) => boolean,
   now = Date.now(),
 ): PRPushAttention[] {
   if (!authorized(principalId)) return [];
@@ -25,15 +24,13 @@ export function prPushSources(
   }));
   const teams = rules.store.snapshot().teams;
   for (const monitor of monitors.store.snapshot().monitors) {
-    if (!authorized(monitor.ownerId, monitor.ownerGeneration ?? 0)) continue;
-    const owner = matchesPrincipalOwner(monitor, principalId);
+    if (!authorized(monitor.ownerId)) continue;
+    const owner = principalId === monitor.ownerId;
     const team = teams.find(
       (team) => team.id === monitor.config.teamId && team.ownerId === monitor.ownerId,
     );
     const recipient =
       team?.config.notificationPrincipalIds.includes(principalId) &&
-      (team.notificationPrincipalGenerations?.[principalId] ?? 0) ===
-        principalOwnerGeneration(principalId) &&
       team.config.account.host.toLowerCase() === monitor.config.account.host.toLowerCase() &&
       team.config.account.login.toLowerCase() === monitor.config.account.login.toLowerCase();
     if (!owner && !recipient) continue;
