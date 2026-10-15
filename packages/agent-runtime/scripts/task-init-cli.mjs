@@ -108,8 +108,8 @@ function gitOutput(args) {
   }
 }
 
-async function main() {
-  const args = process.argv.slice(2);
+export async function taskInitFromArgv(args, execution) {
+  args = [...args];
   if (args.length === 0 || args[0] === '-h' || args[0] === '--help') usage(0);
   const { opts, catalog } = parseArgs(args);
   const runtime = await loadRuntime();
@@ -153,6 +153,7 @@ async function main() {
     ...(opts.modePreamble ? { modePreamble: opts.modePreamble } : {}),
     addendum,
     ...(opts.markCommand ? { markCommand: opts.markCommand } : {}),
+    ...(execution ? { execution } : {}),
   });
 
   if (opts.json) {
@@ -160,10 +161,11 @@ async function main() {
   } else {
     process.stdout.write(`Task document: ${result.taskDocument}\nChecklist: ${result.checklist}\n`);
   }
+  return result;
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
-  main().catch((error) => {
+  taskInitFromArgv(process.argv.slice(2)).catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
   });

@@ -13,7 +13,10 @@ export function installedRuntimeScriptCommand(filename: string): string {
   return `node ${quoteMarkCommandWord(path.join(packageRoot, 'scripts', filename))}`;
 }
 
-export function installedTaskCommands(): { AC_CMD: string; ARTIFACT_CHECK_CMD: string } {
-  const entry = installedRuntimeScriptCommand('../bin/farmslot-agent.mjs');
+export function installedTaskCommands(mapPath: (file: string) => string = (file) => file): {
+  AC_CMD: string;
+  ARTIFACT_CHECK_CMD: string;
+} {
+  const entry = `node ${quoteMarkCommandWord(mapPath(path.join(packageRoot, 'bin/farmslot-agent.mjs')))}`;
   return { AC_CMD: `${entry} ac`, ARTIFACT_CHECK_CMD: `${entry} artifact-check` };
 }

@@ -3,17 +3,27 @@
 // mark, inputs/); this wrapper adds the defaults only the host knows.
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
+
+import type { TaskExecutionInput, TaskInitResult } from '@farmslot/agent-runtime';
 
 import { contextAdapter } from '../context-state.js';
 import { harnessHost } from '../host.js';
+import { usageError } from '../parse-args.js';
 import { harnessExecutable } from '../paths.js';
 import { EXIT } from '../shared.js';
+
+import type { ChecklistCommandOptions, ChecklistStepGate } from './checklist.js';
 
 const require = createRequire(import.meta.url);
 
 export interface TaskInitCommandOptions {
   // The task's run surface when --surface is absent.
   surface?: string;
+}
+
+export interface ProjectTaskCommandOptions extends TaskInitCommandOptions, ChecklistCommandOptions {
+  stepGates: readonly ChecklistStepGate[];
 }
 
 function hasOption(argv: readonly string[], name: string): boolean {
@@ -24,10 +34,14 @@ function hasOption(argv: readonly string[], name: string): boolean {
 // that routes through the host's checklist gates instead of the runtime's own
 // engine, and the platform of the checkout the command runs in. Run mode is not
 // one of them: only a control plane knows it, and it selects nothing here.
-function hostDefaults(argv: readonly string[], options: TaskInitCommandOptions): string[] {
+function hostDefaults(
+  argv: readonly string[],
+  options: TaskInitCommandOptions,
+  retained = false,
+): string[] {
   const defaults: string[] = [];
   if (options.surface && !hasOption(argv, '--surface')) defaults.push('--surface', options.surface);
-  if (!hasOption(argv, '--mark-command')) {
+  if (!retained && !hasOption(argv, '--mark-command')) {
     defaults.push('--mark-command', `${harnessExecutable()} checklist mark`);
   }
   if (!hasOption(argv, '--platform')) {
@@ -40,6 +54,7 @@ function hostDefaults(argv: readonly string[], options: TaskInitCommandOptions):
 export async function handleTaskInit(
   argv: string[],
   options: TaskInitCommandOptions = {},
+  execution?: TaskExecutionInput,
 ): Promise<number> {
   const host = harnessHost().name;
   if (argv[0] !== 'init') {
@@ -58,6 +73,21 @@ export async function handleTaskInit(
       }`,
     );
     return EXIT.runtime;
+  }
+
+  if (execution) {
+    if (execution.bindingIdentity !== null && hasOption(forwarded, '--mark-command'))
+      throw usageError(
+        'A bound task must use its frozen CLI task mark command so provider gates remain enforced.',
+      );
+    const module: {
+      taskInitFromArgv(args: string[], execution: TaskExecutionInput): Promise<TaskInitResult>;
+    } = await import(pathToFileURL(entrypoint).href);
+    await module.taskInitFromArgv(
+      [...forwarded, ...hostDefaults(forwarded, options, true)],
+      execution,
+    );
+    return EXIT.ok;
   }
 
   const result = spawnSync(
