@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Keep failed reviewers without an artifact scope from holding publication gates in recovery after a settled review.
+
 - Exclude unavailable native hosts from automatic review placement even when their previous reviews were accepted.
 
 - Resume an interrupted self-review fix after gateway restart without skipping its signal or waiting for an operator replay.
