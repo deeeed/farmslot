@@ -50,3 +50,33 @@ test('preset seeding rotates launcher credentials and preserves explicit logins'
   await seedPresetGatewayProfileSecrets([preset]);
   assert.equal(await readGatewayProfileSecret(preset), 'launcher-account-a');
 });
+
+test('Companion persists the shared expiry beside its secure login and clears it on explicit login/sign-out', async () => {
+  const { rememberedSessionForProfile, writeGatewayProfileSecret } =
+    await import('./gateway-profiles');
+  const profile: GatewayProfile = {
+    id: 'remembered',
+    name: 'Remembered',
+    url: 'ws://localhost:7801/ws',
+    kind: 'custom',
+    authMode: 'token',
+    secretStorageKey: 'remembered-secret',
+  };
+  await writeGatewayProfileSecret(profile, 'fixture-token');
+  const session = await rememberedSessionForProfile(profile, () => {});
+  assert.ok(session);
+  await session.recordSuccessfulUse();
+  const saved = secrets.get('remembered-secret.expires-at');
+  assert.ok(saved);
+  const reloaded = await rememberedSessionForProfile(profile, () => {});
+  assert.equal(reloaded?.expiresAt, Number(saved));
+  await reloaded?.recordSuccessfulUse();
+  assert.equal(secrets.get('remembered-secret.expires-at'), saved);
+  secrets.set('remembered-secret.expires-at', String(Date.now() - 1));
+  const expired = await rememberedSessionForProfile(profile, () => {});
+  assert.throws(() => expired?.assertCurrent(), /expired/);
+  await writeGatewayProfileSecret(profile, 'replacement-token');
+  assert.equal(secrets.has('remembered-secret.expires-at'), false);
+  await writeGatewayProfileSecret(profile, '');
+  assert.equal(secrets.has('remembered-secret'), false);
+});

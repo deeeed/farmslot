@@ -83,6 +83,7 @@ function relativeImportClosure(entryPath: string): string[] {
     const source = readFileSync(path.join(farmslotRoot, relativePath), 'utf8');
     const specifiers = [
       ...source.matchAll(/\b(?:import|export)\s+(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]/g),
+      ...source.matchAll(/\brequire\(\s*['"]([^'"]+)['"]\s*\)/g),
     ].map(([, specifier]) => specifier!);
     for (const specifier of specifiers) {
       if (!specifier.startsWith('.')) continue;
@@ -165,6 +166,10 @@ test('remote observability install falls back when an immutable bundle is incomp
     );
     writeFileSync(
       path.join(supportRoot, 'packages/agent-runtime/scripts/workspace-trust.cjs'),
+      'dependency\n',
+    );
+    writeFileSync(
+      path.join(supportRoot, 'packages/agent-runtime/scripts/review-account-preflight.cjs'),
       'dependency\n',
     );
     writeFileSync(

@@ -1,3 +1,5 @@
+import { isAccountSessionExpired, parseAccountSessionExpiry } from '@farmslot/review-dispatch';
+
 import { getDesktopConnection, isDesktopClient } from './desktop-connection.js';
 
 export interface BrowserLocationLike {
@@ -21,6 +23,13 @@ export type GatewayConnectionSource = 'configured' | 'hosted' | 'stored' | 'impl
 
 export const GATEWAY_URL_STORAGE_KEY = 'farmslot.gateway.url';
 export const GATEWAY_CANDIDATES_STORAGE_KEY = 'farmslot.gateway.candidates';
+export const GATEWAY_SESSION_EXPIRY_STORAGE_KEY = 'farmslot.gateway.session-expires-at';
+export function readStoredGatewaySessionExpiry(): number | null {
+  return typeof localStorage === 'undefined'
+    ? null
+    : parseAccountSessionExpiry(localStorage.getItem(GATEWAY_SESSION_EXPIRY_STORAGE_KEY));
+}
+
 export const GATEWAY_SIGNED_OUT_STORAGE_KEY = 'farmslot.gateway.signed-out';
 export const GATEWAY_TOKEN_STORAGE_KEY = 'farmslot.gateway.token';
 export const GATEWAY_PASSWORD_STORAGE_KEY = 'farmslot.gateway.password';
@@ -162,6 +171,7 @@ export function gatewayWebSocketToHttpOrigin(wsUrl: string): string {
 }
 
 export function readGatewayAuth(): { token?: string; password?: string } {
+  if (isAccountSessionExpired(readStoredGatewaySessionExpiry())) return {};
   if (isDesktopClient()) {
     const connection = getDesktopConnection();
     return { token: connection?.token, password: connection?.password };

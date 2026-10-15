@@ -7,15 +7,161 @@ import {
   type ReviewStatus,
   type RunDecision,
 } from '@farmslot/protocol';
-import { resolveReviewDispatchDefaults } from '@farmslot/review-dispatch';
+import {
+  resolveReviewDispatchDefaults,
+  reviewRequestFromSequence,
+} from '@farmslot/review-dispatch';
+
+import {
+  registerWarmReviewerSession,
+  resetWarmReviewerSessionsForTest,
+} from '../review/session-mode.js';
 
 import {
   automaticPublicationReviewPlan,
   humanGateReviewPolicy,
+  recoveryReviewPlanForActiveFix,
   remainingExplicitReviewPlan,
+  repairUnboundRecoveryReviewPlan,
   resolveHumanGateReviewExecutionPlan,
   reviewPlanFromSelection,
 } from './review-plan.js';
+import { makeRun } from './test-fixtures.js';
+
+test('complete replay repairs an unbound warm row from its original pair and current-head PASS', () => {
+  const head = 'a'.repeat(40);
+  const plan: ReviewSelection[] = [
+    { runner: 'claude', model: 'opus', effort: null, mode: 'cold' },
+    { runner: 'codex', model: 'gpt-6-astra', effort: 'high', mode: 'cold' },
+  ];
+  const run = makeRun({
+    decisions: [
+      {
+        id: 'original-pair',
+        type: 'engine_human_gate',
+        title: 'Review',
+        description: '',
+        actions: [],
+        createdAt: '2026-10-15T00:00:00Z',
+        resolvedAt: '2026-10-15T00:00:01Z',
+        resolvedAction: 'request-review',
+        context: { reviewRequestConsumedAt: '2026-10-15T00:00:02Z' },
+        selectionData: { reviewRequest: reviewRequestFromSequence(plan) },
+      },
+    ],
+    reviewRoundAdmissions: Array.from({ length: 7 }, (_, index) => `spent-${index}`),
+    engineState: {
+      publishGate: {
+        reviewSequence: [{ ...plan[0], mode: 'warm' }],
+        reviewSequenceRequestedAt: '2026-10-15T00:02:00Z',
+        reviews: [
+          {
+            ...passing('native-pass', 'native-session', 'human-gate'),
+            runner: 'claude',
+            model: 'opus',
+            effort: null,
+            reviewedHeadSha: head,
+            completedAt: '2026-10-15T00:01:00Z',
+          },
+        ],
+      },
+    },
+  });
+  run.reviewRoundAdmissions = Array.from({ length: 7 }, (_, index) => `spent-${index}`);
+  const before = structuredClone(run);
+  const repaired = repairUnboundRecoveryReviewPlan(run, head);
+  assert.deepEqual(repaired?.sequence, [plan[1]]);
+  assert.equal(repaired?.requestedAt, run.decisions[0].resolvedAt);
+  assert.match(repaired?.note ?? '', /original gate request/);
+  assert.deepEqual(
+    run,
+    before,
+    'repair does not consume another admission or rewrite native proof',
+  );
+  assert.deepEqual(
+    repairUnboundRecoveryReviewPlan(run, 'b'.repeat(40))?.sequence,
+    plan,
+    'a different-head PASS cannot satisfy the recovered request',
+  );
+  const fallback = repairUnboundRecoveryReviewPlan({ ...run, decisions: [] }, head);
+  assert.deepEqual(fallback?.sequence, [plan[0]]);
+  assert.match(fallback?.note ?? '', /Using COLD/);
+});
+
+test('active fix recovery binds verified warm lineage, otherwise records a cold fallback', (t) => {
+  resetWarmReviewerSessionsForTest();
+  t.after(resetWarmReviewerSessionsForTest);
+  const run = makeRun({
+    ticketOrPr: 'example/recovery#42',
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            ...passing('lineage', 'retained-session', 'human-gate'),
+            verdict: 'issues',
+            unresolvedCount: 1,
+          },
+        ],
+      },
+    },
+  });
+  run.agentContexts = [
+    {
+      id: 'review-fix',
+      role: 'review-fix',
+      label: 'Fix',
+      status: 'working',
+      slotId: 'slot-1',
+      runId: 'run-1',
+    },
+    {
+      id: 'reviewer',
+      role: 'review',
+      label: 'Reviewer',
+      status: 'complete',
+      slotId: 'slot-1',
+      runId: 'run-1',
+      runner: 'codex',
+      model: 'gpt-6-astra',
+      effort: 'high',
+      runnerSessionId: 'retained-session',
+    },
+  ];
+  assert.equal(recoveryReviewPlanForActiveFix(run)?.sequence[0].mode, 'cold');
+  assert.match(recoveryReviewPlanForActiveFix(run)?.note ?? '', /Using COLD/);
+  registerWarmReviewerSession({
+    runId: run.id,
+    reviewId: 'lineage',
+    project: run.project,
+    ownerPrincipalId: null,
+    transport: 'tmux',
+    taskDir: '',
+    artifactScope: 'lineage',
+    runner: 'codex',
+    model: 'gpt-6-astra',
+    effort: 'high',
+    repository: 'example/recovery',
+    prNumber: 42,
+    contextId: 'reviewer',
+    windowName: 'reviewer',
+    slotId: 'slot-1',
+    runnerSessionId: 'retained-session',
+    runnerSessionPath: '/tmp/retained-session.jsonl',
+    lastLoopNumber: 1,
+    lastReviewedHeadSha: 'head',
+  });
+  const recovered = recoveryReviewPlanForActiveFix(run);
+  assert.equal(recovered?.sequence[0].mode, 'warm');
+  assert.deepEqual(recovered?.context, {
+    reviewLineages: [{ repository: 'example/recovery', prNumber: 42, reviewId: 'lineage' }],
+  });
+  run.engineState!.publishGate!.reviews![0].verdict = 'pass';
+  assert.equal(
+    recoveryReviewPlanForActiveFix(run),
+    undefined,
+    'a stale active fix cannot replace remaining reviewers after PASS',
+  );
+});
 
 const selection: ReviewSelection = {
   runner: 'codex',

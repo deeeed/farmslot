@@ -9,10 +9,15 @@ import {
   type ResponseFrame,
   type SelfPrincipalSummary,
 } from '@farmslot/protocol';
+import type { RememberedAccountSession } from '@farmslot/review-dispatch';
 
 import { gatewaySupportsPing } from './gateway-connection-test';
 import { connectionWaitTerminalError } from './gateway-connection-wait';
-import type { GatewayAuthCredentials } from './gateway-http-auth';
+import {
+  type GatewayAuthCredentials,
+  type GatewayHttpAuthHeaders,
+  gatewayHttpAuthHeaders,
+} from './gateway-http-auth';
 import {
   type WorkspaceAccess,
   workspaceAccessFromAuth,
@@ -49,6 +54,36 @@ export class GatewayClient {
   private backoff = 1000;
   private url: string;
   private auth: GatewayAuthCredentials;
+  private accountSession: RememberedAccountSession | null = null;
+
+  setAccountSession(session: RememberedAccountSession | null): void {
+    this.accountSession = session;
+  }
+
+  async clearAccountSession(): Promise<void> {
+    await this.accountSession?.clear();
+    this.accountSession = null;
+  }
+
+  get httpAuthHeaders(): GatewayHttpAuthHeaders {
+    return this.access === 'none' || this.accountSession?.expired
+      ? {}
+      : gatewayHttpAuthHeaders(this.auth);
+  }
+
+  private assertSessionCurrent(): void {
+    try {
+      this.accountSession?.assertCurrent();
+    } catch (error) {
+      this.clearAuthority();
+      this.lastConnectionError = getErrorMessage(error);
+      this.cancelReconnect();
+      this.rejectAllPending(this.lastConnectionError);
+      this.closeCurrentSocket();
+      this.setState('disconnected', true);
+      throw error;
+    }
+  }
   private disposed = false;
   private pausedForBackground = false;
   private appStateSubscription: ReturnType<typeof AppState.addEventListener> | null = null;
@@ -111,6 +146,12 @@ export class GatewayClient {
 
   connect(): void {
     if (this.disposed || this.pausedForBackground) return;
+    try {
+      this.assertSessionCurrent();
+    } catch {
+      // Settings retains the expiry caption and offers token entry; do not retry an expired login.
+      return;
+    }
     if (!this.url) {
       this.setState('disconnected');
       return;
@@ -189,6 +230,8 @@ export class GatewayClient {
     });
     if (!result.ok) throw new Error('Gateway authentication failed');
     if (this.ws !== socket || this.generation !== generation) return;
+    await this.accountSession?.recordSuccessfulUse();
+    if (this.ws !== socket || this.generation !== generation) return;
     this.principal = result.principal ?? null;
     this.access = workspaceAccessFromAuth(result);
     this.pingSupported = gatewaySupportsPing(result);
@@ -215,6 +258,8 @@ export class GatewayClient {
     params?: unknown,
     timeout = DEFAULT_TIMEOUT,
   ): Promise<T> {
+    this.assertSessionCurrent();
+    const session = this.accountSession;
     const generation = this.generation;
     if (method !== Methods.AUTH_CONNECT && this.state !== 'connected') {
       await this.waitForConnected(timeout);
@@ -246,6 +291,8 @@ export class GatewayClient {
       this.ws!.send(JSON.stringify(frame));
     });
     if (generation !== this.generation) throw new Error('Gateway identity changed during request');
+    if (method !== Methods.AUTH_CONNECT && session === this.accountSession)
+      await session?.recordSuccessfulUse();
     return result;
   }
 
@@ -341,8 +388,8 @@ export class GatewayClient {
     }
   }
 
-  private setState(s: ConnectionState): void {
-    if (this.state === s) return;
+  private setState(s: ConnectionState, authorityChanged = false): void {
+    if (this.state === s && !authorityChanged) return;
     this.state = s;
     for (const cb of this.connSubs) {
       try {

@@ -6,9 +6,13 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
-## 0.22.11 - 2026-10-15
+## 0.22.12 - 2026-10-15
 
 - Align the published dependency set with protocol 0.47.0 initial resource proof modes.
+
+## 0.22.11 - 2026-10-15
+
+- Use agent-runtime 0.23.1 for native review account preflight and isolated account hooks.
 
 ## 0.22.10 - 2026-10-15
 

@@ -996,7 +996,7 @@ test('recovery restores and replays a review plan for an active fix pass', async
   await recoverActiveRuns(deps);
 
   assert.deepEqual(restoredPlan, [
-    { runner: 'codex', model: 'gpt-5.6-sol', effort: null, mode: 'warm' as const },
+    { runner: 'codex', model: 'gpt-5.6-sol', effort: null, mode: 'cold' as const },
   ]);
   assert.deepEqual(calls.rearmed, [{ runId: run.id, replayPending: true }]);
   assert.deepEqual(calls.replayed, []);

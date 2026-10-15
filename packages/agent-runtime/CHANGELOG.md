@@ -4,9 +4,14 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.23.2 - 2026-10-15
+
+- Disable native startup hooks for source-read-only workers before session initialization; keep ordinary conversation settings and source cleanup checks intact.
+- Align the published dependency set with protocol 0.47.0 initial resource proof modes.
+
 ## 0.23.1 - 2026-10-15
 
-- Align the published dependency set with protocol 0.47.0 initial resource proof modes.
+- Inspect review account hook policy before task preparation, and isolate named Grok profiles from ambient home hooks and plugins while retaining same-account session resume.
 
 ## 0.23.0 - 2026-10-15
 

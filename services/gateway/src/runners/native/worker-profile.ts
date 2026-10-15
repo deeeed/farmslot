@@ -1,5 +1,6 @@
 import {
   Methods,
+  type NativeProfileInfo,
   type NativeProfileReference,
   type NativeProfileStatusResult,
   type NativeSessionInfo,
@@ -62,7 +63,7 @@ export function nativeWorkerProfileMatches(
 export async function inspectNativeWorkerProfile(
   owner: string,
   profile: NativeProfileReference,
-): Promise<void> {
+): Promise<NativeProfileInfo> {
   const result = (await routeNativeExecution(owner, Methods.NATIVE_PROFILE_STATUS, {
     executionNodeId: profile.executionNodeId,
     profileId: profile.profileId,
@@ -75,4 +76,5 @@ export async function inspectNativeWorkerProfile(
     throw new Error('Selected native profile changed; select its current configuration');
   if (!result.account.installed || result.account.login !== 'authenticated')
     throw new Error('Selected native profile is not signed in on its execution node');
+  return result.profile;
 }

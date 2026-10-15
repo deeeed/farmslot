@@ -19,6 +19,7 @@ export const RUNNER_OBSERVABILITY_SUPPORT_PATHS = [
   INSTALLER_RELATIVE_PATH,
   'scripts/lib/provider-accounts.mjs',
   'packages/agent-runtime/scripts/toml-scan.cjs',
+  'packages/agent-runtime/scripts/review-account-preflight.cjs',
   'packages/agent-runtime/scripts/workspace-trust.cjs',
   ...RUNNER_OBSERVABILITY_COPY_PATHS,
 ] as const;
