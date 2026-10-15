@@ -248,12 +248,14 @@ test('concurrent identical captures serialize the reference commit and reuse one
     materializeRunBundle(f.request),
   ]);
   assert.deepEqual(results[0]!.ref, results[1]!.ref);
-  assert.equal(f.refs.length, 2);
+  assert.ok(f.refs.length >= 2);
+  assert.ok(f.refs.every((ref) => ref.bundleDigest === results[0]!.ref.bundleDigest));
 });
 
 test('GC preserves pending media, prunes expired completed media, and leaves report/manifest bytes unchanged', async (t) => {
   const f = await fixture(t);
   const result = await materializeRunBundle(f.request);
+  const initialAvailability = await readRunBundleAvailability(f.store, result.ref, f.run.id);
   const bundle = await readRetainedRunBundle(f.store, result.ref, f.run.id);
   const originalManifest = await readFile(path.join(bundle.directory, 'manifest.json'));
   const pending: Run = {
@@ -302,7 +304,7 @@ test('GC preserves pending media, prunes expired completed media, and leaves rep
     { code: 'ENOENT' },
   );
   const pruned = await readRunBundleAvailability(f.store, result.ref, f.run.id);
-  assert.equal(pruned.revision, 1);
+  assert.equal(pruned.revision, initialAvailability.revision + 1);
   const restored = await materializeRunBundle({
     ...f.request,
     captureKey: 'explicit-media-recovery',
@@ -311,7 +313,7 @@ test('GC preserves pending media, prunes expired completed media, and leaves rep
   assert.deepEqual(restored.ref, result.ref);
   assert.deepEqual(restored.missingData, []);
   assert.deepEqual(await readRunBundleAvailability(f.store, result.ref, f.run.id), {
-    revision: 2,
+    revision: initialAvailability.revision + 2,
     prunedPaths: [],
   });
   assert.deepEqual(await readFile(path.join(bundle.directory, 'manifest.json')), originalManifest);
@@ -511,4 +513,55 @@ test('an unresolved imported decision pins its target-owned payload through its 
   );
   const bundle = await readRetainedRunBundle(f.store, result.ref, f.run.id);
   assert.equal(await bundle.readText('artifacts/capture.mp4'), 'video bytes');
+});
+
+test('near-full storage commits the report before media admission and fills the same capture after capacity recovery', async (t) => {
+  const f = await fixture(t);
+  const bytes = Buffer.alloc(90_000, 7);
+  await rm(path.join(f.taskDir, 'artifacts/capture.mp4'));
+  const filler = path.join(f.store.root, 'retained-fixture-filler');
+  await writeFile(filler, Buffer.alloc(100_000));
+  let transfers = 0;
+  let commits = 0;
+  const request: MaterializeRunBundleRequest = {
+    ...f.request,
+    policy: {
+      maxBundleBytes: 200_000,
+      maxStoreBytes: 180_000,
+      metadataReserveBytes: 32_000,
+      mediaRetentionDays: 30,
+    },
+    artifacts: [
+      f.artifacts[0]!,
+      {
+        path: 'artifacts/capture.mp4',
+        purpose: 'video',
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+        sizeBytes: bytes.length,
+      },
+    ],
+    acquireMedia: async (_artifact, destination, maximum) => {
+      assert.ok(commits > 0, 'the report reference commits before media transport');
+      assert.ok(maximum >= bytes.length);
+      transfers++;
+      await writeFile(destination, bytes);
+      return { sha256: createHash('sha256').update(bytes).digest('hex'), bytes: bytes.length };
+    },
+    commit: async (ref) => {
+      commits++;
+      const bundle = await readRetainedRunBundle(f.store, ref, f.run.id);
+      assert.equal(await bundle.readText('artifacts/report.html'), '<h1>Retained report</h1>');
+    },
+  };
+  const partial = await materializeRunBundle(request);
+  assert.equal(transfers, 0, 'an unaffordable video never enters gateway staging');
+  assert.ok(partial.missingData.includes('media-capacity:artifacts/capture.mp4'));
+  const interrupted = path.join(f.store.root, 'staging', partial.ref.bundleDigest);
+  await mkdir(interrupted, { recursive: true });
+  await writeFile(path.join(interrupted, 'abandoned.part'), Buffer.alloc(100_000));
+  await rm(filler);
+  const repaired = await materializeRunBundle(request);
+  assert.deepEqual(repaired.ref, partial.ref);
+  assert.deepEqual(repaired.missingData, []);
+  assert.equal(transfers, 1);
 });

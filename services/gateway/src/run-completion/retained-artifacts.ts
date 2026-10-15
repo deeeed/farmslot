@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readdir, readFile, rm, stat } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -26,6 +26,7 @@ import {
   isRunBundleMedia,
   type MaterializedRunBundle,
   materializeRunBundle,
+  type MaterializeRunBundleRequest,
   openRunBundleStore,
   readRetainedRunBundle,
   readRunBundleAvailability,
@@ -33,8 +34,16 @@ import {
   resolveRetainedRunBundleRef as localBundleRef,
 } from '@farmslot/run-bundle';
 
+import { sha256File } from '../core/file-hash.js';
 import { inferArtifactPurpose } from '../core/index.js';
 import { isolatedTestPath } from '../core/isolated-test-path.js';
+import {
+  ORCHESTRATOR_LOCALITY,
+  type SlotCopyAdmission,
+  slotCopyFile,
+  slotFileFingerprint,
+  type SlotLocality,
+} from '../core/slot-io.js';
 import { loadContextFromArtifactRoot } from '../live-recipe/context.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 import {
@@ -44,6 +53,72 @@ import {
   shouldUseIsolatedRunsDir,
   updateRun,
 } from '../runs/store.js';
+
+export interface RunArtifactAcquisition {
+  readonly media: ArtifactRef[];
+  beforeCopy(locality: SlotLocality): SlotCopyAdmission;
+  acquireMedia: NonNullable<MaterializeRunBundleRequest['acquireMedia']>;
+}
+
+/** Writer-only IO: retain metadata before asking a slot to transfer its media. */
+export function createRunArtifactAcquisition(run: Run): RunArtifactAcquisition {
+  if (!run.taskFile) throw new Error('Artifact acquisition requires a task directory.');
+  const taskFile = run.taskFile;
+  const generation = run.engineState?.generation;
+  const taskDir = path.dirname(taskFile);
+  const media = new Map<string, ArtifactRef>();
+  const sources = new Map<string, { locality: SlotLocality; source: string }>();
+  const assertCurrent = () => {
+    const current = getRun(run.id);
+    if (!current || current.taskFile !== taskFile || current.engineState?.generation !== generation)
+      throw new Error('Run attempt changed while acquiring retained media.');
+  };
+  return {
+    get media() {
+      return [...media.values()];
+    },
+    beforeCopy: (locality) => async (source, destination) => {
+      const relative = path.relative(taskDir, destination).split(path.sep).join('/');
+      if (!isRunBundleMedia(relative)) return true;
+      if (relative.startsWith('../') || path.isAbsolute(relative))
+        throw new Error('Artifact acquisition escapes its task.');
+      assertCurrent();
+      const identity = await slotFileFingerprint(locality, source);
+      const previous = media.get(relative);
+      if (previous?.sha256 && previous.sha256 !== identity.sha256)
+        throw new Error('Media changed during inventory acquisition.');
+      media.set(relative, {
+        path: relative,
+        purpose: inferArtifactPurpose(relative.replace(/^artifacts\//u, '')),
+        sha256: identity.sha256,
+        sizeBytes: identity.size,
+      });
+      sources.set(relative, { locality, source });
+      return false;
+    },
+    acquireMedia: async (artifact, destination, maxBytes) => {
+      assertCurrent();
+      const source = sources.get(artifact.path) ?? {
+        locality: ORCHESTRATOR_LOCALITY,
+        source: path.join(taskDir, artifact.path),
+      };
+      await mkdir(path.dirname(destination), { recursive: true });
+      await slotCopyFile(source.locality, source.source, destination, {
+        maxBytes,
+        phase: 'mirror',
+        runId: run.id,
+        slotId: run.slotId ?? undefined,
+        label: artifact.path,
+      });
+      const identity = {
+        sha256: await sha256File(destination),
+        bytes: (await stat(destination)).size,
+      };
+      assertCurrent();
+      return identity;
+    },
+  };
+}
 
 export function runBundleStore(create = false) {
   if (create && process.env.FARMSLOT_SANDBOX_HOME)
@@ -261,6 +336,7 @@ export async function retainCapturedRunArtifacts(input: {
   allowChanged?: boolean;
   existingRef?: RunArtifactBundleRef;
   sourceRef?: RunArtifactBundleRef;
+  acquireMedia?: MaterializeRunBundleRequest['acquireMedia'];
   releaseStagingMedia?: boolean;
   commit(ref: RunArtifactBundleRef, missingData: string[]): Promise<void>;
 }): Promise<MaterializedRunBundle> {
@@ -307,6 +383,18 @@ export async function retainCapturedRunArtifacts(input: {
       if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
     }
   }
+  const staged = input.sourceRef
+    ? []
+    : await Promise.all(
+        artifacts.map(async (artifact) => {
+          try {
+            return (await stat(path.join(taskDir, artifact.path))).size;
+          } catch (error) {
+            if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return 0;
+            throw error;
+          }
+        }),
+      );
   return materializeRunBundle({
     store,
     farmslotRoot,
@@ -320,8 +408,9 @@ export async function retainCapturedRunArtifacts(input: {
       input.manifestDigest,
     ]),
     policy: await retentionPolicy(),
-    stagingBytes: artifacts.reduce((bytes, artifact) => bytes + (artifact.sizeBytes ?? 0), 0),
+    stagingBytes: staged.reduce((sum, bytes) => sum + bytes, 0),
     allowChanged: input.allowChanged,
+    acquireMedia: input.acquireMedia,
     existingRef: input.existingRef,
     commit: async (ref, missingData) => {
       const latest = getRun(input.run.id);
@@ -387,6 +476,7 @@ export async function retainRunArtifacts(runId: string): Promise<RunBundleRetain
         missingData: output.retentionMissingData ?? bundle.manifest.missingData ?? [],
       };
   }
+  const acquisition = createRunArtifactAcquisition(run);
   // Acquisition is explicit. A viewer never refreshes a mirror or asks a slot for files.
   const missing = await Promise.all(
     output.artifactManifest.map(async (artifact) => {
@@ -401,11 +491,12 @@ export async function retainRunArtifacts(runId: string): Promise<RunBundleRetain
   );
   if (missing.some(Boolean) && run.slotId) {
     const { refreshArtifactMirror } = await import('./artifact-mirror.js');
-    await refreshArtifactMirror(run);
+    await refreshArtifactMirror(run, { acquisition });
   }
   const result = await retainCapturedRunArtifacts({
     run,
     artifacts: output.artifactManifest,
+    acquireMedia: acquisition.acquireMedia,
     manifestDigest: output.manifestDigest,
     allowChanged: true,
     existingRef: output.artifactBundle,

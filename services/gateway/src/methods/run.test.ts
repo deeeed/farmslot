@@ -3187,6 +3187,7 @@ test('real packaged approval restores a parked run before reading a reused slot 
     taskFile: path.join(task, 'TASK.md'),
     decisions: [decision],
   });
+  await retainRunFixture(getRun(run.id)!, pkg);
   let restores = 0;
   await runResolveDecision(
     {

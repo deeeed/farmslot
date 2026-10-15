@@ -39,7 +39,6 @@ import {
   markReviewedInputsRerun,
   reviewedInputsAwaitingReview,
 } from '../review/reviewed-inputs.js';
-import { refreshArtifactMirror } from '../run-completion/artifact-mirror.js';
 import { evidenceKeyVariants } from '../run-completion/evidence-paths.js';
 import {
   isArtifactOnlyRun,
@@ -1405,7 +1404,7 @@ export async function executeCompleteStep(
   const runBeforeDiff = getRun(runId) ?? current;
   if (runBeforeDiff.engineState?.evalExperiment) {
     await executeEvalHarnessLifecycle(runBeforeDiff, 'cleanup');
-    await refreshArtifactMirror(getRun(runId) ?? runBeforeDiff);
+    await captureRunOutput(runId);
   }
 
   // diffStat needs the slot's git tree; runs before slotRelease below.

@@ -225,7 +225,8 @@ test('a required publish mirror accepts zero transfers and forwards publication 
   });
   assert.equal(completion.completion.artifactsCopied, true);
   assert.equal(completion.prPackage.headSha, headSha);
-  assert.deepEqual(mirrorOptions, { requireSourceArtifacts: true, forPublication: true });
+  assert.equal(mirrorOptions?.requireSourceArtifacts, true);
+  assert.equal(mirrorOptions?.forPublication, true);
 });
 
 test('no-code completion mirrors without requesting publication preflight', async () => {

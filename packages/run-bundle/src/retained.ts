@@ -14,7 +14,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import path from 'node:path';
-import { Transform } from 'node:stream';
+import { Transform, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 import lockfile from 'proper-lockfile';
@@ -67,6 +67,11 @@ interface CaptureIntent {
   committed?: boolean;
 }
 
+export interface RunBundlePayloadIdentity {
+  sha256: string;
+  bytes: number;
+}
+
 export interface MaterializeRunBundleRequest {
   store: RunBundleStore;
   farmslotRoot: string;
@@ -79,6 +84,12 @@ export interface MaterializeRunBundleRequest {
   existingRef?: RunArtifactBundleRef;
   policy?: RunBundleRetentionPolicy;
   stagingBytes?: number;
+  /** Inventory is frozen before metadata commits; media transport writes only admitted bytes. */
+  acquireMedia?: (
+    artifact: ArtifactRef,
+    destination: string,
+    maxBytes: number,
+  ) => Promise<RunBundlePayloadIdentity>;
   allowChanged?: boolean;
   /** Must fence and durably commit the Run reference before returning. */
   commit(ref: RunArtifactBundleRef, missingData: string[]): Promise<void>;
@@ -202,7 +213,7 @@ export async function withRunBundleStoreLock<T>(
     realpath: false,
     stale: 30_000,
     update: 2_000,
-    retries: { retries: 120, factor: 1, minTimeout: 20, maxTimeout: 50 },
+    retries: { retries: 1500, factor: 1, minTimeout: 20, maxTimeout: 50 },
   });
   try {
     return await fn();
@@ -286,10 +297,10 @@ function assertPolicy(policy: RunBundleRetentionPolicy): void {
 
 async function copyHashed(
   source: string,
-  dest: string,
+  dest: string | null,
   maxBytes: number,
-): Promise<{ sha256: string; bytes: number }> {
-  await mkdir(path.dirname(dest), { recursive: true });
+): Promise<RunBundlePayloadIdentity> {
+  if (dest) await mkdir(path.dirname(dest), { recursive: true });
   const digest = createHash('sha256');
   let bytes = 0;
   const handle = await open(source, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -305,12 +316,18 @@ async function copyHashed(
           callback(null, chunk);
         },
       }),
-      createWriteStream(dest, { flags: 'wx', mode: 0o600 }),
+      dest
+        ? createWriteStream(dest, { flags: 'wx', mode: 0o600 })
+        : new Writable({
+            write(_chunk, _encoding, callback) {
+              callback();
+            },
+          }),
     );
   } finally {
     await handle.close();
   }
-  await chmod(dest, 0o400);
+  if (dest) await chmod(dest, 0o400);
   return { sha256: digest.digest('hex'), bytes };
 }
 
@@ -348,7 +365,15 @@ async function completeRetainedPayloads(
   manifest: RunBundleManifest,
 ): Promise<string[]> {
   const policy = request.policy ?? DEFAULT_RUN_BUNDLE_RETENTION;
-  let used = (await physicalBytes(request.store.root)) + (request.stagingBytes ?? 0);
+  // The store lock excludes another repair of this capture. Interrupted transfer
+  // scratch is regenerable and must not consume the retry's admission budget.
+  const repairStage = path.join(request.store.root, 'staging', ref.bundleDigest);
+  await rm(repairStage, { recursive: true, force: true });
+  await mkdir(repairStage, { recursive: true });
+  let used =
+    (await physicalBytes(request.store.root)) +
+    (await reservedMetadataBytes(request.store, request.run.id)) +
+    (request.stagingBytes ?? 0);
   let bundleBytes = await physicalBytes(directory);
   const prefix = `tasks/${ref.taskKey}/`;
   const missing: string[] = (manifest.missingData ?? []).filter((reason) => {
@@ -373,25 +398,37 @@ async function completeRetainedPayloads(
     if (
       meta.bytes >
       Math.min(
-        policy.maxStoreBytes - used - policy.metadataReserveBytes,
+        policy.maxStoreBytes -
+          used -
+          (isRunBundleMedia(relative) ? policy.metadataReserveBytes : 0),
         policy.maxBundleBytes - bundleBytes,
       )
     ) {
       missing.push(`media-capacity:${relative}`);
       continue;
     }
-    const temp = `${target}.${randomUUID()}.tmp`;
+    const temp = path.join(repairStage, `${randomUUID()}.tmp`);
     try {
-      const taskRoot = await realpath(request.taskDir);
-      const source = resolvePathInsideRoot(taskRoot, relative);
-      if ((await realpath(source)) !== source)
-        throw new Error('Retained repair source is redirected.');
-      const copied = await copyHashed(source, temp, meta.bytes);
+      let copied: RunBundlePayloadIdentity;
+      if (request.acquireMedia && isRunBundleMedia(relative)) {
+        copied = await request.acquireMedia(
+          { path: relative, purpose: 'artifact', sha256: meta.sha256, sizeBytes: meta.bytes },
+          temp,
+          meta.bytes,
+        );
+      } else {
+        const taskRoot = await realpath(request.taskDir);
+        const source = resolvePathInsideRoot(taskRoot, relative);
+        if ((await realpath(source)) !== source)
+          throw new Error('Retained repair source is redirected.');
+        copied = await copyHashed(source, temp, meta.bytes);
+      }
       if (copied.sha256 !== meta.sha256 || copied.bytes !== meta.bytes) {
         missing.push(`changed:${relative}`);
         await rm(temp);
         continue;
       }
+      await mkdir(path.dirname(target), { recursive: true });
       await rename(temp, target);
       restored.add(key);
       used += copied.bytes;
@@ -402,20 +439,47 @@ async function completeRetainedPayloads(
       missing.push(`missing:${relative}`);
     }
   }
+  await rm(repairStage, { recursive: true, force: true });
   const availabilityPath = path.join(
     request.store.root,
     'availability',
     `${ref.bundleDigest}.json`,
   );
   const prior = await readOptional(availabilityPath);
-  if (prior && restored.size) {
-    const availability: RunBundleAvailability = JSON.parse(prior);
+  if (restored.size) {
+    const availability: RunBundleAvailability = prior
+      ? JSON.parse(prior)
+      : { revision: 0, prunedPaths: [] };
     await atomicJson(availabilityPath, {
       revision: availability.revision + 1,
       prunedPaths: availability.prunedPaths.filter((key) => !restored.has(key)),
     });
   }
   return missing;
+}
+
+async function commitRetainedPayloads(
+  request: MaterializeRunBundleRequest,
+  ref: RunArtifactBundleRef,
+  directory: string,
+  manifest: RunBundleManifest,
+): Promise<string[]> {
+  const prefix = `tasks/${ref.taskKey}/`;
+  const unavailable = [...(manifest.missingData ?? [])];
+  for (const key of Object.keys(manifest.entries)) {
+    if (!key.startsWith(prefix)) continue;
+    try {
+      await stat(resolvePathInsideRoot(directory, key));
+    } catch (error) {
+      if (!hasCode(error, 'ENOENT')) throw error;
+      unavailable.push(`missing:${key.slice(prefix.length)}`);
+    }
+  }
+  // The report has a durable, readable identity before any bulk transport starts.
+  await request.commit(ref, [...new Set(unavailable)]);
+  const remaining = await completeRetainedPayloads(request, ref, directory, manifest);
+  await request.commit(ref, remaining);
+  return remaining;
 }
 
 export async function readRunBundleAvailability(
@@ -688,13 +752,12 @@ export async function materializeRunBundle(
         await rename(stage, destination);
       }
       const retained = await readRetainedRunBundle(store, ref, run.id);
-      const missingData = await completeRetainedPayloads(
+      const missingData = await commitRetainedPayloads(
         request,
         ref,
         retained.directory,
         retained.manifest,
       );
-      await request.commit(ref, missingData);
       intent.committed = true;
       intent.runJson = '';
       await atomicJson(intentPath, intent);
@@ -765,10 +828,23 @@ export async function materializeRunBundle(
         } catch (error) {
           if (!hasCode(error, 'ENOENT')) throw error;
           recordExpectedArtifact(manifest, taskKey, artifact);
-          missingData.push(`missing:${artifact.path}`);
-          continue;
+          if (
+            request.acquireMedia &&
+            isRunBundleMedia(artifact.path) &&
+            artifact.sha256 &&
+            artifact.sizeBytes !== undefined
+          ) {
+            size = artifact.sizeBytes;
+          } else {
+            missingData.push(`missing:${artifact.path}`);
+            continue;
+          }
         }
         const media = isRunBundleMedia(artifact.path);
+        const expected =
+          media && !artifact.sha256
+            ? { ...artifact, sha256: (await copyHashed(source, null, size)).sha256 }
+            : artifact;
         // Keep manifest overhead and the protected report/metadata reserve ahead of media.
         const available = Math.min(
           policy.maxBundleBytes - bundleBytes - manifestReserve,
@@ -782,8 +858,14 @@ export async function materializeRunBundle(
             throw new Error(
               'Run bundle metadata capacity exhausted; free storage or raise gateway retention limits.',
             );
-          recordExpectedArtifact(manifest, taskKey, artifact, size);
+          recordExpectedArtifact(manifest, taskKey, expected, size);
           missingData.push(`media-capacity:${artifact.path}`);
+          continue;
+        }
+        if (media) {
+          recordExpectedArtifact(manifest, taskKey, expected, size);
+          bundleBytes += size;
+          storeBytes += size;
           continue;
         }
         const key = `tasks/${taskKey}/${artifact.path}`;
@@ -819,12 +901,12 @@ export async function materializeRunBundle(
         taskKey,
         manifestDigest: request.manifestDigest,
       };
-      await request.commit(ref, missingData);
+      const remaining = await commitRetainedPayloads(request, ref, destination, manifest);
       intent.committed = true;
       intent.runJson = '';
       await atomicJson(intentPath, intent);
       await rm(path.join(store.root, 'reservations', `${run.id}.json`), { force: true });
-      return { ref, manifest, missingData };
+      return { ref, manifest, missingData: remaining };
     } catch (error) {
       // Keep a published capture pinned by its persisted intent until commit/recovery.
       if (!intent.bundleDigest) await rm(stage, { recursive: true, force: true });

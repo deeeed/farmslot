@@ -823,7 +823,10 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
     });
 
     try {
-      if (i === startIdx) await reserveRunArtifactMetadata(current);
+      if (i === startIdx) {
+        await reserveRunArtifactMetadata(current);
+        if (runSupersededSince(getRun(runId), myGen)) return;
+      }
       const stepIO = await executeStep(runId, stepName, myGen);
 
       // Re-check cancellation/pause after async step

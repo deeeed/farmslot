@@ -116,6 +116,7 @@ test('selected evidence retains labelled comparisons and external captures with 
       before_state_capture: { source: 'baseline' },
     }),
   );
+  await retainRunFixture(run);
   const effective = await readEvidenceManifest(run);
   assert.equal(effective?.before_after_pairs?.[0]?.label, 'Flag off / flag on');
   assert.deepEqual(effective?.standalone, []);
@@ -197,6 +198,7 @@ test('task declarations cannot select a retained artifact owned by another recip
       ],
     }),
   );
+  await retainRunFixture(run);
   await assert.rejects(readEvidenceManifest(run), (error: unknown) => {
     assert.equal((error as { code: string }).code, 'evidence-selection-invalid');
     assert.match((error as Error).message, /belongs to another recipe attempt/);
@@ -370,6 +372,7 @@ test('same-run clean baseline freezes as before evidence without supplying head 
   const f = await baselineFixture(t);
   assert.equal(f.baseline.claims.criteria[0]?.verdict, 'failed');
   assert.equal(f.head.claims.criteria[0]?.verdict, 'proven');
+  await retainRunFixture(f.run);
   const effective = await readEvidenceManifest(f.run);
   const inventory = await buildPackageEvidenceManifest(
     f.taskDir,
@@ -416,6 +419,7 @@ test('baseline declarations refuse other roles, source changes and incomplete ca
       standalone: [{ label: 'Other attempt', file: `${f.baselineRoot}/proof.png` }],
     }),
   );
+  await retainRunFixture(f.run);
   await assert.rejects(readEvidenceManifest(f.run), /belongs to another recipe attempt/);
   await writeFile(
     f.declarationPath,
@@ -428,6 +432,7 @@ test('baseline declarations refuse other roles, source changes and incomplete ca
       })),
     }),
   );
+  await retainRunFixture(f.run);
   await assert.rejects(readEvidenceManifest(f.run), /belongs to another recipe attempt/);
   await writeFile(f.declarationPath, JSON.stringify(f.declaration));
   for (const provenance of [
@@ -443,6 +448,7 @@ test('baseline declarations refuse other roles, source changes and incomplete ca
       path.join(f.taskDir, 'artifacts', f.baselineRoot, 'product-provenance.json'),
       JSON.stringify(provenance),
     );
+    await retainRunFixture(f.run);
     await assert.rejects(readEvidenceManifest(f.run), /belongs to another recipe attempt/);
   }
   await writeFile(
@@ -452,6 +458,7 @@ test('baseline declarations refuse other roles, source changes and incomplete ca
   f.inventory.find(
     (entry) => entry.path === `artifacts/${f.baselineRoot}/product-provenance.json`,
   )!.sha256 = digest(Buffer.from(JSON.stringify(f.provenance)));
+  await retainRunFixture(f.run);
   const effective = await readEvidenceManifest(f.run);
   const missing = publicationBaselineContext(
     f.run,
@@ -521,6 +528,7 @@ test('pre-cutover reruns retain both declared captures while the gate reads only
     JSON.stringify({ version: 1, relativeArtifactRoot: 'recipe-runs/old' }),
   );
   assert.equal(run.recordedEvidenceContractVersion, undefined);
+  await retainRunFixture(run);
   const effective = await readEvidenceManifest(run);
   assert.deepEqual(effective, manifest);
   const inventory = await buildPackageEvidenceManifest(taskDir, artifacts, effective, 0);
@@ -538,6 +546,7 @@ test('pre-cutover reruns retain both declared captures while the gate reads only
     'artifacts/recipe-runs/old/',
   );
   run.recordedEvidenceContractVersion = 1;
+  await retainRunFixture(run);
   await assert.rejects(readEvidenceManifest(run), /Update the recipe runtime/);
 });
 
@@ -561,6 +570,7 @@ test('an attempt without publication media freezes its closure without selecting
   await mkdir(path.join(taskDir, 'artifacts/failed'));
   await writeFile(path.join(taskDir, 'artifacts/failed/summary.json'), '{}');
   artifacts.push({ path: 'artifacts/failed/summary.json', purpose: 'summary' });
+  await retainRunFixture(run);
   const effective = await readEvidenceManifest(run);
   const inventory = await buildPackageEvidenceManifest(taskDir, artifacts, effective);
   assert(inventory.some((entry) => entry.path === 'artifacts/recipe-runs/current/summary.json'));
@@ -606,6 +616,7 @@ test('the gate reads only the frozen selected attempt and rejects changed pointe
   );
   for (const artifact of artifacts)
     artifact.path = artifact.path.replace('recipe-run/', 'recipe-runs/current/');
+  await retainRunFixture(run);
   const effective = await readEvidenceManifest(run);
   const inventory = await buildPackageEvidenceManifest(taskDir, artifacts, effective);
   const unrelated = path.join(taskDir, 'artifacts/summary.json');
@@ -842,9 +853,11 @@ for (const location of ['promoted', 'inherited'] as const) {
         }),
       );
       if (location === 'inherited') {
+        await retainRunFixture(run);
         await assert.rejects(readEvidenceManifest(run), /selected recipe attempt has no/);
         return;
       }
+      await retainRunFixture(run);
       const effective = await readEvidenceManifest(run);
       const inventory = await buildPackageEvidenceManifest(taskDir, artifacts, effective);
       await retainRunFixture(run);

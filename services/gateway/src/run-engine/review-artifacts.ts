@@ -16,6 +16,7 @@ import {
 import { loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
 import { slotCopyDir, slotCopyFile, slotFileExists, slotListDir } from '../core/slot-io.js';
 import {
+  createRunArtifactAcquisition,
   readOptionalRetainedRunText,
   retainedRunTaskDirectory,
 } from '../run-completion/retained-artifacts.js';
@@ -139,6 +140,7 @@ async function workerGatewayOwnedCopyExcludes(
 export async function copyWorkerArtifacts(runId: string): Promise<void> {
   const run = getRun(runId)!;
   if (!run.taskFile) return;
+  const acquisition = createRunArtifactAcquisition(run);
   if (run.slotId) {
     const vars = await loadSlotVars(run.slotId);
     const taskDir = path.dirname(run.taskFile);
@@ -161,6 +163,7 @@ export async function copyWorkerArtifacts(runId: string): Promise<void> {
         runId,
         slotId: run.slotId ?? vars.slotId,
         labelPrefix: 'review-artifacts',
+        beforeCopy: acquisition.beforeCopy(vars),
       });
 
       for (const document of ['TASK.md', 'CHECKLIST.md']) {
@@ -178,7 +181,7 @@ export async function copyWorkerArtifacts(runId: string): Promise<void> {
   }
   // Artifact acquisition commits a retained capture before any review consumer reads it.
   const { captureRunOutput } = await import('../run-completion/output.js');
-  await captureRunOutput(runId, false);
+  await captureRunOutput(runId, false, false, { acquisition });
 }
 
 /**

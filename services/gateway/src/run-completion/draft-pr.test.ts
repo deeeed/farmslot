@@ -82,7 +82,9 @@ test('buildDraftPrBody renders local before/after evidence preview from manifest
       }),
     );
 
-    const body = await buildDraftPrBody(makeRun({ taskFile }), null, [
+    const retained = makeRun({ taskFile });
+    await retainRunFixture(retained);
+    const body = await buildDraftPrBody(retained, null, [
       { path: 'artifacts/before-ac1-placeholder.png', purpose: 'screenshot' },
       { path: 'artifacts/after-ac1-placeholder.png', purpose: 'screenshot' },
     ]);
@@ -130,7 +132,9 @@ test('buildDraftPrBody trusts evidence-manifest screenshots even when artifact s
       }),
     );
 
-    const body = await buildDraftPrBody(makeRun({ taskFile }), null, [
+    const retained = makeRun({ taskFile });
+    await retainRunFixture(retained);
+    const body = await buildDraftPrBody(retained, null, [
       { path: 'artifacts/evidence-manifest.json', purpose: 'evidence-manifest' },
     ]);
 
@@ -222,8 +226,10 @@ test('buildDraftPrBody strips execution provenance before the public summary', a
     const taskFile = path.join(root, 'task.md');
     await writeFile(taskFile, '# Task\n');
 
+    const retained = makeRun({ taskFile });
+    await retainRunFixture(retained);
     const body = await buildDraftPrBody(
-      makeRun({ taskFile }),
+      retained,
       [
         '# TAT-3344 — [Core] order 0: insufficient margin to place order',
         '',

@@ -15,9 +15,10 @@ import {
 import { GATEWAY_OWNED_DIFF_ARTIFACTS } from '../core/artifact-copy-policy.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 
-import { refreshArtifactMirror } from './artifact-mirror.js';
+import { type ArtifactMirrorOptions, refreshArtifactMirror } from './artifact-mirror.js';
 import { scanArtifacts } from './publication-artifacts.js';
 import {
+  createRunArtifactAcquisition,
   readRetainedRunText,
   retainCapturedRunArtifacts,
   retainedRunArtifactManifest,
@@ -173,13 +174,25 @@ export async function captureRunOutput(
   runId: string,
   mirror = true,
   workerFinished = false,
+  options: ArtifactMirrorOptions = {},
 ): Promise<number> {
   const run = getRun(runId);
   if (!run?.taskFile) return 0;
   const taskFile = run.taskFile;
   const generation = run.engineState?.generation;
-  const copied = mirror && !run.reviewWorkspace ? await refreshArtifactMirror(run) : 0;
-  const artifacts = await scanArtifacts(path.dirname(taskFile));
+  const acquisition = options.acquisition ?? createRunArtifactAcquisition(run);
+  const copied =
+    mirror && !run.reviewWorkspace
+      ? await refreshArtifactMirror(run, { ...options, acquisition })
+      : 0;
+  const artifacts = [
+    ...new Map(
+      [...(await scanArtifacts(path.dirname(taskFile))), ...acquisition.media].map((artifact) => [
+        artifact.path,
+        artifact,
+      ]),
+    ).values(),
+  ];
   if (artifacts.some((artifact) => !artifact.sha256))
     throw new Error('Could not fingerprint all output files');
   const candidates = [
@@ -227,8 +240,9 @@ export async function captureRunOutput(
   await retainCapturedRunArtifacts({
     run: { ...current, output },
     artifacts,
+    acquireMedia: acquisition.acquireMedia,
     manifestDigest: output.manifestDigest,
-    releaseStagingMedia: current.completionPolicy === 'artifact-only',
+    releaseStagingMedia: true,
     commit: async (ref, missingData) => {
       const latest = getRun(runId);
       if (!latest || latest.taskFile !== taskFile || latest.engineState?.generation !== generation)

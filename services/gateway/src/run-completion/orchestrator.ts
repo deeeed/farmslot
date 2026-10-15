@@ -61,7 +61,6 @@ import {
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 import { validateDeterministicChecksForRun } from '../tasks/worker-terminal-contract.js';
 
-import { refreshArtifactMirror } from './artifact-mirror.js';
 import {
   buildDraftPrBody,
   buildDraftPrTitle,
@@ -1009,7 +1008,7 @@ export async function runCompletionPipeline(
   //    client instead of continuing when the mirror is incomplete.
   if (!isReviewPR) {
     try {
-      await refreshArtifactMirror(run, {
+      await captureRunOutput(runId, true, true, {
         requireSourceArtifacts: options?.requireArtifactMirror,
         forPublication: options?.forPublication,
       });
@@ -1026,8 +1025,7 @@ export async function runCompletionPipeline(
     }
   }
 
-  if (flags.artifactsCopied || !run.output?.artifactBundle)
-    await captureRunOutput(runId, false, true);
+  if (!getRun(runId)?.output?.artifactBundle) await captureRunOutput(runId, false, true);
   run = getRun(runId) ?? run;
 
   // 0b. Extract worker session cost

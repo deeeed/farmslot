@@ -62,6 +62,7 @@ import {
   scanPublishPackage,
   selectPublishPackageEntries,
 } from './publish-package-scope.js';
+import type { RunArtifactAcquisition } from './retained-artifacts.js';
 
 // Push only executable recipe inputs (recipe.json + recipe-library/) from
 // the gateway-owned mirror to a slot's worker task dir, so a run loaded onto
@@ -265,6 +266,7 @@ async function copyEvidenceManifestReferencedArtifacts(
   manifest: EvidenceManifest | null | undefined,
   progress?: { runId?: string; slotId?: string },
   retainedPaths: readonly string[] = [],
+  beforeCopy?: import('../core/slot-io.js').SlotCopyAdmission,
 ): Promise<number> {
   const paths = [
     ...new Set([
@@ -306,6 +308,7 @@ async function copyEvidenceManifestReferencedArtifacts(
         runId: progress?.runId,
         slotId: progress?.slotId ?? vars.slotId,
         label: relativePath,
+        beforeCopy,
       })
     )
       copied += 1;
@@ -317,6 +320,7 @@ async function copyEvidenceManifestReferencedArtifacts(
 // explicit user-triggered callers (run.refreshMirror) can surface the error.
 // Best-effort callers must wrap in their own try/catch (see complete()).
 export interface ArtifactMirrorOptions {
+  acquisition?: RunArtifactAcquisition;
   /** Completion requires source artifacts even when none need transferring. */
   requireSourceArtifacts?: boolean;
   /** Publication callers validate the same selected attempt before any copy. */
@@ -334,6 +338,7 @@ export async function refreshArtifactMirror(
   }
 
   const vars = await loadSlotVars(run.slotId);
+  const beforeCopy = options.acquisition?.beforeCopy(vars);
   const taskDir = path.dirname(run.taskFile);
   const pv = await loadProjectVars(run.project).catch(() => null);
   const taskRelDir = resolveTaskRelDir(
@@ -515,6 +520,7 @@ export async function refreshArtifactMirror(
           phase: 'mirror',
           ...transferMeta,
           label: `artifacts/${entry.path}`,
+          beforeCopy,
         },
       )
     )
@@ -536,6 +542,7 @@ export async function refreshArtifactMirror(
         phase: 'mirror',
         ...transferMeta,
         labelPrefix: promotedPointer.relativeArtifactRoot,
+        beforeCopy,
       },
     );
     // Defensive cleanup for stale promoted mirrors created before screenshots/ was excluded.
@@ -556,6 +563,7 @@ export async function refreshArtifactMirror(
     run.taskFile ? await retainedEvidenceManifest(path.dirname(run.taskFile)) : null,
     transferMeta,
     manifestPaths,
+    beforeCopy,
   );
   if (copied > 0) {
     console.log(`[run-completion] copied ${copied} artifact(s) from worker`);

@@ -1006,3 +1006,79 @@ test('slotReadFileBuffer chunked path reports readChunkCount and bounded root', 
   assert.equal(transport?.root, '/repo');
   assert.ok(fakeWs.calls.filter((c) => c.method === 'fs.readChunk').length >= 2);
 });
+
+test('directory acquisition defers media before writes on both local and remote transports', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'slot-copy-admission-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const source = path.join(dir, 'source');
+  await mkdir(source);
+  await writeFile(path.join(source, 'report.md'), 'report');
+  await writeFile(path.join(source, 'capture.mp4'), 'video');
+  const beforeCopy = async (_source: string, destination: string) => !destination.endsWith('.mp4');
+  const local = { host: 'localhost', machine: 'local', sshTarget: '' };
+  const localTarget = path.join(dir, 'local');
+  assert.equal(await slotCopyDir(local, source, localTarget, { beforeCopy }), 1);
+  assert.equal(await readFile(path.join(localTarget, 'report.md'), 'utf8'), 'report');
+  assert.equal(existsSync(path.join(localTarget, 'capture.mp4')), false);
+  const remote = {
+    host: 'remote.invalid',
+    machine: 'remote-admission',
+    sshTarget: '',
+    nodeRequest: async (method: string, input: unknown) => {
+      const params = input as { root: string; relPath: string };
+      if (method === 'fs.exists') return { exists: true };
+      if (method === 'fs.realpath') return { path: path.resolve(params.root, params.relPath) };
+      if (method === 'fs.list')
+        return {
+          entries: [
+            { name: 'report.md', type: 'file', size: 6 },
+            { name: 'capture.mp4', type: 'file', size: 5 },
+          ],
+        };
+      assert.ok(!params.relPath.endsWith('.mp4'), 'deferred media never enters transport');
+      if (method === 'fs.stat') return { size: 6, isFile: true };
+      if (method === 'fs.readBase64') return { content: Buffer.from('report').toString('base64') };
+      throw new Error(`Unexpected RPC ${method}`);
+    },
+  };
+  const remoteTarget = path.join(dir, 'remote');
+  assert.equal(await slotCopyDir(remote, '/source', remoteTarget, { beforeCopy }), 1);
+  assert.equal(await readFile(path.join(remoteTarget, 'report.md'), 'utf8'), 'report');
+  assert.equal(existsSync(path.join(remoteTarget, 'capture.mp4')), false);
+});
+
+test('admitted byte limits refuse local overflow and remote growth before excess bytes are written', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'slot-copy-bound-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const source = path.join(dir, 'video');
+  await writeFile(source, 'grown');
+  const destination = path.join(dir, 'destination');
+  await assert.rejects(
+    slotCopyFile({ host: 'localhost', machine: 'local', sshTarget: '' }, source, destination, {
+      maxBytes: 4,
+    }),
+    /admitted byte capacity/,
+  );
+  assert.equal(existsSync(destination), false);
+  const remote = {
+    host: 'remote.invalid',
+    machine: 'remote-bound',
+    sshTarget: '',
+    nodeRequest: async (method: string) => {
+      if (method === 'fs.stat') return { size: 3, isFile: true };
+      if (method === 'fs.readChunk')
+        return {
+          content: Buffer.from('grown').toString('base64'),
+          bytesRead: 5,
+          eof: true,
+          totalSize: 5,
+        };
+      throw new Error(`Unexpected RPC ${method}`);
+    },
+  };
+  await assert.rejects(
+    slotCopyFile(remote, '/video', destination, { maxBytes: 4, verifyRemoteHash: false }),
+    /admitted byte capacity/,
+  );
+  if (existsSync(destination)) assert.ok((await readFile(destination)).length <= 4);
+});

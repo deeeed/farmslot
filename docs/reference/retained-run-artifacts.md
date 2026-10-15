@@ -173,7 +173,8 @@ an actor or destination path, and writes only below gateway-owned retention.
 `@farmslot/run-bundle` adds experimental `materializeRunBundle` and
 `resolveRunBundleEntry` exports for gateway capture, HTTP reads and export.
 They reuse its existing codec, hashing and manifest validation. Protocol owns bundle
-references and request/result types. Existing SDK evidence exports remain the
+references, request/result types, and `decisionArtifactBundleRef`, the shared
+decision-snapshot selector used by gateway readers and bundle GC. Existing SDK evidence exports remain the
 single evidence model, consumed by both clients and publication.
 
 The command backfills done/failed runs from their existing captured inventory and
