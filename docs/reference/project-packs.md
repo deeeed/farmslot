@@ -60,24 +60,29 @@ source — editor validation works after `project add`.
 Every project must declare nonempty `qa.profiles`; each profile selects a QA
 checklist with `template_id`. The same pack validator checks this declaration
 before `project add` registers anything and before gateway node-support sync.
-QA presets remain separate from prepare profiles and runner/model defaults.
+Until the amendment below is accepted and implemented, `qa.default_profile` is required and must name a configured profile; invalid QA reports `project.json` and a configuration hint. QA presets remain separate from prepare profiles and runner/model defaults.
 
 ### QA selection amendment, proposed
 
 The following rules are proposed by [ADR-058 Amendment 1](../adr/058-static-review-and-farm-owned-qa.md#amendment-1-optional-qa-defaults-and-required-choices-2026-10-15).
 
 `qa.default_profile` MUST be optional. When present it MUST identify a configured
-profile. Selection MUST use, in order, a valid explicit request id, the configured
-default, or the sole profile. If several profiles remain without either selection,
+profile. The existing `resolvePRWorkflowDefaults` owner MUST first resolve request ids over
+repository, team and farm workflow-policy ids, including
+`workflow_defaults.qa.review.qaProfileId`. QA selection MUST use that effective
+id, otherwise the configured default or sole profile. If several profiles remain
+without an effective id or configured default,
 admission MUST return `REVIEW_QA_NEEDS_CONFIGURATION` with the available ids and
 titles before creating a run or allocating resources. An invalid explicit id MUST
 refuse rather than fall back. Empty profile lists and invalid defaults MUST fail
 configuration validation.
 
-Clients MUST show the configured default or sole profile selected. Otherwise they
+Clients MUST resolve the same workflow policy before preselection and show its
+effective id, otherwise the configured default or sole profile. A user change
+MUST override the resolved policy choice. Otherwise they
 MUST show an empty required choice and disable Dispatch. They MUST submit the
 visible selected id. CLI omission is valid only when the shared resolver can select
-a default or sole profile. Manual and automatic intake MUST share these rules.
+an effective policy id, default or sole profile. Manual and automatic intake MUST share these rules.
 
 The admitted Run MUST retain the chosen id, title, effective inputs and selected
 template. Replays and migrations MUST preserve an already-recorded selection.
