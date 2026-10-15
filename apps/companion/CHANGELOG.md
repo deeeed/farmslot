@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Open Unassigned comparison media through its recorded selection, replacing the previous proof gallery.
+
 - Show selected AC proof first and keep supporting files and checks collapsed in run reviews.
 - Keep report and evidence links bound to their gateway-retained snapshot, including read-only stale reports.
 - Use the shared timeline groups in the existing video viewer, keeping node details collapsed and failures expanded.

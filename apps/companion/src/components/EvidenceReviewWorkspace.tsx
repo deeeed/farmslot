@@ -89,6 +89,10 @@ export function EvidenceReviewWorkspace({
   onOpenCompareArtifactWorkspace,
   authHeaders,
 }: EvidenceReviewWorkspaceProps) {
+  const open = (path: string) =>
+    evidenceModel && onOpenRecordedEvidence
+      ? onOpenRecordedEvidence(evidenceModel, path)
+      : onOpenVisual(artifactUrlForEntry(gatewayUrl, runId, { path, purpose: 'evidence' }));
   const [, refreshComparisons] = useState(0);
   const layouts = useRef<ComparisonLayouts>({ workspace: 0, rail: 0, rows: {} });
   const [reviewReasons, setReviewReasons] = useState<Record<string, string>>({});
@@ -243,6 +247,7 @@ export function EvidenceReviewWorkspace({
             ).map((filter) => (
               <Pressable
                 key={filter}
+                testID={`companion-evidence-filter-${filter}`}
                 style={styles.evidenceFilterChip}
                 accessibilityState={{ selected: evidenceModel.comparisonFilter === filter }}
                 onPress={() => {
@@ -278,12 +283,6 @@ export function EvidenceReviewWorkspace({
               row.after.some((media) => media.identity === row.selectedAfter?.identity)
                 ? convert(row.selectedAfter)
                 : undefined;
-            const open = (path: string) =>
-              onOpenRecordedEvidence
-                ? onOpenRecordedEvidence(evidenceModel, path)
-                : onOpenVisual(
-                    artifactUrlForEntry(gatewayUrl, runId, { path, purpose: 'evidence' }),
-                  );
             return (
               <View
                 key={row.claim.id}
@@ -517,14 +516,11 @@ export function EvidenceReviewWorkspace({
               {evidenceModel.comparisonView.unassigned.map((media) => (
                 <Pressable
                   key={media.identity}
-                  onPress={() =>
-                    onOpenVisual(
-                      artifactUrlForEntry(gatewayUrl, runId, {
-                        path: media.artifactPath,
-                        purpose: 'evidence',
-                      }),
-                    )
-                  }
+                  testID={`companion-unassigned-media-${media.artifactPath}`}
+                  onPress={() => {
+                    evidenceModel.selectComparisonMedia(media.identity);
+                    open(media.artifactPath);
+                  }}
                 >
                   <Text style={styles.deltaActionText}>{media.name}</Text>
                 </Pressable>

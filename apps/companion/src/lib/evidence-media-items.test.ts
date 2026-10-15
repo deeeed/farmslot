@@ -75,3 +75,26 @@ test('an ordinary visual opens its own list despite a retained comparison select
   assert.equal(evidenceViewerSelection(null, manifest, moment).index, -1);
   assert.equal(evidenceViewerSelection('https://gateway/missing', manifest, moment).index, -1);
 });
+
+test('selecting Unassigned media replaces a prior claim in the recorded viewer', () => {
+  const path = 'artifacts/ordinary.png';
+  const model = createEvidenceReviewModel({
+    package: fixture.input,
+    artifactPrefix: 'artifacts/head/',
+    artifacts: [{ path, purpose: 'evidence', type: 'image' }],
+  });
+  model.selectClaim('check-1');
+  assert.ok(model.playback.clip);
+  model.setComparisonFilter('unassigned');
+  const media = model.comparisonView.unassigned.find((entry) => entry.artifactPath === path);
+  assert.ok(media);
+  model.selectComparisonMedia(media.identity);
+  const item = selectedEvidenceMediaItem(model, path, (value) => value, {});
+  assert.deepEqual(
+    model.selection?.artifacts.map((entry) => entry.artifactPath),
+    [path],
+  );
+  assert.equal(model.playback.clip, null);
+  assert.equal(item.mediaType, 'image');
+  assert.equal(evidenceViewerSelection(item.uri, [], [item]).index, 0);
+});

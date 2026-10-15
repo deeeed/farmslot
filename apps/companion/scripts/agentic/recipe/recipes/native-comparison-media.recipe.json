@@ -14,6 +14,11 @@
     {
       "id": "ordinary-viewer",
       "claim": "Ordinary artifacts remain accessible after a comparison selection."
+    },
+    {
+      "id": "unassigned-viewer",
+      "claim": "Unassigned media opens its own recorded selection after a comparison.",
+      "proofMode": "state"
     }
   ],
   "workflow": {
@@ -141,7 +146,7 @@
         "action": "ui.press",
         "test_id": "companion-artifact-media-viewer-close",
         "intent": "Close the viewer without resolving the gate.",
-        "next": "scroll-raw-toggle"
+        "next": "show-unassigned"
       },
       "done": {
         "action": "end",
@@ -186,6 +191,62 @@
         "timeout_ms": 10000,
         "intent": "The supporting artifact disclosure is ready after the viewer closes.",
         "next": "show-raw"
+      },
+      "show-unassigned": {
+        "action": "ui.press",
+        "test_id": "companion-evidence-filter-unassigned",
+        "intent": "Show media without an AC binding after a comparison.",
+        "next": "open-unassigned"
+      },
+      "open-unassigned": {
+        "action": "ui.press",
+        "test_id": "companion-unassigned-media-artifacts/recipe-runs/head/ordinary.png",
+        "intent": "Open the Unassigned ordinary image through the recorded viewer.",
+        "next": "unassigned-title"
+      },
+      "unassigned-title": {
+        "action": "ui.wait_for",
+        "test_id": "companion-artifact-media-viewer-title",
+        "text": "ordinary.png",
+        "expected": "visible",
+        "timeout_ms": 10000,
+        "proves": ["unassigned-viewer"],
+        "intent": "The viewer shows the Unassigned image instead of the previous video.",
+        "next": "unassigned-index"
+      },
+      "unassigned-index": {
+        "action": "ui.wait_for",
+        "test_id": "companion-artifact-media-viewer-index",
+        "text": "1/1",
+        "expected": "visible",
+        "proves": ["unassigned-viewer"],
+        "intent": "The Unassigned image uses its one-item recorded selection.",
+        "next": "hud-capture-unassigned"
+      },
+      "hud-capture-unassigned": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Record the Unassigned image selected after comparison media.",
+        "next": "capture-unassigned"
+      },
+      "capture-unassigned": {
+        "action": "ui.screenshot",
+        "path": "native-media-unassigned-viewer.png",
+        "covers": ["unassigned-viewer"],
+        "intent": "Record the Unassigned image in its own gallery.",
+        "next": "close-unassigned"
+      },
+      "close-unassigned": {
+        "action": "ui.press",
+        "test_id": "companion-artifact-media-viewer-close",
+        "intent": "Return without changing the gate or evidence.",
+        "next": "show-all"
+      },
+      "show-all": {
+        "action": "ui.press",
+        "test_id": "companion-evidence-filter-all",
+        "intent": "Restore the full comparison view before checking ordinary files.",
+        "next": "scroll-raw-toggle"
       }
     }
   }
