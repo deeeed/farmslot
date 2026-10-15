@@ -154,6 +154,13 @@
         "cmd": "node --import tsx scripts/e2e-review-qa-contract.mts profile-selection",
         "timeout_ms": 90000,
         "intent": "Public CLI/RPC refuse ambiguous profiles before admission, resolve explicit/default/sole profiles, and retain their snapshots after restart and config edits.",
+        "next": "qa-profile-selection-sources"
+      },
+      "qa-profile-selection-sources": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts profile-selection temp/qa-profile-selection-sources sources",
+        "timeout_ms": 180000,
+        "intent": "Source-enabled admission preserves typed QA choices, refuses before creating a run and accepts an explicit profile from the verified pack.",
         "next": "qa-pool"
       }
     }

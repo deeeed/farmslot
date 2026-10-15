@@ -133,14 +133,9 @@ export class PRReviewRequestForm extends LitElement {
       farm: farm?.workflowDefaults,
     });
     if (prReviewWorkflow(resolved.review) === 'qa') {
-      const qaPolicy = resolvePRWorkflowDefaults({ workflow: 'qa', farm: farm?.workflowDefaults });
       resolved.review = {
         ...resolved.review,
-        qaProfileId: resolveQaProfileId(
-          farm?.qa,
-          resolved.review.qaProfileId,
-          qaPolicy.review.qaProfileId,
-        ),
+        qaProfileId: resolveQaProfileId(farm?.qa, resolved.review.qaProfileId),
       };
     }
     return { teamId, team, policy, farm, resolved };

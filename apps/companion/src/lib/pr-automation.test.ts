@@ -627,3 +627,41 @@ test('QA profile policy beats the configured default while an explicit user pick
   assert.equal(effective.review.qaProfileId, 'full');
   assert.equal(buildPRRequest(draft, 'explicit', effective).review?.qaProfileId, 'full');
 });
+
+test('Run QA retains repository and team profile choices when the request only selects the QA workflow', () => {
+  const selectedTeam = structuredClone(team);
+  const draft: ReturnType<typeof newPRRequestDraft> = {
+    ...newPRRequestDraft(),
+    url: 'https://github.com/owner/repo/pull/42',
+    teamId: team.id,
+    overrideReview: true,
+    review: { mode: 'cold', workflow: 'qa' },
+  };
+  const farms: NonNullable<Parameters<typeof effectivePRRequest>[2]> = [
+    {
+      name: 'project',
+      qa: {
+        default_profile: 'default',
+        profiles: ['default', 'farm', 'team', 'repository'].map((id) => ({
+          id,
+          title: id,
+          template_id: 'qa/shared',
+        })),
+      },
+      workflowDefaults: { qa: { review: { mode: 'cold', workflow: 'qa', qaProfileId: 'farm' } } },
+    },
+  ];
+  selectedTeam.config.review = { mode: 'cold', workflow: 'qa', qaProfileId: 'team' };
+  selectedTeam.config.repositories[0].review = {
+    mode: 'cold',
+    workflow: 'qa',
+    qaProfileId: 'repository',
+  };
+  let resolved = effectivePRRequest(draft, [selectedTeam], farms);
+  assert.equal(resolved.review.qaProfileId, 'repository');
+  assert.equal(buildPRRequest(draft, 'repo-inherited', resolved).review?.qaProfileId, 'repository');
+  delete selectedTeam.config.repositories[0].review;
+  resolved = effectivePRRequest(draft, [selectedTeam], farms);
+  assert.equal(resolved.review.qaProfileId, 'team');
+  assert.equal(buildPRRequest(draft, 'team-inherited', resolved).review?.qaProfileId, 'team');
+});

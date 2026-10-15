@@ -97,20 +97,13 @@ export function effectivePRRequest(
     team: team?.config,
     farm: farm?.workflowDefaults,
   });
-  const qaPolicy =
+  const review =
     prReviewWorkflow(resolved.review) === 'qa'
-      ? resolvePRWorkflowDefaults({ workflow: 'qa', farm: farm?.workflowDefaults }).review
-      : undefined;
-  const review = qaPolicy
-    ? {
-        ...resolved.review,
-        qaProfileId: resolveQaProfileId(
-          farm?.qa,
-          resolved.review.qaProfileId,
-          qaPolicy.qaProfileId,
-        ),
-      }
-    : resolved.review;
+      ? {
+          ...resolved.review,
+          qaProfileId: resolveQaProfileId(farm?.qa, resolved.review.qaProfileId),
+        }
+      : resolved.review;
   const profile = farm?.qa?.profiles.find((item) => item.id === review.qaProfileId);
   return {
     project: policy?.project ?? '',

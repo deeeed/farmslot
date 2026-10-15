@@ -7,9 +7,11 @@ import { once } from 'node:events';
 import { closeSync, openSync } from 'node:fs';
 import {
   copyFile,
+  cp,
   mkdir,
   mkdtemp,
   readdir,
+  realpath,
   readFile,
   rm,
   stat,
@@ -46,9 +48,12 @@ import {
   createStandardCoreAdapters,
 } from '../packages/recipe-runner/src/index.js';
 
+import { ProofSourceUpstream } from './sources-validation/upstream.js';
+
 const root = fileURLToPath(new URL('../', import.meta.url));
 const scenario = process.argv[2];
 const publicationCase = process.argv[4] ?? 'pass';
+const sourceProfileProof = scenario === 'profile-selection' && process.argv[4] === 'sources';
 if (scenario === 'publication-delivery')
   assert(
     [
@@ -120,7 +125,7 @@ assert(
   ].includes(scenario),
   'Expected profiles, legacy-queue or conflicts',
 );
-const fixture = await mkdtemp(path.join(tmpdir(), 'farmslot-review-qa-'));
+const fixture = await realpath(await mkdtemp(path.join(tmpdir(), 'farmslot-review-qa-')));
 // Reuse existing objects without creating commits or checking out another copy of the source.
 execFileSync('git', ['clone', '--shared', '--no-checkout', root, fixture], { stdio: 'pipe' });
 const log = path.join(fixture, 'gateway.log');
@@ -697,6 +702,7 @@ if (scenario === 'ready-gate-refusal') {
     updatedAt: now,
   });
 }
+let upstream: ProofSourceUpstream | undefined;
 let gateway = launchGateway();
 const terminateOwnedGateway = () => {
   if (gateway.exitCode !== null || !gateway.pid) return;
@@ -743,6 +749,33 @@ async function stopGateway() {
 }
 try {
   await connectGateway();
+  if (sourceProfileProof) {
+    await stopGateway();
+    upstream = await ProofSourceUpstream.start(path.join(fixture, 'upstream'), root);
+    execFileSync('git', ['-C', upstream.worktree, 'checkout', 'main'], { stdio: 'pipe' });
+    await cp(path.join(fixture, 'projects'), path.join(upstream.worktree, 'qa-profiles'), {
+      recursive: true,
+    });
+    await upstream.advance('main', 'qa-profile-inputs');
+    process.env.GIT_SSL_CAINFO = upstream.caFile;
+    await json(path.join(fixture, 'home/sources.json'), {
+      schemaVersion: 1,
+      revision: 1,
+      pollIntervalMs: 30000,
+      sources: [{ id: 'qa-pack', kind: 'pack', repo: upstream.repository }],
+      packs: {
+        ...Object.fromEntries(
+          ['first', 'second', 'sole'].map((project) => [
+            project,
+            { sourceId: 'qa-pack', entry: `qa-profiles/${project}` },
+          ]),
+        ),
+        'farmslot-farm': { sourceId: 'qa-pack', entry: 'framework' },
+      },
+    });
+    gateway = launchGateway();
+    await connectGateway();
+  }
   const base = {
     project: 'first',
     slotId: 'first-disabled',
@@ -1320,8 +1353,8 @@ try {
     assert.deepEqual(first.project.qa?.profiles[0].inputs, { scope: { kind: 'changes' } });
   } else if (scenario === 'profile-selection') {
     testGatewayProfile(path.join(fixture, 'home'), `ws://127.0.0.1:${port}`, token);
-    const invoke = (project: string, flags: string[] = []) => {
-      const child = spawnSync(
+    const invoke = async (project: string, flags: string[] = []) => {
+      const child = spawn(
         process.execPath,
         [
           '--import',
@@ -1330,7 +1363,7 @@ try {
           '--url',
           `ws://127.0.0.1:${port}`,
           '--timeout',
-          '10000',
+          sourceProfileProof ? '45000' : '10000',
           '--json',
           'run',
           'create',
@@ -1356,7 +1389,7 @@ try {
         ],
         {
           cwd: path.join(root, 'packages/cli'),
-          encoding: 'utf8',
+          timeout: 60000,
           env: {
             ...process.env,
             FARMSLOT_HOME: path.join(fixture, 'home'),
@@ -1364,13 +1397,26 @@ try {
           },
         },
       );
-      assert(child.stdout, child.stderr);
-      return { code: child.status, envelope: JSON.parse(child.stdout) };
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (chunk) => {
+        stdout += chunk.toString();
+      });
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk.toString();
+      });
+      const [code] = await once(child, 'close');
+      assert(stdout, stderr);
+      return { code, envelope: JSON.parse(stdout) };
     };
     const before = await connection!.call('run.list');
-    const missing = invoke('first');
+    const missing = await invoke('first');
     assert.notEqual(missing.code, 0);
-    assert.equal(missing.envelope.error.code, 'REVIEW_QA_NEEDS_CONFIGURATION');
+    assert.equal(
+      missing.envelope.error.code,
+      'REVIEW_QA_NEEDS_CONFIGURATION',
+      JSON.stringify(missing.envelope),
+    );
     assert.deepEqual(missing.envelope.error.details.qaProfiles, [
       { id: 'release', title: 'Release validation' },
       { id: 'changes', title: 'Validate changes' },
@@ -1392,30 +1438,37 @@ try {
       ['second', [], 'candidate'],
       ['sole', [], 'only'],
     ] as const) {
-      const result = invoke(project, [...flags]);
+      const result = await invoke(project, [...flags]);
       assert.equal(result.code, 0, JSON.stringify(result.envelope));
       const run = result.envelope.data.run;
       assert.equal(run.qa.profile.id, expected);
+      if (sourceProfileProof)
+        assert(
+          run.sourcePlan || run.sourceProvenance,
+          'Source authority must bind the admitted run',
+        );
       assert.equal(run.status, 'created');
       captured.push({ id: run.id, qa: run.qa });
     }
-    const invalid = invoke('second', ['--qa-profile', 'absent']);
+    const invalid = await invoke('second', ['--qa-profile', 'absent']);
     assert.notEqual(invalid.code, 0);
     assert.match(invalid.envelope.error.message, /does not exist/);
-    await stopGateway();
-    const projectPath = path.join(fixture, 'projects/second/project.json');
-    const changed = JSON.parse(await readFile(projectPath, 'utf8'));
-    changed.qa.default_profile = 'release';
-    changed.qa.profiles.find((profile: { id: string }) => profile.id === 'candidate').title =
-      'Changed configuration title';
-    await json(projectPath, changed);
-    gateway = launchGateway();
-    await connectGateway();
-    for (const saved of captured) {
-      const { run } = await connection!.call<{ run: { qa: unknown } }>('run.get', {
-        runId: saved.id,
-      });
-      assert.deepEqual(run.qa, saved.qa, 'Restart/config edits must preserve admitted QA');
+    if (!sourceProfileProof) {
+      await stopGateway();
+      const projectPath = path.join(fixture, 'projects/second/project.json');
+      const changed = JSON.parse(await readFile(projectPath, 'utf8'));
+      changed.qa.default_profile = 'release';
+      changed.qa.profiles.find((profile: { id: string }) => profile.id === 'candidate').title =
+        'Changed configuration title';
+      await json(projectPath, changed);
+      gateway = launchGateway();
+      await connectGateway();
+      for (const saved of captured) {
+        const { run } = await connection!.call<{ run: { qa: unknown } }>('run.get', {
+          runId: saved.id,
+        });
+        assert.deepEqual(run.qa, saved.qa, 'Restart/config edits must preserve admitted QA');
+      }
     }
     await json(
       path.join(path.resolve(process.argv[3] ?? 'temp/qa-profile-selection'), 'receipt.json'),
@@ -1429,8 +1482,9 @@ try {
           'configured-default',
           'sole',
           'invalid-id',
-          'restart-frozen-profile',
+          ...(sourceProfileProof ? [] : ['restart-frozen-profile']),
         ],
+        sourceAuthority: sourceProfileProof,
         workerExecution: false,
       },
     );
@@ -2157,6 +2211,20 @@ try {
   throw new Error(`${String(error)}\n${details}`, { cause: error });
 } finally {
   await stopGateway();
+  await upstream?.close();
+  if (sourceProfileProof && process.platform === 'darwin') {
+    const mounts = path.join(fixture, 'home/sources/gateway/mounts');
+    const directories = await readdir(mounts, { withFileTypes: true }).catch((error) => {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    });
+    for (const entry of directories) {
+      if (!entry.isDirectory()) continue;
+      const mount = path.join(mounts, entry.name);
+      if ((await stat(mount)).dev !== (await stat(mounts)).dev)
+        execFileSync('hdiutil', ['detach', '-quiet', mount], { stdio: 'pipe' });
+    }
+  }
   // The private tmux server outlives the gateway; its socket exists only if it started.
   const tmuxSocket = path.join(tmuxEnv.TMUX_TMPDIR!, `tmux-${process.getuid!()}`, 'default');
   const tmuxStarted =
