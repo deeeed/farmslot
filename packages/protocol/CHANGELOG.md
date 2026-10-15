@@ -5,6 +5,9 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Add gateway-retained artifact references and the run.bundle.retain recovery contract; artifact links preserve their capture digest and availability.
+
+## 0.48.0 - 2026-10-15
+
 - Describe validated operator waits and their shared run activity label without changing run status.
 
 ## 0.47.0 - 2026-10-15

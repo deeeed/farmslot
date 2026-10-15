@@ -8,6 +8,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.15.1 - 2026-10-15
+
+- Use the operator-wait runtime and protocol dependency set.
+
 ## 0.15.0 - 2026-10-15
 
 - Replace `PlatformAdapter` with `ProjectRuntime` and `AdapterActions` with `ActionCatalog`.

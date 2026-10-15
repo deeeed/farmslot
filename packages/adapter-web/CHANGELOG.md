@@ -4,7 +4,12 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## Unreleased
 
+
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.10.6 - 2026-10-15
+
+- Use the operator-wait runtime and protocol dependency set.
 
 ## 0.10.5 - 2026-10-15
 
