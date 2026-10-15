@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Share the read-only authored task Markdown renderer, retaining prose, checklists, selected evidence and public-safe provenance.
 
 ## 0.21.0 - 2026-10-15
 

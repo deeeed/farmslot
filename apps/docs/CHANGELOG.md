@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document authored task Markdown rendering and its output controls in the generated recipe CLI reference.
+
 - Document the accepted person-device session expiry and revocation contract in ADR-051.
 
 - Document canonical task, review and recipe quality commands and retained tooling verification.

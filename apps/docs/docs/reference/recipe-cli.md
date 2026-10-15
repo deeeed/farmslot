@@ -459,6 +459,9 @@ Options:
   --validate                          Validate the artifact package and runner
                                       provenance
   --format <format>                   Output format (choices: "text", "markdown")
+  --command <text>                    Invocation displayed above the authored task run
+                                      log (Markdown only)
+  --out <file>                        Write Markdown to this file instead of stdout
   -h, --help                          display help for command
 
 Commands:

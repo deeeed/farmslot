@@ -398,7 +398,7 @@ Every active pack, skill, template, library and completion caller MUST move or b
 
 ## Authored task Markdown
 
-**Status:** Proposed under ADR-068 Amendment 4. Implementation follows reviewed content approval in the same caller-parity PR.
+**Status:** Accepted under ADR-068 Amendment 4, lead approval 2026-10-16 at `2a38e98a81bc8db246997ebb86b97cfe1e3517f6`. Implementation: [#1173](https://github.com/deeeed/farmslot/pull/1173). Installed consumers require the matching shared-package release.
 
 ### Public surface
 

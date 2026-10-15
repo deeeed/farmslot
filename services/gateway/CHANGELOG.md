@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Surface structured recipe artifact renderer failures during PR-body publication preparation.
+
 - Cover person-device lifetime and revocation through the shared credential store.
 - Resolve frozen output package selections inside their captured bundle, preserving the original task path and rejecting roots outside the selected snapshot.
 

@@ -164,7 +164,7 @@ The [helper cutover specification](../reference/project-recipe-contract.md#share
 
 ## Amendment 4: Authored task Markdown, 2026-10-16
 
-**Status:** Proposed. The accepted decision and earlier amendments retain their status.
+**Status:** Accepted by the lead under delegated amendment authority, 2026-10-16, at content snapshot `2a38e98a81bc8db246997ebb86b97cfe1e3517f6`. Implementation: [#1173](https://github.com/deeeed/farmslot/pull/1173). Earlier decisions retain their status.
 
 ### Decision and rationale
 
