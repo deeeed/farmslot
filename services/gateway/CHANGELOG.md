@@ -5,6 +5,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Retain run output and publication evidence in gateway-owned bundles; serve reports, recipe metadata and artifact ranges from pinned local snapshots, with explicit backfill and retention limits.
+- Refuse stale publication approvals before resolving their gate, and retain accepted approvals and their exact package through recovery without restarting reviews.
+
 - Preserve unfinished reviewer requests during recovery, restore current-head review progress on replay, and record a COLD fallback when WARM lineage is unavailable.
 
 - Refresh current-head publication packages through their existing gate, preserving prior packages, decisions and selected evidence.

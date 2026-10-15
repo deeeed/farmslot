@@ -40,7 +40,7 @@ import { DocumentViewer } from '../../components/DocumentViewer';
 import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
 import { MediaViewer } from '../../components/MediaViewer';
 import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
-import { TaskProgressFallbackPanel, TaskProgressPanel } from '../../components/TaskProgressPanel';
+import { TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { useConnectedTransport } from '../../hooks/useConnectedTransport';
 import { useHumanGateGuard } from '../../hooks/useHumanGateGuard';
 import { useRunAcceptance } from '../../hooks/useRunAcceptance';
@@ -1487,11 +1487,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
             onLayout={rememberSection('progress')}
           >
             <Text style={styles.sectionTitle}>Worker progress</Text>
-            <TaskProgressFallbackPanel
-              summary={fallbackTaskProgress}
-              error={taskProgressError}
-              compact
-            />
+            <TaskProgressPanel summary={fallbackTaskProgress} error={taskProgressError} compact />
           </View>
         ) : null}
 

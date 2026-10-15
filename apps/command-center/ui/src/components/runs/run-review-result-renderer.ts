@@ -51,10 +51,11 @@ export function renderReviewProcess(run: Run, ctx: RunEvidenceRenderContext) {
       ${run.reviewWorkspace?.support?.skills.map((skill) => skill.name).join(', ') ||
       'Project review instructions'}
     </p>
-    <div class="evidence-title">Task progress</div>
     ${ctx.taskProgress
       ? html`<progress-tracker
           .structured=${ctx.taskProgress}
+          .activeStep=${'review'}
+          .activeTaskBasename=${run.activeTaskFile?.split('/').pop()}
           .runId=${run.id}
           .runActive=${isRunWorking(run)}
         ></progress-tracker>`

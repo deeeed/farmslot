@@ -1,4 +1,4 @@
-import { html, nothing, type TemplateResult } from 'lit';
+import { html, nothing } from 'lit';
 import { customElement } from 'lit/decorators.js';
 
 import {
@@ -6,24 +6,15 @@ import {
   resolveRunSlotId,
   type RunStep,
   staticReviewReplayBlock,
-  type TaskStepProgress,
 } from '@farmslot/protocol';
 
 import '../shared/media-lightbox.js';
 import '../shared/step-artifacts.js';
 import '../shared/slot-prepare-options.js';
+import '../progress-tracker/progress-tracker.js';
 
 import { colors } from '../../styles/theme-tokens.js';
-import {
-  OperationClock,
-  operationPanelStyles,
-  renderOperationPanel,
-} from '../progress-tracker/operation-panel.js';
-import {
-  renderSubtaskBlock,
-  subtaskBlockStyles,
-  SubtaskOpenState,
-} from '../progress-tracker/subtask-block.js';
+import { SubtaskOpenState } from '../progress-tracker/subtask-block.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
 import { CIWatchPokeController } from './ci-watch-actions.js';
@@ -64,8 +55,8 @@ import { stepInspectorStyles } from './step-inspector-styles.js';
 
 @customElement('step-inspector')
 export class StepInspector extends StepInspectorState {
-  private readonly _operationClock = new OperationClock(this, () => this.taskProgress);
-  static styles = [operationPanelStyles, stepInspectorStyles, subtaskBlockStyles];
+  private readonly subtaskOpen = new SubtaskOpenState();
+  static styles = stepInspectorStyles;
 
   /**
    * Command Center opens an unsettled child on first sight (the operator is
@@ -73,7 +64,6 @@ export class StepInspector extends StepInspectorState {
    * then on, so live progress updates cannot fight them. Scoped by run: this
    * inspector is reused as run detail swaps runs, and a unit id repeats.
    */
-  private readonly _subtaskOpen = new SubtaskOpenState();
 
   private _ciPokeRunId = '';
   private readonly _ciPoke = new CIWatchPokeController((state) => {
@@ -180,7 +170,21 @@ export class StepInspector extends StepInspectorState {
           ? html` ${logPaths.map(([k, v]) => this._renderLogPaths(k, v))} `
           : nothing}
         ${this._renderCIWatchBanner(s)} ${this._renderReviewLoopSummary(s)}
-        ${this._renderTaskProgress()}
+        ${this.taskProgress?.totalSteps
+          ? html`<progress-tracker
+              data-testid="step-task-progress"
+              .structured=${this.taskProgress}
+              .openScope=${this.subtaskOpen.scope(this.run?.id)}
+              .runId=${this.run?.id}
+              .runActive=${this.run ? isRunWorking(this.run) : false}
+              .activeStep=${this.step?.name === 'review'
+                ? 'review'
+                : this.step?.name === 'ci-watch'
+                  ? 'ci-watch'
+                  : 'monitor'}
+              .activeTaskBasename=${this.run?.activeTaskFile?.split('/').pop()}
+            ></progress-tracker>`
+          : nothing}
         ${costInfo
           ? html`
               <div class="cost-summary">
@@ -324,70 +328,6 @@ export class StepInspector extends StepInspectorState {
       <div class="kv-row">
         <span class="kv-key">${key}</span>
         <span class="kv-value">${this._renderValue(key, value)}</span>
-      </div>
-    `;
-  }
-
-  /**
-   * One checklist step row, plus the child unit block when the step owns one
-   * (ADR-060). `nested` draws the child's rows and stops: one level in v1.
-   */
-  private _renderTaskProgressStep(step: TaskStepProgress, nested = false): TemplateResult {
-    const icon =
-      step.status === 'done'
-        ? '✓'
-        : step.status === 'running'
-          ? '▸'
-          : step.status === 'skipped'
-            ? '–'
-            : '○';
-    return html`
-      <div class="task-progress-step ${step.status}">
-        <span class="task-progress-step-icon">${icon}</span>
-        <span class="task-progress-step-name">${step.name}</span>
-      </div>
-      ${step.subtask && !nested
-        ? renderSubtaskBlock(
-            step.subtask,
-            (childStep) => this._renderTaskProgressStep(childStep, true),
-            this._subtaskOpen.scope(this.run?.id),
-          )
-        : nothing}
-    `;
-  }
-
-  private _renderTaskProgress() {
-    const tp = this.taskProgress;
-    if (!tp?.totalSteps) return nothing;
-    const pct = Math.max(0, Math.min(100, (tp.completedSteps / tp.totalSteps) * 100));
-    return html`
-      <div class="section-title">Task Progress</div>
-      <div class="task-progress" data-testid="step-task-progress">
-        <div class="task-progress-summary">
-          <span
-            >${tp.completedSteps}/${tp.totalSteps}${tp.currentPhase
-              ? ` — ${tp.currentPhase}`
-              : ''}</span
-          >
-          <span>${Math.round(pct)}%</span>
-        </div>
-        <div class="task-progress-bar">
-          <div class="task-progress-fill" style="width:${pct}%"></div>
-        </div>
-        ${renderOperationPanel(tp, this.run?.id, {
-          runActive: this.run ? isRunWorking(this.run) : false,
-        })}
-        ${tp.phases.map(
-          (phase) => html`
-            <div class="task-phase">
-              <div class="task-phase-title">
-                <span>${phase.name}</span>
-                <span>${phase.completedSteps}/${phase.totalSteps}</span>
-              </div>
-              ${phase.steps.map((step) => this._renderTaskProgressStep(step))}
-            </div>
-          `,
-        )}
       </div>
     `;
   }

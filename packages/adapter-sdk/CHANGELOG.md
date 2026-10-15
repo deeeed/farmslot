@@ -8,6 +8,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.14.2 - 2026-10-15
+
+- Align the published dependency set with protocol 0.47.0 initial resource proof modes.
+
 ## 0.14.1 - 2026-10-15
 
 - Keep pending visual criteria visible while recorded evidence is loading or unavailable.

@@ -1,6 +1,7 @@
 import { html, nothing } from 'lit';
 
 import { isSlotFreedByPark } from '@farmslot/protocol';
+import { checklistProgressView } from '@farmslot/review-dispatch';
 
 import '../chat/native-session-view.js';
 
@@ -30,9 +31,9 @@ export function renderSlotViewAgentContexts(view: SlotView) {
   const contexts = view._agentContexts();
   if (contexts.length === 0) return nothing;
   const selected = view._selectedAgentContext();
-  const totalSteps = view._structuredProgress?.totalSteps ?? view._taskSteps.length;
-  const doneSteps =
-    view._structuredProgress?.completedSteps ?? view._taskSteps.filter((s) => s.checked).length;
+  const progressView = checklistProgressView(view._structuredProgress, { steps: view._taskSteps });
+  const totalSteps = progressView?.totalSteps ?? 0;
+  const doneSteps = progressView?.completedSteps ?? 0;
   return html`
     <div class="sv-agent-contexts" aria-label="Agent roles">
       ${contexts.map((ctx) => {
@@ -140,7 +141,11 @@ export function renderSlotViewSidebarActions(view: SlotView) {
 
 export function renderSlotViewSidebarTask(view: SlotView) {
   const slot = view._slot;
-  if (!slot || !view._shouldShowTaskUI()) {
+  if (
+    !slot ||
+    !view._shouldShowTaskUI() ||
+    (!view._structuredProgress && view._taskSteps.length === 0)
+  ) {
     return html`<div
       style="padding: ${spacing.sm}; color: ${colors.textMuted}; font-size: ${fonts.sizeXs}"
     >
@@ -148,45 +153,13 @@ export function renderSlotViewSidebarTask(view: SlotView) {
     </div>`;
   }
 
-  // Structured progress (phase accordion) when available
-  if (view._structuredProgress) {
-    // The slot follows one run to the next, so child-unit expand state is
-    // scoped by run. Use the linked run, the same identity the progress itself
-    // is fetched and filtered by: a pinned or cached linked run can differ from
-    // the fleet's `currentRunId`, and scoping by the fleet value would file the
-    // viewer's expand state under a run this panel is not showing.
-    return html`<progress-tracker
-      .structured=${view._structuredProgress}
-      .runId=${view._linkedRun?.id}
-      .runActive=${view._linkedRun ? isRunWorking(view._linkedRun) : false}
-    ></progress-tracker>`;
-  }
-
-  // Fallback to flat step list
-  if (view._taskSteps.length === 0) {
-    return html`
-      <div style="padding: ${spacing.sm}; color: ${colors.textMuted}; font-size: ${fonts.sizeXs}">
-        No active task
-      </div>
-    `;
-  }
-
-  return html`
-    <div class="sv-task-header">Progress ${Math.round(view._taskProgress * 100)}%</div>
-    <div class="sv-progress-bar">
-      <div class="sv-progress-fill" style="width:${view._taskProgress * 100}%"></div>
-    </div>
-    ${view._taskSteps.map(
-      (step) => html`
-        <div class="sv-task-step">
-          <div class="sv-task-checkbox ${step.checked ? 'checked' : ''}">
-            ${step.checked ? '\u2713' : ''}
-          </div>
-          <span class="sv-task-text ${step.checked ? 'checked' : ''}">${step.text}</span>
-        </div>
-      `,
-    )}
-  `;
+  return html`<progress-tracker
+    .structured=${view._structuredProgress}
+    .steps=${view._taskSteps}
+    .runId=${view._linkedRun?.id}
+    .runActive=${view._linkedRun ? isRunWorking(view._linkedRun) : false}
+    .activeTaskBasename=${view._linkedRun?.activeTaskFile?.split('/').pop()}
+  ></progress-tracker>`;
 }
 
 export function renderSlotViewActivityPanel(view: SlotView) {
@@ -527,10 +500,11 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
             if (view._reviewFullWidth || !view._taskPanelOpen) return nothing;
             const ctx = view._taskAgentContext();
             const ctxLabel = ctx ? ctx.label || ctx.role : '';
-            const totalSteps = view._structuredProgress?.totalSteps ?? view._taskSteps.length;
-            const doneSteps =
-              view._structuredProgress?.completedSteps ??
-              view._taskSteps.filter((s) => s.checked).length;
+            const progressView = checklistProgressView(view._structuredProgress, {
+              steps: view._taskSteps,
+            });
+            const totalSteps = progressView?.totalSteps ?? 0;
+            const doneSteps = progressView?.completedSteps ?? 0;
             return html`
               <div class="sv-task-panel-col" style="width:${view._taskPanelWidth}px">
                 <div class="sv-task-panel-header" title="${ctx?.taskFile ?? ''}">

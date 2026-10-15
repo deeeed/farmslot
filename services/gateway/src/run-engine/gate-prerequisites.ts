@@ -597,7 +597,7 @@ export async function collectRunGateReadiness(
       allowedReviewOverrides.push(APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION);
     if (buildUnavailableSnapshotAction(validReviews, preparedPackage, policy))
       allowedReviewOverrides.push(APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION);
-    if (required > 0 && (await source.reviewedInputsAwaitingReview(run))) {
+    if (await source.reviewedInputsAwaitingReview(run)) {
       reasons.push({
         code: 'review-inputs-awaiting-review',
         prerequisite: 'lifecycle',

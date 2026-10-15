@@ -1,11 +1,8 @@
-import { html, nothing, type TemplateResult } from 'lit';
+import { html, nothing } from 'lit';
 
-import type { Run, TaskProgressStructured, TaskStepProgress } from '@farmslot/protocol';
-import { nestedLoopProgressLabel } from '@farmslot/protocol/checklist-target';
+import type { Run } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
-import { renderOperationPanel } from '../progress-tracker/operation-panel.js';
-import { renderSubtaskBlock, type SubtaskOpenScope } from '../progress-tracker/subtask-block.js';
 
 import { isInteractiveCompletionAwaitingOperator } from './run-detail-model.js';
 import { formatDuration } from './run-utils.js';
@@ -92,80 +89,6 @@ export function renderRunPipelineSummary(run: Run) {
             >${run.metrics.nudgeCount} nudge${run.metrics.nudgeCount > 1 ? 's' : ''}</span
           >`
         : nothing}
-    </div>
-  `;
-}
-
-/**
- * One substep row, plus the child unit block when the step owns one (ADR-060).
- * `nested` renders the child's own rows and stops there: v1 draws a single
- * level even though the projection nests recursively. `openScope` belongs to
- * the host element, scoped to the run it is showing, so the viewer's
- * expand/collapse survives progress updates but not a run change.
- */
-function renderSubstep(
-  step: TaskStepProgress,
-  openScope: SubtaskOpenScope,
-  nested = false,
-): TemplateResult {
-  return html`
-    <div class="substep ${step.status}">
-      <span class="substep-icon">
-        ${step.status === 'done' ? 'v' : step.status === 'running' ? '*' : '.'}
-      </span>
-      ${step.name}
-    </div>
-    ${step.subtask && !nested
-      ? renderSubtaskBlock(
-          step.subtask,
-          (childStep) => renderSubstep(childStep, openScope, true),
-          openScope,
-        )
-      : nothing}
-  `;
-}
-
-export function renderPipelineProgressPanel(
-  progress: TaskProgressStructured,
-  activeStep: 'monitor' | 'review' | 'ci-watch' | 'human-gate' | null,
-  close: () => void,
-  openScope: SubtaskOpenScope,
-  activeTaskBasename?: string | null,
-  runId?: string | null,
-  runActive = false,
-) {
-  const label = nestedLoopProgressLabel(activeStep, activeTaskBasename);
-  return html`
-    <div class="monitor-detail">
-      <div class="monitor-detail-header">
-        <span
-          >${label} ${progress.completedSteps}/${progress.totalSteps}
-          ${progress.currentPhase ? ` — ${progress.currentPhase}` : ''}
-        </span>
-        <button class="monitor-close" aria-label="Close worker progress" @click=${close}>x</button>
-      </div>
-      ${renderOperationPanel(progress, runId, { runActive })}
-      ${progress.phases.map((phase) => {
-        const allDone = phase.completedSteps === phase.totalSteps;
-        const hasRunning = phase.steps.some((step) => step.status === 'running');
-        return html`
-          <div class="phase">
-            <div class="phase-header">
-              <span
-                style="color: ${hasRunning
-                  ? colors.accentHover
-                  : allDone
-                    ? colors.statusOk
-                    : colors.textPrimary}"
-              >
-                ${phase.name}
-              </span>
-              <span class="phase-count">${phase.completedSteps}/${phase.totalSteps}</span>
-            </div>
-            ${phase.steps.map((step) => renderSubstep(step, openScope))}
-          </div>
-        `;
-      })}
     </div>
   `;
 }

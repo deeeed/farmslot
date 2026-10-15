@@ -1,6 +1,5 @@
 import type { SlotStatus, TaskProgressStructured } from '@farmslot/protocol';
-
-import type { TaskStep } from './slot-view-model.js';
+import type { ChecklistProgressStep } from '@farmslot/review-dispatch';
 
 export function formatSlotViewDuration(ms: number): string {
   if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
@@ -11,7 +10,7 @@ export function formatSlotViewDuration(ms: number): string {
 
 export function hasSlotViewActiveTask(
   structuredProgress: TaskProgressStructured | undefined,
-  taskSteps: readonly TaskStep[],
+  taskSteps: readonly ChecklistProgressStep[],
 ): boolean {
   return !!(structuredProgress || taskSteps.length > 0);
 }
@@ -19,7 +18,7 @@ export function hasSlotViewActiveTask(
 export function shouldShowSlotViewTaskUi(
   slot: SlotStatus | null,
   structuredProgress: TaskProgressStructured | undefined,
-  taskSteps: readonly TaskStep[],
+  taskSteps: readonly ChecklistProgressStep[],
 ): boolean {
   if (!slot?.taskFile) return false;
   return (

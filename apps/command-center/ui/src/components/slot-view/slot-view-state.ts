@@ -14,6 +14,7 @@ import type {
   SlotStatus,
   TaskProgressStructured,
 } from '@farmslot/protocol';
+import type { ChecklistProgressStep } from '@farmslot/review-dispatch';
 
 import { gateway } from '../../gateway-client.js';
 import { type RecoveryPhase } from '../../utils/reconnect.js';
@@ -26,13 +27,7 @@ import {
   recipeRunnerUiOptions,
 } from '../workspace/recipe-runner-options-model.js';
 
-import {
-  type CheckResult,
-  type EditorId,
-  type GitData,
-  type OpenFile,
-  type TaskStep,
-} from './slot-view-model.js';
+import { type CheckResult, type EditorId, type GitData, type OpenFile } from './slot-view-model.js';
 import type { SlotViewRecipeEvidenceResult } from './slot-view-recipe-helpers.js';
 import type { SlotViewResizeType } from './slot-view-resize-effects.js';
 
@@ -56,7 +51,7 @@ export abstract class SlotViewState extends LitElement {
   // The built-in lifecycle actions (Prepare/Release/Refresh/Recycle/Cleanup)
   // moved to <slot-actions-panel>, which manages its own confirm state.
   @state() _pendingConfirm: string | null = null;
-  @state() _taskSteps: TaskStep[] = [];
+  @state() _taskSteps: ChecklistProgressStep[] = [];
   @state() _taskProgress = 0;
   @state() _structuredProgress?: TaskProgressStructured;
   @state() _selectedAgentContextId = 'primary';

@@ -6,13 +6,14 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Add gateway-retained artifact references and the run.bundle.retain recovery contract; artifact links preserve their capture digest and availability.
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+## 0.47.0 - 2026-10-15
+
+- Expose scoped review-budget grants and the effective review limit.
 - Declare initial resource proof modes in selected templates and share read-only admission with stored-plan precedence.
 
 ## 0.46.0 - 2026-10-15
 
 - Expose verified review exceptions so publication actions match their gate prerequisites.
-- Expose scoped review-budget grants and the effective review limit.
 - Resolve QA profiles from an explicit or policy id, an optional project default, or the sole profile; return typed choices for ambiguous requests.
 - Add the shared Sign out / switch account control to forget this device login and disconnect until explicit login or pairing.
 

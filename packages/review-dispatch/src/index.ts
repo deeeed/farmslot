@@ -1,5 +1,6 @@
 export * from './account-session.js';
 export * from './catalog.js';
+export * from './checklist-progress.js';
 export * from './execution.js';
 export * from './provenance.js';
 export * from './types.js';

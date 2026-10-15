@@ -1,22 +1,10 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { TaskStepSubtaskProgress } from '@farmslot/protocol';
+import type { TaskProgressStructured, TaskStepSubtaskProgress } from '@farmslot/protocol';
 
-import { subtaskProgressView, taskStepStatusColor } from '../lib/task-progress-view';
+import { subtaskProgressView } from '../lib/task-progress-view';
 import { baseStyles, colors, fonts, radii, spacing } from '../lib/theme';
-
-/** Row colours by step status, built once — a style object per step per render is waste. */
-const STEP_ICON_STYLES: Record<string, { color: string }> = Object.fromEntries(
-  ['done', 'running', 'pending', 'skipped'].map((status) => [
-    status,
-    { color: taskStepStatusColor(status) },
-  ]),
-);
-
-function stepIconStyle(status: string): { color: string } {
-  return STEP_ICON_STYLES[status] ?? STEP_ICON_STYLES.pending;
-}
 
 /**
  * A child checklist unit under its parent step (ADR-060), read-only. The header
@@ -36,7 +24,13 @@ function stepIconStyle(status: string): { color: string } {
  * One level only: child steps render as plain rows and never draw another block,
  * even though the projection nests recursively.
  */
-function TaskSubtaskBlockView({ subtask }: { subtask: TaskStepSubtaskProgress }) {
+function TaskSubtaskBlockView({
+  subtask,
+  renderProgress,
+}: {
+  subtask: TaskStepSubtaskProgress;
+  renderProgress: (progress: TaskProgressStructured) => React.ReactNode;
+}) {
   const [expanded, setExpanded] = React.useState(false);
   const view = subtaskProgressView(subtask);
   return (
@@ -73,30 +67,7 @@ function TaskSubtaskBlockView({ subtask }: { subtask: TaskStepSubtaskProgress })
         </Text>
       ) : null}
       {view.staleNote ? <Text style={styles.staleNote}>{view.staleNote}</Text> : null}
-      {expanded
-        ? subtask.progress.phases.map((phase) => (
-            <View key={`${subtask.id}-${phase.name}`} style={styles.childPhase}>
-              <View style={styles.childPhaseHeader}>
-                <Text style={styles.childPhaseName} numberOfLines={1}>
-                  {phase.name}
-                </Text>
-                <Text style={baseStyles.textMuted}>
-                  {phase.completedSteps}/{phase.totalSteps}
-                </Text>
-              </View>
-              {phase.steps.map((step) => (
-                <View key={`${subtask.id}-${phase.name}-${step.index}`} style={styles.childStepRow}>
-                  <Text style={[styles.childStepIcon, stepIconStyle(step.status)]}>
-                    {step.status === 'done' ? '✓' : step.status === 'running' ? '▶' : '○'}
-                  </Text>
-                  <Text style={styles.childStepName} numberOfLines={1}>
-                    {step.name}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          ))
-        : null}
+      {expanded ? renderProgress(subtask.progress) : null}
     </View>
   );
 }
@@ -156,37 +127,6 @@ const styles = StyleSheet.create({
   },
   staleNote: {
     color: colors.statusWarn,
-    fontSize: fonts.sizeXs,
-  },
-  childPhase: {
-    gap: spacing.xs,
-    paddingTop: spacing.xs,
-  },
-  childPhaseHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
-  },
-  childPhaseName: {
-    flex: 1,
-    color: colors.textSecondary,
-    fontSize: fonts.sizeXs,
-    fontWeight: '700',
-  },
-  childStepRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  childStepIcon: {
-    width: 14,
-    color: colors.textMuted,
-    fontSize: fonts.sizeXs,
-  },
-  childStepName: {
-    flex: 1,
-    minWidth: 0,
-    color: colors.textSecondary,
     fontSize: fonts.sizeXs,
   },
 });

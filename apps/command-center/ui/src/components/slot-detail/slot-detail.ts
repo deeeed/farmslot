@@ -7,10 +7,12 @@ import type {
   ScriptOutput,
   SlotHealth,
   SlotStatus,
+  TaskProgressStructured,
 } from '@farmslot/protocol';
 import { Events, Methods } from '@farmslot/protocol';
 
 import '../terminal/terminal-view.js';
+import '../progress-tracker/progress-tracker.js';
 import '../workspace/slot-workspace.js';
 
 import { gateway } from '../../gateway-client.js';
@@ -25,11 +27,6 @@ interface CheckResult {
   name: string;
   status: 'pass' | 'fail';
   detail: string;
-}
-
-interface TaskStep {
-  text: string;
-  checked: boolean;
 }
 
 type EditorId = 'cursor' | 'vscode';
@@ -59,8 +56,7 @@ export class SlotDetail extends LitElement {
   @state() private _actionRequestId = '';
   @state() private _actionExitCode: number | null = null;
   @state() private _pendingConfirm: string | null = null;
-  @state() private _taskSteps: TaskStep[] = [];
-  @state() private _taskProgress = 0;
+  @state() private _structuredProgress?: TaskProgressStructured;
   @state() private _repoPath = '';
   @state() private _editor: EditorId = 'cursor';
   @state() private _viewTab: 'detail' | 'workspace' = 'detail';
@@ -166,19 +162,7 @@ export class SlotDetail extends LitElement {
         Methods.TASK_PROGRESS,
         { slotId: this.slotId },
       );
-      if (result.structured) {
-        const steps: TaskStep[] = [];
-        for (const phase of result.structured.phases) {
-          for (const step of phase.steps) {
-            steps.push({ text: step.name, checked: step.status === 'done' });
-          }
-        }
-        this._taskSteps = steps;
-        this._taskProgress =
-          result.structured.totalSteps > 0
-            ? result.structured.completedSteps / result.structured.totalSteps
-            : 0;
-      }
+      this._structuredProgress = result.structured;
     } catch {
       /* ignore — slot may not have a parseable task file */
     }
@@ -461,29 +445,15 @@ export class SlotDetail extends LitElement {
             : ''}
         </div>
 
-        <!-- Task progress section (if working) -->
-        ${slot.lifecycle === 'busy' && this._taskSteps.length > 0
-          ? html`
-              <div class="section">
-                <div class="section-title">
-                  Task Progress ${Math.round(this._taskProgress * 100)}%
-                </div>
-                <div class="progress-bar-container">
-                  <div class="progress-bar-fill" style="width:${this._taskProgress * 100}%"></div>
-                </div>
-                ${this._taskSteps.map(
-                  (step) => html`
-                    <div class="task-step">
-                      <div class="task-checkbox ${step.checked ? 'checked' : ''}">
-                        ${step.checked ? '\u2713' : ''}
-                      </div>
-                      <span class="task-text ${step.checked ? 'checked' : ''}">${step.text}</span>
-                    </div>
-                  `,
-                )}
-              </div>
-            `
-          : ''}
+        ${slot.lifecycle === 'busy' && this._structuredProgress?.totalSteps
+          ? html`<div class="section">
+              <progress-tracker
+                .structured=${this._structuredProgress}
+                .runId=${slot.currentRunId ?? undefined}
+                .runActive=${true}
+              ></progress-tracker>
+            </div>`
+          : nothing}
       </div>
     `;
   }

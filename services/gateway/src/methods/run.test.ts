@@ -3226,4 +3226,13 @@ test('real packaged approval restores a parked run before reading a reused slot 
   );
   assert.equal(restores, 1);
   assert.equal(getRun(run.id)!.decisions[0].resolvedAction, 'approve-publish-unresolved');
+  assert.equal(getRun(run.id)!.engineState?.publishGate?.publicationStatus, 'pending_publish');
+  assert.equal(getRun(run.id)!.engineState?.publishGate?.approvedPackageHash, pkg.packageHash);
+  const { loadAllRuns } = await import('../runs/store.js');
+  const { ensureCurrentPublishPackage } = await import('../run-engine/publish-package-refresh.js');
+  await loadAllRuns();
+  const reloaded = getRun(run.id)!;
+  assert.equal(reloaded.decisions[0].resolvedAction, 'approve-publish-unresolved');
+  assert.equal(reloaded.engineState?.publishGate?.publicationStatus, 'pending_publish');
+  assert.equal((await ensureCurrentPublishPackage(run.id))?.packageHash, pkg.packageHash);
 });

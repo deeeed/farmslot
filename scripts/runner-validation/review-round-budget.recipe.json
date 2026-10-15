@@ -10,6 +10,13 @@
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/review-round-budget.mts --ui --extend",
         "timeout_ms": 600000,
         "intent": "The gateway refuses stale approval without consuming the gate, records an extension, admits native sixth/seventh reviews and retains N/L through restart.",
+        "next": "approval-outcome"
+      },
+      "approval-outcome": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/publication-approval.mts",
+        "timeout_ms": 120000,
+        "intent": "A zero-review policy still refuses stale proof before consuming approval; accepted approvals retain one exact-package decision through a private gateway restart.",
         "next": "done"
       },
       "done": {
