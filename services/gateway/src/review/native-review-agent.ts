@@ -78,6 +78,9 @@ import {
 import { expandReviewTemplate } from './templates.js';
 import {
   isTerminalReviewArtifactError,
+  nativeReviewerFailure,
+  ReviewerExitedError,
+  reviewerExitForNativeSnapshot,
   TerminalReviewArtifactError,
   terminalReviewArtifactErrorForCompletion,
 } from './terminal-result.js';
@@ -404,8 +407,11 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
       const command = snapshot.commands.find(
         (command) => command.commandId === context!.nativeSession!.commandId,
       );
-      if (['closed', 'failed'].includes(snapshot.session.state) || command?.outcome === 'failed')
-        throw new Error('Native reviewer stopped without a valid terminal signal');
+      if (['closed', 'failed'].includes(snapshot.session.state) || command?.outcome === 'failed') {
+        const reason =
+          snapshot.session.error ?? 'Native reviewer stopped without a valid terminal signal';
+        throw reviewerExitForNativeSnapshot(snapshot) ?? new Error(reason);
+      }
       if (Date.now() >= deadline) {
         await cancelNativeWorkerContext(runId, context);
         throw new Error(`Native reviewer did not complete within ${input.reviewTimeoutMs}ms`);
@@ -528,7 +534,13 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
       ],
     };
   } catch (error) {
-    primaryFailure = error;
+    context =
+      getRun(runId)?.agentContexts?.find((candidate) => candidate.id === contextId) ?? context;
+    const failure = await nativeReviewerFailure(error, async () => {
+      admit();
+      return readNativeWorkerSnapshot(runId, 'review', contextId);
+    });
+    primaryFailure = failure;
     invalidateWarmReviewerSessions(runId, runner);
     const run = getRun(runId);
     if (
@@ -543,15 +555,15 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
           markAgentContextStatus(
             runId,
             'review',
-            isTerminalReviewArtifactError(error) ? 'blocked' : 'failed',
+            isTerminalReviewArtifactError(failure) ? 'blocked' : 'failed',
             { id: contextId },
           ),
         );
       } catch (recordError) {
         primaryFailure = new AggregateError(
-          [error, recordError],
-          `${String(error)}; reviewer status recording also failed: ${String(recordError)}`,
-          { cause: error },
+          [failure, recordError],
+          `${String(failure)}; reviewer status recording also failed: ${String(recordError)}`,
+          { cause: failure },
         );
       }
     }
@@ -560,6 +572,13 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
     await finishReviewCleanup(primaryFailure, [
       () => progress?.stop(),
       () => unwatchContext(vars.slotId, contextId, { expectedRunId: runId }),
+      async () => {
+        if (!(primaryFailure instanceof ReviewerExitedError) || !context?.nativeSession) return;
+        await withNativeReviewMutation(async () => {
+          admit();
+          await cancelNativeWorkerContext(runId, context!);
+        });
+      },
       async () => {
         if (!activeTaskSet || !nativeReviewOperationIsCurrent()) return;
         await withNativeReviewMutation(async () => {

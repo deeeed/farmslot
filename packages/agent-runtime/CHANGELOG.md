@@ -2,9 +2,11 @@
 
 ## Unreleased
 
-- Preserve retained input directory names so installed dependency lookup keeps its original layout.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.25.1 - 2026-10-15
+
+- Preserve retained input directory names so installed dependency lookup keeps its original layout.
 
 ## 0.25.0 - 2026-10-15
 
