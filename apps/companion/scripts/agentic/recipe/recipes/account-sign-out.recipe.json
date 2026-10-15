@@ -9,19 +9,19 @@
         "action": "ui.press",
         "test_id": "account-sign-out",
         "intent": "Forget this device login through the real account control.",
-        "next": "signed-out"
+        "next": "protocol"
       },
       "signed-out": {
         "action": "ui.wait_for",
         "text_contains": ["Signed out. Log in or pair to choose an account."],
         "intent": "Show that explicit login or pairing is required.",
-        "next": "protocol"
+        "next": "capture"
       },
       "protocol": {
         "action": "command",
         "cmd": "node scripts/agentic/cdp-eval.mjs --file scripts/agentic/probes/account-session-signed-out.js",
         "intent": "Verify the live client lost its principal, HTTP authority and RPC transport.",
-        "next": "capture"
+        "next": "signed-out"
       },
       "capture": {
         "action": "ui.screenshot",
