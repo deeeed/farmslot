@@ -332,7 +332,13 @@
         "path": "screenshots/after-gate-review-criteria.png",
         "label": "Acceptance criteria and evidence strip",
         "covers": ["gate-review-screen", "approve-guard"],
-        "intent": "Record the criteria panel and Compare by AC.",
+        "intent": "Record the criteria and Compare by AC with supporting files collapsed.",
+        "next": "expand-raw-evidence"
+      },
+      "expand-raw-evidence": {
+        "action": "ui.press",
+        "test_id": "companion-ac-raw-AC-1",
+        "intent": "Expand raw files to inspect this criterion's screenshot and text evidence.",
         "next": "open-evidence"
       },
       "open-evidence": {

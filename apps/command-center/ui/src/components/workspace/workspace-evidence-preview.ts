@@ -460,6 +460,19 @@ function renderComparisonPreview(input: WorkspaceEvidenceComparison): TemplateRe
             ${row.claim.proofKinds.join(', ') || 'no recorded proof'}
             ${row.claim.reviewLabels.join('; ')}
           </div>
+          ${row.primaryFiles.map(
+            (file) =>
+              html`<div>
+                <a
+                  data-selected-proof-file
+                  href=${input.artifactUrl(file.artifactPath)}
+                  target="_blank"
+                  rel="noopener"
+                >
+                  Selected file · ${file.name}
+                </a>
+              </div>`,
+          )}
           <div
             style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:12px;"
           >

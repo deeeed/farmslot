@@ -300,6 +300,18 @@ export function EvidenceReviewWorkspace({
                 <Text style={styles.railTitle}>
                   {row.claim.id}: {row.claim.text}
                 </Text>
+                {row.primaryFiles.map((file, index) => (
+                  <Pressable
+                    key={file.artifactPath}
+                    testID={`companion-selected-proof-file-${row.claim.id}-${index}`}
+                    onPress={() => {
+                      evidenceModel.selectClaim(row.claim.id, file.artifactPath);
+                      open(file.artifactPath);
+                    }}
+                  >
+                    <Text style={styles.deltaActionText}>Selected file · {file.name}</Text>
+                  </Pressable>
+                ))}
                 <Text style={styles.railSubtitle}>
                   {row.claim.status?.verdict ?? 'not assessed'} ·{' '}
                   {row.claim.status?.proofMode ?? 'no proof mode'} ·{' '}
@@ -494,7 +506,7 @@ export function EvidenceReviewWorkspace({
               </View>
             );
           })}
-          {evidenceModel.comparisonFilter === 'unassigned' &&
+          {evidenceModel.comparisonFilter !== 'all' &&
           evidenceModel.comparisonView.unassigned.length > 0 ? (
             <View>
               <Text style={styles.railTitle}>

@@ -120,6 +120,11 @@ test('the display uses recorded publication selections and retains every remaini
   assert.deepEqual(model.claims, original);
   assert.deepEqual(ledger.criteria[0]?.evidence, evidence);
   assert.equal(model.selection, null);
+  assert.equal(model.comparisonView.rows[0]?.primaryClip, null);
+  assert.deepEqual(
+    model.comparisonView.rows[0]?.primaryFiles.map((file) => file.artifactPath),
+    ['artifacts/proof.png'],
+  );
   assert.deepEqual(
     createEvidenceReviewModel({ ledger, gateDecision: recordedGate([]) }).claimDisplay('AC-1')
       .selected,

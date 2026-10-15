@@ -206,6 +206,7 @@ export interface EvidenceReviewClaimDisplay {
 
 export interface EvidenceReviewComparisonViewRow extends EvidenceReviewComparisonRow {
   primaryClip: EvidenceReviewClip | null;
+  primaryFiles: readonly EvidenceReviewArtifact[];
 }
 
 export interface EvidenceReviewModel {
@@ -975,29 +976,45 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
         rows:
           comparisonFilter === 'unassigned'
             ? []
-            : comparison.rows.map((row) => ({
-                ...row,
-                primaryClip:
+            : comparison.rows.map((row) => {
+                const display = claimDisplay(row.claim.id);
+                const primaryClip =
                   comparisonFilter === 'all' || comparisonFilter === 'moments'
-                    ? claimDisplay(row.claim.id).clip
-                    : null,
-                claim: {
-                  ...row.claim,
-                  clips:
-                    comparisonFilter === 'all' || comparisonFilter === 'moments'
-                      ? row.claim.clips
-                      : [],
-                },
-                before: filtered(row.before),
-                after: filtered(row.after),
-                review: filtered(row.review),
-                selectedBefore: filtered(row.before).find(
-                  (media) => media.identity === row.selectedBefore?.identity,
-                ),
-                selectedAfter: filtered(row.after).find(
-                  (media) => media.identity === row.selectedAfter?.identity,
-                ),
-              })),
+                    ? display.clip
+                    : null;
+                const shownPaths = new Set([
+                  row.selectedBefore?.artifactPath,
+                  row.selectedAfter?.artifactPath,
+                ]);
+                if (primaryClip)
+                  shownPaths.add(`${input.artifactPrefix ?? ''}${primaryClip.videoPath}`);
+                return {
+                  ...row,
+                  primaryClip,
+                  primaryFiles: display.selected.filter(
+                    (file) =>
+                      !shownPaths.has(file.artifactPath) &&
+                      (comparisonFilter === 'all' ||
+                        (comparisonFilter === 'screenshots' && file.mediaType === 'image')),
+                  ),
+                  claim: {
+                    ...row.claim,
+                    clips:
+                      comparisonFilter === 'all' || comparisonFilter === 'moments'
+                        ? row.claim.clips
+                        : [],
+                  },
+                  before: filtered(row.before),
+                  after: filtered(row.after),
+                  review: filtered(row.review),
+                  selectedBefore: filtered(row.before).find(
+                    (media) => media.identity === row.selectedBefore?.identity,
+                  ),
+                  selectedAfter: filtered(row.after).find(
+                    (media) => media.identity === row.selectedAfter?.identity,
+                  ),
+                };
+              }),
         unassigned: ['all', 'unassigned', 'screenshots', 'moments'].includes(comparisonFilter)
           ? filtered(comparison.unassigned)
           : [],
