@@ -127,7 +127,7 @@ export function EvidenceReviewWorkspace({
     evidenceModel ? [...evidenceModel.rawArtifacts(filteredArtifacts)] : filteredArtifacts,
   ).map((artifact) => ({
     ...artifact,
-    url: artifactUrlForEntry(gatewayUrl, runId, artifact),
+    url: recordedEvidenceArtifactUrl(gatewayUrl, runId, evidenceModel, artifact),
   }));
   const evidenceSummary = useMemo(
     () => summarizeEvidenceCompleteness(artifacts, pairs.length),

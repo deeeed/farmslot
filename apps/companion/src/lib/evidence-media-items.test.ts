@@ -9,6 +9,7 @@ import {
 import type { RecordedEvidencePackageInput } from '@farmslot/protocol';
 
 import {
+  evidenceMediaItems,
   evidenceRecordingForPath,
   evidenceViewerSelection,
   recordedEvidenceArtifactUrl,
@@ -144,4 +145,51 @@ test('recorded media and dependent URLs keep the model bundle and full task path
     new URL(resolve('artifacts/selected-root.png')).searchParams.get('bundleDigest'),
     digest,
   );
+  const gallery = evidenceMediaItems(
+    [{ path, purpose: 'evidence' }],
+    (artifact) => recordedEvidenceArtifactUrl('ws://gateway/ws', 'retained-run', model, artifact),
+    {},
+    model,
+  );
+  assert.equal(gallery[0].uri, item.uri);
+  assert.equal(evidenceViewerSelection(item.uri, gallery, null).index, 0);
+  assert.equal(
+    gallery[0].resolveArtifactUrl!('artifacts/head/timeline.json'),
+    item.resolveArtifactUrl!('artifacts/head/timeline.json'),
+  );
+});
+
+test('gallery entries preserve explicit bundle and execution identities without a model', () => {
+  const artifact = {
+    path: 'artifacts/ordinary.png',
+    purpose: 'evidence',
+    recipeRunId: 'baseline-execution',
+    bundleDigest: 'b'.repeat(64),
+  };
+  const model = createEvidenceReviewModel({
+    package: fixture.input,
+    report: {
+      artifactManifest: [artifact],
+      manifestDigest: 'inventory',
+      artifactBundle: {
+        storeId: 'store',
+        taskKey: 'task',
+        bundleDigest: 'a'.repeat(64),
+        manifestDigest: 'inventory',
+      },
+    },
+  });
+  for (const evidenceModel of [model, null]) {
+    const url = new URL(
+      recordedEvidenceArtifactUrl('ws://gateway/ws', 'run', evidenceModel, artifact),
+    );
+    assert.equal(url.searchParams.get('bundleDigest'), artifact.bundleDigest);
+    assert.equal(url.searchParams.get('recipeRunId'), artifact.recipeRunId);
+    assert.equal(url.searchParams.get('path'), artifact.path);
+  }
+  const unbound = new URL(
+    recordedEvidenceArtifactUrl('ws://gateway/ws', 'run', null, 'artifacts/ordinary.png'),
+  );
+  assert.equal(unbound.searchParams.get('bundleDigest'), null);
+  assert.equal(unbound.searchParams.get('recipeRunId'), null);
 });

@@ -798,7 +798,12 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const openDocumentArtifact = useCallback(
     (artifact: ArtifactManifestEntry) => {
       if (!presentation?.runId) return;
-      const url = artifactUrlForEntry(gatewayUrl, presentation.runId, artifact);
+      const url = recordedEvidenceArtifactUrl(
+        gatewayUrl,
+        presentation.runId,
+        checkedEvidenceModel,
+        artifact,
+      );
       documentAbortRef.current?.abort();
       const controller = new AbortController();
       documentAbortRef.current = controller;
@@ -818,7 +823,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
           if (!controller.signal.aborted) setLoadingDocument(null);
         });
     },
-    [artifactAuthHeaders, gatewayUrl, presentation?.runId],
+    [artifactAuthHeaders, checkedEvidenceModel, gatewayUrl, presentation?.runId],
   );
 
   const openOutputReport = useCallback(async () => {
@@ -980,7 +985,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     const runId = presentation.runId;
     const items = evidenceMediaItems(
       presentation.artifactManifest,
-      (artifact) => artifactUrlForEntry(gatewayUrl, runId, artifact),
+      (artifact) => recordedEvidenceArtifactUrl(gatewayUrl, runId, checkedEvidenceModel, artifact),
       artifactAuthHeaders,
       humanGate?.acceptance.evidenceModel ?? outputAcceptance.evidenceModel,
     );
@@ -1008,8 +1013,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     presentation?.artifactManifest,
     presentation?.runId,
     recipeFallbackPairs,
-    humanGate?.acceptance.evidenceModel,
-    outputAcceptance.evidenceModel,
+    checkedEvidenceModel,
   ]);
 
   if (!decision || !presentation) {

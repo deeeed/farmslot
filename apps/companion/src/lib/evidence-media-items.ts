@@ -14,18 +14,23 @@ import {
 export function recordedEvidenceArtifactUrl(
   gatewayUrl: string,
   runId: string,
-  model: EvidenceReviewModel,
-  path: string,
+  model: EvidenceReviewModel | null | undefined,
+  pathOrArtifact: string | ArtifactManifestEntry,
 ): string {
+  const artifact: ArtifactManifestEntry =
+    typeof pathOrArtifact === 'string'
+      ? { path: pathOrArtifact, purpose: 'evidence' }
+      : pathOrArtifact;
   return artifactUrl(
     gatewayUrl,
     runId,
-    path,
-    model.report?.artifactManifest.some((entry) => entry.path === path)
-      ? CURRENT_ARTIFACTS_RECIPE_RUN_PARAM
-      : undefined,
+    artifact.path,
+    artifact.recipeRunId ??
+      (model?.report?.artifactManifest.some((entry) => entry.path === artifact.path)
+        ? CURRENT_ARTIFACTS_RECIPE_RUN_PARAM
+        : undefined),
     undefined,
-    model.report?.artifactBundle?.bundleDigest,
+    artifact.bundleDigest ?? model?.report?.artifactBundle?.bundleDigest,
   );
 }
 
