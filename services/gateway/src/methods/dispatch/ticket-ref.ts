@@ -115,9 +115,10 @@ export function validateTicketRef(normalized: string, flowType: string): void {
   // Non-PR flows (fix-bug, new-feature, dev, custom): accept Jira key or GitHub issue ref.
   // Backlog-owned manual refs are accepted only by the narrow backlog handoff path
   // that supplies manual ticketData; direct dispatch must still require a real source.
-  if (/^MANUAL-\d+$/.test(normalized)) {
+  if (/^MANUAL-\d+$/i.test(normalized)) {
     throw new Error(
-      `Invalid ticket reference for flow '${flowType}': manual backlog refs must be dispatched from Backlog.`,
+      `Invalid ticket reference for flow '${flowType}': manual backlog refs must be dispatched from Backlog. ` +
+        `Use farmslot backlog enqueue ${normalized.toUpperCase()} to load the backlog title, notes and acceptance criteria.`,
     );
   }
   if (!JIRA_KEY_RE.test(normalized) && !parseGitHubRef(normalized)) {

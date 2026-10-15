@@ -24,7 +24,7 @@ export function isLocalDevRef(ticketOrPr: string): boolean {
 }
 
 export function isManualBacklogRef(ticketOrPr: string): boolean {
-  return /^MANUAL-\d+$/.test(ticketOrPr);
+  return /^MANUAL-\d+$/i.test(ticketOrPr);
 }
 
 /** Runs dispatched from Backlog keep MANUAL-* refs; replay must not re-validate them as direct dispatch. */
