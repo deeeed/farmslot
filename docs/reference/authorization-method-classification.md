@@ -263,6 +263,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `run.create`                            | admin          |                                                                                    |
 | `run.createNative`                      | admin          |                                                                                    |
 | `run.delete`                            | admin          |                                                                                    |
+| `run.extendReviewBudget`                | admin          |                                                                                    |
 | `run.forceComplete`                     | admin          |                                                                                    |
 | `run.forSlot`                           | admin          |                                                                                    |
 | `run.get`                               | admin          | reads run artifact paths by pathname                                               |

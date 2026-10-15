@@ -46,6 +46,7 @@ import {
   type DescriptionCheckFinding,
   descriptionCheckFindings,
 } from './description-check.js';
+import { reviewBudgetScopeBrief } from './review-round-budget.js';
 import { parseReviewMode } from './session-mode.js';
 import {
   renderReviewTemplatePaths,
@@ -355,7 +356,7 @@ Use the task's mark wrapper for this reviewer checklist. Preserve the parent wor
     descriptionCheckSection(vars, taskDir, run, pv?.projectJson),
     diffScopeSection(vars, run, pv ? getProjectField(pv.projectJson, 'default_branch') : undefined),
   ]);
-  return `${expanded.trimEnd()}${bindingSection}\n${planningBrief.trimEnd()}\n\n${scope}\n\n${check}\n`;
+  return `${expanded.trimEnd()}${bindingSection}\n${planningBrief.trimEnd()}\n\n${scope}\n\n${check}\n${reviewBudgetScopeBrief(getRun(run.id) ?? run)}`;
 }
 
 export async function expandReviewFixTemplate(

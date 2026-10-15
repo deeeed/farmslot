@@ -282,6 +282,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'run.create': { classification: 'admin' },
   'run.createNative': { classification: 'admin' },
   'run.delete': { classification: 'admin' },
+  'run.extendReviewBudget': { classification: 'admin' },
   'run.forceComplete': { classification: 'admin' },
   'run.forSlot': { classification: 'admin' },
   'run.get': { classification: 'admin', reason: 'reads run artifact paths by pathname' },

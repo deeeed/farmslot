@@ -7,7 +7,7 @@ unlisted: true
 
 This advanced reference is generated from `@farmslot/protocol` capability metadata plus TSDoc comments on protocol interfaces. Do not edit it by hand. For public onboarding, start with [Gateway API capability surface](./gateway-api.md). This raw table is intentionally unlisted because some low-level methods still have generated summaries while public-safe capability grouping and TSDoc coverage mature.
 
-Protocol version: `0.45.0`
+Protocol version: `0.46.0`
 
 ## WebSocket frame shape
 
@@ -306,6 +306,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `run.create`                            | run              | bounded-write | —      | —      | Run Create gateway method.                            |
 | `run.createNative`                      | run              | bounded-write | —      | —      | Run CreateNative gateway method.                      |
 | `run.delete`                            | run              | high-impact   | —      | —      | Run Delete gateway method.                            |
+| `run.extendReviewBudget`                | run              | bounded-write | —      | —      | Run ExtendReviewBudget gateway method.                |
 | `run.forSlot`                           | run              | bounded-write | —      | —      | Run ForSlot gateway method.                           |
 | `run.forceComplete`                     | run              | bounded-write | —      | —      | Run ForceComplete gateway method.                     |
 | `run.get`                               | run              | read-only     | —      | —      | Run Get gateway method.                               |

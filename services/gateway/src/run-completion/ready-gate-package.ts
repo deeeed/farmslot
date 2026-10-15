@@ -59,6 +59,7 @@ function packageSemanticHashPayload(
 ): Record<string, unknown> {
   const {
     id: _id,
+    artifactPath: _artifactPath,
     packageHash: _packageHash,
     packageInputHash: _packageInputHash,
     reviewSubjectHash: _reviewSubjectHash,

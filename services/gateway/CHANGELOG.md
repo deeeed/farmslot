@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Retain run output and publication evidence in gateway-owned bundles; serve reports, recipe metadata and artifact ranges from pinned local snapshots, with explicit backfill and retention limits.
+- Refresh current-head publication packages through their existing gate, preserving prior packages, decisions and selected evidence.
 
 - Keep source and review diff identities stable across user Git settings; disable external diff and text conversion.
 - Refuse unresolved QA profile choices before run creation, preserve existing policy and admitted selections, and retain profile identity in QA task context.
@@ -13,6 +14,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Let authenticated admin people supervise any run and review workspace while preserving its native execution owner.
 - Bind retained unpublished runs to declared graph stacks through existing run and graph authority, refusing stale source and preserving proof.
 - Allow admins to explicitly replace a retired principal id without restoring old credentials or stored-work authority; freshly authored queued work carries its identity generation.
+- Support authenticated, scoped review-budget extensions without resetting spent attempts.
+
 - Preserve the frozen run review policy in nested role contracts so valid pending visual claims reach their human gate without weakening evidence or CI checks.
 - Include the shared minimal-diff review policy and whole-contribution sensitive-path inventory in independent review packets.
 
@@ -161,6 +164,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 - Allow managed runner resumes to suppress startup update checks.
+- Preserve advisory inline comments on passing static reviews while refusing blocking comments and mismatched issue reviews.
 
 ## 0.21.0 - 2026-10-10
 

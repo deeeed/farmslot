@@ -133,7 +133,7 @@ function inferSafetyTier(method: string): string {
     method.includes('ping') ||
     method.includes('status') ||
     method.includes('doctor') ||
-    method.includes('get') ||
+    /(?:^|\.)get(?:[A-Z]|$)/.test(method) ||
     method.includes('read') ||
     method.includes('capabilities') ||
     // History-only pressure read: in-memory rings + freshness, no mutation.

@@ -49,6 +49,16 @@ test('refreshArtifactMirror preserves gateway-owned review artifacts while clear
   await writeFile(path.join(workerTaskDir, 'TASK.md'), '# mirror test\n');
   await writeFile(path.join(workerTaskDir, 'artifacts/report.md'), 'worker report\n');
   await writeFile(path.join(workerTaskDir, 'artifacts/after.png'), 'fresh worker image\n');
+  await mkdir(path.join(workerTaskDir, 'artifacts/publication-packages'), { recursive: true });
+  await writeFile(
+    path.join(workerTaskDir, 'artifacts/publication-packages/old.json'),
+    '{"worker":true}',
+  );
+  await mkdir(path.join(taskDir, 'artifacts/publication-packages'), { recursive: true });
+  await writeFile(
+    path.join(taskDir, 'artifacts/publication-packages/old.json'),
+    '{"gateway":true}',
+  );
   await writeFile(path.join(workerTaskDir, 'artifacts/pr-package.json'), '{"worker":true}\n');
   await mkdir(path.join(workerTaskDir, 'artifacts/review-loop-1'), { recursive: true });
   await writeFile(path.join(workerTaskDir, 'artifacts/review-loop-1/review.diff'), 'worker diff\n');
@@ -93,6 +103,10 @@ test('refreshArtifactMirror preserves gateway-owned review artifacts while clear
     makeRun({ id: testId, project: 'farmslot-farm', slotId, taskFile }),
   );
 
+  assert.equal(
+    await readFile(path.join(taskDir, 'artifacts/publication-packages/old.json'), 'utf-8'),
+    '{"gateway":true}',
+  );
   assert.equal(copied >= 2, true);
   assert.equal(existsSync(path.join(taskDir, 'artifacts/after.png')), true);
   assert.equal(existsSync(path.join(taskDir, 'artifacts/review-2.json')), true);

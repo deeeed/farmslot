@@ -70,6 +70,13 @@ test('ready package hashes separate artifact identity from review subject', () =
     selectedEvidenceKeys: [],
     publicationTarget: 'draft' as const,
   };
+  const retained = { ...base, artifactPath: 'artifacts/publication-packages/pkg-a.json' };
+  assert.notEqual(computeReadyGatePackageHash(base), computeReadyGatePackageHash(retained));
+  assert.equal(computeReadyGatePackageInputHash(base), computeReadyGatePackageInputHash(retained));
+  assert.equal(
+    computeReadyGateReviewSubjectHash(base),
+    computeReadyGateReviewSubjectHash(retained),
+  );
   assert.notEqual(computeReadyGatePackageHash(base), computeReadyGatePackageHash(volatile));
   assert.notEqual(
     computeReadyGatePackageInputHash(base),

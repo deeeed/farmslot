@@ -34,6 +34,7 @@ import {
   type RunCancelEffect,
   type RunCreateParams,
   type RunDecision,
+  type RunExtendReviewBudgetResult,
   type RunForceCompleteResult,
   type RunGetGradeResult,
   type RunGradeResult,
@@ -1034,6 +1035,48 @@ export function registerRunCommand(program: Command): void {
         emit.fail(err);
       }
     });
+
+  run
+    .command('extend-review-budget <runId>')
+    .description('Record a lead-approved scope and grant extra reviews on the same run')
+    .requiredOption('--limit <n>', 'New absolute limit, at most five additional reviews')
+    .requiredOption('--head <sha>', 'Full current branch head SHA')
+    .requiredOption('--scope <text>', 'Lead-approved review scope brief')
+    .requiredOption('--request-id <id>', 'Stable idempotency key for this grant')
+    .option('--expected-limit <n>', 'Expected current limit', '5')
+    .action(
+      async (
+        runId: string,
+        opts: {
+          limit: string;
+          head: string;
+          scope: string;
+          requestId: string;
+          expectedLimit: string;
+        },
+        cmd: Command,
+      ) => {
+        const { client, output } = resolveContext(cmd);
+        const emit = createEmitter(output, cmd);
+        try {
+          const result = await client.call<RunExtendReviewBudgetResult>(
+            Methods.RUN_EXTEND_REVIEW_BUDGET,
+            {
+              runId,
+              limit: Number(opts.limit),
+              expectedLimit: Number(opts.expectedLimit),
+              headSha: opts.head,
+              scopeBrief: opts.scope,
+              requestId: opts.requestId,
+            },
+          );
+          if (emit.machine) emit.ok(result);
+          else output.write(`${result.budget.label}\n${result.budget.extensionSummary}\n`);
+        } catch (error) {
+          emit.fail(error);
+        }
+      },
+    );
 
   run
     .command('adopt-published-pr <runId>')

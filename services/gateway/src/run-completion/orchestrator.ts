@@ -1,6 +1,7 @@
 // run-completion.ts — Post-work completion pipeline
 // Handles artifact copy, PR comments (with worker report), PR body sanitization, retrospective curation.
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -103,6 +104,7 @@ import {
   computeReadyGatePackageInputHash,
   computeReadyGateReviewSubjectHash,
   packageChangedError,
+  readReadyGatePreparedPackage,
   resolveSelectedEvidenceRef,
   sha256Text,
   sortArtifactRefsForComparison,
@@ -210,6 +212,8 @@ export interface CompletionResult {
 }
 
 export interface PrepareCompletionPackageResult {
+  /** Refresh commits only after its gate projection and final source checks finish. */
+  commit?: () => Promise<void>;
   completion: CompletionResult;
   prPackage: ReadyGatePrPackage;
   reviewPolicy: ReviewPolicy;
@@ -699,6 +703,9 @@ export interface PrepareCompletionPackageOptions {
   stampReviews?: boolean;
   requireArtifactMirror?: boolean;
   headSha?: string;
+  expectedHeadSha?: string;
+  deferCommit?: boolean;
+  assertSourceCurrent?: () => Promise<void>;
 }
 
 export function prepareCompletionPackage(
@@ -719,6 +726,14 @@ export async function prepareCompletionPackageTransitionLocked(
     throw new Error(
       'Human publication adoption preserves the prior package; further work needs its own publication authorization',
     );
+
+  const previousPackage = await readReadyGatePreparedPackage(before);
+  const generation = before.engineState?.generation ?? 0;
+  const slotId = before.slotId;
+  const branch = before.branch ?? '';
+  const headBefore = await snapshotHeadSha(before);
+  if (options?.expectedHeadSha && headBefore !== options.expectedHeadSha)
+    throw packageChangedError(runId, 'HEAD changed before package preparation');
 
   const deterministicChecks = await currentDeterministicChecks(before);
 
@@ -806,9 +821,8 @@ export async function prepareCompletionPackageTransitionLocked(
   // make the unavailable snapshot a passing review or bypass its explicit override.
   if (reviewSnapshot.source === 'unavailable')
     reviewSnapshot = { ...reviewSnapshot, baseRef: `origin/${baseBranch}` };
-  const branch = run.branch ?? before.branch ?? '';
   const packageId = `pkg-${run.id.slice(0, 8)}-${Date.now().toString(36)}`;
-  const artifactPath = 'artifacts/pr-package.json';
+  const artifactPath = `artifacts/publication-packages/${packageId}.json`;
   const validSelectedEvidenceKeys = preserveSelectedEvidenceKeys(
     options?.selectedEvidenceKeys,
     evidenceManifest,
@@ -907,22 +921,71 @@ export async function prepareCompletionPackageTransitionLocked(
   const packageHash = computeReadyGatePackageHash(packageWithoutHash);
   const prPackage: ReadyGatePrPackage = { ...packageWithoutHash, packageHash };
   if (options?.stampReviews !== false) {
-    reviews = reviews.map((review) => ({
-      ...review,
-      reviewedHeadSha: prPackage.headSha ?? review.reviewSnapshot?.headSha ?? null,
-      reviewedPackageInputHash: prPackage.packageInputHash ?? null,
-      reviewedReviewSubjectHash: prPackage.reviewSubjectHash ?? null,
-    }));
+    reviews = reviews.map((review) =>
+      (review.reviewSnapshot?.headSha ?? review.reviewedHeadSha) !== prPackage.headSha
+        ? review
+        : {
+            ...review,
+            reviewedHeadSha: prPackage.headSha ?? review.reviewSnapshot?.headSha ?? null,
+            reviewedPackageInputHash: prPackage.packageInputHash ?? null,
+            reviewedReviewSubjectHash: prPackage.reviewSubjectHash ?? null,
+          },
+    );
     prPackage.reviewArtifactIds = reviews.flatMap((review) => review.artifactPaths ?? [review.id]);
   }
 
-  if (taskDir) {
-    const artifactsDir = path.join(taskDir, 'artifacts');
-    await mkdir(artifactsDir, { recursive: true });
-    await writeFile(path.join(taskDir, artifactPath), JSON.stringify(prPackage, null, 2), 'utf-8');
-    await writeFile(
-      path.join(taskDir, 'artifacts/pr-package.md'),
-      [
+  const assertPreparationCurrent = async () => {
+    const latest = getRun(runId);
+    if (latest?.artifactBundle?.bundleDigest !== retained.ref.bundleDigest)
+      throw packageChangedError(runId, 'retained publication snapshot changed during preparation');
+    if (
+      !latest ||
+      (latest.engineState?.generation ?? 0) !== generation ||
+      latest.slotId !== slotId ||
+      (latest.branch ?? '') !== branch ||
+      (headBefore && (await snapshotHeadSha(latest)) !== headBefore) ||
+      (reviewSnapshot.headSha && reviewSnapshot.headSha !== headSha)
+    )
+      throw packageChangedError(
+        runId,
+        'source or run ownership changed during package preparation',
+      );
+  };
+  const commit = async () => {
+    await options?.assertSourceCurrent?.();
+    await assertPreparationCurrent();
+
+    if (taskDir) {
+      const artifactsDir = path.join(taskDir, 'artifacts');
+      await mkdir(path.join(artifactsDir, 'publication-packages'), { recursive: true });
+      if (previousPackage?.artifactPath === 'artifacts/pr-package.json') {
+        const retained = path.join(
+          artifactsDir,
+          'publication-packages',
+          `retained-${sha256Text(previousPackage.id)}.json`,
+        );
+        if (!existsSync(retained))
+          await writeFile(retained, JSON.stringify(previousPackage, null, 2), {
+            encoding: 'utf-8',
+            flag: 'wx',
+          });
+      }
+      await writeFile(path.join(taskDir, artifactPath), JSON.stringify(prPackage, null, 2), {
+        encoding: 'utf-8',
+        flag: 'wx',
+      });
+    }
+
+    await options?.assertSourceCurrent?.();
+    await assertPreparationCurrent();
+    if (taskDir) {
+      const artifactsDir = path.join(taskDir, 'artifacts');
+      await writeFile(
+        path.join(artifactsDir, 'pr-package.json'),
+        JSON.stringify(prPackage, null, 2),
+        'utf-8',
+      );
+      const markdown = [
         '# PR Package',
         '',
         `- Package: ${prPackage.id}`,
@@ -938,34 +1001,40 @@ export async function prepareCompletionPackageTransitionLocked(
         '',
         '## Draft body',
         prPackage.draftBody,
-      ].join('\n'),
-      'utf-8',
-    );
-  }
-
-  if (getRun(runId)?.artifactBundle?.bundleDigest !== retained.ref.bundleDigest)
-    throw new Error(
-      'The retained publication snapshot changed during preparation. Refresh the gate package.',
-    );
-  updateRun(runId, {
-    engineState: {
-      ...run.engineState,
-      publishGate: {
-        ...run.engineState?.publishGate,
-        packageId: prPackage.id,
-        packageHash: prPackage.packageHash,
-        packageInputHash: prPackage.packageInputHash,
-        reviewSubjectHash: prPackage.reviewSubjectHash,
-        packageArtifactPath: artifactPath,
-        publicationTarget: target,
-        publicationStatus: 'not_published',
-        reviewPolicy,
-        reviews,
+      ].join('\n');
+      await writeFile(path.join(taskDir, artifactPath.replace(/\.json$/, '.md')), markdown, {
+        encoding: 'utf-8',
+        flag: 'wx',
+      });
+      await writeFile(path.join(taskDir, 'artifacts/pr-package.md'), markdown, 'utf-8');
+    }
+    const current = getRun(runId)!;
+    updateRun(runId, {
+      engineState: {
+        ...current.engineState,
+        publishGate: {
+          ...current.engineState?.publishGate,
+          packageId: prPackage.id,
+          packageHash: prPackage.packageHash,
+          packageInputHash: prPackage.packageInputHash,
+          reviewSubjectHash: prPackage.reviewSubjectHash,
+          packageArtifactPath: artifactPath,
+          publicationTarget: target,
+          publicationStatus: 'not_published',
+          reviewPolicy,
+          reviews,
+        },
       },
-    },
-  });
-
-  return { completion, prPackage, reviewPolicy, reviews };
+    });
+  };
+  if (!options?.deferCommit) await commit();
+  return {
+    completion,
+    prPackage,
+    reviewPolicy,
+    reviews,
+    ...(options?.deferCommit ? { commit } : {}),
+  };
 }
 
 /**
