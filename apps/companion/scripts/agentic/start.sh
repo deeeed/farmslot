@@ -159,7 +159,6 @@ ANDROID_TARGET="${ANDROID_DEVICE:-${ADB_SERIAL:-}}"
 if [[ -n "${ANDROID_TARGET}" ]]; then
   DEVICE_MODE="${DEVICE_MODE:-device}"
 fi
-companion_load_local_auth_env
 companion_configure_network_env
 if [[ -n "${ANDROID_TARGET}" ]]; then
   ANDROID_TARGET="$(resolve_configured_android_device "${ANDROID_TARGET}")"

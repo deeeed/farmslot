@@ -65,7 +65,7 @@ function findGatewayEnvFiles(env: NodeJS.ProcessEnv, cwd: string): string[] {
 
   const files: string[] = [];
   for (const root of roots) {
-    for (const name of ['.env.local-auth', '.env']) {
+    for (const name of ['.env']) {
       const file = resolve(root, name);
       if (existsSync(file) && !files.includes(file)) files.push(file);
     }

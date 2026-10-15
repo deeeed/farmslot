@@ -45,6 +45,6 @@ export function isRemoteGatewayListenAllowed(host: string): boolean {
 export function remotePairingBlockedHint(host: string, port: number): string {
   return (
     `Gateway is listening on ${host}:${port} only — phones on your LAN cannot reach it. ` +
-    'Restart with GATEWAY_HOST=0.0.0.0 (yarn farmdev does this when .env.local-auth is present) or run farmslot up.'
+    'Restart with GATEWAY_HOST=0.0.0.0 (yarn farmdev does this for an activated credential store) or run farmslot up.'
   );
 }

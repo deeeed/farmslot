@@ -81,11 +81,9 @@ export async function terminalSessionFixture(input: {
       principalId: principal.id,
       displayName: 'Isolated node',
     });
-    await writeFile(
-      path.join(nodeRoot, '.env.local-auth'),
-      `FARMSLOT_NODE_TOKEN=${credential.secret}\n`,
-      { mode: 0o600 },
-    );
+    await writeFile(path.join(nodeRoot, '.env'), `FARMSLOT_NODE_TOKEN=${credential.secret}\n`, {
+      mode: 0o600,
+    });
     const fd = openSync(path.join(evidence, 'session-node.log'), 'w', 0o600);
     const node = spawn('yarn', ['workspace', '@farmslot/node', 'start'], {
       cwd: root,

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Provision node credentials through --secret-file; remove the checkout auth-env writer.
+
 - Reject release-version and calendar-date slot repo paths in doctor diagnostics without preventing slot teardown.
 - Show available QA profiles and the --qa-profile recovery flag when a multi-profile farm needs a choice.
 - Add graph attach-run for verified unpublished retained work, without dispatching another run.
