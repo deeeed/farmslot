@@ -4,7 +4,6 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
-
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.37.1 - 2026-10-15

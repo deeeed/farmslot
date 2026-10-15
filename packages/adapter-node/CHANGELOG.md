@@ -4,7 +4,6 @@ All notable changes to `@farmslot/adapter-node` are tracked here.
 
 ## Unreleased
 
-
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.1.27 - 2026-10-15

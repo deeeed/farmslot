@@ -4,7 +4,6 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 ## Unreleased
 
-
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.6.13 - 2026-10-15

@@ -4,7 +4,6 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## Unreleased
 
-
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.22.14 - 2026-10-15

@@ -2,7 +2,6 @@
 
 ## Unreleased
 
-
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.24.0 - 2026-10-15
