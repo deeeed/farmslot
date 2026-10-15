@@ -85,7 +85,7 @@
         "action": "ui.press",
         "test_id": "companion-artifact-media-viewer-close",
         "intent": "Return to the decision without changing its evidence.",
-        "next": "scroll-raw-toggle"
+        "next": "open-single"
       },
       "show-raw": {
         "action": "ui.press",
@@ -120,7 +120,7 @@
         "action": "ui.press",
         "test_id": "companion-artifact-media-viewer-close",
         "intent": "Return to the existing decision.",
-        "next": "scroll-back"
+        "next": "done"
       },
       "open-single": {
         "action": "ui.press",
@@ -141,7 +141,7 @@
         "action": "ui.press",
         "test_id": "companion-artifact-media-viewer-close",
         "intent": "Close the viewer without resolving the gate.",
-        "next": "done"
+        "next": "scroll-raw-toggle"
       },
       "done": {
         "action": "end",
@@ -171,13 +171,6 @@
         "pixels": 650,
         "intent": "The ordinary image and its retained artifact path are visible.",
         "next": "open-ordinary"
-      },
-      "scroll-back": {
-        "action": "ui.scroll",
-        "direction": "up",
-        "pixels": 650,
-        "intent": "Return to the single-video comparison card.",
-        "next": "open-single"
       },
       "scroll-raw-toggle": {
         "action": "ui.scroll",
