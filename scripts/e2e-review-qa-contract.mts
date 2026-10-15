@@ -7,9 +7,11 @@ import { once } from 'node:events';
 import { closeSync, openSync } from 'node:fs';
 import {
   copyFile,
+  cp,
   mkdir,
   mkdtemp,
   readdir,
+  realpath,
   readFile,
   rm,
   stat,
@@ -38,6 +40,7 @@ import type {
   PRReviewIntent,
   DispatchQueueAddResult,
   DispatchQueueListResult,
+  Run,
 } from '../packages/protocol/src/index.js';
 import { FLOW_STEPS, PipelineSteps } from '../packages/protocol/src/index.js';
 import {
@@ -45,9 +48,12 @@ import {
   createStandardCoreAdapters,
 } from '../packages/recipe-runner/src/index.js';
 
+import { ProofSourceUpstream } from './sources-validation/upstream.js';
+
 const root = fileURLToPath(new URL('../', import.meta.url));
 const scenario = process.argv[2];
 const publicationCase = process.argv[4] ?? 'pass';
+const sourceProfileProof = scenario === 'profile-selection' && process.argv[4] === 'sources';
 if (scenario === 'publication-delivery')
   assert(
     [
@@ -98,6 +104,7 @@ if (scenario === 'recipe') {
 assert(
   [
     'profiles',
+    'profile-selection',
     'qa-pool',
     'publication-defaults',
     'publication-accounts',
@@ -118,7 +125,7 @@ assert(
   ].includes(scenario),
   'Expected profiles, legacy-queue or conflicts',
 );
-const fixture = await mkdtemp(path.join(tmpdir(), 'farmslot-review-qa-'));
+const fixture = await realpath(await mkdtemp(path.join(tmpdir(), 'farmslot-review-qa-')));
 // Reuse existing objects without creating commits or checking out another copy of the source.
 execFileSync('git', ['clone', '--shared', '--no-checkout', root, fixture], { stdio: 'pipe' });
 const log = path.join(fixture, 'gateway.log');
@@ -141,9 +148,29 @@ for (const name of ['scripts', 'services', 'packages'])
 await writeFile(path.join(fixture, 'CLAUDE.md'), '# Isolated gateway contract validation\n');
 await mkdir(path.join(fixture, 'pool'));
 await mkdir(path.join(fixture, 'repo'));
+if (scenario === 'profile-selection') {
+  // Disabled fixture slots are known locally; do not launch a startup fleet refresh.
+  await json(path.join(fixture, '.farm-status.json'), {
+    checked_at: new Date().toISOString(),
+    slots: ['first', 'second', 'sole'].map((project) => ({
+      slot: `${project}-disabled`,
+      machine: `${project}-node`,
+      project,
+      platform: 'cli',
+      repo: path.join(fixture, 'repo'),
+      session: `qa-${project}`,
+      enabled: false,
+      lifecycle: 'ready',
+      phase: null,
+      agent: 'idle',
+      health: { ssh: 'LOCAL', device: '-', devserver: '-', fixtures: '-' },
+    })),
+  });
+}
 for (const [name, profile] of [
   ['first', 'changes'],
   ['second', 'candidate'],
+  ...(scenario === 'profile-selection' ? [['sole', 'only']] : []),
 ]) {
   const project = path.join(fixture, 'projects', name);
   await mkdir(path.join(project, 'shared', 'validation'), { recursive: true });
@@ -220,8 +247,13 @@ for (const [name, profile] of [
       sources: [{ id: 'workspace:shared', kind: 'workspace', root: { projectPath: 'shared' } }],
     },
     qa: {
-      default_profile: profile,
+      ...(scenario !== 'profile-selection' || name === 'second'
+        ? { default_profile: profile }
+        : {}),
       profiles: [
+        ...(scenario === 'profile-selection' && name !== 'sole'
+          ? [{ id: 'release', title: 'Release validation', template_id: 'validation/shared' }]
+          : []),
         {
           id: profile,
           title: `Validate ${profile}`,
@@ -558,7 +590,7 @@ function launchGateway() {
       ...(depthScenario ? tmuxEnv : process.env),
       PATH: `${path.join(fixture, 'bin')}${path.delimiter}${process.env.PATH}`,
       FARMSLOT_ROOT: fixture,
-      ...(scenario === 'publication-direct'
+      ...(['publication-direct', 'profile-selection'].includes(scenario)
         ? { NODE_TEST_CONTEXT: '1', FARMSLOT_DISABLE_RUN_ENGINE_START: '1' }
         : {}),
       FARMSLOT_HOME: path.join(fixture, 'home'),
@@ -670,6 +702,7 @@ if (scenario === 'ready-gate-refusal') {
     updatedAt: now,
   });
 }
+let upstream: ProofSourceUpstream | undefined;
 let gateway = launchGateway();
 const terminateOwnedGateway = () => {
   if (gateway.exitCode !== null || !gateway.pid) return;
@@ -716,6 +749,33 @@ async function stopGateway() {
 }
 try {
   await connectGateway();
+  if (sourceProfileProof) {
+    await stopGateway();
+    upstream = await ProofSourceUpstream.start(path.join(fixture, 'upstream'), root);
+    execFileSync('git', ['-C', upstream.worktree, 'checkout', 'main'], { stdio: 'pipe' });
+    await cp(path.join(fixture, 'projects'), path.join(upstream.worktree, 'qa-profiles'), {
+      recursive: true,
+    });
+    await upstream.advance('main', 'qa-profile-inputs');
+    process.env.GIT_SSL_CAINFO = upstream.caFile;
+    await json(path.join(fixture, 'home/sources.json'), {
+      schemaVersion: 1,
+      revision: 1,
+      pollIntervalMs: 30000,
+      sources: [{ id: 'qa-pack', kind: 'pack', repo: upstream.repository }],
+      packs: {
+        ...Object.fromEntries(
+          ['first', 'second', 'sole'].map((project) => [
+            project,
+            { sourceId: 'qa-pack', entry: `qa-profiles/${project}` },
+          ]),
+        ),
+        'farmslot-farm': { sourceId: 'qa-pack', entry: 'framework' },
+      },
+    });
+    gateway = launchGateway();
+    await connectGateway();
+  }
   const base = {
     project: 'first',
     slotId: 'first-disabled',
@@ -1291,6 +1351,143 @@ try {
     assert.equal(first.project.qa?.default_profile, 'changes');
     assert.equal(second.project.qa?.default_profile, 'candidate');
     assert.deepEqual(first.project.qa?.profiles[0].inputs, { scope: { kind: 'changes' } });
+  } else if (scenario === 'profile-selection') {
+    testGatewayProfile(path.join(fixture, 'home'), `ws://127.0.0.1:${port}`, token);
+    const invoke = async (project: string, flags: string[] = []) => {
+      const child = spawn(
+        process.execPath,
+        [
+          '--import',
+          'tsx',
+          path.join(root, 'packages/cli/src/entry.ts'),
+          '--url',
+          `ws://127.0.0.1:${port}`,
+          '--timeout',
+          sourceProfileProof ? '45000' : '10000',
+          '--json',
+          'run',
+          'create',
+          '--project',
+          project,
+          '--flow-type',
+          'qa',
+          '--ticket',
+          'profile-selection',
+          '--mode',
+          'autonomous',
+          '--slot',
+          `${project}-disabled`,
+          '--runner',
+          'codex',
+          '--model',
+          'gpt-6-luna',
+          '--effort',
+          'low',
+          '--transport',
+          'native',
+          ...flags,
+        ],
+        {
+          cwd: path.join(root, 'packages/cli'),
+          timeout: 60000,
+          env: {
+            ...process.env,
+            FARMSLOT_HOME: path.join(fixture, 'home'),
+            FARMSLOT_GATEWAY_PROFILE: 'proof',
+          },
+        },
+      );
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (chunk) => {
+        stdout += chunk.toString();
+      });
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk.toString();
+      });
+      const [code] = await once(child, 'close');
+      assert(stdout, stderr);
+      return { code, envelope: JSON.parse(stdout) };
+    };
+    const before = await connection!.call('run.list');
+    const missing = await invoke('first');
+    assert.notEqual(missing.code, 0);
+    assert.equal(
+      missing.envelope.error.code,
+      'REVIEW_QA_NEEDS_CONFIGURATION',
+      JSON.stringify(missing.envelope),
+    );
+    assert.deepEqual(missing.envelope.error.details.qaProfiles, [
+      { id: 'release', title: 'Release validation' },
+      { id: 'changes', title: 'Validate changes' },
+    ]);
+    assert.match(missing.envelope.error.userAction, /--qa-profile/);
+    await assert.rejects(
+      connection!.call('run.createNative', { ...base, flowType: 'qa' }),
+      (error: unknown) => {
+        assert(error instanceof GatewayRpcError);
+        assert.equal(error.code, 'REVIEW_QA_NEEDS_CONFIGURATION');
+        assert.deepEqual(error.details, missing.envelope.error.details);
+        return true;
+      },
+    );
+    assert.deepEqual(await connection!.call('run.list'), before);
+    const captured: Array<Pick<Run, 'id' | 'qa'>> = [];
+    for (const [project, flags, expected] of [
+      ['first', ['--qa-profile', 'release'], 'release'],
+      ['second', [], 'candidate'],
+      ['sole', [], 'only'],
+    ] as const) {
+      const result = await invoke(project, [...flags]);
+      assert.equal(result.code, 0, JSON.stringify(result.envelope));
+      const run = result.envelope.data.run;
+      assert.equal(run.qa.profile.id, expected);
+      if (sourceProfileProof)
+        assert(
+          run.sourcePlan || run.sourceProvenance,
+          'Source authority must bind the admitted run',
+        );
+      assert.equal(run.status, 'created');
+      captured.push({ id: run.id, qa: run.qa });
+    }
+    const invalid = await invoke('second', ['--qa-profile', 'absent']);
+    assert.notEqual(invalid.code, 0);
+    assert.match(invalid.envelope.error.message, /does not exist/);
+    if (!sourceProfileProof) {
+      await stopGateway();
+      const projectPath = path.join(fixture, 'projects/second/project.json');
+      const changed = JSON.parse(await readFile(projectPath, 'utf8'));
+      changed.qa.default_profile = 'release';
+      changed.qa.profiles.find((profile: { id: string }) => profile.id === 'candidate').title =
+        'Changed configuration title';
+      await json(projectPath, changed);
+      gateway = launchGateway();
+      await connectGateway();
+      for (const saved of captured) {
+        const { run } = await connection!.call<{ run: { qa: unknown } }>('run.get', {
+          runId: saved.id,
+        });
+        assert.deepEqual(run.qa, saved.qa, 'Restart/config edits must preserve admitted QA');
+      }
+    }
+    await json(
+      path.join(path.resolve(process.argv[3] ?? 'temp/qa-profile-selection'), 'receipt.json'),
+      {
+        passed: true,
+        missing: missing.envelope.error,
+        captured,
+        controls: [
+          'missing-choice-cli-rpc-no-run',
+          'explicit',
+          'configured-default',
+          'sole',
+          'invalid-id',
+          ...(sourceProfileProof ? [] : ['restart-frozen-profile']),
+        ],
+        sourceAuthority: sourceProfileProof,
+        workerExecution: false,
+      },
+    );
   } else if (scenario === 'legacy-queue') {
     const result = await connection!.call<DispatchQueueAddResult>('dispatch.queue.add', {
       ...base,
@@ -2014,6 +2211,23 @@ try {
   throw new Error(`${String(error)}\n${details}`, { cause: error });
 } finally {
   await stopGateway();
+  await upstream?.close();
+  if (sourceProfileProof) {
+    const mounts = path.join(fixture, 'home/sources/gateway/mounts');
+    const directories = await readdir(mounts, { withFileTypes: true }).catch((error) => {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    });
+    for (const entry of directories) {
+      if (!entry.isDirectory()) continue;
+      const mount = path.join(mounts, entry.name);
+      if ((await stat(mount)).dev !== (await stat(mounts)).dev) {
+        if (process.platform === 'darwin')
+          execFileSync('hdiutil', ['detach', '-quiet', mount], { stdio: 'pipe' });
+        else if (process.platform === 'linux') execFileSync('umount', [mount], { stdio: 'pipe' });
+      }
+    }
+  }
   // The private tmux server outlives the gateway; its socket exists only if it started.
   const tmuxSocket = path.join(tmuxEnv.TMUX_TMPDIR!, `tmux-${process.getuid!()}`, 'default');
   const tmuxStarted =

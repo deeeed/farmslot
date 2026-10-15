@@ -266,7 +266,11 @@ test('project packs require a valid farm-owned QA preset with a fix hint', () =>
     const errors = validatePackFilePortability(file, JSON.stringify({ qa: value }));
     assert.equal(errors.length, 1);
     assert.match(errors[0], /project.json:1: (missing required|invalid) qa flow/);
-    assert.match(errors[0], /configure qa.default_profile and qa.profiles/);
+    assert.match(errors[0], /configure qa.profiles/);
   }
+  assert.deepEqual(
+    validatePackFilePortability(file, JSON.stringify({ qa: { profiles: qa.profiles } })),
+    [],
+  );
   assert.deepEqual(validatePackFilePortability('recipes/fixture.json', '{}'), []);
 });

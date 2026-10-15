@@ -7,6 +7,8 @@ import type {
 import {
   interactiveWorkerTemplateOption,
   modeForFlow as sharedModeForFlow,
+  resolvePRWorkflowDefaults,
+  resolveQaProfileId,
   selectedTemplateMode as sharedSelectedTemplateMode,
   selectQaProfile,
 } from '@farmslot/protocol';
@@ -119,14 +121,32 @@ export function publicationReviewsEnabled(
   return flowType === 'dev' && mode === 'autonomous';
 }
 
+/** Keep the visible profile aligned with the gateway's existing workflow policy owner. */
+export function qaDispatchReview(
+  config: import('@farmslot/protocol').ProjectQaConfig | undefined,
+  profileId: string,
+  workflowDefaults?: import('@farmslot/protocol').ProjectWorkflowDefaults,
+) {
+  const { review } = resolvePRWorkflowDefaults({
+    workflow: 'qa',
+    farm: workflowDefaults,
+  });
+  return {
+    ...review,
+    qaProfileId: resolveQaProfileId(config, profileId || undefined, review.qaProfileId),
+  };
+}
+
 /** Inputs stay skill-owned; only the selected farm profile and JSON shape are interpreted here. */
 export function qaDispatchFields(
   config: import('@farmslot/protocol').ProjectQaConfig | undefined,
   profileId: string,
   rawInputs: string,
+  workflowDefaults?: import('@farmslot/protocol').ProjectWorkflowDefaults,
 ) {
-  const inputs = parseQaInputOverrides(rawInputs);
-  const selected = selectQaProfile(config, profileId || undefined, inputs);
+  const review = qaDispatchReview(config, profileId, workflowDefaults);
+  const inputs = { ...review.qaInputs, ...parseQaInputOverrides(rawInputs) };
+  const selected = selectQaProfile(config, review.qaProfileId, inputs);
   return { qaProfileId: selected.profile.id, qaInputs: selected.inputs };
 }
 

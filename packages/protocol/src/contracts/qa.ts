@@ -22,7 +22,7 @@ export interface QaProfile {
 }
 
 export interface ProjectQaConfig {
-  default_profile: string;
+  default_profile?: string;
   profiles: QaProfile[];
   after_review?: { enabled: boolean; profile_id: string };
 }
@@ -79,8 +79,13 @@ export type ReviewQaDispatchSelection =
   | { flowType: 'review-pr'; contract: ReviewQaContract; qa?: never }
   | { flowType: 'qa'; contract: ReviewQaContract; qa: QaProfileSelection };
 
+interface QaProfileChoiceDetails {
+  qaProfiles: Array<Pick<QaProfile, 'id' | 'title'>>;
+}
+
 export class ReviewQaConfigurationError extends Error {
   readonly code = 'REVIEW_QA_NEEDS_CONFIGURATION';
+  details?: QaProfileChoiceDetails;
 }
 
 /** Apply at unstarted intake boundaries; running and historical records keep their contract. */
@@ -198,7 +203,7 @@ function requireFields(value: Record<string, unknown>, allowed: string[], field:
 export function validateQaConfig(value: unknown): asserts value is ProjectQaConfig {
   if (!isRecord(value)) throw new Error('qa must be an object');
   requireFields(value, ['default_profile', 'profiles', 'after_review'], 'qa');
-  requireText(value.default_profile, 'qa.default_profile');
+  if (value.default_profile !== undefined) requireText(value.default_profile, 'qa.default_profile');
   if (!Array.isArray(value.profiles) || value.profiles.length === 0) {
     throw new Error('qa.profiles must contain at least one preset');
   }
@@ -266,7 +271,7 @@ export function validateQaConfig(value: unknown): asserts value is ProjectQaConf
       }
     }
   }
-  if (!ids.has(value.default_profile)) {
+  if (typeof value.default_profile === 'string' && !ids.has(value.default_profile)) {
     throw new Error(`QA default preset does not exist: ${value.default_profile}`);
   }
   if (value.after_review !== undefined) {
@@ -307,6 +312,20 @@ export function captureQaAfterReview(
   };
 }
 
+/** Resolve an effective request/policy id without validating unfinished input forms. */
+export function resolveQaProfileId(
+  config: ProjectQaConfig | undefined,
+  requestedId?: string,
+  policyId?: string,
+): string | undefined {
+  return (
+    requestedId ??
+    policyId ??
+    config?.default_profile ??
+    (config?.profiles.length === 1 ? config.profiles[0]?.id : undefined)
+  );
+}
+
 /** Returns a detached snapshot so configuration edits cannot change an admitted task. */
 export function selectQaProfile(
   config: ProjectQaConfig | undefined,
@@ -319,7 +338,15 @@ export function selectQaProfile(
   if (!isRecord(inputs) || !Object.values(inputs).every(isInput)) {
     throw new Error('QA inputs must be an object containing JSON values');
   }
-  const id = requestedId ?? config.default_profile;
+  const id = resolveQaProfileId(config, requestedId);
+  if (id === undefined) {
+    const qaProfiles = config.profiles.map(({ id, title }) => ({ id, title }));
+    const error = new ReviewQaConfigurationError(
+      `Choose a QA profile: ${qaProfiles.map(({ id, title }) => `${id} (${title})`).join(', ')}`,
+    );
+    error.details = { qaProfiles };
+    throw error;
+  }
   const profile = config.profiles.find((entry) => entry.id === id);
   if (!profile)
     throw new ReviewQaConfigurationError(`QA preset does not exist in this farm: ${id}`);
