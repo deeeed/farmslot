@@ -13,6 +13,7 @@ import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 
 import type { ReviewWorkspaceAdmission } from './admission.js';
 import { REVIEW_SKILL_INSTALL_SCRIPT } from './skill-install.js';
+import { useReviewWorkspaceStorage } from './storage-use.js';
 import { REVIEW_WORKSPACE_SCRIPT } from './workspace-node.js';
 
 export { REVIEW_WORKSPACE_SCRIPT } from './workspace-node.js';
@@ -52,7 +53,7 @@ async function exclusive<T>(runId: string, operation: () => Promise<T>): Promise
     );
   operations.add(runId);
   try {
-    return await operation();
+    return await useReviewWorkspaceStorage(operation);
   } finally {
     operations.delete(runId);
   }

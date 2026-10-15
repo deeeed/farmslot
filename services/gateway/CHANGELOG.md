@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Reclaim retired static-review execution caches through run cleanup while preserving open gates, retained reports and active admissions.
+
 - Deliver frozen evidence for adopted publications only at the attested head, preserving human PR content and archived execution records.
 - Resolve task and reviewer pack commands from the connected node installation instead of a guessed deployment directory.
 

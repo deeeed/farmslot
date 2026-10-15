@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Report retired review execution cache paths from run cleanup, including dry-run previews.
+
 ## 0.48.0 - 2026-10-15
 
 - Describe validated operator waits and their shared run activity label without changing run status.
