@@ -124,8 +124,7 @@ function readSelection(taskDir: string): TaskProjectSelection {
 }
 
 /** Retain the installed dependency tree without including its owner's product files. */
-function providerInputRoot(providerRoot: string, packageName?: string): string {
-  if (!packageName) return providerRoot;
+function installedInputRoot(providerRoot: string): string {
   let modules = path.dirname(providerRoot);
   if (path.basename(modules).startsWith('@')) modules = path.dirname(modules);
   if (path.basename(modules) !== 'node_modules') return providerRoot;
@@ -204,9 +203,9 @@ export async function projectTaskExecution(
     bindingIdentity,
     inputs: [
       ...new Set([
-        binding.root,
-        providerInputRoot(binding.provider.root, binding.provider.package),
-        ...host.librarySources.map((entry) => entry.root),
+        installedInputRoot(binding.root),
+        installedInputRoot(binding.provider.root),
+        ...host.librarySources.map((entry) => installedInputRoot(entry.root)),
         ...configuration.map((entry) => entry.path),
       ]),
     ],

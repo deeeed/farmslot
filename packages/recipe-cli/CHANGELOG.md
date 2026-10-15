@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- Preserve installed provider dependencies hoisted beside the package when retaining task tooling.
+- Preserve hoisted dependencies with retained project, provider and library packages.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
