@@ -729,6 +729,7 @@ export async function resolveProjectContext(
         : `No project binding found${named ? ` for ${named}` : ''}.`,
       'select a registered project with --project <name>',
       candidates.map((entry) => entry.config.name),
+      source === 'default' ? options.defaultProject : named,
     );
   }
   const selected = candidates[0]!;
