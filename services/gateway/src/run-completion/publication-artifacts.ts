@@ -5,7 +5,9 @@ import path from 'node:path';
 
 import {
   type ArtifactRef,
+  type HumanPublicationAdoptionReceipt,
   isRecord,
+  type ReadyGatePrPackage,
   RecordedEvidenceReadError,
   type Run,
   type RunArtifactBundleRef,
@@ -1183,7 +1185,48 @@ export function replaceMarkdownSection(body: string, heading: string, content: s
   return `${trimmed}\n\n${heading}\n\n${content.trim()}\n`;
 }
 
-/** Rewrites and posts the PR body; returns the body posted, or null when it was not. */
+interface AdoptedEvidenceBody {
+  receipt: HumanPublicationAdoptionReceipt;
+  prepared: ReadyGatePrPackage;
+  previousBody?: string;
+}
+
+function mergeOwnedEvidenceBody(
+  runId: string,
+  current: string,
+  previous: string | undefined,
+  content: string,
+): string {
+  const prefix = `<!-- farmslot-evidence:${runId}:`;
+  const start = `${prefix}start -->`;
+  const end = `${prefix}end -->`;
+  const section = (body: string) => {
+    const from = body.indexOf(start);
+    const to = body.indexOf(end);
+    if (from === -1 && to === -1 && !body.includes(prefix)) return null;
+    if (
+      from < 0 ||
+      to < from ||
+      body.indexOf(start, from + start.length) !== -1 ||
+      body.indexOf(end, to + end.length) !== -1 ||
+      body.split(prefix).length !== 3
+    )
+      throw new Error('Evidence refresh refused: malformed or duplicate farm evidence markers');
+    return { from, to: to + end.length, bytes: body.slice(from, to + end.length) };
+  };
+  const live = section(current);
+  const recorded = previous === undefined ? null : section(previous);
+  if ((live && (!recorded || live.bytes !== recorded.bytes)) || (!live && recorded))
+    throw new Error(
+      'Evidence refresh refused: farm evidence block was edited or has no recorded delivery',
+    );
+  const block = `${start}\n${content}\n${end}`;
+  return live
+    ? current.slice(0, live.from) + block + current.slice(live.to)
+    : current + (current.endsWith('\n') ? '\n' : '\n\n') + block + '\n';
+}
+
+/** Rewrites and posts the PR body; returns the posted body or null. */
 export async function postProcessPRBody(
   run: Run,
   ciRepo: string,
@@ -1196,6 +1239,7 @@ export async function postProcessPRBody(
     evidenceManifest?: EvidenceManifest | null;
     validateBody?: (body: string) => void | Promise<void>;
     checkAuthorChecklist?: boolean;
+    adoptedEvidence?: AdoptedEvidenceBody;
   } = {},
 ): Promise<string | null> {
   try {
@@ -1217,6 +1261,17 @@ export async function postProcessPRBody(
       body = result.stdout;
     }
 
+    const humanBody = body;
+    if (options.adoptedEvidence) {
+      const { receipt, prepared } = options.adoptedEvidence;
+      // Only this generated block enters the renderer. Human text never enters sanitization.
+      body =
+        `## Farm evidence\n\nPublication attested at \`${receipt.headSha}\`.\n` +
+        `Retained package \`${prepared.id}\` from source \`${prepared.headSha ?? 'unknown'}\`.\n` +
+        'Evidence retains its original execution verdicts; this refresh makes no new current-head claim.\n';
+      mergeOwnedEvidenceBody(run.id, humanBody, options.adoptedEvidence.previousBody, body);
+    }
+
     const selectedArtifactUrls = artifactUrls
       ? filterArtifactUrlsByEvidenceSelection(artifactUrls, selectedEvidenceKeys)
       : artifactUrls;
@@ -1235,6 +1290,8 @@ export async function postProcessPRBody(
       ? filterEvidenceManifestBySelection(rawManifest, selectedEvidenceKeys)
       : autoDetectEvidenceManifest(selectedArtifactUrls);
 
+    if (options.adoptedEvidence && !manifest)
+      throw new Error('Adopted evidence requires a deterministic evidence manifest');
     body = sanitizePRBody(body);
 
     if (selectedEvidenceKeys?.length && selectedArtifactUrls && selectedArtifactUrls.size === 0) {
@@ -1275,7 +1332,11 @@ export async function postProcessPRBody(
     if (options.failOnError) assertNoLocalPrBodyPathResidues(body);
 
     // Auto-check author checklist boxes (CI may be gated on these)
-    if (options.checkAuthorChecklist !== false && body.includes('- [ ]')) {
+    if (
+      !options.adoptedEvidence &&
+      options.checkAuthorChecklist !== false &&
+      body.includes('- [ ]')
+    ) {
       const reviewerMarker = 'reviewer checklist';
       const markerIdx = body.toLowerCase().indexOf(reviewerMarker);
       if (markerIdx > 0) {
@@ -1289,14 +1350,15 @@ export async function postProcessPRBody(
     // The gateway-owned explanation is literal provenance, not a local media
     // reference. Restore it after body rewrites so they cannot drop its text.
     body = withEvidenceAttestation(run, body);
-    await options.validateBody?.(body);
-
+    if (options.adoptedEvidence)
+      body = mergeOwnedEvidenceBody(run.id, humanBody, options.adoptedEvidence.previousBody, body);
     const tmpFile = `/tmp/farmslot-pr-body-${prNumber}-${randomUUID()}.md`;
     const { writeFile: writeF } = await import('node:fs/promises');
     await writeF(tmpFile, body, 'utf-8');
     let editError: unknown = null;
     let cleanupError: unknown = null;
     try {
+      await options.validateBody?.(body);
       await ghRequest(['pr', 'edit', String(prNumber), '--repo', ciRepo, '--body-file', tmpFile], {
         force: true,
       });

@@ -299,7 +299,7 @@ the existing recovery action without discarding earlier evidence.
 
 ## Amendment 5: evidence delivery after human publication adoption, 2026-10-15
 
-**Status:** Proposed. Implementation awaits lead acceptance after paired review.
+**Status:** Accepted for implementation under the lead continuation, 2026-10-16, after paired R2 approval at `62e73a1a486ed5454fe272b6116a8bef8120e229`.
 **Specification:** [Adopted publication evidence delivery](../reference/fail-closed-run-lifecycle.md#adopted-publication-evidence-delivery).
 
 ### Decision

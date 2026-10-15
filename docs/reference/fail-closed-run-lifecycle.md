@@ -521,8 +521,8 @@ No hand-created PR or adoption may substitute for that publication receipt.
 
 ## Adopted publication evidence delivery
 
-**Status:** Proposed under ADR-065 Amendment 5. This section does not change the
-accepted adoption restrictions until the amendment is accepted and implemented.
+**Status:** Accepted under ADR-065 Amendment 5, 2026-10-16. Delivery requires the
+implementation PR; the person-only adoption restrictions remain unchanged.
 
 `run.refreshPublishedEvidence` MAY deliver retained media for an adopted
 publication under its existing scoped authorization for run mutations. Adoption itself
