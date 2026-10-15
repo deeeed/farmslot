@@ -199,10 +199,10 @@ export function reviewerContextNeedsRecovery(
 ): boolean {
   if (!isRecoverableReviewerContext(ctx, options)) return false;
   const artifactScope = ctx.artifactScope?.trim();
-  // Legacy complete contexts without a persisted scope cannot be distinguished
-  // from normally ingested reviews. In-flight contexts remain recoverable via
-  // the existing fallback id path.
-  if (!artifactScope) return ctx.status !== 'complete';
+  // Without a persisted scope, complete contexts may already be ingested and
+  // failed contexts cannot match a delivery-failure placeholder. In-flight
+  // contexts remain recoverable via the existing fallback id path.
+  if (!artifactScope) return ctx.status !== 'complete' && ctx.status !== 'failed';
   const recordedIndex = reviews.findIndex((review) => review.id === artifactScope);
   if (recordedIndex < 0) return ctx.status !== 'failed';
   const recorded = reviews[recordedIndex];
