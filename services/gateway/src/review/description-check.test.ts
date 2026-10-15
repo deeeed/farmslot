@@ -126,7 +126,7 @@ test('the section names the findings and says when the pre-check could not run',
     preCheck: [{ code: 'FLAG_STATE_EVIDENCE_MISSING', detail: 'no flag off pair.' }],
   });
   assert.match(withFinding, /^## Description and evidence check/);
-  assert.match(withFinding, /git diff origin\/main\.\.\.HEAD/);
+  assert.match(withFinding, /--src-prefix=a\/.*origin\/main\.\.\.HEAD/);
   assert.match(withFinding, /cat tasks\/t1\/artifacts\/pr-description\.md/);
   assert.match(withFinding, /- `FLAG_STATE_EVIDENCE_MISSING`: no flag off pair\./);
   for (const code of [

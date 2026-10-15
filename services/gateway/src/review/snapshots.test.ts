@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
+
 import { makeVars } from '../runners/test-fixtures.js';
 
 import {
@@ -120,7 +122,7 @@ test('COLD captures the full immutable PR range; WARM uses exactly the verified 
         stdout = base;
       else if (command.includes('--abbrev-ref')) stdout = 'feature';
       else if (command.includes('--numstat')) stdout = '1\t1\tsrc/a.ts';
-      else if (command.startsWith('git diff')) stdout = 'diff --git a/src/a.ts b/src/a.ts';
+      else if (command.startsWith(GIT_DIFF_COMMAND)) stdout = 'diff --git a/src/a.ts b/src/a.ts';
       return { exitCode: 0, stdout, stderr: '' };
     },
   };
@@ -129,7 +131,7 @@ test('COLD captures the full immutable PR range; WARM uses exactly the verified 
   assert.equal(cold.snapshot.headSha, head);
   assert.ok(
     commands
-      .filter((command) => command.startsWith('git diff'))
+      .filter((command) => command.startsWith(GIT_DIFF_COMMAND))
       .every((command) => command.includes(base) && command.includes(head)),
   );
   assert.ok(!commands.some((command) => command.includes('ls-files')));
@@ -144,7 +146,7 @@ test('COLD captures the full immutable PR range; WARM uses exactly the verified 
   assert.ok(commands.some((command) => command.includes(`--is-ancestor '${prior}' '${head}'`)));
   assert.ok(
     commands
-      .filter((command) => command.startsWith('git diff'))
+      .filter((command) => command.startsWith(GIT_DIFF_COMMAND))
       .every((command) => command.includes(prior) && command.includes(head)),
   );
   const invalid = await captureCurrentReviewSnapshot(
