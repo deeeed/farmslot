@@ -9,7 +9,7 @@ import {
   type AdapterDevices,
   type AdapterReadiness,
   createAdapterRegistry,
-  type PlatformAdapter,
+  type ProjectRuntime,
 } from '@farmslot/adapter-sdk';
 
 import {
@@ -65,7 +65,7 @@ function shopHost(): { packageRoot: string } {
   return { packageRoot };
 }
 
-function fakeAdapter(id: string, extra: Partial<PlatformAdapter> = {}): PlatformAdapter {
+function fakeAdapter(id: string, extra: Partial<ProjectRuntime> = {}): ProjectRuntime {
   return {
     id,
     sdkVersion: ADAPTER_SDK_VERSION,
@@ -100,7 +100,7 @@ function fakeAdapter(id: string, extra: Partial<PlatformAdapter> = {}): Platform
   };
 }
 
-function useAdapters(...adapters: PlatformAdapter[]): void {
+function useAdapters(...adapters: ProjectRuntime[]): void {
   const registry = createAdapterRegistry();
   for (const adapter of adapters) registry.register(adapter);
   configureHarnessAdapters(registry);

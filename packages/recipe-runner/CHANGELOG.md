@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.37.0 - 2026-10-15
+
+- Replace `ActionAdapter` with `ActionHandler` and `defineActionAdapter` with `defineActionHandler`.
+
 ## 0.36.2 - 2026-10-15
 
 - Align the published dependency set with protocol 0.47.0 initial resource proof modes.

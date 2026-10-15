@@ -13,6 +13,7 @@ export function runClaimOverrideSnapshotIdentity(decision: Pick<RunDecision, 'pa
   if (payload?.kind === 'output-review')
     return digestRecipeDocument({
       manifestDigest: payload.manifestDigest,
+      ...(payload.artifactBundle ? { bundleDigest: payload.artifactBundle.bundleDigest } : {}),
       receipts: payload.claimOverrideReceiptIds ?? [],
       ...(payload.visualJudgmentReceiptIds?.length
         ? { visualJudgments: payload.visualJudgmentReceiptIds }

@@ -117,6 +117,10 @@ export interface RecipeArtifactManifestDocument {
 }
 
 export interface ArtifactRef {
+  /** Pins retained HTTP reads independently of later captures. */
+  bundleDigest?: string;
+  availability?: 'available' | 'missing' | 'pruned';
+  retentionRevision?: number;
   capture?: RecipeEvidenceCaptureBinding;
   path: string; // relative to task dir
   purpose: string; // "task-md", "report", "review", "recipe", "video-before", etc.
@@ -466,4 +470,11 @@ export interface CIWatchStepOutput {
   checkTimeline: Array<{ timestamp: string; status: string; detail?: string }>;
   actionableBotCommentCount: number;
   cliCommand?: string;
+}
+
+/** Shared transport binding for retained artifact links in web and native clients. */
+export function withArtifactBundleDigest(url: string, bundleDigest?: string): string {
+  return bundleDigest
+    ? `${url}${url.includes('?') ? '&' : '?'}bundleDigest=${encodeURIComponent(bundleDigest)}`
+    : url;
 }

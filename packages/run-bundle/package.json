@@ -16,10 +16,12 @@
     "test": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src"
   },
   "dependencies": {
-    "@farmslot/protocol": "workspace:*"
+    "@farmslot/protocol": "workspace:*",
+    "proper-lockfile": "^4.1.2"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/proper-lockfile": "^4.1.4",
     "eslint": "^10.3.0",
     "prettier": "^3.8.3",
     "tsx": "^4.19.0",

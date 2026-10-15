@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import type { PlatformAdapter } from '@farmslot/adapter-sdk';
+import type { ProjectRuntime } from '@farmslot/adapter-sdk';
 import { portableRepoIdentity } from '@farmslot/agent-runtime';
 import {
   DEFAULT_TASK_DIR,
@@ -591,7 +591,7 @@ export interface ResolveProjectContextOptions extends ResolveHarnessContextOptio
 }
 
 export interface ProjectProvider {
-  runtime: PlatformAdapter;
+  runtime: ProjectRuntime;
   engine?: RecipeEngine;
   /** Project presentation and owned companions consumed by the shared lifecycle handlers. */
   commandOptions?: {

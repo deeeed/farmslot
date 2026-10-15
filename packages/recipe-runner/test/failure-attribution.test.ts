@@ -12,8 +12,8 @@ import {
 
 import { createStandardCoreAdapters } from '../src/adapters/core.js';
 import { RecipeExecutionError } from '../src/core/failure.js';
-import { createRecipeRunner, defineActionAdapter } from '../src/core/runner.js';
-import type { ActionAdapter } from '../src/core/types.js';
+import { createRecipeRunner, defineActionHandler } from '../src/core/runner.js';
+import type { ActionHandler } from '../src/core/types.js';
 
 function manifest(actions: string[]): RecipeActionManifestDocument {
   const schemas: Record<string, Record<string, unknown>> = {
@@ -83,8 +83,8 @@ test('classifies explicit and untyped adapter failures and reconciles summary co
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'farmslot-failure-attribution-'));
   try {
     await writeFile(path.join(tempRoot, 'state.json'), '{"ready":false}\n');
-    const classified = (action: string, cause: 'harness' | 'environment'): ActionAdapter =>
-      defineActionAdapter({
+    const classified = (action: string, cause: 'harness' | 'environment'): ActionHandler =>
+      defineActionHandler({
         action,
         source: { kind: 'bundled', trust: 'trusted' },
         async execute() {
@@ -168,7 +168,7 @@ test('preserves a nested structured cause on the parent call failure', async () 
         2,
       )}\n`,
     );
-    const subject = defineActionAdapter({
+    const subject = defineActionHandler({
       action: 'example.subject',
       source: { kind: 'bundled', trust: 'trusted' },
       async execute() {

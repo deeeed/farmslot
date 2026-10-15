@@ -115,7 +115,12 @@ import { runReplayStep } from '../methods/run/replay-step.js';
 import { runRereviewLatestHead } from '../methods/run/rereview.js';
 import { runSessionCommand } from '../methods/run/session-command.js';
 import { runSlotHistory } from '../methods/run/slot-history.js';
-import { runBundleExport, runBundleImport, runBundleList } from '../methods/run-bundle.js';
+import {
+  runBundleExport,
+  runBundleImport,
+  runBundleList,
+  runBundleRetain,
+} from '../methods/run-bundle.js';
 import { refreshPublishedEvidence } from '../run-completion/published-evidence-refresh.js';
 
 export interface RouteRunMethodContext {
@@ -220,6 +225,8 @@ export async function routeRunMethod(
       return handled(runBundleExport(p as RunBundleExportParams));
     case Methods.RUN_BUNDLE_IMPORT:
       return handled(runBundleImport(p as RunBundleImportParams));
+    case Methods.RUN_BUNDLE_RETAIN:
+      return handled(runBundleRetain(p as import('@farmslot/protocol').RunBundleRetainParams));
     case Methods.RUN_BUNDLE_LIST:
       return handled(runBundleList(p as RunBundleListParams));
     case Methods.RUN_GET:

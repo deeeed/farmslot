@@ -48,7 +48,7 @@ import {
 import voiceAsrTestClipAssetModule from '../../../assets/asr/voice-command-status.wav';
 import { ConnectionBanner } from '../../components/ConnectionBanner';
 import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
-import { TaskProgressFallbackPanel, TaskProgressPanel } from '../../components/TaskProgressPanel';
+import { TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
 import {
   type ArtifactManifestEntry,
@@ -1864,11 +1864,7 @@ export default function TerminalScreen() {
             </View>
           ) : showTerminalOptions && fallbackTaskProgress ? (
             <View style={styles.terminalProgressPanel}>
-              <TaskProgressFallbackPanel
-                summary={fallbackTaskProgress}
-                error={taskProgressError}
-                compact
-              />
+              <TaskProgressPanel summary={fallbackTaskProgress} error={taskProgressError} compact />
             </View>
           ) : null}
 

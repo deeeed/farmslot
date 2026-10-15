@@ -45,7 +45,8 @@ farmslot credential issue --principal <node-id> --subject node \
 ```
 
 Install the private node file with `deploy-node.sh --node-token-file <private-node-file>`,
-or run `credential issue --write-node-env` from the node checkout. Supply it through `FARMSLOT_NODE_TOKEN`. Node requests and remote
+or use the private machine secret for a co-launched development node, as described
+in [Worktree operator model](../operations/worktree-operator-model.md). Node requests and remote
 file transfer use the authenticated node connection. An HTTP file download still
 requires a person or service credential.
 

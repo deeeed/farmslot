@@ -17,7 +17,7 @@ import {
   normalizeRelativePath,
 } from '../core/json.js';
 import { copyFileWithinRoots, readFileWithinRoot, statFileWithinRoot } from '../core/path.js';
-import type { ActionAdapter, ActionExecutionContext } from '../core/types.js';
+import type { ActionExecutionContext, ActionHandler } from '../core/types.js';
 
 export { recipeExecutionSignal, withRecipeExecutionSignal } from '../core/execution-signal.js';
 export { assertRecipeActive } from '../core/failure.js';
@@ -26,7 +26,7 @@ export const RECIPE_PROCESS_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT']
 
 export function createStandardCoreAdapters(
   options: { actions?: Iterable<string> } = {},
-): ActionAdapter[] {
+): ActionHandler[] {
   const adapters = [
     defineWaitAdapter(),
     defineCommandAdapter(),
@@ -53,7 +53,7 @@ export function createStandardCoreAdapters(
   return bundled.filter((adapter) => actions.has(adapter.action));
 }
 
-function defineWaitAdapter(): ActionAdapter {
+function defineWaitAdapter(): ActionHandler {
   return {
     action: 'wait',
     async execute(node, context) {
@@ -68,7 +68,7 @@ function defineWaitAdapter(): ActionAdapter {
   };
 }
 
-function defineCommandAdapter(): ActionAdapter {
+function defineCommandAdapter(): ActionHandler {
   return {
     action: 'command',
     async execute(node, context) {
@@ -90,7 +90,7 @@ function defineCommandAdapter(): ActionAdapter {
   };
 }
 
-function defineAssertFileAdapter(): ActionAdapter {
+function defineAssertFileAdapter(): ActionHandler {
   return {
     action: 'assert_file',
     async execute(node, context) {
@@ -119,7 +119,7 @@ function defineAssertFileAdapter(): ActionAdapter {
   };
 }
 
-function defineAssertJsonAdapter(): ActionAdapter {
+function defineAssertJsonAdapter(): ActionHandler {
   return {
     action: 'assert_json',
     async execute(node, context) {
@@ -133,7 +133,7 @@ function defineAssertJsonAdapter(): ActionAdapter {
   };
 }
 
-function defineAssertExitCodeAdapter(): ActionAdapter {
+function defineAssertExitCodeAdapter(): ActionHandler {
   return {
     action: 'assert_exit_code',
     async execute(node, context) {
@@ -148,7 +148,7 @@ function defineAssertExitCodeAdapter(): ActionAdapter {
   };
 }
 
-function defineAssertOutputAdapter(): ActionAdapter {
+function defineAssertOutputAdapter(): ActionHandler {
   return {
     action: 'assert_output',
     async execute(node, context) {
@@ -193,7 +193,7 @@ function defineAssertOutputAdapter(): ActionAdapter {
   };
 }
 
-function defineStateReadAdapter(): ActionAdapter {
+function defineStateReadAdapter(): ActionHandler {
   return {
     action: 'state_read',
     async execute(node, context) {
@@ -206,7 +206,7 @@ function defineStateReadAdapter(): ActionAdapter {
   };
 }
 
-function defineSwitchAdapter(): ActionAdapter {
+function defineSwitchAdapter(): ActionHandler {
   return {
     action: 'switch',
     async execute(node) {
@@ -221,7 +221,7 @@ function defineSwitchAdapter(): ActionAdapter {
   };
 }
 
-function defineManualAdapter(): ActionAdapter {
+function defineManualAdapter(): ActionHandler {
   return {
     action: 'manual',
     async execute(node) {
@@ -235,7 +235,7 @@ function defineManualAdapter(): ActionAdapter {
   };
 }
 
-function defineWatchLogsAdapter(): ActionAdapter {
+function defineWatchLogsAdapter(): ActionHandler {
   return {
     action: 'watch_logs',
     async execute(node, context) {
@@ -295,7 +295,7 @@ function defineWatchLogsAdapter(): ActionAdapter {
   };
 }
 
-function defineIndexArtifactsAdapter(): ActionAdapter {
+function defineIndexArtifactsAdapter(): ActionHandler {
   return {
     action: 'index_artifacts',
     async execute(node, context) {

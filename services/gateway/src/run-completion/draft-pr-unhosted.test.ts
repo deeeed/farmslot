@@ -14,6 +14,7 @@ process.env.FARMSLOT_PROJECTS_DIR = projectsRoot;
 const { buildDraftPrBody } = await import('./draft-pr.js');
 const { sanitizePRBody, localPrBodyPathResidues } = await import('./publication-artifacts.js');
 const { makeRun } = await import('./test-fixtures.js');
+const { retainRunFixture } = await import('../run-engine/test-fixtures.js');
 
 test.after(() => rm(projectsRoot, { recursive: true, force: true }));
 
@@ -33,6 +34,7 @@ test('buildDraftPrBody lists evidence names when the project has no artifacts re
       project: 'unhosted-farm',
       taskFile,
     });
+    await retainRunFixture(run);
     const body = await buildDraftPrBody(run, null, [
       { path: 'artifacts/recipe-run/screenshots/recipe/01-drawer-open.png', purpose: 'screenshot' },
       { path: 'artifacts/recipe-run/screenshots/recipe/02-search.png', purpose: 'screenshot' },

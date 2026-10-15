@@ -92,14 +92,14 @@ standing drift hazard (e.g. hooks.ts already has `{safety_flags}`, `cursor_path`
 
 ## `scripts/*.sh` — DEV-ONLY / TEST-HARNESS
 
-| Script                                   | Purpose                                                                | Class                    |
-| ---------------------------------------- | ---------------------------------------------------------------------- | ------------------------ |
-| `dev.sh` (86L)                           | Start command-center dev servers from `.env.ports`/`.env.local-auth`   | **DEV-ONLY**             |
-| `completions.sh` (232L)                  | `farm` wrapper + bash/zsh tab completion                               | **DEV-ONLY**             |
-| `e2e-tmux-runner-validate.sh` (208L)     | Live tmux E2E — canonical ADR-032 runner-driver proof (not unit tests) | **DEV-ONLY (test gate)** |
-| `run-runner-observability-gate.sh` (41L) | Runner observability empirical gate (live tmux E2E + install probes)   | **DEV-ONLY (test gate)** |
-| `validate-tmux-driver.sh` (2L)           | Alias → `e2e-tmux-runner-validate.sh`                                  | **DEV-ONLY (alias)**     |
-| `validate-config.sh`                     | (also listed above as decision-core validation)                        | —                        |
+| Script                                   | Purpose                                                                                       | Class                    |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------- | ------------------------ |
+| `dev.sh` (86L)                           | Start command-center dev servers with ports, provider settings and a separate node credential | **DEV-ONLY**             |
+| `completions.sh` (232L)                  | `farm` wrapper + bash/zsh tab completion                                                      | **DEV-ONLY**             |
+| `e2e-tmux-runner-validate.sh` (208L)     | Live tmux E2E — canonical ADR-032 runner-driver proof (not unit tests)                        | **DEV-ONLY (test gate)** |
+| `run-runner-observability-gate.sh` (41L) | Runner observability empirical gate (live tmux E2E + install probes)                          | **DEV-ONLY (test gate)** |
+| `validate-tmux-driver.sh` (2L)           | Alias → `e2e-tmux-runner-validate.sh`                                                         | **DEV-ONLY (alias)**     |
+| `validate-config.sh`                     | (also listed above as decision-core validation)                                               | —                        |
 
 ---
 

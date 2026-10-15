@@ -25,7 +25,7 @@
 # An existing launchd capture-helper override is retained when this is unset.
 # Set FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID to opt this node into native sessions
 # for that gateway principal. Runner installation and login remain node-owned.
-# An explicit caller value (including empty) overrides auth-file defaults;
+# An explicit caller value (including empty) controls enrollment;
 # ordinary macOS updates retain the target instance's installed native owner.
 #
 # One-time prerequisites:
@@ -102,22 +102,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 NODE_SRC="$REPO_ROOT/services/node"
 PACKAGES_DIR="$REPO_ROOT/packages"
-AUTH_ENV_FILE="$REPO_ROOT/.env.local-auth"
 
-# Auth-file defaults are not an explicit request to replace a node's enrollment.
+# Only an explicit caller can replace enrollment; otherwise retain the target owner.
 NATIVE_OWNER_EXPLICIT="${FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID+x}"
-NATIVE_OWNER_REQUESTED="${FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID-}"
-
-if [[ -f "$AUTH_ENV_FILE" ]]; then
-  set -a
-  # shellcheck source=/dev/null
-  source "$AUTH_ENV_FILE"
-  set +a
-fi
-
-if [[ "$NATIVE_OWNER_EXPLICIT" == x ]]; then
-  FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID="$NATIVE_OWNER_REQUESTED"
-fi
 
 if [[ -n "$NODE_TOKEN_FILE" ]]; then
   if [[ ! -r "$NODE_TOKEN_FILE" ]]; then
@@ -599,7 +586,7 @@ rsync -a --delete \
   "${RSYNC_PREFIX}$REMOTE_DIR/packages/agent-runtime/"
 
 # --- Refuse a deployed node token that an env file would shadow ---
-# The node reads FARMSLOT_NODE_TOKEN from a .env.local-auth or .env in or above
+# The node reads FARMSLOT_NODE_TOKEN from a .env in or above
 # its install dir ahead of the token the service definition below carries, so a
 # stale file kept nodes failing auth after a deploy that reported success. The
 # synced node answers with the service's own invocation (FARMSLOT_ROOT unset

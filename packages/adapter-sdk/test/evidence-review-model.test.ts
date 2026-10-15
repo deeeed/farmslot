@@ -528,7 +528,8 @@ test('QA report selection retains the reviewed report and output manifest identi
   };
   const model = createEvidenceReviewModel({ context: 'gate', report });
   assert.equal(model.selectReport()?.artifacts[0]?.path, report.reportPath);
-  assert.equal(model.selection?.caption, 'Report snapshot retained-output');
+  assert.match(model.selection?.caption ?? '', /^Report snapshot retained-output/);
+  assert.match(model.selection?.caption ?? '', /no recorded review binding/);
   assert.equal(model.report?.artifactManifest[0]?.sha256, report.artifactManifest[0]?.sha256);
   assert.equal(
     createEvidenceReviewModel({ report: { ...report, reportPath: 'other.html' } }).selectReport(),
@@ -626,16 +627,17 @@ test('report rendering is bound to both the decision snapshot and actual report 
   assert.equal((await readEvidenceReviewReport(model, async () => bytes)).body, '# QA report');
   await assert.rejects(
     readEvidenceReviewReport(model, async () => new TextEncoder().encode('changed')),
-    /bytes no longer match/,
+    /bytes do not match/,
   );
   const stale = createEvidenceReviewModel({
     report: { ...report, manifestDigest: 'new-manifest' },
     reportSnapshot,
   });
-  await assert.rejects(
-    readEvidenceReviewReport(stale, async () => bytes),
-    /no longer matches/,
-  );
+  const staleReport = await readEvidenceReviewReport(stale, async () => bytes);
+  assert.equal(staleReport.body, '# QA report');
+  assert.match(staleReport.caption, /no longer matches.*expected frozen-manifest/);
+  assert.ok(stale.warnings.some((warning) => warning.includes('no longer matches')));
+  assert.equal(stale.errors.length, 0);
 });
 
 test('review projection carries the retained checked expectation beside its claim', () => {
@@ -766,7 +768,7 @@ test('artifact-only reports open read-only despite recipe selection errors and s
   assert.equal(model.errors.length, 1);
   await assert.rejects(
     readEvidenceReviewReport(model, async () => new TextEncoder().encode('changed')),
-    /bytes no longer match/,
+    /bytes do not match/,
   );
   const stale = createEvidenceReviewModel({
     report,
@@ -777,11 +779,13 @@ test('artifact-only reports open read-only despite recipe selection errors and s
     },
     readErrors: model.errors,
   });
-  assert.equal(stale.selectReport(), null);
-  await assert.rejects(
-    readEvidenceReviewReport(stale, async () => new TextEncoder().encode(body)),
-    /no longer matches/,
+  assert.ok(stale.selectReport());
+  const staleReport = await readEvidenceReviewReport(stale, async () =>
+    new TextEncoder().encode(body),
   );
+  assert.equal(staleReport.body, body);
+  assert.match(staleReport.caption, /no longer matches.*expected another-output/);
+  assert.deepEqual(stale.errors, model.errors);
 });
 
 test('unverifiable current reads are invalid with recovery guidance', () => {

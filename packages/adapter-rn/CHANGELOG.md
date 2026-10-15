@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.22.13 - 2026-10-15
+
+- Consume the plain `ActionHandler` contract.
+
 ## 0.22.12 - 2026-10-15
 
 - Align the published dependency set with protocol 0.47.0 initial resource proof modes.

@@ -99,7 +99,7 @@ import {
 } from './trust.js';
 import { RECIPE_TRUST_ENV } from './trust-input.js';
 import type {
-  ActionAdapter,
+  ActionHandler,
   ActiveVideoRecording,
   CreateRecipeRunnerOptions,
   RecipeHudOptions,
@@ -147,7 +147,7 @@ interface ResolvedRecipeRun {
   videoOptions: RecipeVideoRecordingOptions & { mode: 'off' | 'full-run' };
 }
 
-export function defineActionAdapter(adapter: ActionAdapter): ActionAdapter {
+export function defineActionHandler(adapter: ActionHandler): ActionHandler {
   if (!adapter.action.trim()) throw new Error('Action adapter action must be a non-empty string.');
   return adapter;
 }
@@ -155,7 +155,7 @@ export function defineActionAdapter(adapter: ActionAdapter): ActionAdapter {
 export function createRecipeRunner(options: CreateRecipeRunnerOptions): RecipeRunner {
   assertManifestIsValid(options.actionManifest);
   const declaredActions = new Set(getRecipeActionManifestActionNames(options.actionManifest));
-  const adapterMap = new Map<string, ActionAdapter>();
+  const adapterMap = new Map<string, ActionHandler>();
 
   for (const adapter of options.adapters) {
     if (!adapter.action.trim())
@@ -210,7 +210,7 @@ function isNodeFileMissingError(error: unknown): boolean {
 
 class DefaultRecipeRunner implements RecipeRunner {
   readonly #actionManifest: RecipeActionManifestDocument;
-  readonly #adapters: ReadonlyMap<string, ActionAdapter>;
+  readonly #adapters: ReadonlyMap<string, ActionHandler>;
   readonly #logger: RecipeLogger;
   readonly #defaultObserverRefs;
   readonly #hud: RecipeHudOptions | false | undefined;
@@ -221,7 +221,7 @@ class DefaultRecipeRunner implements RecipeRunner {
 
   constructor(
     actionManifest: RecipeActionManifestDocument,
-    adapters: ReadonlyMap<string, ActionAdapter>,
+    adapters: ReadonlyMap<string, ActionHandler>,
     logger: RecipeLogger,
     hud: RecipeHudOptions | false | undefined,
     runnerProvenance: CreateRecipeRunnerOptions['runner'],
@@ -1047,7 +1047,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     registerArtifact(entry: RecipeArtifactManifestEntry): void;
     runFileOffsets: ReadonlyMap<string, number>;
     recording?: RunVideoRecording;
-  }): Parameters<ActionAdapter['execute']>[1] {
+  }): Parameters<ActionHandler['execute']>[1] {
     return {
       nodeId,
       recipe,
@@ -1328,7 +1328,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       recipe: unknown;
       index: number;
       total: number;
-      context: Parameters<ActionAdapter['execute']>[1];
+      context: Parameters<ActionHandler['execute']>[1];
       error?: string;
     },
     hud: RecipeHudOptions | false,
@@ -1365,7 +1365,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       recipe: unknown;
       index: number;
       total: number;
-      context: Parameters<ActionAdapter['execute']>[1];
+      context: Parameters<ActionHandler['execute']>[1];
       error?: string;
     },
     hud: RecipeHudOptions | false,

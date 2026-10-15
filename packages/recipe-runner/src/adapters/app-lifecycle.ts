@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import { asNumber, asOptionalString } from '../core/json.js';
-import type { ActionAdapter, ActionExecutionContext } from '../core/types.js';
+import type { ActionExecutionContext, ActionHandler } from '../core/types.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -58,14 +58,14 @@ export interface CreateAppLifecycleAdapterOptions {
 
 export function createAppLifecycleAdapters(
   options: CreateAppLifecycleAdapterOptions,
-): ActionAdapter[] {
+): ActionHandler[] {
   if (options.actions && !new Set(options.actions).has('app.lifecycle')) return [];
   return [createAppLifecycleAdapter(options)];
 }
 
 export function createAppLifecycleAdapter(
   options: CreateAppLifecycleAdapterOptions,
-): ActionAdapter {
+): ActionHandler {
   const commandRunner = options.commandRunner ?? defaultCommandRunner();
   return {
     action: 'app.lifecycle',

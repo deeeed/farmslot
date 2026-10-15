@@ -966,6 +966,10 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
+    "run.bundle.retain": {
+      "surface": "typed-command",
+      "command": "farmslot runs bundle retain"
+    },
     "run.cancel": {
       "surface": "typed-command",
       "command": "farmslot run"

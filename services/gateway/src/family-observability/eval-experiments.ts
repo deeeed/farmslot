@@ -1,6 +1,5 @@
 // eval-experiments.ts — Family observability projection of eval experiment packages
 
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -18,6 +17,10 @@ import {
   fileExists,
   readResultPackageManifest,
 } from '../evals/package-store.js';
+import {
+  readOptionalRetainedRunText,
+  retainedRunTaskDirectory,
+} from '../run-completion/retained-artifacts.js';
 
 const EXPERIMENT_MANIFEST_RELATIVE_PATH = `artifacts/${EXPERIMENT_MANIFEST_FILENAME}` as const;
 
@@ -223,14 +226,12 @@ export async function buildEvalExperimentProjections(
   const byEvalKey = new Map<string, { projection: EvalExperimentProjection; updatedAt: string }>();
   for (const run of familyRuns) {
     if (!run.taskFile) continue;
-    const manifestPath = path.join(path.dirname(run.taskFile), EXPERIMENT_MANIFEST_RELATIVE_PATH);
-    let raw: string;
-    try {
-      raw = await readFile(manifestPath, 'utf-8');
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
-      throw err;
-    }
+    const raw = await readOptionalRetainedRunText(run, EXPERIMENT_MANIFEST_RELATIVE_PATH);
+    if (raw === undefined) continue;
+    const manifestPath = path.join(
+      await retainedRunTaskDirectory(run),
+      EXPERIMENT_MANIFEST_RELATIVE_PATH,
+    );
     const parsed = JSON.parse(raw);
     if (!isEvalExperimentManifest(parsed)) continue;
     const existing = byEvalKey.get(parsed.experimentKey);

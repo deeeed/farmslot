@@ -12,8 +12,10 @@ let copies = 0;
 mock.module('./review-artifacts.js', {
   namedExports: {
     ...artifacts,
-    copyWorkerArtifacts: async () => {
+    copyWorkerArtifacts: async (runId: string) => {
       copies += 1;
+      const { captureRunOutput } = await import('../run-completion/output.js');
+      await captureRunOutput(runId, false);
     },
   },
 });

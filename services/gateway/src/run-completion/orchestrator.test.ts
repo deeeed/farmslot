@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type { RawProjectJson } from '../core/config.js';
+import { retainRunFixture } from '../run-engine/test-fixtures.js';
 
 import { buildDraftPrBody } from './draft-pr.js';
 import { buildEvidenceSection } from './evidence-manifest.js';
@@ -550,7 +551,9 @@ test('readEvidenceManifest rejects unknown manifest keys', async () => {
       }),
     );
 
-    assert.equal(await readEvidenceManifest(makeRun({ taskFile })), null);
+    const run = makeRun({ taskFile });
+    await retainRunFixture(run);
+    assert.equal(await readEvidenceManifest(run), null);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -584,7 +587,9 @@ test('readEvidenceManifest accepts before-state capture metadata', async () => {
       }),
     );
 
-    const manifest = await readEvidenceManifest(makeRun({ taskFile }));
+    const run = makeRun({ taskFile });
+    await retainRunFixture(run);
+    const manifest = await readEvidenceManifest(run);
     assert.equal(manifest?.before_state_capture?.method, 'temporary checkout of baseline files');
     assert.deepEqual(manifest?.omit, [
       'debug-before.png',
@@ -611,7 +616,9 @@ test('readEvidenceManifest falls back to inherited and promoted recipe manifests
       }),
     );
 
-    const inheritedManifest = await readEvidenceManifest(makeRun({ taskFile: inheritedTaskFile }));
+    const inherited = makeRun({ taskFile: inheritedTaskFile });
+    await retainRunFixture(inherited);
+    const inheritedManifest = await readEvidenceManifest(inherited);
     assert.equal(inheritedManifest?.summary, 'Inherited curated evidence.');
 
     const promotedRoot = await mkdtemp(path.join(tmpdir(), 'farmslot-promoted-manifest-'));
@@ -645,7 +652,9 @@ test('readEvidenceManifest falls back to inherited and promoted recipe manifests
         }),
       );
 
-      const promotedManifest = await readEvidenceManifest(makeRun({ taskFile: promotedTaskFile }));
+      const promoted = makeRun({ taskFile: promotedTaskFile });
+      await retainRunFixture(promoted);
+      const promotedManifest = await readEvidenceManifest(promoted);
       assert.equal(promotedManifest?.summary, 'Promoted recipe evidence.');
       assert.equal(
         promotedManifest?.standalone?.[0]?.file,
@@ -694,6 +703,7 @@ test('assertReadyGatePackageInputsCurrent publishes an edited body instead of re
       ticketOrPr: 'PROJ-1',
       taskFile,
     });
+    await retainRunFixture(run);
     const draftBody = await buildDraftPrBody(run, null, [
       { path: 'artifacts/after-ac1.png', purpose: 'screenshot', sizeBytes: imageBytes.length },
       { path: 'artifacts/after.mp4', purpose: 'video', sizeBytes: videoBytes.length },
@@ -742,6 +752,7 @@ test('assertReadyGatePackageInputsCurrent publishes an edited body instead of re
     assert.deepEqual(await assertReadyGatePackageInputsCurrent(run, prPackage), prPackage);
 
     await writeFile(path.join(artifactsDir, 'pr-description.md'), '## Summary\nEdited body.\n');
+    await retainRunFixture(run);
     const published = await assertReadyGatePackageInputsCurrent(run, prPackage);
     assert.match(published.draftBody, /Edited body\./);
     assert.equal(published.packageHash, prPackage.packageHash);

@@ -8,7 +8,7 @@ import {
   type AdapterLaunchContext,
   type AdapterReadiness,
   createAdapterRegistry,
-  type PlatformAdapter,
+  type ProjectRuntime,
 } from '@farmslot/adapter-sdk';
 
 import {
@@ -57,7 +57,7 @@ function checkout(files: Record<string, string> = {}): string {
   return root;
 }
 
-async function launchUsage(adapter: PlatformAdapter): Promise<[string, string]> {
+async function launchUsage(adapter: ProjectRuntime): Promise<[string, string]> {
   let args: [string, string] = ['', ''];
   const code = await adapter.launch({
     usage(message: string, userAction: string) {
@@ -238,7 +238,7 @@ test('workspacePackages wire tsx live scripts unless the host set its own', asyn
 });
 
 test('a host extends the adapter by spreading it', () => {
-  interface HostAdapter extends PlatformAdapter {
+  interface HostAdapter extends ProjectRuntime {
     // A host's own readiness members extend the SDK's.
     readiness: AdapterReadiness & { mode(): string };
   }

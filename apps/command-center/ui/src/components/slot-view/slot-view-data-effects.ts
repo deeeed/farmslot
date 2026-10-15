@@ -5,12 +5,12 @@ import type {
   TaskProgressResult,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
+import { type ChecklistProgressStep, checklistProgressView } from '@farmslot/review-dispatch';
 
 import { gateway } from '../../gateway-client.js';
 import { getState } from '../../state.js';
 
 import type { SlotView } from './slot-view.js';
-import type { TaskStep } from './slot-view-model.js';
 
 export function loadSlotViewSlot(view: SlotView): void {
   const fleet = getState().fleet;
@@ -99,7 +99,7 @@ export async function parseSlotViewTaskSteps(view: SlotView): Promise<void> {
     ) {
       return;
     }
-    const steps: TaskStep[] = [];
+    const steps: ChecklistProgressStep[] = [];
     for (const line of snap.markdown.split('\n')) {
       const match = line.match(/^- \[([ x])\] (.+)/);
       if (match) {
@@ -107,8 +107,7 @@ export async function parseSlotViewTaskSteps(view: SlotView): Promise<void> {
       }
     }
     view._taskSteps = steps;
-    const checked = steps.filter((step) => step.checked).length;
-    view._taskProgress = steps.length > 0 ? checked / steps.length : 0;
+    view._taskProgress = (checklistProgressView(undefined, { steps })?.percent ?? 0) / 100;
   } catch (err) {
     console.warn(
       '[slot-view] parse task steps failed:',

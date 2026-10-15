@@ -58,7 +58,10 @@ export async function runOverrideClaim(
     throw new Error('The selected human evidence gate is unavailable.');
   const snapshotIdentity = runClaimOverrideSnapshotIdentity(decision);
   const prepared = decision.payload?.kind === 'ready' ? decision.payload.prPackage : undefined;
-  const qa = !prepared && run.flowType === 'qa' ? await assertQaCompletion(run) : undefined;
+  const qa =
+    !prepared && run.flowType === 'qa'
+      ? await assertQaCompletion(run, { retained: true })
+      : undefined;
   const inputs = await (dependencies.evidence ?? readGateRecordedEvidence)(
     run,
     prepared ?? null,

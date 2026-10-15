@@ -13,6 +13,7 @@ import {
   verifyReadyGateSelectedEvidenceFiles,
 } from './ready-gate-package.js';
 import { makeRun } from './test-fixtures.js';
+const { retainRunFixture } = await import('../run-engine/test-fixtures.js');
 
 test('ready package hashes separate artifact identity from review subject', () => {
   const base = {
@@ -214,8 +215,10 @@ test('ready gate selected evidence checks and review hash use path variants', as
       packageInputHash,
       reviewSubjectHash: reviewHash,
     });
+    const run = makeRun({ taskFile });
+    await retainRunFixture(run);
     await verifyReadyGateSelectedEvidenceFiles(
-      makeRun({ taskFile }),
+      run,
       { ...basePackage, packageInputHash, reviewSubjectHash: reviewHash, packageHash },
       ['./after-ac1.png'],
     );

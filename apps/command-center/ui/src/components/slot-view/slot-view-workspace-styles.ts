@@ -128,57 +128,7 @@ export function renderSlotViewWorkspaceStyles(): string {
         margin-top: ${spacing.xs};
       }
 
-      /* --- Task progress --- */
-      slot-view .sv-task-header {
-        font-size: ${fonts.sizeXs};
-        color: ${colors.textMuted};
-        margin-bottom: ${spacing.sm};
-      }
-      slot-view .sv-progress-bar {
-        background: ${colors.bgInput};
-        border-radius: 3px;
-        height: 4px;
-        margin-bottom: ${spacing.md};
-        overflow: hidden;
-      }
-      slot-view .sv-progress-fill {
-        height: 100%;
-        background: ${colors.accent};
-        border-radius: 3px;
-        transition: width 0.3s;
-      }
-      slot-view .sv-task-step {
-        display: flex;
-        align-items: flex-start;
-        gap: ${spacing.sm};
-        padding: 1px 0;
-        font-size: ${fonts.sizeXs};
-      }
-      slot-view .sv-task-checkbox {
-        width: 10px;
-        height: 10px;
-        border: 1px solid #2a2a44;
-        border-radius: 2px;
-        flex-shrink: 0;
-        margin-top: 2px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 7px;
-      }
-      slot-view .sv-task-checkbox.checked {
-        background: ${colors.statusOk}22;
-        border-color: ${colors.statusOk}44;
-        color: ${colors.statusOk};
-      }
-      slot-view .sv-task-text {
-        color: ${colors.textSecondary};
-        line-height: 1.3;
-      }
-      slot-view .sv-task-text.checked {
-        color: ${colors.textMuted};
-        text-decoration: line-through;
-      }
+
 
       /* --- Tab row (tabs + new file button) --- */
       slot-view .sv-tab-row {

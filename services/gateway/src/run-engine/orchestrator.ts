@@ -1,6 +1,5 @@
 // run-engine.ts — Workflow state machine for Runs
 // Drives a Run through its lifecycle steps, calling existing gateway methods.
-import path from 'node:path';
 
 import {
   Events,
@@ -51,7 +50,10 @@ import {
   reconcileReviewWorkspaceCleanup,
   teardownReviewWorkspace,
 } from '../review-workspaces/pipeline.js';
-import { scanArtifacts } from '../run-completion/orchestrator.js';
+import {
+  reserveRunArtifactMetadata,
+  retainedRunArtifactManifest,
+} from '../run-completion/retained-artifacts.js';
 import { isCompletionPrerequisiteFailure, STEP_TO_STATUS } from '../run-lifecycle/step-status.js';
 import {
   routeTerminalRunTransition,
@@ -821,6 +823,10 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
     });
 
     try {
+      if (i === startIdx) {
+        await reserveRunArtifactMetadata(current);
+        if (runSupersededSince(getRun(runId), myGen)) return;
+      }
       const stepIO = await executeStep(runId, stepName, myGen);
 
       // Re-check cancellation/pause after async step
@@ -1570,7 +1576,7 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
     copyWorkerArtifacts,
     readReviewArtifacts,
     loadProjectVarsOrNull,
-    scanArtifacts,
+    retainedRunArtifactManifest,
     readTaskArtifactText,
     setPrHealthOverlay,
     buildCIWatchChainedRunParams,
@@ -1924,7 +1930,7 @@ async function executeNoChangeGate(runId: string): Promise<void> {
   let artifactManifest: EvidenceManifestEntry[] | undefined;
   if (current.taskFile) {
     try {
-      artifactManifest = await scanArtifacts(path.dirname(current.taskFile));
+      artifactManifest = await retainedRunArtifactManifest(getRun(runId)!);
     } catch (err) {
       console.warn(
         `[run-engine] no-change gate artifact scan failed for ${runId.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,

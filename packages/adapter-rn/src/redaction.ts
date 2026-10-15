@@ -1,5 +1,5 @@
 import {
-  type ActionAdapter,
+  type ActionHandler,
   type ActionResult,
   createStandardCoreAdapters,
 } from '@farmslot/recipe-runner';
@@ -11,7 +11,7 @@ const SENSITIVE_TEXT_PATTERN =
 const REDACTED_VALUE = '<redacted>';
 
 // Recipe traces persist adapter outputs, so the Expo package redacts command output before the runner writes any artifacts.
-export function createRedactingCoreAdapters(actions: string[]): ActionAdapter[] {
+export function createRedactingCoreAdapters(actions: string[]): ActionHandler[] {
   return createStandardCoreAdapters({ actions }).map((adapter) => {
     if (adapter.action !== 'command') return adapter;
     return {

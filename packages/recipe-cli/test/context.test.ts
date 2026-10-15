@@ -12,7 +12,7 @@ import {
   ADAPTER_SDK_VERSION,
   type AdapterDetect,
   createAdapterRegistry,
-  type PlatformAdapter,
+  type ProjectRuntime,
 } from '@farmslot/adapter-sdk';
 
 import {
@@ -51,7 +51,7 @@ function gitOrigin(root: string, url: string): void {
   execFileSync('git', ['-C', root, 'remote', 'add', 'origin', url], { stdio: 'ignore' });
 }
 
-function adapter(id: string, extra: Partial<PlatformAdapter> = {}): PlatformAdapter {
+function adapter(id: string, extra: Partial<ProjectRuntime> = {}): ProjectRuntime {
   return {
     id,
     sdkVersion: ADAPTER_SDK_VERSION,
@@ -79,7 +79,7 @@ function adapter(id: string, extra: Partial<PlatformAdapter> = {}): PlatformAdap
     runtimeContext: { forbiddenFields: [] },
     launch: async () => 0,
     ...extra,
-  } as PlatformAdapter;
+  } as ProjectRuntime;
 }
 
 const hasFile =
@@ -87,7 +87,7 @@ const hasFile =
   (target) =>
     fs.existsSync(path.join(target, file));
 
-function useAdapters(...adapters: PlatformAdapter[]): void {
+function useAdapters(...adapters: ProjectRuntime[]): void {
   const registry = createAdapterRegistry();
   for (const entry of adapters) registry.register(entry);
   configureHarnessAdapters(registry);

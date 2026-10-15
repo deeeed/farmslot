@@ -161,7 +161,7 @@ export interface RecipeRunnerProvenance {
 
 export interface CreateRecipeRunnerOptions {
   actionManifest: RecipeActionManifestDocument;
-  adapters: ActionAdapter[];
+  adapters: ActionHandler[];
   /** Caller-owned default provenance. Omit to fail closed with unknown trust. */
   defaultSource?: RecipeSourceProvenance;
   logger?: RecipeLogger;
@@ -318,7 +318,7 @@ export interface ActionExecutionContext {
   logger: RecipeLogger;
 }
 
-export interface ActionAdapter {
+export interface ActionHandler {
   action: string;
   testOnly?: boolean;
   capabilities?: RecipeExecutionCapability[];

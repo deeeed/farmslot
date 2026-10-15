@@ -178,9 +178,9 @@ const suite = await finalizeRecipeSuite({
 ## Custom action
 
 ```ts
-import { defineActionAdapter } from '@farmslot/recipe-runner';
+import { defineActionHandler } from '@farmslot/recipe-runner';
 
-export const echoAdapter = defineActionAdapter({
+export const echoAdapter = defineActionHandler({
   action: 'example.echo',
   async execute(node, context) {
     const message = String(node.message ?? '');

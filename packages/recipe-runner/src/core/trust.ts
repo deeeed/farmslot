@@ -21,7 +21,7 @@ import { resolveRecipeParams, resolveRecipeValue } from './parameters.js';
 import type { DefaultObserverRefs } from './passive-observations.js';
 import { RecipeResolutionError } from './resolution-error.js';
 import { invalidRecipeSource, RecipeTrustError } from './trust-error.js';
-import type { ActionAdapter, RecipeHudOptions, RecipeRunRequest } from './types.js';
+import type { ActionHandler, RecipeHudOptions, RecipeRunRequest } from './types.js';
 
 const officialActions = new Set<string>(OFFICIAL_RECIPE_ACTIONS);
 const bundledSource: RecipeSourceProvenance = {
@@ -75,7 +75,7 @@ export function buildRecipeExecutionPlan({
   params: Record<string, unknown>;
   source: RecipeSourceProvenance;
   recipes: ReadonlyMap<string, ResolvedLibraryRecipe>;
-  adapters: ReadonlyMap<string, ActionAdapter>;
+  adapters: ReadonlyMap<string, ActionHandler>;
   actionManifest: RecipeActionManifestDocument;
   defaultObserverRefs: DefaultObserverRefs;
   projectRoot: string;
@@ -275,7 +275,7 @@ export function enforceRecipeExecutionPlan(
 }
 
 export async function verifyExecutableSource(
-  executable: Pick<ActionAdapter, 'source' | 'resolveSourceDigest'>,
+  executable: Pick<ActionHandler, 'source' | 'resolveSourceDigest'>,
   label: string,
 ): Promise<void> {
   if (!executable.resolveSourceDigest) return;
@@ -329,7 +329,7 @@ function redactSourceDetails(source: RecipeSourceProvenance): RecipeSourceProven
 
 function actionCapabilities(
   action: string,
-  adapter: ActionAdapter | undefined,
+  adapter: ActionHandler | undefined,
   adapterOrigin: RecipeSourceProvenance | undefined,
   manifestCapabilities: readonly RecipeExecutionCapability[],
   observes: boolean,
@@ -374,7 +374,7 @@ function declaredActionCapabilities(
 
 function adapterSource(
   action: string,
-  adapter: ActionAdapter | undefined,
+  adapter: ActionHandler | undefined,
 ): RecipeSourceProvenance | undefined {
   if (action === 'call' || action === 'end') return bundledSource;
   if (adapter?.source) return adapter.source;

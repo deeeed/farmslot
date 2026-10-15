@@ -4,6 +4,11 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Keep report and evidence links bound to their gateway-retained snapshot, including read-only stale reports.
+- Describe LAN binding through credential-store activation instead of the retired checkout auth file.
+
+- Use one compact worker checklist in pipeline, step inspection and slot views.
+
 - Move sign-out into the account menu with confirmation; retain sign-in for 30 days and reconnect through gateway restarts.
 
 - Share QA profile selection across Dispatch and PR requests, disable unresolved choices, and show the admitted profile id and title.
@@ -50,6 +55,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 - Portable workspace pool policies render as the configured pool and retain their runner/model defaults; machine selection narrows that pool without requiring a literal machine list in the pack.
 - PR previews load explicit task-artifact screenshot links even from older packages with incomplete inventories, and repeated references to one image stay resolvable.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+- Show runner/model/effort as visible shared chips across dispatch, review, backlog launch plans and Eval candidates, with execution options always open.
 
 ## 0.20.7 - 2026-10-10
 

@@ -38,11 +38,18 @@ export function renderChoiceButtons<T extends string>(input: {
   disabled?: boolean;
 }) {
   const labels: Partial<Record<T, string>> = input.labels ?? {};
-  return html`<div class="choice-grid" data-testid=${input.testId ?? ''}>
+  return html`<div
+    class="choice-grid"
+    role="group"
+    data-value=${input.value}
+    data-testid=${input.testId ?? ''}
+  >
     ${input.options.map(
       (option) =>
         html`<button
           class="choice-button ${option === input.value ? 'active' : ''}"
+          aria-pressed=${String(option === input.value)}
+          data-choice-value=${option}
           type="button"
           data-testid=${input.testId ? `${input.testId}-${option}` : ''}
           ?disabled=${input.disabled}

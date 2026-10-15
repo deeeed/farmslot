@@ -13,15 +13,13 @@ import {
   RunDecision,
   TaskProgressStructured,
 } from '@farmslot/protocol';
+import { taskProgressPercent } from '@farmslot/review-dispatch';
 
 import { ArtifactCard, ComparisonCard } from '../../../components/ArtifactCard';
 import { BeforeAfterPreview } from '../../../components/BeforeAfterPreview';
 import { PairNavigation } from '../../../components/EvidenceReviewWorkspace';
 import { RunTitle } from '../../../components/RunTitle';
-import {
-  TaskProgressFallbackPanel,
-  TaskProgressPanel,
-} from '../../../components/TaskProgressPanel';
+import { TaskProgressPanel } from '../../../components/TaskProgressPanel';
 import {
   type ArtifactManifestEntry,
   artifactsForRecipeRun,
@@ -46,7 +44,7 @@ import {
   selectSlotCompareTarget,
   selectSlotRecipeArtifactsForPreviewScope,
 } from '../../../lib/slot-workspace';
-import { type fallbackTaskProgressSummary, taskProgressPercent } from '../../../lib/task-progress';
+import { type fallbackTaskProgressSummary } from '../../../lib/task-progress';
 import { baseStyles, colors } from '../../../lib/theme';
 import {
   selectReadyWorkspaceDecision,
@@ -1600,11 +1598,7 @@ export function FamilyRunWorkspaceCard({
           compact
         />
       ) : fallbackTaskProgress ? (
-        <TaskProgressFallbackPanel
-          summary={fallbackTaskProgress}
-          error={taskProgressError}
-          compact
-        />
+        <TaskProgressPanel summary={fallbackTaskProgress} error={taskProgressError} compact />
       ) : null}
 
       {run.artifacts.length > 0 ? (

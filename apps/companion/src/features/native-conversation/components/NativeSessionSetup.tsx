@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 
+import { ReviewDispatchPicker } from '../../review-dispatch/ReviewDispatchPicker';
 import { nativeStyles as styles } from '../styles/native-conversation.styles';
 import type { useNativeSessionSetup } from '../use-native-session-setup';
 
@@ -66,47 +67,26 @@ export function NativeSessionSetup({
             </Pressable>
           ))
         : null}
-      <Text style={styles.muted}>Runner</Text>
-      <View style={styles.row}>
-        {vm.catalog?.runners.map((item) => (
-          <Pressable
-            key={item.runner}
-            testID={`companion-native-runner-${item.runner}`}
-            accessibilityRole="button"
-            accessibilityState={{ selected: item.runner === vm.runner }}
-            style={styles.button}
-            disabled={vm.controlsDisabled}
-            onPress={() => actions.selectRunner(item.runner)}
-          >
-            <Text style={styles.buttonText}>
-              {item.runner === vm.runner ? '✓ ' : ''}
-              {item.runner}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
+      {vm.executionPicker ? (
+        <ReviewDispatchPicker
+          model={vm.executionPicker}
+          review={false}
+          discover={false}
+          disabled={vm.controlsDisabled}
+          testID="companion-native-execution"
+          onChange={() => {
+            const selection = vm.executionPicker?.selection;
+            if (!selection) return;
+            actions.selectRunner(selection.runner);
+            actions.selectModel(selection.model ?? '');
+          }}
+        />
+      ) : null}
       <NativeProfilePicker
         viewModel={vm.profiles}
         actions={actions.profiles}
         disabled={vm.controlsDisabled}
       />
-      <Text style={styles.muted}>Model</Text>
-      {runner?.models.map((model, index) => (
-        <Pressable
-          key={model}
-          testID={`companion-native-model-${index}`}
-          accessibilityRole="button"
-          accessibilityState={{ selected: model === vm.model }}
-          style={styles.button}
-          disabled={vm.controlsDisabled}
-          onPress={() => actions.selectModel(model)}
-        >
-          <Text style={styles.buttonText}>
-            {model === vm.model ? '✓ ' : ''}
-            {model}
-          </Text>
-        </Pressable>
-      ))}
       {(runner?.modes.length ?? 0) > 1 ? (
         <View style={styles.row}>
           {runner?.modes.map((mode) => (

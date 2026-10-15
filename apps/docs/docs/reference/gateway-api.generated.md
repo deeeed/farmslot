@@ -298,6 +298,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `run.bundle.export`                     | run              | bounded-write | —      | —      | Run Bundle Export gateway method.                     |
 | `run.bundle.import`                     | run              | bounded-write | —      | —      | Run Bundle Import gateway method.                     |
 | `run.bundle.list`                       | run              | read-only     | —      | —      | Run Bundle List gateway method.                       |
+| `run.bundle.retain`                     | run              | bounded-write | —      | —      | Run Bundle Retain gateway method.                     |
 | `run.cancel`                            | run              | bounded-write | —      | —      | Run Cancel gateway method.                            |
 | `run.ciWatch.poke`                      | run              | bounded-write | —      | —      | Run CiWatch Poke gateway method.                      |
 | `run.cleanup`                           | run              | bounded-write | —      | —      | Run Cleanup gateway method.                           |

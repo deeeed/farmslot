@@ -4,6 +4,7 @@ import {
   isRunEvidenceVideoArtifact,
   type RecipeRunArtifactGroup,
   type Run,
+  withArtifactBundleDigest,
 } from '@farmslot/protocol';
 
 import { type GatewayHttpAuthHeaders, gatewayResourceSource } from './gateway-http-auth';
@@ -37,7 +38,7 @@ export type ArtifactManifestType =
 
 export interface ArtifactManifestEntry extends Pick<
   ArtifactRef,
-  'sha256' | 'timelinePath' | 'timelineUnavailableReason'
+  'sha256' | 'timelinePath' | 'timelineUnavailableReason' | 'bundleDigest'
 > {
   path: string;
   purpose: string;
@@ -67,12 +68,13 @@ export function artifactUrl(
   path: string,
   recipeRunId?: string | null,
   mirrorEpoch?: number,
+  bundleDigest?: string,
 ): string {
   const base = wsToHttpBase(gatewayWsUrl);
   const params = new URLSearchParams({ runId, path });
   if (recipeRunId) params.set('recipeRunId', recipeRunId);
   if (mirrorEpoch && mirrorEpoch > 0) params.set('m', String(mirrorEpoch));
-  return `${base}/api/run-artifact?${params.toString()}`;
+  return withArtifactBundleDigest(`${base}/api/run-artifact?${params.toString()}`, bundleDigest);
 }
 
 export function artifactUrlForEntry(
@@ -81,7 +83,14 @@ export function artifactUrlForEntry(
   artifact: ArtifactManifestEntry,
   mirrorEpoch?: number,
 ): string {
-  return artifactUrl(gatewayWsUrl, runId, artifact.path, artifact.recipeRunId, mirrorEpoch);
+  return artifactUrl(
+    gatewayWsUrl,
+    runId,
+    artifact.path,
+    artifact.recipeRunId,
+    mirrorEpoch,
+    artifact.bundleDigest,
+  );
 }
 
 /**
@@ -297,7 +306,12 @@ function mergeArtifactMetadata(
   incoming: ArtifactManifestEntry,
 ): ArtifactManifestEntry {
   const merged = { ...existing };
-  for (const key of ['sha256', 'timelinePath', 'timelineUnavailableReason'] as const) {
+  for (const key of [
+    'sha256',
+    'timelinePath',
+    'timelineUnavailableReason',
+    'bundleDigest',
+  ] as const) {
     if (incoming[key] !== undefined) merged[key] = incoming[key];
   }
   const incomingPurposeSpecificity = artifactPurposeSpecificity(incoming.purpose);

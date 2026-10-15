@@ -14,6 +14,7 @@ const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.
 const { captureRunOutput, failRunOutputCapture, outputManifestDigest, outputReviewDecisions } =
   await import('./output.js');
 const { closeRunOutput } = await import('./output-close.js');
+const { retainedRunTaskDirectory } = await import('./retained-artifacts.js');
 const { createRetrospectiveForRun } = await import('./retrospective.js');
 
 const output: RunOutput = {
@@ -152,11 +153,15 @@ test('an override arriving during output verification invalidates both confirmat
   });
   await captureRunOutput(run.id, false);
   const decision = getRun(run.id)!.decisions.find((entry) => !entry.resolvedAt)!;
+  const retainedReportFile = path.join(
+    await retainedRunTaskDirectory(getRun(run.id)!),
+    'artifacts/report.md',
+  );
   const originalRead = fsPromises.readFile;
   let inject = false;
   t.mock.method(fsPromises, 'readFile', async (...args: Parameters<typeof originalRead>) => {
     const result = await originalRead(...args);
-    if (inject && String(args[0]) === reportFile) {
+    if (inject && String(args[0]) === retainedReportFile) {
       inject = false;
       updateRun(run.id, {
         decisions: getRun(run.id)!.decisions.map((entry) =>
@@ -323,7 +328,7 @@ test('capture follows the existing narrative report names for every flow', async
   }
 });
 
-test('partial output can be reviewed without resuming the worker; changed bytes require another review', async (t) => {
+test('partial output review uses its frozen bytes and only an explicit capture advances them', async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'run-output-'));
   await mkdir(path.join(dir, 'artifacts'));
   await writeFile(path.join(dir, 'artifacts/report.md'), '# Partial report\nOne gap remains.\n');
@@ -374,14 +379,13 @@ test('partial output can be reviewed without resuming the worker; changed bytes 
   await captureRunOutput(run.id, false);
   const next = getRun(run.id)!.decisions.find((decision) => !decision.resolvedAt)!;
   await writeFile(path.join(dir, 'artifacts/coverage.json'), '{"passed":0}\n');
-  await assert.rejects(
-    runResolveDecision({ runId: run.id, decisionId: next.id, actionId: 'mark-reviewed' }, () => {}),
-    /output changed/,
+  const pinned = structuredClone(getRun(run.id)!.output?.artifactBundle);
+  await runResolveDecision(
+    { runId: run.id, decisionId: next.id, actionId: 'mark-reviewed' },
+    () => {},
   );
-  assert.equal(
-    getRun(run.id)!.decisions.find((decision) => decision.id === next.id)?.resolvedAt,
-    undefined,
-  );
+  assert.ok(getRun(run.id)!.decisions.find((decision) => decision.id === next.id)?.resolvedAt);
+  assert.deepEqual(getRun(run.id)!.output?.artifactBundle, pinned);
   updateRun(run.id, { status: 'paused', completedAt: undefined });
   await captureRunOutput(run.id, false);
   assert.equal(

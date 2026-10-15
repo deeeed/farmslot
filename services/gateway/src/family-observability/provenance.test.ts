@@ -5,8 +5,12 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { generateFamilyReport } from './report.js';
-import { buildFamilyObservabilitySnapshotFromRuns } from './snapshot.js';
-import { makeRecipeJson, makeRun, writeArtifact } from './test-fixtures.js';
+import {
+  buildRetainedFamilySnapshot as buildFamilyObservabilitySnapshotFromRuns,
+  makeRecipeJson,
+  makeRun,
+  writeArtifact,
+} from './test-fixtures.js';
 
 test('snapshot prefers family-level recipe quality from the strongest available signal and keeps a family-first summary', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'family-observability-strength-'));

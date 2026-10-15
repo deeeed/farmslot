@@ -105,12 +105,12 @@ node "$tutorial_cli" up --port 17877 --no-open --no-node
 tutorial_machine="$(node -p 'require("node:os").hostname().replace(/\.local$/, "")')"
 node "$tutorial_cli" --gateway local credential issue \
   --principal "$tutorial_machine" --subject node --machine "$tutorial_machine" \
-  --write-node-env --json
+  --secret-file "$FARMSLOT_HOME/node.secret" --json
 node "$tutorial_cli" up --port 17877 --no-open
 node "$tutorial_cli" --gateway local gateway status
 ```
 
-Use the installed CLI for the rest of this section so the gateway, node and registered pack use the same disposable workspace. The first `up` starts only the gateway and records the authenticated `local` profile. Issue its local node credential once, then run `up` again to start the node. `--write-node-env` stores the credential in the installed checkout; `--json` returns credential metadata without printing the secret. `FARMSLOT_WORKSPACE` selects installation files; it does not select the gateway for RPC calls. Use `--gateway local` below, and confirm the installer reports the disposable workspace and gateway status reports the chosen port and connected local node. If port 17877 is occupied, choose another unused port.
+Use the installed CLI for the rest of this section so the gateway, node and registered pack use the same disposable workspace. The first `up` starts only the gateway and records the authenticated `local` profile. Issue its local node credential once, then run `up` again to start the node. `--secret-file` stores the credential in the disposable gateway home with mode 0600; `--json` returns credential metadata without printing the secret. `FARMSLOT_WORKSPACE` selects installation files; it does not select the gateway for RPC calls. Use `--gateway local` below, and confirm the installer reports the disposable workspace and gateway status reports the chosen port and connected local node. If port 17877 is occupied, choose another unused port.
 
 Register the pack and create a run:
 

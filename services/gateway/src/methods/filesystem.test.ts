@@ -8,20 +8,14 @@ import test, { type TestContext } from 'node:test';
 
 import { WebSocket } from 'ws';
 
+import { retainFixtureTask } from '../../../../packages/run-bundle/src/retained.test-support.js';
 import { poolDir } from '../core/config.js';
 import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
 import { handleNodeResponse } from '../fleet/node-rpc.js';
-import { createRun, deleteRun, updateRun } from '../runs/store.js';
+import { runBundleStore } from '../run-completion/retained-artifacts.js';
+import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
-import {
-  fsDelete,
-  fsList,
-  fsRead,
-  fsWrite,
-  serveFile,
-  serveRunArtifact,
-  shouldServeRecipeArtifactFromLocalCache,
-} from './filesystem.js';
+import { fsDelete, fsList, fsRead, fsWrite, serveFile, serveRunArtifact } from './filesystem.js';
 
 class FakeNodeWebSocket {
   readyState = WebSocket.OPEN;
@@ -126,7 +120,12 @@ class MockResponse extends PassThrough {
 
   writeHead(statusCode: number, headers: Record<string, string | number | string[]>) {
     this.statusCode = statusCode;
-    this.headers = headers;
+    this.headers = { ...this.headers, ...headers };
+    return this;
+  }
+
+  setHeader(name: string, value: string | number | string[]) {
+    this.headers[name] = value;
     return this;
   }
 }
@@ -191,7 +190,7 @@ async function withRemoteRun(
   await writeFile(path.join(taskDir, 'TASK.md'), '# task\n', 'utf-8');
   await writeFile(
     path.join(liveRunDir, 'summary.json'),
-    JSON.stringify({ status: 'pass' }),
+    JSON.stringify({ recipeRunId: 'live-run', status: 'pass' }),
     'utf-8',
   );
   await writeFile(
@@ -268,6 +267,15 @@ async function withRemoteRun(
   });
 }
 
+async function serveRetainedFixture(
+  req: Parameters<typeof serveRunArtifact>[0],
+  res: Parameters<typeof serveRunArtifact>[1],
+) {
+  const run = getRun(new URL(req.url!, 'http://localhost').searchParams.get('runId')!)!;
+  await retainFixtureTask(path.dirname(run.taskFile!), run, await runBundleStore(true));
+  return serveRunArtifact(req, res);
+}
+
 test('serveRunArtifact rejects traversal before resolving recipe-run groups', async (t) => {
   await withRemoteRun(t, async ({ runId, liveRecipeRunId }) => {
     const req = {
@@ -275,13 +283,13 @@ test('serveRunArtifact rejects traversal before resolving recipe-run groups', as
       headers: { host: 'localhost' },
     } as any;
     const res = new MockResponse();
-    await serveRunArtifact(req, res as any);
+    await serveRetainedFixture(req, res as any);
     assert.equal(res.statusCode, 403);
     assert.match(res.body, /Path traversal not allowed/);
   });
 });
 
-test('serveRunArtifact serves recipe-run artifacts from a local cache even when the slot is remote', async (t) => {
+test('serveRunArtifact serves recipe-run artifacts from its retained bundle when the slot is remote', async (t) => {
   await withRemoteRun(t, async ({ runId, liveGroupId, liveRunDir }) => {
     const videoPath = path.join(liveRunDir, 'video.mp4');
     await writeFile(videoPath, 'cached-video', 'utf-8');
@@ -300,9 +308,9 @@ test('serveRunArtifact serves recipe-run artifacts from a local cache even when 
       headers: { host: 'localhost' },
     } as any;
     const res = new MockResponse();
-    await serveRunArtifact(req, res as any);
+    await serveRetainedFixture(req, res as any);
     await new Promise((resolve) => res.on('finish', resolve));
-    assert.equal(res.statusCode, 200);
+    assert.equal(res.statusCode, 200, res.body);
     assert.equal(res.headers['Accept-Ranges'], 'bytes');
     assert.equal(res.body, 'cached-video');
     assert.equal(fakeWs.statCalls, 0);
@@ -310,7 +318,7 @@ test('serveRunArtifact serves recipe-run artifacts from a local cache even when 
   });
 });
 
-test('serveRunArtifact supports byte ranges for local recipe-run cache videos', async (t) => {
+test('serveRunArtifact supports byte ranges for retained recipe-run videos', async (t) => {
   await withRemoteRun(t, async ({ runId, liveGroupId, liveRunDir }) => {
     const videoPath = path.join(liveRunDir, 'video.mp4');
     await writeFile(videoPath, 'cached-video', 'utf-8');
@@ -329,9 +337,9 @@ test('serveRunArtifact supports byte ranges for local recipe-run cache videos', 
       headers: { host: 'localhost', range: 'bytes=0-5' },
     } as any;
     const res = new MockResponse();
-    await serveRunArtifact(req, res as any);
+    await serveRetainedFixture(req, res as any);
     await new Promise((resolve) => res.on('finish', resolve));
-    assert.equal(res.statusCode, 206);
+    assert.equal(res.statusCode, 206, res.body);
     assert.equal(res.headers['Content-Range'], 'bytes 0-5/12');
     assert.equal(res.headers['Content-Length'], 6);
     assert.equal(res.headers['Accept-Ranges'], 'bytes');
@@ -341,7 +349,7 @@ test('serveRunArtifact supports byte ranges for local recipe-run cache videos', 
   });
 });
 
-test('serveRunArtifact rejects unsatisfiable byte ranges for local recipe-run cache videos', async (t) => {
+test('serveRunArtifact rejects unsatisfiable byte ranges for retained recipe-run videos', async (t) => {
   await withRemoteRun(t, async ({ runId, liveGroupId, liveRunDir }) => {
     const videoPath = path.join(liveRunDir, 'video.mp4');
     await writeFile(videoPath, 'cached-video', 'utf-8');
@@ -351,7 +359,7 @@ test('serveRunArtifact rejects unsatisfiable byte ranges for local recipe-run ca
       headers: { host: 'localhost', range: 'bytes=99-100' },
     } as any;
     const res = new MockResponse();
-    await serveRunArtifact(req, res as any);
+    await serveRetainedFixture(req, res as any);
     assert.equal(res.statusCode, 416);
     assert.equal(res.headers['Content-Range'], 'bytes */12');
     assert.equal(res.headers['Accept-Ranges'], 'bytes');
@@ -369,9 +377,9 @@ test('serveRunArtifact falls back to the latest recipe package when recipeRunId 
       headers: { host: 'localhost', range: 'bytes=7-' },
     } as any;
     const res = new MockResponse();
-    await serveRunArtifact(req, res as any);
+    await serveRetainedFixture(req, res as any);
     await new Promise((resolve) => res.on('finish', resolve));
-    assert.equal(res.statusCode, 206);
+    assert.equal(res.statusCode, 206, res.body);
     assert.equal(res.headers['Content-Range'], 'bytes 7-11/12');
     assert.equal(res.headers['Accept-Ranges'], 'bytes');
     assert.equal(res.body, 'video');
@@ -389,118 +397,42 @@ test('serveRunArtifact prefers a recipe package when an omitted recipeRunId poin
       headers: { host: 'localhost' },
     } as any;
     const res = new MockResponse();
-    await serveRunArtifact(req, res as any);
+    await serveRetainedFixture(req, res as any);
     await new Promise((resolve) => res.on('finish', resolve));
-    assert.equal(res.statusCode, 200);
+    assert.equal(res.statusCode, 200, res.body);
     assert.equal(res.headers['Content-Length'], 12);
     assert.equal(res.headers['Accept-Ranges'], 'bytes');
     assert.equal(res.body, 'cached-video');
   });
 });
 
-test('serveRunArtifact falls back to the remote slot when a local recipe-run mirror is incomplete', async (t) => {
-  await withRemoteRun(t, async ({ runId, liveGroupId, remoteArtifactRoot }) => {
-    const expectedAbs = path.join(remoteArtifactRoot, 'video.mp4');
-    const observedRoots: string[] = [];
-    const fakeWs = new FakeNodeWebSocket({
-      onRealpath: ({ path: requestedPath }) => ({ path: requestedPath }),
-      onStat: ({ path: requestedPath, root, relPath }) => {
-        // Bounded artifact root — never collapse to filesystem root `/`.
-        assert.equal(root, path.normalize(remoteArtifactRoot));
-        assert.equal(relPath, 'video.mp4');
-        assert.equal(requestedPath, expectedAbs);
-        if (root) observedRoots.push(root);
-        return { size: 'remote-video'.length };
-      },
-      onRead: ({ path: requestedPath, maxBytes, root, relPath }) => {
-        assert.equal(root, path.normalize(remoteArtifactRoot));
-        assert.equal(relPath, 'video.mp4');
-        assert.equal(requestedPath, expectedAbs);
-        assert.ok(typeof maxBytes === 'number' && maxBytes > 'remote-video'.length);
-        if (root) observedRoots.push(root);
-        return { content: Buffer.from('remote-video').toString('base64') };
-      },
-    });
-    registerNode('remote-machine', 123, fakeWs as any);
-    t.after(() => {
-      unregisterByWs(fakeWs as any);
-    });
-
-    const req = {
-      url: `/api/run-artifact?runId=${encodeURIComponent(runId)}&recipeRunId=${encodeURIComponent(liveGroupId)}&path=${encodeURIComponent('artifacts/video.mp4')}`,
-      headers: { host: 'localhost' },
-    } as any;
-    const res = new MockResponse();
-    await serveRunArtifact(req, res as any);
-    await new Promise((resolve) => res.on('finish', resolve));
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.body, 'remote-video');
-    // Progress-aware proxy: stat size, then one-shot readBase64 for small files.
-    assert.equal(fakeWs.statCalls, 1);
-    assert.equal(fakeWs.readCalls, 1);
-    assert.ok(observedRoots.every((root) => root !== '/' && root !== path.parse(root).root));
-  });
-});
-
-test('serveRunArtifact maps node confinement denials to HTTP 403', async (t) => {
+test('serveRunArtifact reports missing retained media without consulting the remote slot', async (t) => {
   await withRemoteRun(t, async ({ runId, liveGroupId }) => {
     const fakeWs = new FakeNodeWebSocket({
       onRead: () => {
-        const error = new Error(
-          'Refusing final-component symlink: video.mp4',
-        ) as NodeJS.ErrnoException;
-        error.code = 'EACCES';
-        throw error;
+        throw new Error('No slot reads');
       },
     });
     registerNode('remote-machine', 123, fakeWs as any);
     t.after(() => unregisterByWs(fakeWs as any));
-
     const req = {
-      url: `/api/run-artifact?runId=${encodeURIComponent(runId)}&recipeRunId=${encodeURIComponent(liveGroupId)}&path=${encodeURIComponent('artifacts/video.mp4')}`,
+      url: `/api/run-artifact?runId=${runId}&recipeRunId=${liveGroupId}&path=artifacts/video.mp4`,
       headers: { host: 'localhost' },
     } as any;
     const res = new MockResponse();
-    await serveRunArtifact(req, res as any);
-
-    assert.equal(res.statusCode, 403);
-    assert.match(res.body, /final-component symlink/);
+    await serveRetainedFixture(req, res as any);
+    assert.equal(res.statusCode, 404);
+    assert.match(res.body, /Artifact was not retained/);
+    assert.equal(fakeWs.statCalls, 0);
+    assert.equal(fakeWs.readCalls, 0);
   });
 });
 
-test('shouldServeRecipeArtifactFromLocalCache only trusts roots under the local task artifacts tree for remote slots', () => {
-  const run = { taskFile: '/tmp/orchestrator/tasks/task-1/TASK.md' } as any;
-  assert.equal(
-    shouldServeRecipeArtifactFromLocalCache(
-      run,
-      '/tmp/orchestrator/tasks/task-1/artifacts/recipe-runs/pass-run',
-      false,
-    ),
-    true,
-  );
-  assert.equal(
-    shouldServeRecipeArtifactFromLocalCache(
-      run,
-      '/tmp/repo/.task/task-1/artifacts/recipe-runs/pass-run',
-      false,
-    ),
-    false,
-  );
-  assert.equal(
-    shouldServeRecipeArtifactFromLocalCache(
-      run,
-      '/tmp/repo/.task/task-1/artifacts/recipe-runs/pass-run',
-      true,
-    ),
-    true,
-  );
-});
-
-test('updateRun invalidates cached recipe-run groups when live recipe context changes', async (t) => {
+test('a new retained capture exposes its own recipe-run group', async (t) => {
   await withRemoteRun(t, async ({ runId, liveGroupId, liveRunDir }) => {
     await writeFile(
       path.join(liveRunDir, 'summary.json'),
-      JSON.stringify({ status: 'fail' }),
+      JSON.stringify({ recipeRunId: 'live-run', status: 'fail' }),
       'utf-8',
     );
     const initialReq = {
@@ -508,15 +440,15 @@ test('updateRun invalidates cached recipe-run groups when live recipe context ch
       headers: { host: 'localhost' },
     } as any;
     const initialRes = new MockResponse();
-    await serveRunArtifact(initialReq, initialRes as any);
+    await serveRetainedFixture(initialReq, initialRes as any);
     await new Promise((resolve) => initialRes.on('finish', resolve));
-    assert.equal(initialRes.statusCode, 200);
+    assert.equal(initialRes.statusCode, 200, initialRes.body);
 
     const nextRunDir = path.join(path.dirname(liveRunDir), 'next-run');
     await mkdir(nextRunDir, { recursive: true });
     await writeFile(
       path.join(nextRunDir, 'summary.json'),
-      JSON.stringify({ status: 'pass' }),
+      JSON.stringify({ recipeRunId: 'next-run', status: 'pass' }),
       'utf-8',
     );
     updateRun(runId, {
@@ -535,11 +467,11 @@ test('updateRun invalidates cached recipe-run groups when live recipe context ch
     });
 
     const nextReq = {
-      url: `/api/run-artifact?runId=${encodeURIComponent(runId)}&recipeRunId=${encodeURIComponent('live-run:next-run')}&path=${encodeURIComponent('artifacts/summary.json')}`,
+      url: `/api/run-artifact?runId=${encodeURIComponent(runId)}&recipeRunId=${encodeURIComponent('next-run')}&path=${encodeURIComponent('artifacts/summary.json')}`,
       headers: { host: 'localhost' },
     } as any;
     const nextRes = new MockResponse();
-    await serveRunArtifact(nextReq, nextRes as any);
+    await serveRetainedFixture(nextReq, nextRes as any);
     await new Promise((resolve) => nextRes.on('finish', resolve));
     assert.equal(nextRes.statusCode, 200);
     assert.match(nextRes.body, /pass/);
@@ -557,9 +489,7 @@ test('serveRunArtifact rejects symlink escapes from local recipe-run caches', as
       headers: { host: 'localhost' },
     } as any;
     const res = new MockResponse();
-    await serveRunArtifact(req, res as any);
-    assert.equal(res.statusCode, 403);
-    assert.match(res.body, /Path traversal not allowed/);
+    await assert.rejects(serveRetainedFixture(req, res as any), /Artifact is redirected/);
   });
 });
 
@@ -569,7 +499,7 @@ test('serveRunArtifact rejects symlinked recipe-run roots before serving local c
     await mkdir(outsideDir, { recursive: true });
     await writeFile(
       path.join(outsideDir, 'summary.json'),
-      JSON.stringify({ status: 'pass' }),
+      JSON.stringify({ recipeRunId: 'next-run', status: 'pass' }),
       'utf-8',
     );
     await writeFile(path.join(outsideDir, 'video.mp4'), 'outside-video', 'utf-8');
@@ -581,9 +511,7 @@ test('serveRunArtifact rejects symlinked recipe-run roots before serving local c
       headers: { host: 'localhost' },
     } as any;
     const res = new MockResponse();
-    await serveRunArtifact(req, res as any);
-    assert.equal(res.statusCode, 403);
-    assert.match(res.body, /Path traversal not allowed/);
+    await assert.rejects(serveRetainedFixture(req, res as any), /Artifact is redirected/);
   });
 });
 

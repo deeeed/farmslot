@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 
 import { type ReviewGatePayload, type RunDecision } from '@farmslot/protocol';
 
+import { farmslotRoot } from '../projects/repo-root.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
 import {
@@ -17,10 +17,13 @@ import {
 } from './review-gate.js';
 
 test('refresh preserves the fresh decision list and refuses an in-flight resolution or replacement', async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'review-refresh-'));
+  const tasks = path.join(farmslotRoot, '.sandbox/review-refresh-retained/tasks');
+  await mkdir(tasks, { recursive: true });
+  const root = await mkdtemp(path.join(tasks, 'review-refresh-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(path.join(root, 'artifacts'));
   await writeFile(path.join(root, 'artifacts/review.md'), 'Recommendation: COMMENT\nNew report');
+  await writeFile(path.join(root, 'artifacts/result.png'), 'review image');
   await writeFile(
     path.join(root, 'artifacts/line-comments.json'),
     JSON.stringify({
@@ -64,6 +67,14 @@ test('refresh preserves the fresh decision list and refuses an in-flight resolut
     ['posting', 'sibling'],
   );
   assert.match((refreshed.decisions[0].payload as ReviewGatePayload).reviewMd, /New report/);
+  assert.ok(
+    (refreshed.decisions[0].payload as ReviewGatePayload).artifactManifest?.find(
+      (artifact) => artifact.path === 'artifacts/result.png',
+    ),
+  );
+  const { readRetainedRunText } = await import('../run-completion/retained-artifacts.js');
+  assert.equal(await readRetainedRunText(refreshed, 'artifacts/result.png'), 'review image');
+  await assert.rejects(readFile(path.join(root, 'artifacts/result.png')), { code: 'ENOENT' });
   for (const change of ['resolved', 'replaced']) {
     updateRun(run.id, { decisions: [structuredClone(decision)] });
     const request = refreshReviewGate(run.id);

@@ -2,9 +2,9 @@
 import { captureHelperSnapshot } from '@farmslot/recipe-runner';
 
 /**
- * @param {import('@farmslot/adapter-sdk').AdapterActions} actions
+ * @param {import('@farmslot/adapter-sdk').ActionCatalog} actions
  * @param {import('@farmslot/adapter-sdk').AdapterRecording} recording
- * @returns {import('@farmslot/adapter-sdk').AdapterActions}
+ * @returns {import('@farmslot/adapter-sdk').ActionCatalog}
  */
 export function browserWindowScreenshots(actions, recording) {
   const ui = actions.ui;

@@ -30,8 +30,8 @@ import { RecipeResolutionError } from './resolution-error.js';
 import { recordSyntheticFailure, traceNodeMetadata } from './trace.js';
 import { verifyExecutableSource } from './trust.js';
 import type {
-  ActionAdapter,
   ActionExecutionContext,
+  ActionHandler,
   ActionResult,
   RecipeCallTrace,
   RecipeLogger,
@@ -66,7 +66,7 @@ export interface ExecuteRecipeOptions {
   maxCallDepth?: number;
   recipes: ReadonlyMap<string, ResolvedLibraryRecipe>;
   actionManifest: RecipeActionManifestDocument;
-  adapters: ReadonlyMap<string, ActionAdapter>;
+  adapters: ReadonlyMap<string, ActionHandler>;
   traceWriter: TraceWriter;
   claimProjections?: ReadonlyMap<
     string,
@@ -575,7 +575,7 @@ async function captureAutomaticStill(
 }
 
 async function executeAction(
-  adapter: ActionAdapter,
+  adapter: ActionHandler,
   action: string,
   node: Record<string, unknown>,
   context: ActionExecutionContext,

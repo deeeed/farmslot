@@ -1,4 +1,8 @@
-import type { ArtifactRef, RecipeRunArtifactGroup } from '@farmslot/protocol';
+import {
+  type ArtifactRef,
+  type RecipeRunArtifactGroup,
+  withArtifactBundleDigest,
+} from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
 import { gatewayResourceUrl } from '../../utils/gateway-origin.js';
@@ -172,7 +176,10 @@ export function slotViewRecipeArtifactUrl(input: {
   linkedRunId?: string;
   artifactPath: string;
   artifactManifest?: ArtifactRef[] | null;
-  selectedRun: Pick<RecipeRunArtifactGroup, 'id' | 'groupKind'> | null | undefined;
+  selectedRun:
+    | Pick<RecipeRunArtifactGroup, 'id' | 'groupKind' | 'artifactBundle'>
+    | null
+    | undefined;
   artifactMirrorEpoch: number;
 }): string {
   const params = new URLSearchParams({
@@ -188,7 +195,12 @@ export function slotViewRecipeArtifactUrl(input: {
   else if (typeof entry?.sizeBytes === 'number') params.set('v', `s${entry.sizeBytes}`);
   if (typeof entry?.sizeBytes === 'number') params.set('vsize', String(entry.sizeBytes));
   if (input.artifactMirrorEpoch > 0) params.set('m', String(input.artifactMirrorEpoch));
-  return gatewayResourceUrl(`/api/run-artifact?${params.toString()}`);
+  return gatewayResourceUrl(
+    withArtifactBundleDigest(
+      `/api/run-artifact?${params.toString()}`,
+      entry?.bundleDigest ?? input.selectedRun?.artifactBundle?.bundleDigest,
+    ),
+  );
 }
 
 export function selectedSlotViewRecipeArtifact(

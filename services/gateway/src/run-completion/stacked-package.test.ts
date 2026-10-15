@@ -70,6 +70,14 @@ mock.module('../runs/store.js', {
     getRunWithArchived: async (id: string) =>
       id === lineageParent?.id ? lineageParent : id === run?.id ? run : null,
     updateRun: (_id: string, patch: Partial<Run>) => (run = { ...run, ...patch }),
+    // The native store fences writes against its own map, which this fixture replaces.
+    persistRunNow: async (record: Run) => {
+      await mkdir(nativeStore.runsDirectory(), { recursive: true });
+      await writeFile(
+        path.join(nativeStore.runsDirectory(), `${record.id}.json`),
+        JSON.stringify(record),
+      );
+    },
   },
 });
 mock.module('./artifact-mirror.js', {
@@ -217,7 +225,8 @@ test('a required publish mirror accepts zero transfers and forwards publication 
   });
   assert.equal(completion.completion.artifactsCopied, true);
   assert.equal(completion.prPackage.headSha, headSha);
-  assert.deepEqual(mirrorOptions, { requireSourceArtifacts: true, forPublication: true });
+  assert.equal(mirrorOptions?.requireSourceArtifacts, true);
+  assert.equal(mirrorOptions?.forPublication, true);
 });
 
 test('no-code completion mirrors without requesting publication preflight', async () => {

@@ -10,8 +10,12 @@ import type { RetrospectivePayload, RunDecision } from '@farmslot/protocol';
 import { createRetrospective, initRunCompletion } from '../run-completion/orchestrator.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
-import { buildFamilyObservabilitySnapshotFromRuns } from './snapshot.js';
-import { makeRun, writeArtifact } from './test-fixtures.js';
+import {
+  buildRetainedFamilySnapshot as buildFamilyObservabilitySnapshotFromRuns,
+  makeRun,
+  retainFamilyFixtures,
+  writeArtifact,
+} from './test-fixtures.js';
 
 test('snapshot backfills retrospective payload for unresolved legacy decisions', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'family-observability-retro-backfill-'));
@@ -145,6 +149,7 @@ test('createRetrospective broadcasts root supersession before follow-up new (ato
     });
   });
 
+  await retainFamilyFixtures([root, followUp]);
   await createRetrospective(followUp, null);
 
   // Filter to the two key broadcasts; ignore intermediate RUN_UPDATED.
@@ -188,6 +193,7 @@ test('createRetrospective is idempotent for concurrent calls on the same run', a
   });
   t.after(async () => deleteRun(run.id));
 
+  await retainFamilyFixtures([run]);
   await Promise.all([createRetrospective(run, null), createRetrospective(run, null)]);
 
   const retrospectives = getRun(run.id)!.decisions.filter(
@@ -284,6 +290,7 @@ test('createRetrospective emits terminal update-branch family retro with review-
     await deleteRun(mergeMain.id);
   });
 
+  await retainFamilyFixtures([root, prComplete, mergeMain]);
   await createRetrospective(mergeMain, '## Summary\nMerged after conflict fix.');
 
   const storedRoot = getRun(root.id)!;

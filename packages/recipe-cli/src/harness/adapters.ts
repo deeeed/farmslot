@@ -10,7 +10,7 @@ import {
   type AdapterDetectSpec,
   type AdapterRegistry,
   createAdapterRegistry,
-  type PlatformAdapter,
+  type ProjectRuntime,
 } from '@farmslot/adapter-sdk';
 
 import { AdapterAmbiguousError, type AdapterCandidate, type DetectMatch } from './context-state.js';
@@ -27,11 +27,11 @@ export function harnessAdapters(): AdapterRegistry {
   return registry;
 }
 
-export function harnessAdapter(id: string): PlatformAdapter {
+export function harnessAdapter(id: string): ProjectRuntime {
   return registry.get(id);
 }
 
-function registered(): PlatformAdapter[] {
+function registered(): ProjectRuntime[] {
   return registry.list().map((id) => registry.get(id));
 }
 

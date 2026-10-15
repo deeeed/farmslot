@@ -1,12 +1,15 @@
 import { css, html, LitElement, nothing, type TemplateResult, unsafeCSS } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
+import { customElement, property } from 'lit/decorators.js';
 
+import type { TaskProgressStructured, TaskStepProgress } from '@farmslot/protocol';
+import type { PipelineProgressStep } from '@farmslot/protocol/checklist-target';
 import {
-  enumerateChecklistCheckboxes,
-  type TaskPhaseProgress,
-  type TaskProgressStructured,
-  type TaskStepProgress,
-} from '@farmslot/protocol';
+  type ChecklistProgressFallback,
+  type ChecklistProgressOptions,
+  checklistProgressRow,
+  type ChecklistProgressStep,
+  checklistProgressView,
+} from '@farmslot/review-dispatch';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
@@ -17,28 +20,6 @@ import {
   type SubtaskOpenScope,
   SubtaskOpenState,
 } from './subtask-block.js';
-
-interface Step {
-  text: string;
-  done: boolean;
-}
-
-function parseSteps(markdown: string): Step[] {
-  // Shared enumeration from @farmslot/protocol — the same skip rules the
-  // gateway parsers and the `mark` helper use, so the markdown fallback cannot
-  // count informational checkboxes (ACs, pre-merge sections) as steps.
-  return enumerateChecklistCheckboxes(markdown).map((item) => ({
-    text: item.rawLabel,
-    done: item.checked,
-  }));
-}
-
-const STATUS_ICONS: Record<string, string> = {
-  done: '\u2713', // checkmark
-  running: '\u25b8', // right-pointing triangle
-  pending: '\u25cb', // circle
-  skipped: '\u2013', // en-dash
-};
 
 /**
  * One step row, plus the child unit block when the step owns one (ADR-060).
@@ -54,9 +35,9 @@ export function renderTrackerStepRow(
   nested = false,
 ): TemplateResult {
   return html`
-    <div class="s-step ${step.status}">
-      <span class="s-step-icon ${step.status}">${STATUS_ICONS[step.status]}</span>
-      <span class="s-step-name">${step.name}</span>
+    <div class="substep ${step.status}">
+      <span class="substep-icon">${checklistProgressRow(step).icon}</span>
+      <span class="substep-name">${step.name}</span>
     </div>
     ${step.subtask && !nested
       ? renderSubtaskBlock(
@@ -68,32 +49,77 @@ export function renderTrackerStepRow(
   `;
 }
 
+export interface ChecklistRenderOptions extends ChecklistProgressOptions {
+  runId?: string;
+  runActive?: boolean;
+  compact?: boolean;
+  closable?: boolean;
+  onClose?: () => void;
+  openScope: SubtaskOpenScope;
+}
+
+/** The sole web checklist renderer, shared by the element and its contract tests. */
+export function renderChecklistProgress(
+  progress: TaskProgressStructured | undefined,
+  options: ChecklistRenderOptions,
+) {
+  const view = checklistProgressView(progress, options);
+  if (!view) return nothing;
+  return html`<div class="monitor-detail" data-testid="checklist-progress">
+    <div class="monitor-detail-header">
+      <span>${view.heading}</span>
+      ${options.closable
+        ? html`<button
+            class="monitor-close"
+            aria-label="Close worker progress"
+            @click=${options.onClose}
+          >
+            x
+          </button>`
+        : nothing}
+    </div>
+    ${progress && !options.compact
+      ? renderOperationPanel(progress, options.runId, { runActive: options.runActive })
+      : nothing}
+    ${view.waiting
+      ? html`<div class="waiting">${view.message}<br />Waiting for the worker checklist.</div>`
+      : nothing}
+    ${options.compact
+      ? nothing
+      : view.phases.map(
+          (phase) =>
+            html`<div class="phase">
+              <div class="phase-header">
+                <span
+                  style="color:${phase.running
+                    ? colors.accentHover
+                    : phase.complete
+                      ? colors.statusOk
+                      : colors.textPrimary}"
+                  >${phase.name}</span
+                ><span class="phase-count">${phase.counts}</span>
+              </div>
+              ${phase.rows.map(({ step }) => renderTrackerStepRow(step, options.openScope))}
+            </div>`,
+        )}
+  </div>`;
+}
+
 @customElement('progress-tracker')
 export class ProgressTracker extends LitElement {
   private readonly _operationClock = new OperationClock(this, () => this.structured);
+  private readonly subtaskOpen = new SubtaskOpenState();
+  @property({ attribute: false }) openScope?: SubtaskOpenScope;
   @property() markdown = '';
   @property({ type: Boolean }) compact = false;
-  @property({ type: Object }) structured?: TaskProgressStructured;
-  /**
-   * Run (or other task identity) the progress belongs to. Only child-unit
-   * expand state uses it: this element outlives the run it shows on surfaces
-   * like the slot view, and a unit id repeats across runs.
-   */
+  @property({ attribute: false }) structured?: TaskProgressStructured;
+  @property({ attribute: false }) steps?: readonly ChecklistProgressStep[];
+  @property({ attribute: false }) fallback?: ChecklistProgressFallback;
+  @property({ attribute: false }) activeStep: PipelineProgressStep = null;
+  @property() activeTaskBasename?: string;
   @property() runId?: string;
-  /** Whether the run is still working; see `OperationPanelOptions.runActive`. */
   @property({ type: Boolean }) runActive = false;
-
-  @state() private _expandedPhases: Set<string> = new Set();
-  private _prevCurrentPhase: string | null = null;
-  /**
-   * Command Center opens an unsettled child on first sight, because the
-   * operator is watching work in flight here and the child's steps are the
-   * detail they came for. Companion starts every child collapsed instead: a
-   * phone has no room to spare. Either way the default applies once per unit
-   * id per run — after that this map holds the viewer's own choice, and a new
-   * run starts from the default again.
-   */
-  private readonly _subtaskOpen = new SubtaskOpenState();
+  @property({ type: Boolean }) closable = false;
 
   static styles = [
     css`
@@ -101,216 +127,87 @@ export class ProgressTracker extends LitElement {
         display: block;
         font-family: ${unsafeCSS(fonts.mono)};
       }
-
-      .progress-bar-container {
-        display: flex;
-        align-items: center;
-        gap: ${unsafeCSS(spacing.md)};
-      }
-
-      .progress-track {
-        flex: 1;
-        height: 6px;
+      .monitor-detail {
+        margin-top: ${unsafeCSS(spacing.md)};
         background: ${unsafeCSS(colors.bgCard)};
-        border-radius: 3px;
-        overflow: hidden;
-      }
-
-      .progress-fill {
-        height: 100%;
-        background: ${unsafeCSS(colors.accent)};
-        border-radius: 3px;
-        transition: width 0.3s ease;
-      }
-
-      .progress-label {
-        font-size: ${unsafeCSS(fonts.sizeSm)};
-        color: ${unsafeCSS(colors.textSecondary)};
-        white-space: nowrap;
-      }
-
-      /* --- Flat step list --- */
-
-      .step-list {
-        margin-top: ${unsafeCSS(spacing.lg)};
-        display: flex;
-        flex-direction: column;
-        gap: ${unsafeCSS(spacing.sm)};
-      }
-
-      .step {
-        display: flex;
-        align-items: flex-start;
-        gap: ${unsafeCSS(spacing.md)};
-        padding: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.md)};
-        border-left: 2px solid transparent;
-        border-radius: ${unsafeCSS(radii.sm)};
-        font-size: ${unsafeCSS(fonts.sizeSm)};
-        line-height: 1.4;
-      }
-
-      .step.current {
-        border-left-color: ${unsafeCSS(colors.accentHover)};
-        background: ${unsafeCSS(colors.accent)}0a;
-      }
-
-      .step-check {
-        flex-shrink: 0;
-        width: 16px;
-        text-align: center;
-      }
-
-      .step-check.done {
-        color: ${unsafeCSS(colors.statusOk)};
-      }
-      .step-check.pending {
-        color: ${unsafeCSS(colors.textSecondary)};
-      }
-
-      .step-text {
-        color: ${unsafeCSS(colors.textPrimary)};
-      }
-      .step.done .step-text {
-        color: ${unsafeCSS(colors.textSecondary)};
-      }
-
-      /* --- Structured phase accordion --- */
-
-      .phase-list {
-        margin-top: ${unsafeCSS(spacing.lg)};
-        display: flex;
-        flex-direction: column;
-        gap: ${unsafeCSS(spacing.sm)};
-      }
-
-      .phase {
         border-radius: ${unsafeCSS(radii.md)};
-        background: ${unsafeCSS(colors.bgCard)};
-        overflow: hidden;
+        padding: ${unsafeCSS(spacing.md)};
+        cursor: default;
       }
-
-      .phase-header {
+      .monitor-detail-header {
+        font-size: ${unsafeCSS(fonts.sizeSm)};
+        font-weight: 600;
+        color: ${unsafeCSS(colors.textSecondary)};
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: ${unsafeCSS(spacing.sm)};
         display: flex;
         align-items: center;
-        gap: ${unsafeCSS(spacing.md)};
-        padding: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.md)};
-        font-size: ${unsafeCSS(fonts.sizeSm)};
-        cursor: pointer;
-        user-select: none;
+        justify-content: space-between;
       }
-      .phase-header:hover {
-        background: ${unsafeCSS(colors.bgCardHover)};
-      }
-
-      .phase-arrow {
-        flex-shrink: 0;
-        width: 10px;
+      .monitor-close {
+        background: none;
+        border: none;
         color: ${unsafeCSS(colors.textSecondary)};
-        font-size: 10px;
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 12px;
+        padding: 0 4px;
       }
-
-      .phase-name {
+      .monitor-close:hover {
         color: ${unsafeCSS(colors.textPrimary)};
+      }
+      .phase {
+        margin-bottom: ${unsafeCSS(spacing.lg)};
+      }
+      .phase-header {
+        font-size: ${unsafeCSS(fonts.sizeSm)};
         font-weight: 600;
-        flex: 1;
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        color: ${unsafeCSS(colors.textPrimary)};
+        margin-bottom: 2px;
+        display: flex;
+        justify-content: space-between;
       }
-
-      .phase-mini-bar {
-        width: 40px;
-        height: 3px;
-        background: ${unsafeCSS(colors.bgSurface)};
-        border-radius: 2px;
-        overflow: hidden;
-        flex-shrink: 0;
-      }
-
-      .phase-mini-fill {
-        height: 100%;
-        border-radius: 2px;
-        transition: width 0.3s ease;
-      }
-
       .phase-count {
         color: ${unsafeCSS(colors.textSecondary)};
-        flex-shrink: 0;
-        font-size: ${unsafeCSS(fonts.sizeXs)};
+        font-weight: 400;
       }
-
-      .phase.complete .phase-name {
-        color: ${unsafeCSS(colors.textSecondary)};
-      }
-      .phase.active .phase-name {
-        color: ${unsafeCSS(colors.accentHover)};
-      }
-
-      .phase-steps {
-        display: flex;
-        flex-direction: column;
-        padding: 0 ${unsafeCSS(spacing.md)} ${unsafeCSS(spacing.sm)};
-        padding-left: ${unsafeCSS(spacing.xl)};
-        gap: 2px;
-      }
-
-      .s-step {
+      .substep {
+        font-size: ${unsafeCSS(fonts.sizeSm)};
+        color: ${unsafeCSS(colors.textPrimary)};
+        border-left: 2px solid transparent;
+        padding: 4px 8px;
+        line-height: 1.5;
+        overflow-wrap: anywhere;
         display: flex;
         align-items: flex-start;
         gap: ${unsafeCSS(spacing.sm)};
-        padding: 2px 0;
-        font-size: ${unsafeCSS(fonts.sizeSm)};
-        line-height: 1.4;
       }
-
-      .s-step-icon {
-        flex-shrink: 0;
-        width: 14px;
+      .substep-icon {
+        width: 12px;
         text-align: center;
+        flex-shrink: 0;
       }
-
-      .s-step-icon.done {
+      .substep.done .substep-icon {
         color: ${unsafeCSS(colors.statusOk)};
       }
-      .s-step-icon.running {
+      .substep.running .substep-icon {
         color: ${unsafeCSS(colors.accentHover)};
       }
-      .s-step-icon.pending,
-      .s-step-icon.skipped {
+      .substep.done,
+      .substep.skipped {
         color: ${unsafeCSS(colors.textSecondary)};
       }
-
-      .s-step-name {
-        overflow-wrap: anywhere;
-        color: ${unsafeCSS(colors.textPrimary)};
-      }
-      .s-step.done .s-step-name,
-      .s-step.skipped .s-step-name {
-        color: ${unsafeCSS(colors.textSecondary)};
-      }
-      .s-step.running .s-step-name {
+      .substep.running {
+        border-left-color: ${unsafeCSS(colors.accentHover)};
+        background: ${unsafeCSS(colors.bgSurface)};
+        border-radius: ${unsafeCSS(radii.sm)};
         font-weight: 600;
       }
 
-      .s-step.running {
-        border-left: 2px solid ${unsafeCSS(colors.accent)};
-        padding-left: ${unsafeCSS(spacing.sm)};
-        margin-left: -${unsafeCSS(spacing.sm)};
-      }
-
-      @keyframes pulse-accent {
-        0%,
-        100% {
-          opacity: 1;
-        }
-        50% {
-          opacity: 0.4;
-        }
-      }
-
-      .s-step-icon.running {
-        animation: pulse-accent 1.5s ease-in-out infinite;
+      .waiting {
+        color: ${unsafeCSS(colors.textSecondary)};
+        font-size: ${unsafeCSS(fonts.sizeSm)};
       }
     `,
     operationPanelStyles,
@@ -318,120 +215,20 @@ export class ProgressTracker extends LitElement {
   ];
 
   render() {
-    if (this.structured) {
-      return this.renderStructured(this.structured);
-    }
-    return this.renderFlat();
-  }
-
-  willUpdate(changed: Map<PropertyKey, unknown>) {
-    if (changed.has('structured') && this.structured) {
-      const cur = this.structured.currentPhase;
-      if (cur && cur !== this._prevCurrentPhase) {
-        this._expandedPhases.add(cur);
-        this._prevCurrentPhase = cur;
-      }
-    }
-  }
-
-  private _togglePhase(name: string) {
-    const next = new Set(this._expandedPhases);
-    if (next.has(name)) {
-      next.delete(name);
-    } else {
-      next.add(name);
-    }
-    this._expandedPhases = next;
-  }
-
-  private renderFlat() {
-    const steps = parseSteps(this.markdown);
-    if (steps.length === 0) return html``;
-
-    const completed = steps.filter((s) => s.done).length;
-    const total = steps.length;
-    const pct = Math.round((completed / total) * 100);
-    const currentIdx = steps.findIndex((s) => !s.done);
-
-    return html`
-      <div class="progress-bar-container">
-        <div class="progress-track">
-          <div class="progress-fill" style="width:${pct}%"></div>
-        </div>
-        <span class="progress-label">${completed}/${total} steps</span>
-      </div>
-      ${this.compact
-        ? nothing
-        : html`
-            <div class="step-list">
-              ${steps.map(
-                (step, i) => html`
-                  <div class="step ${step.done ? 'done' : ''} ${i === currentIdx ? 'current' : ''}">
-                    <span class="step-check ${step.done ? 'done' : 'pending'}"
-                      >${step.done ? '[x]' : '[ ]'}</span
-                    >
-                    <span class="step-text">${step.text}</span>
-                  </div>
-                `,
-              )}
-            </div>
-          `}
-    `;
-  }
-
-  private renderStructured(s: TaskProgressStructured) {
-    const pct = s.totalSteps > 0 ? Math.round((s.completedSteps / s.totalSteps) * 100) : 0;
-
-    const label = s.currentPhase
-      ? `${s.currentPhase} ${s.completedSteps}/${s.totalSteps}`
-      : `${s.completedSteps}/${s.totalSteps} done`;
-
-    return html`
-      <div class="progress-bar-container">
-        <div class="progress-track">
-          <div class="progress-fill" style="width:${pct}%"></div>
-        </div>
-        <span class="progress-label">${label}</span>
-      </div>
-      ${this.compact
-        ? nothing
-        : html`
-            <div class="phase-list">
-              ${renderOperationPanel(s, this.runId, { runActive: this.runActive })}
-              ${s.phases.map((phase) => this._renderPhase(phase, s.currentPhase))}
-            </div>
-          `}
-    `;
-  }
-
-  private _renderStepRow(step: TaskStepProgress): TemplateResult {
-    return renderTrackerStepRow(step, this._subtaskOpen.scope(this.runId));
-  }
-
-  private _renderPhase(phase: TaskPhaseProgress, currentPhase: string | null) {
-    const isComplete = phase.completedSteps === phase.totalSteps;
-    const isActive = phase.name === currentPhase;
-    const isExpanded = this._expandedPhases.has(phase.name);
-    const phasePct = phase.totalSteps > 0 ? (phase.completedSteps / phase.totalSteps) * 100 : 0;
-    const barColor = isComplete ? colors.statusOk : isActive ? colors.accent : colors.textMuted;
-
-    return html`
-      <div class="phase ${isComplete ? 'complete' : ''} ${isActive ? 'active' : ''}">
-        <div class="phase-header" @click=${() => this._togglePhase(phase.name)}>
-          <span class="phase-arrow">${isExpanded ? '\u25BE' : '\u25B8'}</span>
-          <span class="phase-name">${phase.name}</span>
-          <div class="phase-mini-bar">
-            <div class="phase-mini-fill" style="width:${phasePct}%; background:${barColor}"></div>
-          </div>
-          <span class="phase-count">${phase.completedSteps}/${phase.totalSteps}</span>
-        </div>
-        ${isExpanded
-          ? html`
-              <div class="phase-steps">${phase.steps.map((step) => this._renderStepRow(step))}</div>
-            `
-          : nothing}
-      </div>
-    `;
+    return renderChecklistProgress(this.structured, {
+      markdown: this.markdown,
+      steps: this.steps,
+      fallback: this.fallback,
+      activeStep: this.activeStep,
+      activeTaskBasename: this.activeTaskBasename,
+      runId: this.runId,
+      runActive: this.runActive,
+      compact: this.compact,
+      closable: this.closable,
+      openScope: this.openScope ?? this.subtaskOpen.scope(this.runId),
+      onClose: () =>
+        this.dispatchEvent(new CustomEvent('progress-close', { bubbles: true, composed: true })),
+    });
   }
 }
 

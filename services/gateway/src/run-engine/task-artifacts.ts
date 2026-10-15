@@ -1,10 +1,7 @@
-import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
-
 import { type DiffStat, FLOW_WORKER_REPORT_ARTIFACTS, type Run } from '@farmslot/protocol';
 
-import { getRun } from '../runs/store.js';
+import { readOptionalRetainedRunText } from '../run-completion/retained-artifacts.js';
+import { getAllRuns, getRun } from '../runs/store.js';
 
 import { captureRunDiffArtifacts } from './diff-artifacts.js';
 
@@ -14,29 +11,21 @@ export async function readWorkerReport(runId: string): Promise<string | null> {
     run.flowType as keyof typeof FLOW_WORKER_REPORT_ARTIFACTS
   ] ?? ['report.md', 'pr-description.md'];
   for (const filename of candidates) {
-    const text = await readTaskArtifactText(run.taskFile, filename);
+    const text = await readTaskArtifactText(run, filename);
     if (text?.trim()) return text;
   }
   return null;
 }
 
 export async function readTaskArtifactText(
-  taskFile: string | null | undefined,
+  task: Run | string | null | undefined,
   filename: string,
 ): Promise<string | undefined> {
-  if (!taskFile) return undefined;
-  const artifactPath = path.join(path.dirname(taskFile), 'artifacts', filename);
-  if (!existsSync(artifactPath)) return undefined;
-  try {
-    return await readFile(artifactPath, 'utf-8');
-  } catch (err) {
-    // Individual optional artifacts are recoverable, but the read failure
-    // should remain visible because it changes review/gate evidence.
-    console.warn(
-      `[run-engine] failed to read task artifact ${artifactPath}: ${(err as Error).message.slice(0, 200)}`,
-    );
-    return undefined;
-  }
+  if (!task) return undefined;
+  const matching =
+    typeof task === 'string' ? getAllRuns().filter((run) => run.taskFile === task) : [task];
+  if (matching.length !== 1) return undefined;
+  return readOptionalRetainedRunText(matching[0]!, `artifacts/${filename}`);
 }
 
 /** Same read, for `inputs/` — the task record rather than worker output. */
@@ -45,16 +34,9 @@ export async function readTaskInputText(
   filename: string,
 ): Promise<string | undefined> {
   if (!taskFile) return undefined;
-  const inputPath = path.join(path.dirname(taskFile), 'inputs', filename);
-  if (!existsSync(inputPath)) return undefined;
-  try {
-    return await readFile(inputPath, 'utf-8');
-  } catch (err) {
-    console.warn(
-      `[run-engine] failed to read task input ${inputPath}: ${(err as Error).message.slice(0, 200)}`,
-    );
-    return undefined;
-  }
+  const matching = getAllRuns().filter((run) => run.taskFile === taskFile);
+  if (matching.length !== 1) return undefined;
+  return readOptionalRetainedRunText(matching[0]!, `inputs/${filename}`);
 }
 
 export async function getDiffStat(run: Run, options: { fresh?: boolean } = {}): Promise<DiffStat> {

@@ -1,8 +1,8 @@
 import { isRecord } from '@farmslot/protocol';
 
-import { ADAPTER_SDK_VERSION, type PlatformAdapter } from './types.js';
+import { ADAPTER_SDK_VERSION, type ProjectRuntime } from './types.js';
 
-export interface AdapterRegistry<A extends PlatformAdapter = PlatformAdapter> {
+export interface AdapterRegistry<A extends ProjectRuntime = ProjectRuntime> {
   register(adapter: A): void;
   get(id: string): A;
   has(id: string): boolean;
@@ -12,7 +12,7 @@ export interface AdapterRegistry<A extends PlatformAdapter = PlatformAdapter> {
 
 // Throws when the adapter cannot be registered by any host: a missing id, or an
 // SDK version this package does not implement.
-function assertAdapterShape(adapter: PlatformAdapter): void {
+function assertAdapterShape(adapter: ProjectRuntime): void {
   if (typeof adapter.id !== 'string' || adapter.id.trim() === '') {
     throw new Error('adapter id must be a non-empty string');
   }
@@ -54,14 +54,14 @@ function assertAdapterShape(adapter: PlatformAdapter): void {
 }
 
 /** Type and shape-check a platform adapter where it is written. */
-export function defineAdapter<A extends PlatformAdapter>(adapter: A): A {
+export function defineAdapter<A extends ProjectRuntime>(adapter: A): A {
   assertAdapterShape(adapter);
   return adapter;
 }
 
 /** A registry keyed by adapter id. Registering an id twice throws. */
 export function createAdapterRegistry<
-  A extends PlatformAdapter = PlatformAdapter,
+  A extends ProjectRuntime = ProjectRuntime,
 >(): AdapterRegistry<A> {
   const adapters = new Map<string, A>();
   const registry: AdapterRegistry<A> = {

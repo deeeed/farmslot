@@ -15,8 +15,15 @@ import {
 import { GATEWAY_OWNED_DIFF_ARTIFACTS } from '../core/artifact-copy-policy.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 
-import { refreshArtifactMirror } from './artifact-mirror.js';
+import { type ArtifactMirrorOptions, refreshArtifactMirror } from './artifact-mirror.js';
 import { scanArtifacts } from './publication-artifacts.js';
+import {
+  createRunArtifactAcquisition,
+  readRetainedRunText,
+  retainCapturedRunArtifacts,
+  retainedRunArtifactManifest,
+  retainedRunBundleRef,
+} from './retained-artifacts.js';
 
 // Completion writes these diagnostics after the worker output gate opens.
 // Keep them browsable without changing the report and evidence being reviewed.
@@ -111,6 +118,7 @@ export function outputReviewDecisions(run: Run, output: RunOutput): RunDecision[
     createdAt: new Date().toISOString(),
     payload: {
       kind: 'output-review',
+      ...(output.artifactBundle ? { artifactBundle: output.artifactBundle } : {}),
       manifestDigest: output.manifestDigest,
       reportPath: output.reportPath,
       ...(capturedReview?.kind === 'output-review'
@@ -155,6 +163,7 @@ export function failRunOutputCapture(runId: string, error: unknown, workerFinish
     artifactManifest: run.output?.artifactManifest ?? [],
     manifestDigest: run.output?.manifestDigest ?? '',
     reportPath: run.output?.reportPath,
+    ...(run.output?.artifactBundle ? { artifactBundle: run.output.artifactBundle } : {}),
     captureError: error instanceof Error ? error.message : String(error),
   };
   return updateRun(runId, { output, decisions: outputReviewDecisions(run, output) });
@@ -165,13 +174,25 @@ export async function captureRunOutput(
   runId: string,
   mirror = true,
   workerFinished = false,
+  options: ArtifactMirrorOptions = {},
 ): Promise<number> {
   const run = getRun(runId);
-  if (!run?.taskFile || run.reviewWorkspace) return 0;
+  if (!run?.taskFile) return 0;
   const taskFile = run.taskFile;
   const generation = run.engineState?.generation;
-  const copied = mirror ? await refreshArtifactMirror(run) : 0;
-  const artifacts = await scanArtifacts(path.dirname(taskFile));
+  const acquisition = options.acquisition ?? createRunArtifactAcquisition(run);
+  const copied =
+    mirror && !run.reviewWorkspace
+      ? await refreshArtifactMirror(run, { ...options, acquisition })
+      : 0;
+  const artifacts = [
+    ...new Map(
+      [...(await scanArtifacts(path.dirname(taskFile))), ...acquisition.media].map((artifact) => [
+        artifact.path,
+        artifact,
+      ]),
+    ).values(),
+  ];
   if (artifacts.some((artifact) => !artifact.sha256))
     throw new Error('Could not fingerprint all output files');
   const candidates = [
@@ -216,12 +237,32 @@ export async function captureRunOutput(
     manifestDigest: outputManifestDigest(artifacts),
     ...(report ? { reportPath: report.path } : {}),
   };
-  const updated = updateRun(runId, {
-    output,
-    decisions:
-      current.status === 'cancelled' ? current.decisions : outputReviewDecisions(current, output),
+  await retainCapturedRunArtifacts({
+    run: { ...current, output },
+    artifacts,
+    acquireMedia: acquisition.acquireMedia,
+    manifestDigest: output.manifestDigest,
+    releaseStagingMedia: true,
+    commit: async (ref, missingData) => {
+      const latest = getRun(runId);
+      if (!latest || latest.taskFile !== taskFile || latest.engineState?.generation !== generation)
+        throw new Error('Run attempt changed while retaining output; refresh the current attempt');
+      const retainedOutput: RunOutput = {
+        ...output,
+        artifactBundle: ref,
+        retentionMissingData: missingData,
+      };
+      const updated = updateRun(runId, {
+        artifactBundle: ref,
+        output: retainedOutput,
+        decisions:
+          latest.status === 'cancelled'
+            ? latest.decisions
+            : outputReviewDecisions(latest, retainedOutput),
+      });
+      await persistRunNow(updated, 'retained run output');
+    },
   });
-  await persistRunNow(updated, 'retained run output');
   return copied;
 }
 
@@ -258,14 +299,16 @@ export async function verifyRunOutputReview(
     run.output.reportPath !== reportPath
   )
     throw new Error('Run output changed; refresh the report before reviewing');
-  // Verify worker bytes, not just a previously stored manifest. New or removed
-  // worker files also change the digest and require another review.
-  const artifacts = await scanArtifacts(path.dirname(taskFile));
+  // The decision reads its immutable capture, never the mutable acquisition mirror.
+  const ref = retainedRunBundleRef(run, decisionId);
+  const artifacts = (await retainedRunArtifactManifest(run, ref)).filter((artifact) =>
+    artifact.path.startsWith('artifacts/'),
+  );
   if (outputManifestDigest(artifacts) !== expected)
     throw new Error('Run output changed; refresh the report before reviewing');
   if (!artifacts.some((artifact) => artifact.path === reportPath))
     throw new Error('Reviewed report is not in the retained output');
-  const report = await readFile(path.join(path.dirname(taskFile), reportPath), 'utf8');
+  const report = await readRetainedRunText(run, reportPath, ref);
   if (!report.trim()) throw new Error('The report is empty');
   const current = getRun(runId);
   const pending = current?.decisions.find((candidate) => candidate.id === decisionId);

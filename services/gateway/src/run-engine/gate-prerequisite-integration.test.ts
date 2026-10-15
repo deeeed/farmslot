@@ -1,17 +1,18 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
-import type { SlotVars } from '../core/config.js';
+import { retainFixtureTask } from '../../../../packages/run-bundle/src/retained.test-support.js';
 
 await import('../runtime/mock-pty.test-support.js');
 const { readGateAcceptance, collectRunGateReadiness } = await import('./gate-prerequisites.js');
 const { makeRun, deleteTestRunIfPresent } = await import('./test-fixtures.js');
 const { createRun, getRun, updateRun } = await import('../runs/store.js');
-const { resolveWorkerTerminalContract } = await import('../tasks/worker-terminal-contract.js');
+const { runBundleStore } = await import('../run-completion/retained-artifacts.js');
 const require = createRequire(import.meta.url);
 const {
   setDerivedClaims,
@@ -35,6 +36,7 @@ async function fixture(t: TestContext) {
   await writeFile(path.join(taskDir, 'artifacts/output.json'), JSON.stringify({ ok: true }));
   const run = {
     ...makeRun({
+      id: randomUUID(),
       ticketData: {
         title: 'Authority test',
         description: '',
@@ -46,7 +48,7 @@ async function fixture(t: TestContext) {
         labels: [],
       },
     }),
-    taskFile: path.join(root, 'retained', 'TASK.md'),
+    taskFile: path.join(taskDir, 'TASK.md'),
     slotId: 'owned-slot',
     agentContexts: [
       {
@@ -60,36 +62,22 @@ async function fixture(t: TestContext) {
       },
     ],
   };
-  const vars = {
-    slotId: 'owned-slot',
-    host: 'localhost',
-    machine: 'local',
-    sshTarget: '',
-    remoteRepo: root,
-    repo: root,
-    osType: 'darwin',
-    sshUser: '',
-  } as SlotVars;
-  const contract = resolveWorkerTerminalContract(undefined, 'dev');
-  const sources = {
-    slot: async () => vars,
-    contract: async () => ({
-      ...contract,
-      acceptance: { ...contract.acceptance, allowWeak: false },
-    }),
-  };
+  run.agentContexts[0].runId = run.id;
+  const capture = async () => retainFixtureTask(root, run, await runBundleStore(true));
+  await capture();
   const proveAll = () => setDerivedClaims(taskDir, engineClaims(criteria));
-  return { run, taskDir, sources, proveAll };
+  return { run, taskDir, capture, proveAll };
 }
 
-test('the current dispatched task refuses 0/11 verdicts even when its retained copy is elsewhere', async (t) => {
+test('captured task registration refuses 0/11 verdicts until a new engine projection is retained', async (t) => {
   const f = await fixture(t);
-  const empty = await readGateAcceptance(f.run, f.sources);
+  const empty = await readGateAcceptance(f.run);
   assert.equal(empty.criteria.length, 11);
   assert.equal(empty.ledger, null);
   assert.ok(empty.issues.length);
   f.proveAll();
-  const complete = await readGateAcceptance(f.run, f.sources);
+  await f.capture();
+  const complete = await readGateAcceptance(f.run);
   assert.equal(complete.error, undefined);
   assert.deepEqual(complete.issues, []);
 });
@@ -97,14 +85,16 @@ test('the current dispatched task refuses 0/11 verdicts even when its retained c
 test('a foreign criterion replacing a registered row cannot pass the completion guard', async (t) => {
   const f = await fixture(t);
   f.proveAll();
+  await f.capture();
   const file = path.join(f.taskDir, 'artifacts/acceptance-status.json');
   const ledger = JSON.parse(await readFile(file, 'utf8'));
   ledger.criteria[0].id = 'AC-12';
   await writeFile(file, JSON.stringify(ledger));
+  await f.capture();
   const readiness = await collectRunGateReadiness(f.run, null, {
     deterministic: async () => {},
     progress: async () => ({ kind: 'idle' }),
-    acceptance: (run) => readGateAcceptance(run, f.sources),
+    acceptance: (run) => readGateAcceptance(run),
   });
   assert.equal(readiness.state, 'not-ready');
   assert.ok(readiness.reasons.some((reason) => reason.code === 'acceptance-incomplete'));
@@ -113,28 +103,24 @@ test('a foreign criterion replacing a registered row cannot pass the completion 
 test('missing current registration does not erase the original task criteria', async (t) => {
   const f = await fixture(t);
   f.proveAll();
+  await f.capture();
   await unlink(path.join(f.taskDir, 'inputs/handoff.json'));
-  const result = await readGateAcceptance(f.run, f.sources);
+  await f.capture();
+  const result = await readGateAcceptance(f.run);
   assert.match(result.error ?? '', /registration is missing or changed/);
 });
 
-test('weak engine verdicts defer to package review while terminal checks preserve the frozen flow exception', async (t) => {
+test('weak engine verdicts defer to package review while terminal checks keep their explicit exception', async (t) => {
   const f = await fixture(t);
   f.proveAll();
+  await f.capture();
   const claims = readAcceptanceLedger(f.taskDir);
   claims.criteria[0].verdict = 'weak';
   writeAcceptanceLedger(f.taskDir, claims);
+  await f.capture();
   assert.ok(acceptanceContractIssues(f.taskDir, { require: true, allowWeak: false }).length);
-  assert.deepEqual((await readGateAcceptance(f.run, f.sources)).issues, []);
+  assert.deepEqual((await readGateAcceptance(f.run)).issues, []);
   assert.deepEqual(acceptanceContractIssues(f.taskDir, { require: true, allowWeak: true }), []);
-  const permitted = await readGateAcceptance(f.run, {
-    ...f.sources,
-    contract: async () => {
-      const contract = await f.sources.contract();
-      return { ...contract, acceptance: { ...contract.acceptance, allowWeak: true } };
-    },
-  });
-  assert.deepEqual(permitted.issues, []);
 });
 
 test('static review gate validates its exact admitted report through the owner readers', async (t) => {
@@ -159,7 +145,10 @@ test('static review gate validates its exact admitted report through the owner r
     acceptance: async () => ({ criteria: [], ledger: null, issues: [] }),
     progress: async () => ({ kind: 'idle' as const }),
   };
-  const check = () => collectRunGateReadiness(getRun(run.id)!, null, source);
+  const check = async () => {
+    await retainFixtureTask(root, getRun(run.id)!, await runBundleStore(true));
+    return collectRunGateReadiness(getRun(run.id)!, null, source);
+  };
   assert.ok((await check()).reasons.some((reason) => reason.code === 'review-document-missing'));
   await writeFile(path.join(root, 'artifacts/review.md'), 'A review is finished.');
   assert.equal((await check()).state, 'not-ready');

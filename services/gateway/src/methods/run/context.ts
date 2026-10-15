@@ -21,11 +21,15 @@ import {
   SKIP_ACTIVE_RUN_SELECTION,
 } from '../../core/active-run-selection.js';
 import { loadFleetStatus } from '../../fleet/state.js';
-import {
-  attachLiveRecipeContext,
-  listRecipeRunArtifactGroupsForRun,
-} from '../../live-recipe/context.js';
+import { attachLiveRecipeContext } from '../../live-recipe/context.js';
 import { attachReviewRoundBudget } from '../../review/review-round-budget.js';
+import { outputManifestDigest } from '../../run-completion/output.js';
+import {
+  retainedRecipeRunGroups,
+  retainedRunArtifactManifest,
+  retainedRunBundleRef,
+  selectedRetainedRecipeGroup,
+} from '../../run-completion/retained-artifacts.js';
 import { refreshRunGateReadiness } from '../../run-engine/gate-prerequisites.js';
 import { enrichDecisionsWithGateSummary } from '../../run-engine/gate-summary.js';
 import { reconcilePublicationPackageForInspection } from '../../run-engine/publish-package-refresh.js';
@@ -36,12 +40,17 @@ import { readRunRecordedEvidence } from './evidence-review.js';
 
 /** Serve a run to the UI with live-recipe context + lazy gate-summary backfill. */
 async function presentRun(run: Run): Promise<Run> {
+  run = await reconcilePublicationPackageForInspection(await refreshRunGateReadiness(run));
+  if (run.artifactBundle || run.output?.artifactBundle) {
+    const groups = await retainedRecipeRunGroups(run);
+    const selected = selectedRetainedRecipeGroup(groups);
+    return enrichDecisionsWithGateSummary({
+      ...(await attachReviewRoundBudget(run)),
+      liveRecipeContext: selected ?? null,
+    });
+  }
   return enrichDecisionsWithGateSummary(
-    await attachLiveRecipeContext(
-      await attachReviewRoundBudget(
-        await reconcilePublicationPackageForInspection(await refreshRunGateReadiness(run)),
-      ),
-    ),
+    await attachLiveRecipeContext(await attachReviewRoundBudget(run)),
   );
 }
 
@@ -133,9 +142,10 @@ export async function runRecipeRunsForSlot(
     resolveBoundTerminalRunForSlot(slot?.currentRunId) ??
     selectActiveRunForSlot(params.slotId, active, slot?.currentRunId);
   if (!run) return { recipeRuns: [], selectedRecipeRunId: null };
-  const enrichedRun = await attachLiveRecipeContext(run);
-  const recipeRuns = await listRecipeRunArtifactGroupsForRun(enrichedRun);
-  const selectedRecipeRunId = selectRecipeRunId(recipeRuns, enrichedRun.liveRecipeContext ?? null);
+  if (!run.artifactBundle && !run.output?.artifactBundle)
+    return { recipeRuns: [], selectedRecipeRunId: null };
+  const recipeRuns = await retainedRecipeRunGroups(run);
+  const selectedRecipeRunId = selectedRetainedRecipeGroup(recipeRuns)?.id ?? null;
   return { recipeRuns, selectedRecipeRunId };
 }
 
@@ -162,14 +172,15 @@ export async function runRecipeRunsForRun(
   // Run-scoped mobile artifact review is anchored to an explicit run id; unlike
   // the slot-scoped helper, a missing run is caller state drift and should surface.
   if (!run) throw new Error(`Run not found: ${params.runId}`);
-  const enrichedRun = await attachLiveRecipeContext(run);
-  const recipeRuns = await listRecipeRunArtifactGroupsForRun(enrichedRun);
+  if (!run.taskFile) return { recipeRuns: [], selectedRecipeRunId: null };
+  const ref = retainedRunBundleRef(run, params.decisionId);
+  const enrichedRun = run;
+  const recipeRuns = await retainedRecipeRunGroups(run, ref);
   const requested = params.recipeRunId
     ? recipeRuns.find((group) => group.id === params.recipeRunId)
     : undefined;
   const missingHint = Boolean(params.recipeRunId && !requested);
-  const selectedRecipeRunId =
-    requested?.id ?? selectRecipeRunId(recipeRuns, enrichedRun.liveRecipeContext ?? null);
+  const selectedRecipeRunId = requested?.id ?? selectedRetainedRecipeGroup(recipeRuns)?.id ?? null;
   const selected = recipeRuns.find((group) => group.id === selectedRecipeRunId);
   const recordedEvidence: RunRecipeRunsForRunResult['recordedEvidence'] =
     params.includeRecordedEvidence
@@ -189,12 +200,20 @@ export async function runRecipeRunsForRun(
             params.recordedRecipeRunId,
           )
       : undefined;
-  if (recordedEvidence && run.output)
+  if (recordedEvidence) {
+    const reportManifest = await retainedRunArtifactManifest(run, ref);
+    const payload = params.decisionId
+      ? run.decisions.find(({ id }) => id === params.decisionId)?.payload
+      : undefined;
     recordedEvidence.report = {
-      reportPath: run.output.reportPath,
-      manifestDigest: run.output.manifestDigest,
-      artifactManifest: run.output.artifactManifest,
+      reportPath: payload?.kind === 'output-review' ? payload.reportPath : run.output?.reportPath,
+      manifestDigest: outputManifestDigest(
+        reportManifest.filter((artifact) => artifact.path.startsWith('artifacts/')),
+      ),
+      artifactManifest: reportManifest,
+      artifactBundle: ref,
     };
+  }
   return {
     recipeRuns,
     selectedRecipeRunId: params.decisionId ? null : selectedRecipeRunId,

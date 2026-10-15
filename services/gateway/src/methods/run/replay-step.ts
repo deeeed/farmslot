@@ -40,7 +40,7 @@ import { claimSlotStatusIf, readSlotRow, SLOT_PHASE_RELEASING } from '../../core
 import { GatewayMethodError } from '../../core/method-error.js';
 import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
-import { refreshArtifactMirror } from '../../run-completion/artifact-mirror.js';
+import { captureRunOutput } from '../../run-completion/output.js';
 import { retainedMaintenanceStepOutputs } from '../../run-engine/branch-maintenance.js';
 import {
   hasValidPrNumber,
@@ -1421,7 +1421,7 @@ export async function runReplayStep(
     ) {
       assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
       assertNativeReplayCurrent();
-      const copied = await refreshArtifactMirror(runBeforeGateReplay, {
+      const copied = await captureRunOutput(params.runId, true, false, {
         forPublication: requiresPublicationApproval(runBeforeGateReplay),
       });
       console.log(

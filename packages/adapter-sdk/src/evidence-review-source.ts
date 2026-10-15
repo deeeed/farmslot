@@ -59,6 +59,6 @@ export async function readEvidenceReviewReport(
   if (!expected) throw new Error('The retained report has no byte digest.');
   const bytes = await readBytes(file.path);
   if (bytesToHex(sha256(bytes)) !== expected.replace(/^sha256:/u, ''))
-    throw new Error('Report bytes no longer match the reviewed snapshot.');
+    throw new Error('Report bytes do not match the retained bundle.');
   return { path: file.path, body: new TextDecoder().decode(bytes), caption: selected.caption };
 }
