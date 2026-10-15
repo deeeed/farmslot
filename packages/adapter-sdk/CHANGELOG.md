@@ -4,6 +4,8 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
+- Replace `PlatformAdapter` with `ProjectRuntime` and `AdapterActions` with `ActionCatalog`.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.14.2 - 2026-10-15

@@ -4,7 +4,7 @@
 // only through it.
 import path from 'node:path';
 
-import type { ActionCapabilitySource, PlatformAdapter, RecipeCatalog } from '@farmslot/adapter-sdk';
+import type { ActionCapabilitySource, ProjectRuntime, RecipeCatalog } from '@farmslot/adapter-sdk';
 import {
   OFFICIAL_RECIPE_ACTIONS,
   type OfficialActionName,
@@ -40,7 +40,7 @@ export type {
 } from '@farmslot/adapter-sdk';
 
 export interface RuntimeRecipeCatalogOptions {
-  runtime: PlatformAdapter;
+  runtime: ProjectRuntime;
   bundledLibrary: RecipeCatalog['bundledLibrary'];
 }
 

@@ -10,7 +10,7 @@ import {
 } from '@farmslot/protocol';
 
 import { createRecipeRunner } from './runner.js';
-import type { ActionAdapter, TraceEntry } from './types.js';
+import type { ActionHandler, TraceEntry } from './types.js';
 
 const manifest: RecipeActionManifestDocument = {
   $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
@@ -80,7 +80,7 @@ function document(ref = 'done'): Record<string, unknown> {
   };
 }
 
-function adapter(overrides: Partial<ActionAdapter> = {}): ActionAdapter {
+function adapter(overrides: Partial<ActionHandler> = {}): ActionHandler {
   return {
     action: 'ui.press',
     source: { kind: 'bundled', trust: 'trusted', name: 'observation test' },

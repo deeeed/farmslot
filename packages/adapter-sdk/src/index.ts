@@ -27,8 +27,8 @@ export {
 } from './recording-admission.js';
 export { type AdapterRegistry, createAdapterRegistry, defineAdapter } from './registry.js';
 export {
+  type ActionCatalog,
   ADAPTER_SDK_VERSION,
-  type AdapterActions,
   type AdapterBrowser,
   type AdapterCdpTarget,
   type AdapterConsoleFiles,
@@ -74,7 +74,7 @@ export {
   type NativeUiTransportOptions,
   type NetworkCaptureBackend,
   noopStage,
-  type PlatformAdapter,
+  type ProjectRuntime,
   type RecipeNodeEvent,
   type RecipeRunOptions,
   type RunObserver,

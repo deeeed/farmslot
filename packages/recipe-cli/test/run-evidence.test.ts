@@ -13,7 +13,7 @@ import {
   ADAPTER_SDK_VERSION,
   type AdapterBrowser,
   createAdapterRegistry,
-  type PlatformAdapter,
+  type ProjectRuntime,
 } from '@farmslot/adapter-sdk';
 import {
   type RecipeActionManifestDocument,
@@ -114,7 +114,7 @@ function artifactContext(
   };
 }
 
-function fakeAdapter(id: string, extra: Partial<PlatformAdapter> = {}): PlatformAdapter {
+function fakeAdapter(id: string, extra: Partial<ProjectRuntime> = {}): ProjectRuntime {
   return {
     id,
     sdkVersion: ADAPTER_SDK_VERSION,
@@ -145,7 +145,7 @@ function fakeAdapter(id: string, extra: Partial<PlatformAdapter> = {}): Platform
   };
 }
 
-function useAdapters(...adapters: PlatformAdapter[]): void {
+function useAdapters(...adapters: ProjectRuntime[]): void {
   const registry = createAdapterRegistry();
   for (const adapter of adapters) registry.register(adapter);
   configureHarnessAdapters(registry);
@@ -1428,8 +1428,8 @@ describe('run report', () => {
     interface WebBrowser extends AdapterBrowser {
       version?: string;
     }
-    const web: PlatformAdapter<object, WebBrowser> = {
-      ...(fakeAdapter('web') as PlatformAdapter<object, WebBrowser>),
+    const web: ProjectRuntime<object, WebBrowser> = {
+      ...(fakeAdapter('web') as ProjectRuntime<object, WebBrowser>),
       run: {
         launchedBrowser: (_target, _artifacts, cdpPort) => ({
           boundTo: `slot:${cdpPort}`,

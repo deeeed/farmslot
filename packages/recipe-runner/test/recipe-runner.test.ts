@@ -39,7 +39,7 @@ import { writeFileWithinRoot } from '../src/core/path.js';
 import { cleanupAbortedRunVideoRecording } from '../src/core/recording-cleanup.js';
 import {
   createRecipeRunner as createRawRecipeRunner,
-  defineActionAdapter,
+  defineActionHandler,
 } from '../src/core/runner.js';
 import type { VideoRecorder, VideoRecorderStartRequest } from '../src/core/types.js';
 import { createCaptureHelperVideoRecorder } from '../src/recording/capture-helper.js';
@@ -935,7 +935,7 @@ test('screenshot capture composes with project artifact indexing across distinct
       },
       adapters: [
         ...createStandardCoreAdapters({ actions: ['index_artifacts'] }),
-        defineActionAdapter({
+        defineActionHandler({
           action: 'ui.screenshot',
           async execute(node, context) {
             const artifactPath = String(node.path);
@@ -2886,13 +2886,13 @@ test('preserves typed parent outputs across recipe call parameters', async () =>
     const runner = createRecipeRunner({
       actionManifest,
       adapters: [
-        defineActionAdapter({
+        defineActionHandler({
           action: 'demo.produce',
           async execute() {
             return { output: { count: 7 } };
           },
         }),
-        defineActionAdapter({
+        defineActionHandler({
           action: 'demo.consume',
           async execute(node) {
             consumed = node.count;
@@ -2973,13 +2973,13 @@ test('rejects action values whose resolved output violates the manifest schema',
     const runner = createRecipeRunner({
       actionManifest,
       adapters: [
-        defineActionAdapter({
+        defineActionHandler({
           action: 'demo.produce',
           async execute() {
             return { output: { count: 'seven' } };
           },
         }),
-        defineActionAdapter({
+        defineActionHandler({
           action: 'demo.consume',
           async execute() {
             consumed = true;
@@ -3066,7 +3066,7 @@ test('rejects resolved action values that violate the active adapter schema', as
     const runner = createRecipeRunner({
       actionManifest,
       adapters: [
-        defineActionAdapter({
+        defineActionHandler({
           action: 'demo.produce',
           async execute() {
             return {
@@ -3079,7 +3079,7 @@ test('rejects resolved action values that violate the active adapter schema', as
             };
           },
         }),
-        defineActionAdapter({
+        defineActionHandler({
           action: 'demo.consume',
           async execute() {
             consumed = true;
@@ -3458,7 +3458,7 @@ test('routes from declared result cases and ignores adapter-owned status or dest
       actionManifest,
       adapters: [
         ...createStandardCoreAdapters(),
-        defineActionAdapter({
+        defineActionHandler({
           action: 'example.route',
           source: { kind: 'bundled', trust: 'trusted', name: 'recipe harness test' },
           async execute() {
@@ -3597,7 +3597,7 @@ test('supports the documented v1 assertion operators', async () => {
 });
 
 test('fails fast for missing manifest declarations and missing adapter implementations', () => {
-  const echoAdapter = defineActionAdapter({
+  const echoAdapter = defineActionHandler({
     action: 'example.echo',
     async execute(node) {
       return { output: { message: node.message } };
@@ -4365,7 +4365,7 @@ test('adapter-specific gestures fail preflight with the supporting adapter names
   const runner = createRecipeRunner({
     actionManifest: manifest,
     adapters: [
-      defineActionAdapter({
+      defineActionHandler({
         action: 'ui.pan',
         async execute() {
           return { output: { ok: true } };

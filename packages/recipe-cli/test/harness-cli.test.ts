@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 import {
   ADAPTER_SDK_VERSION,
   createAdapterRegistry,
-  type PlatformAdapter,
+  type ProjectRuntime,
 } from '@farmslot/adapter-sdk';
 
 import {
@@ -64,7 +64,7 @@ function shopHost(packageRoot = tempRoot(), version = '1.2.3') {
   };
 }
 
-function fakeAdapter(id: string): PlatformAdapter {
+function fakeAdapter(id: string): ProjectRuntime {
   return {
     id,
     sdkVersion: ADAPTER_SDK_VERSION,

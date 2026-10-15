@@ -13,7 +13,7 @@ registry.register(web);
 registry.get('web');
 ```
 
-A host extends `PlatformAdapter` with its own members and types its registry with that:
+A host extends `ProjectRuntime` with its own members and types its registry with that:
 `createAdapterRegistry<HostAdapter>()`. A registry refuses a duplicate id and any adapter whose
 `sdkVersion` differs from `ADAPTER_SDK_VERSION`.
 
@@ -46,13 +46,13 @@ See [ADR-062](../../docs/adr/062-recorded-run-evidence.md) and its
 
 ## Source layout
 
-| path                         | owns                                                          |
-| ---------------------------- | ------------------------------------------------------------- |
-| `src/types.ts`               | `PlatformAdapter`, its member types and `ADAPTER_SDK_VERSION` |
-| `src/registry.ts`            | `defineAdapter` and `createAdapterRegistry`                   |
-| `src/engine.ts`              | Shared recipe engine factory and executable host contracts    |
-| `src/recording-admission.ts` | Bridge to the existing lease authority                        |
-| `src/evidence.ts`            | Portable retained-package validation                          |
+| path                         | owns                                                         |
+| ---------------------------- | ------------------------------------------------------------ |
+| `src/types.ts`               | `ProjectRuntime`, its member types and `ADAPTER_SDK_VERSION` |
+| `src/registry.ts`            | `defineAdapter` and `createAdapterRegistry`                  |
+| `src/engine.ts`              | Shared recipe engine factory and executable host contracts   |
+| `src/recording-admission.ts` | Bridge to the existing lease authority                       |
+| `src/evidence.ts`            | Portable retained-package validation                         |
 
 ## Maintenance rules
 
