@@ -8,7 +8,7 @@ import type {
   ResponseFrame,
   SelfPrincipalSummary,
 } from '@farmslot/protocol';
-import { Methods, workspaceAccessFromAuth } from '@farmslot/protocol';
+import { Methods, signOutAccount, workspaceAccessFromAuth } from '@farmslot/protocol';
 
 import {
   getDesktopConnection,
@@ -23,6 +23,7 @@ import {
 import {
   filterConnectableGatewayUrls,
   GATEWAY_CANDIDATES_STORAGE_KEY,
+  GATEWAY_SIGNED_OUT_STORAGE_KEY,
   GATEWAY_SOURCE_STORAGE_KEY,
   GATEWAY_URL_STORAGE_KEY,
   gatewayWebSocketToHttpOrigin,
@@ -118,11 +119,12 @@ function resolveBrowserGatewayConnection(): BrowserGatewayConnection {
     if (!connection) throw new Error('Desktop connection has not been initialized.');
     return { urls: [connection.url], auth: readGatewayAuth(), source: 'configured' };
   }
-  const env = (import.meta as ImportMetaWithEnv).env;
+  const env = (import.meta as ImportMetaWithEnv).env ?? {};
   const storedAuth = readGatewayAuth();
   const hosted = parseHostedGatewayConnection(location.hash);
-  const token = hosted.token ?? storedAuth.token;
-  const password = hosted.password ?? storedAuth.password;
+  const signedOut = localStorage.getItem(GATEWAY_SIGNED_OUT_STORAGE_KEY) === 'true';
+  const token = signedOut ? undefined : (hosted.token ?? storedAuth.token);
+  const password = signedOut ? undefined : (hosted.password ?? storedAuth.password);
   const storedCandidates = localStorage.getItem(GATEWAY_CANDIDATES_STORAGE_KEY);
   const storedGatewayUrl = localStorage.getItem(GATEWAY_URL_STORAGE_KEY);
   const storedSource = localStorage.getItem(GATEWAY_SOURCE_STORAGE_KEY);
@@ -222,6 +224,10 @@ export class GatewayClient {
     this.url = this.urls[0];
     this.auth = auth ?? resolved.auth;
     this.source = url ? 'configured' : resolved.source;
+    if (localStorage.getItem(GATEWAY_SIGNED_OUT_STORAGE_KEY) === 'true') {
+      this.authBlocked = true;
+      this.state = 'auth_required';
+    }
     this.persistConnection();
     persistGatewayAuthForHttp(this.auth);
     syncBrowserHttpAuthCookie(this.auth, this.url);
@@ -277,6 +283,7 @@ export class GatewayClient {
   async setAuthCredentials(auth: GatewayAuthCredentials, rememberMe?: boolean): Promise<void> {
     await saveDesktopCredentials(auth, rememberMe);
     this.auth = auth;
+    localStorage.removeItem(GATEWAY_SIGNED_OUT_STORAGE_KEY);
     syncBrowserHttpAuthCookie(auth, this.url);
     this.authBlocked = false;
     this.lastAuthError = null;
@@ -286,8 +293,36 @@ export class GatewayClient {
     this.setState('disconnected');
   }
 
+  async signOut(): Promise<void> {
+    await signOutAccount({
+      forgetLogin: async () => {
+        await saveDesktopCredentials({}, false);
+        replaceStoredGatewayAuthForHttp({});
+        localStorage.setItem(GATEWAY_SIGNED_OUT_STORAGE_KEY, 'true');
+      },
+      closeSession: () => {
+        this.auth = {};
+        syncBrowserHttpAuthCookie({}, this.url);
+        this.authBlocked = true;
+        this.lastAuthError = null;
+        this.epoch += 1;
+        this.principal = null;
+        this.adminRole = false;
+        this.access = 'none';
+        if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+        this.rejectAllPending('Signed out');
+        this.teardownSocket();
+        this.setState('auth_required');
+      },
+    });
+  }
+
   connect(): void {
-    if (this.disposed || this.authBlocked) return;
+    if (this.disposed) return;
+    if (this.authBlocked) {
+      this.setState('auth_required');
+      return;
+    }
     // No reachable candidate from this https origin — don't open a doomed socket or spin a
     // retry loop; stay disconnected so the UI can surface the mixed-content explanation.
     if (this.insecureBlocked) {

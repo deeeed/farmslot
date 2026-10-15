@@ -15,6 +15,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { ACCOUNT_SESSION_CONTROL } from '@farmslot/protocol';
+
 import voiceAsrTestClipAssetModule from '../../../assets/asr/voice-command-status.wav';
 import { AppEnvironmentCard } from '../../components/AppEnvironmentCard';
 import { AppUpdateStatusCard } from '../../components/AppUpdateStatusCard';
@@ -136,6 +138,9 @@ export default function SettingsScreen() {
   const [advancedGatewaySetupOpen, setAdvancedGatewaySetupOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const {
+    signOutCurrentAccount,
+    signingOut,
+    signedOut,
     activateProfile: handleActivateProfile,
     connectionTestsInProgress,
     manualUrlValidationInProgress,
@@ -682,6 +687,20 @@ export default function SettingsScreen() {
       ) : null}
 
       <View style={styles.infoSection}>
+        <Text style={styles.helperTextNoMargin}>{ACCOUNT_SESSION_CONTROL.description}</Text>
+        <Pressable
+          testID="account-sign-out"
+          accessibilityRole="button"
+          style={styles.button}
+          onPress={() => void signOutCurrentAccount()}
+          disabled={signedOut || signingOut || connectionTestsInProgress}
+        >
+          <Text style={styles.buttonText}>{ACCOUNT_SESSION_CONTROL.label}</Text>
+        </Pressable>
+        {signedOut ? <Text>{ACCOUNT_SESSION_CONTROL.signedOut}</Text> : null}
+      </View>
+
+      <View style={styles.infoSection}>
         <View style={styles.gatewayActionHeader}>
           <View style={styles.gatewayActionCopy}>
             <Text style={[styles.sectionTitle, styles.gatewayActionTitle]}>
@@ -752,7 +771,7 @@ export default function SettingsScreen() {
             </View>
           ) : (
             displayedProfiles.map((profile) => {
-              const selected = profile.id === activeProfile?.id;
+              const selected = profile.id === activeProfile?.id && !signedOut;
               const connectionTest = profileConnectionTests[profile.id];
               const testInProgress = connectionTest?.status === 'testing';
               const activeBadge =
@@ -1114,10 +1133,11 @@ export default function SettingsScreen() {
                   autoCapitalize="none"
                   autoCorrect={false}
                   secureTextEntry
+                  testID="gateway-auth-secret"
                 />
               </View>
             ) : null}
-            <Pressable style={styles.button} onPress={handleSaveAuth}>
+            <Pressable testID="gateway-auth-save" style={styles.button} onPress={handleSaveAuth}>
               <Text style={styles.buttonText}>Save Auth for Active Profile</Text>
             </Pressable>
           </View>

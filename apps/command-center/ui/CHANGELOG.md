@@ -11,6 +11,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Show visual-review delegation and reviewer identity beside acceptance verdicts.
 
+- Add the shared Sign out / switch account control to forget this device login and disconnect until explicit login or pairing.
+
 - Require stored or explicitly supplied login credentials instead of build-time environment secrets, including in the sample configuration.
 
 - Show authenticated visual claim reviews through the shared evidence model.

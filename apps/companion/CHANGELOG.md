@@ -7,6 +7,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 - Show and submit the resolved QA profile, require a choice for ambiguous farms, and retain admitted profile identity in run detail.
 - Direct device setup to person pairing instead of build-time gateway token presets.
 
+- Add the shared Sign out / switch account control to forget this device login and disconnect until explicit login or pairing.
+
 - Reuse the shared criterion comparison model and synchronized Before/After zoom in the existing evidence workspace and player.
 
 - Show the shared visual-review proof kind, delegation and reviewer identity.

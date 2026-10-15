@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Alert } from 'react-native';
 
+import { ACCOUNT_SESSION_CONTROL } from '@farmslot/protocol';
+
 import {
   type ConnectionHealthState,
   connectionProbeTeachingError,
@@ -48,8 +50,16 @@ const PAIRING_CONNECT_TIMEOUT_MS = 3_500;
 const PAIRING_PING_TIMEOUT_MS = 3_500;
 
 export function useGatewayProfileController(options: GatewayProfileControllerOptions) {
-  const { connect, resetSavedProfiles, saveProfile, setActiveProfile, setGatewayUrl } =
-    useConnectionStore();
+  const {
+    connect,
+    resetSavedProfiles,
+    saveProfile,
+    setActiveProfile,
+    setGatewayUrl,
+    signOut,
+    signedOut,
+  } = useConnectionStore();
+  const [signingOut, setSigningOut] = useState(false);
   const [manualUrlValidationInProgress, setManualUrlValidationInProgress] = useState(false);
   const [profileConnectionTests, setProfileConnectionTests] = useState<
     Record<string, ProfileConnectionTestState>
@@ -126,7 +136,8 @@ export function useGatewayProfileController(options: GatewayProfileControllerOpt
   };
 
   const activateProfile = async (profile: GatewayProfile) => {
-    if (connectionTestsInProgress || profile.id === options.activeProfile?.id) return;
+    if (connectionTestsInProgress || (profile.id === options.activeProfile?.id && !signedOut))
+      return;
     setProfileConnectionTests((current) => ({
       ...current,
       [profile.id]: testingState(profile, 'Validating'),
@@ -201,7 +212,28 @@ export function useGatewayProfileController(options: GatewayProfileControllerOpt
     );
   };
 
+  const signOutCurrentAccount = async () => {
+    if (signingOut || connectionTestsInProgress) return;
+    setSigningOut(true);
+    try {
+      await signOut();
+      options.setPairingImportMessage(ACCOUNT_SESSION_CONTROL.signedOut);
+      options.setRecentImportedProfiles([]);
+      setProfileConnectionTests({});
+    } catch (error) {
+      Alert.alert(
+        'Sign out failed',
+        error instanceof Error ? error.message : 'Unable to forget login.',
+      );
+    } finally {
+      setSigningOut(false);
+    }
+  };
+
   return {
+    signOutCurrentAccount,
+    signingOut,
+    signedOut,
     activateProfile,
     connectionTestsInProgress,
     manualUrlValidationInProgress,
