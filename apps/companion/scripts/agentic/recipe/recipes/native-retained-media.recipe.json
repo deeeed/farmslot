@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Companion retained media bundle binding",
-  "description": "Use an isolated gate fixture with a blue retained image and red newer current image at the same task-relative path. Open the full gate review with filters visible. Set FARMSLOT_BUNDLE_PROOF_SCREENSHOT to this run artifact directory/native-retained-media.png; ffmpeg and od must be available. No real gate action or judgment. Remove owned proof resources after receipts.",
+  "description": "Use an isolated gate fixture with blue retained and red newer current images at the same task-relative path. Open full gate review with filters visible. The engine supplies FARMSLOT_RECIPE_ARTIFACTS_DIR; ffmpeg and od must be available. No real gate action or judgment. Remove owned proof resources after receipts.",
   "proofTargets": [
     {
       "id": "retained-media",
@@ -29,7 +29,6 @@
         "text": "ordinary.png",
         "expected": "visible",
         "timeout_ms": 10000,
-        "proves": ["retained-media"],
         "intent": "The viewer shows the Unassigned image instead of the previous video.",
         "next": "unassigned-index"
       },
@@ -38,7 +37,6 @@
         "test_id": "companion-artifact-media-viewer-index",
         "text": "1/1",
         "expected": "visible",
-        "proves": ["retained-media"],
         "intent": "The Unassigned image uses its one-item recorded selection.",
         "next": "hud-capture-unassigned"
       },
@@ -59,7 +57,7 @@
         "action": "ui.press",
         "test_id": "companion-artifact-media-viewer-close",
         "intent": "Return without changing the gate or evidence.",
-        "next": "done"
+        "next": "show-raw-gallery"
       },
       "done": {
         "action": "end",
@@ -67,7 +65,7 @@
       },
       "read-displayed-pixel": {
         "action": "command",
-        "cmd": "ffmpeg -v error -i \"$FARMSLOT_BUNDLE_PROOF_SCREENSHOT\" -vf \"crop=1:1:iw/2:ih/2\" -f rawvideo -pix_fmt rgb24 - | od -An -tu1",
+        "cmd": "ffmpeg -v error -i \"$FARMSLOT_RECIPE_ARTIFACTS_DIR/native-retained-media.png\" -vf \"crop=1:1:iw/2:ih/2\" -f rawvideo -pix_fmt rgb24 - | od -An -tu1",
         "intent": "Read the displayed image pixel from the actual native screenshot.",
         "next": "assert-retained-blue"
       },
@@ -79,6 +77,61 @@
         "proves": ["retained-media"],
         "intent": "The visible image is retained blue, never current red.",
         "next": "close-unassigned"
+      },
+      "show-raw-gallery": {
+        "action": "ui.press",
+        "test_id": "companion-raw-artifacts",
+        "intent": "Expand the ordinary raw gate gallery.",
+        "next": "open-gallery-image"
+      },
+      "open-gallery-image": {
+        "action": "ui.press",
+        "test_id": "companion-evidence-artifact-artifacts/recipe-runs/head/ordinary.png",
+        "intent": "Open the ordinary raw gate image in the existing gallery.",
+        "next": "gallery-title"
+      },
+      "gallery-title": {
+        "action": "ui.wait_for",
+        "test_id": "companion-artifact-media-viewer-title",
+        "text": "artifacts/recipe-runs/head/ordinary.png",
+        "expected": "visible",
+        "timeout_ms": 10000,
+        "intent": "The raw gallery opens its own ordinary image.",
+        "next": "hud-gallery"
+      },
+      "hud-gallery": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "The ordinary gate gallery must retain blue after newer output turns red.",
+        "next": "capture-gallery"
+      },
+      "capture-gallery": {
+        "action": "ui.screenshot",
+        "path": "native-retained-gallery.png",
+        "covers": ["retained-media"],
+        "intent": "Record the real ordinary gate gallery.",
+        "next": "read-gallery-pixel"
+      },
+      "read-gallery-pixel": {
+        "action": "command",
+        "cmd": "ffmpeg -v error -i \"$FARMSLOT_RECIPE_ARTIFACTS_DIR/native-retained-gallery.png\" -vf \"crop=1:1:iw/2:ih/2\" -f rawvideo -pix_fmt rgb24 - | od -An -tu1",
+        "intent": "Read the displayed pixel from the actual native screenshot.",
+        "next": "assert-retained-gallery-blue"
+      },
+      "assert-retained-gallery-blue": {
+        "action": "assert_output",
+        "source": "read-gallery-pixel",
+        "stream": "stdout",
+        "match": "^\\s*0\\s+0\\s+255\\s*$",
+        "proves": ["retained-media"],
+        "intent": "The ordinary gallery shows retained blue, never current red.",
+        "next": "close-gallery"
+      },
+      "close-gallery": {
+        "action": "ui.press",
+        "test_id": "companion-artifact-media-viewer-close",
+        "intent": "Close the read-only gallery without changing the gate.",
+        "next": "done"
       }
     }
   }

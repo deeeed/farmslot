@@ -26,7 +26,6 @@ import { acceptanceEvidenceHref } from '../../lib/acceptance-evidence';
 import {
   type ArtifactHttpHeaders,
   type ArtifactManifestEntry,
-  artifactUrlForEntry,
   groupVisualArtifactPairs,
   type VisualArtifactPair,
 } from '../../lib/artifact-url';
@@ -212,7 +211,8 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
       artifacts,
       pairs: groupVisualArtifactPairs(
         artifacts,
-        (artifact) => artifactUrlForEntry(gatewayUrl, run.id, artifact),
+        (artifact) =>
+          recordedEvidenceArtifactUrl(gatewayUrl, run.id, acceptance.evidenceModel, artifact),
         acceptance.evidenceModel,
       ).pairs,
       media,
@@ -338,7 +338,13 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
           uri,
           items: evidenceMediaItems(
             viewModel.artifacts,
-            (artifact) => artifactUrlForEntry(gatewayUrl, runId, artifact),
+            (artifact) =>
+              recordedEvidenceArtifactUrl(
+                gatewayUrl,
+                runId,
+                viewModel.acceptance.evidenceModel,
+                artifact,
+              ),
             authHeaders,
             viewModel.acceptance.evidenceModel,
           ),
