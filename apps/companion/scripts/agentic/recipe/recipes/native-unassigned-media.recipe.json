@@ -1,0 +1,71 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion Unassigned recorded media",
+  "description": "On an isolated connected gateway fixture, open the full gate review and make its comparison filters visible. Open Unassigned media with retained bundle metadata. This proves navigation only. No judgment or gate action. Delete owned proof resources after receipts.",
+  "proofTargets": [
+    {
+      "id": "unassigned-viewer",
+      "claim": "Unassigned media opens its own recorded selection after a comparison.",
+      "proofMode": "state"
+    }
+  ],
+  "workflow": {
+    "entry": "show-unassigned",
+    "nodes": {
+      "show-unassigned": {
+        "action": "ui.press",
+        "test_id": "companion-evidence-filter-unassigned",
+        "intent": "Show media without an AC binding in the existing gate review.",
+        "next": "open-unassigned"
+      },
+      "open-unassigned": {
+        "action": "ui.press",
+        "test_id": "companion-unassigned-media-artifacts/recipe-runs/head/ordinary.png",
+        "intent": "Open the Unassigned ordinary image through the recorded viewer.",
+        "next": "unassigned-title"
+      },
+      "unassigned-title": {
+        "action": "ui.wait_for",
+        "test_id": "companion-artifact-media-viewer-title",
+        "text": "ordinary.png",
+        "expected": "visible",
+        "timeout_ms": 10000,
+        "proves": ["unassigned-viewer"],
+        "intent": "The viewer shows the Unassigned image instead of the previous video.",
+        "next": "unassigned-index"
+      },
+      "unassigned-index": {
+        "action": "ui.wait_for",
+        "test_id": "companion-artifact-media-viewer-index",
+        "text": "1/1",
+        "expected": "visible",
+        "proves": ["unassigned-viewer"],
+        "intent": "The Unassigned image uses its one-item recorded selection.",
+        "next": "hud-capture-unassigned"
+      },
+      "hud-capture-unassigned": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "Record the Unassigned image selected after comparison media.",
+        "next": "capture-unassigned"
+      },
+      "capture-unassigned": {
+        "action": "ui.screenshot",
+        "path": "native-media-unassigned-viewer.png",
+        "covers": ["unassigned-viewer"],
+        "intent": "Record the Unassigned image in its own gallery.",
+        "next": "close-unassigned"
+      },
+      "close-unassigned": {
+        "action": "ui.press",
+        "test_id": "companion-artifact-media-viewer-close",
+        "intent": "Return without changing the gate or evidence.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}
