@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Remove the retired checkout auth-file prerequisite from validation instructions.
+
 - Use explicit test gateway profiles in desktop validation instructions.
 
 - Docs refer to the recipe runner package as `@farmslot/recipe-runner` (renamed from `@farmslot/recipe-harness`).

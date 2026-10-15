@@ -90,7 +90,15 @@ pin_sandbox_home
 unset FARMSLOT_NODE_TOKEN FARMSLOT_GATEWAY_TOKEN FARMSLOT_GATEWAY_PASSWORD FARMSLOT_GATEWAY_AUTH_MODE
 
 # Providers belong to this gateway home and cannot set identity or shell policy.
-DEV_HOME="$(cd "$DEV_FRAMEWORK_ROOT" && node --import tsx --input-type=module -e 'import { farmslotHome } from "@farmslot/protocol/node/farmslot-home"; process.stdout.write(farmslotHome())')"
+# Match the machine-home contract without requiring installed workspace packages.
+DEV_HOME="${FARMSLOT_HOME:-}"
+DEV_HOME="${DEV_HOME#"${DEV_HOME%%[![:space:]]*}"}"
+DEV_HOME="${DEV_HOME%"${DEV_HOME##*[![:space:]]}"}"
+DEV_HOME="${DEV_HOME:-$HOME/.farmslot}"
+case "$DEV_HOME" in
+  '~') DEV_HOME="$HOME" ;;
+  '~/'*) DEV_HOME="$HOME/${DEV_HOME#'~/'}" ;;
+esac
 PROVIDER_ENV_FILE="$DEV_HOME/providers.env"
 NODE_TOKEN_FILE="$DEV_HOME/node.secret"
 if [ -z "${FARMSLOT_SANDBOX_HOME:-}" ] && [ "$DEV_HOME" = "$HOME/.farmslot-dev" ]; then

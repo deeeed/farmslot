@@ -390,8 +390,10 @@ function printActivationWalkthrough(output: { write(text: string): void }): void
     '\nThis gateway is now activated, permanently. Two things change:\n' +
       '  - open sessions must re-authenticate; their subscriptions were closed.\n' +
       '  - the local node no longer connects implicitly.\n' +
-      "Next: issue the local node's credential and write it where the node reads it:\n" +
-      '  farmslot credential issue --principal <machine> --subject node --machine <machine> --write-node-env\n',
+      'Next: issue a node credential to a new private file:\n' +
+      '  farmslot credential issue --principal <node-principal> --subject node --machine <machine> --secret-file <private-node-file>\n' +
+      'For farmdev, use ~/.farmslot-automation/<machine>-node-automation.secret and restart farmdev.\n' +
+      'For another local stack, use <FARMSLOT_HOME>/node.secret and restart it. For a remote node, deploy with --node-token-file <private-node-file>.\n',
   );
 }
 
