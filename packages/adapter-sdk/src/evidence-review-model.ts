@@ -5,7 +5,10 @@ import {
   type AcceptanceEvidenceLink,
   type AcceptanceStatusLedger,
   type AcceptanceStatusSummary,
+  type ArtifactRef,
   type ClaimOverrideAuthority,
+  delegatedVisualClaimAllowed,
+  type DeterministicChecklistCheck,
   EVIDENCE_PADDING_MS,
   type EvidenceMomentRef,
   isRecord,
@@ -16,11 +19,21 @@ import {
   type RecipeRecordingTimelineBinding,
   type RecipeRecordingTimelineDocument,
   recipeTraceEntries,
+  type RecipeVisualJudgmentKind,
   type RecipeVisualReviewAuthority,
   recordedEvidenceClosureIdentity,
   type RecordedEvidencePackageInput,
+  recordedVisualJudgments,
   type RecordingSegmentRef,
+  type ReviewDiffSnapshot,
+  type ReviewRequirementDisplay,
+  reviewRequirementDisplay,
+  type ReviewStatus,
+  type RunDecision,
+  type RunGatePrerequisiteReason,
   type RunOutput,
+  type RunReviewVisualClaimParams,
+  type SelfPrincipalSummary,
   summarizeAcceptanceStatus,
   validateRecipeRecordingTimelineBinding,
 } from '@farmslot/protocol';
@@ -34,6 +47,22 @@ import {
 } from '@farmslot/recipe-runner/evidence';
 
 import {
+  type EvidenceReviewComparisonFilter,
+  type EvidenceReviewComparisonMedia,
+  type EvidenceReviewComparisonRow,
+  type EvidenceReviewComparisonTransform,
+  matchesComparisonFilter,
+  normalizedComparisonTransform,
+  projectEvidenceComparisons,
+} from './evidence-review-comparisons.js';
+export type {
+  EvidenceReviewComparisonFilter,
+  EvidenceReviewComparisonMedia,
+  EvidenceReviewComparisonRow,
+  EvidenceReviewComparisonTransform,
+} from './evidence-review-comparisons.js';
+
+import {
   type EvidenceReviewPackageStatus,
   evidenceReviewPackageStatus,
 } from './evidence-review-status.js';
@@ -41,6 +70,7 @@ import {
 export type EvidenceReviewContext = 'gate' | 'pr-preview' | 'run-detail' | 'artifact';
 export type EvidenceReviewTiming = 'measured' | 'untimed' | 'outside-recording';
 export type EvidenceReviewMediaType = 'image' | 'video' | 'document';
+export type EvidenceReviewProofKind = 'assertion' | 'agent-reviewed' | 'person-reviewed';
 
 /** Standalone players supply the same retained trace and checked video identity. */
 export interface EvidenceReviewRecordingInput extends RecipeRecordingTimelineBinding {
@@ -48,7 +78,26 @@ export interface EvidenceReviewRecordingInput extends RecipeRecordingTimelineBin
   gapBefore?: boolean;
 }
 
+export interface EvidenceReviewGateSnapshot {
+  headSha?: string | null;
+  reviewRequirement: ReviewRequirementDisplay;
+  reviews: readonly Pick<
+    ReviewStatus,
+    'id' | 'mode' | 'verdict' | 'stale' | 'reviewedHeadSha' | 'reviewSnapshot'
+  >[];
+  ci: readonly DeterministicChecklistCheck[];
+  ciChecks: NonNullable<import('@farmslot/protocol').ReadyGatePayload['ciChecks']>;
+  ownReviewVerdict?: string;
+  requirements: readonly RunGatePrerequisiteReason[];
+  nextAction: string;
+}
+
 export interface EvidenceReviewInput {
+  visualReviewContext?: { snapshotIdentity: string; decisionId?: string };
+  gateDecision?: RunDecision;
+  artifacts?: readonly ArtifactRef[];
+  comparisonSnapshot?: Pick<ReviewDiffSnapshot, 'baseSha' | 'headSha'>;
+  criterionSourceUrl?: string;
   /** Gateway run contract: 0 is retained pre-cutover data, 1 is selected-attempt evidence. */
   contractVersion?: number;
   claimOverrideAuthority?: ClaimOverrideAuthority;
@@ -76,13 +125,22 @@ export interface EvidenceReviewArtifact {
   mediaType: EvidenceReviewMediaType;
 }
 
+export interface EvidenceReviewArtifactPair<T> {
+  before: T;
+  after: T;
+  claimId: string;
+}
+
 export interface EvidenceReviewClaim extends AcceptanceCriterionView {
+  proofKinds: readonly EvidenceReviewProofKind[];
+  reviewLabels: readonly string[];
   kind: RecipeClaimKind;
   parentId?: string;
   caption: string;
   timing?: EvidenceReviewTiming;
   evidence: readonly EvidenceReviewArtifact[];
   moments: readonly EvidenceMomentRef[];
+  clips: readonly EvidenceReviewClip[];
   occurrences: readonly EvidenceReviewOccurrence[];
 }
 
@@ -104,6 +162,7 @@ export interface EvidenceReviewClip {
   videoDigest: string;
   traceIndex: number;
   startMs: number;
+  momentMs?: number;
   endMs: number;
   caption: string;
   moment?: EvidenceMomentRef;
@@ -129,12 +188,47 @@ export interface EvidenceReviewPlaybackEffect {
 }
 
 export interface EvidenceReviewModel {
+  artifactRole(path: string): 'before' | 'after' | 'review' | null;
+  pairedArtifacts<T extends { path: string }>(
+    artifacts: readonly T[],
+  ): EvidenceReviewArtifactPair<T>[];
+  readonly pendingVisualClaimIds: readonly string[];
+  visualReviewKind(
+    claimId: string,
+    principal: SelfPrincipalSummary | null,
+  ): RecipeVisualJudgmentKind | null;
+  visualReviewRequest(
+    claimId: string,
+    principal: SelfPrincipalSummary | null,
+    verdict: 'confirmed' | 'rejected',
+    reason: string,
+  ): RunReviewVisualClaimParams;
+  readonly gateSnapshot: EvidenceReviewGateSnapshot | null;
+  readonly comparisons: readonly EvidenceReviewComparisonRow[];
+  readonly unassigned: readonly EvidenceReviewComparisonMedia[];
+  readonly comparisonErrors: readonly {
+    code: 'comparison-source-mismatch';
+    artifactPath: string;
+    message: string;
+  }[];
+  readonly comparisonFilter: EvidenceReviewComparisonFilter;
+  readonly comparisonTransform: EvidenceReviewComparisonTransform;
+  readonly comparisonView: {
+    rows: readonly EvidenceReviewComparisonRow[];
+    unassigned: readonly EvidenceReviewComparisonMedia[];
+  };
+  setComparisonFilter(filter: EvidenceReviewComparisonFilter): void;
+  chooseComparisonMedia(claimId: string, role: 'before' | 'after', identity: string): boolean;
+  setComparisonTransform(transform: EvidenceReviewComparisonTransform): void;
+  resetComparisonTransform(): void;
+  selectComparisonMedia(identity: string): EvidenceReviewSelection | null;
   claimOverrideCandidate(
     id: string,
   ): Pick<import('@farmslot/protocol').RunOverrideClaimParams, 'claimId' | 'recipeRunId'> | null;
   readonly context: EvidenceReviewContext;
   readonly summary: AcceptanceStatusSummary;
   readonly claims: readonly EvidenceReviewClaim[];
+  readonly visualReviewMarkdown: string;
   readonly occurrences: readonly EvidenceReviewOccurrence[];
   readonly recordings: readonly RecipeRecordingTimelineDocument[];
   readonly errors: readonly string[];
@@ -265,7 +359,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
         .map((finding) => finding.message),
     );
   }
-  const timelines = indexRecordingTimelines(recordings.map(({ timeline }) => timeline));
+  const timelines = new Map(indexRecordingTimelines(recordings.map(({ timeline }) => timeline)));
   const segments: readonly RecordingSegmentRef[] =
     packageClaims?.recording.segments ??
     recordings.map((recording, index) => ({
@@ -282,11 +376,51 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       ? pkg.manifest.artifacts.filter(isRecord)
       : [];
   const links = new Map((input.evidenceLinks ?? []).map((link) => [link.id, link.evidence]));
+  const judgments =
+    pkg && input.visualReviewAuthority && !errors.length
+      ? recordedVisualJudgments(pkg, input.visualReviewAuthority)
+      : [];
+  const latestJudgments = new Map(judgments.map((judgment) => [judgment.claimId, judgment]));
+  function reviewContributions(id: string) {
+    if (!latestJudgments.size) return [];
+    const ids = new Set([id]);
+    for (const claim of packageClaims?.criteria ?? []) {
+      let parent = claim.parentId;
+      while (parent) {
+        if (parent === id) {
+          ids.add(claim.id);
+          break;
+        }
+        parent = packageClaims?.criteria.find((entry) => entry.id === parent)?.parentId;
+      }
+    }
+    return [...ids].flatMap((claimId) => {
+      const judgment = latestJudgments.get(claimId);
+      const claim = packageClaims?.criteria.find(({ id }) => id === claimId);
+      return judgment && claim?.verdict === 'awaiting-review' ? [judgment] : [];
+    });
+  }
   const claims: EvidenceReviewClaim[] = acceptanceCriteriaView(
     packageClaims?.criteria ?? input.criteria ?? ledger?.criteria ?? [],
     ledger,
   ).map((claim) => ({
     ...claim,
+    proofKinds: [
+      ...new Set<EvidenceReviewProofKind>([
+        ...(packageClaims && !errors.length && claim.status?.assertionIndices?.length
+          ? ['assertion' as const]
+          : []),
+        ...reviewContributions(claim.id).map((judgment) =>
+          judgment.kind === 'lead-agent-reviewed'
+            ? ('agent-reviewed' as const)
+            : ('person-reviewed' as const),
+        ),
+      ]),
+    ],
+    reviewLabels: reviewContributions(claim.id).map(
+      (judgment) =>
+        `${judgment.kind === 'lead-agent-reviewed' ? `agent-reviewed (delegated by ${judgment.delegation!.displayName})` : 'person-reviewed'} · ${judgment.reviewer.displayName}`,
+    ),
     kind: claim.status?.kind ?? 'acceptance',
     ...(claim.status?.parentId ? { parentId: claim.status.parentId } : {}),
     caption: claimCaption(claim),
@@ -296,6 +430,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       packageClaims ? input.artifactPrefix : undefined,
     ),
     moments: claim.status?.moments ?? [],
+    clips: [],
     occurrences: [],
   }));
   const proofNodes =
@@ -364,6 +499,50 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       },
     ];
   });
+  const comparison = projectEvidenceComparisons(
+    pkg,
+    claims,
+    input.artifactPrefix ?? '',
+    input.artifacts ?? [],
+    input.comparisonSnapshot ??
+      (input.gateDecision?.payload?.kind === 'ready'
+        ? input.gateDecision.payload.prPackage?.reviewSnapshot
+        : undefined),
+    input.criterionSourceUrl,
+    errors.length > 0,
+  );
+  let comparisonFilter: EvidenceReviewComparisonFilter = 'all';
+  let comparisonTransform: EvidenceReviewComparisonTransform = { scale: 1, x: 0.5, y: 0.5 };
+  const playbackSources = new Map<
+    string,
+    {
+      segments: readonly RecordingSegmentRef[];
+      timelines: ReadonlyMap<string, RecipeRecordingTimelineDocument>;
+    }
+  >();
+  const headTimelines = new Map(timelines);
+  for (const timeline of headTimelines.values())
+    playbackSources.set(timeline.videoPath, { segments, timelines: headTimelines });
+  const addDependencyTimelines = (source: RecordedEvidencePackageInput, prefix: string) => {
+    const childTimelines = new Map(
+      Object.values(source.timelines).map((timeline) => [
+        `${prefix}${timeline.videoPath}`,
+        { ...timeline, videoPath: `${prefix}${timeline.videoPath}` },
+      ]),
+    );
+    const childSegments = (source.claims?.recording.segments ?? []).map((segment) => ({
+      ...segment,
+      videoPath: `${prefix}${segment.videoPath}`,
+    }));
+    for (const [videoPath, timeline] of childTimelines) {
+      timelines.set(videoPath, timeline);
+      playbackSources.set(videoPath, { segments: childSegments, timelines: childTimelines });
+    }
+    for (const child of source.comparisonDependencies ?? [])
+      addDependencyTimelines(child.input, `${prefix}${child.artifactRoot}/`);
+  };
+  for (const child of pkg?.comparisonDependencies ?? [])
+    addDependencyTimelines(child.input, `${child.artifactRoot}/`);
   const byClaim = new Map(claims.map((claim) => [claim.id, claim]));
   const byOccurrence = new Map(
     occurrences.map((occurrence) => [occurrence.traceIndex, occurrence]),
@@ -405,6 +584,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
         videoPath: segment.videoPath,
         videoDigest: segment.videoDigest,
         traceIndex,
+        momentMs: (marker.startRangeMs[0] + marker.startRangeMs[1]) / 2,
         startMs: Math.max(0, marker.startRangeMs[0] - EVIDENCE_PADDING_MS),
         endMs: Math.min(timeline.durationMs, marker.endRangeMs[1] + EVIDENCE_PADDING_MS),
         caption: byOccurrence.get(traceIndex)?.intent ?? marker.nodeId,
@@ -417,6 +597,14 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
   // Long recordings may list every original in the retained ledger. Present
   // only this claim's measured originals; the full file inventory stays browsable.
   for (const claim of claims) {
+    claim.clips = [...new Set(claim.moments.map((moment) => moment.traceIndex))]
+      .flatMap(clipsFor)
+      .filter((clip) =>
+        claim.moments.some(
+          (moment) =>
+            moment.traceIndex === clip.traceIndex && moment.videoDigest === clip.videoDigest,
+        ),
+      );
     const measured = new Set(
       claim.moments.flatMap((moment) =>
         clipsFor(moment.traceIndex)
@@ -490,7 +678,195 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     errors,
     input.contractVersion,
   );
+  const reviewedClaims = claims.filter((claim) => claim.reviewLabels.length);
+  const markdownCell = (value: string) =>
+    value.replace(/[\r\n]+/gu, ' ').replace(/[\\|`*_[\]<>]/gu, '\\$&');
+  const visualReviewMarkdown = reviewedClaims.length
+    ? [
+        '## Visual judgments',
+        '',
+        `Execution: ${markdownCell(recipeRunId ?? '')}`,
+        '',
+        '| Criterion | Verdict | Reviewed by |',
+        '| --- | --- | --- |',
+        ...reviewedClaims.map(
+          (claim) =>
+            `| ${markdownCell(`${claim.id}: ${claim.text}`)} | ${markdownCell(claim.status?.verdict ?? 'not assessed')} | ${claim.reviewLabels.map(markdownCell).join('; ')} |`,
+        ),
+      ].join('\n')
+    : '';
+  const gatePayload =
+    input.gateDecision?.payload?.kind === 'ready' ? input.gateDecision.payload : undefined;
+  const nextReason = gatePayload?.gateReadiness?.reasons[0];
+  const offeredNext = nextReason?.actionId
+    ? input.gateDecision?.actions.find((action) => action.id === nextReason.actionId)
+    : undefined;
+  const reviewableClaims =
+    pkg && !errors.length
+      ? deriveReviewedRecipeClaims(pkg).filter(
+          (claim) =>
+            claim.verdict === 'awaiting-review' &&
+            ['visual', 'mixed'].includes(claim.proofMode) &&
+            claim.assertionIndices.length,
+        )
+      : [];
+  const pendingVisualClaimIds = claims
+    .filter(
+      (claim) =>
+        claim.status?.verdict === 'awaiting-review' &&
+        reviewableClaims.some((raw) => raw.id === claim.id),
+    )
+    .map((claim) => claim.id);
+  const visualReviewKind = (
+    claimId: string,
+    principal: SelfPrincipalSummary | null,
+  ): RecipeVisualJudgmentKind | null => {
+    const authority = input.visualReviewAuthority;
+    if (
+      !pkg ||
+      !input.visualReviewContext ||
+      !authority ||
+      authority.historical ||
+      input.gateDecision?.resolvedAt ||
+      authority.recipeRunId !== packageClaims?.recipeRunId ||
+      authority.closureIdentity !== recordedEvidenceClosureIdentity(pkg) ||
+      !reviewableClaims.some((claim) => claim.id === claimId)
+    )
+      return null;
+    if (principal?.subjectKind === 'person') return 'person-reviewed';
+    return principal?.subjectKind === 'service' &&
+      delegatedVisualClaimAllowed(pkg, claimId, principal.id, authority.projectPolicy)
+      ? 'lead-agent-reviewed'
+      : null;
+  };
+  const gateSnapshot: EvidenceReviewGateSnapshot | null = gatePayload
+    ? {
+        headSha: gatePayload.prPackage?.reviewSnapshot?.headSha ?? gatePayload.headSha,
+        reviewRequirement: reviewRequirementDisplay(gatePayload),
+        reviews: gatePayload.reviews ?? [],
+        ci: gatePayload.prPackage?.deterministicChecks ?? [],
+        ciChecks: gatePayload.ciChecks ?? [],
+        ownReviewVerdict: gatePayload.reviewVerdict,
+        requirements: gatePayload.gateReadiness?.reasons ?? [],
+        nextAction: input.gateDecision?.resolvedAt
+          ? 'Read retained evidence (read-only)'
+          : (offeredNext?.label ?? nextReason?.message ?? 'Use the current gate action'),
+      }
+    : null;
   return {
+    artifactRole(path) {
+      const media = comparison.media.find((entry) => entry.artifactPath === path && entry.eligible);
+      return media?.capture?.role ?? null;
+    },
+    pairedArtifacts(artifacts) {
+      return comparison.rows.flatMap((row) => {
+        const before = row.selectedBefore?.eligible
+          ? artifacts.find((artifact) => artifact.path === row.selectedBefore?.artifactPath)
+          : undefined;
+        const after = row.selectedAfter?.eligible
+          ? artifacts.find((artifact) => artifact.path === row.selectedAfter?.artifactPath)
+          : undefined;
+        return before && after ? [{ before, after, claimId: row.claim.id }] : [];
+      });
+    },
+    pendingVisualClaimIds,
+    visualReviewKind,
+    visualReviewRequest(claimId, principal, verdict, reason) {
+      const kind = visualReviewKind(claimId, principal);
+      if (!kind || !input.visualReviewContext || !input.visualReviewAuthority || !packageClaims)
+        throw new Error(
+          'This claim requires an authorized reviewer and a captured evidence selection.',
+        );
+      if (!reason.trim()) throw new Error('Describe the visual proof you inspected.');
+      return {
+        runId: input.visualReviewAuthority.runId,
+        decisionId: input.visualReviewContext.decisionId,
+        snapshotIdentity: input.visualReviewContext.snapshotIdentity,
+        recipeRunId: packageClaims.recipeRunId,
+        claimId,
+        kind,
+        verdict,
+        reason: reason.trim(),
+      };
+    },
+    gateSnapshot,
+    comparisonErrors: comparison.media
+      .filter((media) => media.limitationCode === 'comparison-source-mismatch')
+      .map((media) => ({
+        code: 'comparison-source-mismatch' as const,
+        artifactPath: media.artifactPath,
+        message: media.limitation!,
+      })),
+    comparisons: comparison.rows,
+    unassigned: comparison.unassigned,
+    get comparisonFilter() {
+      return comparisonFilter;
+    },
+    get comparisonTransform() {
+      return comparisonTransform;
+    },
+    get comparisonView() {
+      const filtered = (media: readonly EvidenceReviewComparisonMedia[]) =>
+        media.filter((entry) => matchesComparisonFilter(entry, comparisonFilter));
+      return {
+        rows:
+          comparisonFilter === 'unassigned'
+            ? []
+            : comparison.rows.map((row) => ({
+                ...row,
+                claim: {
+                  ...row.claim,
+                  clips:
+                    comparisonFilter === 'all' || comparisonFilter === 'moments'
+                      ? row.claim.clips
+                      : [],
+                },
+                before: filtered(row.before),
+                after: filtered(row.after),
+                review: filtered(row.review),
+                selectedBefore: filtered(row.before).find(
+                  (media) => media.identity === row.selectedBefore?.identity,
+                ),
+                selectedAfter: filtered(row.after).find(
+                  (media) => media.identity === row.selectedAfter?.identity,
+                ),
+              })),
+        unassigned: ['all', 'unassigned', 'screenshots', 'moments'].includes(comparisonFilter)
+          ? filtered(comparison.unassigned)
+          : [],
+      };
+    },
+    setComparisonFilter(filter) {
+      comparisonFilter = filter;
+    },
+    chooseComparisonMedia(claimId, role, identity) {
+      const row = comparison.rows.find((entry) => entry.claim.id === claimId);
+      const media = row?.[role].find((entry) => entry.identity === identity);
+      if (!row || !media?.eligible) return false;
+      if (role === 'before') row.selectedBefore = media;
+      else row.selectedAfter = media;
+      comparisonTransform = { scale: 1, x: 0.5, y: 0.5 };
+      return true;
+    },
+    setComparisonTransform(transform) {
+      comparisonTransform = normalizedComparisonTransform(transform);
+    },
+    resetComparisonTransform() {
+      comparisonTransform = { scale: 1, x: 0.5, y: 0.5 };
+    },
+    selectComparisonMedia(identity) {
+      const media = comparison.media.find((entry) => entry.identity === identity);
+      return media
+        ? select(
+            media.name,
+            [media],
+            [...media.clips],
+            media.capture?.traceIndex,
+            media.capture?.ac,
+            media.timing,
+          )
+        : null;
+    },
     context: input.context ?? 'artifact',
     claimOverrideCandidate(id) {
       const claim = packageClaims?.criteria.find(
@@ -508,8 +884,9 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       claims,
     ),
     claims,
+    visualReviewMarkdown,
     occurrences,
-    recordings: recordings.map((recording) => recording.timeline),
+    recordings: [...timelines.values()],
     errors,
     warnings,
     displayWarnings: [...new Set(warnings)].filter(
@@ -613,7 +990,12 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     markerSeekMs(videoPath, traceIndex, phase, mediaDurationMs) {
       if (
         errors.length ||
-        occurrenceRecordingCoverage(traceIndex, segments, timelines).timing !== 'measured'
+        !playbackSources.has(videoPath) ||
+        occurrenceRecordingCoverage(
+          traceIndex,
+          playbackSources.get(videoPath)!.segments,
+          playbackSources.get(videoPath)!.timelines,
+        ).timing !== 'measured'
       )
         return null;
       const timeline = timelines.get(videoPath);

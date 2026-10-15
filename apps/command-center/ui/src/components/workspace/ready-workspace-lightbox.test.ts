@@ -84,49 +84,24 @@ test('ready workspace lightbox items include media, documents, and execution log
   assert.equal(readyWorkspaceOpensInLightbox(artifact('artifacts/stdout.txt')), false);
 });
 
-test('ready workspace lightbox pairs keep before/after media compare metadata', () => {
-  const pairs = readyWorkspaceLightboxPairs(
-    [artifact('artifacts/before-ac1.png'), artifact('artifacts/after-ac1.png')],
-    (entry) => `url:${entry.path}`,
+test('lightbox comparison needs checked bindings rather than AC-like filenames', () => {
+  const files = [artifact('artifacts/before-ac1.png'), artifact('artifacts/after-ac1.png')];
+  assert.deepEqual(
+    readyWorkspaceLightboxPairs(files, (entry) => `url:${entry.path}`),
+    [],
   );
-
-  assert.deepEqual(pairs, [
-    {
-      before: {
-        url: 'url:artifacts/before-ac1.png',
-        path: 'artifacts/before-ac1.png',
-        purpose: 'screenshot',
-      },
-      after: {
-        url: 'url:artifacts/after-ac1.png',
-        path: 'artifacts/after-ac1.png',
-        purpose: 'screenshot',
-      },
-      stem: 'ac1',
-      kind: 'image',
-    },
-  ]);
+  assert.equal(readyWorkspaceLightboxItems(files, (entry) => `url:${entry.path}`).length, 2);
 });
 
-test('ready workspace lightbox pairs shared baseline before with AC after captures', () => {
-  const pairs = readyWorkspaceLightboxPairs(
-    [
-      artifact('artifacts/before-autoclose-baseline.png'),
-      artifact('artifacts/after-ac1-default-signs.png'),
-      artifact('artifacts/after-ac6-negative-tp-trigger.png'),
-    ],
-    (entry) => `url:${entry.path}`,
-  );
-
+test('an unbound shared baseline never borrows every AC after capture', () => {
+  const files = [
+    artifact('artifacts/before-autoclose-baseline.png'),
+    artifact('artifacts/after-ac1-default-signs.png'),
+    artifact('artifacts/after-ac6-negative-tp-trigger.png'),
+  ];
   assert.deepEqual(
-    pairs.map((pair) => [pair.stem, pair.before.path, pair.after.path]),
-    [
-      ['ac1', 'artifacts/before-autoclose-baseline.png', 'artifacts/after-ac1-default-signs.png'],
-      [
-        'ac6',
-        'artifacts/before-autoclose-baseline.png',
-        'artifacts/after-ac6-negative-tp-trigger.png',
-      ],
-    ],
+    readyWorkspaceLightboxPairs(files, (entry) => `url:${entry.path}`),
+    [],
   );
+  assert.equal(readyWorkspaceLightboxItems(files, (entry) => `url:${entry.path}`).length, 3);
 });

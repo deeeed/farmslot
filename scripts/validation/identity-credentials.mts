@@ -1,4 +1,4 @@
-// Manual protocol proof. Uses an isolated identity home and service/node credentials only.
+// Manual protocol proof. Every identity and credential belongs to an isolated home.
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -11,6 +11,11 @@ let releasePresence: (() => void) | undefined;
 try {
   process.env.FARMSLOT_HOME = join(scratch, 'home');
   process.env.FARMSLOT_ROOT = scratch;
+  await mkdir(join(scratch, 'projects', 'proof'), { recursive: true });
+  await writeFile(
+    join(scratch, 'projects', 'proof', 'project.json'),
+    JSON.stringify({ name: 'proof' }),
+  );
   for (const marker of ['CLAUDE.md', 'scripts/dev.sh', 'services/gateway/package.json']) {
     const file = join(scratch, marker);
     await mkdir(join(file, '..'), { recursive: true });
@@ -27,6 +32,7 @@ try {
   const {
     CredentialStoreRuntime,
     CredentialStoreWriter,
+    parseCredentialWire,
     registerGatewayPresence,
     retirePrincipalsOffline,
   } = await import('@farmslot/credential-store');
@@ -51,6 +57,12 @@ try {
     }),
   );
   const { createWebSocketServer } = await import('../../services/gateway/src/server.js');
+  const { queueRecordOriginator, persistQueueNow, loadQueue } =
+    await import('../../services/gateway/src/backlog/dispatch-queue.js');
+  const { resolveWorkOriginator } =
+    await import('../../services/gateway/src/security/work-originator.js');
+  const { authorizeStoredRunEffect } =
+    await import('../../services/gateway/src/security/authorization.js');
 
   const store = new CredentialStoreRuntime();
   const writer = new CredentialStoreWriter(store, true);
@@ -175,6 +187,14 @@ try {
   );
   const node = new GatewayClient({ url, timeout: 5000, credential: { token: issued.secret } });
   await assert.rejects(node.call('principal.list', {}), { code: 'AUTH_FORBIDDEN' });
+  await assert.rejects(
+    node.call('principal.reuseRetiredId', {
+      principalId: 'absent-proof-id',
+      subject: { type: 'person', displayName: 'replacement' },
+      roles: [],
+    }),
+    { code: 'AUTH_FORBIDDEN' },
+  );
   const deniedHttp = await fetch(`http://127.0.0.1:${address.port}/api/file`, {
     headers: { Authorization: `Bearer ${issued.secret}` },
   });
@@ -196,6 +216,192 @@ try {
   assert.notEqual(replacement.principal.id, created.principal.id);
   assert.ok(runtime.store.snapshot().activatedAt);
   claims.push('revocation and retirement take effect; ids and activation remain reserved');
+  const obsolete = await client.call<{ principal: { id: string } }>('principal.create', {
+    subject: { type: 'service', displayName: 'replacement-person' },
+    roles: [{ role: 'admin', scope: { kind: 'global' } }],
+  });
+  const oldCredential = await client.call<{ credential: { id: string }; secret: string }>(
+    'credential.issue',
+    { principalId: obsolete.principal.id, displayName: 'obsolete service device' },
+  );
+  const oldClient = new GatewayClient({
+    url,
+    timeout: 5000,
+    credential: { token: oldCredential.secret },
+  });
+  await oldClient.call('principal.list', {});
+  const staleInvitation = await client.call<{ code: string }>('pairing.create', {
+    gatewayUrl: url,
+    authority: { kind: 'existing-principal', principalId: obsolete.principal.id },
+  });
+  const queueParams = {
+    flowType: 'dev',
+    project: 'proof',
+    ticketOrPr: 'MANUAL-000001',
+    autoDispatch: false,
+  };
+  const oldQueue = await oldClient.call<{ item: { id: string } }>(
+    'dispatch.queue.add',
+    queueParams,
+  );
+  await persistQueueNow();
+  const oldOriginator = queueRecordOriginator(oldQueue.item.id);
+  assert.equal(
+    authorizeStoredRunEffect(
+      resolveWorkOriginator(runtime, oldOriginator),
+      'old proof work',
+      undefined,
+    ).id,
+    obsolete.principal.id,
+  );
+  await client.call('credential.revoke', { credentialId: oldCredential.credential.id });
+  await client.call('principal.retire', { principalIds: [obsolete.principal.id] });
+  const beforeReuse = structuredClone(runtime.store.snapshot());
+  const reuseParams = {
+    principalId: obsolete.principal.id,
+    subject: { type: 'person', displayName: 'Replacement person' },
+    roles: [{ role: 'admin', scope: { kind: 'global' } }],
+  };
+  assert.throws(
+    () =>
+      runtime.writer.createPrincipal(
+        reuseParams.subject as { type: 'person'; displayName: string },
+        [],
+        obsolete.principal.id,
+      ),
+    /has been retired/,
+  );
+  const reused = await client.call<{ principal: { id: string; subject: { type: string } } }>(
+    'principal.reuseRetiredId',
+    reuseParams,
+  );
+  assert.equal(reused.principal.id, obsolete.principal.id);
+  assert.equal(reused.principal.subject.type, 'person');
+  const afterReuse = runtime.store.snapshot();
+  assert.deepEqual(afterReuse.credentials, beforeReuse.credentials);
+  assert.deepEqual(afterReuse.retiredCredentialIds, beforeReuse.retiredCredentialIds);
+  assert.ok(afterReuse.retiredPrincipalIds?.includes(created.principal.id));
+  assert.equal(afterReuse.principalIdReuses?.at(-1)?.principalId, obsolete.principal.id);
+  assert.deepEqual(
+    new CredentialStoreRuntime().snapshot().principalIdReuses,
+    afterReuse.principalIdReuses,
+  );
+  assert.equal(resolveWorkOriginator(runtime, oldOriginator), null);
+  assert.throws(
+    () =>
+      authorizeStoredRunEffect(
+        resolveWorkOriginator(runtime, oldOriginator),
+        'retired proof work',
+        undefined,
+      ),
+    /cannot be resolved/,
+  );
+  await assert.rejects(oldClient.call('principal.list', {}));
+  const beforeStaleExchange = await readFile(runtime.store.path);
+  await assert.rejects(client.call('pairing.exchange', { code: staleInvitation.code }), {
+    code: 'PAIRING_FAILED',
+  });
+  assert.deepEqual(await readFile(runtime.store.path), beforeStaleExchange);
+  const freshInvitation = await client.call<{ code: string }>('pairing.create', {
+    gatewayUrl: url,
+    authority: { kind: 'existing-principal', principalId: reused.principal.id },
+  });
+  const freshPairing = await client.call<{ profile: { secret: string } }>('pairing.exchange', {
+    code: freshInvitation.code,
+  });
+  const replacementPairedClient = new GatewayClient({
+    url,
+    timeout: 5000,
+    credential: { token: freshPairing.profile.secret },
+  });
+  await replacementPairedClient.call('principal.list', {});
+  claims.push(
+    'an old pairing invitation fails after reuse without a store write; a new invitation authenticates as the replacement',
+  );
+  const fresh = await client.call<{ credential: { id: string }; secret: string }>(
+    'credential.issue',
+    {
+      principalId: reused.principal.id,
+      displayName: 'replacement person device',
+    },
+  );
+  assert.notEqual(fresh.credential.id, oldCredential.credential.id);
+  const freshClient = new GatewayClient({
+    url,
+    timeout: 5000,
+    credential: { token: fresh.secret },
+  });
+  await freshClient.call('principal.list', {});
+  const newQueue = await freshClient.call<{ item: { id: string } }>('dispatch.queue.add', {
+    ...queueParams,
+    ticketOrPr: 'MANUAL-000002',
+  });
+  await persistQueueNow();
+  await loadQueue();
+  const newOriginator = queueRecordOriginator(newQueue.item.id);
+  assert.deepEqual(newOriginator, {
+    kind: 'principal',
+    principalId: reused.principal.id,
+    principalGeneration: 1,
+  });
+  assert.equal(
+    authorizeStoredRunEffect(
+      resolveWorkOriginator(runtime, newOriginator),
+      'new proof work',
+      undefined,
+    ).id,
+    reused.principal.id,
+  );
+  assert.equal(resolveWorkOriginator(runtime, queueRecordOriginator(oldQueue.item.id)), null);
+  await freshClient.call('dispatch.queue.update', {
+    itemId: oldQueue.item.id,
+    label: 'explicitly re-authored proof',
+  });
+  await persistQueueNow();
+  await loadQueue();
+  assert.deepEqual(queueRecordOriginator(oldQueue.item.id), newOriginator);
+  assert.equal(
+    authorizeStoredRunEffect(
+      resolveWorkOriginator(runtime, queueRecordOriginator(oldQueue.item.id)),
+      're-authored proof work',
+      undefined,
+    ).id,
+    reused.principal.id,
+  );
+  claims.push(
+    'public queue writes persist the replacement generation; old work fails fire-time authorization until a public edit explicitly re-authors it',
+  );
+  await assert.rejects(oldClient.call('principal.list', {}));
+  await assert.rejects(client.call('principal.reuseRetiredId', reuseParams), {
+    code: 'CREDENTIAL_STORE_REFUSED',
+  });
+  const operator = await client.call<{ principal: { id: string } }>('principal.create', {
+    subject: { type: 'person', displayName: 'operator' },
+    roles: [{ role: 'operator', scope: { kind: 'global' } }],
+  });
+  const operatorIssue = await client.call<{ secret: string }>('credential.issue', {
+    principalId: operator.principal.id,
+    displayName: 'operator device',
+  });
+  const operatorClient = new GatewayClient({
+    url,
+    timeout: 5000,
+    credential: { token: operatorIssue.secret },
+  });
+  const refusedBytes = await readFile(runtime.store.path);
+  await assert.rejects(operatorClient.call('principal.reuseRetiredId', reuseParams), {
+    code: 'AUTH_FORBIDDEN',
+  });
+  assert.deepEqual(await readFile(runtime.store.path), refusedBytes);
+  claims.push(
+    'explicit admin reuse replaces a service with a person at the exact id; old secrets stay denied, history reloads, tombstones survive, and operator/node callers are refused',
+  );
+  await client.call('credential.revoke', { credentialId: fresh.credential.id });
+  const pairedReplacementCredential = parseCredentialWire(freshPairing.profile.secret);
+  assert.ok(pairedReplacementCredential);
+  await client.call('credential.revoke', {
+    credentialId: pairedReplacementCredential.credentialId,
+  });
   await client.call('credential.revoke', { credentialId: paired.record.id });
   await assert.rejects(client.call('credential.revoke', { credentialId: admin.record.id }));
   assert.throws(() => retirePrincipalsOffline([replacement.principal.id]), /gateway|stopped/i);

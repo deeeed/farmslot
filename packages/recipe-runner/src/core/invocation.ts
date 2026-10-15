@@ -1,4 +1,9 @@
-import { digestRecipeDocument, isRecord, type RecipeClaimDeclaration } from '@farmslot/protocol';
+import {
+  digestRecipeDocument,
+  isRecord,
+  type RecipeClaimDeclaration,
+  type RecipeComparisonDependency,
+} from '@farmslot/protocol';
 
 const SENSITIVE_KEY =
   /(?:api[-_]?key|auth|credential|mnemonic|pass(?:word)?|private[-_]?key|secret|seed|srp|token|vault)/iu;
@@ -12,6 +17,7 @@ export interface RecipeInvocationDocument {
   redactedPaths: string[];
   claims?: readonly RecipeClaimDeclaration[];
   recipeRunId?: string;
+  comparisonDependencies?: readonly RecipeComparisonDependency[];
 }
 
 /** Retain typed public inputs without recording credential-bearing fields. */

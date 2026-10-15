@@ -150,3 +150,29 @@ The operator authorized implementation on 2026-09-15, including migration. Runti
 - A changed PR head, profile edit or unavailable reviewer session cannot inherit an old verdict or bypass recorded execution constraints.
 
 Prove these through gateway endpoints and real runner execution, plus Command Center and Companion flows. Documentation checks alone do not establish implementation readiness.
+
+## Amendment 1: Optional QA defaults and required choices (2026-10-15)
+
+**Status:** Accepted by lead, 2026-10-15, after R2 paired review of #1092 at `a2d95439`. This amendment makes the farm default optional while preserving existing request and workflow-policy precedence.
+
+### Decision
+
+`qa.default_profile` is optional. When supplied, it must identify a configured profile. The existing `resolvePRWorkflowDefaults` owner resolves the request id before repository, team and farm workflow-policy ids, including `workflow_defaults.qa.review.qaProfileId`. Its effective id is then passed to QA selection; only when no effective id exists does selection use `qa.default_profile` or the only profile when exactly one exists. Several profiles without an effective id or configured default require a choice. Invalid explicit ids never fall through to another profile.
+
+Missing selection returns the existing typed `REVIEW_QA_NEEDS_CONFIGURATION` refusal and lists the available ids and titles. Admission must refuse before creating a run, claiming a slot or starting work. Empty or invalid profile configuration remains an error.
+
+Command Center and Companion resolve the same applicable workflow policy before preselection. They show its effective profile id, otherwise the configured default or sole profile. A user change overrides that resolved policy choice. Otherwise they preselect nothing and disable Dispatch until the user chooses. The visible selection is sent with the request. Manual dispatch, PR requests and automation use the same selection rules; a saved policy may supply an explicit profile id. Clients must not select the first array entry as a substitute.
+
+The admitted run retains the resolved profile id, title, inputs and template snapshot. Run detail and existing QA report or PR evidence presentation show the id and title. Replays and migrations preserve an already-admitted selection; configuration edits cannot silently select a different profile. Unstarted legacy full-live requests and queued QA without a captured selection follow the same selection and typed-choice rules.
+
+Remove existing `default_profile` values from first-party packs. Other projects may continue to configure a default. Publish and deploy the shared optional-default contract before cutting those packs over; the old pack validator requires a default. Retained task and evidence bytes are unchanged.
+
+### Public surface
+
+`ProjectQaConfig` and `selectQaProfile` remain owned by `@farmslot/protocol`; the existing `default_profile` field becomes optional. An additive `resolveQaProfileId` export provides the same pure id selection to `selectQaProfile`, Command Center and Companion; callers pass the effective request/policy id from `resolvePRWorkflowDefaults`, then it returns that id, the configured-default or sole id, or no id when a choice is required. It does not add another policy resolver. Existing gateway QA request fields and CLI `--qa-profile` are unchanged. The CLI permits omission when existing policy supplies an id or the farm resolves a configured default or sole profile; otherwise it prints the choices and a command using `--qa-profile`. Harnesses inherit the shared selection and admitted snapshot without a second parser, allocator or store.
+
+### Rationale and validation
+
+A default is valid project policy, while array order is not selection intent. The sole-profile case needs no prompt. First-party multi-profile packs require a deliberate choice by omitting their defaults.
+
+Verify request-over-policy selection, workflow-policy-over-farm-default selection, configured default, sole profile, ambiguous multi-profile refusal and invalid ids through shared contract tests and public gateway/CLI controls. Verify UI preselection and disabled Dispatch through Command Center and Companion flows. Retained/restart controls must preserve the captured profile. Release and installed-node readback follow the accepted implementation.

@@ -39,7 +39,7 @@ test('enrichDecisionWithRunContext supplies run artifacts for retrospective evid
       actionEffects: [],
     },
   };
-  const run = {
+  const run: Run = {
     id: 'run-retro',
     familyId: 'family-retro',
     lane: 'production',
@@ -65,11 +65,11 @@ test('enrichDecisionWithRunContext supplies run artifacts for retrospective evid
       },
     ],
     decisions: [],
-    metrics: { runner: 'codex', model: 'gpt-5.5' },
+    metrics: { runner: 'codex', model: 'gpt-5.5', nudgeCount: 0 },
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:01:00.000Z',
     summary: 'Review perps provider',
-  } as unknown as Run;
+  };
 
   const enriched = enrichDecisionWithRunContext(decision, run);
   assert.equal(enriched?.slotId, 'runner-mobile-2');
@@ -83,7 +83,7 @@ test('enrichDecisionWithRunContext supplies run artifacts for retrospective evid
   );
   assert(
     presentation.highlights.some(
-      (highlight) => highlight.label === 'Before→After' && highlight.value === '1 pair',
+      (highlight) => highlight.label === 'Evidence' && highlight.value === '3 artifact(s)',
     ),
   );
 });

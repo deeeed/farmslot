@@ -40,6 +40,7 @@ export interface CredentialStore {
   credentials: CredentialRecord[];
   retiredPrincipalIds?: string[];
   retiredCredentialIds?: string[];
+  principalIdReuses?: { principalId: string; generation: number; reusedAt: string }[];
 }
 
 export interface CredentialStoreChange {
@@ -228,6 +229,38 @@ export function validateCredentialStore(
       fail(path, `${key} contains an id that still has a record`);
   }
   const principals = value.principals as Principal[];
+  if (value.principalIdReuses !== undefined) {
+    if (
+      !Array.isArray(value.principalIdReuses) ||
+      value.principalIdReuses.some(
+        (entry) =>
+          !isRecord(entry) ||
+          typeof entry.principalId !== 'string' ||
+          !entry.principalId.trim() ||
+          (VIRTUAL_PRINCIPAL_IDS as readonly string[]).includes(entry.principalId) ||
+          !Number.isSafeInteger(entry.generation) ||
+          (entry.generation as number) < 1 ||
+          typeof entry.reusedAt !== 'string' ||
+          !isIsoUtc(entry.reusedAt),
+      )
+    )
+      fail(
+        path,
+        'principalIdReuses must contain principal ids, generations and ISO-8601 UTC timestamps',
+      );
+  }
+  const generations = new Map<string, number>();
+  for (const reuse of (value.principalIdReuses ?? []) as NonNullable<
+    CredentialStore['principalIdReuses']
+  >) {
+    if (reuse.generation !== (generations.get(reuse.principalId) ?? 0) + 1)
+      fail(path, 'principalIdReuses generations must increase sequentially per principal');
+    generations.set(reuse.principalId, reuse.generation);
+  }
+  for (const principal of principals) {
+    if ((principal.generation ?? 0) !== (generations.get(principal.id) ?? 0))
+      fail(path, `principal '${principal.id}' generation does not match its reuse history`);
+  }
   const assignedMachines = new Set<string>();
   for (const principal of principals) {
     if (principal.subject.type !== 'node' || principal.subject.nativeOwnerPrincipalId === undefined)
@@ -262,6 +295,11 @@ function validatePrincipal(
     fail(path, `principal[${index}] uses reserved virtual id '${value.id}'`);
   }
   validateSubject(value.subject, path, index);
+  if (
+    value.generation !== undefined &&
+    (!Number.isSafeInteger(value.generation) || (value.generation as number) < 1)
+  )
+    fail(path, `principal[${index}].generation must be a positive safe integer`);
   value.roles.forEach((binding, bindingIndex) => {
     if (
       !isRecord(binding) ||

@@ -15,11 +15,35 @@ import {
 function run(runId: string, variant: string): FamilyObservabilityRunSummary {
   return {
     runId,
+    familyId: 'fam',
+    flowType: 'dev',
+    project: 'example',
+    ticketOrPr: 'EXAMPLE-1',
+    branch: null,
+    prNumber: null,
+    summary: null,
+    createdAt: '2026-10-15',
+    updatedAt: '2026-10-15',
+    slotId: null,
+    workerReport: null,
+    workerLearnings: null,
+    recipeJson: null,
+    recipeQualityArtifact: null,
+    recipeQuality: { semantic: 'unknown', source: 'missing', reasoning: 'No quality record.' },
+    diffStat: { files: 0, additions: 0, deletions: 0, available: false },
+    artifacts: [],
+    learnings: [],
+    steps: [],
+    acceptanceCriteria: [],
+    ciChecks: [],
+    review: { verdict: null, summary: null, issues: [] },
+    familyScope: null,
+    missingData: [],
     lane: 'comparison',
     status: 'done',
     variant,
     metrics: { runner: 'codex', model: 'gpt-5.5', nudgeCount: 0 },
-  } as unknown as FamilyObservabilityRunSummary;
+  };
 }
 
 function art(
@@ -29,18 +53,19 @@ function art(
 ): FamilyObservabilityArtifact {
   return {
     runId,
+    familyId: 'fam',
     sourceRunId: runId,
     path,
     purpose,
     source: 'task-artifact',
-  } as unknown as FamilyObservabilityArtifact;
+  };
 }
 
 function snapshot(
   runs: FamilyObservabilityRunSummary[],
   evidence: FamilyObservabilityArtifact[],
-): FamilyObservabilitySnapshot {
-  return { familyId: 'fam', runs, evidence } as unknown as FamilyObservabilitySnapshot;
+): Pick<FamilyObservabilitySnapshot, 'runs' | 'evidence'> {
+  return { runs, evidence };
 }
 
 test('matrix lines up the same stem across runs and labels columns by variant', () => {
@@ -55,7 +80,7 @@ test('matrix lines up the same stem across runs and labels columns by variant', 
     ['opus', 'codex'],
   );
   assert.equal(matrix.rows.length, 1);
-  assert.equal(matrix.rows[0].label, 'swap confirm');
+  assert.equal(matrix.rows[0].label, 'after swap confirm');
   assert.equal(matrix.rows[0].coverage, 2);
   assert.deepEqual(
     matrix.rows[0].cells.map((c) => c.artifact?.runId ?? null),
@@ -80,7 +105,7 @@ test('a screen captured by only one run moves to the uncompared strip (not dropp
   );
   assert.deepEqual(
     matrix.rows.map((r) => r.label),
-    ['shared'],
+    ['after shared'],
   );
   assert.deepEqual(
     matrix.uncompared.map((u) => [u.runId, u.artifacts.map((a) => a.artifact.path)]),
@@ -88,25 +113,21 @@ test('a screen captured by only one run moves to the uncompared strip (not dropp
   );
 });
 
-test('acceptance-criteria token aligns differently-named screenshots across runs', () => {
+test('AC-looking filenames never align different recorded paths', () => {
   const matrix = buildEvidenceComparisonMatrix(
     snapshot(
-      [run('a', 'opus'), run('b', 'codex')],
+      [run('a', 'first'), run('b', 'second')],
       [
-        // Same AC (ac2), different descriptive names — should still line up.
         art('a', 'artifacts/after-ac2-eth-banner-visible.png'),
         art('b', 'artifacts/after-ac2-banner-visible.png'),
       ],
     ),
   );
-  assert.equal(matrix.rows.length, 1);
-  assert.equal(matrix.rows[0].coverage, 2);
-  // Label uses the longest (most descriptive) stem in the group.
-  assert.equal(matrix.rows[0].label, 'ac2 eth banner visible');
-  assert.equal(matrix.uncompared.length, 0);
+  assert.equal(matrix.rows.length, 0);
+  assert.equal(matrix.uncompared.length, 2);
 });
 
-test('after capture is preferred over before for the cell', () => {
+test('only exact shared paths align; other captures remain available', () => {
   const matrix = buildEvidenceComparisonMatrix(
     snapshot(
       [run('a', 'opus'), run('b', 'codex')],
@@ -121,20 +142,15 @@ test('after capture is preferred over before for the cell', () => {
   assert.match(cellA?.artifact?.path ?? '', /after-swap\.png$/);
 });
 
-test('a setup-named screenshot with an AC token still aligns (codex naming case)', () => {
+test('an unbound filename token does not assign an AC or role', () => {
   const matrix = buildEvidenceComparisonMatrix(
     snapshot(
-      [run('a', 'opus'), run('b', 'codex')],
-      [
-        art('a', 'artifacts/after-ac2-banner.png'), // after-marked
-        // No after/evidence prefix -> classified 'setup', but carries ac2.
-        art('b', 'artifacts/ac2-screenshot-banner.png'),
-      ],
+      [run('a', 'first'), run('b', 'second')],
+      [art('a', 'artifacts/after-ac2-banner.png'), art('b', 'artifacts/ac2-screenshot-banner.png')],
     ),
   );
-  assert.equal(matrix.rows.length, 1);
-  assert.equal(matrix.rows[0].coverage, 2);
-  assert.equal(matrix.uncompared.length, 0);
+  assert.equal(matrix.rows.length, 0);
+  assert.equal(matrix.uncompared.length, 2);
 });
 
 test('non-visual artifacts (reports, .md) are excluded', () => {
@@ -151,7 +167,7 @@ test('non-visual artifacts (reports, .md) are excluded', () => {
   );
   assert.deepEqual(
     matrix.rows.map((r) => r.label),
-    ['x'],
+    ['after x'],
   );
   assert.equal(matrix.uncompared.length, 0);
 });

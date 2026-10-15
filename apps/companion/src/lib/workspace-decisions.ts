@@ -1,5 +1,7 @@
 import type { RunDecision } from '@farmslot/protocol';
 
+import { DECISION_EVIDENCE_RECIPE_RUN_PARAM } from './artifact-url';
+
 export interface WorkspaceDecisionSource {
   decisions?: RunDecision[] | null;
 }
@@ -7,6 +9,17 @@ export interface WorkspaceDecisionSource {
 const READY_WORKSPACE_KINDS = new Set(['ready']);
 const REVIEW_WORKSPACE_KINDS = new Set(['ready', 'review', 'no-change']);
 const REVIEW_GATE_WORKSPACE_KINDS = new Set(['review', 'no-change']);
+
+export function selectArtifactWorkspaceDecision(
+  source: WorkspaceDecisionSource | null | undefined,
+  recipeRun: string,
+  explicitDecisionId: string,
+): RunDecision | undefined {
+  if (recipeRun !== DECISION_EVIDENCE_RECIPE_RUN_PARAM) return undefined;
+  return explicitDecisionId
+    ? source?.decisions?.find((decision) => decision.id === explicitDecisionId)
+    : (selectReadyWorkspaceDecision(source) ?? undefined);
+}
 
 export function selectReadyWorkspaceDecision(
   source: WorkspaceDecisionSource | null | undefined,

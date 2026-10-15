@@ -10,7 +10,6 @@ import {
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
   dedupeArtifacts,
   extractRunArtifactManifest,
-  formatVisualArtifactPairLabel,
   groupVisualArtifactPairs,
   inferArtifactPurpose,
   resolveRecipeRunSelection,
@@ -145,11 +144,10 @@ assert.equal(
     ['artifacts/before-market.png', 'artifacts/after-market.png', 'artifacts/report.md'],
     'retrospective presentation should use run-context artifacts as evidence fallback',
   );
-  assert(
-    retro.highlights.some(
-      (highlight) => highlight.label === 'Before→After' && highlight.value === '1 pair',
-    ),
-    'retrospective context evidence should drive visual-pair highlights',
+  assert.equal(
+    retro.highlights.some((highlight) => highlight.label === 'Before→After'),
+    false,
+    'retained filenames do not supply AC bindings',
   );
 }
 
@@ -190,57 +188,16 @@ assert.equal(
   'bare before→after sentinels should not collapse into an empty-stem pair',
 );
 
-const namedPairs = groupVisualArtifactPairs(
+const unassigned = groupVisualArtifactPairs(
   [
-    { path: 'before-market.png', purpose: 'screenshot' },
+    { path: 'before-market.png', purpose: 'screenshot-before' },
     { path: 'after-market.png', purpose: 'screenshot' },
+    { path: 'after-ac1-more-specific.png', purpose: 'screenshot' },
   ],
   (artifact) => artifact.path,
 );
-assert.equal(namedPairs.pairs.length, 1, 'named before→after visuals should still pair');
-assert.equal(
-  namedPairs.pairs[0]?.stem,
-  'market',
-  'named before→after visual pairs should expose the comparison stem',
-);
-assert.equal(
-  formatVisualArtifactPairLabel(namedPairs.pairs[0]!),
-  'market',
-  'mobile comparison labels should use the stable pairing stem instead of raw filenames',
-);
-
-const acFallbackPairs = groupVisualArtifactPairs(
-  [
-    {
-      path: 'artifacts/before-ac1-market-detail-no-liq-distance.png',
-      purpose: 'screenshot-before',
-      stepName: null,
-      runId: 'run-1',
-    },
-    {
-      path: 'artifacts/after-ac1-market-detail-liq-distance.png',
-      purpose: 'screenshot',
-      stepName: 'complete',
-      runId: 'run-1',
-    },
-  ],
-  (artifact) => artifact.path,
-);
-assert.equal(
-  acFallbackPairs.pairs.length,
-  1,
-  'AC-number fallback should pair before→after visuals across different step names',
-);
-assert.equal(
-  acFallbackPairs.pairs[0]?.stem,
-  'ac1',
-  'AC fallback pairs should expose their acceptance-criteria key as the comparison stem',
-);
-assert.equal(
-  formatVisualArtifactPairLabel(acFallbackPairs.pairs[0]!),
-  'AC1',
-  'AC fallback labels should be compact enough for mobile evidence cards',
-);
+assert.equal(unassigned.pairs.length, 0, 'filenames and purposes cannot bind AC comparisons');
+assert.equal(unassigned.singles.length, 3, 'all original unassigned media remains readable');
 
 assert.equal(
   inferArtifactPurpose('artifacts/evidence/diff-screenshot.png'),

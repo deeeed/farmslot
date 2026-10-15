@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { hostname, networkInterfaces } from 'node:os';
 
+import { CredentialStoreRefusalError } from '@farmslot/credential-store';
 import {
   type PairingAuthority,
   type PairingCandidate,
@@ -23,6 +24,7 @@ interface PairingRecord {
   profileName: string;
   expiresAtMs: number;
   authority: PairingAuthority;
+  principalGeneration?: number;
 }
 
 const pairings = new Map<string, PairingRecord>();
@@ -93,6 +95,7 @@ export function pairingCreate(
       'Pairing requires an activated gateway with an active admin credential; issue the owner credential first.',
     );
   }
+  let principalGeneration: number | undefined;
   if (params.authority.kind === 'existing-principal') {
     if (typeof params.authority.principalId !== 'string' || !params.authority.principalId) {
       throw new Error('existing-principal authority requires principalId');
@@ -101,6 +104,7 @@ export function pairingCreate(
     if (!principal) {
       throw new Error(`Pairing principal '${params.authority.principalId}' does not exist`);
     }
+    principalGeneration = principal.generation ?? 0;
   } else if (params.authority.kind === 'new-service-principal') {
     if (
       typeof params.authority.displayName !== 'string' ||
@@ -125,6 +129,7 @@ export function pairingCreate(
     profileName,
     expiresAtMs,
     authority: structuredClone(params.authority),
+    ...(principalGeneration !== undefined ? { principalGeneration } : {}),
   });
   pruneExpiredPairings();
   return {
@@ -163,14 +168,28 @@ export function pairingExchange(
     pairings.delete(code);
     throw new GatewayMethodError('PAIRING_FAILED', 'Pairing code is invalid or expired');
   }
-  const issue =
-    record.authority.kind === 'existing-principal'
-      ? runtime.writer.issueCredential(record.authority.principalId, record.profileName, 'paired')
-      : runtime.writer.provisionPairedServicePrincipal(
-          record.authority.displayName,
-          record.authority.roles,
-          record.profileName,
-        );
+  let issue;
+  try {
+    issue =
+      record.authority.kind === 'existing-principal'
+        ? runtime.writer.issueCredential(
+            record.authority.principalId,
+            record.profileName,
+            'paired',
+            record.principalGeneration,
+          )
+        : runtime.writer.provisionPairedServicePrincipal(
+            record.authority.displayName,
+            record.authority.roles,
+            record.profileName,
+          );
+  } catch (error) {
+    if (!(error instanceof CredentialStoreRefusalError)) throw error;
+    // An invalid grant cannot become valid later. Infrastructure failures keep
+    // the code available for retry and still propagate to the caller.
+    pairings.delete(code);
+    throw new GatewayMethodError('PAIRING_FAILED', 'Pairing authority is no longer valid');
+  }
   pairings.delete(code);
   return {
     profile: {

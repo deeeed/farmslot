@@ -11,6 +11,7 @@ import {
   type FleetStatus,
   type FleetSummary,
   normalizeProjectWorkflowDefaults,
+  parseProjectVisualClaimReviewPolicy,
   type PoolConfig,
   type ProjectConfig,
   type ReadinessRecord,
@@ -781,8 +782,12 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
         );
         const content = await readFile(configPath, 'utf-8');
         const raw = JSON.parse(content);
-        if (await projectSourceContext(dir))
-          Object.assign(raw, await readSourceRuntimeSettings(dir));
+        if (await projectSourceContext(dir)) {
+          const settings = await readSourceRuntimeSettings(dir);
+          Object.assign(raw, settings);
+          // Delegation is operator policy, not an authorization grant shipped by a pack.
+          raw.visual_claim_review = settings.visual_claim_review;
+        }
         const staticReview = normalizeRawStaticReview(
           raw.static_review,
           configPath,
@@ -814,6 +819,7 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
         const runtimeCapabilities = normalizeRawRuntimeCapabilities(raw.runtime_capabilities);
         projects.push({
           name: raw.name || dir,
+          visualClaimReview: parseProjectVisualClaimReviewPolicy(raw.visual_claim_review),
           repoUrl: raw.repo_url || '',
           defaultBranch: raw.default_branch || 'main',
           slotTrackingBranch:

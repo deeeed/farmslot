@@ -4,6 +4,8 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
+- Preserve the installed macOS native owner ahead of checkout auth defaults during redeploy; explicit caller replacement or empty disable remains authoritative.
+
 - Authenticate with machine-bound node credentials only.
 
 - Share Git HEAD observations across pane polling requests and reap pending inventory children before node shutdown, preserving branch and worker telemetry.

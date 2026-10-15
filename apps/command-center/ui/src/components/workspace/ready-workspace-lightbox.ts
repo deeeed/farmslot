@@ -1,3 +1,4 @@
+import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import type { ArtifactRef, RecipeRunArtifactGroup } from '@farmslot/protocol';
 
 import { artifactLightboxItems, artifactLightboxPairs } from '../shared/artifact-lightbox-model.js';
@@ -42,18 +43,21 @@ export function readyWorkspaceOpensInLightbox(artifact: Pick<ArtifactRef, 'path'
 export function readyWorkspaceLightboxItems(
   sourceArtifacts: readonly ArtifactRef[],
   artifactUrl: (artifact: ArtifactRef) => string,
+  model?: EvidenceReviewModel | null,
 ): LightboxItem[] {
-  return artifactLightboxItems(sourceArtifacts, artifactUrl, readyWorkspaceOpensInLightbox);
+  return artifactLightboxItems(sourceArtifacts, artifactUrl, readyWorkspaceOpensInLightbox, model);
 }
 
 export function readyWorkspaceLightboxPairs(
   sourceArtifacts: readonly ArtifactRef[],
   artifactUrl: (artifact: ArtifactRef) => string,
+  model?: EvidenceReviewModel | null,
 ): LightboxPair[] {
   return artifactLightboxPairs(
     sourceArtifacts,
     artifactUrl,
     (artifact) => MEDIA_EXTS.test(artifact.path),
     (artifact) => VIDEO_EXTS.test(artifact.path),
+    model,
   );
 }

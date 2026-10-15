@@ -7,13 +7,15 @@ import test from 'node:test';
 
 import type { Run } from '@farmslot/protocol';
 
-import {
+await import('../runtime/mock-pty.test-support.js');
+
+const {
   deterministicChecklistTaskFileForPublication,
   readFrozenWorkerTerminalContractForRun,
   resolveWorkerTerminalContract,
   syncTerminalContractForFlowOnSlot,
   validateDeterministicChecksForRun,
-} from './worker-terminal-contract.js';
+} = await import('./worker-terminal-contract.js');
 
 async function task(t: test.TestContext) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'ci-gate-'));
@@ -114,8 +116,57 @@ test('role cleanup preserves the entire frozen parent contract byte for byte', a
   const role = JSON.parse(
     await readFile(path.join(root, 'inputs/worker-terminal-contract.REVIEW-FIX.json'), 'utf8'),
   );
+  assert.equal(role.claimReviewGate, true);
+  assert.equal(role.recordedEvidenceContractVersion, 1);
+  assert.equal(role.flowType, 'dev');
   assert.equal(role.deterministicChecks[0].checklist, 'REVIEW-FIX.md');
+  assert.equal(await readFile(contractFile, 'utf8'), initialized);
   assert.equal(role.deterministicChecks[0].command, 'yarn ci:local');
+});
+
+test('every nested role inherits only the frozen parent review authority', async (t) => {
+  const { root } = await task(t);
+  const contractFile = path.join(root, 'inputs', 'worker-terminal-contract.json');
+  const vars = {
+    projectName: 'farmslot-farm',
+    remoteRepo: path.dirname(root),
+    host: 'localhost',
+    machine: 'local',
+  } as Parameters<typeof syncTerminalContractForFlowOnSlot>[0];
+  for (const claimReviewGate of [true, false, undefined]) {
+    const parent = JSON.stringify({
+      ...resolveWorkerTerminalContract(null, 'dev'),
+      claimReviewGate,
+      recordedEvidenceContractVersion: claimReviewGate === undefined ? undefined : 1,
+    });
+    await writeFile(contractFile, parent);
+    for (const role of ['review', 'review-fix', 'ci-fix']) {
+      const checklist = `${role.toUpperCase()}.md`;
+      await writeFile(path.join(root, checklist), '- [ ] Role work\n');
+      await syncTerminalContractForFlowOnSlot(
+        vars,
+        path.basename(root),
+        role,
+        undefined,
+        'artifacts/role-report.md',
+        checklist,
+      );
+      const scoped = JSON.parse(
+        await readFile(
+          path.join(root, `inputs/worker-terminal-contract.${role.toUpperCase()}.json`),
+          'utf8',
+        ),
+      );
+      assert.equal(scoped.claimReviewGate, claimReviewGate);
+      assert.equal(
+        scoped.recordedEvidenceContractVersion,
+        claimReviewGate === undefined ? undefined : 1,
+      );
+      assert.equal(scoped.flowType, role);
+      assert.equal(scoped.commands.complete.report, 'artifacts/role-report.md');
+      assert.equal(await readFile(contractFile, 'utf8'), parent);
+    }
+  }
 });
 
 test('retained replay reads only the matching frozen dispatch contract', async (t) => {

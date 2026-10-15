@@ -35,16 +35,17 @@ test('opening the lightbox clears a kind filter left from the last visit', () =>
   assert.equal(view._kindFilter, 'all');
 });
 
-test('a host selecting a file the filter hides clears it; browsing within the filter keeps it', () => {
+test('unassigned media clears unsupported role filters; browsing within Unassigned keeps its filter', () => {
   const view = Object.create(MediaLightbox.prototype) as Lightbox;
   Object.assign(view, { requestUpdate: () => undefined });
   Object.assign(view, { open: true, items, selectedIndex: 1, _kindFilter: 'after' });
 
   view.selectedIndex = 2;
   view.willUpdate(new Map([['selectedIndex', 1]]));
-  assert.equal(view._kindFilter, 'after', 'next within the After files keeps the filter');
+  assert.equal(view._kindFilter, 'all', 'filenames do not assign an After role');
+  view._kindFilter = 'setup';
 
   view.selectedIndex = 3;
   view.willUpdate(new Map([['selectedIndex', 2]]));
-  assert.equal(view._kindFilter, 'all', 'a link to teardown shows teardown');
+  assert.equal(view._kindFilter, 'setup', 'all unbound media remains in the same filter');
 });

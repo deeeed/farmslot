@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Retained worker review contract recovery",
-  "description": "Manual copied-task proof. FARMSLOT_WORKER_CONTRACT_PROOF_INPUT supplies the retained run snapshot, worker task and dispatch task.",
+  "description": "Manual copied-task proof. FARMSLOT_WORKER_CONTRACT_PROOF_INPUT supplies the retained run snapshot, worker task and dispatch task; optional checklist selects the retained REVIEW-FIX recovery path.",
   "workflow": {
     "entry": "recover",
     "nodes": {

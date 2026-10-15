@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { createEvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import {
   type ArtifactRef,
   DEFAULT_BRANCH,
@@ -34,7 +35,11 @@ import {
 import { inferReviewSourceKind } from '../quality/review-sources.js';
 import { captureCurrentReviewSnapshot, unavailableReviewSnapshot } from '../review/snapshots.js';
 import { appliedClaimOverrideReceiptIds } from '../run-engine/claim-overrides.js';
-import { appliedVisualJudgmentReceiptIds } from '../run-engine/claim-reviews.js';
+import {
+  appliedVisualJudgmentReceiptIds,
+  readVisualReviewPolicy,
+  visualReviewAuthority,
+} from '../run-engine/claim-reviews.js';
 import { latestResolvedHumanGateDecision } from '../run-engine/decision-replay.js';
 import { contributionStack } from '../run-engine/diff-artifacts.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
@@ -439,7 +444,42 @@ export async function renderCurrentDescription(
     await assertPreparedPublicationBaseCurrent(current, preparedPackage, baseBranch),
     { tolerateMissingSlot: Boolean(preparedPackage.headSha) },
   );
-  return { draftTitle: buildDraftPrTitle(current), draftBody };
+  return {
+    draftTitle: buildDraftPrTitle(current),
+    draftBody: await appendVisualJudgmentProvenance(current, draftBody, preparedPackage),
+  };
+}
+
+async function appendVisualJudgmentProvenance(
+  run: Run,
+  body: string,
+  prepared: Pick<
+    ReadyGatePrPackage,
+    'evidenceManifest' | 'selectedEvidenceKeys' | 'visualJudgmentReceiptIds'
+  >,
+): Promise<string> {
+  if (!prepared.visualJudgmentReceiptIds?.length) return body;
+  const sources = await readFrozenRecordedEvidenceSources(
+    run,
+    prepared.evidenceManifest ?? [],
+    prepared.selectedEvidenceKeys,
+  );
+  const policy = await readVisualReviewPolicy(run);
+  const sections = sources
+    .map(
+      ({ input }) =>
+        createEvidenceReviewModel({
+          package: input,
+          visualReviewAuthority: visualReviewAuthority(
+            run,
+            input,
+            prepared.visualJudgmentReceiptIds,
+            policy,
+          ),
+        }).visualReviewMarkdown,
+    )
+    .filter(Boolean);
+  return sections.length ? `${body.trimEnd()}\n\n${sections.join('\n\n')}\n` : body;
 }
 
 async function assertPreparedPublicationBaseCurrent(
@@ -809,12 +849,18 @@ export async function prepareCompletionPackageTransitionLocked(
     basePackage.visualJudgmentReceiptIds = appliedVisualJudgmentReceiptIds(
       run,
       sources.map(({ input }) => input),
+      await readVisualReviewPolicy(run),
     );
     basePackage.claimOverrideReceiptIds = appliedClaimOverrideReceiptIds(
       run,
       sources.map(({ input }) => input),
     );
   }
+  basePackage.draftBody = await appendVisualJudgmentProvenance(
+    run,
+    basePackage.draftBody,
+    basePackage,
+  );
   const packageInputHash = computeReadyGatePackageInputHash(basePackage);
   const reviewSubjectHash = computeReadyGateReviewSubjectHash(basePackage);
   const packageWithoutHash = {

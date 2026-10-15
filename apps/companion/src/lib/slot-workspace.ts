@@ -1,3 +1,4 @@
+import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import type {
   RecipeRunArtifactGroup,
   Run,
@@ -554,10 +555,12 @@ export function selectSlotCompareTarget({
   runArtifacts,
   recipeRuns,
   selectedRecipeRunId,
+  evidenceModel,
 }: {
   runArtifacts: ArtifactManifestEntry[];
   recipeRuns: RecipeRunArtifactGroup[];
   selectedRecipeRunId: string | null | undefined;
+  evidenceModel?: EvidenceReviewModel | null;
 }): SlotCompareTarget | null {
   const selectedRecipeRun = recipeRuns.find((group) => group.id === selectedRecipeRunId) ?? null;
   const selectedRecipeArtifacts = selectedRecipeRun ? artifactsForRecipeRun(selectedRecipeRun) : [];
@@ -565,24 +568,14 @@ export function selectSlotCompareTarget({
     selectedRecipeArtifacts,
     'selected-recipe',
     selectedRecipeRun?.id ?? null,
+    evidenceModel,
   );
   if (selectedRecipeTarget) return selectedRecipeTarget;
 
-  const runTarget = compareTargetFromArtifacts(runArtifacts, 'run', null);
+  const runTarget = compareTargetFromArtifacts(runArtifacts, 'run', null, evidenceModel);
   if (runTarget) return runTarget;
 
-  const fallbackGroups = [
-    ...recipeRuns.filter((group) => group.id !== selectedRecipeRunId && group.promoted),
-    ...recipeRuns.filter((group) => group.id !== selectedRecipeRunId && !group.promoted),
-  ];
-  for (const group of fallbackGroups) {
-    const target = compareTargetFromArtifacts(
-      artifactsForRecipeRun(group),
-      'recipe-fallback',
-      group.id,
-    );
-    if (target) return target;
-  }
+  // A selected model cannot assign roles to another attempt's same-named media.
   return null;
 }
 
@@ -626,8 +619,9 @@ function compareTargetFromArtifacts(
   artifacts: ArtifactManifestEntry[],
   source: SlotCompareTarget['source'],
   fallbackRecipeRunId: string | null,
+  model?: EvidenceReviewModel | null,
 ): SlotCompareTarget | null {
-  const pairs = groupVisualArtifactPairs(artifacts, (artifact) => artifact.path).pairs;
+  const pairs = groupVisualArtifactPairs(artifacts, (artifact) => artifact.path, model).pairs;
   const primaryPair = pairs[0] ?? null;
   if (!primaryPair) return null;
   return {

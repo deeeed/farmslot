@@ -4,6 +4,8 @@ All notable changes to `@farmslot/credential-store` are tracked here.
 
 ## Unreleased
 
+- Replace an explicitly selected retired principal id in one locked transaction, retaining all credential tombstones and a validated reuse history.
+
 - Migrate stored `env-migrated` credential metadata under the existing lock before validation so upgrades preserve gateway startup and existing credentials.
 
 - Remove environment-secret identities and retire revoked principals through guarded transactions that reserve ids and preserve surviving admins.

@@ -3,6 +3,7 @@ import {
   type RecipeArtifactManifestEntry,
   type RecipeClaimLedger,
   type RecipeResolutionDocument,
+  type RecordedEvidencePackageInput,
   resolvedRecipeArtifactPath,
 } from '@farmslot/protocol';
 
@@ -21,6 +22,7 @@ import type {
   TraceEntry,
   TraceWriter,
 } from '../core/types.js';
+import { groupRecipeCaptureComparisons } from '../evidence/capture-comparisons.js';
 
 export class JsonArtifactWriter implements ArtifactWriter {
   readonly #artifactsDir: string;
@@ -97,26 +99,64 @@ export class JsonArtifactWriter implements ArtifactWriter {
   }
 
   /** Every engine consumer gets the same attempt-local publication candidate. */
-  async writeEvidenceManifest(claims: RecipeClaimLedger): Promise<string> {
+  async writeEvidenceManifest(
+    claims: RecipeClaimLedger,
+    comparisons: RecordedEvidencePackageInput['comparisonDependencies'] = [],
+    snapshot?: Pick<import('@farmslot/protocol').ReviewDiffSnapshot, 'baseSha' | 'headSha'>,
+  ): Promise<string> {
     if (this.#entries.some((artifact) => artifact.path === 'evidence-manifest.json'))
       throw new Error('evidence-manifest.json is owned by the recipe engine.');
-    const media = this.list().filter(
-      (artifact) => artifact.type === 'screenshot' || artifact.type === 'video',
+    const projection = groupRecipeCaptureComparisons(
+      {
+        summary: undefined,
+        manifest: { artifacts: this.list() },
+        claims,
+        comparisonDependencies: comparisons,
+        timelines: {},
+        artifactDigests: {},
+      },
+      claims.criteria,
+      snapshot,
     );
-    const recording = media.find(
-      (artifact) => artifact.type === 'video' && artifact.record === 'full_run',
+    const used = new Set<string>();
+    const pairs = projection.rows.flatMap((row) => {
+      const before = row.before.filter((media) => media.eligible && media.type === 'screenshot');
+      const after = row.after.filter((media) => media.eligible && media.type === 'screenshot');
+      if (before.length !== 1 || after.length !== 1) return [];
+      used.add(before[0]!.path);
+      used.add(after[0]!.path);
+      return [
+        {
+          label: claims.criteria.find((claim) => claim.id === row.id)!.text,
+          covers: [row.id],
+          before: before[0]!.path,
+          after: after[0]!.path,
+        },
+      ];
+    });
+    const sourceMismatch = projection.media.find(
+      (media) => media.reasonCode === 'comparison-source-mismatch',
     );
+    if (sourceMismatch)
+      throw new Error(
+        `comparison-source-mismatch: ${sourceMismatch.path}: ${sourceMismatch.reason}`,
+      );
     const manifest: EvidenceManifest = {
       version: 1,
       preferred_mode: 'screenshots',
       summary: claims.criteria.map((claim) => `${claim.id}: ${claim.verdict}`).join('; '),
-      ...(recording ? { videos: { after: recording.path, preferred: true } } : {}),
-      standalone: media
-        .filter((artifact) => artifact !== recording)
-        .map((artifact) => ({
-          label: artifact.label ?? artifact.nodeId ?? artifact.path,
-          file: artifact.path,
-          note: `Recorded in recipe execution ${claims.recipeRunId}.`,
+      ...(pairs.length ? { before_after_pairs: pairs } : {}),
+      standalone: projection.media
+        .filter((media) => !used.has(media.path))
+        .map((media) => ({
+          label: media.label,
+          file: media.path,
+          ...(media.capture?.ac && claims.criteria.some((claim) => claim.id === media.capture?.ac)
+            ? { covers: [media.capture.ac] }
+            : {}),
+          note: media.capture?.role
+            ? `${media.capture.role}; execution ${media.capture.recipeRunId}; source ${media.capture.sourceCommit ?? 'unknown'}. ${media.reason ?? ''}`
+            : 'Unassigned capture.',
         })),
     };
     const manifestPath = await writeJsonWithinRoot(

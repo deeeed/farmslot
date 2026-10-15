@@ -130,6 +130,7 @@ import {
   type PrincipalCreateParams,
   type PrincipalGrantParams,
   type PrincipalRetireParams,
+  type PrincipalReuseRetiredIdParams,
   type PrincipalRevokeRoleParams,
   type PRListParams,
   PROTOCOL_VERSION,
@@ -423,6 +424,7 @@ import {
   principalGrant,
   principalList,
   principalRetire,
+  principalReuseRetiredId,
   principalRevokeRole,
 } from '../methods/principal.js';
 import { providerAccountsSnapshot } from '../methods/provider-accounts.js';
@@ -570,7 +572,10 @@ import {
   requireNodeSession,
 } from '../security/auth.js';
 import { authorizeGatewayMethod } from '../security/authorization.js';
-import { authorizeEvidenceAttestation } from '../security/evidence-attestation.js';
+import {
+  authorizeEvidenceAttestation,
+  authorizeVisualClaimReview,
+} from '../security/evidence-attestation.js';
 import { assertNativeMachineAssignment, nativeNodeDeclaration } from '../security/native-node.js';
 import { assertNativeWorkerRpcAccess } from '../security/native-worker-access.js';
 import { currentSessionOriginator, runWithSessionOriginator } from '../security/work-originator.js';
@@ -688,6 +693,8 @@ async function routeAuthorizedMethod(
     emit,
     authorizeEvidenceAttestation: () =>
       authorizeEvidenceAttestation(authRuntime, attestationSession),
+    authorizeVisualClaimReview: (kind, policy) =>
+      authorizeVisualClaimReview(authRuntime, attestationSession, kind, policy),
     authorizeSourceSelections: () =>
       sourceRpcCaller(authRuntime, state, Methods.SOURCES_PIN).authorize(),
   });
@@ -731,6 +738,8 @@ async function routeAuthorizedMethod(
     // Principal and credential management (authorization gate above is admin-only).
     case Methods.PRINCIPAL_CREATE:
       return principalCreate(p as PrincipalCreateParams, authRuntime);
+    case Methods.PRINCIPAL_REUSE_RETIRED_ID:
+      return principalReuseRetiredId(p as PrincipalReuseRetiredIdParams, authRuntime);
     case Methods.PRINCIPAL_BIND_NATIVE_OWNER:
       return principalBindNativeOwner(p as PrincipalBindNativeOwnerParams, authRuntime);
     case Methods.PRINCIPAL_LIST:

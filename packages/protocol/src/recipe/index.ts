@@ -161,5 +161,6 @@ export {
   getRecipeWorkflowActions,
   getRecipeWorkflowNodeIds,
   isDynamicRecipeRef,
+  isRecipeVisualCaptureAction,
   normalizeRecipeRef,
 } from './workflow.js';

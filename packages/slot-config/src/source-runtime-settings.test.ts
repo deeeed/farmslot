@@ -34,6 +34,21 @@ test('mutable project policy retains backups in a farm root without writing sour
       auto_recovery: { enabled: false },
     });
     assert.equal(await readFile(path.join(source, 'project.json'), 'utf8'), bytes);
+    const delegation = {
+      delegatedReviewerPrincipalIds: ['lead'],
+      delegatorPrincipalId: 'person',
+      personOnlyClaimIds: ['ac1'],
+    };
+    await writeSourceRuntimeSettings('demo', { visual_claim_review: delegation });
+    assert.deepEqual((await readSourceRuntimeSettings('demo')).visual_claim_review, {
+      ...delegation,
+      personOnlyClaimIds: ['AC-1'],
+    });
+    assert.equal(await readFile(path.join(source, 'project.json'), 'utf8'), bytes);
+    await assert.rejects(
+      writeSourceRuntimeSettings('demo', { visual_claim_review: { delegatorPrincipalId: '' } }),
+      /Invalid project visualClaimReview/,
+    );
     await assert.rejects(writeSourceRuntimeSettings('../escape', {}), /Invalid/);
   } finally {
     if (previous === undefined) delete process.env.FARMSLOT_HOME;

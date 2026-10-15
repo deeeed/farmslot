@@ -1,13 +1,15 @@
 import { html, nothing } from 'lit';
 
-import type { ArtifactRef, PublicationTarget, ReadyGatePayload } from '@farmslot/protocol';
+import {
+  type ArtifactRef,
+  type PublicationTarget,
+  type ReadyGatePayload,
+  reviewRequirementDisplay,
+} from '@farmslot/protocol';
 
 import '../reviews/gate-summary-panel.js';
 
-import {
-  publishEvidenceDisplayRows,
-  summarizeReviewCounts,
-} from '../../utils/review-gate-display.js';
+import { publishEvidenceDisplayRows } from '../../utils/review-gate-display.js';
 
 export interface ReadyPackagePanelContext {
   payload: ReadyGatePayload;
@@ -29,22 +31,21 @@ export interface ReadyPackagePanelContext {
 }
 
 export function renderReadyPackagePanel(ctx: ReadyPackagePanelContext) {
-  const reviewSummary = summarizeReviewCounts(ctx.payload);
+  const reviewRequirement = reviewRequirementDisplay(ctx.payload);
+  const reviewSummary = reviewRequirement.counts;
   const selectedEvidenceCount = ctx.publishEvidence.filter((artifact) =>
     ctx.selectedEvidence.has(artifact.path),
   ).length;
-  const reviewReady =
-    reviewSummary.trustedPassingReviews >= reviewSummary.requiredReviews &&
-    reviewSummary.unresolvedFindings === 0;
-  const reviewStatus = reviewReady
-    ? 'Review requirement satisfied'
-    : reviewSummary.unresolvedFindings > 0
-      ? `${reviewSummary.unresolvedFindings} finding${reviewSummary.unresolvedFindings === 1 ? '' : 's'} require resolution`
-      : `${Math.max(0, reviewSummary.requiredReviews - reviewSummary.trustedPassingReviews)} passing review${reviewSummary.requiredReviews - reviewSummary.trustedPassingReviews === 1 ? '' : 's'} still required`;
+  const reviewReady = reviewRequirement.satisfied;
+  const reviewStatus = reviewRequirement.label;
   return html`
     <div class="rdy-package-panel">
       ${ctx.payload.gateSummary
-        ? html`<gate-summary-panel .summary=${ctx.payload.gateSummary}></gate-summary-panel>`
+        ? html`<gate-summary-panel
+            .summary=${ctx.payload.gateSummary}
+            .reviewRequirement=${reviewRequirement}
+            compact
+          ></gate-summary-panel>`
         : nothing}
       <div class="rdy-package-summary">
         ${(ctx.payload.prPackage?.deterministicChecks ?? []).map(
@@ -111,8 +112,7 @@ export function renderReadyPackagePanel(ctx: ReadyPackagePanelContext) {
         <div class="rdy-package-status ${reviewReady ? 'ready' : 'attention'}">
           <strong>${reviewStatus}</strong>
           <span
-            >${reviewSummary.trustedPassingReviews}/${reviewSummary.requiredReviews} passing ·
-            ${reviewSummary.totalAttempts}
+            >History: ${reviewSummary.totalAttempts}
             round${reviewSummary.totalAttempts === 1 ? '' : 's'}</span
           >
         </div>

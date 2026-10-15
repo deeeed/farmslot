@@ -19,6 +19,7 @@ import {
   runOutputCloseUnavailableReason,
   type SlotPickerPayload,
   slotPickerViewModel,
+  TERMINAL_RUN_STATUSES,
 } from '@farmslot/protocol';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
@@ -29,6 +30,10 @@ import {
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
 import { readyReviewRequestProgress } from '../workspace/ready-workspace-review-request-model.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
+import {
+  renderWorkspaceEvidencePreview,
+  type WorkspaceEvidenceComparison,
+} from '../workspace/workspace-evidence-preview.js';
 
 import { supportsDecisionAdvice } from './decision-advice-model.js';
 import {
@@ -104,6 +109,8 @@ function withGraftedGateSummary(
 }
 
 export interface RunDecisionRenderContext {
+  comparison?: WorkspaceEvidenceComparison;
+  visualReviewMessage?: string;
   evidenceModel?: EvidenceReviewModel | null;
   openOutputReport?: () => void;
   openEvidence?: (open: AcceptanceEvidenceOpen) => void;
@@ -157,10 +164,42 @@ export function publicationGateWaitingTitle(decision: Pick<RunDecision, 'actions
   return 'Action required';
 }
 
+/** Inspect a retained gate without reopening its decision or running slot recovery. */
+export function retainedEvidenceGate(
+  run: Pick<Run, 'status' | 'decisions'>,
+): RunDecision | undefined {
+  if (
+    !TERMINAL_RUN_STATUSES.includes(run.status) ||
+    run.decisions.some((decision) => !decision.resolvedAt)
+  )
+    return undefined;
+  return [...run.decisions]
+    .reverse()
+    .find((decision) => decision.resolvedAt && decision.payload?.kind === 'ready');
+}
+
 export function renderRunGateSection(run: Run, context: RunDecisionRenderContext) {
   // Show gate section for ANY unresolved decision (not just ones with payload)
   const rawPending = run.decisions.find((d) => !d.resolvedAt);
   if (!rawPending) {
+    const retained = retainedEvidenceGate(run);
+    if (retained)
+      return html`<section class="gate-section" data-testid="retained-evidence-gate">
+        <details open>
+          <summary data-testid="open-retained-evidence">Review saved gate evidence</summary>
+          <p class="gate-description">
+            Read-only · ${retained.resolvedAction ?? 'resolved'} · ${retained.resolvedAt}
+          </p>
+          <ready-workspace
+            .runId=${run.id}
+            .decision=${retained}
+            .run=${run}
+            .recipeRuns=${context.recipeRuns}
+            selectedRecipeRunId=${context.selectedRecipeRunId}
+            .hideRecipeTab=${true}
+          ></ready-workspace>
+        </details>
+      </section>`;
     const progress = readyReviewRequestProgress(run);
     return progress
       ? html`<section class="gate-section" role="status" data-testid="rdy-review-progress">
@@ -179,16 +218,25 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
         ${run.metrics.outcome ?? 'unknown'} result and any gaps remain unchanged.
       </p>
       <p>Report snapshot ${pending.payload.manifestDigest}</p>
-      ${context.evidenceModel
-        ? renderAcceptancePanel(
-            { schemaVersion: 1, criteria: [] },
-            {
-              evidenceModel: context.evidenceModel,
-              openEvidence: context.openEvidence,
-              evidenceHref: (path) => `#run/${run.id}?artifact=${encodeURIComponent(path)}`,
-            },
-          )
+      ${context.visualReviewMessage
+        ? html`<p role="status">${context.visualReviewMessage}</p>`
         : nothing}
+      ${context.comparison
+        ? renderWorkspaceEvidencePreview({
+            title: 'Compare by AC',
+            items: [],
+            comparison: context.comparison,
+          })
+        : context.evidenceModel
+          ? renderAcceptancePanel(
+              { schemaVersion: 1, criteria: [] },
+              {
+                evidenceModel: context.evidenceModel,
+                openEvidence: context.openEvidence,
+                evidenceHref: (path) => `#run/${run.id}?artifact=${encodeURIComponent(path)}`,
+              },
+            )
+          : nothing}
       <div class="evidence-actions">
         <a
           class="evidence-link"
@@ -353,22 +401,24 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                       ></review-workspace>
                     `
                   : html`
-                      <ready-workspace
-                        .runId=${run.id}
-                        .decision=${pending}
-                        .run=${run}
-                        .recipeRuns=${context.recipeRuns}
-                        selectedRecipeRunId=${context.selectedRecipeRunId}
-                        slotId=${run.slotId ?? ''}
-                        branch=${run.branch ?? ''}
-                        runner=${run.metrics.runner ?? ''}
-                        .resourcePosture=${context.posture.choice}
-                        .postureBlockedReason=${context.postureBlockedReason}
-                        @recipe-complete=${(event: CustomEvent<RecipeCompleteDetail>) =>
-                          context.handleRecipeRunArtifacts(run, event.detail, true)}
-                        @recipe-artifacts-request=${(event: CustomEvent<RecipeCompleteDetail>) =>
-                          context.handleRecipeRunArtifacts(run, event.detail, false)}
-                      ></ready-workspace>
+                      <div class="gate-workspace">
+                        <ready-workspace
+                          .runId=${run.id}
+                          .decision=${pending}
+                          .run=${run}
+                          .recipeRuns=${context.recipeRuns}
+                          selectedRecipeRunId=${context.selectedRecipeRunId}
+                          slotId=${run.slotId ?? ''}
+                          branch=${run.branch ?? ''}
+                          runner=${run.metrics.runner ?? ''}
+                          .resourcePosture=${context.posture.choice}
+                          .postureBlockedReason=${context.postureBlockedReason}
+                          @recipe-complete=${(event: CustomEvent<RecipeCompleteDetail>) =>
+                            context.handleRecipeRunArtifacts(run, event.detail, true)}
+                          @recipe-artifacts-request=${(event: CustomEvent<RecipeCompleteDetail>) =>
+                            context.handleRecipeRunArtifacts(run, event.detail, false)}
+                        ></ready-workspace>
+                      </div>
                     `}
               </div>
             `

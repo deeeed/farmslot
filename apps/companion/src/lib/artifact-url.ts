@@ -1,3 +1,4 @@
+import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import {
   type ArtifactRef,
   isRunEvidenceVideoArtifact,
@@ -344,18 +345,17 @@ function artifactPurposeSpecificity(purpose: string): number {
   return 1;
 }
 
-export function isBeforeVisualArtifact(artifact: { path: string; purpose?: string }): boolean {
-  const purpose = artifact.purpose?.toLowerCase() ?? '';
-  if (/\b(before|baseline|reference)\b/.test(purpose)) return true;
-  if (purpose && !NEUTRAL_VISUAL_PURPOSES.has(purpose)) return false;
-  return /(^|[-_/])(before|baseline|reference)([-_./]|$)/.test(artifact.path.toLowerCase());
+export function isBeforeVisualArtifact(
+  artifact: { path: string; purpose?: string },
+  model?: EvidenceReviewModel | null,
+): boolean {
+  return model?.artifactRole(artifact.path) === 'before';
 }
-
-export function isAfterVisualArtifact(artifact: { path: string; purpose?: string }): boolean {
-  const purpose = artifact.purpose?.toLowerCase() ?? '';
-  if (/\b(after|current|candidate)\b/.test(purpose)) return true;
-  if (purpose && !NEUTRAL_VISUAL_PURPOSES.has(purpose)) return false;
-  return /(^|[-_/])(after|current|candidate)([-_./]|$)/.test(artifact.path.toLowerCase());
+export function isAfterVisualArtifact(
+  artifact: { path: string; purpose?: string },
+  model?: EvidenceReviewModel | null,
+): boolean {
+  return model?.artifactRole(artifact.path) === 'after';
 }
 
 export function isVisualMediaArtifact(artifact: ArtifactManifestEntry): boolean {
@@ -366,130 +366,43 @@ export function isVisualMediaArtifact(artifact: ArtifactManifestEntry): boolean 
 export function groupVisualArtifactPairs<T extends ArtifactManifestEntry>(
   manifest: T[],
   urlFor: (artifact: T) => string,
+  model?: EvidenceReviewModel | null,
 ): { pairs: VisualArtifactPair<T>[]; singles: T[] } {
-  const pairItems = visualArtifactPairs(manifest);
   const paired = new Set<T>();
-  const pairs = pairItems.map(({ before, after, stem }) => {
+  const pairs = (model?.pairedArtifacts(manifest) ?? []).map(({ before, after, claimId }) => {
     paired.add(before);
     paired.add(after);
     return {
       before: { ...before, url: urlFor(before) },
       after: { ...after, url: urlFor(after) },
-      stem,
+      stem: claimId,
     };
   });
-
   return { pairs, singles: manifest.filter((artifact) => !paired.has(artifact)) };
 }
-
-export function countVisualArtifactPairs<T extends ArtifactManifestEntry>(manifest: T[]): number {
-  return visualArtifactPairs(manifest).length;
-}
-
-function visualArtifactPairs<T extends ArtifactManifestEntry>(
+export function countVisualArtifactPairs<T extends ArtifactManifestEntry>(
   manifest: T[],
-): Array<{ before: T; after: T; stem: string }> {
-  const exactBuckets = new Map<string, { before?: T; after?: T; stem: string }>();
-  for (const artifact of manifest) {
-    if (!isVisualMediaArtifact(artifact)) continue;
-    const kind = visualArtifactKind(artifact);
-    if (!kind) continue;
-    const { base, ext, stem, stemForKey } = filenameStem(artifact.path);
-    const key = `${artifactRunKey(artifact)}::${artifactStepKey(artifact)}::${stemForKey}::${ext}`;
-    const bucket = exactBuckets.get(key) ?? { stem: stem || base };
-    bucket[kind] = artifact;
-    exactBuckets.set(key, bucket);
-  }
-
-  const pairs: Array<{ before: T; after: T; stem: string }> = [];
-  const paired = new Set<T>();
-  for (const bucket of exactBuckets.values()) {
-    if (!bucket.before || !bucket.after) continue;
-    pairs.push({ before: bucket.before, after: bucket.after, stem: bucket.stem });
-    paired.add(bucket.before);
-    paired.add(bucket.after);
-  }
-
-  const acBuckets = new Map<
-    string,
-    { before?: T; after?: T; stem: string; beforeCount: number; afterCount: number }
-  >();
-  for (const artifact of manifest) {
-    if (paired.has(artifact) || !isVisualMediaArtifact(artifact)) continue;
-    const kind = visualArtifactKind(artifact);
-    if (!kind) continue;
-    const acKey = acceptanceCriteriaKey(artifact.path);
-    if (!acKey) continue;
-    const { ext } = filenameStem(artifact.path);
-    const key = `${artifactRunKey(artifact)}::${acKey}::${ext}`;
-    const bucket = acBuckets.get(key) ?? { stem: acKey, beforeCount: 0, afterCount: 0 };
-    bucket[kind] = artifact;
-    if (kind === 'before') bucket.beforeCount += 1;
-    else bucket.afterCount += 1;
-    acBuckets.set(key, bucket);
-  }
-  for (const bucket of acBuckets.values()) {
-    if (!bucket.before || !bucket.after || bucket.beforeCount !== 1 || bucket.afterCount !== 1) {
-      continue;
-    }
-    pairs.push({ before: bucket.before, after: bucket.after, stem: bucket.stem });
-  }
-
-  return pairs;
+  model?: EvidenceReviewModel | null,
+): number {
+  return model?.pairedArtifacts(manifest).length ?? 0;
 }
-
 export function deriveBaselineVisualArtifactPairs<T extends ArtifactManifestEntry>(
   manifest: T[],
   urlFor: (artifact: T) => string,
   existingPairs: Array<Pick<VisualArtifactPair<T>, 'before' | 'after'>> = [],
+  model?: EvidenceReviewModel | null,
 ): VisualArtifactPair<T>[] {
-  const alreadyPaired = new Set(
-    existingPairs.flatMap((pair) => [pair.before.path, pair.after.path]),
+  const existing = new Set(existingPairs.map((pair) => `${pair.before.path}::${pair.after.path}`));
+  return groupVisualArtifactPairs(manifest, urlFor, model).pairs.filter(
+    (pair) => !existing.has(`${pair.before.path}::${pair.after.path}`),
   );
-  const before: T[] = [];
-  const after: T[] = [];
-  for (const artifact of manifest) {
-    if (alreadyPaired.has(artifact.path) || !isVisualMediaArtifact(artifact)) continue;
-    const kind = visualArtifactKind(artifact);
-    if (kind === 'before') before.push(artifact);
-    if (kind === 'after') after.push(artifact);
-  }
-
-  if (before.length === 1 && after.length > 0) {
-    const baseline = before[0];
-    return after.map((candidate) => buildVisualArtifactPair(baseline, candidate, urlFor));
-  }
-  if (after.length === 1 && before.length > 0) {
-    const candidate = after[0];
-    return before.map((baseline) => buildVisualArtifactPair(baseline, candidate, urlFor));
-  }
-  return [];
-}
-
-function buildVisualArtifactPair<T extends ArtifactManifestEntry>(
-  before: T,
-  after: T,
-  urlFor: (artifact: T) => string,
-): VisualArtifactPair<T> {
-  return {
-    before: { ...before, url: urlFor(before) },
-    after: { ...after, url: urlFor(after) },
-    stem: visualArtifactPairStem({ before, after }),
-  };
 }
 
 export function visualArtifactPairStem(pair: {
   before: ArtifactManifestEntry;
   after: ArtifactManifestEntry;
 }): string {
-  const beforeBase = pair.before.path.split('/').pop() ?? pair.before.path;
-  const afterBase = pair.after.path.split('/').pop() ?? pair.after.path;
-  const beforeStem = filenameStem(pair.before.path).stem;
-  const afterStem = filenameStem(pair.after.path).stem;
-  if (beforeStem && beforeStem === afterStem) return beforeStem;
-  const acKey = acceptanceCriteriaKey(pair.before.path) ?? acceptanceCriteriaKey(pair.after.path);
-  if (acKey) return acKey;
-  return `${beforeBase} → ${afterBase}`;
+  return `${pair.before.label ?? pair.before.path} → ${pair.after.label ?? pair.after.path}`;
 }
 
 export function formatVisualArtifactPairLabel(
@@ -503,44 +416,6 @@ export function formatVisualArtifactPairLabel(
       .replace(/\s+/g, ' ')
       .trim() || visualArtifactPairStem(pair)
   );
-}
-
-function visualArtifactKind(artifact: ArtifactManifestEntry): 'before' | 'after' | null {
-  if (isBeforeVisualArtifact(artifact)) return 'before';
-  if (isAfterVisualArtifact(artifact)) return 'after';
-  return null;
-}
-
-function filenameStem(path: string): {
-  base: string;
-  ext: string;
-  stem: string;
-  stemForKey: string;
-} {
-  const base = path.split('/').pop() ?? path;
-  const ext = (base.match(/\.[^.]+$/) ?? [''])[0].toLowerCase();
-  const noExt = ext ? base.slice(0, -ext.length) : base;
-  const stem = noExt
-    .replace(/^(before|baseline|reference|after|current|candidate)[-_.]*/i, '')
-    .replace(/^evidence-/i, '')
-    .replace(/[-_.]*(before|baseline|reference|after|current|candidate)$/i, '');
-  // Empty stems must not coalesce bare sentinels like before.png/after.png.
-  const stemForKey = stem || noExt || base;
-  return { base, ext, stem, stemForKey };
-}
-
-function acceptanceCriteriaKey(path: string): string | null {
-  const base = path.split('/').pop()?.toLowerCase() ?? '';
-  const match = base.match(/(?:^|[-_.])(ac\d+)(?:[-_.]|$)/i);
-  return match?.[1]?.toLowerCase() ?? null;
-}
-
-function artifactRunKey(artifact: ArtifactManifestEntry): string {
-  return (artifact as ArtifactManifestEntry & { runId?: string | null }).runId ?? '';
-}
-
-function artifactStepKey(artifact: ArtifactManifestEntry): string {
-  return (artifact as ArtifactManifestEntry & { stepName?: string | null }).stepName ?? '';
 }
 
 export function formatBytes(bytes: number | undefined): string {

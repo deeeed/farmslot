@@ -4,8 +4,6 @@ import {
   isRunEvidenceVideoArtifact,
 } from '@farmslot/protocol';
 
-import { isAfterVisualArtifact, isBeforeVisualArtifact } from './artifact-url';
-
 export type FamilyEvidenceFilter =
   | 'all'
   | 'before'
@@ -67,19 +65,7 @@ interface FamilyEvidenceSnapshot {
 }
 
 export function familyArtifactKind(artifact: FamilyObservabilityArtifact): FamilyEvidenceKind {
-  const filename = (artifact.path.split('/').pop() ?? '').toLowerCase();
   const purpose = artifact.purpose ?? '';
-  if (/^before([-._]|$)/.test(filename)) return 'before';
-  if (/^after([-._]|$)/.test(filename)) return 'after';
-  if (/[-._]before$/.test(filename.replace(/\.[^.]+$/, ''))) return 'before';
-  if (/[-._]after$/.test(filename.replace(/\.[^.]+$/, ''))) return 'after';
-  if (purpose === 'debug-screenshot') return 'setup';
-  if (filename.startsWith('evidence-')) return 'after';
-  if (isBeforeVisualArtifact(artifact)) return 'before';
-  if (isAfterVisualArtifact(artifact)) return 'after';
-  const upperPurpose = purpose.toUpperCase();
-  if (upperPurpose.includes('BEFORE')) return 'before';
-  if (upperPurpose.includes('AFTER')) return 'after';
   const normalized = `${artifact.path} ${purpose} ${artifact.source ?? ''}`.toLowerCase();
   if (isRecipeEvidence(normalized, artifact)) return 'recipes';
   if (isDiffEvidence(normalized)) return 'diffs';

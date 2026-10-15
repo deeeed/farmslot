@@ -478,6 +478,12 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
     ctx.siblings.filter((s) => s.lane === 'comparison').length + (r.lane === 'comparison' ? 1 : 0);
   const actionsBlocked = ctx._actionsBlocked();
   const publication = reviewPublicationPolicyForRun(r);
+  const hasGatePanel = r.decisions.some(
+    (decision) =>
+      !decision.resolvedAt &&
+      ((decision.type === 'engine_human_gate' && decision.payload?.kind === 'ready') ||
+        (decision.type === 'engine_output_review' && decision.payload?.kind === 'output-review')),
+  );
   const prLink = prLinkForRun(r);
   const ticketUrl = ticketUrlForRun(r.ticketOrPr, r, ctx.siblings);
   const familyRootUrl =
@@ -717,7 +723,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           Workspace cleanup deferred: ${r.slotTeardownSkipped}
         </p>`
       : nothing}
-    ${runRecoveryHints(r).map(
+    ${(hasGatePanel ? [] : runRecoveryHints(r)).map(
       (hint) => html`<p role="status" data-testid="run-recovery-hint">${hint}</p>`,
     )}
     ${r.flowType === 'review-pr' && publication

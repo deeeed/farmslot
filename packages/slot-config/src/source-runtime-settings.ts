@@ -2,10 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { isRecord } from '@farmslot/protocol';
+import { isRecord, parseProjectVisualClaimReviewPolicy } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
-export type SourceRuntimeSettings = Partial<Record<'backlog' | 'auto_recovery', unknown>>;
+export type SourceRuntimeSettings = Partial<
+  Record<'backlog' | 'auto_recovery' | 'visual_claim_review', unknown>
+>;
 
 function settingsPath(project: string): string {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(project))
@@ -27,9 +29,15 @@ export async function readSourceRuntimeSettings(project: string): Promise<Source
     raw.project !== project ||
     !isRecord(raw.values) ||
     Object.keys(raw).some((key) => !['schemaVersion', 'project', 'values'].includes(key)) ||
-    Object.keys(raw.values).some((key) => !['backlog', 'auto_recovery'].includes(key))
+    Object.keys(raw.values).some(
+      (key) => !['backlog', 'auto_recovery', 'visual_claim_review'].includes(key),
+    )
   )
     throw new Error('Invalid project runtime settings');
+  if (raw.values.visual_claim_review !== undefined)
+    raw.values.visual_claim_review = parseProjectVisualClaimReviewPolicy(
+      raw.values.visual_claim_review,
+    );
   return raw.values;
 }
 
@@ -42,6 +50,11 @@ export function writeSourceRuntimeSettings(
 ): Promise<string> {
   const previous = pending.get(project) ?? Promise.resolve();
   const work = previous.then(async () => {
+    const normalized = { ...values };
+    if ('visual_claim_review' in normalized)
+      normalized.visual_claim_review = parseProjectVisualClaimReviewPolicy(
+        normalized.visual_claim_review,
+      );
     const destination = settingsPath(project);
     await mkdir(path.dirname(destination), { recursive: true });
     const current = await readSourceRuntimeSettings(project);
@@ -55,7 +68,7 @@ export function writeSourceRuntimeSettings(
     const temporary = `${destination}.${randomUUID()}.tmp`;
     await writeFile(
       temporary,
-      JSON.stringify({ schemaVersion: 1, project, values: { ...current, ...values } }),
+      JSON.stringify({ schemaVersion: 1, project, values: { ...current, ...normalized } }),
       { flag: 'wx', mode: 0o600 },
     );
     await rename(temporary, destination);

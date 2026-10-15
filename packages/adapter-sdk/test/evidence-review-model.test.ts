@@ -11,6 +11,8 @@ import {
   type RecipeVisualJudgmentReceipt,
   recordedEvidenceClosureIdentity,
   type RecordedEvidencePackageInput,
+  reviewedVisualFiles,
+  type SelfPrincipalSummary,
 } from '@farmslot/protocol';
 
 import type { TraceEntry } from '../../recipe-runner/src/core/types.js';
@@ -894,6 +896,50 @@ test('authenticated review uses one engine projection in every view and preserve
     });
     assert.deepEqual(confirmed.errors, []);
     assert.equal(confirmed.summary?.proven, 2);
+    assert.deepEqual(confirmed.claims.find(({ id }) => id === 'check-1')!.proofKinds, [
+      'assertion',
+      'person-reviewed',
+    ]);
+    const policy = { delegatedReviewerPrincipalIds: ['lead'], delegatorPrincipalId: 'person' };
+    const delegated = createEvidenceReviewModel({
+      package: input,
+      context,
+      visualReviewAuthority: {
+        ...authority,
+        projectPolicy: policy,
+        receipts: [
+          {
+            ...receipt,
+            kind: 'lead-agent-reviewed',
+            reviewerSubjectKind: 'service',
+            approver: {
+              principalId: 'lead',
+              credentialId: 'own-credential',
+              displayName: 'Lead reviewer',
+            },
+            reviewedFiles: reviewedVisualFiles(input, receipt.claimId),
+            delegation: {
+              principalId: 'person',
+              displayName: 'Operator',
+              policyDigest: digestRecipeDocument(policy),
+            },
+          },
+        ],
+      },
+    });
+    assert.equal(delegated.summary.proven, 2);
+    assert.match(delegated.visualReviewMarkdown, /agent-reviewed \(delegated by Operator\)/);
+    assert.doesNotMatch(delegated.visualReviewMarkdown, /human-reviewed/);
+    for (const claim of delegated.claims) {
+      assert.deepEqual(claim.proofKinds, ['assertion', 'agent-reviewed']);
+      assert.deepEqual(claim.reviewLabels, [
+        'agent-reviewed (delegated by Operator) · Lead reviewer',
+      ]);
+      assert.equal(
+        claim.reviewLabels.some((label) => label.includes('human')),
+        false,
+      );
+    }
     const rejected = createEvidenceReviewModel({
       package: input,
       context,
@@ -907,6 +953,78 @@ test('authenticated review uses one engine projection in every view and preserve
     });
     assert.equal(rejected.summary?.failed, 2);
   }
+  assert.equal(JSON.stringify(input), original);
+});
+
+test('the shared visual review request binds an eligible claim to its captured source and own identity', () => {
+  const input: RecordedEvidencePackageInput = JSON.parse(
+    readFileSync(
+      new URL('../../recipe-runner/test/fixtures/visual-review-package.json', import.meta.url),
+      'utf8',
+    ),
+  ).input;
+  const original = JSON.stringify(input);
+  const lead: SelfPrincipalSummary = {
+    id: 'lead',
+    displayName: 'Own reviewer',
+    subjectKind: 'service',
+    roles: [],
+  };
+  const authority = {
+    runId: 'run',
+    recipeRunId: input.claims!.recipeRunId,
+    closureIdentity: recordedEvidenceClosureIdentity(input),
+    receipts: [],
+    projectPolicy: { delegatedReviewerPrincipalIds: ['lead'], delegatorPrincipalId: 'person' },
+  };
+  const model = createEvidenceReviewModel({
+    package: input,
+    visualReviewAuthority: authority,
+    visualReviewContext: { snapshotIdentity: 'frozen', decisionId: 'gate' },
+  });
+  assert.deepEqual(model.errors, []);
+  assert(model.pendingVisualClaimIds.includes('check-1'));
+  const request = model.visualReviewRequest(
+    'check-1',
+    lead,
+    'confirmed',
+    ' Observed the recorded view. ',
+  );
+  assert.deepEqual(request, {
+    runId: 'run',
+    decisionId: 'gate',
+    snapshotIdentity: 'frozen',
+    recipeRunId: input.claims!.recipeRunId,
+    claimId: 'check-1',
+    kind: 'lead-agent-reviewed',
+    verdict: 'confirmed',
+    reason: 'Observed the recorded view.',
+  });
+  assert.equal(model.visualReviewKind('check-1', { ...lead, id: 'other' }), null);
+  assert.throws(
+    () => model.visualReviewRequest('check-1', lead, 'confirmed', ''),
+    /Describe the visual proof/,
+  );
+  const personOnly = createEvidenceReviewModel({
+    package: input,
+    visualReviewAuthority: {
+      ...authority,
+      projectPolicy: { ...authority.projectPolicy, personOnlyClaimIds: ['check-1'] },
+    },
+    visualReviewContext: { snapshotIdentity: 'frozen' },
+  });
+  assert.equal(personOnly.visualReviewKind('check-1', lead), null);
+  assert.equal(
+    personOnly.visualReviewKind('check-1', { ...lead, subjectKind: 'person' }),
+    'person-reviewed',
+  );
+  assert.equal(
+    createEvidenceReviewModel({
+      package: input,
+      visualReviewAuthority: authority,
+    }).visualReviewKind('check-1', lead),
+    null,
+  );
   assert.equal(JSON.stringify(input), original);
 });
 
@@ -955,3 +1073,190 @@ for (const { name, count, evidence } of [
     assert.equal(ledger.criteria[0]?.updatedAt, '2026-10-12T00:00:00.000Z');
   });
 }
+
+function boundComparisonPackage(
+  id: string,
+  role: 'before' | 'after',
+  sourceCommit: string,
+  durationMs = 3000,
+): RecordedEvidencePackageInput {
+  const pkg = qaPackage(1, durationMs);
+  assert.ok(pkg.claims);
+  pkg.claims.recipeRunId = id;
+  pkg.recipeRunId = id;
+  for (const claim of pkg.claims.criteria)
+    claim.moments = claim.moments.map((moment) => ({ ...moment, recipeRunId: id }));
+  assert.ok(
+    pkg.invocation && typeof pkg.invocation === 'object' && 'recipeRunId' in pkg.invocation,
+  );
+  pkg.invocation.recipeRunId = id;
+  assert.ok(
+    pkg.summary &&
+      typeof pkg.summary === 'object' &&
+      'recipeRunId' in pkg.summary &&
+      'invocationDigest' in pkg.summary,
+  );
+  pkg.summary.recipeRunId = id;
+  pkg.summary.invocationDigest = digestRecipeDocument(pkg.invocation);
+  assert.ok(
+    pkg.manifest &&
+      typeof pkg.manifest === 'object' &&
+      'artifacts' in pkg.manifest &&
+      Array.isArray(pkg.manifest.artifacts),
+  );
+  for (const artifact of pkg.manifest.artifacts)
+    if (artifact.path === 'stills/1.png')
+      artifact.capture = {
+        ac: 'check-1',
+        role,
+        recipeRunId: id,
+        nodeId: 'assert-1',
+        traceIndex: 1,
+        sourceCommit,
+        sourceDirty: false,
+      };
+  pkg.artifactDigests = {
+    ...Object.fromEntries((pkg.artifactPaths ?? []).map((file) => [file, digest(file)])),
+    ...pkg.artifactDigests,
+  };
+  return pkg;
+}
+
+function withComparison(
+  head: RecordedEvidencePackageInput,
+  baseline: RecordedEvidencePackageInput,
+): RecordedEvidencePackageInput {
+  assert.ok(baseline.claims);
+  const artifactRoot = `comparison-dependencies/${baseline.claims.recipeRunId}`;
+  const refs = [
+    {
+      artifactRoot,
+      recipeRunId: baseline.claims.recipeRunId,
+      closureIdentity: recordedEvidenceClosureIdentity(baseline),
+    },
+  ];
+  assert.ok(head.manifest && typeof head.manifest === 'object');
+  head.manifest = { ...head.manifest, comparisonDependencies: refs };
+  assert.ok(head.invocation && typeof head.invocation === 'object');
+  head.invocation = { ...head.invocation, comparisonDependencies: refs };
+  assert.ok(head.summary && typeof head.summary === 'object');
+  head.summary = { ...head.summary, invocationDigest: digestRecipeDocument(head.invocation) };
+  head.comparisonDependencies = [{ artifactRoot, input: baseline }];
+  head.artifactPaths = [
+    ...(head.artifactPaths ?? []),
+    ...(baseline.artifactPaths ?? []).map((file) => `${artifactRoot}/${file}`),
+  ];
+  head.artifactDigests = {
+    ...head.artifactDigests,
+    ...Object.fromEntries(
+      Object.entries(baseline.artifactDigests).map(([file, digest]) => [
+        `${artifactRoot}/${file}`,
+        digest,
+      ]),
+    ),
+  };
+  return head;
+}
+
+test('comparison roles retain original executions, exact claim rows, independent timestamps and shared transform state', () => {
+  const baseSha = '1'.repeat(40),
+    headSha = '2'.repeat(40);
+  const source = withComparison(
+    boundComparisonPackage('head', 'after', headSha),
+    boundComparisonPackage('baseline', 'before', baseSha),
+  );
+  const model = createEvidenceReviewModel({
+    package: source,
+    artifactPrefix: 'artifacts/selected/',
+    comparisonSnapshot: { baseSha, headSha },
+    criterionSourceUrl: 'https://example.test/TAT-1',
+  });
+  assert.deepEqual(model.errors, []);
+  assert.equal(model.comparisons.length, 2); // The uncaptured QA case remains a row too.
+  const row = model.comparisons.find((row) => row.claim.id === 'check-1')!;
+  assert.equal(row.sourceUrl, 'https://example.test/TAT-1');
+  assert.equal(row.selectedBefore?.recipeRunId, 'baseline');
+  assert.equal(row.selectedAfter?.recipeRunId, 'head');
+  assert.notEqual(row.selectedBefore?.identity, row.selectedAfter?.identity);
+  assert.equal(row.selectedBefore?.clips[0]?.moment?.recipeRunId, 'baseline');
+  assert.equal(model.markerSeekMs(row.selectedBefore!.clips[0]!.videoPath, 1, 'start'), 400);
+  model.setComparisonTransform({ scale: 3, x: 0.25, y: 0.8 });
+  assert.deepEqual(model.comparisonTransform, { scale: 3, x: 0.25, y: 0.8 });
+  assert.equal(
+    model.chooseComparisonMedia('check-1', 'before', row.selectedBefore!.identity),
+    true,
+  );
+  assert.deepEqual(model.comparisonTransform, { scale: 1, x: 0.5, y: 0.5 });
+  model.setComparisonFilter('before');
+  assert.equal(
+    model.comparisonView.rows.find((row) => row.claim.id === 'check-1')!.after.length,
+    0,
+  );
+  assert.equal(model.comparisonView.unassigned.length, 0);
+  model.setComparisonFilter('unassigned');
+  assert.equal(model.comparisonView.rows.length, 0);
+  assert.equal(model.comparisonView.unassigned.length, 2); // Original full-run videos have no authored role.
+  const selected = [row.selectedBefore!, row.selectedAfter!].map((media) => ({
+    path: media.artifactPath,
+    purpose: 'screenshot',
+  }));
+  assert.equal(model.pairedArtifacts(selected).length, 1);
+  assert.equal(model.artifactRole(selected[0]!.path), 'before');
+  assert.equal(model.artifactRole(selected[1]!.path), 'after');
+  assert.equal(model.pairedArtifacts(selected.slice(1)).length, 0);
+  assert.equal(model.artifactRole('before-AC1.png'), null);
+
+  const mismatched = createEvidenceReviewModel({
+    package: source,
+    comparisonSnapshot: { baseSha: '3'.repeat(40), headSha },
+  });
+  assert.equal(mismatched.comparisonErrors[0]?.code, 'comparison-source-mismatch');
+  assert.equal(
+    mismatched.comparisons.find((row) => row.claim.id === 'check-1')!.selectedBefore,
+    undefined,
+  );
+  assert.equal(
+    mismatched.chooseComparisonMedia('check-1', 'before', row.selectedBefore!.identity),
+    false,
+  );
+  assert.equal(
+    row.claim.status?.verdict,
+    source.claims?.criteria.find((claim) => claim.id === 'check-1')?.verdict,
+  );
+});
+
+test('unbound media stays Unassigned and an empty claim row never borrows a Before or After', () => {
+  const model = createEvidenceReviewModel({
+    criteria: [{ id: 'AC-1', text: 'Controls fit.' }],
+    artifacts: [
+      { path: 'artifacts/before-AC1.png', purpose: 'video-before', sha256: 'a'.repeat(64) },
+      { path: 'artifacts/after-AC1.png', purpose: 'video-after', sha256: 'a'.repeat(64) },
+    ],
+  });
+  assert.equal(model.comparisons.length, 1);
+  assert.equal(model.comparisons[0]?.before.length, 0);
+  assert.equal(model.comparisons[0]?.after.length, 0);
+  assert.equal(model.unassigned.length, 2);
+  assert.equal(model.unassigned[0]?.timing, 'untimed');
+  assert.equal(model.selectComparisonMedia(model.unassigned[0]!.identity)?.timing, 'untimed');
+});
+
+test('baseline outside its own recording never borrows measured timing from the same head trace index', () => {
+  const baseSha = '1'.repeat(40),
+    headSha = '2'.repeat(40);
+  const model = createEvidenceReviewModel({
+    package: withComparison(
+      boundComparisonPackage('head', 'after', headSha),
+      boundComparisonPackage('baseline', 'before', baseSha, 350),
+    ),
+    comparisonSnapshot: { baseSha, headSha },
+  });
+  assert.deepEqual(model.errors, []);
+  const row = model.comparisons.find((row) => row.claim.id === 'check-1')!;
+  const before = row.selectedBefore!;
+  assert.equal(before.clips.length, 0);
+  assert.equal(before.timing, 'outside-recording');
+  assert.equal(model.selectComparisonMedia(before.identity)?.timing, 'outside-recording');
+  assert.equal(model.markerSeekMs('comparison-dependencies/baseline/video.mp4', 1, 'start'), null);
+  assert.equal(model.markerSeekMs('video.mp4', 1, 'start'), 400);
+});

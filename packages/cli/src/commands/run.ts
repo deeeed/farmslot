@@ -92,6 +92,7 @@ export interface RunGateCliOptions {
   reason?: string;
   claim?: string;
   recipeRun?: string;
+  judgmentKind?: import('@farmslot/protocol').RecipeVisualJudgmentKind;
   decision?: string;
   runner?: string;
   model?: string;
@@ -792,6 +793,7 @@ export function registerRunCommand(program: Command): void {
     .option('--reason <text>', 'Written reason for evidence attestation or human claim review')
     .option('--claim <id>', 'Registered claim for human evidence review')
     .option('--recipe-run <id>', 'Selected recorded execution for human evidence review')
+    .option('--judgment-kind <kind>', 'Visual review kind: person-reviewed or lead-agent-reviewed')
     .option('--runner <runner>', 'Review runner for request-review')
     .option('--model <model>', 'Review model for request-review')
     .option('--effort <level>', 'Review reasoning effort for request-review')
@@ -837,6 +839,11 @@ export function registerRunCommand(program: Command): void {
         }
         const actionId = opts.action;
         if ([CONFIRM_VISUAL_CLAIM_ACTION, REJECT_VISUAL_CLAIM_ACTION].includes(actionId)) {
+          if (
+            opts.judgmentKind !== undefined &&
+            !['person-reviewed', 'lead-agent-reviewed'].includes(opts.judgmentKind)
+          )
+            throw new Error('--judgment-kind must be person-reviewed or lead-agent-reviewed.');
           if (!opts.claim?.trim() || !opts.recipeRun?.trim() || !opts.reason?.trim())
             throw new Error('Visual review requires --claim, --recipe-run and --reason.');
           const candidates = opts.decision
@@ -878,6 +885,7 @@ export function registerRunCommand(program: Command): void {
               recipeRunId: opts.recipeRun,
               reason: opts.reason,
               verdict: actionId === CONFIRM_VISUAL_CLAIM_ACTION ? 'confirmed' : 'rejected',
+              ...(opts.judgmentKind ? { kind: opts.judgmentKind } : {}),
             }),
           );
           return;
