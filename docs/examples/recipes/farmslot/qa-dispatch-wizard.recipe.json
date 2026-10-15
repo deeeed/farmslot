@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "General dispatch Review and farm QA wizard",
-  "description": "Real browser controls and an isolated production gateway prove QA profile/default/input selection, invalid JSON refusal, distinct queue fields, workspace-only farms, legacy links and existing dev controls. Orchestration remains disabled.",
+  "description": "Real browser controls and an isolated production gateway prove configured-default, sole-profile and required-choice selection, visible-id admission, policy overrides, QA inputs and existing dispatch controls. Orchestration remains disabled.",
   "workflow": {
     "entry": "wizard-interface",
     "nodes": {

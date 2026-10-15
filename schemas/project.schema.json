@@ -817,7 +817,7 @@
       "type": "object",
       "description": "Thin farm-owned presets selecting shared validation templates and project-defined inputs. Workflow and recipe-selection logic stays in the shared skill.",
       "additionalProperties": false,
-      "required": ["default_profile", "profiles"],
+      "required": ["profiles"],
       "properties": {
         "after_review": {
           "type": "object",

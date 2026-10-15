@@ -791,7 +791,9 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
     )}
     ${r.reviewWorkspace && !r.output ? ctx.renderGateSection(r) : nothing}
     ${r.qa
-      ? html`<p data-testid="run-qa-profile">QA profile: <strong>${r.qa.profile.title}</strong></p>`
+      ? html`<p data-testid="run-qa-profile">
+          QA profile: <strong>${r.qa.profile.title}</strong> <code>${r.qa.profile.id}</code>
+        </p>`
       : nothing}
     ${r.qaAfterReview
       ? html`<div class="redirect-banner" data-testid="run-automatic-qa">

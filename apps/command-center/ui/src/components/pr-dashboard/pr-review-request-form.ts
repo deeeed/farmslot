@@ -14,6 +14,8 @@ import {
   prReviewWorkflow,
   type PRTeamProfile,
   resolvePRWorkflowDefaults,
+  resolveQaProfileId,
+  selectQaProfile,
   type SlotStatus,
   workspacePolicyTargetLabel,
 } from '@farmslot/protocol';
@@ -84,12 +86,17 @@ export class PRReviewRequestForm extends LitElement {
       const pr = parseGitHubPullUrl(this.url);
       if (!pr) throw new Error('Enter a GitHub pull request URL');
       let requestedReview = this.overrideReview ? this.review : undefined;
-      const { resolved } = this.selection();
-      if (prReviewWorkflow(resolved.review) === 'qa' && this.qaInputsText !== undefined) {
-        const inputs = JSON.parse(this.qaInputsText);
-        if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs))
-          throw new Error('QA inputs must be a JSON object');
-        requestedReview = { ...resolved.review, qaInputs: inputs };
+      const { resolved, farm } = this.selection();
+      if (prReviewWorkflow(resolved.review) === 'qa') {
+        let inputs = resolved.review.qaInputs;
+        if (this.qaInputsText !== undefined) {
+          const overrides = JSON.parse(this.qaInputsText);
+          if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides))
+            throw new Error('QA inputs must be a JSON object');
+          inputs = { ...inputs, ...overrides };
+        }
+        const qaProfileId = resolved.review.qaProfileId ?? selectQaProfile(farm?.qa).profile.id;
+        requestedReview = { ...resolved.review, qaProfileId, qaInputs: inputs };
       }
       const request: PRReviewRequest = {
         teamId: this.selectedTeamId(),
@@ -125,6 +132,12 @@ export class PRReviewRequestForm extends LitElement {
       team: team?.config,
       farm: farm?.workflowDefaults,
     });
+    if (prReviewWorkflow(resolved.review) === 'qa') {
+      resolved.review = {
+        ...resolved.review,
+        qaProfileId: resolveQaProfileId(farm?.qa, resolved.review.qaProfileId),
+      };
+    }
     return { teamId, team, policy, farm, resolved };
   }
   render() {
@@ -223,10 +236,8 @@ export class PRReviewRequestForm extends LitElement {
                   .value=${this.qaInputsText ??
                   JSON.stringify(
                     {
-                      ...farm?.qa?.profiles.find(
-                        (profile) =>
-                          profile.id === (review.qaProfileId ?? farm?.qa?.default_profile),
-                      )?.inputs,
+                      ...farm?.qa?.profiles.find((profile) => profile.id === review.qaProfileId)
+                        ?.inputs,
                       ...review.qaInputs,
                     },
                     null,
@@ -318,7 +329,13 @@ export class PRReviewRequestForm extends LitElement {
               </p>`}
         </details>
         ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}
-        <button data-testid="pr-review-request-submit" class="primary" type="submit">
+        <button
+          data-testid="pr-review-request-submit"
+          class="primary"
+          type="submit"
+          ?disabled=${prReviewWorkflow(review) === 'qa' &&
+          !farm?.qa?.profiles.some((profile) => profile.id === review.qaProfileId)}
+        >
           ${this.disabled
             ? 'Submitting…'
             : prReviewWorkflow(review) === 'qa'

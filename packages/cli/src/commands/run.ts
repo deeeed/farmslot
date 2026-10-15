@@ -17,6 +17,7 @@ import {
   type HumanGrade,
   isAllowedRunDecisionAction,
   isPrerequisiteGatePayload,
+  isRecord,
   isReviewMode,
   MARK_CLAIM_UNTESTABLE_ACTION,
   Methods,
@@ -56,6 +57,7 @@ import {
 import { bold, cyan, green } from '../colors.js';
 import { type CommandContext, resolveContext } from '../context.js';
 import { createEmitter } from '../envelope.js';
+import { GatewayRpcError } from '../gateway-client.js';
 import { withProgress, withStreamProgress } from '../progress.js';
 import { collectRunCreatePlan } from '../wizard/run-create-wizard.js';
 
@@ -1325,6 +1327,22 @@ export function registerRunCommand(program: Command): void {
         }
         await executeRunCreate(ctx, emit, opts);
       } catch (err) {
+        if (
+          err instanceof GatewayRpcError &&
+          err.code === 'REVIEW_QA_NEEDS_CONFIGURATION' &&
+          isRecord(err.details) &&
+          Array.isArray(err.details.qaProfiles)
+        ) {
+          emit.fail(
+            new GatewayRpcError(
+              err.message,
+              err.code,
+              'Rerun this command with --qa-profile <id> using one of the listed profiles.',
+              err.details,
+            ),
+          );
+          return;
+        }
         emit.fail(err);
         return;
       }
