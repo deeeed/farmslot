@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.18.2 - 2026-10-15
+
+- Align the published dependency set with protocol 0.47.0 initial resource proof modes.
+
 ## 0.18.1 - 2026-10-15
 
 - Keep source and review diff identities stable across user Git settings; disable external diff and text conversion.

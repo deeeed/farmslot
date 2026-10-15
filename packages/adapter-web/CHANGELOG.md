@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.10.4 - 2026-10-15
+
+- Align the published dependency set with protocol 0.47.0 initial resource proof modes.
+
 ## 0.10.3 - 2026-10-15
 
 - Align the published dependency closure with protocol 0.46.0 and the merged runtime fixes.

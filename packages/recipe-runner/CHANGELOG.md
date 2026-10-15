@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.36.2 - 2026-10-15
+
+- Align the published dependency set with protocol 0.47.0 initial resource proof modes.
+
 ## 0.36.1 - 2026-10-15
 
 - Bound file-backed evidence reads and hashing across concurrent packages, and close each descriptor before releasing its read slot.
