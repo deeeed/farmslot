@@ -46,9 +46,17 @@ test('dispatch and warm review render searchable choices without native selects'
   }
 });
 
-const choiceValue = /\._?(?:runner|model|effort)\b/i;
+const choiceValue = /\.[\w$]*(?:runner|model|effort)[\w$]*\b/i;
 const choiceHandler =
-  /\b_?(?:set|change|select|choose)(?:Runner|Model|Effort)\s*\(|\b(?:runner|model|effort)\s*:/i;
+  /\b(?:\w*(?:set|change|select|choose)\w*(?:runner|model|effort)|\w*(?:runner|model|effort)\w*(?:set|change|select|choose))\w*\b|\b(?:runner|model|effort)\s*:/i;
+
+function isChoiceHandler(expression: string) {
+  // Opening the picker and selecting an ASR voice model are not execution choices.
+  const selection = expression
+    .replace(/\b[\w$]*(?:voice|speech|transcription)[\w$]*model[\w$]*\b/gi, '')
+    .replace(/\b[\w$]*(?:Runner|Model|Effort)PickerOpen\b/gi, '');
+  return choiceHandler.test(selection);
+}
 
 /** Inspect rendered controls, excluding state adapters and read-only model metadata. */
 function hasIndependentChoices(source: string, filename: string): boolean {
@@ -70,9 +78,7 @@ function hasIndependentChoices(source: string, filename: string): boolean {
       for (const control of text.matchAll(/<(?:select|input|button|choice-picker)\b[^>]*>/g)) {
         for (const binding of control[0].matchAll(/(\.value|@\w+)\s*=\s*["']?EXPRESSION_(\d+)_/g)) {
           const expression = expressions[Number(binding[2])];
-          if (
-            binding[1] === '.value' ? choiceValue.test(expression) : choiceHandler.test(expression)
-          )
+          if (binding[1] === '.value' ? choiceValue.test(expression) : isChoiceHandler(expression))
             found = true;
         }
       }
@@ -90,7 +96,8 @@ function hasIndependentChoices(source: string, filename: string): boolean {
           if (
             attr.name.getText(file) === 'value'
               ? choiceValue.test(expression)
-              : choiceHandler.test(expression)
+              : /^(onPress|onChange|onChangeText|onValueChange)$/.test(attr.name.getText(file)) &&
+                isChoiceHandler(expression)
           )
             found = true;
         }
@@ -126,6 +133,25 @@ test('choice guard catches native, custom and native-app duplicates but permits 
     hasIndependentChoices('html`<select .value=${options.publishReview}></select>`', 'fixture.ts'),
     false,
   );
+  for (const source of [
+    'html`<select .value=${this._draftModel}></select>`',
+    'html`<select .value=${this.selectedRunner} @change=${this.onRunnerChange}></select>`',
+    '<Pressable onPress={() => setRunnerId(r)} />',
+    '<Choice onPress={() => onSelectModel(m)} />',
+  ])
+    assert.equal(
+      hasIndependentChoices(source, source.startsWith('html') ? 'fixture.ts' : 'fixture.tsx'),
+      true,
+    );
+  for (const source of [
+    'html`<button @click=${() => this._setRunnerPickerOpen(true)}>Open</button>`',
+    '<Pressable onPress={() => handleSelectVoiceModel(model.id)} />',
+    '<Pressable disabled={voiceModelSelectionLocked} style={styles.voiceModelChoice} />',
+  ])
+    assert.equal(
+      hasIndependentChoices(source, source.startsWith('html') ? 'fixture.ts' : 'fixture.tsx'),
+      false,
+    );
   assert.equal(
     hasIndependentChoices('<Metric label="Model" value={run.model} />', 'fixture.tsx'),
     false,

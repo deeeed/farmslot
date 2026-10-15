@@ -7,14 +7,14 @@
     "nodes": {
       "ready": {
         "action": "ui.wait_for",
-        "test_id": "companion-native-runner-claude",
+        "test_id": "companion-native-execution-runner-0-claude",
         "timeout_ms": 30000,
         "intent": "The native setup form is connected before testing reply races.",
         "next": "claude"
       },
       "claude": {
         "action": "ui.press",
-        "test_id": "companion-native-runner-claude",
+        "test_id": "companion-native-execution-runner-0-claude",
         "intent": "Choose the runner whose two native configurations are prepared.",
         "next": "profiles"
       },
@@ -93,13 +93,13 @@
       },
       "show-codex": {
         "action": "command",
-        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-runner-codex up",
+        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-execution-runner-0-codex up",
         "intent": "Reach another runner while the old inventory is pending.",
         "next": "codex"
       },
       "codex": {
         "action": "ui.press",
-        "test_id": "companion-native-runner-codex",
+        "test_id": "companion-native-execution-runner-0-codex",
         "intent": "Change runner before the earlier profile inventory arrives.",
         "next": "release-list"
       },

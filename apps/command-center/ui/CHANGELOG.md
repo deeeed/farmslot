@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- Restore styled, searchable runner/model/effort controls across dispatch, review and backlog launch plans through the shared picker.
+- Restore styled, searchable runner/model/effort controls across dispatch, review, backlog launch plans and Eval candidates through the shared picker.
 
 - Use one compact worker checklist in pipeline, step inspection and slot views.
 

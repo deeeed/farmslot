@@ -116,6 +116,7 @@ import {
 import {
   applyBacklogRefineItemRefresh,
   BACKLOG_SORT_KEYS,
+  backlogCandidateExecution,
   backlogItemMatchesStatusFilter,
   backlogRefinementPickerView,
   backlogRefineResultMessage,
@@ -2181,19 +2182,14 @@ export class BacklogPanel extends LitElement {
           event.stopPropagation();
           const { runner, model, effort } = event.detail;
           if (!runner) return;
-          const variantModel =
-            model ?? defaultModelForRunner(runner, rememberedReviewDispatchCatalog()) ?? '';
           this._updateLaunchCandidate(
             key,
             index,
-            {
-              runner,
-              model: model ?? '',
-              effort: effort ?? '',
-              ...(runner !== candidate.runner && candidate.role === 'comparison'
-                ? { variant: `${runner}-${variantModel.replace(/[^a-z0-9]+/gi, '-')}` }
-                : {}),
-            },
+            backlogCandidateExecution(
+              candidate,
+              { runner, model: model ?? null, effort: effort ?? null },
+              rememberedReviewDispatchCatalog(),
+            ),
             item,
           );
         }}

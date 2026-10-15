@@ -20,7 +20,7 @@
     "nodes": {
       "runner": {
         "action": "ui.press",
-        "test_id": "companion-native-runner-claude",
+        "test_id": "companion-native-execution-runner-0-claude",
         "intent": "Choose the installed Claude runner.",
         "next": "profiles-ready"
       },
@@ -56,7 +56,7 @@
       },
       "model": {
         "action": "ui.press",
-        "test_id": "companion-native-model-0",
+        "test_id": "companion-native-execution-model-0-default",
         "intent": "Choose Sonnet.",
         "next": "create-visible"
       },
@@ -210,7 +210,7 @@
       },
       "setup-ready": {
         "action": "ui.wait_for",
-        "test_id": "companion-native-runner-claude",
+        "test_id": "companion-native-execution-runner-0-claude",
         "timeout_ms": 30000,
         "intent": "The connected gateway exposes available native runners in the creation form.",
         "next": "runner"
@@ -235,7 +235,7 @@
       },
       "model-visible": {
         "action": "command",
-        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-model-0",
+        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-execution-model-0-default",
         "intent": "Reach the model choice after profile readiness changes.",
         "next": "model"
       },
