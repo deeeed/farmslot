@@ -153,7 +153,7 @@ Prove these through gateway endpoints and real runner execution, plus Command Ce
 
 ## Amendment 1: Optional QA defaults and required choices (2026-10-15)
 
-**Status:** Proposed. This amendment makes the farm default optional while preserving existing request and workflow-policy precedence.
+**Status:** Accepted by lead, 2026-10-15, after R2 paired review of #1092 at `a2d95439`. This amendment makes the farm default optional while preserving existing request and workflow-policy precedence.
 
 ### Decision
 

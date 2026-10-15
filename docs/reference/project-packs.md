@@ -60,11 +60,11 @@ source — editor validation works after `project add`.
 Every project must declare nonempty `qa.profiles`; each profile selects a QA
 checklist with `template_id`. The same pack validator checks this declaration
 before `project add` registers anything and before gateway node-support sync.
-Until the amendment below is accepted and implemented, `qa.default_profile` is required and must name a configured profile; invalid QA reports `project.json` and a configuration hint. QA presets remain separate from prepare profiles and runner/model defaults.
+Until the accepted amendment below is implemented, `qa.default_profile` is required and must name a configured profile; invalid QA reports `project.json` and a configuration hint. QA presets remain separate from prepare profiles and runner/model defaults.
 
-### QA selection amendment, proposed
+### QA selection amendment, accepted
 
-The following rules are proposed by [ADR-058 Amendment 1](../adr/058-static-review-and-farm-owned-qa.md#amendment-1-optional-qa-defaults-and-required-choices-2026-10-15).
+The following rules were accepted by lead on 2026-10-15 after R2 paired review of #1092, as [ADR-058 Amendment 1](../adr/058-static-review-and-farm-owned-qa.md#amendment-1-optional-qa-defaults-and-required-choices-2026-10-15).
 
 `qa.default_profile` MUST be optional. When present it MUST identify a configured
 profile. The existing `resolvePRWorkflowDefaults` owner MUST first resolve request ids over
@@ -90,7 +90,7 @@ Existing run detail and QA report/PR evidence displays MUST identify the profile
 by id and title. First-party packs MUST remove their current defaults after the
 optional-default runtime is deployed; third-party defaults remain supported.
 
-Until the amendment is accepted and implemented, the current required-default
+Until the accepted amendment is implemented, the current required-default
 contract remains in force.
 
 ## Required fixture sources
