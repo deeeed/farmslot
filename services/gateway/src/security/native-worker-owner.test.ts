@@ -30,7 +30,12 @@ const owner: Principal = {
 };
 const other: Principal = {
   id: 'other-admin-test',
-  subject: { type: 'person', displayName: 'Other' },
+  subject: { type: 'service', displayName: 'Other' },
+  roles: [{ role: 'admin', scope: { kind: 'global' } }],
+};
+const supervisor: Principal = {
+  id: 'person-admin-test',
+  subject: { type: 'person', displayName: 'Admin person' },
   roles: [{ role: 'admin', scope: { kind: 'global' } }],
 };
 
@@ -103,6 +108,15 @@ test('decision-only resolution checks the resolved native run owner before effec
     ),
     /Action not found/,
   );
+  // Supervision consumes the real gate without changing native execution ownership.
+  // Monitoring has no suspended engine to restart in this fixture.
+  updateRun(run.id, { status: 'monitoring' });
+  await runWithSessionOriginator(supervisor, () =>
+    decisionResolve({ decisionId: decision.id, actionId: 'continue' }),
+  );
+  assert.equal(run.decisions[0]?.resolvedAction, 'continue');
+  assert.ok(run.decisions[0]?.resolvedAt);
+  assert.equal(run.nativeOwnerPrincipalId, owner.id);
 });
 
 function setup(t: TestContext) {

@@ -11,7 +11,11 @@ import {
   resolveNativeWorkerOwner,
   resolveReviewWorkspaceOwner,
 } from './native-worker-owner.js';
-import { runWithSessionOriginator, runWithSystemOriginator } from './work-originator.js';
+import {
+  currentSessionPrincipal,
+  runWithSessionOriginator,
+  runWithSystemOriginator,
+} from './work-originator.js';
 
 test('issued remote owners can own workspace reviews without owning the local runner profile', (t) => {
   const home = mkdtempSync(join(tmpdir(), 'review-owner-'));
@@ -31,7 +35,7 @@ test('issued remote owners can own workspace reviews without owning the local ru
   const owner = writer.createPrincipal({ type: 'person', displayName: 'Remote owner' }, [
     { role: 'admin', scope: { kind: 'global' } },
   ]);
-  const other = writer.createPrincipal({ type: 'person', displayName: 'Other owner' }, [
+  const other = writer.createPrincipal({ type: 'service', displayName: 'Other owner' }, [
     { role: 'admin', scope: { kind: 'global' } },
   ]);
   writer.createPrincipal(
@@ -58,6 +62,36 @@ test('issued remote owners can own workspace reviews without owning the local ru
   runWithSessionOriginator(other, () => {
     assert.throws(() => resolveReviewWorkspaceOwner(), /owned execution node/);
     assert.throws(() => resolveReviewWorkspaceOwner(owner.id), /another principal/);
+  });
+  const admin = writer.createPrincipal({ type: 'person', displayName: 'Admin supervisor' }, [
+    { role: 'admin', scope: { kind: 'global' } },
+  ]);
+  const operator = writer.createPrincipal({ type: 'person', displayName: 'Operator' }, [
+    { role: 'operator', scope: { kind: 'global' } },
+  ]);
+  runWithSessionOriginator(admin, () => {
+    assert.equal(resolveReviewWorkspaceOwner(owner.id), owner.id);
+    assert.equal(resolveNativeWorkerOwner('local-owner'), 'local-owner');
+    // Historical runs remain inspectable after their runner owner was retired.
+    // Transport authorization still uses that recorded owner, never the viewer.
+    assert.equal(resolveReviewWorkspaceOwner('retired-service'), 'retired-service');
+    assert.equal(resolveNativeWorkerOwner('retired-service'), 'retired-service');
+    assert.throws(() => resolveReviewWorkspaceOwner(), /owned execution node/);
+    const run = {
+      transport: 'native' as const,
+      nativeOwnerPrincipalId: owner.id,
+      reviewWorkspaceTarget: { machine: 'remote' },
+      agentContexts: [],
+    };
+    assert.doesNotThrow(() => assertNativeRunOwner(run));
+    assert.equal(run.nativeOwnerPrincipalId, owner.id);
+    assert.equal(currentSessionPrincipal()?.id, admin.id);
+    runWithSystemOriginator(() => assert.equal(currentSessionPrincipal(), undefined));
+    assert.equal(currentSessionPrincipal()?.id, admin.id);
+  });
+  runWithSessionOriginator(operator, () => {
+    assert.throws(() => resolveReviewWorkspaceOwner(owner.id), /another principal/);
+    assert.throws(() => resolveNativeWorkerOwner('local-owner'), /another principal/);
   });
   runWithSystemOriginator(() => {
     assert.equal(resolveReviewWorkspaceOwner(owner.id), owner.id);

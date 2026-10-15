@@ -84,11 +84,7 @@ export function nativeWorkerHistoryBinding(
   };
 }
 
-export async function routeNativeWorkerRead(
-  principal: string,
-  method: string,
-  params: Record<string, unknown>,
-) {
+export async function routeNativeWorkerRead(method: string, params: Record<string, unknown>) {
   const target = readTarget(params.worker);
   const archived = getRun(target.runId)
     ? undefined
@@ -103,7 +99,7 @@ export async function routeNativeWorkerRead(
     if (
       !selected ||
       !binding ||
-      binding.ownerPrincipalId !== principal ||
+      binding.ownerPrincipalId !== run.nativeOwnerPrincipalId ||
       binding.sessionId !== params.sessionId ||
       binding.executionNodeId !== (params.executionNodeId ?? 'local')
     )
@@ -126,7 +122,7 @@ export async function routeNativeWorkerRead(
     leaseId: binding.leaseId,
   };
   if (method !== Methods.NATIVE_SESSION_READ) {
-    const result = await routeNativeExecution(principal, method, {
+    const result = await routeNativeExecution(binding.ownerPrincipalId, method, {
       ...nativeParams,
       worker: target,
     });
@@ -134,7 +130,7 @@ export async function routeNativeWorkerRead(
     return result;
   }
   const result = (await routeNativeExecution(
-    principal,
+    binding.ownerPrincipalId,
     NATIVE_WORKER_READ,
     nativeParams,
   )) as NativeSessionReadResult;
@@ -143,7 +139,7 @@ export async function routeNativeWorkerRead(
     !result.scope ||
     result.scope.leaseId !== binding.leaseId ||
     result.session.workerLeaseId !== binding.leaseId ||
-    result.session.ownerPrincipalId !== principal ||
+    result.session.ownerPrincipalId !== binding.ownerPrincipalId ||
     result.session.id !== binding.sessionId ||
     result.session.executionNodeId !== binding.executionNodeId
   )

@@ -137,8 +137,12 @@ const { dispatchQueueAdd } = await import('../methods/dispatch/queue.js');
 const { runCreate, planRunCreation } = await import('../methods/run.js');
 const { runWithSessionOriginator } = await import('../security/work-originator.js');
 const queue = await import('../backlog/dispatch-queue.js');
-const asOwner = <T>(operation: () => T) =>
-  runWithSessionOriginator({ id: 'owner' } as Principal, operation);
+const owner: Principal = {
+  id: 'owner',
+  subject: { type: 'service', displayName: 'Owner' },
+  roles: [{ role: 'admin', scope: { kind: 'global' } }],
+};
+const asOwner = <T>(operation: () => T) => runWithSessionOriginator(owner, operation);
 const request = {
   flowType: 'review-pr' as const,
   project: 'farm',
