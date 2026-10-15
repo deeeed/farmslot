@@ -4,9 +4,12 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
-- Share the selected proof and raw-artifact display across review clients while preserving the full evidence inventory and recorded verdicts.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.15.2 - 2026-10-16
+
+- Share the selected proof and raw-artifact display across review clients while preserving the full evidence inventory and recorded verdicts.
+- Align the worker dependency set with Protocol 0.49.0 person-device sessions.
 
 ## 0.15.1 - 2026-10-15
 
