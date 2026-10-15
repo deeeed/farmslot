@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/agent-runtime",
-  "version": "0.22.5",
+  "version": "0.23.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -36,6 +36,10 @@
       "import": "./dist/native/*.js"
     },
     "./scripts/branch-update.mjs": "./scripts/branch-update.mjs",
+    "./scripts/git-diff.cjs": {
+      "types": "./scripts/git-diff.d.cts",
+      "default": "./scripts/git-diff.cjs"
+    },
     "./scripts/review-diff-scope.cjs": {
       "types": "./scripts/review-diff-scope.d.cts",
       "default": "./scripts/review-diff-scope.cjs"
@@ -96,6 +100,7 @@
     "scripts/**/*.mjs",
     "scripts/retained-recipe-attempt.d.cts",
     "scripts/execution-template-cli.mjs",
+    "scripts/git-diff.d.cts",
     "scripts/review-diff-scope.d.cts"
   ],
   "publishConfig": {

@@ -58,9 +58,9 @@ export async function nativeSessionRoute(
         'Worker launch settings are supplied by run dispatch',
       );
     if (params.worker !== undefined && NATIVE_WORKER_INPUT_METHODS.includes(method))
-      return await routeNativeWorkerInput(principal, method, params);
+      return await routeNativeWorkerInput(method, params);
     if (params.worker !== undefined && NATIVE_WORKER_READ_METHODS.includes(method))
-      return await routeNativeWorkerRead(principal, method, params);
+      return await routeNativeWorkerRead(method, params);
     if (method === Methods.NATIVE_SESSION_CATALOG)
       return await nativeCatalog(principal, allowWorkers);
     if (method === Methods.NATIVE_SESSION_LIST && params.executionNodeId === undefined) {

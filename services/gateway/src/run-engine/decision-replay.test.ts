@@ -6,6 +6,7 @@ import { FLOW_STEPS, type FlowType, type Run, type RunDecision } from '@farmslot
 import {
   canReplayCollisionDecision,
   findLatestResolvedDecision,
+  hasHeldPublicationApproval,
   isReplayableResolvedHumanGateDecision,
   latestResolvedHumanGateDecision,
   markResolvedHumanGateApprovalHeld,
@@ -238,4 +239,36 @@ test('a held approval is neither replayed nor seen by finalize; the next decisio
   assert.equal(latestResolvedHumanGateDecision([held], true), undefined);
   const again = approval('again', '2026-10-07T00:05:00Z');
   assert.equal(latestResolvedHumanGateDecision([held, again], true), again);
+});
+
+test('held approval cannot replay and only a later explicit action authorizes review recovery', () => {
+  const held: RunDecision = {
+    ...makeCollisionDecision([]),
+    type: 'engine_human_gate',
+    resolvedAction: 'approve-publish-unresolved',
+  };
+  markResolvedHumanGateApprovalHeld(held);
+  assert.equal(isReplayableResolvedHumanGateDecision(held), false);
+  const pending: RunDecision = {
+    ...held,
+    id: 'replacement',
+    resolvedAt: undefined,
+    resolvedAction: undefined,
+    context: undefined,
+  };
+  assert.equal(hasHeldPublicationApproval({ decisions: [held, pending] }), true);
+  assert.equal(
+    hasHeldPublicationApproval({
+      decisions: [held, { ...pending, resolvedAt: held.resolvedAt, resolvedAction: 'superseded' }],
+    }),
+    true,
+  );
+  for (const resolvedAction of ['request-review', 'continue-review-fix', 'approve-publish']) {
+    assert.equal(
+      hasHeldPublicationApproval({
+        decisions: [held, { ...pending, resolvedAt: held.resolvedAt, resolvedAction }],
+      }),
+      false,
+    );
+  }
 });

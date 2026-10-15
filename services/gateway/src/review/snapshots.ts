@@ -1,3 +1,4 @@
+import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import {
   agentRoleWindow,
   DEFAULT_BRANCH,
@@ -287,7 +288,7 @@ export async function captureCurrentReviewSnapshot(
     const numstat = await deps.exec(
       vars,
       immutableRange
-        ? `git diff --no-ext-diff --no-textconv --numstat ${capturedRange}`
+        ? `${GIT_DIFF_COMMAND} --numstat ${capturedRange}`
         : runSourceDiffNumstatCommand(baseSha, pathspecs),
       {
         timeout: 10_000,
@@ -301,7 +302,7 @@ export async function captureCurrentReviewSnapshot(
     const diff = await deps.exec(
       vars,
       immutableRange
-        ? `git diff --no-ext-diff --no-textconv ${capturedRange}`
+        ? `${GIT_DIFF_COMMAND} ${capturedRange}`
         : cappedRunSourceDiffCommand(baseSha, pathspecs),
       {
         timeout: 30_000,

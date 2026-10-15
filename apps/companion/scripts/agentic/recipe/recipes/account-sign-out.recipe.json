@@ -1,0 +1,38 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion local account sign-out",
+  "description": "Start on Settings, connected to a validation gateway with a service profile. The credential is not revoked; this device forgets its login. No person session is used.",
+  "workflow": {
+    "entry": "sign-out",
+    "nodes": {
+      "sign-out": {
+        "action": "ui.press",
+        "test_id": "account-sign-out",
+        "intent": "Forget this device login through the real account control.",
+        "next": "protocol"
+      },
+      "signed-out": {
+        "action": "ui.wait_for",
+        "text_contains": ["Signed out. Log in or pair to choose an account."],
+        "intent": "Show that explicit login or pairing is required.",
+        "next": "capture"
+      },
+      "protocol": {
+        "action": "command",
+        "cmd": "node scripts/agentic/cdp-eval.mjs --file scripts/agentic/probes/account-session-signed-out.js",
+        "intent": "Verify the live client lost its principal, HTTP authority and RPC transport.",
+        "next": "signed-out"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/account-signed-out.png",
+        "intent": "Record the signed-out device UI.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

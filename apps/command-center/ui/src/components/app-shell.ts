@@ -25,6 +25,7 @@ import type {
   TmuxWorkerSummary,
 } from '@farmslot/protocol';
 import {
+  ACCOUNT_SESSION_CONTROL,
   buildGatewayPairingQrPayload,
   Events,
   isTerminalRunStatus,
@@ -239,6 +240,7 @@ export class FarmApp extends LitElement {
   @state() private authSaving = false;
   @state() private authRememberMe = getDesktopConnection()?.rememberMe !== false;
   @state() private authSaveError = '';
+  @state() private signingOut = false;
   @state() private pairingOpen = false;
   @state() private pairingBusy = false;
   @state() private pairingProfileName = DEFAULT_PAIRING_PROFILE_NAME;
@@ -895,6 +897,36 @@ export class FarmApp extends LitElement {
     } finally {
       this.authSaving = false;
     }
+  }
+
+  private async signOut(): Promise<void> {
+    if (this.signingOut) return;
+    this.signingOut = true;
+    this.authSaveError = '';
+    try {
+      await gateway.signOut();
+      this.authSecret = '';
+      this.pairingOpen = false;
+      this.pairingQrDataUrl = '';
+      this.navigate('fleet');
+    } catch (error) {
+      this.authSaveError = error instanceof Error ? error.message : 'Unable to sign out.';
+    } finally {
+      this.signingOut = false;
+    }
+  }
+
+  private renderAccountControl() {
+    return html`<button
+        type="button"
+        data-testid="account-sign-out"
+        ?disabled=${this.signingOut}
+        title=${ACCOUNT_SESSION_CONTROL.description}
+        @click=${() => void this.signOut()}
+      >
+        ${ACCOUNT_SESSION_CONTROL.label}
+      </button>
+      ${this.authSaveError ? html`<p role="alert">${this.authSaveError}</p>` : nothing}`;
   }
 
   private openPairingPanel() {
@@ -1981,7 +2013,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
       <details class="native-connection">
         <summary>Farmslot · Gateway connection</summary>
         <p>${gateway.gatewayUrl}</p>
-        ${this.renderAuthScreen()}
+        ${this.renderAuthScreen()} ${this.renderAccountControl()}
       </details>
       <native-session-view></native-session-view>
     `;
@@ -1997,7 +2029,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
       return html`<p>
           This account has no workspace access. Ask your farm administrator to enroll it.
         </p>
-        ${this.renderAuthScreen()}`;
+        ${this.renderAuthScreen()} ${this.renderAccountControl()}`;
     }
     if (gateway.workspaceAccess === 'native') return this.renderNativeWorkspace();
     const activeRunCount = activeSidebarRuns(this.runs, Number.MAX_SAFE_INTEGER).length;
@@ -2093,6 +2125,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
           @connection-details=${() => this.openPairingPanel()}
         >
         </fleet-summary-bar>
+        ${this.renderAccountControl()}
         <global-filter-bar .slots=${this.fleetSlots}> </global-filter-bar>
         ${this.renderMainContent()}
       </div>

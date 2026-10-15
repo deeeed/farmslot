@@ -8,7 +8,7 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## 0.22.10 - 2026-10-15
 
-- Align the published dependency closure with protocol 0.46.0 and the merged runtime fixes.
+- Keep source and review diff identities stable across user Git settings; disable external diff and text conversion.
 
 ## 0.22.9 - 2026-10-15
 

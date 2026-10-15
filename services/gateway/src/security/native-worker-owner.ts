@@ -2,9 +2,22 @@ import type { Run } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
 
+import { isAdminPrincipal } from './authorization.js';
 import { loadCredentialStore } from './credential-store.js';
 import { nativeOwnerAssignedMachines } from './native-node.js';
-import { currentSessionOriginator } from './work-originator.js';
+import { currentSessionOriginator, currentSessionPrincipal } from './work-originator.js';
+
+function nativeControlOwner(expectedOwner?: string): string | undefined {
+  const originator = currentSessionOriginator();
+  if (originator.kind !== 'principal') return expectedOwner;
+  return originator.principalId;
+}
+
+function isAdminSupervisor(): boolean {
+  const principal = currentSessionPrincipal();
+  // Supervision authorizes the caller without adopting the runner's identity.
+  return principal?.subject.type === 'person' && isAdminPrincipal(principal);
+}
 
 export function requireNativeProfileOwner(principalId: string | undefined): string {
   const configured = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
@@ -18,8 +31,8 @@ export function requireNativeProfileOwner(principalId: string | undefined): stri
 
 /** Network requests use their authenticated principal; internal continuations need stored ownership. */
 export function resolveNativeWorkerOwner(expectedOwner?: string): string {
-  const originator = currentSessionOriginator();
-  const owner = originator.kind === 'principal' ? originator.principalId : expectedOwner;
+  if (expectedOwner && isAdminSupervisor()) return expectedOwner;
+  const owner = nativeControlOwner(expectedOwner);
   if (expectedOwner && owner !== expectedOwner)
     throw new GatewayMethodError('AUTH_FORBIDDEN', 'Native worker belongs to another principal');
   return requireNativeProfileOwner(owner);
@@ -27,8 +40,8 @@ export function resolveNativeWorkerOwner(expectedOwner?: string): string {
 
 /** Workspace workers may belong to an issued remote-node owner without owning the local profile. */
 export function resolveReviewWorkspaceOwner(expectedOwner?: string): string {
-  const originator = currentSessionOriginator();
-  const owner = originator.kind === 'principal' ? originator.principalId : expectedOwner;
+  if (expectedOwner && isAdminSupervisor()) return expectedOwner;
+  const owner = nativeControlOwner(expectedOwner);
   if (!owner || (expectedOwner && owner !== expectedOwner)) {
     throw new GatewayMethodError('AUTH_FORBIDDEN', 'Workspace review belongs to another principal');
   }

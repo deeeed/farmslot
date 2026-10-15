@@ -8,7 +8,7 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 ## 0.6.9 - 2026-10-15
 
-- Align the published dependency closure with protocol 0.46.0 and the merged runtime fixes.
+- Keep source and review diff identities stable across user Git settings; disable external diff and text conversion.
 
 ## 0.6.8 - 2026-10-15
 

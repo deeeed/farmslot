@@ -1,0 +1,17 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Admin person supervises a service-owned review",
+  "description": "Connect an admin person and create a service-owned review workspace on an isolated gateway. Read its frozen Git diff through the actual Companion client and confirm the native execution owner stays the service. The pre-fix ownership guard must fail this same read. Gate resolution and pinned worker attachment/control are covered by typed gateway tests.",
+  "workflow": {
+    "entry": "supervise",
+    "nodes": {
+      "supervise": {
+        "action": "command",
+        "cmd": "node scripts/agentic/cdp-eval.mjs --file scripts/agentic/probes/admin-review-supervision.js",
+        "intent": "Read a service-owned review as an admin person and preserve its native owner.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

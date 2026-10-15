@@ -81,6 +81,12 @@ Tests use credentials issued into an isolated test home, never a person's profil
 
 ## Recover admin access
 
+An authenticated person with `admin/global` may view and operate every run and review
+workspace, including gates and pinned worker sessions created by automation. The run's
+native execution owner, node assignment, session generation and lease stay unchanged;
+the gateway routes native operations using that recorded owner. Service, node and
+non-admin person credentials do not gain cross-owner access through this rule.
+
 Keep an active admin while changing credentials. If all admin credentials are
 lost, stop every gateway sharing that `FARMSLOT_HOME`, then run the supported
 offline credential command as the owner of that home:

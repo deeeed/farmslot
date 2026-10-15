@@ -4,8 +4,9 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
-## 0.22.5 - 2026-10-15
+## 0.23.0 - 2026-10-15
 
+- Keep source and review diff identities stable across user Git settings; disable external diff and text conversion.
 - Recover a stopped native host whose first process census failed before any session started, preserving the unmatched marker in quarantine and retaining all journals.
 
 ## 0.22.4 - 2026-10-15
