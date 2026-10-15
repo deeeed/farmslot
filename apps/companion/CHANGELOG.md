@@ -5,6 +5,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 ## Unreleased
 
 - Show and submit the resolved QA profile, require a choice for ambiguous farms, and retain admitted profile identity in run detail.
+- Direct device setup to person pairing instead of build-time gateway token presets.
 
 - Reuse the shared criterion comparison model and synchronized Before/After zoom in the existing evidence workspace and player.
 
