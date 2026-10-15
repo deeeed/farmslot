@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Disable native startup hooks for source-read-only workers before session initialization; keep ordinary conversation settings and source cleanup checks intact.
 
 ## 0.23.0 - 2026-10-15
 
