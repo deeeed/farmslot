@@ -5,6 +5,7 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 ## Unreleased
 
 - Open an available retained report with a stale-review warning while keeping report-byte integrity and evidence admission checks.
+- Replace `PlatformAdapter` with `ProjectRuntime` and `AdapterActions` with `ActionCatalog`.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

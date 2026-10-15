@@ -10,7 +10,7 @@ import { pathToFileURL } from 'node:url';
 import {
   ADAPTER_SDK_VERSION,
   createAdapterRegistry,
-  type PlatformAdapter,
+  type ProjectRuntime,
 } from '@farmslot/adapter-sdk';
 
 import {
@@ -119,7 +119,7 @@ function library(
   return root;
 }
 
-function builtin(id: string): PlatformAdapter {
+function builtin(id: string): ProjectRuntime {
   return {
     id,
     sdkVersion: ADAPTER_SDK_VERSION,
@@ -146,7 +146,7 @@ function builtin(id: string): PlatformAdapter {
     },
     runtimeContext: { forbiddenFields: [] },
     launch: async () => 0,
-  } as PlatformAdapter;
+  } as ProjectRuntime;
 }
 
 async function refusal(id: string): Promise<{ code: string; message: string }> {
@@ -207,6 +207,28 @@ describe('adapter plugins', () => {
     assert.equal(imports().length, 2);
   });
 
+  test('a declared partial child inherits parent actions and doctor checks once', async () => {
+    const root = library('partial', {
+      echo: { source: pluginSource('echo') },
+      child: {
+        source: "export const adapter = { id: 'child', sdkVersion: 1 };",
+        extends: 'echo',
+      },
+    });
+    process.env.RECIPE_LIBRARY_PATH = `partial=${root}`;
+    await ensureAdapterLoaded('child');
+    const child = harnessAdapter('child');
+    assert.deepEqual(child.actions.manifestPaths?.(), ['/manifests/echo.json']);
+    assert.deepEqual(
+      (await child.actions.adapters?.())?.map((handler) => handler.action),
+      ['echo.ping'],
+    );
+    assert.deepEqual(
+      (await child.doctor?.('/t'))?.map((check) => check.id),
+      ['echo-ready'],
+    );
+  });
+
   test('a child replaces the parent members it declares', () => {
     const parent = builtin('web');
     const child = {
@@ -214,7 +236,7 @@ describe('adapter plugins', () => {
       sdkVersion: ADAPTER_SDK_VERSION,
       headless: false,
       hints: { launch: 'shop', relaunch: 'shop', runtimeProbeRecovery: () => 'shop' },
-    } as unknown as PlatformAdapter;
+    } satisfies Partial<ProjectRuntime>;
     const composed = composeAdapter(parent, child);
     assert.equal(composed.id, 'shop');
     assert.equal(composed.headless, false);
@@ -230,17 +252,17 @@ describe('adapter plugins', () => {
     const parent = {
       ...builtin('web'),
       readiness: { liveChecks, readyIndicator: () => 'ready', statusRuntime: true },
-    } as PlatformAdapter;
+    } as ProjectRuntime;
     const child = {
       id: 'shop',
       sdkVersion: ADAPTER_SDK_VERSION,
       readiness: { readyIndicator: () => 'OK' },
-    } as unknown as PlatformAdapter;
+    } satisfies Partial<ProjectRuntime>;
     const composed = composeAdapter(parent, child);
     assert.equal(composed.readiness?.readyIndicator?.([]), 'OK');
     assert.equal(composed.readiness?.liveChecks, liveChecks);
     assert.equal(composed.readiness?.statusRuntime, true);
-    const bare = { id: 'bare', sdkVersion: ADAPTER_SDK_VERSION } as unknown as PlatformAdapter;
+    const bare = { id: 'bare', sdkVersion: ADAPTER_SDK_VERSION } satisfies Partial<ProjectRuntime>;
     assert.equal(composeAdapter(parent, bare).readiness?.liveChecks, liveChecks);
     assert.equal(composeAdapter(builtin('web'), bare).readiness, undefined);
   });
@@ -248,7 +270,7 @@ describe('adapter plugins', () => {
   test('the host adopts a plugin before it registers', async () => {
     process.env.RECIPE_LIBRARY_PATH = `plug=${library('plug', { echo: { source: pluginSource('echo') } })}`;
     await ensureAdapterLoaded('echo', {
-      adopt: (adapter) => ({ ...adapter, hostOnly: true }) as PlatformAdapter,
+      adopt: (adapter) => ({ ...adapter, hostOnly: true }) as ProjectRuntime,
     });
     assert.equal((harnessAdapter('echo') as unknown as { hostOnly: boolean }).hostOnly, true);
   });
@@ -715,8 +737,8 @@ describe('adapter plugins', () => {
 
   test("live scripts: a child adapter finds its parents' scripts, child first, then shared", async () => {
     harnessAdapters().register(builtin('web-dapp'));
-    harnessAdapters().register({ ...builtin('terminal'), extends: 'web-dapp' } as PlatformAdapter);
-    harnessAdapters().register({ ...builtin('kiosk'), extends: 'terminal' } as PlatformAdapter);
+    harnessAdapters().register({ ...builtin('terminal'), extends: 'web-dapp' } as ProjectRuntime);
+    harnessAdapters().register({ ...builtin('kiosk'), extends: 'terminal' } as ProjectRuntime);
     const root = tempRoot('recipe-cli-live-chain-');
     const env = { RECIPE_ACTION_SOURCE_MAP: JSON.stringify({ 'team.probe': root }) };
     const script = (platform: string) => {
@@ -744,7 +766,7 @@ describe('adapter plugins', () => {
 
   test("live scripts: every one of a child's files comes before its parent's", async () => {
     harnessAdapters().register(builtin('echo'));
-    harnessAdapters().register({ ...builtin('echo-child'), extends: 'echo' } as PlatformAdapter);
+    harnessAdapters().register({ ...builtin('echo-child'), extends: 'echo' } as ProjectRuntime);
     const action = 'metamask.app.launch';
     const write = (root: string, file: string) => {
       fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
@@ -785,8 +807,8 @@ describe('adapter plugins', () => {
   });
 
   test('live scripts: an extends cycle between registered adapters ends', async () => {
-    harnessAdapters().register({ ...builtin('loop-a'), extends: 'loop-b' } as PlatformAdapter);
-    harnessAdapters().register({ ...builtin('loop-b'), extends: 'loop-a' } as PlatformAdapter);
+    harnessAdapters().register({ ...builtin('loop-a'), extends: 'loop-b' } as ProjectRuntime);
+    harnessAdapters().register({ ...builtin('loop-b'), extends: 'loop-a' } as ProjectRuntime);
     const root = tempRoot('recipe-cli-live-cycle-');
     const env = { RECIPE_ACTION_SOURCE_MAP: JSON.stringify({ 'team.probe': root }) };
     assert.equal(await resolveLiveAdapter('loop-a', 'team.probe', 'shop', env), null);

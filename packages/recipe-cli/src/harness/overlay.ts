@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { AdapterHarnessVerify, PlatformAdapter } from '@farmslot/adapter-sdk';
+import type { AdapterHarnessVerify, ProjectRuntime } from '@farmslot/adapter-sdk';
 
 import {
   adapterDetectNext,
@@ -64,7 +64,7 @@ Options:
   -- <args>                            Forward the rest verbatim to the underlying script.`;
 }
 
-function failureHint(surface: PlatformAdapter, action: HarnessAction): string {
+function failureHint(surface: ProjectRuntime, action: HarnessAction): string {
   const restart = surface.harness.restart;
   if (!restart) {
     if (action === 'verify') {
@@ -241,7 +241,7 @@ function installedRunnerSource(target: string, adapter: string): string | undefi
 // verify is whatever the platform dispatches: a leaf, a delegate, runner-owned
 // code in this process, or an error to report.
 function resolveHarnessDispatch(
-  surface: PlatformAdapter,
+  surface: ProjectRuntime,
   action: HarnessAction,
   target: string,
 ): AdapterHarnessVerify {
@@ -481,7 +481,7 @@ export async function handleHarness(
 // adapter code) so their --json envelope and human lines cannot drift.
 function reportHarnessOutcome(
   action: HarnessAction,
-  surface: PlatformAdapter,
+  surface: ProjectRuntime,
   target: string,
   exitCode: number,
   autoDetected: boolean,

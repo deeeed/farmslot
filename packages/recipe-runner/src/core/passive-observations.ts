@@ -2,7 +2,7 @@ import type { RecipeActionManifestDocument, UiObserverRef } from '@farmslot/prot
 
 import { verifyExecutableSource } from './trust.js';
 import type {
-  ActionAdapter,
+  ActionHandler,
   ActionResult,
   RecipeLogger,
   RecipeObservationResult,
@@ -96,8 +96,8 @@ export async function runPassiveObservers({
 }: {
   action: string;
   node: Record<string, unknown>;
-  adapter: ActionAdapter;
-  context: Parameters<ActionAdapter['execute']>[1];
+  adapter: ActionHandler;
+  context: Parameters<ActionHandler['execute']>[1];
   logger: RecipeLogger;
   refs: readonly UiObserverRef[];
 }): Promise<RecipeObservationResult> {

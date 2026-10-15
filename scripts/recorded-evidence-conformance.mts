@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   createDefaultRecipeEngine,
-  type PlatformAdapter,
+  type ProjectRuntime,
   ADAPTER_SDK_VERSION,
   type RecipeCatalog,
   type VideoRecorderStartRequest,
@@ -118,7 +118,7 @@ try {
   page = await CdpWebPage.connectToTarget(target);
   await page.waitForDocumentReady({ expectedUrl: url });
   const activePage = page;
-  const runtime: PlatformAdapter = {
+  const runtime: ProjectRuntime = {
     id: 'browser',
     sdkVersion: ADAPTER_SDK_VERSION,
     resolveSlotPorts() {},

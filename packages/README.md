@@ -7,7 +7,7 @@
 | `protocol/`      | Shared Farmslot API, event, run, slot, recipe, manifest, and artifact contracts.           |
 | `recipe-runner/` | Generic Recipe Protocol v1 runner, adapters, CLI runner support, and artifact writers.     |
 | `recipe-cli/`    | The `farmslot-recipe` command: run, validate, and library-wide recipe/action discovery.    |
-| `adapter-sdk/`   | The platform adapter contract: `PlatformAdapter`, `defineAdapter`, the adapter registry.   |
+| `adapter-sdk/`   | The platform adapter contract: `ProjectRuntime`, `defineAdapter`, the adapter registry.    |
 | `adapter-node/`  | Headless Node adapter: `createNodeAdapter`, the dependency check, tsx workspace paths.     |
 | `adapter-web/`   | Web platform pieces: browser resolve/launch, CDP-port ownership, extension loading, focus. |
 | `adapter-rn/`    | React Native (Expo) adapter: scaffold, doctor, Metro bridge and native UI transports.      |

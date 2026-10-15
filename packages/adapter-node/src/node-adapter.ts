@@ -7,14 +7,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  type AdapterActions,
+  type ActionCatalog,
   type AdapterDetect,
   type AdapterHarness,
   type AdapterHints,
   type AdapterRun,
   type AdapterRuntimeContextSpec,
   defineAdapter,
-  type PlatformAdapter,
+  type ProjectRuntime,
 } from '@farmslot/adapter-sdk';
 import { depsCheck } from '@farmslot/recipe-runner/runtime/deps-readiness';
 
@@ -75,7 +75,7 @@ export interface NodeAdapterConfig {
   /** Registry key and the value of `--adapter`. */
   id: string;
   hints: AdapterHints;
-  actions: AdapterActions;
+  actions: ActionCatalog;
   harness: AdapterHarness;
   detect?: AdapterDetect;
   /** Host run members. A host `dependencyBlock` replaces the built-in check. */
@@ -95,8 +95,8 @@ export interface NodeAdapterConfig {
   runtimeContext?: AdapterRuntimeContextSpec;
 }
 
-/** A headless `PlatformAdapter`; spread it to add host members. */
-export function createNodeAdapter(config: NodeAdapterConfig): PlatformAdapter {
+/** A headless `ProjectRuntime`; spread it to add host members. */
+export function createNodeAdapter(config: NodeAdapterConfig): ProjectRuntime {
   const { id, hints } = config;
   const installCommand = config.installCommand ?? yarnInstallCommand;
   const wording: NodeAdapterWording = {
@@ -124,7 +124,7 @@ export function createNodeAdapter(config: NodeAdapterConfig): PlatformAdapter {
     });
   const workspacePackages = config.workspacePackages;
 
-  return defineAdapter<PlatformAdapter>({
+  return defineAdapter<ProjectRuntime>({
     id,
     sdkVersion: 1,
     headless: true,

@@ -11,8 +11,8 @@ import {
   uiScrollToRequestSummary,
 } from '../core/scroll-to.js';
 import type {
-  ActionAdapter,
   ActionExecutionContext,
+  ActionHandler,
   ActionResult,
   RecipeActionPhase,
   RecipeObservationResult,
@@ -86,7 +86,7 @@ export interface CreateStandardUiAdaptersOptions {
 
 export function createStandardUiAdapters(
   options: CreateStandardUiAdaptersOptions,
-): ActionAdapter[] {
+): ActionHandler[] {
   const requestedActions = options.actions ? new Set(options.actions) : null;
   return STANDARD_UI_ACTIONS.filter(
     (action) => !requestedActions || requestedActions.has(action),

@@ -5,10 +5,10 @@ import {
   ADAPTER_SDK_VERSION,
   createAdapterRegistry,
   defineAdapter,
-  type PlatformAdapter,
+  type ProjectRuntime,
 } from '../src/index.js';
 
-function adapter(id: string, extra: Partial<PlatformAdapter> = {}): PlatformAdapter {
+function adapter(id: string, extra: Partial<ProjectRuntime> = {}): ProjectRuntime {
   return {
     id,
     sdkVersion: ADAPTER_SDK_VERSION,
@@ -95,7 +95,7 @@ test('refuses an adapter written for another SDK version or without an id', () =
 });
 
 test('defineAdapter keeps the host-specific members of an extended adapter type', () => {
-  interface HostAdapter extends PlatformAdapter {
+  interface HostAdapter extends ProjectRuntime {
     fixtures: { operations: readonly string[] };
   }
   const registry = createAdapterRegistry<HostAdapter>();
@@ -138,7 +138,7 @@ test('UI overlay declarations cannot infer built-in mode from missing leaves', (
   const complete = adapter('overlay', { headless: false });
   if (complete.harness.kind === 'built-in') throw new Error('Expected the overlay fixture');
   for (const kind of [undefined, 'overlay'] as const) {
-    const runtime: PlatformAdapter = { ...complete, harness: { ...complete.harness, kind } };
+    const runtime: ProjectRuntime = { ...complete, harness: { ...complete.harness, kind } };
     assert.equal(defineAdapter(runtime), runtime);
     for (const missing of ['install', 'cleanup'] as const) {
       const harness: Record<string, unknown> = { ...runtime.harness };
@@ -176,8 +176,8 @@ test('an adapter with its own run options and browser record fits a plain regist
     version?: string;
   }
   const prepared: Array<boolean | undefined> = [];
-  const web = defineAdapter<PlatformAdapter<WebPlatform, WebBrowser>>({
-    ...(adapter('web') as PlatformAdapter<WebPlatform, WebBrowser>),
+  const web = defineAdapter<ProjectRuntime<WebPlatform, WebBrowser>>({
+    ...(adapter('web') as ProjectRuntime<WebPlatform, WebBrowser>),
     run: {
       platformOptions: (options) => ({ reuseBrowser: options.reuseBrowser === true }),
       async prepareRuntime(_root, options) {

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## Unreleased
 
+- Consume the plain `ProjectRuntime` and `ActionCatalog` contracts.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.10.4 - 2026-10-15

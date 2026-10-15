@@ -23,6 +23,7 @@ async function linkWorkspacePackage(tempRoot, packageName, packagePath) {
 
 async function main() {
   run('yarn', ['workspace', '@farmslot/recipe-runner', 'build']);
+  run('yarn', ['workspace', '@farmslot/adapter-sdk', 'build']);
   run('yarn', ['workspace', '@farmslot/skills', 'build']);
 
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'farmslot-package-consumer-'));
@@ -30,6 +31,7 @@ async function main() {
     await mkdir(path.join(tempRoot, 'src'), { recursive: true });
     await linkWorkspacePackage(tempRoot, 'protocol', 'packages/protocol');
     await linkWorkspacePackage(tempRoot, 'recipe-runner', 'packages/recipe-runner');
+    await linkWorkspacePackage(tempRoot, 'adapter-sdk', 'packages/adapter-sdk');
     await linkWorkspacePackage(tempRoot, 'skills', 'packages/skills');
 
     await writeFile(
@@ -53,6 +55,8 @@ async function main() {
             module: 'NodeNext',
             moduleResolution: 'NodeNext',
             strict: true,
+            types: ['node'],
+            typeRoots: [path.join(repoRoot, 'node_modules/@types')],
             skipLibCheck: false,
             noEmit: true,
           },
@@ -79,7 +83,7 @@ import {
   createRecipeRunner,
   createStandardCoreAdapters,
   createStandardUiAdapters,
-  type ActionAdapter,
+  type ActionHandler,
 } from '@farmslot/recipe-runner';
 import { runRecipeRunnerCli } from '@farmslot/recipe-runner/cli';
 import { validateRecipeCliInput } from '@farmslot/recipe-runner/cli/support';
@@ -87,6 +91,18 @@ import { JsonArtifactWriter } from '@farmslot/recipe-runner/writers';
 import { dataTestId, type UiScreenshotCapture } from '@farmslot/recipe-runner/runtime/cdp';
 import { createReactNativeBridgeUiTransport } from '@farmslot/recipe-runner/runtime/react-native-bridge';
 import { FARMSLOT_SKILL_NAMES } from '@farmslot/skills';
+import type { ProjectRuntime, ActionCatalog } from '@farmslot/adapter-sdk';
+// @ts-expect-error The former runtime contract export is removed.
+import type { PlatformAdapter } from '@farmslot/adapter-sdk';
+// @ts-expect-error The former catalog contract export is removed.
+import type { AdapterActions } from '@farmslot/adapter-sdk';
+// @ts-expect-error The former handler contract export is removed.
+import type { ActionAdapter } from '@farmslot/recipe-runner';
+// @ts-expect-error The former handler constructor export is removed.
+import { defineActionAdapter } from '@farmslot/recipe-runner';
+export type RemovedContracts = [PlatformAdapter, AdapterActions, ActionAdapter, typeof defineActionAdapter];
+const runtimeCatalogMatches: ProjectRuntime['actions'] extends ActionCatalog ? true : never = true;
+void runtimeCatalogMatches;
 
 const result = validateRecipeDocument({
   schema_version: RECIPE_PROTOCOL_SCHEMA_VERSION,
@@ -102,7 +118,7 @@ const result = validateRecipeDocument({
 
 const runMethod: string = RunMethods.get;
 const maybeRun: Run | undefined = undefined;
-const adapters: ActionAdapter[] = createStandardCoreAdapters({ actions: ['wait'] });
+const adapters: ActionHandler[] = createStandardCoreAdapters({ actions: ['wait'] });
 const screenshot: UiScreenshotCapture = { data: new Uint8Array([0]) };
 
 void result;
@@ -128,7 +144,8 @@ void FARMSLOT_SKILL_NAMES;
       `import { validateRecipeDocument } from '@farmslot/protocol';
 import { RunMethods } from '@farmslot/protocol/rpc/run';
 import { COMMAND_CENTER_SURFACES } from '@farmslot/protocol/surfaces/command-center';
-import { createStandardCoreAdapters } from '@farmslot/recipe-runner';
+import * as recipeRunner from '@farmslot/recipe-runner';
+import { createStandardCoreAdapters, defineActionHandler } from '@farmslot/recipe-runner';
 import { runRecipeRunnerCli } from '@farmslot/recipe-runner/cli';
 import { dataTestId } from '@farmslot/recipe-runner/runtime/cdp';
 import { FARMSLOT_SKILL_NAMES } from '@farmslot/skills';
@@ -136,7 +153,9 @@ import { FARMSLOT_SKILL_NAMES } from '@farmslot/skills';
 if (validateRecipeDocument({}).status !== 'invalid') throw new Error('recipe validator smoke failed');
 if (RunMethods.get !== 'run.get') throw new Error('run RPC smoke failed');
 if (!COMMAND_CENTER_SURFACES.length) throw new Error('surface registry smoke failed');
-if (!createStandardCoreAdapters({ actions: ['wait'] }).length) throw new Error('harness root smoke failed');
+const handler = createStandardCoreAdapters({ actions: ['wait'] })[0];
+if (!handler || defineActionHandler(handler) !== handler) throw new Error('handler constructor smoke failed');
+if ('defineActionAdapter' in recipeRunner) throw new Error('retired constructor export remains');
 if (typeof runRecipeRunnerCli !== 'function') throw new Error('harness cli smoke failed');
 if (dataTestId('x') !== '[data-testid="x"]') throw new Error('harness cdp smoke failed');
 if (!FARMSLOT_SKILL_NAMES.includes('recipe-cook')) throw new Error('skills import smoke failed');

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- Replace `ActionAdapter` with `ActionHandler` and `defineActionAdapter` with `defineActionHandler`.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.36.2 - 2026-10-15

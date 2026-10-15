@@ -9,7 +9,7 @@ import {
   type RecipeSourceProvenance,
 } from '@farmslot/protocol';
 import {
-  type ActionAdapter,
+  type ActionHandler,
   type ActionResult,
   createRecipeRunner,
   createStandardCoreAdapters,
@@ -30,7 +30,7 @@ import {
   type ConsoleClassifier,
   createDefaultConsoleClassifier,
 } from './diagnostics.js';
-import type { CommandOptions, PlatformAdapter, RecipeNodeEvent } from './types.js';
+import type { CommandOptions, ProjectRuntime, RecipeNodeEvent } from './types.js';
 
 /** Where one resolved action came from. */
 export interface ActionCapabilitySource {
@@ -69,7 +69,7 @@ export interface RecipeCatalog {
     action: string,
     source: ActionCapabilitySource | undefined,
     options: RecipeRunnerOptions<unknown>,
-  ): Promise<ActionAdapter | undefined>;
+  ): Promise<ActionHandler | undefined>;
   /** The execution capabilities the host enforces for a bundled action. */
   actionCapabilities(action: string): readonly RecipeExecutionCapability[];
 }
@@ -135,7 +135,7 @@ export interface RecipeEngine<
 }
 
 export interface DefaultRecipeEngineOptions {
-  runtime: PlatformAdapter;
+  runtime: ProjectRuntime;
   catalog: RecipeCatalog;
   runnerIncludes?: readonly string[];
   console?: ConsoleClassifier<ConsoleAllowlist>;
@@ -180,7 +180,7 @@ export function createDefaultRecipeEngine(options: DefaultRecipeEngineOptions): 
         trust: 'unknown' as const,
         name: runtime.id,
       };
-      const bindRuntime = (entries: ActionAdapter[]) =>
+      const bindRuntime = (entries: ActionHandler[]) =>
         entries.map((entry) => ({
           ...entry,
           source: entry.source ?? runtimeSource,
@@ -227,7 +227,7 @@ export function createDefaultRecipeEngine(options: DefaultRecipeEngineOptions): 
                       },
                     }
                   : {}),
-              }) satisfies ActionAdapter,
+              }) satisfies ActionHandler,
           )
         : [];
       const lifecycle = runtime.actions.lifecycle ? await runtime.actions.lifecycle([]) : [];
@@ -269,7 +269,7 @@ export function createDefaultRecipeEngine(options: DefaultRecipeEngineOptions): 
                   },
                 }
               : {}),
-          }) satisfies ActionAdapter,
+          }) satisfies ActionHandler,
       );
       const logger = runnerOptions.quietStdout ? new console.Console(process.stderr) : console;
       const videoRecorder = await runtime.recording?.videoRecorder?.();

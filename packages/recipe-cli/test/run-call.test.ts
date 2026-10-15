@@ -13,7 +13,7 @@ import {
   ADAPTER_SDK_VERSION,
   createAdapterRegistry,
   type NetworkCaptureBackend,
-  type PlatformAdapter,
+  type ProjectRuntime,
   type RecipeNodeEvent,
 } from '@farmslot/adapter-sdk';
 import {
@@ -21,8 +21,8 @@ import {
   validateRecipeActionManifestDocument,
 } from '@farmslot/protocol';
 import {
-  type ActionAdapter,
   type ActionExecutionContext,
+  type ActionHandler,
   createRecipeRunner,
   createStandardCoreAdapters,
   type RecipeRecordingOptions,
@@ -193,7 +193,7 @@ function newCalls(): Calls {
   };
 }
 
-const pingAdapter: ActionAdapter = {
+const pingAdapter: ActionHandler = {
   action: 'shop.ping',
   source: { kind: 'bundled', trust: 'trusted', name: 'shop' },
   async execute(node, context) {
@@ -279,7 +279,7 @@ function shopEngine(
                 source: { kind: 'bundled', trust: 'trusted', name: 'shop' },
                 execute: (node: Record<string, unknown>, context: ActionExecutionContext) =>
                   runNetworkCaptureAction(adapter, node, context),
-              } satisfies ActionAdapter,
+              } satisfies ActionHandler,
             ]
           : []),
         ...(manifest.actions['app.hud']
@@ -288,7 +288,7 @@ function shopEngine(
                 action: 'app.hud',
                 source: { kind: 'bundled', trust: 'trusted', name: 'shop' },
                 execute: () => Promise.resolve({ output: { hud: false, cleared: true } }),
-              } satisfies ActionAdapter,
+              } satisfies ActionHandler,
             ]
           : []),
       ].map((entry) => ({
@@ -339,8 +339,8 @@ function shopEngine(
 function shopAdapter(
   id: string,
   calls: Calls,
-  extra: Partial<PlatformAdapter> = {},
-): PlatformAdapter {
+  extra: Partial<ProjectRuntime> = {},
+): ProjectRuntime {
   return {
     id,
     sdkVersion: ADAPTER_SDK_VERSION,
@@ -386,7 +386,7 @@ function shopAdapter(
 }
 
 // `web` has a dev server, a device pin, run hooks and observation.
-function webAdapter(calls: Calls): PlatformAdapter {
+function webAdapter(calls: Calls): ProjectRuntime {
   const backend: NetworkCaptureBackend = {
     async start(params) {
       calls.networkStarts.push(params);

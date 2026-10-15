@@ -7,7 +7,7 @@ title: Adapter SDK
 `@farmslot/adapter-sdk` defines the contract a recipe harness drives a platform through. A platform adapter owns everything one target kind needs, so the harness commands (`launch`, `doctor`, `logs`, `run`, `install`, `verify`, `cleanup`) never branch on the adapter id.
 
 ```ts
-import { createAdapterRegistry, defineAdapter, type PlatformAdapter } from '@farmslot/adapter-sdk';
+import { createAdapterRegistry, defineAdapter, type ProjectRuntime } from '@farmslot/adapter-sdk';
 
 export const web = defineAdapter({
   id: 'web',
@@ -19,7 +19,7 @@ export const web = defineAdapter({
   // sourceFingerprint
 });
 
-const registry = createAdapterRegistry<PlatformAdapter>();
+const registry = createAdapterRegistry<ProjectRuntime>();
 registry.register(web);
 ```
 
@@ -53,8 +53,8 @@ registry.register(web);
 
 ## Rules
 
-- A host extends `PlatformAdapter` with its own members and types its registry with that type.
-- `PlatformAdapter<TPlatform, TBrowser>` types the platform's own run options and browser record. `run` members are methods, so such an adapter still registers in a registry of plain `PlatformAdapter`.
+- A host extends `ProjectRuntime` with its own members and types its registry with that type.
+- `ProjectRuntime<TPlatform, TBrowser>` types the platform's own run options and browser record. `run` members are methods, so such an adapter still registers in a registry of plain `ProjectRuntime`.
 - `register` refuses a duplicate id, an empty id, and any `sdkVersion` other than `ADAPTER_SDK_VERSION`.
 - A behavior one platform needs is an optional member, not a command branch.
 - Detection: any adapter's remote match beats any adapter's file match; within a pass, registration order decides.

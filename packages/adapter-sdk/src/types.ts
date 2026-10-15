@@ -8,8 +8,8 @@ import type {
   RecipeValidationFinding,
 } from '@farmslot/protocol';
 import type {
-  ActionAdapter,
   ActionExecutionContext,
+  ActionHandler,
   RecipeLibrarySource,
   RecordingTarget,
   RecordingTargetContext,
@@ -26,7 +26,7 @@ export type AdapterSdkVersion = typeof ADAPTER_SDK_VERSION;
 
 // TPlatform: the run options this platform adds (`run.platformOptions`).
 // TBrowser: the browser record a run drove (`run.launchedBrowser`).
-export interface PlatformAdapter<
+export interface ProjectRuntime<
   TPlatform extends object = object,
   TBrowser extends AdapterBrowser = AdapterBrowser,
 > {
@@ -55,7 +55,7 @@ export interface PlatformAdapter<
   appLogSource(target: string): AdapterLogSource | null;
   hints: AdapterHints;
   // The platform's action set: what the runner registers and how it executes.
-  actions: AdapterActions;
+  actions: ActionCatalog;
   // `install`, `verify` and `cleanup`.
   harness: AdapterHarness;
   // What the platform records in the checkout's agentic-runtime.json.
@@ -426,7 +426,7 @@ export interface AdapterRunPrepareContext {
 }
 
 // Members are methods so an adapter with its own TPlatform/TBrowser still fits
-// a registry of `PlatformAdapter`.
+// a registry of `ProjectRuntime`.
 export interface AdapterRun<
   TPlatform extends object = object,
   TBrowser extends AdapterBrowser = AdapterBrowser,
@@ -490,7 +490,7 @@ export interface AdapterHints {
   runtimeProbeRecovery(target: string): string;
 }
 
-export interface AdapterActions {
+export interface ActionCatalog {
   // The bundled action manifest.
   manifestPath(): string;
   // Every action manifest the platform declares, in order: an adapter that
@@ -498,7 +498,7 @@ export interface AdapterActions {
   manifestPaths?(): readonly string[];
   // Action implementations the platform ships in code, registered for the
   // actions its manifests declare instead of a library's live adapter scripts.
-  adapters?(): Promise<ActionAdapter[]>;
+  adapters?(): Promise<ActionHandler[]>;
   // Semantic actions this platform bundles beyond the ones every platform
   // bundles. Any other declared action must come from a live adapter script.
   semantic: readonly string[];
@@ -514,9 +514,9 @@ export interface AdapterActions {
   // The ui.* transport. Absent: the platform is headless and refuses ui.* actions.
   ui?(harness: AdapterUiHarness, options: { hudPolicy: 'auto' | 'show' }): AdapterUiTransport;
   // Wraps every registered action adapter.
-  wrap?(adapters: ActionAdapter[]): Promise<ActionAdapter[]>;
+  wrap?(adapters: ActionHandler[]): Promise<ActionHandler[]>;
   // Wraps the app.lifecycle adapters.
-  lifecycle?(adapters: ActionAdapter[]): Promise<ActionAdapter[]>;
+  lifecycle?(adapters: ActionHandler[]): Promise<ActionHandler[]>;
   // Platform checks on one recipe node's inputs.
   inputFindings?(nodeId: string, node: Record<string, unknown>): RecipeValidationFinding[];
 }

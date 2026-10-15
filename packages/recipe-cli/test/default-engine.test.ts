@@ -8,13 +8,13 @@ import {
   ADAPTER_SDK_VERSION,
   createAdapterRegistry,
   createDefaultRecipeEngine,
-  type PlatformAdapter,
+  type ProjectRuntime,
 } from '@farmslot/adapter-sdk';
 import {
   RECIPE_ACTION_MANIFEST_SCHEMA_URL,
   type RecipeActionManifestDocument,
 } from '@farmslot/protocol';
-import { type ActionAdapter, RecipeTrustError } from '@farmslot/recipe-runner';
+import { type ActionHandler, RecipeTrustError } from '@farmslot/recipe-runner';
 
 import { configureHarnessAdapters } from '../src/harness/adapters.js';
 import { createRuntimeRecipeCatalog } from '../src/harness/catalog.js';
@@ -41,7 +41,7 @@ const recipe = (nodes: Record<string, unknown>) => ({
 function setup(
   t: TestContext,
   actions: RecipeActionManifestDocument['actions'],
-  coded: ActionAdapter[] = [],
+  coded: ActionHandler[] = [],
 ) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'default-recipe-engine-'));
   t.after(() => {
@@ -54,7 +54,7 @@ function setup(
     manifestPath,
     JSON.stringify({ $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL, actions }),
   );
-  const runtime: PlatformAdapter = {
+  const runtime: ProjectRuntime = {
     id: 'api',
     sdkVersion: ADAPTER_SDK_VERSION,
     headless: true,
@@ -353,7 +353,7 @@ test('read-only preflight checks provider policy without publishing execution au
 });
 
 test('composed action precedence preserves shadows and actual coded implementation provenance', async (t) => {
-  const coded: ActionAdapter = {
+  const coded: ActionHandler = {
     action: 'example.read',
     source: {
       kind: 'bundled',

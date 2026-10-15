@@ -5,6 +5,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 ## Unreleased
 
 - Document the retained-run artifact recovery operation in the generated gateway API.
+- Document the plain SDK runtime, action catalog and action handler contracts.
+
 - Propose person-device session expiry and revocation contracts in ADR-051.
 
 - Document safe quarantine of an unobserved native host that stopped before recording any session.

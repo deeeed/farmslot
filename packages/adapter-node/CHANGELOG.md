@@ -4,6 +4,8 @@ All notable changes to `@farmslot/adapter-node` are tracked here.
 
 ## Unreleased
 
+- Consume the plain `ProjectRuntime` contract.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.1.25 - 2026-10-15
