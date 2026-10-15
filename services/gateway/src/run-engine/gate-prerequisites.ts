@@ -274,7 +274,7 @@ const readers: GatePrerequisiteReaders = {
     );
   },
   reviewResult: (run, relativePath) =>
-    readTaskArtifactText(run.taskFile, relativePath.slice('artifacts/'.length)),
+    readTaskArtifactText(run, relativePath.slice('artifacts/'.length)),
   selectedEvidence: (run, preparedPackage) =>
     verifyReadyGateSelectedEvidenceFiles(
       run,
@@ -620,7 +620,7 @@ export async function collectRunGateReadiness(
       reasons.push({
         code: recordedPolicySatisfied ? 'review-result-invalid' : 'review-result-required',
         prerequisite: 'review',
-        message: `Required current-head reviews need valid native result artifacts for this package. ${nextStep}`,
+        message: `Required current-head reviews need valid structured result artifacts for this package. ${nextStep}`,
         actionId: budget.remaining === 0 ? 'hold' : 'request-review',
         allowedReviewOverrides,
       });

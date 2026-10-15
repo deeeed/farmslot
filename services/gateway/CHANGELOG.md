@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Retain pipeline review result snapshots in publication packages and use the pane-owned process's structured turn records for publication readiness, monitor nudges and safe-send busy checks.
+
 - Keep failed reviewers without an artifact scope from holding publication gates in recovery after a settled review.
 
 - Exclude unavailable native hosts from automatic review placement even when their previous reviews were accepted.

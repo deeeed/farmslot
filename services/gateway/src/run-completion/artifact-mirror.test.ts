@@ -99,9 +99,26 @@ test('refreshArtifactMirror preserves gateway-owned review artifacts while clear
     ),
   );
 
+  const pipelineResult = 'artifacts/pipeline-review-loop-2/review-result.json';
+  await mkdir(path.join(workerTaskDir, path.dirname(pipelineResult)), { recursive: true });
+  const result = JSON.stringify({ schemaVersion: 1, verdict: 'pass', issues: [] });
+  await writeFile(path.join(workerTaskDir, pipelineResult), result);
   const copied = await refreshArtifactMirror(
-    makeRun({ id: testId, project: 'farmslot-farm', slotId, taskFile }),
+    makeRun({
+      id: testId,
+      project: 'farmslot-farm',
+      slotId,
+      taskFile,
+      steps: [
+        {
+          name: 'review',
+          status: 'done',
+          outputs: { attempts: [{ artifactPaths: [pipelineResult] }] },
+        },
+      ],
+    }),
   );
+  assert.equal(await readFile(path.join(taskDir, pipelineResult), 'utf8'), result);
 
   assert.equal(
     await readFile(path.join(taskDir, 'artifacts/publication-packages/old.json'), 'utf-8'),
