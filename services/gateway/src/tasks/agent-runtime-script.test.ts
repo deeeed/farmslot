@@ -228,6 +228,7 @@ test('local helpers and project harness marker overrides preserve their selectio
 
 test('configured marker resolves its nested harness command in the connected installation', async (t) => {
   const { roots, vars, requests, activate } = await fixture(t);
+  const localCi = { enabled: true, local_check: 'printf parity' };
   const project: ProjectVars = {
     projectName: 'demo',
     projectConfig: '/pack/project.json',
@@ -235,7 +236,7 @@ test('configured marker resolves its nested harness command in the connected ins
     projectTemplatesDir: '/pack/templates',
     projectJson: {
       name: 'demo',
-      ci: { local_check: 'printf parity' },
+      ci: localCi,
       vars: {
         mark_cmd: '"$({{resolver}})" checklist mark',
         resolver: 'node "{{farmslot_dir}}/resolve.mjs" "{{FARMSLOT_DIR}}"',
