@@ -181,18 +181,46 @@ test('complete re-entry with zero pending decisions restores Codex after a curre
     taskFile: path.join(taskDir, 'TASK.md'),
     steps: [{ name: 'human-gate', status: 'running' }],
     reviewRoundAdmissions: Array.from({ length: 7 }, (_, index) => `spent-${index}`),
-    decisions: [
+    decisions: [],
+    reviewBudgetExtensions: [
       {
-        id: 'consumed-request',
-        type: 'engine_human_gate',
-        title: 'Review',
-        description: '',
-        actions: [],
-        createdAt: '2026-10-15T00:00:00Z',
-        resolvedAt: '2026-10-15T00:00:01Z',
-        resolvedAction: 'request-review',
-        context: { reviewRequestConsumedAt: '2026-10-15T00:00:02Z' },
-        selectionData: { reviewRequest: reviewRequestFromSequence(plan) },
+        requestId: 'remaining-pair',
+        runId: run.id,
+        project: run.project,
+        branch: 'owned',
+        headSha: head,
+        previousLimit: 7,
+        limit: 8,
+        scopeBrief: 'Complete the scoped native pair.',
+        principalId: 'fixture-lead-service',
+        principalSubject: { type: 'service', displayName: 'Fixture lead' },
+        approvedAt: '2026-10-15T00:00:00Z',
+      },
+    ],
+    agentContexts: [
+      {
+        id: 'rev-second',
+        role: 'review',
+        label: 'Second reviewer',
+        status: 'complete',
+        runId: run.id,
+        slotId: 'isolated-review-slot',
+        runner: plan[1].runner,
+        model: plan[1].model,
+        effort: plan[1].effort,
+        runnerSessionId: 'old-session',
+      },
+      {
+        id: 'rev-first',
+        role: 'review',
+        label: 'First reviewer',
+        status: 'complete',
+        runId: run.id,
+        slotId: 'isolated-review-slot',
+        runner: plan[0].runner,
+        model: plan[0].model,
+        effort: plan[0].effort,
+        runnerSessionId: 'native-session',
       },
     ],
     engineState: {
@@ -204,7 +232,7 @@ test('complete re-entry with zero pending decisions restores Codex after a curre
         reviews: [
           {
             id: 'native-pass',
-            source: 'human-gate',
+            source: 'dispatch',
             loopNumber: 7,
             ...plan[0],
             verdict: 'pass',
@@ -229,11 +257,12 @@ test('complete re-entry with zero pending decisions restores Codex after a curre
     /Remaining Codex reviewer reached/,
   );
   assert.deepEqual(getRun(run.id)!.engineState?.publishGate?.reviewSequence, [plan[1]]);
-  assert.match(
-    String(getRun(run.id)!.steps[0].outputs?.reviewRecoveryNote),
-    /original gate request/,
-  );
+  assert.match(String(getRun(run.id)!.steps[0].outputs?.reviewRecoveryNote), /Using COLD/);
   assert.equal(getRun(run.id)!.reviewRoundAdmissions?.length, 7);
+  const budget = await runReviewRoundBudget(getRun(run.id)!);
+  assert.equal(budget.used, 7);
+  assert.equal(budget.limit, 8);
+  assert.equal(budget.remaining, 1);
 });
 
 test('artifact-only QA complete identifies execution completion to the canonical gate guard', async (t) => {

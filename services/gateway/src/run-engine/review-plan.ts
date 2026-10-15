@@ -186,7 +186,7 @@ export function repairUnboundRecoveryReviewPlan(
     const remaining = remainingExplicitReviewPlan(
       original,
       (gate?.reviews ?? []).filter((review) => review.reviewedHeadSha === headSha),
-      { requestedAt: request?.resolvedAt, source: 'human-gate' },
+      { requestedAt: request?.resolvedAt },
     );
     const remainingContext = originalContext
       ? { reviewLineages: originalContext.reviewLineages.slice(original.length - remaining.length) }
@@ -201,6 +201,39 @@ export function repairUnboundRecoveryReviewPlan(
         context: remainingContext,
         requestedAt: request?.resolvedAt,
         note: 'Recovered remaining reviewers from the original gate request; current-head native reviews are retained.',
+      };
+  }
+  // Older complete replays deleted the request decision. Recover the missing
+  // choices from retained reviewer contexts, within the attested extension.
+  const grants = (run.reviewBudgetExtensions ?? [])
+    .filter((grant) => grant.headSha === headSha)
+    .sort((a, b) => a.approvedAt.localeCompare(b.approvedAt));
+  if (headSha && grants.length && gate?.reviewPolicy) {
+    const passed = qualifyingPassingReviews(
+      (gate.reviews ?? []).filter(
+        (review) =>
+          review.reviewedHeadSha === headSha &&
+          Date.parse(review.completedAt ?? '') >= Date.parse(grants[0].approvedAt),
+      ),
+    );
+    const sessions = new Set(passed.map((review) => review.reviewerSessionId));
+    const choices: ReviewSequence = (run.agentContexts ?? [])
+      .filter((candidate) => candidate.role === 'review' && candidate.runner)
+      .sort(
+        (a, b) => Number(sessions.has(b.runnerSessionId)) - Number(sessions.has(a.runnerSessionId)),
+      )
+      .map((candidate) => ({
+        runner: normalizeRunner(candidate.runner),
+        model: candidate.model ?? null,
+        effort: reviewerContextEffort(candidate),
+        mode: 'cold',
+      }));
+    const missing = Math.max(0, effectiveRequiredReviewCount(gate.reviewPolicy) - sessions.size);
+    if (choices.length)
+      return {
+        sequence: remainingExplicitReviewPlan(choices, passed).slice(0, missing),
+        requestedAt: grants[0].approvedAt,
+        note: 'WARM recovery lost its request lineage. Using COLD for the remaining retained reviewer choices; scoped current-head native PASS is preserved.',
       };
   }
   return {
