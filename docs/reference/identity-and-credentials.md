@@ -137,3 +137,17 @@ generation-aware version and retire native id-only owner bindings. A pending
 pairing invitation from the retired identity is invalid; create a new invitation
 for the replacement. PR push, monitoring and rule features are unsupported for
 reused ids until their owner records carry identity generations in a follow-up.
+
+## Proposed person-device sessions
+
+[ADR-051 Amendment 4](../adr/051-principal-and-credential-model.md#amendment-4-expiring-person-device-sessions-2026-10-15)
+proposes one-hour access and a sliding 30-day refresh lifetime for person logins.
+After its coordinated implementation, all three clients retain only a refresh
+token and device metadata. They show the device and sign-in expiry, confirm
+sign-out and revoke that device at the gateway. Command Center settings list
+signed-in devices with per-device revoke. Service profiles and node credentials
+keep their existing behavior.
+
+This is a proposed contract, not a deployed login method. The
+[principal core spec](../plans/principal-core-implementation-spec.md#person-device-sessions-proposed)
+owns expiry, persistence, revocation and cutover requirements.
