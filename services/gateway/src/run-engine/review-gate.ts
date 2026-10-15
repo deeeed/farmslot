@@ -33,10 +33,10 @@ import {
   extractAndPersistSessionCost,
   type LowCaption,
   readEvidenceManifest,
-  scanArtifacts,
   type SessionCostSnapshot,
   uploadArtifacts,
 } from '../run-completion/orchestrator.js';
+import { retainedRunArtifactManifest } from '../run-completion/retained-artifacts.js';
 import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
 import {
   ACCEPTANCE_STATUS_FILENAME,
@@ -169,8 +169,7 @@ export async function executeReviewGate(runId: string): Promise<void> {
 
   if (current.taskFile) {
     try {
-      const taskDir = path.dirname(current.taskFile);
-      artifactManifest = await scanArtifacts(taskDir);
+      artifactManifest = await retainedRunArtifactManifest(getRun(runId)!);
     } catch (err) {
       // Review posting can continue without a refreshed manifest, but the
       // failure must stay visible because missing evidence is actionable.
@@ -589,12 +588,8 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
   let artifactManifest: ArtifactRef[] | undefined;
   if (run.taskFile) {
     try {
-      // A successful scan returning [] means evidence was removed since
-      // the last refresh — overwrite the manifest with [] rather than
-      // leaving the stale entries in place (the spread below preserves
-      // them otherwise, and the review UI keeps showing 404s for files
-      // that no longer exist).
-      artifactManifest = await scanArtifacts(path.dirname(run.taskFile));
+      // Project the fresh capture, including media deliberately removed from acquisition staging.
+      artifactManifest = await retainedRunArtifactManifest(getRun(runId)!);
     } catch (err) {
       // Recovery is intentional: refresh continues with the previously
       // persisted manifest (no rescan applied). But surface the failure

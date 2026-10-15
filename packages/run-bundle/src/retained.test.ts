@@ -565,3 +565,102 @@ test('near-full storage commits the report before media admission and fills the 
   assert.deepEqual(repaired.missingData, []);
   assert.equal(transfers, 1);
 });
+
+test('preserved acquisition media from another deleted run remains charged before new transport', async (t) => {
+  const f = await fixture(t);
+  const historical = path.join(f.root, 'projects/demo/tasks/qa/deleted-run/artifacts/unique.mp4');
+  await mkdir(path.dirname(historical), { recursive: true });
+  await writeFile(historical, Buffer.alloc(800_000, 1));
+  await rm(path.join(f.taskDir, 'artifacts/capture.mp4'));
+  const video = Buffer.alloc(250_000, 2);
+  let transfers = 0;
+  const result = await materializeRunBundle({
+    ...f.request,
+    policy: {
+      maxStoreBytes: 1_000_000,
+      maxBundleBytes: 500_000,
+      metadataReserveBytes: 50_000,
+      mediaRetentionDays: 30,
+    },
+    artifacts: [
+      f.artifacts[0]!,
+      {
+        path: 'artifacts/capture.mp4',
+        purpose: 'video',
+        sha256: createHash('sha256').update(video).digest('hex'),
+        sizeBytes: video.length,
+      },
+    ],
+    acquireMedia: async (_artifact, destination) => {
+      transfers++;
+      await writeFile(destination, video);
+      return { sha256: createHash('sha256').update(video).digest('hex'), bytes: video.length };
+    },
+  });
+  assert.equal(transfers, 0);
+  assert.ok(result.missingData.includes('media-capacity:artifacts/capture.mp4'));
+  assert.equal((await readFile(historical)).length, 800_000);
+  const retained = await readRetainedRunBundle(f.store, result.ref, f.run.id);
+  assert.equal(await retained.readText('artifacts/report.html'), '<h1>Retained report</h1>');
+});
+
+test('an in-flight media transfer reserves its ceiling without holding global admission or GC', async (t) => {
+  const f = await fixture(t);
+  await rm(path.join(f.taskDir, 'artifacts/capture.mp4'));
+  const video = Buffer.alloc(25_000, 3);
+  let enter!: () => void;
+  let release!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  t.after(() => release());
+  const capture = materializeRunBundle({
+    ...f.request,
+    artifacts: [
+      f.artifacts[0]!,
+      {
+        path: 'artifacts/capture.mp4',
+        purpose: 'video',
+        sha256: createHash('sha256').update(video).digest('hex'),
+        sizeBytes: video.length,
+      },
+    ],
+    acquireMedia: async (_artifact, destination) => {
+      enter();
+      await held;
+      await writeFile(destination, video);
+      return { sha256: createHash('sha256').update(video).digest('hex'), bytes: video.length };
+    },
+  });
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      entered,
+      capture.then(() => {
+        throw new Error('capture never requested its media');
+      }),
+    ]);
+    const admission = async () => {
+      await reserveRunBundleMetadata(f.store, 'other-run', undefined, f.root);
+      await collectRunBundleGarbage(f.store);
+    };
+    await Promise.race([
+      admission(),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error('bulk transfer blocked global admission')),
+          1500,
+        );
+      }),
+    ]);
+    const report = await readRetainedRunBundle(f.store, f.refs[0]!, f.run.id);
+    assert.equal(await report.readText('artifacts/report.html'), '<h1>Retained report</h1>');
+  } finally {
+    clearTimeout(timeout);
+    release();
+    await capture;
+  }
+});

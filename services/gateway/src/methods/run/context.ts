@@ -40,20 +40,17 @@ import { readRunRecordedEvidence } from './evidence-review.js';
 
 /** Serve a run to the UI with live-recipe context + lazy gate-summary backfill. */
 async function presentRun(run: Run): Promise<Run> {
+  run = await reconcilePublicationPackageForInspection(await refreshRunGateReadiness(run));
   if (run.artifactBundle || run.output?.artifactBundle) {
     const groups = await retainedRecipeRunGroups(run);
     const selected = selectedRetainedRecipeGroup(groups);
     return enrichDecisionsWithGateSummary({
-      ...(await attachReviewRoundBudget(await refreshRunGateReadiness(run))),
+      ...(await attachReviewRoundBudget(run)),
       liveRecipeContext: selected ?? null,
     });
   }
   return enrichDecisionsWithGateSummary(
-    await attachLiveRecipeContext(
-      await attachReviewRoundBudget(
-        await reconcilePublicationPackageForInspection(await refreshRunGateReadiness(run)),
-      ),
-    ),
+    await attachLiveRecipeContext(await attachReviewRoundBudget(run)),
   );
 }
 

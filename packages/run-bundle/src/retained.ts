@@ -83,6 +83,7 @@ export interface MaterializeRunBundleRequest {
   captureKey: string;
   existingRef?: RunArtifactBundleRef;
   policy?: RunBundleRetentionPolicy;
+  /** Import extraction bytes outside the gateway acquisition roots. */
   stagingBytes?: number;
   /** Inventory is frozen before metadata commits; media transport writes only admitted bytes. */
   acquireMedia?: (
@@ -203,13 +204,18 @@ export async function openRunBundleStore(input: {
   return binding;
 }
 
-/** One cross-process lock covers capture reservations, commit and GC. */
-export async function withRunBundleStoreLock<T>(
+/** One cross-process lock covers capacity reservations, commit and GC. */
+export function withRunBundleStoreLock<T>(store: RunBundleStore, fn: () => Promise<T>): Promise<T> {
+  return withBundleLock(store, 'bundle-store.lock', fn);
+}
+
+async function withBundleLock<T>(
   store: RunBundleStore,
+  name: string,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const release = await lockfile.lock(store.runsDir, {
-    lockfilePath: path.join(store.runsDir, 'bundle-store.lock'),
+  const release = await lockfile.lock(path.join(store.runsDir, name), {
+    lockfilePath: path.join(store.runsDir, name),
     realpath: false,
     stale: 30_000,
     update: 2_000,
@@ -227,13 +233,86 @@ export function isRunBundleMedia(file: string): boolean {
 }
 
 async function physicalBytes(root: string): Promise<number> {
+  let entries;
+  try {
+    entries = await readdir(root, { withFileTypes: true });
+  } catch (error) {
+    if (hasCode(error, 'ENOENT')) return 0;
+    throw error;
+  }
   let total = 0;
-  for (const entry of await readdir(root, { withFileTypes: true })) {
+  for (const entry of entries) {
     const file = path.join(root, entry.name);
     if (entry.isDirectory()) total += await physicalBytes(file);
-    else if (entry.isFile()) total += (await stat(file)).size;
+    else if (entry.isFile()) {
+      try {
+        total += (await stat(file)).size;
+      } catch (error) {
+        if (!hasCode(error, 'ENOENT')) throw error;
+      }
+    }
   }
   return total;
+}
+
+/** A transfer stage charges its reserved ceiling, including partially written bytes, once. */
+async function chargedStoreBytes(store: RunBundleStore): Promise<number> {
+  let bytes = 0;
+  for (const entry of await readdir(store.root, { withFileTypes: true })) {
+    const file = path.join(store.root, entry.name);
+    if (entry.name !== 'staging' || !entry.isDirectory()) {
+      bytes += entry.isDirectory() ? await physicalBytes(file) : (await stat(file)).size;
+      continue;
+    }
+    for (const stage of await readdir(file)) {
+      const directory = path.join(file, stage);
+      const actual = await physicalBytes(directory);
+      let reserved = 0;
+      try {
+        reserved = (await stat(path.join(directory, '.reservation'))).size;
+      } catch (error) {
+        if (!hasCode(error, 'ENOENT')) throw error;
+      }
+      bytes += Math.max(reserved, actual - reserved);
+    }
+  }
+  return bytes;
+}
+
+/** Count every gateway acquisition tree, including preserved media of archived/deleted runs. */
+async function acquisitionBytes(root: string): Promise<number> {
+  let bytes = 0;
+  try {
+    for (const project of await readdir(path.join(root, 'projects'), { withFileTypes: true })) {
+      if (project.isDirectory())
+        bytes += await physicalBytes(path.join(root, 'projects', project.name, 'tasks'));
+    }
+  } catch (error) {
+    if (!hasCode(error, 'ENOENT')) throw error;
+  }
+  const sandbox = async (directory: string): Promise<number> => {
+    if (path.basename(directory) === 'tasks') return physicalBytes(directory);
+    let sum = 0;
+    try {
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        if (entry.isDirectory() && !shouldSkipBundleFilesystemEntry(entry.name, true))
+          sum += await sandbox(path.join(directory, entry.name));
+      }
+    } catch (error) {
+      if (!hasCode(error, 'ENOENT')) throw error;
+    }
+    return sum;
+  };
+  return bytes + (await sandbox(path.join(root, '.sandbox')));
+}
+
+async function chargedCaptureBytes(request: MaterializeRunBundleRequest): Promise<number> {
+  return (
+    (await chargedStoreBytes(request.store)) +
+    (await reservedMetadataBytes(request.store, request.run.id)) +
+    (await acquisitionBytes(request.farmslotRoot)) +
+    (request.stagingBytes ?? 0)
+  );
 }
 
 async function reservedMetadataBytes(store: RunBundleStore, exceptRunId?: string): Promise<number> {
@@ -265,6 +344,7 @@ export async function reserveRunBundleMetadata(
   store: RunBundleStore,
   runId: string,
   policy = DEFAULT_RUN_BUNDLE_RETENTION,
+  farmslotRoot?: string,
 ): Promise<void> {
   await assertStorePairing(store);
   assertSafeBundleSegment(runId, 'run id');
@@ -277,7 +357,11 @@ export async function reserveRunBundleMetadata(
     if (
       bytes === 0 ||
       reserved + bytes > policy.metadataReserveBytes ||
-      (await physicalBytes(store.root)) + reserved + bytes > policy.maxStoreBytes
+      (await chargedStoreBytes(store)) +
+        reserved +
+        bytes +
+        (farmslotRoot ? await acquisitionBytes(farmslotRoot) : 0) >
+        policy.maxStoreBytes
     )
       throw new Error(
         'Retained report metadata capacity is exhausted; free storage before starting work.',
@@ -365,97 +449,110 @@ async function completeRetainedPayloads(
   manifest: RunBundleManifest,
 ): Promise<string[]> {
   const policy = request.policy ?? DEFAULT_RUN_BUNDLE_RETENTION;
-  // The store lock excludes another repair of this capture. Interrupted transfer
-  // scratch is regenerable and must not consume the retry's admission budget.
+  // The capture-scoped lock excludes another repair. Global admission remains free during IO.
   const repairStage = path.join(request.store.root, 'staging', ref.bundleDigest);
-  await rm(repairStage, { recursive: true, force: true });
-  await mkdir(repairStage, { recursive: true });
-  let used =
-    (await physicalBytes(request.store.root)) +
-    (await reservedMetadataBytes(request.store, request.run.id)) +
-    (request.stagingBytes ?? 0);
-  let bundleBytes = await physicalBytes(directory);
+  await withRunBundleStoreLock(request.store, async () => {
+    await rm(repairStage, { recursive: true, force: true });
+    await mkdir(repairStage, { recursive: true });
+  });
+  const reservation = path.join(repairStage, '.reservation');
   const prefix = `tasks/${ref.taskKey}/`;
-  const missing: string[] = (manifest.missingData ?? []).filter((reason) => {
+  const missing = (manifest.missingData ?? []).filter((reason) => {
     const relative = reason.startsWith('missing:')
-      ? reason.slice('missing:'.length)
+      ? reason.slice(8)
       : reason.startsWith('media-capacity:')
-        ? reason.slice('media-capacity:'.length)
+        ? reason.slice(15)
         : null;
     return relative === null || !manifest.entries[`${prefix}${relative}`];
   });
   const restored = new Set<string>();
-  for (const [key, meta] of Object.entries(manifest.entries)) {
-    if (!key.startsWith(prefix)) continue;
-    const target = resolvePathInsideRoot(directory, key);
-    try {
-      await stat(target);
-      continue;
-    } catch (error) {
-      if (!hasCode(error, 'ENOENT')) throw error;
-    }
-    const relative = key.slice(prefix.length);
-    if (
-      meta.bytes >
-      Math.min(
-        policy.maxStoreBytes -
-          used -
-          (isRunBundleMedia(relative) ? policy.metadataReserveBytes : 0),
-        policy.maxBundleBytes - bundleBytes,
-      )
-    ) {
-      missing.push(`media-capacity:${relative}`);
-      continue;
-    }
-    const temp = path.join(repairStage, `${randomUUID()}.tmp`);
-    try {
-      let copied: RunBundlePayloadIdentity;
-      if (request.acquireMedia && isRunBundleMedia(relative)) {
-        copied = await request.acquireMedia(
-          { path: relative, purpose: 'artifact', sha256: meta.sha256, sizeBytes: meta.bytes },
-          temp,
-          meta.bytes,
-        );
-      } else {
-        const taskRoot = await realpath(request.taskDir);
-        const source = resolvePathInsideRoot(taskRoot, relative);
-        if ((await realpath(source)) !== source)
-          throw new Error('Retained repair source is redirected.');
-        copied = await copyHashed(source, temp, meta.bytes);
+  try {
+    for (const [key, meta] of Object.entries(manifest.entries)) {
+      if (!key.startsWith(prefix)) continue;
+      const target = resolvePathInsideRoot(directory, key);
+      try {
+        await stat(target);
+        continue;
+      } catch (error) {
+        if (!hasCode(error, 'ENOENT')) throw error;
       }
-      if (copied.sha256 !== meta.sha256 || copied.bytes !== meta.bytes) {
-        missing.push(`changed:${relative}`);
-        await rm(temp);
+      const relative = key.slice(prefix.length);
+      const admitted = await withRunBundleStoreLock(request.store, async () => {
+        const used = await chargedCaptureBytes(request);
+        const available = Math.min(
+          policy.maxStoreBytes -
+            used -
+            (isRunBundleMedia(relative) ? policy.metadataReserveBytes : 0),
+          policy.maxBundleBytes - (await physicalBytes(directory)),
+        );
+        if (meta.bytes > available) return false;
+        // A sparse ceiling reserves the transfer without allocating a second payload copy.
+        const handle = await open(reservation, 'wx', 0o600);
+        try {
+          await handle.truncate(meta.bytes);
+        } finally {
+          await handle.close();
+        }
+        return true;
+      });
+      if (!admitted) {
+        missing.push(`media-capacity:${relative}`);
         continue;
       }
-      await mkdir(path.dirname(target), { recursive: true });
-      await rename(temp, target);
-      restored.add(key);
-      used += copied.bytes;
-      bundleBytes += copied.bytes;
-    } catch (error) {
-      await rm(temp, { force: true });
-      if (!hasCode(error, 'ENOENT')) throw error;
-      missing.push(`missing:${relative}`);
+      const temp = path.join(repairStage, `${randomUUID()}.tmp`);
+      try {
+        let copied: RunBundlePayloadIdentity;
+        if (request.acquireMedia && isRunBundleMedia(relative)) {
+          copied = await request.acquireMedia(
+            { path: relative, purpose: 'artifact', sha256: meta.sha256, sizeBytes: meta.bytes },
+            temp,
+            meta.bytes,
+          );
+        } else {
+          const source = resolvePathInsideRoot(await realpath(request.taskDir), relative);
+          if ((await realpath(source)) !== source)
+            throw new Error('Retained repair source is redirected.');
+          copied = await copyHashed(source, temp, meta.bytes);
+        }
+        await withRunBundleStoreLock(request.store, async () => {
+          if (copied.sha256 !== meta.sha256 || copied.bytes !== meta.bytes) {
+            missing.push(`changed:${relative}`);
+            await rm(temp, { force: true });
+          } else {
+            await chmod(temp, 0o400);
+            await mkdir(path.dirname(target), { recursive: true });
+            await rename(temp, target);
+            restored.add(key);
+          }
+          await rm(reservation);
+        });
+      } catch (error) {
+        await withRunBundleStoreLock(request.store, async () => {
+          await rm(temp, { force: true });
+          await rm(reservation, { force: true });
+        });
+        if (!hasCode(error, 'ENOENT')) throw error;
+        missing.push(`missing:${relative}`);
+      }
     }
-  }
-  await rm(repairStage, { recursive: true, force: true });
-  const availabilityPath = path.join(
-    request.store.root,
-    'availability',
-    `${ref.bundleDigest}.json`,
-  );
-  const prior = await readOptional(availabilityPath);
-  if (restored.size) {
-    const availability: RunBundleAvailability = prior
-      ? JSON.parse(prior)
-      : { revision: 0, prunedPaths: [] };
-    await atomicJson(availabilityPath, {
-      revision: availability.revision + 1,
-      prunedPaths: availability.prunedPaths.filter((key) => !restored.has(key)),
+    await withRunBundleStoreLock(request.store, async () => {
+      if (!restored.size) return;
+      const file = path.join(request.store.root, 'availability', `${ref.bundleDigest}.json`);
+      const prior = await readOptional(file);
+      const availability: RunBundleAvailability = prior
+        ? JSON.parse(prior)
+        : { revision: 0, prunedPaths: [] };
+      await atomicJson(file, {
+        revision: availability.revision + 1,
+        prunedPaths: availability.prunedPaths.filter((key) => !restored.has(key)),
+      });
     });
+    return missing;
+  } finally {
+    await withRunBundleStoreLock(request.store, () =>
+      rm(repairStage, { recursive: true, force: true }),
+    );
   }
-  return missing;
 }
 
 async function commitRetainedPayloads(
@@ -477,9 +574,7 @@ async function commitRetainedPayloads(
   }
   // The report has a durable, readable identity before any bulk transport starts.
   await request.commit(ref, [...new Set(unavailable)]);
-  const remaining = await completeRetainedPayloads(request, ref, directory, manifest);
-  await request.commit(ref, remaining);
-  return remaining;
+  return [...new Set(unavailable)];
 }
 
 export async function readRunBundleAvailability(
@@ -614,6 +709,7 @@ export async function collectRunBundleGarbage(
           continue;
         }
         activeStages.add(intent.bundleId);
+        if (intent.bundleDigest) activeStages.add(intent.bundleDigest);
         captureRuns.add(intent.runId);
         if (intent.bundleDigest) pinned.add(intent.bundleDigest);
       }
@@ -702,7 +798,7 @@ export async function materializeRunBundle(
   await assertStorePairing(store);
   const policy = request.policy ?? DEFAULT_RUN_BUNDLE_RETENTION;
   assertPolicy(policy);
-  return withRunBundleStoreLock(store, async () => {
+  const captured = await withRunBundleStoreLock(store, async () => {
     const taskKey = run.id;
     const intentPath = path.join(
       store.runsDir,
@@ -758,7 +854,7 @@ export async function materializeRunBundle(
         retained.directory,
         retained.manifest,
       );
-      intent.committed = true;
+      intent.committed = false;
       intent.runJson = '';
       await atomicJson(intentPath, intent);
       await rm(path.join(store.root, 'reservations', `${run.id}.json`), { force: true });
@@ -796,10 +892,7 @@ export async function materializeRunBundle(
     };
     const missingData: string[] = [];
     let bundleBytes = Buffer.byteLength(intent.runJson);
-    let storeBytes =
-      (await physicalBytes(store.root)) +
-      (await reservedMetadataBytes(store, run.id)) +
-      (request.stagingBytes ?? 0);
+    let storeBytes = await chargedCaptureBytes(request);
     const taskRoot = await realpath(request.taskDir);
     const ordered = [...request.artifacts].sort(
       (a, b) =>
@@ -902,7 +995,7 @@ export async function materializeRunBundle(
         manifestDigest: request.manifestDigest,
       };
       const remaining = await commitRetainedPayloads(request, ref, destination, manifest);
-      intent.committed = true;
+      intent.committed = false;
       intent.runJson = '';
       await atomicJson(intentPath, intent);
       await rm(path.join(store.root, 'reservations', `${run.id}.json`), { force: true });
@@ -912,5 +1005,26 @@ export async function materializeRunBundle(
       if (!intent.bundleDigest) await rm(stage, { recursive: true, force: true });
       throw error;
     }
+  });
+  return withBundleLock(store, `bundle-repair-${captured.ref.bundleDigest}.lock`, async () => {
+    const missingData = await completeRetainedPayloads(
+      request,
+      captured.ref,
+      bundleDirectory(store, captured.ref.bundleDigest),
+      captured.manifest,
+    );
+    return withRunBundleStoreLock(store, async () => {
+      await request.commit(captured.ref, missingData);
+      const intentPath = path.join(
+        store.runsDir,
+        'bundle-intents',
+        `${sha256Text(`${run.id}:${request.captureKey}`)}.json`,
+      );
+      const intent: CaptureIntent = JSON.parse(await readFile(intentPath, 'utf8'));
+      intent.committed = true;
+      intent.runJson = '';
+      await atomicJson(intentPath, intent);
+      return { ...captured, missingData };
+    });
   });
 }

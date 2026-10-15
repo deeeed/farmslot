@@ -123,12 +123,13 @@ export function createRunArtifactAcquisition(run: Run): RunArtifactAcquisition {
 export function runBundleStore(create = false) {
   if (create && process.env.FARMSLOT_SANDBOX_HOME)
     throw new Error('Sandbox gateways may only read the owning gateway retained bundle store.');
-  const home =
-    !process.env.FARMSLOT_RUNS_DIR &&
-    !process.env.FARMSLOT_HOME &&
-    shouldUseIsolatedRunsDir(process.env, process.argv)
-      ? isolatedTestPath('farmslot-test-bundle-home')
-      : farmslotHome();
+  const home = process.env.FARMSLOT_HOME
+    ? farmslotHome()
+    : process.env.FARMSLOT_RUNS_DIR
+      ? path.join(runsDirectory(), 'bundle-home')
+      : shouldUseIsolatedRunsDir(process.env, process.argv)
+        ? isolatedTestPath('farmslot-test-bundle-home')
+        : farmslotHome();
   return openRunBundleStore({
     runsDir: runsDirectory(),
     home,
@@ -326,7 +327,7 @@ export async function reserveRunArtifactMetadata(run: Run): Promise<void> {
   const policy = await retentionPolicy();
   await persistRunNow(getRun(run.id) ?? run, 'retention admission');
   await collectRunBundleGarbage(store, policy);
-  await reserveRunBundleMetadata(store, run.id, policy);
+  await reserveRunBundleMetadata(store, run.id, policy, farmslotRoot);
 }
 
 export async function retainCapturedRunArtifacts(input: {
@@ -383,18 +384,6 @@ export async function retainCapturedRunArtifacts(input: {
       if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
     }
   }
-  const staged = input.sourceRef
-    ? []
-    : await Promise.all(
-        artifacts.map(async (artifact) => {
-          try {
-            return (await stat(path.join(taskDir, artifact.path))).size;
-          } catch (error) {
-            if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return 0;
-            throw error;
-          }
-        }),
-      );
   return materializeRunBundle({
     store,
     farmslotRoot,
@@ -408,7 +397,6 @@ export async function retainCapturedRunArtifacts(input: {
       input.manifestDigest,
     ]),
     policy: await retentionPolicy(),
-    stagingBytes: staged.reduce((sum, bytes) => sum + bytes, 0),
     allowChanged: input.allowChanged,
     acquireMedia: input.acquireMedia,
     existingRef: input.existingRef,
