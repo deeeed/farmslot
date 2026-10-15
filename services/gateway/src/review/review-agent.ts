@@ -6,6 +6,7 @@ import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import {
   type AgentContext,
   allocateReviewerContext,
+  isTerminalRunStatus,
   type ReviewDiffSnapshot,
   type ReviewFixDeltaSnapshot,
   type ReviewIssue,
@@ -32,12 +33,14 @@ import {
   resolveTmuxWindowPaneCount,
   respawnTmuxWindowWithCommand,
   shellQuote,
+  throwIfTmuxQueryTimedOut,
   TMUX_WINDOW_RESPAWN_SETTLE_MS,
   tmuxShellSnippet,
   type TmuxWindowRef,
 } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
+import { runSupersededSince } from '../run-engine/run-generation.js';
 import { stackPrBase } from '../run-engine/stack-base.js';
 import {
   buildLaunchCommand,
@@ -118,8 +121,10 @@ import { expandReviewTemplate } from './templates.js';
 import {
   isSuccessfulTerminalReviewSignal,
   isTerminalReviewArtifactError,
+  ReviewerExitedError,
   TerminalReviewArtifactError,
   terminalReviewArtifactErrorForCompletion,
+  withReviewerRelaunch,
 } from './terminal-result.js';
 
 interface ReconciledReviewerWindow extends TmuxWindowRef {
@@ -926,6 +931,70 @@ async function recoverRunningReviewAgent(params: {
 }
 
 export async function runReviewAgent(
+  ...args: Parameters<typeof runReviewAgentAttempt>
+): Promise<ReviewAgentResult> {
+  const runId = args[5];
+  const generation = getRun(runId)?.engineState?.generation ?? 0;
+  const deadline = Date.now() + args[6];
+  return withReviewerRelaunch(
+    () => runReviewAgentAttempt(...args),
+    async (error) => {
+      const current = getRun(runId);
+      if (
+        !current ||
+        runSupersededSince(current, generation) ||
+        isTerminalRunStatus(current.status)
+      )
+        throw error;
+      const context = [...(current.agentContexts ?? [])]
+        .reverse()
+        .find(
+          (item) => item.role === 'review' && item.runner === args[1] && item.status === 'failed',
+        );
+      if (!context?.taskFile || !context.signalFile) throw error;
+      const [vars, , , taskDir, , , , loopNumber, , artifactScope] = args;
+      const artifactDir = reviewArtifactDir(loopNumber, artifactScope);
+      const destination = slotTaskRelPath(vars, taskDir, `${artifactDir}/stopped-${randomUUID()}`);
+      const files = [
+        [context.taskFile, 'review.md'],
+        [context.signalFile, 'review-signal.json'],
+        [taskDirRelPath(taskDir, reviewerFeedbackRelPath(context.id)), 'review-feedback.md'],
+        [taskDirRelPath(taskDir, reviewerResultRelPath(context.id)), 'review-result.json'],
+        [taskDirRelPath(taskDir, `${artifactDir}/review.diff`), 'review.diff'],
+        [taskDirRelPath(taskDir, `${artifactDir}/review-diff-stat.json`), 'review-diff-stat.json'],
+      ];
+      const archived = await execOnSlot(
+        vars,
+        [
+          `mkdir -p ${shellQuote(destination)}`,
+          ...files.map(([source, name]) => {
+            const from = shellQuote(path.posix.resolve(vars.remoteRepo, source!));
+            return `if [ -f ${from} ]; then cp ${from} ${shellQuote(`${destination}/${name}`)}; fi`;
+          }),
+        ].join(' && '),
+        { timeout: 10_000 },
+      );
+      if (archived.exitCode !== 0)
+        throw new AggregateError(
+          [error, new Error(archived.stderr || archived.stdout)],
+          'Stopped reviewer evidence could not be preserved',
+        );
+      const fresh = getRun(runId);
+      if (!fresh || runSupersededSince(fresh, generation) || isTerminalRunStatus(fresh.status))
+        throw error;
+      args[6] = deadline - Date.now();
+      if (args[6] <= 0)
+        throw new Error(`${error.message}; review deadline expired before relaunch`, {
+          cause: error,
+        });
+      console.warn(
+        `[review] run ${runId.slice(0, 8)}: ${error.message}; relaunching reviewer once`,
+      );
+    },
+  );
+}
+
+async function runReviewAgentAttempt(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runner: string,
   model: string,
@@ -1670,6 +1739,18 @@ export async function runReviewAgent(
       () => progressWatcher?.stop(),
       () => unwatchContext(vars.slotId, allocated.id),
       async () => {
+        if (!(primaryFailure instanceof ReviewerExitedError) || !reviewContext?.target) return;
+        const target = reviewContext.target;
+        const pane = await resolveExactTmuxWindowPane(vars, target.target);
+        if (!pane) return;
+        if (
+          pane.paneId !== target.paneId ||
+          (await resolveTmuxWindowPaneCount(vars, target.target)) !== 1
+        )
+          throw new Error('Stopped reviewer pane changed before cleanup');
+        await killTmuxWindowById(vars, target.target);
+      },
+      async () => {
         if (!activeTaskSet) return;
         clearRunActiveTaskFile(_runId, taskMdPath);
         const parentRun = getRun(_runId);
@@ -1705,26 +1786,31 @@ export async function waitForReviewCompletion(
   const outputExists = async (outputPath: string): Promise<boolean> =>
     (await execOnSlot(vars, `test -f ${shellQuote(outputPath)} && echo yes`)).stdout.trim() ===
     'yes';
-  const terminalInvalid = async (reason: string): Promise<never> => {
-    await markAgentContextStatus(runId, 'review', 'blocked', {
+  const failCompletion = async (
+    reason: string,
+    kind: 'artifact' | 'exited' = 'artifact',
+  ): Promise<never> => {
+    await markAgentContextStatus(runId, 'review', kind === 'exited' ? 'failed' : 'blocked', {
       id: reviewContextId,
       lastSignalAt: new Date().toISOString(),
     });
+    if (kind === 'exited')
+      throw new ReviewerExitedError(`Reviewer ${reviewContextId} stopped: ${reason}`);
     throw new TerminalReviewArtifactError(
       `Reviewer ${reviewContextId} completed with an invalid result artifact: ${reason}`,
     );
   };
   const validateCompletedOutput = async (): Promise<void> => {
     if (!(await outputExists(requiredOutputPaths[0]!))) {
-      return terminalInvalid(`${feedbackRelPath} is missing`);
+      return failCompletion(`${feedbackRelPath} is missing`);
     }
     if (resultRelPath && !(await outputExists(requiredOutputPaths[1]!))) {
-      return terminalInvalid(`${resultRelPath} is missing`);
+      return failCompletion(`${resultRelPath} is missing`);
     }
     if (resultRelPath) {
       const feedback = await readReviewFeedback(vars, taskDir, feedbackRelPath, resultRelPath);
       if (feedback.terminalInvalidReason) {
-        return terminalInvalid(feedback.terminalInvalidReason);
+        return failCompletion(feedback.terminalInvalidReason);
       }
     }
   };
@@ -1799,36 +1885,36 @@ export async function waitForReviewCompletion(
         reading.turnToken === acceptance.turnToken
       ) {
         await markAgentContextStatus(runId, 'review', 'failed', { id: reviewContextId });
-        throw new Error(
-          `Reviewer ${reviewContextId} failed: ${reading.failure}. Replay the review after correcting the runner configuration.`,
-        );
+        throw new Error(`Reviewer ${reviewContextId} failed: ${reading.failure}`);
       }
     }
 
     // Check the immutable reviewer target. Window names are not unique in tmux
     // and must never be used for lifecycle or completion decisions.
-    const hasWindow =
-      (
-        await execOnSlot(
-          vars,
-          tmuxShellSnippet(`list-panes -t ${shellQuote(reviewTarget)} 2>/dev/null`),
-        )
-      ).exitCode === 0;
+    const windowQuery = await execOnSlot(
+      vars,
+      tmuxShellSnippet(`list-panes -t ${shellQuote(reviewTarget)} 2>/dev/null`),
+    );
+    throwIfTmuxQueryTimedOut(windowQuery, 'reviewer window');
+    const hasWindow = windowQuery.exitCode === 0;
 
     if (!hasWindow) {
       if (await completeFromTerminalSignal()) return true;
-      return terminalInvalid(`${signalBasename} is missing after the reviewer window closed`);
+      return failCompletion(
+        `${signalBasename} is missing after the reviewer window closed`,
+        'exited',
+      );
     }
 
     // Check if the configured runner process is still running in the review pane.
-    const panePid = (
-      await execOnSlot(
-        vars,
-        tmuxShellSnippet(
-          `list-panes -t ${shellQuote(reviewTarget)} -F '#{pane_pid}' 2>/dev/null | head -1`,
-        ),
-      )
-    ).stdout.trim();
+    const paneQuery = await execOnSlot(
+      vars,
+      tmuxShellSnippet(
+        `list-panes -t ${shellQuote(reviewTarget)} -F '#{pane_pid}' 2>/dev/null | head -1`,
+      ),
+    );
+    throwIfTmuxQueryTimedOut(paneQuery, 'reviewer pane');
+    const panePid = paneQuery.stdout.trim();
 
     if (panePid) {
       const runnerProbe = await probeRunnerDescendantPid(vars, panePid, runner);
@@ -1837,7 +1923,10 @@ export async function waitForReviewCompletion(
 
       if (runnerProbe.state === 'absent' && reviewerWasObservedActive) {
         if (await completeFromTerminalSignal()) return true;
-        return terminalInvalid(`${signalBasename} is missing after the reviewer runner exited`);
+        return failCompletion(
+          `${signalBasename} is missing after the reviewer runner exited`,
+          'exited',
+        );
       }
     }
 

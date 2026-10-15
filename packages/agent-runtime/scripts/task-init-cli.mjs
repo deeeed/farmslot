@@ -96,10 +96,11 @@ function parseArgs(args) {
   return { opts, catalog };
 }
 
-function gitOutput(args) {
+function gitOutput(args, cwd = process.cwd()) {
   try {
     return execFileSync('git', args, {
       encoding: 'utf8',
+      cwd,
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
   } catch {
@@ -108,21 +109,23 @@ function gitOutput(args) {
   }
 }
 
-async function main() {
-  const args = process.argv.slice(2);
+export async function taskInitFromArgv(args, execution, suppliedRuntime) {
+  args = [...args];
   if (args.length === 0 || args[0] === '-h' || args[0] === '--help') usage(0);
   const { opts, catalog } = parseArgs(args);
-  const runtime = await loadRuntime();
+  const runtime = suppliedRuntime ?? (await loadRuntime());
 
   const description = opts.taskFile
     ? readFileSync(path.resolve(opts.taskFile), 'utf8').trim()
     : (opts.taskText ?? '').trim();
-  const toplevel = gitOutput(['rev-parse', '--show-toplevel']);
-  const originUrl = gitOutput(['remote', 'get-url', 'origin']);
+  const target = execution?.bindingIdentity?.target ?? process.cwd();
+  const toplevel = gitOutput(['rev-parse', '--show-toplevel'], target);
+  const originUrl = gitOutput(['remote', 'get-url', 'origin'], target);
   const repo = opts.repo ?? (originUrl ? runtime.portableRepoIdentity(originUrl) : undefined);
   const project =
     opts.project ??
-    (repo ? repo.split('/').pop() : path.basename(toplevel || process.cwd())).toLowerCase();
+    execution?.bindingIdentity?.project ??
+    (repo ? repo.split('/').pop() : path.basename(toplevel || target)).toLowerCase();
   // Rendered inside taskInit with the same vars as the checklist, so an addendum
   // that works on the farm works here.
   const addendum = opts.addendumFile ? readFileSync(path.resolve(opts.addendumFile), 'utf8') : null;
@@ -153,6 +156,7 @@ async function main() {
     ...(opts.modePreamble ? { modePreamble: opts.modePreamble } : {}),
     addendum,
     ...(opts.markCommand ? { markCommand: opts.markCommand } : {}),
+    ...(execution ? { execution } : {}),
   });
 
   if (opts.json) {
@@ -160,10 +164,11 @@ async function main() {
   } else {
     process.stdout.write(`Task document: ${result.taskDocument}\nChecklist: ${result.checklist}\n`);
   }
+  return result;
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
-  main().catch((error) => {
+  taskInitFromArgv(process.argv.slice(2)).catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
   });

@@ -2,11 +2,13 @@
 export type {
   EvidenceReviewArtifact,
   EvidenceReviewClaim,
+  EvidenceReviewClaimDisplay,
   EvidenceReviewClip,
   EvidenceReviewComparisonFilter,
   EvidenceReviewComparisonMedia,
   EvidenceReviewComparisonRow,
   EvidenceReviewComparisonTransform,
+  EvidenceReviewComparisonViewRow,
   EvidenceReviewContext,
   EvidenceReviewGateSnapshot,
   EvidenceReviewInput,
@@ -16,6 +18,7 @@ export type {
   EvidenceReviewPlaybackEffect,
   EvidenceReviewProofKind,
   EvidenceReviewRecordingInput,
+  EvidenceReviewRecordingSelection,
   EvidenceReviewSelection,
   EvidenceReviewTiming,
 } from './evidence-review-model.js';
@@ -26,6 +29,8 @@ export type {
 } from './evidence-review-source.js';
 export { loadRecordingEvidenceReview, readEvidenceReviewReport } from './evidence-review-source.js';
 export type { EvidenceReviewIssue, EvidenceReviewPackageStatus } from './evidence-review-status.js';
+export type { EvidenceReviewTimelineGroup } from './evidence-review-timeline.js';
+export { formatEvidenceReviewVideoTime } from './evidence-review-timeline.js';
 export type { RecipeValidationResult, RecordedEvidencePackageInput } from '@farmslot/protocol';
 export {
   deriveReviewedRecipeClaims,

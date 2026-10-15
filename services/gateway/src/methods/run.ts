@@ -649,6 +649,7 @@ export async function planRunCreation(
     if (
       params.flowType === 'dev' &&
       params.mode === 'interactive' &&
+      !isManualBacklogRef(params.ticketOrPr) &&
       !isValidTicketForFlow(params.ticketOrPr, params.flowType)
     ) {
       params.initialContext = params.initialContext || initialContext;

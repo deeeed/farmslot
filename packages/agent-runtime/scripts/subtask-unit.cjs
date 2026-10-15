@@ -19,6 +19,7 @@ const {
   markStepInFile,
   parseChecklist,
   pickSignalPassthrough,
+  operatorWaitHistory,
   readJson,
   writeIndex,
   writeSignal,
@@ -301,6 +302,7 @@ function writeParentSignal(taskDir, unit, { status, stepLabel, reason, event, no
     step: stepLabel,
     checklistTiming: { schemaVersion: 1, source: timing.source, events },
     timestamp: now,
+    ...operatorWaitHistory(signal, now),
     status,
     ...(status === 'blocked' ? { outcome: 'partial', disposition: 'blocked' } : {}),
     ...(reason ? { reason } : {}),
@@ -547,13 +549,13 @@ function subStep(taskDir, unit, rawStep) {
 
 /**
  * A child `blocked` blocked the parent signal too; resuming the child restores
- * `running` on both. Any other parent status is left alone: the parent is the
- * worker's own signal and a child step is not a parent mark.
+ * `running` on both. Child progress also closes an operator wait. Otherwise the
+ * parent is left alone: a child step is not a parent checklist mark.
  */
 function resumeParentSignal(taskDir, unit, now) {
   const target = targetForChecklistBasename(unit.parent.checklist);
   const parentSignal = readJson(path.join(taskDir, target.signal));
-  if (parentSignal.status !== 'blocked') return;
+  if (parentSignal.status !== 'blocked' && !parentSignal.waitingForOperator) return;
   const parent = parsedChecklistFile(taskDir, unit.parent.checklist);
   const parentRow = parent.items.find((item) => item.stepNumber === unit.parent.stepNumber) ?? null;
   writeParentSignal(taskDir, unit, {

@@ -4,10 +4,16 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Open the retained reviewer conversation directly on slot-free reviews and distinguish it from the worktree shell.
+- Show selected AC proof first and collapse supporting files behind raw-artifact controls in run reviews.
+- Show WARM/COLD review mode as visible segmented buttons beside the shared execution choices.
+
 - Keep report and evidence links bound to their gateway-retained snapshot, including read-only stale reports.
+- Show one recording timeline chip per AC or setup/teardown group, with collapsed time-ordered nodes and visible failures.
 - Describe LAN binding through credential-store activation instead of the retired checkout auth file.
 
 - Use one compact worker checklist in pipeline, step inspection and slot views.
+- Show who an active run is waiting on using the shared lifecycle activity label.
 
 - Move sign-out into the account menu with confirmation; retain sign-in for 30 days and reconnect through gateway restarts.
 

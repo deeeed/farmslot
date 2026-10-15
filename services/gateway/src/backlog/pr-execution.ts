@@ -17,6 +17,7 @@ import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
 import { loadFleetStatus, loadProjectConfig } from '../fleet/state.js';
 import { inspectReviewWorkspaceTarget } from '../review-workspaces/admission.js';
 import { bindPRExecutionProfilesToPool } from '../review-workspaces/pool-policy.js';
+import { assertReviewNativeRunnerHealthy } from '../runners/native/review-health.js';
 import { isKnownRunner, runnerSupportsEffort, runnerSupportsModel } from '../runners/registry.js';
 
 export interface PRExecutionContext {
@@ -65,15 +66,14 @@ export async function resolvePRExecution(
     for (const choice of choices) {
       if (!isPRWorkspaceExecutionChoice(choice)) continue;
       try {
-        await inspectReviewWorkspaceTarget(
-          {
-            project,
-            ...choice,
-            effort: executionModelFromSelection(choice).effort ?? undefined,
-            model: executionModelFromSelection(choice).model,
-          },
-          context.ownerId,
-        );
+        const target = {
+          project,
+          ...choice,
+          effort: executionModelFromSelection(choice).effort ?? undefined,
+          model: executionModelFromSelection(choice).model,
+        };
+        const admission = await inspectReviewWorkspaceTarget(target, context.ownerId);
+        await assertReviewNativeRunnerHealthy(target, context.ownerId, admission.executionNodeId);
         supported.push(choice);
       } catch (error) {
         // Rejected alternatives become operator-visible configuration failures; unexpected failures propagate.

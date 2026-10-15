@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 
 import {
@@ -6,6 +7,7 @@ import {
   type DefaultRecipeEngineOptions,
   type RecipeEngine,
 } from '@farmslot/adapter-sdk';
+import { isRecord } from '@farmslot/protocol';
 import type { RecipeLibrarySource } from '@farmslot/recipe-runner';
 import { assertRecipeActive } from '@farmslot/recipe-runner/adapters/core';
 
@@ -39,6 +41,7 @@ import { deferCommandOutput } from './json-stream.js';
 import { applyRuntimeDirOption, type CliOptions, type ParsedArgs } from './parse-args.js';
 import { recipeOutputRoots } from './paths.js';
 import { isRecipeExecution } from './project-command.js';
+import { withTaskProjectHost } from './project-helpers.js';
 import { resolveLibrarySources } from './recipe-library.js';
 
 export interface ProjectRecipeHostOptions
@@ -72,6 +75,22 @@ function aggregateFailures(failures: unknown[]): AggregateError {
 export function withProjectRecipeHost<T>(
   options: ProjectRecipeHostOptions,
   invoke: (host: ProjectRecipeHost) => Promise<T>,
+): Promise<T> {
+  const taskDir = process.env.RECIPE_TASK_DIR;
+  const receipt = taskDir ? path.join(taskDir, 'artifacts/harness-provenance.json') : undefined;
+  if (options.command !== 'task' && taskDir && receipt && fs.existsSync(receipt)) {
+    const value: unknown = JSON.parse(fs.readFileSync(receipt, 'utf8'));
+    if (isRecord(value) && 'bindingIdentity' in value)
+      return withTaskProjectHost(options, taskDir, invoke);
+  }
+  return withProjectRecipeHostContext(options, invoke);
+}
+
+/** The single composition implementation, after fresh or retained binding selection. */
+export function withProjectRecipeHostContext<T>(
+  options: ProjectRecipeHostOptions,
+  invoke: (host: ProjectRecipeHost) => Promise<T>,
+  sourceCeiling?: string,
 ): Promise<T> {
   return withHarnessInvocation(async () => {
     // Lifecycle and log followers share owned-child cancellation, without granting
@@ -127,6 +146,13 @@ export function withProjectRecipeHost<T>(
         let outcome: PromiseSettledResult<T>;
         try {
           assertRecipeActive(signal);
+          if (sourceCeiling)
+            process.env.GIT_CEILING_DIRECTORIES = [
+              fs.realpathSync(sourceCeiling),
+              process.env.GIT_CEILING_DIRECTORIES,
+            ]
+              .filter(Boolean)
+              .join(path.delimiter);
           configureHarnessAdapters(createAdapterRegistry());
           configureHarnessHost({
             ...previousHost,

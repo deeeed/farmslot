@@ -1210,6 +1210,60 @@ test('runReviewRetryLoop: relaunches once when the retained worker rejects fix d
   assert.equal(calls.sendFeedback, 1);
 });
 
+test(
+  'runReviewRetryLoop: deferred fresh-worker delivery waits for the fix signal before re-review',
+  { timeout: 1_000 },
+  async () => {
+    const { deps, calls } = buildDeps({
+      reviewVerdicts: ['pass'],
+      feedbackErrors: [new ReviewFixDeliveryError('unacknowledged retained handoff')],
+    });
+    const statuses: string[] = [];
+    let completeFix!: (signal: WorkerSignal) => void;
+    const signal = new Promise<WorkerSignal>((resolve) => {
+      completeFix = resolve;
+    });
+    let watching!: () => void;
+    const watchStarted = new Promise<void>((resolve) => {
+      watching = resolve;
+    });
+    let watcherStopped = false;
+    deps.resumeFixPromptDelivery = async () => ({ status: 'deferred' });
+    deps.setRunStatus = (_runId, status) => statuses.push(status);
+    deps.startProgressWatcher = () => ({
+      stop: () => {
+        watcherStopped = true;
+      },
+    });
+    deps.waitForWorkerSignal = async (_vars, _taskDir, _timeout, baseline, turnActive) => {
+      assert.equal(baseline, '');
+      assert.equal(turnActive, undefined, 'uncertain delivery cannot claim an accepted turn');
+      watching();
+      return signal;
+    };
+    const review = runReviewRetryLoop({
+      ...baseArgs,
+      maxRetries: 1,
+      reviewResult: { verdict: 'issues', issues: ISSUES },
+      retryCount: 0,
+      deps,
+    });
+    await watchStarted;
+    assert.deepEqual(statuses, ['reconciling']);
+    assert.match(calls.progressDetails[0] ?? '', /delivery unconfirmed.*REVIEW-FIX-SIGNAL/);
+    assert.equal(watcherStopped, false);
+    assert.equal(calls.reviewAgent, 0);
+    assert.equal(calls.relaunches, 1);
+    assert.equal(calls.sendFeedback, 1);
+    completeFix({ status: 'complete', timestamp: new Date().toISOString() });
+    const result = await review;
+    assert.equal(result.verdict, 'pass');
+    assert.equal(result.retryCount, 1);
+    assert.equal(calls.reviewAgent, 1);
+    assert.equal(watcherStopped, true);
+  },
+);
+
 test('runReviewRetryLoop: relaunches a high-context worker before sending the fix task', async () => {
   const { deps, calls } = buildDeps({
     reviewVerdicts: ['issues', 'pass'],

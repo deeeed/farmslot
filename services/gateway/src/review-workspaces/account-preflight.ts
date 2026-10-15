@@ -26,13 +26,10 @@ export async function preflightReviewWorkspaceAccount(
   const profile = run.nativeProfile
     ? await inspectNativeWorkerProfile(run.nativeOwnerPrincipalId!, run.nativeProfile)
     : undefined;
-  const executable =
-    run.transport === 'tmux'
-      ? interactiveRunnerExecutable({
-          runner: run.metrics.runner!,
-          machine: await loadMachinePool(run.reviewWorkspace.machine),
-        })
-      : definition!.binary;
+  const executable = interactiveRunnerExecutable({
+    runner: run.metrics.runner!,
+    machine: await loadMachinePool(run.reviewWorkspace.machine),
+  });
   assertCurrent();
   const local = run.reviewWorkspace.executionNodeId === 'local';
   if (local) requireNativeProfileOwner(run.nativeOwnerPrincipalId);

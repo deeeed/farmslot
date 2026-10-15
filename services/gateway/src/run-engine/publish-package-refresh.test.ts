@@ -10,6 +10,7 @@ import type { ReadyGatePayload, ReviewGatePayload, RunDecision } from '@farmslot
 import { execLocal } from '../core/exec.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { capturePublicationSource } from '../run-completion/publication-source.js';
+import { runBundleStore } from '../run-completion/retained-artifacts.js';
 import { createRun, getRun, loadAllRuns, persistRunNow, updateRun } from '../runs/store.js';
 
 import {
@@ -53,6 +54,25 @@ test('pending publication reload retains its approved package without reading li
   await loadAllRuns();
   assert.equal(JSON.stringify(await ensureCurrentPublishPackage(run.id)), JSON.stringify(prepared));
   assert.equal(getRun(run.id)!.engineState?.publishGate?.publicationStatus, 'pending_publish');
+
+  const store = await runBundleStore(true);
+  await writeFile(
+    path.join(taskDir, prepared.artifactPath),
+    JSON.stringify({
+      ...prepared,
+      artifactBundle: {
+        storeId: store.id,
+        bundleDigest: 'a'.repeat(64),
+        taskKey: run.id,
+        manifestDigest: 'captured-output',
+      },
+    }),
+  );
+  await assert.rejects(
+    ensureCurrentPublishPackage(run.id),
+    /Approved publication package is unavailable/,
+  );
+  assert.equal(getRun(run.id)!.engineState?.publishGate?.packageHash, prepared.packageHash);
 });
 
 test('publish package refresh evidence summary preserves valid selection and reports drops', () => {
@@ -355,7 +375,7 @@ test('refreshReviewGate does not let worker artifacts overwrite gateway-owned pa
   );
 });
 
-test('inspection defers while work progresses, coalesces idle refresh, and retains a failed gate', async (t) => {
+test('inspection repairs a missing bundle at unchanged HEAD, defers busy work and coalesces refresh', async (t) => {
   const run = createRun({
     flowType: 'dev',
     mode: 'autonomous',
@@ -385,6 +405,19 @@ test('inspection defers while work progresses, coalesces idle refresh, and retai
     },
   };
   updateRun(run.id, { status: 'human-gating', decisions: [decision] });
+  let missingBundleRefreshes = 0;
+  const missingBundleReaders = {
+    head: async () => prepared.headSha ?? null,
+    bundleAvailable: async () => false,
+    progress: async () => ({ kind: 'idle' as const }),
+    refresh: async () => {
+      missingBundleRefreshes++;
+      return getRun(run.id)!;
+    },
+  };
+  await reconcilePublicationPackageForInspection(getRun(run.id)!, missingBundleReaders);
+  assert.equal(missingBundleRefreshes, 1);
+  assert.deepEqual(getRun(run.id)!.decisions, [decision]);
   const readers = {
     head: async () => 'new-head',
     progress: async () => ({ kind: 'making-progress' as const }),

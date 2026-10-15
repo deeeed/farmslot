@@ -7,6 +7,7 @@
 import {
   createEvidenceReviewModel,
   type EvidenceReviewClaim,
+  type EvidenceReviewClaimDisplay,
   type EvidenceReviewModel,
 } from '@farmslot/adapter-sdk/evidence';
 import {
@@ -91,6 +92,7 @@ export interface AcceptanceEvidenceEntry {
 }
 
 export interface AcceptanceLedgerRow {
+  display: EvidenceReviewClaimDisplay;
   review?: EvidenceReviewClaim;
   criterion: AcceptanceCriterionView;
   /** The recorded verdict, or null while the criterion is unjudged. */
@@ -136,6 +138,7 @@ export function acceptanceLedgerView(
     unassessed: summary.unrecorded,
     hasOpenCriteria: summary.proven + summary.untestable < summary.total,
     rows: model.claims.map((criterion) => ({
+      display: model.claimDisplay(criterion.id),
       criterion,
       review: criterion,
       verdict: criterion.status?.verdict ?? null,

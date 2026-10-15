@@ -5,6 +5,62 @@ export class TerminalReviewArtifactError extends Error {
   }
 }
 
+export class ReviewerExitedError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'ReviewerExitedError';
+  }
+}
+
+export function reviewerExitForNativeSnapshot(
+  snapshot: NativeSessionReadResult,
+  cause?: unknown,
+): ReviewerExitedError | undefined {
+  const session = snapshot.session;
+  if (
+    ['closed', 'failed'].includes(session.state) &&
+    (session.processStopped || !session.processPid)
+  )
+    return new ReviewerExitedError(
+      session.error ?? 'Native reviewer stopped without a valid terminal signal',
+      { cause },
+    );
+  return undefined;
+}
+
+/** An uncertain dispatch becomes an exit only after an ownership-checked stop observation. */
+export async function nativeReviewerFailure(
+  error: unknown,
+  readSnapshot: () => Promise<NativeSessionReadResult>,
+): Promise<unknown> {
+  if (!(error instanceof NativeWorkerOperationUncertainError)) return error;
+  let snapshot: NativeSessionReadResult;
+  try {
+    snapshot = await readSnapshot();
+  } catch (observationError) {
+    return new NativeWorkerOperationUncertainError(
+      error.operation,
+      error.message,
+      new AggregateError([error, observationError], 'Native reviewer launch observation failed'),
+    );
+  }
+  return reviewerExitForNativeSnapshot(snapshot, error) ?? error;
+}
+
+/** Cleanup has settled before retrying; all other failures retain their existing handling. */
+export async function withReviewerRelaunch<T>(
+  review: () => Promise<T>,
+  onRelaunch: (error: ReviewerExitedError) => void | Promise<void>,
+): Promise<T> {
+  try {
+    return await review();
+  } catch (error) {
+    if (!(error instanceof ReviewerExitedError)) throw error;
+    await onRelaunch(error);
+    return review();
+  }
+}
+
 export function isTerminalReviewArtifactError(
   error: unknown,
 ): error is TerminalReviewArtifactError {
@@ -26,3 +82,6 @@ export function terminalReviewArtifactErrorForCompletion(
     `Reviewer ${reviewerContextId} completed with an invalid result artifact: ${terminalInvalidReason}`,
   );
 }
+import type { NativeSessionReadResult } from '@farmslot/protocol';
+
+import { NativeWorkerOperationUncertainError } from '../runners/native/worker-error.js';

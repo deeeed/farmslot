@@ -50,6 +50,7 @@ import { isTerminalWorkerSignal, normalizeWorkerSignal } from '../tasks/worker-s
 
 import { claudeHookObservability } from './claude-observability.js';
 import { codexSessionObservability } from './codex-observability.js';
+import { createCursorLogObservability } from './cursor-observability.js';
 import { grokLogObservability } from './grok-observability.js';
 import {
   parseCodexModelCatalog,
@@ -675,6 +676,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
 const KNOWN_RUNNER_OBSERVABILITY: Record<string, RunnerObservability> = {
   claude: claudeHookObservability,
   codex: codexSessionObservability,
+  cursor: createCursorLogObservability(),
   grok: grokLogObservability,
   pi: claudeHookObservability,
 };

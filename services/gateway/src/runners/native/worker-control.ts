@@ -20,13 +20,18 @@ import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { routeNativeExecution } from './node.js';
 import { nativeWorkerProfileMatches } from './worker-profile.js';
 
-function workerBinding(runId: string, role?: AgentRole, contextId?: string) {
+function workerBinding(
+  runId: string,
+  role?: AgentRole,
+  contextId?: string,
+  allowLaunchIntent = false,
+) {
   const run = getRun(runId);
   if (!run || run.transport !== 'native') throw new Error('Native worker run not found');
   assertNativeRunOwner(run);
   const context = selectAgentContext(run, { role, contextId });
   const binding = resolveNativeContext(run, context)?.binding;
-  if (!binding?.generation || binding.releasedAt)
+  if (!binding || (!binding.generation && !allowLaunchIntent) || binding.releasedAt)
     throw new Error('Native worker has no current process generation');
   return { run, context, binding };
 }
@@ -67,7 +72,7 @@ export async function readNativeWorkerSnapshot(
   role?: AgentRole,
   contextId?: string,
 ) {
-  const { binding } = workerBinding(runId, role, contextId);
+  const { binding } = workerBinding(runId, role, contextId, true);
   const snapshot = (await routeNativeExecution(
     binding.ownerPrincipalId,
     Methods.NATIVE_SESSION_READ,
@@ -77,10 +82,14 @@ export async function readNativeWorkerSnapshot(
       limit: 1,
     },
   )) as NativeSessionReadResult;
-  assertNativeWorkerSnapshot(binding, snapshot);
+  const observedGeneration = binding.generation ?? snapshot.session.generation;
+  assertNativeWorkerSnapshot({ ...binding, generation: observedGeneration }, snapshot);
   // The RPC may have overlapped a transfer, cancellation or explicit recovery.
-  const latest = workerBinding(runId, role, contextId).binding;
-  assertNativeWorkerSnapshot(latest, snapshot);
+  const latest = workerBinding(runId, role, contextId, true).binding;
+  assertNativeWorkerSnapshot(
+    { ...latest, generation: latest.generation ?? observedGeneration },
+    snapshot,
+  );
   if (
     snapshot.session.state === 'failed' &&
     snapshot.session.error &&

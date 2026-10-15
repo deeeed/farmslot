@@ -12,6 +12,7 @@ import {
   recordedEvidenceClosureIdentity,
   type RecordedEvidencePackageInput,
   reviewedVisualFiles,
+  type RunDecision,
   type SelfPrincipalSummary,
 } from '@farmslot/protocol';
 
@@ -36,6 +37,231 @@ const entry = (nodeId: string, start: number, end: number) => ({
   startedAt: at(start),
   endedAt: at(end),
   durationMs: end - start,
+});
+
+function recordedGate(selectedEvidenceKeys: string[]): RunDecision {
+  const diffStat = { files: 0, additions: 0, deletions: 0 };
+  return {
+    id: 'gate',
+    type: 'engine_human_gate',
+    title: 'Review',
+    description: '',
+    actions: [],
+    createdAt: at(0),
+    payload: {
+      kind: 'ready',
+      prNumber: null,
+      repo: null,
+      diffStat,
+      workerReport: '',
+      branch: 'review',
+      prPackage: {
+        id: 'package',
+        packageHash: digest('package'),
+        artifactPath: 'artifacts/pr-package.json',
+        branch: 'review',
+        diffStat,
+        draftTitle: 'Review',
+        draftBody: '',
+        reviewArtifactIds: [],
+        gatePolicy: {
+          owner: 'human',
+          dispatchMode: 'autonomous',
+          publishAuthority: 'human',
+          reason: 'Review the proof.',
+        },
+        publicationTarget: 'ready',
+        publicationStatus: 'not_published',
+        createdAt: at(0),
+        selectedEvidenceKeys,
+      },
+    },
+  };
+}
+
+test('the display uses recorded publication selections and retains every remaining artifact without changing claims', () => {
+  const evidence = ['artifacts/proof.png', 'artifacts/still.png', 'artifacts/log.txt'];
+  const ledger: AcceptanceStatusLedger = {
+    schemaVersion: 1,
+    criteria: [
+      {
+        id: 'AC-1',
+        text: 'Inspect the result.',
+        verdict: 'weak',
+        evidence,
+        recipeNodes: [],
+        updatedAt: at(0),
+      },
+    ],
+  };
+  const inventory = [...evidence, 'artifacts/summary.json'].map((path) => ({
+    path,
+    purpose: 'evidence',
+  }));
+  const model = createEvidenceReviewModel({
+    ledger,
+    artifacts: inventory,
+    gateDecision: recordedGate(['artifacts/proof.png']),
+  });
+  const original = structuredClone(model.claims);
+  const display = model.claimDisplay('AC-1');
+  assert.deepEqual(
+    display.selected.map((file) => file.artifactPath),
+    evidence.slice(0, 1),
+  );
+  assert.deepEqual(
+    display.raw.map((file) => file.artifactPath),
+    evidence.slice(1),
+  );
+  assert.deepEqual(
+    model.rawArtifacts(inventory).map((file) => file.path),
+    [...evidence.slice(1), 'artifacts/summary.json'],
+  );
+  assert.deepEqual(model.claims, original);
+  assert.deepEqual(ledger.criteria[0]?.evidence, evidence);
+  assert.equal(model.selection, null);
+  assert.equal(model.comparisonView.rows[0]?.primaryClip, null);
+  assert.deepEqual(
+    model.comparisonView.rows[0]?.primaryFiles.map((file) => file.artifactPath),
+    ['artifacts/proof.png'],
+  );
+  assert.deepEqual(
+    createEvidenceReviewModel({ ledger, gateDecision: recordedGate([]) }).claimDisplay('AC-1')
+      .selected,
+    [],
+  );
+  assert.deepEqual(createEvidenceReviewModel({ ledger }).claimDisplay('AC-1').selected, []);
+});
+
+test('a measured proof stays primary while its supporting stills remain raw and filterable', () => {
+  const source = qaPackage(2);
+  const before = JSON.stringify(source);
+  const model = createEvidenceReviewModel({
+    package: source,
+    artifactPrefix: 'artifacts/selected/',
+  });
+  assert.deepEqual(model.errors, []);
+  const claim = model.claims.find((row) => row.id === 'check-1');
+  assert.ok(claim);
+  const display = model.claimDisplay(claim.id);
+  assert.equal(display.clip, claim.clips[0]);
+  assert.deepEqual(display.selected, []);
+  assert.deepEqual(
+    display.raw.map((file) => file.artifactPath),
+    ['artifacts/selected/stills/1.png'],
+  );
+  const inventory = [
+    ...claim.evidence.map((file) => ({ path: file.artifactPath, purpose: 'evidence' })),
+    { path: 'artifacts/selected/summary.json', purpose: 'summary' },
+  ];
+  assert.deepEqual(model.rawArtifacts(inventory), inventory.slice(1));
+  model.setComparisonFilter('before');
+  assert.ok(model.comparisonView.rows.every((row) => row.primaryClip === null));
+  model.setComparisonFilter('moments');
+  assert.equal(
+    model.comparisonView.rows.find((row) => row.claim.id === claim.id)?.primaryClip,
+    display.clip,
+  );
+  assert.equal(JSON.stringify(source), before);
+});
+
+test('selected before and after captures are excluded from raw inventory without losing their source bindings', () => {
+  const baseSha = '1'.repeat(40),
+    headSha = '2'.repeat(40);
+  const source = withComparison(
+    boundComparisonPackage('head', 'after', headSha),
+    boundComparisonPackage('baseline', 'before', baseSha),
+  );
+  const model = createEvidenceReviewModel({
+    package: source,
+    artifactPrefix: 'artifacts/selected/',
+    comparisonSnapshot: { baseSha, headSha },
+  });
+  assert.deepEqual(model.errors, []);
+  const row = model.comparisons.find((row) => row.claim.id === 'check-1');
+  assert.ok(row?.selectedBefore && row.selectedAfter);
+  const inventory = [row.selectedBefore, row.selectedAfter].map((file) => ({
+    path: file.artifactPath,
+    purpose: 'evidence',
+  }));
+  const supporting = { path: 'artifacts/selected/summary.json', purpose: 'summary' };
+  assert.deepEqual(model.rawArtifacts([...inventory, supporting]), [supporting]);
+  assert.ok(
+    model
+      .claimDisplay('check-1')
+      .selected.some((file) => file.artifactPath === row.selectedAfter?.artifactPath),
+  );
+  assert.equal(row.selectedBefore.recipeRunId, 'baseline');
+  assert.equal(row.selectedAfter.recipeRunId, 'head');
+});
+
+function groupedRecording(path = 'video.mp4') {
+  const trace = [
+    { ...entry('setup', 0, 200), proves: [] },
+    { ...entry('first-a', 1000, 1200), proves: ['AC-1'] },
+    { ...entry('other-ac', 1800, 2100), proves: ['AC-2'] },
+    { ...entry('second-a', 2200, 2400), proves: ['AC-1'] },
+    { ...entry('teardown', 3000, 3200), proves: [] },
+  ];
+  const source = recording(trace, 0, 4000, path);
+  for (const marker of source.timeline.markers) marker.proves = trace[marker.traceIndex]!.proves;
+  return source;
+}
+
+test('group selection seeks the complete AC range without changing claims or narrowing a full-run timeline', () => {
+  const model = createEvidenceReviewModel({
+    criteria: [{ id: 'AC-1', text: 'Both observations hold.' }],
+    recordings: [groupedRecording()],
+  });
+  assert.deepEqual(model.errors, []);
+  assert.deepEqual(
+    model.timelineGroups('video.mp4').map((group) => group.label),
+    ['Setup', 'AC-1', 'AC-2', 'Teardown'],
+  );
+  const claims = structuredClone(model.claims);
+  const group = model.timelineGroups('video.mp4').find((entry) => entry.claimId === 'AC-1');
+  assert.ok(group);
+  const playback = model.selectTimelineGroup('video.mp4', group.id);
+  assert.equal(playback.seekMs, 1000);
+  assert.ok(playback.clip && playback.clip.startMs <= 1000 && playback.clip.endMs >= 2400);
+  assert.equal(model.selection?.claimId, undefined);
+  assert.equal(model.timelineGroups('video.mp4').length, 4);
+  assert.ok(model.selectClaim('AC-1'));
+  assert.deepEqual(
+    model.timelineGroups('video.mp4').map((group) => group.label),
+    ['AC-1'],
+  );
+  model.selectTimelineGroup('video.mp4', group.id);
+  model.selectOccurrence(3, { videoPath: 'video.mp4' });
+  assert.equal(model.selection?.claimId, 'AC-1');
+  assert.deepEqual(model.claims, claims);
+  model.clearSelection();
+  assert.deepEqual(
+    model.timelineGroups('video.mp4').map((group) => group.label),
+    ['Setup', 'AC-1', 'AC-2', 'Teardown'],
+  );
+});
+
+test('timeline selection stays on the requested original and preserves timing refusal', () => {
+  const model = createEvidenceReviewModel({
+    recordings: [groupedRecording(), { ...groupedRecording('second.mp4'), gapBefore: false }],
+  });
+  assert.deepEqual(model.errors, []);
+  const selected = model.selectOccurrence(1, { videoPath: 'second.mp4' });
+  assert.equal(selected?.clips.length, 1);
+  assert.equal(selected?.clips[0]?.videoPath, 'second.mp4');
+  const group = model.timelineGroups('second.mp4').find((entry) => entry.claimId === 'AC-1');
+  assert.ok(group);
+  assert.equal(model.selectTimelineGroup('second.mp4', group.id).clip?.videoPath, 'second.mp4');
+  const invalid = createEvidenceReviewModel({
+    recordings: [groupedRecording()],
+    readErrors: ['Retained recording could not be qualified.'],
+  });
+  assert.equal(invalid.timelineGroups('video.mp4')[1]?.startMs, null);
+  const unavailable = invalid.timelineGroups('video.mp4').find((entry) => entry.claimId === 'AC-1');
+  assert.ok(unavailable);
+  assert.equal(invalid.selectTimelineGroup('video.mp4', unavailable.id).seekMs, null);
+  assert.equal(invalid.selection, null);
 });
 
 function recording(
@@ -326,6 +552,14 @@ test('continuous source segments play in order while restart gaps remain outside
       ['first.mp4', 500, 2_000],
       ['next.mp4', 0, 1_500],
     ],
+  );
+  const scoped = createEvidenceReviewModel({ recordings: [first, next] });
+  assert.equal(scoped.markerSeekMs('next.mp4', 0, 'start'), null);
+  assert.equal(scoped.markerSeekMs('next.mp4', 0, 'end'), 500);
+  assert.equal(scoped.selectOccurrence(0, { videoPath: 'next.mp4' }), null);
+  assert.equal(
+    scoped.selectOccurrence(0, { videoPath: 'next.mp4', phase: 'end' })?.clips[0]?.videoPath,
+    'next.mp4',
   );
   const gap = createEvidenceReviewModel({ recordings: [first, { ...next, gapBefore: true }] });
   assert.equal(gap.selectOccurrence(0)?.timing, 'outside-recording');

@@ -213,3 +213,26 @@ test('cleanup retains a detached child after its title changes and parent exits'
     if (descendant && alive(descendant)) process.kill(descendant, 'SIGKILL');
   }
 });
+
+test('retains stopped root observation without retaining live signal ownership', (t) => {
+  const root = 100039802;
+  let census = `${process.pid} 1 ${process.pid} inspector\n${root} 100039801 100039801 original host birth\n`;
+  const ps = t.mock.method(childProcess, 'execFileSync', () => census);
+  const kill = t.mock.method(process, 'kill', () => {
+    assert.fail('a departed root must never be signalled');
+  });
+  syncBuiltinESMExports();
+  try {
+    const tree = new NativeProcessTree(root);
+    const original = tree.snapshot();
+    census = `${process.pid} 1 ${process.pid} inspector\n`;
+    tree.capture();
+    assert.equal(tree.empty(), true);
+    assert.deepEqual(tree.snapshot(), original);
+    tree.stop();
+  } finally {
+    ps.mock.restore();
+    kill.mock.restore();
+    syncBuiltinESMExports();
+  }
+});

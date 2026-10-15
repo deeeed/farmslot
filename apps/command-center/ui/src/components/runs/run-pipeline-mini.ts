@@ -150,9 +150,7 @@ export class RunPipelineMini extends LitElement {
 
   render() {
     const isCancelled = this.run?.status === 'cancelled';
-    const activityLabel = this.run
-      ? deriveRunLifecycleView({ status: this.run.status }).activityLabel
-      : undefined;
+    const activityLabel = this.run ? deriveRunLifecycleView(this.run).activityLabel : undefined;
     const awaitingOperator = isInteractiveCompletionAwaitingOperator(this.run);
     const segments = this.buildSegments();
     if (isCancelled) {

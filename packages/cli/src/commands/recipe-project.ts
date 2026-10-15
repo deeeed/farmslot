@@ -70,6 +70,10 @@ export function projectCommandInvocation(
   for (const option of cmd.options) {
     if (!option.long) continue;
     const value: unknown = values[option.attributeName()];
+    if (option.negate) {
+      if (value === false) argv.push(option.long);
+      continue;
+    }
     if (value === undefined || value === false) continue;
     if (value === true) argv.push(option.long);
     else

@@ -6,12 +6,10 @@ import {
   buildCodexPromptProbeCommand,
   buildCodexSessionBindingProbeCommand,
   buildCodexTurnStateProbeCommand,
-  buildRunnerOpenFileProbeCommand,
   codexSessionObservability,
   parseCodexPromptProbe,
   parseCodexSessionBindingProbe,
   parseCodexTurnStateProbe,
-  parseOpenFilePaths,
 } from '../../../../services/gateway/src/runners/codex-observability.ts';
 import {
   deriveRunnerActivity,
@@ -25,6 +23,10 @@ import {
   instructionNeedle,
   runnerPromptDigest,
 } from '../../../../services/gateway/src/runners/observability-prompt-digest.ts';
+import {
+  buildRunnerOpenFileProbeCommand,
+  parseOpenFilePaths,
+} from '../../../../services/gateway/src/runners/process-open-files.ts';
 import {
   runnerPaneHasBufferedInstruction,
   runnerPaneHasQueuedInstruction,

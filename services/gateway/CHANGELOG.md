@@ -5,11 +5,29 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Cover person-device lifetime and revocation through the shared credential store.
+
+- Relaunch a stopped reviewer once after cleanup, retaining failed-attempt evidence and its actual failure if recovery fails.
+- Refresh unapproved publication packages with missing retained bundles even when source HEAD is unchanged; preserve approved package identity on failure.
+
+- Retain pipeline review result snapshots in publication packages and use the pane-owned process's structured turn records for publication readiness, monitor nudges and safe-send busy checks.
+
+- Keep failed reviewers without an artifact scope from holding publication gates in recovery after a settled review.
+
+- Exclude unavailable native hosts from automatic review placement even when their previous reviews were accepted.
+
+- Resume an interrupted self-review fix after gateway restart without skipping its signal or waiting for an operator replay.
+- Refuse direct manual-backlog references with enqueue guidance instead of generating placeholder tickets; preserve authored context and identity on interactive backlog dispatch.
+
+- Keep deferred review fixes under signal observation and coalesce repeated review replays while the same attempt is active.
+
 - Scope review models to their configured runner and surface native reviewer launch errors without waiting for the review timeout.
 - Retain run output and publication evidence in gateway-owned bundles; serve reports, recipe metadata and artifact ranges from pinned local snapshots, with explicit backfill and retention limits.
+- Honor configured runner executables for native static reviews and account preflight, skip retained native startup failures during automatic placement, and report startup causes separately from checkout mismatches.
+
 - Load development provider settings separately from node credentials and stop loading the retired checkout auth file.
 
 - Refuse stale publication approvals before resolving their gate, and retain accepted approvals and their exact package through recovery without restarting reviews.
+- Retain live workers waiting for an operator and suspend inactivity monitoring until the same execution resumes.
 
 - Preserve unfinished reviewer requests during recovery, restore current-head review progress on replay, and record a COLD fallback when WARM lineage is unavailable.
 
@@ -175,6 +193,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Allow managed runner resumes to suppress startup update checks.
 - Preserve advisory inline comments on passing static reviews while refusing blocking comments and mismatched issue reviews.
+
+- Disable automatic commit attribution during required worker launch preparation, including pool-defined launches and respawns.
 
 ## 0.21.0 - 2026-10-10
 

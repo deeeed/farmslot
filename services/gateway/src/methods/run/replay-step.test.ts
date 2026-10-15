@@ -680,6 +680,118 @@ test('replaySlotReclaimCheck allows reclaim when slot owner run record is missin
   );
 });
 
+test(
+  'review replay coalesces preflight and active fix observation without a second generation',
+  { timeout: 2_000 },
+  async (t) => {
+    const previousDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+    const previousTestContext = process.env.NODE_TEST_CONTEXT;
+    process.env.NODE_TEST_CONTEXT = '1';
+    process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+    const run = createRun({
+      flowType: 'fix-bug',
+      project: 'example-mobile-farm',
+      ticketOrPr: 'PROJ-2585',
+    });
+    let release: (() => void) | undefined;
+    const replayTasks: Promise<unknown>[] = [];
+    let finishDriver!: () => void;
+    const driver = new Promise<void>((resolve) => {
+      finishDriver = resolve;
+    });
+    t.after(async () => {
+      release?.();
+      finishDriver();
+      await Promise.allSettled(replayTasks);
+      if (previousDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+      else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previousDisableStart;
+      if (previousTestContext === undefined) delete process.env.NODE_TEST_CONTEXT;
+      else process.env.NODE_TEST_CONTEXT = previousTestContext;
+      await evictTestRun(run.id, 'failed');
+    });
+    updateRun(run.id, {
+      status: 'failed',
+      engineState: { generation: 2 },
+      steps: run.steps.map((step) => ({
+        ...step,
+        status: step.name === 'review' ? 'failed' : 'done',
+      })),
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered!: () => void;
+    const enteredReplay = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const params = { runId: run.id, stepName: 'review' };
+    const replay = runReplayStep(params, () => {}, {
+      startEngine: () => driver,
+      afterGenerationBump: async () => {
+        entered();
+        await held;
+      },
+    });
+    replayTasks.push(replay);
+    await enteredReplay;
+    const generation = getRun(run.id)?.engineState?.generation;
+    const duplicate = runReplayStep(params, () => {}, {
+      afterGenerationBump: async () => {
+        assert.fail('duplicate replay must not bump generation');
+      },
+    });
+    replayTasks.push(duplicate);
+    release?.();
+    await Promise.all([replay, duplicate]);
+    assert.equal(getRun(run.id)?.engineState?.generation, generation);
+    assert.equal(getRun(run.id)?.recoveryAttempts?.length, 1);
+
+    for (const status of ['reviewing', 'fixing', 'reconciling'] as const) {
+      updateRun(run.id, { status });
+      const before = structuredClone(getRun(run.id));
+      const result = await runReplayStep(params, () =>
+        assert.fail('duplicate replay must not emit'),
+      );
+      assert.deepEqual(result.run, before);
+      assert.deepEqual(getRun(run.id), before);
+    }
+
+    finishDriver();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    // Simulate retained state after observer exit/restart. The durable attempt
+    // still says started, but manual recovery must create a new observer.
+    for (const status of ['fixing', 'reconciling'] as const) {
+      updateRun(run.id, { status });
+      const priorGeneration = getRun(run.id)?.engineState?.generation ?? 0;
+      await runReplayStep(params, () => {});
+      assert.equal(getRun(run.id)?.engineState?.generation, priorGeneration + 1);
+    }
+
+    const current = getRun(run.id)!;
+    updateRun(run.id, {
+      engineState: {
+        ...current.engineState,
+        publishGate: {
+          reviewRecovery: {
+            status: 'operator-required',
+            attempts: 1,
+            startedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      },
+    });
+    await runReplayStep(params, () => {});
+    assert.equal(getRun(run.id)?.engineState?.generation, (generation ?? 0) + 3);
+    assert.equal(getRun(run.id)?.recoveryAttempts?.length, 4);
+
+    updateRun(run.id, { status: 'failed' });
+    await runReplayStep(params, () => {});
+    assert.equal(getRun(run.id)?.engineState?.generation, (generation ?? 0) + 4);
+    assert.equal(getRun(run.id)?.recoveryAttempts?.length, 5);
+  },
+);
+
 test('in-flight replay refuses revive after operator force-complete', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',

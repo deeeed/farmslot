@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { createEvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
-import type { ArtifactRef } from '@farmslot/protocol';
+import type { ArtifactRef, RunDecision } from '@farmslot/protocol';
 import {
   isRecord,
   recipeTraceEntries,
@@ -18,6 +18,85 @@ import {
 function artifact(path: string, overrides: Partial<ArtifactRef> = {}): ArtifactRef {
   return { path, purpose: 'screenshot', ...overrides };
 }
+
+test('All keeps selected file links visible when retained timing is unavailable', () => {
+  const diffStat = { files: 0, additions: 0, deletions: 0 };
+  const gate: RunDecision = {
+    id: 'gate',
+    type: 'engine_human_gate',
+    title: 'Review',
+    description: '',
+    actions: [],
+    createdAt: '2026-01-01T00:00:00Z',
+    payload: {
+      kind: 'ready',
+      prNumber: null,
+      repo: null,
+      diffStat,
+      workerReport: '',
+      branch: 'review',
+      prPackage: {
+        id: 'package',
+        packageHash: 'frozen',
+        artifactPath: 'artifacts/package.json',
+        branch: 'review',
+        diffStat,
+        draftTitle: 'Review',
+        draftBody: '',
+        reviewArtifactIds: [],
+        gatePolicy: {
+          owner: 'human',
+          dispatchMode: 'autonomous',
+          publishAuthority: 'human',
+          reason: 'Review proof.',
+        },
+        publicationTarget: 'ready',
+        publicationStatus: 'not_published',
+        createdAt: '2026-01-01T00:00:00Z',
+        selectedEvidenceKeys: ['artifacts/proof.mp4'],
+      },
+    },
+  };
+  const model = createEvidenceReviewModel({
+    gateDecision: gate,
+    ledger: {
+      schemaVersion: 1,
+      criteria: [
+        {
+          id: 'AC-1',
+          text: 'Inspect the proof.',
+          verdict: 'weak',
+          evidence: ['artifacts/proof.mp4'],
+          recipeNodes: [],
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+      ],
+    },
+    artifacts: [
+      { path: 'artifacts/proof.mp4', purpose: 'video' },
+      { path: 'artifacts/trace.json', purpose: 'evidence' },
+    ],
+    readErrors: ['Retained package unavailable.'],
+  });
+  assert.equal(model.comparisonView.rows[0]?.primaryClip, null);
+  assert.deepEqual(
+    model.rawArtifacts(model.artifactInventory).map((file) => file.path),
+    ['artifacts/trace.json'],
+  );
+  const rendered = renderWorkspaceEvidencePreview({
+    title: 'Evidence',
+    items: [],
+    comparison: {
+      model,
+      artifactUrl: (path) => path,
+      openMedia() {},
+      openMoment() {},
+      changed() {},
+    },
+  });
+  assert.match(litText(rendered), /proof\.mp4/);
+  assert.deepEqual(model.claims[0]?.status?.verdict, 'weak');
+});
 
 function litText(value: unknown): string {
   if (value === null || value === undefined) return '';

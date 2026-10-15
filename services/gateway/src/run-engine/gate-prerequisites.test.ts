@@ -161,7 +161,7 @@ test('review overrides waive only their owning review policy, never checks or li
   }
 });
 
-test('a passing fix/review loop consumes its final artifact and rejects a missing final result', async () => {
+test('a passing fix/review loop consumes its final artifact and rejects a missing final result', async (t) => {
   const prepared = makeReadyGatePackage({
     reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
   });
@@ -230,6 +230,35 @@ test('a passing fix/review loop consumes its final artifact and rejects a missin
     { ...inputs, reviewResult: async () => undefined },
   );
   assert.equal(optional.state, 'ready');
+
+  // Tmux pipeline results must also pass through the real retained-artifact reader.
+  const root = await mkdtemp(path.join(os.tmpdir(), 'gate-pipeline-result-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const pipelinePath = 'artifacts/pipeline-review-loop-2/review-result.json';
+  await mkdir(path.dirname(path.join(root, pipelinePath)), { recursive: true });
+  await writeFile(
+    path.join(root, pipelinePath),
+    JSON.stringify({ schemaVersion: 1, verdict: 'pass', issues: [] }),
+  );
+  const pipeline: ReviewStatus = {
+    ...review,
+    source: 'pipeline',
+    runner: 'claude',
+    artifactPaths: [pipelinePath],
+    attempts: [{ ...review.attempts![1], artifactPaths: [pipelinePath] }],
+  };
+  const retained = makeRun({
+    id: randomUUID(),
+    taskFile: path.join(root, 'TASK.md'),
+    engineState: { publishGate: { reviews: [pipeline] } },
+  });
+  await retainFixtureTask(root, retained, await runBundleStore(true));
+  const fromBundle = await collectRunGateReadiness(retained, prepared, inputs);
+  assert.equal(fromBundle.state, 'ready');
+  assert.deepEqual(
+    gateActionsForReadiness([{ id: 'approve-publish' }, { id: 'hold' }], fromBundle),
+    [{ id: 'approve-publish' }, { id: 'hold' }],
+  );
 });
 
 function pendingReadyDecision(): RunDecision {
@@ -955,7 +984,7 @@ test('unresolved approval requires real current-head review inputs and cannot wa
     );
     assert.match(
       readiness.reasons.find((reason) => reason.prerequisite === 'review')!.message,
-      /current-head.*native.*request|current-head.*native.*Request/i,
+      /current-head.*structured.*request/i,
     );
   }
   const exhausted = await collectRunGateReadiness(exhaustedRun, prepared, inputs);

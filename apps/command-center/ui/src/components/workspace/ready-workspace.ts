@@ -267,6 +267,15 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
 
   // ─── Render ───
 
+  override _openLightboxArtifact(
+    payload: ReadyGatePayload,
+    artifact: ArtifactRef,
+    scope?: { paths: string[]; label: string },
+  ) {
+    this._evidenceModel?.clearSelection();
+    super._openLightboxArtifact(payload, artifact, scope);
+  }
+
   override render() {
     const payload = this._payload;
     if (!payload) return renderReadyWorkspaceEmpty();
