@@ -27,6 +27,7 @@ import {
 
 import { markBacklogRunReleased } from '../../backlog/store.js';
 import { readSlotField, readSlotRow, SLOT_PHASE_RELEASING } from '../../core/index.js';
+import { cleanupReviewWorkspaceCaches } from '../../review-workspaces/cache-cleanup.js';
 import { STALE_RELEASE_RECLAIM_MS } from '../../run-engine/recovery.js';
 import { isTerminalTeardownInFlight } from '../../run-engine/terminal-teardown-registry.js';
 import {
@@ -35,15 +36,18 @@ import {
   isRunArchiving,
 } from '../../run-lifecycle/archive-fence.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
+import { nativeSessionManager } from '../../runners/native/manager.js';
 import {
   archiveRun as storeArchiveRun,
   assertRunArchivable,
   blockedRunOwnsSlot,
   cleanupRuns as storeCleanup,
   deleteRun as storeDeleteRun,
+  getAllRunsWithArchived,
   getRun,
   listRuns,
   listRunTags as storeListRunTags,
+  runsDirectory,
   updateRun,
 } from '../../runs/store.js';
 import { schedulerTick } from '../../work-graph/store.js';
@@ -231,7 +235,14 @@ export async function runBulkDelete(
 }
 
 export async function runCleanup(params: RunCleanupParams): Promise<RunCleanupResult> {
-  return storeCleanup(params.dryRun ?? true);
+  const dryRun = params.dryRun ?? true;
+  const result = await storeCleanup(dryRun);
+  const cacheDirsRemoved = await cleanupReviewWorkspaceCaches(dryRun, {
+    runs: getAllRunsWithArchived,
+    runsDir: runsDirectory(),
+    nativeRoot: nativeSessionManager.root,
+  });
+  return { ...result, cacheDirsRemoved };
 }
 
 export interface RunBackfillSummariesParams {

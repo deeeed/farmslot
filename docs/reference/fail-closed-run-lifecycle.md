@@ -518,3 +518,75 @@ replay after a bounded budget extension, and current-head required reviews.
 Live acceptance MUST publish the original run through its gate, verify its
 linked PR head and hosted per-AC images/video, and retain all earlier attempts.
 No hand-created PR or adoption may substitute for that publication receipt.
+
+## Adopted publication evidence delivery
+
+**Status:** Accepted under ADR-065 Amendment 5, 2026-10-16. Delivery requires the
+implementation PR; the person-only adoption restrictions remain unchanged.
+
+`run.refreshPublishedEvidence` MAY deliver retained media for an adopted
+publication under its existing scoped authorization for run mutations. Adoption itself
+remains person-only. This operation MUST NOT impersonate the adopter or treat
+their code-publication attestation as a new review or evidence verdict.
+
+### Binding and selection
+
+- Resolve the same active or archived run through the canonical store. Refuse
+  imported/read-only records, nonterminal execution or an active task.
+- Require the immutable adoption receipt, its recorded prior decision/package
+  identity and the matching retained frozen package. Validate its hash and
+  evidence manifest through the existing owners. Missing identity or bytes
+  MUST refuse; do not prepare a replacement package or widen its selection.
+- Deliver only media selected in that package, or a requested subset under the
+  existing selection rules. Validate original bytes and provenance. A package
+  from an older head MAY supply historical media, but its head and known capture
+  identities MUST remain visible separately from the attested PR head. Unknown
+  provenance remains unknown; no current-head pass, coverage or baseline is
+  inferred. Existing evidence-policy refusals remain enforced.
+- The live repository, PR and branch MUST match the receipt, and the live head
+  MUST equal `receipt.headSha`, not `observedHeadSha`.
+  Historical adoption does not authorize writing to an advanced head. Refuse
+  unknown identity and closed-unmerged PRs before media delivery.
+
+### Mutation and persistence
+
+Use the current PR body as the base. Extend the shared renderer to append a
+run-specific delimited evidence/provenance block. Replace it only when its bytes
+match this run's last recorded farm delivery; edited or unproven markers MUST
+refuse. A template heading alone establishes no ownership. Human media under
+existing evidence headings and all text outside the owned block MUST survive
+byte-for-byte. Body-wide sanitization and whole-body LLM rewriting are forbidden
+in this operation; existing rendering may process only the owned block.
+
+This supplies the separate package/head authorization and freshness checks
+required by the accepted adoption contract. It does not authorize restoring an
+older draft body or changing source, title, publication state, review budget,
+verdicts or frozen QA.
+
+Serialize through the existing lifecycle owner. Recheck the generation, receipt,
+archive location, frozen selection and live head/body after asynchronous work
+and immediately before editing the body. Observed drift MUST refuse without
+replaying a worker, gate or publication action. Retain already uploaded artifacts
+on refusal; never invent successful delivery or silently retry a public write.
+
+Extend the description recorder through archive-capable `commitRunPublication`,
+retaining the adoption and package identities. Derive the body hash from the
+recorded body; no new protocol field is required. Archived records MUST
+stay archived with status, completion time, generation and successor ownership
+preserved. Repeated refreshes MUST replace the owned section without duplicating
+it or changing the original adoption/package receipt.
+
+### Public contract and acceptance
+
+Keep `RunRefreshPublishedEvidenceParams` and `RunRefreshPublishedEvidenceResult`
+compatible. The existing raw RPC CLI is the operator consumer; harnesses inherit
+the common uploader and renderer with no new hook or parallel writer.
+
+Regression and public-RPC proof MUST cover exact-head and historical-package
+delivery, subset selection, source labels, changed/missing media, foreign or
+advanced PR heads, concurrent body/head changes, idempotent rendering and
+archived persistence. Human media inside template evidence headings and relative
+links elsewhere MUST survive unchanged; an edited or unproven farm marker MUST
+refuse. Assert original receipts, packages, QA and execution state remain
+unchanged. Use a fixture person for adoption setup, never a real person's
+credential held by automation.

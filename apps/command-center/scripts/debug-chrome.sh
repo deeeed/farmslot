@@ -78,6 +78,14 @@ TIMEOUT_SECS="${ARG_TIMEOUT:-${FARMSLOT_CDP_TIMEOUT:-15}}"
 CHROME="${FARMSLOT_CHROME:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
 HEADLESS="${FARMSLOT_CDP_HEADLESS:-0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLEANUP="$SCRIPT_DIR/chrome-profile-cleanup.cjs"
+cleanup_orphans() {
+  # CDP ownership is already proven. A cache/log permission failure defers GC;
+  # it must not turn a live, ready browser into an ambiguous failed launch.
+  if ! node "$CLEANUP" schedule "$PROFILE"; then
+    echo "[debug-chrome] browser ready; profile cleanup deferred after scheduling error" >&2
+  fi
+}
 FARMSLOT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 DEFAULT_UI_PORT="5174"
 if [[ -f "$FARMSLOT_ROOT/.env.ports" ]]; then
@@ -261,6 +269,7 @@ if curl -sf "http://${CDP_HOST}:${PORT}/json/version" >/dev/null 2>&1; then
       >/dev/null 2>&1 \
       || echo "[debug-chrome] warn: could not navigate reused session to ${URL}" >&2
   fi
+  cleanup_orphans
   exit 0
 fi
 
@@ -269,8 +278,6 @@ if [[ ! -x "$CHROME" ]]; then
   echo "[debug-chrome] set FARMSLOT_CHROME=/path/to/chrome to override" >&2
   exit 1
 fi
-
-mkdir -p "$PROFILE"
 
 echo "[debug-chrome] launching Chrome  port=${PORT}  profile=${PROFILE}  url=${URL}"
 CHROME_ARGS=(
@@ -289,21 +296,9 @@ else
   # Pin headed CDP Chrome to the primary display so capture-helper can record.
   CHROME_ARGS+=(--window-position=200,150 --window-size=1200,800)
 fi
-if [[ "$CHROME" == "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]] \
-  && command -v open >/dev/null 2>&1; then
-  # macOS routes direct Chrome binary invocations into the already-running GUI
-  # instance, which can drop the requested CDP port and immediately exit.
-  # `open -na` forces a separate app instance for both headed capture and
-  # headless validation profiles.
-  launch_err="$(open -na "Google Chrome" --args "${CHROME_ARGS[@]}" "$URL" 2>&1 >/dev/null)" || {
-    echo "[debug-chrome] failed to launch Chrome via 'open -na': ${launch_err:-<no output>}" >&2
-    echo "Next: verify the app at /Applications/Google Chrome.app, or set FARMSLOT_CHROME to a" >&2
-    echo "      binary and re-run so it is launched directly instead." >&2
-    exit 1
-  }
-else
-  "$CHROME" "${CHROME_ARGS[@]}" "$URL" >/dev/null 2>&1 &
-fi
+# Launch under the maintenance lock, with macOS clone creation disabled by the
+# shared Chrome argument builder.
+FARMSLOT_CDP_TIMEOUT="$TIMEOUT_SECS" node "$CLEANUP" launch "$PROFILE" "$CHROME" "${CHROME_ARGS[@]}" "$URL"
 
 # Wait for CDP so callers can chain `scripts/cdp.mjs` immediately.
 attempts=$(( TIMEOUT_SECS * 5 ))
@@ -314,6 +309,7 @@ for _ in $(seq 1 "$attempts"); do
     case "$(identify_port_owner)" in
       ours)
         echo "[debug-chrome] ready on :${PORT}"
+        cleanup_orphans
         exit 0
         ;;
       foreign)

@@ -61,6 +61,7 @@ import { invalidateLiveRecipeContextMemo } from '../live-recipe/context.js';
 import { invalidateRecipeRunGroupCache } from '../methods/filesystem.js';
 import { normalizeStartRefRequest } from '../projects/start-ref-policy.js';
 import { assertCurrentReviewConfiguration } from '../quality/review-config.js';
+import { runNeedsExecutionStorage } from '../review-workspaces/storage-use.js';
 import {
   assertRunNotArchiving,
   beginRunArchive,
@@ -1976,11 +1977,21 @@ export async function cleanupRuns(
   // Snapshot ownership before archiving evicts failed/cancelled runs from the
   // live map. Dry-run and real cleanup must evaluate the same task directories.
   const cleanupRunSnapshot = [...runs.values()].filter((run) => !isRunStoreLeak(run));
+  const taskDirectories = (run: Run) =>
+    [
+      run.taskFile,
+      run.activeTaskFile,
+      ...(run.agentContexts ?? []).map((context) => context.taskFile),
+    ]
+      .filter((file): file is string => typeof file === 'string')
+      .map((file) => path.dirname(file));
+  const archivedTaskDirectories = new Set((await getArchivedRuns()).flatMap(taskDirectories));
 
   // Scan for failed/cancelled runs older than 7 days → archive.
   // Active, held, gated, and CI-watching runs never enter this branch.
   for (const [id, run] of runs) {
     if (run.status !== 'failed' && run.status !== 'cancelled') continue;
+    if (runNeedsExecutionStorage(run)) continue;
     const age = now - new Date(run.updatedAt).getTime();
     if (age < CLEANUP_AGE_MS) continue;
     if (!dryRun) {
@@ -2022,12 +2033,29 @@ export async function cleanupRuns(
       const taskStat = await stat(taskPath).catch(() => null);
       if (!taskStat?.isDirectory()) continue;
       if (now - taskStat.mtimeMs < CLEANUP_AGE_MS) continue;
+      if (archivedTaskDirectories.has(taskPath)) continue;
 
       // Check if any run references this task dir
-      const matchingRun = cleanupRunSnapshot.find(
-        (r) => r.taskFile && path.dirname(r.taskFile) === taskPath,
-      );
-      if (matchingRun && (matchingRun.status === 'failed' || matchingRun.status === 'cancelled')) {
+      const matchingRuns = cleanupRunSnapshot.filter((r) => taskDirectories(r).includes(taskPath));
+      if (
+        matchingRuns.length &&
+        matchingRuns.every(
+          (run) =>
+            (run.status === 'failed' || run.status === 'cancelled') &&
+            !runNeedsExecutionStorage(run) &&
+            !run.output &&
+            !run.reviewResult &&
+            !run.artifactBundle &&
+            !run.decisions.length &&
+            !run.steps.some((step) =>
+              Boolean(
+                step.outputs?.artifactManifest ||
+                step.outputs?.artifacts ||
+                step.outputs?.reportPath,
+              ),
+            ),
+        )
+      ) {
         taskDirsRemoved.push(taskPath);
         if (!dryRun) {
           // Remove task dir recursively

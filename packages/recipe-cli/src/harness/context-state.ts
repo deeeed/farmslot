@@ -127,6 +127,7 @@ export class ProjectBindingError extends CliError {
     message: string,
     readonly userAction: string,
     readonly candidates?: readonly string[],
+    readonly selectedProject?: string,
   ) {
     super(candidates?.length ? `${message} Candidates: ${candidates.join(', ')}.` : message, 2);
     this.name = 'ProjectBindingError';

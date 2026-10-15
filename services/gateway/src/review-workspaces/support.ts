@@ -43,6 +43,7 @@ import {
   reviewWorkspaceSupportEnvironment,
   verifyReviewWorkspaceSupport,
 } from './skills.js';
+import { useReviewWorkspaceStorage } from './storage-use.js';
 
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 const MAX_BATCH_BYTES = 512 * 1024;
@@ -154,7 +155,7 @@ function shared<T>(key: string, operation: () => Promise<T>): Promise<T> {
   const current = pending.get(key);
   if (current) return current as Promise<T>;
   const promise = Promise.resolve()
-    .then(operation)
+    .then(() => useReviewWorkspaceStorage(operation))
     .finally(() => pending.delete(key));
   pending.set(key, promise);
   return promise;

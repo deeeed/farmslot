@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Disable Chrome's macOS code-signing clones for isolated launches and reap stopped per-port profiles only when browser and slot ownership are clear.
+
 - Worker launch preparation disables automatic commit trailers while preserving the active CLI configuration.
 
 - Let the CDP select helper choose shared execution chips and verify their selected value.

@@ -94,6 +94,109 @@ test('mark forwarding preserves explicit negation and consumes binding controls'
   }
 });
 
+test('a missing explicit project refuses before creating an unbound task', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'task-project-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const registry = path.join(root, 'projects');
+  fs.mkdirSync(registry);
+  const task = path.join(root, 'task');
+  const program = cli();
+  const init = program.commands
+    .find((entry) => entry.name() === 'task')!
+    .commands.find((entry) => entry.name() === 'init')!;
+  init.action(() => {});
+  await program.parseAsync(
+    [
+      'task',
+      'init',
+      task,
+      '--project',
+      'not-registered',
+      '--projects-dir',
+      registry,
+      '--target',
+      root,
+      '--flow',
+      'dev',
+      '--template',
+      'dev/worker',
+      '--title',
+      'Selected project',
+    ],
+    { from: 'user' },
+  );
+  await assert.rejects(runTaskCommand('init', init), { code: 'PROJECT_NOT_FOUND', exitCode: 2 });
+  assert.equal(fs.existsSync(task), false);
+  assert.deepEqual(fs.readdirSync(root), ['projects']);
+});
+
+for (const selection of ['runtime binding', 'pool slot']) {
+  test(`a missing project from ${selection} cannot create an unbound task`, async (t) => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'task-project-')));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const registry = path.join(root, 'projects');
+    const pool = path.join(root, 'pool');
+    fs.mkdirSync(registry);
+    fs.mkdirSync(pool);
+    const previousPool = process.env.FARMSLOT_POOL_DIR;
+    const previousContext = process.env.RECIPE_RUNTIME_CONTEXT;
+    process.env.FARMSLOT_POOL_DIR = pool;
+    delete process.env.RECIPE_RUNTIME_CONTEXT;
+    t.after(() => {
+      if (previousPool === undefined) delete process.env.FARMSLOT_POOL_DIR;
+      else process.env.FARMSLOT_POOL_DIR = previousPool;
+      if (previousContext === undefined) delete process.env.RECIPE_RUNTIME_CONTEXT;
+      else process.env.RECIPE_RUNTIME_CONTEXT = previousContext;
+    });
+    if (selection === 'runtime binding') {
+      const runtime = path.join(root, 'temp/recipe/runtime');
+      fs.mkdirSync(runtime, { recursive: true });
+      fs.writeFileSync(
+        path.join(runtime, 'agentic-runtime.json'),
+        JSON.stringify({ repoRoot: root, project: 'not-registered' }),
+      );
+    } else {
+      fs.writeFileSync(
+        path.join(pool, 'local.json'),
+        JSON.stringify({
+          host: 'localhost',
+          slots: [{ id: 'one', repo: root, project: 'not-registered' }],
+        }),
+      );
+    }
+    const task = path.join(root, 'task');
+    const program = cli();
+    const init = program.commands
+      .find((entry) => entry.name() === 'task')!
+      .commands.find((entry) => entry.name() === 'init')!;
+    init.action(() => {});
+    await program.parseAsync(
+      [
+        'task',
+        'init',
+        task,
+        '--projects-dir',
+        registry,
+        '--target',
+        root,
+        '--flow',
+        'dev',
+        '--template',
+        'dev/worker',
+        '--title',
+        'Inherited project',
+      ],
+      { from: 'user' },
+    );
+    await assert.rejects(runTaskCommand('init', init), {
+      code: 'PROJECT_NOT_FOUND',
+      exitCode: 2,
+      selectedProject: 'not-registered',
+    });
+    assert.equal(fs.existsSync(task), false);
+  });
+}
+
 test('initializing a retained task again preserves its receipt and authored files', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'task-resume-'));
   const previousFarmHome = process.env.FARMSLOT_HOME;

@@ -62,3 +62,14 @@ export function selectedEvidenceMediaItem(
     resolveArtifactUrl,
   };
 }
+
+/** Resolve visibility and navigation from the same media list, including a selected moment. */
+export function evidenceViewerSelection(
+  uri: string | null,
+  artifacts: MediaViewerItem[],
+  comparison: MediaViewerItem[] | null,
+): { items: MediaViewerItem[]; index: number } {
+  if (uri && comparison?.some((item) => item.uri === uri))
+    return { items: comparison, index: comparison.findIndex((item) => item.uri === uri) };
+  return { items: artifacts, index: uri ? artifacts.findIndex((item) => item.uri === uri) : -1 };
+}

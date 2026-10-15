@@ -329,6 +329,7 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
       closeMedia: () => setMedia(null),
       openVisual: (uri: string) => {
         if (!viewModel) return;
+        viewModel.acceptance.evidenceModel?.clearSelection();
         setMedia({
           uri,
           items: evidenceMediaItems(

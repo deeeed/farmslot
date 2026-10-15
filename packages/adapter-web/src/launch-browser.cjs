@@ -34,6 +34,7 @@ const {
   clearValidationPortQuarantine,
   createRuntimeIdentityNonce,
   detachedLaunchUnprovenPath,
+  disableMacCodeSignClone,
   hasDetachedLaunchUnproven,
   isolatedProfileArgs,
   markDetachedLaunchUnproven,
@@ -225,7 +226,7 @@ function runLaunch(opts, acquireLock) {
   let owner = null;
   const runtimeNonce = createRuntimeIdentityNonce();
   const startedAt = Date.now();
-  const chromeArgs = [
+  const chromeArgs = disableMacCodeSignClone([
     `--user-data-dir=${profile}`,
     // Debug-port trio (address + port + scoped allow-origins) from the shared module,
     // so the DevTools origin allow-list can never drift away from the port.
@@ -241,7 +242,7 @@ function runLaunch(opts, acquireLock) {
     '--disable-extensions-content-verification',
     '--disable-features=ExtensionContentVerification,DisableLoadExtensionCommandLineSwitch',
     ...extensionLaunchArgs(extensionDir, browser.extensionLoading),
-  ];
+  ]);
   // Initial tab: the caller's URL when provided, else the extension home. The
   // extension home avoids leaving disposable chrome://newtab/ or extensions
   // manager tabs in the operator's slot browser. On macOS the browser starts
