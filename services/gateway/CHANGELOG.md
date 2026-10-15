@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Relaunch a stopped reviewer once after cleanup, retaining failed-attempt evidence and its actual failure if recovery fails.
 - Keep failed reviewers without an artifact scope from holding publication gates in recovery after a settled review.
 
 - Exclude unavailable native hosts from automatic review placement even when their previous reviews were accepted.

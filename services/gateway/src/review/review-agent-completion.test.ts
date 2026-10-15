@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
+import { ReviewerExitedError } from './terminal-result.js';
+
 await import('../runtime/mock-pty.test-support.js');
 const core = await import('../core/exec.js');
 const contexts = await import('../agents/contexts.js');
@@ -120,9 +122,9 @@ test('a closed window with feedback but no own terminal mark fails closed', asyn
       null,
       0,
     ),
-    /REVIEW-SIGNAL.json is missing/,
+    { name: 'ReviewerExitedError', message: /REVIEW-SIGNAL.json is missing/ },
   );
-  assert.deepEqual(statuses, ['blocked']);
+  assert.deepEqual(statuses, ['failed']);
 });
 
 test('an observed runner exit without its terminal mark fails promptly', async () => {
@@ -145,10 +147,13 @@ test('an observed runner exit without its terminal mark fails promptly', async (
       null,
       0,
     ),
-    /REVIEW-SIGNAL.json is missing after the reviewer runner exited/,
+    {
+      name: 'ReviewerExitedError',
+      message: /REVIEW-SIGNAL.json is missing after the reviewer runner exited/,
+    },
   );
   assert.equal(probes, 3, 'two polls and a terminal reread, without waiting for timeout');
-  assert.deepEqual(statuses, ['blocked']);
+  assert.deepEqual(statuses, ['failed']);
 });
 
 test('an unknown process probe keeps waiting for the reviewer terminal mark', async () => {
@@ -339,7 +344,7 @@ test('an accepted reviewer that exits before the first poll fails promptly', asy
       null,
       0,
     ),
-    /REVIEW-SIGNAL.json is missing after the reviewer runner exited/,
+    ReviewerExitedError,
   );
   assert.equal(probes, 2, 'one poll and a final terminal reread');
 });

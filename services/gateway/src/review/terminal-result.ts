@@ -5,6 +5,27 @@ export class TerminalReviewArtifactError extends Error {
   }
 }
 
+export class ReviewerExitedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ReviewerExitedError';
+  }
+}
+
+/** Cleanup has settled before retrying; all other failures retain their existing handling. */
+export async function withReviewerRelaunch<T>(
+  review: () => Promise<T>,
+  onRelaunch: (error: ReviewerExitedError) => void | Promise<void>,
+): Promise<T> {
+  try {
+    return await review();
+  } catch (error) {
+    if (!(error instanceof ReviewerExitedError)) throw error;
+    await onRelaunch(error);
+    return review();
+  }
+}
+
 export function isTerminalReviewArtifactError(
   error: unknown,
 ): error is TerminalReviewArtifactError {

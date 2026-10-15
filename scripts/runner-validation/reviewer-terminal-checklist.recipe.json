@@ -20,7 +20,7 @@
         "action": "command",
         "cmd": "FARMSLOT_TERMINAL_PROOF_SCENARIO=runner-exit TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/reviewer-terminal-checklist.mts",
         "timeout_ms": 300000,
-        "intent": "An observed reviewer crash is blocked promptly without accepting its written result as completion.",
+        "intent": "An observed reviewer crash preserves its partial output, consumes a second review round and relaunches once; only the replacement terminal mark completes the review.",
         "next": "done"
       }
     }

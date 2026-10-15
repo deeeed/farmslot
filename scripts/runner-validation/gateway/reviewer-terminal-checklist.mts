@@ -9,6 +9,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -16,7 +17,7 @@ import {
 import { createServer } from 'node:net';
 import { hostname, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import type { ReadyGatePayload, Run } from '@farmslot/protocol';
 
@@ -331,9 +332,14 @@ if (process.argv[2] === 'serve') {
     const processObservation = `reviewerWasObservedActive ||= reviewerActive; if (runnerProbe.state === 'present') { const fs = await import('node:fs'); fs.writeFileSync(${JSON.stringify(path.join(out, 'runner-observed.json'))}, JSON.stringify(runnerProbe)); }`;
     writeFileSync(
       loader,
-      `import {registerHooks} from 'node:module'; import assert from 'node:assert/strict'; registerHooks({load(url,context,nextLoad){const result=nextLoad(url,context);if(!url.endsWith('/services/gateway/src/review/review-agent.ts'))return result;const before=String(result.source);const observed=before.replace('const signalRaw = (', ${JSON.stringify(signalObservation)}); assert.notEqual(observed,before);const after=observed.replace('reviewerWasObservedActive ||= reviewerActive;', ${JSON.stringify(processObservation)}); assert.notEqual(after,observed);return {...result,source:after};}});`,
+      `import assert from 'node:assert/strict'; export async function load(url,context,nextLoad){const result=await nextLoad(url,context);if(!url.endsWith('/services/gateway/src/review/review-agent.ts'))return result;const before=String(result.source);const observed=before.replace(/const signalRaw\\s*=\\s*\\(/, ${JSON.stringify(signalObservation)}); assert.ok(observed!==before,'signal observation inserted');const after=observed.replace(/reviewerWasObservedActive\\s*\\|\\|=\\s*reviewerActive;/, ${JSON.stringify(processObservation)}); assert.ok(after!==observed,'process observation inserted');return {...result,source:after};}`,
     );
-    env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ''} --import ${loader}`;
+    const installObserver = path.join(temporary, 'install-observer.mjs');
+    writeFileSync(
+      installObserver,
+      `import {register} from 'node:module'; register(${JSON.stringify(pathToFileURL(loader).href)}, import.meta.url);`,
+    );
+    env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ''} --import ${installObserver}`;
     gateway = spawn(
       process.execPath,
       ['--import', 'tsx', fileURLToPath(import.meta.url), 'serve', out, runId],
@@ -387,60 +393,55 @@ if (process.argv[2] === 'serve') {
       'blocked start resumes through same host',
       'actual tmux reviewer result-first waits with own checklist target',
     ];
+    let killedRunner: { pid: string } | undefined;
     if (scenario === 'runner-exit') {
       await wait(() => existsSync(path.join(out, 'runner-observed.json')), 'own runner observed');
       const observed = JSON.parse(readFileSync(path.join(out, 'runner-observed.json'), 'utf8'));
       assert.equal(observed.state, 'present');
       assert.ok(Number.isSafeInteger(Number(observed.pid)) && Number(observed.pid) > 1);
-      const exitStartedAt = Date.now();
+      killedRunner = observed;
       process.kill(Number(observed.pid), 'SIGTERM');
-      await wait(
-        () => existsSync(path.join(out, 'review-exited.json')),
-        'prompt crash refusal',
-        25_000,
+      await wait(() => {
+        if (existsSync(path.join(out, 'review-exited.json')))
+          assert.fail(readFileSync(path.join(out, 'review-exited.json'), 'utf8'));
+        const next = JSON.parse(readFileSync(path.join(out, 'runner-observed.json'), 'utf8'));
+        return next.state === 'present' && next.pid !== observed.pid;
+      }, 'a replacement reviewer starts after the owned process exits');
+      assert.equal(readRun().reviewRoundAdmissions?.length, 2, 'both attempts consume rounds');
+      checks.push('an observed process exit automatically starts one replacement reviewer');
+    }
+    writeFileSync(path.join(out, 'allow-terminal'), 'continue');
+    await wait(
+      () => existsSync(path.join(out, 'review-finished.json')),
+      'reviewer own terminal finishes',
+    );
+    const finished = JSON.parse(readFileSync(path.join(out, 'review-finished.json'), 'utf8'));
+    assert.equal(finished.run.engineState.publishGate.reviews[0].verdict, 'pass');
+    const archivedSignal = finished.run.engineState.publishGate.reviews[0].artifactPaths.find(
+      (file: string) => file.endsWith('/review-signal.json'),
+    );
+    assert.ok(archivedSignal, 'completed review archives its own terminal signal');
+    const archived = JSON.parse(
+      readFileSync(path.join(repo, '.task/control', archivedSignal), 'utf8'),
+    );
+    assert.equal(archived.status, 'complete');
+    checks.push('own terminal mark completes and archives signal');
+    if (killedRunner) {
+      const directory = path.dirname(path.join(repo, '.task/control', archivedSignal));
+      const interrupted = readdirSync(directory).filter((entry) => entry.startsWith('stopped-'));
+      assert.equal(interrupted.length, 1, 'exactly one interrupted attempt retained');
+      const prior = path.join(directory, interrupted[0]!);
+      assert.ok(existsSync(path.join(prior, 'review-feedback.md')));
+      assert.ok(existsSync(path.join(prior, 'review-result.json')));
+      assert.notEqual(
+        JSON.parse(readFileSync(path.join(prior, 'review-signal.json'), 'utf8')).status,
+        'complete',
+        'the crashed reviewer result never becomes a completed review',
       );
-      const exited = JSON.parse(readFileSync(path.join(out, 'review-exited.json'), 'utf8'));
-      assert.equal(exited.error.name, 'TerminalReviewArtifactError');
-      assert.match(
-        exited.error.message,
-        /terminal mark|signal.*missing after the reviewer runner exited/i,
-      );
-      assert.equal(
-        exited.run.agentContexts.find((context: { id: string }) => context.id === reviewer.id)
-          .status,
-        'blocked',
-      );
-      assert.equal(existsSync(path.join(out, 'review-finished.json')), false);
-      assert.ok(
-        !(exited.run.engineState.publishGate?.reviews ?? []).some(
-          (review: { verdict: string }) => review.verdict === 'pass',
-        ),
-      );
-      json(path.join(out, 'runner-exit.json'), {
-        elapsedMs: Date.now() - exitStartedAt,
-        observed,
-        exited,
-      });
+      json(path.join(out, 'runner-relaunched.json'), { killedRunner, finished, interrupted });
       checks.push(
-        'observed runner crash refuses promptly with blocked context and no passing archive',
+        'interrupted output retained and replacement review completed through real signal',
       );
-    } else {
-      writeFileSync(path.join(out, 'allow-terminal'), 'continue');
-      await wait(
-        () => existsSync(path.join(out, 'review-finished.json')),
-        'reviewer own terminal finishes',
-      );
-      const finished = JSON.parse(readFileSync(path.join(out, 'review-finished.json'), 'utf8'));
-      assert.equal(finished.run.engineState.publishGate.reviews[0].verdict, 'pass');
-      const archivedSignal = finished.run.engineState.publishGate.reviews[0].artifactPaths.find(
-        (file: string) => file.endsWith('/review-signal.json'),
-      );
-      assert.ok(archivedSignal, 'completed review archives its own terminal signal');
-      const archived = JSON.parse(
-        readFileSync(path.join(repo, '.task/control', archivedSignal), 'utf8'),
-      );
-      assert.equal(archived.status, 'complete');
-      checks.push('own terminal mark completes and archives signal');
     }
     const hashes = Object.fromEntries(
       [
@@ -457,6 +458,7 @@ if (process.argv[2] === 'serve') {
     json(path.join(out, 'receipt.json'), {
       runId,
       scenario,
+      cleanupTargets: { checkout: repo, session, temporaryRoot: temporary },
       hashes,
       checks,
       limits: [
@@ -484,5 +486,12 @@ if (process.argv[2] === 'serve') {
       result.status === 'rejected' ? [result.reason] : [],
     );
     if (failures.length) throw new AggregateError(failures, 'Terminal proof cleanup failed');
+    json(path.join(out, 'cleanup.json'), {
+      checkout: repo,
+      session,
+      temporaryRoot: temporary,
+      removed: !existsSync(temporary),
+      gatewayStopped: gateway?.exitCode !== null || gateway?.signalCode !== null,
+    });
   }
 }
