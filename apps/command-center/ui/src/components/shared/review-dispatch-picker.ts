@@ -3,6 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 
 import {
   Methods,
+  REVIEW_MODES,
   type ReviewSelection,
   type ReviewSequence,
   type RunnerModelCatalogResult,
@@ -435,27 +436,22 @@ export class ReviewDispatchPicker extends LitElement {
               </details>`
             : nothing}
           ${this.review
-            ? html`<label
-                >MODE<choice-picker
-                  data-testid="review-dispatch-mode"
-                  .value=${selected.mode}
-                  ?disabled=${this.disabled}
-                  @change=${(event: Event) =>
-                    this.change(() =>
-                      vm.setMode(
-                        row.id,
-                        (event.target as ChoicePicker).value as ReviewSelection['mode'],
-                      ),
-                    )}
+            ? html`<div class="field">
+                <span class="field-title">MODE</span>
+                ${renderChoiceButtons({
+                  options: REVIEW_MODES,
+                  labels: { cold: 'COLD', warm: 'WARM' },
+                  value: selected.mode,
+                  testId: 'review-dispatch-mode',
+                  disabled: this.disabled,
+                  onSelect: (value) => this.change(() => vm.setMode(row.id, value)),
+                })}
+                <span class="hint"
+                  >${selected.mode === 'cold'
+                    ? 'Fresh session, whole PR'
+                    : 'Retained session, changes since review'}</span
                 >
-                  <option value="cold" ?selected=${selected.mode === 'cold'}>
-                    COLD · fresh session, whole PR
-                  </option>
-                  <option value="warm" ?selected=${selected.mode === 'warm'}>
-                    WARM · retained session, changes since review
-                  </option>
-                </choice-picker></label
-              >`
+              </div>`
             : nothing}
           ${this.review && selected.mode === 'warm'
             ? html`<label

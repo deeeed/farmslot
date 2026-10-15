@@ -713,7 +713,7 @@ process.stdout.write(JSON.stringify(body));
   );
   screenshot('after-static-publication-reviews');
   const publicationPanel = evaluate(
-    `const panel=find('.publication-review-panel').element;const rect=panel.getBoundingClientRect();return {text:panel.textContent.replace(/\\s+/g,' '),modes:[...panel.querySelector('review-dispatch-picker').shadowRoot.querySelectorAll('[data-testid="review-dispatch-mode"]')].map(e=>e.value),buttons:[...panel.querySelectorAll('button')].map(b=>b.textContent.trim()),visible:rect.height>0};`,
+    `const panel=find('.publication-review-panel').element;const rect=panel.getBoundingClientRect();return {text:panel.textContent.replace(/\\s+/g,' '),modes:[...panel.querySelector('review-dispatch-picker').shadowRoot.querySelectorAll('[data-testid="review-dispatch-mode"]')].map(e=>e.dataset.value),buttons:[...panel.querySelectorAll('button')].map(b=>b.textContent.trim()),visible:rect.height>0};`,
   );
   assert(publicationPanel.visible, 'Publication reviews panel must render');
   assert.deepEqual(publicationPanel.modes, ['cold', 'cold']);
