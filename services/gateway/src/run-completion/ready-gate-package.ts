@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { realpath, stat } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -14,11 +14,7 @@ import {
 import { sha256File } from '../core/file-hash.js';
 
 import { evidenceKeyVariants, resolveSelectedEvidenceRef } from './evidence-paths.js';
-import {
-  readOptionalRetainedRunText,
-  retainedRunBundleRef,
-  retainedRunTaskDirectory,
-} from './retained-artifacts.js';
+import { retainedRunBundleRef, retainedRunTaskDirectory } from './retained-artifacts.js';
 
 export { sha256File } from '../core/file-hash.js';
 export { resolveSelectedEvidenceRef } from './evidence-paths.js';
@@ -230,8 +226,17 @@ export async function readReadyGatePreparedPackage(
     );
   if (retained?.payload?.kind === 'ready' && retained.payload.prPackage)
     return retained.payload.prPackage;
-  const text = await readOptionalRetainedRunText(current, artifactRel);
-  return text ? (JSON.parse(text) as ReadyGatePrPackage) : undefined;
+  if (!current.taskFile) return undefined;
+  // This gateway control record is written after capture to carry the payload's
+  // digest. It cannot be part of its own content-addressed payload. No slot I/O.
+  try {
+    return JSON.parse(
+      await readFile(path.join(path.dirname(current.taskFile), artifactRel), 'utf8'),
+    ) as ReadyGatePrPackage;
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
+    throw error;
+  }
 }
 
 export async function verifyReadyGateSelectedEvidenceFiles(

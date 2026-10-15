@@ -24,6 +24,7 @@ import {
 } from './publication-artifacts.js';
 import { sha256File, sortArtifactRefsForComparison } from './ready-gate-package.js';
 import { recordedPublicationDependencies } from './recorded-publication-evidence.js';
+import { retainedRunArtifactManifest, retainedRunTaskDirectory } from './retained-artifacts.js';
 
 const PACKAGE_OUTPUT_ARTIFACT_PATHS = new Set([
   'artifacts/pr-package.json',
@@ -109,9 +110,11 @@ export interface CurrentPackageEvidence {
 
 export async function readCurrentPackageEvidence(run: Run): Promise<CurrentPackageEvidence> {
   if (!run.taskFile) throw new Error('Publication evidence requires a task directory');
-  const taskDir = path.dirname(run.taskFile);
-  const { scanArtifacts, readEvidenceManifest } = await import('./publication-artifacts.js');
-  const artifacts = await scanArtifacts(taskDir);
+  const taskDir = await retainedRunTaskDirectory(run);
+  const { readEvidenceManifest } = await import('./publication-artifacts.js');
+  const artifacts = (await retainedRunArtifactManifest(run)).filter((artifact) =>
+    artifact.path.startsWith('artifacts/'),
+  );
   const manifest = await readEvidenceManifest(run);
   return {
     artifacts,

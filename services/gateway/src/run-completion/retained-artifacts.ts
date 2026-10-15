@@ -31,6 +31,7 @@ import {
   reserveRunBundleMetadata,
 } from '@farmslot/run-bundle';
 
+import { inferArtifactPurpose } from '../core/index.js';
 import { isolatedTestPath } from '../core/isolated-test-path.js';
 import { loadContextFromArtifactRoot } from '../live-recipe/context.js';
 import { farmslotRoot } from '../projects/repo-root.js';
@@ -158,7 +159,8 @@ export async function retainedRunArtifactManifest(
           retentionRevision: availability.revision,
           bundleDigest: ref.bundleDigest,
           path: file,
-          purpose: original.get(file)?.purpose ?? 'artifact',
+          purpose:
+            original.get(file)?.purpose ?? inferArtifactPurpose(file.replace(/^artifacts\//u, '')),
           sha256: entry.sha256,
           sizeBytes: entry.bytes,
         };
@@ -264,6 +266,7 @@ export async function retainCapturedRunArtifacts(input: {
   manifestDigest: string;
   allowChanged?: boolean;
   existingRef?: RunArtifactBundleRef;
+  sourceRef?: RunArtifactBundleRef;
   releaseStagingMedia?: boolean;
   commit(ref: RunArtifactBundleRef, missingData: string[]): Promise<void>;
 }): Promise<MaterializedRunBundle> {
@@ -273,7 +276,9 @@ export async function retainCapturedRunArtifacts(input: {
   const artifacts = [...input.artifacts];
   // Task-local inputs are the frozen control metadata consumed by review and QA readers.
   // The materializer checks containment and hashes each file while copying it.
-  const taskDir = path.dirname(input.run.taskFile);
+  const taskDir = input.sourceRef
+    ? await retainedRunTaskDirectory(input.run, input.sourceRef)
+    : path.dirname(input.run.taskFile);
   try {
     for (const entry of await readdir(path.join(taskDir, 'inputs'), {
       recursive: true,
@@ -297,7 +302,7 @@ export async function retainCapturedRunArtifacts(input: {
   for (const file of [path.basename(input.run.taskFile), 'CHECKLIST.md', ...RETAINED_TASK_INPUTS]) {
     if (artifacts.some((artifact) => artifact.path === file)) continue;
     try {
-      const bytes = await readFile(path.join(path.dirname(input.run.taskFile), file));
+      const bytes = await readFile(path.join(taskDir, file));
       artifacts.push({
         path: file,
         purpose: 'task-input',
@@ -313,7 +318,7 @@ export async function retainCapturedRunArtifacts(input: {
     farmslotRoot,
     run: input.run,
     artifacts,
-    taskDir: path.dirname(input.run.taskFile),
+    taskDir,
     manifestDigest: input.manifestDigest,
     captureKey: JSON.stringify([
       input.run.taskFile,

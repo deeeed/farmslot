@@ -1,5 +1,3 @@
-import path from 'node:path';
-
 import type {
   ReviewDiffSnapshot,
   ReviewSessionTrace,
@@ -10,7 +8,7 @@ import { resolveReviewMode } from '@farmslot/review-dispatch';
 
 import { upsertAgentContext } from '../agents/contexts.js';
 import { reviewPRIdentity } from '../review/session-mode.js';
-import { scanArtifacts } from '../run-completion/orchestrator.js';
+import { retainedRunArtifactManifest } from '../run-completion/retained-artifacts.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 
 import { readReviewInputSnapshot } from './diff-artifacts.js';
@@ -46,7 +44,8 @@ export async function recordArtifactOnlyReviewResult(runId: string): Promise<Run
     throw new Error('Review is missing its pre-dispatch commit snapshot');
   }
   await copyWorkerArtifacts(runId);
-  const review = await readReviewArtifacts(runId);
+  const captured = getRun(runId)!;
+  const review = await readReviewArtifacts(runId, captured.artifactBundle);
   if (!review.hasReview || !review.reviewMd.trim())
     throw new Error('Worker review report is missing');
   const result: RunReviewResult = {
@@ -55,7 +54,9 @@ export async function recordArtifactOnlyReviewResult(runId: string): Promise<Run
     lineComments: review.lineComments,
     reviewSnapshot: input.snapshot,
     reviewInputArtifactPaths: input.artifactPaths,
-    artifactManifest: await scanArtifacts(path.dirname(run.taskFile)),
+    artifactManifest: (await retainedRunArtifactManifest(captured)).filter((artifact) =>
+      artifact.path.startsWith('artifacts/'),
+    ),
     session: await completedReviewSessionTrace(run, input.snapshot),
   };
   await persistRunNow(updateRun(runId, { reviewResult: result }), 'artifact-only review evidence');

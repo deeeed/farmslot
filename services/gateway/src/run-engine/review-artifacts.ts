@@ -138,43 +138,47 @@ async function workerGatewayOwnedCopyExcludes(
 
 export async function copyWorkerArtifacts(runId: string): Promise<void> {
   const run = getRun(runId)!;
-  if (!run.slotId || !run.taskFile) return;
+  if (!run.taskFile) return;
+  if (run.slotId) {
+    const vars = await loadSlotVars(run.slotId);
+    const taskDir = path.dirname(run.taskFile);
+    const taskRelDir = run.taskFile.includes('/tasks/')
+      ? run.taskFile.split('/tasks/')[1].replace('/TASK.md', '')
+      : null;
+    if (taskRelDir) {
+      const pv = await loadProjectVarsOrNull(run.project, 'worker artifact copy', run.id);
+      const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
+      const workerTaskDir = path.join(vars.remoteRepo, taskDirName, taskRelDir);
+      const localArtifactsDir = path.join(taskDir, 'artifacts');
 
-  const vars = await loadSlotVars(run.slotId);
-  const taskDir = path.dirname(run.taskFile);
-  const taskRelDir = run.taskFile.includes('/tasks/')
-    ? run.taskFile.split('/tasks/')[1].replace('/TASK.md', '')
-    : null;
-  if (!taskRelDir) return;
+      const workerArtifacts = path.join(workerTaskDir, 'artifacts');
+      const gatewayOwnedExcludes = await workerGatewayOwnedCopyExcludes(vars, workerArtifacts);
+      await slotCopyDir(vars, workerArtifacts, localArtifactsDir, {
+        excludeTopLevel: [...REVIEW_GATE_ARTIFACT_COPY_EXCLUDES, ...gatewayOwnedExcludes],
+        excludeRelativePaths: [...WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES],
+        // Stamp run/slot so package-refresh / run-detail transfer UI can bind progress.
+        phase: 'mirror',
+        runId,
+        slotId: run.slotId ?? vars.slotId,
+        labelPrefix: 'review-artifacts',
+      });
 
-  const pv = await loadProjectVarsOrNull(run.project, 'worker artifact copy', run.id);
-  const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
-  const workerTaskDir = path.join(vars.remoteRepo, taskDirName, taskRelDir);
-  const localArtifactsDir = path.join(taskDir, 'artifacts');
-
-  const workerArtifacts = path.join(workerTaskDir, 'artifacts');
-  const gatewayOwnedExcludes = await workerGatewayOwnedCopyExcludes(vars, workerArtifacts);
-  await slotCopyDir(vars, workerArtifacts, localArtifactsDir, {
-    excludeTopLevel: [...REVIEW_GATE_ARTIFACT_COPY_EXCLUDES, ...gatewayOwnedExcludes],
-    excludeRelativePaths: [...WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES],
-    // Stamp run/slot so package-refresh / run-detail transfer UI can bind progress.
-    phase: 'mirror',
-    runId,
-    slotId: run.slotId ?? vars.slotId,
-    labelPrefix: 'review-artifacts',
-  });
-
-  for (const document of ['TASK.md', 'CHECKLIST.md']) {
-    const workerDocument = path.join(workerTaskDir, document);
-    if (!(await slotFileExists(vars, workerDocument))) continue;
-    await slotCopyFile(vars, workerDocument, path.join(taskDir, `${document}.worker`), {
-      phase: 'mirror',
-      runId,
-      slotId: run.slotId ?? vars.slotId,
-      label: `${document}.worker`,
-    });
+      for (const document of ['TASK.md', 'CHECKLIST.md']) {
+        const workerDocument = path.join(workerTaskDir, document);
+        if (!(await slotFileExists(vars, workerDocument))) continue;
+        await slotCopyFile(vars, workerDocument, path.join(taskDir, `${document}.worker`), {
+          phase: 'mirror',
+          runId,
+          slotId: run.slotId ?? vars.slotId,
+          label: `${document}.worker`,
+        });
+      }
+      console.log(`[run-engine] copied worker artifacts for ${runId.slice(0, 8)}`);
+    }
   }
-  console.log(`[run-engine] copied worker artifacts for ${runId.slice(0, 8)}`);
+  // Artifact acquisition commits a retained capture before any review consumer reads it.
+  const { captureRunOutput } = await import('../run-completion/output.js');
+  await captureRunOutput(runId, false);
 }
 
 /**

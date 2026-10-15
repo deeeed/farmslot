@@ -16,7 +16,8 @@ mock.module('../integrations/github-client.js', {
     },
   },
 });
-const { deleteTestRunIfPresent } = await import('../run-engine/test-fixtures.js');
+const { deleteTestRunIfPresent, retainRunFixture, overwriteRetainedFixture } =
+  await import('../run-engine/test-fixtures.js');
 const { createRun, getRun, updateRun } = await import('../runs/store.js');
 const { refreshPublishedEvidence } = await import('./published-evidence-refresh.js');
 const { computeReadyGatePackageHash, sha256Text } = await import('./ready-gate-package.js');
@@ -111,6 +112,7 @@ test('published refresh refuses a present but unapproved inventory item before e
       },
     ] satisfies RunDecision[],
   });
+  await retainRunFixture(getRun(run.id)!, prepared);
   await assert.rejects(
     refreshPublishedEvidence(
       { runId: run.id, selectedEvidenceKeys: ['artifacts/unselected.png'] },
@@ -130,8 +132,9 @@ test('published refresh refuses a present but unapproved inventory item before e
       prPackage: prepared,
     }),
   );
-  await writeFile(
-    path.join(root, 'artifacts/evidence-manifest.json'),
+  await overwriteRetainedFixture(
+    getRun(run.id)!,
+    'artifacts/evidence-manifest.json',
     JSON.stringify({ version: 1, standalone: [{ label: 'Replacement', file: 'unselected.png' }] }),
   );
   await assert.rejects(

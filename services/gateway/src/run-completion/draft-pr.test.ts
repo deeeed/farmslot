@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import { buildDraftPrBody, buildDraftPrTitle } from './draft-pr.js';
 import { makeRun } from './test-fixtures.js';
+const { retainRunFixture } = await import('../run-engine/test-fixtures.js');
 
 test('stacked PR bodies name the parent without changing authored prose or duplicating the link', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-stacked-pr-body-'));
@@ -28,6 +29,7 @@ test('stacked PR bodies name the parent without changing authored prose or dupli
         upstreamPrUrl: parent,
       },
     };
+    await retainRunFixture(run);
     const body = await buildDraftPrBody(run, null, []);
     assert.ok(body.includes(link));
     assert.ok(body.endsWith(prose));
@@ -286,7 +288,9 @@ test('buildDraftPrBody keeps the authored prose ahead of a stale pr-body.md when
     );
     await writeFile(path.join(root, 'artifacts', 'pr-body.md'), '## Summary\n\nstale render\n');
     // A slot the pool does not know means no pack renderer: the authored file stays the body.
-    const body = await buildDraftPrBody(makeRun({ taskFile, slotId: 'no-such-slot' }), null, []);
+    const retained = makeRun({ taskFile, slotId: 'no-such-slot' });
+    await retainRunFixture(retained);
+    const body = await buildDraftPrBody(retained, null, []);
     assert.match(body, /fresh prose/);
     assert.doesNotMatch(body, /stale render/);
   } finally {
@@ -327,6 +331,7 @@ test('buildDraftPrBody gives same-named screenshots in different directories the
     const run = makeRun({ taskFile, slotId: 'no-such-slot' });
     const bodies = [];
     for (const artifacts of [[hyperliquid, native], [native, hyperliquid], [native], []]) {
+      await retainRunFixture(run);
       bodies.push(await buildDraftPrBody(run, null, artifacts));
     }
     assert.match(
@@ -364,6 +369,7 @@ test('buildDraftPrBody warns instead of guessing when a manifest path matches se
     const a = { path: 'artifacts/a/supported-menu.png', purpose: 'screenshot' };
     const b = { path: 'artifacts/b/supported-menu.png', purpose: 'screenshot' };
     const run = makeRun({ taskFile, slotId: 'no-such-slot' });
+    await retainRunFixture(run);
     const body = await buildDraftPrBody(run, null, [b, a]);
     assert.doesNotMatch(body, /<img/);
     assert.match(

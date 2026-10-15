@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type { RawProjectJson } from '../core/config.js';
+import { retainRunFixture } from '../run-engine/test-fixtures.js';
 
 import { buildDraftPrBody } from './draft-pr.js';
 import { buildEvidenceSection } from './evidence-manifest.js';
@@ -694,6 +695,7 @@ test('assertReadyGatePackageInputsCurrent publishes an edited body instead of re
       ticketOrPr: 'PROJ-1',
       taskFile,
     });
+    await retainRunFixture(run);
     const draftBody = await buildDraftPrBody(run, null, [
       { path: 'artifacts/after-ac1.png', purpose: 'screenshot', sizeBytes: imageBytes.length },
       { path: 'artifacts/after.mp4', purpose: 'video', sizeBytes: videoBytes.length },
@@ -742,6 +744,7 @@ test('assertReadyGatePackageInputsCurrent publishes an edited body instead of re
     assert.deepEqual(await assertReadyGatePackageInputsCurrent(run, prPackage), prPackage);
 
     await writeFile(path.join(artifactsDir, 'pr-description.md'), '## Summary\nEdited body.\n');
+    await retainRunFixture(run);
     const published = await assertReadyGatePackageInputsCurrent(run, prPackage);
     assert.match(published.draftBody, /Edited body\./);
     assert.equal(published.packageHash, prPackage.packageHash);

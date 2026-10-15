@@ -512,9 +512,15 @@ export async function collectRunBundleGarbage(
     const intentsDir = path.join(store.runsDir, 'bundle-intents');
     await mkdir(intentsDir, { recursive: true });
     const activeStages = new Set<string>();
+    const committedIntents = new Map<string, string[]>();
     for (const file of await readdir(intentsDir)) {
       if (!file.endsWith('.json')) continue;
       const intent: CaptureIntent = JSON.parse(await readFile(path.join(intentsDir, file), 'utf8'));
+      if (intent.committed && intent.bundleDigest) {
+        const files = committedIntents.get(intent.bundleDigest) ?? [];
+        files.push(path.join(intentsDir, file));
+        committedIntents.set(intent.bundleDigest, files);
+      }
       if (!intent.committed) {
         if (!activeRuns.has(intent.runId) && now - Date.parse(intent.exportedAt) > 86_400_000) {
           await rm(path.join(intentsDir, file));
@@ -534,6 +540,9 @@ export async function collectRunBundleGarbage(
       if (!referenced.has(digest)) {
         reclaimedBytes += await physicalBytes(directory);
         await rm(directory, { recursive: true });
+        // A reclaimed payload cannot satisfy its old retry intent. Future explicit
+        // acquisition of these bytes starts a new capture instead of a lost stage.
+        for (const intent of committedIntents.get(digest) ?? []) await rm(intent);
         manifestCache.delete(`${store.id}:${digest}`);
         continue;
       }

@@ -17,6 +17,7 @@ import type {
 import { execLocal } from '../core/exec.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { runResolveDecision } from '../methods/run.js';
+import { retainedRunTaskDirectory } from '../run-completion/retained-artifacts.js';
 import { createRun, getRun, updateRun } from '../runs/store.js';
 
 import { APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION } from './gate-policy.js';
@@ -426,9 +427,14 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
   );
   assert.equal(packageJson.draftBody.includes('artifacts/screenshots/manifest-proof.png'), true);
   assert.equal(
-    existsSync(path.join(taskDir, 'artifacts/screenshots/manifest-proof.png')),
+    existsSync(
+      path.join(
+        await retainedRunTaskDirectory(getRun(run.id)!, packageJson.artifactBundle),
+        'artifacts/screenshots/manifest-proof.png',
+      ),
+    ),
     true,
-    'refresh should copy evidence-manifest referenced screenshots out of the raw spool',
+    'refresh should retain evidence-manifest referenced screenshots from the raw spool',
   );
   assert.equal(
     packageJson.evidenceManifest.some((artifact) =>
@@ -449,7 +455,9 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
     selectedEvidenceKeys: refreshedPayload.prPackage!.selectedEvidenceKeys!,
     publicationTarget: 'draft',
   });
-  assert.equal(second.packageInputHash, first.packageInputHash);
+  // Explicit refresh binds a successor capture. Unchanged evidence keeps the
+  // same review subject and preserves the operator's selections.
+  assert.notEqual(second.packageInputHash, first.packageInputHash);
   assert.equal(second.reviewSubjectHash, first.reviewSubjectHash);
   assert.deepEqual(second.droppedEvidenceKeys, []);
   assert.equal(

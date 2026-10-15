@@ -418,3 +418,13 @@ test('a dead store lease is recovered and concurrent retries publish the same im
   assert.deepEqual(captures[0]!.ref, captures[1]!.ref);
   assert.deepEqual(captures[0]!.manifest, captures[1]!.manifest);
 });
+
+test('GC removes committed retry intents with unreferenced bundles so explicit acquisition can repeat', async (t) => {
+  const f = await fixture(t);
+  const first = await materializeRunBundle(f.request);
+  assert.ok((await collectRunBundleGarbage(f.store)).reclaimedBytes > 0);
+  const repeated = await materializeRunBundle(f.request);
+  assert.notEqual(repeated.ref.bundleDigest, first.ref.bundleDigest);
+  const bundle = await readRetainedRunBundle(f.store, repeated.ref, f.run.id);
+  assert.equal(await bundle.readText('artifacts/report.html'), '<h1>Retained report</h1>');
+});

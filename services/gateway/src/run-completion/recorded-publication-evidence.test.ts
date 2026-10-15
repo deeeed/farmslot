@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { cp, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
-import type { ArtifactRef, ReadyGatePrPackage, Run } from '@farmslot/protocol';
+import type { ArtifactRef, Run } from '@farmslot/protocol';
 
 await import('../runtime/mock-pty.test-support.js');
 const { readFrozenRecordedEvidenceSources, readGateRecordedEvidenceSources } =
@@ -19,6 +19,9 @@ const { expandPublicationEvidenceSelection, readEvidenceManifest } =
   await import('./publication-artifacts.js');
 const { publicationBaselineContext } = await import('./publication-artifacts.js');
 const { computeReadyGatePackageHash } = await import('./ready-gate-package.js');
+
+const { makeRun, makeReadyGatePackage, retainRunFixture, overwriteRetainedFixture } =
+  await import('../run-engine/test-fixtures.js');
 
 const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 
@@ -68,7 +71,7 @@ async function fixture(t: TestContext) {
       sha256: digest(await readFile(path.join(root, file))),
     })),
   );
-  const run = { id: 'retained-run', taskFile: path.join(taskDir, 'TASK.md') } as Run;
+  const run = makeRun({ id: randomUUID(), taskFile: path.join(taskDir, 'TASK.md') });
   return { taskDir, root, run, artifacts, manifest };
 }
 
@@ -135,12 +138,13 @@ test('selected evidence retains labelled comparisons and external captures with 
     }),
     ['artifacts/baseline.png', 'artifacts/recipe-runs/current/proof.png'],
   );
-  const prepared = {
+  const prepared = makeReadyGatePackage({
     id: 'comparison',
     evidenceManifest: inventory,
     selectedEvidenceKeys: ['artifacts/baseline.png', 'artifacts/recipe-runs/current/proof.png'],
-  } as unknown as ReadyGatePrPackage;
+  });
   prepared.packageHash = computeReadyGatePackageHash(prepared);
+  await retainRunFixture(run);
   assert.equal(
     (await readGateRecordedEvidenceSources(run, prepared))[0]?.artifactPrefix,
     'artifacts/recipe-runs/current/',
@@ -150,7 +154,11 @@ test('selected evidence retains labelled comparisons and external captures with 
     JSON.parse(JSON.stringify(effective)),
   );
   await verifyFrozenPublicationEvidence(run, inventory, prepared.selectedEvidenceKeys!);
-  await writeFile(declarationsPath, JSON.stringify({ version: 1, standalone: [] }));
+  await overwriteRetainedFixture(
+    run,
+    path.relative(taskDir, declarationsPath),
+    JSON.stringify({ version: 1, standalone: [] }),
+  );
   await assert.rejects(readFrozenPublicationManifest(run, inventory), /hash mismatch/);
 });
 
@@ -378,6 +386,7 @@ test('same-run clean baseline freezes as before evidence without supplying head 
   const keys = [`artifacts/${f.baselineRoot}/proof.png`, `artifacts/${f.headRoot}/proof.png`];
   const { readFrozenPublicationRecipeSources } =
     await import('../run-engine/recorded-evidence-sources.js');
+  await retainRunFixture(f.run);
   const sources = await readFrozenPublicationRecipeSources(f.run, inventory, keys);
   assert.equal(sources.length, 1);
   assert.equal(sources[0]?.input.claims?.recipeRunId, f.head.claims.recipeRunId);
@@ -388,9 +397,11 @@ test('same-run clean baseline freezes as before evidence without supplying head 
     ]),
     /undeclared recipe attempt/,
   );
+  await retainRunFixture(f.run);
   await verifyFrozenPublicationEvidence(f.run, inventory, keys);
-  await writeFile(
-    path.join(f.taskDir, 'artifacts', f.baselineRoot, 'proof.png'),
+  await overwriteRetainedFixture(
+    f.run,
+    `artifacts/${f.baselineRoot}/proof.png`,
     'changed baseline capture',
   );
   await assert.rejects(verifyFrozenPublicationEvidence(f.run, inventory, keys), /hash mismatch/);
@@ -473,6 +484,7 @@ test('selected recorded media freezes the complete execution input and selection
     assert(inventory.some((entry) => entry.path === `artifacts/recipe-run/${file}`));
   assert(inventory.every((entry) => entry.sha256));
   assert(!inventory.some((entry) => entry.path.startsWith('artifacts/prior-attempt/')));
+  await retainRunFixture(run);
   assert.deepEqual(await readFrozenPublicationManifest(run, inventory), manifest);
   await verifyFrozenPublicationEvidence(run, inventory, ['artifacts/recipe-run/proof.png']);
   const sources = await readFrozenRecordedEvidenceSources(run, inventory, [
@@ -514,12 +526,13 @@ test('pre-cutover reruns retain both declared captures while the gate reads only
   const inventory = await buildPackageEvidenceManifest(taskDir, artifacts, effective, 0);
   assert(inventory.some((entry) => entry.path === 'artifacts/recipe-runs/prior/proof.png'));
   assert(inventory.some((entry) => entry.path === 'artifacts/recipe-runs/old/proof.png'));
-  const prepared = {
+  const prepared = makeReadyGatePackage({
     id: 'old-selected',
     evidenceManifest: inventory,
     selectedEvidenceKeys: ['artifacts/recipe-runs/old/proof.png'],
-  } as unknown as ReadyGatePrPackage;
+  });
   prepared.packageHash = computeReadyGatePackageHash(prepared);
+  await retainRunFixture(run);
   assert.equal(
     (await readGateRecordedEvidenceSources(run, prepared))[0]?.artifactPrefix,
     'artifacts/recipe-runs/old/',
@@ -559,15 +572,20 @@ test('an attempt without publication media freezes its closure without selecting
   assert(inventory.some((entry) => entry.path === 'artifacts/latest-valid-recipe-run.json'));
   assert(!inventory.some((entry) => entry.path.startsWith('artifacts/failed/')));
   assert.deepEqual(allSelectedEvidenceKeysForPublication(inventory), []);
+  await retainRunFixture(run);
   assert.deepEqual(
     await readFrozenPublicationManifest(run, inventory),
     JSON.parse(JSON.stringify(effective)),
   );
   await verifyFrozenPublicationEvidence(run, inventory, []);
-  await writeFile(path.join(selected, 'trace.json'), '[]');
+  await overwriteRetainedFixture(
+    run,
+    path.relative(taskDir, path.join(selected, 'trace.json')),
+    '[]',
+  );
   await assert.rejects(
     verifyFrozenPublicationEvidence(run, inventory, []),
-    /missing or changed.*trace.json/,
+    /missing.*changed.*trace.json/,
   );
 });
 
@@ -597,18 +615,20 @@ test('the gate reads only the frozen selected attempt and rejects changed pointe
     purpose: 'summary',
     sha256: digest(await readFile(unrelated)),
   });
-  const prepared = {
+  const prepared = makeReadyGatePackage({
     id: 'selected',
     evidenceManifest: inventory,
     selectedEvidenceKeys: [],
-  } as unknown as ReadyGatePrPackage;
+  });
   prepared.packageHash = computeReadyGatePackageHash(prepared);
   run.recordedEvidenceContractVersion = 1;
+  await retainRunFixture(run);
   const sources = await readGateRecordedEvidenceSources(run, prepared);
   assert.equal(sources.length, 1);
   assert.equal(sources[0]?.artifactPrefix, 'artifacts/recipe-runs/current/');
-  await writeFile(
-    pointerPath,
+  await overwriteRetainedFixture(
+    run,
+    path.relative(taskDir, pointerPath),
     JSON.stringify({ version: 1, relativeArtifactRoot: 'recipe-runs/another' }),
   );
   await assert.rejects(readGateRecordedEvidenceSources(run, prepared), /hash mismatch/);
@@ -616,12 +636,13 @@ test('the gate reads only the frozen selected attempt and rejects changed pointe
 
 test('a versioned gate cannot fall back to legacy roots and unsupported run contracts refuse', async (t) => {
   const { run, taskDir, artifacts, manifest } = await fixture(t);
-  const prepared = {
+  const prepared = makeReadyGatePackage({
     id: 'legacy',
     evidenceManifest: await buildPackageEvidenceManifest(taskDir, artifacts, manifest),
     selectedEvidenceKeys: [],
-  } as unknown as ReadyGatePrPackage;
+  });
   prepared.packageHash = computeReadyGatePackageHash(prepared);
+  await retainRunFixture(run);
   assert.equal((await readGateRecordedEvidenceSources(run, prepared)).length, 1);
   assert.equal(run.recordedEvidenceContractVersion, undefined);
   run.recordedEvidenceContractVersion = 1;
@@ -640,9 +661,10 @@ test('replacing trace bytes is refused even when the selected media remains unch
   const { taskDir, root, run, artifacts, manifest } = await fixture(t);
   const inventory = await buildPackageEvidenceManifest(taskDir, artifacts, manifest);
   await writeFile(path.join(root, 'trace.json'), '[]');
+  await retainRunFixture(run);
   await assert.rejects(
     verifyFrozenPublicationEvidence(run, inventory, ['artifacts/recipe-run/proof.png']),
-    /missing or changed.*trace.json/,
+    /missing.*changed.*trace.json/,
   );
 });
 
@@ -651,17 +673,24 @@ test('selection manifest substitution and files added after approval cannot repl
   const inventory = await buildPackageEvidenceManifest(taskDir, artifacts, manifest);
   const manifestPath = path.join(taskDir, 'artifacts/evidence-manifest.json');
   const originalManifest = await readFile(manifestPath);
-  await writeFile(
-    manifestPath,
+  await retainRunFixture(run);
+  await overwriteRetainedFixture(
+    run,
+    path.relative(taskDir, manifestPath),
     JSON.stringify({ version: 1, standalone: [{ label: 'New', file: 'recipe-run/new.png' }] }),
   );
   await assert.rejects(readFrozenPublicationManifest(run, inventory), /hash mismatch/);
-  await writeFile(manifestPath, originalManifest);
+  await overwriteRetainedFixture(run, path.relative(taskDir, manifestPath), originalManifest);
   await writeFile(path.join(root, 'new.png'), 'new media');
   await indexMedia(root, 'new.png');
+  await overwriteRetainedFixture(
+    run,
+    path.relative(taskDir, path.join(root, 'artifact-manifest.json')),
+    await readFile(path.join(root, 'artifact-manifest.json')),
+  );
   await assert.rejects(
     verifyFrozenPublicationEvidence(run, inventory, ['artifacts/recipe-run/proof.png']),
-    /missing or changed.*artifact-manifest.json/,
+    /missing.*changed.*artifact-manifest.json/,
   );
 });
 
@@ -670,13 +699,14 @@ test('legacy standalone media remains untimed without invented recipe dependenci
   t.after(() => rm(taskDir, { recursive: true, force: true }));
   await mkdir(path.join(taskDir, 'artifacts'));
   await writeFile(path.join(taskDir, 'artifacts/proof.png'), 'old captured image');
-  const run = { id: 'legacy', taskFile: path.join(taskDir, 'TASK.md') } as Run;
+  const run = makeRun({ id: randomUUID(), taskFile: path.join(taskDir, 'TASK.md') });
   const inventory = await buildPackageEvidenceManifest(
     taskDir,
     [{ path: 'artifacts/proof.png', purpose: 'screenshot' }],
     null,
   );
   assert.equal(inventory.length, 1);
+  await retainRunFixture(run);
   assert.equal(await readFrozenPublicationManifest(run, inventory), null);
   await verifyFrozenPublicationEvidence(run, inventory, ['artifacts/proof.png']);
 });
@@ -773,6 +803,7 @@ test('task-root preparation remains valid after gateway package files are writte
   const inventory = await buildPackageEvidenceManifest(taskDir, artifacts, manifest);
   for (const file of ['pr-package.json', 'pr-package.md'])
     await writeFile(path.join(artifactsDir, file), 'prepared package');
+  await retainRunFixture(run);
   await verifyFrozenPublicationEvidence(run, inventory, ['artifacts/proof.png']);
   assert(!inventory.some((entry) => entry.path.endsWith('/diff.txt')));
 });
@@ -816,6 +847,7 @@ for (const location of ['promoted', 'inherited'] as const) {
       }
       const effective = await readEvidenceManifest(run);
       const inventory = await buildPackageEvidenceManifest(taskDir, artifacts, effective);
+      await retainRunFixture(run);
       assert.deepEqual(
         await readFrozenPublicationManifest(run, inventory),
         JSON.parse(JSON.stringify(effective)),
@@ -831,7 +863,11 @@ for (const location of ['promoted', 'inherited'] as const) {
       await verifyFrozenPublicationEvidence(run, inventory, [
         'artifacts/recipe-runs/retained/proof.png',
       ]);
-      await writeFile(sourcePath, JSON.stringify({ version: 1, standalone: [] }));
+      await overwriteRetainedFixture(
+        run,
+        path.relative(taskDir, sourcePath),
+        JSON.stringify({ version: 1, standalone: [] }),
+      );
       await assert.rejects(readFrozenPublicationManifest(run, inventory), /hash mismatch/);
     },
   );
@@ -933,6 +969,7 @@ test('a valid failed comparison dependency remains inside the head closure witho
     purpose: 'evidence',
     sha256: loaded.input.artifactDigests[file],
   }));
+  await retainRunFixture(run);
   const sources = await readFrozenRecordedEvidenceSources(run, inventory);
   assert.equal(sources.length, 1);
   assert.equal(sources[0]?.input.claims?.recipeRunId, head.claims.recipeRunId);

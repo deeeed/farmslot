@@ -20,6 +20,7 @@ import { invalidateProjectVarsCache, projectsDir } from '../core/config.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { admitReviewRound } from '../review/review-round-budget.js';
 import { computeReadyGatePackageHash } from '../run-completion/ready-gate-package.js';
+import { overwriteRetainedFixture, retainRunFixture } from '../run-engine/test-fixtures.js';
 import { createRun, deleteRun, getAllRuns, getRun, updateRun } from '../runs/store.js';
 import { runWithSessionOriginator } from '../security/work-originator.js';
 
@@ -746,7 +747,6 @@ for (const actionId of ['approve-publish', 'approve-publish-unresolved']) {
       JSON.stringify(prPackage, null, 2),
       'utf-8',
     );
-    writeFileSync(evidencePath, 'mutated-image', 'utf-8');
 
     const run = createRun({
       flowType: 'fix-bug',
@@ -797,6 +797,9 @@ for (const actionId of ['approve-publish', 'approve-publish-unresolved']) {
         },
       },
     });
+
+    await retainRunFixture(getRun(run.id)!, prPackage);
+    await overwriteRetainedFixture(getRun(run.id)!, 'artifacts/keep.png', 'mutated-image');
 
     await assert.rejects(
       () =>

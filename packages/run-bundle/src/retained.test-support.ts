@@ -39,8 +39,8 @@ export async function retainFixtureTask(
     run,
     taskDir,
     artifacts,
-    manifestDigest: sha256Text(JSON.stringify(artifacts)),
-    captureKey: sha256Text(JSON.stringify(artifacts)),
+    manifestDigest: run.output?.manifestDigest ?? sha256Text(JSON.stringify(artifacts)),
+    captureKey: sha256Text(JSON.stringify([run.taskFile, artifacts])),
     commit: async (ref) => {
       run.artifactBundle = ref;
       mkdirSync(store.runsDir, { recursive: true });

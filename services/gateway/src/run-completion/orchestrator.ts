@@ -113,7 +113,12 @@ import {
   readFrozenPublicationManifest,
   verifyFrozenPublicationEvidence,
 } from './recorded-publication-evidence.js';
-import { retainCapturedRunArtifacts, retainedRunArtifactManifest } from './retained-artifacts.js';
+import {
+  retainCapturedRunArtifacts,
+  retainedRunArtifactManifest,
+  retainedRunBundleRef,
+  retainedRunTaskDirectory,
+} from './retained-artifacts.js';
 import { augmentReviewAttemptsFromArtifacts, materializeReviewArtifacts } from './reviews.js';
 
 export {
@@ -442,7 +447,10 @@ export async function renderCurrentDescription(
   const draftBody = await buildPreparedDraftPrBody(
     current,
     report,
-    artifacts ?? (await scanArtifacts(path.dirname(current.taskFile))),
+    artifacts ??
+      (await retainedRunArtifactManifest(current)).filter((artifact) =>
+        artifact.path.startsWith('artifacts/'),
+      ),
     await assertPreparedPublicationBaseCurrent(current, preparedPackage, baseBranch),
     { tolerateMissingSlot: Boolean(preparedPackage.headSha) },
   );
@@ -729,7 +737,7 @@ export async function prepareCompletionPackageTransitionLocked(
   const taskDir = run.taskFile ? path.dirname(run.taskFile) : null;
   const runEvidenceManifest = await readEvidenceManifest(run);
   const evidenceManifest = await buildPackageEvidenceManifest(
-    taskDir,
+    run.taskFile ? await retainedRunTaskDirectory(run) : null,
     artifacts,
     runEvidenceManifest,
     run.recordedEvidenceContractVersion ?? 0,
@@ -822,6 +830,7 @@ export async function prepareCompletionPackageTransitionLocked(
   const retained = await retainCapturedRunArtifacts({
     run,
     artifacts: retentionInventory,
+    sourceRef: retainedRunBundleRef(run),
     manifestDigest: outputManifestDigest(retentionInventory),
     releaseStagingMedia: true,
     commit: async (ref) => {
@@ -1154,9 +1163,11 @@ export async function runCompletionPipeline(
     flags.retrospectiveCreated = true;
   }
 
-  // 7. Scan artifact directory for manifest
+  // 7. List the captured inventory, including media already released from staging.
   if (run.taskFile) {
-    flags.artifacts = await scanArtifacts(path.dirname(run.taskFile));
+    flags.artifacts = (await retainedRunArtifactManifest(run)).filter((artifact) =>
+      artifact.path.startsWith('artifacts/'),
+    );
   }
 
   return flags;
@@ -1419,7 +1430,9 @@ export async function publishCompletionPackage(
     );
     const artifactUrls = publishedEvidence.artifactUrls;
     selectedEvidenceKeys = publishedEvidence.selectedEvidenceKeys;
-    flags.artifacts = await retainedRunArtifactManifest(latestRun, approvedPackage.artifactBundle);
+    flags.artifacts = latestRun.taskFile
+      ? await retainedRunArtifactManifest(latestRun, approvedPackage.artifactBundle)
+      : [];
 
     emit('substep', {
       name: 'post-process-pr-body',

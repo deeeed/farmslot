@@ -172,6 +172,7 @@ export async function runRecipeRunsForRun(
   // Run-scoped mobile artifact review is anchored to an explicit run id; unlike
   // the slot-scoped helper, a missing run is caller state drift and should surface.
   if (!run) throw new Error(`Run not found: ${params.runId}`);
+  if (!run.taskFile) return { recipeRuns: [], selectedRecipeRunId: null };
   const ref = retainedRunBundleRef(run, params.decisionId);
   const enrichedRun = run;
   const recipeRuns = await retainedRecipeRunGroups(run, ref);
