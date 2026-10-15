@@ -5,7 +5,11 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Deliver frozen evidence for adopted publications only at the attested head, preserving human PR content and archived execution records.
+- Resolve task and reviewer pack commands from the connected node installation instead of a guessed deployment directory.
+
 - Relaunch a stopped reviewer once after cleanup, retaining failed-attempt evidence and its actual failure if recovery fails.
+- Refresh unapproved publication packages with missing retained bundles even when source HEAD is unchanged; preserve approved package identity on failure.
+
 - Retain pipeline review result snapshots in publication packages and use the pane-owned process's structured turn records for publication readiness, monitor nudges and safe-send busy checks.
 
 - Keep failed reviewers without an artifact scope from holding publication gates in recovery after a settled review.

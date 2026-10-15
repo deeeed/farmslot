@@ -5,6 +5,7 @@ All notable changes to `@farmslot/run-bundle` are tracked here.
 ## Unreleased
 
 - Retain immutable gateway artifact snapshots in farmrun v1 bundles, with store pairing, quota reservations, recovery, retention and target-owned imports.
+- Pin prepared captures throughout an active run and verify durable manifests before recording references or availability.
 
 - Keep imported claim-override metadata from granting gateway authority.
 

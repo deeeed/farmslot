@@ -431,6 +431,89 @@ test('GC removes committed retry intents with unreferenced bundles so explicit a
   assert.equal(await bundle.readText('artifacts/report.html'), '<h1>Retained report</h1>');
 });
 
+test('GC retains an active prepared capture after a newer output advances the Run pointer', async (t) => {
+  const f = await fixture(t);
+  f.run.status = 'human-gating';
+  const commit: MaterializeRunBundleRequest['commit'] = async (ref) => {
+    f.run.artifactBundle = ref;
+    await writeFile(path.join(f.store.runsDir, `${f.run.id}.json`), JSON.stringify(f.run));
+  };
+  const prepared = await materializeRunBundle({ ...f.request, commit });
+  const output = await materializeRunBundle({
+    ...f.request,
+    captureKey: 'generation-1:new-output',
+    manifestDigest: 'new-output',
+    commit,
+  });
+  assert.notEqual(prepared.ref.bundleDigest, output.ref.bundleDigest);
+  await collectRunBundleGarbage(f.store);
+  const retained = await readRetainedRunBundle(f.store, prepared.ref, f.run.id);
+  assert.equal(await retained.readText('artifacts/report.html'), '<h1>Retained report</h1>');
+
+  // Once the run settles, unreferenced captures are eligible for collection again.
+  f.run.status = 'done';
+  await commit(output.ref, []);
+  await collectRunBundleGarbage(f.store);
+  await assert.rejects(readRetainedRunBundle(f.store, prepared.ref, f.run.id), { code: 'ENOENT' });
+});
+
+test('a cached manifest cannot hide loss of the retained bundle directory', async (t) => {
+  const f = await fixture(t);
+  const result = await materializeRunBundle(f.request);
+  const bundle = await readRetainedRunBundle(f.store, result.ref, f.run.id);
+  await rm(bundle.directory, { recursive: true });
+  await assert.rejects(readRetainedRunBundle(f.store, result.ref, f.run.id), { code: 'ENOENT' });
+  await assert.rejects(readRunBundleAvailability(f.store, result.ref, f.run.id), {
+    code: 'ENOENT',
+  });
+});
+
+test('a full disk during media transfer never records availability or loses the retained report', async (t) => {
+  const f = await fixture(t);
+  const fullDisk = Object.assign(new Error('disk full'), { code: 'ENOSPC' });
+  await assert.rejects(
+    materializeRunBundle({
+      ...f.request,
+      acquireMedia: async () => {
+        throw fullDisk;
+      },
+    }),
+    fullDisk,
+  );
+  const ref = f.refs[0]!;
+  await assert.rejects(
+    readFile(path.join(f.store.root, 'availability', `${ref.bundleDigest}.json`)),
+    {
+      code: 'ENOENT',
+    },
+  );
+  await collectRunBundleGarbage(f.store);
+  const bundle = await readRetainedRunBundle(f.store, ref, f.run.id);
+  assert.equal(await bundle.readText('artifacts/report.html'), '<h1>Retained report</h1>');
+});
+
+test('media completion verifies the published manifest before recording availability', async (t) => {
+  const f = await fixture(t);
+  const video = await readFile(path.join(f.taskDir, 'artifacts/capture.mp4'));
+  await assert.rejects(
+    materializeRunBundle({
+      ...f.request,
+      acquireMedia: async (_artifact, destination) => {
+        await writeFile(destination, video);
+        const ref = f.refs[0]!;
+        await rm(path.join(f.store.root, 'sha256', ref.bundleDigest, 'manifest.json'));
+        return { sha256: createHash('sha256').update(video).digest('hex'), bytes: video.length };
+      },
+    }),
+    { code: 'ENOENT' },
+  );
+  assert.equal(f.refs.length, 1);
+  await assert.rejects(
+    readFile(path.join(f.store.root, 'availability', `${f.refs[0]!.bundleDigest}.json`)),
+    { code: 'ENOENT' },
+  );
+});
+
 test('archived run references retain reports beyond media expiry without source files', async (t) => {
   const f = await fixture(t);
   const result = await materializeRunBundle(f.request);
