@@ -3,11 +3,13 @@ import { test } from 'node:test';
 
 import type { Run } from '@farmslot/protocol';
 
+import { filterArtifactWorkspace } from './artifact-workspace';
 import {
   collectRunInteractivePacketArtifacts,
   interactivePacketActionRequest,
   interactivePacketArtifactKey,
   interactivePacketArtifactOpenUrl,
+  interactivePacketArtifactViewerHref,
 } from './interactive-operator-packets';
 
 test('interactive packet action request accepts complete terminal actions', () => {
@@ -92,4 +94,18 @@ test('interactive packet artifact open URL carries gateway auth for headerless l
     }),
     'https://gateway.example/api/run-artifact?runId=run-1&path=artifacts%2Freport.md&token=dev%20token',
   );
+});
+
+test('packet reports and screenshots select the existing ordinary artifact workspace', () => {
+  const artifacts = [
+    { path: 'artifacts/report.md', purpose: 'Report' },
+    { path: 'artifacts/capture.png', purpose: 'Screenshot' },
+  ];
+  for (const artifact of artifacts) {
+    const href = interactivePacketArtifactViewerHref('run', artifact.path);
+    assert.equal(href.pathname, '/evidence/[runId]');
+    assert.equal(href.params.recipeRun, 'current-artifacts');
+    assert.equal('ac' in href.params, false);
+    assert.deepEqual(filterArtifactWorkspace(artifacts, 'all', href.params.artifact), [artifact]);
+  }
 });

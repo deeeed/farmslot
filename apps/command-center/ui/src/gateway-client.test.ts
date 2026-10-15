@@ -242,7 +242,33 @@ test('browser device-session writes are scoped, verified and refuse stale profil
   assert.deepEqual(await first.load(), auth);
   assert.equal(await second.load(), null);
   await assert.rejects(stale.save(null), /sign-in changed/);
-  await first.save(null);
+  const tabA = new CommandCenterPersonSessionStorage(['ws://one/ws']);
+  const tabB = new CommandCenterPersonSessionStorage(['ws://one/ws']);
+  const refreshed = {
+    ...auth,
+    session: {
+      ...auth.session,
+      lastRefreshedAt: '2026-10-17T00:00:00.000Z',
+      refreshExpiresAt: '2026-11-16T00:00:00.000Z',
+    },
+  };
+  await tabB.save(refreshed);
+  assert.deepEqual(await tabA.load(), refreshed);
+  await first.save(auth); // A late response may not move the same authority's metadata backwards.
+  assert.deepEqual(await tabB.load(), refreshed);
+  await tabA.save(null);
+  await assert.rejects(tabB.save(refreshed), /sign-in changed/);
   assert.equal(new CommandCenterPersonSessionStorage(['ws://one/ws']).required, true);
   assert.equal(await new CommandCenterPersonSessionStorage(['ws://one/ws']).load(), null);
+});
+
+test('one-use hosted invitations are distinct from stored bearer credentials', async () => {
+  const { parseHostedGatewayConnection } = await import('./gateway-url.js');
+  const payload = Buffer.from(
+    JSON.stringify({ v: 1, gateways: ['ws://localhost:7777/ws'], code: 'one-use-code' }),
+  ).toString('base64url');
+  const hosted = parseHostedGatewayConnection(`#fleet?connect=${payload}`);
+  assert.equal(hosted.code, 'one-use-code');
+  assert.equal(hosted.token, undefined);
+  assert.equal(hosted.password, undefined);
 });

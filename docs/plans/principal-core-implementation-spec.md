@@ -97,6 +97,14 @@ a service profile. Preserve
 service profiles and node startup secrets. Remove the temporary client-only
 expiry policy once the shared gateway session contract owns expiry.
 
+Gateway-stamped person approvals identify their stable device session with
+`personSessionId`. Historical and delegated-service receipts retain
+`credentialId`; exactly one of these authority fields is present. All receipt
+readers preserve existing evidence bindings, and final caller checks compare
+the principal and the same authority kind/id. A refresh does not change that
+identity. A person's startup browser handoff uses a one-use invitation so the
+browser creates its own device session without receiving the CLI access token.
+
 #### Validation required before cutover
 
 Use isolated fixture identities and controlled clocks. Cover exact one-hour and

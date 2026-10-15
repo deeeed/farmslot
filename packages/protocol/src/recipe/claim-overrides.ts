@@ -1,5 +1,8 @@
 import type { AcceptanceCriterionStatus, AcceptanceVerdict } from '../contracts/acceptance.js';
-import type { EvidenceAttestationApprover } from '../contracts/run-gate-readiness.js';
+import {
+  type EvidenceAttestationApprover,
+  isEvidenceAttestationApprover,
+} from '../contracts/run-gate-readiness.js';
 import type { RunDecision } from '../contracts/runs.js';
 
 import { digestRecipeDocument } from './digest.js';
@@ -85,8 +88,7 @@ export function isAuthorizedOverride(
     return (
       row.overrides?.[index]?.receiptId === receipt.id &&
       Boolean(receipt.id.trim()) &&
-      Boolean(receipt.approver.principalId.trim()) &&
-      Boolean(receipt.approver.credentialId.trim()) &&
+      isEvidenceAttestationApprover(receipt.approver) &&
       Boolean(receipt.reason.trim()) &&
       Number.isFinite(Date.parse(receipt.overriddenAt)) &&
       receipt.priorVerdict === (index === 0 ? engineClaim.verdict : 'untestable')

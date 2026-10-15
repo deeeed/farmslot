@@ -12,7 +12,7 @@ import {
   validateCredentialStore,
 } from '@farmslot/credential-store';
 
-import { pairingCreate, pairingExchange } from '../fleet/pairing.js';
+import { pairingCreate, pairingExchangePersonSession } from '../fleet/pairing.js';
 
 import { createGatewayAuthRuntime } from './auth.js';
 import {
@@ -54,13 +54,25 @@ test('a pending invitation cannot issue for a retired principal replacement', (t
   f.writer.retirePrincipals(['invited']);
   f.writer.createPrincipal(person, [], 'invited', { reuseRetiredId: true });
   const before = readFileSync(f.runtime.path);
-  assert.throws(() => pairingExchange({ code: invitation.code }, f.auth), {
-    code: 'PAIRING_FAILED',
-  });
+  assert.throws(
+    () =>
+      pairingExchangePersonSession(
+        invitation.code,
+        { deviceName: 'Replacement fixture', deviceKind: 'cli' },
+        f.auth,
+      ),
+    {
+      code: 'PAIRING_FAILED',
+    },
+  );
   assert.deepEqual(readFileSync(f.runtime.path), before);
   const fresh = pairingCreate(params, f.auth);
-  const exchanged = pairingExchange({ code: fresh.code }, f.auth);
-  const authenticated = f.auth.resolver.resolveSecret(exchanged.profile.secret, 'token');
+  const exchanged = pairingExchangePersonSession(
+    fresh.code,
+    { deviceName: 'Replacement fixture', deviceKind: 'cli' },
+    f.auth,
+  );
+  const authenticated = f.auth.resolver.resolveSecret(exchanged.accessToken, 'token');
   assert.equal(authenticated.ok, true);
   if (authenticated.ok) assert.equal(authenticated.principal.generation, 1);
 });
@@ -193,7 +205,13 @@ test('replacement credentials authorize fresh work while old secrets and origina
     }).ok,
     false,
   );
-  assert.equal(f.auth.resolver.resolveSecret(fresh.secret, 'token').ok, true);
+  assert.equal(f.auth.resolver.resolveSecret(fresh.secret, 'token').ok, false);
+  const grant = f.writer.exchangePersonCredential(fresh.secret, {
+    deviceName: 'Replacement fixture',
+    deviceKind: 'cli',
+  });
+  const authenticated = f.auth.resolver.resolveSecret(grant.accessToken, 'token');
+  assert.ok(authenticated.ok && authenticated.authentication);
   assert.equal(f.auth.resolver.resolvePrincipalId('arthur').ok, false);
   assert.equal(resolveWorkOriginator(f.auth, oldOriginator), null);
   const current = runWithSessionOriginator(replacement, currentSessionOriginator);
@@ -201,7 +219,7 @@ test('replacement credentials authorize fresh work while old secrets and origina
   assert.deepEqual(
     sessionOriginatorFor(f.auth, {
       authenticated: true,
-      authentication: { kind: 'credential', credentialId: fresh.record.id },
+      authentication: authenticated.authentication,
     }),
     current,
   );

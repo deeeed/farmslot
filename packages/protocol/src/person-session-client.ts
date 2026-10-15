@@ -33,6 +33,19 @@ export interface PersonSessionClientOptions {
   onAccess?: (grant: PersonSessionGrant) => Promise<void>;
 }
 
+/** Refresh metadata may advance in another client; the selected authority stays stable. */
+export function samePersonSessionAuthority(
+  left: PersonSessionAuth,
+  right: PersonSessionAuth,
+): boolean {
+  return (
+    left.session.id === right.session.id &&
+    left.session.principalId === right.session.principalId &&
+    left.session.principalGeneration === right.session.principalGeneration &&
+    left.refreshToken === right.refreshToken
+  );
+}
+
 export class PersonSessionEndedError extends Error {
   readonly code = 'AUTH_SESSION_ENDED';
   constructor() {
@@ -240,13 +253,7 @@ export class PersonSessionClient {
       : 0;
     if (!grant || lifetime <= 0 || lifetime > 3600_000)
       throw new Error('The gateway returned an invalid or expired device sign-in. Try again.');
-    if (
-      expected &&
-      (grant.session.id !== expected.session.id ||
-        grant.session.principalId !== expected.session.principalId ||
-        grant.session.principalGeneration !== expected.session.principalGeneration ||
-        grant.refreshToken !== expected.refreshToken)
-    )
+    if (expected && !samePersonSessionAuthority(grant, expected))
       throw new Error('The gateway refresh changed the selected device sign-in. Sign in again.');
     const saved = { session: grant.session, refreshToken: grant.refreshToken };
     await this.persist(saved, generation);

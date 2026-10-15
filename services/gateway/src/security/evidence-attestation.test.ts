@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { pairingCreate, pairingExchangePersonSession } from '../fleet/pairing.js';
+
 import { createGatewayAuthRuntime, initializeGatewayIdentity } from './auth.js';
 import {
   authorizeEvidenceAttestation,
@@ -20,7 +22,7 @@ test('attestation rejects solo, service, node and unprivileged callers; active p
   initializeGatewayIdentity(runtime, { host: '127.0.0.1' });
   assert.throws(
     () => authorizeEvidenceAttestation(runtime, { authenticated: true, clientKind: 'ui' }),
-    /credential-backed person/,
+    /active person device session/,
   );
   const roles = [{ role: 'admin' as const, scope: { kind: 'global' as const } }];
   for (const subject of [
@@ -36,7 +38,7 @@ test('attestation rejects solo, service, node and unprivileged callers; active p
     };
     assert.throws(
       () => authorizeEvidenceAttestation(runtime, session),
-      /credential-backed person|Denied/,
+      /active person device session|Denied/,
     );
   }
   const unprivileged = runtime.writer.createPrincipal(
@@ -45,25 +47,21 @@ test('attestation rejects solo, service, node and unprivileged callers; active p
   );
   const unprivilegedIssue = runtime.writer.issueCredential(unprivileged.id, 'observer');
   assert.throws(
-    () =>
-      authorizeEvidenceAttestation(runtime, {
-        authenticated: true,
-        authentication: { kind: 'credential', credentialId: unprivilegedIssue.record.id },
-      }),
+    () => authorizeEvidenceAttestation(runtime, personDevice(runtime, unprivilegedIssue.secret)),
     /Denied/,
   );
   const person = runtime.writer.createPrincipal({ type: 'person', displayName: 'Operator' }, roles);
   const issue = runtime.writer.issueCredential(person.id, 'operator');
-  const session = {
-    authenticated: true,
-    clientKind: 'ui' as const,
-    authentication: { kind: 'credential' as const, credentialId: issue.record.id },
-  };
+  const session = personDevice(runtime, issue.secret);
   assert.deepEqual(authorizeEvidenceAttestation(runtime, session), {
     principalId: person.id,
     displayName: 'Operator',
-    credentialId: issue.record.id,
+    personSessionId: session.authentication.sessionId,
   });
+  assert.equal(
+    authorizeVisualClaimReview(runtime, session, 'person-reviewed').personSessionId,
+    session.authentication.sessionId,
+  );
   runtime.writer.revokeCredential(issue.record.id);
   assert.throws(() => authorizeEvidenceAttestation(runtime, session), /requires authentication/);
 });
@@ -120,10 +118,85 @@ test('delegated visual review uses an allowlisted service credential while publi
       }),
     /person delegator/,
   );
-  assert.throws(() => authorizeEvidenceAttestation(runtime, session), /credential-backed person/);
+  assert.throws(
+    () => authorizeEvidenceAttestation(runtime, session),
+    /active person device session/,
+  );
   runtime.writer.revokeCredential(issue.record.id);
   assert.throws(
     () => authorizeVisualClaimReview(runtime, session, 'lead-agent-reviewed', policy),
     /requires authentication/,
   );
+});
+
+function personDevice(runtime: ReturnType<typeof createGatewayAuthRuntime>, credential: string) {
+  const grant = runtime.writer.exchangePersonCredential(credential, {
+    deviceName: 'Attestation fixture',
+    deviceKind: 'cli',
+  });
+  const resolved = runtime.resolver.resolveSecret(grant.accessToken, 'token');
+  assert.ok(resolved.ok && resolved.authentication?.kind === 'person-session');
+  return {
+    authenticated: true,
+    clientKind: 'ui' as const,
+    authentication: resolved.authentication,
+  };
+}
+
+test('paired person devices retain human approvals without inventing a source credential', (t) => {
+  const home = mkdtempSync(path.join(tmpdir(), 'paired-attestation-auth-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const runtime = createGatewayAuthRuntime({
+    FARMSLOT_HOME: home,
+    FARMSLOT_GATEWAY_AUTH_MODE: 'none',
+  });
+  initializeGatewayIdentity(runtime, { host: '127.0.0.1' });
+  const roles = [{ role: 'admin' as const, scope: { kind: 'global' as const } }];
+  const service = runtime.writer.createPrincipal(
+    { type: 'service', displayName: 'Automation' },
+    roles,
+  );
+  runtime.writer.issueCredential(service.id, 'automation');
+  const person = runtime.writer.createPrincipal(
+    { type: 'person', displayName: 'Paired admin' },
+    roles,
+  );
+  const invitation = pairingCreate(
+    {
+      gatewayUrl: 'ws://127.0.0.1:1/ws',
+      authority: { kind: 'existing-principal', principalId: person.id },
+    },
+    runtime,
+  );
+  const grant = pairingExchangePersonSession(
+    invitation.code,
+    { deviceName: 'Paired fixture', deviceKind: 'companion' },
+    runtime,
+  );
+  const resolved = runtime.resolver.resolveSecret(grant.accessToken, 'token');
+  assert.ok(resolved.ok && resolved.authentication?.kind === 'person-session');
+  const authentication = resolved.authentication;
+  const session = { authenticated: true, clientKind: 'companion' as const, authentication };
+  assert.deepEqual(authorizeEvidenceAttestation(runtime, session), {
+    principalId: person.id,
+    displayName: 'Paired admin',
+    personSessionId: grant.session.id,
+  });
+  assert.equal(
+    authorizeVisualClaimReview(runtime, session, 'person-reviewed').personSessionId,
+    grant.session.id,
+  );
+  runtime.writer.revokeRole(person.id, 'admin', { kind: 'global' });
+  assert.throws(() => authorizeEvidenceAttestation(runtime, session), /requires the admin role/);
+  runtime.writer.grantRole(person.id, 'admin', { kind: 'global' });
+  runtime.writer.revokePersonSession(
+    {
+      principalId: person.id,
+      principalGeneration: person.generation ?? 0,
+      sessionId: authentication.sessionId,
+      accessId: authentication.accessId,
+    },
+    authentication.sessionId,
+  );
+  assert.throws(() => authorizeEvidenceAttestation(runtime, session), /requires authentication/);
 });

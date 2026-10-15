@@ -15,6 +15,7 @@ export interface HostedGatewayCandidate {
 
 export interface HostedGatewayConnection {
   urls: string[];
+  code?: string;
   token?: string;
   password?: string;
 }
@@ -31,6 +32,7 @@ export const GATEWAY_SOURCE_STORAGE_KEY = 'farmslot.gateway.source';
 
 interface HostedGatewayPayload {
   v?: number;
+  code?: string;
   url?: string;
   gatewayUrl?: string;
   gateways?: Array<string | HostedGatewayCandidate>;
@@ -94,6 +96,9 @@ export function parseHostedGatewayConnection(hash: string): HostedGatewayConnect
     const urls = normalizePayloadUrls(payload);
     return {
       urls,
+      ...(typeof payload.code === 'string' && payload.code.trim()
+        ? { code: payload.code.trim() }
+        : {}),
       ...(payload.token?.trim() ? { token: payload.token.trim() } : {}),
       ...(payload.password?.trim() ? { password: payload.password.trim() } : {}),
     };

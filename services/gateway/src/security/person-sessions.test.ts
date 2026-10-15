@@ -65,8 +65,12 @@ test.after(() => {
   rmSync(privateFarm, { recursive: true, force: true });
 });
 const { createWebSocketServer } = await import('../server.js');
-const { authorizeHttpRequest, createGatewayAuthRuntime, startCredentialFreshnessPolling } =
-  await import('./auth.js');
+const {
+  authorizeHttpRequest,
+  createGatewayAuthRuntime,
+  initializeGatewayIdentity,
+  startCredentialFreshnessPolling,
+} = await import('./auth.js');
 
 function stateFixture() {
   const root = mkdtempSync(join(tmpdir(), 'person-session-'));
@@ -280,6 +284,26 @@ export async function rpcFixture(
   ]);
   const adminCredential = f.writer.issueCredential(admin.id, 'Automation');
   const runtime = createGatewayAuthRuntime(f.runtime.env, () => f.clock.now);
+  const { url, http } = await startSessionRpcServer(t, runtime, f.dispose, resources, port);
+  const client = (token?: string) =>
+    new GatewayClient({ url, timeout: 2500, credential: token ? { token } : null });
+  return {
+    ...f,
+    adminCredential,
+    authRuntime: runtime,
+    url,
+    http,
+    client,
+  };
+}
+
+async function startSessionRpcServer(
+  t: test.TestContext,
+  runtime: ReturnType<typeof createGatewayAuthRuntime>,
+  cleanup: () => void,
+  resources: Record<string, SessionProofResource> = {},
+  port = 0,
+) {
   const server = createServer((req, res) => {
     if (!authorizeHttpRequest({ runtime, req, res, resource: 'run-artifact' })) return;
     const resource = resources[new URL(req.url ?? '/', 'http://localhost').pathname];
@@ -296,7 +320,7 @@ export async function rpcFixture(
         server.close((error) => (error ? reject(error) : resolve())),
       );
     }
-    f.dispose();
+    cleanup();
   });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
@@ -305,16 +329,7 @@ export async function rpcFixture(
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
   const url = 'ws://127.0.0.1:' + address.port + '/ws';
-  const client = (token?: string) =>
-    new GatewayClient({ url, timeout: 2500, credential: token ? { token } : null });
-  return {
-    ...f,
-    adminCredential,
-    authRuntime: runtime,
-    url,
-    http: 'http://127.0.0.1:' + address.port,
-    client,
-  };
+  return { url, http: 'http://127.0.0.1:' + address.port };
 }
 
 async function httpStatus(url: string, token: string): Promise<number> {
@@ -620,4 +635,96 @@ test('CLI person pairing consumes its invitation once and saves a refresh-only d
     f.client().call(Methods.AUTH_SESSION_EXCHANGE, { code: pairing.code, ...f.device }),
     rpcCode('PAIRING_FAILED'),
   );
+});
+
+test('first local startup persists one device and renews it through the production gateway', async (t) => {
+  const { ensureLocalCredential } = await import('../../../../packages/cli/src/commands/up.js');
+  const { probeGatewayAuth } = await import('../../../../packages/cli/src/gateway-auth.js');
+  const home = mkdtempSync(join(tmpdir(), 'local-start-session-'));
+  const previousHome = process.env.FARMSLOT_HOME;
+  const input = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+  const output = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+  t.after(() => {
+    if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = previousHome;
+    if (input) Object.defineProperty(process.stdin, 'isTTY', input);
+    else Reflect.deleteProperty(process.stdin, 'isTTY');
+    if (output) Object.defineProperty(process.stdout, 'isTTY', output);
+    else Reflect.deleteProperty(process.stdout, 'isTTY');
+  });
+  process.env.FARMSLOT_HOME = home;
+  Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: true });
+  Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true });
+  const initial = ensureLocalCredential(8801);
+  assert.ok(initial.personSession);
+  const runtime = createGatewayAuthRuntime({ FARMSLOT_HOME: home });
+  initializeGatewayIdentity(runtime, { host: '127.0.0.1' });
+  const server = await startSessionRpcServer(t, runtime, () =>
+    rmSync(home, { recursive: true, force: true }),
+  );
+  const profile = loadProfiles();
+  const port = Number(new URL(server.url).port);
+  profile.gateways.local.url = 'ws://localhost:' + port;
+  saveProfiles(profile);
+  const restored = ensureLocalCredential(port);
+  assert.equal(restored.personSession?.session.id, initial.personSession.session.id);
+  assert.equal(
+    (await probeGatewayAuth(profile.gateways.local.url, restored)).state,
+    'authenticated',
+  );
+  const persisted = loadProfiles().gateways.local;
+  assert.equal(persisted.secret, undefined);
+  assert.equal(persisted.personSession?.session.id, initial.personSession.session.id);
+  assert.equal(runtime.store.snapshot().personSessions.length, 1);
+  assert.ok(!readFileSync(profilesPath(), 'utf8').includes('fsa_'));
+});
+
+test('online activation exchanges its one-time owner credential before saving a CLI profile', async (t) => {
+  const { persistOwnerCredential } =
+    await import('../../../../packages/cli/src/commands/credential.js');
+  const { ensureLocalCredential } = await import('../../../../packages/cli/src/commands/up.js');
+  const { probeGatewayAuth } = await import('../../../../packages/cli/src/gateway-auth.js');
+  const home = mkdtempSync(join(tmpdir(), 'activation-device-session-'));
+  const previousHome = process.env.FARMSLOT_HOME;
+  t.after(() => {
+    if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = previousHome;
+  });
+  process.env.FARMSLOT_HOME = home;
+  const runtime = createGatewayAuthRuntime({
+    FARMSLOT_HOME: home,
+    FARMSLOT_GATEWAY_AUTH_MODE: 'none',
+  });
+  initializeGatewayIdentity(runtime, { host: '127.0.0.1' });
+  const server = await startSessionRpcServer(t, runtime, () =>
+    rmSync(home, { recursive: true, force: true }),
+  );
+  const client = new GatewayClient({ url: server.url, timeout: 2500, credential: null });
+  const created = await client.call<import('@farmslot/protocol').PrincipalCreateResult>(
+    Methods.PRINCIPAL_CREATE,
+    { subject: { type: 'service', displayName: 'Bootstrap target' }, roles: [] },
+  );
+  const issue = await client.call<import('@farmslot/protocol').CredentialIssueResult>(
+    Methods.CREDENTIAL_ISSUE,
+    { principalId: created.principal.id, displayName: 'Bootstrap service' },
+  );
+  assert.equal(issue.activationLatched, true);
+  assert.ok(issue.adminGrant);
+  const port = Number(new URL(server.url).port);
+  const url = 'ws://localhost:' + port;
+  saveProfiles({
+    active: 'remote',
+    gateways: {
+      remote: { url: 'wss://remote.invalid/ws', authMode: 'token', secret: 'retained-service' },
+    },
+  });
+  await persistOwnerCredential(url, 'local', issue.adminGrant.secret);
+  const profiles = loadProfiles();
+  assert.equal(profiles.active, 'remote');
+  assert.equal(profiles.gateways.remote.secret, 'retained-service');
+  assert.ok(profiles.gateways.local.personSession);
+  const raw = readFileSync(profilesPath(), 'utf8');
+  assert.ok(!raw.includes(issue.adminGrant.secret) && !raw.includes('fsa_'));
+  assert.equal((await probeGatewayAuth(url, ensureLocalCredential(port))).state, 'authenticated');
+  assert.equal(runtime.store.snapshot().personSessions.length, 1);
 });

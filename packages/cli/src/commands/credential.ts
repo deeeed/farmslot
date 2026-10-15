@@ -20,6 +20,7 @@ import type {
 
 import { resolveContext } from '../context.js';
 import { createEmitter } from '../envelope.js';
+import { exchangePerson, probeGatewayAuth } from '../gateway-auth.js';
 import { loadProfiles, profileForUrl, saveProfiles } from '../gateway-profiles.js';
 
 export function registerCredentialCommands(program: Command): void {
@@ -105,7 +106,7 @@ export function registerCredentialCommands(program: Command): void {
           }
           let persistedProfile: string | undefined;
           if (!opts.offline && issue.activationLatched) {
-            persistedProfile = persistOwnerCredential(
+            persistedProfile = await persistOwnerCredential(
               target.url,
               target.profileName,
               issue.adminGrant?.secret ?? issue.secret,
@@ -362,15 +363,23 @@ export function writeSecretFile(requestedPath: string, secret: string): string {
   return absolute;
 }
 
-export function persistOwnerCredential(
+export async function persistOwnerCredential(
   url: string,
   profileName: string | undefined,
   secret: string,
-): string {
+): Promise<string> {
   const profiles = loadProfiles();
   const matching = profileForUrl(url, profiles)?.name;
   const name = profileName ?? matching ?? uniqueProfileName(profiles.gateways, 'activated-gateway');
-  profiles.gateways[name] = { url, authMode: 'token', secret };
+  const profile = { url, authMode: 'token' as const, secret };
+  profiles.gateways[name] = profile;
+  const probe = await probeGatewayAuth(url, { token: secret });
+  if (probe.errorCode === 'AUTH_PERSON_SESSION_REQUIRED')
+    await exchangePerson(profile, profiles, { credential: secret });
+  else if (probe.state !== 'authenticated' || probe.principal?.subjectKind !== 'service')
+    throw new Error(
+      'The newly issued owner credential could not be verified. Sign in again before continuing.',
+    );
   if (!profiles.active || profiles.active === name || !profiles.gateways[profiles.active]) {
     profiles.active = name;
   }

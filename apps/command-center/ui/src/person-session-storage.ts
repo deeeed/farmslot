@@ -3,6 +3,7 @@ import {
   type PersonSessionAuth,
   PersonSessionChangedError,
   type PersonSessionStorage,
+  samePersonSessionAuthority,
 } from '@farmslot/protocol';
 
 import {
@@ -31,13 +32,34 @@ export class CommandCenterPersonSessionStorage implements PersonSessionStorage {
 
   async load(): Promise<PersonSessionAuth | null> {
     if (this.pending !== undefined) return this.pending;
-    if (this.read() !== this.expected) throw new PersonSessionChangedError();
-    if (this.expected === null) return null;
-    const value: unknown = JSON.parse(this.expected);
+    return this.synchronize();
+  }
+
+  private parse(raw: string | null): PersonSessionAuth | null {
+    if (raw === null) return null;
+    let value: unknown;
+    try {
+      value = JSON.parse(raw);
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      throw new Error('The saved device sign-in is invalid. Sign in again.');
+    }
     if (value === null) return null;
     const auth = parsePersonSessionAuth(value);
     if (!auth) throw new Error('The saved device sign-in is invalid. Sign in again.');
     return auth;
+  }
+
+  private synchronize(): PersonSessionAuth | null {
+    const raw = this.read();
+    const current = this.parse(raw);
+    if (raw !== this.expected) {
+      const expected = this.parse(this.expected);
+      if (!expected || !current || !samePersonSessionAuthority(expected, current))
+        throw new PersonSessionChangedError();
+      this.expected = raw;
+    }
+    return current;
   }
 
   beginValidation(): void {
@@ -70,9 +92,16 @@ export class CommandCenterPersonSessionStorage implements PersonSessionStorage {
   }
 
   private async persist(value: PersonSessionAuth | null): Promise<void> {
-    if (this.read() !== this.expected) throw new PersonSessionChangedError();
-    const serialized = JSON.stringify(value);
-    if (this.desktop) await saveDesktopCredentials({ personSession: value });
+    const current = this.synchronize();
+    const latest =
+      value &&
+      current &&
+      samePersonSessionAuthority(value, current) &&
+      Date.parse(current.session.lastRefreshedAt) > Date.parse(value.session.lastRefreshedAt)
+        ? current
+        : value;
+    const serialized = JSON.stringify(latest);
+    if (this.desktop) await saveDesktopCredentials({ personSession: latest });
     else localStorage.setItem(this.key, serialized);
     this.expected = serialized;
   }

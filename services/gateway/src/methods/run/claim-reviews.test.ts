@@ -288,7 +288,7 @@ test('unauthenticated, spoofed, stale, wrong-execution and derived-parent reques
   const f = await fixture(t);
   await assert.rejects(
     runReviewVisualClaim(f.params, () => {}),
-    /credential-backed person/,
+    /active person device session/,
   );
   await assert.rejects(
     runReviewVisualClaim(f.params, () => {}, {

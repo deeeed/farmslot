@@ -21,12 +21,10 @@ import {
 } from '@farmslot/protocol';
 
 import { useRunAcceptance } from '../../../hooks/useRunAcceptance';
-import { acceptanceEvidenceHref } from '../../../lib/acceptance-evidence';
 import {
   type ArtifactHttpHeaders,
   type ArtifactManifestEntry,
   artifactUrl,
-  CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
 } from '../../../lib/artifact-url';
 import {
   HUMAN_GATE_DECISION_TYPE,
@@ -40,6 +38,7 @@ import {
   interactivePacketActionRequest,
   interactivePacketArtifactKey,
   interactivePacketArtifactOpenUrl,
+  interactivePacketArtifactViewerHref,
 } from '../../../lib/interactive-operator-packets';
 import { colors, fonts, radii, spacing } from '../../../lib/theme';
 
@@ -146,7 +145,7 @@ export function InteractiveOperatorPacketsPanel({
 
   const openArtifact = async (path: string) => {
     if (usesPersonHttpAccess(artifactAuthHeaders)) {
-      router.push(acceptanceEvidenceHref(run.id, '', path, CURRENT_ARTIFACTS_RECIPE_RUN_PARAM));
+      router.push(interactivePacketArtifactViewerHref(run.id, path));
       return;
     }
     await Linking.openURL(

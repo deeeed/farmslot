@@ -1,21 +1,19 @@
-import os from 'node:os';
 import { createInterface } from 'node:readline/promises';
 
 import type { Command } from 'commander';
 
-import {
-  hasAuthErrorCode,
-  personSessionCaption,
-  PersonSessionClient,
-  type PersonSessionExchangeParams,
-} from '@farmslot/protocol';
+import { hasAuthErrorCode, personSessionCaption } from '@farmslot/protocol';
 
 import { dim, green, red, yellow } from '../colors.js';
 import { isMachineMode } from '../envelope.js';
-import { describeProbe, exchangePairingCode, probeGatewayAuth } from '../gateway-auth.js';
-import { GatewayClient } from '../gateway-client.js';
 import {
-  type GatewayProfile,
+  describeProbe,
+  exchangePairingCode,
+  exchangePerson,
+  personSessionClient,
+  probeGatewayAuth,
+} from '../gateway-auth.js';
+import {
   type GatewayProfilesFile,
   loadProfiles,
   loadProfilesOrExit,
@@ -43,52 +41,6 @@ function requireProfile(
     process.exit(1);
   }
   return { name: resolved };
-}
-
-function personSessionClient(
-  profile: GatewayProfile,
-  profiles: GatewayProfilesFile,
-): PersonSessionClient {
-  return new PersonSessionClient({
-    storage: {
-      load: async () => profile.personSession ?? null,
-      save: async (value) => {
-        if (value) {
-          profile.personSession = value;
-          profile.authMode = 'token';
-        } else {
-          delete profile.personSession;
-          delete profile.authMode;
-        }
-        delete profile.secret;
-        saveProfiles(profiles);
-      },
-    },
-    request: (method, params, accessToken) =>
-      new GatewayClient({
-        url: profile.url,
-        timeout: 5_000,
-        credential: accessToken ? { token: accessToken } : null,
-      }).call(method, params),
-  });
-}
-
-async function exchangePerson(
-  profile: GatewayProfile,
-  profiles: GatewayProfilesFile,
-  input: { credential: string } | { code: string },
-): Promise<string> {
-  const client = personSessionClient(profile, profiles);
-  const params: PersonSessionExchangeParams = {
-    ...input,
-    deviceName: `CLI on ${os.hostname()}`.slice(0, 128),
-    deviceKind: 'cli',
-  };
-  try {
-    return await client.exchange(params);
-  } finally {
-    await client.dispose();
-  }
 }
 
 interface LoginOptions {

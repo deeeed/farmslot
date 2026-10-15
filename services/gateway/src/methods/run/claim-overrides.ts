@@ -11,6 +11,7 @@ import {
   runClaimOverrideSnapshotIdentity,
   type RunOverrideClaimParams,
   type RunOverrideClaimResult,
+  sameEvidenceAttestationApprover,
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../../core/method-error.js';
@@ -122,10 +123,7 @@ export async function runOverrideClaim(
     );
   const assertCurrent = (current: Run) => {
     const person = authorize();
-    if (
-      person.principalId !== approver.principalId ||
-      person.credentialId !== approver.credentialId
-    )
+    if (!sameEvidenceAttestationApprover(person, approver))
       throw new Error('The authenticated override identity changed.');
     const currentDecision = current.decisions.find(({ id }) => id === params.decisionId);
     if (

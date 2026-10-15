@@ -1,6 +1,7 @@
 import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   type EvidencePolicyAttestation,
+  isEvidenceAttestationApprover,
   isEvidencePolicyReason,
   isValidEvidenceAttestationReason,
   type ReadyGatePrPackage,
@@ -27,9 +28,7 @@ export function assertEvidenceAttestationReceipt(
     receipt.decisionId !== decision.id ||
     receipt.packageHash !== prepared.packageHash ||
     !isValidEvidenceAttestationReason(receipt.reason) ||
-    !receipt.approver?.principalId?.trim() ||
-    !receipt.approver.displayName?.trim() ||
-    !receipt.approver.credentialId?.trim() ||
+    !isEvidenceAttestationApprover(receipt.approver) ||
     !Number.isFinite(Date.parse(receipt.approvedAt)) ||
     !Array.isArray(receipt.selectedEvidenceKeys) ||
     !receipt.waivedReasons?.length ||

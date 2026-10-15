@@ -66,6 +66,7 @@ interface BrowserGatewayConnection {
   auth: GatewayAuthCredentials;
   source: 'configured' | 'hosted' | 'stored' | 'implicit';
   explicit?: boolean;
+  code?: string;
 }
 
 interface PendingRequest {
@@ -161,7 +162,8 @@ function resolveBrowserGatewayConnection(): BrowserGatewayConnection {
   return {
     urls,
     source,
-    explicit: Boolean(hosted.token || hosted.password),
+    explicit: Boolean(hosted.code || hosted.token || hosted.password),
+    code: hosted.code,
     auth: {
       ...(token ? { token } : {}),
       ...(password ? { password } : {}),
@@ -226,6 +228,7 @@ export class GatewayClient {
   private person: PersonSessionClient;
   private explicitSignIn: boolean;
   private rememberMe?: boolean;
+  private pairingCode?: string;
   private authBlocked = false;
 
   get personSession(): PersonDeviceSession | null {
@@ -282,6 +285,8 @@ export class GatewayClient {
     this.auth = auth ?? resolved.auth;
     this.source = url ? 'configured' : resolved.source;
     this.explicitSignIn = Boolean(auth) || resolved.explicit === true;
+    this.pairingCode = resolved.code;
+    if (this.pairingCode) localStorage.removeItem(GATEWAY_SIGNED_OUT_STORAGE_KEY);
     this.personStorage = new CommandCenterPersonSessionStorage(this.urls);
     if (this.explicitSignIn) this.personStorage.beginValidation();
     this.person = this.createPersonClient();
@@ -366,6 +371,7 @@ export class GatewayClient {
     setGatewayMemoryAuth({}, this.url);
     syncBrowserHttpAuthCookie({}, this.url);
     this.explicitSignIn = true;
+    this.pairingCode = undefined;
     localStorage.removeItem(GATEWAY_SIGNED_OUT_STORAGE_KEY);
     this.authBlocked = false;
     this.lastAuthError = null;
@@ -545,6 +551,17 @@ export class GatewayClient {
     if (this.ws !== socket || this.disposed) return;
     if (this.person.session) {
       await this.person.accessToken(true);
+      this.person.startRefresh((error) => this.failPersonRefresh(error));
+      return;
+    }
+    if (this.pairingCode) {
+      await this.person.exchange({
+        code: this.pairingCode,
+        deviceName: 'Command Center browser',
+        deviceKind: 'command-center',
+      });
+      this.pairingCode = undefined;
+      this.explicitSignIn = false;
       this.person.startRefresh((error) => this.failPersonRefresh(error));
       return;
     }

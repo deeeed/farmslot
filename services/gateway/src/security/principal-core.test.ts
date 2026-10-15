@@ -100,10 +100,10 @@ test('credential store rejects unsupported and node-role records and saves mode 
   const path = credentialStorePath(env);
   writeFileSync(
     path,
-    JSON.stringify({ schemaVersion: 2, activatedAt: null, principals: [], credentials: [] }),
+    JSON.stringify({ schemaVersion: 99, activatedAt: null, principals: [], credentials: [] }),
     { mode: 0o600 },
   );
-  assert.throws(() => loadCredentialStore(path), /unsupported schemaVersion 2/u);
+  assert.throws(() => loadCredentialStore(path), /unsupported schemaVersion 99/u);
 
   // A JSON.parse message quotes the input around the error; the store's must not.
   writeFileSync(path, '{"schemaVersion":1,"credentials":[{"secret":{"hash":fake_stored_hash}}]}');
@@ -227,7 +227,7 @@ test('identity domains isolate homes while gateways in one home share activation
   const secondEnv = isolatedEnv({ HOME: fakeUserHome });
   const first = createGatewayAuthRuntime(firstEnv);
   initializeGatewayIdentity(first, { host: '127.0.0.1' });
-  const admin = first.writer.createPrincipal({ type: 'person', displayName: 'domain-admin' }, [
+  const admin = first.writer.createPrincipal({ type: 'service', displayName: 'domain-admin' }, [
     { role: 'admin', scope: { kind: 'global' } },
   ]);
   const issued = first.writer.issueCredential(admin.id, 'domain-admin');
@@ -362,7 +362,7 @@ test('HTTP transport accepts issued tokens and rejects password schemes', async 
   const issuedRuntime = createGatewayAuthRuntime(isolatedEnv());
   initializeGatewayIdentity(issuedRuntime, { host: '127.0.0.1' });
   const admin = issuedRuntime.writer.createPrincipal(
-    { type: 'person', displayName: 'http-admin' },
+    { type: 'service', displayName: 'http-admin' },
     [{ role: 'admin', scope: { kind: 'global' } }],
   );
   const issued = issuedRuntime.writer.issueCredential(admin.id, 'http-admin');
@@ -413,20 +413,24 @@ test('verification cache never caches authority and rejects password transport',
     { role: 'operator', scope: { kind: 'global' } },
   ]);
   const issued = runtime.writer.issueCredential(principal.id, 'sam-laptop');
-  assert.equal(runtime.resolver.resolveSecret(issued.secret, 'token').ok, true);
-  assert.equal(runtime.resolver.resolveSecret(issued.secret, 'password').ok, false);
+  const grant = runtime.writer.exchangePersonCredential(issued.secret, {
+    deviceName: 'Cache fixture',
+    deviceKind: 'cli',
+  });
+  assert.equal(runtime.resolver.resolveSecret(grant.accessToken, 'token').ok, true);
+  assert.equal(runtime.resolver.resolveSecret(grant.accessToken, 'password').ok, false);
 
   runtime.writer.grantRole(principal.id, 'admin', { kind: 'global' });
-  const updated = runtime.resolver.resolveSecret(issued.secret, 'token');
+  const updated = runtime.resolver.resolveSecret(grant.accessToken, 'token');
   assert.equal(updated.ok, true);
   assert.equal(
     updated.ok && updated.principal.roles.some((binding) => binding.role === 'admin'),
     true,
   );
   runtime.writer.revokeCredential(issued.record.id);
-  assert.deepEqual(runtime.resolver.resolveSecret(issued.secret, 'token'), {
+  assert.deepEqual(runtime.resolver.resolveSecret(grant.accessToken, 'token'), {
     ok: false,
-    reason: 'revoked',
+    reason: 'session_ended',
   });
 });
 
@@ -477,10 +481,16 @@ test('activated gateways without an admin teach the offline escape without revea
   const issue = offline.issueCredential(operator.id, 'sam-laptop');
   const runtime = createGatewayAuthRuntime(env);
   initializeGatewayIdentity(runtime, { host: '127.0.0.1' });
+  const grant = runtime.writer.exchangePersonCredential(issue.secret, {
+    deviceName: 'Authorization fixture',
+    deviceKind: 'cli',
+  });
+  const resolved = runtime.resolver.resolveSecret(grant.accessToken, 'token');
+  assert.ok(resolved.ok && resolved.authentication);
   const session = {
     authenticated: true,
     clientKind: 'ui' as const,
-    authentication: { kind: 'credential' as const, credentialId: issue.record.id },
+    authentication: resolved.authentication,
   };
   assert.throws(
     () => authorizeGatewayMethod(runtime, session, Methods.CREDENTIAL_ISSUE),
@@ -662,12 +672,18 @@ function createCredentialSession(
 ) {
   const principal = runtime.writer.createPrincipal({ type: 'person', displayName }, roles);
   const issue = runtime.writer.issueCredential(principal.id, `${displayName}-credential`);
+  const grant = runtime.writer.exchangePersonCredential(issue.secret, {
+    deviceName: 'Authorization fixture',
+    deviceKind: 'cli',
+  });
+  const resolved = runtime.resolver.resolveSecret(grant.accessToken, 'token');
+  assert.ok(resolved.ok && resolved.authentication);
   return {
     principalId: principal.id,
     session: {
       authenticated: true,
       clientKind: 'ui' as const,
-      authentication: { kind: 'credential' as const, credentialId: issue.record.id },
+      authentication: resolved.authentication,
     },
   };
 }

@@ -58,6 +58,7 @@ import {
   type RunResolveDecisionParams,
   type RunResolveDecisionResult,
   type SafetyTier,
+  sameEvidenceAttestationApprover,
 } from '@farmslot/protocol';
 import {
   assertReviewPolicy,
@@ -2164,10 +2165,7 @@ export async function resolveRunDecision(
     assertReviewBudgetAtConsumption?.();
     if (attestation) {
       const currentApprover = dependencies.authorizeEvidenceAttestation!();
-      if (
-        currentApprover.principalId !== attestation.approver.principalId ||
-        currentApprover.credentialId !== attestation.approver.credentialId
-      )
+      if (!sameEvidenceAttestationApprover(currentApprover, attestation.approver))
         throw new GatewayMethodError(
           'AUTH_FORBIDDEN',
           'Evidence attestation caller changed during validation.',

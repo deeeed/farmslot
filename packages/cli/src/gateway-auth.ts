@@ -1,10 +1,13 @@
+import os from 'node:os';
+
 // gateway-auth.ts — auth probing + login flows against a gateway (ADR-036).
-// Consumes the existing auth.connect / pairing.exchange protocol surface; no
-// new gateway methods.
-import type {
-  GatewayAuthConnectResult,
-  PairingExchangeResult,
-  SelfPrincipalSummary,
+// Uses the shared gateway authentication and person-device session contracts.
+import {
+  type GatewayAuthConnectResult,
+  type PairingExchangeResult,
+  PersonSessionClient,
+  type PersonSessionExchangeParams,
+  type SelfPrincipalSummary,
 } from '@farmslot/protocol';
 
 import {
@@ -14,7 +17,7 @@ import {
   type GatewayCredential,
   GatewayRpcError,
 } from './gateway-client.js';
-import type { GatewayProfile } from './gateway-profiles.js';
+import { type GatewayProfile, type GatewayProfilesFile, saveProfiles } from './gateway-profiles.js';
 
 export const AUTH_PROBE_TIMEOUT_MS = 5_000;
 
@@ -113,4 +116,50 @@ function formatPrincipal(principal: SelfPrincipalSummary | undefined): string {
     ? principal.roles.map((binding) => `${binding.role}:${binding.scope.kind}`).join(',')
     : 'no roles';
   return ` as ${principal.displayName} [${roles}]`;
+}
+
+export function personSessionClient(
+  profile: GatewayProfile,
+  profiles: GatewayProfilesFile,
+): PersonSessionClient {
+  return new PersonSessionClient({
+    storage: {
+      load: async () => profile.personSession ?? null,
+      save: async (value) => {
+        if (value) {
+          profile.personSession = value;
+          profile.authMode = 'token';
+        } else {
+          delete profile.personSession;
+          delete profile.authMode;
+        }
+        delete profile.secret;
+        saveProfiles(profiles);
+      },
+    },
+    request: (method, params, accessToken) =>
+      new GatewayClient({
+        url: profile.url,
+        timeout: 5_000,
+        credential: accessToken ? { token: accessToken } : null,
+      }).call(method, params),
+  });
+}
+
+export async function exchangePerson(
+  profile: GatewayProfile,
+  profiles: GatewayProfilesFile,
+  input: { credential: string } | { code: string },
+): Promise<string> {
+  const client = personSessionClient(profile, profiles);
+  const params: PersonSessionExchangeParams = {
+    ...input,
+    deviceName: `CLI on ${os.hostname()}`.slice(0, 128),
+    deviceKind: 'cli',
+  };
+  try {
+    return await client.exchange(params);
+  } finally {
+    await client.dispose();
+  }
 }
