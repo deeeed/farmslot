@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Accept a contained retained evidenceBaseline through the existing recipe parameter option.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.17.5 - 2026-10-15

@@ -36,6 +36,8 @@ export function renderReadyTopBar(input: {
   openDiff: (title: string, artifact?: ArtifactRef) => void;
   openReviewRequestModal: () => void;
   confirmAction: (actionId: string) => void;
+  pendingVisualClaimIds?: readonly string[];
+  focusClaim?: (id: string) => void | Promise<void>;
 }) {
   const { branch, prNumber, repo, diffStat } = input.payload;
   const lifecycle = deriveRunLifecycleView({
@@ -51,6 +53,9 @@ export function renderReadyTopBar(input: {
       (action) => action.id === 'approve-publish' || action.id === 'ready',
     ) ?? !packageGate;
   const canApprove = offeredApproval && (!input.payload.gateReadiness || lifecycle.canAdvance);
+  const claimVerdictsBlocked = input.payload.gateReadiness?.reasons.some(
+    (reason) => reason.evidencePolicy === 'claim-verdict',
+  );
   const extraReviewAction = input.decision?.actions?.find(
     (action) => action.id === 'request-review',
   );
@@ -79,7 +84,11 @@ export function renderReadyTopBar(input: {
             >${input.payload.reviewRoundBudget.label}</span
           >`
         : nothing}
-      ${lifecycle.gateLabel ? html`<span role="status">${lifecycle.gateLabel}</span>` : nothing}
+      ${input.decision?.resolvedAt
+        ? html`<span role="status">Retained evidence</span>`
+        : lifecycle.gateLabel
+          ? html`<span role="status">${lifecycle.gateLabel}</span>`
+          : nothing}
       ${prUrl
         ? html`
             <a class="rdy-pr-link" href=${prUrl} target="_blank" rel="noopener">#${prNumber}</a>
@@ -145,9 +154,10 @@ export function renderReadyTopBar(input: {
                 `
               : nothing}
             ${attestationAction
-              ? html` <label>
+              ? html` <label class="rdy-attestation-field">
                     Reason for evidence policy attestation
                     <textarea
+                      class="rdy-attestation-reason"
                       data-testid="evidence-attestation-reason"
                       aria-label="Reason for evidence policy attestation"
                       .value=${input.attestationReason ?? ''}
@@ -187,24 +197,41 @@ export function renderReadyTopBar(input: {
                   </button>
                 `
               : nothing}
-            <button
-              class="rdy-btn ${pendingApproveConfirm ? 'rdy-confirming' : 'rdy-btn-primary'}"
-              ?disabled=${input.acting || input.recovering || !canApprove}
-              title=${canApprove
-                ? ''
-                : reviewBlockingReason || 'Required review policy is not satisfied yet'}
-              @click=${() => input.confirmAction(approveActionId)}
-            >
-              ${input.acting
-                ? 'Submitting…'
-                : pendingApproveConfirm
-                  ? 'Confirm Publish?'
-                  : canApprove
-                    ? approveLabel
-                    : exhaustedReview
-                      ? 'Retries exhausted'
-                      : reviewBlockingReason || 'Review Required'}
-            </button>
+            ${!canApprove && claimVerdictsBlocked
+              ? html`<p role="status" data-testid="blocking-visual-claims">
+                  ${input.pendingVisualClaimIds?.length
+                    ? html`${input.pendingVisualClaimIds.map(
+                        (id, index) =>
+                          html`${index ? ', ' : ''}<a
+                              href=${`#ac-${encodeURIComponent(id)}`}
+                              @click=${(event: Event) => {
+                                event.preventDefault();
+                                void input.focusClaim?.(id);
+                              }}
+                              >${id}</a
+                            >`,
+                      )}
+                      need a visual judgment.`
+                    : 'Recorded claim proof does not yet satisfy publication policy. Review the acceptance criteria.'}
+                </p>`
+              : html`<button
+                  class="rdy-btn ${pendingApproveConfirm ? 'rdy-confirming' : 'rdy-btn-primary'}"
+                  ?disabled=${input.acting || input.recovering || !canApprove}
+                  title=${canApprove
+                    ? ''
+                    : reviewBlockingReason || 'Required review policy is not satisfied yet'}
+                  @click=${() => input.confirmAction(approveActionId)}
+                >
+                  ${input.acting
+                    ? 'Submitting…'
+                    : pendingApproveConfirm
+                      ? 'Confirm Publish?'
+                      : canApprove
+                        ? approveLabel
+                        : exhaustedReview
+                          ? 'Retries exhausted'
+                          : reviewBlockingReason || 'Review Required'}
+                </button>`}
           `}
     </div>
   `;

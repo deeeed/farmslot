@@ -130,7 +130,7 @@ test('slot workspace ready evidence includes run step artifacts', () => {
   );
 });
 
-test('slot workspace gate metrics call out before after evidence when present', () => {
+test('slot workspace never counts unbound legacy filenames as comparison proof', () => {
   const run = baseRun({
     decisions: [
       {
@@ -158,10 +158,9 @@ test('slot workspace gate metrics call out before after evidence when present', 
   });
 
   const summary = summarizeSlotWorkspaceGate(run);
-  assert.deepEqual(
+  assert.equal(
     summary?.metrics.find((item) => item.label === 'Before→After'),
-    { label: 'Before→After', value: '1 pair' },
-    'slot gates should expose visual difference counts as first-class workspace context',
+    undefined,
   );
 });
 
@@ -434,12 +433,8 @@ test('slot workspace retro summary exposes latest pending retrospective with met
     'artifacts/workspace-before.png',
     'artifacts/workspace-after.png',
   ]);
-  assert.deepEqual(summary?.primaryVisualPair, {
-    beforePath: 'artifacts/workspace-before.png',
-    afterPath: 'artifacts/workspace-after.png',
-    stem: 'workspace',
-  });
-  assert.equal(summary?.visualPairCount, 1);
+  assert.equal(summary?.primaryVisualPair, null);
+  assert.equal(summary?.visualPairCount, 0);
   assert.deepEqual(
     summary?.metrics.map((item) => item.value),
     ['partial', '2/3 fixed', 'green'],
@@ -647,86 +642,29 @@ test('slot recipe previews fall back to document artifacts when no visuals exist
   );
 });
 
-test('slot compare target prefers selected recipe pairs over run evidence pairs', () => {
-  const selectedRecipe = recipeGroup({
+test('slot comparison targets require checked AC bindings even for selected or promoted recipes', () => {
+  const group = recipeGroup({
     id: 'live-run:selected',
     groupKind: 'live-run',
+    promoted: true,
     artifactManifest: [
-      { path: 'recipe/before-login.png', purpose: 'screenshot' },
+      { path: 'recipe/before-login.png', purpose: 'screenshot-before' },
       { path: 'recipe/after-login.png', purpose: 'screenshot' },
     ],
   });
-
-  assert.deepEqual(
-    selectSlotCompareTarget({
-      runArtifacts: [
-        { path: 'run/before-home.png', purpose: 'screenshot' },
-        { path: 'run/after-home.png', purpose: 'screenshot' },
-      ],
-      recipeRuns: [selectedRecipe],
-      selectedRecipeRunId: 'live-run:selected',
-    }),
-    {
-      artifactPath: 'recipe/after-login.png',
-      recipeRunId: 'live-run:selected',
-      pairCount: 1,
-      source: 'selected-recipe',
-    },
-  );
-});
-
-test('slot compare target uses run evidence before unselected recipe fallback', () => {
-  assert.deepEqual(
-    selectSlotCompareTarget({
-      runArtifacts: [
-        { path: 'run/before-home.png', purpose: 'screenshot' },
-        { path: 'run/after-home.png', purpose: 'screenshot' },
-      ],
-      recipeRuns: [
-        recipeGroup({
-          id: 'live-run:promoted',
-          groupKind: 'live-run',
-          promoted: true,
-          artifactManifest: [
-            { path: 'recipe/before-login.png', purpose: 'screenshot' },
-            { path: 'recipe/after-login.png', purpose: 'screenshot' },
-          ],
-        }),
-      ],
-      selectedRecipeRunId: null,
-    }),
-    {
-      artifactPath: 'run/after-home.png',
-      recipeRunId: null,
-      pairCount: 1,
-      source: 'run',
-    },
-  );
-});
-
-test('slot compare target falls back to recipe pairs when run evidence has no pair', () => {
-  assert.deepEqual(
-    selectSlotCompareTarget({
-      runArtifacts: [{ path: 'run/report.md', purpose: 'report' }],
-      recipeRuns: [
-        recipeGroup({
-          id: 'current-artifacts',
-          groupKind: 'current-artifacts',
-          artifactManifest: [
-            { path: 'recipe/before-login.png', purpose: 'screenshot' },
-            { path: 'recipe/after-login.png', purpose: 'screenshot' },
-          ],
-        }),
-      ],
-      selectedRecipeRunId: null,
-    }),
-    {
-      artifactPath: 'recipe/after-login.png',
-      recipeRunId: 'current-artifacts',
-      pairCount: 1,
-      source: 'recipe-fallback',
-    },
-  );
+  for (const selectedRecipeRunId of [group.id, null]) {
+    assert.equal(
+      selectSlotCompareTarget({
+        runArtifacts: [
+          { path: 'run/before-home.png', purpose: 'screenshot' },
+          { path: 'run/after-home.png', purpose: 'screenshot' },
+        ],
+        recipeRuns: [group],
+        selectedRecipeRunId,
+      }),
+      null,
+    );
+  }
 });
 
 test('slot run evidence previews prefer visual artifacts but keep document fallback', () => {
@@ -770,7 +708,7 @@ test('slot gate previews preserve gate artifact focus and backfill missing manif
   );
 });
 
-test('slot gate fallback metadata preserves filename before after pairing', () => {
+test('slot gate fallback metadata keeps unbound media readable without inferred pairs', () => {
   const artifacts = selectSlotGatePreviewArtifacts(
     {
       artifactPaths: ['artifacts/before-login.png', 'artifacts/after-login.png'],
@@ -781,12 +719,12 @@ test('slot gate fallback metadata preserves filename before after pairing', () =
   assert.deepEqual(
     artifacts.map((artifact) => artifact.purpose),
     ['image', 'image'],
-    'missing gate manifest metadata should stay neutral enough for before→after filename detection',
+    'missing capture bindings remain neutral',
   );
   assert.equal(
     groupVisualArtifactPairs(artifacts, (artifact) => artifact.path).pairs.length,
-    1,
-    'slot gate fallback artifacts should still form a before→after pair',
+    0,
+    'unbound gate media cannot become an AC comparison',
   );
 });
 

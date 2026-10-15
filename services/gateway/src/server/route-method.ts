@@ -570,7 +570,10 @@ import {
   requireNodeSession,
 } from '../security/auth.js';
 import { authorizeGatewayMethod } from '../security/authorization.js';
-import { authorizeEvidenceAttestation } from '../security/evidence-attestation.js';
+import {
+  authorizeEvidenceAttestation,
+  authorizeVisualClaimReview,
+} from '../security/evidence-attestation.js';
 import { assertNativeMachineAssignment, nativeNodeDeclaration } from '../security/native-node.js';
 import { assertNativeWorkerRpcAccess } from '../security/native-worker-access.js';
 import { currentSessionOriginator, runWithSessionOriginator } from '../security/work-originator.js';
@@ -688,6 +691,8 @@ async function routeAuthorizedMethod(
     emit,
     authorizeEvidenceAttestation: () =>
       authorizeEvidenceAttestation(authRuntime, attestationSession),
+    authorizeVisualClaimReview: (kind, policy) =>
+      authorizeVisualClaimReview(authRuntime, attestationSession, kind, policy),
     authorizeSourceSelections: () =>
       sourceRpcCaller(authRuntime, state, Methods.SOURCES_PIN).authorize(),
   });

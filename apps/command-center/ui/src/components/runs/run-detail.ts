@@ -61,6 +61,7 @@ import {
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 import { recipeRunArtifactUrl, runArtifactUrl } from '../workspace/workspace-artifacts.js';
+import type { WorkspaceEvidenceComparison } from '../workspace/workspace-evidence-preview.js';
 
 import { CIWatchPokeController } from './ci-watch-actions.js';
 import {
@@ -155,6 +156,10 @@ import { collectRunInteractivePacketArtifacts, sortRunsForFamilyView } from './r
 export class RunDetail extends RunDetailState {
   @state() evidenceModel: EvidenceReviewModel | null = null;
   @state() private _recordedEvidence: RunRecipeRunsForRunResult['recordedEvidence'] = undefined;
+  @state() private _visualReviewReasons: Record<string, string> = {};
+  @state() private _visualReviewBusy = false;
+  @state() private _visualReviewMessage = '';
+  private _visualReviewScope = '';
   private _evidenceGroupId: string | null = null;
   private _evidenceTaskRelative = true;
 
@@ -171,12 +176,27 @@ export class RunDetail extends RunDetailState {
       const output = this.run?.decisions.find(
         (decision) => !decision.resolvedAt && decision.payload?.kind === 'output-review',
       );
+      const scope = JSON.stringify([
+        this.run?.id,
+        this._recordedEvidence?.input?.claims?.recipeRunId,
+        this._recordedEvidence?.visualReviewContext?.snapshotIdentity,
+      ]);
+      if (scope !== this._visualReviewScope) {
+        this._visualReviewScope = scope;
+        this._visualReviewReasons = {};
+        this._visualReviewMessage = '';
+      }
       this.evidenceModel = createEvidenceReviewModel({
-        context: 'run-detail',
+        context: output ? 'gate' : 'run-detail',
+        gateDecision: output,
+        artifacts: this._recordedEvidence?.report?.artifactManifest,
+        comparisonSnapshot: this._recordedEvidence?.comparisonSnapshot,
+        criterionSourceUrl: this.run?.links?.find((link) => link.label === 'Jira')?.url,
         package: this._recordedEvidence?.input,
         contractVersion: this._recordedEvidence?.contractVersion,
         claimOverrideAuthority: this._recordedEvidence?.claimOverrideAuthority,
         visualReviewAuthority: this._recordedEvidence?.visualReviewAuthority,
+        visualReviewContext: this._recordedEvidence?.visualReviewContext,
         readErrors: this._recordedEvidence?.errors,
         artifactPrefix: this._recordedEvidence?.artifactPrefix,
         packagePath: this._recordedEvidence?.packagePath,
@@ -237,10 +257,7 @@ export class RunDetail extends RunDetailState {
       changed.has('_selectedRecipeRunId') &&
       this.run &&
       this._selectedRecipeRunId &&
-      this._selectedRecipeRunId !== this._evidenceGroupId &&
-      !this.run.decisions.some(
-        (decision) => !decision.resolvedAt && decision.payload?.kind === 'output-review',
-      )
+      this._selectedRecipeRunId !== this._evidenceGroupId
     )
       void this._refreshRecipeRunsForRun(this.run, { force: true });
     if (changed.has('runId') || changed.has('mockData') || changed.has('mockRun')) {
@@ -840,9 +857,16 @@ export class RunDetail extends RunDetailState {
       const params = {
         runId: run.id,
         includeRecordedEvidence: true,
+        ...(recipeRunId ? { recipeRunId } : {}),
         ...(outputDecision?.payload?.kind === 'output-review'
           ? {
               decisionId: outputDecision.id,
+              ...(this._recipeRuns.find((group) => group.id === recipeRunId)?.recipeRunId
+                ? {
+                    recordedRecipeRunId: this._recipeRuns.find((group) => group.id === recipeRunId)!
+                      .recipeRunId,
+                  }
+                : {}),
               evidenceSnapshotHash: outputDecision.payload.manifestDigest,
             }
           : recipeRunId
@@ -1243,6 +1267,82 @@ export class RunDetail extends RunDetailState {
       }),
     );
   };
+
+  private async _recordVisualReview(claimId: string, verdict: 'confirmed' | 'rejected') {
+    const model = this.evidenceModel;
+    const run = this.run;
+    if (!model || !run || this._visualReviewBusy) return;
+    this._visualReviewBusy = true;
+    try {
+      const request = model.visualReviewRequest(
+        claimId,
+        gateway.authenticatedPrincipal,
+        verdict,
+        this._visualReviewReasons[claimId] ?? '',
+      );
+      if (request.runId !== run.id)
+        throw new Error('The evidence selection changed. Refresh the run.');
+      await gateway.request(Methods.RUN_REVIEW_VISUAL_CLAIM, request);
+      if (this.run?.id !== run.id) return;
+      await this.fetchRun(run.id);
+      await this._refreshRecipeRunsForRun(this.run ?? run, { force: true });
+      this._visualReviewMessage = 'Visual judgment recorded.';
+    } catch (error) {
+      this._visualReviewMessage = error instanceof Error ? error.message : String(error);
+    } finally {
+      this._visualReviewBusy = false;
+    }
+  }
+
+  private _comparisonContext(): WorkspaceEvidenceComparison | undefined {
+    const model = this.evidenceModel;
+    if (!model) return undefined;
+    const resolve = this._captureEvidenceResolver();
+    const open = (video: boolean, mediaPath?: string) => {
+      const clip = model.playback.clip;
+      const path = video && clip ? model.artifactPath(clip.videoPath) : mediaPath;
+      if (!path || !model.selection) return;
+      this._openEvidenceLightbox({
+        items: [
+          {
+            path,
+            purpose: 'evidence',
+            url: resolve(path),
+            evidenceModel: model,
+            fullscreen: video,
+            ...(video && clip ? { initialTraceIndex: clip.traceIndex } : {}),
+            caption: model.selection.caption,
+            resolveArtifactUrl: resolve,
+          },
+        ],
+        index: 0,
+        scope: model.selection.caption,
+        criterionId: model.selection.claimId ?? null,
+      });
+    };
+    return {
+      model,
+      reviewer: gateway.authenticatedPrincipal,
+      reviewing: this._visualReviewBusy,
+      reviewReason: (id) => this._visualReviewReasons[id] ?? '',
+      changeReviewReason: (id, reason) => {
+        this._visualReviewReasons = { ...this._visualReviewReasons, [id]: reason };
+      },
+      recordReview: (id, verdict) => this._recordVisualReview(id, verdict),
+      artifactUrl: resolve,
+      changed: () => this.requestUpdate(),
+      openMedia: (media, index) => {
+        model.selectComparisonMedia(media.identity);
+        if (index !== undefined) model.cueClip(index);
+        open(index !== undefined, media.artifactPath);
+      },
+      openMoment: (id, index) => {
+        model.selectClaim(id);
+        model.cueClip(index);
+        open(true);
+      },
+    };
+  }
 
   private _openOutputReport = async (): Promise<void> => {
     const run = this.run;
@@ -1745,6 +1845,8 @@ export class RunDetail extends RunDetailState {
       },
       openOutputReport: () => void this._openOutputReport(),
       evidenceModel: this.evidenceModel,
+      comparison: this._comparisonContext(),
+      visualReviewMessage: this._visualReviewMessage,
       openEvidence: this._openAcceptanceEvidence,
       confirmResolve: (runId, decision, actionId) =>
         this._confirmResolve(runId, decision, actionId),

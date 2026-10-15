@@ -1,4 +1,10 @@
-import { type EvidenceAttestationApprover, Methods } from '@farmslot/protocol';
+import {
+  type EvidenceAttestationApprover,
+  Methods,
+  type ProjectVisualClaimReviewPolicy,
+  type RecipeVisualJudgmentKind,
+  type RecipeVisualReviewer,
+} from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
 
@@ -24,5 +30,42 @@ export function authorizeEvidenceAttestation(
     principalId: principal.id,
     displayName: principal.subject.displayName,
     credentialId: session.authentication.credentialId,
+  };
+}
+
+/** Visual delegation uses its own principal; publication attestation remains person-only. */
+export function authorizeVisualClaimReview(
+  runtime: GatewayAuthRuntime,
+  session: GatewayAuthSession,
+  kind: RecipeVisualJudgmentKind,
+  policy?: ProjectVisualClaimReviewPolicy,
+): RecipeVisualReviewer {
+  const principal = authorizeGatewayMethod(runtime, session, Methods.RUN_REVIEW_VISUAL_CLAIM);
+  const delegated = kind === 'lead-agent-reviewed';
+  if (
+    session.authentication?.kind !== 'credential' ||
+    principal.id === 'legacy-env' ||
+    principal.subject.type !== (delegated ? 'service' : 'person') ||
+    (delegated && !policy?.delegatedReviewerPrincipalIds.includes(principal.id))
+  )
+    throw new GatewayMethodError(
+      'AUTH_FORBIDDEN',
+      "Visual review requires the authorized reviewer's own active credential.",
+    );
+  const delegator =
+    delegated && policy ? runtime.store.findPrincipal(policy.delegatorPrincipalId) : undefined;
+  if (delegated && (!delegator || delegator.subject.type !== 'person'))
+    throw new GatewayMethodError(
+      'AUTH_FORBIDDEN',
+      'Delegated visual review requires an identified person delegator.',
+    );
+  return {
+    principalId: principal.id,
+    displayName: principal.subject.displayName,
+    credentialId: session.authentication.credentialId,
+    subjectKind: delegated ? 'service' : 'person',
+    ...(delegator
+      ? { delegator: { principalId: delegator.id, displayName: delegator.subject.displayName } }
+      : {}),
   };
 }

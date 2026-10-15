@@ -7,6 +7,7 @@ export interface LightboxSelection {
 }
 
 export interface LightboxItem {
+  fullscreen?: boolean;
   url: string;
   path: string;
   purpose: string;

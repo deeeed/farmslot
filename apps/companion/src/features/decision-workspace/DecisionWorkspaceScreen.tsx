@@ -62,7 +62,7 @@ import { documentTitle, presentDecision } from '../../lib/decision-presentation'
 import { decisionResolveRequest } from '../../lib/decision-resolve';
 import { decisionRunId, enrichDecisionWithRunContext } from '../../lib/decision-run-context';
 import { diffArtifactCandidate } from '../../lib/diff';
-import { evidenceMediaItems } from '../../lib/evidence-media-items';
+import { evidenceMediaItems, selectedEvidenceMediaItem } from '../../lib/evidence-media-items';
 import { gateReviewHref, HUMAN_GATE_DECISION_TYPE } from '../../lib/gate-review';
 import { gatewayFetch } from '../../lib/gateway-http-auth';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
@@ -446,12 +446,19 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     () => targetWorkspaceRouteContextParams('diff', decisionRouteContext.decisionKind),
     [decisionRouteContext.decisionKind],
   );
+  const checkedEvidenceModel =
+    humanGate?.acceptance.evidenceModel ?? outputAcceptance.evidenceModel;
   const pairs = useMemo(
     () =>
       presentation?.runId
-        ? groupArtifacts(presentation.artifactManifest, gatewayUrl, presentation.runId)
+        ? groupArtifacts(
+            presentation.artifactManifest,
+            gatewayUrl,
+            presentation.runId,
+            checkedEvidenceModel,
+          )
         : [],
-    [gatewayUrl, presentation?.artifactManifest, presentation?.runId],
+    [gatewayUrl, presentation?.artifactManifest, presentation?.runId, checkedEvidenceModel],
   );
   const diffArtifact = useMemo(
     () => (presentation ? diffArtifactCandidate(presentation.artifactManifest) : undefined),
@@ -877,6 +884,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
           runId: presentation.runId,
           ...decisionRouteContext,
           recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+          evidenceDecision: decision?.id,
           artifact: artifact.path,
           filter:
             artifactFilterParamForArtifactPath(artifact.path) ??
@@ -884,7 +892,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
         },
       });
     },
-    [decisionRouteContext, openDiffArtifact, presentation?.runId, router],
+    [decisionRouteContext, openDiffArtifact, presentation?.runId, router, decision?.id],
   );
 
   const rememberSection = useCallback(
@@ -909,9 +917,10 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
         ? groupVisualArtifactPairs(
             selectSlotRecipeArtifactsForPreviewScope(recipeRuns, null),
             (artifact) => artifactUrlForEntry(gatewayUrl, presentation.runId!, artifact),
+            checkedEvidenceModel,
           ).pairs
         : [],
-    [gatewayUrl, pairs.length, presentation?.runId, recipeRuns],
+    [gatewayUrl, pairs.length, presentation?.runId, recipeRuns, checkedEvidenceModel],
   );
   const recipeScopedArtifacts = useMemo(
     () => selectSlotRecipeArtifactsForPreviewScope(recipeRuns, null),
@@ -932,11 +941,13 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const recipeVisualPairs = useMemo(
     () =>
       presentation?.runId
-        ? groupVisualArtifactPairs(recipeScopedArtifacts, (artifact) =>
-            artifactUrlForEntry(gatewayUrl, presentation.runId!, artifact),
+        ? groupVisualArtifactPairs(
+            recipeScopedArtifacts,
+            (artifact) => artifactUrlForEntry(gatewayUrl, presentation.runId!, artifact),
+            checkedEvidenceModel,
           ).pairs
         : [],
-    [gatewayUrl, presentation?.runId, recipeScopedArtifacts],
+    [gatewayUrl, presentation?.runId, recipeScopedArtifacts, checkedEvidenceModel],
   );
   const priorityPairs = pairs.length > 0 ? pairs : recipeFallbackPairs;
   const primaryPair = priorityPairs[0] ?? null;
@@ -944,6 +955,9 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const priorityCompareRecipeRunId = primaryPairIsRecipeFallback
     ? recipeRunIdForVisualPair(recipeRuns, primaryPair)
     : DECISION_EVIDENCE_RECIPE_RUN_PARAM;
+  const [comparisonViewerItems, setComparisonViewerItems] = useState<
+    import('../../components/MediaViewer').MediaViewerItem[] | null
+  >(null);
   const visualViewerItems = useMemo(() => {
     if (!presentation?.runId) return [];
     const runId = presentation.runId;
@@ -1577,6 +1591,38 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
               gatewayUrl={gatewayUrl}
               artifacts={presentation.artifactManifest}
               pairs={pairs}
+              evidenceModel={humanGate?.acceptance.evidenceModel ?? outputAcceptance.evidenceModel}
+              reviewer={humanGate?.acceptance.reviewer ?? outputAcceptance.reviewer}
+              onRecordVisualReview={
+                humanGate?.acceptance.recordVisualReview ?? outputAcceptance.recordVisualReview
+              }
+              onFocusClaim={(offset) => {
+                const section = sectionOffsetsRef.current.evidence;
+                if (typeof section === 'number')
+                  scrollRef.current?.scrollTo({
+                    y: Math.max(0, section + offset - spacing.md),
+                    animated: true,
+                  });
+              }}
+              onOpenRecordedEvidence={(model, path) => {
+                const uri = artifactUrlForEntry(gatewayUrl, presentation.runId!, {
+                  path,
+                  purpose: 'evidence',
+                });
+                setComparisonViewerItems([
+                  selectedEvidenceMediaItem(
+                    model,
+                    path,
+                    (path) =>
+                      artifactUrlForEntry(gatewayUrl, presentation.runId!, {
+                        path,
+                        purpose: 'evidence',
+                      }),
+                    artifactAuthHeaders,
+                  ),
+                ]);
+                setViewerUri(uri);
+              }}
               authHeaders={artifactAuthHeaders}
               onOpenVisual={setViewerUri}
               onOpenDocument={openDocumentArtifact}
@@ -1874,10 +1920,13 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
           testID="companion-artifact-media-viewer"
           visible={isFocused && canShowViewer}
           uri={viewerUri}
-          items={visualViewerItems}
+          items={comparisonViewerItems ?? visualViewerItems}
           authHeaders={artifactAuthHeaders}
           initialIndex={Math.max(0, viewerIndex)}
-          onClose={() => setViewerUri(null)}
+          onClose={() => {
+            setViewerUri(null);
+            setComparisonViewerItems(null);
+          }}
         />
         <DocumentViewer
           visible={isFocused && !!documentViewer}

@@ -1,15 +1,13 @@
+import { useRef } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
+import { MediaViewer } from '../../components/MediaViewer';
 import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
 import { baseStyles } from '../../lib/theme';
 
-import {
-  GateActions,
-  GateEvidenceStrip,
-  GateReviewVerdicts,
-  GateSummaryCard,
-} from './components/gate-review-panels';
+import { GateActions, GateReviewVerdicts, GateSummaryCard } from './components/gate-review-panels';
 import { gateReviewStyles as styles } from './styles/gate-review.styles';
 import type { GateReviewActions, GateReviewScreenState } from './use-gate-review-controller';
 
@@ -26,6 +24,7 @@ export function GateReviewScreen({
   actions: GateReviewActions;
 }) {
   const insets = useSafeAreaInsets();
+  const scroll = useRef<ScrollView>(null);
   if (state.status !== 'ready') {
     return (
       <View style={[baseStyles.container, styles.center]} testID="companion-screen-gate-review">
@@ -44,6 +43,7 @@ export function GateReviewScreen({
   const { acceptance } = viewModel;
   return (
     <ScrollView
+      ref={scroll}
       testID="companion-screen-gate-review"
       style={baseStyles.container}
       contentContainerStyle={[
@@ -73,10 +73,27 @@ export function GateReviewScreen({
           <Text style={styles.muted}>This run registered no acceptance criteria.</Text>
         ) : null}
       </View>
-      <GateEvidenceStrip
-        items={viewModel.evidence}
+      <EvidenceReviewWorkspace
+        runId={viewModel.run.id}
+        gatewayUrl={viewModel.gatewayUrl}
+        artifacts={viewModel.artifacts}
+        pairs={viewModel.pairs}
+        evidenceModel={acceptance.evidenceModel}
+        reviewer={acceptance.reviewer}
+        onRecordVisualReview={actions.recordVisualReview}
+        onFocusClaim={(y) => scroll.current?.scrollTo({ y, animated: true })}
+        onOpenRecordedEvidence={actions.openRecordedEvidence}
+        onOpenVisual={actions.openVisual}
+        onOpenDocument={(artifact) => actions.openLog(artifact.path)}
+        onOpenDiff={actions.openLog}
         authHeaders={viewModel.authHeaders}
-        onOpen={actions.openEvidence}
+      />
+      <MediaViewer
+        visible={Boolean(viewModel.media)}
+        items={viewModel.media?.items ?? []}
+        uri={viewModel.media?.uri ?? null}
+        authHeaders={viewModel.authHeaders}
+        onClose={actions.closeMedia}
       />
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Actions</Text>

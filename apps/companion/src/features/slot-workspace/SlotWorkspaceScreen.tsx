@@ -22,6 +22,7 @@ export default function SlotWorkspaceScreen() {
     currentRun,
     currentRecipeRuns,
     currentRecipeRunsLoaded,
+    currentEvidenceModel,
     familySnapshot,
     selectedRecipeRunId,
     slotHistory,
@@ -103,6 +104,7 @@ export default function SlotWorkspaceScreen() {
           slotCurrentRunId={slot.currentRunId}
           run={currentRun}
           recipeRuns={currentRecipeRuns}
+          evidenceModel={currentEvidenceModel}
           recipeRunsLoaded={currentRecipeRunsLoaded}
           selectedRecipeRunId={selectedRecipeRunId}
           familySnapshot={familySnapshot}

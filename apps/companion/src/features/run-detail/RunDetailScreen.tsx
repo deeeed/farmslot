@@ -195,6 +195,9 @@ export default function RunDetailScreen() {
     () =>
       createEvidenceReviewModel({
         context: 'run-detail',
+        comparisonSnapshot: recordedEvidence?.comparisonSnapshot,
+        artifacts: run ? extractRunArtifactManifest(run) : [],
+        criterionSourceUrl: run?.links?.find((link) => link.label === 'Jira')?.url,
         package: recordedEvidence?.input,
         contractVersion: recordedEvidence?.contractVersion,
         readErrors: recordedEvidence?.errors,
@@ -495,9 +498,10 @@ export default function RunDetailScreen() {
             runArtifacts: extractRunArtifactManifest(run),
             recipeRuns,
             selectedRecipeRunId,
+            evidenceModel,
           })
         : null,
-    [recipeRuns, run, selectedRecipeRunId],
+    [recipeRuns, run, selectedRecipeRunId, evidenceModel],
   );
 
   if (!run) {

@@ -883,6 +883,17 @@ review RPC. The gateway rechecks policy and identity before persisting. It retai
 the checked policy digest with the receipt; changed policy holds current gates
 for refresh while historical review keeps its frozen policy/receipt references.
 
+The project JSON key is `visual_claim_review`; the gateway projects it to
+`ProjectConfig.visualClaimReview`. Managed packs use the existing operator
+`SourceRuntimeSettings` value through `readSourceRuntimeSettings` and
+`writeSourceRuntimeSettings` in `@farmslot/slot-config`. Pack bytes stay unchanged;
+a pack-embedded delegation grants no authority. Unmanaged projects use their
+operator-owned project JSON. The allowlist names the permitted service reviewer;
+the existing RPC also requires admin authority. This policy does not grant that
+role or change independent publication review. The visual-review operation adds
+no dispatcher/producer separation rule; keep delegate credentials out of worker
+inputs.
+
 Extend `RecipeVisualJudgmentReceipt` with the kind and gateway-stamped reviewer
 subject kind, delegation identity and policy digest. Both kinds retain the run,
 selected `recipeRunId`, claim, exact moments, closure identity, verdict, rationale
@@ -905,6 +916,7 @@ execution/head identity. Agent review is labeled
 For mixed claims, show the assertion and review contributions without changing
 the existing `state`/`visual`/`mixed` proof mode. A later valid receipt and retries
 follow the same stored-order and submission-snapshot rules as person review.
+`agent-reviewed` is the display projection of `lead-agent-reviewed`.
 
 ### Public surface and first implementation
 
@@ -940,7 +952,7 @@ proof-eligible or change the engine verdict.
 
 The engine MUST record the observed source commit as `sourceCommit` with the
 capture, using the existing source/checkout authority. Worker-supplied SHA strings
-are not observations. The existing frozen `ReviewDiffSnapshot.baseSha` and
+are not observations. Trusted SDK hosts may supply that frozen identity as `RecipeRunRequest.comparisonSnapshot`; authored parameters cannot replace it. Without a frozen snapshot, the writer keeps standalone captures and their source limitation. The existing frozen `ReviewDiffSnapshot.baseSha` and
 `headSha` define the compared revisions, not a later branch tip or recomputed
 merge-base. Check `before`/`after` against that snapshot during finalization and
 review projection. A changed snapshot yields a typed source mismatch and requires
@@ -963,6 +975,8 @@ moment remains viewable; its video link MUST state untimed or outside recording
 and MUST NOT invent a seek range. Existing padding and segment rules apply.
 
 ### Frozen selection and publication
+
+A resolved captured view MUST retain the stored receipt's recorded policy qualification. It is read-only. Active gate qualification MUST use the current project policy; changing policy cannot grant a historical view publication authority.
 
 The selected head execution remains the claim/verdict authority. Baseline and
 review captures from another execution MUST be explicit comparison dependencies
@@ -1029,6 +1043,8 @@ At a gate, show one screen with each AC's text, verdict and proof kind. When bot
 sides exist, show the matched before/after pair and source SHAs so the change
 relevant to that AC is visible; otherwise show the AC's available visual proof
 with the missing side stated. Unrelated captures MUST NOT fill a missing side.
+The same factory exposes optional `gateSnapshot` facts from the existing `gateDecision`: recorded head, reviews, CI, prerequisite reasons and the existing next action. It grants no approval authority.
+
 Each capture opens its own measured
 video timestamp in one interaction. Untimed evidence keeps its explicit no-seek
 state. On this same screen show own and independent review verdicts with the

@@ -18,16 +18,45 @@ import {
   renderReadyTopBar,
 } from './ready-workspace-shell-renderers.js';
 
-test('the existing top bar shows the shared attestation reason and explicit confirmation', () => {
-  const rendered = renderReadyTopBar({
-    payload: {
-      kind: 'ready',
+function gateFixture(): ReadyGatePayload {
+  return {
+    kind: 'ready',
+    branch: 'branch',
+    prNumber: null,
+    repo: null,
+    workerReport: 'Completed work.',
+    diffStat: { files: 0, additions: 0, deletions: 0 },
+    reviews: [],
+    prPackage: {
+      id: 'package',
+      gatePolicy: { owner: 'human', publishAuthority: 'human', reason: 'Operator review' },
+      publicationTarget: 'draft',
+      publicationStatus: 'not_published',
+      packageHash: 'a'.repeat(64),
+      artifactPath: 'artifacts/pr-package.json',
       branch: 'branch',
+      headSha: 'b'.repeat(40),
       diffStat: { files: 0, additions: 0, deletions: 0 },
-      reviews: [],
-      prPackage: {},
-    } as unknown as ReadyGatePayload,
-    decision: { actions: [EVIDENCE_ATTESTATION_ACTION] } as RunDecision,
+      draftTitle: 'Title',
+      draftBody: 'Body',
+      reviewArtifactIds: [],
+      createdAt: '2026-10-14T00:00:00Z',
+    },
+  };
+}
+
+function topBarFixture(payload = gateFixture()): Parameters<typeof renderReadyTopBar>[0] {
+  const decision: RunDecision = {
+    id: 'gate',
+    type: 'engine_human_gate',
+    title: 'Review',
+    description: 'Review the captured work.',
+    createdAt: '2026-10-14T00:00:00Z',
+    actions: [EVIDENCE_ATTESTATION_ACTION],
+  };
+  return {
+    payload,
+    decision,
     publicationTarget: 'draft',
     pendingConfirm: EVIDENCE_ATTESTATION_ACTION.id,
     attestationReason: 'Inspected retained evidence.',
@@ -39,11 +68,39 @@ test('the existing top bar shows the shared attestation reason and explicit conf
     openDiff: () => undefined,
     openReviewRequestModal: () => undefined,
     confirmAction: () => undefined,
-  });
-  const text = litText(rendered);
+  };
+}
+
+test('the existing top bar shows the shared attestation reason and explicit confirmation', () => {
+  const text = litText(renderReadyTopBar(topBarFixture()));
   assert.match(text, /Reason for evidence policy attestation/);
   assert.match(text, /Confirm attestation and publish/);
   assert.match(text, /Integrity, source, CI and review checks remain required/);
+});
+
+test('blocked visual claims show linked criteria instead of a disabled publication explanation', () => {
+  const payload = gateFixture();
+  payload.gateReadiness = {
+    state: 'not-ready',
+    identity: { runId: 'run', generation: 1 },
+    reasons: [
+      {
+        code: 'evidence-policy-unsatisfied',
+        prerequisite: 'evidence',
+        evidencePolicy: 'claim-verdict',
+        message: 'Recorded claim verdicts do not satisfy publication policy.',
+      },
+    ],
+  };
+  const text = litText(
+    renderReadyTopBar({
+      ...topBarFixture(payload),
+      pendingVisualClaimIds: ['AC-1', 'AC-2'],
+      focusClaim: () => undefined,
+    }),
+  );
+  assert.match(text, /AC-1.*AC-2.*need a visual judgment/s);
+  assert.doesNotMatch(text, /Recorded claim verdicts do not satisfy publication policy/);
 });
 
 const files: GitBranchDiffFile[] = [

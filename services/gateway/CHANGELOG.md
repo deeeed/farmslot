@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Allow admins to explicitly replace a retired principal id without restoring old credentials or stored-work authority; freshly authored work, PR notifications, monitors, rules and review follow-ups carry their identity generation.
+- Preserve the frozen run review policy in nested role contracts so valid pending visual claims reach their human gate without weakening evidence or CI checks.
 
 - Wait up to two minutes for node reconnection during task writing, preparation and dispatch; reattach static-review monitors after gateway restarts, retaining the exact worker command and reservation when observation remains unavailable.
 - Keep publication gates open across review-fix recovery and retain workers, slots and evidence when finalization lacks approval or publication; completed step flags cannot bypass publication before DONE.
@@ -14,9 +15,11 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Authenticate explicit person, service and node credentials, remove environment-secret import, and retire revoked principals without resetting activation or admin protection.
 - Allow declared before-evidence from the run's captured clean baseline, freeze its original recipe closure and preserve the selected head as claim authority.
+- Keep comparison dependencies within the selected execution closure and refuse source mismatches against the frozen review snapshot.
 
 - Prepare native workspace decisions in the selected account home before farm reviews. Verify hook safety using the selected runner executable, suppress repository startup automation, preserve Git-readable content and enforce source write restrictions.
 - Preserve the complete frozen worker contract during role cleanup and restore the matching dispatch contract on retained replay, allowing pending visual claims to reach their intended review gate.
+- Support delegated visual judgments under project policy, with retained evidence and existing publication rules.
 
 - Allow valid artifact-only QA output with unresolved engine claims to finish execution for review, preserving its claim gaps and all publication, registration and integrity checks.
 

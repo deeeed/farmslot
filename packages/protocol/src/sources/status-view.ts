@@ -53,6 +53,7 @@ export interface SourceStatusRowView {
 
 export interface SourceStatusViewModel {
   configured: boolean;
+  readOnlyReason?: string;
   declarationRevision?: number;
   pinRevision?: number;
   target?: SourcePinTarget;
@@ -96,6 +97,11 @@ export function deriveSourceStatusView(
   const draft = context.selections !== undefined && context.target === undefined;
   return structuredClone({
     configured: status.configured,
+    readOnlyReason:
+      status.runSource?.selectionRefusal ??
+      (!status.configured
+        ? 'Source authority is not configured. Retained inputs are read-only.'
+        : undefined),
     declarationRevision: status.declarationRevision,
     pinRevision: status.pinRevision,
     target: context.target,

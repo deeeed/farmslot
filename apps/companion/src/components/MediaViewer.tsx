@@ -34,6 +34,7 @@ import {
   artifactSource,
   classifyArtifact,
 } from '../lib/artifact-url';
+import { evidenceRecordingForPath } from '../lib/evidence-media-items';
 import { gatewayFetch } from '../lib/gateway-http-auth';
 import {
   TEXT_PREVIEW_MAX_BYTES,
@@ -433,10 +434,7 @@ function FullscreenVideo({
       if (!active) return;
       if (read && item.initialTraceIndex !== undefined && !read.selection?.claimId)
         read.selectOccurrence(item.initialTraceIndex);
-      const recording = read?.recordings.find(
-        (recording) =>
-          item.path === recording.videoPath || item.path?.endsWith(`/${recording.videoPath}`),
-      );
+      const recording = read ? evidenceRecordingForPath(read, item.path) : undefined;
       if (read?.selection?.clips.length && recording) {
         const index = read.selection.clips.findIndex(
           (clip) => clip.videoPath === recording.videoPath,
@@ -495,8 +493,15 @@ function FullscreenVideo({
     const cue = () => {
       if (!active || !model?.selection?.clips.length) return;
       const clip = model.playback.clip;
-      if (clip?.videoPath !== videoPath) return;
-      applyPlayback({ ...model.playback, seekMs: clip.startMs });
+      if (!clip || clip.videoPath !== videoPath) return;
+      applyPlayback({
+        ...model.playback,
+        seekMs:
+          item.initialTraceIndex === clip.traceIndex
+            ? (model.markerSeekMs(videoPath ?? clip.videoPath, item.initialTraceIndex, 'start') ??
+              clip.startMs)
+            : clip.startMs,
+      });
       if (resumePlayback.current) {
         resumePlayback.current = false;
         player.play();

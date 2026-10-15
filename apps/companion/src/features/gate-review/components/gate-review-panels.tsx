@@ -1,4 +1,4 @@
-import { Image, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Pressable, Text, TextInput, View } from 'react-native';
 
 import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
@@ -7,7 +7,6 @@ import {
 } from '@farmslot/protocol';
 import type { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
-import { type ArtifactHttpHeaders, artifactSource } from '../../../lib/artifact-url';
 import type {
   GateReviewAction,
   GateReviewSummary,
@@ -15,7 +14,6 @@ import type {
 } from '../../../lib/gate-review';
 import { ReviewDispatchPicker } from '../../review-dispatch/ReviewDispatchPicker';
 import { gateReviewStyles as styles } from '../styles/gate-review.styles';
-import type { GateReviewEvidenceThumb } from '../use-gate-review-controller';
 
 /** Entry from run detail and the decision workspace into the gate review. */
 export function GateReviewEntryCard({ onOpen, testID }: { onOpen: () => void; testID: string }) {
@@ -122,58 +120,6 @@ export function GateReviewVerdicts({ reviews }: { reviews: GateReviewVerdict[] }
   );
 }
 
-const THUMB_KIND_LABELS = { image: 'IMAGE', video: 'VIDEO', document: 'TEXT' } as const;
-
-export function GateEvidenceStrip({
-  items,
-  authHeaders,
-  onOpen,
-}: {
-  items: GateReviewEvidenceThumb[];
-  authHeaders: ArtifactHttpHeaders;
-  onOpen: (criterionId: string, path: string) => void;
-}) {
-  return (
-    <View style={styles.section} testID="companion-gate-review-evidence-strip">
-      <Text style={styles.sectionTitle}>Evidence</Text>
-      {items.length === 0 ? (
-        <Text style={styles.muted}>No acceptance evidence recorded.</Text>
-      ) : (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={styles.strip}>
-            {items.map((item, index) => (
-              <Pressable
-                key={item.path}
-                testID={`companion-gate-review-evidence-${index}`}
-                accessibilityRole="button"
-                accessibilityLabel={`Open ${item.name} evidence for ${item.criterionId}`}
-                onPress={() => onOpen(item.criterionId, item.path)}
-                style={({ pressed }) => [styles.thumb, pressed && styles.pressed]}
-              >
-                <View style={styles.thumbMedia}>
-                  {item.mediaType === 'image' ? (
-                    <Image
-                      source={artifactSource(item.uri, authHeaders)}
-                      style={styles.thumbMedia}
-                      resizeMode="cover"
-                    />
-                  ) : (
-                    <Text style={styles.thumbKind}>{THUMB_KIND_LABELS[item.mediaType]}</Text>
-                  )}
-                </View>
-                <Text style={styles.thumbCaption} numberOfLines={2}>
-                  {item.criterionId} · {item.name}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        </ScrollView>
-      )}
-    </View>
-  );
-}
-
-/** Which publish approvals are withheld and why; nothing when none is. */
 export function PublishGuardNotice({
   actions,
   testID,

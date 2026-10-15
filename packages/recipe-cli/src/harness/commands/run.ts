@@ -363,6 +363,8 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
     });
   }
   const params = parseRecipeParamAssignments(paramAssignments);
+  const evidenceBaseline = params.evidenceBaseline;
+  delete params.evidenceBaseline;
   // The runtime directory names where the slot's context and the run's runtime
   // state live, so it applies before the plan and before the slot resolves.
   applyRuntimeDirOption(options);
@@ -502,6 +504,69 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
     );
   }
   const { artifactsDir, taskDir, claims } = artifactContext;
+  let comparisonDependencies: string[] | undefined;
+  if (evidenceBaseline !== undefined) {
+    const definition =
+      isRecord(validated.recipe) && isRecord(validated.recipe.paramsSchema)
+        ? validated.recipe.paramsSchema
+        : undefined;
+    if (
+      definition &&
+      isRecord(definition.properties) &&
+      'evidenceBaseline' in definition.properties
+    )
+      return emitRunUsageError(
+        jsonOutput,
+        stream,
+        adapter,
+        validated.recipeFile,
+        'COMPARISON_PARAM_RESERVED',
+        'evidenceBaseline is reserved for retained comparison evidence.',
+        'remove the authored evidenceBaseline parameter',
+      );
+    const root = path.resolve(taskDir ?? target, 'artifacts');
+    if (
+      typeof evidenceBaseline !== 'string' ||
+      path.isAbsolute(evidenceBaseline) ||
+      evidenceBaseline.split(/[\/]/u).some((part) => part === '..' || part === '.')
+    )
+      return emitRunUsageError(
+        jsonOutput,
+        stream,
+        adapter,
+        validated.recipeFile,
+        'COMPARISON_ROOT_INVALID',
+        'evidenceBaseline must name a contained artifact package.',
+        'pass a path relative to the task artifacts',
+      );
+    try {
+      const candidate = path.resolve(root, evidenceBaseline);
+      const retainedRoot = fs.realpathSync(root);
+      const retainedCandidate = fs.realpathSync(candidate);
+      const relative = path.relative(retainedRoot, retainedCandidate);
+      if (relative.startsWith('..') || path.isAbsolute(relative))
+        return emitRunUsageError(
+          jsonOutput,
+          stream,
+          adapter,
+          validated.recipeFile,
+          'COMPARISON_ROOT_INVALID',
+          'evidenceBaseline escapes the artifact root.',
+          'pass a contained retained package',
+        );
+      comparisonDependencies = [retainedCandidate];
+    } catch (error) {
+      return emitRunUsageError(
+        jsonOutput,
+        stream,
+        adapter,
+        validated.recipeFile,
+        'COMPARISON_ROOT_INVALID',
+        error instanceof Error ? error.message : String(error),
+        'pass a retained package inside the task artifacts',
+      );
+    }
+  }
   recordCommandEvidence(artifactsDir);
   // Reuse the sources validateRunRecipeStatic already resolved (same --library
   // input) instead of a second resolution.
@@ -512,6 +577,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
     ...recipeRunOptionsFromCli(adapter, options),
     cli: options,
     claims,
+    comparisonDependencies,
     params,
     ...(librarySources ? { librarySources } : {}),
     stdoutIsMachineContract: machine,

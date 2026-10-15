@@ -374,14 +374,14 @@ async function commitRunEvidenceReceipt<R extends RunEvidenceReceipt>(
   field: 'claimOverrideReceipts' | 'visualJudgmentReceipts',
   outputField: 'claimOverrideReceiptIds' | 'visualJudgmentReceiptIds',
   build: (run: Run) => R,
-  assertCurrent: (run: Run) => void,
+  assertCurrent: (run: Run) => void | Promise<void>,
   outputReceiptIds?: (snapshot: Run) => string[],
 ): Promise<R> {
   let receipt: R | undefined;
   await enqueueRunWrite(id, async () => {
     const run = runs.get(id);
     if (!run) throw new Error('Run is unavailable');
-    assertCurrent(run);
+    await assertCurrent(run);
     receipt = build(run);
     const prior: readonly RunEvidenceReceipt[] = run[field] ?? [];
     if (prior.some((entry) => entry.id === receipt!.id)) return;
@@ -399,7 +399,7 @@ async function commitRunEvidenceReceipt<R extends RunEvidenceReceipt>(
     }
     await persistBody(run, snapshot, true);
     try {
-      assertCurrent(run);
+      await assertCurrent(run);
     } catch (error) {
       // A stale person/source must not expose an accepted receipt after restart.
       await persistBody(run);
@@ -446,7 +446,7 @@ export function commitRunClaimOverride(
 export function commitRunVisualJudgment(
   id: string,
   build: (run: Run) => import('@farmslot/protocol').RecipeVisualJudgmentReceipt,
-  assertCurrent: (run: Run) => void,
+  assertCurrent: (run: Run) => void | Promise<void>,
   outputReceiptIds?: (snapshot: Run) => string[],
 ): Promise<import('@farmslot/protocol').RecipeVisualJudgmentReceipt> {
   return commitRunEvidenceReceipt(

@@ -1,4 +1,6 @@
 import {
+  isRecipeVisualCaptureAction,
+  normalizeRecipeClaimId,
   normalizeRecipeRef,
   RECIPE_ASSERTION_ACTIONS,
   type RecipeActionManifestDocument,
@@ -66,18 +68,25 @@ export interface ExecuteRecipeOptions {
   actionManifest: RecipeActionManifestDocument;
   adapters: ReadonlyMap<string, ActionAdapter>;
   traceWriter: TraceWriter;
-  claimProjections?: ReadonlyMap<string, { proves?: string[] }>;
+  claimProjections?: ReadonlyMap<
+    string,
+    { proves?: string[]; captureClaimBindings?: Record<string, string> }
+  >;
   logger: RecipeLogger;
   defaultObserverRefs: DefaultObserverRefs;
   /** Prepare engine-owned capture before the node's context and trace interval begin. */
-  prepareNode?(nodeId: string): Promise<void>;
+  prepareNode?(nodeId: string, node: Record<string, unknown>): Promise<void>;
   createContext(
     nodeId: string,
     recipe: unknown,
     outputs: ReadonlyMap<string, unknown>,
     getOutput: (nodeId: string) => unknown,
   ): ActionExecutionContext;
-  registerArtifacts(artifacts: NonNullable<ActionResult['artifacts']>): void;
+  bindArtifactOccurrence?(nodeId: string, traceIndex: number): void;
+  registerArtifacts(
+    artifacts: NonNullable<ActionResult['artifacts']>,
+    nodeId?: string,
+  ): void | Promise<void>;
   publishHudProgress?: HudPublisher;
   /** Root-graph partial execution: stop after this node passes, then run teardown. */
   stopAfterNode?: string;
@@ -202,6 +211,12 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
       }
 
       const node = resolvedNode;
+      if (isRecipeVisualCaptureAction(node.action) && typeof node.ac === 'string') {
+        const bindings = options.claimProjections?.get(namespacedNodeId)?.captureClaimBindings;
+        node.ac =
+          bindings?.[normalizeRecipeClaimId(node.ac.trim())] ??
+          normalizeRecipeClaimId(node.ac.trim());
+      }
       const action = String(node.action);
       const retryAttempt = (attempts.get(localNodeId) ?? 0) + 1;
       attempts.set(localNodeId, retryAttempt);
@@ -248,7 +263,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
       let context: ActionExecutionContext | undefined;
       try {
         if (options.prepareNode) {
-          await options.prepareNode(namespacedNodeId);
+          await options.prepareNode(namespacedNodeId, node);
           startedAt = new Date();
         }
         context = {
@@ -317,7 +332,6 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           localOutputs[localNodeId] = result.output;
           outputs.set(localNodeId, result.output);
         }
-        if (result.artifacts?.length) options.registerArtifacts(result.artifacts);
         const next = resolveNextNode(node, result);
         if (!next) {
           throw new RecipeExecutionError(
@@ -332,6 +346,8 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
         });
         const still = await captureAutomaticStill(options, node, context, retryAttempt);
         if (still) result.artifacts = [...(result.artifacts ?? []), still];
+        await options.registerArtifacts(result.artifacts ?? [], namespacedNodeId);
+        options.bindArtifactOccurrence?.(namespacedNodeId, options.traceWriter.list().length);
         options.traceWriter.record({
           nodeId: namespacedNodeId,
           action,
@@ -399,6 +415,18 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           signal?.aborted || !context
             ? undefined
             : await captureAutomaticStill(options, node, context, retryAttempt);
+        try {
+          await options.registerArtifacts([], namespacedNodeId);
+        } catch (captureError) {
+          recordSyntheticFailure(
+            options.traceWriter,
+            `${namespacedNodeId}:capture-source`,
+            captureError instanceof Error ? captureError : new Error(String(captureError)),
+            'capture.source',
+            'environment',
+          );
+        }
+        options.bindArtifactOccurrence?.(namespacedNodeId, options.traceWriter.list().length);
         options.traceWriter.record({
           nodeId: namespacedNodeId,
           action,
@@ -531,7 +559,7 @@ async function captureAutomaticStill(
       label: typeof node.intent === 'string' ? node.intent : context.nodeId,
       metadata: { recordedEvidence: { ...frame, traceIndex: options.traceWriter.list().length } },
     };
-    options.registerArtifacts([artifact]);
+    await options.registerArtifacts([artifact], context.nodeId);
     return artifact;
   } catch (error) {
     // An unavailable optional still keeps the clip usable and the failure visible in the trace.

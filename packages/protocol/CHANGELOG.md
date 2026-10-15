@@ -5,6 +5,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Expose explicit retired principal-id replacement and identity generations while retaining retired credential ids and binding PR automation ownership to its identity generation.
+- Retain optional AC/role capture annotations and original execution/source identities with immutable comparison dependencies.
+- Add project-authorized delegated visual judgments with checked media and person-only claim policy.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
