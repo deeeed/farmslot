@@ -38,6 +38,7 @@ import type {
   PRReviewIntent,
   DispatchQueueAddResult,
   DispatchQueueListResult,
+  Run,
 } from '../packages/protocol/src/index.js';
 import { FLOW_STEPS, PipelineSteps } from '../packages/protocol/src/index.js';
 import {
@@ -1385,7 +1386,7 @@ try {
       },
     );
     assert.deepEqual(await connection!.call('run.list'), before);
-    const captured = [];
+    const captured: Array<Pick<Run, 'id' | 'qa'>> = [];
     for (const [project, flags, expected] of [
       ['first', ['--qa-profile', 'release'], 'release'],
       ['second', [], 'candidate'],
@@ -1447,6 +1448,7 @@ try {
       const wait = (test_id: string, enabled?: boolean) =>
         action('ui.wait_for', {
           test_id,
+          expected: 'present',
           ...(enabled === undefined ? {} : { enabled }),
           timeout_ms: 15000,
         });
@@ -1524,6 +1526,24 @@ try {
         await action('ui.press', { text: 'Add gateway' });
         await press('companion-native-profile-save');
         await wait('companion-native-open-workspace', true);
+        const retained = captured[1];
+        assert(retained.qa);
+        execFileSync('xcrun', [
+          'simctl',
+          'openurl',
+          simulator,
+          `farmslot-development:///run/${retained.id}`,
+        ]);
+        await wait('companion-run-qa-profile');
+        const runScreen = await device.capture.snapshot({ session, forceFull: true });
+        const profileLabel = runScreen.nodes.find(
+          (node) => node.identifier === 'companion-run-qa-profile',
+        )?.label;
+        assert(
+          profileLabel?.includes(retained.qa.profile.id) &&
+            profileLabel.includes(retained.qa.profile.title),
+        );
+        await action('ui.screenshot', { path: 'retained-profile.png' });
         execFileSync('xcrun', [
           'simctl',
           'openurl',
