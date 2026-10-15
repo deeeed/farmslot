@@ -1,16 +1,10 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Companion local account sign-out",
-  "description": "Start connected to a disposable validation gateway with a service profile. The existing credential is not revoked; this device forgets its login. No person session is used.",
+  "description": "Start on Settings, connected to a validation gateway with a service profile. The credential is not revoked; this device forgets its login. No person session is used.",
   "workflow": {
-    "entry": "settings",
+    "entry": "sign-out",
     "nodes": {
-      "settings": {
-        "action": "ui.press",
-        "test_id": "companion-tab-settings",
-        "intent": "Open the connected account settings.",
-        "next": "sign-out"
-      },
       "sign-out": {
         "action": "ui.press",
         "test_id": "account-sign-out",
@@ -26,7 +20,7 @@
       "protocol": {
         "action": "command",
         "cmd": "node scripts/agentic/cdp-eval.mjs --file scripts/agentic/probes/account-session-signed-out.js",
-        "intent": "Verify the live client lost its principal, HTTP authority and connected RPC transport.",
+        "intent": "Verify the live client lost its principal, HTTP authority and RPC transport.",
         "next": "capture"
       },
       "capture": {
