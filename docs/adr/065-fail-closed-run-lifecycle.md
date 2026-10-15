@@ -210,7 +210,7 @@ newer head. Exact retries retain the first receipt; conflicting adoption refuses
 
 ## Amendment 3: explicit operator wait, 2026-10-15
 
-**Status:** Proposed.
+**Status:** Accepted by lead, 2026-10-15, after paired review at `918415164e639f4a7c0a751cd04a7ee96353b825`.
 **Specification:** [Waiting for an operator](../reference/fail-closed-run-lifecycle.md#waiting-for-an-operator).
 **Related:** [ADR-045](045-worker-terminal-contract.md).
 

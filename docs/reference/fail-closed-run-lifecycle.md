@@ -163,7 +163,7 @@ mode and runners without this capability retain their existing observations.
 
 ### Waiting for an operator
 
-Proposed under ADR-065 Amendment 3. ADR-045 remains the terminal-contract owner.
+Accepted by the lead, 2026-10-15, under ADR-065 Amendment 3. ADR-045 remains the terminal-contract owner.
 
 `./mark wait --who <name> --reason <text>` MUST write a nonterminal `running`
 signal through the existing atomic, role-owned writer. Its optional
