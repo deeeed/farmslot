@@ -5,6 +5,108 @@
 
 ## Summary
 
+## Person-device sessions, Proposed
+
+**Authority:** ADR-051 Amendment 4. This section takes effect after acceptance
+and supersedes direct person-credential login and storage rules below. Other
+principal, service, node, activation and authorization contracts remain current.
+
+### Tokens and durable state
+
+- Access tokens live for exactly one hour. Refresh tokens expire exactly 30 days
+  after issuance or successful refresh. Only refresh advances that deadline.
+  Gateway UTC time is authoritative; `now >= expiresAt` refuses. Ordinary
+  requests do not persist activity.
+- Both tokens contain a random 128-bit hex record id and a random 256-bit
+  base64url secret. Prefixes `fsa_` and `fsr_` distinguish access and refresh
+  tokens from existing `fs_` credentials. Refresh tokens never authenticate a
+  general RPC or HTTP download. The store keeps only the existing `StoredSecret`
+  hashes; plaintext secrets appear only in their issuance response.
+- Extend the existing locked credential store to schema version 2 with person
+  device-session and access-token records. Sessions contain their principal id
+  and generation, device name, device kind, creation/refresh/expiry/revocation
+  timestamps, refresh hash and optional source-credential id. Access records
+  contain their session id, access hash and individual expiry. A credential
+  exchange records its source credential; pairing records the invited identity.
+  Device kind is descriptive metadata, one of command-center, companion or cli;
+  it does not change the existing wire `clientKind` or grant node authority.
+- The shared loader upgrades schema 1 by adding empty session collections under
+  `credentials.lock`, preserving every existing field. Unknown schemas or invalid
+  surviving records fail without a write. Upgrade all readers sharing the
+  identity home before writing schema 2. Sessions survive gateway restart.
+- Resolve the current session, principal generation, source credential when
+  present and live roles on every authorization decision. Retired, replaced,
+  revoked, missing or expired authority refuses access. Cache identity references
+  only, with the existing store freshness and invalidation guarantees.
+
+### Gateway methods
+
+`@farmslot/protocol` owns params, results and typed failures. None of these
+methods accepts service or node credentials as person-session authority.
+
+| Method                  | Authority and result                                                                                                                                                                                                                                                                                           |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth.session.exchange` | Pre-authentication. Accept exactly one person credential or one-use pairing code, plus a device name and device kind. Verify current identity/generation inside the issuance transaction. Return session metadata, one access token and one refresh token. Never persist the submitted credential in a client. |
+| `auth.session.refresh`  | Pre-authentication, refresh token only. Refuse expired/revoked/replaced authority without mutation. In one locked transaction extend refresh expiry by 30 days, update the refresh timestamp and issue a new one-hour access token. The refresh secret stays stable until revocation.                          |
+| `auth.session.list`     | Authenticated person only. Return only that person's device ids, names, device kinds, timestamps and states. No secret, hash or token is returned.                                                                                                                                                             |
+| `auth.session.revoke`   | Authenticated person only, selected device owned by that exact identity generation. Revoke idempotently and invalidate every access token for the device. Another person's device cannot be listed or revoked.                                                                                                 |
+
+Existing `auth.connect` and HTTP authentication accept `fsa_` access tokens.
+`AuthenticationRef` gains a person-session variant naming the device and access
+records; it grants no role or ownership itself. Long-lived person credentials
+are accepted only by exchange. Existing service/node credential paths remain.
+
+Refresh does not invalidate other unexpired access tokens for the same device.
+Prune expired access records during normal locked mutations. Concurrent refresh
+and lost-response retries cannot revoke another device, create replacement
+identity authority or replay a consumed pairing invitation. Pairing exchange
+consumption and session issuance must share one atomic decision.
+
+### Clients and sign-out
+
+One transport-neutral `PersonSessionClient` in `@farmslot/protocol` implements
+refresh, single-flight coordination and typed expiry handling. Command Center,
+Companion and the CLI supply RPC and private-storage adapters. They persist only
+the refresh token and nonsecret session/gateway metadata; access tokens remain
+in memory and never enter URLs, logs or persisted profiles. Credentials and
+refresh tokens never enter worker task files or harness environments.
+
+The controller refreshes before access expiry, on reconnect and before bounded
+retry after an expiry response. Expired/revoked refresh authority clears its
+stored session and requires sign-in. Network errors do not become successful
+refreshes. HTTP downloads and WebSocket calls consume the same current access
+identity. Scope storage and refresh to the explicitly selected gateway profile.
+
+Clients show "Signed in on <device> until <date>" using refresh expiry. Command
+Center settings list the person's devices and provide per-device revoke. Use
+existing shared settings/list components. CLI login, logout and auth status
+consume the same controller; no separate person-secret profile path remains.
+
+Sign-out requires confirmation and gateway revocation before clearing the local
+refresh token. Refresh expired access first when possible; a confirmed expired
+or revoked session is already signed out. If revocation cannot be confirmed,
+report that failure and allow retry. Never claim another device was revoked.
+
+Cut over all three clients in one implementation. On encountering an old stored
+person credential, remove that persisted person secret and require sign-in
+through exchange; do not fall back to direct person authentication. Preserve
+service profiles and node startup secrets. Remove the temporary client-only
+expiry policy once the shared gateway session contract owns expiry.
+
+### Validation required before cutover
+
+Use isolated fixture identities and controlled clocks. Cover exact one-hour and
+30-day boundaries, sliding refresh, restart persistence, independent devices,
+concurrent refresh and lost responses, principal-generation mismatch, source
+credential revocation, one-use pairing and failed atomic writes. Assert no raw
+person credential or access token persists in any client.
+
+Prove confirmed sign-out and remote device revoke invalidate existing WebSocket
+subscriptions and HTTP access under the existing two-second freshness bound.
+Prove service/node auth and automation attribution remain unchanged. Live
+Command Center, Companion and CLI sign-in/reconnect/sign-out proof follows the
+public gateway path; automation uses no person's real credential.
+
 ### Credential consolidation contract, 2026-10-14
 
 This section governs the current implementation and replaces the environment

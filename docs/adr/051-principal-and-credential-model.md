@@ -1676,3 +1676,61 @@ propagation change. Native id-only owner bindings must be retired before reuse.
 The [principal implementation spec](../plans/principal-core-implementation-spec.md)
 owns the transaction, validation and regression requirements. The
 [identity reference](../reference/identity-and-credentials.md) owns operator guidance.
+
+## Amendment 4: expiring person-device sessions, 2026-10-15
+
+**Status:** Proposed. The owner approved this scope and ADR routing on
+2026-10-15. Acceptance follows paired review; implementation follows acceptance.
+
+### Decision
+
+Person clients exchange a person credential or a one-use pairing invitation for
+an independently revocable device session. Access tokens expire after one hour.
+A refresh token expires 30 days after issuance or its latest successful refresh.
+A successful refresh extends that deadline by 30 days and issues a new access
+token. Ordinary requests do not extend either deadline.
+
+Command Center, Companion and the CLI persist only the refresh token and device
+metadata. Access tokens stay in memory. The gateway stores only secret hashes
+and resolves the device session, principal generation and roles live. A device
+session never changes work authorship or native execution ownership.
+
+Confirmed sign-out revokes that device session and all its access tokens before
+removing its local refresh token. Command Center settings list the current
+person's signed-in devices and can revoke each one. Expiry, principal retirement
+and applicable source-credential revocation also end access. Existing service
+and node credentials keep their authentication and deployment contracts.
+
+### Rationale
+
+A persisted person credential currently grants access indefinitely. A device
+session limits that persistence and lets a person withdraw one device without
+rotating automation or node credentials. This uses the existing identity store,
+writer lock and live authorization checks; it adds no identity provider.
+
+### Consequences
+
+Move every person client in one coordinated implementation. Remove the old
+person paste-and-store path and direct person-credential authentication outside
+the exchange. Expired or revoked sessions require a fresh sign-in. Do not add a
+legacy-person authentication fallback. Preserve service profiles and node
+startup credentials. The implementation must cover restart, simultaneous
+clients, refresh failure and sign-out revocation, including HTTP downloads.
+
+### Public surface
+
+- `auth.session.exchange`, `refresh`, `revoke` and `list` are owned by
+  `@farmslot/protocol`; exchange and refresh are narrowly available before
+  authentication. Only the current person can list or revoke their sessions.
+- Existing login/pairing and sign-out flows consume these methods in Command
+  Center, Companion and the CLI. Existing CLI login, logout and auth status
+  show and revoke the selected person-device session.
+- `@farmslot/credential-store` owns session records, locked mutations and expiry.
+  One transport-neutral client controller in `@farmslot/protocol` owns refresh
+  and persistence rules for all three clients. Platform storage remains an adapter.
+- These are coordinated farm contracts requiring a protocol release. Harnesses
+  inherit the selected client's access token and gain no refresh-token API or
+  alternative authorization path.
+
+The [principal core spec](../plans/principal-core-implementation-spec.md#person-device-sessions-proposed)
+owns the normative token, mutation, cutover and regression requirements.
