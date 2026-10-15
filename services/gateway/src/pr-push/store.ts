@@ -226,6 +226,17 @@ export class PRPushStore {
     const { expectedRevision, ...p } = structuredClone(input);
     return this.change((data) => {
       if (!authorized()) throw new Error('Notification registration authority was revoked');
+      const generation = principalOwnerGeneration(ownerId);
+      // Re-pairing keeps the phone's Expo token. Retire its stale binding, never
+      // adopt the old device or its deliveries into the replacement identity.
+      for (const device of data.devices)
+        if (
+          device.enabled &&
+          device.token === p.token &&
+          device.ownerId === ownerId &&
+          (device.ownerGeneration ?? 0) < generation
+        )
+          this.disableDevice(device);
       if (
         data.devices.some(
           (d) =>
@@ -286,12 +297,13 @@ export class PRPushStore {
       const device = data.devices.find(
         (d) => matchesPrincipalOwner(d, ownerId) && d.installationId === installationId,
       );
-      if (device?.enabled) {
-        device.enabled = false;
-        device.revision++;
-        device.updatedAt = new Date().toISOString();
-      }
+      if (device?.enabled) this.disableDevice(device);
     });
+  }
+  private disableDevice(device: StoredPushDevice): void {
+    device.enabled = false;
+    device.revision++;
+    device.updatedAt = new Date().toISOString();
   }
   reserve(
     device: StoredPushDevice,

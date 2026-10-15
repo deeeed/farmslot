@@ -182,6 +182,11 @@ test('push registration, acknowledgements and delayed delivery stay with the dev
   };
   const old = await store.register(owner, registration, () => true);
   await store.acknowledge(owner, 'source', () => true);
+  await assert.rejects(
+    runWithPrincipalOwner(replacement, () => store.register(owner, registration, () => false)),
+    /authority was revoked/,
+  );
+  assert.equal(store.snapshot().devices.find((device) => device.id === old.id)?.enabled, true);
   let sent = 0;
   const service = new PRPushService(
     store,
@@ -212,13 +217,16 @@ test('push registration, acknowledgements and delayed delivery stay with the dev
   await runWithPrincipalOwner(replacement, async () => {
     assert.deepEqual(service.list(owner).devices, []);
     assert.equal(service.attention(owner)[0].acknowledgedAt, undefined);
-    const fresh = await service.register(owner, { ...registration, token: 'ExpoPushToken[fresh]' });
+    const fresh = await service.register(owner, registration);
     assert.notEqual(fresh.id, old.id);
     assert.equal(service.list(owner).devices.length, 1);
+    assert.equal(store.snapshot().devices.find((device) => device.id === old.id)?.enabled, false);
   });
   await runWithPrincipalOwner({ ownerId: owner, ownerGeneration: 2 }, () => service.tick());
   assert.equal(sent, 1);
   runWithPrincipalOwner(replacement, () => {
     assert.equal(service.list(owner).deliveries[0].state, 'delivered');
   });
+  const reloaded = await PRPushStore.load(join(dir, 'push.json'));
+  assert.equal(reloaded.snapshot().devices.find((device) => device.id === old.id)?.enabled, false);
 });

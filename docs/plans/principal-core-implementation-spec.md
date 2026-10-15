@@ -985,6 +985,8 @@ invalidation hook, and **the subscribed session makes no request at any point**.
   contributions and actions carry a server-derived optional `ownerGeneration`.
   Omission means zero. Client configuration cannot supply that metadata. Reads,
   edits and idempotency keys isolate successive generations of the same id.
+  Fresh push registration may disable the same token's obsolete generation
+  binding for that principal id, then creates a new device without old deliveries.
 - Team notification recipients bind the current server-resolved identity
   generation when the team is saved. Old recipient lists and acknowledgements
   cannot adopt a replacement person. Owner-scoped events check the recipient

@@ -283,7 +283,7 @@ try {
     profileId: 'proof',
     platform: 'ios',
     token: 'ExpoPushToken[old]',
-    enabled: false,
+    enabled: true,
     sound: false,
   };
   await oldClient.call(Methods.PR_PUSH_REGISTER, pushConfig);
@@ -394,10 +394,7 @@ try {
     (await freshClient.call<{ devices: unknown[] }>(Methods.PR_PUSH_LIST, {})).devices.length,
     0,
   );
-  await freshClient.call(Methods.PR_PUSH_REGISTER, {
-    ...pushConfig,
-    token: 'ExpoPushToken[fresh]',
-  });
+  await freshClient.call(Methods.PR_PUSH_REGISTER, pushConfig);
   assert.equal(
     (await freshClient.call<{ devices: unknown[] }>(Methods.PR_PUSH_LIST, {})).devices.length,
     1,
@@ -480,7 +477,7 @@ try {
   assert.equal(ruleState.actions[0].ownerGeneration, 1);
   assert.equal(ruleState.notifications.length, 1);
   claims.push(
-    'fresh PR push, monitors, teams and rules work for the replacement; background collectors retain generation one and old records stay isolated',
+    'fresh PR push reuses the same phone installation and token; monitors, teams and rules work for the replacement; background collectors retain generation one and old records stay isolated',
   );
 
   // Seed completed static reviews as setup. All ownership decisions use the public QA RPC.
