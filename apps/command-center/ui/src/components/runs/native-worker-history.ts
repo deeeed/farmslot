@@ -8,8 +8,9 @@ import '../chat/native-session-view.js';
 
 import {
   archivedNativeWorkerTargets,
-  nativeWorkerViewKey,
+  nativeWorkerAttemptKey,
   type NativeWorkerViewTarget,
+  selectedNativeWorkerTarget,
 } from '../chat/native-worker-target.js';
 
 @customElement('native-worker-history')
@@ -62,15 +63,14 @@ export class NativeWorkerHistory extends LitElement {
     );
     const attempts = [...current, ...archivedNativeWorkerTargets(this.contexts)];
     if (!attempts.length) return nothing;
-    const attemptKey = (target: (typeof attempts)[number]) =>
-      JSON.stringify([nativeWorkerViewKey(target), target.binding.generation]);
-    const selected = attempts.find((target) => attemptKey(target) === this.selected);
+    const selected = selectedNativeWorkerTarget(attempts, this.selected);
+    const selectedKey = selected ? nativeWorkerAttemptKey(selected) : '';
     return html`
       <label
         >${current.length ? 'Reviewer conversation' : 'Previous worker attempts'}
         <select
           data-testid="native-worker-history-select"
-          .value=${selected ? this.selected : ''}
+          .value=${selectedKey}
           @change=${(event: Event) => {
             this.selected = (event.target as HTMLSelectElement).value;
           }}
@@ -78,7 +78,7 @@ export class NativeWorkerHistory extends LitElement {
           <option value="" .selected=${!selected}>Choose task history</option>
           ${attempts.map(
             (target) => html`
-              <option value=${attemptKey(target)} .selected=${target === selected}>
+              <option value=${nativeWorkerAttemptKey(target)} .selected=${target === selected}>
                 ${target.label} · ${target.binding.sessionId.slice(0, 8)}
               </option>
             `,
@@ -86,10 +86,7 @@ export class NativeWorkerHistory extends LitElement {
         </select>
       </label>
       ${selected
-        ? keyed(
-            this.selected,
-            html`<native-session-view .worker=${selected}></native-session-view>`,
-          )
+        ? keyed(selectedKey, html`<native-session-view .worker=${selected}></native-session-view>`)
         : nothing}
     `;
   }
