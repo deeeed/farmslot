@@ -52,7 +52,7 @@
       },
       "open-paired-after": {
         "action": "ui.press",
-        "test_id": "companion-evidence-comparison-AC-1-after-video",
+        "test_id": "companion-evidence-comparison-AC-1-after",
         "intent": "Open the selected After capture from its own comparison list.",
         "next": "paired-title"
       },
@@ -124,7 +124,7 @@
       },
       "open-single": {
         "action": "ui.press",
-        "test_id": "companion-evidence-comparison-AC-2-after-video",
+        "test_id": "companion-evidence-comparison-AC-2-after",
         "intent": "Open the unpaired After video from its existing card.",
         "next": "single-title"
       },
