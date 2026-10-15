@@ -32,7 +32,13 @@ export async function assertReviewNativeRunnerHealthy(
           (context) =>
             context.role === 'review' && (context.runner ?? run.metrics.runner) === input.runner,
         )
-        .flatMap((context) => (context.nativeSession ? [context.nativeSession] : [])),
+        .flatMap((context) => {
+          const binding = context.nativeSession;
+          if (!binding) return [];
+          // Confirmed cancellation before acceptance is not a runner health observation.
+          if (run.status === 'cancelled' && binding.closedAt && !binding.acceptedAt) return [];
+          return [binding];
+        }),
     )
     .filter(
       (binding) =>
@@ -45,11 +51,21 @@ export async function assertReviewNativeRunnerHealthy(
     .sort((a, b) => Date.parse(b.launchRequestedAt!) - Date.parse(a.launchRequestedAt!));
   const latest = attempts[0];
   if (!latest || latest.acceptedAt) return;
-  const snapshot = (await routeNativeExecution(owner, NATIVE_WORKER_READ, {
-    sessionId: latest.sessionId,
-    executionNodeId,
-    leaseId: latest.leaseId,
-  })) as NativeSessionReadResult;
+  let snapshot: NativeSessionReadResult;
+  try {
+    snapshot = (await routeNativeExecution(owner, NATIVE_WORKER_READ, {
+      sessionId: latest.sessionId,
+      executionNodeId,
+      leaseId: latest.leaseId,
+    })) as NativeSessionReadResult;
+  } catch (error) {
+    if (error instanceof GatewayMethodError) throw error;
+    // A host can reject before creating a session. Keep that refusal on its candidate.
+    throw new GatewayMethodError(
+      'NATIVE_SESSION_ERROR',
+      `Native ${input.runner} startup on ${executionNodeId} could not be verified: ${error instanceof Error ? error.message : 'Native session read failed'}`,
+    );
+  }
   const accepted = snapshot.commands.some(
     (command) => command.commandId === latest.commandId && command.accepted,
   );

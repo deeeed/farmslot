@@ -2,13 +2,16 @@ import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
 import { NATIVE_WORKER_READ } from '@farmslot/agent-runtime/native';
+import { NativeSessionMethodError } from '@farmslot/agent-runtime/native/service';
 import type { NativeSessionReadResult, Run } from '@farmslot/protocol';
 
+import { GatewayMethodError } from '../../core/method-error.js';
 import { makeRun } from '../../methods/run/test-fixtures.js';
 
 let history: Run[] = [];
 let reads: Record<string, unknown>[] = [];
 let snapshot: NativeSessionReadResult;
+let readFailure: Error | undefined;
 mock.module('../../runs/store.js', {
   namedExports: { getAllRunsWithArchived: async () => history },
 });
@@ -22,6 +25,7 @@ mock.module('./node.js', {
       assert.equal(owner, 'owner');
       assert.equal(method, NATIVE_WORKER_READ);
       reads.push(params);
+      if (readFailure) throw readFailure;
       return snapshot;
     },
   },
@@ -60,6 +64,7 @@ function attempt(id = 'failed', launchRequestedAt = '2026-01-01T00:00:00.000Z'):
 function reset() {
   history = [attempt()];
   reads = [];
+  readFailure = undefined;
   snapshot = {
     session: {
       id: 'failed',
@@ -159,4 +164,43 @@ test('task failures after native acceptance and ordinary cancellation do not poi
   snapshot.session.state = 'closed';
   delete snapshot.session.error;
   await assertReviewNativeRunnerHealthy(input, 'owner', 'node');
+});
+
+for (const local of [true, false]) {
+  test(`missing ${local ? 'local' : 'remote'} startup session stays a candidate refusal`, async () => {
+    reset();
+    readFailure = local
+      ? new NativeSessionMethodError(
+          'NATIVE_SESSION_ERROR',
+          'Native session not found for this principal',
+        )
+      : new Error('Native session not found for this principal');
+    await assert.rejects(
+      assertReviewNativeRunnerHealthy(input, 'owner', 'node'),
+      (error: unknown) => {
+        assert(error instanceof GatewayMethodError);
+        assert.equal(error.code, 'NATIVE_SESSION_ERROR');
+        assert.match(error.message, /startup.*could not be verified.*Native session not found/);
+        return true;
+      },
+    );
+  });
+}
+
+test('confirmed cancellation before creation adds no health verdict and preserves earlier failure', async () => {
+  reset();
+  const cancelled = attempt('cancelled', '2026-01-02T00:00:00.000Z');
+  cancelled.status = 'cancelled';
+  cancelled.agentContexts![0].nativeSession!.closedAt = '2026-01-02T00:00:01.000Z';
+  history = [cancelled];
+  readFailure = new NativeSessionMethodError(
+    'NATIVE_SESSION_ERROR',
+    'Native session not found for this principal',
+  );
+  await assertReviewNativeRunnerHealthy(input, 'owner', 'node');
+  assert.equal(reads.length, 0);
+  history.push(attempt());
+  readFailure = undefined;
+  await assert.rejects(assertReviewNativeRunnerHealthy(input, 'owner', 'node'), /timed out/);
+  assert.equal(reads[0].sessionId, 'failed');
 });

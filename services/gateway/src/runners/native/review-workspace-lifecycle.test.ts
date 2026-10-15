@@ -23,7 +23,7 @@ import { NativeWorkerOperationUncertainError } from './worker-error.js';
 
 await import('../../runtime/mock-pty.test-support.js');
 const config = await import('../../core/config.js');
-const configuredPool: RawPoolJson = {
+const configuredPool = {
   machine: 'host',
   os: 'macos',
   host: 'localhost',
@@ -31,8 +31,8 @@ const configuredPool: RawPoolJson = {
   platform: 'test',
   ssh_user: 'fixture',
   slots: [],
-  claude_path: '/configured/outside-path/claude',
-};
+  codex_path: '/configured/outside-path/codex',
+} satisfies RawPoolJson;
 mock.module('../../core/config.js', {
   namedExports: { ...config, loadMachinePool: async () => configuredPool },
 });
@@ -492,17 +492,15 @@ test('native launch binds recorded reference paths and keeps them read-only', as
 
 test('native review pins the configured machine executable instead of PATH-selected project shims', async () => {
   reset();
-  run.metrics.runner = 'claude';
-  run.metrics.model = 'opus';
-  selectedExecutable = configuredPool.claude_path!;
+  selectedExecutable = configuredPool.codex_path;
   await launch();
   const ensure = calls.find((call) => call.method === NATIVE_WORKER_ENSURE);
   assert.ok(ensure);
   const launchInput = ensure.params.launch;
   assert.ok(launchInput && typeof launchInput === 'object');
-  assert.equal(Reflect.get(launchInput, 'executable'), configuredPool.claude_path);
+  assert.equal(Reflect.get(launchInput, 'executable'), configuredPool.codex_path);
   assert.equal(executableSelections.length, 1);
-  assert.equal(executableSelections[0]?.runner, 'claude');
+  assert.equal(executableSelections[0]?.runner, 'codex');
   assert.equal(executableSelections[0]?.machine, configuredPool);
 });
 
