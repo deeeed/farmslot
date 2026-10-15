@@ -27,6 +27,7 @@ import {
 } from '../fleet/node-rpc.js';
 import { loadFleetStatus, loadPoolConfigs } from '../fleet/state.js';
 import { isFreeSlot } from '../methods/dispatch/slot-scoring.js';
+import { assertReviewNativeRunnerHealthy } from '../runners/native/review-health.js';
 import {
   getRunnerDefinition,
   isKnownRunner,
@@ -322,16 +323,25 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
     )) {
       let admission: ReviewWorkspaceAdmission | undefined;
       try {
-        admission = await inspectReviewWorkspaceTarget(
-          {
-            project: params.project,
-            ...choice,
-            effort: executionModelFromSelection(choice).effort ?? undefined,
-            model: executionModelFromSelection(choice).model,
-          },
+        const target = {
+          project: params.project,
+          ...choice,
+          effort: executionModelFromSelection(choice).effort ?? undefined,
+          model: executionModelFromSelection(choice).model,
+        };
+        const inspected = await inspectReviewWorkspaceTarget(
+          target,
           options.ownerId,
           options.excludingRunId,
         );
+        if (!original.reviewWorkspaceTarget)
+          await assertReviewNativeRunnerHealthy(
+            target,
+            options.ownerId,
+            inspected.executionNodeId,
+            options.excludingRunId,
+          );
+        admission = inspected;
         waiting ??= { choice, admission };
         assertReviewWorkspaceAdmitted(admission, options.excludingRunId);
         waiting = { choice, admission };
