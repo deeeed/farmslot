@@ -13,6 +13,8 @@ import path from 'node:path';
 
 import type { BranchMaintenanceOperation } from '@farmslot/protocol';
 
+import { gitDiffArgs } from '../../scripts/git-diff.cjs';
+
 export interface BranchMaintenanceRequest {
   id: string;
   ownerRunId: string;
@@ -75,7 +77,7 @@ export function normalizeMaintenanceBranch(value: string): string {
 }
 
 function git(repo: string, args: string[], input?: string, authorEnv?: NodeJS.ProcessEnv): string {
-  return execFileSync('git', args, {
+  return execFileSync('git', args[0] === 'diff' ? gitDiffArgs(args.slice(1)) : args, {
     cwd: repo,
     ...(authorEnv ? { env: { ...process.env, ...authorEnv } } : {}),
     encoding: 'utf8',

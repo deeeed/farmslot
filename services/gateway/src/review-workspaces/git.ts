@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
+import { gitDiffArgs } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
+
 import { execFileArgv } from '../core/exec.js';
 import type { GitExecDeps } from '../methods/git.js';
 import { execNativeNodeArgv } from '../runners/native/node.js';
@@ -51,7 +53,16 @@ const p=JSON.parse(process.argv[1]);
 if(JSON.stringify(JSON.parse(fs.readFileSync(p.cache+'.json','utf8')))!==JSON.stringify(p.identity))throw Error('Review repository ownership changed');
 const r=cp.spawnSync('git',['--no-pager','--git-dir',p.cache,...p.args],{encoding:'utf8',maxBuffer:10*1024*1024});
 if(r.error)throw r.error;process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exit(r.status??1);`;
-      const argv = ['node', '-e', script, JSON.stringify({ cache, identity, args })];
+      const argv = [
+        'node',
+        '-e',
+        script,
+        JSON.stringify({
+          cache,
+          identity,
+          args: args[0] === 'diff' ? gitDiffArgs(args.slice(1)) : args,
+        }),
+      ];
       const result =
         workspace.executionNodeId === 'local'
           ? await execFileArgv([process.execPath, ...argv.slice(1)], {

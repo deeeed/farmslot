@@ -7,6 +7,8 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { gitDiffArgs } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
+
 import {
   checkFingerprintBaseline,
   type FingerprintCheck,
@@ -30,9 +32,7 @@ export function sourceFingerprint(projectRoot: string, inputs: SourceInputs): st
     }
   } else {
     hash.update(head);
-    hash.update(
-      git(projectRoot, ['diff', '--no-ext-diff', '--binary', 'HEAD', '--', ...inputs.paths]),
-    );
+    hash.update(git(projectRoot, gitDiffArgs(['--binary', 'HEAD', '--', ...inputs.paths])));
 
     const untracked = git(projectRoot, [
       'ls-files',

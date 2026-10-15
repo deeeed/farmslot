@@ -1,3 +1,5 @@
+import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
+
 // description-check.ts — the review rule that a PR says what it does
 // (F42). The gateway appends one section to every review document, so
 // every farm gets the same rule from one place, and runs a deterministic
@@ -147,7 +149,7 @@ export function buildDescriptionCheckSection(input: DescriptionCheckSectionInput
     '```bash',
     `cd ${input.repo}`,
     `git fetch origin ${input.baseBranch}`,
-    `git diff ${base}...HEAD`,
+    `${GIT_DIFF_COMMAND} ${base}...HEAD`,
     `git log --format=%s ${base}..HEAD`,
     `cat ${description}`,
     ...(manifest

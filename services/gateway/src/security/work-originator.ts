@@ -17,22 +17,35 @@ export function principalWorkOriginator(principal: Principal): WorkOriginator {
   };
 }
 
-const sessionOriginator = new AsyncLocalStorage<WorkOriginator>();
+interface SessionWorkContext {
+  originator: WorkOriginator;
+  principal?: Principal;
+}
+
+const sessionOriginator = new AsyncLocalStorage<SessionWorkContext>();
 
 export function runWithSessionOriginator<T>(principal: Principal, operation: () => T): T {
-  return sessionOriginator.run(principalWorkOriginator(principal), operation);
+  return sessionOriginator.run(
+    { originator: principalWorkOriginator(principal), principal },
+    operation,
+  );
 }
 
 /** Background scheduling must not adopt the user whose unrelated event woke it. */
 export function runWithSystemOriginator<T>(operation: () => T): T {
-  return sessionOriginator.run({ kind: 'system' }, operation);
+  return sessionOriginator.run({ originator: { kind: 'system' } }, operation);
 }
 
 export function currentSessionOriginator(): WorkOriginator {
   // Every network route is entered through runWithSessionOriginator. The
   // fallback preserves direct in-process maintenance callers without making
   // the system principal reachable from an ingress.
-  return sessionOriginator.getStore() ?? { kind: 'system' };
+  return sessionOriginator.getStore()?.originator ?? { kind: 'system' };
+}
+
+/** Current authenticated authority is request-local, never persisted with work authorship. */
+export function currentSessionPrincipal(): Principal | undefined {
+  return sessionOriginator.getStore()?.principal;
 }
 
 export function workAuthorshipNotice(

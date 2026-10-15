@@ -1,18 +1,21 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
-  "title": "Five-round reviewer budget",
+  "title": "Honest publication gate actions",
   "description": "Manual local native reviewer and gateway recovery proof. Set FARMSLOT_CDP_PORT for the owned browser; use a fresh artifact directory.",
   "workflow": {
     "entry": "round-budget",
     "nodes": {
       "round-budget": {
         "action": "command",
-        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/review-round-budget.mts --ui",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/review-round-budget.mts --ui --gate-refusal",
         "timeout_ms": 300000,
-        "intent": "The gateway admits a fifth native review, refuses a sixth without consuming the gate, and retains N/5 through restart.",
+        "intent": "Missing current-head review approval is refused without consuming the gate or resuming worker work; the gate explains the exhausted budget and supported next step.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
     }
   }
 }

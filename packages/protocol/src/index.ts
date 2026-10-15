@@ -39,6 +39,7 @@ export * from './sources/controller.js';
 export * from './sources/pins.js';
 export * from './sources/status-view.js';
 export * from './sources/validation.js';
+export * from './surfaces/account-session.js';
 export * from './surfaces/command-center.js';
 export * from './transport/events.js';
 export * from './transport/frames.js';

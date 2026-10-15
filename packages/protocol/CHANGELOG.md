@@ -4,7 +4,12 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+- Expose verified review exceptions so publication actions match their gate prerequisites.
 - Resolve QA profiles from an explicit or policy id, an optional project default, or the sole profile; return typed choices for ambiguous requests.
+
+- Add the shared Sign out / switch account control to forget this device login and disconnect until explicit login or pairing.
 
 ## 0.45.0 - 2026-10-15
 

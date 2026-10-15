@@ -5,6 +5,8 @@ import { promisify } from 'node:util';
 
 import type { NativeWorkspaceChangesResult, NativeWorkspaceListResult } from '@farmslot/protocol';
 
+import { gitDiffArgs } from '../../scripts/git-diff.cjs';
+
 import { readWorkspaceText, WORKSPACE_TEXT_LIMIT, workspacePath } from './workspace-files.js';
 
 const execFile = promisify(execFileCallback);
@@ -22,7 +24,7 @@ async function git(cwd: string, args: string[], maxBuffer = WORKSPACE_TEXT_LIMIT
         'core.quotePath=false',
         '-c',
         'core.fsmonitor=false',
-        ...args,
+        ...(args[0] === 'diff' ? gitDiffArgs(args.slice(1)) : args),
       ],
       {
         cwd,

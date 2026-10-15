@@ -42,21 +42,14 @@ function workerTarget(value: unknown): NativeWorkerControlTarget {
 }
 
 /** Network controls are checked against durable run ownership before the host's lease CAS. */
-export async function routeNativeWorkerInput(
-  principal: string,
-  method: string,
-  params: Record<string, unknown>,
-) {
+export async function routeNativeWorkerInput(method: string, params: Record<string, unknown>) {
   const target = workerTarget(params.worker);
   if (method === Methods.NATIVE_SESSION_CLOSE)
-    return withRunTransition(target.runId, () =>
-      routePinnedWorkerInput(principal, method, params, target),
-    );
-  return routePinnedWorkerInput(principal, method, params, target);
+    return withRunTransition(target.runId, () => routePinnedWorkerInput(method, params, target));
+  return routePinnedWorkerInput(method, params, target);
 }
 
 async function routePinnedWorkerInput(
-  principal: string,
   method: string,
   params: Record<string, unknown>,
   target: NativeWorkerControlTarget,
@@ -71,7 +64,7 @@ async function routePinnedWorkerInput(
     if (
       !context ||
       !binding ||
-      binding.ownerPrincipalId !== principal ||
+      binding.ownerPrincipalId !== run.nativeOwnerPrincipalId ||
       binding.sessionId !== params.sessionId ||
       binding.executionNodeId !== (params.executionNodeId ?? 'local') ||
       binding.generation !== target.generation ||
@@ -108,24 +101,24 @@ async function routePinnedWorkerInput(
     leaseId: target.leaseId,
   };
   if (method === Methods.NATIVE_SESSION_SEND)
-    return routeNativeExecution(principal, NATIVE_WORKER_SEND, {
+    return routeNativeExecution(binding.ownerPrincipalId, NATIVE_WORKER_SEND, {
       ...nativeTarget,
       commandId: params.commandId,
       text: params.text,
     });
   if (method === Methods.NATIVE_SESSION_RESPOND)
-    return routeNativeExecution(principal, NATIVE_WORKER_RESPOND, {
+    return routeNativeExecution(binding.ownerPrincipalId, NATIVE_WORKER_RESPOND, {
       ...nativeTarget,
       requestId: params.requestId,
       response: { decision: params.decision, answers: params.answers },
     });
   if (method === Methods.NATIVE_SESSION_INTERRUPT)
-    return routeNativeExecution(principal, NATIVE_WORKER_INTERRUPT, nativeTarget);
+    return routeNativeExecution(binding.ownerPrincipalId, NATIVE_WORKER_INTERRUPT, nativeTarget);
   if (method === Methods.NATIVE_SESSION_CLOSE) {
     if (run.reviewWorkspace) await cancelReviewWorkspaceWorker(run.id);
     else await cancelNativeWorkerContext(run.id, context, { machineTransitionHeld: true });
     const snapshot = (await routeNativeExecution(
-      principal,
+      binding.ownerPrincipalId,
       Methods.NATIVE_SESSION_READ,
       nativeTarget,
     )) as { session: unknown };

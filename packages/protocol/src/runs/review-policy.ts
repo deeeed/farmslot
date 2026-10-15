@@ -21,16 +21,29 @@ export function isQualifyingReview(review: ReviewStatus): boolean {
 
 /** Retrying a session replaces its verdict, including a later failure on the same head. */
 export function qualifyingPassingReviews(reviews: ReviewStatus[]): ReviewStatus[] {
+  return qualifyingReviewSessions(
+    reviews,
+    (review) => review.verdict === 'pass' && review.unresolvedCount === 0,
+  );
+}
+
+/** Completed review inputs, including real findings that an operator may explicitly accept. */
+export function qualifyingTerminalReviewInputs(reviews: ReviewStatus[]): ReviewStatus[] {
+  return qualifyingReviewSessions(
+    reviews,
+    (review) => review.verdict === 'pass' || review.verdict === 'issues',
+  );
+}
+
+function qualifyingReviewSessions(
+  reviews: ReviewStatus[],
+  accepts: (review: ReviewStatus) => boolean,
+): ReviewStatus[] {
   const latest = new Map<string, ReviewStatus>();
   for (const review of reviews) latest.set(review.id, review);
   const sessions = new Set<string>();
   return [...latest.values()].filter((review) => {
-    if (
-      !isQualifyingReview(review) ||
-      review.verdict !== 'pass' ||
-      review.unresolvedCount !== 0 ||
-      sessions.has(review.reviewerSessionId!)
-    )
+    if (!isQualifyingReview(review) || !accepts(review) || sessions.has(review.reviewerSessionId!))
       return false;
     sessions.add(review.reviewerSessionId!);
     return true;
