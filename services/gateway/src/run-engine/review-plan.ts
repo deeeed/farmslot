@@ -217,17 +217,24 @@ export function repairUnboundRecoveryReviewPlan(
       ),
     );
     const sessions = new Set(passed.map((review) => review.reviewerSessionId));
+    const seenChoices = new Set<string>();
     const choices: ReviewSequence = (run.agentContexts ?? [])
       .filter((candidate) => candidate.role === 'review' && candidate.runner)
       .sort(
         (a, b) => Number(sessions.has(b.runnerSessionId)) - Number(sessions.has(a.runnerSessionId)),
       )
-      .map((candidate) => ({
+      .map<ReviewSelection>((candidate) => ({
         runner: normalizeRunner(candidate.runner),
         model: candidate.model ?? null,
         effort: reviewerContextEffort(candidate),
         mode: 'cold',
-      }));
+      }))
+      .filter((choice) => {
+        const key = JSON.stringify([choice.runner, choice.model, choice.effort]);
+        if (seenChoices.has(key)) return false;
+        seenChoices.add(key);
+        return true;
+      });
     const missing = Math.max(0, effectiveRequiredReviewCount(gate.reviewPolicy) - sessions.size);
     if (choices.length)
       return {

@@ -245,24 +245,41 @@ test('complete re-entry with zero pending decisions restores Codex after a curre
       },
     },
   });
-  assert.equal(getRun(run.id)!.decisions.filter((decision) => !decision.resolvedAt).length, 0);
-  await assert.rejects(
-    executeHumanGateStep(run.id, {
-      ...restartReplayContext(),
-      executePublishGateReviewPlan: async (_id, _slot, actualPlan) => {
-        assert.deepEqual(actualPlan, [plan[1]]);
-        throw new Error('Remaining Codex reviewer reached');
-      },
-    }),
-    /Remaining Codex reviewer reached/,
-  );
-  assert.deepEqual(getRun(run.id)!.engineState?.publishGate?.reviewSequence, [plan[1]]);
-  assert.match(String(getRun(run.id)!.steps[0].outputs?.reviewRecoveryNote), /Using COLD/);
-  assert.equal(getRun(run.id)!.reviewRoundAdmissions?.length, 7);
-  const budget = await runReviewRoundBudget(getRun(run.id)!);
-  assert.equal(budget.used, 7);
-  assert.equal(budget.limit, 8);
-  assert.equal(budget.remaining, 1);
+  const retained = structuredClone(getRun(run.id)!);
+  const [secondReviewer, passingReviewer] = retained.agentContexts!;
+  const olderReviewer = {
+    ...passingReviewer,
+    id: 'old-first',
+    runnerSessionId: 'old-first-session',
+  };
+  for (const contexts of [
+    [olderReviewer, secondReviewer, passingReviewer],
+    [passingReviewer, olderReviewer, secondReviewer],
+  ]) {
+    updateRun(run.id, {
+      agentContexts: contexts,
+      engineState: structuredClone(retained.engineState),
+      steps: structuredClone(retained.steps),
+    });
+    assert.equal(getRun(run.id)!.decisions.filter((decision) => !decision.resolvedAt).length, 0);
+    await assert.rejects(
+      executeHumanGateStep(run.id, {
+        ...restartReplayContext(),
+        executePublishGateReviewPlan: async (_id, _slot, actualPlan) => {
+          assert.deepEqual(actualPlan, [plan[1]]);
+          throw new Error('Remaining Codex reviewer reached');
+        },
+      }),
+      /Remaining Codex reviewer reached/,
+    );
+    assert.deepEqual(getRun(run.id)!.engineState?.publishGate?.reviewSequence, [plan[1]]);
+    assert.match(String(getRun(run.id)!.steps[0].outputs?.reviewRecoveryNote), /Using COLD/);
+    assert.equal(getRun(run.id)!.reviewRoundAdmissions?.length, 7);
+    const budget = await runReviewRoundBudget(getRun(run.id)!);
+    assert.equal(budget.used, 7);
+    assert.equal(budget.limit, 8);
+    assert.equal(budget.remaining, 1);
+  }
 });
 
 test('artifact-only QA complete identifies execution completion to the canonical gate guard', async (t) => {
