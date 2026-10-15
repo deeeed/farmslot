@@ -195,7 +195,7 @@ async function handshake(socket: WebSocket): Promise<void> {
         console.error(
           `This gateway requires a node-subject credential for "${MACHINE_NAME}". ` +
             `Fix: farmslot credential issue --principal <node-principal> --subject node --machine ${MACHINE_NAME} --secret-file <private-node-file>. ` +
-            `For farmdev use ~/.farmslot-automation/${MACHINE_NAME}-node-automation.secret and restart farmdev; ` +
+            `For farmdev use $HOME/.farmslot-automation/${MACHINE_NAME}-node-automation.secret and restart farmdev; ` +
             `for another local stack use <FARMSLOT_HOME>/node.secret and restart it; for a remote node use deploy-node.sh --node-token-file <private-node-file>.`,
         );
       }

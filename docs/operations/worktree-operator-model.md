@@ -103,7 +103,7 @@ See [Identity and credentials](../reference/identity-and-credentials.md).
 
 Dev stacks clear inherited credentials before loading checkout configuration. The
 local development node reads its machine credential from
-`~/.farmslot-automation/<machine>-node-automation.secret` when using the default
+`$HOME/.farmslot-automation/<machine>-node-automation.secret` when using the default
 development home. Other stacks read only their own `FARMSLOT_HOME/node.secret`;
 sandboxes never borrow the operator credential. Credential files require mode 0600. Configure native enrollment explicitly with
 `FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID` in the stack's nonsecret port configuration.
