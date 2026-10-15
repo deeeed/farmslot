@@ -211,9 +211,19 @@ test('additional runner profiles clear native auth overrides and select their na
         `${key} must not override the selected Cursor profile`,
       );
     const grokEnv = nativeProfileEnvironment(grok, base);
+    assert.equal(
+      grokEnv.HOME,
+      grok.directory,
+      'Grok must not discover the ambient home hooks or plugins',
+    );
     assert.equal(grokEnv.GROK_HOME, grok.directory);
     assert.equal(grokEnv.XAI_API_KEY, undefined);
     assert.equal(grokEnv.GROK_API_KEY, undefined);
+    const defaultGrok = await addNativeProfile(
+      { profileId: 'grok-default', runner: 'grok', directory: join(home, '.grok') },
+      home,
+    );
+    assert.equal(nativeProfileEnvironment(defaultGrok, base).HOME, home);
     assert.equal(cursorEnv.SERVICE_PORT, '1234');
     assert.equal(grokEnv.SERVICE_PORT, '1234');
   } finally {

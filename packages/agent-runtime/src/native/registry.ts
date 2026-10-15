@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -13,6 +14,12 @@ import { cursorNativeAdapter } from './cursor.js';
 import { grokNativeAdapter } from './grok.js';
 import { hostReviewSandboxAvailable, type NativeProcessSandbox } from './review-sandbox.js';
 import type { NativeAdapter } from './types.js';
+
+const { grokProfileEnvironment } = createRequire(import.meta.url)(
+  '../../scripts/review-account-preflight.cjs',
+) as {
+  grokProfileEnvironment(directory: string, base?: NodeJS.ProcessEnv): Record<string, string>;
+};
 
 export interface NativeWorkspaceTrustOptions {
   executable?: string;
@@ -53,6 +60,8 @@ export interface NativeRunnerDefinition {
   /** Repository startup configuration cannot execute inside a read-only review. Git blobs stay readable. */
   reviewConfigurationRoots?: (cwd: string) => string[];
   reviewRuntimeRoots?: (environment: NodeJS.ProcessEnv) => string[];
+  /** Read-only account inspection before copying support or trusting a review checkout. */
+  reviewAccountPreflight?: { script: string; timeoutMs: number };
   /** Default for new standalone conversations; worker launch settings stay authoritative. */
   defaultEffort?: string;
   account: {
@@ -136,6 +145,10 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     },
   },
   grok: {
+    reviewAccountPreflight: {
+      script: `${readFileSync(new URL('../../scripts/review-account-preflight.cjs', import.meta.url), 'utf8')}\ntry { const env = process.argv[2] ? { ...process.env, ...grokProfileEnvironment(process.argv[2]) } : process.env; assertGrokReviewAccount(process.argv[1], env); } catch (error) { console.error(error.message); process.exitCode = 1; }`,
+      timeoutMs: 15_000,
+    },
     reviewConfigurationRoots: reviewConfigurationRootsByRunner.grok,
     trustWorkspace: workspaceTrustByRunner.grok,
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
@@ -144,7 +157,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     binary: 'grok',
     supportsWorkers: true,
     account: {
-      environment: (directory) => ({ GROK_HOME: directory }),
+      environment: grokProfileEnvironment,
       unset: ['GROK_API_KEY', 'XAI_API_KEY'],
       loginArgs: ['login'],
       observe: observeGrokAccount,

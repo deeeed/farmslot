@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Inspect review account hook policy before task preparation, and isolate named Grok profiles from ambient home hooks and plugins.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.22.3 - 2026-10-15

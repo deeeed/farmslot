@@ -38,6 +38,7 @@ import {
 import { getAllRuns, getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { withSubtaskMetrics } from '../tasks/subtask-metrics.js';
 
+import { preflightReviewWorkspaceAccount } from './account-preflight.js';
 import { assertReviewWorkspaceAdmitted, inspectReviewWorkspaceTarget } from './admission.js';
 import { compatibleWorkspaceReviewer, configureWorkspaceContinuity } from './continuity.js';
 import { holdWorkspaceReview, waitingAtReviewGate } from './gate.js';
@@ -380,6 +381,7 @@ export async function executeReviewWorkspaceStep(
     }
     case PipelineSteps.WRITE_TASK: {
       if (!run.reviewWorkspaceSubject) throw new Error('Workspace review subject is missing');
+      await preflightReviewWorkspaceAccount(run, check);
       await ensureReviewWorkspaceSupport(runId, check);
       check();
       const task = await materializeReviewWorkspaceTask(runId, run.reviewWorkspaceSubject);

@@ -760,10 +760,31 @@ export function runGateDefinitionActions(decision: RunDecision): DecisionAction[
     : actions;
 }
 
-/** Refresh the existing projection; it is never approval authority. */
-export async function refreshRunGateReadiness(
+const defaultRefreshReaders: Partial<GatePrerequisiteReaders> = {};
+const readinessRefreshes = new Map<
+  string,
+  { snapshot: string; readers: Partial<GatePrerequisiteReaders>; promise: Promise<Run> }
+>();
+
+/** Concurrent display reads share work; later reads still verify the actual evidence bytes. */
+export function refreshRunGateReadiness(
   run: Run,
-  overrides: Partial<GatePrerequisiteReaders> = {},
+  overrides: Partial<GatePrerequisiteReaders> = defaultRefreshReaders,
+): Promise<Run> {
+  const snapshot = JSON.stringify(run);
+  const pending = readinessRefreshes.get(run.id);
+  if (pending?.snapshot === snapshot && pending.readers === overrides) return pending.promise;
+  const promise = refreshRunGateReadinessOnce(run, overrides).finally(() => {
+    if (readinessRefreshes.get(run.id)?.promise === promise) readinessRefreshes.delete(run.id);
+  });
+  readinessRefreshes.set(run.id, { snapshot, readers: overrides, promise });
+  return promise;
+}
+
+/** Refresh the existing projection; it is never approval authority. */
+async function refreshRunGateReadinessOnce(
+  run: Run,
+  overrides: Partial<GatePrerequisiteReaders>,
 ): Promise<Run> {
   const generation = run.engineState?.generation ?? 0;
   const pending = run.decisions.filter(

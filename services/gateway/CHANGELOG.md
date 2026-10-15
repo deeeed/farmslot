@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Refuse unsafe native review accounts before copying task support, and share concurrent readiness display reads so repeated evidence hashing cannot starve preparation. Later reads and publication still validate current evidence.
 - Bind retained unpublished runs to declared graph stacks through existing run and graph authority, refusing stale source and preserving proof.
 - Allow admins to explicitly replace a retired principal id without restoring old credentials or stored-work authority; freshly authored queued work carries its identity generation.
 - Preserve the frozen run review policy in nested role contracts so valid pending visual claims reach their human gate without weakening evidence or CI checks.
