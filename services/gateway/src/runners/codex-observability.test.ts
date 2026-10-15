@@ -53,16 +53,18 @@ test('retained delivery uses native completion without bypassing ownership or ne
       'saved-reviewer',
       session,
     );
-  assert.equal((await read())?.value, 'idle');
-  assert.equal((await read())?.failure, "The 'opus' model is not supported");
+  const failed = await read();
+  assert.equal(failed?.value, 'idle');
+  assert.equal(failed?.failure, "The 'opus' model is not supported");
   hooks.mock.mockImplementation(async () => ({
     value: 'active' as const,
     source: 'hook' as const,
     confidence: 'high' as const,
     observedAt: at + 100,
   }));
-  assert.equal((await read())?.value, 'active');
-  assert.equal((await read())?.failure, undefined, 'newer turn evidence supersedes old errors');
+  const active = await read();
+  assert.equal(active?.value, 'active');
+  assert.equal(active?.failure, undefined, 'newer turn evidence supersedes old errors');
   hooks.mock.restore();
   await writeFile(
     session,
