@@ -1679,8 +1679,9 @@ owns the transaction, validation and regression requirements. The
 
 ## Amendment 4: expiring person-device sessions, 2026-10-15
 
-**Status:** Proposed. The owner approved this scope and ADR routing on
-2026-10-15. Acceptance follows paired review; implementation follows acceptance.
+**Status:** Accepted on 2026-10-15 after paired review and merge of
+[PR #1120](https://github.com/deeeed/farmslot/pull/1120). Implementation follows
+this accepted contract; package publication and client rollout are separate.
 
 ### Decision
 
@@ -1706,7 +1707,10 @@ and node credentials keep their authentication and deployment contracts.
 A persisted person credential currently grants access indefinitely. A device
 session limits that persistence and lets a person withdraw one device without
 rotating automation or node credentials. This uses the existing identity store,
-writer lock and live authorization checks; it adds no identity provider.
+writer lock and live authorization checks; it adds no identity provider. The
+refresh secret stays stable so a lost refresh response can be retried. A copied
+refresh token can also renew until revocation; per-device revoke is the remedy.
+Rotation and replay detection are outside this decision.
 
 ### Consequences
 
@@ -1732,5 +1736,5 @@ clients, refresh failure and sign-out revocation, including HTTP downloads.
   inherit the selected client's access token and gain no refresh-token API or
   alternative authorization path.
 
-The [principal core spec](../plans/principal-core-implementation-spec.md#person-device-sessions-proposed)
+The [principal core spec](../plans/principal-core-implementation-spec.md#person-device-sessions)
 owns the normative token, mutation, cutover and regression requirements.

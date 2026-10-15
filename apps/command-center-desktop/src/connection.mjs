@@ -1,11 +1,18 @@
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { parsePersonSessionAuth, parsePersonSessionToken } from '@farmslot/protocol';
+
 export function validateConnection(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('Connection must be an object.');
   }
-  if (Object.keys(value).some((key) => !['url', 'token', 'password', 'rememberMe'].includes(key))) {
+  if (
+    Object.keys(value).some(
+      (key) =>
+        !['url', 'token', 'password', 'rememberMe', 'personSession', 'pending'].includes(key),
+    )
+  ) {
     throw new Error('Unknown connection field.');
   }
   if (typeof value.url !== 'string' || value.url.length > 2048) {
@@ -35,6 +42,18 @@ export function validateConnection(value) {
   }
   if (connection.token && connection.password)
     throw new Error('Choose token or password authentication.');
+  if (value.pending !== undefined) {
+    if (typeof value.pending !== 'boolean') throw new Error('Pending sign-in must be a boolean.');
+    if (value.pending) connection.pending = true;
+  }
+  if (value.personSession !== undefined) {
+    const session =
+      value.personSession === null ? null : parsePersonSessionAuth(value.personSession);
+    if (value.personSession !== null && !session) throw new Error('Invalid device sign-in.');
+    if (connection.token || connection.password)
+      throw new Error('Choose a device session or a service credential.');
+    connection.personSession = session;
+  }
   return connection;
 }
 
@@ -55,6 +74,9 @@ export function createConnectionStore(directory, encryption) {
     },
     async save(value) {
       const connection = validateConnection(value);
+      if (connection.pending) throw new Error('Verify the pending sign-in before saving it.');
+      if (connection.token && parsePersonSessionToken(connection.token, 'fsa'))
+        throw new Error('Access tokens must stay in memory.');
       if (!connection.rememberMe) {
         await rm(path, { force: true });
         await rm(`${path}.tmp`, { force: true });

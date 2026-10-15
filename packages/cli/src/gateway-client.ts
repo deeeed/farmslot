@@ -1,6 +1,13 @@
 import { WebSocket as NodeWebSocket } from 'ws';
 
-import type { EventFrame, Frame } from '@farmslot/protocol';
+import {
+  type EventFrame,
+  type Frame,
+  hasAuthErrorCode,
+  type PersonSessionAuth,
+  PersonSessionClient,
+  type ResponseFrame,
+} from '@farmslot/protocol';
 
 export interface GatewayClientOpts {
   url: string;
@@ -35,6 +42,19 @@ export class GatewayRpcError extends Error {
   }
 }
 
+function rpcFailure(
+  error: ResponseFrame['error'],
+  message = 'Unknown gateway error',
+  code = 'METHOD_ERROR',
+): GatewayRpcError {
+  return new GatewayRpcError(
+    error?.message || message,
+    error?.code || code,
+    error?.userAction,
+    error?.details,
+  );
+}
+
 export interface GatewayConnection {
   call<T = unknown>(method: string, params?: unknown, options?: { timeoutMs?: number }): Promise<T>;
   /** Subscribe to broadcast events; returns an unsubscribe function. */
@@ -44,20 +64,68 @@ export interface GatewayConnection {
   close(): void;
 }
 
-interface GatewayCredential {
+export interface GatewayCredential {
   token?: string;
   password?: string;
+  personSession?: PersonSessionAuth;
+  persistPersonSession?: (value: PersonSessionAuth | null) => Promise<void>;
+  forgetLegacyPerson?: () => Promise<void>;
+}
+
+export async function forgetRejectedPersonCredential(
+  error: unknown,
+  credential: GatewayCredential | null | undefined,
+): Promise<void> {
+  if (hasAuthErrorCode(error, 'AUTH_PERSON_SESSION_REQUIRED'))
+    await credential?.forgetLegacyPerson?.();
 }
 
 export class GatewayClient {
   private url: string;
   private timeout: number;
   private credential: GatewayCredential | null;
+  private personClient: PersonSessionClient | null = null;
+  private activeConnection: GatewayConnection | null = null;
 
   constructor(opts: GatewayClientOpts) {
     this.url = opts.url;
     this.timeout = opts.timeout;
     this.credential = effectiveCredential(opts.credential);
+  }
+
+  async currentCredentials(
+    forceRefresh = false,
+  ): Promise<{ token?: string; password?: string } | null> {
+    const credential = this.credential;
+    if (!this.personClient && credential?.personSession) {
+      this.personClient = new PersonSessionClient({
+        storage: {
+          load: async () => credential.personSession ?? null,
+          save: async (value) => {
+            await credential.persistPersonSession?.(value);
+            if (value) credential.personSession = value;
+            else delete credential.personSession;
+          },
+        },
+        request: (method, params, accessToken) =>
+          new GatewayClient({
+            url: this.url,
+            timeout: this.timeout,
+            credential: accessToken ? { token: accessToken } : null,
+          }).call(method, params),
+        onAccess: async (grant) => {
+          if (this.activeConnection)
+            await this.activeConnection.call('auth.connect', {
+              clientKind: 'ui',
+              clientName: 'farmslot-tui',
+              token: grant.accessToken,
+            });
+        },
+      });
+    }
+    return this.personClient
+      ? { token: await this.personClient.accessToken(forceRefresh) }
+      : credential;
   }
 
   async call<T = unknown>(method: string, params: unknown = {}): Promise<T> {
@@ -70,6 +138,7 @@ export class GatewayClient {
    * per-invocation sockets via call().
    */
   async connect(): Promise<GatewayConnection> {
+    const credential = await this.currentCredentials(true);
     const WebSocketCtor = globalThis.WebSocket ?? NodeWebSocket;
     const ws = new WebSocketCtor(this.url);
     const pending = new Map<
@@ -120,15 +189,7 @@ export class GatewayClient {
       if (!entry) return;
       pending.delete(frame.id);
       if (frame.ok) entry.resolve(frame.payload);
-      else
-        entry.reject(
-          new GatewayRpcError(
-            frame.error?.message || 'Unknown gateway error',
-            frame.error?.code || 'METHOD_ERROR',
-            frame.error?.userAction,
-            frame.error?.details,
-          ),
-        );
+      else entry.reject(rpcFailure(frame.error));
     });
     ws.addEventListener('close', () => {
       closed = true;
@@ -141,7 +202,7 @@ export class GatewayClient {
     const authId = 'connect-auth';
     try {
       await new Promise<void>((resolve, reject) => {
-        const needsAuth = Boolean(this.credential?.token || this.credential?.password);
+        const needsAuth = Boolean(credential?.token || credential?.password);
         const opened = setTimeout(
           () => reject(new GatewayConnectionError(`Timeout — no activity for ${this.timeout}ms`)),
           this.timeout,
@@ -171,8 +232,8 @@ export class GatewayClient {
               params: {
                 clientKind: 'ui',
                 clientName: 'farmslot-tui',
-                ...(this.credential?.token ? { token: this.credential.token } : {}),
-                ...(this.credential?.password ? { password: this.credential.password } : {}),
+                ...(credential?.token ? { token: credential.token } : {}),
+                ...(credential?.password ? { password: credential.password } : {}),
               },
             }),
           );
@@ -187,13 +248,14 @@ export class GatewayClient {
       // socket so the process does not stay alive on a dead connection.
       closed = true;
       ws.close();
+      await forgetRejectedPersonCredential(err, this.credential);
       throw err;
     } finally {
       pending.delete(authId);
     }
 
     const timeout = this.timeout;
-    return {
+    const connection: GatewayConnection = {
       call<T = unknown>(
         method: string,
         params: unknown = {},
@@ -245,12 +307,39 @@ export class GatewayClient {
         ws.close();
       },
     };
+    this.activeConnection = connection;
+    this.personClient?.startRefresh(() => connection.close());
+    connection.onClose(() => {
+      if (this.activeConnection !== connection) return;
+      this.activeConnection = null;
+      this.personClient?.stopRefresh();
+    });
+    return connection;
   }
 
   async callWithEvents<T = unknown>(
     method: string,
     params: unknown = {},
     onEvent?: (event: EventFrame) => void,
+  ): Promise<T> {
+    const credential = await this.currentCredentials();
+    if (this.personClient)
+      return this.personClient.withAccess((token) =>
+        this.callWithCredential<T>(method, params, onEvent, { token }),
+      );
+    try {
+      return await this.callWithCredential<T>(method, params, onEvent, credential);
+    } catch (error) {
+      await forgetRejectedPersonCredential(error, this.credential);
+      throw error;
+    }
+  }
+
+  private callWithCredential<T>(
+    method: string,
+    params: unknown,
+    onEvent: ((event: EventFrame) => void) | undefined,
+    credential: { token?: string; password?: string } | null,
   ): Promise<T> {
     const reqId = `cli-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
@@ -289,7 +378,7 @@ export class GatewayClient {
 
       ws.addEventListener('open', () => {
         resetTimer();
-        if (this.credential?.token || this.credential?.password) {
+        if (credential?.token || credential?.password) {
           authPending = true;
           ws.send(
             JSON.stringify({
@@ -299,8 +388,8 @@ export class GatewayClient {
               params: {
                 clientKind: 'ui',
                 clientName: 'farmslot-cli',
-                ...(this.credential.token ? { token: this.credential.token } : {}),
-                ...(this.credential.password ? { password: this.credential.password } : {}),
+                ...(credential.token ? { token: credential.token } : {}),
+                ...(credential.password ? { password: credential.password } : {}),
               },
             }),
           );
@@ -332,7 +421,7 @@ export class GatewayClient {
             sendRequest();
           } else {
             finish(() =>
-              reject(new Error(frame.error?.message || 'Gateway authentication failed')),
+              reject(rpcFailure(frame.error, 'Gateway authentication failed', 'AUTH_FAILED')),
             );
           }
           return;
@@ -343,16 +432,7 @@ export class GatewayClient {
         if (frame.ok) {
           finish(() => resolve(frame.payload as T));
         } else {
-          finish(() =>
-            reject(
-              new GatewayRpcError(
-                frame.error?.message || 'Unknown gateway error',
-                frame.error?.code || 'METHOD_ERROR',
-                frame.error?.userAction,
-                frame.error?.details,
-              ),
-            ),
-          );
+          finish(() => reject(rpcFailure(frame.error)));
         }
       });
 

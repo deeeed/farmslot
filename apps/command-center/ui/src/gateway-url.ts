@@ -1,4 +1,4 @@
-import { isAccountSessionExpired, parseAccountSessionExpiry } from '@farmslot/review-dispatch';
+import { parsePersonSessionToken, type PersonSessionClient } from '@farmslot/protocol';
 
 import { getDesktopConnection, isDesktopClient } from './desktop-connection.js';
 
@@ -15,6 +15,7 @@ export interface HostedGatewayCandidate {
 
 export interface HostedGatewayConnection {
   urls: string[];
+  code?: string;
   token?: string;
   password?: string;
 }
@@ -24,12 +25,6 @@ export type GatewayConnectionSource = 'configured' | 'hosted' | 'stored' | 'impl
 export const GATEWAY_URL_STORAGE_KEY = 'farmslot.gateway.url';
 export const GATEWAY_CANDIDATES_STORAGE_KEY = 'farmslot.gateway.candidates';
 export const GATEWAY_SESSION_EXPIRY_STORAGE_KEY = 'farmslot.gateway.session-expires-at';
-export function readStoredGatewaySessionExpiry(): number | null {
-  return typeof localStorage === 'undefined'
-    ? null
-    : parseAccountSessionExpiry(localStorage.getItem(GATEWAY_SESSION_EXPIRY_STORAGE_KEY));
-}
-
 export const GATEWAY_SIGNED_OUT_STORAGE_KEY = 'farmslot.gateway.signed-out';
 export const GATEWAY_TOKEN_STORAGE_KEY = 'farmslot.gateway.token';
 export const GATEWAY_PASSWORD_STORAGE_KEY = 'farmslot.gateway.password';
@@ -37,6 +32,7 @@ export const GATEWAY_SOURCE_STORAGE_KEY = 'farmslot.gateway.source';
 
 interface HostedGatewayPayload {
   v?: number;
+  code?: string;
   url?: string;
   gatewayUrl?: string;
   gateways?: Array<string | HostedGatewayCandidate>;
@@ -100,6 +96,9 @@ export function parseHostedGatewayConnection(hash: string): HostedGatewayConnect
     const urls = normalizePayloadUrls(payload);
     return {
       urls,
+      ...(typeof payload.code === 'string' && payload.code.trim()
+        ? { code: payload.code.trim() }
+        : {}),
       ...(payload.token?.trim() ? { token: payload.token.trim() } : {}),
       ...(payload.password?.trim() ? { password: payload.password.trim() } : {}),
     };
@@ -170,8 +169,36 @@ export function gatewayWebSocketToHttpOrigin(wsUrl: string): string {
   return parsed.toString().replace(/\/$/, '');
 }
 
+let memoryAuth: {
+  origin: string;
+  auth: { token?: string; password?: string };
+  person?: PersonSessionClient;
+} | null = null;
+
+export function setGatewayMemoryAuth(
+  auth: { token?: string; password?: string },
+  url: string,
+  person?: PersonSessionClient,
+): void {
+  memoryAuth = { origin: gatewayWebSocketToHttpOrigin(url), auth, person };
+}
+
+export function clearGatewayMemoryAuth(): void {
+  memoryAuth = null;
+}
+
 export function readGatewayAuth(): { token?: string; password?: string } {
-  if (isAccountSessionExpired(readStoredGatewaySessionExpiry())) return {};
+  const desktop = getDesktopConnection();
+  const selected =
+    desktop?.url ??
+    (typeof localStorage === 'undefined' ? null : localStorage.getItem(GATEWAY_URL_STORAGE_KEY));
+  if (memoryAuth && (!selected || gatewayWebSocketToHttpOrigin(selected) === memoryAuth.origin))
+    return memoryAuth.auth;
+  return readStoredGatewayAuth();
+}
+
+/** Unverified legacy credentials are read only for the authentication handshake. */
+export function readStoredGatewayAuth(): { token?: string; password?: string } {
   if (isDesktopClient()) {
     const connection = getDesktopConnection();
     return { token: connection?.token, password: connection?.password };
@@ -183,11 +210,22 @@ export function readGatewayAuth(): { token?: string; password?: string } {
   };
 }
 
+export function withGatewayHttpAccess<T>(
+  operation: (auth: { token?: string; password?: string }) => Promise<T>,
+): Promise<T> {
+  const auth = readGatewayAuth();
+  return memoryAuth?.person && auth === memoryAuth.auth
+    ? memoryAuth.person.withAccess((token) => operation({ token }))
+    : operation(auth);
+}
+
 export function persistGatewayAuthForHttp(auth: { token?: string; password?: string }): void {
   if (isDesktopClient() || typeof localStorage === 'undefined') return;
 
   const token = auth.token?.trim();
   const password = auth.password?.trim();
+  if (token && parsePersonSessionToken(token, 'fsa'))
+    throw new Error('Access tokens must stay in memory.');
   if (token) {
     localStorage.setItem(GATEWAY_TOKEN_STORAGE_KEY, token);
     localStorage.removeItem(GATEWAY_PASSWORD_STORAGE_KEY);

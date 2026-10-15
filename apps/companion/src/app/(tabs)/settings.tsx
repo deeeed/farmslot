@@ -15,8 +15,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ACCOUNT_SESSION_CONTROL } from '@farmslot/protocol';
-import { accountSessionCaption } from '@farmslot/review-dispatch';
+import { ACCOUNT_SESSION_CONTROL, personSessionCaption } from '@farmslot/protocol';
 
 import voiceAsrTestClipAssetModule from '../../../assets/asr/voice-command-status.wav';
 import { AppEnvironmentCard } from '../../components/AppEnvironmentCard';
@@ -141,7 +140,7 @@ export default function SettingsScreen() {
   const {
     signOutCurrentAccount,
     signingOut,
-    sessionExpiresAt,
+    personSession,
     signedOut,
     activateProfile: handleActivateProfile,
     connectionTestsInProgress,
@@ -690,8 +689,8 @@ export default function SettingsScreen() {
 
       <View style={styles.infoSection}>
         <Text style={styles.sectionTitle}>Account</Text>
-        {sessionExpiresAt !== null ? (
-          <Text style={styles.helperTextNoMargin}>{accountSessionCaption(sessionExpiresAt)}</Text>
+        {personSession !== null ? (
+          <Text style={styles.helperTextNoMargin}>{personSessionCaption(personSession)}</Text>
         ) : null}
         <Pressable
           testID="account-sign-out"

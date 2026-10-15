@@ -1,25 +1,47 @@
 import {
   type Frame,
+  type GatewayAuthConnectResult,
   type GatewayPairingQrPayload,
   Methods,
   type PairingExchangeResult,
+  parsePersonSessionGrant,
+  type PersonSessionAuth,
   type RequestFrame,
   type ResponseFrame,
 } from '@farmslot/protocol';
 
+import { isGatewayAuthConnectResult } from './gateway-connection-test';
 import { pairingWebSocketConnectionError } from './gateway-pairing-errors';
 import { profileFromPairingExchange } from './gateway-pairing-normalization';
 import { sortPairingExchangeUrls } from './gateway-pairing-urls';
 
 export type { GatewayPairingQrPayload, GatewayPairingQrProfile } from '@farmslot/protocol';
 
+export type PairedGatewayProfile =
+  | (PairingExchangeResult['profile'] & {
+      personSession?: never;
+      verification?: GatewayAuthConnectResult;
+    })
+  | {
+      name: string;
+      url: string;
+      authMode: 'token';
+      secret?: never;
+      personSession: PersonSessionAuth;
+      verification?: GatewayAuthConnectResult;
+    };
+export interface GatewayPairingExchange {
+  profile: PairedGatewayProfile;
+  expiresAt?: string;
+}
+
 const PAIRING_TIMEOUT_MS = 15_000;
-type PairingExchange = (urls: string[], code: string) => Promise<PairingExchangeResult>;
+type PairingExchange = (urls: string[], code: string) => Promise<GatewayPairingExchange>;
 
 export async function exchangeGatewayPairingQr(
   payload: GatewayPairingQrPayload,
   exchange: PairingExchange = sendUnauthenticatedPairingExchangeWithFallback,
-): Promise<PairingExchangeResult['profile'][]> {
+): Promise<PairedGatewayProfile[]> {
   const exchangeUrls = sortPairingExchangeUrls(
     uniqueUrls(payload.profiles.map((profile) => profile.url)),
   );
@@ -43,7 +65,7 @@ export async function exchangeGatewayPairingQr(
 async function sendUnauthenticatedPairingExchangeWithFallback(
   urls: string[],
   code: string,
-): Promise<PairingExchangeResult> {
+): Promise<GatewayPairingExchange> {
   let lastError: Error | null = null;
   for (const url of urls) {
     try {
@@ -62,16 +84,18 @@ function uniqueUrls(urls: string[]): string[] {
 function sendUnauthenticatedPairingExchange(
   url: string,
   code: string,
-): Promise<PairingExchangeResult> {
-  return new Promise<PairingExchangeResult>((resolve, reject) => {
+): Promise<GatewayPairingExchange> {
+  return new Promise<GatewayPairingExchange>((resolve, reject) => {
     const ws = new WebSocket(url);
-    const requestId = 'pairing-exchange';
+    let requestId = 'pairing-exchange';
+    let candidate: PairedGatewayProfile | undefined;
+    let invitationExpiry: string | undefined;
     let settled = false;
     const timer = setTimeout(() => {
       settleWithError(new Error('Pairing exchange timed out'));
     }, PAIRING_TIMEOUT_MS);
 
-    const settleWithResult = (result: PairingExchangeResult) => {
+    const settleWithResult = (result: GatewayPairingExchange) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -110,21 +134,89 @@ function sendUnauthenticatedPairingExchange(
     ws.onmessage = (event: MessageEvent) => {
       let frame: Frame;
       try {
-        frame = JSON.parse(event.data as string);
+        frame = JSON.parse(String(event.data));
       } catch (error) {
-        settleWithError(
-          new Error(`Gateway returned malformed pairing response: ${(error as Error).message}`),
-        );
+        if (!(error instanceof SyntaxError)) throw error;
+        settleWithError(new Error('Gateway returned a malformed pairing response.'));
         return;
       }
 
       if (frame.type !== 'res' || frame.id !== requestId) return;
       const response = frame as ResponseFrame;
       if (!response.ok) {
-        settleWithError(new Error(response.error?.message ?? 'Pairing exchange failed'));
+        if (
+          requestId === 'pairing-exchange' &&
+          response.error?.code === 'AUTH_PERSON_SESSION_REQUIRED'
+        ) {
+          requestId = 'person-session-exchange';
+          const frame: RequestFrame = {
+            type: 'req',
+            id: requestId,
+            method: Methods.AUTH_SESSION_EXCHANGE,
+            params: { code, deviceName: 'Mobile Companion', deviceKind: 'companion' },
+          };
+          ws.send(JSON.stringify(frame));
+        } else
+          settleWithError(
+            Object.assign(new Error(response.error?.message ?? 'Pairing exchange failed'), {
+              code: response.error?.code,
+            }),
+          );
         return;
       }
-      settleWithResult(response.payload as PairingExchangeResult);
+      if (requestId === 'pairing-verification') {
+        if (
+          !candidate ||
+          !isGatewayAuthConnectResult(response.payload) ||
+          !response.payload.principal
+        ) {
+          settleWithError(new Error('Update the gateway before saving this pairing credential.'));
+          return;
+        }
+        const verified = response.payload;
+        if (
+          candidate.personSession
+            ? verified.principal?.subjectKind !== 'person' ||
+              verified.principal.id !== candidate.personSession.session.principalId
+            : verified.principal?.subjectKind === 'person'
+        ) {
+          settleWithError(new Error('Pairing did not produce a supported device sign-in.'));
+          return;
+        }
+        settleWithResult({
+          profile: { ...candidate, verification: verified },
+          expiresAt: invitationExpiry,
+        });
+        return;
+      }
+      let verifyToken: string;
+      if (requestId === 'person-session-exchange') {
+        const grant = parsePersonSessionGrant(response.payload);
+        if (!grant) {
+          settleWithError(new Error('Gateway returned an invalid person session.'));
+          return;
+        }
+        candidate = {
+          name: 'Paired Gateway',
+          url,
+          authMode: 'token',
+          personSession: { session: grant.session, refreshToken: grant.refreshToken },
+        };
+        verifyToken = grant.accessToken;
+      } else {
+        const exchanged = response.payload as PairingExchangeResult;
+        candidate = exchanged.profile;
+        invitationExpiry = exchanged.expiresAt;
+        verifyToken = exchanged.profile.secret;
+      }
+      requestId = 'pairing-verification';
+      const verify: RequestFrame = {
+        type: 'req',
+        id: requestId,
+        method: Methods.AUTH_CONNECT,
+        params: { clientKind: 'companion', token: verifyToken },
+      };
+      ws.send(JSON.stringify(verify));
     };
   });
 }

@@ -108,7 +108,11 @@ test('production WebSocket route accepts only a fixture person, preserves archiv
       timeout: 2000,
       credential: { token: secret },
     });
-  const personClient = client(humanCredential.secret);
+  const personGrant = runtime.writer.exchangePersonCredential(humanCredential.secret, {
+    deviceName: 'Publication fixture',
+    deviceKind: 'cli',
+  });
+  const personClient = client(personGrant.accessToken);
   const serviceClient = client(serviceCredential.secret);
   const archived = createRun({
     flowType: 'dev',
@@ -141,7 +145,7 @@ test('production WebSocket route accepts only a fixture person, preserves archiv
   };
   await assert.rejects(
     serviceClient.call(Methods.RUN_ADOPT_PUBLISHED_PR, params),
-    /credential-backed person/,
+    /active person device session/,
   );
   assert.deepEqual(JSON.parse(await readFile(archive, 'utf8')), before);
   const result = await personClient.call<RunAdoptPublishedPrResult>(
@@ -150,7 +154,8 @@ test('production WebSocket route accepts only a fixture person, preserves archiv
   );
   assert.equal(result.archived, true);
   assert.equal(result.receipt.approver.principalId, person.id);
-  assert.equal(result.receipt.approver.credentialId, humanCredential.record.id);
+  assert.equal(result.receipt.approver.personSessionId, personGrant.session.id);
+  assert.equal(result.receipt.approver.credentialId, undefined);
   assert.equal(result.receipt.headSha, reviewed);
   assert.equal(result.receipt.observedHeadSha, observed);
   assert.equal(getRun(archived.id), undefined);

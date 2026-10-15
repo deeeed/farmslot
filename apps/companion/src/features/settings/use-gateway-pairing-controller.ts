@@ -54,12 +54,19 @@ export function useGatewayPairingController(options: GatewayPairingControllerOpt
       const importedProfiles = pairedProfileResults.map((pairedProfileResult) => ({
         profile: profileFromPairingResult(pairedProfileResult),
         secret: pairedProfileResult.secret,
+        personSession: pairedProfileResult.personSession,
+        verification: pairedProfileResult.verification,
       }));
       options.setRecentImportedProfiles(
         importedProfiles.map((importedProfile) => importedProfile.profile),
       );
       for (const importedProfile of importedProfiles) {
-        await saveProfile(importedProfile.profile, importedProfile.secret);
+        await saveProfile(
+          importedProfile.profile,
+          importedProfile.secret,
+          importedProfile.personSession,
+          importedProfile.verification,
+        );
       }
       options.setProfileConnectionTests(
         Object.fromEntries(

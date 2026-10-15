@@ -32,7 +32,15 @@ export function workspaceAllowsMethod(
   method: string,
   params?: unknown,
 ): boolean {
-  if (access === 'farm' || method === Methods.AUTH_CONNECT || method === Methods.GATEWAY_PING)
+  if (
+    access === 'farm' ||
+    method === Methods.AUTH_CONNECT ||
+    method === Methods.GATEWAY_PING ||
+    method === Methods.AUTH_SESSION_EXCHANGE ||
+    method === Methods.AUTH_SESSION_REFRESH ||
+    method === Methods.AUTH_SESSION_LIST ||
+    method === Methods.AUTH_SESSION_REVOKE
+  )
     return true;
   return (
     access === 'native' &&

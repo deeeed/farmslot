@@ -5,13 +5,14 @@
 
 ## Summary
 
-## Person-device sessions, Proposed
+### Person-device sessions
 
-**Authority:** ADR-051 Amendment 4. This section takes effect after acceptance
-and supersedes direct person-credential login and storage rules below. Other
-principal, service, node, activation and authorization contracts remain current.
+**Authority:** ADR-051 Amendment 4, accepted in [PR #1120](https://github.com/deeeed/farmslot/pull/1120).
+This contract supersedes direct person-credential login and storage rules in
+this specification. Service, node, activation and other authorization contracts
+remain current; implementation and rollout must satisfy the cutover below.
 
-### Tokens and durable state
+#### Tokens and durable state
 
 - Access tokens live for exactly one hour. Refresh tokens expire exactly 30 days
   after issuance or successful refresh. Only refresh advances that deadline.
@@ -39,7 +40,7 @@ principal, service, node, activation and authorization contracts remain current.
   revoked, missing or expired authority refuses access. Cache identity references
   only, with the existing store freshness and invalidation guarantees.
 
-### Gateway methods
+#### Gateway methods
 
 `@farmslot/protocol` owns params, results and typed failures. None of these
 methods accepts service or node credentials as person-session authority.
@@ -62,7 +63,7 @@ and lost-response retries cannot revoke another device, create replacement
 identity authority or replay a consumed pairing invitation. Pairing exchange
 consumption and session issuance must share one atomic decision.
 
-### Clients and sign-out
+#### Clients and sign-out
 
 One transport-neutral `PersonSessionClient` in `@farmslot/protocol` implements
 refresh, single-flight coordination and typed expiry handling. Command Center,
@@ -89,11 +90,22 @@ report that failure and allow retry. Never claim another device was revoked.
 
 Cut over all three clients in one implementation. On encountering an old stored
 person credential, remove that persisted person secret and require sign-in
-through exchange; do not fall back to direct person authentication. Preserve
+through exchange; do not fall back to direct person authentication. Classify
+legacy opaque profiles only through live gateway verification, never by token
+grammar or a guessed subject. An unavailable gateway cannot authorize deleting
+a service profile. Preserve
 service profiles and node startup secrets. Remove the temporary client-only
 expiry policy once the shared gateway session contract owns expiry.
 
-### Validation required before cutover
+Gateway-stamped person approvals identify their stable device session with
+`personSessionId`. Historical and delegated-service receipts retain
+`credentialId`; exactly one of these authority fields is present. All receipt
+readers preserve existing evidence bindings, and final caller checks compare
+the principal and the same authority kind/id. A refresh does not change that
+identity. A person's startup browser handoff uses a one-use invitation so the
+browser creates its own device session without receiving the CLI access token.
+
+#### Validation required before cutover
 
 Use isolated fixture identities and controlled clocks. Cover exact one-hour and
 30-day boundaries, sliding refresh, restart persistence, independent devices,
@@ -101,7 +113,9 @@ concurrent refresh and lost responses, principal-generation mismatch, source
 credential revocation, one-use pairing and failed atomic writes. Assert no raw
 person credential or access token persists in any client.
 
-Prove confirmed sign-out and remote device revoke invalidate existing WebSocket
+Prove idle WebSocket subscriptions expire at the one-hour boundary without an
+intervening request or store mutation. Prove confirmed sign-out and remote
+device revoke invalidate existing WebSocket
 subscriptions and HTTP access under the existing two-second freshness bound.
 Prove service/node auth and automation attribution remain unchanged. Live
 Command Center, Companion and CLI sign-in/reconnect/sign-out proof follows the

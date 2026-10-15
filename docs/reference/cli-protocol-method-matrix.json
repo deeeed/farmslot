@@ -28,6 +28,24 @@
       "command": "farmslot login",
       "note": "Also the implicit transport handshake on every authenticated client connection."
     },
+    "auth.session.exchange": {
+      "surface": "typed-command",
+      "command": "farmslot login",
+      "note": "Person credential or one-use pairing code creates the selected CLI device session."
+    },
+    "auth.session.refresh": {
+      "surface": "na",
+      "note": "Transport-private renewal through the shared PersonSessionClient; refresh tokens never authenticate general RPCs."
+    },
+    "auth.session.list": {
+      "surface": "rpc-only",
+      "note": "Command Center signed-in device settings and farmslot rpc auth.session.list."
+    },
+    "auth.session.revoke": {
+      "surface": "typed-command",
+      "command": "farmslot logout",
+      "note": "Confirmed logout revokes the selected CLI device. Device settings or rpc can revoke another owned session."
+    },
     "backlog.archive": {
       "surface": "typed-command",
       "command": "farmslot backlog archive"

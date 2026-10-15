@@ -37,6 +37,7 @@ export interface GatewayAuthRuntime {
   store: CredentialStoreRuntime;
   writer: CredentialStoreWriter;
   resolver: PrincipalResolver;
+  onAuthenticationPoll?: () => void;
 }
 
 export interface GatewayAuthResult {
@@ -117,19 +118,26 @@ export function resolveGatewayAuth(env: NodeJS.ProcessEnv = process.env): Resolv
     : { mode: 'none', source: 'default-none' };
 }
 
-export function createGatewayAuthRuntime(env: NodeJS.ProcessEnv = process.env): GatewayAuthRuntime {
+export function createGatewayAuthRuntime(
+  env: NodeJS.ProcessEnv = process.env,
+  now = Date.now,
+): GatewayAuthRuntime {
   const auth = resolveGatewayAuth(env);
   const store = new CredentialStoreRuntime(env);
-  const resolver = new PrincipalResolver(store, {
-    bindIsLoopbackOnly: isLoopbackHost(env.GATEWAY_HOST?.trim() || '127.0.0.1'),
-    trustProxyHeaders: shouldTrustProxyHeaders(env),
-    machine: os.hostname().replace(/\.local$/u, ''),
-  });
+  const resolver = new PrincipalResolver(
+    store,
+    {
+      bindIsLoopbackOnly: isLoopbackHost(env.GATEWAY_HOST?.trim() || '127.0.0.1'),
+      trustProxyHeaders: shouldTrustProxyHeaders(env),
+      machine: os.hostname().replace(/\.local$/u, ''),
+    },
+    now,
+  );
   return {
     auth,
     limiter: new GatewayAuthRateLimiter(),
     store,
-    writer: new CredentialStoreWriter(store),
+    writer: new CredentialStoreWriter(store, false, now),
     resolver,
   };
 }
@@ -149,6 +157,7 @@ export function startCredentialFreshnessPolling(runtime: GatewayAuthRuntime): ()
   const timer = setInterval(() => {
     try {
       runtime.store.ensureFresh();
+      runtime.onAuthenticationPoll?.();
     } catch (err) {
       // A failed load leaves the last-known-good projection and freshness stamp intact,
       // so the next interval can retry after the store is repaired.
@@ -203,8 +212,7 @@ export function authenticateGatewayClient(params: {
   // With proxy trust on there is a reverse proxy in front, clientIp comes from
   // X-Forwarded-For and a remote client could forge 127.0.0.1 — never exempt then, so
   // brute-force protection stays on for remote callers.
-  const rateLimitApplies =
-    shouldTrustProxyHeaders(params.runtime.store.env) || !isLoopbackClientIp(params.clientIp);
+  const rateLimitApplies = authRateLimitApplies(params.runtime, params.clientIp);
   if (rateLimitApplies) {
     const rateLimited = limiter.check(params.clientIp);
     if (rateLimited) return rateLimited;
@@ -231,7 +239,13 @@ export function authenticateGatewayClient(params: {
   const resolution = params.runtime.resolver.resolveSecret(presented, 'token');
   if (!resolution.ok) {
     if (rateLimitApplies) limiter.recordFailure(params.clientIp);
-    return { ok: false, reason: 'credential_mismatch' };
+    return {
+      ok: false,
+      reason:
+        resolution.reason === 'person_session_required' || resolution.reason === 'session_ended'
+          ? resolution.reason
+          : 'credential_mismatch',
+    };
   }
   limiter.reset(params.clientIp);
   return {
@@ -244,6 +258,10 @@ export function authenticateGatewayClient(params: {
 
 // A loopback client IP, tolerant of the IPv4-mapped IPv6 form Node reports
 // (e.g. ::ffff:127.0.0.1) in addition to 127.x / ::1 / localhost.
+export function authRateLimitApplies(runtime: GatewayAuthRuntime, clientIp: string): boolean {
+  return shouldTrustProxyHeaders(runtime.store.env) || !isLoopbackClientIp(clientIp);
+}
+
 function isLoopbackClientIp(ip: string): boolean {
   return isLoopbackHost(
     ip

@@ -64,10 +64,16 @@ test('role-free enrollment grants only native ingress, never farm HTTP or broadc
     );
     const issue = runtime.writer.issueCredential(owner.id, 'native-client');
     assert.equal(gatewayWorkspaceAccess(owner, runtime.store.snapshot().principals), 'none');
+    const grant = runtime.writer.exchangePersonCredential(issue.secret, {
+      deviceName: 'Native owner fixture',
+      deviceKind: 'cli',
+    });
+    const resolved = runtime.resolver.resolveSecret(grant.accessToken, 'token');
+    assert.ok(resolved.ok && resolved.authentication);
     const state = {
       authenticated: true,
       clientKind: 'ui' as const,
-      authentication: { kind: 'credential' as const, credentialId: issue.record.id },
+      authentication: resolved.authentication,
     };
     assert.throws(
       () => authorizeGatewayMethod(runtime, state, Methods.NATIVE_SESSION_LIST),

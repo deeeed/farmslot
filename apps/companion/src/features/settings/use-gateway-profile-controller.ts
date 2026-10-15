@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Alert } from 'react-native';
 
-import { ACCOUNT_SESSION_CONTROL } from '@farmslot/protocol';
+import { ACCOUNT_SESSION_CONTROL, type PersonSessionAuth } from '@farmslot/protocol';
 import { accountSignOutConfirmation, confirmAccountSignOut } from '@farmslot/review-dispatch';
 
 import {
@@ -14,8 +14,7 @@ import {
   type GatewayProfile,
   type GatewayProfileAuthMode,
   mobileGatewayProfileUrlError,
-  readGatewayProfileSecret,
-  seedPresetGatewayProfileSecrets,
+  prepareGatewayProfileLogin,
 } from '../../lib/gateway-profiles';
 import { useConnectionStore } from '../../store/connection';
 
@@ -26,7 +25,8 @@ export type ProfileConnectionTestState = {
 
 export type ImportedPairingProfile = {
   profile: GatewayProfile;
-  secret: string;
+  secret?: string;
+  personSession?: PersonSessionAuth;
 };
 
 export type PairingProfileReachability = {
@@ -60,7 +60,7 @@ export function useGatewayProfileController(options: GatewayProfileControllerOpt
     setGatewayUrl,
     signOut,
     signedOut,
-    sessionExpiresAt,
+    personSession,
   } = useConnectionStore();
   const [signingOut, setSigningOut] = useState(false);
   const [manualUrlValidationInProgress, setManualUrlValidationInProgress] = useState(false);
@@ -74,11 +74,9 @@ export function useGatewayProfileController(options: GatewayProfileControllerOpt
 
   const testProfileConnection = async (
     profile: GatewayProfile,
-    restorePresetSecret = false,
   ): Promise<ProfileConnectionTestState> => {
     try {
       // Explicit selection can restore a bundled preset after local sign-out.
-      if (restorePresetSecret) await seedPresetGatewayProfileSecrets([profile]);
       const auth = await authCredentialsForProfile(profile);
       if (profile.authMode !== 'none' && Object.keys(auth).length === 0) {
         throw new Error(`No ${profile.authMode} credential is saved for this profile.`);
@@ -148,7 +146,7 @@ export function useGatewayProfileController(options: GatewayProfileControllerOpt
       ...current,
       [profile.id]: testingState(profile, 'Validating'),
     }));
-    const result = await testProfileConnection(profile, true);
+    const result = await testProfileConnection(profile);
     setProfileConnectionTests((current) => ({ ...current, [profile.id]: result }));
     if (result.status !== 'healthy') {
       Alert.alert(
@@ -255,7 +253,7 @@ export function useGatewayProfileController(options: GatewayProfileControllerOpt
 
   return {
     signOutCurrentAccount,
-    sessionExpiresAt,
+    personSession,
     signingOut,
     signedOut,
     activateProfile,
@@ -285,7 +283,7 @@ export function startImportedPairingProfileTests(
   importedProfiles: ImportedPairingProfile[],
 ): Promise<PairingProfileReachability>[] {
   return importedProfiles.map(async (importedProfile) => {
-    const auth = authCredentialsForSecret(importedProfile.profile, importedProfile.secret);
+    const auth = await authCredentialsForProfile(importedProfile.profile);
     try {
       const result = await testGatewayConnection(importedProfile.profile.url, auth, {
         connectMs: PAIRING_CONNECT_TIMEOUT_MS,
@@ -370,15 +368,7 @@ function testingState(profile: GatewayProfile, verb: string): ProfileConnectionT
 }
 
 async function authCredentialsForProfile(profile: GatewayProfile): Promise<GatewayAuthCredentials> {
-  const secret = await readGatewayProfileSecret(profile);
-  return authCredentialsForSecret(profile, secret ?? '');
-}
-
-function authCredentialsForSecret(profile: GatewayProfile, secret: string): GatewayAuthCredentials {
-  if (!secret) return {};
-  if (profile.authMode === 'password') return { password: secret };
-  if (profile.authMode === 'token') return { token: secret };
-  return {};
+  return (await prepareGatewayProfileLogin(profile)).credentials;
 }
 
 export function connectionHealthNeedsAttention(

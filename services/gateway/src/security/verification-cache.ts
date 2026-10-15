@@ -1,20 +1,20 @@
 import { verificationCacheKey } from './credential-secret.js';
 
-export class VerificationCache {
-  private readonly entries = new Map<string, string>();
+export class VerificationCache<T = string> {
+  private readonly entries = new Map<string, T>();
 
   constructor(private readonly capacity = 256) {}
 
-  get(presented: string): string | undefined {
+  get(presented: string): T | undefined {
     const key = verificationCacheKey(presented);
     const credentialId = this.entries.get(key);
-    if (!credentialId) return undefined;
+    if (credentialId === undefined) return undefined;
     this.entries.delete(key);
     this.entries.set(key, credentialId);
     return credentialId;
   }
 
-  set(presented: string, credentialId: string): void {
+  set(presented: string, credentialId: T): void {
     const key = verificationCacheKey(presented);
     this.entries.delete(key);
     this.entries.set(key, credentialId);

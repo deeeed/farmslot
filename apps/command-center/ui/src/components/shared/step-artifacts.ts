@@ -10,6 +10,8 @@ import type {
 import { colors, fonts } from '../../styles/theme-tokens.js';
 import { formatBytes } from '../../utils/format.js';
 
+import { gatewayMediaSrc } from './gateway-media-src.js';
+
 /**
  * Shared expandable step row used by family-observability and step-inspector.
  *
@@ -158,7 +160,7 @@ export class StepArtifacts extends LitElement {
                       <li>
                         <a
                           class="artifact-link"
-                          href=${url ? url(a) : '#'}
+                          href=${gatewayMediaSrc(url ? url(a) : '#')}
                           @click=${(e: Event) => this._onArtifactClick(i, e)}
                           >${a.path}</a
                         >

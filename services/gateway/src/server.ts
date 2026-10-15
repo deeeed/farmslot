@@ -6,6 +6,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 
 import { decodeNodeFrame } from '@farmslot/capabilities/screen-frame';
 import {
+  type AuthenticationRef,
   chatActionRejectCode,
   type EventFrame,
   Events,
@@ -66,8 +67,10 @@ import {
   gatewayWorkspaceAccess,
   isNodeSubjectSession,
 } from './security/authorization.js';
+import type { CredentialStoreChange } from './security/credential-store.js';
 import { nativeOwnerCanUseWorkers } from './security/native-owner.js';
 import { isGatewayOriginAllowed } from './security/origin.js';
+import { personSessionMethods, routePersonSessionMethod } from './security/person-sessions.js';
 import type { ClientState } from './server/client-state.js';
 import { routeMethod } from './server/route-method.js';
 import { handleAgentFsChanged } from './tasks/watcher.js';
@@ -210,11 +213,10 @@ export function createWebSocketServer(
         try {
           peek = JSON.parse(raw.toString());
         } catch (err) {
+          if (!(err instanceof SyntaxError)) throw err;
           // Parse failures are not structured node frames; preserve legacy text handling.
           if (process.env.DEBUG_GATEWAY_FRAMES) {
-            console.warn(
-              `[server] non-JSON websocket frame routed as text: ${(err as Error).message}`,
-            );
+            console.warn('[server] non-JSON websocket frame routed as text');
           }
           void handleMessage(state, raw, authRuntime, _req).catch((err) => {
             console.error(
@@ -542,11 +544,38 @@ async function handleMessage(
   try {
     frame = JSON.parse(raw.toString());
   } catch (err) {
-    console.warn(`[server] ignoring malformed request frame: ${(err as Error).message}`);
+    if (!(err instanceof SyntaxError)) throw err;
+    console.warn('[server] ignoring malformed request frame');
     return;
   }
 
   if (frame.type !== 'req') return;
+
+  if (personSessionMethods.has(frame.method)) {
+    try {
+      const result = routePersonSessionMethod(
+        frame.method,
+        frame.params ?? {},
+        authRuntime,
+        state,
+        resolveRequestIp(req, authRuntime.store.env),
+      );
+      sendResponse(state.ws, frame.id, true, result);
+    } catch (error) {
+      if (!(error instanceof GatewayMethodError)) {
+        console.error('[auth] person-session request failed');
+        sendResponse(state.ws, frame.id, false, undefined, {
+          code: 'INTERNAL_ERROR',
+          message: 'Sign-in request failed.',
+        });
+      } else
+        sendResponse(state.ws, frame.id, false, undefined, {
+          code: error.code,
+          message: error.message,
+        });
+    }
+    return;
+  }
 
   if (frame.method === Methods.PAIRING_EXCHANGE) {
     try {
@@ -557,7 +586,7 @@ async function handleMessage(
         console.error(`[server] pairing exchange failed on ${state.id}: ${(err as Error).message}`);
       }
       sendResponse(state.ws, frame.id, false, undefined, {
-        code: 'PAIRING_FAILED',
+        code: err instanceof GatewayMethodError ? err.code : 'PAIRING_FAILED',
         message: err instanceof GatewayMethodError ? err.message : 'Pairing exchange failed',
       });
     }
@@ -594,8 +623,17 @@ async function handleMessage(
         ? ` Retry after ${Math.ceil(result.retryAfterMs / 1000)}s.`
         : '';
       sendResponse(state.ws, frame.id, false, undefined, {
-        code: result.rateLimited ? 'AUTH_RATE_LIMITED' : 'AUTH_FAILED',
-        message: `Gateway authentication failed: ${sanitizeAuthFailureReason(result.reason)}.${retry}`,
+        code: result.rateLimited
+          ? 'AUTH_RATE_LIMITED'
+          : result.reason === 'person_session_required'
+            ? 'AUTH_PERSON_SESSION_REQUIRED'
+            : result.reason === 'session_ended'
+              ? 'AUTH_SESSION_ENDED'
+              : 'AUTH_FAILED',
+        message:
+          result.reason === 'person_session_required'
+            ? 'Sign in again using a current Farmslot client.'
+            : `Gateway authentication failed: ${sanitizeAuthFailureReason(result.reason)}.${retry}`,
       });
       return;
     }
@@ -608,9 +646,8 @@ async function handleMessage(
       return;
     }
     if (
-      state.authentication?.kind === 'credential' &&
-      (result.authentication?.kind !== 'credential' ||
-        result.authentication.credentialId !== state.authentication.credentialId ||
+      state.authentication &&
+      (!sameAuthenticationSession(state.authentication, result.authentication) ||
         (state.clientKind !== undefined && state.clientKind !== clientKind))
     ) {
       sendResponse(state.ws, frame.id, false, undefined, {
@@ -624,6 +661,14 @@ async function handleMessage(
     state.authMode = result.mode ?? authRuntime.auth.mode;
     state.authenticatedAt = Date.now();
     state.authentication = result.authentication;
+    let gatewayPing = true;
+    try {
+      authorizeGatewayMethod(authRuntime, state, Methods.GATEWAY_PING);
+    } catch (error) {
+      if (!(error instanceof GatewayMethodError) || error.code !== 'AUTH_FORBIDDEN') throw error;
+      // Capabilities describe this account's existing permission, not a guard exemption.
+      gatewayPing = false;
+    }
     console.log(`[auth] ${clientKind} authenticated using ${state.authMode}`);
     sendResponse(state.ws, frame.id, true, {
       ok: true,
@@ -632,8 +677,9 @@ async function handleMessage(
       authenticatedAt: state.authenticatedAt,
       capabilities: {
         httpBearerAuth: !authRuntime.resolver.isSoloMode(),
+        personSessions: true,
         voiceInstructionFormatting: true,
-        gatewayPing: true,
+        gatewayPing,
         workspaceAccess: gatewayWorkspaceAccess(
           result.principal,
           authRuntime.store.snapshot().principals,
@@ -850,38 +896,43 @@ export function closeSessions(predicate: (state: ClientState) => boolean): void 
 function installCredentialSessionInvalidation(authRuntime: GatewayAuthRuntime): void {
   if (invalidationInstalled.has(authRuntime)) return;
   invalidationInstalled.add(authRuntime);
+  authRuntime.onAuthenticationPoll = () => reconcileAuthenticationSessions(authRuntime);
   authRuntime.store.onChange((change) => {
-    // Let the mutation's response frame (especially the one-time issuance
-    // secret that latches activation) flush before invalidating sockets.
-    setImmediate(() => {
-      if (change.activationLatched) {
-        closeSessions(() => true);
-        return;
-      }
-      let authorizationFaultLogged = false;
-      closeSessions((state) => {
-        if (
-          state.authentication?.kind === 'credential' &&
-          change.revokedCredentialIds.includes(state.authentication.credentialId)
-        ) {
-          return true;
-        }
-        try {
-          const resolution = authRuntime.resolver.resolveSessionPrincipal(state);
-          if (!resolution.ok) return true;
-          return change.changedPrincipalIds.includes(resolution.principal.id);
-        } catch (err) {
-          // If current authority cannot be established, this session must fail closed;
-          // the next connection can authenticate after the store is repaired.
-          if (!authorizationFaultLogged) {
-            console.error(
-              `[server] credential session invalidation failed: ${(err as Error).message}`,
-            );
-            authorizationFaultLogged = true;
-          }
-          return true;
-        }
-      });
-    });
+    // Allow the mutation response to flush before closing its requesting socket.
+    setImmediate(() => reconcileAuthenticationSessions(authRuntime, change));
   });
+}
+
+function reconcileAuthenticationSessions(
+  runtime: GatewayAuthRuntime,
+  change?: CredentialStoreChange,
+): void {
+  if (change?.activationLatched) {
+    closeSessions(() => true);
+    return;
+  }
+  let faultLogged = false;
+  closeSessions((state) => {
+    // New sockets have no authority to withdraw. Their authentication must receive its own result.
+    if (!state.authenticated && !state.authentication) return false;
+    if (!change && state.authentication?.kind !== 'person-session') return false;
+    try {
+      const resolved = runtime.resolver.resolveSessionPrincipal(state);
+      if (!resolved.ok) return true;
+      return change?.changedPrincipalIds.includes(resolved.principal.id) ?? false;
+    } catch (error) {
+      // Unknown current authority cannot keep a subscription alive.
+      if (!faultLogged) {
+        console.error('[auth] session reconciliation failed: ' + (error as Error).message);
+        faultLogged = true;
+      }
+      return true;
+    }
+  });
+}
+
+function sameAuthenticationSession(previous: AuthenticationRef, next?: AuthenticationRef): boolean {
+  if (previous.kind === 'credential')
+    return next?.kind === 'credential' && previous.credentialId === next.credentialId;
+  return next?.kind === 'person-session' && previous.sessionId === next.sessionId;
 }

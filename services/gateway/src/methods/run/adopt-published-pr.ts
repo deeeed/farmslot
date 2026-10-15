@@ -10,6 +10,7 @@ import {
   type RunAdoptPublishedPrParams,
   type RunAdoptPublishedPrResult,
   type RunGatePrerequisiteReason,
+  sameEvidenceAttestationApprover,
 } from '@farmslot/protocol';
 
 import { loadProjectVars } from '../../core/config.js';
@@ -231,10 +232,7 @@ export async function runAdoptPublishedPr(
   }
   return withRunTransition(initial.id, async () => {
     const currentApprover = authorize();
-    if (
-      currentApprover.principalId !== approver.principalId ||
-      currentApprover.credentialId !== approver.credentialId
-    )
+    if (!sameEvidenceAttestationApprover(currentApprover, approver))
       throw new GatewayMethodError(
         'AUTH_FORBIDDEN',
         'Publication attestation caller changed during verification',
@@ -259,10 +257,7 @@ export async function runAdoptPublishedPr(
       adoption: receipt!,
       assertCurrent: (run) => {
         const person = authorize();
-        if (
-          person.principalId !== approver.principalId ||
-          person.credentialId !== approver.credentialId
-        )
+        if (!sameEvidenceAttestationApprover(person, approver))
           throw new GatewayMethodError('AUTH_FORBIDDEN', 'Publication attestation caller changed');
         if (adoptionIdentity(run) !== currentIdentity)
           throw new Error('Publication run changed before persistence');

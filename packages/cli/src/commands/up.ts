@@ -29,22 +29,33 @@ import {
   parseCredentialWire,
   verifySecret,
 } from '@farmslot/credential-store';
-import type {
-  CredentialIssueResult,
-  CredentialListResult,
-  PrincipalCreateResult,
-  PrincipalListResult,
+import {
+  type CredentialIssueResult,
+  type CredentialListResult,
+  hasAuthErrorCode,
+  type PairingCreateResult,
+  parsePersonSessionToken,
+  PersonSessionChangedError,
+  type PrincipalCreateResult,
+  type PrincipalListResult,
+  samePersonSessionAuthority,
 } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { bold, cyan, dim, green, red, yellow } from '../colors.js';
 import { probeGatewayAuth } from '../gateway-auth.js';
-import { GatewayClient } from '../gateway-client.js';
+import {
+  GatewayClient,
+  GatewayConnectionError,
+  type GatewayCredential,
+  GatewayRpcError,
+} from '../gateway-client.js';
 import {
   DEFAULT_GATEWAY_PORT,
   DEFAULT_GATEWAY_URL,
   loadProfiles,
   saveProfiles,
+  storedProfileCredential,
 } from '../gateway-profiles.js';
 import { resolveGatewayTls } from '../gateway-tls.js';
 import { repoRoot } from '../onboarding/workspace.js';
@@ -114,11 +125,13 @@ function hostedCommandCenterUrl(
   port: number,
   token: string | null,
   tlsPort: number | null,
+  code?: string,
 ): string {
   const payload = {
     v: 1,
     gateways: hostedGatewayCandidates(port, tlsPort),
     ...(token ? { token } : {}),
+    ...(code ? { code } : {}),
   };
   return `${HOSTED_COMMAND_CENTER_BASE}#doctor?connect=${encodeBase64UrlJson(payload)}`;
 }
@@ -207,10 +220,14 @@ function readPid(): number | null {
 }
 
 /** First interactive startup issues a person credential; subsequent starts reuse its profile. */
-function ensureLocalCredential(port: number): string {
+export function ensureLocalCredential(port: number): GatewayCredential {
   const profile = loadProfiles().gateways[LOCAL_PROFILE];
   const url = port === DEFAULT_GATEWAY_PORT ? DEFAULT_GATEWAY_URL : `ws://localhost:${port}`;
   const runtime = new CredentialStoreRuntime();
+  if (profile?.url === url && profile.authMode === 'token' && profile.personSession) {
+    const profileAuth = storedProfileCredential(LOCAL_PROFILE, profile);
+    if (profileAuth) return profileAuth;
+  }
   if (
     profile?.url === url &&
     profile.authMode === 'token' &&
@@ -231,8 +248,14 @@ function ensureLocalCredential(port: number): string {
         'The local profile credential is invalid or revoked. Log in again before starting the gateway.',
       );
     }
-    return profile.secret;
+    const profileAuth = storedProfileCredential(LOCAL_PROFILE, profile);
+    if (profileAuth) return profileAuth;
+    throw new Error('The local profile has no usable credential. Sign in again.');
   }
+  if (profile?.url === url && (profile.secret || profile.personSession))
+    throw new Error(
+      'The local profile has an unverified credential. Verify or replace it explicitly before starting a new gateway.',
+    );
   if (runtime.isActivated() || !process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error(
       'A verified local profile is required. Add the local gateway profile and log in with a person pairing code; for recovery, stop every gateway and use credential issue --offline.',
@@ -243,12 +266,22 @@ function ensureLocalCredential(port: number): string {
     { role: 'admin', scope: { kind: 'global' } },
   ]);
   const issued = writer.issueCredential(principal.id, 'local-cli');
-  registerLocalProfile(port, issued.secret);
-  return issued.secret;
+  // The existing offline first-owner bootstrap uses the same locked issuer as the gateway.
+  // Persist its device authority before boot so a failed daemon start cannot lose the only login.
+  const grant = writer.exchangePersonCredential(issued.secret, {
+    deviceName: `CLI on ${hostname()}`.slice(0, 128),
+    deviceKind: 'cli',
+  });
+  registerLocalProfile(port, {
+    personSession: { session: grant.session, refreshToken: grant.refreshToken },
+  });
+  const credential = storedProfileCredential(LOCAL_PROFILE, loadProfiles().gateways[LOCAL_PROFILE]);
+  if (!credential) throw new Error('The local device sign-in could not be saved.');
+  return credential;
 }
 
 /** The local node has its own machine-bound credential, never the CLI's identity. */
-async function localNodeCredential(port: number, token: string): Promise<string> {
+async function localNodeCredential(port: number, credential: GatewayCredential): Promise<string> {
   const machine = hostname().replace(/\.local$/, '');
   const secretPath = join(farmslotHome(), 'node.secret');
   // Use the node's own install/reconnect resolution before the startup cache.
@@ -283,7 +316,7 @@ async function localNodeCredential(port: number, token: string): Promise<string>
   const client = new GatewayClient({
     url: `ws://localhost:${port}`,
     timeout: 5000,
-    credential: { token },
+    credential,
   });
   const listed = await client.call<PrincipalListResult>('principal.list', {});
   const nodes = listed.principals.filter(
@@ -323,13 +356,21 @@ async function localNodeCredential(port: number, token: string): Promise<string>
 }
 
 /** Register/refresh the `local` profile; returns true when it is the active profile. */
-function registerLocalProfile(port: number, token: string): boolean {
+function registerLocalProfile(port: number, credential: GatewayCredential): boolean {
   const profiles = loadProfiles();
-  profiles.gateways[LOCAL_PROFILE] = {
-    url: port === DEFAULT_GATEWAY_PORT ? DEFAULT_GATEWAY_URL : `ws://localhost:${port}`,
-    authMode: 'token',
-    secret: token,
-  };
+  const current = profiles.gateways[LOCAL_PROFILE];
+  if (credential.personSession && current?.personSession) {
+    if (!samePersonSessionAuthority(credential.personSession, current.personSession))
+      throw new PersonSessionChangedError();
+    // Verification already persisted fresh metadata through the shared controller.
+  } else
+    profiles.gateways[LOCAL_PROFILE] = {
+      url: port === DEFAULT_GATEWAY_PORT ? DEFAULT_GATEWAY_URL : `ws://localhost:${port}`,
+      authMode: 'token',
+      ...(credential.personSession
+        ? { personSession: credential.personSession }
+        : { secret: credential.token }),
+    };
   // Don't hijack an existing active profile (e.g. a remote gateway the user
   // works against); the printed pair hint targets `local` explicitly instead.
   if (!profiles.active) profiles.active = LOCAL_PROFILE;
@@ -380,14 +421,41 @@ async function waitForHealthOrExit(
 }
 
 /** The up-managed gateway must accept our token — anything else is a broken pairing setup. */
-async function verifyTokenAuth(port: number, token: string, output: OutputContext): Promise<void> {
-  const probe = await probeGatewayAuth(`ws://localhost:${port}`, { token });
+export async function verifyTokenAuth(
+  port: number,
+  credential: GatewayCredential,
+  output: OutputContext,
+): Promise<void> {
+  const probe = await probeGatewayAuth(`ws://localhost:${port}`, credential);
   if (probe.state === 'authenticated') return;
+  if (
+    probe.errorCode === 'AUTH_PERSON_SESSION_REQUIRED' ||
+    probe.errorCode === 'AUTH_SESSION_ENDED'
+  )
+    throw Object.assign(
+      new Error(
+        probe.errorCode === 'AUTH_SESSION_ENDED'
+          ? 'The local device sign-in has ended. The gateway is running; use farmslot login local --code <code from a signed-in Command Center or Companion>, then retry farmslot up.'
+          : 'The local person login needs a device session. The gateway is running; use farmslot login local --token <credential> or --code <pairing-code>, then retry farmslot up.',
+      ),
+      { code: probe.errorCode },
+    );
   output.error(
     `gateway on :${port} did not accept the local token (auth state: ${probe.state}) — ` +
       `check the local gateway profile and restart: farmslot down && farmslot up`,
   );
   throw new Error(`Local gateway credential verification failed: ${probe.state}`);
+}
+
+export async function cleanupFailedGatewayStartup(pid: number, error: unknown): Promise<void> {
+  // Keep the healthy owned gateway reachable so another device can issue a login invitation.
+  if (
+    hasAuthErrorCode(error, 'AUTH_PERSON_SESSION_REQUIRED') ||
+    hasAuthErrorCode(error, 'AUTH_SESSION_ENDED')
+  )
+    return;
+  await killGracefully(pid);
+  rmSync(pidFilePath(), { force: true });
 }
 
 function pairHint(localActive: boolean): string {
@@ -399,7 +467,8 @@ export function writeUpResult(params: {
   status: 'gateway up' | 'gateway already running';
   pid: number;
   port: number;
-  token: string;
+  token?: string;
+  pairingCode?: string;
   localActive: boolean;
   dashboardBuilt: boolean;
   openBrowser: boolean;
@@ -410,7 +479,8 @@ export function writeUpResult(params: {
   // The connect link carries the gateway token, so it only reaches stdout (terminals,
   // agent transcripts, logs) on explicit --print-connect-url; the browser gets it directly.
   const hostedDashboard = hostedCommandCenterUrl(params.port, null, params.tlsPort);
-  const connectUrl = hostedCommandCenterUrl(params.port, params.token, params.tlsPort);
+  const token = params.token && !parsePersonSessionToken(params.token, 'fsa') ? params.token : null;
+  const connectUrl = hostedCommandCenterUrl(params.port, token, params.tlsPort, params.pairingCode);
   const fallbackDashboard = `http://localhost:${params.port}`;
   if (params.output.json) {
     params.output.writeJson({
@@ -422,7 +492,7 @@ export function writeUpResult(params: {
       dashboard: params.dashboardBuilt ? fallbackDashboard : null,
       hostedDashboard,
       // The raw token, like the link that carries it, only on --print-connect-url.
-      ...(params.printConnectUrl ? { token: params.token, connectUrl } : {}),
+      ...(params.printConnectUrl ? { ...(token ? { token } : {}), connectUrl } : {}),
       fallbackDashboard,
       tlsUrl: params.tlsPort ? `wss://localhost:${params.tlsPort}/ws` : null,
     });
@@ -443,7 +513,7 @@ export function writeUpResult(params: {
   }
   if (params.printConnectUrl) {
     params.output.write(
-      `  ${dim('connect url')}    ${cyan(connectUrl)} ${dim('(contains the gateway token)')}\n`,
+      `  ${dim('connect url')}    ${cyan(connectUrl)} ${dim(token ? '(contains the gateway token)' : '(sign in separately in this browser)')}\n`,
     );
   } else {
     const portFlag = params.port === DEFAULT_GATEWAY_PORT ? '' : ` --port ${params.port}`;
@@ -549,16 +619,22 @@ async function up(
   const existingPid = readPid();
   if (existingPid && isAlive(existingPid)) {
     if (await waitForHealth(port, 2000)) {
-      const token = ensureLocalCredential(port);
-      await verifyTokenAuth(port, token, output);
-      const localActive = registerLocalProfile(port, token);
-      if (startNode) await startLocalNode(port, await localNodeCredential(port, token), output);
+      const credential = ensureLocalCredential(port);
+      await verifyTokenAuth(port, credential, output);
+      const localActive = registerLocalProfile(port, credential);
+      if (startNode)
+        await startLocalNode(port, await localNodeCredential(port, credential), output);
       writeUpResult({
         output,
         status: 'gateway already running',
         pid: existingPid,
         port,
-        token,
+        token: credential.personSession ? undefined : credential.token,
+        pairingCode: await startupBrowserInvitation(
+          port,
+          credential,
+          openBrowser || printConnectUrl,
+        ),
         localActive,
         dashboardBuilt: existsSync(UI_DIST_INDEX),
         openBrowser,
@@ -595,7 +671,7 @@ async function up(
     process.exit(1);
   }
 
-  const token = ensureLocalCredential(port);
+  const credential = ensureLocalCredential(port);
   mkdirSync(farmslotHome(), { recursive: true, mode: 0o700 });
   const logFd = openSync(logFilePath(), 'a');
   const child = spawn(tsx, [entry], {
@@ -639,12 +715,11 @@ async function up(
   }
   let localActive: boolean;
   try {
-    await verifyTokenAuth(port, token, output);
-    localActive = registerLocalProfile(port, token);
-    if (startNode) await startLocalNode(port, await localNodeCredential(port, token), output);
+    await verifyTokenAuth(port, credential, output);
+    localActive = registerLocalProfile(port, credential);
+    if (startNode) await startLocalNode(port, await localNodeCredential(port, credential), output);
   } catch (error) {
-    await killGracefully(child.pid);
-    rmSync(pidFilePath(), { force: true });
+    await cleanupFailedGatewayStartup(child.pid, error);
     throw error;
   }
 
@@ -653,7 +728,8 @@ async function up(
     status: 'gateway up',
     pid: child.pid,
     port,
-    token,
+    token: credential.personSession ? undefined : credential.token,
+    pairingCode: await startupBrowserInvitation(port, credential, openBrowser || printConnectUrl),
     localActive,
     dashboardBuilt: existsSync(UI_DIST_INDEX),
     openBrowser,
@@ -718,4 +794,33 @@ export function registerUpCommand(program: Command): void {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
       await down(output);
     });
+}
+
+async function startupBrowserInvitation(
+  port: number,
+  credential: GatewayCredential,
+  requested: boolean,
+): Promise<string | undefined> {
+  if (!requested || !credential.personSession) return undefined;
+  const client = new GatewayClient({ url: `ws://localhost:${port}`, timeout: 5000, credential });
+  try {
+    const invitation = await client.call<PairingCreateResult>('pairing.create', {
+      gatewayUrl: `ws://localhost:${port}`,
+      authority: {
+        kind: 'existing-principal',
+        principalId: credential.personSession.session.principalId,
+      },
+    });
+    return invitation.code;
+  } catch (error) {
+    if (
+      error instanceof GatewayConnectionError ||
+      (error instanceof GatewayRpcError && error.code === 'AUTH_FORBIDDEN')
+    ) {
+      // The daemon remains usable. The opened browser asks for its own sign-in when
+      // this caller cannot issue an invitation or a deploy interrupts that optional handoff.
+      return undefined;
+    }
+    throw error;
+  }
 }

@@ -168,3 +168,15 @@ test('the shared action builder sends an override operation instead of decision 
     /requires/,
   );
 });
+
+test('person device override receipts preserve the original engine verdict and stored chain', () => {
+  const receipt: ClaimUntestableOverrideReceipt = {
+    ...first,
+    approver: { principalId: 'person', displayName: 'Reviewer', personSessionId: 'device' },
+  };
+  const deviceAuthority = { ...authority, receipts: [receipt] };
+  const projected = projectClaimUntestableOverride(claim, deviceAuthority);
+  assert.equal(projected.verdict, 'untestable');
+  assert.equal(projected.engineVerdict, claim.verdict);
+  assert.equal(isAuthorizedOverride(projected, claim, deviceAuthority), true);
+});

@@ -10,6 +10,7 @@ import {
 } from '../../utils/artifact-markdown.js';
 import { renderMarkdown } from '../../utils/markdown.js';
 import { createSlotViewRecipeHostEntry } from '../recipe/recipe-quality-hosts.js';
+import { gatewayMediaSrc } from '../shared/gateway-media-src.js';
 import {
   dedupeWorkspaceEvidenceArtifacts,
   renderWorkspaceEvidencePreview,
@@ -134,13 +135,13 @@ export function renderRecipeArtifactPreview(
       </div>
       ${isImageRecipeArtifact(artifact)
         ? html`<img
-            src=${url}
+            src=${gatewayMediaSrc(url)}
             alt=${artifact.path}
             style="display:block; width:100%; max-height:280px; object-fit:contain; background:${colors.bgBase};"
           />`
         : isVideoRecipeArtifact(artifact)
           ? html`<video
-              src=${url}
+              src=${gatewayMediaSrc(url)}
               controls
               style="display:block; width:100%; max-height:280px; background:${colors.bgBase};"
             ></video>`

@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
@@ -31,12 +32,13 @@ import {
   openHumanGateDecision,
 } from '../../../lib/gate-review';
 import type { GatewayClient } from '../../../lib/gateway-client';
-import { gatewayFetch } from '../../../lib/gateway-http-auth';
+import { gatewayFetch, usesPersonHttpAccess } from '../../../lib/gateway-http-auth';
 import {
   collectRunInteractivePacketArtifacts,
   interactivePacketActionRequest,
   interactivePacketArtifactKey,
   interactivePacketArtifactOpenUrl,
+  interactivePacketArtifactViewerHref,
 } from '../../../lib/interactive-operator-packets';
 import { colors, fonts, radii, spacing } from '../../../lib/theme';
 
@@ -58,6 +60,7 @@ export function InteractiveOperatorPacketsPanel({
   gatewayUrl: string;
   artifactAuthHeaders: ArtifactHttpHeaders;
 }) {
+  const router = useRouter();
   const packetArtifacts = collectRunInteractivePacketArtifacts(run);
   const packetArtifactKey = interactivePacketArtifactKey(packetArtifacts);
   const [packets, setPackets] = useState<LoadedInteractivePacket[]>([]);
@@ -140,6 +143,16 @@ export function InteractiveOperatorPacketsPanel({
 
   if (!packetArtifacts.length && !loading) return null;
 
+  const openArtifact = async (path: string) => {
+    if (usesPersonHttpAccess(artifactAuthHeaders)) {
+      router.push(interactivePacketArtifactViewerHref(run.id, path));
+      return;
+    }
+    await Linking.openURL(
+      interactivePacketArtifactOpenUrl(gatewayUrl, run.id, path, artifactAuthHeaders),
+    );
+  };
+
   const runAction = async (packet: InteractiveOperatorPacket, actionId: string) => {
     const action = packet.actions?.find((candidate) => candidate.id === actionId);
     if (!action) return;
@@ -176,14 +189,7 @@ export function InteractiveOperatorPacketsPanel({
           return;
         }
       } else if (request.kind === 'open-artifact') {
-        await Linking.openURL(
-          interactivePacketArtifactOpenUrl(
-            gatewayUrl,
-            run.id,
-            request.artifactPath,
-            artifactAuthHeaders,
-          ),
-        );
+        await openArtifact(request.artifactPath);
       } else if (request.kind === 'terminal.send') {
         if (!client) throw new Error('Gateway is not connected.');
         if (!run.slotId) throw new Error('Run is not attached to a slot.');
@@ -251,12 +257,9 @@ export function InteractiveOperatorPacketsPanel({
                       key={anchor.id}
                       style={panelStyles.chip}
                       onPress={() =>
-                        void Linking.openURL(
-                          interactivePacketArtifactOpenUrl(
-                            gatewayUrl,
-                            run.id,
-                            artifactPath,
-                            artifactAuthHeaders,
+                        void openArtifact(artifactPath).catch((error: unknown) =>
+                          setFeedback(
+                            error instanceof Error ? error.message : 'Could not open artifact.',
                           ),
                         )
                       }

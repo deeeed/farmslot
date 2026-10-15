@@ -10,6 +10,7 @@ export * from './integrations/pr-rule-config.js';
 export * from './integrations/pr-rule-predicates.js';
 export * from './integrations/pr-workflow-defaults.js';
 export * from './pairing/index.js';
+export * from './person-session-client.js';
 export * from './recipe/index.js';
 export * from './recipes/step-io.js';
 export * from './roadmap/delivery-view.js';

@@ -21,7 +21,9 @@ function fixture(t: { after(fn: () => void): void }) {
   const date = '2026-01-01T00:00:00.000Z';
   const secret = hashSecret('synthetic-origin-proof');
   const store: CredentialStore = {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    personSessions: [],
+    personAccessTokens: [],
     activatedAt: date,
     principals: [
       {
@@ -54,6 +56,7 @@ function fixture(t: { after(fn: () => void): void }) {
   };
   const historical = {
     ...store,
+    schemaVersion: 1,
     credentials: store.credentials.map((record, index) => ({
       ...record,
       origin: index >= 2 ? 'env-migrated' : record.origin,
@@ -120,7 +123,7 @@ test('migration uses the supplied path and reuses an already-held writer lock', 
 test('invalid surviving records and unknown origins refuse boot without rewriting', (t) => {
   const f = fixture(t);
   for (const invalid of [
-    { ...f.historical, schemaVersion: 2 },
+    { ...f.historical, schemaVersion: 99 },
     { ...f.historical, principals: [{ ...f.store.principals[0], roles: ['invalid'] }] },
     {
       ...f.historical,

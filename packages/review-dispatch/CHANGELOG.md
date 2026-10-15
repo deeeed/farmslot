@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Use gateway device-session expiry in clients instead of the temporary local sign-in lifetime.
+
 - Document modelPickerState as the renderer API and remove the unused modelChoices method.
 
 - Share model filtering and custom-model detection between the web and native execution pickers.

@@ -8,6 +8,7 @@ import type {
 
 import '../reviews/gate-summary-panel.js';
 
+import { gatewayMediaSrc } from '../shared/gateway-media-src.js';
 import { renderRunTitle } from '../shared/run-title.js';
 
 import {
@@ -307,7 +308,11 @@ function renderEvidenceThumb(
     <button class="evidence-thumb" title=${artifact.path} @click=${onClick}>
       ${kind === 'video'
         ? html`<span class="evidence-video">▶</span>`
-        : html`<img src=${options.evidenceThumbUrl(artifact)} alt=${label} loading="lazy" />`}
+        : html`<img
+            src=${gatewayMediaSrc(options.evidenceThumbUrl(artifact))}
+            alt=${label}
+            loading="lazy"
+          />`}
     </button>
   `;
 }

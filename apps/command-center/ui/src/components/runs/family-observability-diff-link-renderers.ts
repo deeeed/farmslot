@@ -7,6 +7,8 @@ import type {
   FamilyObservabilitySnapshot,
 } from '@farmslot/protocol';
 
+import { gatewayMediaSrc } from '../shared/gateway-media-src.js';
+
 import { familyArtifactUrl } from './family-observability-artifact-model.js';
 import {
   artifactFromPath,
@@ -95,7 +97,7 @@ export function createFamilyDiffLinkRenderers(options: DiffLinkRenderersInput) {
       if (!artifact) return nothing;
       return html`<a
         class="detail-link"
-        href=${familyArtifactUrl(artifact)}
+        href=${gatewayMediaSrc(familyArtifactUrl(artifact))}
         target="_blank"
         rel="noopener noreferrer"
         >${label}</a

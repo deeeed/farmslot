@@ -1,5 +1,6 @@
 import {
   type EvidenceAttestationApprover,
+  type EvidenceAttestationAuthority,
   Methods,
   type ProjectVisualClaimReviewPolicy,
   type RecipeVisualJudgmentKind,
@@ -17,19 +18,19 @@ export function authorizeEvidenceAttestation(
   session: GatewayAuthSession,
 ): EvidenceAttestationApprover {
   const principal = authorizeGatewayMethod(runtime, session, Methods.RUN_RESOLVE_DECISION);
-  if (session.authentication?.kind !== 'credential' || principal.subject.type !== 'person') {
+  if (session.authentication?.kind !== 'person-session' || principal.subject.type !== 'person') {
     throw new GatewayMethodError(
       'AUTH_FORBIDDEN',
-      'Evidence attestation requires a credential-backed person with publish authority.',
+      'Evidence attestation requires an active person device session with publish authority.',
       {
-        userAction: 'Authenticate with an active person admin credential before attesting.',
+        userAction: 'Sign in with a current client as a person admin before attesting.',
       },
     );
   }
   return {
     principalId: principal.id,
     displayName: principal.subject.displayName,
-    credentialId: session.authentication.credentialId,
+    ...receiptAuthority(session.authentication),
   };
 }
 
@@ -43,7 +44,7 @@ export function authorizeVisualClaimReview(
   const principal = authorizeGatewayMethod(runtime, session, Methods.RUN_REVIEW_VISUAL_CLAIM);
   const delegated = kind === 'lead-agent-reviewed';
   if (
-    session.authentication?.kind !== 'credential' ||
+    session.authentication?.kind !== (delegated ? 'credential' : 'person-session') ||
     principal.id === 'legacy-env' ||
     principal.subject.type !== (delegated ? 'service' : 'person') ||
     (delegated && !policy?.delegatedReviewerPrincipalIds.includes(principal.id))
@@ -62,10 +63,18 @@ export function authorizeVisualClaimReview(
   return {
     principalId: principal.id,
     displayName: principal.subject.displayName,
-    credentialId: session.authentication.credentialId,
+    ...receiptAuthority(session.authentication),
     subjectKind: delegated ? 'service' : 'person',
     ...(delegator
       ? { delegator: { principalId: delegator.id, displayName: delegator.subject.displayName } }
       : {}),
   };
+}
+
+function receiptAuthority(
+  authentication: NonNullable<GatewayAuthSession['authentication']>,
+): EvidenceAttestationAuthority {
+  return authentication.kind === 'credential'
+    ? { credentialId: authentication.credentialId }
+    : { personSessionId: authentication.sessionId };
 }

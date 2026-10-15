@@ -1,8 +1,14 @@
+import { isRecord } from '../recipe/common.js';
+
 import type { RoleBinding, SelfPrincipalSummary } from './principal.js';
 import { Methods } from './registry.js';
 
 export const AuthMethods = {
   connect: Methods.AUTH_CONNECT,
+  sessionExchange: Methods.AUTH_SESSION_EXCHANGE,
+  sessionRefresh: Methods.AUTH_SESSION_REFRESH,
+  sessionList: Methods.AUTH_SESSION_LIST,
+  sessionRevoke: Methods.AUTH_SESSION_REVOKE,
 } as const;
 
 export type GatewayAuthClientKind = 'ui' | 'companion' | 'node';
@@ -27,6 +33,7 @@ export interface GatewayAuthConnectResult {
     voiceInstructionFormatting: boolean;
     /** Absent on gateways predating the lightweight liveness method. */
     gatewayPing?: boolean;
+    personSessions?: boolean;
     /** Client shell selection; every RPC still checks current server authority. */
     workspaceAccess?: GatewayWorkspaceAccess;
   };
@@ -127,4 +134,136 @@ export interface PairingExchangeResult {
     secret: string;
   };
   expiresAt: string;
+}
+
+/** Metadata never authenticates a caller; the gateway resolves the record live. */
+export const PERSON_DEVICE_KINDS = ['command-center', 'companion', 'cli'] as const;
+export type PersonDeviceKind = (typeof PERSON_DEVICE_KINDS)[number];
+
+export interface PersonDeviceDescription {
+  deviceName: string;
+  deviceKind: PersonDeviceKind;
+}
+
+export interface PersonDeviceSession extends PersonDeviceDescription {
+  id: string;
+  principalId: string;
+  principalGeneration: number;
+  createdAt: string;
+  lastRefreshedAt: string;
+  refreshExpiresAt: string;
+  revokedAt: string | null;
+}
+
+/** The only person authentication value permitted in persistent client storage. */
+export interface PersonSessionAuth {
+  session: PersonDeviceSession;
+  refreshToken: string;
+}
+
+/** Access tokens remain in memory. Never persist this complete grant. */
+export interface PersonSessionGrant extends PersonSessionAuth {
+  accessToken: string;
+  accessExpiresAt: string;
+}
+
+export type PersonSessionExchangeParams = PersonDeviceDescription &
+  ({ credential: string; code?: never } | { code: string; credential?: never });
+export type PersonSessionExchangeResult = PersonSessionGrant;
+export interface PersonSessionRefreshParams {
+  refreshToken: string;
+}
+export type PersonSessionRefreshResult = PersonSessionGrant;
+export interface PersonSessionListParams {}
+export interface PersonSessionListResult {
+  sessions: PersonDeviceSession[];
+}
+export interface PersonSessionRevokeParams {
+  sessionId: string;
+}
+export interface PersonSessionRevokeResult {
+  session: PersonDeviceSession;
+}
+
+/** Shared validation for sign-in metadata at every writer and client boundary. */
+export function parsePersonDeviceDescription(value: unknown): PersonDeviceDescription | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (!('deviceName' in value) || typeof value.deviceName !== 'string' || !('deviceKind' in value))
+    return null;
+  const deviceName = value.deviceName.trim();
+  const deviceKind = PERSON_DEVICE_KINDS.find((kind) => kind === value.deviceKind);
+  return deviceName && deviceName.length <= 128 && deviceKind ? { deviceName, deviceKind } : null;
+}
+
+export function parsePersonSessionToken(
+  value: string,
+  kind: 'fsa' | 'fsr',
+): { id: string; secret: string } | null {
+  const match = /^(fsa|fsr)_([a-f0-9]{32})_([A-Za-z0-9_-]{43})$/u.exec(value);
+  return match?.[1] === kind ? { id: match[2], secret: match[3] } : null;
+}
+
+export function parsePersonDeviceSession(value: unknown): PersonDeviceSession | null {
+  if (!isRecord(value)) return null;
+  const device = parsePersonDeviceDescription(value);
+  if (
+    !device ||
+    typeof value.id !== 'string' ||
+    !/^[a-f0-9]{32}$/u.test(value.id) ||
+    typeof value.principalId !== 'string' ||
+    !value.principalId.trim() ||
+    typeof value.principalGeneration !== 'number' ||
+    !Number.isSafeInteger(value.principalGeneration) ||
+    value.principalGeneration < 0 ||
+    !sessionTimestamp(value.createdAt) ||
+    !sessionTimestamp(value.lastRefreshedAt) ||
+    !sessionTimestamp(value.refreshExpiresAt) ||
+    (value.revokedAt !== null && !sessionTimestamp(value.revokedAt))
+  )
+    return null;
+  return {
+    ...device,
+    id: value.id,
+    principalId: value.principalId,
+    principalGeneration: value.principalGeneration,
+    createdAt: value.createdAt,
+    lastRefreshedAt: value.lastRefreshedAt,
+    refreshExpiresAt: value.refreshExpiresAt,
+    revokedAt: value.revokedAt,
+  };
+}
+
+/** Storage adapters never accept an access token as a persisted session. */
+export function parsePersonSessionAuth(value: unknown): PersonSessionAuth | null {
+  if (!isRecord(value) || 'accessToken' in value || typeof value.refreshToken !== 'string')
+    return null;
+  const session = parsePersonDeviceSession(value.session);
+  const token = parsePersonSessionToken(value.refreshToken, 'fsr');
+  return session && token?.id === session.id ? { session, refreshToken: value.refreshToken } : null;
+}
+
+export function parsePersonSessionGrant(value: unknown): PersonSessionGrant | null {
+  if (
+    !isRecord(value) ||
+    typeof value.accessToken !== 'string' ||
+    !sessionTimestamp(value.accessExpiresAt)
+  )
+    return null;
+  const saved = parsePersonSessionAuth({
+    session: value.session,
+    refreshToken: value.refreshToken,
+  });
+  if (
+    !saved ||
+    !parsePersonSessionToken(value.accessToken, 'fsa') ||
+    saved.session.revokedAt !== null
+  )
+    return null;
+  return { ...saved, accessToken: value.accessToken, accessExpiresAt: value.accessExpiresAt };
+}
+
+function sessionTimestamp(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const milliseconds = Date.parse(value);
+  return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value;
 }

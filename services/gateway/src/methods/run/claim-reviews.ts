@@ -17,6 +17,7 @@ import {
   type Run,
   type RunReviewVisualClaimParams,
   type RunReviewVisualClaimResult,
+  sameEvidenceAttestationApprover,
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../../core/method-error.js';
@@ -166,8 +167,7 @@ export async function runReviewVisualClaim(
     if (
       getRun(current.id) !== current ||
       current.readOnly ||
-      person.principalId !== approver.principalId ||
-      person.credentialId !== approver.credentialId ||
+      !sameEvidenceAttestationApprover(person, approver) ||
       person.subjectKind !== subjectKind ||
       digestRecipeDocument(currentPolicy ?? null) !== digestRecipeDocument(policy ?? null) ||
       digestRecipeDocument(person.delegator ?? null) !== digestRecipeDocument(delegator ?? null)

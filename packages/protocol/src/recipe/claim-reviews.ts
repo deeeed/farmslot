@@ -1,4 +1,7 @@
-import type { EvidenceAttestationApprover } from '../contracts/run-gate-readiness.js';
+import {
+  type EvidenceAttestationApprover,
+  isEvidenceAttestationApprover,
+} from '../contracts/run-gate-readiness.js';
 
 import { recordedEvidenceClosureIdentity } from './claim-overrides.js';
 import { isRecord } from './common.js';
@@ -20,10 +23,10 @@ export interface ProjectVisualClaimReviewPolicy {
   personOnlyClaimIds?: string[];
 }
 
-export interface RecipeVisualReviewer extends EvidenceAttestationApprover {
+export type RecipeVisualReviewer = EvidenceAttestationApprover & {
   subjectKind: 'person' | 'service';
   delegator?: Pick<EvidenceAttestationApprover, 'principalId' | 'displayName'>;
-}
+};
 
 /** Operator-owned project policy, never supplied by a task or judgment request. */
 export function parseProjectVisualClaimReviewPolicy(
@@ -145,8 +148,7 @@ export function recordedVisualJudgments(
       receipt.recipeRunId !== authority.recipeRunId ||
       receipt.closureIdentity !== authority.closureIdentity ||
       !receipt.id?.trim() ||
-      !receipt.approver?.principalId?.trim() ||
-      !receipt.approver?.credentialId?.trim() ||
+      !isEvidenceAttestationApprover(receipt.approver) ||
       !receipt.reason?.trim() ||
       !['confirmed', 'rejected'].includes(receipt.verdict) ||
       !Number.isFinite(Date.parse(receipt.judgedAt)) ||
@@ -158,7 +160,8 @@ export function recordedVisualJudgments(
         digestRecipeDocument(receipt.reviewedFiles) !==
           digestRecipeDocument(reviewedVisualFiles(input, receipt.claimId))) ||
       (delegated &&
-        (!receipt.reviewedFiles?.length ||
+        (!receipt.approver.credentialId ||
+          !receipt.reviewedFiles?.length ||
           !receipt.delegation?.principalId.trim() ||
           !receipt.delegation?.displayName.trim() ||
           !/^sha256:[a-f0-9]{64}$/u.test(receipt.delegation.policyDigest) ||

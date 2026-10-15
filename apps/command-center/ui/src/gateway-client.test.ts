@@ -46,7 +46,8 @@ test('sign-out disconnects, rejects pending work, survives refresh and allows de
                 capabilities: { workspaceAccess: 'farm' },
                 principal: {
                   id: 'operator',
-                  subject: { type: 'person' },
+                  subjectKind: 'service',
+                  displayName: 'Operator',
                   roles: [{ role: 'admin', scope: { kind: 'global' } }],
                 },
               },
@@ -98,7 +99,7 @@ test('sign-out disconnects, rejects pending work, survives refresh and allows de
   await connected;
   assert.equal(client.authenticatedPrincipalId, 'operator');
   const originalExpiry = store.get(GATEWAY_SESSION_EXPIRY_STORAGE_KEY);
-  assert.ok(Number(originalExpiry) > Date.now());
+  assert.equal(originalExpiry, undefined);
   // Reload/browser restart creates a fresh client from durable storage.
   client.disconnect();
   client = new GatewayClient();
@@ -156,8 +157,8 @@ test('sign-out disconnects, rejects pending work, survives refresh and allows de
   const expired = new GatewayClient();
   t.after(() => expired.disconnect());
   expired.connect();
-  assert.equal(expired.connectionState, 'auth_required');
-  assert.match(expired.authError?.message ?? '', /expired/);
+  await flush();
+  assert.equal(expired.connectionState, 'connected');
   assert.equal(store.get(GATEWAY_TOKEN_STORAGE_KEY), 'replacement-device-secret');
   store.set(GATEWAY_SESSION_EXPIRY_STORAGE_KEY, validExpiry);
   // Desktop secure-store failure must leave the authenticated session intact.
@@ -199,4 +200,75 @@ test('sign-out disconnects, rejects pending work, survives refresh and allows de
   assert.equal(desktopLogin.authenticatedPrincipalId, 'operator');
   await desktopLogin.signOut();
   assert.deepEqual(desktopSaves.at(-1), { url: 'ws://localhost:1234/ws', rememberMe: true });
+});
+
+test('browser device-session writes are scoped, verified and refuse stale profile writers', async (t) => {
+  const { CommandCenterPersonSessionStorage } = await import('./person-session-storage.js');
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  const values = new Map<string, string>();
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+    },
+  });
+  t.after(() => {
+    if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor);
+    else Reflect.deleteProperty(globalThis, 'localStorage');
+  });
+  const first = new CommandCenterPersonSessionStorage(['ws://one/ws']);
+  const stale = new CommandCenterPersonSessionStorage(['ws://one/ws']);
+  const second = new CommandCenterPersonSessionStorage(['ws://two/ws']);
+  const auth = {
+    refreshToken: `fsr_${'a'.repeat(32)}_${'b'.repeat(43)}`,
+    session: {
+      id: 'a'.repeat(32),
+      principalId: 'person',
+      principalGeneration: 0,
+      deviceName: 'Browser',
+      deviceKind: 'command-center' as const,
+      createdAt: '2026-10-16T00:00:00.000Z',
+      lastRefreshedAt: '2026-10-16T00:00:00.000Z',
+      refreshExpiresAt: '2026-11-15T00:00:00.000Z',
+      revokedAt: null,
+    },
+  };
+  first.beginValidation();
+  await first.save(auth);
+  assert.equal(values.size, 0);
+  await first.commit();
+  assert.equal(first.required, true);
+  assert.deepEqual(await first.load(), auth);
+  assert.equal(await second.load(), null);
+  await assert.rejects(stale.save(null), /sign-in changed/);
+  const tabA = new CommandCenterPersonSessionStorage(['ws://one/ws']);
+  const tabB = new CommandCenterPersonSessionStorage(['ws://one/ws']);
+  const refreshed = {
+    ...auth,
+    session: {
+      ...auth.session,
+      lastRefreshedAt: '2026-10-17T00:00:00.000Z',
+      refreshExpiresAt: '2026-11-16T00:00:00.000Z',
+    },
+  };
+  await tabB.save(refreshed);
+  assert.deepEqual(await tabA.load(), refreshed);
+  await first.save(auth); // A late response may not move the same authority's metadata backwards.
+  assert.deepEqual(await tabB.load(), refreshed);
+  await tabA.save(null);
+  await assert.rejects(tabB.save(refreshed), /sign-in changed/);
+  assert.equal(new CommandCenterPersonSessionStorage(['ws://one/ws']).required, true);
+  assert.equal(await new CommandCenterPersonSessionStorage(['ws://one/ws']).load(), null);
+});
+
+test('one-use hosted invitations are distinct from stored bearer credentials', async () => {
+  const { parseHostedGatewayConnection } = await import('./gateway-url.js');
+  const payload = Buffer.from(
+    JSON.stringify({ v: 1, gateways: ['ws://localhost:7777/ws'], code: 'one-use-code' }),
+  ).toString('base64url');
+  const hosted = parseHostedGatewayConnection(`#fleet?connect=${payload}`);
+  assert.equal(hosted.code, 'one-use-code');
+  assert.equal(hosted.token, undefined);
+  assert.equal(hosted.password, undefined);
 });

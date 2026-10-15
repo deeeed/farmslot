@@ -4,6 +4,7 @@ import {
   activeAdminCredentialCount,
   type CredentialStore,
   credentialStorePath,
+  migrateCredentialStoreVersion,
   saveCredentialStore,
   validateCredentialStore,
   VIRTUAL_PRINCIPAL_IDS,
@@ -59,7 +60,7 @@ export function retireSelectedPrincipals(
     throw new CredentialStoreRefusalError('Virtual principals cannot be retired');
   if (
     !isRecord(input) ||
-    input.schemaVersion !== 1 ||
+    (input.schemaVersion !== 1 && input.schemaVersion !== 2) ||
     !Array.isArray(input.principals) ||
     !Array.isArray(input.credentials)
   )
@@ -108,7 +109,7 @@ export function retireSelectedPrincipals(
       throw new CredentialStoreRefusalError('Retire or re-enroll bound nodes before their owner');
   }
   const next: unknown = {
-    ...input,
+    ...migrateCredentialStoreVersion(input),
     principals,
     credentials: input.credentials.filter((record) => !credentials.includes(record)),
     retiredPrincipalIds: [...retiredIds(input.retiredPrincipalIds), ...principalIds],

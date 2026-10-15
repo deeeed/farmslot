@@ -58,3 +58,17 @@ assert.equal(capturedUrl, 'https://example.test/api/file?slotId=s1&path=a.diff')
 assert.equal(capturedAuth, passwordHeaders.Authorization);
 
 console.log('gateway HTTP auth tests passed');
+
+const personAccess = `fsa_${'a'.repeat(32)}_${'s'.repeat(43)}`;
+const personHeaders = gatewayHttpAuthHeaders({ token: personAccess });
+const protectedMedia = 'https://example.test/api/run-artifact?runId=1&path=video.mp4';
+assert.equal(gatewayResourceUrl(protectedMedia, personHeaders), protectedMedia);
+assert.deepEqual(gatewayResourceSource(protectedMedia, personHeaders), {
+  uri: protectedMedia,
+  headers: personHeaders,
+});
+assert.equal(
+  gatewayResourceUrl(protectedMedia + '&token=old#frame', personHeaders),
+  protectedMedia + '#frame',
+);
+assert.ok(!gatewayResourceUrl(protectedMedia, personHeaders).includes(personAccess));

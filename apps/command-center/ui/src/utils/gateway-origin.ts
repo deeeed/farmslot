@@ -1,8 +1,11 @@
+import { parsePersonSessionToken } from '@farmslot/protocol';
+
 import { getDesktopConnection } from '../desktop-connection.js';
 import {
   GATEWAY_URL_STORAGE_KEY,
   gatewayWebSocketToHttpOrigin,
   readGatewayAuth,
+  withGatewayHttpAccess,
 } from '../gateway-url.js';
 
 export interface GatewayOriginLocation {
@@ -44,6 +47,15 @@ export function gatewayApiUrl(path: string): string {
   const { token: credential, password: fallbackPassword } = readGatewayAuth();
   const hasQueryCredential =
     absolute.searchParams.has('token') || absolute.searchParams.has('password');
+  if (
+    absolute.origin === gatewayOrigin &&
+    credential &&
+    parsePersonSessionToken(credential, 'fsa')
+  ) {
+    absolute.searchParams.delete('token');
+    absolute.searchParams.delete('password');
+    return absolute.toString();
+  }
   if (absolute.origin === gatewayOrigin && !hasQueryCredential) {
     if (credential) absolute.searchParams.set('token', credential);
     else if (fallbackPassword) absolute.searchParams.set('password', fallbackPassword);
@@ -113,18 +125,22 @@ export function gatewayHttpFetch(
   const gatewayOrigin = gatewayHttpOrigin();
   const absolute = absoluteGatewayUrl(pathOrUrl, gatewayOrigin);
   const url = sameOriginGatewayHttpUrl(absolute.toString(), locationLike, gatewayOrigin);
-  const headers = new Headers(init?.headers);
-  if (absolute.origin === gatewayOrigin && !headers.has('Authorization')) {
-    const auth = readGatewayAuth();
-    const token = auth.token?.trim();
-    const password = auth.password?.trim();
-    if (token) {
-      headers.set('Authorization', `Bearer ${token}`);
-    } else if (password) {
-      headers.set('Authorization', `Basic ${encodeBasicPassword(password)}`);
+  if (absolute.origin !== gatewayOrigin) return fetch(url, init);
+  return withGatewayHttpAccess(async (auth) => {
+    const headers = new Headers(init?.headers);
+    if (absolute.origin === gatewayOrigin && !headers.has('Authorization')) {
+      const token = auth.token?.trim();
+      const password = auth.password?.trim();
+      if (token) headers.set('Authorization', `Bearer ${token}`);
+      else if (password) headers.set('Authorization', `Basic ${encodeBasicPassword(password)}`);
     }
-  }
-  return fetch(url, { ...init, headers });
+    const response = await fetch(url, { ...init, headers });
+    if (response.status === 401 && auth.token && parsePersonSessionToken(auth.token, 'fsa')) {
+      await response.body?.cancel();
+      throw Object.assign(new Error('Device access has expired.'), { code: 'AUTH_SESSION_ENDED' });
+    }
+    return response;
+  });
 }
 
 function absoluteGatewayUrl(pathOrUrl: string, gatewayOrigin: string): URL {
