@@ -20,14 +20,17 @@ import {
 } from '../src/harness/project-host.js';
 
 function captureStdout(t: TestContext) {
-  let output = '';
+  const chunks: string[] = [];
   const write = process.stdout.write.bind(process.stdout);
   t.mock.method(process.stdout, 'write', (...args: Parameters<typeof process.stdout.write>) => {
-    if (typeof args[0] !== 'string') return write(...args);
-    output += args[0];
-    return true;
+    if (typeof args[0] === 'string') chunks.push(args[0]);
+    return write(...args);
   });
-  return () => output;
+  return () => {
+    const output = chunks.find((chunk) => chunk.startsWith('{\n  "command": "review",\n'));
+    assert.ok(output, 'review must emit its JSON envelope');
+    return output;
+  };
 }
 
 function fixture(t: TestContext) {
