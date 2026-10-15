@@ -50,6 +50,7 @@ import {
   detectRunnerLaunchBlocker,
   getRunnerSessionUsageProvider,
   readRunnerActivityFromObservability,
+  readRunnerBackgroundWorkState,
   readRunnerTurnState,
   runnerLineLooksWaiting,
   runnerSupportsNativeTaskReuse,
@@ -61,7 +62,7 @@ import {
 } from '../runners/registry.js';
 import { readRunProgress, runDecisionWaitingStatus } from '../runners/run-progress.js';
 import {
-  isRunnerAliveUnderPane,
+  probeRunnerDescendantPid,
   resolveRunnerSessionForRun,
   resolveRunRetainedSessionBinding,
   retainedSessionSendOption,
@@ -1347,7 +1348,7 @@ export async function monitorRun(
         ctx?.id,
       );
     }
-    if (startupAgent !== 'working') {
+    if (startupAgent === 'idle' || startupAgent === 'no-tmux') {
       // The worker can write its signal while the startup/liveness probes await.
       const terminalSignal = await checkSignalFile();
       if (terminalSignal)
@@ -1450,7 +1451,7 @@ export async function monitorRun(
         return { pollCount, exitReason, violations: allViolations, snapshots };
       }
 
-      // 1. Check if worker is done — live tmux pgrep (not .farm-status.json which is stale for gateway-dispatched runs)
+      // 1. Confirm the owned worker is idle, including any native background work.
       const liveContext = currentMonitorContext();
       let agentStatus = await observeWorker(
         slotId,
@@ -1459,7 +1460,7 @@ export async function monitorRun(
         liveContext?.role,
         liveContext?.id,
       );
-      if (agentStatus !== 'working') {
+      if (agentStatus === 'idle' || agentStatus === 'no-tmux') {
         recordOperatorWait(false);
         const recoveredContext = currentMonitorContext();
         const recoveredStatus = await waitForWorker(
@@ -1470,7 +1471,7 @@ export async function monitorRun(
           recoveredContext?.role,
           recoveredContext?.id,
         );
-        if (recoveredStatus !== 'working') {
+        if (recoveredStatus === 'idle' || recoveredStatus === 'no-tmux') {
           // Re-read completion after confirming exit; the earlier read predates that probe.
           const terminalSignal = await checkSignalFile();
           if (terminalSignal)
@@ -1515,7 +1516,7 @@ export async function monitorRun(
       }
 
       if (signal.aborted) break;
-      const waitingForOperator = recordOperatorWait(true);
+      const waitingForOperator = recordOperatorWait(agentStatus === 'working');
 
       // 2. Capture pane + detect violations
       const violationContext = currentMonitorContext();
@@ -1929,34 +1930,57 @@ async function detectViolations(
   return violations;
 }
 
-/** Live tmux+pgrep check — avoids stale .farm-status.json agent field for gateway-dispatched runs */
-async function checkAgentLive(
+interface MonitorLivenessReaders {
+  native: typeof readNativeWorkerSnapshot;
+  slot: typeof loadSlotVars;
+  target: typeof resolveAgentTarget;
+  exec: typeof execOnSlot;
+  process: typeof probeRunnerDescendantPid;
+}
+
+/** A live worker can wait between turns without completing its task. */
+export async function checkAgentLive(
   slotId: string,
   runner?: string | null,
   runId?: string,
   role?: AgentRole,
   contextId?: string,
+  readers: Partial<MonitorLivenessReaders> = {},
 ): Promise<AgentLiveStatus> {
+  const source = {
+    native: readNativeWorkerSnapshot,
+    slot: loadSlotVars,
+    target: resolveAgentTarget,
+    exec: execOnSlot,
+    process: probeRunnerDescendantPid,
+    ...readers,
+  };
   try {
     if (runId && getRun(runId)?.transport === 'native')
-      return nativeWorkerLiveStatus(await readNativeWorkerSnapshot(runId, role, contextId));
-    const vars = await loadSlotVars(slotId);
+      return nativeWorkerLiveStatus(await source.native(runId, role, contextId));
+    const vars = await source.slot(slotId);
     if (!vars.session) return 'idle';
-    const session = (await resolveAgentTarget(slotId, { runId, role, contextId })).target;
-    const r = await execOnSlot(
+    const session = (await source.target(slotId, { runId, role, contextId })).target;
+    const r = await source.exec(
       vars,
       tmuxShellSnippet(
         `list-panes -t ${shellQuote(session)} -F '#{pane_pid}' 2>/dev/null | head -1`,
       ),
     );
+    if (r.exitCode !== 0) return 'unknown';
     const panePid = r.stdout.trim();
     if (!panePid) return 'no-tmux';
-    return (await isRunnerAliveUnderPane(vars, panePid, runner)) ? 'working' : 'idle';
+    const process = await source.process(vars, panePid, runner);
+    return process.state === 'present'
+      ? 'working'
+      : process.state === 'absent'
+        ? 'idle'
+        : 'unknown';
   } catch (err) {
     console.warn(
       `[run-monitor] live agent check failed for slot=${slotId} run=${runId?.slice(0, 8) ?? '-'} role=${role ?? '-'}: ${(err as Error).message}`,
     );
-    return runId && getRun(runId)?.transport === 'native' ? 'unknown' : 'no-tmux';
+    return 'unknown';
   }
 }
 
@@ -2037,7 +2061,11 @@ async function sendNudge(
       const runner = run.metrics.runner ?? 'claude';
       const activity = await readRunnerActivityFromObservability(vars, session, runner);
       const turnState = await readRunnerTurnState(vars, session, runner);
-      const kind = classifyMonitorProgress({ activity, turnState });
+      const kind = classifyMonitorProgress({
+        activity,
+        turnState,
+        backgroundWork: await readRunnerBackgroundWorkState(vars, session, runner),
+      });
       if (!shouldDeliverStuckNudge(kind)) {
         console.log(
           `[run-monitor] run ${runId.slice(0, 8)} — skipping ${violation.type} nudge (${kind} runner activity)`,
@@ -2244,6 +2272,7 @@ async function isRunnerMidTurn(
     const progress = classifyMonitorProgress({
       activity: await readRunnerActivityFromObservability(vars, session, runner),
       turnState: await readRunnerTurnState(vars, session, runner),
+      backgroundWork: await readRunnerBackgroundWorkState(vars, session, runner),
     });
     return progress === 'making-progress';
   } catch (error) {

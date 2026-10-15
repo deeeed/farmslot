@@ -13,7 +13,7 @@ import '../runtime/mock-pty.test-support.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { createRun, getRun, loadAllRuns, persistRunNow, updateRun } from '../runs/store.js';
 
-import { type MonitorObservations, monitorRun } from './run-monitor.js';
+import { type MonitorObservations, monitorRun, resolveMonitorDecision } from './run-monitor.js';
 import { deleteTestRunIfPresent } from './test-fixtures.js';
 
 async function fixture(t: TestContext, consumedBeforeWaitMs = 2000) {
@@ -31,6 +31,9 @@ async function fixture(t: TestContext, consumedBeforeWaitMs = 2000) {
   t.signal.addEventListener('abort', () => controller.abort(), { once: true });
   t.after(async () => {
     controller.abort();
+    for (const decision of (ownedRunId && getRun(ownedRunId)?.decisions) || []) {
+      if (!decision.resolvedAt) resolveMonitorDecision(decision.id, 'abort');
+    }
     await Promise.allSettled(executions);
     if (ownedRunId) await deleteTestRunIfPresent(ownedRunId);
     await rm(projectDir, { recursive: true, force: true });
@@ -126,6 +129,44 @@ async function fixture(t: TestContext, consumedBeforeWaitMs = 2000) {
     return execution;
   };
   return { run, controller, waiting, startedAt, since, start, writeSignal };
+}
+
+for (const phase of ['startup', 'after-idle'] as const) {
+  test(
+    `unknown worker evidence at ${phase} keeps monitoring without a handoff`,
+    { timeout: 4000 },
+    async (t) => {
+      const f = await fixture(t);
+      await f.writeSignal({ ...f.waiting, waitingForOperator: undefined });
+      updateRun(f.run.id, { monitorState: undefined });
+      let observations = 0;
+      let classified = false;
+      let abort: ReturnType<typeof setImmediate> | undefined;
+      t.after(() => {
+        if (abort) clearImmediate(abort);
+      });
+      await f.start({
+        workerStatus: async () =>
+          phase === 'startup' ? 'unknown' : ++observations === 1 ? 'working' : 'idle',
+        waitForWorker: async () => {
+          if (phase === 'after-idle') abort = setImmediate(() => f.controller.abort());
+          return 'unknown';
+        },
+        violations: async () => {
+          classified = true;
+          f.controller.abort();
+          return [];
+        },
+      });
+      assert.equal(
+        classified,
+        true,
+        'the monitor continues its poll instead of waiting for an operator',
+      );
+      assert.deepEqual(getRun(f.run.id)!.decisions, []);
+      assert.equal(getRun(f.run.id)!.status, 'monitoring');
+    },
+  );
 }
 
 test(
