@@ -255,6 +255,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `run.bundle.export`                     | admin          |                                                                                    |
 | `run.bundle.import`                     | admin          |                                                                                    |
 | `run.bundle.list`                       | admin          |                                                                                    |
+| `run.bundle.retain`                     | admin          |                                                                                    |
 | `run.cancel`                            | admin          |                                                                                    |
 | `run.ciWatch.poke`                      | admin          |                                                                                    |
 | `run.cleanup`                           | admin          |                                                                                    |

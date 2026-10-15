@@ -1,7 +1,5 @@
-import { existsSync } from 'node:fs';
 import path from 'node:path';
 
-import { readRecordedEvidencePackage } from '@farmslot/adapter-sdk';
 import { validateRecordedEvidencePackage } from '@farmslot/adapter-sdk/evidence';
 import {
   type RecipeRunArtifactGroup,
@@ -12,10 +10,10 @@ import {
   TERMINAL_RUN_STATUSES,
 } from '@farmslot/protocol';
 
-import { loadSlotVars } from '../../core/config.js';
-import { getNode } from '../../fleet/machine-registry.js';
-import { getSlotLocality, sendNodeRequest } from '../../fleet/node-rpc.js';
-import { scanSlotArtifactRootDetailed } from '../../live-recipe/context.js';
+import {
+  readRetainedEvidencePackage,
+  retainedRunBundleRef,
+} from '../../run-completion/retained-artifacts.js';
 import { claimOverrideAuthority } from '../../run-engine/claim-overrides.js';
 import { readVisualReviewPolicy, visualReviewAuthority } from '../../run-engine/claim-reviews.js';
 import {
@@ -25,10 +23,6 @@ import {
   recordedEvidenceInventoryMismatch,
   visualReviewSnapshotIdentity,
 } from '../../run-engine/recorded-evidence-sources.js';
-import {
-  resolveRemoteRecipeArtifactRoot,
-  shouldServeRecipeArtifactFromLocalCache,
-} from '../filesystem.js';
 
 /** A display snapshot, never publication/approval authority. Read the same source as its media route. */
 export async function readRunRecordedEvidence(
@@ -84,7 +78,12 @@ export async function readRunRecordedEvidence(
           throw new Error('The displayed QA output snapshot changed. Refresh the decision.');
         sources =
           captured?.sources ??
-          (await readFrozenRecordedEvidenceSources(run, run.output.artifactManifest));
+          (await readFrozenRecordedEvidenceSources(
+            run,
+            run.output.artifactManifest,
+            [],
+            run.output.artifactBundle,
+          ));
       } else throw new Error('The gate has no frozen recipe evidence package.');
       const retainedRunId =
         recordedRecipeRunId ??
@@ -149,40 +148,12 @@ export async function readRunRecordedEvidence(
       };
     }
     if (!group?.artifactRoot) return { artifactPrefix, contractVersion, errors: [] };
-    const locality = run.slotId ? await getSlotLocality(run.slotId) : null;
-    const useLocal =
-      !locality ||
-      (shouldServeRecipeArtifactFromLocalCache(run, group.artifactRoot, locality.isLocal) &&
-        existsSync(group.artifactRoot));
-    let result;
-    if (useLocal) {
-      result = await readRecordedEvidencePackage(group.artifactRoot);
-    } else {
-      const root = await resolveRemoteRecipeArtifactRoot(run, group.artifactRoot);
-      if (!root || !run.slotId) throw new Error('The retained recipe source is unavailable.');
-      const vars = await loadSlotVars(run.slotId);
-      const node = getNode(vars.machine);
-      if (!node) throw new Error('The retained recipe node is disconnected.');
-      const scan = await scanSlotArtifactRootDetailed(root, run, { excludeTopLevel: [] });
-      if (scan.unavailable) throw new Error('The retained recipe source is unavailable.');
-      const digests = new Map(
-        scan.refs.map((ref) => [ref.path.slice('artifacts/'.length), ref.sha256]),
-      );
-      result = await readRecordedEvidencePackage(root, {
-        listPaths: async () => [...digests.keys()],
-        readJson: async (relPath) => {
-          const response = (await sendNodeRequest(node, 'fs.read', { root, relPath })) as {
-            content: string;
-          };
-          return JSON.parse(response.content);
-        },
-        digestFile: async (relPath) => {
-          const digest = digests.get(relPath);
-          if (!digest) throw new Error(`Retained file has no byte digest: ${relPath}`);
-          return `sha256:${digest}`;
-        },
-      });
-    }
+    const root = packagePath && packagePath !== '.' ? `artifacts/${packagePath}` : 'artifacts';
+    const result = await readRetainedEvidencePackage(
+      run,
+      root,
+      group.artifactBundle ?? retainedRunBundleRef(run),
+    );
     const errors = result.checks
       .filter((check) => check.status === 'fail')
       .map((check) => check.message);

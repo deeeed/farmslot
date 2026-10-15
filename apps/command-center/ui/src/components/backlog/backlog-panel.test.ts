@@ -2,9 +2,12 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import type { BacklogItem, BacklogStatus, Run } from '@farmslot/protocol';
+import { DEFAULT_CODEX_MODEL } from '@farmslot/protocol';
+import { createReviewDispatchCatalog } from '@farmslot/review-dispatch';
 
 import {
   applyBacklogRefineItemRefresh,
+  backlogCandidateExecution,
   backlogItemMatchesStatusFilter,
   backlogRefinementPickerView,
   backlogRefineResultMessage,
@@ -28,6 +31,33 @@ import {
   sortBacklogItems,
   syncedBacklogDraftProject,
 } from './backlog-panel-model.js';
+
+test('a Codex launch candidate default cannot inherit its Claude parent model', () => {
+  const parent = { runner: 'claude', model: 'opus' };
+  const candidate = { role: 'comparison' as const, runner: 'claude', variant: 'claude-opus' };
+  const patch = backlogCandidateExecution(
+    candidate,
+    { runner: 'codex', model: null, effort: null },
+    createReviewDispatchCatalog(),
+  );
+  // This is the launch-plan serializer and gateway fallback used when saving an item.
+  const serialized = { runner: patch.runner, model: patch.model || undefined };
+  const effective = {
+    runner: serialized.runner ?? parent.runner,
+    model: serialized.model ?? parent.model,
+  };
+  assert.equal(effective.model, DEFAULT_CODEX_MODEL);
+  assert.equal(effective.runner, 'codex');
+  assert.equal(patch.variant, `codex-${DEFAULT_CODEX_MODEL.replace(/[^a-z0-9]+/gi, '-')}`);
+  const defaultAgain = backlogCandidateExecution(
+    { ...candidate, ...patch },
+    { runner: 'codex', model: null, effort: 'high' },
+    createReviewDispatchCatalog(),
+  );
+  assert.equal(defaultAgain.model, DEFAULT_CODEX_MODEL);
+  assert.equal(defaultAgain.effort, 'high');
+  assert.equal(defaultAgain.variant, patch.variant);
+});
 
 test('backlog default filter shows the live set and hides done/archived', () => {
   // Store loads archived items (includeArchived), so the default view must hide

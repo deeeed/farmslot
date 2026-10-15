@@ -4,8 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { buildFamilyObservabilitySnapshotFromRuns } from './snapshot.js';
-import { makeRecipeJson, makeRun, writeArtifact } from './test-fixtures.js';
+import {
+  buildRetainedFamilySnapshot as buildFamilyObservabilitySnapshotFromRuns,
+  makeRecipeJson,
+  makeRun,
+  writeArtifact,
+} from './test-fixtures.js';
 
 test('snapshot aggregates family runs, artifacts, and learnings from persisted files', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'family-observability-'));

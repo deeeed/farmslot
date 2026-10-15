@@ -1,3 +1,6 @@
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+
 import type {
   ReadyGatePrPackage,
   ResultPackageManifest,
@@ -5,6 +8,7 @@ import type {
   RunDecision,
 } from '@farmslot/protocol';
 
+import { retainFixtureTask } from '../../../../packages/run-bundle/src/retained.test-support.js';
 import { deleteRun, getRun, updateRun } from '../runs/store.js';
 
 export const RECIPE_HARNESS_PROJECT_CONFIG = {
@@ -187,4 +191,47 @@ export async function deleteTestRunIfPresent(runId: string): Promise<void> {
   }
 
   await deleteRun(runId);
+}
+
+/** Capture fixture bytes explicitly before exercising production readers. */
+export async function retainRunFixture(run: Run, prepared?: ReadyGatePrPackage): Promise<void> {
+  if (!run.taskFile) return;
+  const { runBundleStore } = await import('../run-completion/retained-artifacts.js');
+  const store = await runBundleStore(true);
+  await retainFixtureTask(path.dirname(run.taskFile), run, store);
+  if (run.output) {
+    run.output.artifactBundle = run.artifactBundle;
+    for (const decision of run.decisions)
+      if (
+        decision.payload?.kind === 'output-review' &&
+        decision.payload.manifestDigest === run.output.manifestDigest
+      )
+        decision.payload.artifactBundle = run.artifactBundle;
+  }
+  if (prepared) {
+    const { computeReadyGatePackageHash } = await import('../run-completion/ready-gate-package.js');
+    const previousHash = prepared.packageHash;
+    prepared.artifactBundle = run.artifactBundle;
+    prepared.packageHash = computeReadyGatePackageHash(prepared);
+    if (run.engineState?.publishGate?.packageHash === previousHash)
+      run.engineState.publishGate.packageHash = prepared.packageHash;
+    if (typeof prepared.artifactPath === 'string') {
+      const file = path.join(path.dirname(run.taskFile), prepared.artifactPath);
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, JSON.stringify(prepared));
+    }
+  }
+  await writeFile(path.join(store.runsDir, `${run.id}.json`), JSON.stringify(run));
+}
+
+/** Deliberately corrupt a listed retained fixture to exercise integrity refusals. */
+export async function overwriteRetainedFixture(
+  run: Run,
+  relativePath: string,
+  bytes: string | Uint8Array,
+): Promise<void> {
+  const { retainedRunTaskDirectory } = await import('../run-completion/retained-artifacts.js');
+  const file = path.join(await retainedRunTaskDirectory(run), relativePath);
+  await chmod(file, 0o600);
+  await writeFile(file, bytes);
 }

@@ -13,8 +13,8 @@ import {
   buildFollowUpScopeContractSection,
   FOLLOW_UP_SCOPE_VERDICTS,
   getFamilyRecoveryLedger,
-  materializeInheritedContext,
 } from './context.js';
+import { materializeRetainedFamilyContext as materializeInheritedContext } from './test-fixtures.js';
 
 function makeRun(overrides: Partial<Run> = {}): Run {
   const id = overrides.id ?? `run-${Math.random().toString(16).slice(2)}`;

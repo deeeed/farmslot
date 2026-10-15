@@ -1,4 +1,3 @@
-import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -27,6 +26,11 @@ import { refreshRetrospectiveFeedback } from '../intelligence/feedback-candidate
 import { readPortableTextIfExists } from '../live-recipe/context.js';
 import { loadRecipeQualityEvaluation } from '../quality/recipe-quality.js';
 import { buildRetrospectivePayload } from '../run-completion/orchestrator.js';
+import {
+  readOptionalRetainedRunText,
+  retainedArtifactRun,
+  retainedRunArtifactManifest,
+} from '../run-completion/retained-artifacts.js';
 import { inferRetrospectiveOutcome } from '../run-completion/retrospective.js';
 import { buildGateSummary } from '../run-engine/gate-summary.js';
 import { readFrozenRecordedEvidenceSources } from '../run-engine/recorded-evidence-sources.js';
@@ -51,7 +55,7 @@ import {
   readIterationDiffProvenance,
 } from './change-ledger.js';
 import { buildEvalExperimentProjections } from './eval-experiments.js';
-import { isMissingPathError, readJsonIfExists, readTextIfExists, statIfPresent } from './io.js';
+import { readJsonIfExists, readTextIfExists } from './io.js';
 import { buildFamilyStateSummary, sortRunsByFreshness } from './state.js';
 import { buildFamilyObservabilityTokenSummary } from './token-summary.js';
 
@@ -65,7 +69,6 @@ const FAMILY_EVIDENCE_PURPOSES = new Set([
   'report',
   'review',
 ]);
-const MAX_TASK_ARTIFACT_SCAN_DEPTH = 8;
 const MAX_TASK_ARTIFACT_SCAN_FILES = 2000;
 
 interface ResolvedRecipeProvenance {
@@ -105,19 +108,8 @@ function runTaskDir(run: Pick<Run, 'taskFile'>): string | null {
   return run.taskFile ? path.dirname(run.taskFile) : null;
 }
 
-async function readRunArtifactText(
-  run: Pick<Run, 'taskFile' | 'slotId' | 'project'>,
-  relativePath: string,
-): Promise<string | null> {
-  const taskDir = runTaskDir(run);
-  if (!taskDir) return null;
-  // Route through the cached readPortableTextIfExists so a slot-panel-open burst
-  // (which fans through both attachLiveRecipeContext and family-observability paths)
-  // shares one round trip per artifact instead of duplicating reads under two helpers.
-  // The Pick must include `project` — readPortableTextIfExists transitively calls
-  // resolveWorkerTaskDir which reads run.project; the prior `run as Run` cast erased
-  // it and silently fell back to DEFAULT_TASK_DIR for projects with custom task_dir.
-  return readPortableTextIfExists(run, path.join(taskDir, 'artifacts', relativePath));
+async function readRunArtifactText(run: Run, relativePath: string): Promise<string | null> {
+  return (await readOptionalRetainedRunText(run, `artifacts/${relativePath}`)) ?? null;
 }
 
 function familyReferenceSet(familyRuns: Run[]): Set<string> {
@@ -257,82 +249,42 @@ async function resolveHistoricalRecipeProvenance(
 }
 
 async function scanTaskArtifacts(run: Run): Promise<ScannedTaskArtifacts> {
-  if (!run.taskFile) return { artifacts: [], truncated: false };
-  const artifactsDir = path.join(path.dirname(run.taskFile), 'artifacts');
-  try {
-    const collected: FamilyObservabilityArtifact[] = [];
-    let truncated = false;
-    const walk = async (dir: string, prefix = 'artifacts', depth = 0): Promise<void> => {
-      if (collected.length >= MAX_TASK_ARTIFACT_SCAN_FILES) {
-        truncated = true;
-        return;
-      }
-      if (depth > MAX_TASK_ARTIFACT_SCAN_DEPTH) {
-        truncated = true;
-        console.warn(`[family-observability] artifact scan depth cap reached for ${dir}`);
-        return;
-      }
-      const names = await readdir(dir);
-      for (const name of names) {
-        if (collected.length >= MAX_TASK_ARTIFACT_SCAN_FILES) {
-          truncated = true;
-          console.warn(`[family-observability] artifact scan file cap reached for run ${run.id}`);
-          return;
-        }
-        const full = path.join(dir, name);
-        const rel = `${prefix}/${name}`;
-        const s = await statIfPresent(full);
-        if (!s) continue;
-        if (s.isDirectory()) {
-          await walk(full, rel, depth + 1);
-          continue;
-        }
-        if (!s.isFile()) continue;
-        collected.push({
-          runId: run.id,
-          familyId: run.familyId,
-          stepName: null,
-          path: rel,
-          purpose: inferPurpose(name),
-          sizeBytes: s.size,
-          source: 'task-artifact' as const,
-        });
-      }
-    };
-    await walk(artifactsDir);
-    return { artifacts: collected, truncated };
-  } catch (err) {
-    if (isMissingPathError(err)) return { artifacts: [], truncated: false };
-    throw err;
-  }
+  if (!run.artifactBundle && !run.output?.artifactBundle)
+    return { artifacts: [], truncated: false };
+  const entries = (await retainedRunArtifactManifest(run)).filter((artifact) =>
+    artifact.path.startsWith('artifacts/'),
+  );
+  entries.sort(
+    (a, b) => Number(b.path === run.output?.reportPath) - Number(a.path === run.output?.reportPath),
+  );
+  return {
+    artifacts: entries.slice(0, MAX_TASK_ARTIFACT_SCAN_FILES).map((artifact) => ({
+      ...artifact,
+      runId: run.id,
+      familyId: run.familyId,
+      stepName: null,
+      purpose:
+        artifact.purpose === 'artifact'
+          ? inferPurpose(path.basename(artifact.path))
+          : artifact.purpose,
+      source: 'task-artifact',
+    })),
+    truncated: entries.length > MAX_TASK_ARTIFACT_SCAN_FILES,
+  };
 }
 
 async function scanTaskInputs(run: Run): Promise<FamilyObservabilityArtifact[]> {
-  if (!run.taskFile) return [];
-  const inputsDir = path.join(path.dirname(run.taskFile), 'inputs');
-  try {
-    const names = await readdir(inputsDir);
-    const refs = await Promise.all(
-      names.map(async (name): Promise<FamilyObservabilityArtifact | null> => {
-        const full = path.join(inputsDir, name);
-        const s = await statIfPresent(full);
-        if (!s?.isFile()) return null;
-        return {
-          runId: run.id,
-          familyId: run.familyId,
-          stepName: null,
-          path: `inputs/${name}`,
-          purpose: inferInputPurpose(name),
-          sizeBytes: s.size,
-          source: 'task-input' as const,
-        };
-      }),
-    );
-    return refs.flatMap((entry) => (entry ? [entry] : []));
-  } catch (err) {
-    if (isMissingPathError(err)) return [];
-    throw err;
-  }
+  if (!run.artifactBundle && !run.output?.artifactBundle) return [];
+  return (await retainedRunArtifactManifest(run))
+    .filter((artifact) => artifact.path.startsWith('inputs/'))
+    .map((artifact) => ({
+      ...artifact,
+      runId: run.id,
+      familyId: run.familyId,
+      stepName: null,
+      purpose: inferInputPurpose(path.basename(artifact.path)),
+      source: 'task-input',
+    }));
 }
 
 const recipeQualityRank: Record<RecipeQualitySignal['source'], number> = {
@@ -911,7 +863,11 @@ export async function buildFamilyObservabilitySnapshotFromRuns(
   runs: Run[],
   allRuns: Run[] = [],
 ): Promise<FamilyObservabilitySnapshot> {
-  const familyRuns = await Promise.all(sortRunsByFreshness(runs).map(projectArchivedRunnerUsage));
+  const familyRuns = await Promise.all(
+    sortRunsByFreshness(runs).map(async (run) =>
+      retainedArtifactRun(await projectArchivedRunnerUsage(run)),
+    ),
+  );
   if (familyRuns.length === 0) {
     throw new Error('No runs found for family snapshot');
   }

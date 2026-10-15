@@ -2,7 +2,11 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { DEFAULT_TASK_DIR, type PlanningContextProjection } from '@farmslot/protocol';
+import {
+  DEFAULT_TASK_DIR,
+  type PlanningContextProjection,
+  type RunArtifactBundleRef,
+} from '@farmslot/protocol';
 
 import {
   isGatewayOwnedArtifactMirrorEntry,
@@ -11,6 +15,11 @@ import {
 } from '../core/artifact-copy-policy.js';
 import { loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
 import { slotCopyDir, slotCopyFile, slotFileExists, slotListDir } from '../core/slot-io.js';
+import {
+  createRunArtifactAcquisition,
+  readOptionalRetainedRunText,
+  retainedRunTaskDirectory,
+} from '../run-completion/retained-artifacts.js';
 import { getRun } from '../runs/store.js';
 import { buildPlanningContextSection, PLANNING_CONTEXT_INPUT } from '../tasks/planning-context.js';
 
@@ -130,43 +139,49 @@ async function workerGatewayOwnedCopyExcludes(
 
 export async function copyWorkerArtifacts(runId: string): Promise<void> {
   const run = getRun(runId)!;
-  if (!run.slotId || !run.taskFile) return;
+  if (!run.taskFile) return;
+  const acquisition = createRunArtifactAcquisition(run);
+  if (run.slotId) {
+    const vars = await loadSlotVars(run.slotId);
+    const taskDir = path.dirname(run.taskFile);
+    const taskRelDir = run.taskFile.includes('/tasks/')
+      ? run.taskFile.split('/tasks/')[1].replace('/TASK.md', '')
+      : null;
+    if (taskRelDir) {
+      const pv = await loadProjectVarsOrNull(run.project, 'worker artifact copy', run.id);
+      const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
+      const workerTaskDir = path.join(vars.remoteRepo, taskDirName, taskRelDir);
+      const localArtifactsDir = path.join(taskDir, 'artifacts');
 
-  const vars = await loadSlotVars(run.slotId);
-  const taskDir = path.dirname(run.taskFile);
-  const taskRelDir = run.taskFile.includes('/tasks/')
-    ? run.taskFile.split('/tasks/')[1].replace('/TASK.md', '')
-    : null;
-  if (!taskRelDir) return;
+      const workerArtifacts = path.join(workerTaskDir, 'artifacts');
+      const gatewayOwnedExcludes = await workerGatewayOwnedCopyExcludes(vars, workerArtifacts);
+      await slotCopyDir(vars, workerArtifacts, localArtifactsDir, {
+        excludeTopLevel: [...REVIEW_GATE_ARTIFACT_COPY_EXCLUDES, ...gatewayOwnedExcludes],
+        excludeRelativePaths: [...WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES],
+        // Stamp run/slot so package-refresh / run-detail transfer UI can bind progress.
+        phase: 'mirror',
+        runId,
+        slotId: run.slotId ?? vars.slotId,
+        labelPrefix: 'review-artifacts',
+        beforeCopy: acquisition.beforeCopy(vars),
+      });
 
-  const pv = await loadProjectVarsOrNull(run.project, 'worker artifact copy', run.id);
-  const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
-  const workerTaskDir = path.join(vars.remoteRepo, taskDirName, taskRelDir);
-  const localArtifactsDir = path.join(taskDir, 'artifacts');
-
-  const workerArtifacts = path.join(workerTaskDir, 'artifacts');
-  const gatewayOwnedExcludes = await workerGatewayOwnedCopyExcludes(vars, workerArtifacts);
-  await slotCopyDir(vars, workerArtifacts, localArtifactsDir, {
-    excludeTopLevel: [...REVIEW_GATE_ARTIFACT_COPY_EXCLUDES, ...gatewayOwnedExcludes],
-    excludeRelativePaths: [...WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES],
-    // Stamp run/slot so package-refresh / run-detail transfer UI can bind progress.
-    phase: 'mirror',
-    runId,
-    slotId: run.slotId ?? vars.slotId,
-    labelPrefix: 'review-artifacts',
-  });
-
-  for (const document of ['TASK.md', 'CHECKLIST.md']) {
-    const workerDocument = path.join(workerTaskDir, document);
-    if (!(await slotFileExists(vars, workerDocument))) continue;
-    await slotCopyFile(vars, workerDocument, path.join(taskDir, `${document}.worker`), {
-      phase: 'mirror',
-      runId,
-      slotId: run.slotId ?? vars.slotId,
-      label: `${document}.worker`,
-    });
+      for (const document of ['TASK.md', 'CHECKLIST.md']) {
+        const workerDocument = path.join(workerTaskDir, document);
+        if (!(await slotFileExists(vars, workerDocument))) continue;
+        await slotCopyFile(vars, workerDocument, path.join(taskDir, `${document}.worker`), {
+          phase: 'mirror',
+          runId,
+          slotId: run.slotId ?? vars.slotId,
+          label: `${document}.worker`,
+        });
+      }
+      console.log(`[run-engine] copied worker artifacts for ${runId.slice(0, 8)}`);
+    }
   }
-  console.log(`[run-engine] copied worker artifacts for ${runId.slice(0, 8)}`);
+  // Artifact acquisition commits a retained capture before any review consumer reads it.
+  const { captureRunOutput } = await import('../run-completion/output.js');
+  await captureRunOutput(runId, false, false, { acquisition });
 }
 
 /**
@@ -209,7 +224,10 @@ export async function buildReviewPlanningBrief(
   );
 }
 
-export async function readReviewArtifacts(runId: string): Promise<ReviewArtifacts> {
+export async function readReviewArtifacts(
+  runId: string,
+  artifactBundle?: RunArtifactBundleRef,
+): Promise<ReviewArtifacts> {
   let markdownRecommendation: string | null = null;
   const run = getRun(runId);
   const result: ReviewArtifacts = {
@@ -222,14 +240,15 @@ export async function readReviewArtifacts(runId: string): Promise<ReviewArtifact
   };
 
   if (!run?.taskFile) return result;
-  const taskDir = path.dirname(run.taskFile);
+  if (!artifactBundle && !run.artifactBundle && !run.output?.artifactBundle) return result;
+  const taskDir = await retainedRunTaskDirectory(run, artifactBundle);
   const reviewPath = path.join(taskDir, 'artifacts', 'review.md');
   const lcPath = path.join(taskDir, 'artifacts', 'line-comments.json');
 
   // Read review.md
-  if (existsSync(reviewPath)) {
+  const reviewMd = await readOptionalRetainedRunText(run, 'artifacts/review.md', artifactBundle);
+  if (reviewMd !== undefined) {
     try {
-      const reviewMd = await readFile(reviewPath, 'utf-8');
       result.hasReview = true;
       result.reviewMd = reviewMd;
 
@@ -250,9 +269,13 @@ export async function readReviewArtifacts(runId: string): Promise<ReviewArtifact
   }
 
   // Read line-comments.json
-  if (existsSync(lcPath)) {
+  const raw = await readOptionalRetainedRunText(
+    run,
+    'artifacts/line-comments.json',
+    artifactBundle,
+  );
+  if (raw !== undefined) {
     try {
-      const raw = await readFile(lcPath, 'utf-8');
       const data: unknown = JSON.parse(raw);
       const comments = reviewLineCommentsFromArtifact(data);
       const counts: Record<string, number> = {};

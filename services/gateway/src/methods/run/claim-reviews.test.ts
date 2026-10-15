@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import fsPromises, { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import fsPromises, { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -24,8 +24,9 @@ const { runReviewVisualClaim } = await import('./claim-reviews.js');
 const { visualReviewSnapshotIdentity, readVisualReviewSource } =
   await import('../../run-engine/recorded-evidence-sources.js');
 const { visualReviewAuthority } = await import('../../run-engine/claim-reviews.js');
-const { deleteTestRunIfPresent, makeReadyGatePackage } =
+const { deleteTestRunIfPresent, makeReadyGatePackage, retainRunFixture } =
   await import('../../run-engine/test-fixtures.js');
+const { retainedRunTaskDirectory } = await import('../../run-completion/retained-artifacts.js');
 const { computeReadyGatePackageHash } = await import('../../run-completion/ready-gate-package.js');
 const { collectRunGateReadiness } = await import('../../run-engine/gate-prerequisites.js');
 const { readRunRecordedEvidence } = await import('./evidence-review.js');
@@ -92,6 +93,7 @@ async function fixture(t: TestContext) {
     status: 'human-gating',
     decisions: [decision],
   });
+  await retainRunFixture(getRun(run.id)!, prepared);
   const params: RunReviewVisualClaimParams = {
     runId: run.id,
     decisionId: decision.id,
@@ -315,10 +317,15 @@ test('unauthenticated, spoofed, stale, wrong-execution and derived-parent reques
 
 test('a changed retained file remains an integrity refusal, even with a person', async (t) => {
   const f = await fixture(t);
-  await writeFile(path.join(f.directory, 'video.mp4'), 'changed recording');
+  const file = path.join(
+    await retainedRunTaskDirectory(f.run, f.prepared.artifactBundle),
+    'artifacts/recipe-runs/attempt/video.mp4',
+  );
+  await chmod(file, 0o600);
+  await writeFile(file, 'changed recording');
   await assert.rejects(
     runReviewVisualClaim(f.params, () => {}, f.dependencies),
-    /missing or changed/,
+    /missing|changed/,
   );
   assert.equal(f.run.visualJudgmentReceipts, undefined);
 });
@@ -532,6 +539,7 @@ test('QA review consumes only frozen case registration, even when another retain
       artifactManifest: inventory,
     },
   });
+  await retainRunFixture(getRun(f.run.id)!);
   const source = await readVisualReviewSource(f.run, f.decision.id);
   assert.deepEqual(
     source.sources.map(({ artifactPrefix }) => artifactPrefix),

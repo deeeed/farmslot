@@ -11,12 +11,12 @@ import {
   type ReadyGatePrPackage,
 } from '@farmslot/protocol';
 
-import { computeReadyGatePackageHash } from '../run-completion/ready-gate-package.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
 const directory = await mkdtemp(path.join(os.tmpdir(), 'branch-maintenance-store-'));
 process.env.FARMSLOT_RUNS_DIR = path.join(directory, 'runs');
 const runs = await import('../runs/store.js');
+const { computeReadyGatePackageHash } = await import('../run-completion/ready-gate-package.js');
 const maintenance = await import('./branch-maintenance.js');
 test.after(() => rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
 

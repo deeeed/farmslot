@@ -1,5 +1,4 @@
 // run-engine/recovery.ts — restart recovery and orphan slot reconciliation.
-import path from 'node:path';
 
 import {
   type ArtifactRef,
@@ -101,7 +100,7 @@ export interface RunRecoveryCollaborators {
     context: string,
     runId?: string,
   ) => Promise<ProjectVars | null>;
-  scanArtifacts: (taskDir: string) => Promise<ArtifactRef[]>;
+  retainedRunArtifactManifest: (run: Run) => Promise<ArtifactRef[]>;
   readTaskArtifactText: (
     taskFile: string | null | undefined,
     filename: string,
@@ -582,7 +581,9 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
                 let recoveryArtifactManifest: ArtifactRef[] = [];
                 if (run.taskFile) {
                   try {
-                    recoveryArtifactManifest = await deps.scanArtifacts(path.dirname(run.taskFile));
+                    recoveryArtifactManifest = await deps.retainedRunArtifactManifest(
+                      deps.getRun(run.id) ?? run,
+                    );
                   } catch (err) {
                     console.warn(
                       `[run-engine] recovery artifact scan failed for ${run.id.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,

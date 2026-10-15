@@ -51,7 +51,6 @@ import {
 } from '@farmslot/protocol';
 import {
   defaultModelForRunner,
-  modelsForRunner,
   resolveReviewDispatchDefaults,
   ReviewDispatchViewModel,
   reviewLineagesForPR,
@@ -67,7 +66,6 @@ import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, type GlobalFilters, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { renderMarkdown } from '../../utils/markdown.js';
-import { RUNNER_OPTIONS } from '../../utils/runner-options.js';
 import { rememberedReviewDispatchCatalog } from '../../utils/runner-visible-cache.js';
 import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
@@ -118,6 +116,7 @@ import {
 import {
   applyBacklogRefineItemRefresh,
   BACKLOG_SORT_KEYS,
+  backlogCandidateExecution,
   backlogItemMatchesStatusFilter,
   backlogRefinementPickerView,
   backlogRefineResultMessage,
@@ -198,6 +197,16 @@ const BACKLOG_DISPATCH_CONFIG_CONTROLS: DispatchConfigEditorControls = {
   explicitModeFallback: true,
   // ADR-054: backlog dispatch settings are the surface that persists waitPolicy.
   waitPolicy: true,
+};
+
+const LAUNCH_CANDIDATE_CONTROLS: DispatchConfigEditorControls = {
+  runnerModelEffort: true,
+  template: false,
+  prepareProfile: false,
+  interactiveProfile: false,
+  publicationReviews: false,
+  explicitModeFallback: false,
+  waitPolicy: false,
 };
 
 type DraftSlotPolicyKind = BacklogLaunchSlotPolicy['kind'];
@@ -958,6 +967,9 @@ export class BacklogPanel extends LitElement {
         grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
         gap: 6px;
         align-items: end;
+      }
+      .launch-row dispatch-config-editor {
+        grid-column: 1 / -1;
       }
       .launch-row .wide {
         grid-column: span 2;
@@ -2156,56 +2168,33 @@ export class BacklogPanel extends LitElement {
     index: number,
     item?: BacklogItem,
   ) {
-    const models = modelsForRunner(
-      candidate.runner,
-      candidate.model,
-      rememberedReviewDispatchCatalog(),
-    );
     return html`<div class="launch-row" data-testid="backlog-launch-candidate">
       <div>
         <div class="field-label">${candidate.role}</div>
         ${renderPlanningBadge(candidate.id, candidate.role === 'baseline' ? 'positive' : 'default')}
       </div>
-      <label
-        >Runner
-        <select
-          .value=${candidate.runner}
-          @change=${(e: Event) => {
-            const runner = (e.target as HTMLSelectElement).value;
-            this._updateLaunchCandidate(
-              key,
-              index,
-              {
-                runner,
-                model: defaultModelForRunner(runner, rememberedReviewDispatchCatalog()) ?? '',
-                variant:
-                  candidate.role === 'comparison'
-                    ? `${runner}-${(defaultModelForRunner(runner, rememberedReviewDispatchCatalog()) ?? '').replace(/[^a-z0-9]+/gi, '-')}`
-                    : '',
-              },
-              item,
-            );
-          }}
-        >
-          ${RUNNER_OPTIONS.map((runner) => html`<option value=${runner}>${runner}</option>`)}
-        </select>
-      </label>
-      <label
-        >Model
-        <select
-          .value=${candidate.model}
-          @change=${(e: Event) =>
-            this._updateLaunchCandidate(
-              key,
-              index,
-              { model: (e.target as HTMLSelectElement).value },
-              item,
-            )}
-        >
-          ${models.map((model) => html`<option value=${model}>${model}</option>`)}
-        </select>
-        ${this._renderVisibleModelsError()}
-      </label>
+      <dispatch-config-editor
+        .runner=${candidate.runner}
+        .model=${candidate.model}
+        .effort=${candidate.effort}
+        .controls=${LAUNCH_CANDIDATE_CONTROLS}
+        @dispatch-config-change=${(event: CustomEvent<DispatchConfigChangeDetail>) => {
+          event.stopPropagation();
+          const { runner, model, effort } = event.detail;
+          if (!runner) return;
+          this._updateLaunchCandidate(
+            key,
+            index,
+            backlogCandidateExecution(
+              candidate,
+              { runner, model: model ?? null, effort: effort ?? null },
+              rememberedReviewDispatchCatalog(),
+            ),
+            item,
+          );
+        }}
+      ></dispatch-config-editor>
+      ${this._renderVisibleModelsError()}
       ${candidate.role === 'comparison'
         ? html`<label
             >Variant
@@ -2221,20 +2210,6 @@ export class BacklogPanel extends LitElement {
             />
           </label>`
         : nothing}
-      <label
-        >Effort
-        <input
-          placeholder="default"
-          .value=${candidate.effort}
-          @input=${(e: Event) =>
-            this._updateLaunchCandidate(
-              key,
-              index,
-              { effort: (e.target as HTMLInputElement).value },
-              item,
-            )}
-        />
-      </label>
       <label
         >Slot policy
         <select

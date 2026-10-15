@@ -319,6 +319,7 @@ export const Methods = {
   RUN_BUNDLE_EXPORT: 'run.bundle.export',
   RUN_BUNDLE_IMPORT: 'run.bundle.import',
   RUN_BUNDLE_LIST: 'run.bundle.list',
+  RUN_BUNDLE_RETAIN: 'run.bundle.retain',
   RUN_CREATE: 'run.create',
   RUN_CREATE_NATIVE: 'run.createNative',
   RUN_GET: 'run.get',

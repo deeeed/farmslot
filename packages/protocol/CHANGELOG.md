@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add gateway-retained artifact references and the run.bundle.retain recovery contract; artifact links preserve their capture digest and availability.
+
 ## 0.47.0 - 2026-10-15
 
 - Expose scoped review-budget grants and the effective review limit.

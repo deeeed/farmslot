@@ -2,7 +2,7 @@
 // Local: Node fs. Remote: agent RPC or SSH.
 // All functions accept a SlotLocality context (SlotVars satisfies this).
 
-import { existsSync } from 'node:fs';
+import { createReadStream, createWriteStream, existsSync } from 'node:fs';
 import {
   chmod as fsChmod,
   copyFile,
@@ -16,6 +16,8 @@ import {
   writeFile as fsWriteFile,
 } from 'node:fs/promises';
 import path from 'node:path';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
 import { type FSWatcher, watch } from 'chokidar';
 
@@ -56,7 +58,11 @@ export interface SlotLocality {
   ) => Promise<unknown>;
 }
 
+export type SlotCopyAdmission = (sourcePath: string, destinationPath: string) => Promise<boolean>;
+
 export interface SlotCopyDirOptions {
+  /** Acquisition may inventory a file without downloading its payload yet. */
+  beforeCopy?: SlotCopyAdmission;
   /** Artifact refresh keeps matching files instead of downloading them again. */
   skipUnchanged?: boolean;
   excludeTopLevel?: string[];
@@ -291,6 +297,9 @@ export async function slotStat(ctx: SlotLocality, targetPath: string): Promise<S
 // go through chunked fs.readChunk with progress events and idle-based timeouts.
 
 export interface SlotCopyFileOptions {
+  beforeCopy?: SlotCopyAdmission;
+  /** Hard byte ceiling for an admitted payload, including source growth. */
+  maxBytes?: number;
   /** Artifact refresh skips only when destination size and SHA-256 both match. */
   skipUnchanged?: boolean;
   label?: string;
@@ -313,7 +322,7 @@ export interface SlotCopyFileOptions {
   abortSignal?: AbortSignal;
 }
 
-interface SlotFileFingerprint {
+export interface SlotFileFingerprint {
   sha256: string;
   size: number;
 }
@@ -332,12 +341,20 @@ async function existingSlotFileMatches(
     throw error;
   }
   if (!destination.isFile() || destination.size !== sourceSize) return false;
-  const source: SlotFileFingerprint = local(ctx)
-    ? { sha256: await sha256File(sourcePath), size: sourceSize }
+  const source = await slotFileFingerprint(ctx, sourcePath, sourceSize);
+  return source.size === destination.size && source.sha256 === (await sha256File(destinationPath));
+}
+
+export async function slotFileFingerprint(
+  ctx: SlotLocality,
+  sourcePath: string,
+  sourceSize?: number,
+): Promise<SlotFileFingerprint> {
+  return local(ctx)
+    ? { sha256: await sha256File(sourcePath), size: sourceSize ?? (await stat(sourcePath)).size }
     : ((await requestFor(ctx)('fs.hash', nodePathParams(sourcePath), {
         timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
       })) as SlotFileFingerprint);
-  return source.size === destination.size && source.sha256 === (await sha256File(destinationPath));
 }
 
 export async function slotCopyFile(
@@ -346,13 +363,37 @@ export async function slotCopyFile(
   localPath: string,
   options: SlotCopyFileOptions = {},
 ): Promise<boolean> {
+  if (options.beforeCopy && !(await options.beforeCopy(remotePath, localPath))) return false;
+  if (
+    options.maxBytes !== undefined &&
+    (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 0)
+  )
+    throw new Error('File copy requires a non-negative byte ceiling.');
   if (local(ctx)) {
+    if (options.maxBytes !== undefined && (await stat(remotePath)).size > options.maxBytes)
+      throw new Error('File copy exceeds its admitted byte capacity.');
     if (
       options.skipUnchanged &&
       (await existingSlotFileMatches(ctx, remotePath, localPath, (await stat(remotePath)).size))
     )
       return false;
-    await copyFile(remotePath, localPath);
+    if (options.maxBytes === undefined) await copyFile(remotePath, localPath);
+    else {
+      let bytes = 0;
+      const ceiling = options.maxBytes;
+      await pipeline(
+        createReadStream(remotePath),
+        new Transform({
+          transform(chunk: Buffer, _encoding, callback) {
+            bytes += chunk.length;
+            if (bytes > ceiling)
+              return callback(new Error('File copy exceeds its admitted byte capacity.'));
+            callback(null, chunk);
+          },
+        }),
+        createWriteStream(localPath),
+      );
+    }
     return true;
   }
   const request = requestFor(ctx);
@@ -384,7 +425,9 @@ export async function slotCopyFile(
   )
     return false;
 
-  const useChunked = options.forceChunked || size > threshold;
+  if (options.maxBytes !== undefined && sizeKnown && size > options.maxBytes)
+    throw new Error('File copy exceeds its admitted byte capacity.');
+  const useChunked = options.forceChunked || options.maxBytes !== undefined || size > threshold;
   if (!useChunked) {
     const result = (await request('fs.readBase64', pathParams, {
       timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
@@ -423,6 +466,11 @@ export async function slotCopyFile(
         { ...pathParams, offset, length },
         { timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS },
       )) as NodeFsReadChunkResult;
+      if (
+        options.maxBytes !== undefined &&
+        offset + Buffer.from(chunk.content, 'base64').length > options.maxBytes
+      )
+        throw new Error('File copy exceeds its admitted byte capacity.');
       return chunk;
     },
   });
@@ -768,7 +816,10 @@ async function copyLocalRecursive(
     if (isFile) {
       try {
         if (
-          await slotCopyFile(ctx, sourcePath, targetPath, { skipUnchanged: options.skipUnchanged })
+          await slotCopyFile(ctx, sourcePath, targetPath, {
+            skipUnchanged: options.skipUnchanged,
+            beforeCopy: options.beforeCopy,
+          })
         )
           count += 1;
       } catch (err) {
@@ -961,6 +1012,7 @@ export async function slotCopyDir(
       if (entry.type === 'file') {
         const copyOptions: SlotCopyFileOptions = {
           skipUnchanged: options.skipUnchanged,
+          beforeCopy: options.beforeCopy,
           phase: options.phase ?? 'download',
           label: options.labelPrefix
             ? `${options.labelPrefix}/${path.relative(remoteDir, sourcePath)}`

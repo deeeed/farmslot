@@ -17,6 +17,7 @@ import { execLocal } from '../core/exec.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { runResolveDecision } from '../methods/run.js';
 import { capturePublicationSource } from '../run-completion/publication-source.js';
+import { retainedRunTaskDirectory } from '../run-completion/retained-artifacts.js';
 import { createRun, getRun, updateRun, updateRunStep } from '../runs/store.js';
 
 import { findLatestResolvedDecision } from './decision-replay.js';
@@ -369,7 +370,12 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
   );
   assert.equal(packageJson.draftBody.includes('artifacts/screenshots/manifest-proof.png'), true);
   assert.equal(
-    existsSync(path.join(taskDir, 'artifacts/screenshots/manifest-proof.png')),
+    existsSync(
+      path.join(
+        await retainedRunTaskDirectory(getRun(run.id)!, packageJson.artifactBundle),
+        'artifacts/screenshots/manifest-proof.png',
+      ),
+    ),
     true,
     'refresh should copy evidence-manifest referenced screenshots out of the raw spool',
   );
@@ -401,7 +407,8 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
         }),
     },
   );
-  assert.equal(second.packageInputHash, first.packageInputHash);
+  // A successor capture changes package identity while the review subject stays stable.
+  assert.notEqual(second.packageInputHash, first.packageInputHash);
   assert.equal(second.reviewSubjectHash, first.reviewSubjectHash);
   assert.deepEqual(second.droppedEvidenceKeys, []);
   assert.equal(

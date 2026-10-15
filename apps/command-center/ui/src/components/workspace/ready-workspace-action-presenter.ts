@@ -11,6 +11,7 @@ import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   buildRunResolveDecisionParams,
   Methods,
+  withArtifactBundleDigest,
 } from '@farmslot/protocol';
 import { ReviewDispatchViewModel, reviewLineagesForRun } from '@farmslot/review-dispatch';
 
@@ -235,7 +236,10 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     return this.mockData || window.location.hash.startsWith('#dev/');
   }
 
-  _artifactUrl(path: string, artifact?: Pick<ArtifactRef, 'sha256' | 'sizeBytes'>): string {
+  _artifactUrl(
+    path: string,
+    artifact?: Pick<ArtifactRef, 'sha256' | 'sizeBytes' | 'bundleDigest'>,
+  ): string {
     const params = new URLSearchParams({
       runId: this.runId,
       path,
@@ -243,7 +247,12 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     if (artifact?.sha256) params.set('v', artifact.sha256.slice(0, 12));
     else if (typeof artifact?.sizeBytes === 'number') params.set('v', `s${artifact.sizeBytes}`);
     if (typeof artifact?.sizeBytes === 'number') params.set('vsize', String(artifact.sizeBytes));
-    return gatewayResourceUrl(`/api/run-artifact?${params.toString()}`);
+    return gatewayResourceUrl(
+      withArtifactBundleDigest(
+        `/api/run-artifact?${params.toString()}`,
+        artifact?.bundleDigest ?? this._payload?.prPackage?.artifactBundle?.bundleDigest,
+      ),
+    );
   }
 
   _recipeRunArtifactUrl(group: RecipeRunArtifactGroup, artifact: ArtifactRef): string {

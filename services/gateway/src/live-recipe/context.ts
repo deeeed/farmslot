@@ -14,6 +14,7 @@ import {
   type RecipeRunArtifactGroup,
   type RecipeRunArtifactGroupStatus,
   type Run,
+  TERMINAL_RUN_STATUSES,
   validateArtifactManifestDocument,
 } from '@farmslot/protocol';
 
@@ -81,7 +82,11 @@ async function sha256SlotFile(
   }
 }
 
-interface LoadContextOptions {
+export interface LoadContextOptions {
+  retained?: {
+    artifactManifest: ArtifactRef[];
+    readText(relativePath: string): Promise<string | null>;
+  };
   artifactRoot: string;
   run: Run;
   source: LiveRecipeContext['source'];
@@ -151,7 +156,7 @@ async function readTextIfExists(filePath: string): Promise<string | null> {
 // → loadProjectVars). Without `project`, custom `task_dir` projects silently
 // fall back to DEFAULT_TASK_DIR and resolve to the wrong worker subdir — a
 // latent bug round-5 review caught on the family-observability cast path.
-type LiveRecipeReadCtx = Pick<Run, 'slotId' | 'taskFile' | 'project'>;
+type LiveRecipeReadCtx = Run;
 
 async function shouldPreferLocalPortableArtifacts(
   run: LiveRecipeReadCtx,
@@ -234,6 +239,14 @@ export async function readPortableTextIfExists(
   run: LiveRecipeReadCtx,
   filePath: string,
 ): Promise<string | null> {
+  if (run.artifactBundle || run.output?.artifactBundle) {
+    if (!run.taskFile) return null;
+    const relative = path.relative(path.dirname(run.taskFile), filePath).replaceAll('\\', '/');
+    if (relative.startsWith('../') || path.isAbsolute(relative)) return null;
+    const { readOptionalRetainedRunText } = await import('../run-completion/retained-artifacts.js');
+    return (await readOptionalRetainedRunText(run, relative)) ?? null;
+  }
+  if (TERMINAL_RUN_STATUSES.includes(run.status)) return null;
   const key = cacheKey(run.slotId, filePath);
   const cached = artifactTextCache.get(key);
   if (cached && Date.now() - cached.at < ARTIFACT_TEXT_CACHE_TTL_MS) return cached.value;
@@ -368,8 +381,9 @@ async function readSlotTextIfExists(
 async function readRecipeQualityArtifactPortable(
   run: LiveRecipeReadCtx,
   filePath: string,
+  readText = (file: string) => readPortableTextIfExists(run, file),
 ): Promise<RecipeQualityArtifact | null> {
-  const raw = await readPortableTextIfExists(run, filePath);
+  const raw = await readText(filePath);
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -642,7 +656,7 @@ async function loadContextFromInheritedInputs(run: Run): Promise<LiveRecipeConte
   return hasLiveRecipeEvidence(context) ? context : null;
 }
 
-async function loadContextFromArtifactRoot({
+export async function loadContextFromArtifactRoot({
   artifactRoot,
   run,
   source,
@@ -651,12 +665,17 @@ async function loadContextFromArtifactRoot({
   isStale,
   scanOptions = {},
   allowUnavailableAsStale = false,
+  retained,
 }: LoadContextOptions): Promise<LiveRecipeContext | null> {
-  const selectedPointer = await readLatestValidRecipeRunPointer(run, artifactRoot);
+  const readText = (file: string) =>
+    retained
+      ? retained.readText(path.relative(artifactRoot, file).replaceAll('\\', '/'))
+      : readPortableTextIfExists(run, file);
+  const selectedPointer = await readLatestValidRecipeRunPointer(run, artifactRoot, readText);
   const evidenceManifestPath = selectedPointer
     ? path.join(artifactRoot, selectedPointer.relativeArtifactRoot, 'evidence-manifest.json')
     : path.join(artifactRoot, 'evidence-manifest.json');
-  const evidenceManifestJson = await readPortableTextIfExists(run, evidenceManifestPath);
+  const evidenceManifestJson = await readText(evidenceManifestPath);
   const selectedReferences = extractEvidenceManifestReferencedPaths(
     evidenceManifestJson,
     evidenceManifestPath,
@@ -666,10 +685,7 @@ async function loadContextFromArtifactRoot({
   // Browsing retains external captures and historical references without admitting them.
   const declarationPath = path.join(artifactRoot, 'evidence-manifest.json');
   const declaredReferences = selectedPointer
-    ? extractEvidenceManifestReferencedPaths(
-        await readPortableTextIfExists(run, declarationPath),
-        declarationPath,
-      )
+    ? extractEvidenceManifestReferencedPaths(await readText(declarationPath), declarationPath)
     : [];
   const evidenceManifestReferencedPaths = [
     ...new Set([...selectedReferences, ...declaredReferences]),
@@ -680,7 +696,7 @@ async function loadContextFromArtifactRoot({
   const selectedTypedRefs =
     selectedPointer && selectedManifestRelative
       ? parseTypedArtifactManifestRefs(
-          await readPortableTextIfExists(run, path.join(artifactRoot, selectedManifestRelative)),
+          await readText(path.join(artifactRoot, selectedManifestRelative)),
           path.join(artifactRoot, selectedManifestRelative),
           selectedPointer.relativeArtifactRoot,
         )
@@ -705,12 +721,18 @@ async function loadContextFromArtifactRoot({
     typedArtifactManifestJson,
     artifactScan,
   ] = await Promise.all([
-    readPortableTextIfExists(run, path.join(artifactRoot, 'recipe.json')),
-    readPortableTextIfExists(run, path.join(artifactRoot, 'learnings.md')),
-    readRecipeQualityArtifactPortable(run, path.join(artifactRoot, 'recipe-quality.json')),
-    readPortableTextIfExists(run, path.join(artifactRoot, 'recipe-coverage.md')),
-    readPortableTextIfExists(run, path.join(artifactRoot, 'artifact-manifest.json')),
-    scanArtifactRootPortable(artifactRoot, run, effectiveScanOptions),
+    readText(path.join(artifactRoot, 'recipe.json')),
+    readText(path.join(artifactRoot, 'learnings.md')),
+    readRecipeQualityArtifactPortable(
+      run,
+      path.join(artifactRoot, 'recipe-quality.json'),
+      readText,
+    ),
+    readText(path.join(artifactRoot, 'recipe-coverage.md')),
+    readText(path.join(artifactRoot, 'artifact-manifest.json')),
+    retained
+      ? Promise.resolve({ refs: retained.artifactManifest, unavailable: false })
+      : scanArtifactRootPortable(artifactRoot, run, effectiveScanOptions),
   ]);
   const recipeQualityArtifact =
     recipeJson || recipeCoverage
@@ -744,7 +766,7 @@ async function loadContextFromArtifactRoot({
         const manifestPath = path.join(artifactRoot, relative);
         return (
           parseTypedArtifactManifestRefs(
-            await readPortableTextIfExists(run, manifestPath),
+            await readText(manifestPath),
             manifestPath,
             path.posix.dirname(relative),
           ) ?? []
@@ -796,12 +818,13 @@ const pointerInvalidWarned = new Set<string>();
 async function readLatestValidRecipeRunPointer(
   run: Run,
   taskArtifactsRoot: string | null,
+  readText = (file: string) => readPortableTextIfExists(run, file),
 ): Promise<LatestValidRecipeRunPointer | null> {
   if (!taskArtifactsRoot) return null;
   const pointerPath = path.join(taskArtifactsRoot, 'latest-valid-recipe-run.json');
   const cached = pointerCache.get(pointerPath);
   if (cached && Date.now() - cached.at < POINTER_CACHE_TTL_MS) return cached.value;
-  const raw = await readPortableTextIfExists(run, pointerPath);
+  const raw = await readText(pointerPath);
   if (!raw) {
     pointerCache.set(pointerPath, { value: null, at: Date.now() });
     return null;
@@ -905,6 +928,11 @@ function currentArtifactsGroupStatus(
 export async function listRecipeRunArtifactGroupsForRun(
   run: Run,
 ): Promise<RecipeRunArtifactGroup[]> {
+  if (run.artifactBundle || run.output?.artifactBundle) {
+    const { retainedRecipeRunGroups } = await import('../run-completion/retained-artifacts.js');
+    return retainedRecipeRunGroups(run);
+  }
+  if (TERMINAL_RUN_STATUSES.includes(run.status)) return [];
   const groups: RecipeRunArtifactGroup[] = [];
   const orchestratorTaskDir = run.taskFile ? path.dirname(run.taskFile) : null;
   const workerTaskDir = await resolveWorkerTaskDir(run);
@@ -1012,6 +1040,12 @@ export async function listRecipeRunArtifactGroupsForRun(
 }
 
 export async function loadLiveRecipeContextForRun(run: Run): Promise<LiveRecipeContext | null> {
+  if (run.artifactBundle || run.output?.artifactBundle) {
+    const { retainedRecipeRunGroups, selectedRetainedRecipeGroup } =
+      await import('../run-completion/retained-artifacts.js');
+    return selectedRetainedRecipeGroup(await retainedRecipeRunGroups(run)) ?? null;
+  }
+  if (TERMINAL_RUN_STATUSES.includes(run.status)) return null;
   const workerTaskDir = await resolveWorkerTaskDir(run);
   const orchestratorArtifactRoot = run.taskFile
     ? path.join(path.dirname(run.taskFile), 'artifacts')

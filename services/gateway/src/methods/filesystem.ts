@@ -1,6 +1,6 @@
 // methods/filesystem.ts — fs.list, fs.read, fs.write, fs.rename, fs.delete, fs.reveal, fs.mkdir, serveFile, serveRunArtifact
 import { execFile as execFileCb, spawn } from 'node:child_process';
-import { constants, existsSync } from 'node:fs';
+import { constants } from 'node:fs';
 import { mkdir, open, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import path from 'node:path';
@@ -11,7 +11,6 @@ import { serveRemoteRange } from './filesystem/remote-range-serving.js';
 const execFile = promisify(execFileCb);
 import {
   type ArtifactRef,
-  DEFAULT_TASK_DIR,
   type FileEntry,
   type FsDeleteParams,
   type FsListParams,
@@ -25,25 +24,14 @@ import {
   type FsWriteResult,
   type OkResult,
   type Run,
+  type RunArtifactBundleRef,
 } from '@farmslot/protocol';
 
-import {
-  getOrchestratorTaskRoot,
-  loadProjectVars,
-  loadSlotVars,
-  resolveProjectTaskDirName,
-  resolveTaskRelDir,
-} from '../core/config.js';
 import { farmslotRoot } from '../core/index.js';
-import { normalizeRemotePath, resolvePathWithinRemoteBase } from '../core/remote-paths.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadPoolConfigs } from '../fleet/state.js';
-import {
-  attachLiveRecipeContext,
-  invalidateArtifactTextCache,
-  listRecipeRunArtifactGroupsForRun,
-} from '../live-recipe/context.js';
+import { invalidateArtifactTextCache } from '../live-recipe/context.js';
 
 import {
   mimeForPath,
@@ -97,6 +85,8 @@ const MAX_REMOTE_RUN_ARTIFACT_BYTES = parseMaxRemoteRunArtifactBytes();
 type CachedRecipeRunGroup = {
   id: string;
   groupKind: string;
+  recipeRunId: string | null;
+  promoted: boolean;
   artifactRoot: string | null;
   artifactManifest: ArtifactRef[] | null;
 };
@@ -107,7 +97,9 @@ type RecipeRunGroupCacheEntry =
 const recipeRunGroupCache = new Map<string, RecipeRunGroupCacheEntry>();
 
 export function invalidateRecipeRunGroupCache(runId: string): void {
-  recipeRunGroupCache.delete(runId);
+  for (const key of recipeRunGroupCache.keys()) {
+    if (key.startsWith(`${runId}:`)) recipeRunGroupCache.delete(key);
+  }
 }
 
 function isPathWithinBase(targetPath: string, basePath: string): boolean {
@@ -213,8 +205,12 @@ async function resolveRepoPath(slotId: string): Promise<string> {
   throw new Error(`Slot ${slotId} not found in pool configs`);
 }
 
-async function getCachedRecipeRunGroups(run: Run): Promise<CachedRecipeRunGroup[]> {
-  const cached = recipeRunGroupCache.get(run.id);
+async function getCachedRecipeRunGroups(
+  run: Run,
+  ref: RunArtifactBundleRef,
+): Promise<CachedRecipeRunGroup[]> {
+  const key = `${run.id}:${ref.bundleDigest}`;
+  const cached = recipeRunGroupCache.get(key);
   if (cached) {
     if ('groups' in cached && cached.expiresAt > Date.now()) {
       return cached.groups;
@@ -229,14 +225,17 @@ async function getCachedRecipeRunGroups(run: Run): Promise<CachedRecipeRunGroup[
   }
 
   const promise = (async () => {
-    const groups = await listRecipeRunArtifactGroupsForRun(await attachLiveRecipeContext(run));
+    const { retainedRecipeRunGroups } = await import('../run-completion/retained-artifacts.js');
+    const groups = await retainedRecipeRunGroups(run, ref);
     const simplified = groups.map((group) => ({
       id: group.id,
       groupKind: group.groupKind,
+      recipeRunId: group.recipeRunId,
+      promoted: group.promoted === true,
       artifactRoot: group.artifactRoot,
       artifactManifest: group.artifactManifest,
     }));
-    recipeRunGroupCache.set(run.id, {
+    recipeRunGroupCache.set(key, {
       expiresAt: Date.now() + RECIPE_RUN_GROUP_CACHE_TTL_MS,
       groups: simplified,
     });
@@ -248,71 +247,11 @@ async function getCachedRecipeRunGroups(run: Run): Promise<CachedRecipeRunGroup[
     throw error;
   });
 
-  recipeRunGroupCache.set(run.id, {
+  recipeRunGroupCache.set(key, {
     expiresAt: Date.now() + RECIPE_RUN_GROUP_CACHE_TTL_MS,
     promise,
   });
   return promise;
-}
-
-async function resolveRemoteTaskArtifactsRoot(run: Run): Promise<string | null> {
-  if (!run.slotId || !run.taskFile) return null;
-  try {
-    const slotVars = await loadSlotVars(run.slotId);
-    const projectVars = await loadProjectVars(run.project).catch(() => null);
-    const orchestratorTaskRoot = getOrchestratorTaskRoot(
-      run.project,
-      projectVars?.projectJson ?? null,
-    );
-    const taskRelDir =
-      resolveTaskRelDir(run.taskFile, orchestratorTaskRoot) ??
-      (run.taskFile.includes('/tasks/')
-        ? (run.taskFile.split('/tasks/')[1]?.replace(/\/TASK\.md$/, '') ?? null)
-        : null);
-    if (taskRelDir === null) return null;
-    const taskDirName = projectVars
-      ? resolveProjectTaskDirName(projectVars.projectJson)
-      : DEFAULT_TASK_DIR;
-    return path.join(slotVars.remoteRepo, taskDirName, taskRelDir, 'artifacts');
-  } catch {
-    return null;
-  }
-}
-
-export async function resolveRemoteRecipeArtifactRoot(
-  run: Run,
-  selectedRecipeArtifactRoot: string | null,
-): Promise<string | null> {
-  const remoteTaskArtifactsRoot = await resolveRemoteTaskArtifactsRoot(run);
-  if (!remoteTaskArtifactsRoot) return null;
-  if (!selectedRecipeArtifactRoot) return remoteTaskArtifactsRoot;
-  if (!run.taskFile) return selectedRecipeArtifactRoot;
-
-  const localTaskArtifactsRoot = path.join(path.dirname(run.taskFile), 'artifacts');
-  const relativeRecipeArtifactRoot = path.relative(
-    localTaskArtifactsRoot,
-    selectedRecipeArtifactRoot,
-  );
-  if (
-    relativeRecipeArtifactRoot === '' ||
-    (!relativeRecipeArtifactRoot.startsWith('..') && !path.isAbsolute(relativeRecipeArtifactRoot))
-  ) {
-    return path.join(remoteTaskArtifactsRoot, relativeRecipeArtifactRoot);
-  }
-
-  return selectedRecipeArtifactRoot;
-}
-
-export function shouldServeRecipeArtifactFromLocalCache(
-  run: Run,
-  selectedRecipeArtifactRoot: string | null,
-  isLocal: boolean,
-): boolean {
-  if (!selectedRecipeArtifactRoot) return false;
-  if (isLocal) return true;
-  if (!run.taskFile) return false;
-  const localTaskArtifactsRoot = path.join(path.dirname(run.taskFile), 'artifacts');
-  return isPathWithinBase(selectedRecipeArtifactRoot, localTaskArtifactsRoot);
 }
 
 function isResolvedPathWithinBase(targetPath: string, basePath: string): boolean {
@@ -334,22 +273,6 @@ async function assertResolvedPathWithinBase(
     resolvePath(basePath),
   ]);
   if (!isResolvedPathWithinBase(resolvedTargetPath, resolvedBasePath)) {
-    const error = new Error('Path traversal not allowed');
-    (error as NodeJS.ErrnoException).code = 'EACCES';
-    throw error;
-  }
-}
-
-async function assertResolvedBasePathIsConcrete(
-  basePath: string,
-  resolvePath: (inputPath: string) => Promise<string>,
-): Promise<void> {
-  const [resolvedBasePath, resolvedParentPath] = await Promise.all([
-    resolvePath(basePath),
-    resolvePath(path.dirname(basePath)),
-  ]);
-  const expectedResolvedBasePath = path.join(resolvedParentPath, path.basename(basePath));
-  if (!isResolvedPathWithinBase(resolvedBasePath, expectedResolvedBasePath)) {
     const error = new Error('Path traversal not allowed');
     (error as NodeJS.ErrnoException).code = 'EACCES';
     throw error;
@@ -770,364 +693,105 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
   try {
     const url = new URL(req.url!, `http://${req.headers.host}`);
     const runId = url.searchParams.get('runId');
-    const filePath = url.searchParams.get('path');
-    const recipeRunId = url.searchParams.get('recipeRunId');
-
-    if (!runId || !filePath) {
+    const requested = url.searchParams.get('path');
+    if (!runId || !requested) {
       res.writeHead(400, { 'Content-Type': 'text/plain' });
       res.end('Missing runId or path');
       return;
     }
-
+    if (
+      path.isAbsolute(requested) ||
+      requested.split(/[\\/]/u).some((part) => part === '..' || part === '.')
+    ) {
+      throw Object.assign(new Error('Path traversal not allowed'), { code: 'EACCES' });
+    }
     const { getRun } = await import('../runs/store.js');
     const run = getRun(runId);
-    if (!run?.taskFile) {
-      res.writeHead(404, { 'Content-Type': 'text/plain' });
-      res.end('Run not found or no taskFile');
-      return;
-    }
-
-    if (recipeRunId && !filePath.startsWith('artifacts/')) {
-      res.writeHead(400, { 'Content-Type': 'text/plain' });
-      res.end('Recipe run artifact paths must start with artifacts/');
-      return;
-    }
-
-    const relativePath = recipeRunId ? filePath.slice('artifacts/'.length) : filePath;
-    if (path.isAbsolute(relativePath) || relativePath.split(/[\\/]+/).includes('..')) {
-      res.writeHead(403, { 'Content-Type': 'text/plain' });
-      res.end('Path traversal not allowed');
-      return;
-    }
-
-    const taskDir = path.dirname(run.taskFile);
-    let selectedRecipeArtifactRoot: string | null = null;
-    let basePath = taskDir;
-    if (recipeRunId) {
-      const groups = await getCachedRecipeRunGroups(run);
-      const selected = groups.find((group) => group.id === recipeRunId);
-      if (!selected?.artifactRoot) {
-        res.writeHead(404, { 'Content-Type': 'text/plain' });
-        res.end('Recipe run artifact root not found');
-        return;
-      }
-      selectedRecipeArtifactRoot = selected.artifactRoot;
-      basePath = selected.artifactRoot;
-    }
-
-    const normalizedBasePath = path.resolve(basePath);
-    const targetPath = path.resolve(normalizedBasePath, relativePath);
+    if (!run) throw new Error('Run not found.');
+    const {
+      retainedRunBundleRef,
+      retainedRunTaskDirectory,
+      runBundleStore,
+      selectedRetainedRecipeGroup,
+    } = await import('../run-completion/retained-artifacts.js');
+    const { resolveRunBundleEntry } = await import('@farmslot/run-bundle');
+    const recipeRunId = url.searchParams.get('recipeRunId');
+    const decisionId =
+      url.searchParams.get('decisionId') ??
+      (recipeRunId === 'decision-evidence'
+        ? run.decisions
+            .slice()
+            .reverse()
+            .find((decision) => decision.payload?.kind === 'ready' && decision.payload.prPackage)
+            ?.id
+        : undefined);
+    const ref = retainedRunBundleRef(
+      run,
+      decisionId,
+      url.searchParams.get('bundleDigest') ?? undefined,
+    );
+    let artifactPath = requested;
     if (
-      !(
-        targetPath === normalizedBasePath ||
-        targetPath.startsWith(`${normalizedBasePath}${path.sep}`)
+      (recipeRunId && !['current-artifacts', 'decision-evidence'].includes(recipeRunId)) ||
+      (!recipeRunId && requested !== run.output?.reportPath && requested.startsWith('artifacts/'))
+    ) {
+      if (!requested.startsWith('artifacts/'))
+        throw new Error('Recipe artifact paths must start with artifacts/.');
+      const groups = await getCachedRecipeRunGroups(run, ref);
+      const group = recipeRunId
+        ? groups.find((group) => group.id === recipeRunId)
+        : selectedRetainedRecipeGroup(groups);
+      if (recipeRunId && !group?.artifactRoot)
+        throw new Error('Retained recipe execution is unavailable.');
+      if (
+        group?.artifactRoot &&
+        (recipeRunId || group.artifactManifest?.some(({ path }) => path === requested))
       )
-    ) {
-      res.writeHead(403, { 'Content-Type': 'text/plain' });
-      res.end('Path traversal not allowed');
-      return;
-    }
-
-    const mime = mimeForPath(targetPath);
-
-    const serveArtifactFromBase = async (
-      basePathToServe: string,
-      artifactRelativePath = relativePath,
-      assertConcreteRoot = Boolean(recipeRunId),
-    ) => {
-      const normalizedServeBasePath = path.resolve(basePathToServe);
-      const targetPathToServe = path.resolve(normalizedServeBasePath, artifactRelativePath);
-      if (assertConcreteRoot) {
-        await assertResolvedBasePathIsConcrete(normalizedServeBasePath, realpath);
-      }
-      await assertResolvedPathWithinBase(targetPathToServe, normalizedServeBasePath, realpath);
-      const handle = await openLocalReadHandle(targetPathToServe, artifactRelativePath);
-      const stats = await handle.stat();
-      serveLocalFileWithRange(req, res, handle, mime, stats.size);
-    };
-
-    if (!recipeRunId) {
-      // UI sends `vsize=<bytes>` (preferred) or legacy `v=s<size>` derived
-      // from the live artifact manifest. When the worker rewrites an artifact
-      // after the orchestrator rsync (baseline-rerun, recipe re-screenshot),
-      // the orchestrator mirror keeps the old bytes but the manifest's
-      // size/sha matches the fresh slot copy. Detect the mismatch via vsize
-      // and route to the slot so reviewers see the bytes the worker captured.
-      //
-      // Empty / non-numeric `vsize` falls through to legacy `v=s<size>` so a
-      // malformed primary hint doesn't suppress an otherwise-valid one.
-      // 0-byte artifacts are intentionally excluded from stale-detect: there
-      // is no legitimate 0-byte capture, and treating size 0 as "expected"
-      // would route every empty file to slot fallback on every read.
-      const vsizeParam = url.searchParams.get('vsize');
-      const legacyV = url.searchParams.get('v');
-      const parsedVsize = vsizeParam !== null ? Number(vsizeParam) : NaN;
-      const parsedLegacy = legacyV?.startsWith('s') ? Number(legacyV.slice(1)) : NaN;
-      const expectedSize = Number.isFinite(parsedVsize)
-        ? parsedVsize
-        : Number.isFinite(parsedLegacy)
-          ? parsedLegacy
-          : null;
-      const serveFromRecipeRunPackageFallback = async (): Promise<boolean> => {
-        const recipeRelativePath = relativePath.startsWith('artifacts/')
-          ? relativePath.slice('artifacts/'.length)
-          : relativePath;
-        const groups = await getCachedRecipeRunGroups(run);
-        for (const group of groups) {
-          if (group.groupKind === 'current-artifacts' || !group.artifactRoot) continue;
-          const manifestEntry = group.artifactManifest?.find((entry) => entry.path === filePath);
-          if (
-            typeof expectedSize === 'number' &&
-            expectedSize > 0 &&
-            typeof manifestEntry?.sizeBytes === 'number' &&
-            manifestEntry.sizeBytes !== expectedSize
-          ) {
-            continue;
-          }
-          try {
-            await serveArtifactFromBase(group.artifactRoot, recipeRelativePath, true);
-            return true;
-          } catch (candidateErr) {
-            const candidateError = candidateErr as NodeJS.ErrnoException;
-            if (candidateError.code === 'ENOENT') continue;
-            throw candidateErr;
-          }
-        }
-        return false;
-      };
-      const serveFromSlotFallback = async () => {
-        if (!run.slotId) throw new Error('Run not attached to a slot');
-        const slotArtifactsRoot = await resolveRemoteTaskArtifactsRoot(run);
-        if (!slotArtifactsRoot) throw new Error('Slot artifacts root unresolved');
-        // resolveRemoteTaskArtifactsRoot already includes the trailing
-        // `artifacts/` segment, while relativePath in this branch begins with
-        // `artifacts/` (the orchestrator-side basePath was the taskDir, not
-        // its artifacts/ subdir). Strip the redundant prefix before joining.
-        const slotRelativePath = relativePath.startsWith('artifacts/')
-          ? relativePath.slice('artifacts/'.length)
-          : relativePath;
-        const { isLocal, machine } = await getSlotLocality(run.slotId);
-        if (isLocal) {
-          const slotTarget = path.resolve(slotArtifactsRoot, slotRelativePath);
-          // Realpath check must run BEFORE stat/read — the worker controls the
-          // artifacts dir and could plant a symlink pointing outside the slot
-          // root. Mirrors the orchestrator-side serveArtifactFromBase guard.
-          await assertResolvedPathWithinBase(slotTarget, slotArtifactsRoot, realpath);
-          const handle = await openLocalReadHandle(slotTarget, slotRelativePath);
-          const stats = await handle.stat();
-          serveLocalFileWithRange(req, res, handle, mime, stats.size);
-          return;
-        }
-        const node = getNode(machine);
-        if (!node) throw new Error(`No node connected for machine ${machine}`);
-        const normalizedRemoteBasePath = normalizeRemotePath(slotArtifactsRoot);
-        const remoteTargetPath = resolvePathWithinRemoteBase(
-          normalizedRemoteBasePath,
-          slotRelativePath,
+        artifactPath = path.posix.join(
+          path
+            .relative(await retainedRunTaskDirectory(run, ref), group.artifactRoot)
+            .replaceAll('\\', '/'),
+          requested.slice('artifacts/'.length),
         );
-        if (!remoteTargetPath) throw new Error('Path traversal not allowed');
-        const { slotReadFileBuffer } = await import('../core/slot-io.js');
-        const vars = await (await import('../core/config.js')).loadSlotVars(run.slotId!);
-        const remoteRoot = normalizedRemoteBasePath.replace(/\\/g, '/').replace(/\/+$/, '');
-        const remoteRel = slotRelativePath.replace(/^\/+/, '');
-        const remoteAbs = path.posix.join(remoteRoot, remoteRel);
-        if (
-          await serveRemoteRange(
-            req,
-            res,
-            { machine: vars.machine, root: remoteRoot, relPath: remoteRel },
-            mime,
-            MAX_REMOTE_RUN_ARTIFACT_BYTES,
-          )
-        )
-          return;
-        let transferMode = 'unknown';
-        let readChunkCount = 0;
-        const buffer = await slotReadFileBuffer(
-          { host: vars.host, machine: vars.machine, sshTarget: vars.sshTarget },
-          remoteAbs,
-          {
-            root: remoteRoot,
-            relPath: remoteRel,
-            label: path.basename(slotRelativePath),
-            phase: 'download',
-            runId,
-            slotId: run.slotId ?? undefined,
-            maxBytes: MAX_REMOTE_RUN_ARTIFACT_BYTES,
-            onTransport: (info) => {
-              transferMode = info.mode;
-              readChunkCount = info.readChunkCount;
-            },
-          },
-        );
-        serveBufferWithRange(req, res, buffer, mime, {
-          'X-Farmslot-Transfer-Mode': transferMode,
-          'X-Farmslot-Read-Chunk-Count': String(readChunkCount),
-        });
-      };
-
-      if (Number.isFinite(expectedSize) && (expectedSize as number) > 0 && run.slotId) {
-        try {
-          const orchestratorStats = await stat(targetPath);
-          if (orchestratorStats.size !== expectedSize) {
-            if (await serveFromRecipeRunPackageFallback()) {
-              return;
-            }
-            try {
-              await serveFromSlotFallback();
-              return;
-            } catch (slotErr) {
-              // Slot unreachable or missing — fall through to the
-              // orchestrator copy so reviewers see *something* rather than
-              // a 404. Logged so operators can correlate stale renders with
-              // unreachable slots.
-              console.warn(
-                `[filesystem] stale-mirror fallback to slot failed for runId=${runId} path=${filePath}: ${(slotErr as Error).message}`,
-              );
-            }
-          }
-        } catch (statErr) {
-          // ENOENT here means the mirror file is missing entirely; the
-          // serveArtifactFromBase call below will fall into its own ENOENT
-          // -> slot fallback. Anything else is a real fs error worth
-          // surfacing alongside the eventual response.
-          if ((statErr as NodeJS.ErrnoException).code !== 'ENOENT') {
-            console.warn(
-              `[filesystem] stale-detect stat failed for runId=${runId} path=${filePath}: ${(statErr as Error).message}`,
-            );
-          }
-        }
-      }
-
-      try {
-        await serveArtifactFromBase(basePath);
-        return;
-      } catch (err) {
-        // Orchestrator-side mirror is rsynced once at run completion. Files
-        // the worker writes post-completion (baseline-rerun screenshots,
-        // refreshed evidence-manifest.json) live only on the slot until the
-        // next mirror sync. Fall back to the slot's own task-artifacts dir
-        // so reviewers can scrub evidence from the slot view before the
-        // post-run mirror catches up.
-        const error = err as NodeJS.ErrnoException;
-        if (error.code !== 'ENOENT') throw err;
-        if (await serveFromRecipeRunPackageFallback()) {
-          return;
-        }
-        if (!run.slotId) throw err;
-        await serveFromSlotFallback();
-        return;
-      }
     }
-
-    if (!run.slotId) {
-      res.writeHead(404, { 'Content-Type': 'text/plain' });
-      res.end('Run not attached to a slot');
-      return;
-    }
-
-    const { isLocal, machine } = await getSlotLocality(run.slotId);
-
+    const entry = await resolveRunBundleEntry({
+      store: await runBundleStore(),
+      ref,
+      runId,
+      path: artifactPath,
+    });
+    const expected = url.searchParams.get('v');
     if (
-      shouldServeRecipeArtifactFromLocalCache(run, selectedRecipeArtifactRoot, isLocal) &&
-      selectedRecipeArtifactRoot &&
-      existsSync(selectedRecipeArtifactRoot)
-    ) {
-      try {
-        await serveArtifactFromBase(selectedRecipeArtifactRoot);
+      expected &&
+      !expected.startsWith('s') &&
+      !entry.sha256.startsWith(expected.replace(/^sha256:/u, ''))
+    )
+      throw new Error('This artifact link refers to a different retained snapshot.');
+    res.setHeader('X-Farmslot-Bundle-Digest', ref.bundleDigest);
+    res.setHeader('ETag', `"${entry.sha256}"`);
+    const handle = await openLocalReadHandle(entry.path, artifactPath);
+    try {
+      // The client can disconnect while the retained entry and open are awaited.
+      if (res.destroyed) {
+        await handle.close();
         return;
-      } catch (error) {
-        const localError = error as NodeJS.ErrnoException;
-        if (isLocal || localError.code !== 'ENOENT') throw error;
       }
-    }
-
-    if (isLocal) {
-      await serveArtifactFromBase(basePath);
-      return;
-    }
-
-    const node = getNode(machine);
-    if (!node) throw new Error(`No node connected for machine ${machine}`);
-    const remoteBasePath =
-      (await resolveRemoteRecipeArtifactRoot(run, selectedRecipeArtifactRoot)) ??
-      normalizedBasePath;
-    const normalizedRemoteBasePath = normalizeRemotePath(remoteBasePath);
-    const remoteTargetPath = resolvePathWithinRemoteBase(normalizedRemoteBasePath, relativePath);
-    if (!remoteTargetPath) {
-      const error = new Error('Path traversal not allowed');
-      (error as NodeJS.ErrnoException).code = 'EACCES';
+      // The shared range helper owns the handle after a successful stream handoff.
+      serveLocalFileWithRange(req, res, handle, mimeForPath(entry.path), entry.bytes);
+    } catch (error) {
+      await handle.close();
       throw error;
     }
-    const { slotReadFileBuffer } = await import('../core/slot-io.js');
-    const vars = await (await import('../core/config.js')).loadSlotVars(run.slotId);
-    const remoteRoot = normalizedRemoteBasePath.replace(/\\/g, '/').replace(/\/+$/, '');
-    const remoteRel = relativePath.replace(/^\/+/, '');
-    const remoteAbs = path.posix.join(remoteRoot, remoteRel);
-    if (
-      await serveRemoteRange(
-        req,
-        res,
-        { machine: vars.machine, root: remoteRoot, relPath: remoteRel },
-        mime,
-        MAX_REMOTE_RUN_ARTIFACT_BYTES,
-      )
-    )
+  } catch (error) {
+    if (res.headersSent) {
+      res.destroy(error instanceof Error ? error : new Error(String(error)));
       return;
-    let transferMode = 'unknown';
-    let readChunkCount = 0;
-    const buffer = await slotReadFileBuffer(
-      { host: vars.host, machine: vars.machine, sshTarget: vars.sshTarget },
-      remoteAbs,
-      {
-        root: remoteRoot,
-        relPath: remoteRel,
-        label: path.basename(relativePath),
-        phase: 'download',
-        runId,
-        slotId: run.slotId,
-        maxBytes: MAX_REMOTE_RUN_ARTIFACT_BYTES,
-        onTransport: (info) => {
-          transferMode = info.mode;
-          readChunkCount = info.readChunkCount;
-        },
-      },
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    res.writeHead(
+      error instanceof Error && 'code' in error && error.code === 'EACCES' ? 403 : 404,
+      { 'Content-Type': 'text/plain' },
     );
-    serveBufferWithRange(req, res, buffer, mime, {
-      'X-Farmslot-Transfer-Mode': transferMode,
-      'X-Farmslot-Read-Chunk-Count': String(readChunkCount),
-    });
-  } catch (err) {
-    const error = err as NodeJS.ErrnoException;
-    const message = error.message || String(err);
-    if (error.code === 'ENOENT') {
-      // Artifact packages are intentionally removable while their durable run
-      // records remain. A stale UI request therefore resolves as a quiet 404.
-      res.writeHead(404, { 'Content-Type': 'text/plain' });
-      res.end(message);
-      return;
-    }
-    console.warn('[filesystem] serveRunArtifact failed', err);
-    if (error.code === 'EACCES') {
-      res.writeHead(403, { 'Content-Type': 'text/plain' });
-      res.end(message);
-      return;
-    }
-    if (message.includes('too large to proxy')) {
-      res.writeHead(413, { 'Content-Type': 'text/plain' });
-      res.end(message);
-      return;
-    }
-    if (
-      message.includes('No node connected') ||
-      message.includes('ECONN') ||
-      message.includes('socket')
-    ) {
-      res.writeHead(502, { 'Content-Type': 'text/plain' });
-      res.end(message);
-      return;
-    }
-    res.writeHead(500, { 'Content-Type': 'text/plain' });
     res.end(message);
   }
 }

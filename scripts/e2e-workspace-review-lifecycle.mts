@@ -767,7 +767,6 @@ try {
       }
       assert(draft.ready, draft.reason);
       assert.equal(draft.transport, 'tmux');
-      ui.cdp('click', ui.route, '[data-testid="dispatch-execution-options"] summary');
       ui.cdp('click', ui.route, '[data-transport="native"]');
       assert.equal(
         ui.evaluate(`return {transport:find('dispatch-wizard')._dispatchPayloadDraft().transport};`)

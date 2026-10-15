@@ -30,6 +30,7 @@ import {
   verifyReadyGateSelectedEvidenceFiles,
 } from './ready-gate-package.js';
 import { makeRun } from './test-fixtures.js';
+const { retainRunFixture } = await import('../run-engine/test-fixtures.js');
 
 const PROSE = '## **Description**\n\nFix the order form.\n';
 // The worker's own slot-side render: an older harness and a Command block.
@@ -67,6 +68,7 @@ async function makeTask() {
   await writeFile(path.join(artifactsDir, 'pr-body.md'), WORKER_BODY);
   // The slot is gone from the pool, so the template completion keeps the body as rendered.
   const run = makeRun({ flowType: 'dev', taskFile, slotId: 'no-such-slot', ticketOrPr: 'PROJ-1' });
+  await retainRunFixture(run);
   return { root, artifactsDir, run };
 }
 
@@ -158,6 +160,7 @@ test('a changed title and body do not block approval; the current render is publ
       path.join(artifactsDir, 'pr-description.md'),
       '## **Description**\n\nEdited.\n',
     );
+    await retainRunFixture(run);
     const published = await assertReadyGatePackageInputsCurrent(run, reviewed);
     assert.deepEqual(published, {
       ...reviewed,
@@ -503,4 +506,27 @@ test('a successful publication hands the posted body to the published-descriptio
   const log = await readFile(calls, 'utf-8');
   assert.match(log, /^pr edit 4242 --repo owner\/repo --body-file /m);
   assert.match(log, /^pr edit 4242 --repo owner\/repo --title feat: implement PROJ-1$/m);
+});
+
+test('publication renders retained prose and inventory after the source task is removed', async (t) => {
+  const { root, run } = await makeTask();
+  t.after(() => {
+    __setPrBodyRenderDepsForTest(null);
+  });
+  __setPrBodyRenderDepsForTest({
+    resolveRenderer: async () => ({ command: 'fixture-render' }),
+    exec: async (command, opts) => {
+      const out = /--out '([^']+)'/.exec(command)?.[1];
+      assert.ok(out);
+      const prose = await readFile(path.join(opts.cwd, 'artifacts/pr-description.md'), 'utf8');
+      await writeFile(out, gatewayRender(prose));
+      return { exitCode: 0, stdout: '{}', stderr: '' };
+    },
+  });
+  await rm(root, { recursive: true, force: true });
+  const published = await assertReadyGatePackageInputsCurrent(
+    run,
+    packageWith('feat: implement PROJ-1', gatewayRender(PROSE).trim()),
+  );
+  assert.equal(published.draftBody, gatewayRender(PROSE).trim());
 });

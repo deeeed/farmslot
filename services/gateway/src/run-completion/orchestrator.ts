@@ -48,7 +48,7 @@ import { readFrozenRecordedEvidenceSources } from '../run-engine/recorded-eviden
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
 import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
-import { getRun, updateRun } from '../runs/store.js';
+import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import {
   extractRunnerSessionUsage,
   runnerUsageMetrics,
@@ -62,7 +62,6 @@ import {
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 import { validateDeterministicChecksForRun } from '../tasks/worker-terminal-contract.js';
 
-import { refreshArtifactMirror } from './artifact-mirror.js';
 import {
   buildDraftPrBody,
   buildDraftPrTitle,
@@ -72,6 +71,7 @@ import {
 import { withEvidenceAttestation } from './evidence-attestation.js';
 import type { EvidenceManifest } from './evidence-manifest.js';
 import { evidenceKeyVariants } from './evidence-paths.js';
+import { captureRunOutput, outputManifestDigest } from './output.js';
 import {
   buildPackageEvidenceManifest,
   readCurrentPackageEvidence,
@@ -114,6 +114,12 @@ import {
   readFrozenPublicationManifest,
   verifyFrozenPublicationEvidence,
 } from './recorded-publication-evidence.js';
+import {
+  retainCapturedRunArtifacts,
+  retainedRunArtifactManifest,
+  retainedRunBundleRef,
+  retainedRunTaskDirectory,
+} from './retained-artifacts.js';
 import { augmentReviewAttemptsFromArtifacts, materializeReviewArtifacts } from './reviews.js';
 
 export {
@@ -444,7 +450,10 @@ export async function renderCurrentDescription(
   const draftBody = await buildPreparedDraftPrBody(
     current,
     report,
-    artifacts ?? (await scanArtifacts(path.dirname(current.taskFile))),
+    artifacts ??
+      (await retainedRunArtifactManifest(current)).filter((artifact) =>
+        artifact.path.startsWith('artifacts/'),
+      ),
     await assertPreparedPublicationBaseCurrent(current, preparedPackage, baseBranch),
     { tolerateMissingSlot: Boolean(preparedPackage.headSha) },
   );
@@ -742,7 +751,7 @@ export async function prepareCompletionPackageTransitionLocked(
   const taskDir = run.taskFile ? path.dirname(run.taskFile) : null;
   const runEvidenceManifest = await readEvidenceManifest(run);
   const evidenceManifest = await buildPackageEvidenceManifest(
-    taskDir,
+    run.taskFile ? await retainedRunTaskDirectory(run) : null,
     artifacts,
     runEvidenceManifest,
     run.recordedEvidenceContractVersion ?? 0,
@@ -826,7 +835,33 @@ export async function prepareCompletionPackageTransitionLocked(
   const draftBody = await buildPreparedDraftPrBody(run, report, draftBodyArtifacts, baseBranch, {
     tolerateMissingSlot: Boolean(options?.headSha),
   });
+  const retentionInventory = [
+    ...new Map(
+      [...artifacts, ...evidenceManifest].map((artifact) => [artifact.path, artifact]),
+    ).values(),
+  ];
+  const retained = await retainCapturedRunArtifacts({
+    run,
+    artifacts: retentionInventory,
+    sourceRef: retainedRunBundleRef(run),
+    manifestDigest: outputManifestDigest(retentionInventory),
+    releaseStagingMedia: true,
+    commit: async (ref) => {
+      const latest = getRun(runId);
+      if (
+        !latest ||
+        latest.taskFile !== run.taskFile ||
+        latest.engineState?.generation !== run.engineState?.generation
+      )
+        throw new Error('Run attempt changed while retaining the publication package.');
+      await persistRunNow(
+        updateRun(runId, { artifactBundle: ref }),
+        'retained publication dependencies',
+      );
+    },
+  });
   const basePackage: Omit<ReadyGatePrPackage, 'packageHash'> = {
+    artifactBundle: retained.ref,
     id: packageId,
     artifactPath,
     branch,
@@ -859,6 +894,7 @@ export async function prepareCompletionPackageTransitionLocked(
       run,
       evidenceManifest,
       basePackage.selectedEvidenceKeys,
+      retained.ref,
     );
     basePackage.visualJudgmentReceiptIds = appliedVisualJudgmentReceiptIds(
       run,
@@ -900,6 +936,8 @@ export async function prepareCompletionPackageTransitionLocked(
 
   const assertPreparationCurrent = async () => {
     const latest = getRun(runId);
+    if (latest?.artifactBundle?.bundleDigest !== retained.ref.bundleDigest)
+      throw packageChangedError(runId, 'retained publication snapshot changed during preparation');
     if (
       !latest ||
       (latest.engineState?.generation ?? 0) !== generation ||
@@ -1012,7 +1050,7 @@ export async function runCompletionPipeline(
     requireArtifactMirror?: boolean;
   },
 ): Promise<CompletionResult> {
-  const run = getRun(runId);
+  let run = getRun(runId);
   if (!run) throw new Error(`Run not found: ${runId}`);
 
   const flags: CompletionResult = {
@@ -1039,7 +1077,7 @@ export async function runCompletionPipeline(
   //    client instead of continuing when the mirror is incomplete.
   if (!isReviewPR) {
     try {
-      await refreshArtifactMirror(run, {
+      await captureRunOutput(runId, true, true, {
         requireSourceArtifacts: options?.requireArtifactMirror,
         forPublication: options?.forPublication,
       });
@@ -1055,6 +1093,9 @@ export async function runCompletionPipeline(
       );
     }
   }
+
+  if (!getRun(runId)?.output?.artifactBundle) await captureRunOutput(runId, false, true);
+  run = getRun(runId) ?? run;
 
   // 0b. Extract worker session cost
   await extractAndPersistSessionCost(runId);
@@ -1189,9 +1230,11 @@ export async function runCompletionPipeline(
     flags.retrospectiveCreated = true;
   }
 
-  // 7. Scan artifact directory for manifest
+  // 7. List the captured inventory, including media already released from staging.
   if (run.taskFile) {
-    flags.artifacts = await scanArtifacts(path.dirname(run.taskFile));
+    flags.artifacts = (await retainedRunArtifactManifest(run)).filter((artifact) =>
+      artifact.path.startsWith('artifacts/'),
+    );
   }
 
   return flags;
@@ -1388,6 +1431,7 @@ export async function publishCompletionPackage(
     const evidenceManifest = await readFrozenPublicationManifest(
       run,
       approvedPackage.evidenceManifest ?? [],
+      approvedPackage.artifactBundle,
     );
     const publishableSelectedEvidenceKeys = assertPublicationEvidenceSelection({
       selectedEvidenceKeys: approvedSelectedEvidenceKeys,
@@ -1441,14 +1485,21 @@ export async function publishCompletionPackage(
       name: 'upload-artifacts',
       detail: `Uploading ${selectedEvidenceKeys.length} evidence artifact(s)`,
     });
-    const publishedEvidence = await publishSelectedEvidence(latestRun, prNumber, {
-      selectedEvidenceKeys,
-      evidenceManifest: approvedPackage.evidenceManifest ?? [],
-      trustedEvidenceManifest: evidenceManifest,
-    });
+    const publishedEvidence = await publishSelectedEvidence(
+      latestRun,
+      prNumber,
+      {
+        selectedEvidenceKeys,
+        evidenceManifest: approvedPackage.evidenceManifest ?? [],
+        trustedEvidenceManifest: evidenceManifest,
+      },
+      approvedPackage.artifactBundle,
+    );
     const artifactUrls = publishedEvidence.artifactUrls;
     selectedEvidenceKeys = publishedEvidence.selectedEvidenceKeys;
-    if (latestRun.taskFile) flags.artifacts = await scanArtifacts(path.dirname(latestRun.taskFile));
+    flags.artifacts = latestRun.taskFile
+      ? await retainedRunArtifactManifest(latestRun, approvedPackage.artifactBundle)
+      : [];
 
     emit('substep', {
       name: 'post-process-pr-body',
@@ -1469,6 +1520,7 @@ export async function publishCompletionPackage(
             latestRun,
             approvedPackage.evidenceManifest ?? [],
             selectedEvidenceKeys,
+            approvedPackage.artifactBundle,
           );
           if (prTemplate) reportTemplateDrift(body, 'published body');
         },

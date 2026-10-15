@@ -394,6 +394,12 @@ test('production gateway publishes off-diff findings once through the publicatio
   await once(probe, 'listening');
   const port = (probe.address() as { port: number }).port;
   await new Promise<void>((resolve) => probe.close(() => resolve()));
+  const { openRunBundleStore } = await import('@farmslot/run-bundle');
+  await openRunBundleStore({
+    runsDir: path.join(gatewayRoot, 'runs'),
+    home: path.join(gatewayRoot, 'home'),
+    create: true,
+  });
   const token = testGatewayIdentity(path.join(gatewayRoot, 'home'));
   let logs = '';
   const server = spawn('yarn', ['workspace', '@farmslot/gateway', 'start'], {

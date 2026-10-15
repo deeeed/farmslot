@@ -826,7 +826,14 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     try {
       const report = await readEvidenceReviewReport(model, async (path) => {
         const response = await gatewayFetch(
-          artifactUrl(gatewayUrl, presentation.runId!, path),
+          artifactUrl(
+            gatewayUrl,
+            presentation.runId!,
+            path,
+            undefined,
+            undefined,
+            model.report?.artifactManifest.find((file) => file.path === path)?.bundleDigest,
+          ),
           artifactAuthHeaders,
           { signal: controller.signal },
         );

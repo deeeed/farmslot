@@ -17,6 +17,7 @@ import {
 import { exactEvidenceKeys } from './evidence-paths.js';
 import { PR_BODY_ARTIFACT, PR_PROSE_ARTIFACT, renderPrBody } from './pr-body-render.js';
 import { readEvidenceManifest, replaceMarkdownSection } from './publication-artifacts.js';
+import { retainedArtifactRun } from './retained-artifacts.js';
 import { readTaskArtifactText } from './retrospective.js';
 
 function inferDraftPrTitleScope(run: Run): string {
@@ -240,7 +241,7 @@ export async function buildDraftPrBody(
   // used as returned, never read back from the mirror, where a refresh may
   // have put the worker's own pr-body.md. Without a renderer the authored file
   // is the body, as before. Approval re-renders the same way.
-  const render = await renderPrBody(run);
+  const render = await renderPrBody(await retainedArtifactRun(run));
   if (!render.rendered) {
     console.log(`[run-completion] pr-body not rendered for run ${run.id}: ${render.reason}`);
   }

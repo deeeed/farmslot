@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { chmod, cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { mock, test } from 'node:test';
+import { mock, test, type TestContext } from 'node:test';
 
 import type {
   ReadyGatePrPackage,
@@ -13,25 +13,14 @@ import type {
   RunDecision,
 } from '@farmslot/protocol';
 
+import { retainFixtureTask } from '../../../../../packages/run-bundle/src/retained.test-support.js';
+
 await import('../../runtime/mock-pty.test-support.js');
-const config = await import('../../core/config.js');
 const nodeRpc = await import('../../fleet/node-rpc.js');
 let remote = false;
 let root = '';
-let corrupt = false;
 let hashes: Array<{ path: string; sha256: string }> = [];
 const reads: string[] = [];
-mock.module('../../core/config.js', {
-  namedExports: { ...config, loadSlotVars: async () => ({ machine: 'test-node' }) },
-});
-mock.module('../../qa/completion.js', {
-  namedExports: {
-    parseQaResult: () => assert.fail('Display must not qualify visual-review registration'),
-  },
-});
-mock.module('../../fleet/machine-registry.js', {
-  namedExports: { getNode: () => ({}), getAllNodes: () => [] },
-});
 mock.module('../../fleet/node-rpc.js', {
   namedExports: {
     ...nodeRpc,
@@ -41,40 +30,20 @@ mock.module('../../fleet/node-rpc.js', {
     getSlotLocality: async () => ({ isLocal: !remote }),
     nodeExec: async () => assert.fail('Display must not execute a remote command'),
     nodeExecArgv: async () => assert.fail('Display must not execute a remote command'),
-    sendNodeRequest: async (
-      _node: unknown,
-      method: string,
-      params: { root: string; relPath: string },
-    ) => {
-      assert.equal(method, 'fs.read');
-      assert.equal(params.root, root);
-      reads.push(params.relPath);
-      return {
-        content:
-          corrupt && params.relPath === 'trace.json'
-            ? '{'
-            : await readFile(path.join(root, params.relPath), 'utf8'),
-      };
-    },
-  },
-});
-mock.module('../filesystem.js', {
-  namedExports: {
-    resolveRemoteRecipeArtifactRoot: async () => root,
-    shouldServeRecipeArtifactFromLocalCache: () => !remote,
-  },
-});
-mock.module('../../live-recipe/context.js', {
-  namedExports: {
-    scanSlotArtifactRootDetailed: async () => ({ refs: hashes, unavailable: false }),
+    sendNodeRequest: async () => assert.fail('Retained display must not read a node'),
   },
 });
 const { readRunRecordedEvidence, retainedComparisonSnapshot } =
   await import('./evidence-review.js');
+const { runBundleStore, retainedRunTaskDirectory } =
+  await import('../../run-completion/retained-artifacts.js');
 const { computeReadyGatePackageHash } = await import('../../run-completion/ready-gate-package.js');
 
-async function fixture(): Promise<RecipeRunArtifactGroup> {
-  root = await mkdtemp(path.join(os.tmpdir(), 'gateway-evidence-review-'));
+async function fixture(t: TestContext): Promise<RecipeRunArtifactGroup> {
+  run.id = randomUUID();
+  const taskDir = await mkdtemp(path.join(os.tmpdir(), 'gateway-evidence-review-'));
+  t.after(() => rm(taskDir, { recursive: true, force: true }));
+  root = path.join(taskDir, 'artifacts');
   await cp(
     new URL(
       '../../../../../docs/examples/recipes/farmslot/artifacts/provenance-smoke/',
@@ -96,7 +65,26 @@ async function fixture(): Promise<RecipeRunArtifactGroup> {
         .digest('hex'),
     })),
   );
-  return { artifactRoot: root } as RecipeRunArtifactGroup;
+  run.taskFile = path.join(taskDir, 'TASK.md');
+  await retainFixtureTask(taskDir, run, await runBundleStore(true));
+  return {
+    id: 'current-artifacts',
+    label: 'Retained fixture',
+    groupKind: 'current-artifacts',
+    promoted: false,
+    status: 'pass',
+    artifactRoot: root,
+    artifactBundle: run.artifactBundle,
+    artifactManifest: null,
+    source: 'recipe-run-artifacts',
+    selectionReason: 'latest-run',
+    isStale: false,
+    recipeRunId: null,
+    recipeJson: null,
+    recipeQualityArtifact: null,
+    qualityReport: null,
+    workerLearnings: null,
+  };
 }
 
 const run: Run = {
@@ -138,8 +126,7 @@ test('a finished current run with no execution returns a typed missing selection
   );
 });
 test('local and remote review transport share the canonical input without original-media transfer', async (t) => {
-  const group = await fixture();
-  t.after(() => rm(root, { recursive: true, force: true }));
+  const group = await fixture(t);
   remote = false;
   const local = await readRunRecordedEvidence(run, group);
   remote = true;
@@ -148,17 +135,17 @@ test('local and remote review transport share the canonical input without origin
   assert.deepEqual(transported, local);
   assert.deepEqual(transported.errors, []);
   assert.equal(transported.artifactPrefix, 'artifacts/');
-  assert(reads.every((file) => file.endsWith('.json')));
+  assert.equal(reads.length, 0);
 });
 
 test('transport failures remain visible and never supply invented timed proof', async (t) => {
-  const group = await fixture();
-  t.after(() => rm(root, { recursive: true, force: true }));
+  const group = await fixture(t);
   remote = true;
-  corrupt = true;
+  const tracePath = path.join(await retainedRunTaskDirectory(run), 'artifacts/trace.json');
+  await chmod(tracePath, 0o600);
+  await writeFile(tracePath, '{');
   const source = await readRunRecordedEvidence(run, group);
   assert(source.errors.length);
-  corrupt = false;
   assert.deepEqual(await readRunRecordedEvidence(run, undefined), {
     artifactPrefix: 'artifacts/',
     contractVersion: 0,
@@ -167,8 +154,7 @@ test('transport failures remain visible and never supply invented timed proof', 
 });
 
 test('gate display reuses the frozen inventory and refuses changed bytes or a refreshed package identity', async (t) => {
-  const group = await fixture();
-  t.after(() => rm(root, { recursive: true, force: true }));
+  const group = await fixture(t);
   const prefix = `${path.basename(root)}/`;
   const prepared = {
     id: 'retained-package',
@@ -205,14 +191,20 @@ test('gate display reuses the frozen inventory and refuses changed bytes or a re
   assert.equal(changed.input, undefined);
   assert.match(changed.errors.join(' '), /package changed/);
   await writeFile(path.join(root, 'original.mp4'), new Uint8Array([9]));
+  assert.deepEqual((await readRunRecordedEvidence(sourceRun, group, binding)).errors, []);
+  const retainedMedia = path.join(
+    await retainedRunTaskDirectory(sourceRun),
+    'artifacts/original.mp4',
+  );
+  await chmod(retainedMedia, 0o600);
+  await writeFile(retainedMedia, new Uint8Array([9]));
   const corruptSource = await readRunRecordedEvidence(sourceRun, group, binding);
   assert.equal(corruptSource.input, undefined);
-  assert.match(corruptSource.errors.join(' '), /missing or changed/);
+  assert.match(corruptSource.errors.join(' '), /missing|changed/);
 });
 
 test('QA output display uses the same frozen closure and refuses a changed report snapshot', async (t) => {
-  const group = await fixture();
-  t.after(() => rm(root, { recursive: true, force: true }));
+  const group = await fixture(t);
   const prefix = `${path.basename(root)}/`;
   const output = {
     capturedAt: new Date().toISOString(),
@@ -264,20 +256,20 @@ test('QA output display uses the same frozen closure and refuses a changed repor
 });
 
 test('package display paths use the selected artifact root even when the run task is an operator mirror', async (t) => {
-  const group = await fixture();
-  t.after(() => rm(root, { recursive: true, force: true }));
+  const group = await fixture(t);
   const original = root;
-  const nested = path.join(root, 'artifacts', 'recipe-run');
+  const nested = path.join(root, 'recipe-run');
   await mkdir(nested, { recursive: true });
   for (const file of await readdir(original)) {
-    if (file !== 'artifacts')
+    if (file !== 'recipe-run')
       await cp(path.join(original, file), path.join(nested, file), { recursive: true });
   }
   root = nested;
+  await retainFixtureTask(path.dirname(original), run, await runBundleStore(true));
   remote = false;
   const source = await readRunRecordedEvidence(
     { ...run, taskFile: '/operator/tasks/TASK.md' } as Run,
-    { ...group, artifactRoot: nested },
+    { ...group, artifactRoot: nested, artifactBundle: run.artifactBundle },
   );
   root = original;
   assert.equal(source.packagePath, 'recipe-run');
@@ -285,8 +277,7 @@ test('package display paths use the selected artifact root even when the run tas
 });
 
 test('historical comparisons require the same execution, package prefix and summary bytes in a retained ready snapshot', async (t) => {
-  const group = await fixture();
-  t.after(() => rm(root, { recursive: true, force: true }));
+  const group = await fixture(t);
   remote = false;
   const source = await readRunRecordedEvidence(run, group);
   assert.ok(source.input);

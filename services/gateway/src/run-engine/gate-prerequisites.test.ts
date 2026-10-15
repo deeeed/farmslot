@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -14,12 +14,16 @@ import {
   type RunDecision,
 } from '@farmslot/protocol';
 
+import { retainFixtureTask } from '../../../../packages/run-bundle/src/retained.test-support.js';
+
 await import('../runtime/mock-pty.test-support.js');
 const { collectRunGateReadiness, gateActionsForReadiness, refreshRunGateReadiness } =
   await import('./gate-prerequisites.js');
 const { makeRun, makeReadyGatePackage, deleteTestRunIfPresent } =
   await import('./test-fixtures.js');
 const { createRun, getRun, updateRun } = await import('../runs/store.js');
+const { runBundleStore, retainedRunTaskDirectory } =
+  await import('../run-completion/retained-artifacts.js');
 const { computeReadyGatePackageHash } = await import('../run-completion/ready-gate-package.js');
 
 const idle = async () => ({ kind: 'idle' as const });
@@ -485,7 +489,13 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
     ),
   );
   prepared.packageHash = computeReadyGatePackageHash(prepared);
-  const run = makeRun({ taskFile: path.join(root, 'TASK.md') });
+  const run = makeRun({ id: randomUUID(), taskFile: path.join(root, 'TASK.md') });
+  await retainFixtureTask(root, run, await runBundleStore(true));
+  prepared.artifactBundle = run.artifactBundle;
+  prepared.packageHash = computeReadyGatePackageHash(prepared);
+  const pinnedDecision = pendingReadyDecision();
+  if (pinnedDecision.payload?.kind === 'ready') pinnedDecision.payload.prPackage = prepared;
+  run.decisions.push(pinnedDecision);
   const sources = {
     deterministic: passed,
     progress: idle,
@@ -586,6 +596,7 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
   );
 
   await writeFile(path.join(root, prepared.artifactPath), JSON.stringify(prepared));
+  await retainFixtureTask(root, run, await runBundleStore(true));
   const recoveredRun = {
     ...run,
     engineState: { publishGate: { packageId: prepared.id, packageHash: prepared.packageHash } },
@@ -840,9 +851,9 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
     path.join(root, 'artifacts/discovery.json'),
     JSON.stringify({ provider: 'changed' }),
   );
-  assert.ok(
-    (await qaCheck()).reasons.some((reason) => reason.message.includes('Run output changed')),
-  );
+  const pinnedOutput = structuredClone(getRun(qaRun.id)!.output?.artifactBundle);
+  assert.equal((await qaCheck()).state, 'ready');
+  assert.deepEqual(getRun(qaRun.id)!.output?.artifactBundle, pinnedOutput);
   await captureRunOutput(qaRun.id, false, true);
   assert.equal((await qaCheck()).state, 'ready');
   const missingStateEvidence = {
@@ -873,10 +884,21 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
     path.join(directory, 'recipe-invocation.json'),
     JSON.stringify({ ...invocation, params: { substituted: true } }),
   );
-  assert.ok(
-    (await check()).reasons.some((reason) => reason.message.includes('missing or changed')),
+  const afterLiveMutation = await check();
+  assert.equal(afterLiveMutation.state, 'ready', JSON.stringify(afterLiveMutation.reasons));
+  const retainedInvocation = path.join(
+    await retainedRunTaskDirectory(run, prepared.artifactBundle),
+    'artifacts/proof/recipe-invocation.json',
   );
-  await writeFile(path.join(directory, 'recipe-invocation.json'), '{');
+  await chmod(retainedInvocation, 0o600);
+  await writeFile(
+    retainedInvocation,
+    JSON.stringify({ ...invocation, params: { substituted: true } }),
+  );
+  assert.ok(
+    (await check()).reasons.some((reason) => reason.code === 'evidence-validation-unavailable'),
+  );
+  await writeFile(retainedInvocation, '{');
   const unreadable = await check();
   assert.ok(unreadable.reasons.some((reason) => reason.code === 'evidence-validation-unavailable'));
   assert.ok(unreadable.reasons.some((reason) => reason.message.includes('recipe-invocation.json')));
