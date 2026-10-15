@@ -5,7 +5,7 @@
   "proofTargets": [
     {
       "id": "unassigned-viewer",
-      "claim": "Unassigned media opens its own recorded selection after a comparison.",
+      "claim": "Unassigned media opens its own recorded selection.",
       "proofMode": "state"
     }
   ],
@@ -46,7 +46,7 @@
       "hud-capture-unassigned": {
         "action": "app.hud",
         "status": "running",
-        "intent": "Record the Unassigned image selected after comparison media.",
+        "intent": "Record the Unassigned image in its selected gallery.",
         "next": "capture-unassigned"
       },
       "capture-unassigned": {
