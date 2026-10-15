@@ -4,6 +4,8 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
+- Keep pending visual criteria visible while recorded evidence is loading or unavailable.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.14.0 - 2026-10-15
