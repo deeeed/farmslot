@@ -81,6 +81,8 @@ export function recoverStoppedNativeHost(
   if (!hostObserved && observations.length)
     throw new Error('Native cleanup recovery cannot identify the old host');
   const journals: Record<string, string> = {};
+  let unattributedSession = false;
+  let hostObservationJournal: string | undefined;
   const sessionRoot = join(root, 'sessions');
   for (const name of readdirSync(sessionRoot).filter((name) => name.endsWith('.journal'))) {
     const bytes = privateBytes(join(sessionRoot, name));
@@ -95,11 +97,8 @@ export function recoverStoppedNativeHost(
       if (entry.info !== undefined) {
         if (!object(entry.info) || typeof entry.info.generation !== 'string')
           throw new Error('Native cleanup recovery has malformed session identity');
-        // An unobserved startup can be quarantined only if it never owned a session.
         if (!hostObserved && (!pid(entry.info.hostPid) || entry.info.hostPid === hostPid))
-          throw new Error(
-            'Unobserved native host recovery cannot exclude a session from that host',
-          );
+          unattributedSession = true;
         info = entry.info;
         projected.info = { generation: entry.info.generation };
       }
@@ -119,10 +118,21 @@ export function recoverStoppedNativeHost(
         throw new Error('Native cleanup recovery has malformed runner identity');
       pids.add(info.processPid);
       groups.add(info.processPid);
-      for (const observed of journalProcesses(entries) ?? []) observe(observed);
+      const processes = journalProcesses(entries) ?? [];
+      // This kernel-recorded parent link attests that the host was released.
+      // Fresh absence checks below still cover every recorded process and group.
+      if (
+        !hostObserved &&
+        processes.some((entry) => entry.pid === info.processPid && entry.parent === hostPid)
+      )
+        hostObservationJournal ??= name;
+      for (const observed of processes) observe(observed);
     }
     journals[name] = digest(bytes);
   }
+  if (hostObservationJournal) hostObserved = true;
+  if (!hostObserved && unattributedSession)
+    throw new Error('Unobserved native host recovery cannot exclude a session from that host');
   const snapshot = readNativeProcessSnapshot();
   if (!snapshot.has(process.pid))
     throw new Error('Native cleanup recovery process census is incomplete');
@@ -163,6 +173,7 @@ export function recoverStoppedNativeHost(
     supervisorPid,
     hostPid,
     originalCleanup: cleanup,
+    ...(hostObservationJournal ? { hostObservationJournal } : {}),
     originalCleanupSha256: digest(original),
     journalSha256: journals,
     verifiedStoppedPids: [...pids],

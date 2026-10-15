@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Exclude unavailable native hosts from automatic review placement even when their previous reviews were accepted.
+
 - Resume an interrupted self-review fix after gateway restart without skipping its signal or waiting for an operator replay.
 - Keep deferred review fixes under signal observation and coalesce repeated review replays while the same attempt is active.
 

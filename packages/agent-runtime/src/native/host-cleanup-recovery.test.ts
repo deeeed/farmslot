@@ -343,3 +343,91 @@ test('unobserved startup refuses a surviving supervisor group and keeps the mark
   assert.equal(readFileSync(join(f.root, 'cleanup.json'), 'utf8'), JSON.stringify(original));
   assert.equal(existsSync(join(f.root, 'cleanup-quarantine')), false);
 });
+
+test('recovers a released stopped host whose cleanup lost its root census observation', (t) => {
+  const f = fixture(t);
+  const original = { ...marker, observedProcesses: [] };
+  f.write('cleanup.json', original);
+  const bytes =
+    f.journal +
+    JSON.stringify({
+      processesAdded: [
+        { pid: runner, parent: host, group: runner, identity: 'retained runner birth' },
+        { pid: runner + 1, parent: runner, group: runner + 1, identity: 'detached child birth' },
+      ],
+    }) +
+    '\n';
+  writeFileSync(join(f.root, 'sessions/session.journal'), bytes, { mode: 0o600 });
+  recoverStoppedNativeHost(f.root, supervisor, host);
+  assert.equal(readFileSync(join(f.root, 'sessions/session.journal'), 'utf8'), bytes);
+  const cleanup = JSON.parse(readFileSync(join(f.root, 'cleanup.json'), 'utf8'));
+  assert.equal(cleanup.state, 'complete');
+  assert.match(cleanup.recoveryReceipt, /^cleanup-recoveries\//);
+  const receipt = JSON.parse(readFileSync(join(f.root, cleanup.recoveryReceipt), 'utf8'));
+  assert.equal(receipt.hostObservationJournal, 'session.journal');
+  assert.deepEqual(receipt.originalCleanup, original);
+  assert.equal(
+    receipt.journalSha256['session.journal'],
+    createHash('sha256').update(bytes).digest('hex'),
+  );
+  assert.ok(receipt.verifiedStoppedPids.includes(runner + 1));
+});
+
+for (const kind of [
+  'host',
+  'supervisor',
+  'runner',
+  'detached',
+  'orphan',
+  'independent-group',
+  'census-failure',
+  'wrong-parent',
+  'old-generation',
+] as const) {
+  test(`lost root observation still refuses ${kind} evidence`, (t) => {
+    const f = fixture(t);
+    const original = { ...marker, observedProcesses: [] };
+    f.write('cleanup.json', original);
+    const processes = [
+      {
+        pid: runner,
+        parent: kind === 'wrong-parent' ? host - 1 : host,
+        group: runner,
+        identity: 'retained runner birth',
+      },
+      { pid: runner + 1, parent: runner, group: runner + 1, identity: 'detached child birth' },
+    ];
+    let bytes = f.journal + JSON.stringify({ processesAdded: processes }) + '\n';
+    if (kind === 'old-generation')
+      bytes += JSON.stringify({ info: { ...f.info, generation: 'new-generation' } }) + '\n';
+    writeFileSync(join(f.root, 'sessions/session.journal'), bytes, { mode: 0o600 });
+    if (kind === 'census-failure') f.failCensus(new Error('Census timed out'));
+    else if (kind === 'independent-group') f.live.add(-(runner + 1));
+    else if (['host', 'supervisor', 'runner', 'detached', 'orphan'].includes(kind)) {
+      const value =
+        kind === 'host'
+          ? host
+          : kind === 'supervisor'
+            ? supervisor
+            : kind === 'runner'
+              ? runner
+              : runner + 1;
+      const group = kind === 'orphan' ? runner : value;
+      f.setCensus(
+        `${process.pid} 1 ${process.pid} inspector\n${value} 1 ${group} ${kind === 'runner' ? 'retained runner birth' : kind === 'detached' ? 'detached child birth' : 'surviving birth'}\n`,
+      );
+    }
+    const refusal =
+      kind === 'census-failure'
+        ? /Census timed out/
+        : kind === 'independent-group'
+          ? /recorded group stopped/
+          : kind === 'wrong-parent' || kind === 'old-generation'
+            ? /cannot exclude/
+            : /surviving process or group/;
+    assert.throws(() => recoverStoppedNativeHost(f.root, supervisor, host), refusal);
+    assert.equal(readFileSync(join(f.root, 'cleanup.json'), 'utf8'), JSON.stringify(original));
+    assert.equal(readFileSync(join(f.root, 'sessions/session.journal'), 'utf8'), bytes);
+    assert.equal(existsSync(join(f.root, 'cleanup-recoveries')), false);
+  });
+}

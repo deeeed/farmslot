@@ -164,11 +164,13 @@ function signal(identity: ProcessIdentity, kind: NodeJS.Signals): void {
 export class NativeProcessTree {
   private owned = new Map<number, ProcessIdentity>();
   private readonly rootIdentity: string;
+  private readonly rootObservation: ProcessIdentity;
   constructor(private readonly root: number) {
     const snapshot = processes();
-    const identity = snapshot.get(root)?.identity;
-    if (!identity) throw new Error('Native process identity is unavailable');
-    this.rootIdentity = identity;
+    const observation = snapshot.get(root);
+    if (!observation?.identity) throw new Error('Native process identity is unavailable');
+    this.rootIdentity = observation.identity;
+    this.rootObservation = { ...observation };
     this.applySnapshot(snapshot);
   }
   capture(): void {
@@ -229,7 +231,11 @@ export class NativeProcessTree {
   }
   /** Last observed identities remain useful when a later census cannot be read. */
   snapshot(): ProcessIdentity[] {
-    return [...this.owned.values()].map((identity) => ({ ...identity }));
+    const observations = [...this.owned.values()];
+    // Keep cleanup provenance after exit; only the live map authorizes signals.
+    if (this.owned.get(this.root)?.identity !== this.rootIdentity)
+      observations.unshift(this.rootObservation);
+    return observations.map((identity) => ({ ...identity }));
   }
   /** Freeze observed owners before the final ancestry scan, preventing new child launches. */
   stop(): void {
