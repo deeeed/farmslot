@@ -47,6 +47,7 @@ function fixture(t: TestContext) {
 
 test('task tooling survives install pruning and provider/library updates', (t) => {
   const { root, taskDir, provider, library, input } = fixture(t);
+  fs.symlinkSync(input.executable, path.join(input.distributionRoot, 'entry-link'));
   const receipt = retainTaskExecution(taskDir, input);
   fs.rmSync(input.distributionRoot, { recursive: true });
   fs.writeFileSync(path.join(provider, 'action.mjs'), 'export default 2;\n');

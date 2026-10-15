@@ -39,7 +39,7 @@ export function retainTaskInput(
   destination = path.resolve(destination);
   if (destination === source) throw new Error('A retained input cannot replace its source.');
   fs.mkdirSync(path.dirname(destination), { recursive: true });
-  const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'farmslot-task-pin-'));
+  const staging = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'farmslot-task-pin-')));
   const copy = path.join(staging, 'input');
   try {
     fs.cpSync(source, copy, {
