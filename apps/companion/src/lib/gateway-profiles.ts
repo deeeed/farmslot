@@ -1,7 +1,11 @@
 import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
 
-import { parseAccountSessionExpiry, RememberedAccountSession } from '@farmslot/review-dispatch';
+import {
+  isAccountSessionExpired,
+  parseAccountSessionExpiry,
+  RememberedAccountSession,
+} from '@farmslot/review-dispatch';
 
 import type { GatewayProfileKind } from './gateway-profile-kind';
 import { isLegacyPresetGatewayProfile } from './gateway-profile-legacy';
@@ -76,12 +80,16 @@ export function profileSecretStorageKey(profileId: string): string {
   return `farmslot.gateway-profile.${profileId}.secret`;
 }
 
+function sessionExpiryKey(secretKey: string): string {
+  return `${secretKey}.expires-at`;
+}
+
 export async function readGatewayProfileSecret(profile: GatewayProfile): Promise<string | null> {
   if (!profile.secretStorageKey || profile.authMode === 'none') return null;
   const expiry = parseAccountSessionExpiry(
-    await SecureStore.getItemAsync(`${profile.secretStorageKey}.expires-at`),
+    await SecureStore.getItemAsync(sessionExpiryKey(profile.secretStorageKey)),
   );
-  if (expiry !== null && expiry <= Date.now()) return null;
+  if (isAccountSessionExpired(expiry)) return null;
   return SecureStore.getItemAsync(profile.secretStorageKey);
 }
 
@@ -90,7 +98,7 @@ export async function rememberedSessionForProfile(
   onExpiryChange: (expiresAt: number | null) => void,
 ): Promise<RememberedAccountSession | null> {
   if (!profile || profile.authMode === 'none' || !profile.secretStorageKey) return null;
-  const key = `${profile.secretStorageKey}.expires-at`;
+  const key = sessionExpiryKey(profile.secretStorageKey);
   const expiry = parseAccountSessionExpiry(await SecureStore.getItemAsync(key));
   onExpiryChange(expiry);
   return new RememberedAccountSession(expiry, async (next) => {
@@ -105,7 +113,7 @@ export async function writeGatewayProfileSecret(
   secret: string,
 ): Promise<void> {
   const key = profile.secretStorageKey ?? profileSecretStorageKey(profile.id);
-  await SecureStore.deleteItemAsync(`${key}.expires-at`);
+  await SecureStore.deleteItemAsync(sessionExpiryKey(key));
   if (!secret.trim()) {
     await SecureStore.deleteItemAsync(`${key}.explicit`);
     await SecureStore.deleteItemAsync(key);

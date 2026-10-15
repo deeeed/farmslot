@@ -27,9 +27,13 @@ export function parseAccountSessionExpiry(value: string | null): number | null {
   return Number.isFinite(expiry) && expiry > 0 ? expiry : null;
 }
 
+export function isAccountSessionExpired(expiresAt: number | null, now = Date.now()): boolean {
+  return expiresAt !== null && expiresAt <= now;
+}
+
 export function accountSessionCaption(expiresAt: number | null, now = Date.now()): string {
   if (expiresAt === null) return '';
-  return expiresAt <= now
+  return isAccountSessionExpired(expiresAt, now)
     ? ACCOUNT_SIGN_IN_EXPIRED
     : `Signed in until ${new Date(expiresAt).toLocaleDateString()}`;
 }
@@ -45,9 +49,12 @@ export class RememberedAccountSession {
     private readonly now = Date.now,
   ) {}
 
+  get expired(): boolean {
+    return !this.active || isAccountSessionExpired(this.expiresAt, this.now());
+  }
+
   assertCurrent(): void {
-    if (!this.active || (this.expiresAt !== null && this.expiresAt <= this.now()))
-      throw new Error(ACCOUNT_SIGN_IN_EXPIRED);
+    if (this.expired) throw new Error(ACCOUNT_SIGN_IN_EXPIRED);
   }
 
   async recordSuccessfulUse(): Promise<void> {

@@ -9,11 +9,15 @@ import {
   type ResponseFrame,
   type SelfPrincipalSummary,
 } from '@farmslot/protocol';
-import { RememberedAccountSession } from '@farmslot/review-dispatch';
+import type { RememberedAccountSession } from '@farmslot/review-dispatch';
 
 import { gatewaySupportsPing } from './gateway-connection-test';
 import { connectionWaitTerminalError } from './gateway-connection-wait';
-import type { GatewayAuthCredentials } from './gateway-http-auth';
+import {
+  type GatewayAuthCredentials,
+  type GatewayHttpAuthHeaders,
+  gatewayHttpAuthHeaders,
+} from './gateway-http-auth';
 import {
   type WorkspaceAccess,
   workspaceAccessFromAuth,
@@ -61,6 +65,12 @@ export class GatewayClient {
     this.accountSession = null;
   }
 
+  get httpAuthHeaders(): GatewayHttpAuthHeaders {
+    return this.access === 'none' || this.accountSession?.expired
+      ? {}
+      : gatewayHttpAuthHeaders(this.auth);
+  }
+
   private assertSessionCurrent(): void {
     try {
       this.accountSession?.assertCurrent();
@@ -70,7 +80,7 @@ export class GatewayClient {
       this.cancelReconnect();
       this.rejectAllPending(this.lastConnectionError);
       this.closeCurrentSocket();
-      this.setState('disconnected');
+      this.setState('disconnected', true);
       throw error;
     }
   }
@@ -378,8 +388,8 @@ export class GatewayClient {
     }
   }
 
-  private setState(s: ConnectionState): void {
-    if (this.state === s) return;
+  private setState(s: ConnectionState, authorityChanged = false): void {
+    if (this.state === s && !authorityChanged) return;
     this.state = s;
     for (const cb of this.connSubs) {
       try {

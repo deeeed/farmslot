@@ -9,11 +9,7 @@ import type {
   SelfPrincipalSummary,
 } from '@farmslot/protocol';
 import { Methods, signOutAccount, workspaceAccessFromAuth } from '@farmslot/protocol';
-import {
-  ACCOUNT_SESSION_POLICY,
-  parseAccountSessionExpiry,
-  RememberedAccountSession,
-} from '@farmslot/review-dispatch';
+import { ACCOUNT_SESSION_POLICY, RememberedAccountSession } from '@farmslot/review-dispatch';
 
 import {
   getDesktopConnection,
@@ -36,6 +32,7 @@ import {
   parseHostedGatewayConnection,
   persistGatewayAuthForHttp,
   readGatewayAuth,
+  readStoredGatewaySessionExpiry,
   replaceStoredGatewayAuthForHttp,
   resolveGatewayConnectionSource,
   resolveGatewayWebSocketUrls,
@@ -166,9 +163,7 @@ function syncBrowserHttpAuthCookie(auth: GatewayAuthCredentials, gatewayUrl: str
       document.cookie = `${name}=; Path=/; SameSite=Lax; Max-Age=0${secure}`;
     }
   };
-  const expiresAt = parseAccountSessionExpiry(
-    localStorage.getItem(GATEWAY_SESSION_EXPIRY_STORAGE_KEY),
-  );
+  const expiresAt = readStoredGatewaySessionExpiry();
   const maxAge = Math.floor(
     ((expiresAt ?? Date.now() + ACCOUNT_SESSION_POLICY.durationMs) - Date.now()) / 1000,
   );
@@ -218,14 +213,11 @@ export class GatewayClient {
   private authBlocked = false;
 
   private loadAccountSession(): RememberedAccountSession {
-    return new RememberedAccountSession(
-      parseAccountSessionExpiry(localStorage.getItem(GATEWAY_SESSION_EXPIRY_STORAGE_KEY)),
-      (expiry) => {
-        if (expiry === null) localStorage.removeItem(GATEWAY_SESSION_EXPIRY_STORAGE_KEY);
-        else localStorage.setItem(GATEWAY_SESSION_EXPIRY_STORAGE_KEY, String(expiry));
-        if (expiry !== null) syncBrowserHttpAuthCookie(this.auth, this.url);
-      },
-    );
+    return new RememberedAccountSession(readStoredGatewaySessionExpiry(), (expiry) => {
+      if (expiry === null) localStorage.removeItem(GATEWAY_SESSION_EXPIRY_STORAGE_KEY);
+      else localStorage.setItem(GATEWAY_SESSION_EXPIRY_STORAGE_KEY, String(expiry));
+      if (expiry !== null) syncBrowserHttpAuthCookie(this.auth, this.url);
+    });
   }
 
   get sessionExpiresAt(): number | null {

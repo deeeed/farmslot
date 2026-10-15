@@ -876,6 +876,12 @@ export class FarmApp extends LitElement {
     if (s.connection === 'connected' && this.connection !== 'connected') {
       if (this.route === 'onboarding') this.navigate('fleet');
     }
+    if (
+      s.connection === 'auth_required' &&
+      this.connection !== 'auth_required' &&
+      gateway.authError?.code === 'SESSION_EXPIRED'
+    )
+      this.authSecret = '';
     this.connection = s.connection;
     this.hydrated = isFullyHydrated(s.hydrated);
     this.githubQuota = s.githubQuota;

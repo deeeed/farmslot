@@ -383,6 +383,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           status,
           principalId,
           workspaceAccess,
+          activeProfileHttpAuthHeaders: client.httpAuthHeaders,
           authorityEpoch: get().authorityEpoch + (authorityChanged ? 1 : 0),
           ...(authorityChanged
             ? { lastSyncError: null, gatewayCompatibilityHint: null, probeInProgress: false }
@@ -757,6 +758,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       probeAttemptTracker.invalidate();
       livenessController?.reset();
     }
+    await configureRememberedSession(state.client, nextProfile);
     state.client?.setConnection(nextProfile.url, auth, transition.changed);
     if (transition.changed) void livenessController?.probeFresh();
   },
