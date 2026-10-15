@@ -4,8 +4,11 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
-- Bound file-backed evidence reads and hashing across concurrent packages, and close each descriptor before releasing its read slot.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.36.1 - 2026-10-15
+
+- Bound file-backed evidence reads and hashing across concurrent packages, and close each descriptor before releasing its read slot.
 
 ## 0.36.0 - 2026-10-15
 

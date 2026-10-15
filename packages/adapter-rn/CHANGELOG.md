@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.22.10 - 2026-10-15
+
+- Align the published dependency closure with protocol 0.46.0 and the merged runtime fixes.
+
 ## 0.22.9 - 2026-10-15
 
 - Align the installed dependency closure with protocol 0.45.0 and retained-run stack attachment.

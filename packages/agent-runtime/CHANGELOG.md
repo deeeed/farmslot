@@ -2,8 +2,11 @@
 
 ## Unreleased
 
-- Recover a stopped native host whose first process census failed before any session started, preserving the unmatched marker in quarantine and retaining all journals.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.22.5 - 2026-10-15
+
+- Recover a stopped native host whose first process census failed before any session started, preserving the unmatched marker in quarantine and retaining all journals.
 
 ## 0.22.4 - 2026-10-15
 
