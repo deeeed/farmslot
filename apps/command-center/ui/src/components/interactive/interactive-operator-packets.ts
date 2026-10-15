@@ -12,6 +12,7 @@ import {
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { gatewayHttpFetch, gatewayResourceUrl } from '../../utils/gateway-origin.js';
+import { openMediaLightbox } from '../shared/media-lightbox.js';
 import { renderReadyWorkspaceMarkdown } from '../workspace/ready-workspace-markdown.js';
 
 import {
@@ -255,7 +256,13 @@ export class InteractiveOperatorPackets extends LitElement {
       if (request.kind === 'copy') {
         await this._copyText(request.text);
       } else if (request.kind === 'open-artifact') {
-        window.open(this._artifactUrl(request.artifactPath), '_blank', 'noopener');
+        openMediaLightbox([
+          {
+            path: request.artifactPath,
+            purpose: 'Interactive packet artifact',
+            url: this._artifactUrl(request.artifactPath),
+          },
+        ]);
       } else if (request.kind === 'terminal.send') {
         if (!this.slotId) throw new Error('Run is not attached to a slot.');
         await gateway.request(Methods.TERMINAL_SEND, {
@@ -317,7 +324,13 @@ export class InteractiveOperatorPackets extends LitElement {
                             class="packet-chip packet-action"
                             title=${artifactPath}
                             @click=${() =>
-                              window.open(this._artifactUrl(artifactPath), '_blank', 'noopener')}
+                              openMediaLightbox([
+                                {
+                                  path: artifactPath,
+                                  purpose: anchor.label,
+                                  url: this._artifactUrl(artifactPath),
+                                },
+                              ])}
                           >
                             ${anchor.label}${anchor.line ? `:${anchor.line}` : ''}
                           </button>

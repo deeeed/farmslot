@@ -20,6 +20,7 @@ import '../shared/step-artifacts.js';
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
+import { openMediaLightbox } from '../shared/media-lightbox.js';
 import { runArtifactUrl } from '../workspace/workspace-artifacts.js';
 
 import { runCompareStyles } from './run-compare-styles.js';
@@ -254,7 +255,10 @@ export class RunCompare extends LitElement {
   ): void {
     const artifact = event.detail.artifacts[event.detail.index];
     if (!artifact) return;
-    window.open(this.artifactUrl(artifact), '_blank', 'noopener');
+    openMediaLightbox(
+      event.detail.artifacts.map((item) => ({ ...item, url: this.artifactUrl(item) })),
+      event.detail.index,
+    );
   }
 
   render() {

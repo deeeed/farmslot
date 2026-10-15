@@ -17,6 +17,7 @@ import type {
   PairingCandidate,
   PairingCandidatesResult,
   PairingCreateResult,
+  PersonDeviceSession,
   PrincipalListResult,
   Run,
   SlotStatus,
@@ -30,12 +31,9 @@ import {
   Events,
   isTerminalRunStatus,
   Methods,
+  personSessionCaption,
 } from '@farmslot/protocol';
-import {
-  accountSessionCaption,
-  accountSignOutConfirmation,
-  confirmAccountSignOut,
-} from '@farmslot/review-dispatch';
+import { accountSignOutConfirmation, confirmAccountSignOut } from '@farmslot/review-dispatch';
 
 import './shared/summary-bar.js';
 import './shared/global-filter-bar.js';
@@ -243,6 +241,10 @@ export class FarmApp extends LitElement {
   @state() private authMode: 'token' | 'password' = 'token';
   @state() private authSecret = '';
   @state() private authSaving = false;
+  @state() private personDevices: PersonDeviceSession[] | null = null;
+  @state() private devicesLoading = false;
+  @state() private devicesError = '';
+  @state() private revokeTarget: PersonDeviceSession | null = null;
   @state() private authRememberMe = getDesktopConnection()?.rememberMe !== false;
   @state() private authSaveError = '';
   @state() private signingOut = false;
@@ -869,6 +871,12 @@ export class FarmApp extends LitElement {
   }
 
   private syncState(s: AppState) {
+    const principalId = gateway.authenticatedPrincipalId;
+    if (principalId !== this.devicesPrincipalId) {
+      this.devicesPrincipalId = principalId;
+      this.personDevices = null;
+      this.devicesError = '';
+    }
     this.summary = s.fleet?.summary ?? null;
     this.fleetSlots = s.fleet?.slots ?? [];
     // The Setup page exists to establish a connection — once one is live,
@@ -879,7 +887,7 @@ export class FarmApp extends LitElement {
     if (
       s.connection === 'auth_required' &&
       this.connection !== 'auth_required' &&
-      gateway.authError?.code === 'SESSION_EXPIRED'
+      gateway.authError?.code === 'AUTH_SESSION_ENDED'
     )
       this.authSecret = '';
     this.connection = s.connection;
@@ -929,6 +937,41 @@ export class FarmApp extends LitElement {
       this.authSaveError = error instanceof Error ? error.message : 'Unable to sign out.';
     } finally {
       this.signingOut = false;
+    }
+  }
+
+  private devicesPrincipalId: string | null = null;
+
+  private async loadPersonDevices(): Promise<void> {
+    this.devicesLoading = true;
+    this.devicesError = '';
+    try {
+      this.personDevices = await gateway.signedInDevices();
+    } catch (error) {
+      this.devicesError =
+        error instanceof Error ? error.message : 'Unable to load signed-in devices.';
+    } finally {
+      this.devicesLoading = false;
+    }
+  }
+
+  private async revokePersonDevice(device: PersonDeviceSession): Promise<void> {
+    this.revokeTarget = device;
+    await this.updateComplete;
+    try {
+      await confirmAccountSignOut(
+        () => this.confirmSignOut(),
+        async () => {
+          await gateway.revokeDevice(device.id);
+          this.personDevices = null;
+          if (gateway.connectionState === 'connected') await this.loadPersonDevices();
+        },
+      );
+    } catch (error) {
+      this.devicesError =
+        error instanceof Error ? error.message : 'Unable to sign out that device.';
+    } finally {
+      this.revokeTarget = null;
     }
   }
 
@@ -1019,7 +1062,7 @@ export class FarmApp extends LitElement {
           ⋯
         </summary>
         <div class="fa-account-options">
-          <p>${accountSessionCaption(gateway.sessionExpiresAt) || 'Account'}</p>
+          <p>${personSessionCaption(gateway.personSession) || 'Account'}</p>
           <button
             type="button"
             data-testid="account-sign-out"
@@ -1029,6 +1072,36 @@ export class FarmApp extends LitElement {
           >
             Sign out…
           </button>
+          ${gateway.personSession
+            ? html`
+                <button
+                  data-testid="signed-in-devices"
+                  ?disabled=${this.devicesLoading}
+                  @click=${() => void this.loadPersonDevices()}
+                >
+                  Signed-in devices
+                </button>
+                ${this.personDevices?.map(
+                  (device) =>
+                    html`<div data-testid="signed-in-device">
+                      <p>
+                        ${personSessionCaption(device)}${device.id === gateway.personSession?.id
+                          ? ' · This device'
+                          : ''}
+                      </p>
+                      ${device.revokedAt
+                        ? html`<span>Signed out</span>`
+                        : html`<button
+                            data-testid="revoke-device"
+                            @click=${() => void this.revokePersonDevice(device)}
+                          >
+                            Sign out ${device.deviceName}…
+                          </button>`}
+                    </div>`,
+                )}
+                ${this.devicesError ? html`<p role="alert">${this.devicesError}</p>` : nothing}
+              `
+            : nothing}
           ${this.authSaveError ? html`<p role="alert">${this.authSaveError}</p>` : nothing}
         </div>
       </details>
@@ -1037,7 +1110,9 @@ export class FarmApp extends LitElement {
         data-testid="account-sign-out-confirmation"
         aria-labelledby="sign-out-title"
       >
-        <h2 id="sign-out-title">${confirmation.title}</h2>
+        <h2 id="sign-out-title">
+          ${this.revokeTarget ? `Sign out ${this.revokeTarget.deviceName}?` : confirmation.title}
+        </h2>
         <p>${confirmation.message}</p>
         <form method="dialog">
           <button value="cancel" autofocus data-testid="account-sign-out-cancel">
@@ -1628,7 +1703,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
           Enter your gateway token or password to open your Farmslot workspace.
           ${isDesktopClient()
             ? 'Remembered credentials are encrypted using macOS Keychain.'
-            : 'The secret is stored in this browser profile.'}
+            : 'Person sign-ins use an expiring device session. Service logins are saved in this browser profile.'}
         </div>
         ${authError
           ? html`<div class="auth-error">${authError}</div>`

@@ -19,7 +19,7 @@ import {
   Tray,
 } from 'electron';
 
-import { createConnectionStore } from './connection.mjs';
+import { createConnectionStore, validateConnection } from './connection.mjs';
 import { routeFromDeepLink } from './deep-links.mjs';
 import {
   attentionBadge,
@@ -482,7 +482,10 @@ if (!app.requestSingleInstanceLock()) {
       });
       ipcMain.handle('desktop:save-connection', async (event, value) => {
         assertTrustedSender(event, window, server.origin, developmentUrl());
-        connection = await store.save(value);
+        const candidate = validateConnection(value);
+        if (candidate.pending && connection?.personSession)
+          throw new Error('Sign out this device before switching accounts.');
+        connection = candidate.pending ? candidate : await store.save(candidate);
       });
       ipcMain.handle('desktop:load-preferences', (event) => {
         assertTrustedSender(event, window, server.origin, developmentUrl());

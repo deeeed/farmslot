@@ -263,7 +263,15 @@ test('a revoked acting device cannot mutate another device while its person stil
   assert.equal(readFileSync(f.runtime.path, 'utf8'), bytes);
 });
 
-export async function rpcFixture(t: test.TestContext, operator = false) {
+interface SessionProofResource {
+  contentType: string;
+  body: string | Buffer;
+}
+export async function rpcFixture(
+  t: test.TestContext,
+  operator = false,
+  resources: Record<string, SessionProofResource> = {},
+) {
   const f = stateFixture();
   if (operator) f.writer.grantRole(f.person.id, 'operator', { kind: 'global' });
   const admin = f.writer.createPrincipal({ type: 'service', displayName: 'Automation' }, [
@@ -273,7 +281,9 @@ export async function rpcFixture(t: test.TestContext, operator = false) {
   const runtime = createGatewayAuthRuntime(f.runtime.env, () => f.clock.now);
   const server = createServer((req, res) => {
     if (!authorizeHttpRequest({ runtime, req, res, resource: 'run-artifact' })) return;
-    res.end('authorized');
+    const resource = resources[new URL(req.url ?? '/', 'http://localhost').pathname];
+    if (resource) res.setHeader('Content-Type', resource.contentType);
+    res.end(resource?.body ?? 'authorized');
   });
   const wss = createWebSocketServer(server, runtime);
   t.after(async () => {

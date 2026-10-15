@@ -1,6 +1,6 @@
 import type { PersonDeviceSession } from '../rpc/auth.js';
 
-/** Shared account control for Command Center and Companion. Local sign-out never revokes a credential. */
+/** Shared account control for Command Center and Companion. Person sign-out revokes only this device session. */
 export const ACCOUNT_SESSION_CONTROL = {
   label: 'Sign out / switch account',
   signedOut: 'Signed out. Log in or pair to choose an account.',

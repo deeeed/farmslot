@@ -13,6 +13,7 @@ import {
 
 import { colors } from '../../styles/theme-tokens.js';
 import { MARKDOWN_EXTS } from '../../utils/artifact-file-types.js';
+import { gatewayMediaSrc } from '../shared/gateway-media-src.js';
 import { renderRunTitle } from '../shared/run-title.js';
 
 import {
@@ -201,7 +202,7 @@ function renderFamilyEvidenceArtifact(
           : IMAGE_EXTS.test(artifact.path)
             ? html`<img
                 class="artifact-preview"
-                src=${url}
+                src=${gatewayMediaSrc(url)}
                 alt=${artifact.path}
                 loading="lazy"
                 @error=${() => context.markArtifactBroken(artifact)}
@@ -210,7 +211,7 @@ function renderFamilyEvidenceArtifact(
               ? html`<div class="artifact-video-preview">
                   <video
                     class="artifact-preview"
-                    src=${url}
+                    src=${gatewayMediaSrc(url)}
                     muted
                     preload="metadata"
                     @error=${() => context.markArtifactBroken(artifact)}

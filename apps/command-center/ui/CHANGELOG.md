@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Remember person sign-ins through gateway device sessions, list signed-in devices and revoke confirmed sign-outs without storing access tokens.
+
 - Open the retained reviewer conversation directly on slot-free reviews and distinguish it from the worktree shell.
 - Show selected AC proof first and collapse supporting files behind raw-artifact controls in run reviews.
 - Show WARM/COLD review mode as visible segmented buttons beside the shared execution choices.

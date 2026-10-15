@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Verify person and service sign-ins before saving, and keep person access tokens in memory.
+
 - Remove the retired checkout auth-file prerequisite from validation instructions.
 
 - Use explicit test gateway profiles in desktop validation instructions.

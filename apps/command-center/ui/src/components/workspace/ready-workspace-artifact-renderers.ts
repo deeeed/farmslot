@@ -6,6 +6,7 @@ import type { ArtifactRef, RecipeRunArtifactGroup } from '@farmslot/protocol';
 import { buildBeforeAfterPairs } from '../../utils/artifact-pairs.js';
 import { formatBytes } from '../../utils/format.js';
 import { renderCollapsibleSectionHeader } from '../shared/collapsible-section-header.js';
+import { gatewayMediaSrc } from '../shared/gateway-media-src.js';
 
 import {
   type ArtifactFilter,
@@ -299,7 +300,7 @@ export function renderReadyArtifactCard(ctx: ReadyArtifactCardContext) {
         ? html`
             <img
               class="rdy-media-preview"
-              src=${ctx.mediaUrl}
+              src=${gatewayMediaSrc(ctx.mediaUrl)}
               alt=${artifact.path}
               loading="lazy"
             />
@@ -308,7 +309,7 @@ export function renderReadyArtifactCard(ctx: ReadyArtifactCardContext) {
           ? html`
               <video
                 class="rdy-media-preview"
-                src=${ctx.mediaUrl}
+                src=${gatewayMediaSrc(ctx.mediaUrl)}
                 controls
                 muted
                 preload="metadata"

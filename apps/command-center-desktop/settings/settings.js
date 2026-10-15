@@ -39,7 +39,11 @@ form.addEventListener('submit', async (event) => {
   error.textContent = '';
   button.disabled = true;
   try {
-    const connection = { url: gatewayUrl.value.trim(), rememberMe: rememberMe.checked };
+    const connection = {
+      url: gatewayUrl.value.trim(),
+      rememberMe: rememberMe.checked,
+      pending: true,
+    };
     if (auth.value !== 'none') connection[auth.value] = secret.value;
     await window.farmslotDesktop.saveConnection(connection);
     await window.farmslotDesktop.openUi();
