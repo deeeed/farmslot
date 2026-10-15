@@ -170,7 +170,7 @@ export function redactProfile(name: string, profile: GatewayProfile, active: str
     url: profile.url,
     active: name === active,
     authMode: profile.authMode ?? null,
-    loggedIn: Boolean(profile.secret),
+    loggedIn: Boolean(profile.secret || profile.personSession),
   };
 }
 

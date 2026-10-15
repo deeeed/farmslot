@@ -1,3 +1,5 @@
+import { isRecord } from '../recipe/common.js';
+
 import type { RoleBinding, SelfPrincipalSummary } from './principal.js';
 import { Methods } from './registry.js';
 
@@ -199,4 +201,69 @@ export function parsePersonSessionToken(
 ): { id: string; secret: string } | null {
   const match = /^(fsa|fsr)_([a-f0-9]{32})_([A-Za-z0-9_-]{43})$/u.exec(value);
   return match?.[1] === kind ? { id: match[2], secret: match[3] } : null;
+}
+
+export function parsePersonDeviceSession(value: unknown): PersonDeviceSession | null {
+  if (!isRecord(value)) return null;
+  const device = parsePersonDeviceDescription(value);
+  if (
+    !device ||
+    typeof value.id !== 'string' ||
+    !/^[a-f0-9]{32}$/u.test(value.id) ||
+    typeof value.principalId !== 'string' ||
+    !value.principalId.trim() ||
+    typeof value.principalGeneration !== 'number' ||
+    !Number.isSafeInteger(value.principalGeneration) ||
+    value.principalGeneration < 0 ||
+    !sessionTimestamp(value.createdAt) ||
+    !sessionTimestamp(value.lastRefreshedAt) ||
+    !sessionTimestamp(value.refreshExpiresAt) ||
+    (value.revokedAt !== null && !sessionTimestamp(value.revokedAt))
+  )
+    return null;
+  return {
+    ...device,
+    id: value.id,
+    principalId: value.principalId,
+    principalGeneration: value.principalGeneration,
+    createdAt: value.createdAt,
+    lastRefreshedAt: value.lastRefreshedAt,
+    refreshExpiresAt: value.refreshExpiresAt,
+    revokedAt: value.revokedAt,
+  };
+}
+
+/** Storage adapters never accept an access token as a persisted session. */
+export function parsePersonSessionAuth(value: unknown): PersonSessionAuth | null {
+  if (!isRecord(value) || 'accessToken' in value || typeof value.refreshToken !== 'string')
+    return null;
+  const session = parsePersonDeviceSession(value.session);
+  const token = parsePersonSessionToken(value.refreshToken, 'fsr');
+  return session && token?.id === session.id ? { session, refreshToken: value.refreshToken } : null;
+}
+
+export function parsePersonSessionGrant(value: unknown): PersonSessionGrant | null {
+  if (
+    !isRecord(value) ||
+    typeof value.accessToken !== 'string' ||
+    !sessionTimestamp(value.accessExpiresAt)
+  )
+    return null;
+  const saved = parsePersonSessionAuth({
+    session: value.session,
+    refreshToken: value.refreshToken,
+  });
+  if (
+    !saved ||
+    !parsePersonSessionToken(value.accessToken, 'fsa') ||
+    saved.session.revokedAt !== null
+  )
+    return null;
+  return { ...saved, accessToken: value.accessToken, accessExpiresAt: value.accessExpiresAt };
+}
+
+function sessionTimestamp(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const milliseconds = Date.parse(value);
+  return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value;
 }

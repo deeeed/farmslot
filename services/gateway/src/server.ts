@@ -905,6 +905,8 @@ function reconcileAuthenticationSessions(
   }
   let faultLogged = false;
   closeSessions((state) => {
+    // New sockets have no authority to withdraw. Their authentication must receive its own result.
+    if (!state.authenticated && !state.authentication) return false;
     if (!change && state.authentication?.kind !== 'person-session') return false;
     try {
       const resolved = runtime.resolver.resolveSessionPrincipal(state);

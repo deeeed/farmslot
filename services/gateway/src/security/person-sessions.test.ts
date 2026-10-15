@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { Command } from 'commander';
+
 import {
   activePersonAccess,
   CredentialStoreRefusalError,
@@ -19,12 +21,21 @@ import {
   type GatewayAuthConnectResult,
   Methods,
   type PairingCreateResult,
+  PersonSessionEndedError,
   type PersonSessionGrant,
   type PersonSessionListResult,
   type PersonSessionRevokeResult,
 } from '@farmslot/protocol';
 
+import { registerAuthCommands } from '../../../../packages/cli/src/commands/auth.js';
 import { GatewayClient, GatewayRpcError } from '../../../../packages/cli/src/gateway-client.js';
+import {
+  loadProfiles,
+  profilesPath,
+  resolveGatewayTarget,
+  saveProfiles,
+} from '../../../../packages/cli/src/gateway-profiles.js';
+import { OutputContext } from '../../../../packages/cli/src/output.js';
 
 // No pool, user identity home or native host is consulted by the protocol fixture.
 const privateFarm = realpathSync(mkdtempSync(join(tmpdir(), 'person-session-rpc-')));
@@ -402,5 +413,200 @@ test('person pairing never issues a long-lived device credential and its code is
       })
     ).principal?.subjectKind,
     'service',
+  );
+});
+
+test('the CLI refreshes its selected profile, authenticates its TUI, and clears only confirmed ended authority', async (t) => {
+  const f = await rpcFixture(t);
+  const grant = await f.client().call<PersonSessionGrant>(Methods.AUTH_SESSION_EXCHANGE, {
+    credential: f.credential.secret,
+    ...f.device,
+  });
+  const path = profilesPath();
+  t.after(() => rmSync(path, { force: true }));
+  saveProfiles(
+    {
+      active: 'person',
+      gateways: {
+        person: {
+          url: f.url,
+          authMode: 'token',
+          personSession: { session: grant.session, refreshToken: grant.refreshToken },
+        },
+        automation: {
+          url: 'ws://unrelated.invalid',
+          authMode: 'token',
+          secret: 'retained-service-secret',
+        },
+      },
+    },
+    path,
+  );
+  const target = resolveGatewayTarget({ gateway: 'person' });
+  const client = new GatewayClient({
+    url: target.url,
+    timeout: 2500,
+    credential: target.credential,
+  });
+  const devices = await client.call<PersonSessionListResult>(Methods.AUTH_SESSION_LIST);
+  assert.equal(devices.sessions[0]?.id, grant.session.id);
+  const stored = readFileSync(path, 'utf8');
+  assert.ok(!stored.includes('fsa_'));
+  assert.ok(!stored.includes(f.credential.secret));
+  assert.equal(loadProfiles(path).gateways.person.personSession?.refreshToken, grant.refreshToken);
+  const connection = await client.connect();
+  try {
+    const devices = await connection.call<PersonSessionListResult>(Methods.AUTH_SESSION_LIST);
+    assert.equal(devices.sessions[0]?.id, grant.session.id);
+  } finally {
+    connection.close();
+  }
+  f.writer.revokePersonSession(authority(grant), grant.session.id);
+  await assert.rejects(client.call(Methods.AUTH_SESSION_LIST), PersonSessionEndedError);
+  const after = loadProfiles(path);
+  assert.equal(after.gateways.person.personSession, undefined);
+  assert.equal(after.gateways.automation.secret, 'retained-service-secret');
+});
+
+function authCommand(t: test.TestContext) {
+  const output: unknown[] = [];
+  t.mock.method(OutputContext.prototype, 'writeJson', (value: unknown) => {
+    output.push(value);
+  });
+  t.mock.method(process, 'exit', (code?: number | string | null): never => {
+    throw new Error(`Unexpected CLI exit ${code}`);
+  });
+  return {
+    output,
+    run: async (...args: string[]) => {
+      const program = new Command().option('--json');
+      program.exitOverride();
+      registerAuthCommands(program);
+      await program.parseAsync(['node', 'farmslot', '--json', ...args]);
+    },
+  };
+}
+
+test('the public CLI login persists only a person refresh token and nonsecret metadata', async (t) => {
+  const f = await rpcFixture(t);
+  const path = profilesPath();
+  t.after(() => rmSync(path, { force: true }));
+  saveProfiles({ active: 'person', gateways: { person: { url: f.url } } }, path);
+  const command = authCommand(t);
+  await command.run('login', 'person', '--token', f.credential.secret);
+  const profile = loadProfiles(path).gateways.person;
+  assert.ok(profile.personSession);
+  assert.equal(profile.secret, undefined);
+  const persisted = readFileSync(path, 'utf8');
+  assert.ok(!persisted.includes(f.credential.secret));
+  assert.ok(!persisted.includes('fsa_'));
+  const rendered = JSON.stringify(command.output);
+  assert.ok(!rendered.includes(profile.personSession.refreshToken));
+  assert.ok(!rendered.includes(f.credential.secret));
+});
+
+test('the public CLI logout confirms revocation before removing its person refresh token', async (t) => {
+  const f = await rpcFixture(t);
+  const grant = f.grant();
+  const path = profilesPath();
+  t.after(() => rmSync(path, { force: true }));
+  saveProfiles(
+    {
+      active: 'person',
+      gateways: {
+        person: {
+          url: f.url,
+          authMode: 'token',
+          personSession: { session: grant.session, refreshToken: grant.refreshToken },
+        },
+      },
+    },
+    path,
+  );
+  const command = authCommand(t);
+  await command.run('logout', 'person', '--yes');
+  assert.equal(loadProfiles(path).gateways.person.personSession, undefined);
+  await assert.rejects(
+    f.client().call(Methods.AUTH_SESSION_REFRESH, { refreshToken: grant.refreshToken }),
+    rpcCode('AUTH_SESSION_ENDED'),
+  );
+});
+
+test('CLI access-token input cannot replace or overwrite a saved service credential', async (t) => {
+  const f = await rpcFixture(t);
+  const grant = f.grant();
+  const path = profilesPath();
+  t.after(() => rmSync(path, { force: true }));
+  saveProfiles(
+    {
+      active: 'selected',
+      gateways: { selected: { url: f.url, authMode: 'token', secret: f.adminCredential.secret } },
+    },
+    path,
+  );
+  const before = readFileSync(path, 'utf8');
+  const command = authCommand(t);
+  await assert.rejects(
+    command.run('login', 'selected', '--token', grant.accessToken),
+    /Unexpected CLI exit/,
+  );
+  assert.equal(readFileSync(path, 'utf8'), before);
+});
+
+test('CLI refusal does not classify or delete an opaque legacy service profile', async (t) => {
+  const f = await rpcFixture(t);
+  const path = profilesPath();
+  t.after(() => rmSync(path, { force: true }));
+  saveProfiles(
+    {
+      active: 'selected',
+      gateways: { selected: { url: f.url, authMode: 'token', secret: 'unverified-legacy-value' } },
+    },
+    path,
+  );
+  const before = readFileSync(path, 'utf8');
+  const command = authCommand(t);
+  await assert.rejects(command.run('login', 'selected'), /Unexpected CLI exit/);
+  assert.equal(readFileSync(path, 'utf8'), before);
+});
+
+test('CLI classifies a stored person credential through the gateway and requires fresh sign-in', async (t) => {
+  const f = await rpcFixture(t);
+  const path = profilesPath();
+  t.after(() => rmSync(path, { force: true }));
+  saveProfiles(
+    {
+      active: 'selected',
+      gateways: { selected: { url: f.url, authMode: 'token', secret: f.credential.secret } },
+    },
+    path,
+  );
+  const command = authCommand(t);
+  await assert.rejects(command.run('login', 'selected'), /Unexpected CLI exit/);
+  const after = loadProfiles(path).gateways.selected;
+  assert.equal(after.secret, undefined);
+  assert.equal(after.personSession, undefined);
+  assert.equal(f.authRuntime.store.snapshot().personSessions.length, 0);
+});
+
+test('CLI person pairing consumes its invitation once and saves a refresh-only device session', async (t) => {
+  const f = await rpcFixture(t);
+  const path = profilesPath();
+  t.after(() => rmSync(path, { force: true }));
+  saveProfiles({ active: 'selected', gateways: { selected: { url: f.url } } }, path);
+  const pairing = await f
+    .client(f.adminCredential.secret)
+    .call<PairingCreateResult>(Methods.PAIRING_CREATE, {
+      gatewayUrl: f.url,
+      authority: { kind: 'existing-principal', principalId: f.person.id },
+    });
+  const command = authCommand(t);
+  await command.run('login', 'selected', '--code', pairing.code);
+  const after = loadProfiles(path).gateways.selected;
+  assert.ok(after.personSession);
+  assert.equal(after.secret, undefined);
+  await assert.rejects(
+    f.client().call(Methods.AUTH_SESSION_EXCHANGE, { code: pairing.code, ...f.device }),
+    rpcCode('PAIRING_FAILED'),
   );
 });

@@ -1,9 +1,21 @@
+import os from 'node:os';
+import { createInterface } from 'node:readline/promises';
+
 import type { Command } from 'commander';
+
+import {
+  hasAuthErrorCode,
+  personSessionCaption,
+  PersonSessionClient,
+  type PersonSessionExchangeParams,
+} from '@farmslot/protocol';
 
 import { dim, green, red, yellow } from '../colors.js';
 import { isMachineMode } from '../envelope.js';
 import { describeProbe, exchangePairingCode, probeGatewayAuth } from '../gateway-auth.js';
+import { GatewayClient } from '../gateway-client.js';
 import {
+  type GatewayProfile,
   type GatewayProfilesFile,
   loadProfiles,
   loadProfilesOrExit,
@@ -32,6 +44,52 @@ function requireProfile(
   return { name: resolved };
 }
 
+function personSessionClient(
+  profile: GatewayProfile,
+  profiles: GatewayProfilesFile,
+): PersonSessionClient {
+  return new PersonSessionClient({
+    storage: {
+      load: async () => profile.personSession ?? null,
+      save: async (value) => {
+        if (value) {
+          profile.personSession = value;
+          profile.authMode = 'token';
+        } else {
+          delete profile.personSession;
+          delete profile.authMode;
+        }
+        delete profile.secret;
+        saveProfiles(profiles);
+      },
+    },
+    request: (method, params, accessToken) =>
+      new GatewayClient({
+        url: profile.url,
+        timeout: 5_000,
+        credential: accessToken ? { token: accessToken } : null,
+      }).call(method, params),
+  });
+}
+
+async function exchangePerson(
+  profile: GatewayProfile,
+  profiles: GatewayProfilesFile,
+  input: { credential: string } | { code: string },
+): Promise<string> {
+  const client = personSessionClient(profile, profiles);
+  const params: PersonSessionExchangeParams = {
+    ...input,
+    deviceName: `CLI on ${os.hostname()}`.slice(0, 128),
+    deviceKind: 'cli',
+  };
+  try {
+    return await client.exchange(params);
+  } finally {
+    await client.dispose();
+  }
+}
+
 interface LoginOptions {
   code?: string;
   token?: string;
@@ -58,28 +116,66 @@ export function registerAuthCommands(program: Command): void {
         const { name } = requireProfile(profiles, profileArg, output);
         const profile = profiles.gateways[name];
 
+        let personAccess: string | undefined;
         if (opts.code) {
-          const exchanged = await withProgress(
-            `Exchanging pairing code for ${name}`,
-            () => exchangePairingCode(profile.url, opts.code as string),
-            !isMachineMode(output),
-          );
-          profile.authMode = exchanged.authMode;
-          profile.secret = exchanged.secret;
+          try {
+            const exchanged = await withProgress(
+              `Exchanging pairing code for ${name}`,
+              () => exchangePairingCode(profile.url, opts.code as string),
+              !isMachineMode(output),
+            );
+            profile.authMode = exchanged.authMode;
+            profile.secret = exchanged.secret;
+            delete profile.personSession;
+          } catch (error) {
+            if (!hasAuthErrorCode(error, 'AUTH_PERSON_SESSION_REQUIRED')) throw error;
+            personAccess = await exchangePerson(profile, profiles, { code: opts.code });
+          }
         } else if (opts.token) {
           profile.authMode = 'token';
           profile.secret = opts.token;
+          delete profile.personSession;
         } else if (opts.password) {
           profile.authMode = 'password';
           profile.secret = opts.password;
+          delete profile.personSession;
         }
         // No credential flags: verify whatever is stored (or that none is needed).
 
-        const probe = await withProgress(
+        let probe = await withProgress(
           `Verifying ${name}`,
-          () => probeGatewayAuth(profile.url, profileCredential(profile)),
+          () =>
+            probeGatewayAuth(
+              profile.url,
+              personAccess ? { token: personAccess } : profileCredential(profile),
+            ),
           !isMachineMode(output),
         );
+        if (probe.errorCode === 'AUTH_PERSON_SESSION_REQUIRED') {
+          if (opts.token) {
+            personAccess = await exchangePerson(profile, profiles, { credential: opts.token });
+            probe = await probeGatewayAuth(profile.url, { token: personAccess });
+          } else {
+            // Only this server verdict identifies a legacy person secret. Never guess by grammar.
+            delete profile.secret;
+            delete profile.authMode;
+            saveProfiles(profiles);
+          }
+        }
+        if (
+          probe.state === 'authenticated' &&
+          probe.principal?.subjectKind === 'person' &&
+          !profile.personSession
+        ) {
+          if (flagCount === 0) {
+            delete profile.secret;
+            delete profile.authMode;
+            saveProfiles(profiles);
+          }
+          throw new Error(
+            'Person access tokens are not saved. Sign in with a person credential or a pairing code.',
+          );
+        }
         if (probe.state === 'authenticated' || probe.state === 'no-auth') {
           // Persist ONLY what the gateway actually verified: a no-auth gateway
           // cannot validate a supplied secret, so storing one would keep an
@@ -93,9 +189,12 @@ export function registerAuthCommands(program: Command): void {
               authMode: probe.authMode,
               principal: probe.principal ?? null,
               credentialStored: verifiedCredential,
+              session: profile.personSession?.session ?? null,
             });
           } else {
             output.write(`${green('[OK]')} ${describeProbe(name, profile, probe)}\n`);
+            if (profile.personSession)
+              output.write(`${personSessionCaption(profile.personSession.session)}\n`);
             if (probe.state === 'no-auth' && flagCount === 1) {
               output.write(
                 `${dim('gateway requires no auth — credential NOT stored (cannot be verified)')}\n`,
@@ -122,14 +221,35 @@ export function registerAuthCommands(program: Command): void {
 
   program
     .command('logout')
-    .description('Forget the stored credential for a gateway profile')
+    .description('Sign out this device or forget a service-profile credential')
     .argument('[profile]', 'profile name; defaults to the active profile')
-    .action((profileArg: string | undefined, _opts: unknown, cmd: Command) => {
+    .option('--yes', 'confirm revoking this device sign-in')
+    .action(async (profileArg: string | undefined, opts: { yes?: boolean }, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
       const profiles = loadProfilesOrExit(output);
       const { name } = requireProfile(profiles, profileArg, output);
       const profile = profiles.gateways[name];
-      const hadSecret = Boolean(profile.secret);
+      const hadSecret = Boolean(profile.secret || profile.personSession);
+      if (profile.personSession) {
+        if (!opts.yes) {
+          if (!process.stdin.isTTY || output.json)
+            throw new Error('Use --yes to confirm revoking this device sign-in.');
+          const prompt = createInterface({ input: process.stdin, output: process.stdout });
+          let answer: string;
+          try {
+            answer = await prompt.question('Revoke this device sign-in? [y/N] ');
+          } finally {
+            prompt.close();
+          }
+          if (!['y', 'yes'].includes(answer.trim().toLowerCase())) return;
+        }
+        const client = personSessionClient(profile, profiles);
+        try {
+          await client.signOut();
+        } finally {
+          await client.dispose();
+        }
+      }
       delete profile.secret;
       delete profile.authMode;
       saveProfiles(profiles);
@@ -189,6 +309,7 @@ export function registerAuthCommands(program: Command): void {
             authMode: r.probe.authMode ?? null,
             principal: r.probe.principal ?? null,
             detail: r.probe.detail,
+            session: r.profile.personSession?.session ?? null,
           })),
         });
       } else {
@@ -200,6 +321,8 @@ export function registerAuthCommands(program: Command): void {
                 ? yellow('[WARN]')
                 : red('[FAIL]');
           output.write(`${mark} ${describeProbe(r.name, r.profile, r.probe)}\n`);
+          if (r.profile.personSession)
+            output.write(`${personSessionCaption(r.profile.personSession.session)}\n`);
         }
       }
       if (!ok) process.exit(1);

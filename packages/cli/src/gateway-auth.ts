@@ -7,7 +7,12 @@ import type {
   SelfPrincipalSummary,
 } from '@farmslot/protocol';
 
-import { GatewayClient, GatewayConnectionError } from './gateway-client.js';
+import {
+  GatewayClient,
+  GatewayConnectionError,
+  type GatewayCredential,
+  GatewayRpcError,
+} from './gateway-client.js';
 import type { GatewayProfile } from './gateway-profiles.js';
 
 export const AUTH_PROBE_TIMEOUT_MS = 5_000;
@@ -19,6 +24,7 @@ export interface GatewayAuthProbe {
   authMode?: string;
   detail?: string;
   principal?: SelfPrincipalSummary;
+  errorCode?: string;
 }
 
 /**
@@ -28,16 +34,21 @@ export interface GatewayAuthProbe {
  */
 export async function probeGatewayAuth(
   url: string,
-  credential: { token?: string; password?: string } | undefined,
+  credential: GatewayCredential | undefined,
   timeoutMs: number = AUTH_PROBE_TIMEOUT_MS,
 ): Promise<GatewayAuthProbe> {
-  const client = new GatewayClient({ url, timeout: timeoutMs, credential: null });
+  const client = new GatewayClient({
+    url,
+    timeout: timeoutMs,
+    credential: credential?.personSession ? credential : null,
+  });
   try {
+    const current = credential?.personSession ? await client.currentCredentials() : credential;
     const result = await client.call<GatewayAuthConnectResult>('auth.connect', {
       clientKind: 'ui',
       clientName: 'farmslot-cli',
-      ...(credential?.token ? { token: credential.token } : {}),
-      ...(credential?.password ? { password: credential.password } : {}),
+      ...(current?.token ? { token: current.token } : {}),
+      ...(current?.password ? { password: current.password } : {}),
     });
     return result.authMode === 'none'
       ? { state: 'no-auth', authMode: 'none', principal: result.principal }
@@ -49,7 +60,11 @@ export async function probeGatewayAuth(
     if (err instanceof GatewayConnectionError) {
       return { state: 'unreachable', detail };
     }
-    return { state: 'inactive', detail };
+    return {
+      state: 'inactive',
+      detail,
+      ...(err instanceof GatewayRpcError ? { errorCode: err.code } : {}),
+    };
   }
 }
 

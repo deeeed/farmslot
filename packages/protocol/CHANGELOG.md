@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Declare person-device exchange, refresh, listing and revocation with access/session identity references.
+- Declare person-device exchange, refresh, listing and revocation with access/session identity references and one shared client for renewal, expiry and sign-out.
 
 ## 0.48.0 - 2026-10-15
 
