@@ -2336,3 +2336,73 @@ test('restart restores a held approval wait before stale review continuation or 
   assert.equal(calls.reconciled, 0);
   assert.deepEqual(run, before);
 });
+
+for (const action of ['approve-publish', 'approve-publish-unresolved']) {
+  for (const operatorRequired of [false, true]) {
+    test(`restart retains ${action} ahead of failed review-fix delivery, operator-required=${operatorRequired}`, async () => {
+      const run = minimalActiveRun({
+        flowType: 'fix-bug',
+        status: 'blocked',
+        ticketOrPr: 'APPROVED-RECOVERY',
+        familyRootTicketOrPr: 'APPROVED-RECOVERY',
+        taskFile: '/tmp/approved-recovery/TASK.md',
+        steps: FLOW_STEPS['fix-bug'].map((name) => ({
+          name,
+          status: name === 'human-gate' ? 'running' : name === 'finalize' ? 'pending' : 'done',
+        })),
+        decisions: [
+          {
+            ...humanGateDecision('accepted'),
+            resolvedAt: '2026-10-15T00:01:00Z',
+            resolvedAction: action,
+          },
+        ],
+        engineState: {
+          publishGate: {
+            publicationStatus: 'pending_publish',
+            approvedPackageHash: 'accepted-package',
+            reviews: [
+              {
+                id: 'failed-fix-delivery',
+                source: 'human-gate',
+                loopNumber: 1,
+                mode: 'cold',
+                verdict: 'issues',
+                unresolvedCount: 1,
+                feedbackSent: false,
+                recoveryContinuationPending: true,
+                issues: [{ file: 'src/example.ts', description: 'Accepted finding' }],
+              },
+            ],
+            ...(operatorRequired
+              ? {
+                  reviewRecovery: {
+                    status: 'operator-required',
+                    attempts: 1,
+                    startedAt: '2026-10-15T00:00:00Z',
+                    updatedAt: '2026-10-15T00:01:00Z',
+                  },
+                }
+              : {}),
+          },
+        },
+      });
+      assert.equal(hasPendingPublicationReviewContinuation(run), true);
+      const { deps, calls } = publicationReviewRecoveryDeps(run);
+      let resumed = 0;
+      deps.resumeHeldPublicationGate = async (id) => {
+        assert.equal(id, run.id);
+        resumed++;
+      };
+      deps.recoverInflightPublicationReviews = async () =>
+        assert.fail('approval cannot recover old reviews');
+      const before = structuredClone(run);
+      await recoverActiveRuns(deps);
+      assert.equal(resumed, 1);
+      assert.deepEqual(calls.replayed, []);
+      assert.deepEqual(calls.rearmed, []);
+      assert.equal(calls.reconciled, 0);
+      assert.deepEqual(run, before);
+    });
+  }
+}
