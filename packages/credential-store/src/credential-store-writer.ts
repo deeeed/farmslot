@@ -160,9 +160,16 @@ export class CredentialStoreWriter {
     principalId: string,
     displayName: string,
     origin: CredentialRecord['origin'] = 'issued',
+    expectedPrincipalGeneration?: number,
   ): CredentialIssue {
     const rawSecret = generateCredentialSecret();
-    return this.issueCredentialWithSecret(principalId, displayName, origin, rawSecret);
+    return this.issueCredentialWithSecret(
+      principalId,
+      displayName,
+      origin,
+      rawSecret,
+      expectedPrincipalGeneration,
+    );
   }
 
   provisionPairedServicePrincipal(
@@ -210,9 +217,18 @@ export class CredentialStoreWriter {
     displayName: string,
     origin: CredentialRecord['origin'],
     rawSecret: string,
+    expectedPrincipalGeneration?: number,
   ): CredentialIssue {
     return this.mutate((store) => {
       const principal = requiredPrincipal(store, principalId);
+      // Compare the grant's identity under the write lock, against the disk state.
+      // A pending invitation must not issue for a retired id's replacement.
+      if (
+        expectedPrincipalGeneration !== undefined &&
+        (principal.generation ?? 0) !== expectedPrincipalGeneration
+      ) {
+        throw new CredentialStoreRefusalError('Credential grant belongs to a previous identity');
+      }
       const now = new Date().toISOString();
       const activationLatched = store.activatedAt === null;
       const issued = buildCredential(store, principalId, displayName, origin, rawSecret, now);

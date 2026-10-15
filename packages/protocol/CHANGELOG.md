@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Expose explicit retired principal-id replacement and identity generations while retaining retired credential ids.
+- Expose explicit retired principal-id replacement and identity generations while retaining retired credential ids and binding PR automation ownership to its identity generation.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

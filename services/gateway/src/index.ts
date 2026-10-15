@@ -641,7 +641,7 @@ async function main(): Promise<void> {
         awaitPersist: true,
       });
     const { run } = await runWithSessionOriginator(creatingPrincipal, createQueuedRun);
-    await recordPRQueueRun(item, run);
+    await runWithSessionOriginator(creatingPrincipal, () => recordPRQueueRun(item, run));
     // Link backlog before dropping the queue row so a crash/link-persist failure
     // still leaves item.runId for startup heal (needs-attention can observe the Run).
     try {

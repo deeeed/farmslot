@@ -7,9 +7,11 @@ import {
   type RunCreateParams,
 } from '@farmslot/protocol';
 
+import { principalOwnerStamp } from '../security/work-originator.js';
+
 interface Authority {
   teams: (ownerId: string) => readonly PRTeamProfile[];
-  authorize: (ownerId: string) => void;
+  authorize: (ownerId: string, generation?: number) => void;
 }
 let authority: Authority | undefined;
 export function setDirectPublicationAuthority(value: Authority): void {
@@ -46,6 +48,7 @@ export function selectDirectReviewPublication(
   }
   const selection = (policy: DirectReviewPublication['policy']): DirectReviewPublication => ({
     ownerId,
+    ...principalOwnerStamp(ownerId),
     pr: { host: 'github.com', repo: ref.repo, number: ref.number },
     policy,
     ...(request.publishReview === undefined ? {} : { requested: request.publishReview }),

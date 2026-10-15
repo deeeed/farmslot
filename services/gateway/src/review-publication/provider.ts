@@ -24,6 +24,7 @@ export type { ReviewPublicationReceipt } from '@farmslot/protocol';
 export interface PublishWorkspaceReviewInput {
   run: Run;
   ownerId: string;
+  ownerGeneration?: number;
   account: PRSourceAccount;
   pr: MonitoredPRIdentity;
   /** Re-check the current principal, project/account mapping and publication opt-in. */
@@ -140,6 +141,7 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
     prior &&
     (prior.runId !== run.id ||
       prior.ownerId !== ownerId ||
+      (prior.ownerGeneration ?? 0) !== (input.ownerGeneration ?? 0) ||
       prior.headSha !== subject.headSha ||
       prior.contentSha256 !== contentSha256 ||
       prior.marker !== marker ||
@@ -223,6 +225,7 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
     state: 'posting',
     runId: run.id,
     ownerId,
+    ...(input.ownerGeneration !== undefined ? { ownerGeneration: input.ownerGeneration } : {}),
     account: structuredClone(account),
     pr: structuredClone(pr),
     headSha: subject.headSha,

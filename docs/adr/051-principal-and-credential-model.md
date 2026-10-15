@@ -1633,12 +1633,18 @@ creation still refuses retired ids. The shared writer removes only the selected
 principal tombstone, creates the replacement and records the reuse in one locked
 transaction. Every retired credential id remains reserved. Reuse issues no
 credential and never restores a removed credential or secret.
+Pending pairing invitations belong to the invited identity generation. Their
+exchange checks that generation inside the credential issuance lock and refuses
+a grant for a replaced identity without writing the store.
 
 ### Rationale
 
 A person may need the id previously held by an obsolete service. Automatic
 suffixing does not satisfy that explicit identity choice. A separate admin
 operation makes reuse deliberate and fails safely against an older gateway.
+Every gateway sharing the identity home must run the generation-aware version
+before reuse. The dedicated RPC fails safely on older gateways; sharing a reused
+store with an older reader is unsupported.
 
 ### Consequences
 
@@ -1651,6 +1657,11 @@ references remain bound to generation zero and cannot resolve a replacement.
 New authenticated work carries the replacement generation; old automation must
 be explicitly re-authored. Automation ownership belongs to its service identity,
 not the replacement person.
+Fresh PR push, monitoring and rule records bind the authenticated identity's
+generation, including generated review work, publication and automatic QA.
+Background effects retain their stored generation and re-check authority. Old
+records and notification recipient lists never acquire the replacement's
+identity. Saving new configuration creates a new generation-bound interest.
 
 ### Public surface
 

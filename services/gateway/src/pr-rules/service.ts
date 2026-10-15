@@ -42,6 +42,17 @@ import {
   updateQaFollowUp,
   updateReviewPublication,
 } from '../runs/store.js';
+import {
+  matchesPrincipalOwner,
+  principalIdentityKey,
+  type PrincipalOwner,
+  principalOwnerGeneration,
+  principalOwnerKey,
+  runPrincipalOwner,
+  runWithPrincipalOwner,
+  runWithSystemOriginator,
+  samePrincipalOwner,
+} from '../security/work-originator.js';
 
 import {
   assertAutomaticQaPolicy,
@@ -54,6 +65,7 @@ import {
   collectPRRuleTarget,
   collectPRSubmissionSources,
 } from './github-sources.js';
+import { teamNotificationAudience } from './notification-audience.js';
 import { buildPRReviewPreviewItem, buildPRRulePreview, type PRSourceScan } from './preview.js';
 import { hasPublicationAuthorityConflict } from './publication-policy.js';
 import { resolvePreviewQaPreset } from './qa-preset.js';
@@ -68,12 +80,12 @@ export class PRRuleService {
   private readonly submissionReads = new Map<string, Promise<PRReviewSubmission>>();
   private actionDelivery?: Promise<void>;
   private qaFollowUps?: Promise<void>;
-  private previousAudience = new Set<string>();
+  private previousAudience = new Map<string, PrincipalOwner>();
   schedulerError?: string;
 
   constructor(
     readonly store: PRRuleStore,
-    private readonly authorized: (ownerId: string) => boolean,
+    private readonly authorized: (ownerId: string, generation?: number) => boolean,
     private readonly changed: (ownerId: string) => void,
     private readonly collect: (
       team: PRTeamProfile,
@@ -91,12 +103,9 @@ export class PRRuleService {
     ) => Promise<PRSourceScan> = collectPRRuleTarget,
     private readonly checkpoints?: Pick<PRSourceCheckpoints, 'consume' | 'current' | 'prune'>,
     private readonly runChanged: (run: Run) => void = () => {},
+    private readonly recipientGeneration: (id: string) => number = principalOwnerGeneration,
   ) {
-    this.previousAudience = new Set(
-      store
-        .snapshot()
-        .teams.flatMap((team) => [team.ownerId, ...team.config.notificationPrincipalIds]),
-    );
+    this.previousAudience = this.notificationAudience();
   }
 
   start(): void {
@@ -122,7 +131,7 @@ export class PRRuleService {
   }
   tick(now = Date.now()): Promise<void> {
     if (this.sweep) return this.sweep;
-    this.sweep = (async () => {
+    this.sweep = runWithSystemOriginator(async () => {
       await this.reconcileQaAfterReviews();
       await this.reconcileReviewPublications();
       const snapshot = this.store.snapshot();
@@ -143,21 +152,27 @@ export class PRRuleService {
         }),
       );
       for (const rule of snapshot.rules) {
-        if (!this.authorized(rule.ownerId)) continue;
+        if (!this.authorized(rule.ownerId, rule.ownerGeneration ?? 0)) continue;
         if (!rule.enabled || (rule.scan.nextScanAt && Date.parse(rule.scan.nextScanAt) > now))
           continue;
-        await this.scan(rule.ownerId, rule.id);
+        await runWithPrincipalOwner(rule, () => this.scan(rule.ownerId, rule.id));
       }
       for (const submission of this.store.snapshot().submissions ?? []) {
         if (await automaticQaSource(submission)) continue;
-        if (submission.cancelledAt || !this.authorized(submission.ownerId)) continue;
+        if (
+          submission.cancelledAt ||
+          !this.authorized(submission.ownerId, submission.ownerGeneration ?? 0)
+        )
+          continue;
         const intent = submission.intentId ? this.store.intent(submission.intentId) : undefined;
         if (intent?.runId || ['running', 'completed', 'failed'].includes(intent?.status ?? ''))
           continue;
-        await this.refreshSubmission(submission.ownerId, submission.id);
+        await runWithPrincipalOwner(submission, () =>
+          this.refreshSubmission(submission.ownerId, submission.id),
+        );
       }
       await this.deliverActions();
-    })().finally(() => {
+    }).finally(() => {
       this.sweep = undefined;
     });
     return this.sweep;
@@ -181,13 +196,20 @@ export class PRRuleService {
     const policy = reviewPublicationPolicyForRun(run);
     if (!policy?.enabled || (!direct && run.prWork?.kind !== 'review'))
       throw new Error('PR publication was not requested when this review was admitted');
+    const publicationOwner = direct ?? run.prWork?.review;
+    if (
+      !publicationOwner ||
+      !matchesPrincipalOwner(publicationOwner, ownerId) ||
+      !this.authorized(ownerId, publicationOwner.ownerGeneration ?? 0)
+    )
+      throw new Error('Review publication identity changed');
     if ((direct?.ownerId ?? run.prWork?.review?.ownerId) !== ownerId)
       throw new Error('Review publication belongs to another principal');
     if (direct && run.prWork && !gate) throw new Error('Ambiguous publication authority');
     if (run.status !== 'done') throw new Error('Review must complete before publication');
     const pr = direct?.pr ?? run.prWork!.pr;
     const authorize = async () => {
-      this.assertAuthorized(ownerId);
+      this.assertAuthorized(ownerId, publicationOwner.ownerGeneration ?? 0);
       const current = await getRunWithArchived(runId);
       if (
         !current ||
@@ -219,7 +241,8 @@ export class PRRuleService {
       if (!intent || intent.runId !== runId || intent.headSha !== run.prWork!.headSha)
         throw new Error('Publication is not linked to the admitted review intent');
       const source = intent.contributions.find(
-        (entry) => entry.eligible && entry.ownerId === ownerId && entry.teamId === policy.teamId,
+        (entry) =>
+          entry.eligible && matchesPrincipalOwner(entry, ownerId) && entry.teamId === policy.teamId,
       );
       if (!source) throw new Error('Review publication source is no longer eligible');
       if (hasPublicationAuthorityConflict(intent, this.store.snapshot().teams))
@@ -261,6 +284,9 @@ export class PRRuleService {
       const receipt = await publishWorkspaceReview({
         run,
         ownerId,
+        ...(publicationOwner.ownerGeneration !== undefined
+          ? { ownerGeneration: publicationOwner.ownerGeneration }
+          : {}),
         account: policy.account,
         pr,
         authorize,
@@ -291,13 +317,14 @@ export class PRRuleService {
         run.reviewPublication?.error
       )
         continue;
-      const ownerId =
-        run.reviewPublication?.gate?.publication.ownerId ??
-        run.reviewPublication?.direct?.ownerId ??
-        run.prWork?.review?.ownerId;
-      if (!ownerId) continue;
+      const owner =
+        run.reviewPublication?.gate?.publication ??
+        run.reviewPublication?.direct ??
+        run.prWork?.review;
+      if (!owner || !this.authorized(owner.ownerId, owner.ownerGeneration ?? 0)) continue;
+      const ownerId = owner.ownerId;
       try {
-        await this.publishReview(ownerId, run.id);
+        await runWithPrincipalOwner(owner, () => this.publishReview(ownerId, run.id));
       } catch (error) {
         if (error instanceof ReviewPublicationInProgressError) continue;
         // Publication failure is durable and visible; the completed static review stays available.
@@ -315,9 +342,11 @@ export class PRRuleService {
 
   reconcileQaAfterReviews(): Promise<void> {
     if (this.qaFollowUps) return this.qaFollowUps;
-    this.qaFollowUps = this.reconcileQaAfterReviewsOnce().finally(() => {
-      this.qaFollowUps = undefined;
-    });
+    this.qaFollowUps = runWithSystemOriginator(() => this.reconcileQaAfterReviewsOnce()).finally(
+      () => {
+        this.qaFollowUps = undefined;
+      },
+    );
     return this.qaFollowUps;
   }
 
@@ -333,25 +362,31 @@ export class PRRuleService {
       const run = await getRunWithArchived(candidate.id);
       if (!run?.qaAfterReview || run.flowType !== 'review-pr') continue;
       const followUp = run.qaAfterReview;
-      const ownerId =
-        run.createdByPrincipalId ?? run.nativeOwnerPrincipalId ?? run.prWork?.review?.ownerId;
+      const owner = runPrincipalOwner(run) ?? { ownerId: '' };
+      const ownerId = owner.ownerId;
       const key = automaticQaKey(run.id, followUp.selection.profile.id);
       let receipt = this.store
         .snapshot()
         .submissions?.find(
-          (item) => item.ownerId === ownerId && item.request.idempotencyKey === key,
+          (item) =>
+            item.ownerId === ownerId &&
+            (item.ownerGeneration ?? 0) === (owner.ownerGeneration ?? 0) &&
+            item.request.idempotencyKey === key,
         );
       if (!receipt && followUp.submissionId)
         receipt = this.store
           .snapshot()
           .submissions?.find(
-            (item) => item.ownerId === ownerId && item.id === followUp.submissionId,
+            (item) =>
+              item.ownerId === ownerId &&
+              (item.ownerGeneration ?? 0) === (owner.ownerGeneration ?? 0) &&
+              item.id === followUp.submissionId,
           );
       if (!receipt && run.status === 'done') {
         const headSha = reviewResultForRun(run)?.reviewSnapshot?.headSha;
         receipt = [...(this.store.snapshot().submissions ?? [])].reverse().find((item) => {
           if (
-            item.ownerId !== ownerId ||
+            !samePrincipalOwner(item, owner) ||
             item.sourceReview?.runId !== run.id ||
             item.sourceReview.headSha !== headSha ||
             !item.intentId
@@ -363,6 +398,8 @@ export class PRRuleService {
         });
       }
       try {
+        if (!ownerId || !this.authorized(ownerId, owner.ownerGeneration ?? 0))
+          throw new Error('Automatic QA source owner no longer has automation authority');
         if (receipt) {
           if (receipt.request.idempotencyKey === key) assertAutomaticQaRequest(run, receipt);
           else if (receipt.sourceReview?.runId !== run.id)
@@ -395,28 +432,30 @@ export class PRRuleService {
             continue;
           }
           if (!ownerId) throw new Error('Automatic QA has no source review owner');
-          this.assertAuthorized(ownerId);
+          this.assertAuthorized(ownerId, owner.ownerGeneration ?? 0);
           assertAutomaticQaPolicy(run, await loadProjectConfig(run.project));
           const ref = parseGitHubRef(run.ticketOrPr);
           const pr =
             run.prWork?.pr ??
             (ref ? { host: 'github.com', repo: ref.repo, number: ref.number } : undefined);
           if (!pr) throw new Error('Automatic QA source has no canonical PR identity');
-          await validateQaSourceReview({ runId: run.id, ownerId, project: run.project, pr });
+          await runWithPrincipalOwner(owner, () =>
+            validateQaSourceReview({ runId: run.id, ownerId, project: run.project, pr }),
+          );
           const sourceIntent =
             run.prWork?.kind === 'review' ? this.store.intent(run.prWork.sourceId) : undefined;
           if (run.prWork?.kind === 'review' && !sourceIntent)
             throw new Error('Automatic QA source team context is unavailable');
           const sourceTeams = new Set(
             sourceIntent?.contributions
-              .filter((source) => source.ownerId === ownerId)
+              .filter((source) => samePrincipalOwner(source, owner))
               .map((source) => source.teamId),
           );
           const teams = this.store
             .snapshot()
             .teams.filter(
               (team) =>
-                team.ownerId === ownerId &&
+                samePrincipalOwner(team, owner) &&
                 team.config.account.host.toLowerCase() === pr.host.toLowerCase() &&
                 team.config.repositories.some(
                   (policy) =>
@@ -438,18 +477,22 @@ export class PRRuleService {
             teamId: selected[0].id,
             error: undefined,
           });
-          receipt = await this.submit(ownerId, {
-            teamId: selected[0].id,
-            pr,
-            sourceReviewRunId: run.id,
-            idempotencyKey: key,
-            autoStart: true,
-            ...(followUp.execution ? { execution: followUp.execution } : {}),
-            review: followUp.review,
-            source: { client: 'farm-after-review' },
-          });
+          receipt = await runWithPrincipalOwner(owner, () =>
+            this.submit(ownerId, {
+              teamId: selected[0].id,
+              pr,
+              sourceReviewRunId: run.id,
+              idempotencyKey: key,
+              autoStart: true,
+              ...(followUp.execution ? { execution: followUp.execution } : {}),
+              review: followUp.review,
+              source: { client: 'farm-after-review' },
+            }),
+          );
         }
-        receipt = await this.refreshSubmission(receipt.ownerId, receipt.id);
+        receipt = await runWithPrincipalOwner(owner, () =>
+          this.refreshSubmission(receipt!.ownerId, receipt!.id),
+        );
         const intent = receipt.intentId ? this.store.intent(receipt.intentId) : undefined;
         const source = intent?.contributions.find((entry) => entry.submissionId === receipt!.id);
         const error =
@@ -479,7 +522,13 @@ export class PRRuleService {
     revision?: number,
   ): Promise<PRTeamProfile> {
     this.assertAuthorized(ownerId);
-    const team = await this.store.saveTeam(ownerId, config, id, revision);
+    const generations = Object.fromEntries(
+      config.notificationPrincipalIds.flatMap((id) => {
+        const generation = this.recipientGeneration(id);
+        return generation > 0 ? [[id, generation]] : [];
+      }),
+    );
+    const team = await this.store.saveTeam(ownerId, config, id, revision, generations);
     this.notifyChanges();
     return team;
   }
@@ -585,7 +634,7 @@ export class PRRuleService {
       )
         continue;
       relevant.push(rule.id);
-      if (!this.authorized(rule.ownerId)) {
+      if (!this.authorized(rule.ownerId, rule.ownerGeneration ?? 0)) {
         uncertain = true;
         continue;
       }
@@ -596,13 +645,15 @@ export class PRRuleService {
       try {
         // Source membership and view filters own webhook routing. Team/rule
         // predicates are evaluated by the subsequent normal scan, not here.
-        const scan = await this.collectTarget(
-          {
-            ...team,
-            config: { ...team.config, predicate: { kind: 'all', items: [] }, repositories: [] },
-          },
-          { ...rule, config: { ...rule.config, predicate: { kind: 'all', items: [] } } },
-          pr,
+        const scan = await runWithPrincipalOwner(rule, () =>
+          this.collectTarget(
+            {
+              ...team,
+              config: { ...team.config, predicate: { kind: 'all', items: [] }, repositories: [] },
+            },
+            { ...rule, config: { ...rule.config, predicate: { kind: 'all', items: [] } } },
+            pr,
+          ),
         );
         if (!scan.complete) {
           uncertain = true;
@@ -728,13 +779,15 @@ export class PRRuleService {
       action.kind !== 'notify' ||
       action.status !== 'applied' ||
       !this.authorized(principalId) ||
-      !this.authorized(action.ownerId)
+      !this.authorized(action.ownerId, action.ownerGeneration ?? 0)
     )
       return false;
-    if (principalId === action.ownerId) return true;
+    if (principalId === action.ownerId) return matchesPrincipalOwner(action, principalId);
     const team = this.store.snapshot().teams.find((item) => item.id === action.teamId);
     return (
       !!team?.config.notificationPrincipalIds.includes(principalId) &&
+      (team.notificationPrincipalGenerations?.[principalId] ?? 0) ===
+        principalOwnerGeneration(principalId) &&
       team.config.account.host.toLowerCase() === action.account.host.toLowerCase() &&
       team.config.account.login.toLowerCase() === action.account.login.toLowerCase()
     );
@@ -761,7 +814,7 @@ export class PRRuleService {
             reasons: action.reasons,
             current: action.current && !!rule?.enabled && !rule.scan.error,
             createdAt: action.createdAt,
-            acknowledgedAt: action.acknowledgedBy[principalId],
+            acknowledgedAt: action.acknowledgedBy[principalIdentityKey(principalId)],
           };
         }),
     };
@@ -776,19 +829,25 @@ export class PRRuleService {
     this.notifyChanges();
   }
 
-  notifyChanges(): void {
-    const audience = new Set(
-      this.store
-        .snapshot()
-        .teams.flatMap((team) => [team.ownerId, ...team.config.notificationPrincipalIds]),
+  private notificationAudience(): Map<string, PrincipalOwner> {
+    return new Map(
+      teamNotificationAudience(this.store.snapshot().teams).map((owner) => [
+        principalOwnerKey(owner),
+        owner,
+      ]),
     );
-    for (const id of new Set([...audience, ...this.previousAudience])) this.changed(id);
+  }
+
+  notifyChanges(): void {
+    const audience = this.notificationAudience();
+    for (const owner of new Map([...this.previousAudience, ...audience]).values())
+      runWithPrincipalOwner(owner, () => this.changed(owner.ownerId));
     this.previousAudience = audience;
   }
 
   deliverActions(): Promise<void> {
     if (this.actionDelivery) return this.actionDelivery;
-    this.actionDelivery = this.deliverActionsOnce().finally(() => {
+    this.actionDelivery = runWithSystemOriginator(() => this.deliverActionsOnce()).finally(() => {
       this.actionDelivery = undefined;
     });
     return this.actionDelivery;
@@ -813,7 +872,7 @@ export class PRRuleService {
         const current = this.store.action(action.id);
         return (
           !this.store.admissionPending &&
-          this.authorized(action.ownerId) &&
+          this.authorized(action.ownerId, action.ownerGeneration ?? 0) &&
           this.store.actionIsCurrent(action.id) &&
           current?.ruleRevision === action.ruleRevision &&
           current.teamRevision === action.teamRevision
@@ -823,7 +882,9 @@ export class PRRuleService {
       try {
         if (action.requiresFreshValidation) {
           if (validations++ >= 25) break;
-          const fresh = await this.preview(action.ownerId, action.ruleId, action.subject.pr);
+          const fresh = await runWithPrincipalOwner(action, () =>
+            this.preview(action.ownerId, action.ruleId, action.subject.pr),
+          );
           if (!fresh.complete)
             throw new Error(
               `Fresh source observations are incomplete: ${fresh.sourceErrors.join('; ')}`,
@@ -832,7 +893,7 @@ export class PRRuleService {
             (item) => monitoredPRKey(item.subject.pr) === monitoredPRKey(action.subject.pr),
           );
           const valid = await this.store.validatePendingAction(action, item, () =>
-            this.authorized(action.ownerId),
+            this.authorized(action.ownerId, action.ownerGeneration ?? 0),
           );
           if (!valid || action.kind === 'notify') {
             this.notifyChanges();
@@ -854,10 +915,14 @@ export class PRRuleService {
           cooldownMs: 900_000,
         };
         assertPRMonitorConfig(config);
-        const monitor = await this.monitors.store.enrollRule(action.ownerId, config, isCurrent);
+        const monitor = await runWithPrincipalOwner(action, () =>
+          this.monitors!.store.enrollRule(action.ownerId, config, isCurrent),
+        );
         if (!monitor) continue;
         await this.store.completeAction(action.id, { monitorId: monitor.id });
-        await this.monitors.enrolled(monitor.id, action.ownerId);
+        await runWithPrincipalOwner(action, () =>
+          this.monitors!.enrolled(monitor.id, action.ownerId),
+        );
       } catch (error) {
         // Keep the durable receipt actionable. Pending enrollment retries; an applied monitor owns observation errors.
         await this.store.completeAction(action.id, {
@@ -1040,8 +1105,9 @@ export class PRRuleService {
     this.notifyChanges();
     return current;
   }
-  private assertAuthorized(ownerId: string): void {
-    if (!this.authorized(ownerId)) throw new Error('Rule owner no longer has automation authority');
+  private assertAuthorized(ownerId: string, generation?: number): void {
+    if (!this.authorized(ownerId, generation))
+      throw new Error('Rule owner no longer has automation authority');
   }
 }
 

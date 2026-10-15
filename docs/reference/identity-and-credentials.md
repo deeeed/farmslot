@@ -114,3 +114,12 @@ generation. Old credential ids remain reserved,
 old secrets cannot authenticate, and the store records the reuse. Ordinary
 creation never reuses a retired id. Offline replacement requires all gateways
 sharing the identity home to be stopped.
+Upgrade every gateway sharing that home before reuse. Old pairing invitations
+cannot issue credentials for the replacement; create a fresh invitation after
+replacement. Native profile ownership still uses principal ids, so retire old
+native bindings before reusing their owner's id.
+
+Fresh PR notifications, watches, teams, rules and review requests work for a
+replacement person. Their stored owners and delayed actions bind the new
+identity generation. Existing records remain bound to the retired identity;
+create fresh configuration under the intended person or automation service.

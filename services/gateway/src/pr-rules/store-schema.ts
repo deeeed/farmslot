@@ -12,6 +12,8 @@ import {
   prReviewWorkflow,
 } from '@farmslot/protocol';
 
+import { samePrincipalOwner } from '../security/work-originator.js';
+
 import type { PRRuleStoreData } from './store.js';
 
 const sourceReview = {
@@ -72,12 +74,13 @@ const reviewObservation = {
 const common = {
   id: text,
   ownerId: text,
+  ownerGeneration: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
   revision,
   config: { type: 'object' },
   createdAt: timestamp,
   updatedAt: timestamp,
 };
-const commonRequired = Object.keys(common);
+const commonRequired = Object.keys(common).filter((key) => key !== 'ownerGeneration');
 const ajv = new Ajv();
 const validate = ajv.compile<PRRuleStoreData>({
   type: 'object',
@@ -116,6 +119,7 @@ const validate = ajv.compile<PRRuleStoreData>({
           requiresFreshValidation: { type: 'boolean' },
           nextValidationAt: timestamp,
           ownerId: text,
+          ownerGeneration: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
           ruleId: text,
           ruleRevision: revision,
           ruleName: text,
@@ -181,6 +185,7 @@ const validate = ajv.compile<PRRuleStoreData>({
         properties: {
           id: text,
           ownerId: text,
+          ownerGeneration: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
           revision,
           request: { type: 'object' },
           sourceReview,
@@ -200,7 +205,13 @@ const validate = ajv.compile<PRRuleStoreData>({
         type: 'object',
         additionalProperties: false,
         required: commonRequired,
-        properties: common,
+        properties: {
+          ...common,
+          notificationPrincipalGenerations: {
+            type: 'object',
+            additionalProperties: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+          },
+        },
       },
     },
     rules: {
@@ -349,6 +360,7 @@ const validate = ajv.compile<PRRuleStoreData>({
                 teamId: text,
                 teamRevision: revision,
                 ownerId: text,
+                ownerGeneration: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
                 reasons: strings,
                 project: text,
                 execution: { type: 'object' },
@@ -410,7 +422,7 @@ export function decodePRRuleStore(value: unknown): PRRuleStoreData {
       !value.rules.some(
         (rule) =>
           rule.id === action.ruleId &&
-          rule.ownerId === action.ownerId &&
+          samePrincipalOwner(rule, action) &&
           rule.config.teamId === action.teamId,
       )
     )
@@ -426,12 +438,16 @@ export function decodePRRuleStore(value: unknown): PRRuleStoreData {
     assertPRReviewRequest(submission.request);
     if (submission.request.sourceReviewRunId !== submission.sourceReview?.runId)
       throw new Error('QA request has inconsistent source review provenance');
-    const key = JSON.stringify([submission.ownerId, submission.request.idempotencyKey]);
+    const key = JSON.stringify([
+      submission.ownerId,
+      submission.ownerGeneration ?? 0,
+      submission.request.idempotencyKey,
+    ]);
     if (requestKeys.has(key)) throw new Error('Duplicate review request idempotency key');
     requestKeys.add(key);
     if (
       !value.teams.some(
-        (team) => team.id === submission.request.teamId && team.ownerId === submission.ownerId,
+        (team) => team.id === submission.request.teamId && samePrincipalOwner(team, submission),
       )
     )
       throw new Error('Review request references an unavailable team');
@@ -439,7 +455,7 @@ export function decodePRRuleStore(value: unknown): PRRuleStoreData {
   for (const rule of value.rules) {
     assertPRTriggerRuleConfig(rule.config);
     if (
-      !value.teams.some((team) => team.id === rule.config.teamId && team.ownerId === rule.ownerId)
+      !value.teams.some((team) => team.id === rule.config.teamId && samePrincipalOwner(team, rule))
     )
       throw new Error('Rule references an unavailable team');
   }
@@ -466,7 +482,7 @@ export function decodePRRuleStore(value: unknown): PRRuleStoreData {
           !value.submissions?.some(
             (item) =>
               item.id === source.submissionId &&
-              item.ownerId === source.ownerId &&
+              samePrincipalOwner(item, source) &&
               item.request.teamId === source.teamId,
           )
         )
@@ -485,7 +501,7 @@ export function decodePRRuleStore(value: unknown): PRRuleStoreData {
         !value.rules.some(
           (rule) =>
             rule.id === source.ruleId &&
-            rule.ownerId === source.ownerId &&
+            samePrincipalOwner(rule, source) &&
             rule.config.teamId === source.teamId,
         )
       )

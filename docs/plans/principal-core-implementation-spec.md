@@ -969,11 +969,35 @@ invalidation hook, and **the subscribed session makes no request at any point**.
   identity, generation zero. `PrincipalResolver.resolvePrincipalId(id, generation)`
   fails closed on a mismatch. Credential authentication resolves the principal
   through its fresh credential id and does not borrow authority from history.
+- Existing-principal pairing invitations capture the invited principal's
+  generation at creation. Credential issuance compares that expected generation
+  against the locked disk store. A retired or replaced identity refuses exchange
+  without any store write; a fresh invitation may issue for the replacement.
+  Infrastructure failures remain visible and retain the invitation for retry.
+- Every gateway sharing an identity home must run generation-aware resolution
+  before reuse. Older readers of a reused store are unsupported.
 - The shared WorkOriginator helper stamps authenticated queued, backlog and
   work-graph effects with the principal generation. Fire-time resolution checks
   it. Missing or stale generations cannot adopt replacement authority. Existing
   id-only automation owner records remain unproven for a replacement and must
   be re-authored under the automation service. No loader upgrades their author.
+- Fresh PR push devices, monitors, project policies, teams, rules, submissions,
+  contributions and actions carry a server-derived optional `ownerGeneration`.
+  Omission means zero. Client configuration cannot supply that metadata. Reads,
+  edits and idempotency keys isolate successive generations of the same id.
+- Team notification recipients bind the current server-resolved identity
+  generation when the team is saved. Old recipient lists and acknowledgements
+  cannot adopt a replacement person. Owner-scoped events check the recipient
+  session's generation as well as its id.
+- Background monitoring, publication enrollment, rule scans, action delivery and
+  queue admission retain the exact stored generation. Effects re-check current
+  authority before acting; an unrelated waking request cannot donate authority.
+  A stale contribution is withdrawn before shared-review admission so it cannot
+  block a fresh authorized request. No old record is automatically re-authored.
+- PR review ownership, direct publication and immutable run-creator metadata
+  retain generation through publication and automatic QA intake. Existing
+  generation-zero records continue to work for original identities. Native
+  profile ownership remains id-only and must be retired before owner-id reuse.
 - Reuse preserves every credential tombstone, unrelated principal tombstones,
   activation and surviving credentials. It never issues a credential. Old
   credential wires and session references remain invalid after replacement.

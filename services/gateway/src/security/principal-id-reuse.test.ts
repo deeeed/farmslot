@@ -5,11 +5,14 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import {
+  CredentialStoreRefusalError,
   CredentialStoreWriter,
   loadCredentialStore,
   registerGatewayPresence,
   validateCredentialStore,
 } from '@farmslot/credential-store';
+
+import { pairingCreate, pairingExchange } from '../fleet/pairing.js';
 
 import { createGatewayAuthRuntime } from './auth.js';
 import {
@@ -39,6 +42,44 @@ function fixture(t: { after(fn: () => void): void }) {
 }
 
 const person = { type: 'person', displayName: 'Arthur' } as const;
+
+test('a pending invitation cannot issue for a retired principal replacement', (t) => {
+  const f = fixture(t);
+  f.writer.createPrincipal({ type: 'service', displayName: 'invited' }, []);
+  const params = {
+    gatewayUrl: 'ws://127.0.0.1:1/ws',
+    authority: { kind: 'existing-principal' as const, principalId: 'invited' },
+  };
+  const invitation = pairingCreate(params, f.auth);
+  f.writer.retirePrincipals(['invited']);
+  f.writer.createPrincipal(person, [], 'invited', { reuseRetiredId: true });
+  const before = readFileSync(f.runtime.path);
+  assert.throws(() => pairingExchange({ code: invitation.code }, f.auth), {
+    code: 'PAIRING_FAILED',
+  });
+  assert.deepEqual(readFileSync(f.runtime.path), before);
+  const fresh = pairingCreate(params, f.auth);
+  const exchanged = pairingExchange({ code: fresh.code }, f.auth);
+  const authenticated = f.auth.resolver.resolveSecret(exchanged.profile.secret, 'token');
+  assert.equal(authenticated.ok, true);
+  if (authenticated.ok) assert.equal(authenticated.principal.generation, 1);
+});
+
+test('credential issuance checks expected identity in the locked disk transaction', (t) => {
+  const f = fixture(t);
+  // f.auth.writer reads the same disk store, even if another writer made the replacement.
+  f.writer.createPrincipal(person, [], 'arthur', { reuseRetiredId: true });
+  const before = readFileSync(f.runtime.path);
+  assert.throws(
+    () => f.auth.writer.issueCredential('arthur', 'old grant', 'paired', 0),
+    CredentialStoreRefusalError,
+  );
+  assert.deepEqual(readFileSync(f.runtime.path), before);
+  assert.equal(
+    f.auth.writer.issueCredential('arthur', 'fresh grant', 'paired', 1).record.origin,
+    'paired',
+  );
+});
 
 test('explicit reuse preserves retired credential ids and records a replacement without issuing', (t) => {
   const f = fixture(t);

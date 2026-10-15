@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- Require stored or explicitly supplied login credentials instead of build-time environment secrets.
+- Require stored or explicitly supplied login credentials instead of build-time environment secrets, including in the sample configuration.
 
 - Show authenticated visual claim reviews through the shared evidence model.
 
