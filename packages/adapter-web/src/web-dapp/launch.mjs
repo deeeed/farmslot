@@ -45,6 +45,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { disableMacCodeSignClone } from '../chrome-args.cjs';
+
 import { hostResolverRules } from './lib/blocked-hosts.mjs';
 import { browserWebSocketUrl, CdpClient } from './lib/cdp-client.mjs';
 import {
@@ -596,6 +598,7 @@ export async function launchWebDappBrowser(
     // when its first window appears. Windows are created over CDP instead, in
     // the background.
     browserArgs.push(launchMethod === LAUNCH_SERVICES ? '--no-startup-window' : 'about:blank');
+    const launchArgs = disableMacCodeSignClone(browserArgs);
 
     started = true;
     // Where this browser's console begins in the slot capture, for
@@ -631,14 +634,14 @@ export async function launchWebDappBrowser(
     }
     const browserPid =
       launchMethod === LAUNCH_SERVICES
-        ? await launchInBackground(application, browserArgs, {
+        ? await launchInBackground(application, launchArgs, {
             runtime,
             cdpPort,
             logFile: path.join(runtime, 'browser.log'),
             pidFile: path.join(runtime, 'browser.pid'),
             timeoutMs: timeouts.browserStartMs,
           })
-        : await spawnDetached(browser.bin, browserArgs, {
+        : await spawnDetached(browser.bin, launchArgs, {
             logFile: path.join(runtime, 'browser.log'),
             pidFile: path.join(runtime, 'browser.pid'),
             env,

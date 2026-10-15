@@ -38,11 +38,32 @@ function isolatedProfileArgs(platform = process.platform) {
 // Keep requestAnimationFrame, transitions, and input hit testing alive when the
 // slot-owned browser is occluded by the operator's other windows.
 function automationRuntimeArgs() {
-  return [
+  return disableMacCodeSignClone([
     '--disable-background-timer-throttling',
     '--disable-backgrounding-occluded-windows',
     '--disable-renderer-backgrounding',
-  ];
+  ]);
+}
+
+/**
+ * Chrome's macOS clone manager runs after startup, regardless of spawn method.
+ * Merge feature switches: Chromium honors only the last --disable-features.
+ * @param {string[]} args
+ * @param {string} [platform]
+ * @returns {string[]}
+ */
+function disableMacCodeSignClone(args, platform = process.platform) {
+  if (platform !== 'darwin') return args;
+  const disabled = new Set(['MacAppCodeSignClone']);
+  const remaining = [];
+  for (const arg of args) {
+    if (arg.startsWith('--disable-features=')) {
+      for (const feature of arg.slice('--disable-features='.length).split(',')) {
+        if (feature) disabled.add(feature);
+      }
+    } else remaining.push(arg);
+  }
+  return [`--disable-features=${[...disabled].join(',')}`, ...remaining];
 }
 
 function createRuntimeIdentityNonce() {
@@ -353,6 +374,7 @@ module.exports = {
   clearValidationPortQuarantine,
   createRuntimeIdentityNonce,
   detachedLaunchUnprovenPath,
+  disableMacCodeSignClone,
   hasDetachedLaunchUnproven,
   isolatedProfileArgs,
   markDetachedLaunchUnproven,
