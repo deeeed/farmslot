@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Resolve task and reviewer pack commands from the connected node installation instead of a guessed deployment directory.
+
 - Relaunch a stopped reviewer once after cleanup, retaining failed-attempt evidence and its actual failure if recovery fails.
 - Refresh unapproved publication packages with missing retained bundles even when source HEAD is unchanged; preserve approved package identity on failure.
 

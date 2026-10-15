@@ -3,7 +3,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 
 import {
@@ -69,7 +68,11 @@ import { extractRecipeFromPRBody, materializeExtractedRecipe } from '../quality/
 import { prepareBranchMaintenance } from '../run-engine/branch-maintenance.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
 
-import { agentRuntimeCommandsForSlot, agentRuntimeScriptForSlot } from './agent-runtime-script.js';
+import {
+  agentRuntimeCommandsForSlot,
+  agentRuntimeScriptForSlot,
+  farmslotDirectoryForSlot,
+} from './agent-runtime-script.js';
 import {
   assertArtifactOnlyTaskGuard,
   evaluateArtifactOnlyTaskGuard,
@@ -93,10 +96,6 @@ import {
   readWorkerTerminalProjectConfig,
   resolveWorkerTerminalContract,
 } from './worker-terminal-contract.js';
-
-// Remote deployment dir — kept in sync with REMOTE_AGENT_DIR in core/hooks.ts
-const REMOTE_FARMSLOT_DIR = '~/farmslot-node';
-const localHostname = os.hostname().replace(/\.local$/, '');
 
 export { FLOW_TO_TEMPLATE } from './worker-template-options.js';
 
@@ -1047,6 +1046,9 @@ export async function writeTaskFile(
     ? { PUBLICATION_BASE: publicationBase }
     : {};
 
+  const farmslotDirForSlot = await farmslotDirectoryForSlot(slotVars);
+  const runtimeBindings = { farmslot_dir: farmslotDirForSlot };
+
   // Project-level command snippets are part of the template contract. Keep them
   // in project.json so worker templates don't hardcode repo-local tool paths.
   if (projectVars.projectJson.vars) {
@@ -1057,8 +1059,9 @@ export async function writeTaskFile(
             slotVars,
             projectVars,
             branchReplacements,
+            runtimeBindings,
           )
-        : expandTemplate(String(rawValue), slotVars, projectVars);
+        : expandTemplate(String(rawValue), slotVars, projectVars, runtimeBindings);
       // A var value that does not fully resolve would smuggle raw {{...}}
       // into TASK.md past the template guard — fail the dispatch instead.
       const leftover = collectPlaceholderTokens(rendered);
@@ -1086,13 +1089,7 @@ export async function writeTaskFile(
   vars.DEFAULT_BRANCH = defaultBranch;
   Object.assign(vars, branchReplacements);
 
-  // farmslot_dir — local = repo root, remote = agent deployment dir.
-  // Kept in sync with the same logic in core/hooks.ts expandTemplate.
-  // Needed by templates that invoke framework scripts (e.g. record-window.sh).
-  const slotHost = slotVars.host.replace(/\.local$/, '');
-  const isLocal =
-    slotHost === 'localhost' || slotHost === '127.0.0.1' || slotHost === localHostname;
-  const farmslotDirForSlot = isLocal ? farmslotRoot : REMOTE_FARMSLOT_DIR;
+  // Use the same connected installation for task paths and configured commands.
   vars.farmslot_dir = farmslotDirForSlot;
   vars.FARMSLOT_DIR = farmslotDirForSlot;
   Object.assign(vars, await agentRuntimeCommandsForSlot(slotVars));

@@ -25,7 +25,7 @@ import {
   resolveProjectTaskDirName,
   resolveTaskRelDir,
 } from '../core/config.js';
-import { execOnSlot, isLocal } from '../core/exec.js';
+import { execOnSlot } from '../core/exec.js';
 import {
   assertNoUnknownPlaceholders,
   expandTemplate,
@@ -38,6 +38,7 @@ import { remoteBranchRefspec } from '../methods/slot/slot-tracking.js';
 import { buildReviewPlanningBrief } from '../run-engine/review-artifacts.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
 import { getRun } from '../runs/store.js';
+import { farmslotDirectoryForSlot } from '../tasks/agent-runtime-script.js';
 import { REVIEW_FIX_CHECKLIST_TARGET } from '../tasks/checklist-target.js';
 import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-template-catalog.js';
 
@@ -80,7 +81,6 @@ async function readReviewArtifact(
   return result.stdout;
 }
 
-const REMOTE_FARMSLOT_DIR = '~/farmslot-node';
 /** Diffs past this size are cut for the pre-check scan; the reviewer still reads them whole. */
 const PRE_CHECK_DIFF_BYTES = 5_000_000;
 
@@ -315,8 +315,7 @@ Use the task's mark wrapper for this reviewer checklist. Preserve the parent wor
   }
 
   // Expand {{VAR}} placeholders
-  const { farmslotRoot } = await import('../fleet/state.js');
-  const farmslotDir = isLocal(vars.host, vars.machine) ? farmslotRoot : REMOTE_FARMSLOT_DIR;
+  const farmslotDir = await farmslotDirectoryForSlot(vars);
   const replacements: Record<string, string> = {
     TASK_DIR: taskDir,
     REPO: vars.remoteRepo,
@@ -348,7 +347,7 @@ Use the task's mark wrapper for this reviewer checklist. Preserve the parent wor
   }
   // Second pass: slot resources, project.json vars, reference repos — same
   // coverage as CI-fix task rendering, so templates can use {{recipe_*}} etc.
-  expanded = expandTemplate(expanded, vars, pv ?? undefined);
+  expanded = expandTemplate(expanded, vars, pv ?? undefined, { farmslot_dir: farmslotDir });
   // Reviewers get the worker's frozen related-context snapshot, not a fresh
   // derivation: a prerequisite that moved since dispatch must be detectable.
   const planningBrief = await buildReviewPlanningBrief(run?.taskFile ?? null, taskDir);

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- Preserve per-call template bindings through nested project commands and reserved values.
+
 - Keep visual-review delegation in operator runtime settings for managed packs, with validation and the existing backups.
 
 - Refuse fixture planning when required template, selected compose, include or directory sources are missing, preserving explicit optional skips and reporting the source and project configuration.
