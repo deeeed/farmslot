@@ -714,7 +714,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     .filter(
       (claim) =>
         claim.status?.verdict === 'awaiting-review' &&
-        reviewableClaims.some((raw) => raw.id === claim.id),
+        ['visual', 'mixed'].includes(claim.status?.proofMode ?? ''),
     )
     .map((claim) => claim.id);
   const visualReviewKind = (

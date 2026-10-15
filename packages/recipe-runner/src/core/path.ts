@@ -14,33 +14,53 @@ export function isPathWithin(root: string, candidate: string): boolean {
   );
 }
 
-export async function readFileWithinRoot(root: string, relativePath: string): Promise<Buffer> {
-  const handle = await openExistingFileWithinRoot(root, relativePath);
+// All contained readers in this process share one descriptor budget, including
+// concurrent package reads. Release a slot only after its handle has closed.
+const MAX_OPEN_READERS = 8;
+let openReaders = 0;
+const waitingReaders: Array<() => void> = [];
+
+async function withReadFile<T>(
+  root: string,
+  relativePath: string,
+  read: (handle: FileHandle) => Promise<T>,
+): Promise<T> {
+  if (openReaders < MAX_OPEN_READERS) openReaders++;
+  else await new Promise<void>((resolve) => waitingReaders.push(resolve));
+  let handle: FileHandle | undefined;
   try {
-    return await handle.readFile();
+    handle = await openExistingFileWithinRoot(root, relativePath);
+    return await read(handle);
   } finally {
-    await handle.close();
+    try {
+      await handle?.close();
+    } finally {
+      const next = waitingReaders.shift();
+      if (next) next();
+      else openReaders--;
+    }
   }
+}
+
+export async function readFileWithinRoot(root: string, relativePath: string): Promise<Buffer> {
+  return withReadFile(root, relativePath, (handle) => handle.readFile());
 }
 
 export async function digestFileWithinRoot(root: string, relativePath: string): Promise<string> {
-  const handle = await openExistingFileWithinRoot(root, relativePath);
-  try {
+  return withReadFile(root, relativePath, async (handle) => {
     const hash = createHash('sha256');
-    for await (const bytes of handle.createReadStream({ autoClose: false })) hash.update(bytes);
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    for (;;) {
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      if (!bytesRead) break;
+      hash.update(buffer.subarray(0, bytesRead));
+    }
     return `sha256:${hash.digest('hex')}`;
-  } finally {
-    await handle.close();
-  }
+  });
 }
 
 export async function statFileWithinRoot(root: string, relativePath: string) {
-  const handle = await openExistingFileWithinRoot(root, relativePath);
-  try {
-    return await handle.stat();
-  } finally {
-    await handle.close();
-  }
+  return withReadFile(root, relativePath, (handle) => handle.stat());
 }
 
 export async function writeFileWithinRoot(
