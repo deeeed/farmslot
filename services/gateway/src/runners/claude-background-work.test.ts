@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
@@ -99,6 +99,38 @@ test('foreign sessions, tool identities and ordinary prompts cannot settle nativ
     completed('background-2', 'tool-2'),
   ]);
   assert.equal(f.read().state, 'idle');
+});
+
+test('an idle compacted journal larger than 32 MiB still proves no background work', async (t) => {
+  const f = await transcript(t);
+  const attachment = { type: 'api-request-blob', sessionId, data: 'x'.repeat(64 * 1024) };
+  await f.write([
+    launch(),
+    completed(),
+    ...Array.from({ length: 576 }, () => attachment),
+    { type: 'system', sessionId, subtype: 'stop_hook_summary' },
+    { type: 'system', sessionId, subtype: 'compact_boundary' },
+  ]);
+  assert.ok((await stat(f.file)).size > 32 * 1024 * 1024);
+  assert.equal(f.read().state, 'idle');
+});
+
+test('compaction does not erase an unfinished task across bounded record reads', async (t) => {
+  const f = await transcript(t);
+  const records = [
+    launch(),
+    ...Array.from({ length: 64 }, () => ({
+      type: 'api-request-blob',
+      sessionId,
+      data: 'x'.repeat(512),
+    })),
+    { type: 'system', sessionId, subtype: 'stop_hook_summary' },
+    { type: 'system', sessionId, subtype: 'compact_boundary' },
+  ];
+  await f.write(records);
+  assert.equal(f.read(1024).state, 'active');
+  await f.write([...records, completed()]);
+  assert.equal(f.read(1024).state, 'idle');
 });
 
 test('incomplete, oversized and unattributed native evidence never proves idle', async (t) => {
