@@ -177,6 +177,14 @@ checklist. `start`, numeric checklist marks and terminal marks MUST also clear
 it. Clearing a wait MUST NOT imply completion, a checked row, approval or a new
 worker. Existing artifact and terminal-contract checks still apply.
 
+The signal retains closed waits in `operatorWaitIntervals`, ordered nonoverlapping
+`{ since, until }` ISO intervals within the signal timestamp and owned attempt.
+A new attempt MUST discard the preceding attempt's intervals. The monitor uses
+these intervals to recover excluded wait time across restart. Its persisted
+`operatorWaitMs` and `operatorResumedAt` are accounting and inactivity clocks,
+not worker-progress receipts. A stored `Run.waitingForOperator` MUST be cleared
+on load until the monitor revalidates live ownership.
+
 The gateway MUST validate shape, freshness, role/context and execution attempt
 before accepting a wait. A valid wait is healthy operator dependency, not
 making-progress or worker-done. The healthy waiting label and monitoring

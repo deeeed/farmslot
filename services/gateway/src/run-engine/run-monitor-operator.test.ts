@@ -1,0 +1,300 @@
+// @farmslot:serial — owns temporary project and pool rows in this checkout.
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import test, { type TestContext } from 'node:test';
+
+import type { Run, WorkerSignal } from '@farmslot/protocol';
+
+import '../runtime/mock-pty.test-support.js';
+
+import { farmslotRoot } from '../fleet/state.js';
+import { createRun, getRun, loadAllRuns, persistRunNow, updateRun } from '../runs/store.js';
+
+import { type MonitorObservations, monitorRun } from './run-monitor.js';
+import { deleteTestRunIfPresent } from './test-fixtures.js';
+
+async function fixture(t: TestContext, consumedBeforeWaitMs = 2000) {
+  const project = `operator-monitor-${randomUUID()}`;
+  const projectDir = path.join(farmslotRoot, 'projects', project);
+  const poolFile = path.join(farmslotRoot, 'pool', `${project}.json`);
+  const worker = await mkdtemp(path.join(os.tmpdir(), 'operator-monitor-'));
+  const taskDir = path.join(projectDir, 'tasks/dev/fixture');
+  const signalFile = path.join(worker, 'SIGNAL.json');
+  const slotId = `${project}-slot`;
+  const controller = new AbortController();
+  const executions: Array<ReturnType<typeof monitorRun>> = [];
+  let ownedRunId: string | undefined;
+  const previousOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  t.signal.addEventListener('abort', () => controller.abort(), { once: true });
+  t.after(async () => {
+    controller.abort();
+    await Promise.allSettled(executions);
+    if (ownedRunId) await deleteTestRunIfPresent(ownedRunId);
+    await rm(projectDir, { recursive: true, force: true });
+    await rm(poolFile, { force: true });
+    await rm(worker, { recursive: true, force: true });
+    if (previousOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = previousOwner;
+  });
+  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'fixture-service';
+  const run = createRun(
+    {
+      project,
+      flowType: 'dev',
+      mode: 'autonomous',
+      ticketOrPr: 'WAIT-1',
+      transport: 'native',
+      runner: 'codex',
+    },
+    { nativeOwnerPrincipalId: 'fixture-service' },
+  );
+  ownedRunId = run.id;
+  await mkdir(taskDir, { recursive: true });
+  await mkdir(path.dirname(poolFile), { recursive: true });
+  await writeFile(
+    path.join(projectDir, 'project.json'),
+    JSON.stringify({
+      name: project,
+      monitoring: {
+        poll_interval_min: 1 / 60_000,
+        stuck_timeout_min: 1 / 60_000,
+        idle_timeout_min: 1 / 60_000,
+        total_timeout_min: 1,
+        max_nudges: 0,
+      },
+    }),
+  );
+  await writeFile(
+    poolFile,
+    JSON.stringify({
+      machine: 'localhost',
+      project,
+      host: 'localhost',
+      ssh_user: os.userInfo().username,
+      platform: 'cli',
+      os: 'darwin',
+      slots: [{ id: slotId, enabled: true, repo: worker, session: slotId }],
+    }),
+  );
+  const startedAt = new Date(Date.now() - 600_000).toISOString();
+  const since = new Date(Date.parse(startedAt) + consumedBeforeWaitMs).toISOString();
+  const waiting: WorkerSignal = {
+    status: 'running',
+    attemptId: 'owned-attempt',
+    role: 'dev',
+    contextId: 'worker',
+    timestamp: new Date().toISOString(),
+    waitingForOperator: { who: 'operator', reason: 'Approach review', since },
+  };
+  const writeSignal = async (signal: WorkerSignal) => writeFile(signalFile, JSON.stringify(signal));
+  await writeSignal(waiting);
+  await writeFile(path.join(taskDir, 'TASK.md'), '# Worker\n');
+  updateRun(run.id, {
+    status: 'monitoring',
+    transport: 'native',
+    slotId,
+    taskFile: path.join(taskDir, 'TASK.md'),
+    agentContexts: [
+      {
+        id: 'worker',
+        role: 'dev',
+        label: 'Worker',
+        runner: 'codex',
+        status: 'working',
+        runId: run.id,
+        slotId,
+        signalAttemptId: 'owned-attempt',
+        signalFile,
+        taskFile: path.join(worker, 'TASK.md'),
+        startedAt,
+        attemptStartedAt: startedAt,
+      },
+    ],
+    monitorState: {
+      nudgeCount: 0,
+      startedAt,
+      lastPollAt: startedAt,
+      lastStructuredProgressAt: startedAt,
+    },
+  });
+  const start = (observations: MonitorObservations) => {
+    const execution = monitorRun(run.id, slotId, controller.signal, observations);
+    executions.push(execution);
+    return execution;
+  };
+  return { run, controller, waiting, startedAt, since, start, writeSignal };
+}
+
+test(
+  'a restored live wait suppresses nudges and timeout, and clears on monitor exit',
+  { timeout: 4000 },
+  async (t) => {
+    const f = await fixture(t, 200_000);
+    updateRun(f.run.id, {
+      waitingForOperator: {
+        ...f.waiting.waitingForOperator!,
+        contextId: 'worker',
+        attemptId: 'owned-attempt',
+      },
+    });
+    await persistRunNow(getRun(f.run.id)!, 'operator wait reload');
+    await loadAllRuns();
+    assert.equal(
+      getRun(f.run.id)!.waitingForOperator,
+      undefined,
+      'restart never trusts a cached healthy label',
+    );
+    let observations = 0;
+    const result = await f.start({
+      workerStatus: async () => {
+        if (++observations > 1) assert.equal(getRun(f.run.id)!.waitingForOperator?.who, 'operator');
+        if (observations === 5) f.controller.abort();
+        return 'working';
+      },
+      violations: async () => assert.fail('healthy operator wait must not be classified as stuck'),
+    });
+    assert.ok(result.pollCount >= 3);
+    assert.deepEqual(result.violations, []);
+    assert.equal(getRun(f.run.id)!.metrics.nudgeCount, 0);
+    assert.deepEqual(getRun(f.run.id)!.decisions, []);
+    assert.equal(getRun(f.run.id)!.waitingForOperator, undefined);
+    assert.ok((getRun(f.run.id)!.monitorState?.operatorWaitMs ?? 0) >= 399_000);
+  },
+);
+
+test(
+  'resume excludes the retained wait and starts a fresh inactivity window without inventing progress',
+  { timeout: 4000 },
+  async (t) => {
+    const f = await fixture(t);
+    let observations = 0;
+    let resumed = false;
+    await f.start({
+      workerStatus: async () => {
+        if (++observations === 3) {
+          assert.equal(getRun(f.run.id)!.waitingForOperator?.who, 'operator');
+          const now = new Date().toISOString();
+          await f.writeSignal({
+            ...f.waiting,
+            waitingForOperator: undefined,
+            timestamp: now,
+            operatorWaitIntervals: [{ since: f.since, until: now }],
+          });
+        }
+        return 'working';
+      },
+      violations: async (_run, _slot, state) => {
+        resumed = true;
+        assert.equal(getRun(f.run.id)!.waitingForOperator, undefined);
+        assert.ok(state.operatorWaitMs >= 597_000);
+        assert.ok(state.operatorResumedAt > Date.parse(f.startedAt));
+        assert.equal(state.lastStructuredProgressAt, Date.parse(f.startedAt));
+        f.controller.abort();
+        return [];
+      },
+    });
+    assert.equal(resumed, true);
+    assert.equal(getRun(f.run.id)!.metrics.nudgeCount, 0);
+  },
+);
+
+for (const fault of ['attempt', 'context', 'schema'] as const) {
+  test(`a ${fault} mismatch cannot suppress monitoring`, { timeout: 4000 }, async (t) => {
+    const f = await fixture(t);
+    const signal = {
+      ...f.waiting,
+      ...(fault === 'attempt' ? { attemptId: 'foreign-attempt' } : {}),
+      ...(fault === 'context' ? { contextId: 'foreign-context' } : {}),
+      ...(fault === 'schema'
+        ? { waitingForOperator: { ...f.waiting.waitingForOperator!, who: '' } }
+        : {}),
+    };
+    await f.writeSignal(signal);
+    let classified = false;
+    await f.start({
+      workerStatus: async () => 'working',
+      violations: async (_run, _slot, state) => {
+        classified = true;
+        assert.equal(getRun(f.run.id)!.waitingForOperator, undefined);
+        assert.equal(state.operatorWaitMs, 0);
+        f.controller.abort();
+        return [];
+      },
+    });
+    assert.equal(classified, true);
+  });
+}
+
+for (const generationChanged of [false, true]) {
+  test(
+    `stopping an old monitor retains a replacement projection, generation changed=${generationChanged}`,
+    { timeout: 4000 },
+    async (t) => {
+      const f = await fixture(t);
+      let observations = 0;
+      let replacement: Run['waitingForOperator'];
+      await f.start({
+        workerStatus: async () => {
+          if (++observations === 2) {
+            assert.ok(getRun(f.run.id)!.waitingForOperator);
+            replacement = { ...getRun(f.run.id)!.waitingForOperator! };
+            updateRun(f.run.id, {
+              waitingForOperator: replacement,
+              ...(generationChanged ? { engineState: { generation: 1 } } : {}),
+            });
+            f.controller.abort();
+          }
+          return 'working';
+        },
+      });
+      assert.equal(getRun(f.run.id)!.waitingForOperator, replacement);
+    },
+  );
+}
+
+test(
+  'uncertain liveness clears a stored wait before worker recovery',
+  { timeout: 4000 },
+  async (t) => {
+    const f = await fixture(t);
+    updateRun(f.run.id, {
+      waitingForOperator: {
+        ...f.waiting.waitingForOperator!,
+        contextId: 'worker',
+        attemptId: 'owned-attempt',
+      },
+    });
+    let recoveryObserved = false;
+    await f.start({
+      workerStatus: async () => 'unknown',
+      waitForWorker: async () => {
+        recoveryObserved = true;
+        assert.equal(getRun(f.run.id)!.waitingForOperator, undefined);
+        f.controller.abort();
+        return 'working';
+      },
+    });
+    assert.equal(recoveryObserved, true);
+    assert.equal(getRun(f.run.id)!.waitingForOperator, undefined);
+  },
+);
+
+test('an explicit pause removes the live wait projection', { timeout: 4000 }, async (t) => {
+  const f = await fixture(t);
+  let observations = 0;
+  await f.start({
+    workerStatus: async () => {
+      if (++observations === 2) {
+        assert.ok(getRun(f.run.id)!.waitingForOperator);
+        updateRun(f.run.id, { status: 'paused' });
+        f.controller.abort();
+      }
+      return 'working';
+    },
+  });
+  assert.equal(getRun(f.run.id)!.status, 'paused');
+  assert.equal(getRun(f.run.id)!.waitingForOperator, undefined);
+});

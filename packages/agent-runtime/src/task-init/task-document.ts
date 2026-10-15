@@ -193,6 +193,15 @@ export function buildTaskDocument(input: TaskDocumentInput): string {
 
   const sections: string[] = [`# ${input.flowType}: ${title}`, ''];
   if (input.modePreamble.trim()) sections.push(input.modePreamble, '');
+  if (vars.MODE === 'interactive') {
+    sections.push(
+      '## Waiting for an operator',
+      '',
+      'When an approach or decision needs operator input, run `./mark wait --who "<operator>" --reason "<pending decision>"` from the task directory, then wait for the reply. Keep unchecked rows unchanged.',
+      'Run `./mark resume` when the reply arrives, then continue the existing checklist. Resuming grants no approval or completion.',
+      '',
+    );
+  }
   sections.push(
     '## Task',
     '',

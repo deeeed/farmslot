@@ -23,7 +23,7 @@ test('operator activity names the dependency without authorizing a gate transiti
   assert.equal(view.activityLabel, 'Waiting on operator: release owner');
   assert.equal(view.status, 'monitoring');
   assert.equal(view.canAdvance, false);
-  for (const status of ['done', 'failed', 'cancelled', 'blocked'] as const)
+  for (const status of ['done', 'failed', 'cancelled', 'blocked', 'paused'] as const)
     assert.equal(deriveRunLifecycleView({ status, waitingForOperator }).activityLabel, undefined);
 });
 

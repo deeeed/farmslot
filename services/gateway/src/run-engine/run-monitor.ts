@@ -1021,15 +1021,25 @@ export function restoreBudgetUsageState(
     : emptyBudgetUsageSampleState();
 }
 
+export interface MonitorObservations {
+  workerStatus?: typeof checkAgentLive;
+  waitForWorker?: typeof waitForWorkerStart;
+  violations?: typeof detectViolations;
+}
+
 export async function monitorRun(
   runId: string,
   slotId: string,
   signal: AbortSignal,
+  observations: MonitorObservations = {},
 ): Promise<MonitorResult> {
   const run = getRun(runId);
   if (!run) throw new Error(`Run not found: ${runId}`);
   const initialRun = run;
   const generation = run.engineState?.generation ?? 0;
+  const observeWorker = observations.workerStatus ?? checkAgentLive;
+  const waitForWorker = observations.waitForWorker ?? waitForWorkerStart;
+  const observeViolations = observations.violations ?? detectViolations;
   const createMonitorDecision = (
     id: string,
     reason: string,
@@ -1096,6 +1106,7 @@ export async function monitorRun(
   // Subscribe to push-based worker signals (SIGNAL.json via task-watcher)
   let pushedTerminalSignal = false;
   let latestSignal: WorkerSignal | undefined;
+  let projectedWait: Run['waitingForOperator'];
   let signalResolve: (() => void) | undefined;
   let signalPromise: Promise<void> = Promise.resolve();
   const armSignalPromise = () => {
@@ -1139,48 +1150,46 @@ export async function monitorRun(
   );
 
   // The monitor owns this projection; the raw signal alone never establishes health.
-  function recordOperatorWait(currentRun: Run, alive: boolean): boolean {
-    const current = getRun(runId) ?? currentRun;
+  function recordOperatorWait(alive: boolean): boolean {
+    const current = getRun(runId);
+    if (signal.aborted || !current || (current.engineState?.generation ?? 0) !== generation)
+      return false;
     const context = currentMonitorContext();
+    const ownedSignal =
+      latestSignal &&
+      context?.signalAttemptId &&
+      latestSignal.attemptId === context.signalAttemptId &&
+      signalMatchesMonitorContext(latestSignal, context) &&
+      isWorkerSignalFreshForRun(current, latestSignal)
+        ? latestSignal
+        : undefined;
     const waiting =
       alive &&
+      ['monitoring', 'reviewing', 'fixing'].includes(current.status) &&
       context?.id &&
-      typeof latestSignal?.attemptId === 'string' &&
-      latestSignal.waitingForOperator
+      ownedSignal?.waitingForOperator
         ? {
-            ...latestSignal.waitingForOperator,
+            ...ownedSignal.waitingForOperator,
             contextId: context.id,
-            attemptId: latestSignal.attemptId,
+            attemptId: ownedSignal.attemptId!,
           }
         : undefined;
-    if (alive && latestSignal && (latestSignal.operatorWaitIntervals || waiting)) {
-      state.operatorWaitMs = operatorWaitDurationMs(latestSignal, state.startedAt, Date.now());
+    if (alive && ownedSignal) {
+      state.operatorWaitMs = operatorWaitDurationMs(ownedSignal, state.startedAt, Date.now());
     }
-    if (alive && current.waitingForOperator && !waiting) {
+    if (alive && ownedSignal && current.waitingForOperator && !waiting) {
       state.operatorResumedAt = Date.now();
       state.lastPaneChangeAt = Date.now();
     }
-    if (JSON.stringify(current.waitingForOperator) !== JSON.stringify(waiting)) {
+    if (
+      JSON.stringify(current.waitingForOperator) !== JSON.stringify(waiting) ||
+      (waiting && current.waitingForOperator !== projectedWait)
+    ) {
       updateRun(runId, { waitingForOperator: waiting });
       broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
     }
-    if (waiting) {
-      updateRun(runId, {
-        monitorState: {
-          nudgeCount: current.metrics.nudgeCount,
-          startedAt: new Date(state.startedAt).toISOString(),
-          lastPollAt: new Date().toISOString(),
-          lastStructuredProgressAt: new Date(state.lastStructuredProgressAt).toISOString(),
-          operatorWaitMs: state.operatorWaitMs,
-          ...(state.operatorResumedAt
-            ? { operatorResumedAt: new Date(state.operatorResumedAt).toISOString() }
-            : {}),
-        },
-      });
-      return true;
-    }
-
-    return false;
+    projectedWait = getRun(runId)?.waitingForOperator;
+    return !!waiting;
   }
 
   let warnedNoSignalPath = false;
@@ -1204,8 +1213,8 @@ export async function monitorRun(
       }
       const probe = await probeWorkerSignalForRun(runId, slotId, currentMonitorContext());
       latestSignal = probe.ok || probe.code === 'non_terminal' ? probe.signal : undefined;
-      if (!latestSignal?.waitingForOperator && getRun(runId)?.waitingForOperator) {
-        recordOperatorWait(getRun(runId) ?? initialRun, false);
+      if (!latestSignal && getRun(runId)?.waitingForOperator) {
+        recordOperatorWait(false);
       }
       if (!probe.ok && probe.code === 'artifact_contract') {
         console.warn(
@@ -1297,7 +1306,7 @@ export async function monitorRun(
       return probe.ok ? probe.signal : undefined;
     } catch (err) {
       latestSignal = undefined;
-      recordOperatorWait(getRun(runId) ?? initialRun, false);
+      recordOperatorWait(false);
       console.warn(
         `[run-monitor] failed to read SIGNAL.json for run ${runId.slice(0, 8)}: ${(err as Error).message}`,
       );
@@ -1321,11 +1330,11 @@ export async function monitorRun(
       };
     }
     let ctx = currentMonitorContext();
-    let startupAgent = await checkAgentLive(slotId, run.metrics.runner, runId, ctx?.role, ctx?.id);
+    let startupAgent = await observeWorker(slotId, run.metrics.runner, runId, ctx?.role, ctx?.id);
     if (startupAgent !== 'working') {
-      recordOperatorWait(getRun(runId) ?? initialRun, false);
+      recordOperatorWait(false);
       ctx = currentMonitorContext();
-      startupAgent = await waitForWorkerStart(
+      startupAgent = await waitForWorker(
         slotId,
         run.metrics.runner,
         10_000,
@@ -1373,7 +1382,7 @@ export async function monitorRun(
       }
     }
 
-    recordOperatorWait(getRun(runId) ?? initialRun, startupAgent === 'working');
+    recordOperatorWait(startupAgent === 'working');
 
     while (!signal.aborted) {
       // Race: poll interval vs push signal vs abort
@@ -1439,7 +1448,7 @@ export async function monitorRun(
 
       // 1. Check if worker is done — live tmux pgrep (not .farm-status.json which is stale for gateway-dispatched runs)
       const liveContext = currentMonitorContext();
-      let agentStatus = await checkAgentLive(
+      let agentStatus = await observeWorker(
         slotId,
         run.metrics.runner,
         runId,
@@ -1447,9 +1456,9 @@ export async function monitorRun(
         liveContext?.id,
       );
       if (agentStatus !== 'working') {
-        recordOperatorWait(currentRun, false);
+        recordOperatorWait(false);
         const recoveredContext = currentMonitorContext();
-        const recoveredStatus = await waitForWorkerStart(
+        const recoveredStatus = await waitForWorker(
           slotId,
           run.metrics.runner,
           5_000,
@@ -1501,18 +1510,23 @@ export async function monitorRun(
         agentStatus = recoveredStatus;
       }
 
-      if (recordOperatorWait(currentRun, true)) continue;
+      if (signal.aborted) break;
+      const waitingForOperator = recordOperatorWait(true);
 
       // 2. Capture pane + detect violations
       const violationContext = currentMonitorContext();
-      const violations = await detectViolations(
-        runId,
-        slotId,
-        state,
-        config,
-        violationContext?.role,
-        violationContext?.id,
-      );
+      const violations = waitingForOperator
+        ? []
+        : await observeViolations(
+            runId,
+            slotId,
+            state,
+            config,
+            violationContext?.role,
+            violationContext?.id,
+          );
+
+      if (signal.aborted) break;
 
       // 2b. Soft budget: sample every poll until warned; after warn, retry nudge
       // delivery while unconfirmed, but only up to MAX_BUDGET_NUDGE_ATTEMPTS — each
@@ -1727,7 +1741,7 @@ export async function monitorRun(
 
       // 5. Check total timeout
       const elapsed = Date.now() - state.startedAt - state.operatorWaitMs;
-      if (elapsed > config.totalTimeoutMs) {
+      if (!waitingForOperator && elapsed > config.totalTimeoutMs) {
         console.log(
           `[run-monitor] run ${runId.slice(0, 8)} — total timeout (${config.totalTimeoutMs / 60000}min)`,
         );
@@ -1777,6 +1791,17 @@ export async function monitorRun(
     return { pollCount, exitReason, violations: allViolations, snapshots };
   } finally {
     unsubSignal();
+    const current = getRun(runId);
+    // A replacement monitor may own the same attempt at the same generation.
+    // Clear only the exact projection this instance published.
+    if (
+      projectedWait &&
+      current?.waitingForOperator === projectedWait &&
+      (current.engineState?.generation ?? 0) === generation
+    ) {
+      updateRun(runId, { waitingForOperator: undefined });
+      broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+    }
   }
 }
 

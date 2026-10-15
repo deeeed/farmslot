@@ -243,7 +243,7 @@ Waiting grants no gate approval, completion, publication or resource authority.
   `./mark resume`. Interactive task workers consume both. Numeric checklist
   marks, `start` and terminal marks also clear the wait without ticking an extra
   checklist row or rewriting evidence.
-- `@farmslot/protocol` owns proposed `WorkerOperatorWait` and optional
+- `@farmslot/protocol` owns `WorkerOperatorWait` and optional
   `WorkerSignal.waitingForOperator` and `Run.waitingForOperator`. The existing
   task watcher and monitor validate/project the signal. `deriveRunLifecycleView`
   supplies the activity label to the CLI, Command Center and Companion.

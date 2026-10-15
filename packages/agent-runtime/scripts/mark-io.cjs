@@ -69,6 +69,15 @@ function pickSignalPassthrough(signal) {
   return out;
 }
 
+/** Keep closed waits for this attempt, closing an active wait when work resumes. */
+function operatorWaitHistory(signal, now, { reset = false, closeWait = true } = {}) {
+  const intervals = reset ? [] : [...(signal.operatorWaitIntervals ?? [])];
+  if (!reset && closeWait && signal.waitingForOperator) {
+    intervals.push({ since: signal.waitingForOperator.since, until: now });
+  }
+  return intervals.length ? { operatorWaitIntervals: intervals } : {};
+}
+
 // Step enumeration is shared with the gateway parsers (generateTaskSchema in
 // tasks/writer.ts and parseCheckboxStates in methods/task.ts) via the
 // checklist-target enumerator: same skip sections, <details> handling, and
@@ -112,6 +121,7 @@ module.exports = {
   signalContentUnchanged,
   SIGNAL_PASSTHROUGH_KEYS,
   pickSignalPassthrough,
+  operatorWaitHistory,
   parseChecklist,
   markStepInLines,
   markStepInFile,

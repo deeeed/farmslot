@@ -57,8 +57,7 @@ export function deriveRunLifecycleView(input: {
   return {
     status: input.status,
     label: labels[input.status],
-    ...(input.waitingForOperator &&
-    !['done', 'failed', 'cancelled', 'blocked'].includes(input.status)
+    ...(input.waitingForOperator && ['monitoring', 'reviewing', 'fixing'].includes(input.status)
       ? { activityLabel: `Waiting on operator: ${input.waitingForOperator.who}` }
       : ['fixing', 'review-failed', 'reconciling'].includes(input.status)
         ? { activityLabel: labels[input.status] }

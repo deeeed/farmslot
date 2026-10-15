@@ -18,6 +18,7 @@ const {
   markStepInLines,
   parseChecklist,
   pickSignalPassthrough,
+  operatorWaitHistory,
   readJson,
   signalContentUnchanged,
   writeSignal,
@@ -419,10 +420,6 @@ function buildSignalUpdate(signal, terminal, target, timing, events, now, taskPa
     (signal.waitingForOperator && !process.env.FARMSLOT_SIGNAL_ATTEMPT_ID) ||
     (process.env.FARMSLOT_SIGNAL_ATTEMPT_ID &&
       signal.attemptId === process.env.FARMSLOT_SIGNAL_ATTEMPT_ID);
-  const intervals = sameAttempt ? [...(signal.operatorWaitIntervals ?? [])] : [];
-  if (sameAttempt && signal.waitingForOperator && stepToken !== 'wait') {
-    intervals.push({ since: signal.waitingForOperator.since, until: now });
-  }
   const base = {
     ...pickSignalPassthrough(signal),
     ...(isStartCommand && !sameAttempt
@@ -435,7 +432,7 @@ function buildSignalUpdate(signal, terminal, target, timing, events, now, taskPa
       events,
     },
     timestamp: now,
-    ...(intervals.length ? { operatorWaitIntervals: intervals } : {}),
+    ...operatorWaitHistory(signal, now, { reset: !sameAttempt, closeWait: stepToken !== 'wait' }),
     ...(stepToken === 'wait'
       ? {
           waitingForOperator: {
