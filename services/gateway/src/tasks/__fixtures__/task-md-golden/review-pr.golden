@@ -58,6 +58,23 @@ WRAPPER="<FARMSLOT_ROOT>/projects/farmslot-farm/setup/validate-recipe.sh"
 
 Read `.sandbox/farmslot-farm/agent/recipe-quality.md` before writing any recipe.
 
+## Diff scope
+
+Apply this rule in every self-review, review and review-pr, including paired reviews. Compare every changed file in the whole current contribution against the frozen ticket description and acceptance criteria. Each file must serve an AC or a required test for it.
+Warm reviews keep correctness checks on their saved delta, but still inventory the whole current contribution for scope. Earlier approval does not authorize extra files. Preserve explicit ticket authorizations; do not infer authorization from a previous reviewer, a passing test or a helpful change.
+
+BLOCKER unless the ticket explicitly authorizes the change:
+- CI/workflow.
+- agent/editor configuration.
+- dependency/lockfile.
+- build/tooling configuration.
+- Repository-wide formatting churn.
+
+A required test does not by itself authorize a CI job, agent configuration or dependency change. Inspect sensitive-path candidates against the actual ticket; a path match is a review prompt, not proof of authorization or a waiver.
+SHOULD-FIX: unrelated refactors, renames or dead-code removal outside the touched area, and new abstractions with one caller.
+
+The verdict or self-review report must contain a `## Diff scope` section with one row per changed file: `File | Ticket AC or required test | Scope justification or finding`. Identify the source of any explicit authorization. List out-of-scope changes as findings. Any scope BLOCKER requires REQUEST_CHANGES, never APPROVE. For self-review, fix the scope blocker before marking the review complete. Missing ticket scope or an unavailable inventory is unverified, never a clean scope result.
+
 ## Checklist
 
 Follow `.sandbox/farmslot-farm/worker-task/review/<TASK_ID>/CHECKLIST.md` top to bottom. That file is the only checklist that counts.

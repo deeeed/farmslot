@@ -188,3 +188,20 @@ test('maintenance commands reuse one captured operation and refuse missing stack
   assert.match(ordinary, /execute.*ordinary/);
   assert.ok(ordinary.includes('"baseRef":"main"'));
 });
+
+// The task document supplies the same policy regardless of pack or selected review depth.
+test('all worker review paths receive the shared scope rule exactly once', () => {
+  for (const flowType of ['dev', 'fix-bug', 'self-review', 'review', 'review-pr']) {
+    const document = buildTaskDocument({
+      flowType,
+      modePreamble: '',
+      vars: { TASK_DIR: '.task/review' },
+      description: 'Review the ticket',
+      acceptanceCriteria: ['The requested behavior works'],
+      hasTicketData: true,
+    });
+    assert.equal(document.split('\n## Diff scope\n').length - 1, 1);
+    assert.ok(document.includes('Each file must serve an AC or a required test'));
+    assert.ok(document.includes('Any scope BLOCKER requires REQUEST_CHANGES, never APPROVE'));
+  }
+});

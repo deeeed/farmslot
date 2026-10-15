@@ -2,6 +2,8 @@
 
 Coordination history only. Top-level verdict files remain authoritative for live approval.
 
+Every self-review and paired review consumes the shared rule from `@farmslot/agent-runtime/scripts/review-diff-scope.cjs`. From the owning checkout, run `node packages/agent-runtime/scripts/review-diff-scope.cjs packet <repository> <publication-base> <head>` and include its output in each reviewer packet. Record the resulting `Diff scope` section in each verdict. The orchestrator includes this packet automatically.
+
 ## Setup
 
 - Status: running
