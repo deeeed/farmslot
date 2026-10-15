@@ -7,8 +7,8 @@
 // It sits over the chart's top-left corner, below the chart toolbar, away from
 // the nav bar, the order form, the order rows and the bottom-left dev badge.
 // State lives in <runtime>/hud.json so the wallet host can redraw it after
-// every navigation; the expression only draws on the app origin, never inside
-// MetaMask's extension pages.
+// every navigation; the expression draws only on the selected origin.
+// A bottom dock reserves page space for wallet screenshots.
 
 import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -117,18 +117,28 @@ const STYLE = `
 `;
 
 // A self-contained page expression: draws (or clears, for null) the HUD when
-// the document is on the app origin, and skips the work when the same state
-// is already drawn.
-export function hudRenderExpression(state, appOrigin) {
+// the document is on the selected origin, and skips an unchanged state/layout.
+// The wallet screenshot consumer uses bottom-dock to keep footer controls clear.
+export function hudRenderExpression(state, appOrigin, { layout = 'card' } = {}) {
   return `(() => {
     const state = ${JSON.stringify(state ?? null)};
+    const layout = ${JSON.stringify(layout)};
+    const docked = layout === 'bottom-dock';
     if (location.origin !== ${JSON.stringify(String(appOrigin).replace(/\/$/u, ''))}) return { hud: false, reason: 'not-app-origin' };
     const existing = document.documentElement.querySelector(':scope > ${HUD_ELEMENT}');
-    if (!state) { existing?.remove(); return { hud: false, cleared: true }; }
-    if (existing && existing.dataset.seq === String(state.seq)) return (${waitForHudPaint.toString()})(requestAnimationFrame).then(() => ({ hud: true, seq: state.seq, unchanged: true }));
-    existing?.remove();
+    const remove = () => {
+      if (existing?.dataset.layout === 'bottom-dock') {
+        document.body.style.paddingBottom = existing.dataset.previousPadding;
+        document.getElementById('${HUD_ELEMENT}-space')?.remove();
+      }
+      existing?.remove();
+    };
+    if (!state) { remove(); return { hud: false, cleared: true }; }
+    if (existing && existing.dataset.seq === String(state.seq) && existing.dataset.layout === layout) return (${waitForHudPaint.toString()})(requestAnimationFrame).then(() => ({ hud: true, seq: state.seq, unchanged: true }));
+    remove();
     const host = document.createElement('${HUD_ELEMENT}');
     host.dataset.seq = String(state.seq);
+    host.dataset.layout = layout;
     host.setAttribute('data-farmslot-hud-node', state.current?.nodeId || '');
     host.setAttribute('aria-hidden', 'true');
     host.inert = true;
@@ -137,7 +147,9 @@ export function hudRenderExpression(state, appOrigin) {
     const el = (tag, cls, value) => { const node = document.createElement(tag); if (cls) node.className = cls; if (value != null) node.textContent = value; return node; };
     const style = el('style', null, ${JSON.stringify(STYLE)});
     const box = el('div', 'hud');
-    if (state.position) {
+    if (docked) {
+      Object.assign(box.style, { top: 'auto', bottom: '0', left: '0', right: '0', width: '100vw', maxWidth: 'none', maxHeight: 'none', borderRadius: '0', padding: '5px 8px' });
+    } else if (state.position) {
       box.style.top = state.position === 'top' ? '12px' : 'auto';
       box.style.bottom = state.position === 'bottom' ? '12px' : 'auto';
     }
@@ -165,6 +177,18 @@ export function hudRenderExpression(state, appOrigin) {
     if (state.last && state.last.error) box.append(el('div', 'last error', state.last.error));
     root.append(style, box);
     document.documentElement.append(host);
-    return (${waitForHudPaint.toString()})(requestAnimationFrame).then(() => ({ hud: true, seq: state.seq }));
+    let height;
+    if (docked) {
+      height = Math.ceil(box.getBoundingClientRect().height);
+      host.dataset.previousPadding = document.body.style.paddingBottom;
+      const space = el('div');
+      space.id = '${HUD_ELEMENT}-space';
+      space.setAttribute('aria-hidden', 'true');
+      space.inert = true;
+      Object.assign(space.style, { display: 'block', height: height + 'px', pointerEvents: 'none' });
+      document.body.append(space);
+      document.body.style.paddingBottom = height + 'px';
+    }
+    return (${waitForHudPaint.toString()})(requestAnimationFrame).then(() => ({ hud: true, seq: state.seq, ...(docked ? { docked: true, height } : {}) }));
   })()`;
 }
