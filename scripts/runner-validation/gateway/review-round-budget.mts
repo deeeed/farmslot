@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { centerOfRect } from 'agent-device';
 
 import { NativeSessionClient } from '@farmslot/agent-runtime/native';
+import { reviewRequestFromSequence } from '@farmslot/review-dispatch';
 import { matchesProcess } from '@farmslot/agent-runtime/native/storage';
 import type {
   ReadyGatePrPackage,
@@ -34,6 +35,7 @@ import { computeReadyGatePackageHash } from '../../../services/gateway/src/run-c
 
 const source = fileURLToPath(new URL('../../../', import.meta.url));
 const phase = process.argv[2];
+const gateRefusalProof = process.argv.includes('--gate-refusal') || process.env.FARMSLOT_PROOF_GATE_REFUSAL === '1';
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const writeJson = (file: string, value: unknown) => {
   mkdirSync(path.dirname(file), { recursive: true });
@@ -80,6 +82,7 @@ if (phase === 'serve') {
     [
       { id: 'request-review', label: 'Review', style: 'secondary' },
       { id: 'hold', label: 'Hold', style: 'secondary' },
+      ...(gateRefusalProof ? [{ id: 'approve-publish-unresolved', label: 'Accept findings', style: 'danger' as const }] : []),
     ],
     gatePayload,
   );
@@ -87,7 +90,7 @@ if (phase === 'serve') {
   const requested = getRun(runId)!.decisions.find(
     (decision) => decision.resolvedAction === 'request-review',
   );
-  assert.deepEqual(requested?.selectionData?.reviewRequest, selection);
+  assert.deepEqual(requested?.selectionData?.reviewRequest, reviewRequestFromSequence([selection]));
   const result = await executePublishGateReviewPlan(
     runId,
     getRun(runId)!.slotId!,
@@ -109,6 +112,7 @@ if (phase === 'serve') {
     [
       { id: 'request-review', label: 'Review', style: 'secondary' },
       { id: 'hold', label: 'Hold', style: 'secondary' },
+      ...(gateRefusalProof ? [{ id: 'approve-publish-unresolved', label: 'Accept findings', style: 'danger' as const }] : []),
     ],
     gatePayload,
     { canReplay: () => false },
@@ -313,7 +317,7 @@ if (phase === 'serve') {
       selectedEvidenceKeys: [],
       reviewArtifactIds: [],
       gatePolicy: { owner: 'human', publishAuthority: 'human', reason: 'Review budget control' },
-      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+      reviewPolicy: { minimumReviews: gateRefusalProof ? 2 : 0, requestedBy: 'dispatch' },
       publicationTarget: 'ready',
       publicationStatus: 'not_published',
       createdAt: now,
@@ -328,6 +332,7 @@ if (phase === 'serve') {
       lane: 'validation',
       flowType: 'dev',
       mode: 'interactive',
+      ...(gateRefusalProof ? { devInteractiveProfile: 'reviewed' as const } : {}),
       status: 'human-gating',
       project,
       ticketOrPr: 'MANUAL-REVIEW-BUDGET',
@@ -390,6 +395,7 @@ if (phase === 'serve') {
     );
     env = {
       ...process.env,
+      FARMSLOT_PROOF_GATE_REFUSAL: gateRefusalProof ? '1' : '0',
       FARMSLOT_ROOT: root,
       FARMSLOT_PROJECTS_DIR: path.join(root, 'projects'),
       FARMSLOT_POOL_DIR: path.join(root, 'pool'),
@@ -449,7 +455,7 @@ registerHooks({load(url, context, nextLoad) {
     if (control === 'rpc') after = after.replace(/await assertReviewRoundAvailable\\(getRun\\(params\\.runId\\)!?\\);/, 'void params.runId;');
     if (control === 'rpc' || control === 'consumption') after = after.replace(/assertReviewBudgetAtConsumption\\?\\.\\(\\);/, 'void params.runId;');
     if (control && control !== 'scope') assert.notEqual(after, before, 'RPC control must change its target');
-    const delayed = after.replace(/(const currentDescription = await assertReadyPublishResolveIsFresh\\(existing, decision, params\\);)/, '$1' + ${JSON.stringify(delaySource)});
+    const delayed = after.replace(/(const currentDescription = await assertReadyPublishResolveIsFresh\\([\\s\\S]*?\\);)/, '$1' + ${JSON.stringify(delaySource)});
     assert.notEqual(delayed, after, 'schedule must delay the real awaited probe boundary');
     after = delayed;
   } else return result;
@@ -541,7 +547,7 @@ registerHooks({load(url, context, nextLoad) {
           runId: raceRunId,
           decisionId: raceDecision.id,
           actionId: 'request-review',
-          selectionData: { reviewRequest: selection },
+          selectionData: { reviewRequest: reviewRequestFromSequence([selection]) },
         }),
       ],
       { cwd: source, env, stdio: ['ignore', 'pipe', 'pipe'] },
@@ -554,7 +560,7 @@ registerHooks({load(url, context, nextLoad) {
       runId,
       decisionId: firstGate.id,
       actionId: 'request-review',
-      selectionData: { reviewRequest: selection },
+      selectionData: { reviewRequest: reviewRequestFromSequence([selection]) },
     });
     await waitFor(
       () => readRun().reviewRoundAdmissions?.length === 5,
@@ -619,7 +625,7 @@ registerHooks({load(url, context, nextLoad) {
           runId,
           decisionId: gate.id,
           actionId: 'request-review',
-          selectionData: { reviewRequest: selection },
+          selectionData: { reviewRequest: reviewRequestFromSequence([selection]) },
         }),
       /REVIEW_ROUND_LIMIT_REACHED/,
     );
@@ -628,6 +634,40 @@ registerHooks({load(url, context, nextLoad) {
       undefined,
     );
     writeJson(path.join(out, 'sixth-refused.json'), readRun());
+    if (gateRefusalProof) {
+      assert.equal(
+        gate.actions.some((action) => action.id === 'approve-publish-unresolved'),
+        false,
+      );
+      const beforeRefusal = readRun();
+      assert.throws(
+        () =>
+          rpc('run.resolveDecision', {
+            runId,
+            decisionId: gate.id,
+            actionId: 'approve-publish-unresolved',
+            selectionData: {
+              packageId: prepared.id,
+              packageHash: prepared.packageHash,
+              packageHeadSha: prepared.headSha,
+              selectedEvidenceKeys: prepared.selectedEvidenceKeys,
+            },
+          }),
+        /RUN_GATE_NOT_READY/,
+      );
+      const refused = readRun();
+      assert.equal(refused.decisions.find((entry) => entry.id === gate.id)!.resolvedAt, undefined);
+      assert.deepEqual(refused.reviewRoundAdmissions, beforeRefusal.reviewRoundAdmissions);
+      assert.deepEqual(refused.agentContexts, beforeRefusal.agentContexts);
+      assert.match(
+        JSON.stringify(
+          (refused.decisions.find((entry) => entry.id === gate.id)!.payload as ReadyGatePayload)
+            .gateReadiness,
+        ),
+        /5\/5.*extend-review-budget/,
+      );
+      writeJson(path.join(out, 'approval-refused.json'), refused);
+    }
     await stop(gateway);
     gateway = spawn(process.execPath, ['--import', 'tsx', 'services/gateway/src/index.ts'], {
       cwd: source,
@@ -655,7 +695,7 @@ registerHooks({load(url, context, nextLoad) {
           runId,
           decisionId: gate.id,
           actionId: 'request-review',
-          selectionData: { reviewRequest: selection },
+          selectionData: { reviewRequest: reviewRequestFromSequence([selection]) },
         }),
       /REVIEW_ROUND_LIMIT_REACHED/,
     );

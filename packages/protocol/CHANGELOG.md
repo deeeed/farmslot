@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Expose verified review exceptions so publication actions match their gate prerequisites.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.45.0 - 2026-10-15

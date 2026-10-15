@@ -78,6 +78,11 @@ export class RedirectedError extends Error {
 
 const engineDecisionResolvers = new Map<string, (actionId: string) => void>();
 
+/** Recovery can retain a live gate continuation instead of starting another driver. */
+export function hasEngineDecisionWaiter(decisionId: string): boolean {
+  return engineDecisionResolvers.has(decisionId);
+}
+
 export function resolveEngineDecision(decisionId: string, actionId: string): boolean {
   const resolver = engineDecisionResolvers.get(decisionId);
   if (resolver) {
