@@ -1462,6 +1462,36 @@ export function mockRuns(): Run[] {
   ].map((run) => ({ lane: 'production', variant: null, ...run }) as Run);
 }
 
+export function mockSelfReviewRecoveryRun(): Run {
+  const at = new Date(Date.now() - 60_000).toISOString();
+  return {
+    ...mockRuns()[0]!,
+    id: 'pipe-self-review-recovery',
+    familyId: 'pipe-self-review-recovery',
+    flowType: 'dev',
+    status: 'reconciling',
+    taskFile: 'tasks/review/TASK.md',
+    decisions: [],
+    output: undefined,
+    steps: [
+      { name: 'monitor', status: 'done' },
+      { name: 'review', status: 'done', detail: 'Reviewer exited without a complete result' },
+      { name: 'complete', status: 'pending' },
+    ],
+    engineState: {
+      publishGate: {
+        reviewRecovery: {
+          status: 'operator-required',
+          attempts: 1,
+          startedAt: at,
+          updatedAt: at,
+          lastError: 'Reviewer exited without a complete result',
+        },
+      },
+    },
+  };
+}
+
 export function mockPipelineRuns(): Run[] {
   const now = Date.now();
   return [
@@ -2322,6 +2352,7 @@ export function mockPipelineRuns(): Run[] {
       createdAt: new Date(now - 55 * 60000).toISOString(),
       updatedAt: new Date(now - 1 * 60000).toISOString(),
     },
+    mockSelfReviewRecoveryRun(),
   ].map((run) => ({ lane: 'production', variant: null, ...run }) as Run);
 }
 

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Offer self-review recovery from the run page and decision inbox when a reviewer stops without a complete result.
+
 - Describe LAN binding through credential-store activation instead of the retired checkout auth file.
 
 - Use one compact worker checklist in pipeline, step inspection and slot views.

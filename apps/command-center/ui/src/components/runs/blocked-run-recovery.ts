@@ -18,6 +18,7 @@ import {
   blockedWorkerProofReady,
   canResumeBlockedWorkerMonitor,
   isRecoverableBlockedWorkerRun,
+  isRecoverableSelfReviewRun,
 } from './blocked-run-recovery-model.js';
 
 @customElement('blocked-run-recovery')
@@ -207,8 +208,44 @@ export class BlockedRunRecovery extends LitElement {
     }
   }
 
+  private async rerunSelfReview(): Promise<void> {
+    if (this.disabled || this.busy || !isRecoverableSelfReviewRun(this.run)) return;
+    this.busy = true;
+    this.error = '';
+    try {
+      await gateway.request(Methods.RUN_REPLAY_STEP, {
+        runId: this.run.id,
+        stepName: 'review',
+        triggeredBy: 'operator',
+      });
+    } catch (error) {
+      this.error = error instanceof Error ? error.message : String(error);
+    } finally {
+      this.busy = false;
+    }
+  }
+
   protected render() {
     const run = this.run;
+    if (run && isRecoverableSelfReviewRun(run)) {
+      return html`
+        <section data-testid="self-review-recovery" aria-label="Recover self-review">
+          <h3>Self-review needs attention</h3>
+          <p>
+            Start self-review again with the configured reviewer. The development session stays in
+            place.
+          </p>
+          <button
+            data-testid="rerun-self-review"
+            ?disabled=${this.disabled || this.busy}
+            @click=${this.rerunSelfReview}
+          >
+            ${this.busy ? 'Starting self-review…' : 'Re-run self-review'}
+          </button>
+          ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}
+        </section>
+      `;
+    }
     if (!run || !isRecoverableBlockedWorkerRun(run)) return nothing;
     const ready = this.requirementsReady();
     const unresolved =

@@ -2,6 +2,8 @@ import { html, nothing } from 'lit';
 
 import type { Run } from '@farmslot/protocol';
 
+import './blocked-run-recovery.js';
+
 import { colors } from '../../styles/theme-tokens.js';
 
 import { isInteractiveCompletionAwaitingOperator } from './run-detail-model.js';
@@ -19,6 +21,7 @@ export function renderReviewRecoveryStatus(run: Run) {
   return html`
     <div class="review-recovery ${recovery.status}" role="status">
       Review recovery: ${recovery.status}${recovery.lastError ? ` — ${recovery.lastError}` : ''}
+      <blocked-run-recovery .run=${run}></blocked-run-recovery>
     </div>
   `;
 }

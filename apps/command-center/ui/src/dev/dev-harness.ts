@@ -1561,43 +1561,10 @@ All checks passed.`;
   }
 
   private renderDecisions() {
-    const decisions = mockDecisions();
-    return html`
-      <p class="section-label">Decision inbox (${decisions.length} pending)</p>
-      <div class="card-grid">
-        ${decisions.map(
-          (d) => html`
-            <div style="background: ${colors.bgCard}; border-radius: 8px; padding: 16px;">
-              <strong style="color: ${colors.accent}">${d.title}</strong>
-              <p style="color: ${colors.textMuted}; font-size: 12px; margin: 8px 0">
-                ${d.description}
-              </p>
-              <div style="display: flex; gap: 8px; margin-top: 8px">
-                ${d.actions.map(
-                  (a) => html`
-                    <button
-                      style="padding: 4px 8px; border-radius: 4px; border: 1px solid ${a.style ===
-                      'danger'
-                        ? colors.statusFail
-                        : a.style === 'primary'
-                          ? colors.accent
-                          : colors.textMuted}; background: transparent; color: ${a.style ===
-                      'danger'
-                        ? colors.statusFail
-                        : a.style === 'primary'
-                          ? colors.accent
-                          : colors.textMuted}; cursor: pointer; font-family: inherit; font-size: 11px"
-                    >
-                      ${a.label}
-                    </button>
-                  `,
-                )}
-              </div>
-            </div>
-          `,
-        )}
-      </div>
-    `;
+    this._captureSharedState();
+    updateDecisions(mockDecisions());
+    this._updateMockRuns(mockPipelineRuns());
+    return html`<div style="height: calc(100vh - 200px)"><decision-inbox></decision-inbox></div>`;
   }
 
   private renderViolations() {
@@ -2174,6 +2141,7 @@ All checks passed.`;
       'Review running 7/11 (fix-bug)',
       'Review done w/ issues + retry (fix-bug)',
       'Publish-gate review loop (fix-bug)',
+      'Self-review recovery without a decision',
     ];
     return html`
       <p class="section-label">Run pipeline canvas (${runs.length} scenarios, 3 flow types)</p>

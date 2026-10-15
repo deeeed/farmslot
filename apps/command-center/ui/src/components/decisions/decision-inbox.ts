@@ -11,6 +11,7 @@ import type {
   LearningsDraftPayload,
   PendingDecision,
   RetrospectivePayload,
+  Run,
   RunMeta,
 } from '@farmslot/protocol';
 import {
@@ -20,12 +21,14 @@ import {
 } from '@farmslot/protocol';
 
 import '../diff-viewer/diff-review.js';
+import '../runs/blocked-run-recovery.js';
 import '../shared/hydrating-placeholder.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe as subscribeState } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { formatDiffFileCount } from '../../utils/diff-test-filter.js';
+import { isRecoverableSelfReviewRun } from '../runs/blocked-run-recovery-model.js';
 import {
   feedbackSummaryLabel,
   renderFeedbackCandidates,
@@ -146,6 +149,7 @@ function slotMachine(slotId: string): string {
 @customElement('decision-inbox')
 export class DecisionInbox extends LitElement {
   @state() private _decisions: PendingDecision[] = [];
+  @state() private _reviewRecoveries: Run[] = [];
   @state() private _filterProjects: string[] = [];
   @state() private _filterMachines: string[] = [];
   @state() private _resolving: Set<string> = new Set();
@@ -198,6 +202,7 @@ export class DecisionInbox extends LitElement {
   }
 
   private _syncFromState(s: AppState) {
+    this._reviewRecoveries = s.runs.filter(isRecoverableSelfReviewRun);
     this._filterProjects = s.globalFilters.projects;
     this._filterMachines = s.globalFilters.machines;
     this._hydrating = isHydrating(s, 'decisions');
@@ -244,6 +249,15 @@ export class DecisionInbox extends LitElement {
       );
     }
     return result;
+  }
+
+  private get _filteredReviewRecoveries(): Run[] {
+    return this._reviewRecoveries.filter(
+      (run) =>
+        (!this._filterProjects.length || this._filterProjects.includes(run.project)) &&
+        (!this._filterMachines.length ||
+          this._filterMachines.includes(slotMachine(run.slotId ?? ''))),
+    );
   }
 
   private async _resolve(decision: PendingDecision, actionId: string) {
@@ -741,13 +755,30 @@ export class DecisionInbox extends LitElement {
   }
 
   render() {
+    const reviewRecoveries = this._filteredReviewRecoveries;
     return html`
       <div class="inbox-header">
         <span class="inbox-title">Decisions</span>
-        <span class="inbox-count">${this._filtered.length} pending</span>
+        <span class="inbox-count">${this._filtered.length + reviewRecoveries.length} pending</span>
       </div>
       <div class="inbox-body">
-        ${this._filtered.length === 0
+        ${reviewRecoveries.map(
+          (run) => html`
+            <div class="decision" data-testid="self-review-recovery-card" data-run-id=${run.id}>
+              <div class="decision-top">
+                <a class="decision-title" href=${`#run/${encodeURIComponent(run.id)}`}
+                  >${run.ticketOrPr}</a
+                >
+                <span class="decision-slot">${run.slotId}</span>
+              </div>
+              <div class="decision-desc">
+                ${run.engineState?.publishGate?.reviewRecovery?.lastError ?? ''}
+              </div>
+              <blocked-run-recovery .run=${run}></blocked-run-recovery>
+            </div>
+          `,
+        )}
+        ${this._filtered.length === 0 && !reviewRecoveries.length
           ? this._hydrating
             ? html`<farm-hydrating message="Loading decisions…"></farm-hydrating>`
             : html`

@@ -93,3 +93,19 @@ export function canResumeBlockedWorkerMonitor(run: Run, signal: unknown): boolea
   const currentAt = Date.parse(current.timestamp);
   return Number.isFinite(previousAt) && Number.isFinite(currentAt) && currentAt > previousAt;
 }
+
+/** Self-review can need an operator even when no decision was created. */
+export function isRecoverableSelfReviewRun(run: Run): boolean {
+  return (
+    (run.status === 'reconciling' || run.status === 'review-failed') &&
+    run.engineState?.publishGate?.reviewRecovery?.status === 'operator-required' &&
+    !run.readOnly &&
+    !run.reviewWorkspaceTarget &&
+    !run.engineState?.operatorForceCompleted &&
+    !run.output?.closedAt &&
+    !!run.slotId &&
+    !!run.taskFile &&
+    run.steps.some((step) => step.name === 'review') &&
+    !run.decisions.some((decision) => !decision.resolvedAt)
+  );
+}
