@@ -156,7 +156,7 @@ function workspaceSection(ws: Workspace | null): {
   return { section: { title: 'Workspace', checks }, state };
 }
 
-function poolSection(ws: Workspace | null, state: WorkspaceState | null): DoctorSection {
+export function poolSection(ws: Workspace | null, state: WorkspaceState | null): DoctorSection {
   if (!ws || !state) {
     return {
       title: 'Pool',
@@ -194,6 +194,22 @@ function poolSection(ws: Workspace | null, state: WorkspaceState | null): Doctor
           ok: true,
           detail: `${state.pool_file} (machine ${pool.machine}, ${pool.slots.length} slot${pool.slots.length === 1 ? '' : 's'}, schema v${pool.schema_version ?? 0})`,
         },
+        // Naming policy must not prevent teardown from reading structurally valid slots.
+        ...pool.slots.flatMap((slot) =>
+          /\d+\.\d+\.\d+/.test(slot.repo) ||
+          /(?:^|\D)\d{4}[-_/.]?(?:0[1-9]|1[0-2])[-_/.]?(?:0[1-9]|[12]\d|3[01])(?:\D|$)/.test(
+            slot.repo,
+          )
+            ? [
+                {
+                  name: 'slot repo path',
+                  ok: false,
+                  detail: `${slot.id}: '${slot.repo}' contains a release version or date`,
+                  hint: 'After releasing the slot and its open processes, rename the checkout to a stable path and update its pool repo field.',
+                },
+              ]
+            : [],
+        ),
       ],
     };
   } catch (err) {
