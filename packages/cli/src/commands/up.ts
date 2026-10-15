@@ -421,17 +421,22 @@ async function waitForHealthOrExit(
 }
 
 /** The up-managed gateway must accept our token — anything else is a broken pairing setup. */
-async function verifyTokenAuth(
+export async function verifyTokenAuth(
   port: number,
   credential: GatewayCredential,
   output: OutputContext,
 ): Promise<void> {
   const probe = await probeGatewayAuth(`ws://localhost:${port}`, credential);
   if (probe.state === 'authenticated') return;
-  if (probe.errorCode === 'AUTH_PERSON_SESSION_REQUIRED')
+  if (
+    probe.errorCode === 'AUTH_PERSON_SESSION_REQUIRED' ||
+    probe.errorCode === 'AUTH_SESSION_ENDED'
+  )
     throw Object.assign(
       new Error(
-        'The local person login needs a device session. The gateway is running; use farmslot login local --token <credential> or --code <pairing-code>, then retry farmslot up.',
+        probe.errorCode === 'AUTH_SESSION_ENDED'
+          ? 'The local device sign-in has ended. The gateway is running; use farmslot login local --code <code from a signed-in Command Center or Companion>, then retry farmslot up.'
+          : 'The local person login needs a device session. The gateway is running; use farmslot login local --token <credential> or --code <pairing-code>, then retry farmslot up.',
       ),
       { code: probe.errorCode },
     );
@@ -440,6 +445,17 @@ async function verifyTokenAuth(
       `check the local gateway profile and restart: farmslot down && farmslot up`,
   );
   throw new Error(`Local gateway credential verification failed: ${probe.state}`);
+}
+
+export async function cleanupFailedGatewayStartup(pid: number, error: unknown): Promise<void> {
+  // Keep the healthy owned gateway reachable so another device can issue a login invitation.
+  if (
+    hasAuthErrorCode(error, 'AUTH_PERSON_SESSION_REQUIRED') ||
+    hasAuthErrorCode(error, 'AUTH_SESSION_ENDED')
+  )
+    return;
+  await killGracefully(pid);
+  rmSync(pidFilePath(), { force: true });
 }
 
 function pairHint(localActive: boolean): string {
@@ -703,10 +719,7 @@ async function up(
     localActive = registerLocalProfile(port, credential);
     if (startNode) await startLocalNode(port, await localNodeCredential(port, credential), output);
   } catch (error) {
-    if (!hasAuthErrorCode(error, 'AUTH_PERSON_SESSION_REQUIRED')) {
-      await killGracefully(child.pid);
-      rmSync(pidFilePath(), { force: true });
-    }
+    await cleanupFailedGatewayStartup(child.pid, error);
     throw error;
   }
 

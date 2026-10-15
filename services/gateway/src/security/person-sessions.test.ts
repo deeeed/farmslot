@@ -19,6 +19,7 @@ import {
 } from '@farmslot/credential-store';
 import {
   type GatewayAuthConnectResult,
+  hasAuthErrorCode,
   Methods,
   type PairingCreateResult,
   PersonSessionEndedError,
@@ -677,6 +678,59 @@ test('first local startup persists one device and renews it through the producti
   assert.equal(persisted.personSession?.session.id, initial.personSession.session.id);
   assert.equal(runtime.store.snapshot().personSessions.length, 1);
   assert.ok(!readFileSync(profilesPath(), 'utf8').includes('fsa_'));
+});
+
+test('revoked local sign-in preserves the owned gateway and pid for pairing again', async (t) => {
+  const { cleanupFailedGatewayStartup, verifyTokenAuth } =
+    await import('../../../../packages/cli/src/commands/up.js');
+  const f = await rpcFixture(t, true);
+  f.writer.grantRole(f.person.id, 'admin', { kind: 'global' });
+  const local = f.grant();
+  const browser = f.grant();
+  saveProfiles({
+    gateways: {
+      local: {
+        url: f.url,
+        authMode: 'token',
+        personSession: { session: local.session, refreshToken: local.refreshToken },
+      },
+    },
+  });
+  const target = resolveGatewayTarget({ gateway: 'local' });
+  assert.ok(target.credential);
+  const pidPath = join(privateFarm, 'home', 'gateway.pid');
+  writeFileSync(pidPath, '47123\n');
+  t.after(() => {
+    rmSync(pidPath, { force: true });
+    rmSync(profilesPath(), { force: true });
+  });
+  await f.client(browser.accessToken).call(Methods.AUTH_SESSION_REVOKE, {
+    sessionId: local.session.id,
+  });
+  const kill = t.mock.method(process, 'kill', () => {
+    throw new Error('Ended sign-in must not signal the healthy gateway');
+  });
+  let failure: unknown;
+  try {
+    await verifyTokenAuth(Number(new URL(f.url).port), target.credential, new OutputContext(true));
+  } catch (error) {
+    failure = error;
+    await cleanupFailedGatewayStartup(47123, error);
+  }
+  assert.ok(hasAuthErrorCode(failure, 'AUTH_SESSION_ENDED'));
+  assert.ok(failure instanceof Error);
+  assert.match(failure.message, /farmslot login local --code <code from a signed-in/);
+  assert.equal(kill.mock.callCount(), 0);
+  assert.equal(readFileSync(pidPath, 'utf8'), '47123\n');
+  assert.equal(loadProfiles().gateways.local.personSession, undefined);
+  const invitation = await f
+    .client(browser.accessToken)
+    .call<PairingCreateResult>(Methods.PAIRING_CREATE, {
+      gatewayUrl: f.url,
+      authority: { kind: 'existing-principal', principalId: f.person.id },
+    });
+  await authCommand(t).run('login', 'local', '--code', invitation.code);
+  assert.ok(loadProfiles().gateways.local.personSession);
 });
 
 test('online activation exchanges its one-time owner credential before saving a CLI profile', async (t) => {

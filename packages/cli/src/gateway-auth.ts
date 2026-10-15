@@ -6,6 +6,7 @@ import {
   type GatewayAuthConnectResult,
   type PairingExchangeResult,
   PersonSessionClient,
+  PersonSessionEndedError,
   type PersonSessionExchangeParams,
   type SelfPrincipalSummary,
 } from '@farmslot/protocol';
@@ -76,7 +77,9 @@ export async function probeGatewayAuth(
     return {
       state: 'inactive',
       detail,
-      ...(err instanceof GatewayRpcError ? { errorCode: err.code } : {}),
+      ...(err instanceof GatewayRpcError || err instanceof PersonSessionEndedError
+        ? { errorCode: err.code }
+        : {}),
     };
   }
 }
