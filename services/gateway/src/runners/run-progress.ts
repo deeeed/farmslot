@@ -17,7 +17,11 @@ import { readReviewWorkspaceWorker } from './native/review-workspace.js';
 import { nativeWorkerLiveStatus, readNativeWorkerSnapshot } from './native/worker-control.js';
 import { classifyMonitorProgress, type MonitorProgressKind } from './observability-progress.js';
 import type { ObservabilityReading, RunnerTaskProgressReader } from './observability-types.js';
-import { readRunnerActivityFromObservability, readRunnerTurnState } from './registry.js';
+import {
+  readRunnerActivityFromObservability,
+  readRunnerBackgroundWorkState,
+  readRunnerTurnState,
+} from './registry.js';
 import { reviewWorkspaceRunnerVars } from './review-startup.js';
 
 export interface RunProgressObservation {
@@ -72,6 +76,7 @@ interface RunProgressReaders {
   target: typeof resolveAgentTarget;
   activity: typeof readRunnerActivityFromObservability;
   turn: typeof readRunnerTurnState;
+  background: typeof readRunnerBackgroundWorkState;
   turnActive: typeof runnerTurnLeaseIsActive;
   taskProgress: RunnerTaskProgressReader;
 }
@@ -85,6 +90,7 @@ const progressReaders: RunProgressReaders = {
   target: resolveAgentTarget,
   activity: readRunnerActivityFromObservability,
   turn: readRunnerTurnState,
+  background: readRunnerBackgroundWorkState,
   turnActive: runnerTurnLeaseIsActive,
   // Registry and lifecycle consumers form a cycle; look up this capability after initialization.
   taskProgress: async (input) => (await import('./registry.js')).readRunnerTaskProgress(input),
@@ -142,13 +148,15 @@ async function observeContext(
       });
   if (!target?.target) return { kind: 'unproven', activeRole };
   const runner = normalizeRunner(context?.runner ?? run.metrics.runner);
-  const [activity, turnState] = await Promise.all([
+  const [activity, turnState, backgroundWork] = await Promise.all([
     source.activity(vars, target.target, runner),
     source.turn(vars, target.target, runner),
+    source.background(vars, target.target, runner),
   ]);
   const kind = classifyMonitorProgress({
     activity: structured(activity),
     turnState: structured(turnState),
+    backgroundWork,
   });
   if (kind === 'making-progress' && activeRole === 'review-fix') {
     const receipt = context?.promptAcceptance;
@@ -159,6 +167,19 @@ async function observeContext(
     return { kind: kind === 'making-progress' && accepted ? kind : 'unproven', activeRole };
   }
   return { kind, activeRole };
+}
+
+/** Observe one owned worker without letting an unrelated role mask its state. */
+export async function readAgentContextProgress(
+  run: Run,
+  context: AgentContext | undefined,
+  overrides: Partial<RunProgressReaders> = {},
+): Promise<RunProgressObservation> {
+  try {
+    return await observeContext(run, context, { ...progressReaders, ...overrides });
+  } catch (error) {
+    return { kind: 'unproven', reason: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 /** Kernel/process existence and pane text cannot establish that a turn progresses. */
@@ -204,17 +225,7 @@ export async function readRunProgress(
     ),
   ];
   const observations = await Promise.all(
-    contexts.map(async (context) => {
-      try {
-        return await observeContext(run, context ?? undefined, source);
-      } catch (error) {
-        // A lost transport or ownership binding is uncertainty, never proof of idle.
-        return {
-          kind: 'unproven' as const,
-          reason: error instanceof Error ? error.message : String(error),
-        };
-      }
-    }),
+    contexts.map((context) => readAgentContextProgress(run, context ?? undefined, source)),
   );
   return (
     observations.find((observation) => observation.kind === 'making-progress') ??

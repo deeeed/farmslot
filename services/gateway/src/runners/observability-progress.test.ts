@@ -117,3 +117,33 @@ test('resolveMonitorStuckState keeps the last progress timestamp while idle', ()
   assert.equal(state.lastProgressAt, start);
   assert.equal(state.stuck, false);
 });
+
+for (const background of ['active', 'idle', 'unknown'] as const) {
+  test(`a stopped turn with ${background} background work has the correct monitor posture`, () => {
+    const state = resolveMonitorStuckState({
+      now: start + twentyMin + 1,
+      lastProgressAt: start,
+      stuckTimeoutMs: twentyMin,
+      activity: activity('idle'),
+      turnState: turn('idle'),
+      backgroundWork: turn(background),
+    });
+    assert.equal(
+      state.kind,
+      background === 'active' ? 'making-progress' : background === 'idle' ? 'idle' : 'unproven',
+    );
+    assert.equal(state.stuck, background === 'idle');
+    assert.equal(shouldDeliverStuckNudge(state.kind), background === 'idle');
+  });
+}
+
+test('a live foreground turn still progresses while background evidence is unavailable', () => {
+  assert.equal(
+    classifyMonitorProgress({
+      activity: null,
+      turnState: turn('active'),
+      backgroundWork: turn('unknown'),
+    }),
+    'making-progress',
+  );
+});

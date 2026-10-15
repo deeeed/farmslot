@@ -37,12 +37,16 @@ export function assertBinary() {
   }
 }
 
-/** One-shot print mode — reliable in tmux shell panes (interactive compose does not submit). */
-export function buildLaunchCommand(repo, runtimeDir, prompt = DEFAULT_PROMPT, model = 'opus') {
+function launchCommand(repo, runtimeDir, model) {
   assertBinary();
   const modelFlag = model ? ` --model ${shSingleQuote(model)}` : '';
   const settingsPath = path.join(repo, runtimeDir, '.observability', 'claude-settings.json');
-  return `${shSingleQuote(CLAUDE_BIN)} --dangerously-skip-permissions${modelFlag} --settings ${shSingleQuote(settingsPath)} -p ${shSingleQuote(prompt)}`;
+  return `${shSingleQuote(CLAUDE_BIN)} --dangerously-skip-permissions${modelFlag} --settings ${shSingleQuote(settingsPath)}`;
+}
+
+/** One-shot print mode — reliable in tmux shell panes (interactive compose does not submit). */
+export function buildLaunchCommand(repo, runtimeDir, prompt = DEFAULT_PROMPT, model = 'opus') {
+  return `${launchCommand(repo, runtimeDir, model)} -p ${shSingleQuote(prompt)}`;
 }
 
 export function launchMode() {
@@ -61,4 +65,9 @@ export function skipReason(scenario) {
     return 'claude print path covered by hook-smoke';
   }
   return null;
+}
+
+/** Retain the interactive runner while its native background job finishes. */
+export function buildInteractiveLaunchCommand(repo, runtimeDir, prompt, model = 'opus') {
+  return `${launchCommand(repo, runtimeDir, model)} ${shSingleQuote(prompt)}`;
 }

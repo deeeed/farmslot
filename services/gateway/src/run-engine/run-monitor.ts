@@ -37,7 +37,6 @@ import {
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import {
-  nativeWorkerLiveStatus,
   readNativeWorkerSnapshot,
   sendNativeWorkerInstruction,
 } from '../runners/native/worker-control.js';
@@ -50,6 +49,7 @@ import {
   detectRunnerLaunchBlocker,
   getRunnerSessionUsageProvider,
   readRunnerActivityFromObservability,
+  readRunnerBackgroundWorkState,
   readRunnerTurnState,
   runnerLineLooksWaiting,
   runnerSupportsNativeTaskReuse,
@@ -59,7 +59,11 @@ import {
   sendRunnerInstructionWithOutcome,
   stripRunnerNoise,
 } from '../runners/registry.js';
-import { readRunProgress, runDecisionWaitingStatus } from '../runners/run-progress.js';
+import {
+  readAgentContextProgress,
+  readRunProgress,
+  runDecisionWaitingStatus,
+} from '../runners/run-progress.js';
 import {
   isRunnerAliveUnderPane,
   resolveRunnerSessionForRun,
@@ -1347,7 +1351,7 @@ export async function monitorRun(
         ctx?.id,
       );
     }
-    if (startupAgent !== 'working') {
+    if (startupAgent === 'idle' || startupAgent === 'no-tmux') {
       // The worker can write its signal while the startup/liveness probes await.
       const terminalSignal = await checkSignalFile();
       if (terminalSignal)
@@ -1450,7 +1454,7 @@ export async function monitorRun(
         return { pollCount, exitReason, violations: allViolations, snapshots };
       }
 
-      // 1. Check if worker is done — live tmux pgrep (not .farm-status.json which is stale for gateway-dispatched runs)
+      // 1. Confirm the owned worker is idle, including any native background work.
       const liveContext = currentMonitorContext();
       let agentStatus = await observeWorker(
         slotId,
@@ -1459,7 +1463,7 @@ export async function monitorRun(
         liveContext?.role,
         liveContext?.id,
       );
-      if (agentStatus !== 'working') {
+      if (agentStatus === 'idle' || agentStatus === 'no-tmux') {
         recordOperatorWait(false);
         const recoveredContext = currentMonitorContext();
         const recoveredStatus = await waitForWorker(
@@ -1470,7 +1474,7 @@ export async function monitorRun(
           recoveredContext?.role,
           recoveredContext?.id,
         );
-        if (recoveredStatus !== 'working') {
+        if (recoveredStatus === 'idle' || recoveredStatus === 'no-tmux') {
           // Re-read completion after confirming exit; the earlier read predates that probe.
           const terminalSignal = await checkSignalFile();
           if (terminalSignal)
@@ -1515,7 +1519,7 @@ export async function monitorRun(
       }
 
       if (signal.aborted) break;
-      const waitingForOperator = recordOperatorWait(true);
+      const waitingForOperator = recordOperatorWait(agentStatus === 'working');
 
       // 2. Capture pane + detect violations
       const violationContext = currentMonitorContext();
@@ -1938,8 +1942,16 @@ async function checkAgentLive(
   contextId?: string,
 ): Promise<AgentLiveStatus> {
   try {
-    if (runId && getRun(runId)?.transport === 'native')
-      return nativeWorkerLiveStatus(await readNativeWorkerSnapshot(runId, role, contextId));
+    const run = runId ? getRun(runId) : undefined;
+    if (run) {
+      const context = selectAgentContext(run, { role, contextId }) ?? undefined;
+      const progress = await readAgentContextProgress(run, context);
+      return progress.kind === 'idle'
+        ? 'idle'
+        : progress.kind === 'unproven'
+          ? 'unknown'
+          : 'working';
+    }
     const vars = await loadSlotVars(slotId);
     if (!vars.session) return 'idle';
     const session = (await resolveAgentTarget(slotId, { runId, role, contextId })).target;
@@ -2037,7 +2049,11 @@ async function sendNudge(
       const runner = run.metrics.runner ?? 'claude';
       const activity = await readRunnerActivityFromObservability(vars, session, runner);
       const turnState = await readRunnerTurnState(vars, session, runner);
-      const kind = classifyMonitorProgress({ activity, turnState });
+      const kind = classifyMonitorProgress({
+        activity,
+        turnState,
+        backgroundWork: await readRunnerBackgroundWorkState(vars, session, runner),
+      });
       if (!shouldDeliverStuckNudge(kind)) {
         console.log(
           `[run-monitor] run ${runId.slice(0, 8)} — skipping ${violation.type} nudge (${kind} runner activity)`,
@@ -2244,6 +2260,7 @@ async function isRunnerMidTurn(
     const progress = classifyMonitorProgress({
       activity: await readRunnerActivityFromObservability(vars, session, runner),
       turnState: await readRunnerTurnState(vars, session, runner),
+      backgroundWork: await readRunnerBackgroundWorkState(vars, session, runner),
     });
     return progress === 'making-progress';
   } catch (error) {

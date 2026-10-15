@@ -1,3 +1,4 @@
+import * as backgroundWaitHandoff from './background-wait-handoff.mjs';
 import * as budgetGuardSmoke from './budget-guard-smoke.mjs';
 import * as busyComposer from './busy-composer.mjs';
 import * as copilotRuntimeSmoke from './copilot-runtime-smoke.mjs';
@@ -81,6 +82,7 @@ import * as warmReplacementSmoke from './warm-replacement-smoke.mjs';
 import * as workspaceReviewLifecycle from './workspace-review-lifecycle.mjs';
 
 export const SCENARIOS = {
+  [backgroundWaitHandoff.SCENARIO_ID]: backgroundWaitHandoff,
   [nativeAdditionalProfiles.SCENARIO_ID]: nativeAdditionalProfiles,
   'native-additional-runners': nativeAdditionalRunners,
   'hook-smoke': hookSmoke,

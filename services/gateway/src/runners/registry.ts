@@ -88,10 +88,12 @@ import type {
   ObservabilityReading,
   ObservabilityScope,
   RunnerActivity,
+  RunnerBackgroundWorkState,
   RunnerObservability,
   RunnerSessionDeliveryState,
   RunnerTaskProgressInput,
   RunnerTaskProgressReader,
+  SlotVars,
 } from './observability-types.js';
 import { lineHasAuthBlockerPhrase, readPaneStateFromCapture } from './pane-state-script.js';
 import {
@@ -674,7 +676,11 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
 };
 
 const KNOWN_RUNNER_OBSERVABILITY: Record<string, RunnerObservability> = {
-  claude: claudeHookObservability,
+  claude: {
+    ...claudeHookObservability,
+    getBackgroundWorkState: async (vars, target) =>
+      (await import('./claude-background-work.js')).readClaudeBackgroundWorkState(vars, target),
+  },
   codex: codexSessionObservability,
   cursor: createCursorLogObservability(),
   grok: grokLogObservability,
@@ -1911,6 +1917,23 @@ export async function readRunnerActivityFromObservability(
       `[runner-observability] activity read failed for ${vars.slotId}: ${(error as Error).message}`,
     );
     return null;
+  }
+}
+
+export async function readRunnerBackgroundWorkState(
+  vars: SlotVars,
+  target: string,
+  runner: string,
+): Promise<ObservabilityReading<RunnerBackgroundWorkState> | null> {
+  const reader = getRunnerObservability(runner)?.getBackgroundWorkState;
+  if (!reader) return null;
+  try {
+    return await reader(vars, target);
+  } catch (error) {
+    console.warn(
+      `[runner-observability] background work read failed for ${vars.slotId}: ${(error as Error).message}`,
+    );
+    return { value: 'unknown', source: 'unknown', confidence: 'low', observedAt: Date.now() };
   }
 }
 
