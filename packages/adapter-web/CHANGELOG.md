@@ -4,9 +4,11 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## Unreleased
 
-- Disable macOS code-signing clones across isolated browser launches, merging existing disabled features; let profile cleanup locks retain live owners without a probe-age timeout.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.10.7 - 2026-10-15
+
+- Disable macOS code-signing clones across isolated browser launches, merging existing disabled features; let profile cleanup locks retain live owners without a probe-age timeout.
 
 ## 0.10.6 - 2026-10-15
 
