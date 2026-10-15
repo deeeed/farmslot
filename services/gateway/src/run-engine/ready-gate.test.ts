@@ -630,6 +630,60 @@ function sourceGateFixture(t: TestContext) {
   };
 }
 
+for (const action of ['approve-publish', 'approve-publish-unresolved']) {
+  test(`accepted ${action} resumes its exact package without issuing another decision`, async (t) => {
+    const { run } = sourceGateFixture(t);
+    const prepared = makeReadyGatePackage({
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    });
+    const decision: RunDecision = {
+      id: 'accepted',
+      type: 'engine_human_gate',
+      title: 'Gate',
+      description: '',
+      actions: [],
+      createdAt: '2026-10-15T00:00:00Z',
+      resolvedAt: '2026-10-15T00:01:00Z',
+      resolvedAction: action,
+      selectionData: {
+        packageId: prepared.id,
+        packageHash: prepared.packageHash,
+        packageHeadSha: prepared.headSha,
+      },
+      payload: {
+        kind: 'ready',
+        prNumber: null,
+        repo: null,
+        branch: prepared.branch,
+        diffStat: prepared.diffStat,
+        workerReport: '',
+        prPackage: prepared,
+      },
+    };
+    updateRun(run.id, {
+      decisions: [decision],
+      engineState: {
+        publishGate: {
+          publicationStatus: 'pending_publish',
+          approvedPackageHash: prepared.packageHash,
+        },
+      },
+    });
+    assert.equal(
+      await executeReadyGate(run.id, {
+        ensurePackage: async () => prepared,
+        createDecision: async () => assert.fail('accepted approval must not issue another gate'),
+      }),
+      action,
+    );
+    assert.equal(getRun(run.id)!.decisions.length, 1);
+    assert.equal(
+      getRun(run.id)!.engineState?.publishGate?.approvedPackageHash,
+      prepared.packageHash,
+    );
+  });
+}
+
 test(
   'source-read failure uses the real decision owner and retains its publication wait',
   { timeout: 4000 },

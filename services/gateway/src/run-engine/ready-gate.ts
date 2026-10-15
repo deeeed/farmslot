@@ -55,7 +55,7 @@ import {
   type ReviewResult,
 } from '../review/orchestrator.js';
 import { assertReviewRoundAvailable } from '../review/review-round-budget.js';
-import { reviewedInputsAwaitingReview, reviewedInputsChanged } from '../review/reviewed-inputs.js';
+import { reviewedInputsChanged } from '../review/reviewed-inputs.js';
 import { reviewPRIdentity } from '../review/session-mode.js';
 import { isTerminalReviewArtifactError } from '../review/terminal-result.js';
 import { assertEvidenceAttestationReceipt } from '../run-completion/evidence-attestation.js';
@@ -70,7 +70,7 @@ import {
   readyGateCurrentDescription,
 } from '../run-completion/ready-gate-package.js';
 import { runnerDefaultModel } from '../runners/registry.js';
-import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
+import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import {
   ACCEPTANCE_STATUS_FILENAME,
   acceptanceCoverageMarkdown,
@@ -86,7 +86,6 @@ import {
 } from './branch-freshness.js';
 import {
   latestResolvedHumanGateDecision,
-  markResolvedHumanGateApprovalHeld,
   markResolvedHumanGateReviewRequestConsumed,
 } from './decision-replay.js';
 import { captureReviewInputArtifactsForRun } from './diff-artifacts.js';
@@ -113,6 +112,7 @@ import {
 } from './gate-policy.js';
 import { buildGateSummary } from './gate-summary.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
+import { recordPublicationApproval } from './publication-finalization.js';
 import {
   publicationReviewPolicyForRun,
   requiresPublicationApproval,
@@ -812,6 +812,16 @@ export async function executeReadyGate(
         current = latest!;
       }
     }
+    const approved = getRun(runId)!;
+    const approval = latestResolvedHumanGateDecision(approved.decisions);
+    if (
+      approved.engineState?.publishGate?.publicationStatus === 'pending_publish' &&
+      approved.engineState.publishGate.approvedPackageHash === preparedPackage?.packageHash &&
+      approval?.payload?.kind === 'ready' &&
+      approval.payload.prPackage?.packageHash === preparedPackage?.packageHash &&
+      isPublishApprovalAction(approval.resolvedAction)
+    )
+      recoveredAction = approval.resolvedAction;
   }
   const prNumber =
     artifactOnly || publicationApprovalGate
@@ -1241,26 +1251,9 @@ export async function executeReadyGate(
     await assertAdoptedPublicationContinuation(getRun(runId)!);
     return actionId;
   }
-  // F42: the evidence or HEAD changed while the gate was open and
-  // review has not run again for it. Hold instead of approving: the gate
-  // step re-runs review and presents the gate again.
-  if (
-    publicationApprovalGate &&
-    isPublishApprovalAction(actionId) &&
-    (await reviewedInputsAwaitingReview(getRun(runId)!))
-  ) {
-    if (decision) {
-      markResolvedHumanGateApprovalHeld(decision);
-      await persistRunNow(
-        updateRun(runId, { decisions: afterDecisionRun.decisions }),
-        'approval held',
-      );
-    }
-    console.log(
-      `[run-engine] run ${runId.slice(0, 8)} — '${actionId}' held: evidence or HEAD changed since the last review`,
-    );
-    return 'hold';
-  }
+  // Resolve validates reviewed inputs before consuming an approval. Finalize
+  // revalidates them before publication. Never turn an accepted approval into
+  // an implicit hold or a new review/fix loop here.
   // The operator's posture choice for the wait they just ended.
   const postureChoice = gateChoiceFromSelectionData(selectionData);
   const postureOutcome = await reconcileRunPosture({
@@ -1315,6 +1308,8 @@ export async function executeReadyGate(
       if (actionId !== APPROVE_PUBLISH_UNRESOLVED_ACTION) {
         assertPublicationReviewPolicySatisfied(getRun(runId)!, approvedPackage);
       }
+      if (!decision) throw new Error('Publication approval decision is unavailable');
+      recordPublicationApproval(runId, approvedPackage, decision);
     }
     const target =
       selectionData?.publicationTarget === 'ready'
@@ -1354,13 +1349,9 @@ export async function executeReadyGate(
           ...beforeFinalUpdate.engineState?.publishGate,
           gateSummary,
           publicationTarget: target,
-          ...(isPublishApprovalAction(actionId)
-            ? {
-                approvedPackageHash: approvedPackage?.packageHash,
-                approvedAt: new Date().toISOString(),
-                publicationStatus: 'pending_publish' as const,
-              }
-            : { publicationStatus: 'not_published' as const }),
+          ...(!isPublishApprovalAction(actionId)
+            ? { publicationStatus: 'not_published' as const }
+            : {}),
           ...patch,
         },
       },
