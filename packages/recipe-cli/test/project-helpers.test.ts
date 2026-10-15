@@ -8,6 +8,7 @@ import { retainTaskExecution } from '../../agent-runtime/src/task-init/execution
 import { handleChecklist } from '../src/harness/commands/checklist.js';
 import { handleRecipeQuality } from '../src/harness/commands/recipe-quality.js';
 import { handleReview } from '../src/harness/commands/review.js';
+import { harnessHost } from '../src/harness/host.js';
 import {
   projectTaskExecution,
   verifySelectedTask,
@@ -17,6 +18,17 @@ import {
   type ProjectRecipeHostOptions,
   withProjectRecipeHost,
 } from '../src/harness/project-host.js';
+
+function captureStdout(t: TestContext) {
+  let output = '';
+  const write = process.stdout.write.bind(process.stdout);
+  t.mock.method(process.stdout, 'write', (...args: Parameters<typeof process.stdout.write>) => {
+    if (typeof args[0] !== 'string') return write(...args);
+    output += args[0];
+    return true;
+  });
+  return () => output;
+}
 
 function fixture(t: TestContext) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'task-provider-')));
@@ -294,6 +306,62 @@ test('review retains incremental scope and project rules in its authored output'
     /Review runtime must be one of/,
   );
   assert.equal(fs.existsSync(refused), false);
+});
+
+test('review preserves project parity references, rules and incremental scope', async (t) => {
+  const f = fixture(t);
+  const reference = { adapter: 'browser', root: path.join(f.root, 'reference'), source: 'config' };
+  const output = captureStdout(t);
+  await withProjectRecipeHost(f.options, async () =>
+    handleReview(['checklist', '--base', 'main', '--since', 'approved', '--json'], {
+      runtimeIds: ['headless'],
+      parityRuntimeIds: { headless: 'browser' },
+      parity: (input) => {
+        assert.deepEqual(input, { runtime: 'headless', target: f.checkout, hasParityGuide: false });
+        return {
+          reference,
+          steps: [
+            'Compare with the configured reference; never change the reference to match.',
+            'Confirm both consumers still compile.',
+          ],
+        };
+      },
+    }),
+  );
+  const report = JSON.parse(output());
+  assert.deepEqual(report.reference, reference);
+  assert.equal(report.referenceMissing, null);
+  assert.equal(report.base, 'main');
+  assert.equal(report.since, 'approved');
+  assert.match(report.checklist, /approved\.\.HEAD/);
+  assert.match(report.checklist, /never change the reference/);
+  assert.match(report.checklist, /both consumers still compile/);
+  assert.doesNotMatch(report.checklist, /Parity with browser: not checked/);
+});
+
+test('a missing project parity reference retains its diagnostic and rules', async (t) => {
+  const f = fixture(t);
+  const output = captureStdout(t);
+  const key = `${harnessHost().envPrefix}_REF_BROWSER`;
+  const previous = process.env[key];
+  process.env[key] = path.join(f.root, 'environment-reference');
+  t.after(() => {
+    if (previous === undefined) delete process.env[key];
+    else process.env[key] = previous;
+  });
+  await withProjectRecipeHost(f.options, async () =>
+    handleReview(['checklist', '--base', 'main', '--json'], {
+      parityRuntimeIds: { headless: 'browser' },
+      parity: () => ({
+        referenceMissing: 'no configured or discovered browser checkout',
+        steps: ['Record missing parity in the verdict.'],
+      }),
+    }),
+  );
+  const report = JSON.parse(output());
+  assert.equal(report.reference, null);
+  assert.equal(report.referenceMissing, 'no configured or discovered browser checkout');
+  assert.match(report.checklist, /Record missing parity in the verdict/);
 });
 
 test('advice receives the resolved runtime and preserves an explicit opt-out', async (t) => {

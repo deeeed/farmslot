@@ -12,6 +12,11 @@ export interface ReviewCommandOptions {
   baseRules?: string;
   runtimeIds?: readonly string[];
   parityRuntimeIds?: Readonly<Record<string, string>>;
+  parity?: (input: { runtime: string; target: string; hasParityGuide: boolean }) => {
+    reference?: { adapter: string; root: string; source: string };
+    referenceMissing?: string;
+    steps: readonly string[];
+  };
 }
 
 interface KnowledgeSection {
@@ -277,10 +282,18 @@ export async function handleReview(
   }
   lines.push('', '## Parity');
   const parity = policy.parityRuntimeIds?.[runtime];
-  const reference = parity
-    ? process.env[`${harnessHost().envPrefix}_REF_${parity.toUpperCase()}`]
-    : undefined;
-  if (parity)
+  const projectParity = policy.parity?.({
+    runtime,
+    target,
+    hasParityGuide: Boolean(library && fs.existsSync(path.join(library.root, 'review/parity.md'))),
+  });
+  const reference =
+    !projectParity && parity
+      ? process.env[`${harnessHost().envPrefix}_REF_${parity.toUpperCase()}`]
+      : undefined;
+  if (projectParity) {
+    for (const rule of projectParity.steps) item(rule);
+  } else if (parity)
     item(
       reference
         ? `Compare touched behavior with ${parity} at ${reference}${library && fs.existsSync(path.join(library.root, 'review/parity.md')) ? ' using review/parity.md' : ''}; record every divergence under the library parity rule.`
@@ -299,7 +312,7 @@ export async function handleReview(
   }
   process.stdout.write(
     optionFlag(options, 'json')
-      ? `${JSON.stringify({ command: 'review', subcommand: 'checklist', target, adapter: runtime, domain: domain ?? null, library: library ?? null, reference: reference ?? null, referenceMissing: parity && !reference ? `no ${parity} checkout found` : null, base, since: since ?? null, out: out ? path.resolve(out) : null, checklist }, null, 2)}\n`
+      ? `${JSON.stringify({ command: 'review', subcommand: 'checklist', target, adapter: runtime, domain: domain ?? null, library: library ?? null, reference: projectParity ? (projectParity.reference ?? null) : (reference ?? null), referenceMissing: projectParity ? (projectParity.referenceMissing ?? null) : parity && !reference ? `no ${parity} checkout found` : null, base, since: since ?? null, out: out ? path.resolve(out) : null, checklist }, null, 2)}\n`
       : out
         ? `review checklist: ${path.resolve(out)}\n`
         : checklist,
