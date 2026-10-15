@@ -85,14 +85,34 @@ const REREQUEST_REVIEW_FLOWS = new Set<string>(['pr-complete', 'dev', 'fix-bug',
  * the card shows what went out rather than the reviewed description. A
  * publication that posted nothing (already published) leaves the record as is.
  */
+interface PublishedDescriptionPersistence {
+  assertCurrent: (run: Run) => void;
+}
+
+export function recordPublishedDescription(
+  runId: string,
+  decisionId: string,
+  published: Pick<ReadyGatePrPackage, 'draftTitle' | 'draftBody'>,
+  publishedAt: string,
+  persistence: PublishedDescriptionPersistence,
+): Promise<Run>;
+export function recordPublishedDescription(
+  runId: string,
+  decisionId: string | undefined,
+  published: Pick<ReadyGatePrPackage, 'draftTitle' | 'draftBody'> | undefined,
+  publishedAt?: string,
+): void;
 export function recordPublishedDescription(
   runId: string,
   decisionId: string | undefined,
   published: Pick<ReadyGatePrPackage, 'draftTitle' | 'draftBody'> | undefined,
   publishedAt = new Date().toISOString(),
-  persistence?: { assertCurrent: (run: Run) => void },
+  persistence?: PublishedDescriptionPersistence,
 ): void | Promise<Run> {
-  if (!decisionId || !published) return;
+  if (!decisionId || !published) {
+    if (persistence) throw new Error('Published description requires a decision and delivery');
+    return;
+  }
   const decisions = (run: Run) =>
     run.decisions.map((decision) => {
       const payload = decision.payload as ReadyGatePayload | undefined;

@@ -266,8 +266,19 @@ for (const historical of [false, true]) {
 
 for (const mutation of ['head', 'repository', 'branch', 'closed'] as const) {
   test(`adopted evidence refuses a foreign or advanced ${mutation} before upload`, async (t) => {
-    const { run } = await fixture(t);
-    if (mutation === 'head') pr.headRefOid = oldHead;
+    const { run, receipt } = await fixture(t);
+    if (mutation === 'head') {
+      pr.headRefOid = oldHead;
+      await commitRunPublication(run.id, (current) => ({
+        prNumber: 193,
+        links: current.links,
+        prPublications: current.prPublications,
+        publishGate: {
+          ...current.engineState?.publishGate,
+          humanPublicationAdoption: { ...receipt, observedHeadSha: oldHead },
+        },
+      }));
+    }
     if (mutation === 'repository') pr.headRepository.nameWithOwner = 'foreign/repo';
     if (mutation === 'branch') pr.headRefName = 'foreign';
     if (mutation === 'closed') pr.state = 'CLOSED';
@@ -342,7 +353,11 @@ test('archived delivery persists only description and never restores execution',
   await archiveRun(run.id);
   const file = path.join(runsDirectory(), 'archive', `${run.id}.json`);
   const before: Run = JSON.parse(await readFile(file, 'utf8'));
-  await refreshPublishedEvidence({ runId: run.id }, () => {});
+  const events: string[] = [];
+  await refreshPublishedEvidence({ runId: run.id }, (event) => {
+    events.push(event);
+  });
+  assert.deepEqual(events, [], 'historical delivery must not recreate a live run in clients');
   assert.equal(getRun(run.id), undefined);
   const after: Run = JSON.parse(await readFile(file, 'utf8'));
   const beforeReady = before.decisions[0].payload;

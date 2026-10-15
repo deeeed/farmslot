@@ -86,7 +86,7 @@ async function refreshPublishedEvidenceLocked(
     ? run.decisions.find((entry) => entry.id === adoption.priorGate?.decisionId)
     : latestResolvedHumanGateDecision(run.decisions);
   const payload = decision?.payload as ReadyGatePayload | undefined;
-  if (payload?.kind !== 'ready' || !payload.prPackage) {
+  if (!decision?.id || payload?.kind !== 'ready' || !payload.prPackage) {
     throw new Error('Published evidence refresh requires the recorded publication package');
   }
   const prepared = payload.prPackage;
@@ -215,14 +215,15 @@ async function refreshPublishedEvidenceLocked(
   });
   if (postedBody === null) throw new Error('Published evidence body was not posted');
   const publishedAt = new Date().toISOString();
-  await recordPublishedDescription(
+  const committed = await recordPublishedDescription(
     run.id,
-    decision?.id,
+    decision.id,
     { draftTitle: before.title, draftBody: postedBody },
     publishedAt,
     { assertCurrent },
   );
-  emit(Events.RUN_UPDATED, { run: await getRunWithArchived(run.id) });
+  // Match adoption: historical delivery must not re-enter live execution projections.
+  if (!committed.archivedAt) emit(Events.RUN_UPDATED, { run: committed });
   return {
     runId: run.id,
     prNumber: run.prNumber,
