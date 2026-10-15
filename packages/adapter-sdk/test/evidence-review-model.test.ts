@@ -1260,3 +1260,26 @@ test('baseline outside its own recording never borrows measured timing from the 
   assert.equal(model.markerSeekMs('comparison-dependencies/baseline/video.mp4', 1, 'start'), null);
   assert.equal(model.markerSeekMs('video.mp4', 1, 'start'), 400);
 });
+
+test('pending visual criteria stay visible before evidence loads and after a read error without granting review authority', () => {
+  const input: RecordedEvidencePackageInput = JSON.parse(
+    readFileSync(
+      new URL('../../recipe-runner/test/fixtures/visual-review-package.json', import.meta.url),
+      'utf8',
+    ),
+  ).input;
+  const person: SelfPrincipalSummary = {
+    id: 'operator',
+    displayName: 'Operator',
+    subjectKind: 'person',
+    roles: [],
+  };
+  for (const readErrors of [[], ['Evidence request timed out']]) {
+    const model = createEvidenceReviewModel({ ledger: input.claims, readErrors });
+    assert(model.pendingVisualClaimIds.includes('check-1'));
+    assert.equal(model.visualReviewKind('check-1', person), null);
+    assert.throws(() =>
+      model.visualReviewRequest('check-1', person, 'confirmed', 'Inspected the view.'),
+    );
+  }
+});

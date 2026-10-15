@@ -18,10 +18,16 @@ owns recovery of a stopped host whose cleanup marker remains unresolved.
 
 - The supervisor MUST hold the existing exclusive startup claim before checking
   or reclaiming an old host lock. A live supervisor or host MUST block recovery.
-- An unresolved marker MUST identify the recorded host and its observed process
-  identities/groups. Recovery MUST obtain a successful fresh OS census and verify
+- An unresolved marker MUST identify the recorded host. Existing observations MUST
+  identify its processes/groups. Recovery MUST obtain a successful fresh OS census and verify
   that the failed host's recorded processes and groups are stopped. Failed probes
   remain unknown. Live supervisor or host PIDs retain the existing startup refusal.
+- If the first census failed before the host recorded any session, missing or empty
+  observations MAY be quarantined after fresh and independent checks prove its
+  supervisor, host and process group stopped. Every historical journal MUST still
+  be complete, terminal and confirmed stopped. A journal from that unobserved host
+  MUST refuse this fallback. Archive the original marker and verification facts in
+  `cleanup-quarantine/` before reclaiming ownership; preserve all journal bytes.
 - Every retained session journal MUST be complete and readable. Its latest state
   MUST be closed or failed, its process stop confirmed, and its runner group absent.
   Recorded detached descendants and their groups MUST also be absent.
