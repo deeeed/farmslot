@@ -20,6 +20,12 @@ import {
 
 function fixture(t: TestContext) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'task-provider-')));
+  const previousFarmHome = process.env.FARMSLOT_HOME;
+  process.env.FARMSLOT_HOME = path.join(root, 'pins');
+  t.after(() => {
+    if (previousFarmHome === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = previousFarmHome;
+  });
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const pack = path.join(root, 'pack');
   const checkout = path.join(root, 'checkout');
@@ -118,35 +124,60 @@ test('retained provider gates survive a provider update and ordinary source edit
     /\[x\] Required validation/,
   );
   assert.equal(verifySelectedTask(f.taskDir).bindingIdentity?.project, 'example');
+  await withTaskProjectHost(
+    {
+      ...f.options,
+      tokens: ['--device', 'owned-device', '--watcher-port', '3333'],
+      options: { device: 'owned-device', watcherPort: '3333' },
+    },
+    f.taskDir,
+    async (host) => {
+      assert.equal(host.cli.device, 'owned-device');
+      assert.equal(host.context.ports?.watcher?.value, 3333);
+      assert.equal(host.context.ports?.watcher?.source, 'flag');
+    },
+  );
+  await assert.rejects(
+    withTaskProjectHost(
+      { ...f.options, tokens: ['--library', 'foreign=/unused'] },
+      f.taskDir,
+      async () => assert.fail('must not invoke'),
+    ),
+    { code: 'TASK_BINDING_CHANGED' },
+  );
+
+  const previousTask = process.env.RECIPE_TASK_DIR;
+  process.env.RECIPE_TASK_DIR = f.taskDir;
+  t.after(() => {
+    if (previousTask === undefined) delete process.env.RECIPE_TASK_DIR;
+    else process.env.RECIPE_TASK_DIR = previousTask;
+  });
+  await withProjectRecipeHost({ ...updatedDefaults, command: 'doctor' }, async ({ provider }) => {
+    assert.equal(provider.commandOptions?.task?.stepGates.length, 1);
+  });
 });
 
-test('a missing or changed original provider authorization refuses retained loading', async (t) => {
+test('an unconfigured discovered provider refuses before pin creation', async (t) => {
   const f = fixture(t);
-  await withProjectRecipeHost(f.options, async (host) => {
-    retainTaskExecution(
-      f.taskDir,
-      await projectTaskExecution(host, {
-        executable: path.join(f.installed, 'farmslot'),
-        packageRoot: f.installed,
-        distributionRoot: f.installed,
-      }),
-    );
-  });
-  const changed = {
-    ...f.options,
-    projects: f.options.projects?.map((entry) => ({
-      ...entry,
-      config: {
-        ...entry.config,
-        recipe: { ...entry.config.recipe!, provider: { module: 'other.mjs' } },
+  const config = f.options.projects?.[0]?.config;
+  assert.ok(config);
+  fs.writeFileSync(
+    path.join(f.checkout, 'project.json'),
+    JSON.stringify({
+      ...config,
+      recipe: {
+        ...config.recipe,
+        provider: { module: 'provider.mjs', root: { projectPath: f.pack } },
       },
-    })),
-  };
-  fs.writeFileSync(path.join(f.pack, 'other.mjs'), 'throw new Error("must not import");');
-  await assert.rejects(
-    withTaskProjectHost(changed, f.taskDir, async () => assert.fail('must not invoke')),
-    { code: 'PROVIDER_UNAUTHORIZED' },
+    }),
   );
+  await assert.rejects(
+    withProjectRecipeHost({ ...f.options, projects: [], tokens: [] }, async () =>
+      assert.fail('must not import'),
+    ),
+    { code: 'SOURCE_UNAUTHORIZED' },
+  );
+  assert.equal(fs.existsSync(path.join(f.taskDir, 'artifacts/harness-provenance.json')), false);
 });
 
 test('review retains incremental scope and project rules in its authored output', async (t) => {
@@ -189,4 +220,32 @@ test('advice receives the resolved runtime and preserves an explicit opt-out', a
     }),
   );
   assert.equal(calls, 1);
+});
+
+test('the selected action manifest is retained with its configuration', async (t) => {
+  const f = fixture(t);
+  const config = f.options.projects?.[0]?.config;
+  assert.ok(config?.recipe);
+  const manifest = path.join(f.pack, 'actions.json');
+  fs.writeFileSync(manifest, '{"actions":[]}');
+  const selected = { ...config, recipe: { ...config.recipe, manifest: 'actions.json' } };
+  fs.writeFileSync(path.join(f.pack, 'project.json'), JSON.stringify(selected));
+  const options = { ...f.options, projects: [{ root: f.pack, config: selected }] };
+  await withProjectRecipeHost(options, async (host) => {
+    retainTaskExecution(
+      f.taskDir,
+      await projectTaskExecution(host, {
+        executable: path.join(f.installed, 'farmslot'),
+        packageRoot: f.installed,
+        distributionRoot: f.installed,
+      }),
+    );
+  });
+  fs.writeFileSync(manifest, 'changed original');
+  await withTaskProjectHost(options, f.taskDir, async ({ cli }) => {
+    assert.equal(typeof cli.actionManifest, 'string');
+    if (typeof cli.actionManifest !== 'string') assert.fail('Missing retained manifest');
+    assert.notEqual(cli.actionManifest, manifest);
+    assert.equal(fs.readFileSync(cli.actionManifest, 'utf8'), '{"actions":[]}');
+  });
 });

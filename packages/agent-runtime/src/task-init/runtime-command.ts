@@ -13,10 +13,16 @@ export function installedRuntimeScriptCommand(filename: string): string {
   return `node ${quoteMarkCommandWord(path.join(packageRoot, 'scripts', filename))}`;
 }
 
-export function installedTaskCommands(mapPath: (file: string) => string = (file) => file): {
+/** Retained paths are literal shell arguments. */
+export function quoteTaskPath(word: string): string {
+  return `'${word.replace(/'/g, `'"'"'`)}'`;
+}
+
+export function installedTaskCommands(mapPath?: (file: string) => string): {
   AC_CMD: string;
   ARTIFACT_CHECK_CMD: string;
 } {
-  const entry = `node ${quoteMarkCommandWord(mapPath(path.join(packageRoot, 'bin/farmslot-agent.mjs')))}`;
+  const file = path.join(packageRoot, 'bin/farmslot-agent.mjs');
+  const entry = `node ${mapPath ? quoteTaskPath(mapPath(file)) : quoteMarkCommandWord(file)}`;
   return { AC_CMD: `${entry} ac`, ARTIFACT_CHECK_CMD: `${entry} artifact-check` };
 }

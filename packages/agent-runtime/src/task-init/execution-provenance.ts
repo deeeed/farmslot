@@ -1,5 +1,6 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -32,6 +33,7 @@ export interface TaskRetainedInput {
 
 export interface TaskExecutionProvenance {
   schemaVersion: 1;
+  pin: string;
   package: { name: string; version: string };
   source: { kind: string; packageRoot: string };
   resolvedExecutable: string;
@@ -66,6 +68,29 @@ export class TaskProvenanceError extends Error {
 }
 
 const receiptFile = 'artifacts/harness-provenance.json';
+const pinPaths = new WeakMap<TaskExecutionInput, Map<string, string>>();
+function taskPinRoot(): string {
+  return path.resolve(
+    process.env.FARMSLOT_HOME || path.join(os.homedir(), '.farmslot'),
+    'task-pins',
+  );
+}
+/** Producer-owned pin identity, allocated before rendering but written only after validation. */
+export function taskExecutionPin(taskDir: string, input: TaskExecutionInput): string {
+  let paths = pinPaths.get(input);
+  if (!paths) {
+    paths = new Map();
+    pinPaths.set(input, paths);
+  }
+  const key = path.resolve(taskDir);
+  let pin = paths.get(key);
+  if (!pin) {
+    pin = path.join(taskPinRoot(), randomUUID().replaceAll('-', ''));
+    paths.set(key, pin);
+  }
+  return pin;
+}
+
 const sha256 = (file: string): string =>
   createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 
@@ -127,6 +152,7 @@ function isReceipt(value: unknown): value is TaskExecutionProvenance {
   return (
     isRecord(value) &&
     value.schemaVersion === 1 &&
+    typeof value.pin === 'string' &&
     isRecord(value.package) &&
     typeof value.package.name === 'string' &&
     typeof value.package.version === 'string' &&
@@ -161,6 +187,31 @@ export function verifyTaskExecutionProvenance(
       'TASK_PROVENANCE_INVALID',
       'The task execution receipt is invalid.',
     );
+  const taskRoot = fs.realpathSync(taskDir);
+  const storeRoot = fs.realpathSync(taskPinRoot());
+  if (storeRoot === taskRoot || storeRoot.startsWith(`${taskRoot}${path.sep}`))
+    throw new TaskProvenanceError(
+      'TASK_PROVENANCE_INVALID',
+      'The installation pin store must be outside the task.',
+    );
+  const pin = fs.realpathSync(value.pin);
+  if (path.dirname(pin) !== fs.realpathSync(taskPinRoot()))
+    throw new TaskProvenanceError(
+      'TASK_PROVENANCE_INVALID',
+      'The task pin is outside the configured installation store.',
+    );
+  const authority: unknown = JSON.parse(fs.readFileSync(path.join(pin, 'provenance.json'), 'utf8'));
+  if (
+    !isRecord(authority) ||
+    typeof authority.taskDir !== 'string' ||
+    fs.realpathSync(authority.taskDir) !== fs.realpathSync(taskDir) ||
+    !isDeepStrictEqual(authority.receipt, value)
+  ) {
+    throw new TaskProvenanceError(
+      'TASK_PROVENANCE_INVALID',
+      'The task receipt differs from its producer-owned installation pin.',
+    );
+  }
   const inputsRoot = fs.realpathSync(path.join(taskDir, 'inputs'));
   const within = (root: string, file: string): boolean =>
     file === root || file.startsWith(`${root}${path.sep}`);
@@ -168,6 +219,7 @@ export function verifyTaskExecutionProvenance(
   if (
     value.package.name !== '@farmslot/cli' ||
     value.source.kind !== 'task-retained' ||
+    distribution !== fs.realpathSync(path.join(pin, 'cli')) ||
     !within(distribution, fs.realpathSync(value.source.packageRoot)) ||
     !within(distribution, fs.realpathSync(value.resolvedExecutable))
   ) {
@@ -183,7 +235,10 @@ export function verifyTaskExecutionProvenance(
     );
   }
   for (const input of value.retainedInputs) {
-    if (!within(inputsRoot, fs.realpathSync(input.path)))
+    if (
+      !within(inputsRoot, fs.realpathSync(input.path)) &&
+      !within(pin, fs.realpathSync(input.path))
+    )
       throw new TaskProvenanceError(
         'TASK_PROVENANCE_INVALID',
         'A retained task input escapes its task directory.',
@@ -233,54 +288,85 @@ export function retainTaskExecution(
       );
     }
   }
-  const retainedInputs = [
-    ...new Set([distribution, ...input.inputs.map((source) => fs.realpathSync(source))]),
-  ].map((source, index) =>
-    retainTaskInput(source, path.join(taskDir, 'inputs', 'tooling', String(index)), [
-      path.resolve(taskDir),
-    ]),
-  );
-  if (input.selectedConfiguration !== undefined) {
-    const selection = path.resolve(taskDir, 'inputs', 'recipe-binding.json');
-    fs.writeFileSync(selection, input.selectedConfiguration, { flag: 'wx' });
-    retainedInputs.push({ source: selection, path: selection, sha256: taskInputDigest(selection) });
-  }
-  const retainedDistribution = retainedInputs[0]!;
-  const retainedPackage = path.join(
-    retainedDistribution.path,
-    path.relative(distribution, packageRoot),
-  );
-  const retainedExecutable = path.join(
-    retainedDistribution.path,
-    path.relative(distribution, executable),
-  );
-  const manifest: unknown = JSON.parse(
-    fs.readFileSync(path.join(retainedPackage, 'package.json'), 'utf8'),
-  );
-  if (
-    !isRecord(manifest) ||
-    manifest.name !== '@farmslot/cli' ||
-    typeof manifest.version !== 'string'
-  ) {
+  const pin = taskExecutionPin(taskDir, input);
+  const store = taskPinRoot();
+  if (store === path.resolve(taskDir) || store.startsWith(`${path.resolve(taskDir)}${path.sep}`))
     throw new TaskProvenanceError(
-      'TASK_INSTALL_UNSUPPORTED',
-      'The selected CLI has no package identity.',
+      'TASK_PROVENANCE_INVALID',
+      'The installation pin store must be outside the task.',
     );
+  fs.mkdirSync(store, { recursive: true });
+  const staging = fs.mkdtempSync(path.join(store, '.staging-'));
+  try {
+    const cli = retainTaskInput(distribution, path.join(staging, 'cli'), [
+      path.resolve(taskDir),
+      store,
+    ]);
+    const retainedInputs: TaskRetainedInput[] = [{ ...cli, path: path.join(pin, 'cli') }];
+    for (const source of [...new Set(input.inputs.map((file) => fs.realpathSync(file)))]) {
+      if (
+        retainedInputs.some(
+          (entry) => source === entry.source || source.startsWith(`${entry.source}${path.sep}`),
+        )
+      )
+        continue;
+      const relative = path.join('inputs', String(retainedInputs.length));
+      const copied = retainTaskInput(source, path.join(staging, relative), [
+        path.resolve(taskDir),
+        store,
+      ]);
+      retainedInputs.push({ ...copied, path: path.join(pin, relative) });
+    }
+    fs.mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });
+    if (input.selectedConfiguration !== undefined) {
+      const selection = path.resolve(taskDir, 'inputs/recipe-binding.json');
+      fs.writeFileSync(selection, input.selectedConfiguration, { flag: 'wx' });
+      retainedInputs.push({
+        source: selection,
+        path: selection,
+        sha256: taskInputDigest(selection),
+      });
+    }
+    const retainedPackage = path.join(pin, 'cli', path.relative(distribution, packageRoot));
+    const retainedExecutable = path.join(pin, 'cli', path.relative(distribution, executable));
+    const copiedPackage = path.join(staging, 'cli', path.relative(distribution, packageRoot));
+    const copiedExecutable = path.join(staging, 'cli', path.relative(distribution, executable));
+    const manifest: unknown = JSON.parse(
+      fs.readFileSync(path.join(copiedPackage, 'package.json'), 'utf8'),
+    );
+    if (
+      !isRecord(manifest) ||
+      manifest.name !== '@farmslot/cli' ||
+      typeof manifest.version !== 'string'
+    )
+      throw new TaskProvenanceError(
+        'TASK_INSTALL_UNSUPPORTED',
+        'The selected CLI has no package identity.',
+      );
+    const receipt: TaskExecutionProvenance = {
+      schemaVersion: 1,
+      pin,
+      package: { name: manifest.name, version: manifest.version },
+      source: { kind: 'task-retained', packageRoot: retainedPackage },
+      resolvedExecutable: retainedExecutable,
+      entrySha256: sha256(copiedExecutable),
+      packageTreeSha256: taskInputDigest(copiedPackage),
+      recordedAt: new Date().toISOString(),
+      bindingIdentity: input.bindingIdentity,
+      retainedInputs,
+    };
+    fs.writeFileSync(
+      path.join(staging, 'provenance.json'),
+      JSON.stringify({ taskDir: fs.realpathSync(taskDir), receipt }) + '\n',
+      { mode: 0o444, flag: 'wx' },
+    );
+    fs.renameSync(staging, pin);
+    fs.mkdirSync(path.join(taskDir, 'artifacts'), { recursive: true });
+    fs.writeFileSync(path.join(taskDir, receiptFile), JSON.stringify(receipt, null, 2) + '\n', {
+      flag: 'wx',
+    });
+    return receipt;
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true });
   }
-  const receipt: TaskExecutionProvenance = {
-    schemaVersion: 1,
-    package: { name: manifest.name, version: manifest.version },
-    source: { kind: 'task-retained', packageRoot: retainedPackage },
-    resolvedExecutable: retainedExecutable,
-    entrySha256: sha256(retainedExecutable),
-    packageTreeSha256: taskInputDigest(retainedPackage),
-    recordedAt: new Date().toISOString(),
-    bindingIdentity: input.bindingIdentity,
-    retainedInputs,
-  };
-  fs.mkdirSync(path.join(taskDir, 'artifacts'), { recursive: true });
-  fs.writeFileSync(path.join(taskDir, receiptFile), `${JSON.stringify(receipt, null, 2)}\n`, {
-    flag: 'wx',
-  });
-  return receipt;
 }

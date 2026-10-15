@@ -9,12 +9,13 @@ import {
 } from '@farmslot/agent-runtime';
 import { isRecord, type RecipeConformanceSource } from '@farmslot/protocol';
 
+import { optionValues } from './command-contract.js';
 import { recipeConformanceIdentity } from './conformance.js';
-import { assertProjectProviderAuthorized } from './context.js';
+import { ProjectBindingError } from './context-state.js';
 import {
   type ProjectRecipeHost,
   type ProjectRecipeHostOptions,
-  withProjectRecipeHost,
+  withProjectRecipeHostContext,
 } from './project-host.js';
 
 interface TaskProjectSelection {
@@ -24,6 +25,8 @@ interface TaskProjectSelection {
   provider?: { ref: string; module: string; root: string; export: string };
   runtimeDir?: string;
   artifactDir?: string;
+  libraryOwners?: Record<string, string>;
+  manifest?: string;
 }
 
 function source(value: unknown): value is RecipeConformanceSource {
@@ -91,8 +94,18 @@ function readSelection(taskDir: string): TaskProjectSelection {
     typeof provider.export !== 'string'
   )
     throw new Error('Incomplete retained project selection.');
+  const libraryOwners: Record<string, string> = {};
+  if (value.libraryOwners !== undefined) {
+    if (!isRecord(value.libraryOwners)) throw new Error('Invalid retained library owners.');
+    for (const [name, owner] of Object.entries(value.libraryOwners)) {
+      if (typeof owner !== 'string') throw new Error('Invalid retained library owner.');
+      libraryOwners[name] = owner;
+    }
+  }
   return {
     identity: value.identity,
+    libraryOwners,
+    ...(typeof value.manifest === 'string' ? { manifest: value.manifest } : {}),
     packRoot: value.packRoot,
     checkoutRoot: value.checkoutRoot,
     runtimeDir: value.runtimeDir,
@@ -119,7 +132,7 @@ export async function projectTaskExecution(
     domain: binding.domain,
     context: host.context,
     providerRoot: binding.provider.root,
-    configurationPaths: [binding.configPath],
+    configurationPaths: [binding.configPath, ...(binding.manifest ? [binding.manifest] : [])],
     librarySources: host.librarySources,
     artifactsDir: path.join(binding.checkoutRoot, binding.artifactDir),
     implementationSources: [{ name: 'farmslot', root: install.packageRoot }],
@@ -148,6 +161,13 @@ export async function projectTaskExecution(
     configuration,
   };
   const selection: TaskProjectSelection = {
+    ...(binding.manifest ? { manifest: binding.manifest } : {}),
+    libraryOwners: Object.fromEntries(
+      binding.libraries.map((entry) => [
+        entry.name,
+        entry.owner ?? entry.overriddenSource?.owner ?? binding.name,
+      ]),
+    ),
     identity: bindingIdentity,
     packRoot: binding.root,
     checkoutRoot: binding.checkoutRoot,
@@ -194,11 +214,6 @@ export async function withTaskProjectHost<T>(
   )
     throw new Error('An unbound task has no project provider.');
   const provider = selection.provider;
-  assertProjectProviderAuthorized(options, {
-    project: selected.project,
-    ref: provider.ref,
-    module: provider.module,
-  });
   const retained = (file: string): string => {
     const input =
       receipt.retainedInputs.find((entry) => entry.source === file) ??
@@ -206,9 +221,74 @@ export async function withTaskProjectHost<T>(
     if (!input) throw new Error(`Task input was not retained: ${file}`);
     return path.join(input.path, path.relative(input.source, file));
   };
-  return withProjectRecipeHost(
+  const mismatch: (flag: string) => never = (flag) => {
+    throw new ProjectBindingError(
+      'TASK_BINDING_CHANGED',
+      `${flag} changes the retained task binding.`,
+      'use the recorded selection or initialize a separate task',
+    );
+  };
+  const rewrite = (argv: readonly string[], stripSelectors: boolean): string[] => {
+    const fixed: Record<string, string | null> = {
+      '--project': selected.project,
+      '--adapter': selected.adapter,
+      '--app': selected.app,
+    };
+    for (const [flag, expected] of Object.entries(fixed)) {
+      const requested = optionValues(argv, flag).at(-1);
+      if (requested !== undefined && requested !== expected) mismatch(flag);
+    }
+    const requestedTarget = optionValues(argv, '--target').at(-1);
+    if (requestedTarget) {
+      const requested = path.resolve(options.cwd ?? process.cwd(), requestedTarget);
+      const allowed =
+        requested === selection.checkoutRoot ||
+        requested === selected.target ||
+        requested.startsWith(`${selected.target}${path.sep}`);
+      if (!allowed) mismatch('--target');
+    }
+    const result: string[] = [];
+    for (let index = 0; index < argv.length; index += 1) {
+      const arg = argv[index]!;
+      const flag = arg.split('=', 1)[0]!;
+      if (flag === '--action-manifest' && selection.manifest) {
+        const value = arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : argv[++index];
+        if (!value) mismatch(flag);
+        const file = path.resolve(options.cwd ?? process.cwd(), value);
+        if (file !== selection.manifest && file !== retained(selection.manifest)) mismatch(flag);
+        result.push(flag, retained(selection.manifest));
+      } else if (flag === '--library') {
+        const pair = arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : argv[++index];
+        if (!pair) mismatch(flag);
+        const equals = pair.indexOf('=');
+        const library = selected.libraries.find((entry) => entry.name === pair.slice(0, equals));
+        if (!library?.path || equals < 1) mismatch(flag);
+        const requested = path.resolve(options.cwd ?? process.cwd(), pair.slice(equals + 1));
+        const root = fs.existsSync(requested) ? fs.realpathSync(requested) : requested;
+        if (root !== library.path && root !== retained(library.path)) mismatch(flag);
+        result.push('--library', `${library.name}=${retained(library.path)}`);
+      } else if (stripSelectors && (flag in fixed || flag === '--target')) {
+        if (!arg.includes('=')) index += 1;
+      } else result.push(arg);
+    }
+    return result;
+  };
+  const resources = rewrite(options.tokens, true);
+  const invocation = options.invocation
+    ? { ...options.invocation, argv: rewrite(options.invocation.argv, false) }
+    : undefined;
+  return withProjectRecipeHostContext(
     {
       ...options,
+      ...(invocation ? { invocation } : {}),
+      options: {
+        ...options.options,
+        ...(selection.manifest ? { actionManifest: retained(selection.manifest) } : {}),
+        library: selected.libraries.map((entry) => {
+          if (!entry.path) throw new Error(`Missing retained library ${entry.name}.`);
+          return `${entry.name}=${retained(entry.path)}`;
+        }),
+      },
       projectsDir: undefined,
       resolveSourceBinding: undefined,
       tokens: [
@@ -221,6 +301,7 @@ export async function withTaskProjectHost<T>(
         '--runtime-dir',
         selection.runtimeDir,
         ...(selected.app ? ['--app', selected.app] : []),
+        ...resources,
       ],
       projects: [
         {
@@ -244,7 +325,7 @@ export async function withTaskProjectHost<T>(
                   throw new Error(`Missing retained library path for ${library.name}.`);
                 return {
                   name: library.name,
-                  owner: selected.project,
+                  owner: selection.libraryOwners?.[library.name] ?? selected.project,
                   source: retained(library.path),
                 };
               }),
@@ -254,5 +335,6 @@ export async function withTaskProjectHost<T>(
       ],
     },
     invoke,
+    receipt.pin,
   );
 }

@@ -96,10 +96,11 @@ function parseArgs(args) {
   return { opts, catalog };
 }
 
-function gitOutput(args) {
+function gitOutput(args, cwd = process.cwd()) {
   try {
     return execFileSync('git', args, {
       encoding: 'utf8',
+      cwd,
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
   } catch {
@@ -117,12 +118,14 @@ export async function taskInitFromArgv(args, execution, suppliedRuntime) {
   const description = opts.taskFile
     ? readFileSync(path.resolve(opts.taskFile), 'utf8').trim()
     : (opts.taskText ?? '').trim();
-  const toplevel = gitOutput(['rev-parse', '--show-toplevel']);
-  const originUrl = gitOutput(['remote', 'get-url', 'origin']);
+  const target = execution?.bindingIdentity?.target ?? process.cwd();
+  const toplevel = gitOutput(['rev-parse', '--show-toplevel'], target);
+  const originUrl = gitOutput(['remote', 'get-url', 'origin'], target);
   const repo = opts.repo ?? (originUrl ? runtime.portableRepoIdentity(originUrl) : undefined);
   const project =
     opts.project ??
-    (repo ? repo.split('/').pop() : path.basename(toplevel || process.cwd())).toLowerCase();
+    execution?.bindingIdentity?.project ??
+    (repo ? repo.split('/').pop() : path.basename(toplevel || target)).toLowerCase();
   // Rendered inside taskInit with the same vars as the checklist, so an addendum
   // that works on the farm works here.
   const addendum = opts.addendumFile ? readFileSync(path.resolve(opts.addendumFile), 'utf8') : null;

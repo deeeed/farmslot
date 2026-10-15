@@ -28,9 +28,10 @@ import type { ExecutionTemplateSource } from '../execution-template/types.js';
 import {
   retainTaskExecution,
   type TaskExecutionInput,
+  taskExecutionPin,
   type TaskExecutionProvenance,
 } from './execution-provenance.js';
-import { installedTaskCommands } from './runtime-command.js';
+import { installedTaskCommands, quoteTaskPath } from './runtime-command.js';
 import {
   buildBranchUpdateGuardCommand,
   buildBranchUpdateInstructions,
@@ -143,7 +144,7 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
         const relative = path.relative(spec.execution!.distributionRoot, file);
         if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
           throw new Error('The task runtime must belong to the retained CLI distribution.');
-        return path.resolve(spec.taskDir, 'inputs/tooling/0', relative);
+        return path.join(taskExecutionPin(spec.taskDir, spec.execution!), 'cli', relative);
       })
     : installedTaskCommands();
   const vars: Record<string, string> = {
@@ -227,8 +228,9 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
     taskDir: spec.taskDir,
     taskMarkdown,
     checklistMarkdown,
+    fixedMarkCommand: executionProvenance !== undefined,
     markCommand: executionProvenance
-      ? `'${executionProvenance.resolvedExecutable.replace(/'/g, `'"'"'`)}' task mark`
+      ? `${quoteTaskPath(executionProvenance.resolvedExecutable)} task mark`
       : spec.markCommand,
     handoff: handoffMetadata,
     terminalContract,

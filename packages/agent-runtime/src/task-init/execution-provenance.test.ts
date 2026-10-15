@@ -8,6 +8,12 @@ import { retainTaskExecution, verifyTaskExecutionProvenance } from './execution-
 
 function fixture(t: TestContext) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'task-tooling-'));
+  const previousFarmHome = process.env.FARMSLOT_HOME;
+  process.env.FARMSLOT_HOME = path.join(root, 'pins');
+  t.after(() => {
+    if (previousFarmHome === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = previousFarmHome;
+  });
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const distributionRoot = path.join(root, 'installed');
   const executable = path.join(distributionRoot, 'bin', 'farmslot.mjs');
@@ -82,4 +88,14 @@ test('an external dependency cannot remain linked to a mutable install', (t) => 
   fs.symlinkSync(outside, path.join(input.distributionRoot, 'external'));
   assert.throws(() => retainTaskExecution(taskDir, input), /outside its installation/);
   assert.equal(fs.existsSync(path.join(taskDir, 'artifacts/harness-provenance.json')), false);
+});
+
+test('rewriting task-owned hashes cannot authorize a different executable', (t) => {
+  const { taskDir, input } = fixture(t);
+  const receipt = retainTaskExecution(taskDir, input);
+  const file = path.join(taskDir, 'artifacts/harness-provenance.json');
+  fs.writeFileSync(file, JSON.stringify({ ...receipt, entrySha256: '0'.repeat(64) }));
+  assert.throws(() => verifyTaskExecutionProvenance(taskDir, null), {
+    code: 'TASK_PROVENANCE_INVALID',
+  });
 });

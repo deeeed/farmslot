@@ -24,7 +24,7 @@ export { quoteMarkCommandWord } from './runtime-command.js';
 
 export const TASK_DOCUMENT = 'TASK.md';
 export const MARK_SHIM = 'mark';
-/** Whole-command env override honoured by every `mark` shim. */
+/** Whole-command override for existing unfrozen mark shims. */
 export const MARK_COMMAND_ENV = 'FARMSLOT_MARK_CMD';
 
 const require = createRequire(import.meta.url);
@@ -49,12 +49,14 @@ export function defaultMarkCommand(): string {
  * whole command line and stays unquoted so multi-word commands split and `$HOME`
  * expands on the machine that runs it.
  */
-export function buildMarkShim(markCommand: string): string {
+export function buildMarkShim(markCommand: string, fixed = false): string {
   return [
     '#!/usr/bin/env bash',
     'set -euo pipefail',
     'DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
-    `exec \${${MARK_COMMAND_ENV}:-${markCommand}} "$DIR" "$@"`,
+    fixed
+      ? `exec ${markCommand} "$DIR" "$@"`
+      : `exec \${${MARK_COMMAND_ENV}:-${markCommand}} "$DIR" "$@"`,
     '',
   ].join('\n');
 }
@@ -66,6 +68,8 @@ export interface WriteTaskDirInput {
   /** null when the caller already wrote CHECKLIST.md (lightweight interactive dev). */
   checklistMarkdown: string | null;
   markCommand?: string;
+  /** Frozen tasks always enter their verified CLI gates. */
+  fixedMarkCommand?: boolean;
   handoff: HandoffMetadata;
   terminalContract: WorkerTerminalContractDocument;
   /** Project command references made available to the selected checklist. */
@@ -174,7 +178,12 @@ export async function ensureTaskRuntime(
   }
 
   const mark = path.join(taskDir, MARK_SHIM);
-  if (await write(mark, buildMarkShim(input.markCommand ?? defaultMarkCommand())))
+  if (
+    await write(
+      mark,
+      buildMarkShim(input.markCommand ?? defaultMarkCommand(), input.fixedMarkCommand),
+    )
+  )
     await chmod(mark, 0o755);
   else if (input.markCommand !== undefined) {
     const current = await readFile(mark, 'utf8');
@@ -183,7 +192,7 @@ export async function ensureTaskRuntime(
       current.startsWith('#!/usr/bin/env bash\nset -euo pipefail\nDIR=') &&
       current.includes('${FARMSLOT_MARK_CMD:-')
     )
-      await writeFile(mark, buildMarkShim(input.markCommand), 'utf8');
+      await writeFile(mark, buildMarkShim(input.markCommand, input.fixedMarkCommand), 'utf8');
   }
 
   const handoff = path.join(taskDir, HANDOFF_INPUT);

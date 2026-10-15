@@ -96,6 +96,12 @@ test('mark forwarding preserves explicit negation and consumes binding controls'
 
 test('initializing a retained task again preserves its receipt and authored files', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'task-resume-'));
+  const previousFarmHome = process.env.FARMSLOT_HOME;
+  process.env.FARMSLOT_HOME = path.join(root, 'pins');
+  t.after(() => {
+    if (previousFarmHome === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = previousFarmHome;
+  });
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const installed = path.join(root, 'installed');
   const task = path.join(root, 'task');
