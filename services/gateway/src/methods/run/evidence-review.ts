@@ -13,6 +13,7 @@ import {
 import {
   readRetainedEvidencePackage,
   retainedRunBundleRef,
+  retainedRunTaskDirectory,
 } from '../../run-completion/retained-artifacts.js';
 import { claimOverrideAuthority } from '../../run-engine/claim-overrides.js';
 import { readVisualReviewPolicy, visualReviewAuthority } from '../../run-engine/claim-reviews.js';
@@ -90,9 +91,24 @@ export async function readRunRecordedEvidence(
         (payload?.kind === 'ready' && payload.acceptanceStatus?.schemaVersion === 2
           ? payload.acceptanceStatus.recipeRunId
           : group?.recipeRunId);
+      const selectByExecution = Boolean(
+        recordedRecipeRunId ||
+        (payload?.kind === 'ready' && payload.acceptanceStatus?.schemaVersion === 2),
+      );
       const prefix =
-        group?.artifactRoot && run.taskFile
-          ? `${path.relative(path.dirname(run.taskFile), group.artifactRoot).split(path.sep).join('/')}/`
+        !selectByExecution && group?.artifactRoot && run.taskFile
+          ? `${path
+              .relative(
+                await retainedRunTaskDirectory(
+                  run,
+                  payload?.kind === 'ready'
+                    ? payload.prPackage?.artifactBundle
+                    : run.output?.artifactBundle,
+                ),
+                group.artifactRoot,
+              )
+              .split(path.sep)
+              .join('/')}/`
           : undefined;
       const source =
         (payload?.kind === 'ready' &&
@@ -101,8 +117,7 @@ export async function readRunRecordedEvidence(
           ? sources[0]
           : undefined) ??
         sources.find(({ input, artifactPrefix }) =>
-          recordedRecipeRunId ||
-          (payload?.kind === 'ready' && payload.acceptanceStatus?.schemaVersion === 2)
+          selectByExecution
             ? input.claims?.recipeRunId === retainedRunId
             : prefix
               ? artifactPrefix === prefix
