@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Resume an interrupted self-review fix after gateway restart without skipping its signal or waiting for an operator replay.
 - Keep deferred review fixes under signal observation and coalesce repeated review replays while the same attempt is active.
 
 - Scope review models to their configured runner and surface native reviewer launch errors without waiting for the review timeout.
