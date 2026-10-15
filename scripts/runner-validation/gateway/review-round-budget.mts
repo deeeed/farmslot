@@ -35,7 +35,8 @@ import { computeReadyGatePackageHash } from '../../../services/gateway/src/run-c
 
 const source = fileURLToPath(new URL('../../../', import.meta.url));
 const phase = process.argv[2];
-const gateRefusalProof = process.argv.includes('--gate-refusal') || process.env.FARMSLOT_PROOF_GATE_REFUSAL === '1';
+const gateRefusalProof =
+  process.argv.includes('--gate-refusal') || process.env.FARMSLOT_PROOF_GATE_REFUSAL === '1';
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const writeJson = (file: string, value: unknown) => {
   mkdirSync(path.dirname(file), { recursive: true });
@@ -82,7 +83,9 @@ if (phase === 'serve') {
     [
       { id: 'request-review', label: 'Review', style: 'secondary' },
       { id: 'hold', label: 'Hold', style: 'secondary' },
-      ...(gateRefusalProof ? [{ id: 'approve-publish-unresolved', label: 'Accept findings', style: 'danger' as const }] : []),
+      ...(gateRefusalProof
+        ? [{ id: 'approve-publish-unresolved', label: 'Accept findings', style: 'danger' as const }]
+        : []),
     ],
     gatePayload,
   );
@@ -112,7 +115,9 @@ if (phase === 'serve') {
     [
       { id: 'request-review', label: 'Review', style: 'secondary' },
       { id: 'hold', label: 'Hold', style: 'secondary' },
-      ...(gateRefusalProof ? [{ id: 'approve-publish-unresolved', label: 'Accept findings', style: 'danger' as const }] : []),
+      ...(gateRefusalProof
+        ? [{ id: 'approve-publish-unresolved', label: 'Accept findings', style: 'danger' as const }]
+        : []),
     ],
     gatePayload,
     { canReplay: () => false },
