@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -8,12 +8,14 @@ import type {
   CompleteStepOutput,
   PublicationReviewLaunchRejection,
   ReviewSelection,
+  ReviewStatus,
   Run,
   RunGatePrerequisiteReason,
 } from '@farmslot/protocol';
 import { reviewRequestFromSequence } from '@farmslot/review-dispatch';
 
 import { writeResultPackageManifest } from '../evals/package-store.js';
+import { runReviewRoundBudget } from '../review/review-round-budget.js';
 import type { PrepareCompletionPackageResult } from '../run-completion/orchestrator.js';
 import {
   computeReadyGatePackageHash,
@@ -32,6 +34,7 @@ import {
   persistedUpdateBranchNeedsReview,
   type PostDispatchStepContext,
   readyGateReviewSubjectMatches,
+  reconcilePublishGateReviewPlanResult,
   shouldSkipRetrospectiveAtComplete,
 } from './post-dispatch-steps.js';
 import { shouldPrepareLocalFirstPackage } from './publication-policy.js';
@@ -41,6 +44,94 @@ import {
   makeReadyGatePackage,
   makeRun,
 } from './test-fixtures.js';
+
+for (const verdict of ['pass', 'issues', 'failed'] as const) {
+  test(`review reconciliation retains unfinished rows and lineage after ${verdict}`, async (t) => {
+    const run = createRun({
+      project: 'review-recovery',
+      flowType: 'dev',
+      ticketOrPr: `LINEAGE-${verdict}`,
+    });
+    t.after(() => deleteTestRunIfPresent(run.id));
+    const head = 'a'.repeat(40);
+    const plan: ReviewSelection[] = [
+      { runner: 'claude', model: 'opus', effort: null, mode: 'cold' },
+      { runner: 'codex', model: 'gpt-6-astra', effort: 'high', mode: 'warm' },
+    ];
+    const context = {
+      reviewLineages: [
+        null,
+        { repository: 'example/recovery', prNumber: 42, reviewId: 'codex-lineage' },
+      ],
+    };
+    const review: ReviewStatus = {
+      id: 'attempted',
+      source: 'human-gate',
+      loopNumber: 1,
+      ...plan[0],
+      verdict,
+      unresolvedCount: verdict === 'issues' ? 1 : 0,
+      reviewerSessionId: 'native-session',
+      reviewedHeadSha: head,
+    };
+    updateRun(run.id, {
+      reviewRoundAdmissions: Array.from({ length: 7 }, (_, index) => `spent-${index}`),
+      reviewBudgetExtensions: [
+        {
+          requestId: 'scoped-extension',
+          runId: run.id,
+          project: run.project,
+          branch: 'owned',
+          headSha: head,
+          previousLimit: 5,
+          limit: 8,
+          scopeBrief: 'Finish the approved native pair.',
+          principalId: 'fixture-lead-service',
+          principalSubject: { type: 'service', displayName: 'Fixture lead' },
+          approvedAt: '2026-10-15T00:00:00Z',
+        },
+      ],
+      engineState: {
+        publishGate: { reviews: [review], reviewSequence: plan, reviewSequenceContext: context },
+      },
+    });
+    await reconcilePublishGateReviewPlanResult(
+      run.id,
+      plan,
+      { reviewIds: ['attempted'] },
+      {
+        getDiffStat: async () => ({ files: 1, additions: 1, deletions: 0 }),
+        prepareCompletionPackageForRun: async () => ({
+          completion: {
+            prNumber: null,
+            ciRepo: null,
+            artifactsCopied: true,
+            prCommentPosted: false,
+            prTitleUpdated: false,
+            prMarkedReady: false,
+            retrospectiveCreated: false,
+            artifacts: [],
+          },
+          prPackage: makeReadyGatePackage(),
+          reviews: [review],
+          reviewPolicy: { minimumReviews: 2, requestedBy: 'human-gate' },
+        }),
+      },
+    );
+    const latest = getRun(run.id)!;
+    const passed = verdict === 'pass' ? 1 : 0;
+    assert.deepEqual(latest.engineState?.publishGate?.reviewSequence, plan.slice(passed));
+    assert.deepEqual(
+      latest.engineState?.publishGate?.reviewSequenceContext?.reviewLineages,
+      context.reviewLineages.slice(passed),
+    );
+    const budget = await runReviewRoundBudget(latest);
+    assert.equal(budget.used, 7);
+    assert.equal(budget.limit, 8);
+    assert.equal(budget.remaining, 1);
+    assert.deepEqual(latest.engineState?.publishGate?.reviews, [review]);
+  });
+}
 
 function restartReplayContext(): PostDispatchStepContext {
   return {
@@ -61,6 +152,135 @@ function restartReplayContext(): PostDispatchStepContext {
     deferTerminalSlotRelease: () => {},
   };
 }
+
+test('complete re-entry with zero pending decisions restores Codex after a current-head native PASS', async (t) => {
+  const taskDir = await mkdtemp(path.join(os.tmpdir(), 'review-replay-'));
+  const run = createRun({
+    project: 'review-replay',
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    ticketOrPr: 'REPLAY-1',
+  });
+  t.after(async () => {
+    await deleteTestRunIfPresent(run.id);
+    await rm(taskDir, { recursive: true, force: true });
+  });
+  const head = 'a'.repeat(40);
+  const plan: ReviewSelection[] = [
+    { runner: 'claude', model: 'opus', effort: null, mode: 'cold' },
+    { runner: 'codex', model: 'gpt-6-astra', effort: 'high', mode: 'cold' },
+  ];
+  await mkdir(path.join(taskDir, 'artifacts'));
+  await writeFile(
+    path.join(taskDir, 'artifacts/pr-package.json'),
+    JSON.stringify(makeReadyGatePackage({ headSha: head })),
+  );
+  updateRun(run.id, {
+    status: 'human-gating',
+    slotId: 'isolated-review-slot',
+    taskFile: path.join(taskDir, 'TASK.md'),
+    steps: [{ name: 'human-gate', status: 'running' }],
+    reviewRoundAdmissions: Array.from({ length: 7 }, (_, index) => `spent-${index}`),
+    decisions: [],
+    reviewBudgetExtensions: [
+      {
+        requestId: 'remaining-pair',
+        runId: run.id,
+        project: run.project,
+        branch: 'owned',
+        headSha: head,
+        previousLimit: 7,
+        limit: 8,
+        scopeBrief: 'Complete the scoped native pair.',
+        principalId: 'fixture-lead-service',
+        principalSubject: { type: 'service', displayName: 'Fixture lead' },
+        approvedAt: '2026-10-15T00:00:00Z',
+      },
+    ],
+    agentContexts: [
+      {
+        id: 'rev-second',
+        role: 'review',
+        label: 'Second reviewer',
+        status: 'complete',
+        runId: run.id,
+        slotId: 'isolated-review-slot',
+        runner: plan[1].runner,
+        model: plan[1].model,
+        effort: plan[1].effort,
+        runnerSessionId: 'old-session',
+      },
+      {
+        id: 'rev-first',
+        role: 'review',
+        label: 'First reviewer',
+        status: 'complete',
+        runId: run.id,
+        slotId: 'isolated-review-slot',
+        runner: plan[0].runner,
+        model: plan[0].model,
+        effort: plan[0].effort,
+        runnerSessionId: 'native-session',
+      },
+    ],
+    engineState: {
+      publishGate: {
+        publicationStatus: 'not_published',
+        reviewPolicy: { minimumReviews: 2, requestedBy: 'human-gate' },
+        reviewSequence: [{ ...plan[0], mode: 'warm' }],
+        reviewSequenceRequestedAt: '2026-10-15T00:02:00Z',
+        reviews: [
+          {
+            id: 'native-pass',
+            source: 'dispatch',
+            loopNumber: 7,
+            ...plan[0],
+            verdict: 'pass',
+            unresolvedCount: 0,
+            reviewerSessionId: 'native-session',
+            reviewedHeadSha: head,
+            completedAt: '2026-10-15T00:01:00Z',
+          },
+        ],
+      },
+    },
+  });
+  const retained = structuredClone(getRun(run.id)!);
+  const [secondReviewer, passingReviewer] = retained.agentContexts!;
+  const olderReviewer = {
+    ...passingReviewer,
+    id: 'old-first',
+    runnerSessionId: 'old-first-session',
+  };
+  for (const contexts of [
+    [olderReviewer, secondReviewer, passingReviewer],
+    [passingReviewer, olderReviewer, secondReviewer],
+  ]) {
+    updateRun(run.id, {
+      agentContexts: contexts,
+      engineState: structuredClone(retained.engineState),
+      steps: structuredClone(retained.steps),
+    });
+    assert.equal(getRun(run.id)!.decisions.filter((decision) => !decision.resolvedAt).length, 0);
+    await assert.rejects(
+      executeHumanGateStep(run.id, {
+        ...restartReplayContext(),
+        executePublishGateReviewPlan: async (_id, _slot, actualPlan) => {
+          assert.deepEqual(actualPlan, [plan[1]]);
+          throw new Error('Remaining Codex reviewer reached');
+        },
+      }),
+      /Remaining Codex reviewer reached/,
+    );
+    assert.deepEqual(getRun(run.id)!.engineState?.publishGate?.reviewSequence, [plan[1]]);
+    assert.match(String(getRun(run.id)!.steps[0].outputs?.reviewRecoveryNote), /Using COLD/);
+    assert.equal(getRun(run.id)!.reviewRoundAdmissions?.length, 7);
+    const budget = await runReviewRoundBudget(getRun(run.id)!);
+    assert.equal(budget.used, 7);
+    assert.equal(budget.limit, 8);
+    assert.equal(budget.remaining, 1);
+  }
+});
 
 test('artifact-only QA complete identifies execution completion to the canonical gate guard', async (t) => {
   const run = createRun({ flowType: 'dev', project: 'generic-project', ticketOrPr: 'QA-GAPS' });
@@ -876,6 +1096,28 @@ test('human-gate partial review refusal retains only unconsumed work and rebuild
     executePublishGateReviewPlan: async (_runId, _slotId, actualPlan, trigger) => {
       assert.deepEqual(actualPlan, plan);
       assert.equal(trigger, 'human-gate');
+      const latest = getRun(run.id)!;
+      updateRun(run.id, {
+        engineState: {
+          ...latest.engineState,
+          publishGate: {
+            ...latest.engineState?.publishGate,
+            reviews: [
+              ...(latest.engineState?.publishGate?.reviews ?? []),
+              {
+                id: 'r1',
+                source: 'human-gate',
+                loopNumber: 2,
+                ...plan[0],
+                verdict: 'pass',
+                unresolvedCount: 0,
+                reviewerSessionId: 'native-r1',
+                reviewedHeadSha: 'fixture-head',
+              },
+            ],
+          },
+        },
+      });
       return { reviewIds: ['r1'], rejection };
     },
     executeReadyGate: async () => {

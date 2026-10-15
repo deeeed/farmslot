@@ -427,7 +427,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
     // findings being resent. A run parked at the cap has no active fix
     // context and skips this branch.
     const recoveredFixPlan = recoveryReviewPlanForActiveFix(run);
-    if (run.slotId && isPublicationReviewRecoveryHeld(run) && recoveredFixPlan.length > 0) {
+    if (run.slotId && isPublicationReviewRecoveryHeld(run) && recoveredFixPlan) {
       const reviewSequence = run.engineState?.publishGate?.reviewSequence ?? [];
       const recoveredRun =
         reviewSequence.length > 0
@@ -438,15 +438,24 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
                 ...run.engineState,
                 publishGate: {
                   ...run.engineState?.publishGate,
-                  reviewSequence: recoveredFixPlan,
+                  reviewSequence: recoveredFixPlan.sequence,
+                  reviewSequenceContext: recoveredFixPlan.context,
                   reviewSequenceRequestedAt: new Date().toISOString(),
                 },
               },
             };
       if (reviewSequence.length === 0) {
         deps.updateRun(run.id, { engineState: recoveredRun.engineState });
+        if (recoveredFixPlan.note)
+          deps.updateRunStep(run.id, S.HUMAN_GATE, {
+            detail: recoveredFixPlan.note,
+            outputs: {
+              ...run.steps.find((step) => step.name === S.HUMAN_GATE)?.outputs,
+              reviewRecoveryNote: recoveredFixPlan.note,
+            },
+          });
         console.log(
-          `[run-engine] run ${run.id.slice(0, 8)} — restored publication review plan for active fix pass`,
+          `[run-engine] run ${run.id.slice(0, 8)} — restored publication review plan for active fix pass${recoveredFixPlan.note ? `: ${recoveredFixPlan.note}` : ''}`,
         );
       }
       deps.rearmPublicationReviewRecovery(recoveredRun, { replayPending: true });
