@@ -2,9 +2,11 @@
 
 ## Unreleased
 
-- Retain task tooling and selected inputs with shared byte verification and frozen task callbacks.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.25.0 - 2026-10-15
+
+- Retain task tooling and selected inputs with shared byte verification and frozen task callbacks.
 
 ## 0.24.0 - 2026-10-15
 
