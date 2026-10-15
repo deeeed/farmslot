@@ -10,7 +10,7 @@ import {
 import { dirname, join } from 'node:path';
 
 import {
-  PERSON_DEVICE_KINDS,
+  parsePersonDeviceDescription,
   type Principal,
   type PrincipalSubject,
   type RoleBinding,
@@ -19,6 +19,7 @@ import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { isCredentialStoreLockHeld } from './credential-lock-state.js';
 import { withCredentialLock } from './credential-store-lock.js';
+import { assertNoLiveGatewaysUnlocked } from './gateway-presence.js';
 import type { PersonAccessRecord, PersonSessionRecord } from './person-sessions.js';
 
 export const VIRTUAL_PRINCIPAL_IDS = ['local-admin', 'local-node', 'system'] as const;
@@ -113,6 +114,10 @@ export function loadCredentialStore(path = credentialStorePath()): CredentialSto
       return withCredentialLock(() => loadCredentialStore(path), {
         FARMSLOT_HOME: dirname(path),
       });
+    }
+    if (parsed.schemaVersion === 1) {
+      // Older gateways cannot read the new shape. Upgrade only while this home is idle.
+      assertNoLiveGatewaysUnlocked({ FARMSLOT_HOME: dirname(path) });
     }
     const migrated = {
       ...migrateCredentialStoreVersion(parsed),
@@ -419,10 +424,7 @@ function validatePersonSession(
     typeof value.principalGeneration !== 'number' ||
     !Number.isSafeInteger(value.principalGeneration) ||
     value.principalGeneration < 0 ||
-    typeof value.deviceName !== 'string' ||
-    !value.deviceName.trim() ||
-    value.deviceName.length > 128 ||
-    !PERSON_DEVICE_KINDS.some((kind) => kind === value.deviceKind) ||
+    !parsePersonDeviceDescription(value) ||
     typeof value.createdAt !== 'string' ||
     !isIsoUtc(value.createdAt) ||
     typeof value.lastRefreshedAt !== 'string' ||

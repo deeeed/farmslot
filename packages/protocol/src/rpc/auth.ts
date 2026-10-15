@@ -31,6 +31,7 @@ export interface GatewayAuthConnectResult {
     voiceInstructionFormatting: boolean;
     /** Absent on gateways predating the lightweight liveness method. */
     gatewayPing?: boolean;
+    personSessions?: boolean;
     /** Client shell selection; every RPC still checks current server authority. */
     workspaceAccess?: GatewayWorkspaceAccess;
   };
@@ -180,4 +181,22 @@ export interface PersonSessionRevokeParams {
 }
 export interface PersonSessionRevokeResult {
   session: PersonDeviceSession;
+}
+
+/** Shared validation for sign-in metadata at every writer and client boundary. */
+export function parsePersonDeviceDescription(value: unknown): PersonDeviceDescription | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (!('deviceName' in value) || typeof value.deviceName !== 'string' || !('deviceKind' in value))
+    return null;
+  const deviceName = value.deviceName.trim();
+  const deviceKind = PERSON_DEVICE_KINDS.find((kind) => kind === value.deviceKind);
+  return deviceName && deviceName.length <= 128 && deviceKind ? { deviceName, deviceKind } : null;
+}
+
+export function parsePersonSessionToken(
+  value: string,
+  kind: 'fsa' | 'fsr',
+): { id: string; secret: string } | null {
+  const match = /^(fsa|fsr)_([a-f0-9]{32})_([A-Za-z0-9_-]{43})$/u.exec(value);
+  return match?.[1] === kind ? { id: match[2], secret: match[3] } : null;
 }

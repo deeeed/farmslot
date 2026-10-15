@@ -1,5 +1,6 @@
 import {
-  PERSON_DEVICE_KINDS,
+  parsePersonDeviceDescription,
+  parsePersonSessionToken,
   type PersonDeviceDescription,
   type PersonDeviceSession,
   type PersonSessionGrant,
@@ -44,13 +45,7 @@ export interface PersonSessionMutation<T> {
   result: T;
 }
 
-export function parsePersonSessionToken(
-  value: string,
-  kind: 'fsa' | 'fsr',
-): { id: string; secret: string } | null {
-  const match = /^(fsa|fsr)_([a-f0-9]{32})_([A-Za-z0-9_-]{43})$/u.exec(value);
-  return match?.[1] === kind ? { id: match[2], secret: match[3] } : null;
-}
+export { parsePersonSessionToken } from '@farmslot/protocol';
 
 /** Hashes and source credentials never enter the public device listing. */
 export function personSessionInfo(record: PersonSessionRecord): PersonDeviceSession {
@@ -149,8 +144,8 @@ export function issuePersonSession(
   const principal = store.principals.find((candidate) => candidate.id === principalId);
   if (principal?.subject.type !== 'person' || (principal.generation ?? 0) !== generation)
     throw new CredentialStoreRefusalError('Pairing identity is no longer valid.', 'AUTH_FAILED');
-  const deviceName = device.deviceName.trim();
-  if (!deviceName || deviceName.length > 128 || !PERSON_DEVICE_KINDS.includes(device.deviceKind))
+  const description = parsePersonDeviceDescription(device);
+  if (!description)
     throw new CredentialStoreRefusalError(
       'Choose a device name and supported device kind.',
       'INVALID_PARAMS',
@@ -162,8 +157,7 @@ export function issuePersonSession(
     id,
     principalId,
     principalGeneration: generation,
-    deviceName,
-    deviceKind: device.deviceKind,
+    ...description,
     createdAt: timestamp,
     lastRefreshedAt: timestamp,
     refreshExpiresAt: new Date(now + PERSON_REFRESH_LIFETIME_MS).toISOString(),
