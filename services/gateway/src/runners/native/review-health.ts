@@ -1,5 +1,5 @@
 import { NATIVE_WORKER_READ } from '@farmslot/agent-runtime/native';
-import type { NativeSessionReadResult } from '@farmslot/protocol';
+import { Methods, type NativeSessionReadResult } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../../core/method-error.js';
 import type { ReviewWorkspaceAdmissionInput } from '../../review-workspaces/admission.js';
@@ -7,7 +7,7 @@ import { getAllRunsWithArchived } from '../../runs/store.js';
 
 import { routeNativeExecution } from './node.js';
 
-/** Retained startup failures exclude automatic placement until an explicit retry succeeds. */
+/** Check the current host before consulting retained runner startup evidence. */
 export async function assertReviewNativeRunnerHealthy(
   input: Pick<
     ReviewWorkspaceAdmissionInput,
@@ -18,6 +18,16 @@ export async function assertReviewNativeRunnerHealthy(
   excludingRunId?: string,
 ): Promise<void> {
   if (input.transport !== 'native') return;
+  try {
+    // Past acceptance cannot attest that the host is still serving requests.
+    await routeNativeExecution(owner, Methods.NATIVE_SESSION_LIST, { executionNodeId });
+  } catch (error) {
+    if (error instanceof GatewayMethodError) throw error;
+    throw new GatewayMethodError(
+      'NATIVE_SESSION_ERROR',
+      `Native host on ${executionNodeId} is unavailable: ${error instanceof Error ? error.message : 'Native host probe failed'}`,
+    );
+  }
   const attempts = (await getAllRunsWithArchived())
     .filter(
       (run) =>

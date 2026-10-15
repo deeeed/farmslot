@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve native host census provenance after process exit and reconcile stopped hosts from retained kernel parent evidence without deleting journals or relaxing process-safety checks.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.24.0 - 2026-10-15
