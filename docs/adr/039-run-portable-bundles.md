@@ -294,8 +294,10 @@ Real dispatches/evals that must appear in Companion history still target `--gate
 Use the existing farmrun-v1 manifest and payload layout as the gateway's retained
 artifact home under `FARMSLOT_HOME`. Materialize immutable, digest-addressed bundles
 when completion, output review or publication produces a report or evidence.
-The Run store keeps bundle references; decisions, reviews and attestations pin
-their captured digest. This extends the original transport-only scope without
+The owning Run store durably binds one bundle root under its data home. Gateways
+sharing that Run store use the same binding, not a sandbox's private auth home.
+The Run store keeps references; decisions, reviews and attestations pin their
+digest. This extends the original transport-only scope without
 creating another run database or changing eval-package authority.
 
 Command Center, Companion, CLI, publication and artifact HTTP reads use these
@@ -308,11 +310,18 @@ not a reason to hide it. Reading never grants proof or publication admission.
 ADR-062's canonical reader, package validation, selection and judgment rules
 remain authoritative.
 
-Default limits are 2 GiB per materialized bundle and 20 GiB per gateway store,
-configurable on the gateway. Existing recording/transcode limits stay unchanged.
-Retain every snapshot referenced by run history or a review/publication object.
-GC removes only unreferenced bundles and abandoned staging data. Capacity
-exhaustion reports a capture failure; it does not evict reviewed evidence.
+Default limits are 2 GiB per bundle and 20 GiB per owning store, including a
+protected 512 MiB report/metadata reserve. Reserve mandatory metadata before
+admission and commit produced reports before media. Media quota exhaustion must
+leave reports readable, with missing media explicit. Recording/transcode limits
+stay unchanged.
+
+Preserve ADR-062's separate lifetimes: history pins reports and lightweight frozen
+metadata; unresolved gates and required published references pin media.
+Unpinned media follows its existing 30-day Storage policy and may become pruned
+without changing manifest identity or historical verdicts. GC shares the capture
+commit lock and removes only eligible media, unreferenced bundles and abandoned
+staging. It cannot evict pinned evidence or active reservations.
 
 One supported backfill command captures existing done/failed runs while their
 source remains available. It preserves run identity, verdicts and historical

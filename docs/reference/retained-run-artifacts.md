@@ -30,17 +30,41 @@ FARMSLOT_HOME/run-bundles/sha256/<bundle-digest>/
   analytics/...                       # existing full-profile export only
 ```
 
+The owning Run store binds its bundle root once to
+`<owner FARMSLOT_HOME>/run-bundles` in durable Run-store metadata. All readers,
+capture writers and GC resolve that same binding, keyed by the canonical Run
+store, including when `FARMSLOT_RUNS_DIR` is shared. A sandbox's isolated
+authentication home MUST NOT establish or replace that binding. A missing or
+mismatched store pairing refuses capture, reference writes and GC, leaving the
+owner's history untouched. Read-only sharing uses the owner's bound store;
+private validation uses an isolated Run store and imported references.
+
 The digest is SHA-256 of the exact stored `manifest.json` bytes. Existing manifest
-entries bind each relative payload path, SHA-256 and byte size. `runs/` contains a
+entries bind each relative payload path, SHA-256 and byte size. The digest names
+the original capture; later pruning changes availability, never its manifest or
+retained bytes. A manifest entry does not assert that pruned media still exists.
+`runs/` contains a
 sanitized capture-time record; the existing Run store remains lifecycle authority.
+For retained captures, `profile` is `reference`, `remapPolicy` is `preserve-ids`,
+and `source.farmslotRoot` identifies the owning gateway root for provenance only.
+No reader resolves artifact files through that informational source path.
 No object database, alternate manifest or per-client package parser is introduced.
 
 Stage under the same gateway home, enforce path containment and byte budgets,
 stream-copy/hash files, then publish by atomic rename. Fence the Run reference
 update against the captured run/task/generation. A concurrent successor or failed
-copy MUST NOT replace a committed reference. A retry of the same captured
-inventory MUST reuse the committed bundle rather than duplicate its bytes.
-Staging and committed entries MUST NOT be writable through artifact readers.
+copy MUST NOT replace a committed reference. A retry finds the committed capture through its persisted Run-store capture intent
+and reference, reusing its original manifest bytes, `bundleId` and `exportedAt`.
+It MUST NOT generate a new timestamp/UUID for the same intent. One store-scoped
+lock serializes capacity reservation, publish/reference commit and GC; the new
+bundle remains capture-pinned through the rename/reference-update window.
+Staging and retained entries MUST NOT be writable through artifact readers.
+
+The existing mutable artifact mirror is acquisition staging, not a retained read
+source. Materialize from its captured inventory and selected closures. Charge
+staging/mirror bytes to the same storage budget; after commit, release redundant
+gateway media copies. Keep operational task inputs and source-slot files intact.
+Footprint ownership counts physical copies once, as ADR-062 requires.
 
 Missing files or differences from a historical inventory are recorded through
 existing manifest `missingData` and the capture result. A partial capture is never
@@ -49,7 +73,10 @@ readable with that limitation; package integrity failures remain non-waivable.
 
 ## References and readers
 
-Protocol owns `RunArtifactBundleRef`, containing the bundle digest and task key.
+Protocol owns `RunArtifactBundleRef`, containing the owning store identity,
+bundle digest, task key and source output-inventory `manifestDigest`. That source
+identity matches historical output reviews without rewriting their receipts;
+changed source bytes retain a mismatch warning rather than a fabricated match.
 Run output and prepared publication packages carry their capture's reference;
 output decisions, review receipts and attestations bind that digest through their
 existing snapshot identity. An optional current reference may advance only after
@@ -61,7 +88,7 @@ Every artifact consumer MUST resolve from the referenced gateway bundle:
 
 - `run.recipeRunsForRun`, report loading, artifact listing and HTTP file/range reads;
 - Command Center, Companion and CLI inspection;
-- prerequisite/publication selection, descriptions and subsequent export;
+- `verifyRunOutputReview`, prerequisite/publication selection, descriptions and export;
 - recorded-evidence acquisition feeding the existing SDK reader/model/validator.
 
 A request carrying a gate/review identity MUST use that identity's pinned bundle,
@@ -69,7 +96,9 @@ not the Run's latest reference. Historical links retain their digest. Cross-run
 or unknown references MUST be refused using the existing authorization boundary.
 A run without retained bytes reports retention missing and the supported recovery
 action. It MUST NOT fall back to a live slot, including when the node is online.
-Operational worker monitoring is separate from retained artifact reading.
+Before a capture exists, an in-flight run may keep its existing live operational
+monitoring/progress transport. This does not make a report or artifact viewer a
+slot reader: retained reads show pending capture until bytes are retained.
 
 Use the verified local manifest as the listing/index. Immutable metadata may be
 cached by bundle digest, with concurrent identical reads coalesced. Ordinary
@@ -95,20 +124,40 @@ this distinction for both clients; there is no client-specific exception mapping
 
 Gateway-owned `runBundleRetention.maxBundleBytes` defaults to 2 GiB and
 `maxStoreBytes` to 20 GiB, measured on materialized payload plus manifest bytes.
-Both limits include in-progress reserved copy bytes. They do not change recorder,
-transcode, source-artifact or existing evidence-validation limits.
+A protected `metadataReserveBytes` defaults to 512 MiB within that total. Reserve
+mandatory report/lightweight-metadata capacity before admitting work/capture;
+media MUST NOT consume that reservation. Count in-progress copy reservations and
+mirror staging in the same budget. Recorder/transcode limits stay unchanged.
 
-Retain snapshots while referenced by any retained Run, output decision, review,
-attestation, publication package or comparison dependency. There is no automatic
-age expiry for referenced history. Deleting a Run does not remove a snapshot
-still referenced elsewhere. GC MUST recheck references before deletion and MUST
-ignore active capture staging. It may remove unreferenced committed bundles and
-abandoned staging older than 24 hours, on startup and before capacity refusal.
+Capture and commit the report, manifests, ledger, trace/timeline and review
+metadata before media admission. Media quota exhaustion MUST NOT discard or hide
+a produced report: commit the available report/metadata with explicit missing
+media, then retry media capture after capacity recovery. A protected-metadata
+reservation failure refuses admission before new work can rely on that capacity;
+it never evicts an existing report. Historical backfill also retains its report
+before attempting bulk media. Missing media grants no proof or publication waiver.
 
-If GC cannot make room, fail capture with an explicit capacity error. Preserve
-previous committed bundles and references; do not truncate video, drop selected
-files, or evict reviewed snapshots to admit new work. Operators can change the
-server-owned limits or delete history through its existing supported lifecycle.
+Apply ADR-062's existing separate lifetimes. Run history pins the report and
+lightweight frozen metadata for its lifetime, not every media payload. Unresolved
+gates and required published references pin their media dependency closures.
+Unpinned completed media defaults to 30-day retention, overridable by Storage
+policy. Storage may prune eligible media without changing the immutable manifest,
+recorded verdicts or ranges. Availability and retention revision MUST separately
+record `pruned`; readers do not claim that those payload bytes still exist.
+Complete export/publication cannot pass missing required media off as complete;
+reuse the existing missing-data/refusal rules, without re-reading a source slot.
+
+GC rechecks all existing dependency pins and the owning store binding under the
+same commit lock. It may delete wholly unreferenced bundles, eligible unpinned
+media, and abandoned staging older than 24 hours. It MUST preserve active capture
+reservations and history metadata. Deleting one Run does not delete objects
+referenced elsewhere. After retention changes, update the existing Storage
+footprint/availability projection; do not create a separate statistics store.
+
+If GC cannot make room for media, report explicit capacity/missing-media status
+while the report remains readable. Do not truncate video, silently drop selected
+files, or evict pinned snapshots to admit a new capture. Operators can change the
+server-owned limits or release history/pins through existing lifecycle operations.
 
 ## Public surface and backfill
 
@@ -138,8 +187,11 @@ Changed historical bytes may be retained as an explicitly unverified available
 snapshot, preserving the original expected digest and warning. They MUST NOT
 replace or satisfy the prior review binding. Export/import remain farmrun v1;
 private retention does not bypass existing public-export sanitization or checks.
-Package releases use normal additive versioning; worker-loaded consumers, if
-changed, must be released and verified installed before rollout claims.
+Protocol/CLI changes use normal additive versioning; `@farmslot/run-bundle` is a
+private workspace package. Worker-loaded consumers, if changed, must be released
+and verified installed before rollout claims. Seed, reference-only and mirror
+imports must materialize target-owned retained references before removing the
+unpacked archive; imported references never keep a source-store root binding.
 
 ## Required verification
 
@@ -148,6 +200,9 @@ changed, must be released and verified installed before rollout claims.
 - Mark-reviewed and other metadata transitions leave the pinned bundle unchanged.
 - Resolve every client, CLI and publication reader from a bundle with node reads
   forbidden; verify report open under two seconds on a backfilled retained run.
-- Fail interrupted/concurrent captures safely; verify stale/foreign references,
-  partial backfill, quota refusal, pinned-history GC and idempotent retries.
+- Fail interrupted/concurrent captures safely; verify shared Run-store/sandbox
+  root pairing, stale/foreign references, imports, partial backfill, idempotent
+  retries and GC during publish/reference commit.
+- Fill the media budget: a new report remains readable; pinned media survives,
+  eligible media becomes pruned and metadata/history hashes stay unchanged.
 - Stale reports open with a warning while proof and publication still refuse.
