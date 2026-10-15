@@ -29,6 +29,7 @@ interface PrincipalCreateOptions {
   nativeOwner?: string;
   role?: Role[];
   offline?: boolean;
+  reuseRetiredId?: string;
 }
 
 export function registerPrincipalCommands(program: Command): void {
@@ -41,6 +42,7 @@ export function registerPrincipalCommands(program: Command): void {
     .option('--machine <machine>', 'required for node subjects')
     .option('--native-owner <principal-id>', 'bind a node to its native account owner')
     .option('--role <role...>', 'admin and/or operator; omission creates roles: []')
+    .option('--reuse-retired-id <id>', 'explicitly replace a retired principal at its exact id')
     .option('--offline', 'operate on the store while every gateway is stopped')
     .action(async (opts: PrincipalCreateOptions, cmd: Command) => {
       const { output, client } = resolveContext(cmd);
@@ -50,9 +52,18 @@ export function registerPrincipalCommands(program: Command): void {
         const roles = rolesFromOptions(opts.role);
         const result = opts.offline
           ? {
-              principal: offlineWriter().createPrincipal(subject, roles),
+              principal: offlineWriter().createPrincipal(subject, roles, opts.reuseRetiredId, {
+                reuseRetiredId: opts.reuseRetiredId !== undefined,
+              }),
             }
-          : await client.call<PrincipalCreateResult>('principal.create', { subject, roles });
+          : await client.call<PrincipalCreateResult>(
+              opts.reuseRetiredId !== undefined ? 'principal.reuseRetiredId' : 'principal.create',
+              {
+                subject,
+                roles,
+                ...(opts.reuseRetiredId !== undefined ? { principalId: opts.reuseRetiredId } : {}),
+              },
+            );
         if (emit.machine) emit.ok(result);
         else output.write(`Created principal '${result.principal.id}'.\n`);
       } catch (error) {

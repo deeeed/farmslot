@@ -16,6 +16,7 @@ export const Methods = {
   PAIRING_CANDIDATES: 'pairing.candidates',
   PAIRING_EXCHANGE: 'pairing.exchange',
   PRINCIPAL_CREATE: 'principal.create',
+  PRINCIPAL_REUSE_RETIRED_ID: 'principal.reuseRetiredId',
   PRINCIPAL_BIND_NATIVE_OWNER: 'principal.bindNativeOwner',
   PRINCIPAL_LIST: 'principal.list',
   PRINCIPAL_GRANT: 'principal.grant',
@@ -87,6 +88,7 @@ export const Methods = {
   WORK_GRAPH_ACTIVATE: 'workGraph.activate',
   WORK_GRAPH_PAUSE: 'workGraph.pause',
   WORK_GRAPH_RETRY: 'workGraph.retry',
+  WORK_GRAPH_ATTACH_RUN: 'workGraph.attachRun',
   WORK_GRAPH_GATE_RESOLVE: 'workGraph.gateResolve',
   WORK_GRAPH_SCHEDULER_TICK: 'workGraph.schedulerTick',
 

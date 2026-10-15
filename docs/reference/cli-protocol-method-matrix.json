@@ -1526,6 +1526,15 @@
     "principal.retire": {
       "surface": "typed-command",
       "command": "farmslot principal retire"
+    },
+    "principal.reuseRetiredId": {
+      "surface": "typed-command",
+      "command": "farmslot principal create --reuse-retired-id <id>",
+      "note": "Admin-only explicit replacement; ordinary creation keeps retired ids reserved."
+    },
+    "workGraph.attachRun": {
+      "surface": "typed-command",
+      "command": "farmslot graph attach-run"
     }
   }
 }

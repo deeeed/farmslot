@@ -6,6 +6,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Resolve QA profiles from an explicit or policy id, an optional project default, or the sole profile; return typed choices for ambiguous requests.
 
+- Add typed retained-run stack attachment to the existing work-graph RPC.
+- Expose explicit retired principal-id replacement and identity generations while retaining retired credential ids.
 - Retain optional AC/role capture annotations and original execution/source identities with immutable comparison dependencies.
 - Add project-authorized delegated visual judgments with checked media and person-only claim policy.
 

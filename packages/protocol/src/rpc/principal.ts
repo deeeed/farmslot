@@ -2,6 +2,8 @@ export interface Principal {
   id: string;
   subject: PrincipalSubject;
   roles: RoleBinding[];
+  /** Absent for the original identity; increments on explicit retired-id reuse. */
+  generation?: number;
 }
 
 export type PrincipalSubject =
@@ -44,6 +46,10 @@ export interface PrincipalCreateParams {
 export interface PrincipalCreateResult {
   principal: Principal;
 }
+export interface PrincipalReuseRetiredIdParams extends PrincipalCreateParams {
+  principalId: string;
+}
+export interface PrincipalReuseRetiredIdResult extends PrincipalCreateResult {}
 export interface PrincipalListParams {}
 export interface PrincipalListResult {
   principals: Principal[];

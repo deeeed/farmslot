@@ -18,6 +18,8 @@ import {
   type WorkerTerminalContractDocument,
 } from '@farmslot/protocol';
 
+import { REVIEW_DIFF_SCOPE_RULE } from '../../scripts/review-diff-scope.cjs';
+
 import { normalizeMaintenanceBranch } from './branch-update.js';
 import { installedRuntimeScriptCommand, installedTaskCommands } from './runtime-command.js';
 
@@ -254,6 +256,8 @@ export function buildTaskDocument(input: TaskDocumentInput): string {
   if (input.addendum?.trim()) {
     sections.push('', input.addendum.trim());
   }
+
+  sections.push('', REVIEW_DIFF_SCOPE_RULE);
 
   sections.push(
     '',

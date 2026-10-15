@@ -191,6 +191,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `principal.grant`                       | admin          |                                                                                    |
 | `principal.list`                        | admin          |                                                                                    |
 | `principal.retire`                      | admin          |                                                                                    |
+| `principal.reuseRetiredId`              | admin          |                                                                                    |
 | `principal.revokeRole`                  | admin          |                                                                                    |
 | `providerAccounts.snapshot`             | admin          |                                                                                    |
 | `prPush.acknowledge`                    | admin          |                                                                                    |
@@ -363,6 +364,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `workGraph.activate`                    | admin          |                                                                                    |
 | `workGraph.addEdge`                     | admin          |                                                                                    |
 | `workGraph.addNode`                     | admin          |                                                                                    |
+| `workGraph.attachRun`                   | admin          |                                                                                    |
 | `workGraph.create`                      | admin          |                                                                                    |
 | `workGraph.gateResolve`                 | admin          |                                                                                    |
 | `workGraph.get`                         | operator       |                                                                                    |

@@ -341,14 +341,15 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## principal.\*
 
-| Method                      | Surface       | CLI command                            | TUI | Note |
-| --------------------------- | ------------- | -------------------------------------- | --- | ---- |
-| `principal.create`          | typed-command | `farmslot principal create`            |     |      |
-| `principal.bindNativeOwner` | typed-command | `farmslot principal bind-native-owner` |     |      |
-| `principal.list`            | typed-command | `farmslot principal list`              |     |      |
-| `principal.grant`           | typed-command | `farmslot principal grant`             |     |      |
-| `principal.revokeRole`      | typed-command | `farmslot principal revokeRole`        |     |      |
-| `principal.retire`          | typed-command | `farmslot principal retire`            |     |      |
+| Method                      | Surface       | CLI command                                         | TUI | Note                                                                           |
+| --------------------------- | ------------- | --------------------------------------------------- | --- | ------------------------------------------------------------------------------ |
+| `principal.create`          | typed-command | `farmslot principal create`                         |     |                                                                                |
+| `principal.reuseRetiredId`  | typed-command | `farmslot principal create --reuse-retired-id <id>` |     | Admin-only explicit replacement; ordinary creation keeps retired ids reserved. |
+| `principal.bindNativeOwner` | typed-command | `farmslot principal bind-native-owner`              |     |                                                                                |
+| `principal.list`            | typed-command | `farmslot principal list`                           |     |                                                                                |
+| `principal.grant`           | typed-command | `farmslot principal grant`                          |     |                                                                                |
+| `principal.revokeRole`      | typed-command | `farmslot principal revokeRole`                     |     |                                                                                |
+| `principal.retire`          | typed-command | `farmslot principal retire`                         |     |                                                                                |
 
 ## providerAccounts.\*
 
@@ -633,6 +634,7 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `workGraph.activate`      | typed-command | `farmslot graph activate`     |     |                                                                                                |
 | `workGraph.pause`         | typed-command | `farmslot graph pause`        |     |                                                                                                |
 | `workGraph.retry`         | typed-command | `farmslot graph retry`        |     |                                                                                                |
+| `workGraph.attachRun`     | typed-command | `farmslot graph attach-run`   |     |                                                                                                |
 | `workGraph.gateResolve`   | typed-command | `farmslot graph gate-resolve` |     |                                                                                                |
 | `workGraph.schedulerTick` | typed-command | `farmslot graph tick`         |     |                                                                                                |
 

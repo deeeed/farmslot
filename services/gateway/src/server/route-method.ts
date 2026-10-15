@@ -130,6 +130,7 @@ import {
   type PrincipalCreateParams,
   type PrincipalGrantParams,
   type PrincipalRetireParams,
+  type PrincipalReuseRetiredIdParams,
   type PrincipalRevokeRoleParams,
   type PRListParams,
   PROTOCOL_VERSION,
@@ -221,6 +222,7 @@ import {
   type WorkGraphActivateParams,
   type WorkGraphAddEdgeParams,
   type WorkGraphAddNodeParams,
+  type WorkGraphAttachRunParams,
   type WorkGraphCreateParams,
   type WorkGraphGateResolveParams,
   type WorkGraphGetParams,
@@ -422,6 +424,7 @@ import {
   principalGrant,
   principalList,
   principalRetire,
+  principalReuseRetiredId,
   principalRevokeRole,
 } from '../methods/principal.js';
 import { providerAccountsSnapshot } from '../methods/provider-accounts.js';
@@ -539,6 +542,7 @@ import {
   workGraphActivate,
   workGraphAddEdge,
   workGraphAddNode,
+  workGraphAttachRun,
   workGraphCreate,
   workGraphGateResolve,
   workGraphGet,
@@ -734,6 +738,8 @@ async function routeAuthorizedMethod(
     // Principal and credential management (authorization gate above is admin-only).
     case Methods.PRINCIPAL_CREATE:
       return principalCreate(p as PrincipalCreateParams, authRuntime);
+    case Methods.PRINCIPAL_REUSE_RETIRED_ID:
+      return principalReuseRetiredId(p as PrincipalReuseRetiredIdParams, authRuntime);
     case Methods.PRINCIPAL_BIND_NATIVE_OWNER:
       return principalBindNativeOwner(p as PrincipalBindNativeOwnerParams, authRuntime);
     case Methods.PRINCIPAL_LIST:
@@ -893,6 +899,8 @@ async function routeAuthorizedMethod(
       return workGraphActivate(p as WorkGraphActivateParams);
     case Methods.WORK_GRAPH_PAUSE:
       return workGraphPause(p as WorkGraphPauseParams);
+    case Methods.WORK_GRAPH_ATTACH_RUN:
+      return workGraphAttachRun(p as WorkGraphAttachRunParams);
     case Methods.WORK_GRAPH_RETRY:
       return workGraphRetry(p as WorkGraphRetryParams);
     case Methods.WORK_GRAPH_GATE_RESOLVE:

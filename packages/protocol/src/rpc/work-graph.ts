@@ -1,4 +1,5 @@
 import type { OkResult } from '../contracts/index.js';
+import type { Run } from '../contracts/runs.js';
 import type {
   GraphGateResolution,
   WorkGraphAddEdgeInput,
@@ -23,6 +24,7 @@ export const WorkGraphMethods = {
   activate: Methods.WORK_GRAPH_ACTIVATE,
   pause: Methods.WORK_GRAPH_PAUSE,
   retry: Methods.WORK_GRAPH_RETRY,
+  attachRun: Methods.WORK_GRAPH_ATTACH_RUN,
   gateResolve: Methods.WORK_GRAPH_GATE_RESOLVE,
   schedulerTick: Methods.WORK_GRAPH_SCHEDULER_TICK,
 } as const;
@@ -97,6 +99,18 @@ export interface WorkGraphRetryParams {
 }
 export interface WorkGraphRetryResult {
   graph: WorkGraphProjection;
+}
+
+export interface WorkGraphAttachRunParams {
+  graphId: string;
+  nodeId: string;
+  runId: string;
+  expectedHeadSha: string;
+}
+export interface WorkGraphAttachRunResult {
+  graph: WorkGraphProjection;
+  run: Run;
+  publicationRefreshRequired: boolean;
 }
 
 export interface WorkGraphGateResolveParams extends Omit<GraphGateResolution, 'resolvedAt'> {}

@@ -545,51 +545,14 @@ The node reads credentials only from environment variables and gateway env files
 (`resolveGatewayCredential`, `services/node/src/index.ts:631`), so `--write-node-env` writes to that
 existing path — no new delivery mechanism, and no principal provisioned behind the owner's back.
 
-**Legacy env auth is the old spelling of an admin credential, not a second auth system.** On first
-boot with `FARMSLOT_GATEWAY_TOKEN`/`PASSWORD` configured (`auth.ts:97-114`), the gateway latches
-activation, creates a `service` principal with an `admin`/`global` binding, and writes a credential
-with `origin: 'env-migrated'` whose hash is that secret's. The env secret keeps authenticating
-**because it is that credential**, so existing deployments, stored profiles, and paired Companions
-keep working unchanged; `authMode` stays in the protocol contract. That credential is revocable
-individually — the first time that has been possible.
-
-**Boot reconciliation is additive only.** It has exactly one action and one prohibition:
-
-- **If the current env secret has no active `env-migrated` credential, migrate it** — create one.
-- **Never revoke any credential on the basis of an env value, in any case.** Not on rotation, not on
-  removal, not on mismatch.
-- **Report at boot any other active `env-migrated` credentials that do not match the current
-  environment**, naming explicit revocation as the way to remove them.
-
-The reason is a limit on what the gateway can know, and it subsumes what would otherwise look like
-two unrelated rules for rotation and removal. **Deployments sharing an identity domain share one
-credential store, while each loads its own `.env.local-auth`** — `services/gateway/src/index.ts:173-188`
-reads it from `resolve(farmslotRoot, …)`, which is how two deployments in one domain come to present
-different secrets. So **a gateway cannot distinguish "the operator rotated this secret" from "this is
-a different deployment's secret in the same domain".** Both present as a mismatch against the store.
-Inferring revocation from an ambiguity the system cannot resolve would let one deployment silently
-disable another's access, and it would thrash sequentially: migrate deployment A's secret, start B
-and revoke A's, return to A and revoke B's, indefinitely.
-
-So env reconciliation only ever **adds**, and revocation is always **explicit** — which is exactly
-the tombstone-only model §2 already establishes, applied to the one path that was tempted to deviate
-from it. There is consequently no ordering hazard to manage: a rule that never revokes cannot pass
-through a zero-admin state.
-
-The boot report says so plainly, because the surprise would otherwise run in the dangerous
-direction — an operator who changes or unsets the variable expecting access to follow:
-
-```
-FARMSLOT_GATEWAY_TOKEN does not match any active credential; migrated it as a new one.
-1 other active env-migrated credential does not match this environment — changing or
-unsetting the variable does not remove access.
-Next: to remove it, run
-  farmslot credential revoke <id>
-or stop every gateway and revoke offline.
-```
-
-A gateway may not reconcile itself into a state where nothing can issue, and it may not silently
-reconcile away access that another root or another operator still depends on.
+**Historical environment authentication is superseded by Amendments 1 and 2.**
+The original implementation imported raw environment secrets into stored service
+credentials. It never inferred revocation from changing an environment value,
+because deployments sharing an identity home could have different environments.
+Current gateways accept only explicit issued or paired credentials. The loader
+repairs historical origin metadata under lock; operators move callers, verify
+replacement logins, then revoke and retire obsolete identities. There is no raw
+environment-secret login or boot-time identity import.
 
 **Loopback is a claim about the bind address, not the peer.** Auto-admit keys off the listen address,
 never the request IP, because `resolveRequestIp()` returns a forwarded header when proxy trust is on
@@ -1657,3 +1620,59 @@ There is no new command, flag, RPC or authentication method. The existing
 CLI reads and writer transactions. Harnesses inherit the same store contract.
 The [principal implementation spec](../plans/principal-core-implementation-spec.md)
 owns locking, validation, persistence and regression requirements.
+
+## Amendment 3: explicit reuse of retired principal ids, 2026-10-15
+
+**Status:** Proposed. The owner approved the design on 2026-10-15; acceptance
+follows paired review of the amendment and implementation.
+
+### Decision
+
+An admin may explicitly replace a retired principal at its exact id. Ordinary
+creation still refuses retired ids. The shared writer removes only the selected
+principal tombstone, creates the replacement and records the reuse in one locked
+transaction. Every retired credential id remains reserved. Reuse issues no
+credential and never restores a removed credential or secret.
+Pending pairing invitations belong to the invited identity generation. Their
+exchange checks that generation inside the credential issuance lock and refuses
+a grant for a replaced identity without writing the store.
+
+### Rationale
+
+A person may need the id previously held by an obsolete service. Automatic
+suffixing does not satisfy that explicit identity choice. A separate admin
+operation makes reuse deliberate and fails safely against an older gateway.
+Every gateway sharing the identity home must run the generation-aware version
+before reuse. The dedicated RPC fails safely on older gateways; sharing a reused
+store with an older reader is unsupported.
+
+### Consequences
+
+Retirement still requires revoked credentials, no remaining native-owner
+bindings and a surviving admin. The replacement must obtain fresh credentials.
+Only explicit reuse relaxes the principal-id reservation; credential-id
+reservations remain permanent. The store retains a dated reuse history and increments an identity generation.
+Stored work must match that generation before regaining authority. Id-only
+references remain bound to generation zero and cannot resolve a replacement.
+New authenticated queued work carries the replacement generation; old automation must
+be explicitly re-authored. Automation ownership belongs to its service identity,
+not the replacement person.
+PR push, monitoring and rule ownership remains id-only and cannot resolve a reused
+identity. Supporting those features for reused ids needs a separate generation
+propagation change. Native id-only owner bindings must be retired before reuse.
+
+### Public surface
+
+- `farmslot principal create --reuse-retired-id <id> --type <kind>
+--name <name> [--role <role...>]` serves an admin replacing an obsolete identity.
+  `--offline` retains the existing requirement that all gateways sharing the
+  identity home are stopped.
+- The admin-only `principal.reuseRetiredId` RPC and its request/result types are
+  owned by `@farmslot/protocol`. The named consumer is the CLI identity cutover.
+- `@farmslot/credential-store` owns reuse through its existing writer and lock.
+  Gateway and CLI ship with this internal contract; harnesses inherit it and
+  receive no alternate auth path.
+
+The [principal implementation spec](../plans/principal-core-implementation-spec.md)
+owns the transaction, validation and regression requirements. The
+[identity reference](../reference/identity-and-credentials.md) owns operator guidance.

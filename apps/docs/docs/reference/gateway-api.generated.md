@@ -261,6 +261,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `principal.grant`                       | principal        | bounded-write | —      | —      | Principal Grant gateway method.                       |
 | `principal.list`                        | principal        | read-only     | —      | —      | Principal List gateway method.                        |
 | `principal.retire`                      | principal        | bounded-write | —      | —      | Principal Retire gateway method.                      |
+| `principal.reuseRetiredId`              | principal        | bounded-write | —      | —      | Principal ReuseRetiredId gateway method.              |
 | `principal.revokeRole`                  | principal        | bounded-write | —      | —      | Principal RevokeRole gateway method.                  |
 | `providerAccounts.snapshot`             | providerAccounts | bounded-write | —      | —      | ProviderAccounts Snapshot gateway method.             |
 | `recipe.cancel`                         | recipe           | bounded-write | —      | —      | Recipe Cancel gateway method.                         |
@@ -403,6 +404,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `workGraph.activate`                    | workGraph        | bounded-write | —      | —      | WorkGraph Activate gateway method.                    |
 | `workGraph.addEdge`                     | workGraph        | bounded-write | —      | —      | WorkGraph AddEdge gateway method.                     |
 | `workGraph.addNode`                     | workGraph        | bounded-write | —      | —      | WorkGraph AddNode gateway method.                     |
+| `workGraph.attachRun`                   | workGraph        | bounded-write | —      | —      | WorkGraph AttachRun gateway method.                   |
 | `workGraph.create`                      | workGraph        | bounded-write | —      | —      | WorkGraph Create gateway method.                      |
 | `workGraph.gateResolve`                 | workGraph        | bounded-write | —      | —      | WorkGraph GateResolve gateway method.                 |
 | `workGraph.get`                         | workGraph        | read-only     | —      | —      | WorkGraph Get gateway method.                         |
