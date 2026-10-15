@@ -1872,7 +1872,12 @@ describe('buildLaunchCommand', () => {
 
     it('retires PI because hooks are event-driven and the composer is not polled', () => {
       assert.equal(getRunnerDefinition('pi').observabilityScope, 'event-driven');
-      assert.equal(getRunnerObservability('pi'), getRunnerObservability('claude'));
+      const pi = getRunnerObservability('pi');
+      const claude = getRunnerObservability('claude');
+      assert.equal(pi?.getActivity, claude?.getActivity);
+      assert.equal(pi?.getTurnState, claude?.getTurnState);
+      assert.equal(pi?.getBackgroundWorkState, undefined);
+      assert.equal(typeof claude?.getBackgroundWorkState, 'function');
       assert.equal(isRunnerPaneRetired('pi'), true);
     });
 

@@ -2,10 +2,15 @@ import { isObservabilityReadingAuthoritative } from './observability-send-decisi
 import type {
   ObservabilityReading,
   RunnerActivity,
+  RunnerBackgroundWorkState,
   RunnerSessionDeliveryState,
   SlotVars,
 } from './observability-types.js';
-import { readRunnerActivityFromObservability, readRunnerTurnState } from './registry.js';
+import {
+  readRunnerActivityFromObservability,
+  readRunnerBackgroundWorkState,
+  readRunnerTurnState,
+} from './registry.js';
 
 /**
  * Monitor progress from the runner contract, never from TUI text.
@@ -21,6 +26,7 @@ export type MonitorProgressKind = 'making-progress' | 'idle' | 'awaiting-input' 
 export function classifyMonitorProgress(opts: {
   activity: ObservabilityReading<RunnerActivity> | null | undefined;
   turnState?: ObservabilityReading<RunnerSessionDeliveryState> | null;
+  backgroundWork?: ObservabilityReading<RunnerBackgroundWorkState> | null;
 }): MonitorProgressKind {
   const turn = opts.turnState;
   if (isObservabilityReadingAuthoritative(turn) && turn.value === 'active') {
@@ -32,6 +38,15 @@ export function classifyMonitorProgress(opts: {
     if (activity.value === 'composing' || activity.value === 'tool-running') {
       return 'making-progress';
     }
+  }
+
+  const background = opts.backgroundWork;
+  if (background) {
+    if (!isObservabilityReadingAuthoritative(background) || background.value === 'unknown')
+      return 'unproven';
+    if (background.value === 'active') return 'making-progress';
+  }
+  if (isObservabilityReadingAuthoritative(activity)) {
     if (activity.value === 'awaiting-input') return 'awaiting-input';
     if (activity.value === 'idle') return 'idle';
   }
@@ -51,6 +66,7 @@ export function resolveMonitorStuckState(opts: {
   stuckTimeoutMs: number;
   activity: ObservabilityReading<RunnerActivity> | null | undefined;
   turnState?: ObservabilityReading<RunnerSessionDeliveryState> | null;
+  backgroundWork?: ObservabilityReading<RunnerBackgroundWorkState> | null;
 }): {
   kind: MonitorProgressKind;
   lastProgressAt: number;
@@ -94,18 +110,20 @@ export async function evaluateMonitorStuckForRunner(opts: {
 }> {
   const now = opts.now ?? Date.now();
   const runner = opts.runner ?? '';
-  const [activity, turnState] = runner
+  const [activity, turnState, backgroundWork] = runner
     ? await Promise.all([
         readRunnerActivityFromObservability(opts.vars, opts.target, runner),
         readRunnerTurnState(opts.vars, opts.target, runner),
+        readRunnerBackgroundWorkState(opts.vars, opts.target, runner),
       ])
-    : [null, null];
+    : [null, null, null];
   const state = resolveMonitorStuckState({
     now,
     lastProgressAt: opts.lastProgressAt,
     stuckTimeoutMs: opts.stuckTimeoutMs,
     activity,
     turnState,
+    backgroundWork,
   });
   return {
     ...state,

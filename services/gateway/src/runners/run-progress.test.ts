@@ -7,7 +7,8 @@ import type { SlotVars } from '../core/config.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 
 await import('../runtime/mock-pty.test-support.js');
-const { readRunProgress, runDecisionWaitingStatus } = await import('./run-progress.js');
+const { readAgentContextProgress, readRunProgress, runDecisionWaitingStatus } =
+  await import('./run-progress.js');
 
 function fixRun(transport: 'native' | 'tmux', status: AgentContext['status'] = 'blocked'): Run {
   return {
@@ -137,6 +138,34 @@ test('confirmed stopped native failure permits recovery; uncertain shutdown does
     assert.equal(
       runDecisionWaitingStatus(run, progress, 'native-worker-recovery'),
       stopped ? 'blocked' : 'reconciling',
+    );
+  }
+});
+
+test('the owned primary worker keeps progressing between turns while its background job runs', async () => {
+  const run = fixRun('tmux');
+  const context: AgentContext = {
+    ...run.agentContexts![0],
+    id: 'primary',
+    role: 'primary',
+    runner: 'claude',
+  };
+  for (const background of ['active', 'idle', 'unknown'] as const) {
+    const progress = await readAgentContextProgress(run, context, {
+      slot: async () => slot,
+      target: async () => ({ target: '%owned', session: 'owned' }),
+      taskProgress: async () => null,
+      activity: async () => reading('idle'),
+      turn: async () => reading('idle'),
+      background: async () => reading(background),
+    });
+    assert.equal(
+      progress.kind,
+      background === 'active' ? 'making-progress' : background === 'idle' ? 'idle' : 'unproven',
+    );
+    assert.equal(
+      runDecisionWaitingStatus(run, progress, 'interactive_handoff'),
+      background === 'active' ? 'monitoring' : background === 'idle' ? 'blocked' : 'reconciling',
     );
   }
 });

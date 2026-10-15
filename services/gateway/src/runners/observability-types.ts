@@ -25,6 +25,7 @@ export interface ObservabilityReading<T> {
 
 export type RunnerActivity = 'idle' | 'composing' | 'tool-running' | 'awaiting-input' | 'unknown';
 export type RunnerSessionDeliveryState = 'idle' | 'active' | 'unknown';
+export type RunnerBackgroundWorkState = 'idle' | 'active' | 'unknown';
 
 export type ObservabilityScope = 'event-driven' | 'pane-only' | 'none';
 
@@ -84,6 +85,11 @@ export interface RunnerObservability {
   /** How this provider proves that the exact prompt was accepted. */
   promptAcceptanceMode?: 'hook-digest' | 'native-text';
   getActivity(vars: SlotVars, target: string): Promise<ObservabilityReading<RunnerActivity> | null>;
+  /** Work that can continue after the foreground turn ends. Null means unsupported. */
+  getBackgroundWorkState?(
+    vars: SlotVars,
+    target: string,
+  ): Promise<ObservabilityReading<RunnerBackgroundWorkState> | null>;
   /**
    * Durable state of the whole runner turn currently bound to a tmux target.
    * Unlike transient activity, an active turn remains active across a long tool
