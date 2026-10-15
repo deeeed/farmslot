@@ -1,6 +1,6 @@
 // Byte-for-byte goldens of the farmslot-farm review document, captured
 // before the description and evidence check existed. The rendered document must
-// equal its golden followed by that one gateway-owned section and nothing else.
+// equal its golden followed by the shared scope packet and description check.
 // Regenerate only on purpose: FARMSLOT_UPDATE_REVIEW_GOLDENS=1.
 import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -19,10 +19,10 @@ const GOLDEN_DIR = path.join(
   'review-golden',
 );
 const UPDATE = process.env.FARMSLOT_UPDATE_REVIEW_GOLDENS === '1';
-const SECTION_HEADING = '## Description and evidence check';
+const SECTION_HEADING = '## Diff scope';
 
 for (const depth of ['static-code', 'full-live'] as const) {
-  test(`farmslot-farm ${depth} review is its golden plus only the description check`, async (t) => {
+  test(`farmslot-farm ${depth} review preserves its golden before the shared scope and description checks`, async (t) => {
     const run = createRun({
       flowType: 'dev',
       mode: 'autonomous',
@@ -55,7 +55,7 @@ for (const depth of ['static-code', 'full-live'] as const) {
       .join('<FARMSLOT_ROOT>');
     const goldenPath = path.join(GOLDEN_DIR, `${depth}.golden`);
     const at = rendered.indexOf(SECTION_HEADING);
-    assert.ok(at > 0, 'the description and evidence check is rendered');
+    assert.ok(at > 0, 'the shared scope check is rendered');
     if (UPDATE) {
       // The golden is the document before the check, as captured on main.
       await mkdir(GOLDEN_DIR, { recursive: true });
@@ -65,9 +65,9 @@ for (const depth of ['static-code', 'full-live'] as const) {
     const golden = await readFile(goldenPath, 'utf-8');
     assert.equal(rendered.slice(0, at).trimEnd(), golden.trimEnd());
     assert.equal(
-      rendered.indexOf('\n## ', at + SECTION_HEADING.length),
-      -1,
-      'the check is the last section',
+      rendered.lastIndexOf('## Description and evidence check') > at,
+      true,
+      'shared scope and inventory precede the existing final description check',
     );
   });
 }

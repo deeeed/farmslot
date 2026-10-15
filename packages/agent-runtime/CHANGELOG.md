@@ -6,6 +6,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.22.3 - 2026-10-15
+
+- Supply one minimal-diff policy and sensitive-path inventory for worker self-review, independent reviews and paired review packets.
+
 ## 0.22.2 - 2026-10-15
 
 - Use the coordinated window screenshot engine dependency closure.

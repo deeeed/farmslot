@@ -79,6 +79,8 @@ check; it cannot see a contract you failed to update or a second consumer of a c
 
 ### Review Every PR Before Merge — HARD RULE
 
+Every self-review, review and review-pr consumes the shared policy from `node packages/agent-runtime/scripts/review-diff-scope.cjs instructions`. Use its `packet <repository> <publication-base> <head>` command for the scope inventory. This includes ad hoc repository reviews outside generated task documents; keep the definition in the runtime rather than copying it here or into project packs.
+
 **Every PR must get at least one `/review` round (independent code-reviewer agent) before being suggested for merge.** This applies to PRs opened by Claude — no self-approval, no "ready to merge" straight from a green CI. Fix blocking findings; nits are non-blocking follow-ups. If review uncovers new issues, push a follow-up commit to the same branch and confirm typecheck + CDP still pass.
 
 **Cross-model review is mandatory on top of the worker's own review pass.** Use [.agents/skills/cross-model-orchestrator](.agents/skills/cross-model-orchestrator/SKILL.md) for independent Codex and Claude reviews of the same HEAD SHA. Top-level verdict files must approve that exact SHA. Review round 2+ covers the delta; escalate at round 4 and stop at round 5. Once both verdicts approve and CI is green, freeze the approved head. Nits do not block. Worker self-review alone is not sufficient.

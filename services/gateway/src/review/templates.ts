@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
+import { buildDiffScopePacket } from '@farmslot/agent-runtime/scripts/review-diff-scope.cjs';
 import {
   DEFAULT_BRANCH,
   DEFAULT_TASK_DIR,
@@ -160,6 +161,29 @@ async function descriptionCheckSection(
       ? { unavailable: selectionError }
       : await runDescriptionPreCheck(vars, taskDir, baseBranch, publication?.manifest ?? null),
   });
+}
+
+async function diffScopeSection(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  run: Run,
+  defaultBranch: string | undefined,
+): Promise<string> {
+  const base = await publicationBaseForRun(run, defaultBranch);
+  let files: string[] = [];
+  let unavailable: string | undefined;
+  try {
+    const paths = await execOnSlot(
+      vars,
+      `git diff --no-ext-diff --no-renames --name-only -z ${shellQuote(`origin/${base}...HEAD`)} --`,
+      { cwd: vars.remoteRepo, timeout: 30_000 },
+    );
+    if (paths.exitCode !== 0) throw new Error('Cannot read the publication-base diff');
+    files = paths.stdout.split('\0').filter(Boolean);
+  } catch (error) {
+    // A disconnected slot still gets a review packet, with no clean-scope claim.
+    unavailable = error instanceof Error ? error.message : String(error);
+  }
+  return buildDiffScopePacket(files, unavailable);
 }
 
 export async function expandReviewTemplate(
@@ -327,8 +351,11 @@ Use the task's mark wrapper for this reviewer checklist. Preserve the parent wor
   // Reviewers get the worker's frozen related-context snapshot, not a fresh
   // derivation: a prerequisite that moved since dispatch must be detectable.
   const planningBrief = await buildReviewPlanningBrief(run?.taskFile ?? null, taskDir);
-  const check = await descriptionCheckSection(vars, taskDir, run, pv?.projectJson);
-  return `${expanded.trimEnd()}${bindingSection}\n${planningBrief.trimEnd()}\n\n${check}\n`;
+  const [check, scope] = await Promise.all([
+    descriptionCheckSection(vars, taskDir, run, pv?.projectJson),
+    diffScopeSection(vars, run, pv ? getProjectField(pv.projectJson, 'default_branch') : undefined),
+  ]);
+  return `${expanded.trimEnd()}${bindingSection}\n${planningBrief.trimEnd()}\n\n${scope}\n\n${check}\n`;
 }
 
 export async function expandReviewFixTemplate(

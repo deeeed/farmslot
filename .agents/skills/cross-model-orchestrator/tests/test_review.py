@@ -16,6 +16,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import review
 
 
+def reviewer_command(argv):
+    return argv[0] in review.REVIEWERS
+
+
 class ReviewTests(unittest.TestCase):
     def test_existing_legacy_pr_cannot_restart_new_rounds(self):
         legacy = self.root / 'legacy' / 'project-12'
@@ -52,10 +56,13 @@ class ReviewTests(unittest.TestCase):
             output = self.head
         elif argv[:2] == ["git", "merge-base"]:
             output = self.base
+        elif argv[0] == "node" and argv[1].endswith("review-diff-scope.cjs"):
+            output = "## Diff scope\nShared packet for entire contribution"
         elif argv[:3] == ["git", "diff", "--name-only"]:
             output = "\0".join(self.conflict_paths) + "\0"
         else:
-            reviewer = "codex" if argv[0] == "codex" else "claude"
+            self.assertTrue(reviewer_command(argv), f"Unexpected test subprocess: {argv}")
+            reviewer = argv[0]
             self.prompts.append(kwargs["input"])
             verdict = self.verdicts[reviewer]
             if isinstance(verdict, Exception):
@@ -101,10 +108,10 @@ class ReviewTests(unittest.TestCase):
                 self.assertTrue(Path(self.args.report).read_text().startswith("ESCALATE example/project#12 r4:"))
         self.assertEqual("stopped", state["status"])
         self.assertTrue(Path(self.args.report).read_text().startswith("STOPPED example/project#12 r5:"))
-        model_calls = len([command for command in self.commands if command[0] != "git"])
+        model_calls = len([command for command in self.commands if reviewer_command(command)])
         with self.assertRaisesRegex(RuntimeError, "maximum 5"):
             review.review(self.config, self.args)
-        self.assertEqual(model_calls, len([command for command in self.commands if command[0] != "git"]))
+        self.assertEqual(model_calls, len([command for command in self.commands if reviewer_command(command)]))
         self.assertFalse((self.directory() / "r6").exists())
 
     def test_approvals_freeze_without_ci_and_new_head_is_rejected(self):
@@ -137,6 +144,9 @@ class ReviewTests(unittest.TestCase):
         self.assertIn("user-data loss", prompt)
         self.assertIn("Nits never block", prompt)
         self.assertIn("Round 1, claude", prompt)
+        self.assertIn("## Diff scope", prompt)
+        scope_commands = [command for command in self.commands if command[0] == "node"]
+        self.assertTrue(all(command[-2] == "main" for command in scope_commands))
 
     def test_real_reviewer_failure_cannot_inherit_prior_approval(self):
         review.review(self.config, self.args)
@@ -173,7 +183,7 @@ class ReviewTests(unittest.TestCase):
         observed = {}
 
         def inspect_environment(argv, **kwargs):
-            if argv[0] != "git":
+            if reviewer_command(argv):
                 observed[argv[0]] = kwargs["env"]
             return original(argv, **kwargs)
 
@@ -235,10 +245,10 @@ class ReviewTests(unittest.TestCase):
             review.review(self.config, self.args)
         self.args.conflict_files = ["example.py"]
         self.conflict_paths = ["example.py", "extra.py"]
-        model_calls = len([command for command in self.commands if command[0] != "git"])
+        model_calls = len([command for command in self.commands if reviewer_command(command)])
         with self.assertRaisesRegex(RuntimeError, "outside saved manifest"):
             review.review(self.config, self.args)
-        self.assertEqual(model_calls, len([command for command in self.commands if command[0] != "git"]))
+        self.assertEqual(model_calls, len([command for command in self.commands if reviewer_command(command)]))
         self.assertEqual(1, self.state()["round"])
 
     def test_saved_conflict_tree_excludes_changes_imported_from_main(self):
@@ -309,7 +319,7 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual("retained", state["reviewers"]["codex"]["continuity"])
         self.assertEqual("claude-session", state["reviewer_bindings"]["claude"]["session_id"])
         self.assertEqual(4, sent.call_count)
-        self.assertEqual([], [command for command in self.commands if command[0] != "git"])
+        self.assertEqual([], [command for command in self.commands if reviewer_command(command)])
 
     def test_lane_session_cannot_be_rebound_to_another_pr(self):
         _, sent, _, _ = self.configure_lanes()
@@ -429,14 +439,14 @@ class ReviewTests(unittest.TestCase):
         original = self.run_command
 
         def concurrent_runner(argv, **kwargs):
-            if argv[0] != "git":
+            if reviewer_command(argv):
                 barrier.wait(timeout=0.5)
             return original(argv, **kwargs)
 
         with patch.object(review, "run", side_effect=concurrent_runner):
             state = review.review(self.config, self.args)
         self.assertEqual("needs_changes", state["status"])
-        models = [command[0] for command in self.commands if command[0] != "git"]
+        models = [command[0] for command in self.commands if reviewer_command(command)]
         self.assertCountEqual(["codex", "claude"], models)
 
     def test_simultaneous_same_pr_review_is_rejected(self):
@@ -445,7 +455,7 @@ class ReviewTests(unittest.TestCase):
         original = self.run_command
 
         def blocked_runner(argv, **kwargs):
-            if argv[0] != "git":
+            if reviewer_command(argv):
                 entered.set()
                 if not release.wait(timeout=0.5):
                     raise RuntimeError("test did not release review")
