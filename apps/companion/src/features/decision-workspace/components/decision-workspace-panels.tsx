@@ -27,6 +27,7 @@ import {
 } from '../../../lib/artifact-url';
 import { type DecisionPresentation } from '../../../lib/decision-presentation';
 import { diffArtifactCandidate } from '../../../lib/diff';
+import { recordedEvidenceArtifactUrl } from '../../../lib/evidence-media-items';
 import { fallbackTaskProgressSummary, taskProgressTitle } from '../../../lib/task-progress';
 import { baseStyles } from '../../../lib/theme';
 import {
@@ -963,7 +964,7 @@ export function groupArtifacts(
   if (!runId) return [];
   return groupVisualArtifactPairs(
     manifest,
-    (artifact) => artifactUrlForEntry(gatewayUrl, runId, artifact),
+    (artifact) => recordedEvidenceArtifactUrl(gatewayUrl, runId, model, artifact),
     model,
   ).pairs;
 }

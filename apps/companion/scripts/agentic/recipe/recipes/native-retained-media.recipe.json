@@ -1,11 +1,15 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Companion retained media bundle binding",
-  "description": "Use an isolated gate fixture with blue retained and red newer current images at the same task-relative path. Open full gate review with filters visible. The engine supplies FARMSLOT_RECIPE_ARTIFACTS_DIR; ffmpeg and od must be available. No real gate action or judgment. Remove owned proof resources after receipts.",
+  "description": "Use an isolated gate fixture with blue retained and red newer current images at the same task-relative path. Open full gate review with filters visible. The engine supplies FARMSLOT_RECIPE_ARTIFACTS_DIR; ffmpeg and od must be available. No real gate action or judgment. Remove owned proof resources after receipts. Supply priority_decision_id, priority_comparison_id and priority_before_path for an isolated captured output-review comparison.",
   "proofTargets": [
     {
       "id": "retained-media",
       "claim": "The captured gate displays the retained blue image after newer output is captured."
+    },
+    {
+      "id": "priority-thumbnail",
+      "claim": "The output-review priority thumbnail opens the matching retained Before image."
     }
   ],
   "workflow": {
@@ -131,7 +135,84 @@
         "action": "ui.press",
         "test_id": "companion-artifact-media-viewer-close",
         "intent": "Close the read-only gallery without changing the gate.",
+        "next": "open-output-review"
+      },
+      "open-output-review": {
+        "action": "command",
+        "cmd": "url=\"farmslot-development:///decision/{{params.priority_decision_id}}\"; if [ \"$PLATFORM\" = ios ]; then xcrun simctl openurl \"$IOS_SIMULATOR\" \"$url\"; else adb -s \"$ADB_SERIAL\" shell am start -a android.intent.action.VIEW -d \"$url\" \"$FARMSLOT_RECIPE_APP_ID\"; fi",
+        "intent": "Open the isolated captured output review through its real route.",
+        "next": "open-priority-before"
+      },
+      "open-priority-before": {
+        "action": "ui.press",
+        "test_id": "{{params.priority_comparison_id}}-before",
+        "intent": "Inspect the frozen comparison before the source change.",
+        "next": "open-priority-file"
+      },
+      "priority-viewer-title": {
+        "action": "ui.wait_for",
+        "test_id": "companion-artifact-media-viewer-title",
+        "text": "{{params.priority_before_path}}",
+        "expected": "visible",
+        "timeout_ms": 10000,
+        "intent": "The priority thumbnail opens its matching gallery item.",
+        "next": "hud-priority"
+      },
+      "hud-priority": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "The decision Before thumbnail must open its retained blue evidence.",
+        "next": "capture-priority"
+      },
+      "capture-priority": {
+        "action": "ui.screenshot",
+        "path": "native-priority-before.png",
+        "covers": ["priority-thumbnail"],
+        "intent": "Record the output-review Before image after the real thumbnail tap.",
+        "next": "read-priority-pixel"
+      },
+      "read-priority-pixel": {
+        "action": "command",
+        "cmd": "ffmpeg -v error -i \"$FARMSLOT_RECIPE_ARTIFACTS_DIR/native-priority-before.png\" -vf \"crop=1:1:iw/2:ih/2\" -f rawvideo -pix_fmt rgb24 - | od -An -tu1",
+        "intent": "Read the displayed Before image pixel from the actual screenshot.",
+        "next": "assert-priority-blue"
+      },
+      "assert-priority-blue": {
+        "action": "assert_output",
+        "source": "read-priority-pixel",
+        "stream": "stdout",
+        "match": "^\\s*0\\s+0\\s+255\\s*$",
+        "proves": ["priority-thumbnail"],
+        "intent": "The output-review thumbnail opens the retained blue image.",
+        "next": "close-priority"
+      },
+      "close-priority": {
+        "action": "ui.press",
+        "test_id": "companion-artifact-media-viewer-close",
+        "intent": "Close the read-only viewer without deciding the gate.",
         "next": "done"
+      },
+      "open-priority-file": {
+        "action": "ui.press",
+        "test_id": "{{params.priority_comparison_id}}-fullscreen-page-before",
+        "intent": "The Before gallery must match its captured comparison preview.",
+        "next": "priority-viewer-title"
+      }
+    }
+  },
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["priority_decision_id", "priority_comparison_id", "priority_before_path"],
+    "properties": {
+      "priority_decision_id": {
+        "type": "string"
+      },
+      "priority_before_path": {
+        "type": "string"
+      },
+      "priority_comparison_id": {
+        "type": "string"
       }
     }
   }
