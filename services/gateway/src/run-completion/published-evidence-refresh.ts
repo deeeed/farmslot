@@ -78,7 +78,8 @@ async function refreshPublishedEvidenceLocked(
   if (!isPublishedStatus(publicationStatusForRun(run)) || !run.prNumber) {
     throw new Error('Evidence refresh requires an already published PR');
   }
-  if (!TERMINAL_RUN_STATUSES.includes(run.status) || run.activeTaskFile) {
+  // Archives preserve the last task pointer after worker ownership is released.
+  if (!TERMINAL_RUN_STATUSES.includes(run.status) || (!run.archivedAt && run.activeTaskFile)) {
     throw new Error('Wait for the published run to finish before refreshing its evidence');
   }
   if (!run.taskFile) throw new Error('Published evidence requires the run artifact mirror');

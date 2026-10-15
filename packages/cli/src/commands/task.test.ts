@@ -94,6 +94,42 @@ test('mark forwarding preserves explicit negation and consumes binding controls'
   }
 });
 
+test('a missing explicit project refuses before creating an unbound task', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'task-project-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const registry = path.join(root, 'projects');
+  fs.mkdirSync(registry);
+  const task = path.join(root, 'task');
+  const program = cli();
+  const init = program.commands
+    .find((entry) => entry.name() === 'task')!
+    .commands.find((entry) => entry.name() === 'init')!;
+  init.action(() => {});
+  await program.parseAsync(
+    [
+      'task',
+      'init',
+      task,
+      '--project',
+      'not-registered',
+      '--projects-dir',
+      registry,
+      '--target',
+      root,
+      '--flow',
+      'dev',
+      '--template',
+      'dev/worker',
+      '--title',
+      'Selected project',
+    ],
+    { from: 'user' },
+  );
+  await assert.rejects(runTaskCommand('init', init), { code: 'PROJECT_NOT_FOUND', exitCode: 2 });
+  assert.equal(fs.existsSync(task), false);
+  assert.deepEqual(fs.readdirSync(root), ['projects']);
+});
+
 test('initializing a retained task again preserves its receipt and authored files', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'task-resume-'));
   const previousFarmHome = process.env.FARMSLOT_HOME;

@@ -423,7 +423,7 @@ const { createGatewayAuthRuntime, initializeGatewayIdentity } = await import('..
 const { createWebSocketServer, resetServerGlobalsForTests } = await import('../server.js');
 const { GatewayClient } = await import('../../../../packages/cli/src/gateway-client.js');
 
-test('public RPC delivers archived historical evidence after the adopted run generation advances', async (t) => {
+test('public RPC preserves historical task pointers and adopted generations in archived delivery', async (t) => {
   const f = await fixture(t, oldHead, false);
   const home = await mkdtemp(path.join(os.tmpdir(), 'adopted-evidence-rpc-'));
   const server = createServer();
@@ -495,9 +495,17 @@ test('public RPC delivers archived historical evidence after the adopted run gen
   assert.equal(adoption.receipt.approver.principalId, person.id);
   assert.equal(adoption.run.status, 'failed');
   const replayedGeneration = adoption.receipt.generation + 1;
+  const historicalTaskFile = 'temp/tasks/fixture/REVIEW-FIX.md';
   updateRun(f.run.id, {
     engineState: { ...adoption.run.engineState, generation: replayedGeneration },
+    activeTaskFile: historicalTaskFile,
   });
+  await assert.rejects(
+    serviceClient.call(Methods.RUN_REFRESH_PUBLISHED_EVIDENCE, { runId: f.run.id }),
+    /Wait for the published run to finish/,
+  );
+  assert.equal(uploads.length, 0);
+  assert.equal(writes.length, 0);
   await archiveRun(f.run.id);
   const before = await getRunWithArchived(f.run.id);
   const delivered = await serviceClient.call<
@@ -513,5 +521,6 @@ test('public RPC delivers archived historical evidence after the adopted run gen
   assert.deepEqual(after?.engineState?.publishGate?.humanPublicationAdoption, adoption.receipt);
   assert.equal(after?.status, 'failed');
   assert.equal(after?.archivedAt, before?.archivedAt);
+  assert.equal(after?.activeTaskFile, historicalTaskFile);
   assert.equal(writes.length, 1);
 });
