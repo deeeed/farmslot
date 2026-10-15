@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Scope review models to their configured runner and surface native reviewer launch errors without waiting for the review timeout.
 - Retain run output and publication evidence in gateway-owned bundles; serve reports, recipe metadata and artifact ranges from pinned local snapshots, with explicit backfill and retention limits.
 - Load development provider settings separately from node credentials and stop loading the retired checkout auth file.
 

@@ -786,6 +786,25 @@ test('review runner defaults come from configuration, independent of the worker'
   );
 });
 
+test('unqualified project models cannot change the default reviewer', () => {
+  assert.deepEqual(resolveReviewRunnerModel({ model: 'opus' }), {
+    reviewRunner: 'codex',
+    model: 'gpt-6.1-sol',
+  });
+  assert.throws(
+    () => resolveReviewRunnerModel({ runner: 'codex', model: 'opus' }),
+    /Review runner 'codex' does not support model 'opus'/,
+  );
+  assert.throws(
+    () => resolveReviewRunnerModel({}, { reviewRunner: 'codex', model: 'opus' }),
+    /Review runner 'codex' does not support model 'opus'/,
+  );
+  assert.deepEqual(
+    resolveReviewRunnerModel({ runner: 'claude', model: 'opus' }, { reviewRunner: 'codex' }),
+    { reviewRunner: 'codex', model: 'gpt-6.1-sol' },
+  );
+});
+
 test('disabled project review does not skip explicit publication reviews', () => {
   assert.equal(shouldSkipForDisabledReviewConfig({ enabled: false }), true);
   assert.equal(

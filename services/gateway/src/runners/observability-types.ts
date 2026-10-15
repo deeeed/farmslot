@@ -15,6 +15,8 @@ export interface ObservabilityReading<T> {
   observedAt: number;
   /** True only when prompt-acceptance evidence matched the requested prompt itself. */
   exactPromptMatch?: boolean;
+  /** Error from the exact runner-native terminal turn event, never rendered output. */
+  failure?: string;
   /** Persisted runner session that emitted the reading, when the provider exposes it. */
   sessionId?: string;
   /** Stable identity of the runner turn that emitted the reading. */
