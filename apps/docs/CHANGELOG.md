@@ -5,6 +5,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 ## Unreleased
 
 - Document the retained-run artifact recovery operation in the generated gateway API.
+- Document operator waiting and resume signals in the generated gateway API reference.
+
 - Provision tutorial node credentials with the existing private secret-file option.
 
 - Document the plain SDK runtime, action catalog and action handler contracts.
