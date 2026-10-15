@@ -1,0 +1,17 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion explicit account login",
+  "description": "After local sign-out, enter another service credential using Save Auth or select a configured preset. Run this read-only check after the real login action. Validate launcher rotation on an existing device without ownership metadata, same-device rotation, and explicit login preservation: rotating a launcher-owned preset must change authentication, while a different expired launcher preset must not overwrite Save Auth.",
+  "workflow": {
+    "entry": "connected",
+    "nodes": {
+      "connected": {
+        "action": "command",
+        "cmd": "node scripts/agentic/cdp-eval.mjs --file scripts/agentic/probes/account-session-connected.js",
+        "intent": "Verify explicit login owns the live connection and can read the fleet.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

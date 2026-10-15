@@ -21,6 +21,7 @@ export type GatewayConnectionSource = 'configured' | 'hosted' | 'stored' | 'impl
 
 export const GATEWAY_URL_STORAGE_KEY = 'farmslot.gateway.url';
 export const GATEWAY_CANDIDATES_STORAGE_KEY = 'farmslot.gateway.candidates';
+export const GATEWAY_SIGNED_OUT_STORAGE_KEY = 'farmslot.gateway.signed-out';
 export const GATEWAY_TOKEN_STORAGE_KEY = 'farmslot.gateway.token';
 export const GATEWAY_PASSWORD_STORAGE_KEY = 'farmslot.gateway.password';
 export const GATEWAY_SOURCE_STORAGE_KEY = 'farmslot.gateway.source';
