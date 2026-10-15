@@ -10,7 +10,6 @@ import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   type DecisionAction,
   digestRecipeDocument,
-  effectiveRequiredReviewCount,
   EVIDENCE_ATTESTATION_ACTION,
   evidenceAttestationAvailable,
   isAuthorizedOverride,
@@ -19,7 +18,6 @@ import {
   isRecord,
   isTerminalRunStatus,
   qualifyingPassingReviews,
-  qualifyingTerminalReviewInputs,
   type ReadyGatePrPackage,
   type ReviewStatus,
   type Run,
@@ -35,8 +33,6 @@ import { GatewayMethodError } from '../core/method-error.js';
 import { shellQuote } from '../core/tmux.js';
 import { assertQaCompletion } from '../qa/completion.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
-import { runReviewRoundBudget } from '../review/review-round-budget.js';
-import { reviewedInputsAwaitingReview } from '../review/reviewed-inputs.js';
 import { readReviewWorkspaceCompletion } from '../review-workspaces/task.js';
 import { isArtifactOnlyRun } from '../run-completion/orchestrator.js';
 import { verifyRunOutputReview } from '../run-completion/output.js';
@@ -77,10 +73,7 @@ import {
   APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   assertPublicationReviewPolicySatisfied,
-  buildEvidenceRefreshAction,
-  buildUnavailableSnapshotAction,
   isPublishApprovalAction,
-  publicationReviewMatchesPreparedPackage,
 } from './gate-policy.js';
 import {
   readFrozenRecordedEvidenceSources,
@@ -108,7 +101,6 @@ export interface GatePrerequisiteReaders {
   reviewResult(run: Run, relativePath: string): Promise<string | undefined>;
   selectedEvidence(run: Run, preparedPackage: ReadyGatePrPackage): Promise<void>;
   reviewDocument(run: Run): Promise<boolean>;
-  reviewedInputsAwaitingReview: typeof reviewedInputsAwaitingReview;
 }
 
 export interface GateAcceptanceRead extends AcceptanceStatusRead {
@@ -260,7 +252,6 @@ export async function readGateRecordedEvidence(
 }
 
 const readers: GatePrerequisiteReaders = {
-  reviewedInputsAwaitingReview,
   deterministic: validateDeterministicChecksForRun,
   acceptance: readGateAcceptance,
   progress: readRunProgress,
@@ -574,46 +565,14 @@ export async function collectRunGateReadiness(
     } catch {
       recordedPolicySatisfied = false;
     }
-    const validInputs: ReviewStatus[] = [];
-    for (const review of qualifyingTerminalReviewInputs(
-      run.engineState?.publishGate?.reviews ?? [],
-    )) {
+    const validReviews: ReviewStatus[] = [];
+    for (const review of qualifyingPassingReviews(run.engineState?.publishGate?.reviews ?? [])) {
       const artifact = resultArtifact(review);
       const raw = artifact ? await source.reviewResult(run, artifact) : undefined;
       if (raw) {
         const result = parseStructuredReviewFeedback(raw, artifact!);
-        if (!result.incomplete && result.verdict === review.verdict) validInputs.push(review);
+        if (!result.incomplete && result.verdict === review.verdict) validReviews.push(review);
       }
-    }
-    const validReviews = qualifyingPassingReviews(validInputs);
-    const policy = preparedPackage.reviewPolicy ?? {
-      minimumReviews: 1,
-      requestedBy: 'dispatch' as const,
-    };
-    const required = effectiveRequiredReviewCount(policy);
-    const budget = await runReviewRoundBudget(run);
-    const nextStep =
-      budget.remaining === 0
-        ? `Review budget ${budget.used}/${budget.limit} is exhausted. Ask the lead for a scoped extension, then use farmslot run extend-review-budget ${run.id} and request current-head reviews.`
-        : 'Request reviews for the current head and package.';
-    const allowedReviewOverrides: string[] = [];
-    if (
-      validInputs.filter((review) =>
-        publicationReviewMatchesPreparedPackage(review, preparedPackage),
-      ).length >= required
-    )
-      allowedReviewOverrides.push(APPROVE_PUBLISH_UNRESOLVED_ACTION);
-    if (buildEvidenceRefreshAction(validReviews, preparedPackage))
-      allowedReviewOverrides.push(APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION);
-    if (buildUnavailableSnapshotAction(validReviews, preparedPackage, policy))
-      allowedReviewOverrides.push(APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION);
-    if (required > 0 && (await source.reviewedInputsAwaitingReview(run))) {
-      reasons.push({
-        code: 'review-inputs-awaiting-review',
-        prerequisite: 'lifecycle',
-        message: `Source or evidence changed after review and has not been reviewed at the current head. ${nextStep}`,
-        actionId: budget.remaining === 0 ? 'hold' : 'request-review',
-      });
     }
     try {
       assertPublicationReviewPolicySatisfied(
@@ -630,9 +589,8 @@ export async function collectRunGateReadiness(
       reasons.push({
         code: recordedPolicySatisfied ? 'review-result-invalid' : 'review-result-required',
         prerequisite: 'review',
-        message: `Required current-head reviews need valid native result artifacts for this package. ${nextStep}`,
-        actionId: budget.remaining === 0 ? 'hold' : 'request-review',
-        allowedReviewOverrides,
+        message: 'Required reviews need valid result artifacts for the current package.',
+        actionId: 'request-review',
       });
     }
   }
@@ -728,11 +686,7 @@ function gateReasonsForAction(
   ].some((id) => id === actionId);
   return readiness.reasons.filter(
     (reason) =>
-      !(
-        reviewOverride &&
-        reason.prerequisite === 'review' &&
-        reason.allowedReviewOverrides?.includes(actionId!)
-      ) &&
+      !(reviewOverride && reason.prerequisite === 'review') &&
       !(actionId === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION && isEvidencePolicyReason(reason)),
   );
 }

@@ -1786,7 +1786,6 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
             <Text style={styles.safetyText} testID="companion-review-round-budget">
               {reviewBudget.label}
               {reviewBudget.diagnosis ? `\n${reviewBudget.diagnosis}` : ''}
-              {reviewBudget.extensionSummary ? `\n${reviewBudget.extensionSummary}` : ''}
             </Text>
           ) : null}
           {reviewPublication.curation && <ReviewPublicationPanel {...reviewPublication} />}

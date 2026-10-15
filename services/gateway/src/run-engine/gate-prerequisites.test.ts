@@ -138,7 +138,6 @@ test('review overrides waive only their owning review policy, never checks or li
         code: 'review-result-required',
         prerequisite: 'review' as const,
         message: 'Review required',
-        allowedReviewOverrides: ['approve-publish-unresolved'],
       },
     ],
   };
@@ -884,74 +883,4 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
   assert.ok(
     unavailable.reasons.some((reason) => reason.message.includes('prepared evidence package')),
   );
-});
-
-test('unresolved approval requires real current-head review inputs and cannot waive changed inputs', async () => {
-  const prepared = makeReadyGatePackage({
-    reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
-  });
-  const review: ReviewStatus = {
-    id: 'native-current',
-    source: 'human-gate',
-    mode: 'cold',
-    loopNumber: 1,
-    reviewerSessionId: 'native-session',
-    reviewedHeadSha: prepared.headSha,
-    reviewedReviewSubjectHash: prepared.reviewSubjectHash,
-    reviewSnapshot: prepared.reviewSnapshot,
-    verdict: 'issues',
-    unresolvedCount: 1,
-    artifactPaths: ['artifacts/native-current/review-result.json'],
-  };
-  const actions = [{ id: 'approve-publish-unresolved' }, { id: 'hold' }];
-  const exhaustedRun = {
-    ...makeRun(),
-    reviewRoundAdmissions: ['one', 'two', 'three', 'four', 'five'],
-  };
-  const inputs = {
-    deterministic: passed,
-    acceptance: emptyAcceptance,
-    progress: idle,
-    selectedEvidence: passed,
-    reviewedInputsAwaitingReview: async () => null,
-    reviewResult: async () =>
-      JSON.stringify({
-        schemaVersion: 1,
-        verdict: 'issues',
-        issues: [{ file: 'src/example.ts', severity: 'warning', description: 'Remaining finding' }],
-      }),
-  };
-  for (const reviews of [[], [{ ...review, reviewedHeadSha: 'old-head' }], [review]]) {
-    const readiness = await collectRunGateReadiness(
-      makeRun({ engineState: { publishGate: { reviews } } }),
-      prepared,
-      inputs,
-    );
-    assert.deepEqual(
-      gateActionsForReadiness(actions, readiness),
-      reviews[0] === review ? actions : actions.slice(1),
-    );
-    assert.match(
-      readiness.reasons.find((reason) => reason.prerequisite === 'review')!.message,
-      /current-head.*native.*request|current-head.*native.*Request/i,
-    );
-  }
-  const exhausted = await collectRunGateReadiness(exhaustedRun, prepared, inputs);
-  assert.match(
-    exhausted.reasons.find((reason) => reason.prerequisite === 'review')!.message,
-    /Review budget 5\/5.*extend-review-budget/,
-  );
-  assert.deepEqual(gateActionsForReadiness(actions, exhausted), actions.slice(1));
-  const run = makeRun({ engineState: { publishGate: { reviews: [review] } } });
-  const missing = await collectRunGateReadiness(run, prepared, {
-    ...inputs,
-    reviewResult: async () => undefined,
-  });
-  assert.deepEqual(gateActionsForReadiness(actions, missing), actions.slice(1));
-  const changed = await collectRunGateReadiness(run, prepared, {
-    ...inputs,
-    reviewedInputsAwaitingReview: async () => 'new-fingerprint',
-  });
-  assert.ok(changed.reasons.some((reason) => reason.code === 'review-inputs-awaiting-review'));
-  assert.deepEqual(gateActionsForReadiness(actions, changed), actions.slice(1));
 });

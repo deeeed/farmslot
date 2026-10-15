@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Expose scoped review-budget grants and checked publication action readiness.
+- Expose scoped review-budget grants and the effective review limit.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

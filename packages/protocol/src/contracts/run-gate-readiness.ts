@@ -20,8 +20,6 @@ export interface RunGatePrerequisiteReason {
   reference?: string;
   /** Existing action that can resolve the prerequisite. */
   actionId?: string;
-  /** Gateway-derived exceptions whose current input artifacts were verified. */
-  allowedReviewOverrides?: string[];
   /** Only these checked claim-policy findings may receive human attestation. */
   evidencePolicy?: 'execution-verdict' | 'claim-verdict' | 'criterion-binding';
 }

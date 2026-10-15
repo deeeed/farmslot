@@ -1447,7 +1447,6 @@ async function assertReadyPublishResolveIsFresh(
   run: Run,
   decision: Run['decisions'][number],
   params: RunResolveDecisionParams,
-  readLiveInputs = true,
 ): Promise<ReadyGatePayload['currentDescription']> {
   if (!isPublishApprovalAction(params.actionId)) return undefined;
   const payload = decision.payload as ReadyGatePayload | undefined;
@@ -1491,7 +1490,6 @@ async function assertReadyPublishResolveIsFresh(
     currentPackage,
     currentPackage.selectedEvidenceKeys ?? [],
   );
-  if (!readLiveInputs) return undefined;
   const currentDescription = readyGateCurrentDescription(
     currentPackage,
     await assertReadyGatePackageInputsCurrent(run, currentPackage),
@@ -2011,27 +2009,7 @@ export async function resolveRunDecision(
   // A park that LANDED and freed the slot is restored rather than refused — the
   // operator answering the gate is what asks for the run back. Still before
   // anything READS or consumes the decision, so a refusal leaves it pending.
-  await assertReadyPublishResolveIsFresh(existing, decision, params, false);
-  // A known refusal must not restore a worker, consume the decision or wake recovery.
-  if (
-    isPublishApprovalAction(params.actionId) &&
-    !needsGateParkRestore(existing) &&
-    isPrerequisiteGatePayload(decision.payload)
-  ) {
-    await (dependencies.assertGatePrerequisites ?? assertRunGateReady)(
-      getRun(existing.id)!,
-      decision.payload.kind === 'ready' ? (decision.payload.prPackage ?? null) : null,
-      params.actionId,
-    );
-  }
   const gateParkRestore = await restoreGateParkForResolution(params.runId, existing, dependencies);
-  assertDecisionStillUnresolved(params.runId, params.decisionId);
-  decision = getRun(params.runId)!.decisions.find((entry) => entry.id === params.decisionId)!;
-  const currentDescription = await assertReadyPublishResolveIsFresh(
-    getRun(params.runId)!,
-    decision,
-    params,
-  );
   const gateGeneration = getRun(existing.id)?.engineState?.generation ?? 0;
   const gatePayload = decision.payload;
   const guardedAdvance =
@@ -2078,6 +2056,7 @@ export async function resolveRunDecision(
       existing.slotId,
     );
   }
+  const currentDescription = await assertReadyPublishResolveIsFresh(existing, decision, params);
   const consume = async (): Promise<RunResolveDecisionResult> => {
     let attestation: EvidencePolicyAttestation | undefined;
     // The probes above await; a concurrent resolver (operator abort vs re-armed

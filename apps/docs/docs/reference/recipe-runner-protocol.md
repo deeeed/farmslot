@@ -72,26 +72,6 @@ artifact-manifest.json
 
 The manifest may index screenshots, video, logs, and domain evidence. Every file stays under the artifact root. Package validation revalidates recipe documents, dependency digests, call edges, reachability, and file presence.
 
-### Window screenshots
-
-For unrecorded web-dapp `ui.screenshot`, native capture of the adapter's owned
-browser window is preferred. This includes browser chrome and an extension side
-panel in that window. The adapter must resolve the same validated target used
-for recording. A native refusal falls back to the existing CDP page capture;
-artifact metadata records the actual `captureProvider`, `fallbackFrom` and
-`fallbackReason`. Artifact publication keeps the existing rooted path checks.
-Recorded screenshots retain their session snapshot. Full-page requests and
-`ui.capture_surface` use CDP. Separate notification windows are not included.
-
-Public surface: `CreateCdpWebUiTransportOptions.screenshotProvider` in
-`@farmslot/recipe-runner/runtime/cdp` is an optional provider callback consumed by
-`@farmslot/adapter-web/web-dapp`. `captureHelperSnapshot` in
-`@farmslot/recipe-runner` reads the native PNG and capture facts for that callback,
-using the same helper command as interrupted recording snapshots. These are
-additive pre-1.0 package APIs; the existing `ui.screenshot` command and flags stay
-unchanged. Harnesses that extend web-dapp inherit window capture through their
-existing CDP transport factory.
-
 ## Failure contract
 
 Failures identify the layer and provide a next action. Machine mode uses stable codes rather than prose. A runner must fail before side effects for invalid documents, unresolved dependencies, parameter errors, capability denial, or trust denial.

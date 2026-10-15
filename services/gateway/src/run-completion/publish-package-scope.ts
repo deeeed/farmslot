@@ -28,7 +28,6 @@ import {
   ARTIFACT_COPY_EXCLUDED_DIR_NAMES,
   gatewayOwnedReviewDirFindPredicates,
   isGatewayOwnedArtifactMirrorEntry,
-  isGatewayOwnedArtifactPath,
   WORKER_ARTIFACT_COPY_EXCLUDES,
   WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES,
 } from '../core/artifact-copy-policy.js';
@@ -247,7 +246,6 @@ export function selectPublishPackageEntries(
   const entries: PublishPackageEntry[] = [];
   const dropped: string[] = [];
   for (const entry of scanned) {
-    if (isGatewayOwnedArtifactPath(`artifacts/${entry.path}`)) continue;
     if (named.has(entry.path) || entry.path.includes('/')) {
       entries.push(entry);
     } else if (

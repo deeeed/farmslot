@@ -51,7 +51,7 @@ claim to be a person. Existing credential and principal revocation checks apply.
 
 The request names a stored, nonarchived unpublished run, including a failed or
 interrupted run, its full current head SHA, a finite integer absolute limit
-greater than its effective limit, a nonempty scope brief, an idempotency key and
+greater than its effective limit by one to five rounds, a nonempty scope brief, an idempotency key and
 the expected prior limit. A new grant MUST refuse an already published, archived
 or unrelated run, invalid inputs, unknown/live-head drift, unauthorized origin
 or conflicting prior limit before any state or runner mutation.

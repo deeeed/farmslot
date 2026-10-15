@@ -57,7 +57,6 @@ import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
 import { abandonBranchMaintenance, completeBranchMaintenance } from './branch-maintenance.js';
 import {
-  hasHeldPublicationApproval,
   isHumanGateReviewRequestAction,
   markResolvedHumanGateReviewRequestConsumed,
 } from './decision-replay.js';
@@ -980,7 +979,7 @@ export async function executeHumanGateStep(
   } else if (current.flowType === 'review-pr') {
     await executeReviewGate(runId);
   } else {
-    if (publicationApprovalGate && !hasHeldPublicationApproval(current)) {
+    if (publicationApprovalGate) {
       // Restart mid-review recovery: a gateway restart during a publish-gate
       // review's await abandons the completed reviewer's result. Re-entering the
       // human gate, ingest any finished-but-lost reviews before re-presenting so
@@ -1178,10 +1177,7 @@ export async function executeHumanGateStep(
       }
     }
     const presentReadyGate = async (): Promise<string> => {
-      // A refused approval reopens only the wait. A later explicit review request
-      // or Continue Fixing decision still follows its existing owner below.
-      if (publicationApprovalGate && !hasHeldPublicationApproval(getRun(runId)!))
-        await rerunReviewIfReviewedInputsChanged(runId, context);
+      if (publicationApprovalGate) await rerunReviewIfReviewedInputsChanged(runId, context);
       return executeReadyGate(runId);
     };
     let gateAction = await presentReadyGate();

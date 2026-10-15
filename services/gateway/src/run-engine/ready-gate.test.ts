@@ -1,29 +1,21 @@
 import assert from 'node:assert/strict';
-import test, { type TestContext } from 'node:test';
+import test from 'node:test';
 
-import {
-  Events,
-  type PublicationReviewLaunchRejection,
-  type ReviewRequestPayload,
-  type Run,
-  type RunDecision,
-} from '@farmslot/protocol';
+import type { PublicationReviewLaunchRejection, Run } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
 import { TerminalReviewArtifactError } from '../review/terminal-result.js';
 import { createRun, getRun, updateRun, updateRunStep } from '../runs/store.js';
 
-import { resolveEngineDecision, setEngineDecisionRuntime } from './engine-decisions.js';
 import { BlockedRunError } from './errors.js';
 import {
   executePublishGateReviewPlan,
-  executeReadyGate,
   freedSlotGateResolutionBlocker,
   localVideoProofWarning,
   reconcileReviewLaunchRejectionForCurrentHead,
   resumeInterruptedPublicationReview,
 } from './ready-gate.js';
-import { deleteTestRunIfPresent, makeReadyGatePackage, makeRun } from './test-fixtures.js';
+import { deleteTestRunIfPresent, makeRun } from './test-fixtures.js';
 
 test('localVideoProofWarning flags screenshot packages without local video proof', () => {
   assert.match(
@@ -574,176 +566,3 @@ test('WARM recheck updates its existing lineage and preserves attempt provenance
   assert.equal(reviews[0].attempts?.length, 2);
   assert.equal(reviews[0].reviewedHeadSha, 'new');
 });
-
-function sourceGateFixture(t: TestContext) {
-  const run = createRun({
-    flowType: 'dev',
-    mode: 'autonomous',
-    project: 'missing-source-proof',
-    ticketOrPr: 'SOURCE-WAIT',
-  });
-  updateRun(run.id, {
-    status: 'human-gating',
-    slotId: null,
-    steps: [
-      { name: 'human-gate', status: 'running' },
-      { name: 'finalize', status: 'pending' },
-    ],
-    engineState: { publishGate: { packageId: 'retained', packageHash: 'retained-hash' } },
-  });
-  let notify!: () => void;
-  const notice = () =>
-    new Promise<void>((resolve) => {
-      notify = resolve;
-    });
-  let announced = notice();
-  const executions: Promise<string>[] = [];
-  setEngineDecisionRuntime({
-    broadcast: (event) => {
-      if (event === Events.RUN_DECISION_NEW) notify();
-    },
-    stepToStatus: { 'human-gate': 'human-gating' },
-  });
-  t.after(async () => {
-    updateRun(run.id, { status: 'cancelled' });
-    for (const decision of getRun(run.id)!.decisions)
-      if (!decision.resolvedAt) resolveEngineDecision(decision.id, 'abort');
-    await Promise.allSettled(executions);
-    await deleteTestRunIfPresent(run.id);
-    setEngineDecisionRuntime({ broadcast: () => {}, stepToStatus: {} });
-  });
-  return {
-    run,
-    next: async (execution: Promise<string>): Promise<RunDecision> => {
-      executions.push(execution);
-      await Promise.race([
-        announced,
-        execution.then((action) => {
-          throw new Error(`Gate returned ${action} before creating its wait`);
-        }),
-      ]);
-      announced = notice();
-      const decision = getRun(run.id)!.decisions.find((entry) => !entry.resolvedAt);
-      assert.ok(decision);
-      return decision;
-    },
-  };
-}
-
-test(
-  'source-read failure uses the real decision owner and retains its publication wait',
-  { timeout: 4000 },
-  async (t) => {
-    const { run, next } = sourceGateFixture(t);
-    updateRun(run.id, { slotId: 'retained-source-slot' });
-    const before = structuredClone(getRun(run.id)!);
-    const execution = executeReadyGate(run.id, {
-      ensurePackage: async () => {
-        throw new Error('Owned source SSH connection unavailable');
-      },
-    });
-    const card = await next(execution);
-    assert.match(card.description, /SSH connection unavailable.*Restore the owned source/);
-    assert.deepEqual(
-      card.actions.map((entry) => entry.id),
-      ['hold'],
-    );
-    assert.ok(card.payload?.kind === 'ready' && card.payload.stale && !card.payload.prPackage);
-    const held = getRun(run.id)!;
-    assert.equal(held.slotId, before.slotId);
-    assert.deepEqual(held.engineState, before.engineState);
-    assert.deepEqual(held.steps, before.steps);
-    assert.notEqual(held.status, 'failed');
-    assert.equal(resolveEngineDecision(card.id, 'abort'), true);
-    assert.equal(await execution, 'abort');
-  },
-);
-
-for (const mode of ['cold', 'warm', 'continue-review-fix'] as const) {
-  test(`recovered source gate consumes ${mode} exactly once`, { timeout: 4000 }, async (t) => {
-    const { run, next } = sourceGateFixture(t);
-    const prepared = makeReadyGatePackage({
-      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
-    });
-    let available = false;
-    const dependencies = {
-      ensurePackage: async () => {
-        if (!available) throw new Error('Source disconnected');
-        return prepared;
-      },
-    };
-    const execution = executeReadyGate(run.id, dependencies);
-    const card = await next(execution);
-    const request: ReviewRequestPayload | undefined =
-      mode === 'continue-review-fix'
-        ? undefined
-        : {
-            runner: 'codex',
-            model: null,
-            effort: null,
-            mode,
-            ...(mode === 'warm'
-              ? {
-                  context: {
-                    reviewLineages: [
-                      { repository: 'owner/repo', prNumber: 42, reviewId: 'retained-lineage' },
-                    ],
-                  },
-                }
-              : {}),
-          };
-    // Inspection restores the card. RPC consumption stores these typed fields
-    // before waking the real engine decision owner.
-    available = true;
-    card.payload = {
-      kind: 'ready',
-      prNumber: null,
-      repo: null,
-      workerReport: '',
-      branch: prepared.branch,
-      diffStat: prepared.diffStat,
-      prPackage: prepared,
-    };
-    card.resolvedAt = new Date().toISOString();
-    const action = request ? 'request-review' : 'continue-review-fix';
-    card.resolvedAction = action;
-    card.selectionData = request ? { reviewRequest: request } : {};
-    if (!request)
-      updateRun(run.id, {
-        engineState: {
-          ...getRun(run.id)!.engineState,
-          publishGate: {
-            ...getRun(run.id)!.engineState?.publishGate,
-            reviews: [
-              {
-                id: 'review-1',
-                source: 'human-gate',
-                loopNumber: 1,
-                mode: 'cold',
-                verdict: 'issues',
-                unresolvedCount: 1,
-                issues: [{ file: 'example.ts', description: 'Retained finding' }],
-                feedbackSent: false,
-                recoveryContinuationPending: true,
-              },
-            ],
-          },
-        },
-      });
-    updateRun(run.id, { decisions: [card] });
-    assert.equal(resolveEngineDecision(card.id, action), true);
-    assert.equal(await execution, action);
-    const after = getRun(run.id)!;
-    if (request) {
-      assert.equal(typeof after.decisions[0].context?.reviewRequestConsumedAt, 'string');
-      assert.equal(after.engineState?.publishGate?.reviewSequence?.length, 1);
-      assert.equal(after.engineState?.publishGate?.reviewSequence?.[0].mode, mode);
-      assert.deepEqual(after.engineState?.publishGate?.reviewSequenceContext, request.context);
-    }
-    const repeated = executeReadyGate(run.id, dependencies);
-    const nextCard = await next(repeated);
-    assert.notEqual(nextCard.id, card.id, 'consumed requests cannot replay a second review');
-    assert.equal(resolveEngineDecision(nextCard.id, 'abort'), true);
-    assert.equal(await repeated, 'abort');
-  });
-}

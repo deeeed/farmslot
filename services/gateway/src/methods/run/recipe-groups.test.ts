@@ -21,9 +21,6 @@ mock.module('../../live-recipe/context.js', {
 mock.module('../../run-engine/gate-prerequisites.js', {
   namedExports: { refreshRunGateReadiness: async (value: Run) => value },
 });
-mock.module('../../run-engine/publish-package-refresh.js', {
-  namedExports: { reconcilePublicationPackageForInspection: async (value: Run) => value },
-});
 mock.module('../../run-engine/gate-summary.js', {
   namedExports: { enrichDecisionsWithGateSummary: (value: Run) => value },
 });

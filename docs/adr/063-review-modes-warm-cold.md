@@ -183,7 +183,6 @@ does not grant publication, merge or dispatch authority.
 
 **Status:** Accepted (lead, 2026-10-15).
 **Specification:** [Round budget](../reference/review-modes-warm-cold.md#round-budget).
-**Related:** ADR-065's publication-package refresh amendment.
 
 ### Decision
 

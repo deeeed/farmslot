@@ -11,10 +11,7 @@ import {
 } from '@farmslot/protocol';
 
 import { removeStaleArtifactDirectory } from '../core/artifact-cleanup.js';
-import {
-  isGatewayOwnedArtifactMirrorEntry,
-  isGatewayOwnedArtifactPath,
-} from '../core/artifact-copy-policy.js';
+import { isGatewayOwnedArtifactMirrorEntry } from '../core/artifact-copy-policy.js';
 import {
   getOrchestratorTaskRoot,
   loadProjectVars,
@@ -286,13 +283,11 @@ async function copyEvidenceManifestReferencedArtifacts(
     const required = mediaPaths.has(artifactPath);
     const relativePath = artifactPath.slice('artifacts/'.length);
     const workerPath = path.join(workerArtifactsDir, relativePath);
-    const problem = isGatewayOwnedArtifactPath(artifactPath)
-      ? 'gateway-owned'
-      : isInternalRunArtifactPath(artifactPath)
-        ? 'internal'
-        : (await slotFileExists(vars, workerPath))
-          ? null
-          : 'missing';
+    const problem = isInternalRunArtifactPath(artifactPath)
+      ? 'internal'
+      : (await slotFileExists(vars, workerPath))
+        ? null
+        : 'missing';
     if (problem && required) {
       throw new Error(`evidence-manifest references ${problem} artifact: ${artifactPath}`);
     }

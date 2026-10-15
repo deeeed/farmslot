@@ -83,9 +83,6 @@ if (phase === 'serve') {
     [
       { id: 'request-review', label: 'Review', style: 'secondary' },
       { id: 'hold', label: 'Hold', style: 'secondary' },
-      ...(extensionProof
-        ? [{ id: 'approve-publish-unresolved', label: 'Accept findings', style: 'danger' as const }]
-        : []),
     ],
     gatePayload,
   );
@@ -116,15 +113,6 @@ if (phase === 'serve') {
       [
         { id: 'request-review', label: 'Review', style: 'secondary' },
         { id: 'hold', label: 'Hold', style: 'secondary' },
-        ...(extensionProof
-          ? [
-              {
-                id: 'approve-publish-unresolved',
-                label: 'Accept findings',
-                style: 'danger' as const,
-              },
-            ]
-          : []),
       ],
       gatePayload,
       { canReplay: () => false },
@@ -677,38 +665,6 @@ registerHooks({load(url, context, nextLoad) {
     writeJson(path.join(out, 'sixth-refused.json'), readRun());
     let effectiveLimit = 5;
     if (extensionProof) {
-      assert.equal(
-        gate.actions.some((action) => action.id === 'approve-publish-unresolved'),
-        false,
-      );
-      const beforeRefusal = readRun();
-      assert.throws(
-        () =>
-          rpc('run.resolveDecision', {
-            runId,
-            decisionId: gate.id,
-            actionId: 'approve-publish-unresolved',
-            selectionData: {
-              packageId: prepared.id,
-              packageHash: prepared.packageHash,
-              packageHeadSha: prepared.headSha,
-              selectedEvidenceKeys: prepared.selectedEvidenceKeys,
-            },
-          }),
-        /RUN_GATE_NOT_READY/,
-      );
-      const refused = readRun();
-      assert.equal(refused.decisions.find((entry) => entry.id === gate.id)!.resolvedAt, undefined);
-      assert.deepEqual(refused.reviewRoundAdmissions, beforeRefusal.reviewRoundAdmissions);
-      assert.deepEqual(refused.agentContexts, beforeRefusal.agentContexts);
-      assert.match(
-        JSON.stringify(
-          (refused.decisions.find((entry) => entry.id === gate.id)!.payload as ReadyGatePayload)
-            .gateReadiness,
-        ),
-        /5\/5.*extend-review-budget/,
-      );
-      writeJson(path.join(out, 'approval-refused.json'), refused);
       const request = {
         runId,
         requestId: randomUUID(),
@@ -983,10 +939,7 @@ registerHooks({load(url, context, nextLoad) {
         'sixth refusal preserves pending decision',
         'gateway restart retains the effective budget',
         ...(extensionProof
-          ? [
-              'refused stale approval retains the pending gate and worker contexts',
-              'recorded idempotent grant enables real sixth and seventh native reviews',
-            ]
+          ? ['recorded idempotent grant enables real sixth and seventh native reviews']
           : []),
       ],
       limits: [

@@ -519,17 +519,7 @@ test('exhausted extra-review offers a new review and a dangerous bypass, not ano
   const actions = publicationGateDecisionActions({
     reviewSatisfied: false,
     pendingReviewContinuation: exhausted,
-    reviews: [
-      {
-        ...exhausted,
-        reviewedReviewSubjectHash: 'subject',
-        reviewSnapshot: makeReadyGatePackage({ headSha: 'fixture-head' }).reviewSnapshot,
-      },
-    ],
-    preparedPackage: makeReadyGatePackage({
-      headSha: 'fixture-head',
-      reviewSubjectHash: 'subject',
-    }),
+    reviews: [exhausted],
   });
   assert.equal(
     actions.some((action) => action.id === 'continue-review-fix'),
@@ -590,7 +580,7 @@ test('bypass is not offered when review policy is already satisfied', () => {
   );
 });
 
-test('exhausted extra-review cannot bypass review subject drift', () => {
+test('exhausted extra-review still offers bypass when only the review subject hash drifted', () => {
   const exhausted: ReviewStatus = {
     reviewerSessionId: 'fixture-session-' + 'review-3',
     mode: 'cold' as const,
@@ -615,7 +605,7 @@ test('exhausted extra-review cannot bypass review subject drift', () => {
   });
   assert.equal(
     actions.some((action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION),
-    false,
+    true,
   );
   assert.equal(
     actions.some((action) => action.id === 'continue-review-fix'),
@@ -655,16 +645,8 @@ test('bypass remains available before a newer review exhausts its retries', () =
   const actions = publicationGateDecisionActions({
     reviewSatisfied: false,
     pendingReviewContinuation: later,
-    reviews: [
-      oldCap,
-      {
-        ...later,
-        reviewedHeadSha: 'new-head',
-        reviewedReviewSubjectHash: 'subject',
-        reviewSnapshot: makeReadyGatePackage({ headSha: 'new-head' }).reviewSnapshot,
-      },
-    ],
-    preparedPackage: makeReadyGatePackage({ headSha: 'new-head', reviewSubjectHash: 'subject' }),
+    reviews: [oldCap, later],
+    preparedPackage: { headSha: 'new-head' },
   });
   assert.equal(
     actions.some((action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION),
@@ -677,7 +659,7 @@ test('bypass remains available before a newer review exhausts its retries', () =
 });
 
 for (const verdict of [undefined, 'pass', 'skipped', 'issues'] as const) {
-  test(`review-blocked gate refuses unbound bypass for ${verdict ?? 'missing'} review`, () => {
+  test(`review-blocked gate offers explicit bypass for ${verdict ?? 'missing'} review`, () => {
     const actions = publicationGateDecisionActions({
       reviewSatisfied: false,
       reviews: verdict
@@ -695,7 +677,7 @@ for (const verdict of [undefined, 'pass', 'skipped', 'issues'] as const) {
     });
     assert.equal(
       actions.find((action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION)?.style,
-      undefined,
+      'danger',
     );
     assert.equal(
       actions.some((action) => action.id === 'approve-publish'),
