@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Alert } from 'react-native';
 
-import { ACCOUNT_SESSION_CONTROL } from '@farmslot/protocol';
+import { ACCOUNT_SESSION_CONTROL, type PersonSessionAuth } from '@farmslot/protocol';
 import { accountSignOutConfirmation, confirmAccountSignOut } from '@farmslot/review-dispatch';
 
 import {
@@ -25,7 +25,8 @@ export type ProfileConnectionTestState = {
 
 export type ImportedPairingProfile = {
   profile: GatewayProfile;
-  secret: string;
+  secret?: string;
+  personSession?: PersonSessionAuth;
 };
 
 export type PairingProfileReachability = {
@@ -282,7 +283,7 @@ export function startImportedPairingProfileTests(
   importedProfiles: ImportedPairingProfile[],
 ): Promise<PairingProfileReachability>[] {
   return importedProfiles.map(async (importedProfile) => {
-    const auth = authCredentialsForSecret(importedProfile.profile, importedProfile.secret);
+    const auth = await authCredentialsForProfile(importedProfile.profile);
     try {
       const result = await testGatewayConnection(importedProfile.profile.url, auth, {
         connectMs: PAIRING_CONNECT_TIMEOUT_MS,
@@ -368,13 +369,6 @@ function testingState(profile: GatewayProfile, verb: string): ProfileConnectionT
 
 async function authCredentialsForProfile(profile: GatewayProfile): Promise<GatewayAuthCredentials> {
   return (await prepareGatewayProfileLogin(profile)).credentials;
-}
-
-function authCredentialsForSecret(profile: GatewayProfile, secret: string): GatewayAuthCredentials {
-  if (!secret) return {};
-  if (profile.authMode === 'password') return { password: secret };
-  if (profile.authMode === 'token') return { token: secret };
-  return {};
 }
 
 export function connectionHealthNeedsAttention(

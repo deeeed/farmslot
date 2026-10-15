@@ -53,7 +53,7 @@ function saved(id = 'a'): PersonSessionAuth {
     },
   };
 }
-function verified(subjectKind: 'person' | 'service'): GatewayAuthConnectResult {
+function verified(subjectKind: 'person' | 'service' | 'node'): GatewayAuthConnectResult {
   return {
     ok: true,
     clientKind: 'companion',
@@ -165,4 +165,11 @@ test('the secure writer rejects a complete access grant', async () => {
   });
   await assert.rejects(rejected, /Invalid device session storage/);
   assert.equal(secrets.has('selected-secret'), false);
+});
+
+test('a verified node credential retains the existing non-person storage path', async () => {
+  const login = await api.prepareGatewayProfileLogin(profile, 'verified-node');
+  await login.commitVerifiedCredential(verified('node'));
+  assert.equal(await api.readGatewayProfileSecret(profile), 'verified-node');
+  assert.equal(await api.readGatewayProfilePersonSession(profile), null);
 });

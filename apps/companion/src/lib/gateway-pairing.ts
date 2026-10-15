@@ -1,9 +1,8 @@
-import type { PairingExchangeResult } from '@farmslot/protocol';
-
 import {
   exchangeGatewayPairingQr,
   type GatewayPairingQrPayload,
   type GatewayPairingQrProfile,
+  type PairedGatewayProfile,
 } from './gateway-pairing-exchange';
 import { inferGatewayProfileKindFromUrl } from './gateway-profile-kind';
 import {
@@ -20,7 +19,8 @@ export function parseGatewayPairingQr(data: string): GatewayPairingQrPayload {
   try {
     parsed = JSON.parse(data);
   } catch (error) {
-    throw new Error(`Invalid pairing QR JSON: ${(error as Error).message}`);
+    if (!(error instanceof SyntaxError)) throw error;
+    throw new Error('Invalid pairing QR JSON.');
   }
 
   const payload = parsed as Partial<GatewayPairingQrPayload & GatewayPairingQrProfile>;
@@ -50,7 +50,7 @@ export function parseGatewayPairingQr(data: string): GatewayPairingQrPayload {
 }
 
 export function profileFromPairingResult(
-  profile: PairingExchangeResult['profile'],
+  profile: PairedGatewayProfile,
   profileId = profileIdForPairedProfile(profile),
 ): GatewayProfile {
   const kind = inferGatewayProfileKindFromUrl(profile.url);
@@ -80,7 +80,7 @@ function normalizePairingProfile(profile: unknown, index: number): GatewayPairin
   };
 }
 
-function profileIdForPairedProfile(profile: PairingExchangeResult['profile']): string {
+function profileIdForPairedProfile(profile: PairedGatewayProfile): string {
   try {
     const parsed = new URL(profile.url);
     const protocol = parsed.protocol.replace(':', '');

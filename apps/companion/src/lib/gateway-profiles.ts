@@ -235,9 +235,9 @@ export async function prepareGatewayProfileLogin(
           throw new Error('The gateway did not verify this person sign-in.');
         await persistPerson(pendingPerson);
       } else if (explicit && result.authMode !== 'none') {
-        if (result.principal?.subjectKind !== 'service')
+        if (result.principal?.subjectKind !== 'service' && result.principal?.subjectKind !== 'node')
           throw new Error(
-            'The gateway must identify this service credential before it can be saved.',
+            'The gateway must identify this service or node credential before it can be saved.',
           );
         await serializeProfileWrite(key, async () => {
           if (!sameLogin(await storedLogin(profile), expected))

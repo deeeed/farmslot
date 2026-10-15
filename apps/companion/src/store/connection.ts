@@ -6,6 +6,7 @@ import {
   type DecisionListResult,
   Events,
   type FleetStatusResult,
+  type GatewayAuthConnectResult,
   Methods,
   type MonitorViolationPayload,
   type PendingDecision,
@@ -123,6 +124,7 @@ interface ConnectionStore {
     profile: GatewayProfile,
     secret?: string,
     personSession?: PersonSessionAuth,
+    verification?: GatewayAuthConnectResult,
   ) => Promise<void>;
   setProfileAuth: (
     profileId: string,
@@ -562,6 +564,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     profile: GatewayProfile,
     secret?: string,
     personSession?: PersonSessionAuth,
+    verification?: GatewayAuthConnectResult,
   ) => {
     const normalizedProfile: GatewayProfile = {
       ...profile,
@@ -577,10 +580,12 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       if (current && current.session.id !== personSession.session.id)
         throw new Error('Sign out this device before replacing its person login.');
       await login.credentials.sessionStorage.save(personSession);
-      const result = await testGatewayConnection(normalizedProfile.url, login.credentials);
+      const result =
+        verification ?? (await testGatewayConnection(normalizedProfile.url, login.credentials));
       await login.commitVerifiedCredential(result);
     } else if (secret?.trim() && normalizedProfile.authMode !== 'none') {
-      const result = await testGatewayConnection(normalizedProfile.url, login.credentials);
+      const result =
+        verification ?? (await testGatewayConnection(normalizedProfile.url, login.credentials));
       await login.commitVerifiedCredential(result);
     }
     const profiles = mergeGatewayProfiles([

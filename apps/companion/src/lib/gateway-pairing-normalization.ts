@@ -1,4 +1,4 @@
-import type { PairingExchangeResult } from '@farmslot/protocol';
+import type { GatewayPairingExchange, PairedGatewayProfile } from './gateway-pairing-exchange';
 
 export interface GatewayPairingQrProfileForExchange {
   url: string;
@@ -7,8 +7,8 @@ export interface GatewayPairingQrProfileForExchange {
 
 export function profileFromPairingExchange(
   qrProfile: GatewayPairingQrProfileForExchange,
-  exchangeResult: PairingExchangeResult,
-): PairingExchangeResult['profile'] {
+  exchangeResult: GatewayPairingExchange,
+): PairedGatewayProfile {
   return {
     ...exchangeResult.profile,
     name: exchangeResult.profile.name.trim() || qrProfile.profileName?.trim() || 'Farmslot Gateway',

@@ -280,7 +280,7 @@ export function gatewaySupportsPing(result: GatewayAuthConnectResult): boolean {
   return result.capabilities?.gatewayPing === true;
 }
 
-function isGatewayAuthConnectResult(value: unknown): value is GatewayAuthConnectResult {
+export function isGatewayAuthConnectResult(value: unknown): value is GatewayAuthConnectResult {
   if (!isRecord(value) || value.ok !== true || !isRecord(value.capabilities)) return false;
   return (
     (value.clientKind === 'ui' ||

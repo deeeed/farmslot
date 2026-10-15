@@ -1,4 +1,4 @@
-import type { InteractiveGatewayCredentials } from '@farmslot/protocol';
+import { type InteractiveGatewayCredentials, parsePersonSessionToken } from '@farmslot/protocol';
 
 export type GatewayAuthCredentials = InteractiveGatewayCredentials;
 
@@ -11,13 +11,27 @@ export function gatewayHttpAuthHeaders(auth: GatewayAuthCredentials = {}): Gatew
   return password ? { Authorization: `Basic ${encodeBasicPassword(password)}` } : {};
 }
 
+export function usesPersonHttpAccess(headers: GatewayHttpAuthHeaders): boolean {
+  const credential = gatewayQueryCredential(headers);
+  return credential?.name === 'token' && parsePersonSessionToken(credential.value, 'fsa') !== null;
+}
+
 export function gatewayResourceUrl(uri: string, headers: GatewayHttpAuthHeaders = {}): string {
   const credential = gatewayQueryCredential(headers);
-  if (!credential || hasAuthQueryParam(uri)) return uri;
-
+  if (!credential) return uri;
   const hashIndex = uri.indexOf('#');
-  const base = hashIndex >= 0 ? uri.slice(0, hashIndex) : uri;
-  const hash = hashIndex >= 0 ? uri.slice(hashIndex) : '';
+  const base = hashIndex < 0 ? uri : uri.slice(0, hashIndex);
+  const hash = hashIndex < 0 ? '' : uri.slice(hashIndex);
+  const queryIndex = base.indexOf('?');
+  const query = new URLSearchParams(queryIndex < 0 ? '' : base.slice(queryIndex + 1));
+  if (usesPersonHttpAccess(headers)) {
+    if (!query.has('token') && !query.has('password')) return uri;
+    query.delete('token');
+    query.delete('password');
+    const search = query.toString();
+    return `${queryIndex < 0 ? base : base.slice(0, queryIndex)}${search ? `?${search}` : ''}${hash}`;
+  }
+  if (query.has('token') || query.has('password')) return uri;
   const separator = base.includes('?') ? '&' : '?';
   return `${base}${separator}${credential.name}=${encodeURIComponent(credential.value)}${hash}`;
 }
@@ -37,9 +51,8 @@ export function gatewayFetch(
 ): Promise<Response> {
   // Header-only: fetch fully supports request headers, so the bearer token must
   // never leak into the URL here (where it could land in proxy/request logs or
-  // RN network inspectors). URL-token injection (gatewayResourceUrl /
-  // gatewayResourceSource) is reserved for header-incapable consumers — RN
-  // <Image>/Source — that cannot send an Authorization header.
+  // RN network inspectors). Person media uses the same headers; legacy service
+  // resource URLs retain their existing compatibility behavior.
   return fetch(uri, {
     ...init,
     headers: {
@@ -66,15 +79,6 @@ function gatewayQueryCredential(
     return null;
   }
   return null;
-}
-
-function hasAuthQueryParam(uri: string): boolean {
-  const queryStart = uri.indexOf('?');
-  if (queryStart < 0) return false;
-  const hashStart = uri.indexOf('#', queryStart);
-  const query = uri.slice(queryStart + 1, hashStart >= 0 ? hashStart : undefined);
-  const params = new URLSearchParams(query);
-  return params.has('token') || params.has('password');
 }
 
 function encodeBasicPassword(password: string): string {
