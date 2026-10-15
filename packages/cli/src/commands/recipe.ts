@@ -1,5 +1,4 @@
 import { existsSync } from 'node:fs';
-import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import { type Command, Option } from 'commander';
@@ -463,16 +462,12 @@ export function registerRecipeCommand(program: Command): void {
           taskDir && selection
             ? path.join(taskDir, 'artifacts', selection.relativeArtifactRoot)
             : undefined;
-        if (taskDir && selectedDir) {
-          const root = await realpath(path.join(taskDir, 'artifacts'));
-          const relative = path.relative(root, await realpath(selectedDir));
-          if (
-            relative === '..' ||
-            relative.startsWith(`..${path.sep}`) ||
-            path.isAbsolute(relative)
-          )
-            throw new Error('Selected recipe attempt resolves outside its root.');
-        }
+        if (
+          taskDir &&
+          selectedDir &&
+          !shared.isPathWithin(path.join(taskDir, 'artifacts'), selectedDir)
+        )
+          throw new Error('Selected recipe attempt is missing or resolves outside its root.');
         const candidates = taskDir
           ? [taskDir]
           : (shared.readLatestProofJournal(context!.target.value, context!.project!.runtimeDir)

@@ -532,7 +532,7 @@ for (const selectedState of ['present', 'missing', 'outside', 'nested'] as const
       assert.equal(process.exitCode, 1, output);
       assert.match(
         result.error.message,
-        selectedState === 'outside' ? /outside its root/ : /ENOENT/,
+        selectedState === 'nested' ? /ENOENT/ : /outside its root/,
       );
     }
     assert.equal(await readFile(pointer, 'utf8'), before);
