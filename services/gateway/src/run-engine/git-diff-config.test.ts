@@ -11,7 +11,11 @@ import { reviewDiffHash } from '../core/review-diff-identity.js';
 import { captureCurrentReviewSnapshot } from '../review/snapshots.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
-import { cappedGitDiffCommand, cappedRunSourceDiffCommand } from './diff-artifacts.js';
+import {
+  cappedGitDiffCommand,
+  cappedRunSourceDiffCommand,
+  runSourceDiffNumstatCommand,
+} from './diff-artifacts.js';
 
 function fixture(t: TestContext) {
   const repo = mkdtempSync(path.join(tmpdir(), 'farmslot-diff-config-'));
@@ -110,6 +114,16 @@ test('tracked and untracked patches ignore external diff, textconv, color and fo
   assert.equal(existsSync(`${converter}.ran`), false);
   assert.match(actual, /diff --git a\/untracked.ts b\/untracked.ts/);
   assert.doesNotMatch(actual, /\u001b\[/);
+  const numstat = f.git(...gitDiffArgs(['--numstat', f.base, '--', 'tracked.ts']));
+  assert.equal(numstat, '1\t1\ttracked.ts\n');
+  const stat = f.git(...gitDiffArgs(['--stat', f.base, '--', 'tracked.ts']));
+  assert.match(stat, /1 file changed/);
+  assert.doesNotMatch(stat, /^diff --git |^@@ /m);
+  assert.equal(
+    f.shell(runSourceDiffNumstatCommand(f.base, ['*.ts'])),
+    '1\t1\ttracked.ts\n1\t0\tuntracked.ts\n',
+  );
+
   assert.equal(
     f.git(...gitDiffArgs([f.base, '--', 'tracked.ts'])),
     f.shell(`${GIT_DIFF_COMMAND} ${f.base} -- tracked.ts`),
