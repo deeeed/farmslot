@@ -140,6 +140,24 @@ A bridge compiled into an app needs no generated overlay, delegate stamp or inst
 
 `@farmslot/adapter-sdk` owns the additive `AdapterHarness` declaration and validation through existing `defineAdapter` and registry registration. Audiolab's provider consumes the built-in form; existing overlay providers retain their behavior. `@farmslot/recipe-cli/harness` consumes it in healing and existing install/cleanup helpers. Public `farmslot recipe run`, `call`, `launch --verify` and doctor use the same provider; no command, flag, recorder or evidence model is added.
 
+## Amendment 3: Shared task, review and quality commands, 2026-10-15
+
+**Status:** Proposed
+
+### Decision
+
+Move the remaining referenced helpers onto `farmslot`: task initialization, identity verification, marking and closeout share `task`; review checklists and domain selection share `review`; recipe quality uses `recipe quality`. Reuse the existing task producer, checklist marker, quality builder and template/library resolution. Providers supply project gates and rule data through `ProjectProvider.commandOptions`.
+
+Task provenance freezes the CLI identity separately from its resolved provider and libraries. Marking and closeout verify that identity and preserve the selected task's gates. Moving a caller cannot weaken its completion requirements or replace retained provenance.
+
+### Rationale
+
+Deleting project command glue while these callers remain would remove working behavior or bypass project gates. Keeping generic mechanics in each provider would retain the duplication this migration removes.
+
+### Consequences and public surface
+
+The [helper cutover specification](../reference/project-recipe-contract.md#proposed-helper-cutover) defines the routes, package owners and equivalence checks. Existing bindings, artifacts, resource authority and engine behavior remain in force. Additive public APIs require reviewed minor releases and coordinated consumers. Each old route is removed only after its callers and behavior have a proven replacement.
+
 Built-in install/cleanup reporting means no overlay operation is needed, not that verification passed. App lifecycle, resource ownership, cancellation, HUD, capture and evidence requirements remain unchanged. Existing overlay files are not deleted by selecting built-in mode.
 
 This is a pre-1.0 SDK/CLI addition requiring a coordinated minor release, exact provider dependency pins and installed-host qualification. The SDK ABI and artifact schema versions do not change; older hosts are not qualified to consume the new declaration. Implementation and publication are separate gates after amendment approval.

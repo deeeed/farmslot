@@ -319,6 +319,52 @@ Each project retains its own funding, fixture, plugin, device and collector poli
 
 Existing published APIs retain their accepted behavior until the coordinated cutover. Proposed additions are experimental until reviewed release commits, CI and package checks pass. New pre-1.0 SDK features and breaking type renames receive minor releases; unchanged dependants receive required coordinated pin updates. Shared manifests, lockfiles and release versions require a reviewed release proposal before editing/publication. Registry-only consumer checks MUST prove dependency closure; a local source override cannot substitute for published dependencies.
 
+## Proposed helper cutover
+
+**Status:** Proposed, under ADR-068 Amendment 3. Existing published behavior remains authoritative until implementation and release.
+
+### Public surface
+
+| Canonical command                                               | Replaces                                       | Named consumer                                           |
+| --------------------------------------------------------------- | ---------------------------------------------- | -------------------------------------------------------- |
+| `farmslot task init`                                            | Project `task init`                            | Task-template initialization wrappers                    |
+| `farmslot task verify`                                          | Private executable/receipt verification        | Task execution wrappers before invoking the frozen entry |
+| `farmslot task <mark\|closeout>`                                | Project `checklist mark`, `checklist closeout` | Generated task markers and closeout wrappers             |
+| `farmslot review <checklist\|domain>`                           | Project `review checklist`, `domain`           | Review workflows and domain-selection callers            |
+| `farmslot recipe quality <build\|plan\|advise\|advisor-status>` | Project `recipe-quality` operations            | Recipe authoring and quality-artifact consumers          |
+
+The canonical grammar MUST retain each referenced operation's argument mapping, output fields, exit codes and refusal behavior. It MUST preserve task/template selection, role-specific checklist and signal targets, subtask handling, incremental review base/since ranges, domain and parity resolution, quality guidance and explicit advisor policy. Root controls retain their meanings. Validation MUST precede provider effects; generated help and references MUST use that grammar. There MUST be no second public `checklist` or `recipe-quality` alias.
+
+`@farmslot/recipe-cli/harness` owns these additive provider options and exports, consumed by the root CLI and project provider composition:
+
+| Surface                                                                      | Contract                                                                                                                             |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `ProjectProvider.commandOptions.task?: ProjectTaskCommandOptions`            | `init?: TaskInitCommandOptions` and `checklist?: ChecklistCommandOptions`, reusing the existing types, producer and marker           |
+| `ProjectProvider.commandOptions.recipeQuality?: RecipeQualityCommandOptions` | Existing builder and optional advisor subcommands; `guidance?: string` carries project quality text                                  |
+| `ProjectProvider.commandOptions.review?: ReviewCommandOptions`               | Project rule data: `baseRules?: string`, `runtimeIds?: readonly string[]`, and `parityRuntimeIds?: Readonly<Record<string, string>>` |
+
+Generic parsing, task-directory production, marking, quality validation, domain matching and review rendering MUST have one shared implementation. Existing template/library resolution remains authoritative. Providers retain project gate predicates, closeout policy, supported runtime IDs, parity mappings and rule text. They MUST NOT invoke their retired CLI or copy a shared handler.
+
+### Task identity and gates
+
+Task initialization MUST freeze the actual Farmslot executable and implementation identity alongside the existing resolved provider, library and configuration identities in the task's execution provenance. The shared producer and provenance verification belong to `@farmslot/agent-runtime`; the recipe host supplies its existing binding and identity data. A provider package MUST NOT be recorded as the CLI executable. New wrappers MUST use the shared verifier, replacing their private resolver implementation.
+
+The existing `artifacts/harness-provenance.json` receipt retains its `schemaVersion`, `package`, `source`, `resolvedExecutable`, `entrySha256`, `packageTreeSha256` and `recordedAt` fields and their meanings. New initialization adds `bindingIdentity: RecipeConformanceIdentity | null`, using the existing protocol identity. `null` means an unbound static task, not an omitted project check. A resolved project binding MUST NOT be discarded to obtain that mode. Missing identity in an older receipt MUST NOT be interpreted as a new unbound task.
+
+`@farmslot/agent-runtime` exports `TaskExecutionProvenance` and `verifyTaskExecutionProvenance(taskDir, expectedBindingIdentity)`. The verifier returns the checked receipt or refuses before mutation; it checks the recorded executable/package/source bytes and the supplied current binding identity. Root `task verify`, marking and closeout consume it. Execution wrappers use `task verify --json` through the trusted installed CLI before invoking the verified frozen entry; they MUST NOT first execute a path supplied by an unchecked receipt.
+
+Generated markers MUST target the frozen CLI's `task mark` operation. A bound project's provider MUST opt into task composition through `commandOptions.task`; an empty declaration accepts shared defaults only when its selected template requires no project gate. Explicit caller options retain their existing authority; they MUST NOT waive required gates. Marking and closeout MUST verify recorded identities before changing task state and preserve project checks, required quality evidence, closeout refusals and explicit sharing consent. Missing required provider hooks MUST refuse; an ungated generic fallback is invalid. Helpers MUST NOT acquire resources, repair a runtime or manufacture recipe proof to satisfy a gate. Unbound static task creation remains supported with explicit template inputs; it does not imply project support.
+
+Existing tasks and receipts MUST retain their recorded meaning. Verification MUST NOT silently repin them, rewrite their markers, regenerate acceptance identities or replace retained evidence. Any supported rebinding remains an explicit existing resume operation, outside ordinary marking. Artifact schemas and selected engine publication remain unchanged.
+
+### Equivalence and deletion
+
+Before moving a caller, its replacement MUST prove the same positive result and refusal cases. Checks include rejected gates leaving checklist/signal state untouched; role and subtask targets; immutable identity drift; review domain/parity/base/since output; invalid quality input writing nothing; and advisor opt-out making no model request. Builder success alone is not a quality judgment.
+
+Help, task verification, template selection and advisor status MUST preserve their read-only behavior. Explicit review generation and advice retain only their existing declared effects and authorization.
+
+Every active pack, skill, template, library and completion caller MUST move or be explicitly retired before its producer is deleted. Other legacy operations, including settings, provisioning and artifact rendering, retain their existing disposition and equivalence requirements. This amendment does not authorize dropping them. Final acceptance still requires the original project/target, real-dispatch and tutorial checks.
+
 A schema-v1 report may add optional data without changing existing meaning. Incompatible semantics require an explicit schema transition. The generated reference MUST change with the canonical grammar. No flag or SDK export may ship without the consumer named here or in an approved revision of this specification.
 
 ## 7. Acceptance gates
