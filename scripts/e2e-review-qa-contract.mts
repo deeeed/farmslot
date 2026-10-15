@@ -2212,7 +2212,7 @@ try {
 } finally {
   await stopGateway();
   await upstream?.close();
-  if (sourceProfileProof && process.platform === 'darwin') {
+  if (sourceProfileProof) {
     const mounts = path.join(fixture, 'home/sources/gateway/mounts');
     const directories = await readdir(mounts, { withFileTypes: true }).catch((error) => {
       if (error.code === 'ENOENT') return [];
@@ -2221,8 +2221,11 @@ try {
     for (const entry of directories) {
       if (!entry.isDirectory()) continue;
       const mount = path.join(mounts, entry.name);
-      if ((await stat(mount)).dev !== (await stat(mounts)).dev)
-        execFileSync('hdiutil', ['detach', '-quiet', mount], { stdio: 'pipe' });
+      if ((await stat(mount)).dev !== (await stat(mounts)).dev) {
+        if (process.platform === 'darwin')
+          execFileSync('hdiutil', ['detach', '-quiet', mount], { stdio: 'pipe' });
+        else if (process.platform === 'linux') execFileSync('umount', [mount], { stdio: 'pipe' });
+      }
     }
   }
   // The private tmux server outlives the gateway; its socket exists only if it started.
