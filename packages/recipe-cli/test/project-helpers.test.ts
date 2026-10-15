@@ -249,3 +249,42 @@ test('the selected action manifest is retained with its configuration', async (t
     assert.equal(fs.readFileSync(cli.actionManifest, 'utf8'), '{"actions":[]}');
   });
 });
+
+test('retained hosts preserve recipe runtime, farm runtime and declared conformance checks', async (t) => {
+  const f = fixture(t);
+  const config = f.options.projects?.[0]?.config;
+  assert.ok(config?.recipe);
+  const checks = [{ recipe: 'example/smoke', params: { bounded: true } }];
+  const selected = {
+    ...config,
+    paths: { ...config.paths, runtimeDir: 'farm-runtime' },
+    recipe: { ...config.recipe, checks },
+  };
+  fs.writeFileSync(path.join(f.pack, 'project.json'), JSON.stringify(selected));
+  const options = {
+    ...f.options,
+    projects: [{ root: f.pack, config: selected }],
+    tokens: ['--project', 'example', '--runtime-dir', 'recipe-runtime'],
+    options: { runtimeDir: 'recipe-runtime' },
+  };
+  let freshRecipe: string | undefined;
+  let freshFarm: string | undefined;
+  await withProjectRecipeHost(options, async (host) => {
+    freshRecipe = host.context.project?.runtimeDir;
+    freshFarm = host.context.project?.farmRuntimeDir;
+    assert.notEqual(freshRecipe, freshFarm);
+    retainTaskExecution(
+      f.taskDir,
+      await projectTaskExecution(host, {
+        executable: path.join(f.installed, 'farmslot'),
+        packageRoot: f.installed,
+        distributionRoot: f.installed,
+      }),
+    );
+  });
+  await withTaskProjectHost({ ...f.options, tokens: [] }, f.taskDir, async (host) => {
+    assert.equal(host.context.project?.runtimeDir, freshRecipe);
+    assert.equal(host.context.project?.farmRuntimeDir, freshFarm);
+    assert.deepEqual(host.context.project?.checks, checks);
+  });
+});

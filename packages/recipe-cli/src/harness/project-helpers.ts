@@ -11,6 +11,7 @@ import { isRecord, type RecipeConformanceSource } from '@farmslot/protocol';
 
 import { optionValues } from './command-contract.js';
 import { recipeConformanceIdentity } from './conformance.js';
+import { readProject } from './context.js';
 import { ProjectBindingError } from './context-state.js';
 import {
   type ProjectRecipeHost,
@@ -24,6 +25,7 @@ interface TaskProjectSelection {
   checkoutRoot?: string;
   provider?: { ref: string; module: string; root: string; export: string };
   runtimeDir?: string;
+  farmRuntimeDir?: string;
   artifactDir?: string;
   libraryOwners?: Record<string, string>;
   manifest?: string;
@@ -86,6 +88,7 @@ function readSelection(taskDir: string): TaskProjectSelection {
     typeof value.packRoot !== 'string' ||
     typeof value.checkoutRoot !== 'string' ||
     typeof value.runtimeDir !== 'string' ||
+    typeof value.farmRuntimeDir !== 'string' ||
     typeof value.artifactDir !== 'string' ||
     !isRecord(provider) ||
     typeof provider.ref !== 'string' ||
@@ -109,6 +112,7 @@ function readSelection(taskDir: string): TaskProjectSelection {
     packRoot: value.packRoot,
     checkoutRoot: value.checkoutRoot,
     runtimeDir: value.runtimeDir,
+    farmRuntimeDir: value.farmRuntimeDir,
     artifactDir: value.artifactDir,
     provider: {
       ref: provider.ref,
@@ -172,7 +176,8 @@ export async function projectTaskExecution(
     packRoot: binding.root,
     checkoutRoot: binding.checkoutRoot,
     provider: binding.provider,
-    runtimeDir: binding.farmRuntimeDir,
+    runtimeDir: binding.runtimeDir,
+    farmRuntimeDir: binding.farmRuntimeDir,
     artifactDir: binding.artifactDir,
   };
   return {
@@ -210,6 +215,7 @@ export async function withTaskProjectHost<T>(
     !selection.packRoot ||
     !selection.checkoutRoot ||
     !selection.runtimeDir ||
+    !selection.farmRuntimeDir ||
     !selection.artifactDir
   )
     throw new Error('An unbound task has no project provider.');
@@ -277,6 +283,8 @@ export async function withTaskProjectHost<T>(
   const invocation = options.invocation
     ? { ...options.invocation, argv: rewrite(options.invocation.argv, false) }
     : undefined;
+  const config = readProject(retained(path.join(selection.packRoot, 'project.json')));
+  if (!config.recipe) throw new Error('The retained project has no recipe declaration.');
   return withProjectRecipeHostContext(
     {
       ...options,
@@ -307,14 +315,14 @@ export async function withTaskProjectHost<T>(
         {
           root: retained(selection.packRoot),
           config: {
-            name: selected.project,
-            repoUrl: '',
-            paths: { runtimeDir: selection.runtimeDir, artifactDir: selection.artifactDir },
-            apps: selected.app ? [selected.app] : [],
+            ...config,
+            paths: {
+              ...config.paths,
+              runtimeDir: selection.farmRuntimeDir,
+              artifactDir: selection.artifactDir,
+            },
             recipe: {
-              adapter: selected.adapter,
-              ...(selected.app ? { app: selected.app } : {}),
-              ...(selected.domain ? { domain: selected.domain } : {}),
+              ...config.recipe,
               provider: {
                 module: path.relative(provider.root, provider.module),
                 root: { projectPath: retained(provider.root) },

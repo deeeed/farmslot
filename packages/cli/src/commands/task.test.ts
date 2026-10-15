@@ -80,7 +80,7 @@ test('mark forwarding preserves explicit negation and consumes binding controls'
         '--adapter',
         'headless',
         '--mark-last',
-        ...(negate ? ['--no-self-review'] : []),
+        ...(negate ? ['--no-review'] : []),
       ],
       { from: 'user' },
     );
@@ -88,7 +88,7 @@ test('mark forwarding preserves explicit negation and consumes binding controls'
       'task-dir',
       'complete',
       '--mark-last',
-      ...(negate ? ['--no-self-review'] : []),
+      ...(negate ? ['--no-review'] : []),
       '--json',
     ]);
   }
@@ -137,4 +137,45 @@ test('initializing a retained task again preserves its receipt and authored file
     fs.readFileSync(path.join(task, 'artifacts/harness-provenance.json'), 'utf8'),
     receipt,
   );
+});
+
+test('current SDK operator, child and completion grammar forwards without aliases', async () => {
+  for (const args of [
+    ['wait', '--who', 'operator', '--reason', 'review setup'],
+    ['resume'],
+    [
+      'sub',
+      'start',
+      'child',
+      '--step',
+      '1',
+      '--from',
+      'inline:Child',
+      '--var',
+      'ONE=1',
+      '--var',
+      'TWO=2',
+    ],
+    ['sub', 'child', 'complete', '--report', 'artifacts/child.md'],
+    ['complete', '--no-review'],
+  ]) {
+    const program = cli();
+    const mark = program.commands
+      .find((entry) => entry.name() === 'task')!
+      .commands.find((entry) => entry.name() === 'mark')!;
+    let forwarded: string[] = [];
+    mark.action(() => {
+      forwarded = taskHelperArgv(mark);
+    });
+    await program.parseAsync(['task', 'mark', 'task-dir', ...args], { from: 'user' });
+    assert.equal(forwarded[0], 'task-dir');
+    assert.equal(forwarded[1], args[0]);
+    for (const flag of ['--who', '--report', '--no-review'])
+      assert.equal(forwarded.includes(flag), args.includes(flag));
+    if (args.includes('--var'))
+      assert.deepEqual(
+        forwarded.filter((value, index) => forwarded[index - 1] === '--var'),
+        ['ONE=1', 'TWO=2'],
+      );
+  }
 });

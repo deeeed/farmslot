@@ -3,8 +3,6 @@
 title: 'Task directory contract'
 ---
 
-# Task directory contract
-
 One directory per run, the same shape whether Farmslot dispatched the worker or an engineer started the task from a skill. Farmslot defines the files; `@farmslot/agent-runtime` and any harness built on it consume them.
 
 Review completion MUST wait for the reviewer's own terminal mark before archiving
@@ -132,11 +130,11 @@ The root task commands consume `@farmslot/recipe-cli/harness`'s `projectTaskExec
 
 ## Deterministic checklist checks
 
-[ADR-064](../adr/064-deterministic-checklist-checks.md) defines task-owned command receipts before publication.
+[ADR-064](https://github.com/deeeed/farmslot/blob/main/docs/adr/064-deterministic-checklist-checks.md) defines task-owned command receipts before publication.
 
-Its [CI decision check context amendment](../adr/064-deterministic-checklist-checks.md#amendment-1-2026-10-12-ci-decision-check-context)
+Its [CI decision check context amendment](https://github.com/deeeed/farmslot/blob/main/docs/adr/064-deterministic-checklist-checks.md#amendment-1-2026-10-12-ci-decision-check-context)
 owns the read-only gate/current comparison. The linked
-[CI decision specification](ci-decision-check-context.md) defines retained provider
+[CI decision specification](https://github.com/deeeed/farmslot/blob/main/docs/reference/ci-decision-check-context.md) defines retained provider
 snapshots and refresh availability; those reads do not replace command receipts
 or resolve publication gates.
 
@@ -229,8 +227,8 @@ A project may ship `templates/task-document.md`. The writer renders it with the 
 - `subtasks/` is written by `mark sub` only, and a step may own one child unit for the life of the task directory. A child unit is observed, never spawned: registering one writes files and starts no process. A parent terminal mark is refused while any registered child is unsettled, by `mark` and again by the gateway's terminal check. Settled is `complete` or `done`: a `blocked` child is terminal for the run but keeps its step. The verbs and their refusals live in [Agent runtime](agent-runtime.md).
 - A child unit is not a role switch. It never writes `checklist-target.json` and never changes the run's active task file, so a child may hang off `CHECKLIST.md` or off a role checklist such as `SELF-REVIEW.md`; the parent link names which. A child progress update is live only while its parent checklist is the active one, and `running` with no recent mark projects as `stale` — a projection only, never a status in the file.
 - `artifacts/acceptance-status.json` is a task-namespace projection of the selected recipe engine's schema-2 ledger. The engine is the sole normal verdict authority; agent-runtime transfers its claims and never reduces or records manual verdicts. Writes and current successful completion reject schema 1. Retained schema-1 ledgers are display only with an explicit limitation; migration preserves original bytes and frozen decisions, never manufactures moments or task bindings. Recipe verdicts come from eligible executed expectations and required occurrences; action success alone is not proof, and visual claims require verified review. Successful completion requires a current verdict for every registered criterion even without an acceptance opt-in; missing ledgers or unreadable handoffs refuse. Weak or missing engine verdicts refuse unless the resolved contract sets `acceptance.allowWeak`. No-change and self-review keep their existing outcome contracts. `acceptance.require` cannot disable successful-completion enforcement. Per-flow `acceptance.allowWeak` overrides inherit unspecified keys. Standalone validation can request the same check with `--require-acceptance-status`. Current acceptance readers never derive relationships from manifest `covers` or substitute `recipe-coverage.md`.
-- Schema-2 verdicts and task projections are engine-owned; `ac` is read-only and cannot override them. With a gateway-derived `claimReviewGate`, completion validates the selected package through the canonical SDK reader and can present unresolved verdicts at human review. Approval remains blocked. Only the verified `run.overrideClaim` operation records an untestable exception in the Run store; engine/task bytes stay unchanged. Without a human gate, completion keeps its existing refusal. [ADR-062 Amendment 4](recorded-run-evidence.md#verified-claim-overrides) defines authority and freshness.
+- Schema-2 verdicts and task projections are engine-owned; `ac` is read-only and cannot override them. With a gateway-derived `claimReviewGate`, completion validates the selected package through the canonical SDK reader and can present unresolved verdicts at human review. Approval remains blocked. Only the verified `run.overrideClaim` operation records an untestable exception in the Run store; engine/task bytes stay unchanged. Without a human gate, completion keeps its existing refusal. [ADR-062 Amendment 4](https://github.com/deeeed/farmslot/blob/main/docs/reference/recorded-run-evidence.md#verified-claim-overrides) defines authority and freshness.
 
 - Lightweight interactive dev keeps its own pairing: `CHECKLIST.md` is the operator-agreed plan and `TASK.md` the context.
 
-See also: [Agent runtime](agent-runtime.md), [Template variables](template-variables.md), and the worker artifacts by flow reference on the documentation site.
+See also: [Agent runtime](agent-runtime.md), [Template variables](https://github.com/deeeed/farmslot/blob/main/docs/reference/template-variables.md), and the worker artifacts by flow reference on the documentation site.

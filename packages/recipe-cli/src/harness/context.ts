@@ -1142,7 +1142,7 @@ export async function loadProjectProvider(
   return result;
 }
 
-function readProject(file: string): ProjectConfig {
+export function readProject(file: string): ProjectConfig {
   const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as ProjectConfig & {
     repo_url?: string;
     default_branch?: string;

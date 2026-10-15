@@ -32,11 +32,12 @@ const hostOnly = new Set([
 ]);
 
 /** Preserve task helper flags while consuming root binding controls once. */
-export function taskHelperArgv(command: Command): string[] {
+export function taskHelperArgv(command: Command, includePlatform = false): string[] {
   const argv = projectCommandInvocation(command, {}).argv;
   const forwarded: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
-    if (hostOnly.has(argv[index]!.split('=', 1)[0]!)) {
+    const flag = argv[index]!.split('=', 1)[0]!;
+    if (hostOnly.has(flag) || (!includePlatform && flag === '--platform')) {
       if (!argv[index]!.includes('=')) index += 1;
     } else forwarded.push(argv[index]!);
   }
@@ -72,7 +73,7 @@ export async function runTaskCommand(
 ): Promise<number> {
   const shared = await import('@farmslot/recipe-cli/harness');
   const options: CliOptions = { ...command.optsWithGlobals() };
-  const argv = taskHelperArgv(command);
+  const argv = taskHelperArgv(command, action === 'init');
   const taskDir = path.resolve(command.args[0]!);
   if (action === 'init' && fs.existsSync(path.join(taskDir, 'artifacts/harness-provenance.json'))) {
     shared.verifySelectedTask(taskDir);
@@ -190,29 +191,36 @@ export function registerTaskCommand(program: Command): void {
       .addArgument(
         new Argument('<step>').argParser((step: string) => {
           if (
-            ['start', 'complete', 'no-change', 'blocked', 'sub'].includes(step) ||
+            ['start', 'complete', 'no-change', 'blocked', 'sub', 'wait', 'resume'].includes(step) ||
             (Number.isInteger(Number(step)) && Number(step) >= 1)
           )
             return step;
           throw new InvalidArgumentError(
-            'Use start, a positive step number, complete, no-change, blocked or sub.',
+            'Use start, a positive step number, complete, no-change, blocked, sub, wait or resume.',
           );
         }),
       )
       .argument('[args...]'),
   );
-  for (const flag of ['--reason <text>', '--checklist <path>', '--signal <path>'])
+  for (const flag of [
+    '--reason <text>',
+    '--checklist <path>',
+    '--signal <path>',
+    '--who <name>',
+    '--report <path>',
+  ])
     mark.option(flag);
   for (const flag of [
     '--skip-learnings',
     '--mark-last',
     '--already-fixed',
-    '--no-self-review',
+    '--no-review',
     '--skip-checklist',
     '--allow-empty',
   ])
     mark.option(flag);
   for (const flag of ['--step <number>', '--from <path>']) mark.option(flag);
+  mark.option('--var <key=value>', 'Subtask template variable', collectRecipeOption, []);
   const closeout = recipeProjectOptions(
     task
       .command('closeout')

@@ -750,14 +750,17 @@ Options:
   --reason <text>
   --checklist <path>
   --signal <path>
+  --who <name>
+  --report <path>
   --skip-learnings
   --mark-last
   --already-fixed
-  --no-self-review
+  --no-review
   --skip-checklist
   --allow-empty
   --step <number>
   --from <path>
+  --var <key=value>              Subtask template variable (default: [])
   -h, --help                     display help for command
 ```
 

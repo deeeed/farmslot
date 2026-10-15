@@ -160,4 +160,4 @@ Deleting project command glue while these callers remain would remove working be
 
 ### Consequences and public surface
 
-The [helper cutover specification](../reference/project-recipe-contract.md#proposed-helper-cutover) defines the routes, package owners and equivalence checks. Existing bindings, artifacts, resource authority and engine behavior remain in force. Additive public APIs require reviewed minor releases and coordinated consumers. Each old route is removed only after its callers and behavior have a proven replacement.
+The [helper cutover specification](../reference/project-recipe-contract.md#shared-helper-commands) defines the routes, package owners and equivalence checks. Existing bindings, artifacts, resource authority and engine behavior remain in force. Additive public APIs require reviewed minor releases and coordinated consumers. Each old route is removed only after its callers and behavior have a proven replacement.
