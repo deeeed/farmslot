@@ -659,67 +659,91 @@ test(
   },
 );
 
-for (const mode of ['cold', 'warm'] as const) {
-  test(
-    `recovered source gate records one ${mode} review request with its lineage`,
-    { timeout: 4000 },
-    async (t) => {
-      const { run, next } = sourceGateFixture(t);
-      const prepared = makeReadyGatePackage({
-        reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
-      });
-      let available = false;
-      const dependencies = {
-        ensurePackage: async () => {
-          if (!available) throw new Error('Source disconnected');
-          return prepared;
-        },
-      };
-      const execution = executeReadyGate(run.id, dependencies);
-      const card = await next(execution);
-      const request: ReviewRequestPayload = {
-        runner: 'codex',
-        model: null,
-        effort: null,
-        mode,
-        ...(mode === 'warm'
-          ? {
-              context: {
-                reviewLineages: [
-                  { repository: 'owner/repo', prNumber: 42, reviewId: 'retained-lineage' },
-                ],
+for (const mode of ['cold', 'warm', 'continue-review-fix'] as const) {
+  test(`recovered source gate consumes ${mode} exactly once`, { timeout: 4000 }, async (t) => {
+    const { run, next } = sourceGateFixture(t);
+    const prepared = makeReadyGatePackage({
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    });
+    let available = false;
+    const dependencies = {
+      ensurePackage: async () => {
+        if (!available) throw new Error('Source disconnected');
+        return prepared;
+      },
+    };
+    const execution = executeReadyGate(run.id, dependencies);
+    const card = await next(execution);
+    const request: ReviewRequestPayload | undefined =
+      mode === 'continue-review-fix'
+        ? undefined
+        : {
+            runner: 'codex',
+            model: null,
+            effort: null,
+            mode,
+            ...(mode === 'warm'
+              ? {
+                  context: {
+                    reviewLineages: [
+                      { repository: 'owner/repo', prNumber: 42, reviewId: 'retained-lineage' },
+                    ],
+                  },
+                }
+              : {}),
+          };
+    // Inspection restores the card. RPC consumption stores these typed fields
+    // before waking the real engine decision owner.
+    available = true;
+    card.payload = {
+      kind: 'ready',
+      prNumber: null,
+      repo: null,
+      workerReport: '',
+      branch: prepared.branch,
+      diffStat: prepared.diffStat,
+      prPackage: prepared,
+    };
+    card.resolvedAt = new Date().toISOString();
+    const action = request ? 'request-review' : 'continue-review-fix';
+    card.resolvedAction = action;
+    card.selectionData = request ? { reviewRequest: request } : {};
+    if (!request)
+      updateRun(run.id, {
+        engineState: {
+          ...getRun(run.id)!.engineState,
+          publishGate: {
+            ...getRun(run.id)!.engineState?.publishGate,
+            reviews: [
+              {
+                id: 'review-1',
+                source: 'human-gate',
+                loopNumber: 1,
+                mode: 'cold',
+                verdict: 'issues',
+                unresolvedCount: 1,
+                issues: [{ file: 'example.ts', description: 'Retained finding' }],
+                feedbackSent: false,
+                recoveryContinuationPending: true,
               },
-            }
-          : {}),
-      };
-      // Inspection restores the card. RPC consumption stores these typed fields
-      // before waking the real engine decision owner.
-      available = true;
-      card.payload = {
-        kind: 'ready',
-        prNumber: null,
-        repo: null,
-        workerReport: '',
-        branch: prepared.branch,
-        diffStat: prepared.diffStat,
-        prPackage: prepared,
-      };
-      card.resolvedAt = new Date().toISOString();
-      card.resolvedAction = 'request-review';
-      card.selectionData = { reviewRequest: request };
-      updateRun(run.id, { decisions: [card] });
-      assert.equal(resolveEngineDecision(card.id, 'request-review'), true);
-      assert.equal(await execution, 'request-review');
-      const after = getRun(run.id)!;
+            ],
+          },
+        },
+      });
+    updateRun(run.id, { decisions: [card] });
+    assert.equal(resolveEngineDecision(card.id, action), true);
+    assert.equal(await execution, action);
+    const after = getRun(run.id)!;
+    if (request) {
       assert.equal(typeof after.decisions[0].context?.reviewRequestConsumedAt, 'string');
       assert.equal(after.engineState?.publishGate?.reviewSequence?.length, 1);
       assert.equal(after.engineState?.publishGate?.reviewSequence?.[0].mode, mode);
       assert.deepEqual(after.engineState?.publishGate?.reviewSequenceContext, request.context);
-      const repeated = executeReadyGate(run.id, dependencies);
-      const nextCard = await next(repeated);
-      assert.notEqual(nextCard.id, card.id, 'consumed requests cannot replay a second review');
-      assert.equal(resolveEngineDecision(nextCard.id, 'abort'), true);
-      assert.equal(await repeated, 'abort');
-    },
-  );
+    }
+    const repeated = executeReadyGate(run.id, dependencies);
+    const nextCard = await next(repeated);
+    assert.notEqual(nextCard.id, card.id, 'consumed requests cannot replay a second review');
+    assert.equal(resolveEngineDecision(nextCard.id, 'abort'), true);
+    assert.equal(await repeated, 'abort');
+  });
 }
