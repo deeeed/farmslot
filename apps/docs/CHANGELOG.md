@@ -5,6 +5,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 ## Unreleased
 
 - Document the scoped review-budget extension RPC and CLI.
+- Document safe quarantine of an unobserved native host that stopped before recording any session.
 - Update the gateway API reference to protocol 0.45.0 for retained-run attachment.
 
 - Document the typed retained-run stack attachment RPC and graph command.
