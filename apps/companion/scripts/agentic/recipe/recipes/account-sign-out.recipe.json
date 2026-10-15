@@ -9,7 +9,7 @@
         "action": "ui.press",
         "test_id": "account-sign-out",
         "intent": "Forget this device login through the real account control.",
-        "next": "protocol"
+        "next": "confirm-sign-out"
       },
       "signed-out": {
         "action": "ui.wait_for",
@@ -32,6 +32,12 @@
       "done": {
         "action": "end",
         "status": "pass"
+      },
+      "confirm-sign-out": {
+        "action": "ui.press",
+        "text": "Sign out",
+        "intent": "Confirm local sign-out after the token reminder.",
+        "next": "protocol"
       }
     }
   }

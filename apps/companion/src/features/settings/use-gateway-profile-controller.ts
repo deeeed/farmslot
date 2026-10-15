@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Alert } from 'react-native';
 
 import { ACCOUNT_SESSION_CONTROL } from '@farmslot/protocol';
+import { accountSignOutConfirmation, confirmAccountSignOut } from '@farmslot/review-dispatch';
 
 import {
   type ConnectionHealthState,
@@ -59,6 +60,7 @@ export function useGatewayProfileController(options: GatewayProfileControllerOpt
     setGatewayUrl,
     signOut,
     signedOut,
+    sessionExpiresAt,
   } = useConnectionStore();
   const [signingOut, setSigningOut] = useState(false);
   const [manualUrlValidationInProgress, setManualUrlValidationInProgress] = useState(false);
@@ -220,10 +222,27 @@ export function useGatewayProfileController(options: GatewayProfileControllerOpt
     if (signingOut || connectionTestsInProgress) return;
     setSigningOut(true);
     try {
-      await signOut();
-      options.setPairingImportMessage(ACCOUNT_SESSION_CONTROL.signedOut);
-      options.setRecentImportedProfiles([]);
-      setProfileConnectionTests({});
+      const confirmation = accountSignOutConfirmation('Companion');
+      await confirmAccountSignOut(
+        () =>
+          new Promise<boolean>((resolve) =>
+            Alert.alert(
+              confirmation.title,
+              confirmation.message,
+              [
+                { text: confirmation.cancel, style: 'cancel', onPress: () => resolve(false) },
+                { text: confirmation.confirm, style: 'destructive', onPress: () => resolve(true) },
+              ],
+              { cancelable: true, onDismiss: () => resolve(false) },
+            ),
+          ),
+        async () => {
+          await signOut();
+          options.setPairingImportMessage(ACCOUNT_SESSION_CONTROL.signedOut);
+          options.setRecentImportedProfiles([]);
+          setProfileConnectionTests({});
+        },
+      );
     } catch (error) {
       Alert.alert(
         'Sign out failed',
@@ -236,6 +255,7 @@ export function useGatewayProfileController(options: GatewayProfileControllerOpt
 
   return {
     signOutCurrentAccount,
+    sessionExpiresAt,
     signingOut,
     signedOut,
     activateProfile,
