@@ -573,3 +573,50 @@ test('project review defaults contain only selection fields and preserve precede
     { runner: 'claude', model: null, effort: null, mode: 'cold' },
   );
 });
+
+test('model picker chips share filtering, custom selection and long-list policy', () => {
+  const models = Array.from({ length: 9 }, (_, index) => ({
+    id: `model-${index}`,
+    label: `Model ${index}`,
+  }));
+  const vm = new ReviewDispatchViewModel({
+    context: { allowedActions: ['configure'] },
+    catalog: {
+      runners: [
+        {
+          id: 'codex',
+          models,
+          defaultModel: 'model-0',
+          efforts: [],
+          defaultEffort: null,
+          allowCustomModels: true,
+        },
+      ],
+    },
+    sequence: [{ runner: 'codex', model: 'my-custom-model', effort: null, mode: 'cold' }],
+  });
+  const row = vm.rows[0].id;
+  assert.deepEqual(vm.modelPickerState(row, 'MODEL 2'), {
+    choices: [models[2]],
+    customModel: true,
+    searchable: true,
+  });
+  assert.equal(vm.toSequence()[0].model, 'my-custom-model');
+  vm.setModel(row, 'model-2');
+  assert.equal(vm.modelPickerState(row).customModel, false);
+  assert.equal(vm.modelPickerState(row, 'missing').choices.length, 0);
+  vm.setModel(row, null);
+  assert.equal(vm.modelPickerState(row).customModel, false);
+  vm.setCatalog({
+    runners: [
+      {
+        id: 'codex',
+        models: models.slice(0, 2),
+        defaultModel: 'model-0',
+        efforts: [],
+        defaultEffort: null,
+      },
+    ],
+  });
+  assert.equal(vm.modelPickerState(row).searchable, false);
+});

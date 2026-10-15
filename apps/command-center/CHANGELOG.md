@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Let the CDP select helper choose shared execution chips and verify their selected value.
+
 - Run automation and proof helpers with explicit gateway profiles.
 
 - Bind task recipe claims to registered criteria and transport only successful selected results through the shared task ledger.

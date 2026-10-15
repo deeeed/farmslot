@@ -25,6 +25,7 @@ import type {
   ReviewDispatchEffortChoice,
   ReviewDispatchExecutionResources,
   ReviewDispatchModelOption,
+  ReviewDispatchModelPickerState,
   ReviewDispatchRow,
   ReviewDispatchState,
   ReviewDispatchViewModelOptions,
@@ -280,6 +281,19 @@ export class ReviewDispatchViewModel {
     return modelsForRunner(selection.runner, selection.model, this.catalog).map(
       (id) => runner.models.find((model) => model.id === id) ?? { id },
     );
+  }
+  modelPickerState(id: number, filter = ''): ReviewDispatchModelPickerState {
+    const selection = this.row(id).selection;
+    const models =
+      this.catalog.runners.find((runner) => runner.id === selection.runner)?.models ?? [];
+    return {
+      choices: models.filter((model) =>
+        (model.label ?? model.id).toLowerCase().includes(filter.toLowerCase()),
+      ),
+      customModel:
+        selection.model !== null && !models.some((model) => model.id === selection.model),
+      searchable: models.length > 8,
+    };
   }
   effortChoices(id: number): ReviewDispatchEffortChoice[] {
     const selection = this.row(id).selection;

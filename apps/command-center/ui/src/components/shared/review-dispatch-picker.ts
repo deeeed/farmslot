@@ -270,13 +270,8 @@ export class ReviewDispatchPicker extends LitElement {
         const selected = row.selection;
         const runner = vm.catalog.runners.find((option) => option.id === selected.runner);
         const efforts = vm.effortChoices(row.id);
-        const models = vm.modelChoices(row.id);
-        const knownModels = models.filter((option) =>
-          runner?.models.some((known) => known.id === option.id),
-        );
-        const customModel =
-          selected.model !== null && !runner?.models.some((option) => option.id === selected.model);
-        const showOtherModel = Boolean(this.otherModels[row.id] || customModel);
+        const models = vm.modelPickerState(row.id, this.modelFilters[row.id]);
+        const showOtherModel = Boolean(this.otherModels[row.id] || models.customModel);
         return html`<div class="row" data-testid="review-dispatch-row">
           ${vm.context.allowSequence ? html`<span class="index">${index + 1}</span>` : nothing}
           <div class="field runner-field">
@@ -300,7 +295,7 @@ export class ReviewDispatchPicker extends LitElement {
           <div class="model-effort">
             <div class="field model-field">
               <span class="field-title">MODEL</span>
-              ${runner && runner.models.length > 8
+              ${models.searchable
                 ? html`<input
                     class="model-filter"
                     aria-label="Filter models"
@@ -316,20 +311,11 @@ export class ReviewDispatchPicker extends LitElement {
                   />`
                 : nothing}
               ${renderChoiceButtons({
-                options: [
-                  '',
-                  ...knownModels
-                    .filter((option) =>
-                      (option.label ?? option.id)
-                        .toLowerCase()
-                        .includes((this.modelFilters[row.id] ?? '').toLowerCase()),
-                    )
-                    .map((option) => option.id),
-                ],
+                options: ['', ...models.choices.map((option) => option.id)],
                 labels: {
                   '': `Default${runner?.defaultModel ? ` · ${runner.defaultModel}` : ''}`,
                   ...Object.fromEntries(
-                    models.map((option) => [option.id, option.label ?? option.id]),
+                    models.choices.map((option) => [option.id, option.label ?? option.id]),
                   ),
                 },
                 value: selected.model ?? '',

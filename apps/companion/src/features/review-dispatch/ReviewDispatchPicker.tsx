@@ -45,10 +45,8 @@ export function ReviewDispatchPicker({
       {model.rows.map((row, index) => {
         const runner = model.catalog.runners.find((entry) => entry.id === row.selection.runner);
         const customKey = `${row.id}:${row.selection.runner}`;
-        const customModel =
-          row.selection.model !== null &&
-          !runner?.models.some((option) => option.id === row.selection.model);
-        const showOtherModel = Boolean(otherModels[customKey] || customModel);
+        const models = model.modelPickerState(row.id, modelFilters[customKey]);
+        const showOtherModel = Boolean(otherModels[customKey] || models.customModel);
         return (
           <View style={styles.card} key={row.id} testID={`${testID}-row-${index}`}>
             <View style={styles.row}>
@@ -91,7 +89,7 @@ export function ReviewDispatchPicker({
             <View style={styles.modelEffort}>
               <View style={styles.field}>
                 <Text style={styles.label}>Model</Text>
-                {runner && runner.models.length > 8 && (
+                {models.searchable && (
                   <TextInput
                     accessibilityLabel="Filter models"
                     style={styles.input}
@@ -117,27 +115,21 @@ export function ReviewDispatchPicker({
                       })
                     }
                   />
-                  {(runner?.models ?? [])
-                    .filter((choice) =>
-                      (choice.label ?? choice.id)
-                        .toLowerCase()
-                        .includes((modelFilters[customKey] ?? '').toLowerCase()),
-                    )
-                    .map((choice) => (
-                      <Choice
-                        key={choice.id}
-                        label={choice.label ?? choice.id}
-                        testID={`${testID}-model-${index}-${choice.id}`}
-                        selected={row.selection.model === choice.id}
-                        disabled={disabled}
-                        onPress={() =>
-                          change(() => {
-                            setOtherModels((current) => ({ ...current, [customKey]: false }));
-                            model.setModel(row.id, choice.id);
-                          })
-                        }
-                      />
-                    ))}
+                  {models.choices.map((choice) => (
+                    <Choice
+                      key={choice.id}
+                      label={choice.label ?? choice.id}
+                      testID={`${testID}-model-${index}-${choice.id}`}
+                      selected={row.selection.model === choice.id}
+                      disabled={disabled}
+                      onPress={() =>
+                        change(() => {
+                          setOtherModels((current) => ({ ...current, [customKey]: false }));
+                          model.setModel(row.id, choice.id);
+                        })
+                      }
+                    />
+                  ))}
                 </View>
                 {runner?.allowCustomModels && (
                   <Choice

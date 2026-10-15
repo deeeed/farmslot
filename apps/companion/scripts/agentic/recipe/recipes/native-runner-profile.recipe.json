@@ -56,7 +56,7 @@
       },
       "model": {
         "action": "ui.press",
-        "test_id": "companion-native-execution-model-0-default",
+        "test_id": "companion-native-execution-model-0-sonnet",
         "intent": "Choose Sonnet.",
         "next": "create-visible"
       },
@@ -235,7 +235,7 @@
       },
       "model-visible": {
         "action": "command",
-        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-execution-model-0-default",
+        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-execution-model-0-sonnet",
         "intent": "Reach the model choice after profile readiness changes.",
         "next": "model"
       },
