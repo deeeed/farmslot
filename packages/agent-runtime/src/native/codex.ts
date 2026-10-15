@@ -102,7 +102,12 @@ export const codexNativeAdapter: NativeAdapter = {
       [
         // A read-only PR cannot start repository MCP processes outside tool permissions.
         ...(options.filesystemPolicy
-          ? ['--config', codexWorkspaceTrustConfig(options.cwd, 'untrusted')]
+          ? [
+              '--config',
+              codexWorkspaceTrustConfig(options.cwd, 'untrusted'),
+              '--config',
+              'features.hooks=false',
+            ]
           : []),
         'app-server',
       ],

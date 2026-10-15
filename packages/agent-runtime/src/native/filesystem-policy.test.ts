@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { claudeNativeAdapter } from './claude.js';
 import { codexNativeAdapter } from './codex.js';
 import { NativeSessionManager } from './manager.js';
 
@@ -22,6 +23,10 @@ fs.writeFileSync(${JSON.stringify(argv)}, JSON.stringify(process.argv.slice(2)))
 require('node:readline').createInterface({input:process.stdin}).on('line', line => {
  const message = JSON.parse(line);
  fs.appendFileSync(${JSON.stringify(requests)}, line + '\\n');
+ if (message.type === 'control_request' && message.request.subtype === 'initialize') {
+  process.stdout.write(JSON.stringify({type:'control_response',response:{request_id:message.request_id,subtype:'success',response:{}}})+'\\n');
+  return;
+ }
  if (message.id === undefined) return;
  const result = ['thread/start', 'thread/resume'].includes(message.method) ? {
   thread: {id:'thread'}, activePermissionProfile: {id:${JSON.stringify(confirm ? 'farmslot-read-only-source' : ':workspace')}}
@@ -57,6 +62,8 @@ test('source policy omits legacy writable cwd, pins exact output roots and refus
       assert.deepEqual(argv, [
         '--config',
         `projects={${JSON.stringify(f.root)}={trust_level="untrusted"}}`,
+        '--config',
+        'features.hooks=false',
         'app-server',
       ]);
       const request = messages.find((message) => message.method === 'thread/start').params;
@@ -71,6 +78,47 @@ test('source policy omits legacy writable cwd, pins exact output roots and refus
         messages.some((message) => message.method === 'turn/start'),
         false,
       );
+    } finally {
+      await session?.close();
+      await rm(f.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('ordinary app-server conversations preserve hook configuration', async () => {
+  const f = await fixture(true);
+  let session;
+  try {
+    session = await codexNativeAdapter.start(
+      { cwd: f.root, executable: f.executable, safetyTier: 'sandboxed' },
+      () => {},
+    );
+    assert.deepEqual(JSON.parse(await readFile(f.argv, 'utf8')), ['app-server']);
+  } finally {
+    await session?.close();
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test('stream-json startup hooks are disabled only for source-read-only workers', async () => {
+  for (const readonly of [false, true]) {
+    const f = await fixture(true);
+    let session;
+    try {
+      session = await claudeNativeAdapter.start(
+        {
+          cwd: f.root,
+          executable: f.executable,
+          ...(readonly
+            ? { filesystemPolicy: { readOnlyRoots: [f.root], writableRoots: [`${f.root}-output`] } }
+            : {}),
+        },
+        () => {},
+      );
+      const argv: string[] = JSON.parse(await readFile(f.argv, 'utf8'));
+      const settings = argv.indexOf('--settings');
+      if (readonly) assert.deepEqual(JSON.parse(argv[settings + 1]), { disableAllHooks: true });
+      else assert.equal(settings, -1);
     } finally {
       await session?.close();
       await rm(f.root, { recursive: true, force: true });
