@@ -195,6 +195,7 @@ export interface EvidenceReviewPlaybackEffect {
 export interface EvidenceReviewRecordingSelection {
   videoPath: string;
   mediaDurationMs?: number;
+  phase?: 'start' | 'end';
 }
 
 export interface EvidenceReviewModel {
@@ -1060,7 +1061,12 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
         if (
           !timeline ||
           !marker ||
-          markerSeekMs(recording.videoPath, traceIndex, 'start', recording.mediaDurationMs) === null
+          markerSeekMs(
+            recording.videoPath,
+            traceIndex,
+            recording.phase ?? 'start',
+            recording.mediaDurationMs,
+          ) === null
         )
           return null;
         const claimId = selection?.claimId;

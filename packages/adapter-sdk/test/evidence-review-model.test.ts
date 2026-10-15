@@ -78,6 +78,11 @@ test('group selection seeks the complete AC range without changing claims or nar
   model.selectOccurrence(3, { videoPath: 'video.mp4' });
   assert.equal(model.selection?.claimId, 'AC-1');
   assert.deepEqual(model.claims, claims);
+  model.clearSelection();
+  assert.deepEqual(
+    model.timelineGroups('video.mp4').map((group) => group.label),
+    ['Setup', 'AC-1', 'AC-2', 'Teardown'],
+  );
 });
 
 test('timeline selection stays on the requested original and preserves timing refusal', () => {
@@ -390,6 +395,14 @@ test('continuous source segments play in order while restart gaps remain outside
       ['first.mp4', 500, 2_000],
       ['next.mp4', 0, 1_500],
     ],
+  );
+  const scoped = createEvidenceReviewModel({ recordings: [first, next] });
+  assert.equal(scoped.markerSeekMs('next.mp4', 0, 'start'), null);
+  assert.equal(scoped.markerSeekMs('next.mp4', 0, 'end'), 500);
+  assert.equal(scoped.selectOccurrence(0, { videoPath: 'next.mp4' }), null);
+  assert.equal(
+    scoped.selectOccurrence(0, { videoPath: 'next.mp4', phase: 'end' })?.clips[0]?.videoPath,
+    'next.mp4',
   );
   const gap = createEvidenceReviewModel({ recordings: [first, { ...next, gapBefore: true }] });
   assert.equal(gap.selectOccurrence(0)?.timing, 'outside-recording');

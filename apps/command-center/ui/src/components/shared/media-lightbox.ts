@@ -607,6 +607,7 @@ export class MediaLightbox extends MediaLightboxState {
       !model?.selectOccurrence(marker.traceIndex, {
         videoPath: timing.videoPath,
         mediaDurationMs: duration * 1000,
+        phase,
       })
     )
       return;
