@@ -228,13 +228,13 @@ try {
   claims.push('verified node rotation survives old-credential revocation and restart without env');
 
   await rm(join(home, 'node.secret'));
-  await writeFile(join(scratch, '.env.local-auth'), `FARMSLOT_NODE_TOKEN=${rotatedNode.secret}\n`, {
+  await writeFile(join(scratch, '.env'), `FARMSLOT_NODE_TOKEN=${rotatedNode.secret}\n`, {
     mode: 0o600,
   });
   env.FARMSLOT_NODE_TOKEN = originalNodeSecret;
   await restartNode();
   env.FARMSLOT_NODE_TOKEN = '';
-  await rm(join(scratch, '.env.local-auth'));
+  await rm(join(scratch, '.env'));
   claims.push('installed node file outranks stale launch env and repairs a missing startup cache');
 
   // A distinct logical node name forces the real WebSocket/node file path.

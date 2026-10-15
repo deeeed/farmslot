@@ -2269,7 +2269,7 @@ function pairingListenWarning(listen: GatewayListenInfo | undefined): string {
   if (!listen || listen.remotePairingAllowed) return '';
   return (
     `Gateway is listening on ${listen.host}:${listen.port} only. ` +
-    'Phones on your LAN cannot reach the LAN/Tailscale URLs in this QR until you restart with GATEWAY_HOST=0.0.0.0 (yarn farmdev does this when .env.local-auth is present) or run farmslot up.'
+    'Phones on your LAN cannot reach the LAN/Tailscale URLs in this QR until you restart with GATEWAY_HOST=0.0.0.0 (yarn farmdev does this for an activated credential store) or run farmslot up.'
   );
 }
 

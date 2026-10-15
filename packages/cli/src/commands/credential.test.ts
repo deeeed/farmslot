@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+
+import { Command, CommanderError } from 'commander';
 
 import type { CredentialIssueResult } from '@farmslot/protocol';
 
@@ -12,6 +14,7 @@ import {
   assertSecretFileCreatable,
   credentialIssueMachineResult,
   persistOwnerCredential,
+  registerCredentialCommands,
   writeSecretFile,
 } from './credential.js';
 
@@ -44,9 +47,11 @@ test('credential issue machine output never contains either one-time secret', ()
   assert.match(rendered, /"secretReturned":true/u);
 });
 
-test('activation persists the owner secret without overwriting an unrelated active profile', () => {
+test('activation persists the owner secret without overwriting an unrelated active profile', (t) => {
   const previousHome = process.env.FARMSLOT_HOME;
-  process.env.FARMSLOT_HOME = mkdtempSync(join(tmpdir(), 'farmslot-cli-activation-'));
+  const home = mkdtempSync(join(tmpdir(), 'farmslot-cli-activation-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  process.env.FARMSLOT_HOME = home;
   try {
     saveProfiles({
       active: 'other',
@@ -76,8 +81,9 @@ test('activation persists the owner secret without overwriting an unrelated acti
   }
 });
 
-test('writeSecretFile writes 0600, byte-exact, and refuses to overwrite', () => {
+test('writeSecretFile writes 0600, byte-exact, and refuses to overwrite', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'farmslot-secret-file-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const target = join(dir, 'node.secret');
 
   const written = writeSecretFile(target, 'fs_secret_+/=value');
@@ -91,8 +97,9 @@ test('writeSecretFile writes 0600, byte-exact, and refuses to overwrite', () => 
   assert.equal(readFileSync(target, 'utf8'), 'fs_secret_+/=value');
 });
 
-test('secret-file pre-flight rejects existing targets and missing parents before issuance', () => {
+test('secret-file pre-flight rejects existing targets and missing parents before issuance', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'farmslot-secret-preflight-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const fresh = join(dir, 'new.secret');
   assertSecretFileCreatable(fresh); // must not throw
 
@@ -101,5 +108,25 @@ test('secret-file pre-flight rejects existing targets and missing parents before
   assert.throws(
     () => assertSecretFileCreatable(join(dir, 'no-such-dir', 'x.secret')),
     /parent directory does not exist/,
+  );
+});
+
+test('credential issuance rejects the retired checkout writer before any issuance', () => {
+  const program = new Command()
+    .exitOverride()
+    .configureOutput({ writeOut: () => {}, writeErr: () => {} });
+  registerCredentialCommands(program);
+  assert.throws(
+    () =>
+      program.parse([
+        'node',
+        'farmslot',
+        'credential',
+        'issue',
+        '--principal',
+        'test-node',
+        '--write-node-env',
+      ]),
+    (error) => error instanceof CommanderError && error.code === 'commander.unknownOption',
   );
 });

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Provision tutorial node credentials with the existing private secret-file option.
+
 - Document the plain SDK runtime, action catalog and action handler contracts.
 
 - Propose person-device session expiry and revocation contracts in ADR-051.
