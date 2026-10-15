@@ -24,8 +24,8 @@ test('interactive task documents teach the shared operator wait and resume comma
     hasTicketData: false,
   };
   const interactive = buildTaskDocument(input);
-  assert.match(interactive, /\.\/mark wait --who .* --reason/);
-  assert.match(interactive, /\.\/mark resume/);
+  assert.match(interactive, /\.task\/operator\/mark wait --who .* --reason/);
+  assert.match(interactive, /\.task\/operator\/mark resume/);
   assert.match(interactive, /Resuming grants no approval or completion/);
   assert.doesNotMatch(
     buildTaskDocument({ ...input, vars: { ...input.vars, MODE: 'autonomous' } }),

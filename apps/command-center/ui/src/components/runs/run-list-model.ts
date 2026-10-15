@@ -50,6 +50,7 @@ type ProgressRun = Pick<
   | 'decisions'
   | 'ciWatchState'
   | 'monitorState'
+  | 'waitingForOperator'
 >;
 
 // When a held step stopped for the operator: its duration is stamped at the hold.

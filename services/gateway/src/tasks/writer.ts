@@ -10,6 +10,7 @@ import {
   buildBranchUpdateGuardCommand,
   buildBranchUpdateInstructions,
   buildHandoffMetadata,
+  buildOperatorWaitInstructions,
   buildTaskDocument,
   executionTemplateReference,
   type HandoffSourceKind,
@@ -994,6 +995,8 @@ export async function writeTaskFile(
 
   const vars: Record<string, string> = {
     RUN_ID: run.id,
+    // Missing legacy modes already use the human-operated preamble.
+    MODE: run.mode ?? 'interactive',
     FAMILY_ID: run.familyId,
     SLOT: run.slotId!,
     SLOT_ID: run.slotId!,
@@ -1341,7 +1344,11 @@ export async function writeTaskFile(
     finalContent = applyArtifactOnlyTaskPolicy(await appendTaskContext(taskDocument), run);
   } else {
     const withPlanningContext = await appendTaskContext(content);
-    finalContent = applyArtifactOnlyTaskPolicy(withPlanningContext, run);
+    const withOperatorWait =
+      vars.MODE === 'interactive'
+        ? `${withPlanningContext.trimEnd()}\n\n${buildOperatorWaitInstructions(vars.TASK_DIR)}\n`
+        : withPlanningContext;
+    finalContent = applyArtifactOnlyTaskPolicy(withOperatorWait, run);
   }
   if (shouldApplyArtifactOnlyTaskPolicy(run)) {
     assertArtifactOnlyTaskGuard(finalContent);

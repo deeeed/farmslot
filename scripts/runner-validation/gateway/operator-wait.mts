@@ -17,8 +17,9 @@ import { hostname, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { NativeSessionReadResult, Run } from '@farmslot/protocol';
+import type { NativeSessionReadResult, Run, WorkerSignal } from '@farmslot/protocol';
 import { CredentialStoreRuntime } from '@farmslot/credential-store';
+import { NativeSessionClient } from '@farmslot/agent-runtime/native';
 
 import { matchesProcess } from '../../../packages/agent-runtime/src/native/storage.js';
 import { RUNNER_OBSERVABILITY_SUPPORT_PATHS } from '../../../services/gateway/src/runners/runner-observability.js';
@@ -153,10 +154,10 @@ try {
   await writeNativeFixtureTask(
     taskFile,
     '# Worker: dev\n\n- Task profile: dev\n\n## Checklist\n\n' +
-      '- [ ] Wait for the operator to approve this approach\n- [ ] Continue only when the operator asks\n\n' +
-      'Immediately run the task-local mark wrapper with wait --who fixture-operator --reason "Approve the fixture approach", then end your turn. ' +
+      '- [ ] Wait for fixture-operator to approve this approach\n- [ ] Continue only when the operator asks\n\n' +
+      'The exact operator name for this task is fixture-operator. Follow TASK.md when waiting for its input, then end your turn. ' +
       'Keep both checklist boxes unchecked. Do not modify source, write terminal signals, commit, publish or contact services. ' +
-      'Only when the operator later asks, run the same wrapper with resume, then end that turn.\n',
+      'Only when the operator later asks, resume using TASK.md and end that turn.\n',
     project,
     {
       markCommand: `node '${path.join(source, 'packages/agent-runtime/scripts/mark-checklist-step.cjs')}'`,
@@ -171,8 +172,8 @@ try {
     review: { enabled: false },
     monitoring: {
       poll_interval_min: 1 / 60,
-      stuck_timeout_min: 0.2,
-      idle_timeout_min: 0.2,
+      stuck_timeout_min: 0.5,
+      idle_timeout_min: 0.5,
       total_timeout_min: 5,
       max_nudges: 0,
     },
@@ -240,7 +241,7 @@ try {
     FARMSLOT_UI_URL: `http://127.0.0.1:${uiPort}`,
     FARMSLOT_NATIVE_STATE_DIR: nativeRoot,
     FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: owner.id,
-    FARMSLOT_DISABLE_ORCHESTRATION: '1',
+    FARMSLOT_DISABLE_ORCHESTRATION: '0',
     FARMSLOT_DEMO_POOL: '0',
     TMUX: '',
     TMUX_TMPDIR: path.join(temporary, 'tmux'),
@@ -257,24 +258,27 @@ try {
     uiPort,
     home: env.FARMSLOT_HOME,
   });
-  gateway = spawn(process.execPath, ['--import', 'tsx', 'services/gateway/src/index.ts'], {
-    cwd: source,
-    env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  log(gateway);
-  await waitFor(
-    async () => {
-      try {
-        return (await fetch(`http://127.0.0.1:${gatewayPort}/health`)).ok;
-      } catch (error) {
-        if (error instanceof TypeError) return false;
-        throw error;
-      }
-    },
-    Boolean,
-    'private gateway',
-  );
+  const startGateway = async () => {
+    gateway = spawn(process.execPath, ['--import', 'tsx', 'services/gateway/src/index.ts'], {
+      cwd: source,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    log(gateway);
+    await waitFor(
+      async () => {
+        try {
+          return (await fetch(`http://127.0.0.1:${gatewayPort}/health`)).ok;
+        } catch (error) {
+          if (error instanceof TypeError) return false;
+          throw error;
+        }
+      },
+      Boolean,
+      'private gateway',
+    );
+  };
+  await startGateway();
   const created = rpc<{ run: Run }>('run.createNative', {
     project,
     flowType: 'dev',
@@ -331,10 +335,10 @@ try {
       assert.equal(run.waitingForOperator?.attemptId, attempt);
       assert.equal(run.metrics.nudgeCount, 0);
       assert.equal(run.decisions.length, 0);
-      return Date.now() - since >= 26_000;
+      return Date.now() - since >= 62_000;
     },
     'healthy wait beyond two inactivity windows',
-    40_000,
+    80_000,
   );
   writeJson(path.join(out, 'healthy-wait.json'), { run: healthy, session: idle.session });
   checks.push(
@@ -401,31 +405,53 @@ try {
     : undefined;
   if (nativeResume) checks.push('native Companion renders the live operator dependency');
   const commandId = randomUUID();
-  rpc('native.session.send', {
+  const target = {
     sessionId: binding.sessionId,
     executionNodeId: binding.executionNodeId,
-    worker: {
-      runId,
-      contextId: context.id,
-      generation: binding.generation,
-      leaseId: binding.leaseId,
-    },
+    generation: binding.generation,
+    leaseId: binding.leaseId,
+  };
+  await stop(gateway);
+  gateway = undefined;
+  const native = new NativeSessionClient(nativeRoot, binding.executionNodeId);
+  await native.sendWorker(
+    owner.id,
+    target,
     commandId,
-    text: `The fixture operator approves continuing. Run ${path.posix.join(path.posix.dirname(context.taskFile!), 'mark')} resume, then end your turn. Keep both checklist boxes unchecked and do not write terminal signals or change source.`,
-  });
+    'The fixture operator approves continuing. Resume according to TASK.md, then end your turn. Keep both checklist boxes unchecked and do not write terminal signals or change source.',
+  );
   const resumedSession = await waitFor(
-    read,
+    () => native.readWorker(owner.id, binding.sessionId, binding.leaseId),
     (snapshot) =>
       snapshot.session.state === 'idle' &&
       snapshot.commands.some(
         (command) => command.commandId === commandId && command.outcome === 'completed',
       ),
-    'same native worker resumes',
+    'same native worker resumes while gateway is offline',
   );
+  const signalFile = path.resolve(repo, context.signalFile!);
+  const resumedSignal: WorkerSignal = JSON.parse(readFileSync(signalFile, 'utf8'));
+  const resumeUntil = resumedSignal.operatorWaitIntervals?.at(-1)?.until;
+  assert.ok(resumeUntil && !resumedSignal.waitingForOperator);
+  writeJson(path.join(out, 'offline-resume.json'), {
+    signal: resumedSignal,
+    session: resumedSession.session,
+  });
+  await startGateway();
   const resumed = await waitFor(
     readRun,
-    (run) => !run.waitingForOperator,
-    'wait projection clears',
+    (run) => {
+      assert.ok(
+        !['blocked', 'failed', 'cancelled'].includes(run.status),
+        `${run.status}: ${run.error}`,
+      );
+      return (
+        run.status === 'monitoring' &&
+        !run.waitingForOperator &&
+        run.monitorState?.operatorResumedAt === resumeUntil
+      );
+    },
+    'recovered monitor restores the offline resume clock',
   );
   assert.equal(resumed.status, 'monitoring');
   assert.equal(resumedSession.session.processPid, idle.session.processPid);
@@ -435,12 +461,15 @@ try {
     resumed.agentContexts?.find((item) => item.id === context.id)?.signalAttemptId,
     attempt,
   );
-  assert.ok((resumed.monitorState?.operatorWaitMs ?? 0) >= 25_000);
+  assert.ok((resumed.monitorState?.operatorWaitMs ?? 0) >= 60_000);
   await waitFor(label, (shown) => !shown, 'waiting label clears');
   await nativeResume?.();
   writeJson(path.join(out, 'resumed.json'), { run: resumed, session: resumedSession.session });
   checks.push(
     'mark resume retains native process, session, generation and signal attempt while clearing the wait',
+  );
+  checks.push(
+    'gateway restart restores the original offline resume time without an immediate inactivity gate',
   );
 } catch (error) {
   failure = error;

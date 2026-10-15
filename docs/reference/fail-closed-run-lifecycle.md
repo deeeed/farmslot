@@ -165,6 +165,13 @@ mode and runners without this capability retain their existing observations.
 
 Accepted by the lead, 2026-10-15, under ADR-065 Amendment 3. ADR-045 remains the terminal-contract owner.
 
+`@farmslot/agent-runtime` exports experimental
+`buildOperatorWaitInstructions(taskDir)`. The shared `buildTaskDocument` producer
+and the gateway's lightweight interactive TASK writer consume this single
+instruction definition. Interactive tasks MUST teach wait and resume in both
+document layouts. Harnesses inherit it through task initialization; they add no
+instruction copy or writer. This additive SDK helper ships with runtime 0.24.0.
+
 `./mark wait --who <name> --reason <text>` MUST write a nonterminal `running`
 signal through the existing atomic, role-owned writer. Its optional
 `waitingForOperator` object contains nonempty `who` and `reason` strings and an
@@ -184,6 +191,9 @@ these intervals to recover excluded wait time across restart. Its persisted
 `operatorWaitMs` and `operatorResumedAt` are accounting and inactivity clocks,
 not worker-progress receipts. A stored `Run.waitingForOperator` MUST be cleared
 on load until the monitor revalidates live ownership.
+The latest validated interval's `until` MUST restore the inactivity resume clock
+even when the worker resumed while the gateway was offline. Re-reading that
+interval MUST NOT extend the clock.
 
 The gateway MUST validate shape, freshness, role/context and execution attempt
 before accepting a wait. A valid wait is healthy operator dependency, not

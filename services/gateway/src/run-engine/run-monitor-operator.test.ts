@@ -228,6 +228,38 @@ for (const fault of ['attempt', 'context', 'schema'] as const) {
   });
 }
 
+test(
+  'a resume written while monitoring was offline restores its original inactivity clock once',
+  { timeout: 4000 },
+  async (t) => {
+    const f = await fixture(t);
+    const until = new Date(Date.now() - 1000).toISOString();
+    await f.writeSignal({
+      ...f.waiting,
+      waitingForOperator: undefined,
+      timestamp: until,
+      operatorWaitIntervals: [{ since: f.since, until }],
+    });
+    await persistRunNow(getRun(f.run.id)!, 'offline resume');
+    await loadAllRuns();
+    assert.equal(getRun(f.run.id)!.waitingForOperator, undefined);
+    let polls = 0;
+    await f.start({
+      workerStatus: async () => 'working',
+      violations: async (_run, _slot, state) => {
+        assert.equal(state.operatorResumedAt, Date.parse(until));
+        assert.equal(state.lastPaneChangeAt, Date.parse(until));
+        assert.equal(state.lastStructuredProgressAt, Date.parse(f.startedAt));
+        assert.ok(state.operatorWaitMs >= 596_000);
+        if (++polls === 3) f.controller.abort();
+        return [];
+      },
+    });
+    assert.equal(polls, 3);
+    assert.equal(getRun(f.run.id)!.metrics.nudgeCount, 0);
+  },
+);
+
 for (const generationChanged of [false, true]) {
   test(
     `stopping an old monitor retains a replacement projection, generation changed=${generationChanged}`,

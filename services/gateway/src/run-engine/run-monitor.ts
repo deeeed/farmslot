@@ -1176,10 +1176,14 @@ export async function monitorRun(
         : undefined;
     if (alive && ownedSignal) {
       state.operatorWaitMs = operatorWaitDurationMs(ownedSignal, state.startedAt, Date.now());
-    }
-    if (alive && ownedSignal && current.waitingForOperator && !waiting) {
-      state.operatorResumedAt = Date.now();
-      state.lastPaneChangeAt = Date.now();
+      const resumed = ownedSignal.operatorWaitIntervals?.at(-1);
+      if (resumed) {
+        const resumedAt = Date.parse(resumed.until);
+        if (resumedAt > state.operatorResumedAt) {
+          state.operatorResumedAt = resumedAt;
+          state.lastPaneChangeAt = Math.max(state.lastPaneChangeAt, resumedAt);
+        }
+      }
     }
     if (
       JSON.stringify(current.waitingForOperator) !== JSON.stringify(waiting) ||
