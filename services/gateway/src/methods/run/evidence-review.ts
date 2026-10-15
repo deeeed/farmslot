@@ -149,7 +149,11 @@ export async function readRunRecordedEvidence(
     }
     if (!group?.artifactRoot) return { artifactPrefix, contractVersion, errors: [] };
     const root = packagePath && packagePath !== '.' ? `artifacts/${packagePath}` : 'artifacts';
-    const result = await readRetainedEvidencePackage(run, root, retainedRunBundleRef(run));
+    const result = await readRetainedEvidencePackage(
+      run,
+      root,
+      group.artifactBundle ?? retainedRunBundleRef(run),
+    );
     const errors = result.checks
       .filter((check) => check.status === 'fail')
       .map((check) => check.message);
