@@ -5,6 +5,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 ## Unreleased
 
 - Keep report and evidence links bound to their gateway-retained snapshot, including read-only stale reports.
+- Confirm the secondary Settings sign-out action and retain sign-in with the shared 30-day expiry policy.
 
 - Show and submit the resolved QA profile, require a choice for ambiguous farms, and retain admitted profile identity in run detail.
 - Direct device setup to person pairing instead of build-time gateway token presets.

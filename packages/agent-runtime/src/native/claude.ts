@@ -357,6 +357,7 @@ export const claudeNativeAdapter: NativeAdapter = {
     process = new JsonLineProcess(
       options.executable,
       [
+        ...(options.filesystemPolicy ? ['--settings', '{"disableAllHooks":true}'] : []),
         '--print',
         '--input-format',
         'stream-json',

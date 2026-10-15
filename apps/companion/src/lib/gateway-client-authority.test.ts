@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test, { mock } from 'node:test';
 
+import type { AppStateStatus } from 'react-native';
+
 import {
   createSourceCommandClient,
   type GatewayAuthConnectResult,
@@ -11,8 +13,16 @@ import {
 
 import { sourceStatusFixture } from '../../../../packages/protocol/test/fixtures/source-status';
 
+const appStateListeners = new Set<(state: AppStateStatus) => void>();
 mock.module('react-native', {
-  namedExports: { AppState: { addEventListener: () => ({ remove() {} }) } },
+  namedExports: {
+    AppState: {
+      addEventListener: (_event: string, listener: (state: AppStateStatus) => void) => {
+        appStateListeners.add(listener);
+        return { remove: () => appStateListeners.delete(listener) };
+      },
+    },
+  },
 });
 
 class Socket {
@@ -265,5 +275,117 @@ test('native stale source rejection releases editing and prepares a fresh comman
   } finally {
     client.disconnect();
     globalThis.WebSocket = originalSocket;
+  }
+});
+
+test('remembered native login survives app reload and gateway restart, slides on use, and refuses expiry', async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'WebSocket');
+  Object.defineProperty(globalThis, 'WebSocket', { configurable: true, value: Socket });
+  const { RememberedAccountSession, ACCOUNT_SESSION_POLICY } =
+    await import('@farmslot/review-dispatch');
+  const { GatewayClient } = await import('./gateway-client');
+  let now = 1_800_000_000_000;
+  let saved: number | null = null;
+  const session = () =>
+    new RememberedAccountSession(
+      saved,
+      (expiry) => {
+        saved = expiry;
+      },
+      () => now,
+    );
+  let client = new GatewayClient('ws://localhost:19777', { token: 'remembered-owner' });
+  try {
+    client.setAccountSession(session());
+    const authenticate = async () => {
+      client.connect();
+      const socket = Socket.sockets.at(-1)!;
+      socket.open();
+      socket.response(socket.sent[0].id, auth('owner', 'native'));
+      await settle();
+      assert.equal(client.connectionState, 'connected');
+      return socket;
+    };
+    await authenticate();
+    const firstExpiry = saved;
+    assert.equal(firstExpiry, now + ACCOUNT_SESSION_POLICY.durationMs);
+    client.disconnect();
+    client = new GatewayClient('ws://localhost:19777', { token: 'remembered-owner' });
+    client.setAccountSession(session());
+    const socket = await authenticate();
+    assert.equal(saved, firstExpiry);
+    socket.close(1012);
+    client.reconnect();
+    const restarted = await authenticate();
+    assert.equal(saved, firstExpiry);
+    now = Number(saved) - ACCOUNT_SESSION_POLICY.renewWithinMs;
+    const request = client.request(Methods.NATIVE_SESSION_LIST);
+    restarted.response(restarted.sent.at(-1)!.id, { sessions: [] });
+    await request;
+    assert.equal(saved, now + ACCOUNT_SESSION_POLICY.durationMs);
+    now = Number(saved);
+    await assert.rejects(client.request(Methods.NATIVE_SESSION_LIST), /expired/);
+    assert.equal(client.workspaceAccess, 'none');
+  } finally {
+    client.disconnect();
+    if (original) Object.defineProperty(globalThis, 'WebSocket', original);
+    else Reflect.deleteProperty(globalThis, 'WebSocket');
+  }
+});
+
+test('expiry after background publishes authority loss even when transport is already disconnected', async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'WebSocket');
+  Object.defineProperty(globalThis, 'WebSocket', { configurable: true, value: Socket });
+  const { RememberedAccountSession, ACCOUNT_SESSION_POLICY } =
+    await import('@farmslot/review-dispatch');
+  const { GatewayClient } = await import('./gateway-client');
+  let now = 1_800_000_000_000;
+  const expiry = now + ACCOUNT_SESSION_POLICY.durationMs;
+  const client = new GatewayClient('ws://localhost:19777', { token: 'remembered-owner' });
+  client.setAccountSession(
+    new RememberedAccountSession(
+      expiry,
+      () => {},
+      () => now,
+    ),
+  );
+  const authority: Array<{ access: string; headers: Record<string, string> }> = [];
+  client.onConnectionChange(() =>
+    authority.push({ access: client.workspaceAccess, headers: client.httpAuthHeaders }),
+  );
+  try {
+    client.connect();
+    const socket = Socket.sockets.at(-1)!;
+    socket.open();
+    socket.response(socket.sent[0].id, auth('owner', 'farm'));
+    await settle();
+    for (const listener of appStateListeners) listener('background');
+    assert.equal(client.connectionState, 'disconnected');
+    const beforeExpiry = authority.length;
+    now = expiry;
+    // The HTTP accessor refuses expired credentials before the foreground callback runs.
+    assert.deepEqual(client.httpAuthHeaders, {});
+    for (const listener of appStateListeners) listener('active');
+    assert.ok(authority.length > beforeExpiry);
+    assert.deepEqual(authority.at(-1), { access: 'none', headers: {} });
+    // Selecting the configured profile replaces the expired custom-profile session.
+    client.setAccountSession(
+      new RememberedAccountSession(
+        null,
+        () => {},
+        () => now,
+      ),
+    );
+    client.setConnection('ws://localhost:19778', { token: 'configured-owner' }, true);
+    const configured = Socket.sockets.at(-1)!;
+    configured.open();
+    configured.response(configured.sent[0].id, auth('configured-owner', 'farm'));
+    await settle();
+    assert.equal(client.connectionState, 'connected');
+    assert.equal(client.authenticatedPrincipal?.id, 'configured-owner');
+  } finally {
+    client.disconnect();
+    if (original) Object.defineProperty(globalThis, 'WebSocket', original);
+    else Reflect.deleteProperty(globalThis, 'WebSocket');
   }
 });

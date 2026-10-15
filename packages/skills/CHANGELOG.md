@@ -6,6 +6,10 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.6.10 - 2026-10-15
+
+- Use agent-runtime 0.23.1 for native review account preflight and isolated account hooks.
+
 ## 0.6.9 - 2026-10-15
 
 - Keep source and review diff identities stable across user Git settings; disable external diff and text conversion.

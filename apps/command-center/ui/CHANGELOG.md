@@ -5,6 +5,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Keep report and evidence links bound to their gateway-retained snapshot, including read-only stale reports.
+- Move sign-out into the account menu with confirmation; retain sign-in for 30 days and reconnect through gateway restarts.
+
 - Share QA profile selection across Dispatch and PR requests, disable unresolved choices, and show the admitted profile id and title.
 - Keep pending visual judgments visible while evidence loads or fails; wait up to 60 seconds for gate evidence.
 

@@ -179,7 +179,6 @@
     ]
   },
   "qa": {
-    "default_profile": "pr",
     "profiles": [
       {
         "id": "pr",

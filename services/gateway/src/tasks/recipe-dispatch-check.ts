@@ -6,7 +6,9 @@ import {
   recipeFlowRequirements,
   type RecipeProjectCompatibility,
   recipeProjectCompatibility,
+  resolveRecipeProofRequirements,
   type RuntimeCapabilityCatalogEntry,
+  type RuntimeCapabilityProofPlan,
   validateProjectRecipeConfig,
 } from '@farmslot/protocol';
 
@@ -19,6 +21,7 @@ interface RecipeDispatchCheckDependencies {
   report(options: HostedRecipeConformanceOptions): Promise<RecipeConformanceReport>;
   exists(file: string): Promise<boolean>;
   resources(): Promise<RuntimeCapabilityCatalogEntry[]>;
+  proofPlan?(runId: string, slotId: string): Promise<RuntimeCapabilityProofPlan | undefined>;
 }
 
 /** Preflight the selected flow without acquiring resources or running its smoke. */
@@ -26,7 +29,7 @@ export async function checkRecipeDispatchRequirements(
   project: ProjectVars,
   slot: SlotVars,
   selected: Pick<ExecutionTemplateEntry, 'frontmatter' | 'sha256'> | undefined,
-  selection: { app?: string; domain?: string } = {},
+  selection: { app?: string; domain?: string; runId?: string } = {},
   dependencies?: RecipeDispatchCheckDependencies,
 ): Promise<RecipeProjectCompatibility> {
   const required = recipeFlowRequirements(selected?.frontmatter ?? null);
@@ -55,14 +58,28 @@ export async function checkRecipeDispatchRequirements(
       const { runtimeCapabilityList } = await import('../methods/runtime-capabilities.js');
       return (await runtimeCapabilityList({ slotId: slot.slotId })).capabilities;
     },
+    async proofPlan(runId, slotId) {
+      const { runtimeCapabilityStatus } = await import('../methods/runtime-capabilities.js');
+      return (await runtimeCapabilityStatus({ slotId })).proofPlans[runId];
+    },
   };
+  const proof = resolveRecipeProofRequirements({
+    required,
+    ...(selection.runId && required.resources.length
+      ? {
+          owner: { ownerRunId: selection.runId, slotId: slot.slotId },
+          plan: await deps.proofPlan?.(selection.runId, slot.slotId),
+        }
+      : {}),
+  });
   const diagnostics: string[] = [];
   let report: RecipeConformanceReport | undefined;
-  if (registered && required.recipes.length) {
+  if (registered && required.recipes.length && !proof.missingRequirements.length) {
     const relative = path.posix.join(project.artifactDir, 'conformance', 'conformance-report.json');
     const file = resolvePathWithinRemoteBase(slot.remoteRepo, relative);
     if (!file) throw new Error('Project artifact directory must be inside the selected checkout.');
-    const options = { recipes: required.recipes, params: required.params, ...selection };
+    const { runId: _runId, ...recipeSelection } = selection;
+    const options = { recipes: required.recipes, params: required.params, ...recipeSelection };
     if (await deps.exists(file)) {
       try {
         report = await deps.report({ ...options, checkReport: relative });
@@ -102,8 +119,10 @@ export async function checkRecipeDispatchRequirements(
     required,
     report,
     resources: required.resources.length ? await deps.resources() : [],
+    proof,
   });
-  return { ...result, ...(diagnostics.length ? { diagnostics } : {}) };
+  const allDiagnostics = [...proof.diagnostics, ...diagnostics];
+  return { ...result, ...(allDiagnostics.length ? { diagnostics: allDiagnostics } : {}) };
 }
 
 export function assertRecipeDispatchRequirements(result: RecipeProjectCompatibility): void {

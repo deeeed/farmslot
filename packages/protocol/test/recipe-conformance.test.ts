@@ -6,7 +6,142 @@ import {
   type RecipeConformanceCheck,
   type RecipeConformanceLiveEvidence,
   recipeFlowRequirements,
+  recipeProjectCompatibility,
+  resolveRecipeProofRequirements,
 } from '../src/contracts/recipe-conformance.js';
+import type { RuntimeCapabilityProofPlan } from '../src/contracts/runtime-capabilities.js';
+
+const proofRequirement = {
+  capabilityId: 'browser',
+  reason: 'Observe the application',
+  mode: 'visual' as const,
+};
+const declaration = (entries: unknown = [proofRequirement], resources = ['browser']) => ({
+  runtime_capabilities: resources,
+  runtime_capability_requirements: JSON.stringify(entries),
+});
+
+test('initial proof declarations preserve JSON acquire inputs and require exact resource coverage', () => {
+  for (const mode of ['state', 'visual', 'mixed']) {
+    const entry = {
+      ...proofRequirement,
+      mode,
+      parameters: { flag: false, value: null, items: [1, 'two'], nested: { count: 3 } },
+    };
+    assert.deepEqual(recipeFlowRequirements(declaration([entry])).proofRequirements, [entry]);
+  }
+  assert.deepEqual(recipeFlowRequirements(null).proofRequirements, []);
+  assert.deepEqual(recipeFlowRequirements(declaration([], [])).proofRequirements, []);
+  assert.deepEqual(
+    recipeFlowRequirements({ runtime_capabilities: ['browser'] }).proofRequirements,
+    [],
+  );
+  for (const metadata of [
+    { runtime_capabilities: ['browser'], runtime_capability_requirements: [] },
+    { runtime_capabilities: ['browser'], runtime_capability_requirements: '{bad' },
+    declaration(null),
+    declaration({}),
+    declaration([]),
+    declaration([proofRequirement], []),
+    declaration([proofRequirement], ['browser', 'server']),
+    declaration([proofRequirement, proofRequirement]),
+    ...[
+      { capabilityId: '' },
+      { capabilityId: ' browser' },
+      { reason: '' },
+      { reason: 'why ' },
+      { mode: 'auto' },
+      { parameters: [] },
+      { parameters: null },
+      { unknown: true },
+    ].map((delta) => declaration([{ ...proofRequirement, ...delta }])),
+  ])
+    assert.throws(() => recipeFlowRequirements(metadata));
+});
+
+test('stored proof modes preserve retargets without mutating plans or template defaults', () => {
+  const owner = { ownerRunId: 'run', slotId: 'slot' };
+  const retained = { ...proofRequirement, parameters: { target: 'retargeted', onlyStored: true } };
+  const dependency = {
+    capabilityId: 'server',
+    reason: 'Dependency',
+    mode: 'state' as const,
+    parameters: { port: 8080 },
+  };
+  const plan: RuntimeCapabilityProofPlan = {
+    version: 1,
+    ...owner,
+    createdAt: '2026-10-13T00:00:00Z',
+    requirements: [retained, dependency],
+  };
+  const snapshot = structuredClone(plan);
+  const required = recipeFlowRequirements(
+    declaration([{ ...proofRequirement, parameters: { target: 'default', onlyDefault: true } }]),
+  );
+  const first = resolveRecipeProofRequirements({ required });
+  assert.deepEqual(first.requirements, required.proofRequirements);
+  assert.deepEqual(first.missingRequirements, []);
+  const reused = resolveRecipeProofRequirements({ required, owner, plan });
+  assert.deepEqual(reused.requirements, [retained]);
+  assert.deepEqual(plan, snapshot);
+  reused.requirements[0].parameters!.target = 'copy';
+  assert.deepEqual(plan, snapshot);
+  assert.deepEqual(required.proofRequirements[0].parameters, {
+    target: 'default',
+    onlyDefault: true,
+  });
+  const legacy = recipeFlowRequirements({ runtime_capabilities: ['browser'] });
+  assert.deepEqual(
+    resolveRecipeProofRequirements({ required: legacy, owner, plan }).missingRequirements,
+    [],
+  );
+  assert.deepEqual(resolveRecipeProofRequirements({ required: legacy }).missingRequirements, [
+    'resource.browser.proof-mode',
+  ]);
+  const conflict = recipeFlowRequirements(declaration([{ ...proofRequirement, mode: 'mixed' }]));
+  assert.match(
+    resolveRecipeProofRequirements({ required: conflict, owner, plan }).diagnostics[0],
+    /conflicts.*visual/,
+  );
+  for (const corrupt of [
+    { ...plan, ownerRunId: 'other' },
+    { ...plan, slotId: 'other' },
+    { ...plan, requirements: [retained, retained] },
+  ])
+    assert.throws(() => resolveRecipeProofRequirements({ required, owner, plan: corrupt }));
+  assert.throws(() => resolveRecipeProofRequirements({ required, plan }));
+});
+
+test('compatibility displays authored proof mode as declared and refuses IDs-only first dispatch', () => {
+  const scope = {
+    project: 'example',
+    app: null,
+    domain: null,
+    adapter: 'web',
+    target: '/checkout',
+  };
+  const result = recipeProjectCompatibility({
+    scope,
+    registered: true,
+    required: recipeFlowRequirements(declaration()),
+    resources: [],
+  });
+  assert.ok(
+    result.requirements.some(
+      (entry) => entry.name === 'resource.browser.proof-mode.visual' && entry.status === 'declared',
+    ),
+  );
+  assert.deepEqual(result.missingRequirements, ['resource.browser']);
+  assert.equal(result.recipeVerified, false);
+  const missing = recipeProjectCompatibility({
+    scope,
+    registered: true,
+    required: recipeFlowRequirements({ runtime_capabilities: ['browser'] }),
+    resources: [],
+  });
+  assert.ok(missing.missingRequirements.includes('resource.browser.proof-mode'));
+  assert.match(missing.diagnostics![0], /authored state\/visual\/mixed/);
+});
 
 test('selected recipe parameters preserve JSON values and require a smoke before execution', () => {
   const params = {

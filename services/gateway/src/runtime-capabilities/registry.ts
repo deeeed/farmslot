@@ -1134,6 +1134,53 @@ export class RuntimeCapabilityRegistry {
       : undefined;
     if (deferredRefusal && sameOwner?.state !== 'acquired') return deferredRefusal;
 
+    const recordRequestedPlan = (preserveExisting = false): void => {
+      if (!recordPlan) return;
+      const existingPlan = snapshot.proofPlans[params.ownerRunId];
+      const requirements = existingPlan?.requirements ?? [];
+      if (
+        preserveExisting &&
+        requirements.some(
+          (requirement) => requirement.capabilityId === params.proofRequirement.capabilityId,
+        )
+      )
+        return;
+      const withoutDuplicate = requirements.filter(
+        (requirement) => requirement.capabilityId !== params.proofRequirement.capabilityId,
+      );
+      snapshot.proofPlans[params.ownerRunId] = {
+        version: 1,
+        slotId: params.slotId,
+        ownerRunId: params.ownerRunId,
+        createdAt: existingPlan?.createdAt ?? this.timestamp(),
+        // The EFFECTIVE parameters, not just whatever the caller happened to put
+        // on the requirement. `parameters` may arrive beside the requirement
+        // rather than on it, and a plan that omits the device it was acquired
+        // with is not replayable: the next validation-prepare reads this plan as
+        // its default requirement set and would reacquire the slot's configured
+        // device, or be refused for disagreeing with the lease it already holds.
+        requirements: [
+          ...withoutDuplicate,
+          {
+            ...structuredClone(params.proofRequirement),
+            ...(Object.keys(parameters).length > 0
+              ? { parameters: structuredClone(parameters) }
+              : {}),
+          },
+        ],
+      };
+      this.recordEvent(snapshot, {
+        kind: 'planned',
+        slotId: params.slotId,
+        capabilityId: entry.id,
+        owner: {
+          runId: params.ownerRunId,
+          ...(acquiringFamilyId ? { familyId: acquiringFamilyId } : {}),
+        },
+        detail: params.proofRequirement.reason,
+      });
+    };
+
     let staleOwnerLease = false;
     if (sameOwner?.state === 'acquired') {
       if (!sameCapabilityParameters(sameOwner.parameters, parameters)) {
@@ -1246,6 +1293,7 @@ export class RuntimeCapabilityRegistry {
             ]),
           ];
           sameOwner.updatedAt = this.timestamp();
+          recordRequestedPlan(true);
           return {
             ok: true,
             lease: structuredClone(sameOwner),
@@ -1329,6 +1377,7 @@ export class RuntimeCapabilityRegistry {
           }`,
         });
       } else {
+        recordRequestedPlan(true);
         return {
           ok: true,
           lease: structuredClone(sameOwner),
@@ -1338,44 +1387,7 @@ export class RuntimeCapabilityRegistry {
       }
     }
 
-    if (recordPlan) {
-      const existingPlan = snapshot.proofPlans[params.ownerRunId];
-      const requirements = existingPlan?.requirements ?? [];
-      const withoutDuplicate = requirements.filter(
-        (requirement) => requirement.capabilityId !== params.proofRequirement.capabilityId,
-      );
-      snapshot.proofPlans[params.ownerRunId] = {
-        version: 1,
-        slotId: params.slotId,
-        ownerRunId: params.ownerRunId,
-        createdAt: existingPlan?.createdAt ?? this.timestamp(),
-        // The EFFECTIVE parameters, not just whatever the caller happened to put
-        // on the requirement. `parameters` may arrive beside the requirement
-        // rather than on it, and a plan that omits the device it was acquired
-        // with is not replayable: the next validation-prepare reads this plan as
-        // its default requirement set and would reacquire the slot's configured
-        // device, or be refused for disagreeing with the lease it already holds.
-        requirements: [
-          ...withoutDuplicate,
-          {
-            ...structuredClone(params.proofRequirement),
-            ...(Object.keys(parameters).length > 0
-              ? { parameters: structuredClone(parameters) }
-              : {}),
-          },
-        ],
-      };
-      this.recordEvent(snapshot, {
-        kind: 'planned',
-        slotId: params.slotId,
-        capabilityId: entry.id,
-        owner: {
-          runId: params.ownerRunId,
-          ...(acquiringFamilyId ? { familyId: acquiringFamilyId } : {}),
-        },
-        detail: params.proofRequirement.reason,
-      });
-    }
+    recordRequestedPlan();
 
     const pressure = await this.options.pressureFor?.(
       params.slotId,

@@ -72,7 +72,7 @@ counts.
 
 A **slot** is one isolated repo + runtime sandbox an agent works in. Slot count,
 ports, devices, and platform come from the pack's project configs and the machine
-`pool/<host>.json`.
+`pool/<host>.json`. Use stable repo paths such as `repos/mobile-pixel6`; doctor rejects release versions and calendar dates in slot `repo` paths. A checkout changes refs between runs, so its directory name cannot identify the tested build.
 
 ## 3. Customize (edit before real dispatch)
 

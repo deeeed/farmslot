@@ -5,7 +5,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 ## Unreleased
 
 - Add runs bundle retain for captured reports and evidence; portable export reads retained snapshots and import retains them in the target store.
-
+- Reject release-version and calendar-date slot repo paths in doctor diagnostics without preventing slot teardown.
 - Show available QA profiles and the --qa-profile recovery flag when a multi-profile farm needs a choice.
 - Add graph attach-run for verified unpublished retained work, without dispatching another run.
 - Add explicit retired principal-id replacement to principal create for approved identity cutovers.
