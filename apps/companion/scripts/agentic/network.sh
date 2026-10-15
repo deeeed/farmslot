@@ -50,18 +50,6 @@ companion_detect_lan_host() {
   return 1
 }
 
-companion_load_local_auth_env() {
-  local repo_dir
-  repo_dir="$(cd "${APP_DIR}/../.." && pwd)"
-  local auth_env="${repo_dir}/.env.local-auth"
-  if [[ -f "${auth_env}" ]]; then
-    set -a
-    # shellcheck source=/dev/null
-    source "${auth_env}"
-    set +a
-  fi
-}
-
 companion_default_metro_connection() {
   case "${DEVICE_MODE:-auto}" in
     simulator|emulator)

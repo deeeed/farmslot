@@ -48,6 +48,8 @@ function fixture(t, auth = '') {
     mkdirSync(path.dirname(path.join(root, 'framework', relative)), { recursive: true });
     copyFileSync(path.join(repo, relative), path.join(root, 'framework', relative));
   }
+  mkdirSync(path.join(root, 'home'), { recursive: true });
+  mkdirSync(path.join(root, 'user'), { recursive: true });
   mkdirSync(path.join(root, 'apps/command-center'), { recursive: true });
   mkdirSync(path.join(root, 'apps/companion/scripts/agentic'), { recursive: true });
   symlinkSync(path.join(repo, 'node_modules'), path.join(root, 'node_modules'), 'dir');
@@ -59,11 +61,12 @@ function fixture(t, auth = '') {
   const capture = path.join(root, 'capture.json');
   writeFileSync(
     path.join(bin, 'yarn'),
-    '#!/usr/bin/env node\nconst fs=require("node:fs");fs.writeFileSync(process.env.STACK_CREDENTIAL_CAPTURE,JSON.stringify(Object.fromEntries(["FARMSLOT_NODE_TOKEN","FARMSLOT_GATEWAY_TOKEN","FARMSLOT_GATEWAY_PASSWORD","GATEWAY_URL","GATEWAY_HOST","FARMSLOT_GATEWAY_AUTH_MODE","FARMSLOT_HOME","NODE_OPTIONS"].map(k=>[k,process.env[k]??null]))));if(process.env.STACK_KEEP_CAPTURE_RUNNING==="1")setInterval(()=>{},20);\n',
+    '#!/usr/bin/env node\nconst fs=require("node:fs");fs.writeFileSync(process.env.STACK_CREDENTIAL_CAPTURE,JSON.stringify(Object.fromEntries(["FARMSLOT_NODE_TOKEN","FARMSLOT_GATEWAY_TOKEN","FARMSLOT_GATEWAY_PASSWORD","GATEWAY_URL","GATEWAY_HOST","FARMSLOT_GATEWAY_AUTH_MODE","FARMSLOT_HOME","NODE_OPTIONS","TYPESAFE_API_KEY","FARMSLOT_ASSESSMENT_MODEL","FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID"].map(k=>[k,process.env[k]??null]))));if(process.env.STACK_KEEP_CAPTURE_RUNNING==="1")setInterval(()=>{},20);\n',
     { mode: 0o755 },
   );
   const env = {
     ...process.env,
+    HOME: path.join(root, 'user'),
     PATH: bin + path.delimiter + process.env.PATH,
     GATEWAY_PORT: '0',
     VITE_PORT: '0',
@@ -78,6 +81,9 @@ function fixture(t, auth = '') {
     FARMSLOT_HOME: path.join(root, 'home'),
     STACK_CREDENTIAL_CAPTURE: capture,
   };
+  for (const key of Object.keys(env)) {
+    if (key === 'TYPESAFE_API_KEY' || key.startsWith('FARMSLOT_ASSESSMENT_')) delete env[key];
+  }
   return {
     root,
     env,
@@ -98,12 +104,14 @@ test('dev stack drops inherited parent credentials before co-launching its node'
   assert.equal(child.FARMSLOT_GATEWAY_AUTH_MODE, null);
 });
 
-test('checkout auth supplies only its node credential', (t) => {
+test('retired checkout auth is ignored and the selected home supplies its node credential', (t) => {
   for (const auth of [
     'FARMSLOT_GATEWAY_TOKEN=stack-token\n',
     'FARMSLOT_GATEWAY_PASSWORD=stack-password\n',
   ]) {
-    const child = fixture(t, auth + 'FARMSLOT_NODE_TOKEN=stack-node\n').run();
+    const f = fixture(t, auth + 'FARMSLOT_NODE_TOKEN=retired-node\n');
+    writeFileSync(path.join(f.env.FARMSLOT_HOME, 'node.secret'), 'stack-node', { mode: 0o600 });
+    const child = f.run();
     assert.equal(child.FARMSLOT_NODE_TOKEN, 'stack-node');
     assert.equal(child.FARMSLOT_GATEWAY_TOKEN, null);
     assert.equal(child.FARMSLOT_GATEWAY_PASSWORD, null);
@@ -249,3 +257,78 @@ test('stack-local ports restore their bind host without retired auth policy', (t
   assert.equal(child.FARMSLOT_GATEWAY_PASSWORD, null);
   assert.equal(child.FARMSLOT_NODE_TOKEN, null);
 });
+
+test('development node expands its home, uses its machine secret and reads provider values literally', (t) => {
+  const f = fixture(t);
+  const devHome = path.join(f.env.HOME, '.farmslot-dev');
+  const automationHome = path.join(f.env.HOME, '.farmslot-automation');
+  mkdirSync(devHome);
+  mkdirSync(automationHome);
+  f.env.FARMSLOT_HOME = '~/.farmslot-dev';
+  f.env.MACHINE_NAME = 'fixture-machine';
+  writeFileSync(
+    path.join(automationHome, 'fixture-machine-node-automation.secret'),
+    'machine-node',
+    { mode: 0o600 },
+  );
+  writeFileSync(
+    path.join(devHome, 'providers.env'),
+    'TYPESAFE_API_KEY="$(touch must-not-execute)"\nFARMSLOT_ASSESSMENT_MODEL=fixture-model\n',
+    { mode: 0o600 },
+  );
+  const child = f.run();
+  assert.equal(child.FARMSLOT_NODE_TOKEN, 'machine-node');
+  assert.equal(child.TYPESAFE_API_KEY, '$(touch must-not-execute)');
+  assert.equal(child.FARMSLOT_ASSESSMENT_MODEL, 'fixture-model');
+  assert.equal(existsSync(path.join(f.root, 'must-not-execute')), false);
+  for (const key of ['FARMSLOT_GATEWAY_TOKEN', 'FARMSLOT_GATEWAY_PASSWORD'])
+    assert.equal(child[key], null);
+});
+
+test('a sandbox never borrows the automation node credential', (t) => {
+  const f = fixture(t);
+  const automationHome = path.join(f.env.HOME, '.farmslot-automation');
+  mkdirSync(automationHome);
+  writeFileSync(
+    path.join(automationHome, 'fixture-machine-node-automation.secret'),
+    'operator-node',
+    { mode: 0o600 },
+  );
+  f.env.MACHINE_NAME = 'fixture-machine';
+  const helper = path.join(f.root, 'scripts/lib/stack-credentials.sh');
+  execFileSync(
+    'bash',
+    [
+      '-c',
+      'source "$1"; isolate_sandbox_home "$2"; bash "$3"',
+      'fixture',
+      helper,
+      f.env.FARMSLOT_RUNTIME_DIR,
+      path.join(f.root, 'scripts/dev.sh'),
+    ],
+    { env: f.env, stdio: 'pipe' },
+  );
+  const child = JSON.parse(readFileSync(f.capture, 'utf8'));
+  assert.equal(child.FARMSLOT_NODE_TOKEN, null);
+});
+
+for (const [name, filename, content, mode] of [
+  ['provider auth injection', 'providers.env', 'FARMSLOT_NODE_TOKEN=wrong-node\n', 0o600],
+  ['public node credential', 'node.secret', 'private-node', 0o644],
+  ['public provider settings', 'providers.env', 'TYPESAFE_API_KEY=private-provider\n', 0o644],
+  ['malformed node credential', 'node.secret', 'two tokens', 0o600],
+]) {
+  test(`dev stack refuses ${name} without printing values`, (t) => {
+    const f = fixture(t);
+    writeFileSync(path.join(f.env.FARMSLOT_HOME, filename), content, { mode });
+    assert.throws(
+      () => f.run(),
+      (error) => {
+        const output = String(error.stdout) + String(error.stderr);
+        assert.doesNotMatch(output, /wrong-node|private-node|private-provider|two tokens/);
+        return true;
+      },
+    );
+    assert.equal(existsSync(f.capture), false);
+  });
+}

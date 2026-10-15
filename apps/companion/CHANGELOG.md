@@ -5,6 +5,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 ## Unreleased
 
 - Keep report and evidence links bound to their gateway-retained snapshot, including read-only stale reports.
+- Stop loading checkout authentication in Companion development scripts.
+
 - Use the shared compact worker checklist view and preserve child-unit expansion.
 
 - Confirm the secondary Settings sign-out action and retain sign-in with the shared 30-day expiry policy.

@@ -175,7 +175,6 @@ if [[ ! -t 0 && -z "${IOS_TARGET}" && "${DEVICE_MODE}" == "select" ]]; then
   exit 1
 fi
 
-companion_load_local_auth_env
 companion_configure_network_env
 
 cd "${APP_DIR}"

@@ -242,7 +242,7 @@ async function main(): Promise<void> {
   // (Node --env-file won't override, causing stale values after tsx watch reload).
   // Checkout files contain bind and node settings. Gateway identity is read
   // from the credential store, never imported from an environment secret.
-  for (const name of ['.env', '.env.local-auth']) {
+  for (const name of ['.env']) {
     const envPath = resolve(farmslotRoot, name);
     try {
       const content = readFileSync(envPath, 'utf-8');
