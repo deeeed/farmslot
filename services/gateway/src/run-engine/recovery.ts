@@ -559,7 +559,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
     // can consume the retained fix signal or re-arm its wait after a restart.
     // Treating `fixing` as a blocked decision state loses that continuation.
     if (
-      run.status === 'fixing' &&
+      (run.status === 'fixing' || run.status === 'reconciling') &&
       fleet.slots.some((slot) => slot.slot === run.slotId) &&
       run.steps.some((step) => step.name === S.REVIEW && step.status === 'running') &&
       !run.decisions.some((decision) => !decision.resolvedAt)
