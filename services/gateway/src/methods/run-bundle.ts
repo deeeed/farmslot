@@ -11,8 +11,11 @@ import { exportRunsToBundle, importBundle, listBundle } from '@farmslot/run-bund
 import { farmslotRoot } from '../projects/repo-root.js';
 import { loadAllRuns } from '../runs/store.js';
 
-export async function runBundleExport(params: RunBundleExportParams): Promise<RunBundleExportResult> {
-  if (!params.outputPath?.trim()) throw new Error('Invalid run.bundle.export params: missing outputPath');
+export async function runBundleExport(
+  params: RunBundleExportParams,
+): Promise<RunBundleExportResult> {
+  if (!params.outputPath?.trim())
+    throw new Error('Invalid run.bundle.export params: missing outputPath');
   return exportRunsToBundle({
     farmslotRoot,
     outputPath: params.outputPath,
@@ -24,9 +27,12 @@ export async function runBundleExport(params: RunBundleExportParams): Promise<Ru
   });
 }
 
-export async function runBundleImport(params: RunBundleImportParams): Promise<RunBundleImportResult> {
-  if (!params.bundlePath?.trim()) throw new Error('Invalid run.bundle.import params: missing bundlePath');
-  const result = importBundle({
+export async function runBundleImport(
+  params: RunBundleImportParams,
+): Promise<RunBundleImportResult> {
+  if (!params.bundlePath?.trim())
+    throw new Error('Invalid run.bundle.import params: missing bundlePath');
+  const result = await importBundle({
     farmslotRoot,
     bundlePath: params.bundlePath,
     mode: params.mode ?? 'seed',
@@ -37,6 +43,14 @@ export async function runBundleImport(params: RunBundleImportParams): Promise<Ru
 }
 
 export function runBundleList(params: RunBundleListParams): RunBundleListResult {
-  if (!params.bundlePath?.trim()) throw new Error('Invalid run.bundle.list params: missing bundlePath');
+  if (!params.bundlePath?.trim())
+    throw new Error('Invalid run.bundle.list params: missing bundlePath');
   return { manifest: listBundle(params.bundlePath) };
+}
+export async function runBundleRetain(
+  params: import('@farmslot/protocol').RunBundleRetainParams,
+): Promise<import('@farmslot/protocol').RunBundleRetainResult> {
+  if (!params.runId?.trim()) throw new Error('Invalid run.bundle.retain params: missing runId');
+  const { retainRunArtifacts } = await import('../run-completion/retained-artifacts.js');
+  return retainRunArtifacts(params.runId);
 }

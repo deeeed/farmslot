@@ -3,6 +3,12 @@ import path from 'node:path';
 
 import { RECIPE_PROTOCOL_SCHEMA_URL, type Run } from '@farmslot/protocol';
 
+import { retainFixtureTask } from '../../../../packages/run-bundle/src/retained.test-support.js';
+import { runBundleStore } from '../run-completion/retained-artifacts.js';
+
+import { materializeInheritedContext } from './context.js';
+import { buildFamilyObservabilitySnapshotFromRuns } from './snapshot.js';
+
 export function makeRecipeJson(nodes: Record<string, unknown>, entry = 'start'): string {
   return JSON.stringify({
     $schema: RECIPE_PROTOCOL_SCHEMA_URL,
@@ -58,4 +64,22 @@ export async function writeArtifact(taskDir: string, relPath: string, content: s
   const full = path.join(taskDir, relPath);
   await mkdir(path.dirname(full), { recursive: true });
   await writeFile(full, content, 'utf-8');
+}
+
+/** Explicit capture keeps historical fixtures subject to the production retention boundary. */
+export async function retainFamilyFixtures(runs: Run[]): Promise<void> {
+  const store = await runBundleStore(true);
+  for (const run of new Map(runs.map((run) => [run.id, run])).values()) {
+    if (run.taskFile) await retainFixtureTask(path.dirname(run.taskFile), run, store);
+  }
+}
+
+export async function buildRetainedFamilySnapshot(runs: Run[], allRuns: Run[] = []) {
+  await retainFamilyFixtures([...runs, ...allRuns]);
+  return buildFamilyObservabilitySnapshotFromRuns(runs, allRuns);
+}
+
+export async function materializeRetainedFamilyContext(run: Run, taskDir: string, allRuns: Run[]) {
+  await retainFamilyFixtures(allRuns);
+  return materializeInheritedContext(run, taskDir, allRuns);
 }

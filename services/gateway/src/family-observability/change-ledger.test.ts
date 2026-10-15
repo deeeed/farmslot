@@ -4,8 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { buildFamilyObservabilitySnapshotFromRuns } from './snapshot.js';
-import { makeRun, writeArtifact } from './test-fixtures.js';
+import {
+  buildRetainedFamilySnapshot as buildFamilyObservabilitySnapshotFromRuns,
+  makeRun,
+  writeArtifact,
+} from './test-fixtures.js';
 
 test('snapshot builds family change ledger from durable diff and review-signal artifacts', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'family-observability-ledger-'));

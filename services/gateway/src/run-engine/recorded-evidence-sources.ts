@@ -1,7 +1,6 @@
-import { readFile, realpath } from 'node:fs/promises';
+import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
-import { readRecordedEvidencePackage } from '@farmslot/adapter-sdk';
 import { validateRecordedEvidencePackage } from '@farmslot/adapter-sdk/evidence';
 import {
   type ArtifactRef,
@@ -11,6 +10,7 @@ import {
   type RecordedEvidencePackageInput,
   RecordedEvidenceReadError,
   type Run,
+  type RunArtifactBundleRef,
   sanitizeLatestValidRecipeRunPointer,
 } from '@farmslot/protocol';
 
@@ -20,6 +20,12 @@ import {
   verifyReadyGatePackageHash,
   verifyReadyGateSelectedEvidenceFiles,
 } from '../run-completion/ready-gate-package.js';
+import {
+  readRetainedEvidencePackage,
+  readRetainedRunText,
+  retainedRunBundleRef,
+  retainedRunTaskDirectory,
+} from '../run-completion/retained-artifacts.js';
 
 export interface RecordedEvidenceSource {
   input: RecordedEvidencePackageInput;
@@ -63,6 +69,9 @@ export function visualReviewSnapshotIdentity(run: Run, decisionId?: string): str
       ? {}
       : {
           reportPath: run.output?.reportPath,
+          ...(run.output?.artifactBundle
+            ? { bundleDigest: run.output.artifactBundle.bundleDigest }
+            : {}),
           inventory: run.output?.artifactManifest,
           captureError: run.output?.captureError,
         }),
@@ -95,9 +104,13 @@ export async function readVisualReviewSource(
     let inventory = output.artifactManifest;
     if (run.flowType === 'qa') {
       const indexPath = 'artifacts/qa-result.json';
-      await verifyReadyGateSelectedEvidenceFiles(run, { evidenceManifest: inventory }, [indexPath]);
+      await verifyReadyGateSelectedEvidenceFiles(
+        run,
+        { evidenceManifest: inventory, artifactBundle: output.artifactBundle },
+        [indexPath],
+      );
       const value: unknown = JSON.parse(
-        await readFile(path.join(path.dirname(run.taskFile), indexPath), 'utf8'),
+        await readRetainedRunText(run, indexPath, output.artifactBundle),
       );
       const head =
         run.qaSource?.headSha ??
@@ -110,7 +123,7 @@ export async function readVisualReviewSource(
         Object.values(result.packages).some((root) => file.path.startsWith(`artifacts/${root}/`)),
       );
     }
-    sources = await readFrozenRecordedEvidenceSources(run, inventory);
+    sources = await readFrozenRecordedEvidenceSources(run, inventory, [], output.artifactBundle);
   }
   if (snapshotIdentity !== visualReviewSnapshotIdentity(run, decisionId))
     throw new Error('Captured visual review changed while its evidence was read.');
@@ -165,6 +178,7 @@ export async function readGateRecordedEvidenceSources(
     run,
     preparedPackage.evidenceManifest ?? [],
     preparedPackage.selectedEvidenceKeys ?? [],
+    preparedPackage.artifactBundle,
   );
   if (!sources.length) throw new Error('The gate package has no retained recipe evidence closure.');
   for (const source of sources) {
@@ -185,6 +199,7 @@ export async function readFrozenPublicationRecipeSources(
   run: Run,
   inventory: readonly ArtifactRef[],
   selectedKeys: readonly string[] = [],
+  bundleRef?: RunArtifactBundleRef,
 ): Promise<RecordedEvidenceSource[]> {
   const contractVersion = run.recordedEvidenceContractVersion ?? 0;
   if (contractVersion !== 0 && contractVersion !== 1)
@@ -194,12 +209,14 @@ export async function readFrozenPublicationRecipeSources(
     );
   const pointerPath = 'artifacts/latest-valid-recipe-run.json';
   if (inventory.some((artifact) => artifact.path === pointerPath)) {
-    await verifyReadyGateSelectedEvidenceFiles(run, { evidenceManifest: [...inventory] }, [
-      pointerPath,
-    ]);
+    await verifyReadyGateSelectedEvidenceFiles(
+      run,
+      { evidenceManifest: [...inventory], artifactBundle: bundleRef },
+      [pointerPath],
+    );
     if (!run.taskFile) throw new Error('The frozen evidence has no retained task directory.');
     const pointer = sanitizeLatestValidRecipeRunPointer(
-      JSON.parse(await readFile(path.join(path.dirname(run.taskFile), pointerPath), 'utf8')),
+      JSON.parse(await readRetainedRunText(run, pointerPath, bundleRef)),
     );
     if (!pointer)
       throw new RecordedEvidenceReadError(
@@ -226,7 +243,7 @@ export async function readFrozenPublicationRecipeSources(
         filterEvidenceManifestBySelection,
         publicationBaselineContext,
       } = await import('../run-completion/publication-artifacts.js');
-      const manifest = await readFrozenPublicationManifest(run, inventory);
+      const manifest = await readFrozenPublicationManifest(run, inventory, bundleRef);
       if (!manifest)
         throw new RecordedEvidenceReadError(
           'evidence-selection-invalid',
@@ -235,7 +252,7 @@ export async function readFrozenPublicationRecipeSources(
       const beforeRoots = await assertPublicationManifestOwnership(
         filterEvidenceManifestBySelection(manifest, external),
         pointer.relativeArtifactRoot,
-        path.join(path.dirname(run.taskFile), 'artifacts'),
+        path.join(await retainedRunTaskDirectory(run, bundleRef), 'artifacts'),
         undefined,
         publicationBaselineContext(run, [...inventory]),
       );
@@ -246,7 +263,7 @@ export async function readFrozenPublicationRecipeSources(
           'evidence-selection-invalid',
           'The publication selects an undeclared recipe attempt.',
         );
-      const before = await readFrozenRecordedEvidenceSources(run, inventory, external);
+      const before = await readFrozenRecordedEvidenceSources(run, inventory, external, bundleRef);
       for (const source of before) {
         if (validateRecordedEvidencePackage(source.input).status !== 'valid')
           throw new RecordedEvidenceReadError(
@@ -258,6 +275,8 @@ export async function readFrozenPublicationRecipeSources(
     return readFrozenRecordedEvidenceSources(
       run,
       inventory.filter((artifact) => artifact.path.startsWith(prefix)),
+      [],
+      bundleRef,
     );
   }
   if (contractVersion === 1) {
@@ -275,10 +294,12 @@ export async function readFrozenPublicationRecipeSources(
     return readFrozenRecordedEvidenceSources(
       run,
       inventory.filter((artifact) => artifact.path.startsWith(`${root}/`)),
+      [],
+      bundleRef,
     );
   }
   if (!recordedEvidenceRoots(inventory, selectedKeys).length) return [];
-  return readFrozenRecordedEvidenceSources(run, inventory, selectedKeys);
+  return readFrozenRecordedEvidenceSources(run, inventory, selectedKeys, bundleRef);
 }
 
 /** One closure reader for the existing publication inventory and QA output snapshot. */
@@ -286,9 +307,11 @@ export async function readFrozenRecordedEvidenceSources(
   run: Run,
   evidenceManifest: readonly ArtifactRef[],
   selectedEvidenceKeys: readonly string[] = [],
+  bundleRef?: RunArtifactBundleRef,
 ): Promise<RecordedEvidenceSource[]> {
   if (!run.taskFile) throw new Error('The frozen evidence has no retained task directory.');
-  const taskDir = await realpath(path.dirname(run.taskFile));
+  const ref = bundleRef ?? retainedRunBundleRef(run);
+  const taskDir = await retainedRunTaskDirectory(run, ref);
   const inventory = new Map(evidenceManifest.map((artifact) => [artifact.path, artifact.sha256]));
   const roots = recordedEvidenceRoots(evidenceManifest, selectedEvidenceKeys);
   if (!roots.length) throw new Error('The gate package has no retained recipe evidence closure.');
@@ -304,7 +327,7 @@ export async function readFrozenRecordedEvidenceSources(
     const relative = path.relative(taskDir, directory);
     if (relative.startsWith('..') || path.isAbsolute(relative))
       throw new Error('The retained evidence closure escapes the task directory.');
-    const result = await readRecordedEvidencePackage(directory);
+    const result = await readRetainedEvidencePackage(run, root, ref);
     const failed = result.checks.filter((check) => check.status === 'fail');
     if (failed.length) throw new Error(failed.map((check) => check.message).join(' '));
     // Every file the owner reader consumed must match the inventory frozen at

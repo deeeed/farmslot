@@ -22,7 +22,7 @@ await import('../../runtime/mock-pty.test-support.js');
 const { createRun, updateRun, getRun, runsDirectory } = await import('../../runs/store.js');
 const { runOverrideClaim } = await import('./claim-overrides.js');
 const { collectRunGateReadiness } = await import('../../run-engine/gate-prerequisites.js');
-const { deleteTestRunIfPresent, makeReadyGatePackage } =
+const { deleteTestRunIfPresent, makeReadyGatePackage, retainRunFixture } =
   await import('../../run-engine/test-fixtures.js');
 const { computeReadyGatePackageHash } = await import('../../run-completion/ready-gate-package.js');
 
@@ -178,6 +178,7 @@ async function fixture(t: TestContext) {
     decisions: [decision],
     taskFile: path.join(root, 'TASK.md'),
   });
+  await retainRunFixture(getRun(run.id)!, prepared);
   const acceptance = async () => ({
     criteria: [{ id: claim.id, text: claim.claim }],
     ledger: claims,

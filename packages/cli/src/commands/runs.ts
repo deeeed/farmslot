@@ -69,14 +69,14 @@ export function registerRunsCommand(program: Command): void {
         'Legacy: reference, family, or full (scripts; prefer defaults and --forensic)',
       ).hideHelp(),
     )
-    .action((runId: string | undefined, opts: ExportOptions, cmd: Command) => {
+    .action(async (runId: string | undefined, opts: ExportOptions, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
       const emit = createEmitter(output, cmd);
       try {
         const farmslotRoot = resolveRootFlag(opts.root);
         if (opts.asPackage) {
           if (!runId) throw new Error('Provide a run id when using --as-package');
-          const out = exportRunAsPackage({
+          const out = await exportRunAsPackage({
             farmslotRoot,
             runId,
             outputPath: path.resolve(opts.asPackage),
@@ -87,7 +87,7 @@ export function registerRunsCommand(program: Command): void {
         }
         if (!opts.output) throw new Error('--output is required for bundle export');
         const profile = resolveRunsExportProfile(opts);
-        const result = exportRunsToBundle({
+        const result = await exportRunsToBundle({
           farmslotRoot,
           outputPath: path.resolve(opts.output),
           profile,
@@ -130,12 +130,12 @@ export function registerRunsCommand(program: Command): void {
         const mode = resolveRunsImportMode(opts);
         const useGateway = Boolean(cmd.optsWithGlobals().gateway || cmd.optsWithGlobals().url);
         const label = `Importing ${path.basename(bundlePath)}`;
-        let result: ReturnType<typeof importBundle>;
+        let result: Awaited<ReturnType<typeof importBundle>>;
         if (useGateway) {
           result = await withProgress(
             label,
             () =>
-              client.call<ReturnType<typeof importBundle>>('run.bundle.import', {
+              client.call<Awaited<ReturnType<typeof importBundle>>>('run.bundle.import', {
                 bundlePath: path.resolve(bundlePath),
                 mode,
                 force: opts.force || undefined,
@@ -143,13 +143,11 @@ export function registerRunsCommand(program: Command): void {
             !emit.machine,
           );
         } else {
-          // importBundle is synchronous and blocks the event loop, so the
-          // spinner's 80ms interval could never fire. Print an immediate
-          // notice before the blocking work instead.
+          // Archive extraction is synchronous; print a notice before starting it.
           const showNotice = !emit.machine && (process.stderr.isTTY ?? false);
           if (showNotice) process.stderr.write(`${label}…`);
           try {
-            result = importBundle({
+            result = await importBundle({
               farmslotRoot,
               bundlePath: path.resolve(bundlePath),
               mode,
@@ -244,6 +242,27 @@ export function registerRunsCommand(program: Command): void {
     });
 
   const bundle = runs.command('bundle').description('Inspect portable run bundles');
+  bundle
+    .command('retain <runId>')
+    .description('Retain a captured run report and artifacts in its gateway-owned bundle')
+    .action(async (runId: string, _opts: unknown, cmd: Command) => {
+      const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
+      try {
+        const result = await client.call<import('@farmslot/protocol').RunBundleRetainResult>(
+          'run.bundle.retain',
+          { runId },
+        );
+        if (emit.machine) emit.ok(result);
+        else
+          output.write(
+            `${result.ref.bundleDigest}${result.missingData.length ? ` · ${result.missingData.join('; ')}` : ''}\n`,
+          );
+      } catch (error) {
+        emit.fail(error);
+      }
+    });
+
   bundle
     .command('ls <bundlePath>')
     .description('List manifest summary for a .farmrun bundle')

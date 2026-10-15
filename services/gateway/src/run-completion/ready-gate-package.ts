@@ -14,6 +14,7 @@ import {
 import { sha256File } from '../core/file-hash.js';
 
 import { evidenceKeyVariants, resolveSelectedEvidenceRef } from './evidence-paths.js';
+import { retainedRunBundleRef, retainedRunTaskDirectory } from './retained-artifacts.js';
 
 export { sha256File } from '../core/file-hash.js';
 export { resolveSelectedEvidenceRef } from './evidence-paths.js';
@@ -215,10 +216,28 @@ export async function readReadyGatePreparedPackage(
 ): Promise<ReadyGatePrPackage | undefined> {
   const artifactRel =
     current.engineState?.publishGate?.packageArtifactPath ?? 'artifacts/pr-package.json';
+  const retained = current.decisions
+    .slice()
+    .reverse()
+    .find(
+      (decision) =>
+        decision.payload?.kind === 'ready' &&
+        decision.payload.prPackage?.id === current.engineState?.publishGate?.packageId &&
+        decision.payload.prPackage?.packageHash === current.engineState?.publishGate?.packageHash,
+    );
+  if (retained?.payload?.kind === 'ready' && retained.payload.prPackage)
+    return retained.payload.prPackage;
   if (!current.taskFile) return undefined;
-  const artifactPath = path.join(path.dirname(current.taskFile), artifactRel);
-  if (!existsSync(artifactPath)) return undefined;
-  return JSON.parse(await readFile(artifactPath, 'utf-8')) as ReadyGatePrPackage;
+  // This gateway control record is written after capture to carry the payload's
+  // digest. It cannot be part of its own content-addressed payload. No slot I/O.
+  try {
+    return JSON.parse(
+      await readFile(path.join(path.dirname(current.taskFile), artifactRel), 'utf8'),
+    ) as ReadyGatePrPackage;
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
+    throw error;
+  }
 }
 
 export async function verifyReadyGateSelectedEvidenceFiles(
@@ -228,7 +247,10 @@ export async function verifyReadyGateSelectedEvidenceFiles(
   invalidEvidence: (runId: string, detail: string) => Error = packageChangedError,
 ): Promise<void> {
   if (!current.taskFile) throw new Error('Approved package evidence requires a task directory');
-  const taskDir = path.dirname(current.taskFile);
+  const taskDir = await retainedRunTaskDirectory(
+    current,
+    preparedPackage.artifactBundle ?? retainedRunBundleRef(current),
+  );
   const evidenceByPath = new Map(
     (preparedPackage.evidenceManifest ?? []).map((artifact) => [artifact.path, artifact]),
   );

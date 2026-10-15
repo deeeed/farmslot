@@ -13,6 +13,7 @@ import {
   type RunBundleProfile,
   type RunBundleRunEntry,
 } from '@farmslot/protocol';
+import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import {
   sanitizeRunForBundleExport,
   strictTaskRelativePathFromFarmslotRoot,
@@ -23,6 +24,7 @@ import { selectRunsForExport } from './collect.js';
 import { copyDirectoryRecursive, registerDirectoryEntries } from './copy-tree.js';
 import { sha256File, sha256Text } from './hashing.js';
 import { resolveRunsDir, sanitizeBundleRunId } from './paths.js';
+import { openRunBundleStore, readRetainedRunBundle, resolveRunBundleEntry } from './retained.js';
 
 const PACKAGE_FILENAMES = [
   'reference.result-package.json',
@@ -70,14 +72,14 @@ function addFileEntry(
   };
 }
 
-export function exportRunsToBundle(
+export async function exportRunsToBundle(
   request: RunBundleExportRequest & {
     outputPath: string;
     familyId?: string;
     positionalRunId?: string;
     runIds?: string[];
   },
-): RunBundleExportResult {
+): Promise<RunBundleExportResult> {
   const runs = selectRunsForExport({
     farmslotRoot: request.farmslotRoot,
     runIds: request.runIds,
@@ -115,28 +117,51 @@ export function exportRunsToBundle(
         request.farmslotRoot,
         run.taskFile,
       );
-      if (run.taskFile && existsSync(run.taskFile)) {
-        if (!taskRelative) {
-          missingData.push(`task-path-unapproved:${run.id}`);
-        } else {
-          const taskKey = sanitizeBundleRunId(run.id);
-          const taskBundleDir = `tasks/${taskKey}`;
-          copyDirectoryRecursive(path.dirname(run.taskFile), path.join(bundleDir, taskBundleDir));
-          registerDirectoryEntries(bundleDir, taskBundleDir, entries);
-          entry.taskKey = taskKey;
-          entry.taskRelativePath = taskRelative;
-          const packagePaths = collectPackagePaths(path.dirname(run.taskFile));
-          if (packagePaths.length) {
-            entry.packagePaths = packagePaths.map((packagePath) => {
-              const rel = path
-                .relative(path.dirname(run.taskFile!), packagePath)
-                .replace(/\\/g, '/');
-              return `${taskBundleDir}/${rel}`;
-            });
-          }
+      const ref = run.artifactBundle ?? run.output?.artifactBundle;
+      if (ref) {
+        const store = await openRunBundleStore({
+          runsDir: resolveRunsDir(request.farmslotRoot),
+          home: farmslotHome(),
+        });
+        const retained = await readRetainedRunBundle(store, ref, run.id);
+        const taskKey = sanitizeBundleRunId(run.id);
+        const taskBundleDir = `tasks/${taskKey}`;
+        copyDirectoryRecursive(retained.taskDir, path.join(bundleDir, taskBundleDir));
+        registerDirectoryEntries(bundleDir, taskBundleDir, entries);
+        entry.taskKey = taskKey;
+        entry.artifactBundleDigests = [
+          ref.bundleDigest,
+          ...Object.entries(run.importProvenance?.artifactBundleRefs ?? {})
+            .filter(([, target]) => target.bundleDigest === ref.bundleDigest)
+            .map(([source]) => source),
+        ];
+        entry.taskRelativePath = taskRelative ?? undefined;
+        const packagePaths = collectPackagePaths(retained.taskDir);
+        if (packagePaths.length)
+          entry.packagePaths = packagePaths.map(
+            (file) =>
+              `${taskBundleDir}/${path.relative(retained.taskDir, file).replaceAll('\\', '/')}`,
+          );
+        missingData.push(
+          ...(retained.manifest.missingData ?? []).map((item) => `${run.id}:${item}`),
+        );
+        for (const [key] of Object.entries(retained.manifest.entries)) {
+          const prefix = `tasks/${ref.taskKey}/`;
+          if (key.startsWith(prefix) && !entries[`${taskBundleDir}/${key.slice(prefix.length)}`])
+            missingData.push(`retained-payload-missing:${run.id}:${key.slice(prefix.length)}`);
         }
-      } else if (run.taskFile) {
-        missingData.push(`task-dir-missing:${run.id}`);
+        for (const decision of run.decisions) {
+          const pinned =
+            decision.payload?.kind === 'ready'
+              ? decision.payload.prPackage?.artifactBundle
+              : decision.payload?.kind === 'output-review'
+                ? decision.payload.artifactBundle
+                : undefined;
+          if (pinned && !entry.artifactBundleDigests.includes(pinned.bundleDigest))
+            missingData.push(`historical-capture-not-exported:${run.id}:${pinned.bundleDigest}`);
+        }
+      } else {
+        missingData.push(`retention-missing:${run.id}`);
       }
 
       if (profile === 'full') {
@@ -176,24 +201,37 @@ export function exportRunsToBundle(
   }
 }
 
-export function exportRunAsPackage(input: {
+export async function exportRunAsPackage(input: {
   farmslotRoot: string;
   runId: string;
   outputPath: string;
-}): string {
+}): Promise<string> {
   const runs = selectRunsForExport({
     farmslotRoot: input.farmslotRoot,
     positionalRunId: input.runId,
   });
   const run = runs[0];
-  if (!run.taskFile || !existsSync(run.taskFile)) {
-    throw new Error(`Run ${run.id} has no task directory to export a package from`);
-  }
-  const packagePaths = collectPackagePaths(path.dirname(run.taskFile));
+  const ref = run.artifactBundle ?? run.output?.artifactBundle;
+  if (!ref)
+    throw new Error(
+      `Run ${run.id} has no retained bundle. Run farmslot runs bundle retain ${run.id}.`,
+    );
+  const store = await openRunBundleStore({
+    runsDir: resolveRunsDir(input.farmslotRoot),
+    home: farmslotHome(),
+  });
+  const retained = await readRetainedRunBundle(store, ref, run.id);
+  const packagePaths = collectPackagePaths(retained.taskDir);
   const candidate = packagePaths.find((candidatePath) => candidatePath.includes('result-package'));
   if (!candidate) {
     throw new Error(`Run ${run.id} has no result package artifact to export`);
   }
+  await resolveRunBundleEntry({
+    store,
+    ref,
+    runId: run.id,
+    path: path.relative(retained.taskDir, candidate).replaceAll('\\', '/'),
+  });
   const content = readFileSync(candidate, 'utf-8');
   writeFileSync(input.outputPath, content, 'utf-8');
   return input.outputPath;

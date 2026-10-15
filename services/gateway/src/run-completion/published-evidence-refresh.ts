@@ -108,6 +108,7 @@ export async function refreshPublishedEvidence(
     run,
     run.prNumber,
     selection,
+    prepared.artifactBundle,
   );
   if (!expanded.length) throw new Error('No local visual evidence is available to refresh');
   const postedBody = await postProcessPRBody(run, ciRepo, run.prNumber, artifactUrls, expanded, {
@@ -116,7 +117,7 @@ export async function refreshPublishedEvidence(
     checkAuthorChecklist: false,
     evidenceManifest: manifest,
     validateBody: async () => {
-      await verifyFrozenPublicationEvidence(run, inventory, expanded);
+      await verifyFrozenPublicationEvidence(run, inventory, expanded, prepared.artifactBundle);
       const current = await readPr();
       if (current.headRefOid !== before.headRefOid || current.body !== before.body) {
         throw new Error(

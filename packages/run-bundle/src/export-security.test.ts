@@ -7,6 +7,7 @@ import test from 'node:test';
 import type { Run } from '@farmslot/protocol';
 
 import { exportRunsToBundle, importBundle, listBundle } from './index.js';
+import { fixtureBundleStore, retainFixtureTask } from './retained.test-support.js';
 
 function writeMinimalFarmslotRoot(root: string): void {
   writeFileSync(path.join(root, 'CLAUDE.md'), '# farmslot\n', 'utf-8');
@@ -26,7 +27,7 @@ function writeRun(root: string, run: Run, taskBody = '# Task'): void {
   writeFileSync(run.taskFile, taskBody, 'utf-8');
 }
 
-test('export omits sensitive files from task trees', () => {
+test('export omits sensitive files from task trees', async () => {
   const sourceRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-export-src-'));
   const bundlePath = path.join(tmpdir(), `export-sec-${Date.now()}.farmrun`);
   const runId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
@@ -64,7 +65,8 @@ test('export omits sensitive files from task trees', () => {
   writeFileSync(path.join(path.dirname(taskFile), '.env'), 'SECRET=1\n', 'utf-8');
 
   try {
-    exportRunsToBundle({
+    await retainFixtureTask(sourceRoot, run);
+    await exportRunsToBundle({
       farmslotRoot: sourceRoot,
       outputPath: bundlePath,
       profile: 'reference',
@@ -83,7 +85,7 @@ test('export omits sensitive files from task trees', () => {
   }
 });
 
-test('export strips runner session archives and never packs session-archives/', () => {
+test('export strips runner session archives and never packs session-archives/', async () => {
   const sourceRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-export-archive-'));
   const bundlePath = path.join(tmpdir(), `export-archive-${Date.now()}.farmrun`);
   const runId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
@@ -134,7 +136,8 @@ test('export strips runner session archives and never packs session-archives/', 
   const destRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-import-archive-'));
   writeMinimalFarmslotRoot(destRoot);
   try {
-    exportRunsToBundle({
+    await retainFixtureTask(sourceRoot, run);
+    await exportRunsToBundle({
       farmslotRoot: sourceRoot,
       outputPath: bundlePath,
       profile: 'full',
@@ -145,8 +148,9 @@ test('export strips runner session archives and never packs session-archives/', 
       Object.keys(manifest.entries).some((key) => key.includes('session-archives')),
       false,
     );
-    const imported = importBundle({
+    const imported = await importBundle({
       farmslotRoot: destRoot,
+      retentionStore: await fixtureBundleStore(destRoot),
       bundlePath,
       mode: 'reference-only',
     });
@@ -164,7 +168,7 @@ test('export strips runner session archives and never packs session-archives/', 
   }
 });
 
-test('export skips task trees outside farmslot root', () => {
+test('export skips task trees outside farmslot root', async () => {
   const sourceRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-export-src2-'));
   const outsideRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-export-out-'));
   const bundlePath = path.join(tmpdir(), `export-outside-${Date.now()}.farmrun`);
@@ -204,7 +208,7 @@ test('export skips task trees outside farmslot root', () => {
   writeRun(sourceRoot, run, '# outside\n');
 
   try {
-    exportRunsToBundle({
+    await exportRunsToBundle({
       farmslotRoot: sourceRoot,
       outputPath: bundlePath,
       profile: 'reference',
@@ -212,7 +216,7 @@ test('export skips task trees outside farmslot root', () => {
     });
     const manifest = listBundle(bundlePath);
     assert.equal(manifest.runs[0]?.taskKey, undefined);
-    assert.ok(manifest.missingData?.some((item) => item.startsWith('task-path-unapproved:')));
+    assert.ok(manifest.missingData?.some((item) => item.startsWith('retention-missing:')));
     assert.equal(
       Object.keys(manifest.entries).some((key) => key.startsWith('tasks/')),
       false,

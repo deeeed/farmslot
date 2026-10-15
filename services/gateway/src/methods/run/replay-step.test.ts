@@ -1539,6 +1539,16 @@ test('runReplayStep moves terminal runs back to the active replay phase immediat
 });
 
 test('runReplayStep normalizes stale earlier steps when replaying from a later step', async (t) => {
+  const previousDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+  const previousTestContext = process.env.NODE_TEST_CONTEXT;
+  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+  process.env.NODE_TEST_CONTEXT = '1';
+  t.after(() => {
+    if (previousDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+    else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previousDisableStart;
+    if (previousTestContext === undefined) delete process.env.NODE_TEST_CONTEXT;
+    else process.env.NODE_TEST_CONTEXT = previousTestContext;
+  });
   const taskFile = '/tmp/farmslot-stale-monitor-task/TASK.md';
   const run = createRun({
     flowType: 'dev',
@@ -1589,7 +1599,7 @@ test('runReplayStep normalizes stale earlier steps when replaying from a later s
     replayed.steps.find((step) => step.name === 'monitor')?.outputs?.replayPrerequisiteNormalized,
     true,
   );
-  assert.equal(replayed.steps.find((step) => step.name === 'review')?.status, 'running');
+  assert.equal(replayed.steps.find((step) => step.name === 'review')?.status, 'pending');
   assert.equal(emittedStatuses[0], 'reviewing');
 });
 

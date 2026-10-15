@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Add runs bundle retain for captured reports and evidence; portable export reads retained snapshots and import retains them in the target store.
 - Provision node credentials through --secret-file; remove the checkout auth-env writer.
 
 - Reject release-version and calendar-date slot repo paths in doctor diagnostics without preventing slot teardown.

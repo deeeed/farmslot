@@ -33,10 +33,10 @@ import {
   extractAndPersistSessionCost,
   type LowCaption,
   readEvidenceManifest,
-  scanArtifacts,
   type SessionCostSnapshot,
   uploadArtifacts,
 } from '../run-completion/orchestrator.js';
+import { retainedRunArtifactManifest } from '../run-completion/retained-artifacts.js';
 import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
 import {
   ACCEPTANCE_STATUS_FILENAME,
@@ -169,8 +169,7 @@ export async function executeReviewGate(runId: string): Promise<void> {
 
   if (current.taskFile) {
     try {
-      const taskDir = path.dirname(current.taskFile);
-      artifactManifest = await scanArtifacts(taskDir);
+      artifactManifest = await retainedRunArtifactManifest(getRun(runId)!);
     } catch (err) {
       // Review posting can continue without a refreshed manifest, but the
       // failure must stay visible because missing evidence is actionable.
@@ -209,15 +208,13 @@ export async function executeReviewGate(runId: string): Promise<void> {
     }
   }
 
-  const recipeJson = await readTaskArtifactText(current.taskFile, 'recipe.json');
+  const recipeJson = await readTaskArtifactText(current, 'recipe.json');
   // Coverage is a structured engine projection; worker prose is not a verdict.
   const recipeCoverage = acceptanceCoverageMarkdown(
-    ledgerFromArtifactText(
-      await readTaskArtifactText(current.taskFile, ACCEPTANCE_STATUS_FILENAME),
-    ),
+    ledgerFromArtifactText(await readTaskArtifactText(current, ACCEPTANCE_STATUS_FILENAME)),
   );
-  const workerReport = await readTaskArtifactText(current.taskFile, 'report.md');
-  const workerLearnings = await readTaskArtifactText(current.taskFile, 'learnings.md');
+  const workerReport = await readTaskArtifactText(current, 'report.md');
+  const workerLearnings = await readTaskArtifactText(current, 'learnings.md');
 
   // 3e. Phase 2 evidence quality audit (non-fatal)
   let qualityReport: import('@farmslot/protocol').EvidenceQualityReport | null = null;
@@ -586,17 +583,13 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
   }
   await copyWorkerArtifacts(runId);
   const review = await readReviewArtifacts(runId);
-  const workerLearnings = await readTaskArtifactText(run.taskFile, 'learnings.md');
+  const workerLearnings = await readTaskArtifactText(run, 'learnings.md');
 
   let artifactManifest: ArtifactRef[] | undefined;
   if (run.taskFile) {
     try {
-      // A successful scan returning [] means evidence was removed since
-      // the last refresh — overwrite the manifest with [] rather than
-      // leaving the stale entries in place (the spread below preserves
-      // them otherwise, and the review UI keeps showing 404s for files
-      // that no longer exist).
-      artifactManifest = await scanArtifacts(path.dirname(run.taskFile));
+      // Project the fresh capture, including media deliberately removed from acquisition staging.
+      artifactManifest = await retainedRunArtifactManifest(getRun(runId)!);
     } catch (err) {
       // Recovery is intentional: refresh continues with the previously
       // persisted manifest (no rescan applied). But surface the failure

@@ -27,7 +27,7 @@ mock.module('../integrations/github-client.js', {
 });
 const { runResolveDecision } = await import('./run.js');
 const { createRun, getRun, updateRun } = await import('../runs/store.js');
-const { makeReadyGatePackage, deleteTestRunIfPresent } =
+const { makeReadyGatePackage, deleteTestRunIfPresent, retainRunFixture } =
   await import('../run-engine/test-fixtures.js');
 const { computeReadyGatePackageHash } = await import('../run-completion/ready-gate-package.js');
 const { withEvidenceAttestation } = await import('../run-completion/evidence-attestation.js');
@@ -84,6 +84,7 @@ async function fixture(t: test.TestContext) {
       },
     },
   });
+  await retainRunFixture(getRun(run.id)!, prepared);
   const params = buildRunResolveDecisionParams({
     runId: run.id,
     decision,
