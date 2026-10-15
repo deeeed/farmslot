@@ -37,3 +37,28 @@ export function evidenceMediaItems(
     ];
   });
 }
+
+/** Original recordings match their whole checked artifact identity, never a shared filename. */
+export function evidenceRecordingForPath(model: EvidenceReviewModel, path: string | undefined) {
+  return model.recordings.find((recording) => path === model.artifactPath(recording.videoPath));
+}
+
+export function selectedEvidenceMediaItem(
+  model: EvidenceReviewModel,
+  path: string,
+  resolveArtifactUrl: (path: string) => string,
+  authHeaders: ArtifactHttpHeaders,
+): MediaViewerItem {
+  return {
+    uri: resolveArtifactUrl(path),
+    path,
+    title: model.selection?.caption,
+    mediaType:
+      model.selection?.artifacts.find((artifact) => artifact.artifactPath === path)?.mediaType ??
+      classifyArtifact(path),
+    evidenceModel: model,
+    initialTraceIndex: model.playback.clip?.traceIndex,
+    authHeaders,
+    resolveArtifactUrl,
+  };
+}

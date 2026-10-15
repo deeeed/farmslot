@@ -206,6 +206,11 @@ export interface RecordedEvidenceState {
 
 /** Readers supply identities computed from actual bytes, not hashes copied from a manifest. */
 export interface RecordedEvidencePackageInput extends RecipeArtifactPackageInput {
+  /** Independently validated immutable comparison packages, never head claim authority. */
+  comparisonDependencies?: readonly {
+    artifactRoot: string;
+    input: RecordedEvidencePackageInput;
+  }[];
   recipeRunId?: string;
   artifactDigests: Readonly<Record<string, string>>;
   timelines: Readonly<Record<string, RecipeRecordingTimelineDocument>>;

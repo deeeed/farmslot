@@ -836,3 +836,113 @@ for (const location of ['promoted', 'inherited'] as const) {
     },
   );
 }
+
+test('a valid failed comparison dependency remains inside the head closure without becoming selected claim authority', async (t) => {
+  const { taskDir, run } = await fixture(t);
+  const { createRecipeRunner, createStandardCoreAdapters, readRecordedEvidencePackage } =
+    await import('@farmslot/recipe-runner');
+  const { RECIPE_ACTION_MANIFEST_SCHEMA_URL } = await import('@farmslot/protocol');
+  const runner = createRecipeRunner({
+    actionManifest: {
+      $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+      actions: {
+        command: {
+          description: 'Read the observation.',
+          schema: {
+            type: 'object',
+            properties: { cmd: { type: 'string' } },
+            additionalProperties: false,
+          },
+          examples: [
+            {
+              action: 'command',
+              cmd: 'printf observed',
+              intent: 'Read the observed fixture value.',
+              next: 'verify',
+            },
+          ],
+        },
+        assert_output: {
+          description: 'Check the observation.',
+          schema: {
+            type: 'object',
+            properties: { source: { type: 'string' }, contains: { type: 'string' } },
+            additionalProperties: false,
+          },
+          examples: [
+            {
+              action: 'assert_output',
+              source: 'read',
+              contains: 'observed',
+              intent: 'Verify the observed fixture value.',
+              next: 'done',
+            },
+          ],
+        },
+        end: { description: 'Finish.', examples: [{ action: 'end', status: 'pass' }] },
+      },
+    },
+    adapters: createStandardCoreAdapters({ actions: ['command', 'assert_output'] }),
+    hud: false,
+    defaultSource: { kind: 'operator', trust: 'trusted' },
+  });
+  const recipe = (value: string) => ({
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    title: 'Observe a value',
+    description: 'Retain the original assertion.',
+    proofTargets: [{ id: 'AC-1', claim: 'The value is observed.', proofMode: 'state' }],
+    workflow: {
+      entry: 'read',
+      nodes: {
+        read: {
+          action: 'command',
+          cmd: `printf ${value}`,
+          intent: 'Read the observed fixture value.',
+          next: 'verify',
+        },
+        verify: {
+          action: 'assert_output',
+          source: 'read',
+          contains: 'observed',
+          proves: ['AC-1'],
+          intent: 'Verify the observed fixture value.',
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
+      },
+    },
+  });
+  const baseline = path.join(taskDir, 'artifacts/baseline');
+  const failed = await runner.run({
+    projectRoot: taskDir,
+    artifactsDir: baseline,
+    recipeDocument: recipe('defect'),
+  });
+  assert.equal(failed.status, 'fail');
+  const selected = path.join(taskDir, 'artifacts/selected');
+  const head = await runner.run({
+    projectRoot: taskDir,
+    artifactsDir: selected,
+    recipeDocument: recipe('observed'),
+    comparisonDependencies: [baseline],
+  });
+  assert.equal(head.status, 'pass');
+  const loaded = await readRecordedEvidencePackage(selected);
+  const inventory: ArtifactRef[] = (loaded.input.artifactPaths ?? []).map((file) => ({
+    path: `artifacts/selected/${file}`,
+    purpose: 'evidence',
+    sha256: loaded.input.artifactDigests[file],
+  }));
+  const sources = await readFrozenRecordedEvidenceSources(run, inventory);
+  assert.equal(sources.length, 1);
+  assert.equal(sources[0]?.input.claims?.recipeRunId, head.claims.recipeRunId);
+  assert.equal(sources[0]?.input.claims?.criteria[0]?.verdict, 'proven');
+  assert.equal(
+    sources[0]?.input.comparisonDependencies?.[0]?.input.claims?.recipeRunId,
+    failed.claims.recipeRunId,
+  );
+  assert.equal(
+    sources[0]?.input.comparisonDependencies?.[0]?.input.claims?.criteria[0]?.verdict,
+    'failed',
+  );
+});

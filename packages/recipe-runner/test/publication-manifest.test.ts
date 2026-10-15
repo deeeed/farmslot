@@ -159,7 +159,7 @@ test('a host cannot register a second publication-manifest producer', async (t) 
   );
 });
 
-test('the shared producer keeps full-run recording preference and every segment', async (t) => {
+test('the shared producer retains every unbound recording without assigning an After role', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'preferred-recording-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const writer = new JsonArtifactWriter(root);
@@ -170,9 +170,9 @@ test('the shared producer keeps full-run recording preference and every segment'
   const manifest: EvidenceManifest = JSON.parse(
     await readFile(path.join(root, 'evidence-manifest.json'), 'utf8'),
   );
-  assert.deepEqual(manifest.videos, { after: 'videos/first.mp4', preferred: true });
+  assert.equal(manifest.videos, undefined);
   assert.deepEqual(
     manifest.standalone?.map((entry) => entry.file),
-    ['videos/second.mp4', 'proof.png'],
+    ['videos/first.mp4', 'videos/second.mp4', 'proof.png'],
   );
 });

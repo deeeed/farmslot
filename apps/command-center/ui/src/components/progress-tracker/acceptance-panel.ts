@@ -423,10 +423,14 @@ function renderRow(
         ? html`<span class="ac-mode">${view.timing}</span>`
         : nothing}
       ${criterion?.proofMode ? html`<span class="ac-mode">${criterion.proofMode}</span>` : nothing}
+      ${view.proofKinds.map((kind) => html`<span class="ac-mode">${kind}</span>`)}
       <span class="ac-verdict"
         >${criterion ? criterion.verdict : link ? 'evidence linked' : 'not assessed'}</span
       >
     </div>
+    ${view.reviewLabels.map(
+      (label) => html`<div class="ac-meta" data-testid="visual-review-provenance">${label}</div>`,
+    )}
     ${evidence.length > 0 || recipeNodes.length > 0
       ? html`
           <div class="ac-meta">

@@ -28,7 +28,7 @@ test('slot view recipe lightbox model scopes artifacts by selected paths', () =>
   );
 });
 
-test('slot view recipe lightbox model builds visual and markdown items with kind filtering', () => {
+test('slot view keeps unbound visual and markdown media without guessed roles', () => {
   assert.deepEqual(
     slotViewRecipeLightboxItems({
       artifacts,
@@ -45,33 +45,18 @@ test('slot view recipe lightbox model builds visual and markdown items with kind
       kindFilter: 'after',
       artifactUrl: (artifact) => `/artifact/${artifact.path}`,
     }).map((item) => item.path),
-    ['artifacts/ac1-after.png'],
+    [],
   );
 });
 
-test('slot view recipe lightbox model builds compare pairs and scope clear index', () => {
+test('unbound slot media stays separate and clearing scope retains the selected file', () => {
   assert.deepEqual(
     slotViewRecipeLightboxPairs({
       artifacts,
       scopePaths: null,
       artifactUrl: (artifact) => `/artifact/${artifact.path}`,
     }),
-    [
-      {
-        before: {
-          url: '/artifact/artifacts/ac1-before.png',
-          path: 'artifacts/ac1-before.png',
-          purpose: 'screenshot',
-        },
-        after: {
-          url: '/artifact/artifacts/ac1-after.png',
-          path: 'artifacts/ac1-after.png',
-          purpose: 'screenshot',
-        },
-        stem: 'ac1',
-        kind: 'image',
-      },
-    ],
+    [],
   );
   assert.equal(clearedSlotViewRecipeLightboxScopeIndex([{ path: 'a' }, { path: 'b' }], 'b'), 1);
   assert.equal(clearedSlotViewRecipeLightboxScopeIndex([{ path: 'a' }], 'b'), null);

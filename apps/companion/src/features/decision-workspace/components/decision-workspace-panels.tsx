@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
 import { Image, Pressable, ScrollView, Text, View } from 'react-native';
 
+import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import {
   type CIDecisionCheckView,
   type PendingDecision,
@@ -960,10 +961,13 @@ export function groupArtifacts(
   manifest: ArtifactManifestEntry[],
   gatewayUrl: string,
   runId: string | null,
+  model?: EvidenceReviewModel | null,
 ): VisualArtifactPair[] {
   if (!runId) return [];
-  return groupVisualArtifactPairs(manifest, (artifact) =>
-    artifactUrlForEntry(gatewayUrl, runId, artifact),
+  return groupVisualArtifactPairs(
+    manifest,
+    (artifact) => artifactUrlForEntry(gatewayUrl, runId, artifact),
+    model,
   ).pairs;
 }
 export function recipeRunIdForVisualPair(

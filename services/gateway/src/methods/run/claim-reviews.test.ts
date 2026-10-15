@@ -11,7 +11,12 @@ import {
   deriveReviewedRecipeClaims,
   validateRecordedEvidencePackage,
 } from '@farmslot/adapter-sdk/evidence';
-import type { ArtifactRef, RunDecision, RunReviewVisualClaimParams } from '@farmslot/protocol';
+import {
+  type ArtifactRef,
+  parseProjectVisualClaimReviewPolicy,
+  type RunDecision,
+  type RunReviewVisualClaimParams,
+} from '@farmslot/protocol';
 
 await import('../../runtime/mock-pty.test-support.js');
 const { createRun, updateRun, getRun, runsDirectory } = await import('../../runs/store.js');
@@ -96,10 +101,111 @@ async function fixture(t: TestContext) {
     verdict: 'confirmed',
     reason: 'The recorded view shows the expected value.',
   };
-  const person = { principalId: 'person', credentialId: 'credential', displayName: 'Reviewer' };
-  const dependencies = { authorizeEvidenceAttestation: () => person };
+  const person = {
+    principalId: 'person',
+    credentialId: 'credential',
+    displayName: 'Reviewer',
+    subjectKind: 'person' as const,
+  };
+  const dependencies = { authorizeVisualClaimReview: () => person };
   return { run, decision, params, dependencies, input, prepared, directory, person, inventory };
 }
+
+test('delegated judgments retain their own identity/digests and drive the same parent reducer', async (t) => {
+  const f = await fixture(t);
+  const policy = parseProjectVisualClaimReviewPolicy({
+    delegatedReviewerPrincipalIds: ['lead-reviewer'],
+    delegatorPrincipalId: 'person',
+  })!;
+  const reviewer = {
+    principalId: 'lead-reviewer',
+    credentialId: 'lead-credential',
+    displayName: 'Lead reviewer',
+    subjectKind: 'service' as const,
+    delegator: { principalId: 'person', displayName: 'Operator' },
+  };
+  const dependencies = { authorizeVisualClaimReview: () => reviewer, policy: async () => policy };
+  const params = { ...f.params, kind: 'lead-agent-reviewed' as const };
+  const before = await readFile(path.join(f.directory, 'acceptance-status.json'));
+  const result = await runReviewVisualClaim(params, () => {}, dependencies);
+  assert.equal(result.receipt.kind, 'lead-agent-reviewed');
+  assert.equal(result.receipt.approver.principalId, 'lead-reviewer');
+  assert.equal(result.receipt.reviewerSubjectKind, 'service');
+  assert.equal(result.receipt.delegation!.principalId, 'person');
+  assert.ok(result.receipt.reviewedFiles!.length);
+  for (const file of result.receipt.reviewedFiles!)
+    assert.equal(file.digest, f.input.artifactDigests[file.path]);
+  assert.deepEqual(
+    deriveReviewedRecipeClaims(
+      f.input,
+      visualReviewAuthority(f.run, f.input, undefined, policy),
+    ).map(({ verdict }) => verdict),
+    ['proven', 'proven'],
+  );
+  assert.deepEqual(
+    deriveReviewedRecipeClaims(f.input, visualReviewAuthority(f.run, f.input)).map(
+      ({ verdict }) => verdict,
+    ),
+    ['awaiting-review', 'awaiting-review'],
+  );
+  assert.equal(
+    (await runReviewVisualClaim(params, () => {}, dependencies)).receipt.id,
+    result.receipt.id,
+  );
+  assert.deepEqual(await readFile(path.join(f.directory, 'acceptance-status.json')), before);
+  assert.equal(f.decision.resolvedAt, undefined);
+  const rejected = await runReviewVisualClaim(
+    {
+      ...params,
+      snapshotIdentity: visualReviewSnapshotIdentity(f.run, f.decision.id),
+      verdict: 'rejected',
+      reason: 'The retained value is wrong.',
+    },
+    () => {},
+    dependencies,
+  );
+  assert.notEqual(rejected.receipt.id, result.receipt.id);
+  assert.deepEqual(
+    deriveReviewedRecipeClaims(
+      f.input,
+      visualReviewAuthority(f.run, f.input, undefined, policy),
+    ).map(({ verdict }) => verdict),
+    ['failed', 'failed'],
+  );
+});
+
+test('person-only parents and changed delegation refuse a write without modifying captured evidence', async (t) => {
+  const f = await fixture(t);
+  const policy = {
+    delegatedReviewerPrincipalIds: ['lead-reviewer'],
+    delegatorPrincipalId: 'person',
+  };
+  const reviewer = {
+    principalId: 'lead-reviewer',
+    credentialId: 'lead-credential',
+    displayName: 'Lead reviewer',
+    subjectKind: 'service' as const,
+    delegator: { principalId: 'person', displayName: 'Operator' },
+  };
+  const params = { ...f.params, kind: 'lead-agent-reviewed' as const };
+  await assert.rejects(
+    runReviewVisualClaim(params, () => {}, {
+      authorizeVisualClaimReview: () => reviewer,
+      policy: async () => ({ ...policy, personOnlyClaimIds: ['case-1'] }),
+    }),
+    /person review/,
+  );
+  let reads = 0;
+  await assert.rejects(
+    runReviewVisualClaim(params, () => {}, {
+      authorizeVisualClaimReview: () => reviewer,
+      policy: async () =>
+        ++reads === 1 ? policy : { ...policy, delegatedReviewerPrincipalIds: [] },
+    }),
+    /identity changed/,
+  );
+  assert.equal(f.run.visualJudgmentReceipts?.length ?? 0, 0);
+});
 
 test('durable visual review derives parent/check verdicts, retries once and preserves original bytes', async (t) => {
   const f = await fixture(t);
@@ -184,7 +290,7 @@ test('unauthenticated, spoofed, stale, wrong-execution and derived-parent reques
   );
   await assert.rejects(
     runReviewVisualClaim(f.params, () => {}, {
-      authorizeEvidenceAttestation: () => {
+      authorizeVisualClaimReview: () => {
         throw new Error('Service credentials cannot attest');
       },
     }),
@@ -235,7 +341,7 @@ test('source and person races between reads refuse before persistence', async (t
   let authorizations = 0;
   await assert.rejects(
     runReviewVisualClaim(f.params, () => {}, {
-      authorizeEvidenceAttestation: () =>
+      authorizeVisualClaimReview: () =>
         ++authorizations === 1 ? f.person : { ...f.person, credentialId: 'replaced' },
     }),
     /identity changed/,
@@ -272,7 +378,7 @@ test('failed persistence and revocation during persistence expose no receipt aft
   mode = 'revoke';
   await assert.rejects(
     runReviewVisualClaim(f.params, () => {}, {
-      authorizeEvidenceAttestation: () => {
+      authorizeVisualClaimReview: () => {
         if (revoked) throw new Error('Credential revoked');
         return f.person;
       },

@@ -1,3 +1,4 @@
+import type { ProjectVisualClaimReviewPolicy } from '../recipe/claim-reviews.js';
 import { isRecord } from '../recipe/common.js';
 import { normalizeRecipeRef } from '../recipe/workflow.js';
 import { isContainedSourceEntry } from '../sources/validation.js';
@@ -291,6 +292,7 @@ export interface ProjectConfig {
   worktreeBase?: string;
   apps?: string[];
   recipe?: ProjectRecipeConfig;
+  visualClaimReview?: ProjectVisualClaimReviewPolicy;
   paths: { runtimeDir: string; artifactDir: string };
   defaults: Record<string, { runner: string; model: string; effort?: string }>;
   /** Absolute review picker defaults configured by the project. */

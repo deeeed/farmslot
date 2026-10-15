@@ -78,6 +78,7 @@ export type {
 export type RecipeEngineRunOptions = RecipeRunOptions & {
   /** Command-resolved task registration; the engine never reads ambient task paths. */
   claims?: RecipeRunRequest['claims'];
+  comparisonDependencies?: RecipeRunRequest['comparisonDependencies'];
   signal?: AbortSignal;
   // The engine's trusted mutation reads its own flags from it; `run` passes it,
   // `call` does not.
@@ -324,6 +325,7 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
     recordVideo,
     recordingReason: runtimeOptions.recordingReason,
     claims: runtimeOptions.claims,
+    comparisonDependencies: runtimeOptions.comparisonDependencies,
     ...trust,
     ...(librarySources ? { librarySources } : {}),
     adapter,

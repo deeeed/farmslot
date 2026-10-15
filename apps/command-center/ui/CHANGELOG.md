@@ -4,6 +4,10 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Review criteria, source-bound Before/After captures and fullscreen video moments together in the Evidence tab, with Unassigned media kept separate.
+
+- Show visual-review delegation and reviewer identity beside acceptance verdicts.
+
 - Require stored or explicitly supplied login credentials instead of build-time environment secrets.
 
 - Show authenticated visual claim reviews through the shared evidence model.

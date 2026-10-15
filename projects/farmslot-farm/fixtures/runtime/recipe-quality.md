@@ -172,3 +172,16 @@ node {{farmslot_dir}}/scripts/quality/check-task-artifact-contract.mjs {{TASK_DI
 
 - Workspace smoke: `{{farmslot_dir}}/docs/examples/recipes/farmslot/command-center-ui.recipe.json`
 - Demo banner: `{{recipe_example_banner}}`
+
+## AC capture binding
+
+For each visual criterion, annotate the capture node with its registered `ac` and
+`role`: `before` on the clean base checkout, `after` on the committed head, or
+`review` for other inspection. The engine observes the checkout source. Do not
+write a source SHA or hand-edit capture bindings, claims or a publication manifest.
+
+Keep the base execution in its own retained artifact directory. The head recipe
+may consume it through the existing `--param evidenceBaseline=<package>` option,
+relative to this task's artifacts. The engine retains and checks the dependency
+bytes. Preserve held workspaces and previous attempts. Captures with omitted AC
+or role stay Unassigned. Capturing or comparing never supplies a visual verdict.

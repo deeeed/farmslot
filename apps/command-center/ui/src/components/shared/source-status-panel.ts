@@ -166,12 +166,7 @@ export class SourceStatusPanel extends LitElement {
               Retry this request
             </button>`
         : nothing}
-      ${view && !view.configured
-        ? html`<p>Source authority is not configured. Retained inputs are read-only.</p>`
-        : nothing}
-      ${view?.runSource?.selectionRefusal
-        ? html`<p>${view.runSource.selectionRefusal}</p>`
-        : nothing}
+      ${view?.readOnlyReason ? html`<p>${view.readOnlyReason}</p>` : nothing}
       ${view?.rows.map(
         (row) =>
           html`<article data-source-id=${row.declaration.id}>

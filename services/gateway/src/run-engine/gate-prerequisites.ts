@@ -62,7 +62,11 @@ import {
   claimOverrideAuthority,
   projectGateAcceptance,
 } from './claim-overrides.js';
-import { appliedVisualJudgmentReceiptIds, reviewedRecipeClaims } from './claim-reviews.js';
+import {
+  appliedVisualJudgmentReceiptIds,
+  readVisualReviewPolicy,
+  reviewedRecipeClaims,
+} from './claim-reviews.js';
 import { readReviewInputSnapshot } from './diff-artifacts.js';
 import {
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
@@ -388,7 +392,8 @@ export async function collectRunGateReadiness(
       try {
         const qa = qaOutput ? await source.qaCompletion(run) : undefined;
         const inputs = await source.recordedEvidence(run, preparedPackage, qa);
-        acceptance = projectGateAcceptance(acceptance, run, inputs);
+        const visualPolicy = await readVisualReviewPolicy(run);
+        acceptance = projectGateAcceptance(acceptance, run, inputs, visualPolicy);
         const appliedReceipts = appliedClaimOverrideReceiptIds(run, inputs);
         const frozenReceipts =
           preparedPackage?.claimOverrideReceiptIds ??
@@ -403,7 +408,7 @@ export async function collectRunGateReadiness(
             message: 'Human claim overrides changed. Refresh and review the gate package.',
             actionId: 'hold',
           });
-        const visualReceipts = appliedVisualJudgmentReceiptIds(run, inputs);
+        const visualReceipts = appliedVisualJudgmentReceiptIds(run, inputs, visualPolicy);
         const frozenVisualReceipts =
           preparedPackage?.visualJudgmentReceiptIds ??
           (outputDecision?.payload?.kind === 'output-review'
@@ -415,7 +420,8 @@ export async function collectRunGateReadiness(
             code: 'evidence-override-refresh-required',
             prerequisite: 'evidence',
             actionId: 'hold',
-            message: 'Human visual review changed. Refresh and review the gate package.',
+            message:
+              'Visual review or its delegation policy changed. Refresh and review the gate package.',
           });
         const valid =
           inputs.length > 0 &&
@@ -434,7 +440,9 @@ export async function collectRunGateReadiness(
             input.summary.stopAfterNode === undefined,
         );
         const reviewed = inputs.map((input) =>
-          valid && input.claims ? reviewedRecipeClaims(run, input) : (input.claims?.criteria ?? []),
+          valid && input.claims
+            ? reviewedRecipeClaims(run, input, visualPolicy)
+            : (input.claims?.criteria ?? []),
         );
         const claimsSatisfied = inputs.every(
           (input, index) =>
