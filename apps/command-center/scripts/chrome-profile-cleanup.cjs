@@ -51,17 +51,32 @@ function slotIsInactive(fleet, port, machine, stopping) {
   )
     return false;
   const local = fleet.slots.filter((slot) => slot.machine === machine);
+  // Disabled pool placeholders have no resource definition and can retain a
+  // historical taskId. They cannot own a port without a current run or worker.
+  const configured = local.filter(
+    (slot) =>
+      !(
+        !slot.resources &&
+        slot.enabled === false &&
+        slot.lifecycle === 'disabled' &&
+        !slot.currentRunId &&
+        slot.agent === '-'
+      ),
+  );
   // A missing machine or incomplete config is uncertainty, not an unbound port.
-  if (!local.length || local.some((slot) => !slot.resources || typeof slot.resources !== 'object'))
+  if (
+    !local.length ||
+    configured.some((slot) => !slot.resources || typeof slot.resources !== 'object')
+  )
     return false;
-  const slots = local.filter((slot) =>
+  const slots = configured.filter((slot) =>
     Object.values(slot.resources).some(
       (resource) => resource && Number(resource.cdp_port) === port,
     ),
   );
   return slots.every(
     (slot) =>
-      (stopping && slot.phase === 'releasing') ||
+      (stopping && slot.lifecycle === 'busy' && slot.phase === 'releasing') ||
       (['ready', 'disabled'].includes(slot.lifecycle) &&
         !slot.currentRunId &&
         !slot.taskId &&

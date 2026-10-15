@@ -67,6 +67,35 @@ test('preserves live, held, manual and claimed slots even without CDP', async (t
   assert.deepEqual((await cleanup.reapProfiles(f.options)).removed, []);
 });
 
+test('unconfigured disabled slots do not pin unrelated dead profiles', async (t) => {
+  const f = fixture(t);
+  f.fleet.slots.push({
+    slot: 'disabled-fixture',
+    machine: 'fixture-machine',
+    lifecycle: 'disabled',
+    enabled: false,
+    agent: '-',
+    currentRunId: null,
+    taskId: 'historical-task',
+  });
+  assert.deepEqual((await cleanup.reapProfiles(f.options)).removed, [f.profile]);
+});
+
+test('an unconfigured disabled slot with a retained owner still protects profiles', async (t) => {
+  const f = fixture(t);
+  f.fleet.slots.push({
+    slot: 'disabled-fixture',
+    machine: 'fixture-machine',
+    lifecycle: 'disabled',
+    enabled: false,
+    agent: '-',
+    currentRunId: 'retained-run',
+    taskId: null,
+  });
+  assert.deepEqual((await cleanup.reapProfiles(f.options)).removed, []);
+  assert.equal(fs.existsSync(f.profile), true);
+});
+
 test('preserves browser processes, listeners and failed ownership probes', async (t) => {
   const f = fixture(t);
   for (const probes of [
