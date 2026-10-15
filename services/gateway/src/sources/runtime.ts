@@ -3,18 +3,19 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
-import type {
-  QueueItem,
-  Run,
-  RunCreateParams,
-  SlotStatus,
-  SourceConfiguration,
-  SourceLock,
-  SourceMaterialization,
-  SourceNodeStatus,
-  SourcesPinParams,
-  SourcesPinResult,
-  SourcesUnpinParams,
+import {
+  type QueueItem,
+  ReviewQaConfigurationError,
+  type Run,
+  type RunCreateParams,
+  type SlotStatus,
+  type SourceConfiguration,
+  type SourceLock,
+  type SourceMaterialization,
+  type SourceNodeStatus,
+  type SourcesPinParams,
+  type SourcesPinResult,
+  type SourcesUnpinParams,
 } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import {
@@ -401,6 +402,7 @@ export async function withSourceCreationPlan<T>(
   options = { ...options, sourceCreationRunId: runId, sourceCreationPins: prepared };
   let candidate: SourceCreationCandidate | undefined;
   const reasons: string[] = [];
+  let configurationError: ReviewQaConfigurationError | undefined;
   if (
     params.reviewWorkspaceTarget ||
     (params.flowType === 'review-pr' && params.reviewValidationDepth !== 'full-live')
@@ -427,12 +429,16 @@ export async function withSourceCreationPlan<T>(
       } catch (error) {
         // A scoped node refusal must not hide another eligible workspace's complete inputs.
         reasons.push(`${pool.machine}: ${(error as Error).message}`);
+        if (error instanceof ReviewQaConfigurationError) configurationError ??= error;
       }
     }
   } else {
     const plans = await planSourceRequestSlots(params, options);
     const first = [...(plans?.values() ?? [])].find((plan) => 'creationPlan' in plan);
     if (first && 'creationPlan' in first) candidate = first;
+    for (const plan of plans?.values() ?? []) {
+      if ('refusal' in plan) configurationError ??= plan.configurationError;
+    }
     reasons.push(
       ...[...(plans?.entries() ?? [])].map(
         ([slotId, plan]) =>
@@ -441,6 +447,7 @@ export async function withSourceCreationPlan<T>(
     );
   }
   if (!candidate) {
+    if (configurationError) throw configurationError;
     throw new SourceAdmissionRefusal(`No valid source plan for creation:\n${reasons.join('\n')}`);
   }
   const selected = candidate;

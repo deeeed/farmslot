@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Refuse unresolved QA profile choices before run creation, preserve existing policy and admitted selections, and retain profile identity in QA task context.
+
 - Use the shared bounded, close-awaited file reader for local evidence hashes so repeated evidence requests cannot exhaust gateway descriptors.
 - Bind retained unpublished runs to declared graph stacks through existing run and graph authority, refusing stale source and preserving proof.
 - Allow admins to explicitly replace a retired principal id without restoring old credentials or stored-work authority; freshly authored queued work carries its identity generation.
