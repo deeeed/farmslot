@@ -23,6 +23,7 @@ import {
   filterArtifactWorkspace,
 } from '../lib/artifact-workspace';
 import { diffArtifactCandidate } from '../lib/diff';
+import { recordedEvidenceArtifactUrl } from '../lib/evidence-media-items';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 
 import { BeforeAfterPreview, CompareMedia } from './BeforeAfterPreview';
@@ -92,7 +93,11 @@ export function EvidenceReviewWorkspace({
   const open = (path: string) =>
     evidenceModel && onOpenRecordedEvidence
       ? onOpenRecordedEvidence(evidenceModel, path)
-      : onOpenVisual(artifactUrlForEntry(gatewayUrl, runId, { path, purpose: 'evidence' }));
+      : onOpenVisual(
+          evidenceModel
+            ? recordedEvidenceArtifactUrl(gatewayUrl, runId, evidenceModel, path)
+            : artifactUrlForEntry(gatewayUrl, runId, { path, purpose: 'evidence' }),
+        );
   const [, refreshComparisons] = useState(0);
   const layouts = useRef<ComparisonLayouts>({ workspace: 0, rail: 0, rows: {} });
   const [reviewReasons, setReviewReasons] = useState<Record<string, string>>({});
@@ -267,10 +272,12 @@ export function EvidenceReviewWorkspace({
               ...media,
               type: media.mediaType,
               purpose: media.capture?.role ?? 'evidence',
-              url: artifactUrlForEntry(gatewayUrl, runId, {
-                path: media.artifactPath,
-                purpose: 'evidence',
-              }),
+              url: recordedEvidenceArtifactUrl(
+                gatewayUrl,
+                runId,
+                evidenceModel,
+                media.artifactPath,
+              ),
               path: media.artifactPath,
             });
             const before =

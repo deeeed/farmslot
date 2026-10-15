@@ -1,0 +1,85 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion retained media bundle binding",
+  "description": "Use an isolated gate fixture with a blue retained image and red newer current image at the same task-relative path. Open the full gate review with filters visible. Set FARMSLOT_BUNDLE_PROOF_SCREENSHOT to this run artifact directory/native-retained-media.png; ffmpeg and od must be available. No real gate action or judgment. Remove owned proof resources after receipts.",
+  "proofTargets": [
+    {
+      "id": "retained-media",
+      "claim": "The captured gate displays the retained blue image after newer output is captured."
+    }
+  ],
+  "workflow": {
+    "entry": "show-unassigned",
+    "nodes": {
+      "show-unassigned": {
+        "action": "ui.press",
+        "test_id": "companion-evidence-filter-unassigned",
+        "intent": "Show media without an AC binding in the existing gate review.",
+        "next": "open-unassigned"
+      },
+      "open-unassigned": {
+        "action": "ui.press",
+        "test_id": "companion-unassigned-media-artifacts/recipe-runs/head/ordinary.png",
+        "intent": "Open the Unassigned ordinary image through the recorded viewer.",
+        "next": "unassigned-title"
+      },
+      "unassigned-title": {
+        "action": "ui.wait_for",
+        "test_id": "companion-artifact-media-viewer-title",
+        "text": "ordinary.png",
+        "expected": "visible",
+        "timeout_ms": 10000,
+        "proves": ["retained-media"],
+        "intent": "The viewer shows the Unassigned image instead of the previous video.",
+        "next": "unassigned-index"
+      },
+      "unassigned-index": {
+        "action": "ui.wait_for",
+        "test_id": "companion-artifact-media-viewer-index",
+        "text": "1/1",
+        "expected": "visible",
+        "proves": ["retained-media"],
+        "intent": "The Unassigned image uses its one-item recorded selection.",
+        "next": "hud-capture-unassigned"
+      },
+      "hud-capture-unassigned": {
+        "action": "app.hud",
+        "status": "running",
+        "intent": "The old gate must keep its captured blue image after current output turns red.",
+        "next": "capture-unassigned"
+      },
+      "capture-unassigned": {
+        "action": "ui.screenshot",
+        "path": "native-retained-media.png",
+        "covers": ["retained-media"],
+        "intent": "Record the Unassigned image in its own gallery.",
+        "next": "read-displayed-pixel"
+      },
+      "close-unassigned": {
+        "action": "ui.press",
+        "test_id": "companion-artifact-media-viewer-close",
+        "intent": "Return without changing the gate or evidence.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "read-displayed-pixel": {
+        "action": "command",
+        "cmd": "ffmpeg -v error -i \"$FARMSLOT_BUNDLE_PROOF_SCREENSHOT\" -vf \"crop=1:1:iw/2:ih/2\" -f rawvideo -pix_fmt rgb24 - | od -An -tu1",
+        "intent": "Read the displayed image pixel from the actual native screenshot.",
+        "next": "assert-retained-blue"
+      },
+      "assert-retained-blue": {
+        "action": "assert_output",
+        "source": "read-displayed-pixel",
+        "stream": "stdout",
+        "match": "^\\s*0\\s+0\\s+255\\s*$",
+        "proves": ["retained-media"],
+        "intent": "The visible image is retained blue, never current red.",
+        "next": "close-unassigned"
+      }
+    }
+  }
+}
