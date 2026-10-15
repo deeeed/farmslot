@@ -104,6 +104,10 @@ test('retained native startup failure refuses automatic placement with its real 
   assert.deepEqual(reads, [{ sessionId: 'failed', executionNodeId: 'node', leaseId: 'lease' }]);
   snapshot.session.state = 'closed';
   await assert.rejects(assertReviewNativeRunnerHealthy(input, 'owner', 'node'), /timed out/);
+  await assert.rejects(
+    assertReviewNativeRunnerHealthy({ ...input, model: 'sonnet' }, 'owner', 'node'),
+    /timed out/,
+  );
 });
 
 test('a later accepted review clears an older startup failure, independent of archive ordering', async () => {
@@ -115,11 +119,10 @@ test('a later accepted review clears an older startup failure, independent of ar
   assert.equal(reads.length, 0);
 });
 
-test('runner health does not cross owners, nodes, models, accounts or transports', async () => {
+test('runner health does not cross owners, nodes, runners, accounts or transports', async () => {
   reset();
   for (const selected of [
     { ...input, runner: 'codex' },
-    { ...input, model: 'sonnet' },
     { ...input, transport: 'tmux' as const },
     {
       ...input,

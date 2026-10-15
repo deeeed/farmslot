@@ -646,6 +646,21 @@ test('automatic native review skips unhealthy machines across run, queue and mon
     ownerId: 'owner',
   });
   assert.equal(queuedSelection.params.reviewWorkspaceTarget?.machine, 'two');
+  let dispatchedMachine: string | undefined;
+  queue.initDispatchQueue(
+    () => {},
+    async (item) => {
+      dispatchedMachine = item.reviewWorkspaceTarget?.machine;
+      await queue.removeQueueItemInternalNow(item.id, 'captured-health-selection');
+    },
+  );
+  const queued = await asOwner(() =>
+    dispatchQueueAdd({ ...request, ticketOrPr: 'example/app#92' }),
+  );
+  t.after(() => queue.removeQueueItemInternalNow(queued.item.id, 'test-cleanup'));
+  await queue.tryDispatchNext();
+  assert.equal(dispatchedMachine, 'two');
+
   const { resolvePRExecution } = await import('../backlog/pr-execution.js');
   const resolved = await resolvePRExecution('farm', 'example/app', [execution], {
     ownerId: 'owner',

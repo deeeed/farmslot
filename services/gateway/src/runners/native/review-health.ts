@@ -30,9 +30,7 @@ export async function assertReviewNativeRunnerHealthy(
       (run.agentContexts ?? [])
         .filter(
           (context) =>
-            context.role === 'review' &&
-            (context.runner ?? run.metrics.runner) === input.runner &&
-            (context.model ?? run.metrics.model) === input.model,
+            context.role === 'review' && (context.runner ?? run.metrics.runner) === input.runner,
         )
         .flatMap((context) => (context.nativeSession ? [context.nativeSession] : [])),
     )
