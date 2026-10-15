@@ -38,7 +38,7 @@ import {
 
 import { DocumentViewer } from '../../components/DocumentViewer';
 import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
-import { MediaViewer } from '../../components/MediaViewer';
+import { MediaViewer, type MediaViewerItem } from '../../components/MediaViewer';
 import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
 import { TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { useConnectedTransport } from '../../hooks/useConnectedTransport';
@@ -62,7 +62,11 @@ import { documentTitle, presentDecision } from '../../lib/decision-presentation'
 import { decisionResolveRequest } from '../../lib/decision-resolve';
 import { decisionRunId, enrichDecisionWithRunContext } from '../../lib/decision-run-context';
 import { diffArtifactCandidate } from '../../lib/diff';
-import { evidenceMediaItems, selectedEvidenceMediaItem } from '../../lib/evidence-media-items';
+import {
+  evidenceMediaItems,
+  evidenceViewerSelection,
+  selectedEvidenceMediaItem,
+} from '../../lib/evidence-media-items';
 import { gateReviewHref, HUMAN_GATE_DECISION_TYPE } from '../../lib/gate-review';
 import { gatewayFetch } from '../../lib/gateway-http-auth';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
@@ -962,9 +966,13 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const priorityCompareRecipeRunId = primaryPairIsRecipeFallback
     ? recipeRunIdForVisualPair(recipeRuns, primaryPair)
     : DECISION_EVIDENCE_RECIPE_RUN_PARAM;
-  const [comparisonViewerItems, setComparisonViewerItems] = useState<
-    import('../../components/MediaViewer').MediaViewerItem[] | null
-  >(null);
+  const [comparisonViewerItems, setComparisonViewerItems] = useState<MediaViewerItem[] | null>(
+    null,
+  );
+  const openVisualArtifact = (uri: string) => {
+    setComparisonViewerItems(null);
+    setViewerUri(uri);
+  };
   const visualViewerItems = useMemo(() => {
     if (!presentation?.runId) return [];
     const runId = presentation.runId;
@@ -1014,9 +1022,11 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   }
 
   const toneColor = TONE_COLORS[presentation.tone];
-  const viewerIndex = viewerUri
-    ? visualViewerItems.findIndex((item) => item.uri === viewerUri)
-    : -1;
+  const { items: viewerItems, index: viewerIndex } = evidenceViewerSelection(
+    viewerUri,
+    visualViewerItems,
+    comparisonViewerItems,
+  );
   const canShowViewer = viewerUri != null && viewerIndex >= 0;
   const readyDecision = selectReadyWorkspaceDecision(sourceRun) ?? null;
   const reviewGateDecision = selectReviewGateWorkspaceDecision(sourceRun) ?? null;
@@ -1258,7 +1268,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
                 (artifact) => artifact.path === artifactPath,
               );
               if (visualTarget && ['image', 'video'].includes(classifyArtifact(visualTarget))) {
-                setViewerUri(visualTarget.url);
+                openVisualArtifact(visualTarget.url);
                 return;
               }
               const target = presentation.artifactManifest.find(
@@ -1627,7 +1637,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
                 setViewerUri(uri);
               }}
               authHeaders={artifactAuthHeaders}
-              onOpenVisual={setViewerUri}
+              onOpenVisual={openVisualArtifact}
               onOpenDocument={openDocumentArtifact}
               onOpenDiff={openDiffArtifact}
               onOpenArtifactWorkspace={openArtifactWorkspaceForDecision}
@@ -1923,7 +1933,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
           testID="companion-artifact-media-viewer"
           visible={isFocused && canShowViewer}
           uri={viewerUri}
-          items={comparisonViewerItems ?? visualViewerItems}
+          items={viewerItems}
           authHeaders={artifactAuthHeaders}
           initialIndex={Math.max(0, viewerIndex)}
           onClose={() => {

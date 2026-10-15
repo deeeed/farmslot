@@ -18,6 +18,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 - Direct device setup to person pairing instead of build-time gateway token presets.
 
 - Add the shared Sign out / switch account control to forget this device login and disconnect until explicit login or pairing.
+- Render video comparisons with the shared media preview and open recorded moments and ordinary artifacts from their matching viewer selection.
 
 - Reuse the shared criterion comparison model and synchronized Before/After zoom in the existing evidence workspace and player.
 

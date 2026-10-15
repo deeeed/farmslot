@@ -25,7 +25,7 @@ import {
 import { diffArtifactCandidate } from '../lib/diff';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 
-import { BeforeAfterPreview } from './BeforeAfterPreview';
+import { BeforeAfterPreview, CompareMedia } from './BeforeAfterPreview';
 
 interface EvidenceReviewWorkspaceProps {
   runId: string;
@@ -260,6 +260,7 @@ export function EvidenceReviewWorkspace({
             const primaryClip = row.primaryClip;
             const convert = (media: NonNullable<typeof row.selectedBefore>) => ({
               ...media,
+              type: media.mediaType,
               purpose: media.capture?.role ?? 'evidence',
               url: artifactUrlForEntry(gatewayUrl, runId, {
                 path: media.artifactPath,
@@ -397,6 +398,7 @@ export function EvidenceReviewWorkspace({
                 {before && after ? (
                   <BeforeAfterPreview
                     evidenceModel={evidenceModel}
+                    testIdPrefix={`companion-evidence-comparison-${row.claim.id}`}
                     pair={{ before, after, stem: row.claim.id }}
                     authHeaders={authHeaders}
                     title={row.claim.text}
@@ -424,17 +426,15 @@ export function EvidenceReviewWorkspace({
                                 evidenceModel.selectComparisonMedia(media.identity);
                                 open(media.artifactPath);
                               }}
+                              testID={`companion-evidence-comparison-${row.claim.id}-${role}`}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Open ${role} artifact ${media.artifactPath}`}
                             >
-                              <Image
-                                source={artifactSource(
-                                  artifactUrlForEntry(gatewayUrl, runId, {
-                                    path: media.artifactPath,
-                                    purpose: 'evidence',
-                                  }),
-                                  authHeaders,
-                                )}
-                                style={{ width: '100%', height: 180 }}
-                                resizeMode="contain"
+                              <CompareMedia
+                                artifact={convert(media)}
+                                authHeaders={authHeaders}
+                                height={180}
+                                active={false}
                               />
                             </Pressable>
                           ) : (

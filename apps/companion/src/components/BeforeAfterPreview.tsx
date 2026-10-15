@@ -2,6 +2,7 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Image,
+  type ImageStyle,
   type LayoutChangeEvent,
   Modal,
   type NativeScrollEvent,
@@ -10,6 +11,7 @@ import {
   Pressable,
   ScrollView,
   StatusBar,
+  type StyleProp,
   StyleSheet,
   Text,
   useWindowDimensions,
@@ -192,13 +194,18 @@ export function BeforeAfterPreview<T extends ArtifactManifestEntry = ArtifactMan
                 }}
               >
                 <Text style={styles.title}>{role === 'before' ? 'Before' : 'After'}</Text>
-                <Pressable onPress={() => openSide(role)}>
-                  <Image
-                    source={artifactSource(pair[role].url, authHeaders)}
-                    resizeMode="contain"
-                    style={{
-                      height: imageHeight,
-                      width: '100%',
+                <Pressable
+                  onPress={() => openSide(role)}
+                  testID={`${resolvedTestIdPrefix}-${role}`}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open ${role} artifact ${pair[role].path}`}
+                >
+                  <CompareMedia
+                    artifact={pair[role]}
+                    authHeaders={authHeaders}
+                    height={imageHeight}
+                    active={playVideo}
+                    imageStyle={{
                       transform: [
                         {
                           translateX:
@@ -441,16 +448,18 @@ function ComparePage<T extends ArtifactManifestEntry>({
   );
 }
 
-function CompareMedia<T extends ArtifactManifestEntry>({
+export function CompareMedia<T extends ArtifactManifestEntry>({
   artifact,
   authHeaders,
   height,
   active,
+  imageStyle,
 }: {
   artifact: T & { url: string };
   authHeaders?: ArtifactHttpHeaders;
   height: number;
   active: boolean;
+  imageStyle?: StyleProp<ImageStyle>;
 }) {
   const mediaType = classifyArtifact(artifact);
   if (mediaType === 'video') {
@@ -466,7 +475,7 @@ function CompareMedia<T extends ArtifactManifestEntry>({
     return (
       <Image
         source={artifactSource(artifact.url, authHeaders)}
-        style={[styles.media, { height }]}
+        style={[styles.media, { height }, imageStyle]}
         resizeMode="contain"
       />
     );
