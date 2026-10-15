@@ -72,11 +72,11 @@ export function renderDispatchWizardPrimaryControls(
     ${renderTicketInput(ctx)} ${ctx.interstitialContent} ${renderFlowSelector(ctx)}
     ${renderProjectSelector(ctx)} ${renderAppSelector(ctx)} ${ctx.taskTemplateSelector}
     ${ctx.workflowControls}
-    <details class="config-group" data-testid="dispatch-execution-options">
-      <summary data-testid="dispatch-execution-summary">
+    <section class="config-group" data-testid="dispatch-execution-options">
+      <div class="section-label" data-testid="dispatch-execution-summary">
         Execution options · ${ctx.executionPicker.selection!.runner} /
         ${ctx.executionPicker.selection!.model ?? 'default model'}
-      </summary>
+      </div>
       ${renderRunnerModelConfig(ctx)}
       ${html`<div>
           <div
@@ -126,7 +126,7 @@ export function renderDispatchWizardPrimaryControls(
             </p>`
           : nothing}
         ${ctx.transport === 'native' ? ctx.nativeProfileControl : nothing}`}
-    </details>
+    </section>
     ${renderPrepareToggle(ctx)} ${renderInteractiveDevProfile(ctx)}
   `;
 }

@@ -20,6 +20,11 @@ export interface ReviewDispatchModelOption {
   /** Omitted inherits runner levels. Empty means only the supported default. */
   efforts?: readonly string[];
 }
+export interface ReviewDispatchModelPickerState {
+  choices: readonly ReviewDispatchModelOption[];
+  customModel: boolean;
+  searchable: boolean;
+}
 export interface ReviewDispatchRunnerOption {
   id: string;
   label?: string;

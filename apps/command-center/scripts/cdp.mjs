@@ -12,7 +12,7 @@
 //   node scripts/cdp.mjs viewport <hash> <width> <height> Resize the browser content area.
 //   node scripts/cdp.mjs fill <hash> <selector> <text> Type into a control with real CDP input.
 //   node scripts/cdp.mjs click <hash> <selector>       Click a control, searching shadow roots.
-//   node scripts/cdp.mjs select <hash> <selector> <value> Choose a native select option by keyboard.
+//   node scripts/cdp.mjs select <hash> <selector> <value> Choose a styled choice or native select option.
 //   Selectors may cross shadow roots with >>>, e.g. native-session-view >>> textarea.
 //   node scripts/cdp.mjs tabs                         List CDP tabs.
 //   node scripts/cdp.mjs close <hash>                 Close a matching tab.
@@ -395,6 +395,32 @@ async function inputInTab(hash, selector, value, select) {
     return result.result?.value;
   };
   try {
+    const choiceKind = select
+      ? await evaluate(
+          `return control.localName==='choice-picker' ? 'dropdown' : control.matches('.choice-grid[data-value]') ? 'chips' : null;`,
+        )
+      : null;
+    if (choiceKind) {
+      if (choiceKind === 'dropdown') {
+        const expanded = await evaluate(
+          `return control.shadowRoot.querySelector('.trigger').getAttribute('aria-expanded')==='true';`,
+        );
+        if (!expanded) await clickInTab(hash, `${selector} >>> .trigger`);
+        await inputInTab(hash, `${selector} >>> input`, '', false);
+      }
+      const escaped = await evaluate(`return CSS.escape(${JSON.stringify(value)});`);
+      await clickInTab(
+        hash,
+        `${selector}${choiceKind === 'chips' ? ' ' : ' >>> '}[data-choice-value="${escaped}"]`,
+      );
+      if (
+        !(await evaluate(
+          `return (control.dataset.value ?? control.value)===${JSON.stringify(value)};`,
+        ))
+      )
+        throw new Error('Browser choice did not produce the requested value');
+      return { selected: true };
+    }
     await call('Page.bringToFront');
     const target = await evaluate(`
       control.scrollIntoView({block:'center'});

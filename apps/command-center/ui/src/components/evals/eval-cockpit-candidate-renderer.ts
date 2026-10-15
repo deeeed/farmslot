@@ -1,11 +1,42 @@
 import { html, nothing } from 'lit';
 
 import type { EvalTaskProfile } from '@farmslot/protocol';
+import { defaultModelForRunner, ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
-import { EVAL_CANDIDATE_RUNNERS, runnerLabel } from '../../utils/runner-options.js';
+import '../shared/review-dispatch-picker.js';
+
+import { EVAL_CANDIDATE_RUNNERS } from '../../utils/runner-options.js';
+import { rememberedReviewDispatchCatalog } from '../../utils/runner-visible-cache.js';
+import type { ReviewDispatchChangeDetail } from '../shared/review-dispatch-picker.js';
 
 import { type CandidateTemplateChoice, EVAL_REVIEW_MODE_OPTIONS } from './eval-cockpit-model.js';
 import type { CandidateRow } from './eval-cockpit-url-state.js';
+
+const executionPickers = new WeakMap<CandidateRow, ReviewDispatchViewModel>();
+
+function executionPicker(row: CandidateRow) {
+  const catalog = {
+    runners: rememberedReviewDispatchCatalog()
+      .runners.filter((option) => EVAL_CANDIDATE_RUNNERS.some((id) => id === option.id))
+      .map((option) => ({
+        ...option,
+        // Eval candidates persist runner/model only, so effort remains the supported default.
+        efforts: [],
+        defaultEffort: null,
+        models: option.models.map((model) => ({ ...model, efforts: [] })),
+      })),
+  };
+  let picker = executionPickers.get(row);
+  if (!picker) {
+    picker = new ReviewDispatchViewModel({
+      context: { allowedActions: ['configure'] },
+      catalog,
+      sequence: [{ runner: row.runner, model: row.model || null, effort: null, mode: 'cold' }],
+    });
+    executionPickers.set(row, picker);
+  } else picker.setCatalog(catalog);
+  return picker;
+}
 
 export interface EvalCockpitCandidateMatrixRenderOptions {
   candidateRows: readonly CandidateRow[];
@@ -23,7 +54,6 @@ export interface EvalCockpitCandidateMatrixRenderOptions {
   setAdvancedStrategyOpen: (open: boolean) => void;
   candidateLabel: (row: CandidateRow) => string;
   generatedCandidateLabel: (row: CandidateRow) => string;
-  candidateModelOptions: (runner: string, selected?: string) => string[];
   visibleModelsError: string;
   candidateTemplateChoices: (taskProfile: EvalTaskProfile) => CandidateTemplateChoice[];
   candidateTemplateSummary: (row: CandidateRow) => string;
@@ -53,7 +83,7 @@ export function renderEvalCockpitCandidateMatrix(options: EvalCockpitCandidateMa
       </div>
       <div class="candidate-card-list">
         ${options.candidateRows.map((row, index) => {
-          const models = options.candidateModelOptions(row.runner, row.model);
+          const picker = executionPicker(row);
           return html`
             <article class=${`candidate-card ${row.enabled ? '' : 'disabled'}`}>
               <div class="candidate-card-head">
@@ -98,24 +128,21 @@ export function renderEvalCockpitCandidateMatrix(options: EvalCockpitCandidateMa
               </div>
 
               <div class="dispatch-like-block">
-                <div class="field-label">Runner</div>
-                <div class="choice-row" role="group" aria-label="Candidate runner">
-                  ${EVAL_CANDIDATE_RUNNERS.map(
-                    (runner) => html`
-                      <button
-                        class=${`choice-chip ${row.runner === runner ? 'active' : ''}`}
-                        aria-pressed=${row.runner === runner ? 'true' : 'false'}
-                        @click=${() => options.setCandidateRunner(row.id, runner)}
-                      >
-                        ${runnerLabel(runner)}
-                      </button>
-                    `,
-                  )}
-                </div>
-              </div>
-
-              <div class="dispatch-like-block">
-                <div class="field-label">Model</div>
+                <review-dispatch-picker
+                  .viewModel=${picker}
+                  .discover=${false}
+                  @review-dispatch-change=${(event: CustomEvent<ReviewDispatchChangeDetail>) => {
+                    const selection = event.detail.selection!;
+                    if (selection.runner !== row.runner)
+                      options.setCandidateRunner(row.id, selection.runner);
+                    options.updateRow(row.id, {
+                      model:
+                        selection.model ??
+                        defaultModelForRunner(selection.runner, picker.catalog) ??
+                        '',
+                    });
+                  }}
+                ></review-dispatch-picker>
                 ${options.visibleModelsError
                   ? html`<div
                       class="eval-muted"
@@ -125,20 +152,6 @@ export function renderEvalCockpitCandidateMatrix(options: EvalCockpitCandidateMa
                       Saved visible models could not be loaded: ${options.visibleModelsError}
                     </div>`
                   : nothing}
-                <div class="choice-row" role="group" aria-label="Candidate model">
-                  ${models.map(
-                    (model) => html`
-                      <button
-                        class=${`choice-chip ${row.model === model ? 'active' : ''}`}
-                        data-testid=${`eval-candidate-model-${model}`}
-                        aria-pressed=${row.model === model ? 'true' : 'false'}
-                        @click=${() => options.updateRow(row.id, { model })}
-                      >
-                        ${model}
-                      </button>
-                    `,
-                  )}
-                </div>
               </div>
 
               <div class="start-ref-field">

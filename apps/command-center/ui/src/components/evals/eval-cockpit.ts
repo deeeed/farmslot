@@ -33,7 +33,6 @@ import {
   activeEvalRunCount,
   applyCandidateRunner,
   candidateLabel,
-  candidateModelOptions,
   type CandidateTemplateChoice,
   candidateTemplateChoices,
   candidateTemplateForTaskProfile,
@@ -597,10 +596,6 @@ export class EvalCockpit extends EvalCockpitState {
     });
   }
 
-  private _candidateModelOptions(runner: string, selected?: string): string[] {
-    return candidateModelOptions(runner, selected);
-  }
-
   private _setCandidateRunner(id: string, runner: string): void {
     this._initialModelsPending = false;
     this._candidateRows = this._candidateRows.map((row) => {
@@ -865,7 +860,6 @@ export class EvalCockpit extends EvalCockpitState {
       },
       candidateLabel: (row) => this._candidateLabel(row),
       generatedCandidateLabel: (row) => this._generatedCandidateLabel(row),
-      candidateModelOptions: (runner, selected) => this._candidateModelOptions(runner, selected),
       candidateTemplateChoices: (taskProfile) => this._candidateTemplateChoices(taskProfile),
       candidateTemplateSummary: (row) => this._candidateTemplateSummary(row),
       candidateVariant: (row) => this._candidateVariant(row),

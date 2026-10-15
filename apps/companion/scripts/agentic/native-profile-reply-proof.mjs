@@ -156,7 +156,11 @@ if (phase === PHASES.ARM_STATUS || phase === PHASES.ARM_LIST) {
     assert.equal(create.disabled, true, 'Late mobile login reply enabled the signed-out profile');
     archive('status');
   } else {
-    assert.ok(mobile.controls.some((c) => c.id === 'companion-native-runner-codex' && c.selected));
+    assert.ok(
+      mobile.controls.some(
+        (c) => c.id === 'companion-native-execution-runner-0-codex' && c.selected,
+      ),
+    );
     assert.ok(
       mobile.controls.some((c) => c.id === 'companion-native-runner-profile-empty-codex'),
       'Late mobile inventory discarded the new runner choices',

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   Methods,
@@ -6,6 +6,7 @@ import {
   type NativeSessionCatalogResult,
   type NativeSessionInfo,
 } from '@farmslot/protocol';
+import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
 import { useConnectionStore } from '../../store/connection';
 
@@ -75,6 +76,33 @@ export function useNativeSessionSetup(enabled: boolean) {
     ? catalog?.runners.find((item) => item.runner === runnerId)
     : catalog?.runners[0];
   const model = runner?.models.includes(modelId) ? modelId : (runner?.defaultModel ?? '');
+  const executionPicker = useMemo(
+    () =>
+      catalog?.runners.length
+        ? new ReviewDispatchViewModel({
+            context: { allowedActions: ['chat'] },
+            catalog: {
+              runners: catalog.runners.map((entry) => ({
+                id: entry.runner,
+                models: entry.models.map((id) => ({ id })),
+                defaultModel: entry.defaultModel,
+                allowCustomModels: false,
+                efforts: [],
+                defaultEffort: null,
+              })),
+            },
+            sequence: [
+              {
+                runner: runner?.runner ?? catalog.runners[0].runner,
+                model: runner?.models.includes(modelId) ? modelId : null,
+                effort: null,
+                mode: 'cold',
+              },
+            ],
+          })
+        : undefined,
+    [catalog, runner?.runner, modelId],
+  );
   const contextIndex =
     catalog?.contexts.findIndex((item) => workspaceKey(item) === contextKey) ?? -1;
   const context = catalog?.contexts[contextIndex];
@@ -102,6 +130,7 @@ export function useNativeSessionSetup(enabled: boolean) {
   return {
     viewModel: {
       catalog,
+      executionPicker,
       contextIndex,
       contextUnavailable: !!contextKey && !context,
       runner: runner?.runner,
