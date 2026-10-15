@@ -28,6 +28,7 @@ import {
   computeReadyGateReviewSubjectHash,
   readReadyGatePreparedPackage,
 } from '../run-completion/ready-gate-package.js';
+import { retainedRunTaskDirectory } from '../run-completion/retained-artifacts.js';
 import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import { readRunProgress, type RunProgressObservation } from '../runners/run-progress.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
@@ -66,6 +67,20 @@ async function currentPublicationHead(run: Run): Promise<string | null> {
   return (await capturePublicationSource(run)).headSha;
 }
 
+async function publicationBundleAvailable(
+  run: Run,
+  prepared: ReadyGatePrPackage,
+): Promise<boolean> {
+  if (!prepared.artifactBundle) return true;
+  try {
+    await retainedRunTaskDirectory(run, prepared.artifactBundle);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
 /** The gate loop and inspection share the existing package writer. */
 export async function ensureCurrentPublishPackage(
   runId: string,
@@ -79,7 +94,7 @@ export async function ensureCurrentPublishPackage(
     // Approval already bound this package. A restarted gate must replay that
     // approval without preparing a replacement or losing its package identity.
     if (status === 'pending_publish') {
-      if (!prepared)
+      if (!prepared || !(await publicationBundleAvailable(run, prepared)))
         throw new BlockedRunError(
           'Approved publication package is unavailable; restore its artifacts',
         );
@@ -95,7 +110,8 @@ export async function ensureCurrentPublishPackage(
       .sort();
     if (
       prepared?.headSha === head &&
-      JSON.stringify([...prepared.reviewArtifactIds].sort()) === JSON.stringify(ids)
+      JSON.stringify([...prepared.reviewArtifactIds].sort()) === JSON.stringify(ids) &&
+      (await publicationBundleAvailable(run, prepared))
     )
       return prepared;
     await refreshPublishPackageTransitionLocked({ runId }, true);
@@ -105,6 +121,7 @@ export async function ensureCurrentPublishPackage(
 
 interface PublicationInspectionReaders {
   head: typeof currentPublicationHead;
+  bundleAvailable: typeof publicationBundleAvailable;
   progress: (run: Run) => Promise<RunProgressObservation>;
   refresh: (runId: string, decisionId: string) => Promise<Run>;
 }
@@ -130,6 +147,7 @@ export function reconcilePublicationPackageForInspection(
   if (existing) return existing;
   const readers: PublicationInspectionReaders = {
     head: currentPublicationHead,
+    bundleAvailable: publicationBundleAvailable,
     progress: readRunProgress,
     refresh: async (runId, decisionId) => (await refreshPublishPackage({ runId, decisionId })).run,
     ...overrides,
@@ -170,12 +188,22 @@ export function reconcilePublicationPackageForInspection(
         return collecting(
           'Publication source HEAD is unavailable; retain the gate and restore source access.',
         );
-      if (pending.payload?.kind === 'ready' && pending.payload.prPackage?.headSha === head)
+      const bundleAvailable =
+        pending.payload?.kind === 'ready' && pending.payload.prPackage
+          ? await readers.bundleAvailable(run, pending.payload.prPackage)
+          : false;
+      if (
+        pending.payload?.kind === 'ready' &&
+        pending.payload.prPackage?.headSha === head &&
+        bundleAvailable
+      )
         return getRun(run.id) ?? run;
       const progress = await readers.progress(getRun(run.id) ?? run);
       if (progress.kind !== 'idle')
         return collecting(
-          'Publication HEAD changed; waiting for the owned worker to be idle before refreshing its package.',
+          bundleAvailable
+            ? 'Publication HEAD changed; waiting for the owned worker to be idle before refreshing its package.'
+            : 'Retained publication evidence is missing; waiting for the owned worker to be idle before refreshing its package.',
           head,
         );
       return await readers.refresh(run.id, pending.id);
