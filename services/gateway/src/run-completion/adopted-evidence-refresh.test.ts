@@ -423,7 +423,7 @@ const { createGatewayAuthRuntime, initializeGatewayIdentity } = await import('..
 const { createWebSocketServer, resetServerGlobalsForTests } = await import('../server.js');
 const { GatewayClient } = await import('../../../../packages/cli/src/gateway-client.js');
 
-test('public RPC adopts with a fixture person and delivers archived historical evidence as an admin service', async (t) => {
+test('public RPC delivers archived historical evidence after the adopted run generation advances', async (t) => {
   const f = await fixture(t, oldHead, false);
   const home = await mkdtemp(path.join(os.tmpdir(), 'adopted-evidence-rpc-'));
   const server = createServer();
@@ -494,6 +494,10 @@ test('public RPC adopts with a fixture person and delivers archived historical e
   );
   assert.equal(adoption.receipt.approver.principalId, person.id);
   assert.equal(adoption.run.status, 'failed');
+  const replayedGeneration = adoption.receipt.generation + 1;
+  updateRun(f.run.id, {
+    engineState: { ...adoption.run.engineState, generation: replayedGeneration },
+  });
   await archiveRun(f.run.id);
   const before = await getRunWithArchived(f.run.id);
   const delivered = await serviceClient.call<
@@ -505,6 +509,8 @@ test('public RPC adopts with a fixture person and delivers archived historical e
   assert.equal(getRun(f.run.id), undefined);
   const after = await getRunWithArchived(f.run.id);
   assert.deepEqual(after?.engineState, before?.engineState);
+  assert.equal(after?.engineState?.generation, replayedGeneration);
+  assert.deepEqual(after?.engineState?.publishGate?.humanPublicationAdoption, adoption.receipt);
   assert.equal(after?.status, 'failed');
   assert.equal(after?.archivedAt, before?.archivedAt);
   assert.equal(writes.length, 1);

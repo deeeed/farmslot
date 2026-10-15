@@ -94,7 +94,6 @@ async function refreshPublishedEvidenceLocked(
   if (
     adoption &&
     (adoption.runId !== run.id ||
-      adoption.generation !== (run.engineState?.generation ?? 0) ||
       adoption.prNumber !== run.prNumber ||
       adoption.observedBranch !== run.branch ||
       !adoption.priorGate?.packageId ||
