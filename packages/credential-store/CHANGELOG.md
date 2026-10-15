@@ -4,6 +4,8 @@ All notable changes to `@farmslot/credential-store` are tracked here.
 
 ## Unreleased
 
+- Store expiring person-device sessions with locked issuance, refresh, revocation and schema migration.
+
 - Replace an explicitly selected retired principal id in one locked transaction, retaining all credential tombstones and a validated reuse history.
 
 - Migrate stored `env-migrated` credential metadata under the existing lock before validation so upgrades preserve gateway startup and existing credentials.

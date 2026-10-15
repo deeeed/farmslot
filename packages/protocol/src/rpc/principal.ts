@@ -20,7 +20,9 @@ export type Role = 'admin' | 'operator';
 export type RoleScope = { kind: 'global' };
 
 /** Opaque session authentication reference. Authority is always resolved live. */
-export type AuthenticationRef = { kind: 'credential'; credentialId: string };
+export type AuthenticationRef =
+  | { kind: 'credential'; credentialId: string }
+  | { kind: 'person-session'; sessionId: string; accessId: string };
 
 /** The authenticated caller only. Never describes another principal. */
 export interface SelfPrincipalSummary {

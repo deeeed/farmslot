@@ -3,6 +3,10 @@ import { Methods } from './registry.js';
 
 export const AuthMethods = {
   connect: Methods.AUTH_CONNECT,
+  sessionExchange: Methods.AUTH_SESSION_EXCHANGE,
+  sessionRefresh: Methods.AUTH_SESSION_REFRESH,
+  sessionList: Methods.AUTH_SESSION_LIST,
+  sessionRevoke: Methods.AUTH_SESSION_REVOKE,
 } as const;
 
 export type GatewayAuthClientKind = 'ui' | 'companion' | 'node';
@@ -127,4 +131,53 @@ export interface PairingExchangeResult {
     secret: string;
   };
   expiresAt: string;
+}
+
+/** Metadata never authenticates a caller; the gateway resolves the record live. */
+export const PERSON_DEVICE_KINDS = ['command-center', 'companion', 'cli'] as const;
+export type PersonDeviceKind = (typeof PERSON_DEVICE_KINDS)[number];
+
+export interface PersonDeviceDescription {
+  deviceName: string;
+  deviceKind: PersonDeviceKind;
+}
+
+export interface PersonDeviceSession extends PersonDeviceDescription {
+  id: string;
+  principalId: string;
+  principalGeneration: number;
+  createdAt: string;
+  lastRefreshedAt: string;
+  refreshExpiresAt: string;
+  revokedAt: string | null;
+}
+
+/** The only person authentication value permitted in persistent client storage. */
+export interface PersonSessionAuth {
+  session: PersonDeviceSession;
+  refreshToken: string;
+}
+
+/** Access tokens remain in memory. Never persist this complete grant. */
+export interface PersonSessionGrant extends PersonSessionAuth {
+  accessToken: string;
+  accessExpiresAt: string;
+}
+
+export type PersonSessionExchangeParams = PersonDeviceDescription &
+  ({ credential: string; code?: never } | { code: string; credential?: never });
+export type PersonSessionExchangeResult = PersonSessionGrant;
+export interface PersonSessionRefreshParams {
+  refreshToken: string;
+}
+export type PersonSessionRefreshResult = PersonSessionGrant;
+export interface PersonSessionListParams {}
+export interface PersonSessionListResult {
+  sessions: PersonDeviceSession[];
+}
+export interface PersonSessionRevokeParams {
+  sessionId: string;
+}
+export interface PersonSessionRevokeResult {
+  session: PersonDeviceSession;
 }

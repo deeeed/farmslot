@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Declare person-device exchange, refresh, listing and revocation with access/session identity references.
+
 - Declare initial resource proof modes in selected templates and share read-only admission with stored-plan precedence.
 
 ## 0.46.0 - 2026-10-15

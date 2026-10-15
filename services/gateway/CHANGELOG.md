@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Cover person-device lifetime and revocation through the shared credential store.
+
 - Preserve unfinished reviewer requests during recovery, restore current-head review progress on replay, and record a COLD fallback when WARM lineage is unavailable.
 
 - Refresh current-head publication packages through their existing gate, preserving prior packages, decisions and selected evidence.

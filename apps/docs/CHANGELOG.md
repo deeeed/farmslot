@@ -4,7 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
-- Propose person-device session expiry and revocation contracts in ADR-051.
+- Document the accepted person-device session expiry and revocation contract in ADR-051.
 
 - Document safe quarantine of an unobserved native host that stopped before recording any session.
 - Update the gateway API reference to protocol 0.46.0 for optional QA profile defaults and required ambiguous choices.

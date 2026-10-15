@@ -9,11 +9,17 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import type { Principal, PrincipalSubject, RoleBinding } from '@farmslot/protocol';
+import {
+  PERSON_DEVICE_KINDS,
+  type Principal,
+  type PrincipalSubject,
+  type RoleBinding,
+} from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { isCredentialStoreLockHeld } from './credential-lock-state.js';
 import { withCredentialLock } from './credential-store-lock.js';
+import type { PersonAccessRecord, PersonSessionRecord } from './person-sessions.js';
 
 export const VIRTUAL_PRINCIPAL_IDS = ['local-admin', 'local-node', 'system'] as const;
 
@@ -34,7 +40,9 @@ export interface StoredSecret {
 }
 
 export interface CredentialStore {
-  schemaVersion: 1;
+  schemaVersion: 2;
+  personSessions: PersonSessionRecord[];
+  personAccessTokens: PersonAccessRecord[];
   activatedAt: string | null;
   principals: Principal[];
   credentials: CredentialRecord[];
@@ -47,6 +55,7 @@ export interface CredentialStoreChange {
   revokedCredentialIds: string[];
   changedPrincipalIds: string[];
   activationLatched: boolean;
+  revokedSessionIds?: string[];
 }
 
 interface FreshnessStamp {
@@ -61,7 +70,23 @@ export function credentialStorePath(env: NodeJS.ProcessEnv = process.env): strin
 }
 
 export function emptyCredentialStore(): CredentialStore {
-  return { schemaVersion: 1, activatedAt: null, principals: [], credentials: [] };
+  return {
+    schemaVersion: 2,
+    activatedAt: null,
+    principals: [],
+    credentials: [],
+    personSessions: [],
+    personAccessTokens: [],
+  };
+}
+
+/** One schema upgrade is shared by ordinary loading and explicit offline retirement. */
+export function migrateCredentialStoreVersion(
+  value: Record<string, unknown>,
+): Record<string, unknown> {
+  return value.schemaVersion === 1
+    ? { ...value, schemaVersion: 2, personSessions: [], personAccessTokens: [] }
+    : value;
 }
 
 export function loadCredentialStore(path = credentialStorePath()): CredentialStore {
@@ -76,8 +101,10 @@ export function loadCredentialStore(path = credentialStorePath()): CredentialSto
   }
   if (
     isRecord(parsed) &&
+    (parsed.schemaVersion === 1 || parsed.schemaVersion === 2) &&
     Array.isArray(parsed.credentials) &&
-    parsed.credentials.some((record) => isRecord(record) && record.origin === 'env-migrated')
+    (parsed.schemaVersion === 1 ||
+      parsed.credentials.some((record) => isRecord(record) && record.origin === 'env-migrated'))
   ) {
     const lockPath = join(dirname(path), 'credentials.lock');
     if (!isCredentialStoreLockHeld(lockPath)) {
@@ -88,7 +115,7 @@ export function loadCredentialStore(path = credentialStorePath()): CredentialSto
       });
     }
     const migrated = {
-      ...parsed,
+      ...migrateCredentialStoreVersion(parsed),
       credentials: parsed.credentials.map((record) =>
         isRecord(record) && record.origin === 'env-migrated'
           ? { ...record, origin: 'issued' }
@@ -189,7 +216,8 @@ export class CredentialStoreRuntime {
     if (
       !change.activationLatched &&
       change.revokedCredentialIds.length === 0 &&
-      change.changedPrincipalIds.length === 0
+      change.changedPrincipalIds.length === 0 &&
+      !change.revokedSessionIds?.length
     ) {
       return;
     }
@@ -202,7 +230,7 @@ export function validateCredentialStore(
   path: string,
 ): asserts value is CredentialStore {
   if (!isRecord(value)) fail(path, 'expected an object');
-  if (value.schemaVersion !== 1) {
+  if (value.schemaVersion !== 2) {
     fail(path, `unsupported schemaVersion ${String(value.schemaVersion)}`);
   }
   if (value.activatedAt !== null && typeof value.activatedAt !== 'string') {
@@ -261,6 +289,15 @@ export function validateCredentialStore(
     if ((principal.generation ?? 0) !== (generations.get(principal.id) ?? 0))
       fail(path, `principal '${principal.id}' generation does not match its reuse history`);
   }
+  if (!Array.isArray(value.personSessions) || !Array.isArray(value.personAccessTokens))
+    fail(path, 'personSessions and personAccessTokens must be arrays');
+  value.personSessions.forEach((record, index) => validatePersonSession(record, path, index));
+  value.personAccessTokens.forEach((record, index) => validatePersonAccess(record, path, index));
+  assertUniqueIds(value.personSessions, path, 'person session');
+  assertUniqueIds(value.personAccessTokens, path, 'person access');
+  const sessionIds = new Set(value.personSessions.map((record) => record.id));
+  if (value.personAccessTokens.some((record) => !sessionIds.has(record.sessionId)))
+    fail(path, 'person access record has no device session');
   const assignedMachines = new Set<string>();
   for (const principal of principals) {
     if (principal.subject.type !== 'node' || principal.subject.nativeOwnerPrincipalId === undefined)
@@ -350,13 +387,73 @@ function validateCredential(
     !isIsoUtc(value.createdAt) ||
     (value.revokedAt !== null &&
       (typeof value.revokedAt !== 'string' || !isIsoUtc(value.revokedAt))) ||
-    !isRecord(value.secret) ||
-    value.secret.scheme !== 'scrypt-v1' ||
-    typeof value.secret.salt !== 'string' ||
-    typeof value.secret.hash !== 'string'
+    !isStoredSecret(value.secret)
   ) {
     fail(path, `credential[${index}] is invalid`);
   }
+}
+
+function isStoredSecret(value: unknown): value is StoredSecret {
+  return (
+    isRecord(value) &&
+    value.scheme === 'scrypt-v1' &&
+    typeof value.salt === 'string' &&
+    typeof value.hash === 'string'
+  );
+}
+
+function validSessionId(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{32}$/u.test(value);
+}
+
+function validatePersonSession(
+  value: unknown,
+  path: string,
+  index: number,
+): asserts value is PersonSessionRecord {
+  if (
+    !isRecord(value) ||
+    !validSessionId(value.id) ||
+    typeof value.principalId !== 'string' ||
+    !value.principalId ||
+    typeof value.principalGeneration !== 'number' ||
+    !Number.isSafeInteger(value.principalGeneration) ||
+    value.principalGeneration < 0 ||
+    typeof value.deviceName !== 'string' ||
+    !value.deviceName.trim() ||
+    value.deviceName.length > 128 ||
+    !PERSON_DEVICE_KINDS.some((kind) => kind === value.deviceKind) ||
+    typeof value.createdAt !== 'string' ||
+    !isIsoUtc(value.createdAt) ||
+    typeof value.lastRefreshedAt !== 'string' ||
+    !isIsoUtc(value.lastRefreshedAt) ||
+    typeof value.refreshExpiresAt !== 'string' ||
+    !isIsoUtc(value.refreshExpiresAt) ||
+    (value.revokedAt !== null &&
+      (typeof value.revokedAt !== 'string' || !isIsoUtc(value.revokedAt))) ||
+    !isStoredSecret(value.refreshSecret) ||
+    (value.sourceCredentialId !== undefined &&
+      (typeof value.sourceCredentialId !== 'string' || !value.sourceCredentialId))
+  )
+    fail(path, 'personSessions[' + index + '] is invalid');
+}
+
+function validatePersonAccess(
+  value: unknown,
+  path: string,
+  index: number,
+): asserts value is PersonAccessRecord {
+  if (
+    !isRecord(value) ||
+    !validSessionId(value.id) ||
+    !validSessionId(value.sessionId) ||
+    !isStoredSecret(value.secret) ||
+    typeof value.createdAt !== 'string' ||
+    !isIsoUtc(value.createdAt) ||
+    typeof value.expiresAt !== 'string' ||
+    !isIsoUtc(value.expiresAt)
+  )
+    fail(path, 'personAccessTokens[' + index + '] is invalid');
 }
 
 function readStamp(path: string): FreshnessStamp | null {
@@ -383,7 +480,16 @@ function diffStores(previous: CredentialStore, next: CredentialStore): Credentia
   );
   const nextCredentials = new Map(next.credentials.map((record) => [record.id, record]));
   const nextPrincipals = new Map(next.principals.map((principal) => [principal.id, principal]));
+  const nextSessions = new Map(next.personSessions.map((record) => [record.id, record]));
+  const revokedSessionIds = previous.personSessions
+    .filter(
+      (record) =>
+        !nextSessions.has(record.id) ||
+        (record.revokedAt === null && nextSessions.get(record.id)?.revokedAt !== null),
+    )
+    .map((record) => record.id);
   return {
+    ...(revokedSessionIds.length ? { revokedSessionIds } : {}),
     revokedCredentialIds: previous.credentials
       .filter(
         (record) =>
@@ -415,7 +521,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function assertUniqueIds(
   records: Array<{ id: string }>,
   path: string,
-  kind: 'principal' | 'credential',
+  kind: 'principal' | 'credential' | 'person session' | 'person access',
 ): void {
   const seen = new Set<string>();
   for (const record of records) {

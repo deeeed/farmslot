@@ -1,4 +1,13 @@
-import type { Principal, PrincipalSubject, Role, RoleBinding, RoleScope } from '@farmslot/protocol';
+import type {
+  PersonDeviceDescription,
+  PersonDeviceSession,
+  PersonSessionGrant,
+  Principal,
+  PrincipalSubject,
+  Role,
+  RoleBinding,
+  RoleScope,
+} from '@farmslot/protocol';
 
 import {
   formatCredentialWire,
@@ -15,6 +24,14 @@ import {
 } from './credential-store.js';
 import { CredentialStoreRefusalError, withCredentialStoreLock } from './credential-store-lock.js';
 import { assertNoLiveGatewaysUnlocked } from './gateway-presence.js';
+import {
+  exchangePersonCredential,
+  issuePersonSession,
+  listPersonSessions,
+  type PersonSessionAuthority,
+  refreshPersonSession,
+  revokePersonSession,
+} from './person-sessions.js';
 
 export { VIRTUAL_PRINCIPAL_IDS } from './credential-store.js';
 import { type PrincipalRetirement, retireSelectedPrincipals } from './credential-retirement.js';
@@ -42,6 +59,7 @@ export class CredentialStoreWriter {
   constructor(
     private readonly runtime: CredentialStoreRuntime,
     private readonly offline = false,
+    private readonly now = Date.now,
   ) {}
 
   createPrincipal(
@@ -278,10 +296,44 @@ export class CredentialStoreWriter {
         credentials: store.credentials.map((record) =>
           record.id === credentialId ? revoked : record,
         ),
+        personSessions: store.personSessions.map((record) =>
+          record.sourceCredentialId === credentialId && record.revokedAt === null
+            ? { ...record, revokedAt: revoked.revokedAt }
+            : record,
+        ),
       };
       this.assertAdminRemains(store, next, `credential '${credential.displayName}'`);
       return { next, result: revoked };
     });
+  }
+
+  exchangePersonCredential(
+    credential: string,
+    device: PersonDeviceDescription,
+  ): PersonSessionGrant {
+    return this.mutate((store) => exchangePersonCredential(store, credential, device, this.now()));
+  }
+
+  issuePersonSession(
+    principalId: string,
+    generation: number,
+    device: PersonDeviceDescription,
+  ): PersonSessionGrant {
+    return this.mutate((store) =>
+      issuePersonSession(store, principalId, generation, device, this.now()),
+    );
+  }
+
+  refreshPersonSession(refreshToken: string): PersonSessionGrant {
+    return this.mutate((store) => refreshPersonSession(store, refreshToken, this.now()));
+  }
+
+  listPersonSessions(actor: PersonSessionAuthority): PersonDeviceSession[] {
+    return listPersonSessions(this.runtime.snapshot(), actor, this.now());
+  }
+
+  revokePersonSession(actor: PersonSessionAuthority, sessionId: string): PersonDeviceSession {
+    return this.mutate((store) => revokePersonSession(store, actor, sessionId, this.now()));
   }
 
   latchActivation(): boolean {
