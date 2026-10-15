@@ -8,6 +8,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Deliver lane handoffs to busy Claude sessions with Enter, and treat a draft in Claude's boxed composer as live input that blocks delivery.
 
+- Prefer Tailscale pairing addresses over LAN and exclude VPN tunnel addresses from phone pairing candidates.
+
 - Publish the PR title from the approved body's leading `# type(scope): summary` heading, else the ticket title, and refuse approval when neither names more than a ticket key.
 
 - Let a new review on a PR whose earlier finished review belonged to a since-retired principal take the caller's ownership while keeping its family lineage; live runs and reused ids keep refusing another owner.

@@ -7,8 +7,6 @@
 //
 // Requires the gateway to run with token/password auth — pairing.create rejects
 // an unauthenticated gateway. `farmslot up` starts it that way.
-import { spawnSync } from 'node:child_process';
-import { hostname, networkInterfaces } from 'node:os';
 
 import type { Command } from 'commander';
 import * as QRCode from 'qrcode';
@@ -16,8 +14,8 @@ import * as QRCode from 'qrcode';
 import {
   buildGatewayPairingQrPayload,
   type PairingAuthority,
+  type PairingCandidatesResult,
   type PairingCreateResult,
-  parseTailscaleDnsNameFromStatus,
 } from '@farmslot/protocol';
 
 import { bold, cyan, dim, green } from '../colors.js';
@@ -26,61 +24,10 @@ import { createEmitter } from '../envelope.js';
 import { DEFAULT_GATEWAY_PORT } from '../gateway-profiles.js';
 import { withProgress } from '../progress.js';
 
-export interface ReachableAddress {
-  url: string;
-  name: string;
-}
-
 export interface PairOptions {
   principal?: string;
   newService?: string;
   role?: Array<'admin' | 'operator'>;
-}
-
-/**
- * Non-internal IPv4 addresses, preferring private LAN ranges (RFC1918) so a
- * Wi-Fi address wins over VPN/virtual interfaces. Falls back to all non-internal
- * addresses when none are private. Every candidate becomes its own QR profile,
- * and the app tries each (multi-URL fallback), so extras are harmless.
- */
-function lanIPv4s(): string[] {
-  const all: string[] = [];
-  for (const list of Object.values(networkInterfaces())) {
-    for (const iface of list ?? []) {
-      if (iface.family === 'IPv4' && !iface.internal) all.push(iface.address);
-    }
-  }
-  const isPrivate = (ip: string): boolean =>
-    /^10\./.test(ip) || /^192\.168\./.test(ip) || /^172\.(1[6-9]|2\d|3[01])\./.test(ip);
-  const priv = all.filter(isPrivate);
-  return [...new Set(priv.length > 0 ? priv : all)];
-}
-
-function tailscaleDnsName(): string | null {
-  const result = spawnSync('tailscale', ['status', '--json'], {
-    encoding: 'utf-8',
-    timeout: 4000,
-  });
-  if (result.error || result.status !== 0) return null;
-  return parseTailscaleDnsNameFromStatus(result.stdout);
-}
-
-export function reachableAddressesForPairing(
-  port: string,
-  lanIps: string[],
-  tailnet: string | null,
-): ReachableAddress[] {
-  const host = hostname().replace(/\.local$/, '');
-  const addresses: ReachableAddress[] = [];
-  for (const ip of lanIps) {
-    addresses.push({ url: `ws://${ip}:${port}/ws`, name: `${host} (LAN)` });
-  }
-  if (tailnet) addresses.push({ url: `ws://${tailnet}:${port}/ws`, name: `${host} (Tailscale)` });
-  return addresses;
-}
-
-function reachableAddresses(port: string): ReachableAddress[] {
-  return reachableAddressesForPairing(port, lanIPv4s(), tailscaleDnsName());
 }
 
 export function registerPairCommand(program: Command): void {
@@ -101,7 +48,11 @@ export function registerPairCommand(program: Command): void {
         return;
       }
       const port = new URL(target.url).port || String(DEFAULT_GATEWAY_PORT);
-      const addresses = reachableAddresses(port);
+      const { candidates: addresses } = await withProgress(
+        'Finding pairing addresses',
+        () => client.call<PairingCandidatesResult>('pairing.candidates', { port: Number(port) }),
+        !emit.machine,
+      );
       if (addresses.length === 0) {
         emit.fail(
           Object.assign(new Error('No reachable LAN or Tailscale address found.'), {
@@ -118,29 +69,24 @@ export function registerPairCommand(program: Command): void {
         'Creating pairing code',
         () =>
           client.call<PairingCreateResult>('pairing.create', {
-            gatewayUrl: primaryAddress.url,
-            profileName: primaryAddress.name,
+            gatewayUrl: primaryAddress.gatewayUrl,
+            profileName: primaryAddress.profileName,
             authority,
           }),
         !emit.machine,
       );
-      const payload = buildGatewayPairingQrPayload(
-        pairing,
-        addresses.map((address) => ({
-          gatewayUrl: address.url,
-          profileName: address.name,
-        })),
-      );
+      const payload = buildGatewayPairingQrPayload(pairing, addresses);
       const profiles = payload.profiles;
 
+      const qr = await QRCode.toString(JSON.stringify(payload), { type: 'terminal', small: true });
       if (emit.machine) {
         // Machine envelope (matrix: legacy raw-JSON output resolved); the QR
         // payload lives under data.payload.
         emit.ok({ payload });
+        process.stderr.write(`\n${qr}\n`);
         return;
       }
 
-      const qr = await QRCode.toString(JSON.stringify(payload), { type: 'terminal', small: true });
       output.write(`\n${qr}\n`);
       output.write(`${bold('Scan with the Farmslot companion app')} (App Store / Play Store)\n\n`);
       for (const profile of profiles) {
