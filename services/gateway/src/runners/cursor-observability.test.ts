@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -41,15 +41,12 @@ for (const scenario of cases) {
     const logs = path.join(root, 'cursor-agent-logs-test');
     await mkdir(logs);
     const log = path.join(logs, 'session-test-123-1.log');
-    const lsof = path.join(root, 'lsof');
-    await writeFile(lsof, `#!/bin/sh\nprintf '%s\\n' 'p123' 'n${log}'\n`);
-    await chmod(lsof, 0o755);
     const header =
       JSON.stringify({ event: 'debug-session-start', pid: scenario.pid ?? 123, logFile: log }) +
       '\n';
     await writeFile(log, header + scenario.text);
     const result = JSON.parse(
-      execFileSync('bash', ['-c', buildCursorTurnProbeCommand('123')], {
+      execFileSync('bash', ['-c', buildCursorTurnProbeCommand('123', log)], {
         encoding: 'utf8',
         env: { ...process.env, PATH: `${root}:${process.env.PATH}` },
       }),
@@ -68,13 +65,15 @@ test('Cursor idle is bound to the current pane-owned process and reaches run pro
   const readers = {
     pane: async () => pane,
     process: async () => ({ state: 'present' as const, pid: '123' }),
-    exec: async () => ({
+    exec: async (_vars: unknown, command: string) => ({
       exitCode: 0,
-      stdout: JSON.stringify({
-        state: 'idle',
-        observedAt: 1000,
-        turnToken: '123:turn-1',
-      }),
+      stdout: command.includes('LSOF_BIN=')
+        ? 'p123\nn/tmp/cursor-agent-logs-test/session-test-123-1.log\n'
+        : JSON.stringify({
+            state: 'idle',
+            observedAt: 1000,
+            turnToken: '123:turn-1',
+          }),
       stderr: '',
     }),
   };

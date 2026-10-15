@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Retain pipeline review result snapshots in publication packages and confirm terminal worker turns from the pane-owned process's structured activity records.
+- Retain pipeline review result snapshots in publication packages and use the pane-owned process's structured turn records for publication readiness, monitor nudges and safe-send busy checks.
 
 - Keep failed reviewers without an artifact scope from holding publication gates in recovery after a settled review.
 

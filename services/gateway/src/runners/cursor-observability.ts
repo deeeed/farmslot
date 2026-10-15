@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { isRecord } from '@farmslot/protocol';
 
 import { execOnSlot } from '../core/exec.js';
@@ -9,15 +11,15 @@ import type {
   RunnerSessionDeliveryState,
   SlotVars,
 } from './observability-types.js';
+import { buildRunnerOpenFileProbeCommand, parseOpenFilePaths } from './process-open-files.js';
 import { probeRunnerDescendantPid } from './session-process.js';
 
 /** Read only the native structured lifecycle records in the live process's open log. */
-export function buildCursorTurnProbeCommand(pid: string): string {
+export function buildCursorTurnProbeCommand(pid: string, logFile: string): string {
   if (!/^\d+$/.test(pid)) throw new Error('Cursor process PID is required');
   return `python3 - <<'PY'
 import json
 import os
-import subprocess
 from datetime import datetime
 
 pid = ${pid}
@@ -25,17 +27,8 @@ def unavailable():
     print('null')
     raise SystemExit(0)
 
-opened = subprocess.run(['lsof', '-a', '-p', str(pid), '-Fn'], capture_output=True, text=True, timeout=5)
-if opened.returncode != 0:
-    unavailable()
-logs = list(dict.fromkeys(line[1:] for line in opened.stdout.splitlines()
-    if line.startswith('n') and '/cursor-agent-logs-' in line
-    and os.path.basename(line[1:]).startswith('session-')
-    and os.path.basename(line[1:]).endswith('.log')
-    and os.path.basename(line[1:]).split('-')[-2] == str(pid)))
-if len(logs) != 1:
-    unavailable()
-with open(logs[0], 'rb') as stream:
+log_file = ${JSON.stringify(logFile)}
+with open(log_file, 'rb') as stream:
     header = stream.read(8192).splitlines()
     identities = []
     for line in header:
@@ -49,7 +42,7 @@ with open(logs[0], 'rb') as stream:
             identities.append(record)
     if len(identities) != 1 or identities[0].get('pid') != pid:
         unavailable()
-    if os.path.realpath(identities[0].get('logFile', '')) != os.path.realpath(logs[0]):
+    if os.path.realpath(identities[0].get('logFile', '')) != os.path.realpath(log_file):
         unavailable()
     size = stream.seek(0, os.SEEK_END)
     offset = max(0, size - 8 * 1024 * 1024)
@@ -115,7 +108,23 @@ export async function readCursorTurnState(
   if (!pane) return null;
   const process = await source.process(vars, pane.panePid, 'cursor');
   if (process.state !== 'present') return null;
-  const result = await source.exec(vars, buildCursorTurnProbeCommand(process.pid), {
+  const open = await source.exec(vars, buildRunnerOpenFileProbeCommand(process.pid), {
+    timeout: 10000,
+  });
+  if (open.exitCode !== 0) return null;
+  const logs = [
+    ...new Set(
+      parseOpenFilePaths(open.stdout).filter(
+        (file) =>
+          file.includes('/cursor-agent-logs-') &&
+          path.posix.basename(file).startsWith('session-') &&
+          file.endsWith('.log') &&
+          path.posix.basename(file).split('-').at(-2) === process.pid,
+      ),
+    ),
+  ];
+  if (logs.length !== 1) return null;
+  const result = await source.exec(vars, buildCursorTurnProbeCommand(process.pid, logs[0]), {
     timeout: 10000,
   });
   if (result.exitCode !== 0) throw new Error('Cursor native lifecycle probe failed');

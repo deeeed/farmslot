@@ -984,7 +984,7 @@ test('unresolved approval requires real current-head review inputs and cannot wa
     );
     assert.match(
       readiness.reasons.find((reason) => reason.prerequisite === 'review')!.message,
-      /current-head.*native.*request|current-head.*native.*Request/i,
+      /current-head.*structured.*request/i,
     );
   }
   const exhausted = await collectRunGateReadiness(exhaustedRun, prepared, inputs);
