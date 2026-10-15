@@ -108,11 +108,11 @@ function gitOutput(args) {
   }
 }
 
-export async function taskInitFromArgv(args, execution) {
+export async function taskInitFromArgv(args, execution, suppliedRuntime) {
   args = [...args];
   if (args.length === 0 || args[0] === '-h' || args[0] === '--help') usage(0);
   const { opts, catalog } = parseArgs(args);
-  const runtime = await loadRuntime();
+  const runtime = suppliedRuntime ?? (await loadRuntime());
 
   const description = opts.taskFile
     ? readFileSync(path.resolve(opts.taskFile), 'utf8').trim()

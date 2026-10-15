@@ -76,16 +76,21 @@ export async function handleTaskInit(
   }
 
   if (execution) {
-    if (execution.bindingIdentity !== null && hasOption(forwarded, '--mark-command'))
+    if (hasOption(forwarded, '--mark-command'))
       throw usageError(
-        'A bound task must use its frozen CLI task mark command so provider gates remain enforced.',
+        'A retained task must use its frozen CLI task mark command so provider gates remain enforced.',
       );
     const module: {
-      taskInitFromArgv(args: string[], execution: TaskExecutionInput): Promise<TaskInitResult>;
+      taskInitFromArgv(
+        args: string[],
+        execution: TaskExecutionInput,
+        runtime: typeof import('@farmslot/agent-runtime'),
+      ): Promise<TaskInitResult>;
     } = await import(pathToFileURL(entrypoint).href);
     await module.taskInitFromArgv(
       [...forwarded, ...hostDefaults(forwarded, options, true)],
       execution,
+      await import('@farmslot/agent-runtime'),
     );
     return EXIT.ok;
   }

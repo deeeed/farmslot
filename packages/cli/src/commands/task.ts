@@ -46,9 +46,22 @@ export function taskHelperArgv(command: Command): string[] {
 function cliInstallation(): Omit<TaskExecutionInput, 'bindingIdentity' | 'inputs'> {
   const packageRoot = fs.realpathSync(fileURLToPath(new URL('../..', import.meta.url)));
   const workspace = path.resolve(packageRoot, '../..');
+  const workspaceInstall = fs.existsSync(path.join(workspace, 'yarn.lock'));
+  if (workspaceInstall && !fs.existsSync(path.join(workspace, 'DEPLOYED-REVISION.json'))) {
+    throw Object.assign(
+      new Error(
+        'Task pinning requires the immutable CLI distribution, not a full development workspace.',
+      ),
+      {
+        code: 'TASK_INSTALL_UNSUPPORTED',
+        exitCode: 2,
+        userAction: 'Use the CLI snapshot installed through the supported node CLI installation.',
+      },
+    );
+  }
   return {
     packageRoot,
-    distributionRoot: fs.existsSync(path.join(workspace, 'yarn.lock')) ? workspace : packageRoot,
+    distributionRoot: workspaceInstall ? workspace : packageRoot,
     executable: path.join(packageRoot, 'bin/farmslot.mjs'),
   };
 }
@@ -61,6 +74,12 @@ export async function runTaskCommand(
   const options: CliOptions = { ...command.optsWithGlobals() };
   const argv = taskHelperArgv(command);
   const taskDir = path.resolve(command.args[0]!);
+  if (action === 'init' && fs.existsSync(path.join(taskDir, 'artifacts/harness-provenance.json'))) {
+    shared.verifySelectedTask(taskDir);
+    throw shared.usageError(
+      'This task is already initialized. Use farmslot task verify to resume its retained tooling.',
+    );
+  }
   if (action !== 'init') {
     const receipt = shared.verifySelectedTask(taskDir);
     if (action === 'verify') {
@@ -146,7 +165,6 @@ export function registerTaskCommand(program: Command): void {
     ['--task-dir-label <label>', 'Rendered task directory'],
     ['--mode-preamble <text>', 'Mode instructions'],
     ['--addendum-file <path>', 'Authored task addendum'],
-    ['--mark-command <command>', 'Existing explicit task marker policy'],
     ['--project-worker <path>', 'Project worker templates'],
     ['--project-name <name>', 'Project template identity'],
     ['--package-templates <path>', 'Package template catalog'],

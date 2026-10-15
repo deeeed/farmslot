@@ -6,6 +6,8 @@ import { test, type TestContext } from 'node:test';
 
 import { retainTaskExecution } from '../../agent-runtime/src/task-init/execution-provenance.js';
 import { handleChecklist } from '../src/harness/commands/checklist.js';
+import { handleRecipeQuality } from '../src/harness/commands/recipe-quality.js';
+import { handleReview } from '../src/harness/commands/review.js';
 import {
   projectTaskExecution,
   verifySelectedTask,
@@ -81,14 +83,33 @@ test('retained provider gates survive a provider update and ordinary source edit
     path.join(f.pack, 'provider.mjs'),
     'export function createProvider() { throw new Error("new provider must not be loaded"); }',
   );
+  const updatedDefaults = {
+    ...f.options,
+    projects: f.options.projects?.map((entry) => ({
+      ...entry,
+      config: {
+        ...entry.config,
+        recipe: {
+          ...entry.config.recipe!,
+          libraries: [
+            {
+              name: 'future-library',
+              owner: 'example',
+              source: path.join(f.root, 'not-installed-yet'),
+            },
+          ],
+        },
+      },
+    })),
+  };
   const before = fs.readFileSync(path.join(f.taskDir, 'CHECKLIST.md'), 'utf8');
-  const refused = await withTaskProjectHost(f.options, f.taskDir, async ({ provider }) =>
+  const refused = await withTaskProjectHost(updatedDefaults, f.taskDir, async ({ provider }) =>
     handleChecklist(['mark', f.taskDir, '1'], provider.commandOptions?.task),
   );
   assert.notEqual(refused, 0);
   assert.equal(fs.readFileSync(path.join(f.taskDir, 'CHECKLIST.md'), 'utf8'), before);
   fs.writeFileSync(path.join(f.taskDir, 'allowed'), 'yes');
-  const passed = await withTaskProjectHost(f.options, f.taskDir, async ({ provider }) =>
+  const passed = await withTaskProjectHost(updatedDefaults, f.taskDir, async ({ provider }) =>
     handleChecklist(['mark', f.taskDir, '1'], provider.commandOptions?.task),
   );
   assert.equal(passed, 0);
@@ -126,4 +147,46 @@ test('a missing or changed original provider authorization refuses retained load
     withTaskProjectHost(changed, f.taskDir, async () => assert.fail('must not invoke')),
     { code: 'PROVIDER_UNAUTHORIZED' },
   );
+});
+
+test('review retains incremental scope and project rules in its authored output', async (t) => {
+  const f = fixture(t);
+  const file = path.join(f.taskDir, 'review.md');
+  await withProjectRecipeHost(f.options, async () =>
+    handleReview(['checklist', '--base', 'main', '--since', 'approved', '--out', file], {
+      runtimeIds: ['headless'],
+      baseRules: 'Trace the changed behavior.',
+      parityRuntimeIds: { headless: 'browser' },
+    }),
+  );
+  const checklist = fs.readFileSync(file, 'utf8');
+  assert.match(checklist, /approved\.\.HEAD/);
+  assert.match(checklist, /Trace the changed behavior/);
+  assert.match(checklist, /Parity with browser: not checked/);
+  const refused = path.join(f.taskDir, 'invalid-review.md');
+  await assert.rejects(
+    withProjectRecipeHost(f.options, async () =>
+      handleReview(['checklist', '--out', refused], { runtimeIds: ['browser'] }),
+    ),
+    /Review runtime must be one of/,
+  );
+  assert.equal(fs.existsSync(refused), false);
+});
+
+test('advice receives the resolved runtime and preserves an explicit opt-out', async (t) => {
+  const f = fixture(t);
+  let calls = 0;
+  await withProjectRecipeHost(f.options, async () =>
+    handleRecipeQuality(['advisor-status', '--advisor', 'off'], {
+      subcommands: {
+        'advisor-status': async (options) => {
+          calls += 1;
+          assert.equal(options.adapter, 'headless');
+          assert.equal(options.advisor, 'off');
+          return 0;
+        },
+      },
+    }),
+  );
+  assert.equal(calls, 1);
 });

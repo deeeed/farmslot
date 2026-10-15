@@ -10,8 +10,7 @@ import {
 import { isRecord, type RecipeConformanceSource } from '@farmslot/protocol';
 
 import { recipeConformanceIdentity } from './conformance.js';
-import { resolveProjectContext } from './context.js';
-import { ProjectBindingError } from './context-state.js';
+import { assertProjectProviderAuthorized } from './context.js';
 import {
   type ProjectRecipeHost,
   type ProjectRecipeHostOptions,
@@ -195,31 +194,11 @@ export async function withTaskProjectHost<T>(
   )
     throw new Error('An unbound task has no project provider.');
   const provider = selection.provider;
-  const current = await resolveProjectContext({
-    ...options,
-    tokens: [
-      '--target',
-      selection.checkoutRoot,
-      '--project',
-      selected.project,
-      '--adapter',
-      selected.adapter,
-      ...(selected.app ? ['--app', selected.app] : []),
-    ],
+  assertProjectProviderAuthorized(options, {
+    project: selected.project,
+    ref: provider.ref,
+    module: provider.module,
   });
-  if (
-    current.project?.provider.ref !== provider.ref ||
-    (current.project.provider.authority === 'discovered' &&
-      !options.authorizedProviders?.some(
-        (entry) => entry === provider.ref || entry === provider.module,
-      ))
-  ) {
-    throw new ProjectBindingError(
-      'PROVIDER_UNAUTHORIZED',
-      'The task provider is no longer authorized by the selected project.',
-      'configure or explicitly authorize its original provider source',
-    );
-  }
   const retained = (file: string): string => {
     const input =
       receipt.retainedInputs.find((entry) => entry.source === file) ??

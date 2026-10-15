@@ -227,11 +227,9 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
     taskDir: spec.taskDir,
     taskMarkdown,
     checklistMarkdown,
-    markCommand:
-      executionProvenance &&
-      (executionProvenance.bindingIdentity !== null || spec.markCommand === undefined)
-        ? `'${executionProvenance.resolvedExecutable.replace(/'/g, `'"'"'`)}' task mark`
-        : spec.markCommand,
+    markCommand: executionProvenance
+      ? `'${executionProvenance.resolvedExecutable.replace(/'/g, `'"'"'`)}' task mark`
+      : spec.markCommand,
     handoff: handoffMetadata,
     terminalContract,
     bugInput: spec.bugInput,

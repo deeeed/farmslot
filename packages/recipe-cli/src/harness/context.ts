@@ -607,6 +607,39 @@ export interface ProjectProvider {
   finalize?(): void | Promise<void>;
 }
 
+/** Check source policy without selecting a task's new default provider or libraries. */
+export function assertProjectProviderAuthorized(
+  options: ResolveProjectContextOptions & LoadProjectProviderOptions,
+  selected: { project: string; ref: string; module: string },
+): void {
+  if (
+    options.authorizedProviders?.some(
+      (entry) => entry === selected.ref || entry === selected.module,
+    )
+  )
+    return;
+  const registered = [...(options.projects ?? [])];
+  if (options.projectsDir) {
+    for (const name of fs.readdirSync(options.projectsDir)) {
+      const root = path.join(options.projectsDir, name);
+      const file = path.join(root, 'project.json');
+      if (fs.existsSync(file)) registered.push({ root, config: readProject(file) });
+    }
+  }
+  if (
+    registered.some(
+      ({ config }) =>
+        config.name === selected.project && config.recipe?.provider.module === selected.ref,
+    )
+  )
+    return;
+  throw new ProjectBindingError(
+    'PROVIDER_UNAUTHORIZED',
+    'The task provider is no longer authorized by the selected project.',
+    'configure or explicitly authorize its original provider source',
+  );
+}
+
 export interface LoadProjectProviderOptions {
   /** Exact module paths or declared refs authorized by this invocation's operator. */
   authorizedProviders?: readonly string[];

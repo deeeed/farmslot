@@ -146,7 +146,7 @@ This is a pre-1.0 SDK/CLI addition requiring a coordinated minor release, exact 
 
 ## Amendment 3: Shared task, review and quality commands, 2026-10-15
 
-**Status:** Proposed. The base decision and Amendments 1–2 remain unchanged.
+**Status:** Accepted by the lead under delegated amendment authority, 2026-10-15. Design: [#1130](https://github.com/deeeed/farmslot/pull/1130). Implementation: [#1136](https://github.com/deeeed/farmslot/pull/1136). The base decision and Amendments 1–2 remain unchanged.
 
 ### Decision
 
