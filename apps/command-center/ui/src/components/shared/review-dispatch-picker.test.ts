@@ -39,18 +39,28 @@ test('dispatch and warm review render visible execution chips without dropdowns'
     picker.review = review;
     const rendered = markup(picker.render());
     assert.doesNotMatch(rendered, /<select\b/i);
-    for (const field of ['runner', 'model', 'effort']) {
-      assert.match(rendered, new RegExp(`role="group"[^>]*data-testid=review-dispatch-${field}`));
+    for (const field of ['runner', 'model', 'effort', ...(review ? ['mode'] : [])]) {
+      assert.match(
+        rendered,
+        new RegExp(`role="group"[^>]*data-testid=review-dispatch-${field}(?:\\s|>)`),
+      );
       assert.doesNotMatch(
         rendered,
         new RegExp(`<choice-picker\\s+data-testid="review-dispatch-${field}"`),
       );
     }
+    if (review) {
+      assert.match(rendered, /data-testid=review-dispatch-mode-warm/);
+      assert.match(rendered, /data-testid=review-dispatch-mode-cold/);
+      assert.match(rendered, /Retained session, changes since review/);
+    } else {
+      assert.doesNotMatch(rendered, /data-testid=review-dispatch-mode(?:\s|>)/);
+    }
     assert.match(rendered, /aria-pressed=true/);
     assert.match(rendered, /data-choice-value=codex/);
     assert.match(rendered, /Other model/);
     assert.doesNotMatch(rendered, /data-testid="review-dispatch-custom-model"/);
-    for (const field of review ? ['mode', 'lineage'] : []) {
+    for (const field of review ? ['lineage'] : []) {
       assert.match(
         rendered,
         new RegExp(`<choice-picker\\s+data-testid="review-dispatch-${field}"`),

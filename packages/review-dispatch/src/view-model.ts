@@ -11,7 +11,6 @@ import {
 import {
   DEFAULT_REVIEW_DISPATCH_CATALOG,
   effortsForRunner,
-  modelsForRunner,
   resolveReviewMode,
   runnerOption,
 } from './catalog.js';
@@ -24,7 +23,6 @@ import type {
   ReviewDispatchContext,
   ReviewDispatchEffortChoice,
   ReviewDispatchExecutionResources,
-  ReviewDispatchModelOption,
   ReviewDispatchModelPickerState,
   ReviewDispatchRow,
   ReviewDispatchState,
@@ -273,14 +271,6 @@ export class ReviewDispatchViewModel {
   }
   setMode(id: number, mode: ReviewMode): void {
     this.updateRow(id, { mode });
-  }
-  modelChoices(id: number): ReviewDispatchModelOption[] {
-    const selection = this.row(id).selection;
-    const runner = this.catalog.runners.find((option) => option.id === selection.runner);
-    if (!runner) return selection.model ? [{ id: selection.model }] : [];
-    return modelsForRunner(selection.runner, selection.model, this.catalog).map(
-      (id) => runner.models.find((model) => model.id === id) ?? { id },
-    );
   }
   modelPickerState(id: number, filter = ''): ReviewDispatchModelPickerState {
     const selection = this.row(id).selection;

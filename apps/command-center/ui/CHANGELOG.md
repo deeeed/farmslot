@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show WARM/COLD review mode as visible segmented buttons beside the shared execution choices.
+
 - Keep report and evidence links bound to their gateway-retained snapshot, including read-only stale reports.
 - Describe LAN binding through credential-store activation instead of the retired checkout auth file.
 
