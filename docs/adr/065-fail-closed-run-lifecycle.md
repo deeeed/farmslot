@@ -313,9 +313,12 @@ integrity-checked media may be delivered.
 
 Keep an older package and its evidence provenance historical. Display its head
 separately from the attested publication head; never promote old or unknown
-evidence into a passing result for that head. Update the current PR body's
-evidence section through the shared renderer, without restoring the older draft
-body or changing code, title, publication state, reviews or frozen QA.
+evidence into a passing result for that head. The shared renderer appends a
+delimited block owned by this run and replaces it only when it still matches the
+last recorded farm delivery. Human sections and links remain unchanged. This is
+the separate package/head authorization required by Amendment 2, not permission
+to overwrite the manually published body. Code, title, publication state,
+reviews and frozen QA stay unchanged.
 
 ### Rationale and consequences
 
