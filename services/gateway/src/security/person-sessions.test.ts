@@ -271,6 +271,7 @@ export async function rpcFixture(
   t: test.TestContext,
   operator = false,
   resources: Record<string, SessionProofResource> = {},
+  port = 0,
 ) {
   const f = stateFixture();
   if (operator) f.writer.grantRole(f.person.id, 'operator', { kind: 'global' });
@@ -299,7 +300,7 @@ export async function rpcFixture(
   });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
+    server.listen(port, '127.0.0.1', resolve);
   });
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
