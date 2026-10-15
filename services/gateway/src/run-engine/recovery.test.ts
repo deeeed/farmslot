@@ -1003,6 +1003,61 @@ test('recovery restores and replays a review plan for an active fix pass', async
   assert.equal(calls.broadcasted, 0);
 });
 
+test('restart resumes the running self-review fix before reconciliation or step advancement', async () => {
+  for (const decisions of [
+    [],
+    [{ ...humanGateDecision('resolved'), resolvedAt: '2026-10-15T10:00:00Z' }],
+  ]) {
+    const run = minimalActiveRun({
+      id: 'retained-review-fix',
+      slotId: 'slot-1',
+      ticketOrPr: 'RECOVERY-SELF-REVIEW-FIX',
+      familyRootTicketOrPr: 'RECOVERY-SELF-REVIEW-FIX',
+      taskFile: '/tmp/recovery-self-review-fix/TASK.md',
+      status: 'fixing',
+      decisions,
+      steps: [
+        { name: 'review', status: 'running', detail: 'Fix 2/8' },
+        { name: 'complete', status: 'pending' },
+      ],
+      agentContexts: [
+        {
+          id: 'review-fix',
+          role: 'review-fix',
+          label: 'Review fix',
+          status: 'working',
+          runId: 'retained-review-fix',
+          slotId: 'slot-1',
+          taskFile: 'temp/tasks/fix/REVIEW-FIX.md',
+          signalFile: 'temp/tasks/fix/REVIEW-FIX-SIGNAL.json',
+          signalAttemptId: 'retained-fix-attempt',
+        },
+      ],
+    });
+    const { deps, calls } = publicationReviewRecoveryDeps(run);
+    const started: string[] = [];
+    deps.startRun = async (runId) => {
+      started.push(runId);
+    };
+    deps.updateRunStep = () => assert.fail('recovery must not mark the running review done');
+    deps.reconstructStepOutputs = () => assert.fail('the review loop owns fix-signal validation');
+
+    await recoverActiveRuns(deps);
+
+    assert.deepEqual(started, [run.id]);
+    assert.equal(
+      calls.reconciled,
+      0,
+      'context reconciliation must not retire the completed fix first',
+    );
+    assert.deepEqual(calls.replayed, []);
+    assert.deepEqual(calls.rearmed, []);
+    assert.equal(run.steps.find((step) => step.name === 'review')?.status, 'running');
+    assert.equal(run.steps.find((step) => step.name === 'complete')?.status, 'pending');
+    assert.equal(run.agentContexts?.[0].signalAttemptId, 'retained-fix-attempt');
+  }
+});
+
 test('recovery replays the human gate before reconciliation when a reviewer completed', async () => {
   const run = withRecoverableReviewer(
     minimalActiveRun({

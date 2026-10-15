@@ -555,6 +555,23 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       continue;
     }
 
+    // The review step owns its worker-fix await. Re-enter that same step so it
+    // can consume the retained fix signal or re-arm its wait after a restart.
+    // Treating `fixing` as a blocked decision state loses that continuation.
+    if (
+      run.status === 'fixing' &&
+      fleet.slots.some((slot) => slot.slot === run.slotId) &&
+      run.steps.some((step) => step.name === S.REVIEW && step.status === 'running') &&
+      !run.decisions.some((decision) => !decision.resolvedAt)
+    ) {
+      deps.startRun(run.id).catch((err) => {
+        console.error(
+          `[run-engine] review-fix recovery failed for ${run.id.slice(0, 8)}: ${(err as Error).message}`,
+        );
+      });
+      continue;
+    }
+
     if (deps.reconcileRunAgentRuntime && run.slotId) {
       try {
         await deps.reconcileRunAgentRuntime(run);
