@@ -146,7 +146,7 @@ This is a pre-1.0 SDK/CLI addition requiring a coordinated minor release, exact 
 
 ## Amendment 3: Shared task, review and quality commands, 2026-10-15
 
-**Status:** Proposed. The base decision and Amendments 1–2 remain unchanged.
+**Status:** Accepted by the lead under delegated amendment authority, 2026-10-15. Design: [#1130](https://github.com/deeeed/farmslot/pull/1130). Implementation: [#1136](https://github.com/deeeed/farmslot/pull/1136). The base decision and Amendments 1–2 remain unchanged.
 
 ### Decision
 
@@ -160,4 +160,4 @@ Deleting project command glue while these callers remain would remove working be
 
 ### Consequences and public surface
 
-The [helper cutover specification](../reference/project-recipe-contract.md#proposed-helper-cutover) defines the routes, package owners and equivalence checks. Existing bindings, artifacts, resource authority and engine behavior remain in force. Additive public APIs require reviewed minor releases and coordinated consumers. Each old route is removed only after its callers and behavior have a proven replacement.
+The [helper cutover specification](../reference/project-recipe-contract.md#shared-helper-commands) defines the routes, package owners and equivalence checks. Existing bindings, artifacts, resource authority and engine behavior remain in force. Additive public APIs require reviewed minor releases and coordinated consumers. Each old route is removed only after its callers and behavior have a proven replacement.

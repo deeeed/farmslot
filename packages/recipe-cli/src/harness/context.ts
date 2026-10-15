@@ -573,7 +573,7 @@ function missing(error: unknown): boolean {
 
 /** Registered pack metadata. `root` is the directory containing project.json. */
 export interface ConfiguredRecipeProject {
-  config: ProjectConfig;
+  config: Pick<ProjectConfig, 'name' | 'repoUrl' | 'paths' | 'apps' | 'recipe'>;
   root: string;
 }
 
@@ -595,6 +595,9 @@ export interface ProjectProvider {
   engine?: RecipeEngine;
   /** Project presentation and owned companions consumed by the shared lifecycle handlers. */
   commandOptions?: {
+    task?: import('./commands/task-init.js').ProjectTaskCommandOptions;
+    recipeQuality?: import('./commands/recipe-quality.js').RecipeQualityCommandOptions;
+    review?: import('./commands/review.js').ReviewCommandOptions;
     doctor?: Partial<import('./commands/doctor.js').DoctorCommandOptions>;
     status?: import('./commands/status.js').StatusCommandOptions;
     stop?: import('./commands/stop.js').StopCommandOptions;
@@ -1139,7 +1142,7 @@ export async function loadProjectProvider(
   return result;
 }
 
-function readProject(file: string): ProjectConfig {
+export function readProject(file: string): ProjectConfig {
   const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as ProjectConfig & {
     repo_url?: string;
     default_branch?: string;

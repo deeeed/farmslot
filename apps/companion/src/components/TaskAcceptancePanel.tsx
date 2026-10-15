@@ -1,7 +1,7 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
+import type { EvidenceReviewArtifact, EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import type {
   AcceptanceCriterionRef,
   AcceptanceEvidenceLink,
@@ -53,6 +53,32 @@ export function TaskAcceptancePanel({
   const [showDetails, setShowDetails] = React.useState(false);
   const [overrideClaim, setOverrideClaim] = React.useState<string | null>(null);
   const [overrideReason, setOverrideReason] = React.useState('');
+  const [rawClaims, setRawClaims] = React.useState<ReadonlySet<string>>(() => new Set());
+  React.useEffect(() => setRawClaims(new Set()), [evidenceModel]);
+  const renderFiles = (id: string, files: readonly EvidenceReviewArtifact[]) => (
+    <View style={styles.evidenceList}>
+      {files.map((entry) =>
+        onOpenEvidence ? (
+          <Pressable
+            key={entry.artifactPath}
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${entry.name} evidence for ${id}`}
+            testID={`companion-ac-evidence-${id}-${view.rows.find((row) => row.criterion.id === id)?.evidence.findIndex((file) => file.path === entry.artifactPath)}`}
+            onPress={() => onOpenEvidence(id, entry.artifactPath)}
+            style={({ pressed }) => [styles.evidenceChip, pressed && styles.pressed]}
+          >
+            <Text style={styles.evidence} numberOfLines={1}>
+              {entry.name} ›
+            </Text>
+          </Pressable>
+        ) : (
+          <Text key={entry.artifactPath} style={styles.evidence}>
+            {entry.name}
+          </Text>
+        ),
+      )}
+    </View>
+  );
   React.useEffect(() => setShowDetails(false), [evidenceModel]);
   const packageStatus = evidenceModel?.packageStatus;
   const [expanded, setExpanded] = React.useState(view.hasOpenCriteria || Boolean(error));
@@ -141,7 +167,7 @@ export function TaskAcceptancePanel({
           ))
         : null}
       {expanded
-        ? view.rows.map(({ criterion, verdict, color, evidence, review }) => (
+        ? view.rows.map(({ criterion, verdict, color, display, review }) => (
             <View key={criterion.id} style={styles.row} testID={`companion-ac-row-${criterion.id}`}>
               <View style={styles.rowHeader}>
                 <Text style={styles.id}>{criterion.id}</Text>
@@ -206,10 +232,7 @@ export function TaskAcceptancePanel({
               {review?.timing && review?.timing !== 'measured' ? (
                 <Text style={baseStyles.textMuted}>{review?.timing}</Text>
               ) : null}
-              {review?.moments.length &&
-              evidenceModel &&
-              !evidenceModel.errors.length &&
-              onOpenEvidence ? (
+              {display.clip && evidenceModel && !evidenceModel.errors.length && onOpenEvidence ? (
                 <Pressable
                   accessibilityRole="button"
                   testID={`companion-ac-clip-${criterion.id}`}
@@ -222,37 +245,41 @@ export function TaskAcceptancePanel({
                   <Text style={styles.evidence}>Play proof</Text>
                 </Pressable>
               ) : null}
-              {review?.occurrences.map((occurrence) => (
-                <View key={occurrence.traceIndex}>
-                  <Text style={styles.text}>{occurrence.intent}</Text>
-                  {occurrence.expectation ? (
-                    <Text style={baseStyles.textMuted}>
-                      {JSON.stringify(occurrence.expectation)}
-                    </Text>
-                  ) : null}
-                </View>
-              ))}
-              {evidence.length > 0 && onOpenEvidence ? (
-                <View style={styles.evidenceList}>
-                  {evidence.map((entry, index) => (
-                    <Pressable
-                      key={entry.path}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Open ${entry.name} evidence for ${criterion.id}`}
-                      testID={`companion-ac-evidence-${criterion.id}-${index}`}
-                      onPress={() => onOpenEvidence(criterion.id, entry.path)}
-                      style={({ pressed }) => [styles.evidenceChip, pressed && styles.pressed]}
-                    >
-                      <Text style={styles.evidence} numberOfLines={1}>
-                        {entry.name} ›
-                      </Text>
-                    </Pressable>
+              {renderFiles(criterion.id, display.selected)}
+              {display.raw.length || review?.occurrences.length ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: rawClaims.has(criterion.id) }}
+                  testID={`companion-ac-raw-${criterion.id}`}
+                  onPress={() =>
+                    setRawClaims((previous) => {
+                      const next = new Set(previous);
+                      if (next.has(criterion.id)) next.delete(criterion.id);
+                      else next.add(criterion.id);
+                      return next;
+                    })
+                  }
+                >
+                  <Text style={styles.evidence}>
+                    {rawClaims.has(criterion.id) ? 'Hide ' : ''}
+                    {display.raw.length ? `raw artifacts (${display.raw.length})` : 'Check details'}
+                  </Text>
+                </Pressable>
+              ) : null}
+              {rawClaims.has(criterion.id) ? (
+                <View>
+                  {review?.occurrences.map((occurrence) => (
+                    <View key={occurrence.traceIndex}>
+                      <Text style={styles.text}>{occurrence.intent}</Text>
+                      {occurrence.expectation ? (
+                        <Text style={baseStyles.textMuted}>
+                          {JSON.stringify(occurrence.expectation)}
+                        </Text>
+                      ) : null}
+                    </View>
                   ))}
+                  {renderFiles(criterion.id, display.raw)}
                 </View>
-              ) : evidence.length > 0 ? (
-                <Text style={styles.evidence} numberOfLines={1}>
-                  {evidence.map((entry) => entry.name).join(' · ')}
-                </Text>
               ) : null}
               {criterion.status?.note ? (
                 <Text style={baseStyles.textMuted}>{criterion.status.note}</Text>

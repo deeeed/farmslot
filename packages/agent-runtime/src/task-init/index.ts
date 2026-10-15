@@ -25,7 +25,13 @@ import {
 } from '../execution-template/snapshot.js';
 import type { ExecutionTemplateSource } from '../execution-template/types.js';
 
-import { installedTaskCommands } from './runtime-command.js';
+import {
+  retainTaskExecution,
+  type TaskExecutionInput,
+  taskExecutionPin,
+  type TaskExecutionProvenance,
+} from './execution-provenance.js';
+import { installedTaskCommands, quoteTaskPath } from './runtime-command.js';
 import {
   buildBranchUpdateGuardCommand,
   buildBranchUpdateInstructions,
@@ -40,6 +46,12 @@ import { writeTaskDir, type WrittenTaskDir } from './write.js';
 
 export * from './branch-update.js';
 export * from './discover.js';
+export {
+  type TaskExecutionInput,
+  type TaskExecutionProvenance,
+  type TaskRecipeBindingIdentity,
+  verifyTaskExecutionProvenance,
+} from './execution-provenance.js';
 export * from './task-document.js';
 export * from './write.js';
 // The renderer lives in protocol; re-exported so CLI wrappers reach it through the runtime entry.
@@ -105,6 +117,8 @@ export interface TaskInitSpec {
   /** Addendum template inserted before the checklist pointer; rendered with the same vars as the checklist. */
   addendum?: string | null;
   markCommand?: string;
+  /** Root CLI invocations retain tooling before the task marker is emitted. */
+  execution?: TaskExecutionInput;
   terminalContract?: WorkerTerminalContractDocument;
   bugInput?: unknown;
 }
@@ -112,6 +126,7 @@ export interface TaskInitSpec {
 export interface TaskInitResult extends WrittenTaskDir {
   executionTemplate: HandoffExecutionTemplate;
   handoffMetadata: HandoffMetadata;
+  executionProvenance?: TaskExecutionProvenance;
 }
 
 export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
@@ -124,6 +139,14 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
     ...(spec.template.explicitId ? { explicitId: spec.template.explicitId } : {}),
   });
   const taskDirLabel = spec.taskDirLabel ?? spec.taskDir;
+  const taskCommands = spec.execution
+    ? installedTaskCommands((file) => {
+        const relative = path.relative(spec.execution!.distributionRoot, file);
+        if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+          throw new Error('The task runtime must belong to the retained CLI distribution.');
+        return path.join(taskExecutionPin(spec.taskDir, spec.execution!), 'cli', relative);
+      })
+    : installedTaskCommands();
   const vars: Record<string, string> = {
     TICKET: spec.task.ticket ?? '',
     TITLE: spec.task.title,
@@ -136,7 +159,7 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
     ...(spec.domain ? { DOMAIN: spec.domain } : {}),
     TEMPLATE: selected.entry.id,
     TASK_DIR: taskDirLabel,
-    ...installedTaskCommands(),
+    ...taskCommands,
     ...(spec.task.sourceRef
       ? /^https?:\/\//.test(spec.task.sourceRef)
         ? { TICKET_URL: spec.task.sourceRef }
@@ -198,17 +221,28 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
     hasTicketData: spec.bugInput !== undefined,
   });
 
+  const executionProvenance = spec.execution
+    ? retainTaskExecution(spec.taskDir, spec.execution)
+    : undefined;
   const written = await writeTaskDir({
     taskDir: spec.taskDir,
     taskMarkdown,
     checklistMarkdown,
-    markCommand: spec.markCommand,
+    fixedMarkCommand: executionProvenance !== undefined,
+    markCommand: executionProvenance
+      ? `${quoteTaskPath(executionProvenance.resolvedExecutable)} task mark`
+      : spec.markCommand,
     handoff: handoffMetadata,
     terminalContract,
     bugInput: spec.bugInput,
     deterministicCommands: vars,
   });
-  return { ...written, executionTemplate, handoffMetadata };
+  return {
+    ...written,
+    executionTemplate,
+    handoffMetadata,
+    ...(executionProvenance ? { executionProvenance } : {}),
+  };
 }
 
 export interface TaskProvenance {

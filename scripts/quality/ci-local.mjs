@@ -15,6 +15,19 @@ export const CI_PARITY_STEPS = [
   ['authorization', ['yarn', 'quality:authorization']],
   ['retired scripts', ['yarn', 'quality:retired-scripts']],
   ['import boundaries', ['yarn', 'quality:imports']],
+  [
+    'model transport module load',
+    [
+      'env',
+      'TSX_TSCONFIG_PATH=services/gateway/tsconfig.json',
+      'node',
+      '--import',
+      'tsx',
+      '--input-type=module',
+      '-e',
+      "await import('./.agents/skills/tmux-model-driver/scripts/native-evidence.mjs')",
+    ],
+  ],
   ['large files', ['yarn', 'quality:large-files']],
   ['project hook conformance', ['yarn', 'test:project-hooks']],
 ];

@@ -49,6 +49,7 @@ import {
   registerProjectLifecycleCommands,
 } from './recipe-project.js';
 import { resolveRecipeProjectHookGatewayTimeoutMs } from './recipe-project-hook-timeout.js';
+import { registerRecipeQualityCommand } from './recipe-quality.js';
 
 interface RecipeValidateOptions {
   artifactManifest?: string;
@@ -366,6 +367,7 @@ function formatValidationResult(result: RecipeValidationResult): string {
 
 export function registerRecipeCommand(program: Command): void {
   const recipe = program.command('recipe').description('Checkout recipes and artifact helpers');
+  registerRecipeQualityCommand(recipe);
   registerProjectActionsCommand(recipe);
   registerProjectLifecycleCommands(recipe);
   registerProjectExecutionCommand(recipe, 'call');

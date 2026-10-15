@@ -11,11 +11,14 @@ import {
   type RecipeQualityArtifactBuilderInput,
 } from '@farmslot/agent-runtime';
 
+import { harnessContext } from '../context-state.js';
 import { harnessHost } from '../host.js';
 import { type CliOptions, optionFlag, optionString, parseArgs } from '../parse-args.js';
 import { EXIT, usageOut } from '../shared.js';
 
 export interface RecipeQualityCommandOptions {
+  /** Project quality rules consumed by canonical quality help. */
+  guidance?: string;
   // Subcommands the host adds beside `build` (an advisor, say), by name. They
   // run with the parsed options.
   subcommands?: Readonly<Record<string, (options: CliOptions) => Promise<number>>>;
@@ -70,7 +73,16 @@ export async function handleRecipeQuality(
   const json = optionFlag(options, 'json');
   const action = positional[0];
   const subcommand = action === undefined ? undefined : commandOptions.subcommands?.[action];
-  if (subcommand) return subcommand(options);
+  if (subcommand) {
+    const context = harnessContext();
+    return subcommand({
+      ...(context?.adapter ? { adapter: context.adapter.value } : {}),
+      ...(context?.project
+        ? { library: context.project.libraries.map((entry) => `${entry.name}=${entry.root}`) }
+        : {}),
+      ...options,
+    });
+  }
   const only = commandOptions.subcommandOptions;
   if (only && only.names.some((key) => options[key] !== undefined)) {
     return usageOut(json, 'recipe-quality', only.message, only.userAction);
@@ -85,7 +97,9 @@ export async function handleRecipeQuality(
     const usage =
       `${buildUsage()}\n` +
       `  Shorthand: ${harnessHost().name} recipe-quality --input <compact.json> --output <path> [--json]` +
-      (commandOptions.usageNote ? `\n  Note: ${commandOptions.usageNote}` : '');
+      ((commandOptions.usageNote ?? commandOptions.guidance)
+        ? `\n  Note: ${commandOptions.usageNote ?? commandOptions.guidance}`
+        : '');
     return usageOut(json, 'recipe-quality', message, usage);
   }
   return buildArtifact(options, json);

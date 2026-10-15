@@ -2,7 +2,13 @@
 
 ## Unreleased
 
+- Preserve retained input directory names so installed dependency lookup keeps its original layout.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.25.0 - 2026-10-15
+
+- Retain task tooling and selected inputs with shared byte verification and frozen task callbacks.
 
 ## 0.24.0 - 2026-10-15
 

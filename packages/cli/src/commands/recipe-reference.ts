@@ -2,12 +2,16 @@ import { Command } from 'commander';
 
 import { registerDoctorCommand } from './doctor.js';
 import { registerRecipeCommand } from './recipe.js';
+import { registerReviewCommand } from './review.js';
+import { registerTaskCommand } from './task.js';
 
 /** The same registrations supply help, shell completion and the published reference. */
 export function renderRecipeCliReference(): string {
   const program = new Command().name('farmslot');
   registerRecipeCommand(program);
   registerDoctorCommand(program);
+  registerTaskCommand(program);
+  registerReviewCommand(program);
   const lines = [
     '# Recipe CLI reference',
     '',
