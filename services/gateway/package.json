@@ -12,7 +12,8 @@
     "quality": "yarn typecheck && yarn test",
     "postinstall": "node scripts/fix-node-pty-spawn-helper.mjs",
     "test:acceptance-watch-live": "node --import tsx --experimental-test-module-mocks src/tasks/watcher-acceptance.live.ts",
-    "test:decision-advice-live": "node --import tsx src/methods/decision-advice.rpc.live.ts"
+    "test:decision-advice-live": "node --import tsx src/methods/decision-advice.rpc.live.ts",
+    "test:publish-package-refresh-live": "TSX_TSCONFIG_PATH=tsconfig.json node --import tsx --experimental-test-module-mocks --test src/run-engine/publish-package-refresh.live.ts"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.82.1",

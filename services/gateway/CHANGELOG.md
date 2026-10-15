@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Refresh current-head publication packages through their existing gate, preserving prior packages, decisions and selected evidence.
+
 - Keep source and review diff identities stable across user Git settings; disable external diff and text conversion.
 - Refuse unresolved QA profile choices before run creation, preserve existing policy and admitted selections, and retain profile identity in QA task context.
 

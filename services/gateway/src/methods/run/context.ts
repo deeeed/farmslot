@@ -28,6 +28,7 @@ import {
 import { attachReviewRoundBudget } from '../../review/review-round-budget.js';
 import { refreshRunGateReadiness } from '../../run-engine/gate-prerequisites.js';
 import { enrichDecisionsWithGateSummary } from '../../run-engine/gate-summary.js';
+import { reconcilePublicationPackageForInspection } from '../../run-engine/publish-package-refresh.js';
 import { trimRunForList } from '../../runs/list-trim.js';
 import { getRun, listRuns, listRunsForSlotHistory } from '../../runs/store.js';
 
@@ -37,7 +38,9 @@ import { readRunRecordedEvidence } from './evidence-review.js';
 async function presentRun(run: Run): Promise<Run> {
   return enrichDecisionsWithGateSummary(
     await attachLiveRecipeContext(
-      await attachReviewRoundBudget(await refreshRunGateReadiness(run)),
+      await attachReviewRoundBudget(
+        await reconcilePublicationPackageForInspection(await refreshRunGateReadiness(run)),
+      ),
     ),
   );
 }
