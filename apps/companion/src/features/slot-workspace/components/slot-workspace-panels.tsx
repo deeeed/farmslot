@@ -10,13 +10,11 @@ import type {
   SlotRunHistoryEntry,
   TaskProgressStructured,
 } from '@farmslot/protocol';
+import { taskProgressPercent } from '@farmslot/review-dispatch';
 
 import { BeforeAfterPreview } from '../../../components/BeforeAfterPreview';
 import { RunTitle } from '../../../components/RunTitle';
-import {
-  TaskProgressFallbackPanel,
-  TaskProgressPanel,
-} from '../../../components/TaskProgressPanel';
+import { TaskProgressPanel } from '../../../components/TaskProgressPanel';
 import {
   type ArtifactHttpHeaders,
   type ArtifactManifestEntry,
@@ -62,11 +60,7 @@ import {
   summarizeSlotWorkspaceRetro,
   workspaceGateDiffMetricValue,
 } from '../../../lib/slot-workspace';
-import {
-  type fallbackTaskProgressSummary,
-  taskProgressPercent,
-  taskProgressTitle,
-} from '../../../lib/task-progress';
+import { type fallbackTaskProgressSummary, taskProgressTitle } from '../../../lib/task-progress';
 import { baseStyles, colors } from '../../../lib/theme';
 import { workspaceDecisionKind } from '../../../lib/workspace-decisions';
 import {
@@ -1547,11 +1541,7 @@ export function ActiveRunWorkspaceCard({
           compact
         />
       ) : fallbackTaskProgress ? (
-        <TaskProgressFallbackPanel
-          summary={fallbackTaskProgress}
-          error={taskProgressError}
-          compact
-        />
+        <TaskProgressPanel summary={fallbackTaskProgress} error={taskProgressError} compact />
       ) : null}
       {familySummary ? (
         routeWorkspace === 'family' ? (

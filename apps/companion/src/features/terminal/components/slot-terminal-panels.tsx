@@ -8,6 +8,7 @@ import {
   type TaskProgressStructured,
   type TmuxWindow,
 } from '@farmslot/protocol';
+import { taskProgressPercent } from '@farmslot/review-dispatch';
 
 import { BeforeAfterPreview } from '../../../components/BeforeAfterPreview';
 import {
@@ -18,7 +19,7 @@ import {
 import { diffArtifactCandidate } from '../../../lib/diff';
 import { runWorkspacePathnameForStatus } from '../../../lib/legacy-run-route';
 import { prRepoFromWorkspaceSource } from '../../../lib/pr-links';
-import { fallbackTaskProgressSummary, taskProgressPercent } from '../../../lib/task-progress';
+import { fallbackTaskProgressSummary } from '../../../lib/task-progress';
 import { colors } from '../../../lib/theme';
 import { summarizeRunWorkspaceNavMeta } from '../../../lib/workspace-nav-meta';
 import {

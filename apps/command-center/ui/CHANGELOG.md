@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Use one compact worker checklist in pipeline, step inspection and slot views.
+
 - Move sign-out into the account menu with confirmation; retain sign-in for 30 days and reconnect through gateway restarts.
 
 - Share QA profile selection across Dispatch and PR requests, disable unresolved choices, and show the admitted profile id and title.

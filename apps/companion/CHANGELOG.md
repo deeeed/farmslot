@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Use the shared compact worker checklist view and preserve child-unit expansion.
+
 - Confirm the secondary Settings sign-out action and retain sign-in with the shared 30-day expiry policy.
 
 - Show and submit the resolved QA profile, require a choice for ambiguous farms, and retain admitted profile identity in run detail.

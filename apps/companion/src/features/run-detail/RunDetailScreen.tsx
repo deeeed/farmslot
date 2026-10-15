@@ -28,7 +28,7 @@ import {
 import { RunPipelineFull } from '../../components/RunPipeline';
 import { RunTitle } from '../../components/RunTitle';
 import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
-import { TaskProgressFallbackPanel, TaskProgressPanel } from '../../components/TaskProgressPanel';
+import { TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { useConnectedTransport } from '../../hooks/useConnectedTransport';
 import { useRunResourcePosture } from '../../hooks/useRunResourcePosture';
 import { acceptanceEvidenceHref } from '../../lib/acceptance-evidence';
@@ -1084,7 +1084,7 @@ export default function RunDetailScreen() {
                 compact
               />
             ) : isWorkerProgressActive(run) ? (
-              <TaskProgressFallbackPanel
+              <TaskProgressPanel
                 summary={fallbackTaskProgressSummary(run)}
                 error={taskProgressError}
                 compact
