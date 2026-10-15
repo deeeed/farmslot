@@ -551,6 +551,7 @@ test('authorization is exactly the eight operator methods and separates node sub
   }
   for (const method of [
     Methods.PRINCIPAL_CREATE,
+    Methods.PRINCIPAL_REUSE_RETIRED_ID,
     Methods.PRINCIPAL_LIST,
     Methods.PRINCIPAL_GRANT,
     Methods.PRINCIPAL_REVOKE_ROLE,
@@ -599,6 +600,10 @@ test('authorization is exactly the eight operator methods and separates node sub
   assert.equal(authorizeGatewayMethod(runtime, nodeSession, 'node.connect').id, node.id);
   assert.throws(
     () => authorizeGatewayMethod(runtime, nodeSession, Methods.RUN_LIST),
+    /node surface/u,
+  );
+  assert.throws(
+    () => authorizeGatewayMethod(runtime, nodeSession, Methods.PRINCIPAL_REUSE_RETIRED_ID),
     /node surface/u,
   );
 

@@ -45,7 +45,8 @@ rotation and recovery instructions; ADR-051 Amendments 1 and 2 own these decisio
    existing `credentials.lock` and invalidates deleted references.
 5. The store retains `retiredPrincipalIds` and `retiredCredentialIds` as id-only
    tombstone arrays. Absent arrays mean empty for a store with no retirements.
-   Creation and issuance cannot reuse those ids. Historic authorship is retained
+   Ordinary creation and issuance cannot reuse those ids. Explicit admin principal-id
+   reuse is the bounded exception described below. Historic authorship is retained
    without creating an alias to another principal. Unowned work remains
    unproven and requires explicit re-authoring before scheduling.
 6. Offline retirement acquires the credential lock, proves no gateway sharing
@@ -66,9 +67,14 @@ rotation and recovery instructions; ADR-051 Amendments 1 and 2 own these decisio
 
 #### Public surface
 
-`@farmslot/credential-store` exports the locked writer retirement and offline
-retirement operation to `@farmslot/gateway` and `@farmslot/cli`.
-`@farmslot/protocol` exports the retirement params/result used by both callers.
+`farmslot principal create --reuse-retired-id <id>` and the admin-only
+`principal.reuseRetiredId` RPC serve the explicit service-to-person identity
+cutover. `@farmslot/credential-store` owns reuse through the existing
+`CredentialStoreWriter.createPrincipal` options, retirement and offline writes.
+`@farmslot/protocol` exports their params/results and optional
+`Principal.generation`. The gateway's shared WorkOriginator helper stamps that
+generation for authenticated work; stored-id resolution checks it at fire time.
+No credential, role, or raw environment-auth contract changes.
 The CLI, gateway and scripts ship together; harnesses use the inherited profile
 and node authorization contract without an authentication extension.
 
@@ -122,6 +128,7 @@ interface Principal {
   id: string;
   subject: PrincipalSubject;
   roles: RoleBinding[];
+  generation?: number; // absent means original identity, generation zero
 }
 
 type PrincipalSubject =
@@ -178,6 +185,7 @@ interface CredentialStore {
   credentials: CredentialRecord[];
   retiredPrincipalIds?: string[];
   retiredCredentialIds?: string[];
+  principalIdReuses?: { principalId: string; generation: number; reusedAt: string }[];
 }
 ```
 
@@ -945,7 +953,37 @@ invalidation hook, and **the subscribed session makes no request at any point**.
 - Live gateways block offline retirement across the entire identity home.
 - Retirement preserves the activation latch and at least one active admin.
 - Bound nodes must be re-enrolled or retired before retiring their native owner.
-- Retired principal and credential ids cannot be re-used.
+- Ordinary creation cannot reuse retired principal ids. Retired credential ids
+  can never be reused.
+- Explicit principal-id reuse is admin-only online and requires all gateways
+  stopped offline. It requires an exact retired id and refuses a live, reserved
+  or never-retired id without changing the store.
+- Pending pairing invitations capture the invited identity generation. Exchange
+  compares it with the disk principal inside the credential issuance lock and
+  refuses a stale invitation without writing the store. A fresh invitation works.
+- The existing writer lock covers removing that principal tombstone, creating
+  the replacement and appending `{ principalId, generation, reusedAt }` to
+  `principalIdReuses`. The loader validates every history entry, including its
+  ISO-8601 UTC timestamp. History survives later retirement and reuse.
+- Reuse increments a positive safe-integer generation per principal id. History
+  generations are sequential; a live replacement's generation must match its
+  latest history entry. This avoids timestamp collisions between replacements.
+- Stored principal references without a generation refer to the original
+  identity, generation zero. `PrincipalResolver.resolvePrincipalId(id, generation)`
+  fails closed on a mismatch. Credential authentication resolves the principal
+  through its fresh credential id and does not borrow authority from history.
+- The shared WorkOriginator helper stamps authenticated queued, backlog and
+  work-graph effects with the principal generation. Fire-time resolution checks
+  it. Missing or stale generations cannot adopt replacement authority. Existing
+  id-only automation owner records remain unproven for a replacement and must
+  be re-authored under the automation service. No loader upgrades their author.
+- PR push, monitoring and rule owner records remain id-only. They cannot resolve
+  a reused identity, including newly saved records. Generation propagation for
+  these features is a follow-up; they are unsupported for reused ids until then.
+- Native profile ownership is id-only and must be retired before owner-id reuse.
+- Reuse preserves every credential tombstone, unrelated principal tombstones,
+  activation and surviving credentials. It never issues a credential. Old
+  credential wires and session references remain invalid after replacement.
 - A removed principal stays unresolved in historical work; no implicit re-authoring occurs.
 - Invalid surviving records reject the entire retirement transaction without a write.
 

@@ -9,7 +9,12 @@ export type PrincipalResolution =
   | { ok: true; principal: Principal; authentication?: AuthenticationRef }
   | {
       ok: false;
-      reason: 'no_credential' | 'revoked' | 'missing_principal' | 'secret_mismatch';
+      reason:
+        | 'no_credential'
+        | 'revoked'
+        | 'missing_principal'
+        | 'secret_mismatch'
+        | 'generation_mismatch';
     };
 
 export interface PrincipalResolverFacts {
@@ -67,7 +72,7 @@ export class PrincipalResolver {
     return { ok: false, reason: 'no_credential' };
   }
 
-  resolvePrincipalId(principalId: string): PrincipalResolution {
+  resolvePrincipalId(principalId: string, generation = 0): PrincipalResolution {
     this.store.ensureFresh();
     if (principalId === 'local-admin' && this.isSoloMode()) {
       return { ok: true, principal: this.virtualPrincipal('ui') };
@@ -76,6 +81,10 @@ export class PrincipalResolver {
       return { ok: true, principal: this.virtualPrincipal('node') };
     }
     const principal = this.store.findPrincipal(principalId);
+    // An id-only stored reference belongs to the original identity. It must
+    // not adopt replacement authority after an explicit retired-id reuse.
+    if (principal && (principal.generation ?? 0) !== generation)
+      return { ok: false, reason: 'generation_mismatch' };
     return principal ? { ok: true, principal } : { ok: false, reason: 'missing_principal' };
   }
 
