@@ -732,6 +732,11 @@ async function recoverRunningReviewAgent(params: {
   }
 
   if (context.model !== params.model) {
+    const windowId = await resolveTmuxWindowId(params.vars, pane.paneId);
+    if (!windowId || (await resolveTmuxWindowPaneCount(params.vars, windowId)) !== 1)
+      throw new Error(
+        `Cannot relaunch reviewer ${context.id}: its window is not exclusively owned`,
+      );
     return abandonRecoveredReviewer('reviewer model changed; relaunching the exact reviewer');
   }
 
@@ -1097,6 +1102,7 @@ export async function runReviewAgent(
     // The worker establishes the new opaque attempt identity with `mark start`.
     // Do not let a warm context expose the previous attempt during launch.
     signalAttemptId: undefined,
+    promptAcceptance: undefined,
     taskFile: taskDirRelPath(taskDir, reviewChecklistTarget.checklist),
     signalFile: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
     reviewResultFile: resultRelPath,
@@ -1460,11 +1466,40 @@ export async function runReviewAgent(
 
     // Session binding and process launch do not prove prompt acceptance.
     if (promptAccepted) {
+      // The exact accepted native turn identifies this attempt without comparing
+      // gateway time with a remote node's clock.
+      const acceptance =
+        sessionMeta.runnerSessionId && sessionMeta.runnerSessionPath
+          ? await getRunnerObservability(runner)?.promptAcceptedInSession?.(
+              vars,
+              reviewTarget,
+              sessionMeta.runnerSessionId,
+              sessionMeta.runnerSessionPath,
+              taskPrompt,
+              0,
+            )
+          : null;
       reviewContext =
         (await upsertAgentContext(_runId, 'review', {
           id: allocated.id,
           label: allocated.label,
           status: 'working',
+          ...(acceptance?.value === true &&
+          acceptance.exactPromptMatch &&
+          acceptance.turnToken &&
+          sessionMeta.runnerSessionId &&
+          sessionMeta.runnerSessionPath
+            ? {
+                promptAcceptance: {
+                  runner,
+                  deliveryStartedAt: startedAt,
+                  sessionId: sessionMeta.runnerSessionId,
+                  sessionPath: sessionMeta.runnerSessionPath,
+                  observedAt: acceptance.observedAt,
+                  turnToken: acceptance.turnToken,
+                },
+              }
+            : {}),
         })) ?? reviewContext;
     }
 
@@ -1752,12 +1787,16 @@ export async function waitForReviewCompletion(
         context.runnerSessionId,
         context.runnerSessionPath,
       );
-      const attemptStartedAt = Date.parse(context.attemptStartedAt ?? context.startedAt ?? '');
+      const acceptance = context.promptAcceptance;
       if (
         reading?.failure &&
         reading.confidence === 'high' &&
         reading.sessionId === context.runnerSessionId &&
-        reading.observedAt >= attemptStartedAt
+        acceptance?.sessionId === context.runnerSessionId &&
+        acceptance.sessionPath === context.runnerSessionPath &&
+        acceptance.deliveryStartedAt === context.attemptStartedAt &&
+        acceptance.turnToken !== undefined &&
+        reading.turnToken === acceptance.turnToken
       ) {
         await markAgentContextStatus(runId, 'review', 'failed', { id: reviewContextId });
         throw new Error(

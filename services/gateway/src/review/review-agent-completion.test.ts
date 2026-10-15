@@ -8,6 +8,9 @@ const processes = await import('../runners/session-process.js');
 const store = await import('../runs/store.js');
 const { makeRun } = await import('../run-engine/test-fixtures.js');
 const registry = await import('../runners/registry.js');
+const tmux = await import('../core/tmux.js');
+let paneCount = 1;
+const killedWindows: string[] = [];
 let currentRun: ReturnType<typeof makeRun> | undefined;
 let probes = 0;
 let terminalAt = 3;
@@ -59,7 +62,19 @@ mock.module('../runners/session-process.js', {
 mock.module('../runs/store.js', {
   namedExports: { ...store, getRun: () => currentRun },
 });
-const { waitForReviewCompletion } = await import('./review-agent.js');
+mock.module('../core/tmux.js', {
+  namedExports: {
+    ...tmux,
+    resolveTmuxSession: async () => 'test-1',
+    resolveExactTmuxWindowPane: async () => ({ paneId: '%1', panePid: '123' }),
+    resolveTmuxWindowId: async () => '@7',
+    resolveTmuxWindowPaneCount: async () => paneCount,
+    killTmuxWindowById: async (_vars: unknown, id: string) => {
+      killedWindows.push(id);
+    },
+  },
+});
+const { waitForReviewCompletion, runReviewAgent } = await import('./review-agent.js');
 const { makeVars } = await import('../runners/test-fixtures.js');
 const vars = makeVars();
 
@@ -187,7 +202,7 @@ test('a terminal mark arriving during the exit probe still completes', async () 
   assert.deepEqual(statuses, ['complete']);
 });
 
-test('native launch failure is visible on the first poll while its runner stays alive', async (t) => {
+test('native launch failure is visible despite node clock skew while its runner stays alive', async (t) => {
   probes = 0;
   terminalAt = Number.POSITIVE_INFINITY;
   windowPresent = true;
@@ -208,7 +223,15 @@ test('native launch failure is visible on the first poll while its runner stays 
         model: 'opus',
         runnerSessionId: 'exact-session',
         runnerSessionPath: '/session.jsonl',
-        attemptStartedAt: new Date(at - 100).toISOString(),
+        attemptStartedAt: new Date(at + 60_000).toISOString(),
+        promptAcceptance: {
+          runner: 'codex',
+          deliveryStartedAt: new Date(at + 60_000).toISOString(),
+          sessionId: 'exact-session',
+          sessionPath: '/session.jsonl',
+          observedAt: at - 100,
+          turnToken: 'exact-session:current-turn',
+        },
       },
     ],
   };
@@ -224,6 +247,7 @@ test('native launch failure is visible on the first poll while its runner stays 
     confidence: 'high',
     observedAt: at,
     sessionId: 'exact-session',
+    turnToken: 'exact-session:current-turn',
     failure: "The 'opus' model is not supported",
   }));
   await assert.rejects(
@@ -244,6 +268,36 @@ test('native launch failure is visible on the first poll while its runner stays 
   );
   assert.equal(probes, 1);
   assert.deepEqual(statuses, ['failed']);
+  probes = 0;
+  terminalAt = 3;
+  processStates = ['present', 'present'];
+  statuses.length = 0;
+  t.mock.method(observability, 'getSessionDeliveryState', async () => ({
+    value: 'idle',
+    source: 'signal',
+    confidence: 'high',
+    observedAt: at,
+    sessionId: 'exact-session',
+    turnToken: 'exact-session:old-turn',
+    failure: 'Old attempt failed',
+  }));
+  assert.equal(
+    await waitForReviewCompletion(
+      vars,
+      '%1',
+      'tasks/review',
+      500,
+      'run',
+      'codex',
+      'reviewer',
+      'REVIEW-SIGNAL.json',
+      'artifacts/feedback.md',
+      null,
+      0,
+    ),
+    true,
+  );
+  assert.deepEqual(statuses, ['complete'], 'an older turn cannot fail the current review');
 });
 
 test('an accepted reviewer that exits before the first poll fails promptly', async (t) => {
@@ -288,4 +342,53 @@ test('an accepted reviewer that exits before the first poll fails promptly', asy
     /REVIEW-SIGNAL.json is missing after the reviewer runner exited/,
   );
   assert.equal(probes, 2, 'one poll and a final terminal reread');
+});
+
+test('model correction refuses a split reviewer window without killing sibling work', async (t) => {
+  paneCount = 2;
+  killedWindows.length = 0;
+  processStates = ['present'];
+  currentRun = {
+    ...makeRun(),
+    agentContexts: [
+      {
+        id: 'rev-codex',
+        role: 'review',
+        label: 'Review',
+        status: 'working',
+        slotId: 'slot',
+        runId: 'run',
+        runner: 'codex',
+        model: 'opus',
+        reviewId: 'pipeline-review-run',
+        taskFile: 'tasks/review/REVIEW.rev-codex.md',
+        signalFile: 'tasks/review/REVIEW.rev-codex-SIGNAL.json',
+        target: { session: 'test-1', window: 'reviewer', target: '@7', paneId: '%1' },
+      },
+    ],
+  };
+  t.after(() => {
+    currentRun = undefined;
+    processStates = [];
+    paneCount = 1;
+  });
+  await assert.rejects(
+    runReviewAgent(
+      vars,
+      'codex',
+      'gpt-6.1-sol',
+      'tasks/review',
+      'slot',
+      'run',
+      500,
+      1,
+      'static-code',
+      null,
+      'cold',
+      null,
+      'pipeline-review-run',
+    ),
+    /window is not exclusively owned/,
+  );
+  assert.deepEqual(killedWindows, []);
 });
