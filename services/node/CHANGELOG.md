@@ -4,6 +4,8 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
+- Deploy nodes without sourcing checkout authentication or provider settings, preserving installed native ownership.
+
 - Preserve the installed macOS native owner ahead of checkout auth defaults during redeploy; explicit caller replacement or empty disable remains authoritative.
 
 - Authenticate with machine-bound node credentials only.

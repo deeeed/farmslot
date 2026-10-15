@@ -20,7 +20,6 @@ source "${SCRIPT_DIR}/agentic.conf"
 # shellcheck source=./network.sh
 source "${SCRIPT_DIR}/network.sh"
 
-companion_load_local_auth_env
 companion_configure_network_env
 
 SIM_NAME="${IOS_SIMULATOR:-${SIMULATOR:-}}"

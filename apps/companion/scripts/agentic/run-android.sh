@@ -328,7 +328,6 @@ main() {
 parse_android_cli_args "$@"
 companion_apply_farmslot_slot_context android
 DEVICE_MODE="${DEVICE_MODE:-device}"
-companion_load_local_auth_env
 
 ANDROID_TARGET="$(select_android_device)"
 ANDROID_LINE=""

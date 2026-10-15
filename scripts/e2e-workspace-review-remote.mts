@@ -229,7 +229,7 @@ try {
   );
   nodeToken = credential.secret;
   // The production loader prioritizes root env files; scope this credential to the fixture.
-  await writeFile(path.join(fixture, '.env.local-auth'), `FARMSLOT_NODE_TOKEN=${nodeToken}\n`, {
+  await writeFile(path.join(fixture, '.env'), `FARMSLOT_NODE_TOKEN=${nodeToken}\n`, {
     mode: 0o600,
   });
   nodeProcess = startNode();

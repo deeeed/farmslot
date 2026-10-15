@@ -17,11 +17,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { findNodeTokenEnvFile, resolveGatewayCredential } from './gateway-credential.js';
 
-test('gateway credential is re-read from the node env file on every reconnect lookup', () => {
+test('gateway credential is re-read from the node env file on every reconnect lookup', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'farmslot-node-credential-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   const nested = join(root, 'services', 'node');
   mkdirSync(nested, { recursive: true });
-  const path = join(root, '.env.local-auth');
+  const path = join(root, '.env');
   writeFileSync(path, 'FARMSLOT_NODE_TOKEN=first\n');
   assert.deepEqual(resolveGatewayCredential({}, nested), { token: 'first' });
 
@@ -29,11 +30,12 @@ test('gateway credential is re-read from the node env file on every reconnect lo
   assert.deepEqual(resolveGatewayCredential({}, nested), { token: 'second' });
 });
 
-test('rewritten node env credential outranks stale inherited launch credentials', () => {
+test('rewritten node env credential outranks stale inherited launch credentials', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'farmslot-node-credential-stale-env-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   const nested = join(root, 'services', 'node');
   mkdirSync(nested, { recursive: true });
-  const path = join(root, '.env.local-auth');
+  const path = join(root, '.env');
   const launchedEnv = {
     FARMSLOT_NODE_TOKEN: 'stale-node-token',
     FARMSLOT_GATEWAY_TOKEN: 'stale-gateway-token',
@@ -56,9 +58,9 @@ test('the node token file is the first env file with a FARMSLOT_NODE_TOKEN, from
   const root = tempRoot(t, 'farmslot-node-token-file-');
   const install = join(root, 'farmslot-node');
   mkdirSync(install);
-  writeFileSync(join(root, '.env.local-auth'), 'FARMSLOT_NODE_TOKEN=ancestor-token\n');
+  writeFileSync(join(root, '.env'), 'FARMSLOT_NODE_TOKEN=ancestor-token\n');
   assert.deepEqual(findNodeTokenEnvFile({}, install), {
-    path: join(root, '.env.local-auth'),
+    path: join(root, '.env'),
     token: 'ancestor-token',
   });
 
@@ -68,21 +70,15 @@ test('the node token file is the first env file with a FARMSLOT_NODE_TOKEN, from
     token: 'install-env-token',
   });
 
-  // .env.local-auth comes before .env, and a file without the key is passed over.
-  writeFileSync(join(install, '.env.local-auth'), 'FARMSLOT_GATEWAY_TOKEN=gateway-token\n');
-  assert.equal(findNodeTokenEnvFile({}, install)?.path, join(install, '.env'));
-  writeFileSync(join(install, '.env.local-auth'), 'FARMSLOT_NODE_TOKEN=install-auth-token\n');
-  assert.deepEqual(findNodeTokenEnvFile({}, install), {
-    path: join(install, '.env.local-auth'),
-    token: 'install-auth-token',
-  });
+  // Retired checkout auth files are ignored even if they contain a node token.
+  writeFileSync(join(install, '.env.local-auth'), 'FARMSLOT_NODE_TOKEN=retired-token\n');
   assert.deepEqual(resolveGatewayCredential({ FARMSLOT_NODE_TOKEN: 'service-token' }, install), {
-    token: 'install-auth-token',
+    token: 'install-env-token',
   });
 });
 
 // The node also searches the install root derived from its own source dir: in a
-// checkout that is the repo root, whose .env.local-auth may hold a node token.
+// checkout that is the repo root, whose .env may hold a node token.
 // A copy of the module laid out as deploy-node installs it keeps that root
 // inside the temp dir, as on a deployed node.
 const installedNode = (t: TestContext) => {
@@ -143,7 +139,7 @@ test('an installed node with no env file token falls back to its own env', async
 
 test('the deploy check fails naming the env file whose node token differs, and prints no token', (t) => {
   const { install, check } = installedNode(t);
-  const file = join(install, '.env.local-auth');
+  const file = join(install, '.env');
   writeFileSync(file, 'FARMSLOT_NODE_TOKEN=stale-file-token\n');
 
   const result = check('deployed-token');
@@ -163,7 +159,7 @@ test('the deploy check passes when the env file holds the deployed token or none
   assert.equal(none.status, 0, none.stderr);
   assert.equal(`${none.stdout}${none.stderr}`, '');
 
-  writeFileSync(join(install, '.env.local-auth'), 'FARMSLOT_NODE_TOKEN=deployed-token\n');
+  writeFileSync(join(install, '.env'), 'FARMSLOT_NODE_TOKEN=deployed-token\n');
   const same = check('deployed-token');
   assert.equal(same.status, 0, same.stderr);
   assert.equal(`${same.stdout}${same.stderr}`, '');
