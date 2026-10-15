@@ -11,6 +11,7 @@ import type {
   RecordedEvidencePackageInput,
   Run,
   RunDecision,
+  RunOutput,
 } from '@farmslot/protocol';
 
 import { retainFixtureTask } from '../../../../../packages/run-bundle/src/retained.test-support.js';
@@ -73,7 +74,7 @@ async function fixture(t: TestContext): Promise<RecipeRunArtifactGroup> {
     groupKind: 'current-artifacts',
     promoted: false,
     status: 'pass',
-    artifactRoot: root,
+    artifactRoot: path.join(await retainedRunTaskDirectory(run), 'artifacts'),
     artifactBundle: run.artifactBundle,
     artifactManifest: null,
     source: 'recipe-run-artifacts',
@@ -253,6 +254,73 @@ test('QA output display uses the same frozen closure and refuses a changed repor
   );
   assert.equal(stale.input, undefined);
   assert.match(stale.errors.join(' '), /QA output snapshot changed/);
+});
+
+test('frozen output selects its retained package independently of the original task directory', async (t) => {
+  const group = await fixture(t);
+  const originalTaskFile = run.taskFile;
+  assert.ok(originalTaskFile);
+  const taskDir = path.dirname(originalTaskFile);
+  const files = await readdir(root);
+  const prefix = 'artifacts/recipe-runs/selected/';
+  const reportPath = `${prefix}summary.json`;
+  const selectedDir = path.join(taskDir, prefix);
+  await mkdir(selectedDir, { recursive: true });
+  for (const file of files) await cp(path.join(root, file), path.join(selectedDir, file));
+  const output: RunOutput = {
+    capturedAt: new Date().toISOString(),
+    workerFinished: true,
+    manifestDigest: 'frozen-output',
+    reportPath,
+    artifactManifest: await Promise.all(
+      files.map(async (file) => ({
+        path: `${prefix}${file}`,
+        purpose: 'evidence',
+        sha256: createHash('sha256')
+          .update(await readFile(path.join(selectedDir, file)))
+          .digest('hex'),
+      })),
+    ),
+  };
+  const decision: RunDecision = {
+    id: 'retained-output-review',
+    type: 'engine_output_review',
+    title: 'Review retained output',
+    description: 'Read the captured package.',
+    actions: [],
+    createdAt: output.capturedAt,
+    payload: {
+      kind: 'output-review',
+      manifestDigest: output.manifestDigest,
+      reportPath,
+    },
+  };
+  const sourceRun: Run = { ...run, output, decisions: [decision] };
+  await retainFixtureTask(taskDir, sourceRun, await runBundleStore(true));
+  output.artifactBundle = sourceRun.artifactBundle;
+  const capturedTaskDir = await retainedRunTaskDirectory(sourceRun);
+  assert.notEqual(capturedTaskDir, taskDir);
+  const capturedGroup: RecipeRunArtifactGroup = {
+    ...group,
+    artifactRoot: path.join(capturedTaskDir, prefix),
+    artifactBundle: sourceRun.artifactBundle,
+    recipeRunId: 'directory-label',
+  };
+  const binding = { decisionId: decision.id, packageHash: output.manifestDigest };
+  const selected = await readRunRecordedEvidence(sourceRun, capturedGroup, binding);
+  assert.deepEqual(selected.errors, []);
+  assert.ok(selected.input);
+  assert.equal(selected.artifactPrefix, prefix);
+  assert.equal(selected.packagePath, 'recipe-runs/selected');
+  assert.equal(sourceRun.taskFile, originalTaskFile);
+
+  const foreign = await readRunRecordedEvidence(
+    sourceRun,
+    { ...capturedGroup, artifactRoot: selectedDir },
+    binding,
+  );
+  assert.equal(foreign.input, undefined);
+  assert.match(foreign.errors.join(' '), /Select a retained recipe execution/);
 });
 
 test('package display paths use the selected artifact root even when the run task is an operator mirror', async (t) => {

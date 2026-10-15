@@ -1,0 +1,92 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Retained output package selection",
+  "description": "Read an existing frozen output review whose recorded task path differs from its gateway bundle directory. The gateway URL and captured decision, manifest, package prefix and execution are explicit inputs. Read-only; no gate action or registration write.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "gateway_url",
+      "run_id",
+      "decision_id",
+      "snapshot_hash",
+      "expected_prefix",
+      "expected_execution"
+    ],
+    "properties": {
+      "gateway_url": {
+        "type": "string"
+      },
+      "run_id": {
+        "type": "string"
+      },
+      "decision_id": {
+        "type": "string"
+      },
+      "snapshot_hash": {
+        "type": "string"
+      },
+      "expected_prefix": {
+        "type": "string"
+      },
+      "expected_execution": {
+        "type": "string"
+      }
+    }
+  },
+  "proofTargets": [
+    {
+      "id": "retained-output-selection",
+      "claim": "The frozen output review exposes its selected recorded execution through the retained bundle.",
+      "proofMode": "state"
+    }
+  ],
+  "workflow": {
+    "entry": "read-captured-output",
+    "nodes": {
+      "read-captured-output": {
+        "action": "command",
+        "cmd": "FARMSLOT_GATEWAY=\"{{params.gateway_url}}\" node apps/command-center/scripts/cdp.mjs gateway run.recipeRunsForRun '{\"runId\":\"{{params.run_id}}\",\"decisionId\":\"{{params.decision_id}}\",\"evidenceSnapshotHash\":\"{{params.snapshot_hash}}\",\"includeRecordedEvidence\":true}' > \"$FARMSLOT_RECIPE_ARTIFACTS_DIR/output-review.json\" && node -e 'const fs=require(\"node:fs\");const r=JSON.parse(fs.readFileSync(process.argv[1],\"utf8\")).recordedEvidence;console.log(JSON.stringify({errors:r?.errors??[\"No recorded evidence\"],contractVersion:r?.contractVersion??null,artifactPrefix:r?.artifactPrefix??null,recipeRunId:r?.input?.claims?.recipeRunId??null}));' \"$FARMSLOT_RECIPE_ARTIFACTS_DIR/output-review.json\"",
+        "intent": "The gateway presents the existing captured output package independently of the original task location.",
+        "next": "assert-no-errors"
+      },
+      "assert-no-errors": {
+        "action": "assert_output",
+        "source": "read-captured-output",
+        "stream": "stdout",
+        "contains": "\"errors\":[]",
+        "intent": "The frozen output package remains readable.",
+        "next": "assert-current-contract"
+      },
+      "assert-current-contract": {
+        "action": "assert_output",
+        "source": "read-captured-output",
+        "stream": "stdout",
+        "contains": "\"contractVersion\":1",
+        "intent": "The selected output uses the current recorded-evidence contract.",
+        "next": "assert-package-prefix"
+      },
+      "assert-package-prefix": {
+        "action": "assert_output",
+        "source": "read-captured-output",
+        "stream": "stdout",
+        "contains": "\"artifactPrefix\":\"{{params.expected_prefix}}\"",
+        "intent": "The displayed package retains its captured task-relative location.",
+        "next": "assert-execution"
+      },
+      "assert-execution": {
+        "action": "assert_output",
+        "source": "read-captured-output",
+        "stream": "stdout",
+        "contains": "\"recipeRunId\":\"{{params.expected_execution}}\"",
+        "intent": "The output review presents the captured engine execution.",
+        "next": "done",
+        "proves": ["retained-output-selection"]
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}
