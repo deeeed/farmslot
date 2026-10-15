@@ -303,6 +303,16 @@ body/head-change checks; refreshing never reopens approval or changes code.
 
 Generate PR links/clips only through the authorized pipeline. Use `#t=` only for
 a demonstrated seekable host, otherwise media plus configured claim/moment links.
+Before publication or refresh, the gateway MUST scan the selected frozen
+manifest, recipe inputs, metadata and indexed non-media bytes with the existing
+`@farmslot/handoff/scrub` secret detector. Scanned files MUST retain their frozen
+digest identity. Scan incoming PR prose before an LLM request and rendered prose
+before GitHub create/edit. A detected value MUST refuse publication using only
+its kind and fingerprint, with a rerun/refresh action; never redact retained
+bytes or waive the refusal through evidence attestation. Bare integrity and
+transaction hashes remain allowed. This text scan makes no claim about secrets
+in image or video pixels; existing media review remains required.
+
 Never expose tokens/private traces. Removing duplicate `covers` requires the
 ledger relationship to remain available to publication consumers.
 

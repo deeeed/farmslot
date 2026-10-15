@@ -75,6 +75,39 @@ async function fixture(t: TestContext) {
   return { taskDir, root, run, artifacts, manifest };
 }
 
+test('frozen indexed text is scanned without changing bytes or admitting historical packages', async (t) => {
+  const { taskDir, root, run, artifacts, manifest } = await fixture(t);
+  const phrase = Array<string>(12).fill('abandon').join(' ');
+  const log = path.join(root, 'observed.log');
+  await writeFile(log, JSON.stringify({ arbitrary: phrase }));
+  const packageManifestPath = path.join(root, 'artifact-manifest.json');
+  const packageManifest = JSON.parse(await readFile(packageManifestPath, 'utf8'));
+  packageManifest.artifacts.push({ path: 'observed.log', type: 'log' });
+  await writeFile(packageManifestPath, JSON.stringify(packageManifest));
+  artifacts.push({ path: 'artifacts/recipe-run/observed.log', purpose: 'other' });
+  const inventory = await buildPackageEvidenceManifest(taskDir, artifacts, manifest);
+  await retainRunFixture(run);
+  const frozen = await readFile(log);
+  await assert.rejects(
+    verifyFrozenPublicationEvidence(run, inventory, ['artifacts/recipe-run/proof.png']),
+    /Publication blocked by secret values: srp sha256:/,
+  );
+  assert.deepEqual(await readFile(log), frozen);
+  // A new clean capture is a new fixture, never an edit to the refused package.
+  const clean = await fixture(t);
+  await mkdir(path.join(clean.taskDir, 'artifacts/historical'));
+  await writeFile(path.join(clean.taskDir, 'artifacts/historical/old.log'), phrase);
+  const cleanInventory = await buildPackageEvidenceManifest(
+    clean.taskDir,
+    clean.artifacts,
+    clean.manifest,
+  );
+  await retainRunFixture(clean.run);
+  await verifyFrozenPublicationEvidence(clean.run, cleanInventory, [
+    'artifacts/recipe-run/proof.png',
+  ]);
+});
+
 test('selected evidence retains labelled comparisons and external captures with frozen declarations', async (t) => {
   const { taskDir, root, run, artifacts } = await fixture(t);
   const selected = path.join(taskDir, 'artifacts/recipe-runs/current');

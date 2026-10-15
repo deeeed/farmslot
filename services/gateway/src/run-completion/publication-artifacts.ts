@@ -42,6 +42,7 @@ import {
   assertPublicationEvidenceSelection,
   type PublicationEvidenceSelection,
 } from './publication-evidence-policy.js';
+import { assertPublicationTextSafe, PublicationSecretError } from './publication-secrets.js';
 import { verifyFrozenPublicationEvidence } from './recorded-publication-evidence.js';
 import { retainedRunArtifactManifest, retainedRunTaskDirectory } from './retained-artifacts.js';
 
@@ -92,6 +93,7 @@ ${body}`;
 
   const { getLLMConfig } = await import('../llm/config.js');
   const cfgLLM = getLLMConfig();
+  assertPublicationTextSafe(systemPrompt, userPrompt);
   const result = await callLLM({
     model: cfgLLM.intelligenceModel,
     provider: cfgLLM.defaultProvider,
@@ -101,6 +103,7 @@ ${body}`;
   });
 
   const rewritten = result.text.trim();
+  assertPublicationTextSafe(rewritten);
   if (rewritten.length < body.length * 0.3) {
     console.warn(
       `[run-completion] LLM rewrite suspiciously short (${rewritten.length} vs ${body.length}), rejecting`,
@@ -454,14 +457,13 @@ export async function publishSelectedEvidence(
   artifactBundle?: RunArtifactBundleRef,
 ): Promise<PublishedEvidence> {
   const selectedEvidenceKeys = expandPublicationEvidenceSelection(selection);
-  if (selectedEvidenceKeys.length) {
-    await verifyFrozenPublicationEvidence(
-      run,
-      selection.evidenceManifest,
-      selectedEvidenceKeys,
-      artifactBundle,
-    );
-  }
+  assertPublicationTextSafe(JSON.stringify(selection.trustedEvidenceManifest ?? null));
+  await verifyFrozenPublicationEvidence(
+    run,
+    selection.evidenceManifest,
+    selectedEvidenceKeys,
+    artifactBundle,
+  );
   const artifactUrls = await uploadArtifacts(run, prNumber, selectedEvidenceKeys, {
     failOnError: true,
     artifactBundle,
@@ -1261,6 +1263,8 @@ export async function postProcessPRBody(
       body = result.stdout;
     }
 
+    assertPublicationTextSafe(body);
+
     const humanBody = body;
     if (options.adoptedEvidence) {
       const { receipt, prepared } = options.adoptedEvidence;
@@ -1279,6 +1283,7 @@ export async function postProcessPRBody(
       options.evidenceManifest !== undefined
         ? options.evidenceManifest
         : await readEvidenceManifest(run);
+    assertPublicationTextSafe(JSON.stringify(rawManifest));
     if (options.failOnError) {
       assertPublicationEvidenceSelection({
         selectedEvidenceKeys: selectedEvidenceKeys ?? [...(selectedArtifactUrls?.keys() ?? [])],
@@ -1318,6 +1323,7 @@ export async function postProcessPRBody(
       try {
         body = await rewritePRBodyWithLLM(run.project, body, selectedArtifactUrls);
       } catch (err) {
+        if (err instanceof PublicationSecretError) throw err;
         console.warn(
           `[run-completion] LLM rewrite failed, falling back to sanitize: ${(err as Error).message}`,
         );
@@ -1352,6 +1358,7 @@ export async function postProcessPRBody(
     body = withEvidenceAttestation(run, body);
     if (options.adoptedEvidence)
       body = mergeOwnedEvidenceBody(run.id, humanBody, options.adoptedEvidence.previousBody, body);
+    assertPublicationTextSafe(body);
     const tmpFile = `/tmp/farmslot-pr-body-${prNumber}-${randomUUID()}.md`;
     const { writeFile: writeF } = await import('node:fs/promises');
     await writeF(tmpFile, body, 'utf-8');
@@ -1382,6 +1389,7 @@ export async function postProcessPRBody(
     console.log(`[run-completion] post-processed PR #${prNumber} body (sanitized + checklist)`);
     return body;
   } catch (err) {
+    if (err instanceof PublicationSecretError) throw err;
     if (options.failOnError) throw err;
     console.warn(`[run-completion] PR body post-processing failed: ${(err as Error).message}`);
     return null;

@@ -16,7 +16,8 @@
       "@farmslot/adapter-sdk": ["../../packages/adapter-sdk/src/index.ts"],
       "@farmslot/adapter-sdk/*": ["../../packages/adapter-sdk/src/*"],
       "@farmslot/recipe-runner": ["../../packages/recipe-runner/src/index.ts"],
-      "@farmslot/recipe-runner/*": ["../../packages/recipe-runner/src/*"]
+      "@farmslot/recipe-runner/*": ["../../packages/recipe-runner/src/*"],
+      "@farmslot/handoff/scrub": ["../../packages/handoff/src/scrub/index.ts"]
     }
   },
   "include": ["src/**/*.ts"]

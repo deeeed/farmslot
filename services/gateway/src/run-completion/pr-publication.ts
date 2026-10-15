@@ -11,6 +11,7 @@ import { ghRequest } from '../integrations/github-client.js';
 import { formatPrTitleSuffix } from '../tasks/writer.js';
 
 import { localPrBodyPathResidues } from './publication-artifacts.js';
+import { assertPublicationTextSafe } from './publication-secrets.js';
 
 // ─── PR comment ───
 
@@ -208,7 +209,9 @@ export async function postPRComment(
       }
     }
 
+    assertPublicationTextSafe(report, workflowMmd ?? '');
     const generatedComment = await buildPRComment(run, report, workflowMmd);
+    assertPublicationTextSafe(generatedComment);
     const identityMarker = prCommentIdentityMarker(run.id);
     const comment = generatedComment.includes(identityMarker)
       ? generatedComment
@@ -274,6 +277,7 @@ export async function updatePRTitle(run: Run, ciRepo: string, prNumber: number):
   desc = desc.charAt(0).toLowerCase() + desc.slice(1);
   desc = desc.replace(/\.$/, '');
   const newTitle = `${commitType}${scopePart}: ${desc}${titleSuffix}`;
+  assertPublicationTextSafe(newTitle);
 
   try {
     // Check current title — only update if it looks like a ticket ID

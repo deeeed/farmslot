@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Refuse publication and evidence refresh when frozen text or PR prose contains detected secret values, preserving retained bytes and reporting only fingerprints.
+
 - Resolve frozen output package selections inside their captured bundle, preserving the original task path and rejecting roots outside the selected snapshot.
 
 - Keep autonomous workers monitoring while native background tasks run, and confirm idle after long sessions, reordered completion notifications or successful native task stops using bounded history reads.

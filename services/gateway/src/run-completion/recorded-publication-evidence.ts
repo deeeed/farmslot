@@ -22,6 +22,7 @@ import {
   type PublicationBaselineContext,
   resolvePublicationManifest,
 } from './publication-artifacts.js';
+import { assertPublicationTextSafe } from './publication-secrets.js';
 import {
   resolveSelectedEvidenceRef,
   sha256Text,
@@ -221,5 +222,24 @@ export async function verifyFrozenPublicationEvidence(
       throw new Error(
         `Frozen publication recipe is invalid: ${issues.map((issue) => issue.message).join('; ')}`,
       );
+  }
+  // This inventory is the frozen publication closure, not the task's historical
+  // artifacts. Media pixels retain their existing visual-review requirements.
+  const textEntries = inventory.filter(
+    (artifact) =>
+      !isUploadableMediaPath(artifact.path) &&
+      (artifact.purpose === 'evidence-dependency' ||
+        artifact.purpose === 'evidence-manifest' ||
+        artifact.purpose === 'evidence-manifest-source' ||
+        artifact.path === SELECTION_MANIFEST_PATH ||
+        sources.some((source) => artifact.path.startsWith(source.artifactPrefix))),
+  );
+  await verifyReadyGateSelectedEvidenceFiles(
+    run,
+    { evidenceManifest: [...inventory], artifactBundle: bundleRef },
+    textEntries.map(({ path }) => path),
+  );
+  for (const artifact of textEntries) {
+    assertPublicationTextSafe(await readRetainedRunText(run, artifact.path, bundleRef));
   }
 }

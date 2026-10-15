@@ -99,6 +99,7 @@ import {
   assertPublicationEvidenceSelection,
   defaultSelectedEvidenceKeysForPublication,
 } from './publication-evidence-policy.js';
+import { assertPublicationTextSafe } from './publication-secrets.js';
 import {
   computeReadyGatePackageHash,
   computeReadyGatePackageInputHash,
@@ -1396,6 +1397,11 @@ export async function publishCompletionPackage(
   });
 
   try {
+    assertPublicationTextSafe(
+      approvedPackage.draftTitle,
+      approvedPackage.draftBody,
+      options?.comment ?? '',
+    );
     emit('substep', { name: 'load-project-vars', detail: 'Loading project config' });
     const pv = await loadProjectVars(run.project).catch(() => null);
     const ciRepo: string | null = (pv?.projectJson as any)?.ci?.repo ?? null;
@@ -1439,6 +1445,12 @@ export async function publishCompletionPackage(
       trustedEvidenceManifest: evidenceManifest,
     });
     let selectedEvidenceKeys = publishableSelectedEvidenceKeys;
+    await verifyFrozenPublicationEvidence(
+      run,
+      approvedPackage.evidenceManifest ?? [],
+      selectedEvidenceKeys,
+      approvedPackage.artifactBundle,
+    );
 
     emit('substep', { name: 'resolve-pr-number', detail: `Resolving PR number against ${ciRepo}` });
     let prNumber = run.prNumber ?? (await findPRNumber(run, ciRepo, { noRetry: true }));
