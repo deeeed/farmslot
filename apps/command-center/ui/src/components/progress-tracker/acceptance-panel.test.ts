@@ -32,6 +32,23 @@ function ledger(criteria: AcceptanceCriterionStatus[]): AcceptanceStatusLedger {
   return { schemaVersion: 1, criteria };
 }
 
+test('supporting files start collapsed and remain available under their original AC', () => {
+  const paths = ['artifacts/proof.png', 'artifacts/still.png', 'artifacts/trace.json'];
+  const text = litText(
+    renderAcceptancePanel(ledger([criterion({ evidence: paths })]), {
+      evidenceHref: (path) => `/artifact/${path}`,
+    }),
+  );
+  const raw = text.match(/<details[^>]*data-testid="acceptance-raw-artifacts"[^>]*>/)?.[0];
+  assert.ok(raw);
+  assert.doesNotMatch(raw, /\bopen\b/);
+  assert.match(text, /raw artifacts \(3\)/);
+  assert.ok(text.indexOf('/artifact/artifacts/proof.png') > text.indexOf(raw));
+  for (const path of paths) assert.ok(text.includes(`/artifact/${path}`));
+  assert.match(text, /data-ac-id=AC-1/);
+  assert.match(text, /data-ac-verdict=proven/);
+});
+
 test('the header separates assessment progress from proven criteria', () => {
   const view = acceptancePanelPresentation(
     ledger([

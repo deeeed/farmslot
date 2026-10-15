@@ -219,6 +219,7 @@ function renderComparisonPreview(input: WorkspaceEvidenceComparison): TemplateRe
     'unassigned',
   ];
   const view = model.comparisonView;
+  const rawArtifacts = model.rawArtifacts(model.artifactInventory);
   const transform = model.comparisonTransform;
   const updateTransform = (scale: number, x = transform.x, y = transform.y) => {
     model.setComparisonTransform({ scale, x, y });
@@ -459,6 +460,19 @@ function renderComparisonPreview(input: WorkspaceEvidenceComparison): TemplateRe
             ${row.claim.proofKinds.join(', ') || 'no recorded proof'}
             ${row.claim.reviewLabels.join('; ')}
           </div>
+          ${row.primaryFiles.map(
+            (file) =>
+              html`<div>
+                <a
+                  data-selected-proof-file
+                  href=${input.artifactUrl(file.artifactPath)}
+                  target="_blank"
+                  rel="noopener"
+                >
+                  Selected file · ${file.name}
+                </a>
+              </div>`,
+          )}
           <div
             style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:12px;"
           >
@@ -497,7 +511,7 @@ function renderComparisonPreview(input: WorkspaceEvidenceComparison): TemplateRe
               </details>`
             : nothing}
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
-            ${row.claim.clips.map(
+            ${(row.primaryClip ? [row.primaryClip] : []).map(
               (clip, index) =>
                 html`<button
                   type="button"
@@ -568,7 +582,20 @@ function renderComparisonPreview(input: WorkspaceEvidenceComparison): TemplateRe
             : nothing}
         </article>`,
     )}
-    ${view.unassigned.length
+    ${model.comparisonFilter === 'all' && rawArtifacts.length
+      ? html`<details data-testid="comparison-raw-artifacts">
+          <summary>raw artifacts (${rawArtifacts.length})</summary>
+          ${rawArtifacts.map(
+            (artifact) =>
+              html`<div>
+                <a href=${input.artifactUrl(artifact.path)} target="_blank" rel="noopener">
+                  ${artifact.path}
+                </a>
+              </div>`,
+          )}
+        </details>`
+      : nothing}
+    ${model.comparisonFilter !== 'all' && view.unassigned.length
       ? html`<details open=${model.comparisonFilter === 'unassigned' || nothing}>
           <summary>Unassigned (${view.unassigned.length})</summary>
           <p>These files have no recorded AC and role binding.</p>
