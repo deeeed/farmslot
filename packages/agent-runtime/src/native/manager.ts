@@ -404,9 +404,12 @@ export class NativeSessionManager {
         throw new Error('Worker recovery requires its recorded launch configuration');
       if (previous.info.workerLeaseId !== workerLaunch?.leaseId)
         throw new Error('Worker recovery must preserve its task lease');
+      const currentContext = executionContext(workerLaunch, params.runner, profile);
+      const ambientHome =
+        (workerLaunch ? nativeWorkerEnvironment(workerLaunch) : process.env).HOME ?? homedir();
       if (
-        JSON.stringify(previous.context) !==
-        JSON.stringify(executionContext(workerLaunch, params.runner, profile))
+        JSON.stringify(previous.context) !== JSON.stringify(currentContext) &&
+        !transport.canResumeExecutionContext?.(previous.context, currentContext, ambientHome)
       )
         throw new Error('Resume must preserve the native account execution context');
       if (relocation) {

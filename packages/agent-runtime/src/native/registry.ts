@@ -15,10 +15,15 @@ import { grokNativeAdapter } from './grok.js';
 import { hostReviewSandboxAvailable, type NativeProcessSandbox } from './review-sandbox.js';
 import type { NativeAdapter } from './types.js';
 
-const { grokProfileEnvironment } = createRequire(import.meta.url)(
+const { grokProfileEnvironment, canResumeGrokProfileContext } = createRequire(import.meta.url)(
   '../../scripts/review-account-preflight.cjs',
 ) as {
   grokProfileEnvironment(directory: string, base?: NodeJS.ProcessEnv): Record<string, string>;
+  canResumeGrokProfileContext(
+    previous: Record<string, string>,
+    current: Record<string, string>,
+    ambientHome: string,
+  ): boolean;
 };
 
 export interface NativeWorkspaceTrustOptions {
@@ -62,6 +67,12 @@ export interface NativeRunnerDefinition {
   reviewRuntimeRoots?: (environment: NodeJS.ProcessEnv) => string[];
   /** Read-only account inspection before copying support or trusting a review checkout. */
   reviewAccountPreflight?: { script: string; timeoutMs: number };
+  /** A runner may admit only its verified migration to a stricter profile environment. */
+  canResumeExecutionContext?: (
+    previous: Record<string, string>,
+    current: Record<string, string>,
+    ambientHome: string,
+  ) => boolean;
   /** Default for new standalone conversations; worker launch settings stay authoritative. */
   defaultEffort?: string;
   account: {
@@ -145,8 +156,9 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     },
   },
   grok: {
+    canResumeExecutionContext: canResumeGrokProfileContext,
     reviewAccountPreflight: {
-      script: `${readFileSync(new URL('../../scripts/review-account-preflight.cjs', import.meta.url), 'utf8')}\ntry { const env = process.argv[2] ? { ...process.env, ...grokProfileEnvironment(process.argv[2]) } : process.env; assertGrokReviewAccount(process.argv[1], env); } catch (error) { console.error(error.message); process.exitCode = 1; }`,
+      script: `${readFileSync(new URL('../../scripts/review-account-preflight.cjs', import.meta.url), 'utf8')}\ntry { const env = process.argv[2] ? { ...process.env, ...grokProfileEnvironment(process.argv[2]) } : process.env; const selected = process.argv[3] || 'grok'; const executable = selected.startsWith('~/') ? join(process.env.HOME || homedir(), selected.slice(2)) : selected; assertGrokReviewAccount(process.argv[1], env, { executable }); } catch (error) { console.error(error.message); process.exitCode = 1; }`,
       timeoutMs: 15_000,
     },
     reviewConfigurationRoots: reviewConfigurationRootsByRunner.grok,

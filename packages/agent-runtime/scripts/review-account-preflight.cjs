@@ -20,6 +20,22 @@ function grokProfileEnvironment(directory, base = process.env) {
   };
 }
 
+function canResumeGrokProfileContext(previous, current, ambientHome) {
+  if (
+    !current.profileId ||
+    !current.profileAccountContextId ||
+    previous.home !== ambientHome ||
+    current.home !== current.profileDirectory ||
+    current.grokHome !== current.profileDirectory
+  )
+    return false;
+  const keys = Object.keys(previous);
+  return (
+    keys.length === Object.keys(current).length &&
+    keys.every((key) => key === 'home' || previous[key] === current[key])
+  );
+}
+
 function assertGrokReviewAccount(cwd, env, launch = {}) {
   const remedy =
     'Set allow_managed_hooks_only = true in the selected GROK_HOME/requirements.toml, ' +
@@ -65,4 +81,4 @@ function assertGrokReviewAccount(cwd, env, launch = {}) {
     );
 }
 
-module.exports = { assertGrokReviewAccount, grokProfileEnvironment };
+module.exports = { assertGrokReviewAccount, grokProfileEnvironment, canResumeGrokProfileContext };

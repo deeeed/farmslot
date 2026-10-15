@@ -1,9 +1,15 @@
 import { nativeRunnerDefinitions } from '@farmslot/agent-runtime/native/registry';
 import type { Run } from '@farmslot/protocol';
 
+import { loadMachinePool } from '../core/config.js';
+import { execFileArgv } from '../core/exec.js';
+import { interactiveRunnerExecutable } from '../runners/launch-command.js';
 import { execNativeNodeArgv } from '../runners/native/node.js';
 import { inspectNativeWorkerProfile } from '../runners/native/worker-profile.js';
-import { assertNativeRunOwner } from '../security/native-worker-owner.js';
+import {
+  assertNativeRunOwner,
+  requireNativeProfileOwner,
+} from '../security/native-worker-owner.js';
 
 /** Account policy belongs to the runner; the workflow only selects its owner-bound node. */
 export async function preflightReviewWorkspaceAccount(
@@ -20,20 +26,32 @@ export async function preflightReviewWorkspaceAccount(
   const profile = run.nativeProfile
     ? await inspectNativeWorkerProfile(run.nativeOwnerPrincipalId!, run.nativeProfile)
     : undefined;
+  const executable =
+    run.transport === 'tmux'
+      ? interactiveRunnerExecutable({
+          runner: run.metrics.runner!,
+          machine: await loadMachinePool(run.reviewWorkspace.machine),
+        })
+      : definition!.binary;
   assertCurrent();
+  const local = run.reviewWorkspace.executionNodeId === 'local';
+  if (local) requireNativeProfileOwner(run.nativeOwnerPrincipalId);
   const argv = [
-    'node',
+    local ? process.execPath : 'node',
     '-e',
     preflight.script,
     run.reviewWorkspace.taskPath,
     profile?.directory ?? '',
+    executable,
   ];
-  const result = await execNativeNodeArgv(
-    run.nativeOwnerPrincipalId!,
-    run.reviewWorkspace.machine,
-    argv,
-    preflight.timeoutMs,
-  );
+  const result = local
+    ? await execFileArgv(argv, { timeout: preflight.timeoutMs })
+    : await execNativeNodeArgv(
+        run.nativeOwnerPrincipalId!,
+        run.reviewWorkspace.machine,
+        argv,
+        preflight.timeoutMs,
+      );
   assertCurrent();
   if (result.exitCode !== 0)
     throw new Error(

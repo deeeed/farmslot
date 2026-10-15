@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -22,6 +23,7 @@ import {
   requireNativeProfile,
 } from './account-profiles.js';
 import { decodeRequest } from './ipc.js';
+import { nativeRunnerDefinitions } from './registry.js';
 
 test('the default Claude directory retains its native credential store while custom profiles stay explicit', async () => {
   const home = mkdtempSync(join(tmpdir(), 'native-claude-default-'));
@@ -228,5 +230,24 @@ test('additional runner profiles clear native auth overrides and select their na
     assert.equal(grokEnv.SERVICE_PORT, '1234');
   } finally {
     rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('review preflight uses the configured executable outside PATH', () => {
+  const root = mkdtempSync(join(tmpdir(), 'grok-configured-preflight-'));
+  try {
+    const executable = join(root, 'configured-runner');
+    writeFileSync(
+      executable,
+      `#!${process.execPath}\nprocess.stdout.write(JSON.stringify({grokVersion:'fixture',hooks:[],permissions:{enforced:[{setting:'nonManagedHooks',enabled:false}]}}));\n`,
+      { mode: 0o700 },
+    );
+    const preflight = nativeRunnerDefinitions.grok.reviewAccountPreflight!;
+    execFileSync(process.execPath, ['-e', preflight.script, root, '', executable], {
+      env: { ...process.env, PATH: '' },
+      timeout: 1500,
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

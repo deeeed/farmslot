@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { after, mock, test } from 'node:test';
 
 import { type NativeProfileInfo, PipelineSteps } from '@farmslot/protocol';
+import type { RawPoolJson } from '@farmslot/slot-config';
 
 await import('../runtime/mock-pty.test-support.js');
 const priorOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
@@ -12,6 +13,31 @@ after(() => {
 });
 const { createRun, updateRun } = await import('../runs/store.js');
 const { deleteTestRunIfPresent } = await import('../run-engine/test-fixtures.js');
+const config = await import('../core/config.js');
+const pool: RawPoolJson = {
+  machine: 'review-node',
+  host: 'localhost',
+  project: 'demo',
+  platform: 'test',
+  os: 'macos',
+  ssh_user: 'fixture',
+  slots: [],
+  grok_path: '/configured/outside-path/grok',
+};
+mock.module('../core/config.js', {
+  namedExports: { ...config, loadMachinePool: async () => pool },
+});
+const localExec = await import('../core/exec.js');
+const localCalls: Array<{ argv: string[]; timeout: number }> = [];
+mock.module('../core/exec.js', {
+  namedExports: {
+    ...localExec,
+    execFileArgv: async (argv: string[], options: { timeout: number }) => {
+      localCalls.push({ argv, timeout: options.timeout });
+      return { stdout: '', stderr: error, exitCode: error ? 1 : 0 };
+    },
+  },
+});
 const node = await import('../runners/native/node.js');
 const calls: Array<{ owner: string; machine: string; argv: string[]; timeout: number }> = [];
 let error = '';
@@ -48,7 +74,11 @@ mock.module('./support.js', {
 const { executeReviewWorkspaceStep } = await import('./pipeline.js');
 const { preflightReviewWorkspaceAccount } = await import('./account-preflight.js');
 
-function reviewRun(selectedProfile = false) {
+function reviewRun(
+  selectedProfile = false,
+  local = false,
+  transport: 'native' | 'tmux' = 'native',
+) {
   const run = createRun(
     {
       flowType: 'review-pr',
@@ -56,7 +86,7 @@ function reviewRun(selectedProfile = false) {
       ticketOrPr: 'REVIEW-1',
       runner: 'grok',
       model: 'grok-4.7',
-      transport: 'native',
+      transport,
       reviewWorkspaceTarget: { machine: 'review-node' },
       ...(selectedProfile
         ? {
@@ -77,7 +107,7 @@ function reviewRun(selectedProfile = false) {
     reviewWorkspace: {
       workspaceId: 'owned',
       machine: 'review-node',
-      executionNodeId: 'review-node',
+      executionNodeId: local ? 'local' : 'review-node',
       checkoutPath: '/owned/source',
       taskPath: '/owned/task',
       artifactPath: '/owned/task/artifacts',
@@ -118,11 +148,7 @@ test('write-task refuses unsafe account hooks before any support copy or task ma
   assert.equal(command.owner, 'review-owner');
   assert.equal(command.machine, 'review-node');
   assert.equal(command.timeout, 15_000);
-  assert.equal(
-    command.argv.at(-2),
-    '/owned/task',
-    'inspection uses engine-owned task, not PR source',
-  );
+  assert.equal(command.argv[3], '/owned/task', 'inspection uses engine-owned task, not PR source');
 });
 
 test('profile preflight transports only its checked account directory and retains lifecycle guards', async (t) => {
@@ -130,7 +156,7 @@ test('profile preflight transports only its checked account directory and retain
   t.after(() => disposeRun(run));
   error = '';
   await preflightReviewWorkspaceAccount(run, () => {});
-  assert.equal(calls.at(-1)!.argv.at(-1), profile.directory);
+  assert.equal(calls.at(-1)!.argv[4], profile.directory);
   let checks = 0;
   await assert.rejects(
     preflightReviewWorkspaceAccount(run, () => {
@@ -138,4 +164,17 @@ test('profile preflight transports only its checked account directory and retain
     }),
     /generation changed/,
   );
+});
+
+test('local reviews preflight without a registered node and tmux uses its configured executable', async (t) => {
+  const run = reviewRun(false, true, 'tmux');
+  t.after(() => disposeRun(run));
+  error = '';
+  const remoteCalls = calls.length;
+  await preflightReviewWorkspaceAccount(run, () => {});
+  assert.equal(calls.length, remoteCalls);
+  const command = localCalls.at(-1)!;
+  assert.equal(command.argv[0], process.execPath);
+  assert.equal(command.argv[5], pool.grok_path);
+  assert.equal(command.timeout, 15_000);
 });
