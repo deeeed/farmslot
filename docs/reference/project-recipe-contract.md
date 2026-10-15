@@ -395,3 +395,31 @@ Before moving a caller, its replacement MUST prove the same positive result and 
 Help, task verification, template selection and advisor status MUST preserve their read-only behavior. Explicit review generation and advice retain only their existing declared effects and authorization.
 
 Every active pack, skill, template, library and completion caller MUST move or be explicitly retired before its producer is deleted. Other legacy operations retain their existing disposition and equivalence requirements. In particular, `pr-body render` maps to `recipe artifacts --format markdown` only after authored prose and provenance are preserved; help/JSON and review-guide callers move to canonical command help with the existing review/quality data. Settings and provisioning also retain their named replacement requirements. This amendment does not authorize dropping them. Final acceptance still requires the original project/target, real-dispatch and tutorial checks.
+
+## Authored task Markdown
+
+**Status:** Proposed under ADR-068 Amendment 4. Implementation follows reviewed content approval in the same caller-parity PR.
+
+### Public surface
+
+| Surface                                                                                                                        | Argument mapping and named consumer                                                                                                                                                                                                                                     |
+| ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `farmslot recipe artifacts <task> --format markdown`                                                                           | Replaces `pr-body render <task>` for pack commands and recipe PR-description skills. Preserves authored sections and generated evidence rather than listing filenames.                                                                                                  |
+| `--command <text>`                                                                                                             | Preserves the displayed invocation for recipe PR-description skills. Display only; MUST NOT execute it. Requires Markdown format.                                                                                                                                       |
+| `--out <file>`                                                                                                                 | Preserves explicit output selection for skills and the gateway's private temporary output. Requires Markdown format. No implicit output file is written; callers needing the old default pass `<task>/artifacts/pr-body.md` explicitly.                                 |
+| `--json`                                                                                                                       | Retains inspection's `artifactDir`, `summary`, `manifest` and optional `validation`. Authored rendering adds `sections`, `recipe`, `run`, `workflow`, optional `out`, and the Markdown `body` when no output file is requested. Paths identify the files actually read. |
+| `renderTaskArtifactsMarkdown`, `TaskArtifactsMarkdownInput`, `TaskArtifactsMarkdownResult` from `@farmslot/recipe-cli/harness` | One renderer consumed by the root CLI; project wrappers migrate to that CLI. Input is `{ taskDir, artifactDir?, command? }`. Result is `{ body, sections, recipe, run, workflow }`; file metadata retains its task-relative `path`, and recipe metadata its node count. |
+
+The additive SDK API requires a reviewed minor release and installed consumer checks. The renderer MUST remain read-only and MUST NOT resolve another attempt after the caller supplies `artifactDir`. The root CLI owns authoritative attempt selection and existing package validation. No provider import is required to render an explicit task.
+
+### Rendering and refusals
+
+Read `artifacts/pr-description.md`. Preserve authored sections, images, checklist contents and their order. Replace pasted Validation Recipe, Validation Logs and optional Recipe Workflow sections, inserting generated sections before the first checklist or appending when none exists. Retain graph and older array node counts, optional `artifacts/workflow.mmd`, escaped details summaries and fences longer than embedded backtick runs. Normalize line endings to LF.
+
+For a selected retained attempt, render its captured recipe and report, never a mutable draft or older report. Retain package identity and provenance in Markdown and JSON. A missing, invalid, escaping or incomplete selected package MUST refuse without fallback. Use the existing retained-attempt reader and contained artifact reader; do not add another selection or filesystem policy.
+
+Static tasks MAY render their authored recipe or existing legacy report without a package, with explicit not-applicable sections for missing files. This MUST NOT imply validated or live proof. `--validate` still requires a complete valid package and runner provenance. Existing explicit-package inspection and Markdown listing remain supported.
+
+Default rendering writes only stdout. With `--out`, write the rendered body only after requested validation passes. Refuse outputs that overwrite authored inputs, selection metadata or retained attempt evidence. Rendering MUST NOT change task identities, checklist/signal state, attempt selection or publication authority. Gateway template checks and publication remain separate and consume the returned temporary output bytes.
+
+Before deletion, compare old/new static and selected-attempt rendering, authored sections, output/JSON consumers, invalid selection and validation refusals. Migrate active pack, gateway and skill callers and prove installed behavior; remove the old renderer and route without forwarding wrappers.
