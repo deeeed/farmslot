@@ -78,11 +78,7 @@ import { schedulerTick } from '../work-graph/store.js';
 import { retainedMaintenanceStepOutputs } from './branch-maintenance.js';
 import { buildCIWatchChainedRunParams } from './ci-watch-chain.js';
 import { executeCIWatchStep } from './ci-watch-step.js';
-import {
-  hasHeldPublicationApproval,
-  latestResolvedHumanGateDecision,
-  requiresCollisionPrecheck,
-} from './decision-replay.js';
+import { latestResolvedHumanGateDecision, requiresCollisionPrecheck } from './decision-replay.js';
 import { DeferredSlotReleases } from './deferred-slot-release.js';
 import { executeDispatchStep, executePrepareStep } from './dispatch-lifecycle-steps.js';
 import {
@@ -117,7 +113,10 @@ import {
   executeReviewStep,
 } from './post-dispatch-steps.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
-import { assertPublicationFinalization } from './publication-finalization.js';
+import {
+  assertPublicationFinalization,
+  shouldResumePublicationGate,
+} from './publication-finalization.js';
 import { setPublishPackageRefreshBroadcast } from './publish-package-refresh.js';
 import {
   executePublishGateReviewPlan,
@@ -1328,7 +1327,7 @@ async function resumeHeldPublicationGate(runId: string): Promise<void> {
   const run = getRun(runId);
   if (
     !run ||
-    !hasHeldPublicationApproval(run) ||
+    !shouldResumePublicationGate(run) ||
     isGateParkInFlightOrFreed(run) ||
     run.status === 'paused' ||
     isTerminalRunStatus(run.status) ||
@@ -1351,7 +1350,7 @@ async function resumeHeldPublicationGate(runId: string): Promise<void> {
 
 async function replayHumanGateForRecovery(runId: string): Promise<void> {
   const run = getRun(runId);
-  if (run && hasHeldPublicationApproval(run)) {
+  if (run && shouldResumePublicationGate(run)) {
     await resumeHeldPublicationGate(runId);
     return;
   }

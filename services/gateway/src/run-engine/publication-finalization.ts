@@ -9,7 +9,7 @@ import { GatewayMethodError } from '../core/method-error.js';
 import { isPublishedStatus, publicationStatusForRun } from '../run-completion/orchestrator.js';
 import { getRun, updateRun } from '../runs/store.js';
 
-import { latestResolvedHumanGateDecision } from './decision-replay.js';
+import { hasHeldPublicationApproval, latestResolvedHumanGateDecision } from './decision-replay.js';
 import {
   CLOSE_AS_SHIPPED_ACTION,
   hasValidPrNumber,
@@ -49,6 +49,13 @@ export function publicationFinalizationAction(run: Run): string | undefined {
     return undefined;
   const action = latestResolvedHumanGateDecision(run.decisions)?.resolvedAction;
   return isPublishApprovalAction(action) || action === CLOSE_AS_SHIPPED_ACTION ? action : undefined;
+}
+
+/** An approval resumes its gate before any older reviewer or fix continuation. */
+export function shouldResumePublicationGate(run: Run): boolean {
+  return (
+    hasHeldPublicationApproval(run) || isPublishApprovalAction(publicationFinalizationAction(run))
+  );
 }
 
 export function assertPublicationFinalization(run: Run, phase: 'finalize' | 'complete'): void {
