@@ -55,3 +55,9 @@ The QA result retains the resolved change-scope artifact through `scope.path` an
 JSON `scope.digest`, plus `scope.suiteDigest` for the declared recipe suite. Completion checks
 both digests and requires the scope artifact's base/head to match the reported source.
 Skills continue to own PR, range and time-window selection.
+
+## Proposed selection update
+
+[ADR-058 Amendment 1](../adr/058-static-review-and-farm-owned-qa.md#amendment-1-optional-qa-defaults-and-required-choices-2026-10-15) proposes making `default_profile` optional. An explicit id wins; otherwise the configured default or sole profile is used. Several profiles without a default require a choice. The CLI lists their ids and titles and accepts `--qa-profile <id>`; the UI starts empty and disables Dispatch until chosen.
+
+First-party packs will remove their current defaults after the shared runtime is deployed. Other projects can keep a configured default, which remains visible and preselected. The admitted id and title remain attached to the run and its existing QA report or PR evidence presentation. This proposal does not change existing retained runs or evidence.

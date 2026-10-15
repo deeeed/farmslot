@@ -71,7 +71,7 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [055](055-persistent-pr-monitoring-and-review-intake.md) | Persistent PR monitoring and review intake                              | Proposed |
 | [056](056-runner-session-archive.md)                     | Opaque runner session archive at recycle (ADR-047 follow-up)            | Accepted |
 | [057](057-structured-runner-transports.md)               | Structured runner transports                                            | Accepted |
-| [058](058-static-review-and-farm-owned-qa.md)            | Static review and farm-owned QA                                         | Accepted |
+| [058](058-static-review-and-farm-owned-qa.md)            | Static review and farm-owned QA; optional-default amendment proposed    | Accepted |
 | [059](059-pi-tui-model-agnostic-runner.md)               | PI TUI as a model-agnostic Farmslot worker                              | Accepted |
 | [060](060-sub-task-observability.md)                     | Sub-task observability through child checklist units                    | Accepted |
 | [061](061-structured-assessment-providers.md)            | Structured assessment providers                                         | Accepted |

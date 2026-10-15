@@ -57,13 +57,36 @@ Note: a project.json `$schema` like `../../schemas/project.schema.json`
 resolves once the dir is registered into the farmslot clone, not in the pack
 source — editor validation works after `project add`.
 
-Every project must declare a `qa` flow using the existing farm-owned preset
-contract: `qa.default_profile` must name one of the nonempty `qa.profiles`, and
-each profile selects a QA checklist with `template_id`. The same pack validator
-checks this declaration before `project add` registers anything and before the
-gateway syncs node support. Missing or invalid QA reports the project's
-`project.json` and a configuration hint. QA presets and their selected templates
-remain separate from prepare profiles and runner/model defaults.
+Every project must declare nonempty `qa.profiles`; each profile selects a QA
+checklist with `template_id`. The same pack validator checks this declaration
+before `project add` registers anything and before gateway node-support sync.
+QA presets remain separate from prepare profiles and runner/model defaults.
+
+### QA selection amendment, proposed
+
+The following rules are proposed by [ADR-058 Amendment 1](../adr/058-static-review-and-farm-owned-qa.md#amendment-1-optional-qa-defaults-and-required-choices-2026-10-15).
+
+`qa.default_profile` MUST be optional. When present it MUST identify a configured
+profile. Selection MUST use, in order, a valid explicit request id, the configured
+default, or the sole profile. If several profiles remain without either selection,
+admission MUST return `REVIEW_QA_NEEDS_CONFIGURATION` with the available ids and
+titles before creating a run or allocating resources. An invalid explicit id MUST
+refuse rather than fall back. Empty profile lists and invalid defaults MUST fail
+configuration validation.
+
+Clients MUST show the configured default or sole profile selected. Otherwise they
+MUST show an empty required choice and disable Dispatch. They MUST submit the
+visible selected id. CLI omission is valid only when the shared resolver can select
+a default or sole profile. Manual and automatic intake MUST share these rules.
+
+The admitted Run MUST retain the chosen id, title, effective inputs and selected
+template. Replays and migrations MUST preserve an already-recorded selection.
+Existing run detail and QA report/PR evidence displays MUST identify the profile
+by id and title. First-party packs MUST remove their current defaults after the
+optional-default runtime is deployed; third-party defaults remain supported.
+
+Until the amendment is accepted and implemented, the current required-default
+contract remains in force.
 
 ## Required fixture sources
 

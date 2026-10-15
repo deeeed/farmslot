@@ -150,3 +150,29 @@ The operator authorized implementation on 2026-09-15, including migration. Runti
 - A changed PR head, profile edit or unavailable reviewer session cannot inherit an old verdict or bypass recorded execution constraints.
 
 Prove these through gateway endpoints and real runner execution, plus Command Center and Companion flows. Documentation checks alone do not establish implementation readiness.
+
+## Amendment 1: Optional QA defaults and required choices (2026-10-15)
+
+**Status:** Proposed. This amendment supersedes the required farm default and selection precedence above.
+
+### Decision
+
+`qa.default_profile` is optional. When supplied, it must identify a configured profile. Selection uses an explicit request id first, then the configured default, then the only profile when exactly one exists. Several profiles without an explicit id or configured default require a choice. Invalid explicit ids never fall through to another profile.
+
+Missing selection returns the existing typed `REVIEW_QA_NEEDS_CONFIGURATION` refusal and lists the available ids and titles. Admission must refuse before creating a run, claiming a slot or starting work. Empty or invalid profile configuration remains an error.
+
+Command Center and Companion show the configured default or sole profile selected. Otherwise they preselect nothing and disable Dispatch until the user chooses. The visible selection is sent with the request. Manual dispatch, PR requests and automation use the same selection rules; a saved policy may supply an explicit profile id. Clients must not select the first array entry as a substitute.
+
+The admitted run retains the resolved profile id, title, inputs and template snapshot. Run detail and existing QA report or PR evidence presentation show the id and title. Replays and migrations preserve an already-admitted selection; configuration edits cannot silently select a different profile.
+
+Remove existing `default_profile` values from first-party packs. Other projects may continue to configure a default. Publish and deploy the shared optional-default contract before cutting those packs over; the old pack validator requires a default. Retained task and evidence bytes are unchanged.
+
+### Public surface
+
+`ProjectQaConfig` and `selectQaProfile` remain owned by `@farmslot/protocol`; the existing `default_profile` field becomes optional. An additive `resolveQaProfileId` export provides the same pure id selection to `selectQaProfile`, Command Center and Companion; it returns the explicit, configured-default or sole id, or no id when a choice is required. Existing gateway QA request fields and CLI `--qa-profile` are unchanged. The CLI permits omission only when the farm resolves a configured default or sole profile; otherwise it prints the choices and a command using `--qa-profile`. Harnesses inherit the shared selection and admitted snapshot without a second parser, allocator or store.
+
+### Rationale and validation
+
+A default is valid project policy, while array order is not selection intent. The sole-profile case needs no prompt. First-party multi-profile packs require a deliberate choice by omitting their defaults.
+
+Verify explicit selection, configured default, sole profile, ambiguous multi-profile refusal and invalid ids through shared contract tests and public gateway/CLI controls. Verify UI preselection and disabled Dispatch through Command Center and Companion flows. Retained/restart controls must preserve the captured profile. Release and installed-node readback follow the accepted implementation.
