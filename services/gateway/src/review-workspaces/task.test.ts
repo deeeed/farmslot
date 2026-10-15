@@ -17,6 +17,7 @@ import {
   materializeReviewWorkspaceTask,
   readReviewWorkspaceCompletion,
   readReviewWorkspaceSignal,
+  resolveStaticReviewLineComments,
 } from './task.js';
 
 const exec = promisify(execFile);
@@ -439,4 +440,46 @@ test('a blocked marker retains its reason only for the accepted reviewer attempt
       /accepted worker attempt/,
     );
   });
+});
+
+test('passing static reviews retain four advisory comments without weakening issue matching', () => {
+  const comments = Array.from({ length: 4 }, (_, index) => ({
+    path: 'src/file.ts',
+    line: index + 1,
+    body: `Optional improvement ${index + 1}`,
+    severity: ['minor', 'nit', 'suggestion', 'nitpick'][index],
+  }));
+  const original = structuredClone(comments);
+  assert.deepEqual(resolveStaticReviewLineComments('pass', [], comments), original);
+  assert.deepEqual(comments, original);
+  assert.deepEqual(
+    resolveStaticReviewLineComments('pass', [], [{ ...comments[0], severity: 'comment' }]),
+    [{ ...comments[0], severity: 'comment' }],
+  );
+  for (const invalid of [
+    { severity: 'major' },
+    { severity: 'blocker' },
+    { severity: 'must_fix' },
+    { severity: 'unknown' },
+    { severity: ['nit'] },
+    { path: '../outside.ts' },
+    { path: '/outside.ts' },
+    { line: 0 },
+    { body: '' },
+  ]) {
+    assert.throws(
+      () => resolveStaticReviewLineComments('pass', [], [{ ...comments[0], ...invalid }]),
+      /line comments disagree/,
+    );
+  }
+  const blocking = [{ ...comments[0], severity: 'major' }];
+  assert.deepEqual(resolveStaticReviewLineComments('issues', blocking, blocking), blocking);
+  assert.throws(
+    () => resolveStaticReviewLineComments('issues', blocking, []),
+    /line comments disagree/,
+  );
+  assert.throws(
+    () => resolveStaticReviewLineComments('issues', blocking, comments),
+    /line comments disagree/,
+  );
 });
