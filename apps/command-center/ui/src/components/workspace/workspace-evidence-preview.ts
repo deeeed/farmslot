@@ -8,6 +8,7 @@ import type {
 import type { ArtifactRef, SelfPrincipalSummary } from '@farmslot/protocol';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { gatewayMediaSrc } from '../shared/gateway-media-src.js';
 
 import {
   IMAGE_EXTS,
@@ -154,14 +155,14 @@ export function renderWorkspaceEvidencePreview(input: {
               >
                 ${isImage
                   ? html`<img
-                      src=${url}
+                      src=${gatewayMediaSrc(url)}
                       alt=${label}
                       loading="lazy"
                       style="width:100%; height:100%; object-fit:contain; display:block;"
                     />`
                   : isVideo
                     ? html`<video
-                        src=${url}
+                        src=${gatewayMediaSrc(url)}
                         controls
                         muted
                         preload="metadata"
@@ -248,7 +249,7 @@ function renderComparisonPreview(input: WorkspaceEvidenceComparison): TemplateRe
       >
         ${media.mediaType === 'image'
           ? html`<img
-              src=${input.artifactUrl(media.artifactPath)}
+              src=${gatewayMediaSrc(input.artifactUrl(media.artifactPath))}
               alt=${media.name}
               loading="lazy"
               style=${`width:100%;height:100%;object-fit:contain;transform:scale(${transform.scale});transform-origin:${transform.x * 100}% ${transform.y * 100}%;`}
@@ -465,7 +466,7 @@ function renderComparisonPreview(input: WorkspaceEvidenceComparison): TemplateRe
               html`<div>
                 <a
                   data-selected-proof-file
-                  href=${input.artifactUrl(file.artifactPath)}
+                  href=${gatewayMediaSrc(input.artifactUrl(file.artifactPath))}
                   target="_blank"
                   rel="noopener"
                 >
@@ -487,7 +488,9 @@ function renderComparisonPreview(input: WorkspaceEvidenceComparison): TemplateRe
                   aria-label=${`Open fullscreen proof for ${row.claim.id}`}
                 >
                   <video
-                    src=${input.artifactUrl(model.artifactPath(row.claim.clips[0]!.videoPath))}
+                    src=${gatewayMediaSrc(
+                      input.artifactUrl(model.artifactPath(row.claim.clips[0]!.videoPath)),
+                    )}
                     muted
                     preload="metadata"
                     style="width:100%;height:100%;object-fit:contain;"
@@ -588,7 +591,11 @@ function renderComparisonPreview(input: WorkspaceEvidenceComparison): TemplateRe
           ${rawArtifacts.map(
             (artifact) =>
               html`<div>
-                <a href=${input.artifactUrl(artifact.path)} target="_blank" rel="noopener">
+                <a
+                  href=${gatewayMediaSrc(input.artifactUrl(artifact.path))}
+                  target="_blank"
+                  rel="noopener"
+                >
                   ${artifact.path}
                 </a>
               </div>`,

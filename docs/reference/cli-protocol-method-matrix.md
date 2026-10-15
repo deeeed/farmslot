@@ -40,9 +40,13 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## auth.\*
 
-| Method         | Surface       | CLI command      | TUI | Note                                                                            |
-| -------------- | ------------- | ---------------- | --- | ------------------------------------------------------------------------------- |
-| `auth.connect` | typed-command | `farmslot login` |     | Also the implicit transport handshake on every authenticated client connection. |
+| Method                  | Surface       | CLI command       | TUI | Note                                                                                                              |
+| ----------------------- | ------------- | ----------------- | --- | ----------------------------------------------------------------------------------------------------------------- |
+| `auth.connect`          | typed-command | `farmslot login`  |     | Also the implicit transport handshake on every authenticated client connection.                                   |
+| `auth.session.exchange` | typed-command | `farmslot login`  |     | Person credential or one-use pairing code creates the selected CLI device session.                                |
+| `auth.session.refresh`  | na            |                   |     | Transport-private renewal through the shared PersonSessionClient; refresh tokens never authenticate general RPCs. |
+| `auth.session.list`     | rpc-only      |                   |     | Command Center signed-in device settings and farmslot rpc auth.session.list.                                      |
+| `auth.session.revoke`   | typed-command | `farmslot logout` |     | Confirmed logout revokes the selected CLI device. Device settings or rpc can revoke another owned session.        |
 
 ## backlog.\*
 

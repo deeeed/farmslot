@@ -184,3 +184,22 @@ test('desktop credential replacement preserves session-only preference', async (
   await saveDesktopCredentials({ token: 'remembered' }, true);
   assert.equal(saved?.rememberMe, true);
 });
+
+test('desktop stages a login without treating it as verified persistent authority', async (t) => {
+  const connection = { url: 'ws://localhost:7777/ws', token: 'retained-service' };
+  const bridge = bridgeFor(connection);
+  mockEnvironment(t, bridge);
+  let saved: DesktopConnection | undefined;
+  bridge.saveConnection = async (value) => {
+    saved = value;
+  };
+  await initializeDesktopConnection();
+  await saveDesktopCredentials({ token: 'new-person-input' }, false, true);
+  assert.equal(saved?.pending, true);
+  assert.equal(saved?.rememberMe, false);
+  await assert.rejects(
+    saveDesktopCredentials({ token: `fsa_${'a'.repeat(32)}_${'b'.repeat(43)}` }),
+    /cannot be saved/,
+  );
+  assert.equal(getDesktopConnection()?.token, 'new-person-input');
+});

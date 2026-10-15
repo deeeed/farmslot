@@ -31,6 +31,7 @@ import {
 } from '../progress-tracker/acceptance-panel.js';
 
 import { DiffTestFilterController } from './diff-test-filter-controller.js';
+import { GatewayMediaDocument, gatewayMediaSrc } from './gateway-media-src.js';
 import { loadLightboxEvidence } from './media-lightbox-evidence-source.js';
 import {
   isVideoLightboxItem,
@@ -54,6 +55,16 @@ interface LightboxEvidenceState {
 
 @customElement('media-lightbox')
 export class MediaLightbox extends MediaLightboxState {
+  private readonly _mediaDocuments = new Map<string, GatewayMediaDocument>();
+  private _previewGeneration = 0;
+
+  private clearMediaDocuments(): void {
+    this._previewGeneration++;
+    for (const document of this._mediaDocuments.values()) document.dispose();
+    this._mediaDocuments.clear();
+    this._mdCache.clear();
+  }
+
   private readonly _timelineGroupOpen = new Map<string, boolean>();
   private _logTimer?: ReturnType<typeof setInterval>;
   private _logLoading = false;
@@ -79,7 +90,7 @@ export class MediaLightbox extends MediaLightboxState {
     super.disconnectedCallback();
     window.removeEventListener('keydown', this._onKeyDown);
     if (this._logTimer) clearInterval(this._logTimer);
-    this._mdCache.clear();
+    this.clearMediaDocuments();
     this._timelines.clear();
     this._timelineAbort?.abort();
     this._timelineRequest++;
@@ -116,6 +127,7 @@ export class MediaLightbox extends MediaLightboxState {
     }
 
     if (changed.has('open')) {
+      if (!this.open) this.clearMediaDocuments();
       this._timelineAbort?.abort();
       this._timelineRequest++;
       this._videoPlayError = '';
@@ -1048,7 +1060,7 @@ export class MediaLightbox extends MediaLightboxState {
                     <div class="ml-stage">
                       <img
                         class="ml-expanded"
-                        src=${item.url}
+                        src=${gatewayMediaSrc(item.url)}
                         alt=${item.path}
                         @error=${() => this._markBroken(selectedIdx)}
                         style=${`transform: translate(${this._panX}px, ${this._panY}px) scale(${this._zoom}); cursor: ${this._zoom > 1 ? 'grab' : 'zoom-in'};`}
@@ -1066,7 +1078,7 @@ export class MediaLightbox extends MediaLightboxState {
                           item.url,
                           html`<video
                             class="ml-expanded ml-video"
-                            src=${item.url}
+                            src=${gatewayMediaSrc(item.url)}
                             autoplay
                             preload="metadata"
                             @click=${() => this._toggleVideoPlayback()}
@@ -1103,7 +1115,11 @@ export class MediaLightbox extends MediaLightboxState {
                             : html` <div class="ml-fallback">
                                 <div>No inline preview for this artifact type.</div>
                                 <div class="ml-fallback-meta">${item.path} · ${item.purpose}</div>
-                                <a class="ml-btn" href=${item.url} target="_blank" rel="noopener"
+                                <a
+                                  class="ml-btn"
+                                  href=${gatewayMediaSrc(item.url)}
+                                  target="_blank"
+                                  rel="noopener"
                                   >Open raw</a
                                 >
                               </div>`}
@@ -1126,7 +1142,7 @@ export class MediaLightbox extends MediaLightboxState {
                           ? html`<div class="ml-film-thumb-wrap">
                               <img
                                 class="ml-film-thumb"
-                                src=${candidate.url}
+                                src=${gatewayMediaSrc(candidate.url)}
                                 alt=${candidate.path}
                                 loading="lazy"
                               /><span class="ml-film-type">IMAGE</span>
@@ -1135,7 +1151,7 @@ export class MediaLightbox extends MediaLightboxState {
                             ? html`<div class="ml-film-thumb-wrap">
                                 <video
                                   class="ml-film-thumb"
-                                  src=${candidate.url}
+                                  src=${gatewayMediaSrc(candidate.url)}
                                   muted
                                   preload="metadata"
                                 ></video
@@ -1286,25 +1302,25 @@ export class MediaLightbox extends MediaLightboxState {
                           ${p.kind === 'image'
                             ? html`<img
                                   class="ml-film-thumb ml-film-half"
-                                  src=${p.before.url}
+                                  src=${gatewayMediaSrc(p.before.url)}
                                   alt=${p.before.path}
                                   loading="lazy"
                                 />
                                 <img
                                   class="ml-film-thumb ml-film-half"
-                                  src=${p.after.url}
+                                  src=${gatewayMediaSrc(p.after.url)}
                                   alt=${p.after.path}
                                   loading="lazy"
                                 />`
                             : html`<video
                                   class="ml-film-thumb ml-film-half"
-                                  src=${p.before.url}
+                                  src=${gatewayMediaSrc(p.before.url)}
                                   muted
                                   preload="metadata"
                                 ></video>
                                 <video
                                   class="ml-film-thumb ml-film-half"
-                                  src=${p.after.url}
+                                  src=${gatewayMediaSrc(p.after.url)}
                                   muted
                                   preload="metadata"
                                 ></video>`}
@@ -1324,6 +1340,7 @@ export class MediaLightbox extends MediaLightboxState {
   private _ensureTextPreview(url: string, kind: MediaLightboxTextPreviewKind): void {
     if (this._mdCache.has(url)) return;
     putCapped(this._mdCache, url, { status: 'loading' }, MD_CACHE_LIMIT);
+    const previewGeneration = this._previewGeneration;
     const retained = this.items.find((item) => item.url === url)?.verifiedText;
     (retained !== undefined
       ? Promise.resolve(retained)
@@ -1332,7 +1349,8 @@ export class MediaLightbox extends MediaLightboxState {
           return r.text();
         })
     )
-      .then((text) => {
+      .then(async (text) => {
+        if (previewGeneration !== this._previewGeneration) return;
         const document = this.items.find((item) => item.url === url);
         const byPath = new Map(this.items.map((item) => [item.path, item.url]));
         const content =
@@ -1346,30 +1364,47 @@ export class MediaLightbox extends MediaLightboxState {
                 ),
               )
             : text;
+        let rendered =
+          kind === 'html'
+            ? isolatedArtifactHtml(content, (rawPath) => {
+                const resolve = buildArtifactUrlResolver(
+                  byPath.keys(),
+                  (file) => file,
+                  document?.path,
+                );
+                const item = this.items.find((item) => item.path === resolve(rawPath));
+                return item ? { mediaUrl: item.url, viewUrl: item.viewUrl } : null;
+              })
+            : formatLightboxTextPreview(kind, content);
+        if (kind === 'html' || kind === 'markdown') {
+          if (this._mediaDocuments.size >= MD_CACHE_LIMIT) {
+            const oldest = this._mediaDocuments.keys().next().value;
+            if (oldest !== undefined) {
+              this._mediaDocuments.get(oldest)?.dispose();
+              this._mediaDocuments.delete(oldest);
+              this._mdCache.delete(oldest);
+            }
+          }
+          const media = new GatewayMediaDocument();
+          this._mediaDocuments.set(url, media);
+          rendered = await media.html(rendered);
+        }
+        if (previewGeneration !== this._previewGeneration) return;
         putCapped(
           this._mdCache,
           url,
           {
             status: 'ok',
-            data:
-              kind === 'html'
-                ? isolatedArtifactHtml(content, (rawPath) => {
-                    const resolve = buildArtifactUrlResolver(
-                      byPath.keys(),
-                      (file) => file,
-                      document?.path,
-                    );
-                    const file = resolve(rawPath);
-                    const item = this.items.find((item) => item.path === file);
-                    return item ? { mediaUrl: item.url, viewUrl: item.viewUrl } : null;
-                  })
-                : formatLightboxTextPreview(kind, content),
+            data: rendered,
           },
           MD_CACHE_LIMIT,
         );
         this._mdCacheVersion += 1;
       })
       .catch((err: Error) => {
+        if (previewGeneration !== this._previewGeneration) return;
+        this._mediaDocuments.get(url)?.dispose();
+        this._mediaDocuments.delete(url);
         putCapped(this._mdCache, url, { status: 'err', error: err.message }, MD_CACHE_LIMIT);
         this._mdCacheVersion += 1;
       });
@@ -1412,7 +1447,9 @@ export class MediaLightbox extends MediaLightboxState {
       ${this._renderReportClaims(item)}
       <div class="ml-toolbar">
         <span class="ml-count">${item.path}</span>
-        <a class="ml-btn" href=${item.url} download=${item.path.split('/').pop()}>Download HTML</a>
+        <a class="ml-btn" href=${gatewayMediaSrc(item.url)} download=${item.path.split('/').pop()}
+          >Download HTML</a
+        >
       </div>
       ${entry?.status === 'ok'
         ? html`<iframe
@@ -1437,7 +1474,9 @@ export class MediaLightbox extends MediaLightboxState {
         ${this._renderReportClaims(item)}
         <div class="ml-toolbar ml-md-toolbar">
           <span class="ml-count">${item.path}</span>
-          <a class="ml-btn" href=${item.url} target="_blank" rel="noopener">Open raw</a>
+          <a class="ml-btn" href=${gatewayMediaSrc(item.url)} target="_blank" rel="noopener"
+            >Open raw</a
+          >
         </div>
         <div class="ml-md-body">
           ${entry?.status === 'loading' || !entry
@@ -1535,7 +1574,9 @@ export class MediaLightbox extends MediaLightboxState {
         >
           ${this._logFollow ? 'Stop following' : 'Follow log'}
         </button>
-        <a class="ml-btn" href=${item.url} target="_blank" rel="noopener">Open full log</a>
+        <a class="ml-btn" href=${gatewayMediaSrc(item.url)} target="_blank" rel="noopener"
+          >Open full log</a
+        >
       </div>
       <div class="ml-md-body">
         ${this._logError ? html`<p role="status">Log unavailable: ${this._logError}</p>` : nothing}
@@ -1554,7 +1595,9 @@ ${this._logText || (this._logLoading ? 'Loading…' : 'No output recorded yet.')
       <div class="ml-md-shell">
         <div class="ml-toolbar ml-md-toolbar">
           <span class="ml-count">${item.path}</span>
-          <a class="ml-btn" href=${item.url} target="_blank" rel="noopener">Open raw</a>
+          <a class="ml-btn" href=${gatewayMediaSrc(item.url)} target="_blank" rel="noopener"
+            >Open raw</a
+          >
         </div>
         <div class="ml-md-body">
           ${entry?.status === 'loading' || !entry
@@ -1582,7 +1625,9 @@ ${this._logText || (this._logLoading ? 'Loading…' : 'No output recorded yet.')
         <div class="ml-toolbar ml-md-toolbar">
           <span class="ml-count">${item.path}</span>
           ${this._testFilter.renderControls(split.summary)}
-          <a class="ml-btn" href=${item.url} target="_blank" rel="noopener">Open raw</a>
+          <a class="ml-btn" href=${gatewayMediaSrc(item.url)} target="_blank" rel="noopener"
+            >Open raw</a
+          >
         </div>
         <div class="ml-diff-body">
           ${entry?.status === 'loading' || !entry
@@ -1619,12 +1664,12 @@ ${this._logText || (this._logLoading ? 'Loading…' : 'No output recorded yet.')
             >
               <img
                 class="ml-cmp-img ml-cmp-before"
-                src=${pair.before.url}
+                src=${gatewayMediaSrc(pair.before.url)}
                 alt=${pair.before.path}
               />
               <img
                 class="ml-cmp-img ml-cmp-after"
-                src=${pair.after.url}
+                src=${gatewayMediaSrc(pair.after.url)}
                 alt=${pair.after.path}
                 style=${`clip-path: inset(0 0 0 ${this._divider}%);`}
               />
@@ -1639,11 +1684,19 @@ ${this._logText || (this._logLoading ? 'Loading…' : 'No output recorded yet.')
             <div class="ml-cmp-image-grid">
               <div class="ml-cmp-image-cell">
                 <div class="ml-cmp-label ml-cmp-label-static">BEFORE</div>
-                <img class="ml-cmp-img-side" src=${pair.before.url} alt=${pair.before.path} />
+                <img
+                  class="ml-cmp-img-side"
+                  src=${gatewayMediaSrc(pair.before.url)}
+                  alt=${pair.before.path}
+                />
               </div>
               <div class="ml-cmp-image-cell">
                 <div class="ml-cmp-label ml-cmp-label-static">AFTER</div>
-                <img class="ml-cmp-img-side" src=${pair.after.url} alt=${pair.after.path} />
+                <img
+                  class="ml-cmp-img-side"
+                  src=${gatewayMediaSrc(pair.after.url)}
+                  alt=${pair.after.path}
+                />
               </div>
             </div>
           `}
@@ -1706,7 +1759,7 @@ ${this._logText || (this._logLoading ? 'Loading…' : 'No output recorded yet.')
           <div class="ml-cmp-label ml-cmp-label-static">BEFORE</div>
           <video
             class="ml-cmp-video a"
-            src=${pair.before.url}
+            src=${gatewayMediaSrc(pair.before.url)}
             preload="metadata"
             @loadedmetadata=${() => this._syncPrimaryVideoState()}
             @timeupdate=${() => this._syncPrimaryVideoState()}
@@ -1722,7 +1775,7 @@ ${this._logText || (this._logLoading ? 'Loading…' : 'No output recorded yet.')
           <div class="ml-cmp-label ml-cmp-label-static">AFTER</div>
           <video
             class="ml-cmp-video b"
-            src=${pair.after.url}
+            src=${gatewayMediaSrc(pair.after.url)}
             preload="metadata"
             @loadedmetadata=${() => this._syncPrimaryVideoState()}
             @timeupdate=${() => this._syncPrimaryVideoState()}
@@ -1746,4 +1799,18 @@ declare global {
   interface HTMLElementTagNameMap {
     'media-lightbox': MediaLightbox;
   }
+}
+
+/** Open one existing shared viewer for actions that have no mounted gallery. */
+export function openMediaLightbox(items: LightboxItem[], index = 0): void {
+  const viewer = document.createElement('media-lightbox');
+  viewer.items = items;
+  viewer.selectedIndex = index;
+  viewer.open = true;
+  viewer.addEventListener('lightbox-close', () => viewer.remove(), { once: true });
+  viewer.addEventListener('lightbox-navigate', (event) => {
+    if (event instanceof CustomEvent && typeof event.detail?.index === 'number')
+      viewer.selectedIndex = event.detail.index;
+  });
+  document.body.append(viewer);
 }

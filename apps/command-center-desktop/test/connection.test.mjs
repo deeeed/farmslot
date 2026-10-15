@@ -69,3 +69,24 @@ test('session-only login removes saved credentials without requiring encryption'
   assert.equal(await store.load(), null);
   await assert.rejects(readFile(join(directory, 'connection.encrypted.tmp')), { code: 'ENOENT' });
 });
+
+test('pending credentials and access tokens cannot overwrite a saved login', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'farmslot-pending-login-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const store = createConnectionStore(directory, {
+    isEncryptionAvailable: () => true,
+    encryptString: (value) => Buffer.from(value),
+    decryptString: (value) => value.toString(),
+  });
+  const retained = { url: 'ws://localhost/ws', token: 'retained-service', rememberMe: true };
+  await store.save(retained);
+  await assert.rejects(
+    store.save({ ...retained, token: 'unverified-person', pending: true }),
+    /Verify the pending/,
+  );
+  await assert.rejects(
+    store.save({ ...retained, token: `fsa_${'a'.repeat(32)}_${'b'.repeat(43)}` }),
+    /stay in memory/,
+  );
+  assert.deepEqual(await store.load(), retained);
+});

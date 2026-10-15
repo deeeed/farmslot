@@ -7,8 +7,10 @@ import {
   buildRunResolveDecisionParams,
   evidenceAttestationAvailable,
   evidenceAttestationReason,
+  isEvidenceAttestationApprover,
   isEvidencePolicyReason,
   isPublishApprovalAction,
+  sameEvidenceAttestationApprover,
 } from '../src/index.js';
 
 const policy: RunGateReadiness = {
@@ -81,4 +83,25 @@ test('shared request requires a reason and retains the visible package binding',
   assert.equal(params.evidenceAttestationReason, 'Inspected the retained package.');
   assert.equal(params.selectionData?.packageHash, 'hash');
   assert.equal(params.selectionData?.packageHeadSha, 'head');
+});
+
+test('approval provenance preserves legacy credentials and distinguishes person device sessions', () => {
+  const identity = { principalId: 'person', displayName: 'Person' };
+  const legacy = { ...identity, credentialId: 'authority' };
+  const device = { ...identity, personSessionId: 'authority' };
+  assert.equal(isEvidenceAttestationApprover(legacy), true);
+  assert.equal(isEvidenceAttestationApprover(device), true);
+  assert.equal(isEvidenceAttestationApprover(identity), false);
+  assert.equal(isEvidenceAttestationApprover({ ...legacy, personSessionId: 'device' }), false);
+  assert.equal(isEvidenceAttestationApprover({ ...device, credentialId: '' }), false);
+  assert.equal(
+    sameEvidenceAttestationApprover(device, { ...device, displayName: 'Renamed' }),
+    true,
+  );
+  assert.equal(sameEvidenceAttestationApprover(device, legacy), false);
+  assert.equal(
+    sameEvidenceAttestationApprover(device, { ...device, personSessionId: 'other' }),
+    false,
+  );
+  assert.equal(sameEvidenceAttestationApprover(device, { ...device, principalId: 'other' }), false);
 });

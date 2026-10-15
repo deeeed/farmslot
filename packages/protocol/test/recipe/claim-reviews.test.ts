@@ -184,3 +184,29 @@ test('unrelated identity, moments, bytes or incomplete person fields grant no ju
     [],
   );
 });
+
+test('person device receipts retain visual judgments while delegated services still require credentials', () => {
+  const deviceReceipt: RecipeVisualJudgmentReceipt = {
+    ...receipt,
+    approver: { principalId: 'person-1', displayName: 'Reviewer', personSessionId: 'device-1' },
+  };
+  assert.equal(recordedVisualJudgments(input, authority([deviceReceipt])).length, 1);
+  const delegated: RecipeVisualJudgmentReceipt = {
+    ...deviceReceipt,
+    kind: 'lead-agent-reviewed',
+    reviewerSubjectKind: 'service',
+    reviewedFiles: reviewedVisualFiles(input, receipt.claimId),
+    delegation: {
+      principalId: 'person-1',
+      displayName: 'Reviewer',
+      policyDigest: digestRecipeDocument({
+        delegatedReviewerPrincipalIds: ['person-1'],
+        delegatorPrincipalId: 'person-1',
+      }),
+    },
+  };
+  assert.deepEqual(
+    recordedVisualJudgments(input, { ...authority([delegated]), historical: true }),
+    [],
+  );
+});

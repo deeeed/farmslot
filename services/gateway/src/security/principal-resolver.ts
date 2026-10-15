@@ -1,3 +1,4 @@
+import { activePersonAccess, parsePersonSessionToken } from '@farmslot/credential-store';
 import type { AuthenticationRef, GatewayAuthClientKind, Principal } from '@farmslot/protocol';
 
 import type { GatewayAuthSession } from './auth.js';
@@ -14,7 +15,9 @@ export type PrincipalResolution =
         | 'revoked'
         | 'missing_principal'
         | 'secret_mismatch'
-        | 'generation_mismatch';
+        | 'generation_mismatch'
+        | 'person_session_required'
+        | 'session_ended';
     };
 
 export interface PrincipalResolverFacts {
@@ -24,11 +27,12 @@ export interface PrincipalResolverFacts {
 }
 
 export class PrincipalResolver {
-  readonly verificationCache = new VerificationCache();
+  readonly verificationCache = new VerificationCache<AuthenticationRef>();
 
   constructor(
     readonly store: CredentialStoreRuntime,
     private facts: PrincipalResolverFacts,
+    private readonly now = Date.now,
   ) {
     store.onChange(() => this.verificationCache.clear());
   }
@@ -45,27 +49,41 @@ export class PrincipalResolver {
 
   resolveSecret(presented: string, transport: 'token' | 'password'): PrincipalResolution {
     this.store.ensureFresh();
-    const parsed = parseCredentialWire(presented);
-    if (transport !== 'token' || !parsed) return { ok: false, reason: 'secret_mismatch' };
-    const cachedCredentialId = this.verificationCache.get(presented);
-    if (cachedCredentialId) return this.resolveCredentialReference(cachedCredentialId);
-
-    const credential = this.store.findCredential(parsed.credentialId);
-    if (!credential) return { ok: false, reason: 'secret_mismatch' };
-    const resolved = this.resolveCredentialReference(credential.id);
-    if (!resolved.ok) return resolved;
-    if (!verifySecret(parsed.secret, credential.secret)) {
-      return { ok: false, reason: 'secret_mismatch' };
-    }
-    this.verificationCache.set(presented, credential.id);
+    if (transport !== 'token') return { ok: false, reason: 'secret_mismatch' };
+    const cached = this.verificationCache.get(presented);
+    if (cached) return this.resolveAuthenticationReference(cached);
+    const store = this.store.snapshot();
+    const credentialWire = parseCredentialWire(presented);
+    const accessWire = parsePersonSessionToken(presented, 'fsa');
+    let reference: AuthenticationRef;
+    if (credentialWire) {
+      const credential = store.credentials.find(
+        (record) => record.id === credentialWire.credentialId,
+      );
+      if (!credential) return { ok: false, reason: 'secret_mismatch' };
+      if (credential.revokedAt !== null) return { ok: false, reason: 'revoked' };
+      if (!verifySecret(credentialWire.secret, credential.secret))
+        return { ok: false, reason: 'secret_mismatch' };
+      reference = { kind: 'credential', credentialId: credential.id };
+    } else if (accessWire) {
+      const active = activePersonAccess(store, accessWire.id, this.now());
+      if (!active) return { ok: false, reason: 'session_ended' };
+      if (!verifySecret(accessWire.secret, active.access.secret))
+        return { ok: false, reason: 'secret_mismatch' };
+      reference = {
+        kind: 'person-session',
+        sessionId: active.session.id,
+        accessId: active.access.id,
+      };
+    } else return { ok: false, reason: 'secret_mismatch' };
+    const resolved = this.resolveAuthenticationReference(reference);
+    if (resolved.ok) this.verificationCache.set(presented, reference);
     return resolved;
   }
 
   resolveSessionPrincipal(session: GatewayAuthSession): PrincipalResolution {
     this.store.ensureFresh();
-    if (session.authentication?.kind === 'credential') {
-      return this.resolveCredentialReference(session.authentication.credentialId);
-    }
+    if (session.authentication) return this.resolveAuthenticationReference(session.authentication);
     if (this.isSoloMode()) {
       return { ok: true, principal: this.virtualPrincipal(session.clientKind ?? 'ui') };
     }
@@ -88,17 +106,26 @@ export class PrincipalResolver {
     return principal ? { ok: true, principal } : { ok: false, reason: 'missing_principal' };
   }
 
-  private resolveCredentialReference(credentialId: string): PrincipalResolution {
-    const credential = this.store.findCredential(credentialId);
+  private resolveAuthenticationReference(reference: AuthenticationRef): PrincipalResolution {
+    // Resolve identity and authority from one projection, including across id reuse.
+    const store = this.store.snapshot();
+    if (reference.kind === 'person-session') {
+      const active = activePersonAccess(store, reference.accessId, this.now());
+      if (!active || active.session.id !== reference.sessionId)
+        return { ok: false, reason: 'session_ended' };
+      const principal = store.principals.find((record) => record.id === active.session.principalId);
+      return principal
+        ? { ok: true, principal, authentication: reference }
+        : { ok: false, reason: 'missing_principal' };
+    }
+    const credential = store.credentials.find((record) => record.id === reference.credentialId);
     if (!credential) return { ok: false, reason: 'secret_mismatch' };
     if (credential.revokedAt !== null) return { ok: false, reason: 'revoked' };
-    const principal = this.store.findPrincipal(credential.principalId);
+    const principal = store.principals.find((record) => record.id === credential.principalId);
     if (!principal) return { ok: false, reason: 'missing_principal' };
-    return {
-      ok: true,
-      principal,
-      authentication: { kind: 'credential', credentialId },
-    };
+    if (principal.subject.type === 'person')
+      return { ok: false, reason: 'person_session_required' };
+    return { ok: true, principal, authentication: reference };
   }
 
   private virtualPrincipal(clientKind: GatewayAuthClientKind): Principal {

@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
+import { loadProfiles, profilesPath, saveProfiles } from '../gateway-profiles.js';
 import { OutputContext } from '../output.js';
 
-import { buildHostedGatewayCandidates, writeUpResult } from './up.js';
+import { buildHostedGatewayCandidates, ensureLocalCredential, writeUpResult } from './up.js';
 
 const TOKEN = 'test-gateway-token-abc123';
 
@@ -141,4 +145,73 @@ test('up reports the browser open on its own line, without promising a connectio
   assert.match(tls, /\n {2}browser {8}opened the auto-connect link\n/);
 
   assert.doesNotMatch(runUpResult({ open: () => false }).text, /\n {2}browser /);
+});
+
+test('first local bootstrap and restart preserve one refresh-only person device', (t) => {
+  const previousHome = process.env.FARMSLOT_HOME;
+  const input = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+  const output = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+  const home = mkdtempSync(join(tmpdir(), 'local-session-bootstrap-'));
+  t.after(() => {
+    if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = previousHome;
+    if (input) Object.defineProperty(process.stdin, 'isTTY', input);
+    else Reflect.deleteProperty(process.stdin, 'isTTY');
+    if (output) Object.defineProperty(process.stdout, 'isTTY', output);
+    else Reflect.deleteProperty(process.stdout, 'isTTY');
+    rmSync(home, { recursive: true, force: true });
+  });
+  process.env.FARMSLOT_HOME = home;
+  Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: true });
+  Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true });
+  saveProfiles({
+    gateways: {
+      local: {
+        url: 'ws://localhost:8801',
+        authMode: 'token',
+        secret: 'opaque-existing-credential',
+      },
+    },
+  });
+  const before = readFileSync(profilesPath(), 'utf8');
+  assert.throws(() => ensureLocalCredential(8801), /unverified credential/);
+  assert.equal(readFileSync(profilesPath(), 'utf8'), before);
+  saveProfiles({ gateways: {} });
+  const first = ensureLocalCredential(8801);
+  assert.ok(first.personSession);
+  assert.equal(first.token, undefined);
+  const again = ensureLocalCredential(8801);
+  assert.equal(again.personSession?.session.id, first.personSession.session.id);
+  assert.equal(again.personSession?.refreshToken, first.personSession.refreshToken);
+  assert.equal(loadProfiles().gateways.local.secret, undefined);
+  assert.ok(!readFileSync(profilesPath(), 'utf8').includes('fsa_'));
+});
+
+test('startup browser handoff never puts a person access token in output or a URL', () => {
+  const access = `fsa_${'a'.repeat(32)}_${'s'.repeat(43)}`;
+  const output = new CaptureOutput(true);
+  const opened: string[] = [];
+  writeUpResult({
+    output,
+    status: 'gateway up',
+    pid: 1,
+    port: 7777,
+    token: access,
+    pairingCode: 'one-use-invitation',
+    localActive: true,
+    dashboardBuilt: false,
+    openBrowser: false,
+    printConnectUrl: true,
+    tlsPort: null,
+    open: (url) => {
+      opened.push(url);
+      return true;
+    },
+  });
+  const rendered = JSON.stringify(output.data);
+  assert.ok(!rendered.includes(access));
+  assert.equal(output.data?.token, undefined);
+  const payload = connectPayloads(String(output.data?.connectUrl))[0];
+  assert.equal(payload.code, 'one-use-invitation');
+  assert.equal(payload.token, undefined);
 });

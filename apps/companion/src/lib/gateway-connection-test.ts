@@ -2,8 +2,9 @@ import {
   type GatewayAuthConnectResult,
   type GatewayPingResult,
   Methods,
+  PersonSessionClient,
+  PersonSessionEndedError,
   type RequestFrame,
-  type ResponseFrame,
 } from '@farmslot/protocol';
 
 import type { GatewayAuthCredentials } from './gateway-http-auth';
@@ -40,6 +41,12 @@ export function testGatewayConnection(
   return new Promise((resolve, reject) => {
     let settled = false;
     let authResult: GatewayAuthConnectResult | null = null;
+    let accessToken = auth.token;
+    let sessionRequestId = 0;
+    const sessionRequests = new Map<
+      string,
+      { resolve: (value: unknown) => void; reject: (error: Error) => void }
+    >();
     const ws = new WebSocket(url);
     let timer = setTimeout(() => {
       finishWithError(
@@ -47,10 +54,28 @@ export function testGatewayConnection(
       );
     }, connectTimeout);
 
+    const person = auth.sessionStorage
+      ? new PersonSessionClient({
+          storage: auth.sessionStorage,
+          request: (method, params) =>
+            new Promise((resolve, reject) => {
+              if (settled) {
+                reject(new Error('Gateway connection test ended.'));
+                return;
+              }
+              const id = `connection-test-session-${++sessionRequestId}`;
+              sessionRequests.set(id, { resolve, reject });
+              ws.send(JSON.stringify({ type: 'req', id, method, params }));
+            }),
+        })
+      : null;
     const finish = () => {
       if (settled) return false;
       settled = true;
       clearTimeout(timer);
+      for (const request of sessionRequests.values())
+        request.reject(new Error('Gateway connection test ended.'));
+      sessionRequests.clear();
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         ws.close();
       }
@@ -62,25 +87,43 @@ export function testGatewayConnection(
       reject(error);
     };
 
-    ws.onopen = () => {
+    const sendAuthentication = () => {
+      if (settled) return;
       const frame: RequestFrame = {
         type: 'req',
         id: 'connection-test-auth',
         method: Methods.AUTH_CONNECT,
         params: {
           clientKind: 'companion',
-          ...auth,
+          ...(accessToken ? { token: accessToken } : {}),
+          ...(auth.password ? { password: auth.password } : {}),
         },
       };
       ws.send(JSON.stringify(frame));
+    };
+    ws.onopen = () => {
+      if (!person) {
+        sendAuthentication();
+        return;
+      }
+      (async () => {
+        await person.restore();
+        if (person.session) accessToken = await person.accessToken(true);
+        else if (auth.personSessionRequired && !auth.explicitPersonSignIn)
+          throw new PersonSessionEndedError();
+        sendAuthentication();
+      })().catch((error: unknown) =>
+        finishWithError(error instanceof Error ? error : new Error('Gateway sign-in failed.')),
+      );
     };
 
     ws.onmessage = (ev: MessageEvent) => {
       let parsed: unknown;
       try {
-        parsed = JSON.parse(ev.data as string) as unknown;
+        parsed = JSON.parse(String(ev.data));
       } catch (error) {
-        finishWithError(new Error(`Gateway returned malformed JSON: ${errorMessage(error)}`));
+        if (!(error instanceof SyntaxError)) throw error;
+        finishWithError(new Error('Gateway returned malformed JSON.'));
         return;
       }
       if (!isRecord(parsed)) {
@@ -101,7 +144,7 @@ export function testGatewayConnection(
         );
         return;
       }
-      const response = frame as unknown as ResponseFrame;
+      const response = frame;
       if (typeof response.id !== 'string' || typeof response.ok !== 'boolean') {
         finishWithError(
           new Error(
@@ -110,18 +153,53 @@ export function testGatewayConnection(
         );
         return;
       }
+      const sessionRequest = sessionRequests.get(response.id);
+      if (sessionRequest) {
+        sessionRequests.delete(response.id);
+        if (response.ok) sessionRequest.resolve(response.payload);
+        else {
+          const error = isRecord(response.error) ? response.error : {};
+          sessionRequest.reject(
+            Object.assign(
+              new Error(
+                typeof error.message === 'string' ? error.message : 'Gateway sign-in failed.',
+              ),
+              { code: error.code },
+            ),
+          );
+        }
+        return;
+      }
       if (response.id !== 'connection-test-auth' && response.id !== 'connection-test-ping') {
         return;
       }
       if (!response.ok) {
-        finishWithError(
+        const body = isRecord(response.error) ? response.error : {};
+        const error = Object.assign(
           new Error(
-            response.error?.message ??
-              (response.id === 'connection-test-auth'
-                ? 'Gateway authentication failed'
-                : 'Gateway ping failed'),
+            typeof body.message === 'string' ? body.message : 'Gateway connection test failed',
           ),
+          { code: body.code },
         );
+        if (
+          response.id === 'connection-test-auth' &&
+          body.code === 'AUTH_PERSON_SESSION_REQUIRED'
+        ) {
+          if (auth.explicitPersonSignIn && auth.token && person) {
+            person
+              .exchange({
+                credential: auth.token,
+                deviceName: 'Mobile Companion',
+                deviceKind: 'companion',
+              })
+              .then((token) => {
+                accessToken = token;
+                sendAuthentication();
+              }, finishWithError);
+          } else if (auth.sessionStorage) {
+            auth.sessionStorage.save(null).then(() => finishWithError(error), finishWithError);
+          } else finishWithError(error);
+        } else finishWithError(error);
         return;
       }
       if (response.id === 'connection-test-auth') {
@@ -137,6 +215,13 @@ export function testGatewayConnection(
           );
           return;
         }
+        if (response.payload.principal?.subjectKind === 'person' && !person?.session) {
+          const error = new PersonSessionEndedError();
+          if (!auth.explicitPersonSignIn && auth.sessionStorage)
+            auth.sessionStorage.save(null).then(() => finishWithError(error), finishWithError);
+          else finishWithError(error);
+          return;
+        }
         authResult = response.payload;
         if (!gatewaySupportsPing(authResult)) {
           if (!finish()) return;
@@ -144,7 +229,10 @@ export function testGatewayConnection(
             ...authResult,
             latencyMs: Date.now() - startedAt,
             gatewayPingSupported: false,
-            compatibilityHint: LEGACY_GATEWAY_COMPATIBILITY_HINT,
+            compatibilityHint:
+              authResult.capabilities.gatewayPing === false
+                ? 'Connected; active ping checks are unavailable to this account.'
+                : LEGACY_GATEWAY_COMPATIBILITY_HINT,
           });
           return;
         }
@@ -192,7 +280,7 @@ export function gatewaySupportsPing(result: GatewayAuthConnectResult): boolean {
   return result.capabilities?.gatewayPing === true;
 }
 
-function isGatewayAuthConnectResult(value: unknown): value is GatewayAuthConnectResult {
+export function isGatewayAuthConnectResult(value: unknown): value is GatewayAuthConnectResult {
   if (!isRecord(value) || value.ok !== true || !isRecord(value.capabilities)) return false;
   return (
     (value.clientKind === 'ui' ||
@@ -215,10 +303,6 @@ export function isValidGatewayPingResult(value: unknown): value is GatewayPingRe
     typeof result.serverTimeMs === 'number' &&
     Number.isFinite(result.serverTimeMs)
   );
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

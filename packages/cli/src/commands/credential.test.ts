@@ -5,8 +5,9 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { Command, CommanderError } from 'commander';
+import { WebSocketServer } from 'ws';
 
-import type { CredentialIssueResult } from '@farmslot/protocol';
+import type { CredentialIssueResult, PersonSessionGrant } from '@farmslot/protocol';
 
 import { loadProfiles, saveProfiles } from '../gateway-profiles.js';
 
@@ -47,39 +48,112 @@ test('credential issue machine output never contains either one-time secret', ()
   assert.match(rendered, /"secretReturned":true/u);
 });
 
-test('activation persists the owner secret without overwriting an unrelated active profile', (t) => {
+test('activation saves only a verified person device and preserves an unrelated active profile', async (t) => {
   const previousHome = process.env.FARMSLOT_HOME;
   const home = mkdtempSync(join(tmpdir(), 'farmslot-cli-activation-'));
-  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  t.after(async () => {
+    for (const client of server.clients) client.terminate();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    rmSync(home, { recursive: true, force: true });
+  });
+  server.on('connection', (socket) =>
+    socket.on('message', (data) => {
+      const request = JSON.parse(String(data));
+      const person =
+        request.params?.token === 'owner-secret' || request.params?.token === 'rotated';
+      if (request.method === 'auth.connect')
+        socket.send(
+          JSON.stringify({
+            type: 'res',
+            id: request.id,
+            ...(person
+              ? {
+                  ok: false,
+                  error: {
+                    code: 'AUTH_PERSON_SESSION_REQUIRED',
+                    message: 'Create a device session.',
+                  },
+                }
+              : {
+                  ok: true,
+                  payload: {
+                    ok: true,
+                    authMode: 'token',
+                    clientKind: 'ui',
+                    authenticatedAt: Date.now(),
+                    capabilities: { httpBearerAuth: true, voiceInstructionFormatting: false },
+                    principal: {
+                      id: 'automation',
+                      subjectKind: 'service',
+                      displayName: 'Automation',
+                      roles: [],
+                    },
+                  },
+                }),
+          }),
+        );
+      else if (request.method === 'auth.session.exchange')
+        socket.send(
+          JSON.stringify({ type: 'res', id: request.id, ok: true, payload: activationGrant() }),
+        );
+    }),
+  );
+  await new Promise<void>((resolve, reject) => {
+    server.once('listening', resolve);
+    server.once('error', reject);
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const url = `ws://127.0.0.1:${address.port}/ws`;
   process.env.FARMSLOT_HOME = home;
   try {
     saveProfiles({
       active: 'other',
       gateways: { other: { url: 'wss://other.example/ws', authMode: 'token', secret: 'other' } },
     });
-    const name = persistOwnerCredential('ws://127.0.0.1:8801', undefined, 'owner-secret');
+    const name = await persistOwnerCredential(url, undefined, 'owner-secret');
     assert.equal(name, 'activated-gateway');
-    assert.deepEqual(loadProfiles(), {
-      active: 'other',
-      gateways: {
-        other: { url: 'wss://other.example/ws', authMode: 'token', secret: 'other' },
-        'activated-gateway': {
-          url: 'ws://127.0.0.1:8801',
-          authMode: 'token',
-          secret: 'owner-secret',
-        },
-      },
-    });
-    // Same gateway spelled differently updates its profile, as GW_URL matching does.
+    const saved = loadProfiles();
+    assert.equal(saved.active, 'other');
+    assert.equal(saved.gateways.other.secret, 'other');
+    assert.ok(saved.gateways[name].personSession);
+    assert.equal(saved.gateways[name].secret, undefined);
+    const bytes = JSON.stringify(saved);
+    assert.ok(!bytes.includes('owner-secret') && !bytes.includes('fsa_'));
     assert.equal(
-      persistOwnerCredential('WSS://OTHER.EXAMPLE:443/ws/', undefined, 'rotated'),
-      'other',
+      await persistOwnerCredential(`WS://127.0.0.1:${address.port}/ws/`, undefined, 'rotated'),
+      name,
     );
+    assert.equal(loadProfiles().gateways[name].secret, undefined);
+    await persistOwnerCredential(url, 'automation', 'service-secret');
+    assert.equal(loadProfiles().gateways.automation.secret, 'service-secret');
+    assert.equal(loadProfiles().gateways.automation.personSession, undefined);
   } finally {
     if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
     else process.env.FARMSLOT_HOME = previousHome;
   }
 });
+
+function activationGrant(): PersonSessionGrant {
+  const issued = Date.now();
+  return {
+    accessToken: `fsa_${'b'.repeat(32)}_${'s'.repeat(43)}`,
+    accessExpiresAt: new Date(issued + 3600_000).toISOString(),
+    refreshToken: `fsr_${'a'.repeat(32)}_${'r'.repeat(43)}`,
+    session: {
+      id: 'a'.repeat(32),
+      principalId: 'owner',
+      principalGeneration: 0,
+      deviceName: 'CLI fixture',
+      deviceKind: 'cli',
+      createdAt: new Date(issued).toISOString(),
+      lastRefreshedAt: new Date(issued).toISOString(),
+      refreshExpiresAt: new Date(issued + 30 * 24 * 3600_000).toISOString(),
+      revokedAt: null,
+    },
+  };
+}
 
 test('writeSecretFile writes 0600, byte-exact, and refuses to overwrite', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'farmslot-secret-file-'));

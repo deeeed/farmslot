@@ -12,6 +12,10 @@ export const Methods = {
 
   // Auth
   AUTH_CONNECT: 'auth.connect',
+  AUTH_SESSION_EXCHANGE: 'auth.session.exchange',
+  AUTH_SESSION_REFRESH: 'auth.session.refresh',
+  AUTH_SESSION_LIST: 'auth.session.list',
+  AUTH_SESSION_REVOKE: 'auth.session.revoke',
   PAIRING_CREATE: 'pairing.create',
   PAIRING_CANDIDATES: 'pairing.candidates',
   PAIRING_EXCHANGE: 'pairing.exchange',

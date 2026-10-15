@@ -13,6 +13,8 @@ import {
   type PairingExchangeParams,
   type PairingExchangeResult,
   parseTailscaleDnsNameFromStatus,
+  type PersonDeviceDescription,
+  type PersonSessionGrant,
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
@@ -158,16 +160,16 @@ export function pairingExchange(
   params: PairingExchangeParams,
   runtime: GatewayAuthRuntime,
 ): PairingExchangeResult {
-  if (typeof params?.code !== 'string') {
-    throw new GatewayMethodError('PAIRING_FAILED', 'pairing.exchange requires code');
-  }
-  const code = params.code.trim();
-  if (!code) throw new GatewayMethodError('PAIRING_FAILED', 'pairing.exchange requires code');
-  const record = pairings.get(code);
-  if (!record || record.expiresAtMs <= Date.now()) {
-    pairings.delete(code);
-    throw new GatewayMethodError('PAIRING_FAILED', 'Pairing code is invalid or expired');
-  }
+  const record = livePairingRecord(params?.code);
+  const code = record.code;
+  if (
+    record.authority.kind === 'existing-principal' &&
+    runtime.store.findPrincipal(record.authority.principalId)?.subject.type === 'person'
+  )
+    throw new GatewayMethodError(
+      'AUTH_PERSON_SESSION_REQUIRED',
+      'Sign in using a current Farmslot client.',
+    );
   let issue;
   try {
     issue =
@@ -200,6 +202,48 @@ export function pairingExchange(
     },
     expiresAt: new Date(record.expiresAtMs).toISOString(),
   };
+}
+
+export function pairingExchangePersonSession(
+  code: string,
+  device: PersonDeviceDescription,
+  runtime: GatewayAuthRuntime,
+): PersonSessionGrant {
+  const record = livePairingRecord(code);
+  if (
+    record.authority.kind !== 'existing-principal' ||
+    runtime.store.findPrincipal(record.authority.principalId)?.subject.type !== 'person'
+  )
+    throw new GatewayMethodError(
+      'AUTH_PERSON_REQUIRED',
+      'This code is for a service or node, not a person sign-in.',
+    );
+  let grant: PersonSessionGrant;
+  try {
+    grant = runtime.writer.issuePersonSession(
+      record.authority.principalId,
+      record.principalGeneration ?? 0,
+      device,
+    );
+  } catch (error) {
+    if (!(error instanceof CredentialStoreRefusalError)) throw error;
+    pairings.delete(record.code);
+    throw new GatewayMethodError('PAIRING_FAILED', 'Pairing authority is no longer valid');
+  }
+  pairings.delete(record.code);
+  return grant;
+}
+
+function livePairingRecord(value: unknown): PairingRecord {
+  if (typeof value !== 'string' || !value.trim())
+    throw new GatewayMethodError('PAIRING_FAILED', 'Pairing requires a code.');
+  const code = value.trim();
+  const record = pairings.get(code);
+  if (!record || record.expiresAtMs <= Date.now()) {
+    pairings.delete(code);
+    throw new GatewayMethodError('PAIRING_FAILED', 'Pairing code is invalid or expired');
+  }
+  return record;
 }
 
 function pruneExpiredPairings(): void {

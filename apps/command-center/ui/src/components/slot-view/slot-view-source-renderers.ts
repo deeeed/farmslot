@@ -2,6 +2,7 @@ import { html, nothing } from 'lit';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
 import { gatewayResourceUrl } from '../../utils/gateway-origin.js';
+import { gatewayMediaSrc } from '../shared/gateway-media-src.js';
 
 import type { SlotView } from './slot-view.js';
 import { basename, extToLanguage, isImageFile, isMediaFile, realPath } from './slot-view-model.js';
@@ -276,7 +277,7 @@ export function renderEditor(view: SlotView) {
       `/api/file?slotId=${encodeURIComponent(view.slotId)}&path=${encodeURIComponent(view._activeFile)}`,
     );
     return html`<div class="sv-image-viewer">
-      <img src=${src} alt=${basename(view._activeFile)} />
+      <img src=${gatewayMediaSrc(src)} alt=${basename(view._activeFile)} />
     </div>`;
   }
 
@@ -286,7 +287,7 @@ export function renderEditor(view: SlotView) {
       `/api/file?slotId=${encodeURIComponent(view.slotId)}&path=${encodeURIComponent(view._activeFile)}`,
     );
     return html`<div class="sv-image-viewer">
-      <video controls src=${src}></video>
+      <video controls src=${gatewayMediaSrc(src)}></video>
     </div>`;
   }
 

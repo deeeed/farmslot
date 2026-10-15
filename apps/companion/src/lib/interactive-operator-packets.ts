@@ -9,6 +9,7 @@ import {
   type ArtifactHttpHeaders,
   type ArtifactManifestEntry,
   artifactUrl,
+  CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
   extractRunArtifactManifest,
 } from './artifact-url';
 import { gatewayResourceUrl } from './gateway-http-auth';
@@ -41,4 +42,12 @@ function interactivePacketArtifactKeyPart(artifact: ArtifactManifestEntry): stri
     artifact.mimeType ?? '',
     artifact.sizeBytes == null ? '' : String(artifact.sizeBytes),
   ].join('\u001f');
+}
+
+/** Packet links select an ordinary task artifact without inventing an acceptance criterion. */
+export function interactivePacketArtifactViewerHref(runId: string, path: string) {
+  return {
+    pathname: '/evidence/[runId]' as const,
+    params: { runId, artifact: path, recipeRun: CURRENT_ARTIFACTS_RECIPE_RUN_PARAM },
+  };
 }

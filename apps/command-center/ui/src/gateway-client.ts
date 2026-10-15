@@ -4,12 +4,20 @@ import type {
   EventFrame,
   Frame,
   GatewayAuthConnectResult,
+  PersonDeviceSession,
   RequestFrame,
   ResponseFrame,
   SelfPrincipalSummary,
 } from '@farmslot/protocol';
-import { Methods, signOutAccount, workspaceAccessFromAuth } from '@farmslot/protocol';
-import { ACCOUNT_SESSION_POLICY, RememberedAccountSession } from '@farmslot/review-dispatch';
+import {
+  hasAuthErrorCode,
+  Methods,
+  parsePersonSessionToken,
+  PersonSessionClient,
+  PersonSessionEndedError,
+  signOutAccount,
+  workspaceAccessFromAuth,
+} from '@farmslot/protocol';
 
 import {
   getDesktopConnection,
@@ -22,6 +30,7 @@ import {
   normalizeGatewayRequestOptions,
 } from './gateway-request-timeout.js';
 import {
+  clearGatewayMemoryAuth,
   filterConnectableGatewayUrls,
   GATEWAY_CANDIDATES_STORAGE_KEY,
   GATEWAY_SESSION_EXPIRY_STORAGE_KEY,
@@ -30,13 +39,13 @@ import {
   GATEWAY_URL_STORAGE_KEY,
   gatewayWebSocketToHttpOrigin,
   parseHostedGatewayConnection,
-  persistGatewayAuthForHttp,
-  readGatewayAuth,
-  readStoredGatewaySessionExpiry,
+  readStoredGatewayAuth,
   replaceStoredGatewayAuthForHttp,
   resolveGatewayConnectionSource,
   resolveGatewayWebSocketUrls,
+  setGatewayMemoryAuth,
 } from './gateway-url.js';
+import { CommandCenterPersonSessionStorage } from './person-session-storage.js';
 
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'auth_required';
 type EventCallback<T = unknown> = (payload: T) => void;
@@ -56,6 +65,8 @@ interface BrowserGatewayConnection {
   urls: string[];
   auth: GatewayAuthCredentials;
   source: 'configured' | 'hosted' | 'stored' | 'implicit';
+  explicit?: boolean;
+  code?: string;
 }
 
 interface PendingRequest {
@@ -119,10 +130,15 @@ function resolveBrowserGatewayConnection(): BrowserGatewayConnection {
   if (isDesktopClient()) {
     const connection = getDesktopConnection();
     if (!connection) throw new Error('Desktop connection has not been initialized.');
-    return { urls: [connection.url], auth: readGatewayAuth(), source: 'configured' };
+    return {
+      urls: [connection.url],
+      auth: { token: connection.token, password: connection.password },
+      source: 'configured',
+      explicit: connection.pending === true,
+    };
   }
   const env = (import.meta as ImportMetaWithEnv).env ?? {};
-  const storedAuth = readGatewayAuth();
+  const storedAuth = readStoredGatewayAuth();
   const hosted = parseHostedGatewayConnection(location.hash);
   const signedOut = localStorage.getItem(GATEWAY_SIGNED_OUT_STORAGE_KEY) === 'true';
   const token = signedOut ? undefined : (hosted.token ?? storedAuth.token);
@@ -146,6 +162,8 @@ function resolveBrowserGatewayConnection(): BrowserGatewayConnection {
   return {
     urls,
     source,
+    explicit: Boolean(hosted.code || hosted.token || hosted.password),
+    code: hosted.code,
     auth: {
       ...(token ? { token } : {}),
       ...(password ? { password } : {}),
@@ -163,14 +181,11 @@ function syncBrowserHttpAuthCookie(auth: GatewayAuthCredentials, gatewayUrl: str
       document.cookie = `${name}=; Path=/; SameSite=Lax; Max-Age=0${secure}`;
     }
   };
-  const expiresAt = readStoredGatewaySessionExpiry();
-  const maxAge = Math.floor(
-    ((expiresAt ?? Date.now() + ACCOUNT_SESSION_POLICY.durationMs) - Date.now()) / 1000,
-  );
-  if ((!token && !password) || maxAge <= 0) {
+  if ((!token && !password) || (token && parsePersonSessionToken(token, 'fsa'))) {
     clearCookies();
     return;
   }
+  const maxAge = 30 * 24 * 60 * 60;
   try {
     if (gatewayWebSocketToHttpOrigin(gatewayUrl) !== location.origin) {
       clearCookies();
@@ -209,38 +224,46 @@ export class GatewayClient {
   private auth: GatewayAuthCredentials;
   private source: BrowserGatewayConnection['source'];
   private disposed = false;
-  private accountSession = this.loadAccountSession();
+  private personStorage: CommandCenterPersonSessionStorage;
+  private person: PersonSessionClient;
+  private explicitSignIn: boolean;
+  private rememberMe?: boolean;
+  private pairingCode?: string;
   private authBlocked = false;
 
-  private loadAccountSession(): RememberedAccountSession {
-    return new RememberedAccountSession(readStoredGatewaySessionExpiry(), (expiry) => {
-      if (expiry === null) localStorage.removeItem(GATEWAY_SESSION_EXPIRY_STORAGE_KEY);
-      else localStorage.setItem(GATEWAY_SESSION_EXPIRY_STORAGE_KEY, String(expiry));
-      if (expiry !== null) syncBrowserHttpAuthCookie(this.auth, this.url);
+  get personSession(): PersonDeviceSession | null {
+    return this.person.session;
+  }
+
+  private createPersonClient(): PersonSessionClient {
+    return new PersonSessionClient({
+      storage: this.personStorage,
+      request: (method, params) => this.rawRequest(method, params),
+      onAccess: async (grant) => {
+        const socket = this.ws;
+        const result = await this.rawRequest<GatewayAuthConnectResult>(Methods.AUTH_CONNECT, {
+          clientKind: 'ui',
+          token: grant.accessToken,
+        });
+        if (!socket || socket !== this.ws || this.disposed)
+          throw new Error('Gateway connection changed during sign-in.');
+        if (
+          result.principal?.subjectKind !== 'person' ||
+          result.principal.id !== grant.session.principalId
+        )
+          throw new Error('The gateway did not verify this person sign-in.');
+        await this.personStorage.commit();
+        if (socket !== this.ws || this.disposed)
+          throw new Error('Gateway connection changed during sign-in.');
+        replaceStoredGatewayAuthForHttp({});
+        this.auth = { token: grant.accessToken };
+        setGatewayMemoryAuth(this.auth, this.url, this.person);
+        syncBrowserHttpAuthCookie({}, this.url);
+        this.acceptAuthentication(result);
+      },
     });
   }
 
-  get sessionExpiresAt(): number | null {
-    return this.accountSession.expiresAt;
-  }
-
-  private assertSessionCurrent(): void {
-    if (!this.auth.token && !this.auth.password && this.accountSession.expiresAt === null) return;
-    try {
-      this.accountSession.assertCurrent();
-    } catch (error) {
-      syncBrowserHttpAuthCookie({}, this.url);
-      this.authBlocked = true;
-      this.lastAuthError = new GatewayRequestError(
-        error instanceof Error ? error.message : 'Sign-in expired',
-        'SESSION_EXPIRED',
-      );
-      this.rejectAllPending(this.lastAuthError.message);
-      this.teardownSocket();
-      this.setState('auth_required');
-      throw this.lastAuthError;
-    }
-  }
   private insecureBlocked = false;
   private lastAuthError: GatewayRequestError | null = null;
 
@@ -261,6 +284,12 @@ export class GatewayClient {
     this.url = this.urls[0];
     this.auth = auth ?? resolved.auth;
     this.source = url ? 'configured' : resolved.source;
+    this.explicitSignIn = Boolean(auth) || resolved.explicit === true;
+    this.pairingCode = resolved.code;
+    if (this.pairingCode) localStorage.removeItem(GATEWAY_SIGNED_OUT_STORAGE_KEY);
+    this.personStorage = new CommandCenterPersonSessionStorage(this.urls);
+    if (this.explicitSignIn) this.personStorage.beginValidation();
+    this.person = this.createPersonClient();
     // Desktop settings return a newly saved credential after sign-out.
     if (isDesktopClient() && (this.auth.token || this.auth.password)) {
       localStorage.removeItem(GATEWAY_SIGNED_OUT_STORAGE_KEY);
@@ -270,8 +299,16 @@ export class GatewayClient {
       this.state = 'auth_required';
     }
     this.persistConnection();
-    persistGatewayAuthForHttp(this.auth);
-    syncBrowserHttpAuthCookie(this.auth, this.url);
+    if (resolved.explicit && typeof history !== 'undefined') {
+      const raw = location.hash.slice(1);
+      const split = raw.indexOf('?');
+      const route = split < 0 ? '' : raw.slice(0, split);
+      const query = new URLSearchParams(split < 0 ? raw : raw.slice(split + 1));
+      query.delete('connect');
+      history.replaceState(null, '', `#${route}${query.size ? `?${query}` : ''}`);
+    }
+    setGatewayMemoryAuth({}, this.url);
+    syncBrowserHttpAuthCookie({}, this.url);
   }
 
   get connectionState(): ConnectionState {
@@ -322,30 +359,50 @@ export class GatewayClient {
   }
 
   async setAuthCredentials(auth: GatewayAuthCredentials, rememberMe?: boolean): Promise<void> {
-    await saveDesktopCredentials(auth, rememberMe);
-    await this.accountSession.clear();
-    this.accountSession = this.loadAccountSession();
+    await this.person.restore();
+    if (this.person.session) throw new Error('Sign out this device before switching accounts.');
+    await saveDesktopCredentials(auth, rememberMe, true);
+    await this.person.dispose();
+    this.personStorage = new CommandCenterPersonSessionStorage(this.urls);
+    this.personStorage.beginValidation();
+    this.person = this.createPersonClient();
+    this.rememberMe = rememberMe;
     this.auth = auth;
+    setGatewayMemoryAuth({}, this.url);
+    syncBrowserHttpAuthCookie({}, this.url);
+    this.explicitSignIn = true;
+    this.pairingCode = undefined;
     localStorage.removeItem(GATEWAY_SIGNED_OUT_STORAGE_KEY);
-    syncBrowserHttpAuthCookie(auth, this.url);
     this.authBlocked = false;
     this.lastAuthError = null;
-    replaceStoredGatewayAuthForHttp(auth);
     this.rejectAllPending('Gateway credentials changed');
     this.teardownSocket();
     this.setState('disconnected');
   }
 
+  async signedInDevices(): Promise<PersonDeviceSession[]> {
+    return this.person.list();
+  }
+
+  async revokeDevice(sessionId: string): Promise<void> {
+    const current = this.person.session?.id === sessionId;
+    await this.person.revoke(sessionId);
+    if (current) await this.signOut();
+  }
+
   async signOut(): Promise<void> {
+    await this.person.signOut();
     await signOutAccount({
       forgetLogin: async () => {
         await saveDesktopCredentials({});
-        await this.accountSession.clear();
+        localStorage.removeItem(GATEWAY_SESSION_EXPIRY_STORAGE_KEY);
         replaceStoredGatewayAuthForHttp({});
         localStorage.setItem(GATEWAY_SIGNED_OUT_STORAGE_KEY, 'true');
       },
       closeSession: () => {
+        this.person.stopRefresh();
         this.auth = {};
+        clearGatewayMemoryAuth();
         syncBrowserHttpAuthCookie({}, this.url);
         this.authBlocked = true;
         this.lastAuthError = null;
@@ -363,12 +420,6 @@ export class GatewayClient {
 
   connect(): void {
     if (this.disposed) return;
-    try {
-      this.assertSessionCurrent();
-    } catch {
-      // The expiry check has already routed to token entry without deleting the saved token.
-      return;
-    }
     if (this.authBlocked) {
       this.setState('auth_required');
       return;
@@ -404,12 +455,22 @@ export class GatewayClient {
       () => {
         this.authenticate(ws).catch((err: Error) => {
           if (this.ws !== ws || this.disposed || this.authBlocked) return;
-          if (!(err instanceof GatewayRequestError)) {
+          if (
+            !(err instanceof GatewayRequestError) &&
+            !(err instanceof PersonSessionEndedError) &&
+            ws.readyState !== WebSocket.OPEN
+          ) {
             // Deploys can close the socket while auth.connect is pending. Retry with the saved login.
             ws.close();
             return;
           }
-          const authError = err;
+          const authError =
+            err instanceof GatewayRequestError
+              ? err
+              : new GatewayRequestError(
+                  err.message,
+                  err instanceof PersonSessionEndedError ? err.code : 'AUTH_FAILED',
+                );
           this.authBlocked = true;
           this.lastAuthError = authError;
           this.rejectAllPending(`Authentication failed: ${authError.message}`);
@@ -486,14 +547,92 @@ export class GatewayClient {
   }
 
   private async authenticate(socket: WebSocket): Promise<void> {
-    const result = await this.request<GatewayAuthConnectResult>(Methods.AUTH_CONNECT, {
-      clientKind: 'ui',
-      ...this.auth,
-    });
+    await this.person.restore();
+    if (this.ws !== socket || this.disposed) return;
+    if (this.person.session) {
+      await this.person.accessToken(true);
+      this.person.startRefresh((error) => this.failPersonRefresh(error));
+      return;
+    }
+    if (this.pairingCode) {
+      await this.person.exchange({
+        code: this.pairingCode,
+        deviceName: 'Command Center browser',
+        deviceKind: 'command-center',
+      });
+      this.pairingCode = undefined;
+      this.explicitSignIn = false;
+      this.person.startRefresh((error) => this.failPersonRefresh(error));
+      return;
+    }
+    if (this.personStorage.required && !this.explicitSignIn) throw new PersonSessionEndedError();
+    let result: GatewayAuthConnectResult;
+    try {
+      result = await this.rawRequest<GatewayAuthConnectResult>(Methods.AUTH_CONNECT, {
+        clientKind: 'ui',
+        ...this.auth,
+      });
+    } catch (error) {
+      if (!hasAuthErrorCode(error, 'AUTH_PERSON_SESSION_REQUIRED')) throw error;
+      if (!this.explicitSignIn) {
+        await saveDesktopCredentials({});
+        replaceStoredGatewayAuthForHttp({});
+        throw new GatewayRequestError(
+          'Sign in again to create a device session.',
+          'AUTH_PERSON_SESSION_REQUIRED',
+        );
+      }
+      if (!this.auth.token || this.auth.password)
+        throw new GatewayRequestError(
+          'Use a person credential or pairing code to sign in.',
+          'AUTH_PERSON_SESSION_REQUIRED',
+        );
+      await this.person.exchange({
+        credential: this.auth.token,
+        deviceName: isDesktopClient() ? 'Command Center desktop' : 'Command Center browser',
+        deviceKind: 'command-center',
+      });
+      this.explicitSignIn = false;
+      this.person.startRefresh((error) => this.failPersonRefresh(error));
+      return;
+    }
     if (!result.ok) throw new GatewayRequestError('Gateway authentication failed', 'AUTH_FAILED');
     if (this.ws !== socket || this.disposed) return;
-    if (this.auth.token || this.auth.password) await this.accountSession.recordSuccessfulUse();
+    if (result.principal?.subjectKind === 'person')
+      throw new GatewayRequestError(
+        'Sign in with a person credential or pairing code, not an access token.',
+        'AUTH_PERSON_SESSION_REQUIRED',
+      );
+    if (this.auth.token || this.auth.password) {
+      if (result.principal?.subjectKind !== 'service' && result.principal?.subjectKind !== 'node')
+        throw new GatewayRequestError(
+          'Update the gateway to verify this credential before saving it.',
+          'AUTH_FAILED',
+        );
+      await saveDesktopCredentials(this.auth, this.rememberMe);
+      replaceStoredGatewayAuthForHttp(this.auth);
+      setGatewayMemoryAuth(this.auth, this.url);
+      syncBrowserHttpAuthCookie(this.auth, this.url);
+    }
     if (this.ws !== socket || this.disposed) return;
+    this.explicitSignIn = false;
+    this.acceptAuthentication(result);
+  }
+
+  private failPersonRefresh(error: unknown): void {
+    this.lastAuthError = new GatewayRequestError(
+      error instanceof Error ? error.message : 'Device sign-in refresh failed.',
+      hasAuthErrorCode(error, 'AUTH_SESSION_ENDED') ? 'AUTH_SESSION_ENDED' : 'AUTH_REFRESH_FAILED',
+    );
+    clearGatewayMemoryAuth();
+    if (hasAuthErrorCode(error, 'AUTH_SESSION_ENDED')) this.authBlocked = true;
+    this.rejectAllPending(this.lastAuthError.message);
+    this.teardownSocket();
+    this.setState(this.authBlocked ? 'auth_required' : 'disconnected');
+    if (!this.authBlocked) this.scheduleReconnect();
+  }
+
+  private acceptAuthentication(result: GatewayAuthConnectResult): void {
     this.principal = result.principal ?? null;
     this.adminRole =
       result.principal?.roles.some(
@@ -519,6 +658,8 @@ export class GatewayClient {
 
   disconnect(): void {
     this.disposed = true;
+    void this.person.dispose();
+    clearGatewayMemoryAuth();
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.rejectAllPending('Client disconnected');
     this.teardownSocket();
@@ -530,7 +671,16 @@ export class GatewayClient {
     params?: unknown,
     timeoutOrOptions: number | GatewayRequestOptions = DEFAULT_TIMEOUT,
   ): Promise<T> {
-    this.assertSessionCurrent();
+    if (this.person.session && !method.startsWith('auth.'))
+      return this.person.withAccess(() => this.rawRequest<T>(method, params, timeoutOrOptions));
+    return this.rawRequest<T>(method, params, timeoutOrOptions);
+  }
+
+  private async rawRequest<T = unknown>(
+    method: string,
+    params?: unknown,
+    timeoutOrOptions: number | GatewayRequestOptions = DEFAULT_TIMEOUT,
+  ): Promise<T> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error('Not connected');
     }
@@ -541,7 +691,6 @@ export class GatewayClient {
     const frame: RequestFrame = { type: 'req', id, method, params };
     const t0 = performance.now();
 
-    const session = this.accountSession;
     const result = await new Promise<T>((resolve, reject) => {
       let settled = false;
       let unsub: (() => void) | undefined;
@@ -588,13 +737,6 @@ export class GatewayClient {
 
       this.ws!.send(JSON.stringify(frame));
     });
-    if (
-      method !== Methods.AUTH_CONNECT &&
-      this.state === 'connected' &&
-      session === this.accountSession &&
-      (this.auth.token || this.auth.password)
-    )
-      await session.recordSuccessfulUse();
     return result;
   }
 

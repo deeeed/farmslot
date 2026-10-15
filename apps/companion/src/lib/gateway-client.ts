@@ -4,12 +4,15 @@ import {
   type EventFrame,
   type Frame,
   type GatewayAuthConnectResult,
+  hasAuthErrorCode,
   Methods,
+  type PersonDeviceSession,
+  PersonSessionClient,
+  PersonSessionEndedError,
   type RequestFrame,
   type ResponseFrame,
   type SelfPrincipalSummary,
 } from '@farmslot/protocol';
-import type { RememberedAccountSession } from '@farmslot/review-dispatch';
 
 import { gatewaySupportsPing } from './gateway-connection-test';
 import { connectionWaitTerminalError } from './gateway-connection-wait';
@@ -54,35 +57,54 @@ export class GatewayClient {
   private backoff = 1000;
   private url: string;
   private auth: GatewayAuthCredentials;
-  private accountSession: RememberedAccountSession | null = null;
+  private personSession: PersonSessionClient | null = null;
+  private authRequired = false;
 
-  setAccountSession(session: RememberedAccountSession | null): void {
-    this.accountSession = session;
+  get personDeviceSession(): PersonDeviceSession | null {
+    return this.personSession?.session ?? null;
   }
 
   async clearAccountSession(): Promise<void> {
-    await this.accountSession?.clear();
-    this.accountSession = null;
+    await this.personSession?.signOut();
+    await this.personSession?.dispose();
+    this.personSession = null;
   }
 
   get httpAuthHeaders(): GatewayHttpAuthHeaders {
-    return this.access === 'none' || this.accountSession?.expired
-      ? {}
-      : gatewayHttpAuthHeaders(this.auth);
+    return this.access === 'none' ? {} : gatewayHttpAuthHeaders(this.auth);
   }
 
-  private assertSessionCurrent(): void {
-    try {
-      this.accountSession?.assertCurrent();
-    } catch (error) {
-      this.clearAuthority();
-      this.lastConnectionError = getErrorMessage(error);
-      this.cancelReconnect();
-      this.rejectAllPending(this.lastConnectionError);
-      this.closeCurrentSocket();
-      this.setState('disconnected', true);
-      throw error;
-    }
+  private configurePersonSession(): void {
+    const storage = this.auth.sessionStorage;
+    this.personSession = storage
+      ? new PersonSessionClient({
+          storage,
+          request: async (method, params, accessToken) => {
+            if (accessToken) await this.acceptAccess(accessToken);
+            return this.requestRaw(method, params);
+          },
+          onAccess: async (grant) => {
+            this.auth.token = grant.accessToken;
+            delete this.auth.password;
+            this.auth.personSessionRequired = true;
+            this.auth.explicitPersonSignIn = false;
+            if (this.state === 'connected') await this.acceptAccess(grant.accessToken);
+          },
+        })
+      : null;
+  }
+
+  private async acceptAccess(token: string): Promise<GatewayAuthConnectResult> {
+    const result = await this.requestRaw<GatewayAuthConnectResult>(Methods.AUTH_CONNECT, {
+      clientKind: 'companion',
+      token,
+    });
+    this.auth.token = token;
+    this.principal = result.principal ?? null;
+    this.access = workspaceAccessFromAuth(result);
+    this.pingSupported = gatewaySupportsPing(result);
+    if (this.state === 'connected') this.setState('connected', true);
+    return result;
   }
   private disposed = false;
   private pausedForBackground = false;
@@ -104,6 +126,7 @@ export class GatewayClient {
   constructor(url: string, auth: GatewayAuthCredentials = {}) {
     this.url = url;
     this.auth = auth;
+    this.configurePersonSession();
     this.setupAppStateListener();
   }
 
@@ -119,17 +142,26 @@ export class GatewayClient {
     return this.generation;
   }
 
-  setConnection(url: string, auth: GatewayAuthCredentials = {}, force = false): void {
+  async setConnection(
+    url: string,
+    auth: GatewayAuthCredentials = {},
+    force = false,
+  ): Promise<void> {
     const changed =
       force ||
       this.url !== url ||
       this.auth.token !== auth.token ||
-      this.auth.password !== auth.password;
+      this.auth.password !== auth.password ||
+      this.auth.sessionStorage !== auth.sessionStorage;
     this.url = url;
     this.auth = auth;
     if (!changed) return;
 
+    const previousSession = this.personSession;
+    this.personSession = null;
     this.generation += 1;
+    this.authRequired = false;
+    const generation = this.generation;
     this.pingSupported = null;
     this.clearAuthority();
     this.cancelReconnect();
@@ -137,21 +169,25 @@ export class GatewayClient {
     this.closeCurrentSocket();
     this.setState('disconnected');
     this.backoff = 1000;
+    if (previousSession) await previousSession.dispose();
+    if (generation !== this.generation) return;
+    this.configurePersonSession();
     this.connect();
   }
 
   setUrl(url: string): void {
-    this.setConnection(url, this.auth);
+    const pending = this.setConnection(url, this.auth);
+    const generation = this.generation;
+    pending.catch((error: unknown) => {
+      if (generation !== this.generation) return;
+      this.lastConnectionError = getErrorMessage(error);
+      this.clearAuthority();
+      this.setState('disconnected', true);
+    });
   }
 
   connect(): void {
-    if (this.disposed || this.pausedForBackground) return;
-    try {
-      this.assertSessionCurrent();
-    } catch {
-      // Settings retains the expiry caption and offers token entry; do not retry an expired login.
-      return;
-    }
+    if (this.disposed || this.pausedForBackground || this.authRequired) return;
     if (!this.url) {
       this.setState('disconnected');
       return;
@@ -173,6 +209,9 @@ export class GatewayClient {
       this.authenticate(socket, this.generation).catch((error: Error) => {
         if (this.ws !== socket) return;
         this.clearAuthority();
+        this.authRequired =
+          hasAuthErrorCode(error, 'AUTH_SESSION_ENDED') ||
+          hasAuthErrorCode(error, 'AUTH_PERSON_SESSION_REQUIRED');
         this.lastConnectionError = `Authentication failed: ${error.message}`;
         this.rejectAllPending(this.lastConnectionError);
         socket.close();
@@ -183,6 +222,7 @@ export class GatewayClient {
       if (this.ws !== socket) return;
       if (event.code === 1008) this.clearAuthority();
       this.ws = null;
+      this.personSession?.stopRefresh();
       this.invalidateTransportCapability();
       if (this.state === 'connecting' && !this.lastConnectionError) {
         this.lastConnectionError = 'Gateway connection closed before authentication completed';
@@ -224,13 +264,44 @@ export class GatewayClient {
   }
 
   private async authenticate(socket: WebSocket, generation: number): Promise<void> {
-    const result = await this.request<GatewayAuthConnectResult>(Methods.AUTH_CONNECT, {
-      clientKind: 'companion',
-      ...this.auth,
-    });
-    if (!result.ok) throw new Error('Gateway authentication failed');
+    const session = this.personSession;
+    if (session) await session.restore();
     if (this.ws !== socket || this.generation !== generation) return;
-    await this.accountSession?.recordSuccessfulUse();
+    let result: GatewayAuthConnectResult;
+    if (session?.session) {
+      await session.accessToken(true);
+      result = await session.withAccess((token) => this.acceptAccess(token));
+    } else {
+      if (this.auth.personSessionRequired && !this.auth.explicitPersonSignIn)
+        throw new PersonSessionEndedError();
+      try {
+        result = await this.requestRaw<GatewayAuthConnectResult>(Methods.AUTH_CONNECT, {
+          clientKind: 'companion',
+          token: this.auth.token,
+          password: this.auth.password,
+        });
+      } catch (error) {
+        if (!hasAuthErrorCode(error, 'AUTH_PERSON_SESSION_REQUIRED')) throw error;
+        if (this.auth.explicitPersonSignIn && this.auth.token && session) {
+          await session.exchange({
+            credential: this.auth.token,
+            deviceName: 'Mobile Companion',
+            deviceKind: 'companion',
+          });
+          result = await session.withAccess((token) => this.acceptAccess(token));
+        } else {
+          await this.auth.sessionStorage?.save(null);
+          delete this.auth.token;
+          delete this.auth.password;
+          this.auth.personSessionRequired = true;
+          throw error;
+        }
+      }
+      if (result.principal?.subjectKind === 'person' && !session?.session) {
+        if (!this.auth.explicitPersonSignIn) await this.auth.sessionStorage?.save(null);
+        throw new PersonSessionEndedError();
+      }
+    }
     if (this.ws !== socket || this.generation !== generation) return;
     this.principal = result.principal ?? null;
     this.access = workspaceAccessFromAuth(result);
@@ -238,10 +309,18 @@ export class GatewayClient {
     this.backoff = 1000;
     this.lastConnectionError = null;
     this.setState('connected');
+    if (session?.session)
+      session.startRefresh((error) => {
+        if (this.personSession !== session) return;
+        this.lastConnectionError = getErrorMessage(error);
+        this.authRequired = hasAuthErrorCode(error, 'AUTH_SESSION_ENDED');
+        this.reconnect();
+      });
   }
 
   disconnect(): void {
     this.disposed = true;
+    this.personSession?.stopRefresh();
     this.cancelReconnect();
     this.pausedForBackground = false;
     this.clearAuthority();
@@ -258,10 +337,21 @@ export class GatewayClient {
     params?: unknown,
     timeout = DEFAULT_TIMEOUT,
   ): Promise<T> {
-    this.assertSessionCurrent();
-    const session = this.accountSession;
+    if (this.personSession?.session && !isAuthenticationEntry(method))
+      return this.personSession.withAccess(async (token) => {
+        if (this.auth.token !== token) await this.acceptAccess(token);
+        return this.requestRaw<T>(method, params, timeout);
+      });
+    return this.requestRaw<T>(method, params, timeout);
+  }
+
+  private async requestRaw<T = unknown>(
+    method: string,
+    params?: unknown,
+    timeout = DEFAULT_TIMEOUT,
+  ): Promise<T> {
     const generation = this.generation;
-    if (method !== Methods.AUTH_CONNECT && this.state !== 'connected') {
+    if (!isAuthenticationEntry(method) && this.state !== 'connected') {
       await this.waitForConnected(timeout);
     }
 
@@ -291,8 +381,6 @@ export class GatewayClient {
       this.ws!.send(JSON.stringify(frame));
     });
     if (generation !== this.generation) throw new Error('Gateway identity changed during request');
-    if (method !== Methods.AUTH_CONNECT && session === this.accountSession)
-      await session?.recordSuccessfulUse();
     return result;
   }
 
@@ -401,7 +489,7 @@ export class GatewayClient {
   }
 
   private scheduleReconnect(): void {
-    if (this.disposed || this.pausedForBackground) return;
+    if (this.disposed || this.pausedForBackground || this.authRequired) return;
     this.cancelReconnect();
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
@@ -480,4 +568,12 @@ function rethrowAsync(error: unknown): void {
   setTimeout(() => {
     throw error instanceof Error ? error : new Error(String(error));
   }, 0);
+}
+
+function isAuthenticationEntry(method: string): boolean {
+  return (
+    method === Methods.AUTH_CONNECT ||
+    method === Methods.AUTH_SESSION_EXCHANGE ||
+    method === Methods.AUTH_SESSION_REFRESH
+  );
 }

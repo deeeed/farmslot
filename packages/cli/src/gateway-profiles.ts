@@ -1,16 +1,24 @@
+import { createHash } from 'node:crypto';
 // gateway-profiles.ts — kubeconfig-style gateway profiles for the CLI (ADR-036).
 //
 // Machine-level store at <FARMSLOT_HOME>/gateways.json (0600, default ~/.farmslot): named gateway URLs
 // plus the pairing/auth credential obtained via `farmslot login`. Workspace
 // state stays untouched — profiles follow the operator, not the checkout.
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import type { GatewayAuthMode } from '@farmslot/protocol';
+import { withCredentialLock } from '@farmslot/credential-store';
+import {
+  type GatewayAuthMode,
+  parsePersonSessionAuth,
+  type PersonSessionAuth,
+  PersonSessionChangedError,
+} from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import { isLoopbackHost } from '@farmslot/protocol/node/loopback-host';
 
 import { isCheckoutGatewayUrl } from './onboarding/env-file.js';
+import type { GatewayCredential } from './gateway-client.js';
 
 export type { GatewayAuthMode };
 
@@ -20,12 +28,15 @@ export interface GatewayProfile {
   authMode?: Exclude<GatewayAuthMode, 'none'>;
   /** Pairing/auth credential; never printed in logs or --json output. */
   secret?: string;
+  personSession?: PersonSessionAuth;
 }
 
 export interface GatewayProfilesFile {
   active?: string;
   gateways: Record<string, GatewayProfile>;
 }
+
+const profileVersions = new WeakMap<GatewayProfilesFile, { path: string; digest: string | null }>();
 
 export const DEFAULT_GATEWAY_PORT = 7777;
 export const DEFAULT_GATEWAY_URL = `ws://localhost:${DEFAULT_GATEWAY_PORT}`;
@@ -41,7 +52,11 @@ function invalidProfilesFile(path: string, detail: string): Error {
 }
 
 export function loadProfiles(path: string = profilesPath()): GatewayProfilesFile {
-  if (!existsSync(path)) return { gateways: {} };
+  if (!existsSync(path)) {
+    const empty: GatewayProfilesFile = { gateways: {} };
+    profileVersions.set(empty, { path, digest: null });
+    return empty;
+  }
   const raw = readFileSync(path, 'utf-8');
   let parsed: GatewayProfilesFile;
   try {
@@ -65,19 +80,42 @@ export function loadProfiles(path: string = profilesPath()): GatewayProfilesFile
       p === null ||
       typeof p.url !== 'string' ||
       (p.authMode !== undefined && p.authMode !== 'token' && p.authMode !== 'password') ||
-      (p.secret !== undefined && typeof p.secret !== 'string')
+      (p.secret !== undefined && typeof p.secret !== 'string') ||
+      (p.personSession !== undefined &&
+        (!parsePersonSessionAuth(p.personSession) || p.secret !== undefined))
     ) {
       throw invalidProfilesFile(path, `profile '${name}' is malformed`);
     }
   }
-  return { active: parsed.active, gateways: parsed.gateways ?? {} };
+  const result = { active: parsed.active, gateways: parsed.gateways ?? {} };
+  profileVersions.set(result, { path, digest: createHash('sha256').update(raw).digest('hex') });
+  return result;
 }
 
 export function saveProfiles(profiles: GatewayProfilesFile, path: string = profilesPath()): void {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  writeFileSync(path, JSON.stringify(profiles, null, 2) + '\n', { mode: 0o600 });
-  // writeFileSync mode only applies on create — enforce on every save.
-  chmodSync(path, 0o600);
+  withCredentialLock(
+    () => {
+      const current = existsSync(path)
+        ? createHash('sha256').update(readFileSync(path)).digest('hex')
+        : null;
+      const snapshot = profileVersions.get(profiles);
+      if (snapshot?.path === path && snapshot.digest !== current)
+        throw new Error(
+          'Gateway profiles changed while this command was running. Retry the command.',
+        );
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+      const text = JSON.stringify(profiles, null, 2) + '\n';
+      const temporary = `${path}.${process.pid}.tmp`;
+      writeFileSync(temporary, text, { mode: 0o600 });
+      chmodSync(temporary, 0o600);
+      renameSync(temporary, path);
+      profileVersions.set(profiles, {
+        path,
+        digest: createHash('sha256').update(text).digest('hex'),
+      });
+    },
+    { FARMSLOT_HOME: dirname(path) },
+  );
 }
 
 /** Load the store with a clean CLI error (path included) instead of a stack trace. */
@@ -112,7 +150,7 @@ export interface GatewayTarget {
    * secret could leak to a remote gateway. undefined = non-profile target
    * (no credential is sent).
    */
-  credential?: { token?: string; password?: string } | null;
+  credential?: GatewayCredential | null;
   profileName?: string;
   source: 'url-flag' | 'gateway-flag' | 'env' | 'active-profile' | 'default';
 }
@@ -120,12 +158,65 @@ export interface GatewayTarget {
 /** Map a profile's stored secret onto the auth.connect credential shape. */
 export function profileCredential(
   profile: GatewayProfile,
-): { token?: string; password?: string } | undefined {
+  persist?: (value: PersonSessionAuth | null) => Promise<void>,
+): GatewayCredential | undefined {
+  if (profile.personSession)
+    return {
+      personSession: profile.personSession,
+      persistPersonSession: async (value) => {
+        await persist?.(value);
+        if (value) profile.personSession = value;
+        else delete profile.personSession;
+      },
+    };
   if (!profile.secret || !profile.authMode) return undefined;
   return profile.authMode === 'password' ? { password: profile.secret } : { token: profile.secret };
 }
 
+/** Persist only the selected profile; a late response cannot overwrite a new login or URL. */
+export function storedProfileCredential(
+  name: string,
+  profile: GatewayProfile,
+  path = profilesPath(),
+): GatewayCredential | undefined {
+  const credential = profileCredential(profile, async (value) => {
+    const current = loadProfiles(path);
+    const selected = matchingProfile(current, name, profile);
+    if (selected.personSession?.refreshToken !== profile.personSession?.refreshToken)
+      throw new PersonSessionChangedError();
+    if (value) selected.personSession = value;
+    else delete selected.personSession;
+    saveProfiles(current, path);
+  });
+  if (credential && !profile.personSession && profile.secret) {
+    const presented = profile.secret;
+    credential.forgetLegacyPerson = async () => {
+      const current = loadProfiles(path);
+      const selected = matchingProfile(current, name, profile);
+      if (selected.secret !== presented || selected.personSession)
+        throw new PersonSessionChangedError();
+      delete selected.secret;
+      delete selected.authMode;
+      saveProfiles(current, path);
+      delete profile.secret;
+      delete profile.authMode;
+    };
+  }
+  return credential;
+}
+
+function matchingProfile(
+  profiles: GatewayProfilesFile,
+  name: string,
+  expected: GatewayProfile,
+): GatewayProfile {
+  const selected = profiles.gateways[name];
+  if (!selected || selected.url !== expected.url) throw new PersonSessionChangedError();
+  return selected;
+}
+
 /** Scheme, host, explicit-or-default port and path without a trailing slash. */
+
 function comparableGatewayUrl(raw: string): string | undefined {
   try {
     const url = new URL(raw);
@@ -157,10 +248,16 @@ function targetForMatchedUrl(
   url: string,
   source: GatewayTarget['source'],
   profiles: GatewayProfilesFile,
+  credentialFor: (name: string, profile: GatewayProfile) => GatewayCredential | undefined,
 ): GatewayTarget | undefined {
   const match = profileForUrl(url, profiles);
   return match
-    ? { url, credential: profileCredential(match.profile) ?? null, profileName: match.name, source }
+    ? {
+        url,
+        credential: credentialFor(match.name, match.profile) ?? null,
+        profileName: match.name,
+        source,
+      }
     : undefined;
 }
 
@@ -179,7 +276,10 @@ export function resolveGatewayTarget(
   env: NodeJS.ProcessEnv = process.env,
   profilesOverride?: GatewayProfilesFile,
 ): GatewayTarget {
-  const getProfiles = (): GatewayProfilesFile => profilesOverride ?? loadProfiles();
+  const path = profilesPath();
+  const getProfiles = (): GatewayProfilesFile => profilesOverride ?? loadProfiles(path);
+  const credentialFor = (name: string, profile: GatewayProfile): GatewayCredential | undefined =>
+    profilesOverride ? profileCredential(profile) : storedProfileCredential(name, profile, path);
 
   if (opts.url) {
     let profiles: GatewayProfilesFile;
@@ -191,7 +291,10 @@ export function resolveGatewayTarget(
       return { url: opts.url, source: 'url-flag' };
     }
     return (
-      targetForMatchedUrl(opts.url, 'url-flag', profiles) ?? { url: opts.url, source: 'url-flag' }
+      targetForMatchedUrl(opts.url, 'url-flag', profiles, credentialFor) ?? {
+        url: opts.url,
+        source: 'url-flag',
+      }
     );
   }
 
@@ -205,7 +308,7 @@ export function resolveGatewayTarget(
     }
     return {
       url: profile.url,
-      credential: profileCredential(profile) ?? null,
+      credential: credentialFor(opts.gateway, profile) ?? null,
       profileName: opts.gateway,
       source: 'gateway-flag',
     };
@@ -214,7 +317,7 @@ export function resolveGatewayTarget(
   if (env.GW_URL) {
     // The gateway sets GW_URL for remote workers to the URL their node dials.
     // A stored profile for that gateway supplies its credential (or none).
-    const target = targetForMatchedUrl(env.GW_URL, 'env', getProfiles());
+    const target = targetForMatchedUrl(env.GW_URL, 'env', getProfiles(), credentialFor);
     if (target) return target;
     // Locally derived sandbox URLs may intentionally name an unauthenticated
     // development gateway. An inherited worker URL never gets this fallback.
@@ -242,7 +345,7 @@ export function resolveGatewayTarget(
     if (profile) {
       return {
         url: profile.url,
-        credential: profileCredential(profile) ?? null,
+        credential: credentialFor(profiles.active, profile) ?? null,
         profileName: profiles.active,
         source: 'active-profile',
       };

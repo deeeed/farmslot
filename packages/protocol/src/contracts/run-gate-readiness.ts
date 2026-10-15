@@ -1,3 +1,5 @@
+import { isRecord } from '../recipe/common.js';
+
 import type {
   NoChangeGatePayload,
   ReadyGatePayload,
@@ -26,10 +28,43 @@ export interface RunGatePrerequisiteReason {
   evidencePolicy?: 'execution-verdict' | 'claim-verdict' | 'criterion-binding';
 }
 
-export interface EvidenceAttestationApprover {
+export type EvidenceAttestationAuthority =
+  | { credentialId: string; personSessionId?: never }
+  | { credentialId?: never; personSessionId: string };
+
+export type EvidenceAttestationApprover = EvidenceAttestationAuthority & {
   principalId: string;
   displayName: string;
-  credentialId: string;
+};
+
+/** Retain credential-backed historical receipts and explicitly identify current person devices. */
+export function isEvidenceAttestationApprover(
+  value: unknown,
+): value is EvidenceAttestationApprover {
+  return (
+    isRecord(value) &&
+    typeof value.principalId === 'string' &&
+    Boolean(value.principalId.trim()) &&
+    typeof value.displayName === 'string' &&
+    Boolean(value.displayName.trim()) &&
+    ((typeof value.credentialId === 'string' &&
+      Boolean(value.credentialId.trim()) &&
+      value.personSessionId === undefined) ||
+      (typeof value.personSessionId === 'string' &&
+        Boolean(value.personSessionId.trim()) &&
+        value.credentialId === undefined))
+  );
+}
+
+export function sameEvidenceAttestationApprover(
+  left: EvidenceAttestationApprover,
+  right: EvidenceAttestationApprover,
+): boolean {
+  return (
+    left.principalId === right.principalId &&
+    left.credentialId === right.credentialId &&
+    left.personSessionId === right.personSessionId
+  );
 }
 
 /** Gateway-stamped decision receipt; request callers supply only the reason. */

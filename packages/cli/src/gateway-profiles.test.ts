@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { redactProfile } from './commands/gateway.js';
 import {
   assertGatewayUrl,
   assertProfileName,
@@ -260,4 +261,48 @@ test('worker URL flags and env select the matching profile while the active prof
     () => resolveGatewayTarget({}, { GW_URL: 'ws://unknown:7801' }, profiles),
     /add.*log in.*gateway URL in GW_URL/,
   );
+});
+
+test('a stale profile writer cannot restore credentials over a newer sign-in', (t) => {
+  const path = tmpStore();
+  t.after(() => rmSync(join(path, '..'), { recursive: true, force: true }));
+  saveProfiles(
+    { gateways: { test: { url: 'ws://test', authMode: 'token', secret: 'old' } } },
+    path,
+  );
+  const stale = loadProfiles(path);
+  const current = loadProfiles(path);
+  delete current.gateways.test.secret;
+  delete current.gateways.test.authMode;
+  saveProfiles(current, path);
+  const bytes = readFileSync(path, 'utf8');
+  assert.throws(() => saveProfiles(stale, path), /profiles changed/);
+  assert.equal(readFileSync(path, 'utf8'), bytes);
+});
+
+test('profile listing recognizes a person session without exposing its refresh credential', () => {
+  const entry = redactProfile(
+    'person',
+    {
+      url: 'wss://person.example',
+      authMode: 'token',
+      personSession: {
+        refreshToken: 'fsr_' + 'a'.repeat(32) + '_' + 'r'.repeat(43),
+        session: {
+          id: 'a'.repeat(32),
+          principalId: 'person',
+          principalGeneration: 0,
+          deviceName: 'Fixture',
+          deviceKind: 'cli',
+          createdAt: '2026-10-16T00:00:00.000Z',
+          lastRefreshedAt: '2026-10-16T00:00:00.000Z',
+          refreshExpiresAt: '2026-11-15T00:00:00.000Z',
+          revokedAt: null,
+        },
+      },
+    },
+    'person',
+  );
+  assert.equal(entry.loggedIn, true);
+  assert.ok(!JSON.stringify(entry).includes('fsr_'));
 });

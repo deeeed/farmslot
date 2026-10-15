@@ -69,7 +69,7 @@ test('authorization denial survives the response frame with a teaching Next acti
     const ws = await connect(harness.url);
     const auth = await request(ws, Methods.AUTH_CONNECT, {
       clientKind: 'ui',
-      token: issue.secret,
+      token: personAccess(runtime, issue.secret),
     });
     assert.equal(auth.ok, true);
     assert.deepEqual((auth.payload as { principal?: unknown }).principal, {
@@ -135,7 +135,7 @@ test('auth.connect enforces node subject and returns all virtual and stored self
     const ws = await connect(activatedHarness.url);
     const rejected = await request(ws, Methods.AUTH_CONNECT, {
       clientKind: 'node',
-      token: operatorIssue.secret,
+      token: personAccess(activated, operatorIssue.secret),
     });
     assert.equal(rejected.ok, false);
     assert.equal(rejected.error?.code, 'AUTH_FORBIDDEN');
@@ -248,7 +248,7 @@ test('all seven node frame paths accept node principals and refuse non-node prin
       const adminWs = await connect(harness.url);
       const adminAuth = await request(adminWs, Methods.AUTH_CONNECT, {
         clientKind: 'ui',
-        token: adminIssue.secret,
+        token: personAccess(runtime, adminIssue.secret),
       });
       assert.equal(adminAuth.ok, true, `${frame.name}: non-node authentication`);
       const closed = onceClose(adminWs);
@@ -372,7 +372,7 @@ test(
       const ws = await connect(harness.url);
       const auth = await request(ws, Methods.AUTH_CONNECT, {
         clientKind: 'ui',
-        token: adminIssue.secret,
+        token: personAccess(runtime, adminIssue.secret),
       });
       assert.equal(auth.ok, true);
 
@@ -444,7 +444,7 @@ test(
       const ws = await connect(harness.url);
       const auth = await request(ws, Methods.AUTH_CONNECT, {
         clientKind: 'ui',
-        token: adminIssue.secret,
+        token: personAccess(runtime, adminIssue.secret),
       });
       assert.equal(auth.ok, true);
 
@@ -490,7 +490,7 @@ test(
       const ws = await connect(harness.url);
       const auth = await request(ws, Methods.AUTH_CONNECT, {
         clientKind: 'ui',
-        token: adminIssue.secret,
+        token: personAccess(runtime, adminIssue.secret),
       });
       assert.equal(auth.ok, true);
 
@@ -523,7 +523,7 @@ test(
       const ws = await connect(harness.url);
       const auth = await request(ws, Methods.AUTH_CONNECT, {
         clientKind: 'ui',
-        token: adminIssue.secret,
+        token: personAccess(runtime, adminIssue.secret),
       });
       assert.equal(auth.ok, true);
 
@@ -658,13 +658,13 @@ test(
       const adminWs = await connect(harness.url);
       const adminAuth = await request(adminWs, Methods.AUTH_CONNECT, {
         clientKind: 'ui',
-        token: adminIssue.secret,
+        token: personAccess(runtime, adminIssue.secret),
       });
       assert.equal(adminAuth.ok, true);
       const operatorWs = await connect(harness.url);
       const operatorAuth = await request(operatorWs, Methods.AUTH_CONNECT, {
         clientKind: 'ui',
-        token: operatorIssue.secret,
+        token: personAccess(runtime, operatorIssue.secret),
       });
       assert.equal(operatorAuth.ok, true);
 
@@ -791,7 +791,10 @@ test('scoped source mutations require admin credentials and never trust wire act
   const harness = await startServer(runtime);
   try {
     const ws = await connect(harness.url);
-    await request(ws, Methods.AUTH_CONNECT, { clientKind: 'ui', token: credential.secret });
+    await request(ws, Methods.AUTH_CONNECT, {
+      clientKind: 'ui',
+      token: personAccess(runtime, credential.secret),
+    });
     for (const method of [
       Methods.SOURCES_STATUS,
       Methods.SOURCES_SYNC,
@@ -814,6 +817,13 @@ test('scoped source mutations require admin credentials and never trust wire act
     await harness.close();
   }
 });
+
+function personAccess(runtime: ReturnType<typeof isolatedRuntime>, credential: string): string {
+  return runtime.writer.exchangePersonCredential(credential, {
+    deviceName: 'Authorization fixture',
+    deviceKind: 'cli',
+  }).accessToken;
+}
 
 function isolatedRuntime() {
   const runtime = createGatewayAuthRuntime({
