@@ -14,6 +14,8 @@ import type {
 } from '@farmslot/protocol';
 import { deriveRunLifecycleView, failedRunCancelEffects, Methods } from '@farmslot/protocol';
 
+import '../progress-tracker/progress-tracker.js';
+
 import { gateway } from '../../gateway-client.js';
 import {
   type AcceptanceEvidenceOpen,
@@ -21,8 +23,7 @@ import {
   acceptancePanelStyles,
   renderAcceptancePanel,
 } from '../progress-tracker/acceptance-panel.js';
-import { OperationClock, operationPanelStyles } from '../progress-tracker/operation-panel.js';
-import { subtaskBlockStyles, SubtaskOpenState } from '../progress-tracker/subtask-block.js';
+import { SubtaskOpenState } from '../progress-tracker/subtask-block.js';
 import type { FileTransferUiEntry } from '../shared/file-transfer-progress-model.js';
 import {
   primaryTransferForRun,
@@ -43,7 +44,6 @@ import {
 } from './run-pipeline-model.js';
 import {
   renderPipelineControls,
-  renderPipelineProgressPanel,
   renderReviewRecoveryStatus,
   renderRunPipelineSummary,
 } from './run-pipeline-panels.js';
@@ -72,7 +72,7 @@ import { effectiveStepStatus } from './run-utils.js';
 
 @customElement('run-pipeline')
 export class RunPipeline extends LitElement {
-  private readonly _operationClock = new OperationClock(this, () => this.taskProgress);
+  private readonly subtaskOpen = new SubtaskOpenState();
   @property({ attribute: false }) run!: Run;
   @property({ attribute: false }) taskProgress?: TaskProgressStructured;
   /** The run's acceptance ledger (ADR-060); the panel is hidden without one. */
@@ -99,7 +99,6 @@ export class RunPipeline extends LitElement {
    * element is reused when run detail swaps the run, and `runChanged` resets
    * only the state it knows about.
    */
-  private readonly subtaskOpen = new SubtaskOpenState();
   @state() private autoExpandDone = false;
   @state() private cancelPending = false;
   @state() private transferProgress: FileTransferUiEntry | null = null;
@@ -107,12 +106,7 @@ export class RunPipeline extends LitElement {
   private _unsubTransfer: (() => void) | null = null;
   private _releaseTransfer: (() => void) | null = null;
 
-  static styles = [
-    operationPanelStyles,
-    runPipelineStyles,
-    subtaskBlockStyles,
-    acceptancePanelStyles,
-  ];
+  static styles = [runPipelineStyles, acceptancePanelStyles];
 
   willUpdate(changed: PropertyValues) {
     if (changed.has('run')) {
@@ -335,17 +329,18 @@ export class RunPipeline extends LitElement {
   private renderProgressPanel() {
     const progress = this._activeTaskProgress();
     if (!progress) return nothing;
-    return renderPipelineProgressPanel(
-      progress,
-      this._activeTaskProgressStepId(),
-      () => {
+    return html`<progress-tracker
+      .structured=${progress}
+      .openScope=${this.subtaskOpen.scope(this.run?.id)}
+      .activeStep=${this._activeTaskProgressStepId()}
+      .activeTaskBasename=${this.run.activeTaskFile?.split('/').pop()}
+      .runId=${this.run.id}
+      .runActive=${isRunWorking(this.run)}
+      closable
+      @progress-close=${() => {
         this.monitorExpanded = false;
-      },
-      this.subtaskOpen.scope(this.run?.id),
-      this.run.activeTaskFile?.split('/').pop(),
-      this.run.id,
-      isRunWorking(this.run),
-    );
+      }}
+    ></progress-tracker>`;
   }
 
   private _isInlineCIFixActive(): boolean {

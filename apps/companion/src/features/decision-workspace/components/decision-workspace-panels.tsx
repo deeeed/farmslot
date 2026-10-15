@@ -10,6 +10,7 @@ import {
   type RunDecision,
   type TaskProgressStructured,
 } from '@farmslot/protocol';
+import { taskProgressPercent } from '@farmslot/review-dispatch';
 
 import { BeforeAfterPreview } from '../../../components/BeforeAfterPreview';
 import {
@@ -26,11 +27,7 @@ import {
 } from '../../../lib/artifact-url';
 import { type DecisionPresentation } from '../../../lib/decision-presentation';
 import { diffArtifactCandidate } from '../../../lib/diff';
-import {
-  fallbackTaskProgressSummary,
-  taskProgressPercent,
-  taskProgressTitle,
-} from '../../../lib/task-progress';
+import { fallbackTaskProgressSummary, taskProgressTitle } from '../../../lib/task-progress';
 import { baseStyles } from '../../../lib/theme';
 import {
   artifactFilterParamForArtifactPath,

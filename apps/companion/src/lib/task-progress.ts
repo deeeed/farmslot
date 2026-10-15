@@ -5,14 +5,9 @@ import {
   type TaskProgressStructured,
   type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
+import type { ChecklistProgressFallback } from '@farmslot/review-dispatch';
 
 type UnknownRecord = Record<string, unknown>;
-
-export interface TaskProgressFallbackSummary {
-  title: string;
-  meta: string;
-  percent: number | null;
-}
 
 function recordValue(value: unknown): UnknownRecord | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -177,11 +172,6 @@ export function shouldAcceptTaskProgressUpdate(
   return shouldAcceptTaskProgressForActiveChecklist(run ?? null, update);
 }
 
-export function taskProgressPercent(progress: TaskProgressStructured): number {
-  if (!progress.totalSteps) return 0;
-  return Math.max(0, Math.min(100, (progress.completedSteps / progress.totalSteps) * 100));
-}
-
 export function taskProgressTitle(
   run: Run | null | undefined,
   progress: TaskProgressStructured | null | undefined,
@@ -198,7 +188,7 @@ export function fallbackTaskProgressSummary(
     | Pick<SlotStatus, 'phase' | 'taskPhase' | 'taskStepProgress' | 'activeTaskFile'>
     | null
     | undefined,
-): TaskProgressFallbackSummary {
+): ChecklistProgressFallback {
   const runningStep = run?.steps.find((step) => step.status === 'running');
   const activeTaskFile = slot?.activeTaskFile ?? run?.activeTaskFile;
   const activeTaskName = activeTaskFile?.split('/').pop();

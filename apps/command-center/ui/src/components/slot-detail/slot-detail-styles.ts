@@ -291,58 +291,6 @@ export const slotDetailStyles = css`
     }
   }
 
-  /* Task progress */
-  .progress-bar-container {
-    background: ${unsafeCSS(colors.bgInput)};
-    border-radius: 3px;
-    height: 6px;
-    margin-bottom: ${unsafeCSS(spacing.md)};
-    overflow: hidden;
-  }
-
-  .progress-bar-fill {
-    height: 100%;
-    background: ${unsafeCSS(colors.accent)};
-    border-radius: 3px;
-    transition: width 0.3s;
-  }
-
-  .task-step {
-    display: flex;
-    align-items: flex-start;
-    gap: ${unsafeCSS(spacing.md)};
-    padding: 2px 0;
-    font-size: ${unsafeCSS(fonts.sizeXs)};
-  }
-
-  .task-checkbox {
-    width: 12px;
-    height: 12px;
-    border: 1px solid #2a2a44;
-    border-radius: 2px;
-    flex-shrink: 0;
-    margin-top: 1px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 8px;
-  }
-
-  .task-checkbox.checked {
-    background: ${unsafeCSS(colors.statusOk)}22;
-    border-color: ${unsafeCSS(colors.statusOk)}44;
-    color: ${unsafeCSS(colors.statusOk)};
-  }
-
-  .task-text {
-    color: ${unsafeCSS(colors.textSecondary)};
-  }
-
-  .task-text.checked {
-    color: ${unsafeCSS(colors.textMuted)};
-    text-decoration: line-through;
-  }
-
   /* Output panel */
   .output-panel {
     background: ${unsafeCSS(colors.bgBase)};

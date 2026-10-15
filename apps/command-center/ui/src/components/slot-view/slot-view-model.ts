@@ -16,11 +16,6 @@ export interface CheckResult {
   detail: string;
 }
 
-export interface TaskStep {
-  text: string;
-  checked: boolean;
-}
-
 export interface CodeViewerElement extends HTMLElement {
   _editor?: { getValue(): string };
 }

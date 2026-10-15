@@ -2,223 +2,149 @@ import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import type { Run, TaskProgressStructured } from '@farmslot/protocol';
-
 import {
-  type TaskProgressFallbackSummary,
-  taskProgressPercent,
-  taskProgressTitle,
-} from '../lib/task-progress';
+  type ChecklistPhaseView,
+  type ChecklistProgressFallback,
+  checklistProgressView,
+} from '@farmslot/review-dispatch';
+
+import { activeTaskProgressStepId } from '../lib/task-progress';
 import { subtaskBlockKey, taskStepStatusColor } from '../lib/task-progress-view';
-import { baseStyles, colors, fonts, radii, spacing } from '../lib/theme';
+import { colors, fonts, radii, spacing } from '../lib/theme';
 
 import { TaskSubtaskBlock } from './TaskSubtaskBlock';
 
-export function TaskProgressPanel({
-  run,
-  progress,
-  error,
-  compact,
-}: {
-  run: Run | null;
-  progress: TaskProgressStructured;
-  error?: string | null;
-  compact?: boolean;
-}) {
-  const pct = taskProgressPercent(progress);
-  return (
-    <View style={[styles.card, compact && styles.cardCompact]}>
-      <View style={styles.headerRow}>
-        <View style={styles.headerTextWrap}>
-          <Text style={styles.title}>{taskProgressTitle(run, progress)}</Text>
-          <Text style={baseStyles.textMuted} numberOfLines={1}>
-            {progress.completedSteps}/{progress.totalSteps}
-            {progress.currentPhase ? ` · ${progress.currentPhase}` : ''}
-            {progress.currentStep ? ` · ${progress.currentStep}` : ''}
-          </Text>
-        </View>
-        <Text style={styles.percent}>{Math.round(pct)}%</Text>
+function renderPhases(phases: ChecklistPhaseView[], runId?: string, nested = false) {
+  return phases.map((phase) => (
+    <View key={phase.name} style={styles.phase}>
+      <View style={styles.phaseHeader}>
+        <Text
+          style={[
+            styles.phaseName,
+            {
+              color: phase.running
+                ? colors.accent
+                : phase.complete
+                  ? colors.statusOk
+                  : colors.textPrimary,
+            },
+          ]}
+        >
+          {phase.name}
+        </Text>
+        <Text style={styles.phaseCount}>{phase.counts}</Text>
       </View>
-      <View style={styles.progressTrack}>
-        <View style={[styles.progressFill, { width: `${pct}%` }]} />
-      </View>
-      {error ? <Text style={styles.errorText}>{error}</Text> : null}
-      {progress.phases.map((phase) => (
-        <View key={phase.name} style={styles.phaseCard}>
-          <View style={styles.phaseHeader}>
-            <Text style={styles.phaseName} numberOfLines={1}>
-              {phase.name}
+      {phase.rows.map(({ step, icon }) => (
+        <React.Fragment key={`${phase.name}-${step.index}`}>
+          <View style={[styles.step, step.status === 'running' && styles.runningStep]}>
+            <Text style={[styles.stepIcon, { color: taskStepStatusColor(step.status) }]}>
+              {icon}
             </Text>
-            <Text style={baseStyles.textMuted}>
-              {phase.completedSteps}/{phase.totalSteps}
+            <Text
+              style={[
+                styles.stepName,
+                (step.status === 'done' || step.status === 'skipped') && styles.settledStep,
+              ]}
+            >
+              {step.name}
             </Text>
           </View>
-          {phase.steps.map((step) => (
-            <React.Fragment key={`${phase.name}-${step.index}`}>
-              <View style={styles.stepRow}>
-                <Text style={[styles.stepIcon, { color: taskStepStatusColor(step.status) }]}>
-                  {step.status === 'done' ? '✓' : step.status === 'running' ? '▶' : '○'}
-                </Text>
-                <Text
-                  style={[styles.stepName, step.status === 'done' && styles.stepNameDone]}
-                  numberOfLines={1}
-                >
-                  {step.name}
-                </Text>
-              </View>
-              {/* Child units start collapsed here; Command Center opens an
-                  unsettled one instead. A phone shows one panel at a time, so
-                  the parent checklist stays readable until the viewer taps.
-                  Keyed by run as well as unit id so a run change remounts the
-                  block: see `subtaskBlockKey`. */}
-              {step.subtask ? (
-                <TaskSubtaskBlock
-                  key={subtaskBlockKey(run?.id, step.subtask.id)}
-                  subtask={step.subtask}
-                />
-              ) : null}
-            </React.Fragment>
-          ))}
-        </View>
+          {step.subtask && !nested ? (
+            <TaskSubtaskBlock
+              key={subtaskBlockKey(runId, step.subtask.id)}
+              subtask={step.subtask}
+              renderProgress={renderChildProgress}
+            />
+          ) : null}
+        </React.Fragment>
       ))}
     </View>
-  );
+  ));
 }
 
-export function TaskProgressFallbackPanel({
+function renderChildProgress(progress: TaskProgressStructured) {
+  return renderPhases(checklistProgressView(progress)?.phases ?? [], undefined, true);
+}
+
+/** Native renderer of the same compact checklist view used by Command Center. */
+export function TaskProgressPanel({
+  run = null,
+  progress,
   summary,
   error,
   compact,
 }: {
-  summary: TaskProgressFallbackSummary;
+  run?: Run | null;
+  progress?: TaskProgressStructured | null;
+  summary?: ChecklistProgressFallback;
   error?: string | null;
   compact?: boolean;
 }) {
-  const hasPercent = summary.percent != null;
-  const displayPercent = summary.percent ?? 14;
+  const view = checklistProgressView(progress, {
+    activeStep: activeTaskProgressStepId(run, progress),
+    activeTaskBasename: run?.activeTaskFile?.split('/').pop(),
+    fallback: summary,
+  });
+  if (!view) return null;
   return (
-    <View style={[styles.card, styles.fallbackCard, compact && styles.cardCompact]}>
-      <View style={styles.headerRow}>
-        <View style={styles.headerTextWrap}>
-          <Text style={styles.title}>{summary.title}</Text>
-          <Text style={baseStyles.textMuted} numberOfLines={1}>
-            {summary.meta}
-          </Text>
-        </View>
-        <Text style={styles.percent}>{hasPercent ? `${Math.round(displayPercent)}%` : 'live'}</Text>
-      </View>
-      <View style={styles.progressTrack}>
-        <View
-          style={[
-            styles.progressFill,
-            styles.fallbackProgressFill,
-            { width: `${displayPercent}%` },
-          ]}
-        />
-      </View>
-      <Text style={styles.fallbackText}>
-        Waiting for the structured checklist from the active worker. The slot is still reporting
-        active progress.
-      </Text>
-      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+    <View style={[styles.panel, compact && styles.compact]} testID="checklist-progress">
+      <Text style={styles.heading}>{view.heading}</Text>
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {view.waiting ? (
+        <Text style={styles.waiting}>
+          {view.message}
+          {'\n'}Waiting for the worker checklist.
+        </Text>
+      ) : null}
+      {renderPhases(view.phases, run?.id)}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: colors.bgCard,
-    borderRadius: radii.lg,
-    borderWidth: 1,
-    borderColor: colors.accent + '44',
-    padding: spacing.lg,
-    gap: spacing.md,
-  },
-  cardCompact: {
-    padding: spacing.md,
-  },
-  fallbackCard: {
-    borderColor: colors.statusWarn + '55',
-  },
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: spacing.md,
-    alignItems: 'flex-start',
-  },
-  headerTextWrap: {
-    flex: 1,
-    minWidth: 0,
-  },
-  title: {
-    color: colors.textPrimary,
-    fontSize: fonts.sizeMd,
-    fontWeight: '800',
-  },
-  percent: {
-    color: colors.accent,
-    fontSize: fonts.sizeSm,
-    fontWeight: '800',
+  panel: { backgroundColor: colors.bgCard, borderRadius: radii.md, padding: spacing.lg },
+  compact: { padding: spacing.md },
+  heading: {
     fontFamily: fonts.mono,
+    fontSize: fonts.sizeSm,
+    fontWeight: '600',
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: spacing.sm,
   },
-  progressTrack: {
-    height: 7,
-    borderRadius: 999,
-    backgroundColor: colors.bgSurface,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: 999,
-    backgroundColor: colors.accent,
-  },
-  fallbackProgressFill: {
-    backgroundColor: colors.statusWarn,
-  },
-  fallbackText: {
-    color: colors.textMuted,
-    fontSize: fonts.sizeXs,
-    lineHeight: 16,
-  },
-  phaseCard: {
-    backgroundColor: colors.bgSurface,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.textMuted + '44',
-    padding: spacing.md,
-    gap: spacing.sm,
-  },
+  phase: { marginBottom: spacing.lg },
   phaseHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    gap: spacing.md,
+    gap: spacing.sm,
+    marginBottom: 2,
   },
-  phaseName: {
+  phaseName: { fontFamily: fonts.mono, flex: 1, fontSize: fonts.sizeSm, fontWeight: '600' },
+  phaseCount: { fontFamily: fonts.mono, color: colors.textSecondary, fontSize: fonts.sizeSm },
+  step: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderLeftWidth: 2,
+    borderLeftColor: 'transparent',
+  },
+  runningStep: {
+    borderLeftColor: colors.accent,
+    backgroundColor: colors.bgSurface,
+    borderRadius: radii.sm,
+  },
+  stepIcon: { width: 12, textAlign: 'center', fontFamily: fonts.mono, fontSize: fonts.sizeSm },
+  stepName: {
+    fontFamily: fonts.mono,
     flex: 1,
     color: colors.textPrimary,
     fontSize: fonts.sizeSm,
-    fontWeight: '700',
+    lineHeight: 18,
   },
-  stepRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  stepIcon: {
-    width: 18,
-    fontSize: fonts.sizeSm,
-    fontWeight: '800',
-  },
-  stepName: {
-    flex: 1,
-    minWidth: 0,
-    color: colors.textSecondary,
-    fontSize: fonts.sizeSm,
-  },
-  stepNameDone: {
-    color: colors.textMuted,
-  },
-  errorText: {
-    color: colors.statusWarn,
-    fontSize: fonts.sizeXs,
-  },
+  settledStep: { color: colors.textSecondary },
+  error: { color: colors.statusWarn, fontSize: fonts.sizeSm, marginBottom: spacing.sm },
+  waiting: { color: colors.textSecondary, fontSize: fonts.sizeSm },
 });

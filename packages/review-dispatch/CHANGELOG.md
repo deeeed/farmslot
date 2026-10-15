@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Share compact checklist-progress presentation across operator views.
+
 - Share client sign-in expiry and sign-out confirmation across operator apps.
 
 - Resolve review mode once across explicit selections, recorded run/PR options and project defaults.
