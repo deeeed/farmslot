@@ -314,6 +314,23 @@ export const mediaLightboxStyles = css`
     max-height: 200px;
     overflow: auto;
   }
+  .ml-marker-group > summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ml-marker-group > summary small {
+    color: #a0a0b0;
+  }
+  .ml-marker-group.failed > summary,
+  .ml-marker.failed {
+    border-left: 3px solid var(--color-status-fail, #ff4444);
+    padding-left: 8px;
+  }
+  .ml-timing-info {
+    margin-top: 8px;
+    color: #a0a0b0;
+  }
   .ml-marker {
     display: flex;
     align-items: center;
