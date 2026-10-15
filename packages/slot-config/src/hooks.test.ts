@@ -819,3 +819,31 @@ test('reference repo placeholders name keys only in their exact lowercase form',
     ['mobile', 'perps_library'],
   );
 });
+
+test('runtime template values reach nested project commands and preserve reserved text', () => {
+  const slot = runnerArgsSlotVars({ host: 'remote.invalid' });
+  const project: ProjectVars = {
+    projectName: 'demo',
+    projectConfig: '/pack/project.json',
+    projectFixturesDir: '/pack/fixtures',
+    projectTemplatesDir: '/pack/templates',
+    projectJson: { name: 'demo', vars: { resolver: 'node "{{FARMSLOT_DIR}}/resolve.mjs"' } },
+    runtimeDir: '.agent',
+    artifactDir: '.task',
+  };
+  const values = { farmslot_dir: '/relocated node' };
+  assert.equal(
+    expandTemplate('{{resolver}}', slot, project, values),
+    'node "/relocated node/resolve.mjs"',
+  );
+  assert.equal(
+    expandTemplateWithReservedLast(
+      '{{resolver}} {{feedback}}',
+      slot,
+      project,
+      { feedback: 'literal {{repo}}' },
+      values,
+    ),
+    'node "/relocated node/resolve.mjs" literal {{repo}}',
+  );
+});

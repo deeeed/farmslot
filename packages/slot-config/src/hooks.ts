@@ -164,7 +164,13 @@ function expandTemplateInternal(
   }
   if (includeProjectTemplateVars && projectVars?.projectJson.vars) {
     for (const [key, rawValue] of Object.entries(projectVars.projectJson.vars)) {
-      const value = expandTemplateInternal(String(rawValue), slotVars, projectVars, false);
+      const value = expandTemplateInternal(
+        String(rawValue),
+        slotVars,
+        projectVars,
+        false,
+        extraVars,
+      );
       result = result.replaceAll(`{{${key}}}`, value);
       result = result.replaceAll(`{{${key.toUpperCase()}}}`, value);
     }
@@ -299,7 +305,13 @@ export function knownTemplatePlaceholders(
   // Otherwise expanding the var would smuggle raw {{...}} past the guard
   // through the value itself.
   for (const [key, rawValue] of Object.entries(projectVars?.projectJson.vars ?? {})) {
-    const rendered = expandTemplateInternal(String(rawValue), slotVars, projectVars, false);
+    const rendered = expandTemplateInternal(
+      String(rawValue),
+      slotVars,
+      projectVars,
+      false,
+      extraVars,
+    );
     if (collectPlaceholderTokens(rendered).size === 0) addTo(known, key);
   }
   return known;
@@ -316,12 +328,13 @@ export function expandTemplateWithReservedLast(
   slotVars: SlotVars,
   projectVars: ProjectVars | undefined,
   reserved: Record<string, string>,
+  extraVars?: Record<string, string>,
 ): string {
   let masked = template;
   for (const key of Object.keys(reserved)) {
     masked = masked.replaceAll(`{{${key}}}`, `\u0000${key}\u0000`);
   }
-  let expanded = expandTemplate(masked, slotVars, projectVars);
+  let expanded = expandTemplate(masked, slotVars, projectVars, extraVars);
   for (const [key, value] of Object.entries(reserved)) {
     expanded = expanded.replaceAll(`\u0000${key}\u0000`, value);
   }
