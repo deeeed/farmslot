@@ -4,7 +4,11 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Share the wallet screenshot HUD's bottom-dock layout, reserving footer space and restoring page padding when cleared or replaced.
+
+## 0.10.1 - 2026-10-15
+
+- Align the installed dependency closure with protocol 0.45.0 and retained-run stack attachment.
 
 ## 0.10.0 - 2026-10-15
 

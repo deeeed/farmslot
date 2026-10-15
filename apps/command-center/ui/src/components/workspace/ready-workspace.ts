@@ -97,7 +97,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       this._payload?.prPackage?.packageHash,
     ]);
     if (scope !== this._evidenceScope) {
-      this._evidenceModel = null;
+      this._evidenceModel = this._reviewEvidenceModel();
       this._claimOverrideId = null;
       this._claimOverrideReason = '';
       this._visualReviewReasons = {};
@@ -107,52 +107,52 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     }
     if (!this.runId || this.mockData) return;
     try {
-      const source = await gateway.request<RunRecipeRunsForRunResult>('run.recipeRunsForRun', {
-        runId: this.runId,
-        includeRecordedEvidence: true,
-        decisionId: this.decision?.id,
-        evidenceSnapshotHash: this._payload?.prPackage?.packageHash,
-      });
+      const source = await gateway.request<RunRecipeRunsForRunResult>(
+        'run.recipeRunsForRun',
+        {
+          runId: this.runId,
+          includeRecordedEvidence: true,
+          decisionId: this.decision?.id,
+          evidenceSnapshotHash: this._payload?.prPackage?.packageHash,
+        },
+        60_000,
+      );
       if (request !== this._evidenceRequest || !this.isConnected) return;
-      this._evidenceModel = createEvidenceReviewModel({
-        context: 'pr-preview',
-        gateDecision: this.decision,
-        criteria:
-          this._payload?.acceptanceStatus?.criteria ??
-          this._payload?.acceptanceCriteria?.map((text, index) => ({
-            id: acceptanceCriterionId(index),
-            text,
-          })),
-        ledger: this._payload?.acceptanceStatus,
-        artifacts: this._payload ? this._evidenceArtifacts(this._payload) : [],
-        comparisonSnapshot: this._payload?.prPackage?.reviewSnapshot,
-        criterionSourceUrl: this.run?.links?.find((link) => link.label === 'Jira')?.url,
-        package: source.recordedEvidence?.input,
-        contractVersion: source.recordedEvidence?.contractVersion,
-        claimOverrideAuthority: source.recordedEvidence?.claimOverrideAuthority,
-        visualReviewAuthority: source.recordedEvidence?.visualReviewAuthority,
-        visualReviewContext: source.recordedEvidence?.visualReviewContext,
-        artifactPrefix: source.recordedEvidence?.artifactPrefix,
-        packagePath: source.recordedEvidence?.packagePath,
-        readErrors: source.recordedEvidence?.errors,
-      });
+      this._evidenceModel = this._reviewEvidenceModel(source.recordedEvidence);
       this._evidenceRecipeRunId = source.selectedRecipeRunId;
     } catch (error) {
       if (request === this._evidenceRequest && this.isConnected)
-        this._evidenceModel = createEvidenceReviewModel({
-          gateDecision: this.decision,
-          criteria:
-            this._payload?.acceptanceStatus?.criteria ??
-            this._payload?.acceptanceCriteria?.map((text, index) => ({
-              id: acceptanceCriterionId(index),
-              text,
-            })),
-          ledger: this._payload?.acceptanceStatus,
-          artifacts: this._payload ? this._evidenceArtifacts(this._payload) : [],
-          criterionSourceUrl: this.run?.links?.find((link) => link.label === 'Jira')?.url,
-          readErrors: [error instanceof Error ? error.message : String(error)],
-        });
+        this._evidenceModel = this._reviewEvidenceModel(undefined, [
+          error instanceof Error ? error.message : String(error),
+        ]);
     }
+  }
+  private _reviewEvidenceModel(
+    source?: RunRecipeRunsForRunResult['recordedEvidence'],
+    readErrors?: string[],
+  ): EvidenceReviewModel {
+    return createEvidenceReviewModel({
+      context: 'pr-preview',
+      gateDecision: this.decision,
+      criteria:
+        this._payload?.acceptanceStatus?.criteria ??
+        this._payload?.acceptanceCriteria?.map((text, index) => ({
+          id: acceptanceCriterionId(index),
+          text,
+        })),
+      ledger: this._payload?.acceptanceStatus,
+      artifacts: this._payload ? this._evidenceArtifacts(this._payload) : [],
+      comparisonSnapshot: this._payload?.prPackage?.reviewSnapshot,
+      criterionSourceUrl: this.run?.links?.find((link) => link.label === 'Jira')?.url,
+      package: source?.input,
+      contractVersion: source?.contractVersion,
+      claimOverrideAuthority: source?.claimOverrideAuthority,
+      visualReviewAuthority: source?.visualReviewAuthority,
+      visualReviewContext: source?.visualReviewContext,
+      artifactPrefix: source?.artifactPrefix,
+      packagePath: source?.packagePath,
+      readErrors: source?.errors ?? readErrors,
+    });
   }
   private _renderClaimReview() {
     const model = this._evidenceModel;

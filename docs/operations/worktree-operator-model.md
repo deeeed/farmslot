@@ -95,18 +95,27 @@ farmslot runs export <candidateRunId> --as-package /tmp/candidate.result-package
 
 Real production history stays on main unless you explicitly import with `--keep-ids --force`.
 
-Dev gateway/node stacks load auth from their own `.env.local-auth` or `.env`.
-The Companion wrapper reads `.env.local-auth`. Inherited
-node/gateway credentials, auth mode and bind host are cleared before checkout
-configuration is loaded; shell-exported credentials do not configure a new stack.
+Each sandbox has its own gateway credential store under its isolated
+`FARMSLOT_HOME`. Pair person devices to that gateway and give automation a
+separate service profile. Do not copy the operator gateway's credentials or put
+gateway login tokens in `.env.local-auth`, Companion build settings or templates.
+See [Identity and credentials](../reference/identity-and-credentials.md).
 
-For physical-device LAN mode, each sandbox needs its own token and bind settings
-in `.env.local-auth`; it cannot borrow the operator gateway's credentials.
-A sandbox with no local auth file binds loopback and does not support LAN
-Companion connections. Health checks on loopback do not prove LAN connectivity.
-Slot-local LAN credential provisioning remains a rollout prerequisite.
+Dev stacks clear inherited credentials, auth mode and bind host before loading
+checkout configuration. `.env.local-auth` can supply the local node's machine
+credential and its server-assigned native owner, plus unrelated private provider
+settings. On macOS, remote node deployment retains the installed node's owner unless the
+caller explicitly replaces it.
 
-Standalone gateway hints accept shell exports. When starting through
-`yarn farmdev`, put those same token/password and `GATEWAY_HOST` settings in
-this checkout's `.env.local-auth` or `.env.ports` instead of exporting them.
-An explicit loopback bind belongs in those files too, even with local auth.
+Slot-local credential provisioning remains a rollout prerequisite for
+physical-device LAN mode. Start a new sandbox on loopback first, then provision
+its own admin credential through that loopback gateway or the supported offline
+commands with the sandbox's isolated `FARMSLOT_HOME` at `<runtime>/home`. See
+[Identity and credentials](../reference/identity-and-credentials.md) for issuance
+and offline recovery. Stop the sandbox before offline writes.
+
+Only after the store is activated, restart the sandbox and pair Companion.
+With `GATEWAY_HOST` unset, `dev.sh` binds an activated store to `0.0.0.0`, otherwise
+to loopback. Setting `GATEWAY_HOST=0.0.0.0` before activation makes the gateway
+refuse to start. Put `GATEWAY_HOST=127.0.0.1` in `.env.ports` when LAN access is
+unwanted. Health checks on loopback do not prove LAN connectivity.

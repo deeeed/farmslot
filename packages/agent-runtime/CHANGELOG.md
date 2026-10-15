@@ -3,7 +3,12 @@
 ## Unreleased
 
 - Inspect review account hook policy before task preparation, and isolate named Grok profiles from ambient home hooks and plugins while retaining same-account session resume.
+- Recover a stopped native host whose first process census failed before any session started, preserving the unmatched marker in quarantine and retaining all journals.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.22.4 - 2026-10-15
+
+- Align the installed dependency closure with protocol 0.45.0 and retained-run stack attachment.
 
 ## 0.22.3 - 2026-10-15
 
