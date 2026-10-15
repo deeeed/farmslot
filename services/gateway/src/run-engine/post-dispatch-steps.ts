@@ -95,6 +95,7 @@ import {
   humanGateReviewPolicy,
   humanGateReviewRequestFromDecision,
   remainingExplicitReviewPlan,
+  repairUnboundRecoveryReviewPlan,
   resolveHumanGateReviewExecutionPlan,
 } from './review-plan.js';
 import { recordArtifactOnlyReviewResult } from './review-result.js';
@@ -239,7 +240,7 @@ function stampFreshReviewsForPreparedPackage(
   });
 }
 
-async function reconcilePublishGateReviewPlanResult(
+export async function reconcilePublishGateReviewPlanResult(
   runId: string,
   plan: ReviewSelection[],
   result: PublishGateReviewPlanResult,
@@ -249,11 +250,15 @@ async function reconcilePublishGateReviewPlanResult(
     stampFreshReviews?: boolean;
   } = {},
 ): Promise<number> {
-  const completedReviewCount = result.rejection
-    ? Math.min(result.reviewIds.length, plan.length)
-    : plan.length;
-  const remainingPlan = result.rejection ? plan.slice(completedReviewCount) : [];
   const afterReviewPlan = getRun(runId)!;
+  const reviewedIds = new Set(result.reviewIds);
+  const remainingPlan = remainingExplicitReviewPlan(
+    plan,
+    (afterReviewPlan.engineState?.publishGate?.reviews ?? []).filter((review) =>
+      reviewedIds.has(review.id),
+    ),
+  );
+  const completedReviewCount = plan.length - remainingPlan.length;
   updateRun(runId, {
     engineState: {
       ...afterReviewPlan.engineState,
@@ -1008,7 +1013,32 @@ export async function executeHumanGateStep(
       // Runs persisted before review counting v2 may re-enter directly at the
       // human gate after restart. Repair before deriving an automatic plan so
       // the legacy double-count does not launch a redundant reviewer.
-      const beforeInitialPlan = getRun(runId)!;
+      let beforeInitialPlan = getRun(runId)!;
+      const repairedPlan = repairUnboundRecoveryReviewPlan(
+        beforeInitialPlan,
+        (await readReadyGatePreparedPackage(beforeInitialPlan))?.headSha,
+      );
+      if (repairedPlan) {
+        updateRun(runId, {
+          engineState: {
+            ...beforeInitialPlan.engineState,
+            publishGate: {
+              ...beforeInitialPlan.engineState?.publishGate,
+              reviewSequence: repairedPlan.sequence,
+              reviewSequenceContext: repairedPlan.context,
+              reviewSequenceRequestedAt: repairedPlan.requestedAt,
+            },
+          },
+        });
+        updateRunStep(runId, S.HUMAN_GATE, {
+          detail: repairedPlan.note,
+          outputs: {
+            ...beforeInitialPlan.steps.find((step) => step.name === S.HUMAN_GATE)?.outputs,
+            reviewRecoveryNote: repairedPlan.note,
+          },
+        });
+        beforeInitialPlan = getRun(runId)!;
+      }
       const explicitInitialPlan = beforeInitialPlan.engineState?.publishGate?.reviewSequence ?? [];
       // Operator may have already resolved request-review (e.g. codex) while
       // the engine had no live createEngineDecision waiter. Resume must honor that

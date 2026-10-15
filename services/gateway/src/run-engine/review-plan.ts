@@ -7,6 +7,7 @@ import {
   parseGitHubRef,
   qualifyingPassingReviews,
   type ReviewPolicy,
+  type ReviewRequestContext,
   type ReviewSelection,
   type ReviewSequence,
   type ReviewStatus,
@@ -159,9 +160,60 @@ export function resolveHumanGateReviewExecutionPlan(input: {
   return decision ? reviewPlanFromSelection(decision.selectionData) : [...input.pendingPlan];
 }
 
-export function recoveryReviewPlanForActiveFix(
-  run: Pick<Run, 'agentContexts' | 'engineState'>,
-): ReviewSequence {
+export interface RecoveryReviewPlan {
+  sequence: ReviewSequence;
+  context?: ReviewRequestContext;
+  note?: string;
+  requestedAt?: string;
+}
+
+/** Repair historical recovery rows through the operator's original request. */
+export function repairUnboundRecoveryReviewPlan(
+  run: Run,
+  headSha: string | undefined,
+): RecoveryReviewPlan | undefined {
+  const gate = run.engineState?.publishGate;
+  const sequence = gate?.reviewSequence ?? [];
+  const context = gate?.reviewSequenceContext;
+  if (!sequence.some((row, index) => row.mode === 'warm' && !context?.reviewLineages[index]))
+    return undefined;
+  const request = latestResolvedHumanGateReviewRequestDecision(run.decisions);
+  const original = request ? reviewPlanFromSelection(request.selectionData) : [];
+  const originalContext = request?.selectionData?.reviewRequest
+    ? reviewContextFromRequest(request.selectionData.reviewRequest)
+    : undefined;
+  if (original.length && headSha) {
+    const remaining = remainingExplicitReviewPlan(
+      original,
+      (gate?.reviews ?? []).filter((review) => review.reviewedHeadSha === headSha),
+      { requestedAt: request?.resolvedAt, source: 'human-gate' },
+    );
+    const remainingContext = originalContext
+      ? { reviewLineages: originalContext.reviewLineages.slice(original.length - remaining.length) }
+      : undefined;
+    if (
+      !remaining.some(
+        (row, index) => row.mode === 'warm' && !remainingContext?.reviewLineages[index],
+      )
+    )
+      return {
+        sequence: remaining,
+        context: remainingContext,
+        requestedAt: request?.resolvedAt,
+        note: 'Recovered remaining reviewers from the original gate request; current-head native reviews are retained.',
+      };
+  }
+  return {
+    sequence: sequence.map((row, index) =>
+      row.mode === 'warm' && !context?.reviewLineages[index] ? { ...row, mode: 'cold' } : row,
+    ),
+    context,
+    requestedAt: gate?.reviewSequenceRequestedAt,
+    note: 'WARM recovery has no reviewId lineage context. Using COLD review on the same run; prior reviews remain retained.',
+  };
+}
+
+export function recoveryReviewPlanForActiveFix(run: Run): RecoveryReviewPlan | undefined {
   const contexts = run.agentContexts ?? [];
   if (
     !contexts.some(
@@ -170,7 +222,13 @@ export function recoveryReviewPlanForActiveFix(
         ['launching', 'working', 'waiting'].includes(context.status),
     )
   )
-    return [];
+    return undefined;
+  const latest = [...(run.engineState?.publishGate?.reviews ?? [])]
+    .reverse()
+    .find((review) => review.verdict === 'pass' || review.verdict === 'issues');
+  // A retained fix context can outlive its completed review loop. It does not
+  // authorize replacing the operator's remaining reviewers after a PASS.
+  if (latest?.verdict === 'pass') return undefined;
   const reviewer = contexts
     .filter((context) => context.role === 'review' && context.runner)
     .sort((a, b) =>
@@ -178,18 +236,33 @@ export function recoveryReviewPlanForActiveFix(
         a.attemptStartedAt ?? a.updatedAt ?? '',
       ),
     )[0];
-  if (!reviewer?.runner) return [];
+  if (!reviewer?.runner) return undefined;
   const prior = [...(run.engineState?.publishGate?.reviews ?? [])]
     .reverse()
-    .find((review) => review.reviewerSessionId === reviewer.runnerSessionId);
-  return [
-    {
-      runner: normalizeRunner(reviewer.runner),
-      model: reviewer.model ?? prior?.model ?? null,
-      effort: reviewerContextEffort(reviewer) ?? prior?.effort ?? null,
-      mode: 'warm',
-    },
-  ];
+    .find(
+      (review) => reviewer.runnerSessionId && review.reviewerSessionId === reviewer.runnerSessionId,
+    );
+  const selection: ReviewSelection = {
+    runner: normalizeRunner(reviewer.runner),
+    model: reviewer.model ?? prior?.model ?? null,
+    effort: reviewerContextEffort(reviewer) ?? prior?.effort ?? null,
+    mode: 'warm',
+  };
+  const identity = reviewPRIdentity(run);
+  const context: ReviewRequestContext | undefined =
+    identity && prior ? { reviewLineages: [{ ...identity, reviewId: prior.id }] } : undefined;
+  try {
+    if (!context)
+      throw new WarmReviewRefusal('missing-session', 'no verified reviewId lineage context');
+    assertWarmReviewRequestAvailable(run, { ...selection, context }, [run]);
+    return { sequence: [selection], context };
+  } catch (error) {
+    if (!(error instanceof WarmReviewRefusal)) throw error;
+    return {
+      sequence: [{ ...selection, mode: 'cold' }],
+      note: `WARM recovery unavailable: ${error.message}. Using COLD review on the same run; prior reviews remain retained.`,
+    };
+  }
 }
 
 /** Request refusal happens before a parked run is restored or a gate receipt consumed. */

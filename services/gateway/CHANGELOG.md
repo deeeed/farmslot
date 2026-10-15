@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Preserve unfinished reviewer requests during recovery, restore current-head review progress on replay, and record a COLD fallback when WARM lineage is unavailable.
+
 - Refresh current-head publication packages through their existing gate, preserving prior packages, decisions and selected evidence.
 
 - Keep source and review diff identities stable across user Git settings; disable external diff and text conversion.
