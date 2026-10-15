@@ -24,6 +24,27 @@ export function nativeWorkerViewKey(target: NativeWorkerViewTarget): string {
   ]);
 }
 
+export function nativeWorkerAttemptKey(target: NativeWorkerViewTarget): string {
+  return JSON.stringify([nativeWorkerViewKey(target), target.binding.generation]);
+}
+
+/** One retained input owner opens directly; ambiguous or historical choices stay explicit. */
+export function selectedNativeWorkerTarget(
+  targets: readonly NativeWorkerViewTarget[],
+  selectedKey: string,
+): NativeWorkerViewTarget | undefined {
+  const selected = targets.find((target) => nativeWorkerAttemptKey(target) === selectedKey);
+  if (selected) return selected;
+  const live = targets.filter(
+    (target) =>
+      !target.readOnly &&
+      !target.binding.closedAt &&
+      !target.binding.releasedAt &&
+      !target.binding.recovery,
+  );
+  return live.length === 1 ? live[0] : undefined;
+}
+
 export function nativeWorkerViewPin(target: NativeWorkerViewTarget): NativeWorkerControlTarget {
   if (!target.binding.generation) throw new Error('Worker session generation is not yet available');
   return {

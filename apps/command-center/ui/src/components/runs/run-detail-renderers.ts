@@ -1234,7 +1234,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             ${ctx._showTerminal ? '- Hide' : '+ Show'}
             ${boundSlotId
               ? `Terminal (${boundSlotId})`
-              : `Worktree terminal (${r.reviewWorkspace!.machine})`}
+              : `${r.transport === 'native' ? 'Worktree shell' : 'Reviewer terminal'} (${r.reviewWorkspace!.machine})`}
           </button>
           ${ctx._showTerminal
             ? html`

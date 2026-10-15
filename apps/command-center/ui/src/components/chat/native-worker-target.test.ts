@@ -6,10 +6,12 @@ import type { AgentContext, NativeSessionInfo, NativeSessionReadResult } from '@
 import {
   archivedNativeWorkerTargets,
   assertNativeWorkerViewPage,
+  nativeWorkerAttemptKey,
   nativeWorkerViewControl,
   nativeWorkerViewKey,
   nativeWorkerViewPin,
   type NativeWorkerViewTarget,
+  selectedNativeWorkerTarget,
 } from './native-worker-target.js';
 
 const target: NativeWorkerViewTarget = {
@@ -34,6 +36,30 @@ const session = {
   generation: 'generation',
   workerLeaseId: 'lease',
 } as NativeSessionInfo;
+
+test('the single retained reviewer opens directly without a task-history selection', () => {
+  const historical = {
+    ...target,
+    readOnly: true,
+    binding: { ...target.binding, generation: 'old' },
+  };
+  assert.equal(selectedNativeWorkerTarget([historical, target], ''), target);
+  assert.equal(
+    selectedNativeWorkerTarget([historical, target], nativeWorkerAttemptKey(historical)),
+    historical,
+  );
+  assert.equal(selectedNativeWorkerTarget([historical], ''), undefined);
+  assert.equal(
+    selectedNativeWorkerTarget([target, { ...target, contextId: 'another-reviewer' }], ''),
+    undefined,
+  );
+  for (const binding of [
+    { ...target.binding, closedAt: 'closed' },
+    { ...target.binding, releasedAt: 'released' },
+    { ...target.binding, recovery: { fromGeneration: 'generation', commandId: 'recovery' } },
+  ])
+    assert.equal(selectedNativeWorkerTarget([{ ...target, binding }], ''), undefined);
+});
 
 test('worker controls require the exact live task binding and refuse stale or historical selection', () => {
   assert.deepEqual(nativeWorkerViewControl(target, session), {
