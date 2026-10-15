@@ -18,6 +18,7 @@ const {
   markStepInLines,
   parseChecklist,
   pickSignalPassthrough,
+  operatorWaitHistory,
   readJson,
   signalContentUnchanged,
   writeSignal,
@@ -31,6 +32,7 @@ const {
 } = require('./subtask-unit.cjs');
 
 const START_COMMANDS = new Set(['start']);
+const OPERATOR_COMMANDS = new Set(['wait', 'resume']);
 const TERMINAL_COMMANDS = new Set(['complete', 'no-change', 'blocked']);
 const NO_CHANGE_REPORT = path.join('artifacts', 'no-change-report.md');
 const LEARNINGS_ARTIFACT = path.join('artifacts', 'learnings.md');
@@ -66,6 +68,7 @@ function printHelp() {
       'Override: farmslot-agent mark <task-dir> --checklist REVIEW.md <step> — optional --signal; signal defaults from checklist name.',
       'Bootstrap: ./mark start — role-owned signal with status running (no checklist box).',
       'Progress: ./mark 1, ./mark 2, ... — checks the box and appends checklistTiming.',
+      'Operator: ./mark wait --who "name" --reason "..."; ./mark resume clears the wait without marking a row.',
       'Child units: ./mark sub start <id> --step N --from <path|inline:text>, then ./mark sub <id> <n> | complete [--report PATH] [--mark-last] | blocked --reason "..." | status.',
       '  While a child owns step N, ./mark N is refused; the child complete ticks it. Run ./mark sub --help for the child verbs.',
       'Terminal:',
@@ -89,7 +92,8 @@ function usage() {
 function isMarkStepToken(token) {
   if (token === '--help' || token === '-h') return true;
   const lower = String(token).toLowerCase();
-  if (START_COMMANDS.has(lower) || TERMINAL_COMMANDS.has(lower)) return true;
+  if (START_COMMANDS.has(lower) || OPERATOR_COMMANDS.has(lower) || TERMINAL_COMMANDS.has(lower))
+    return true;
   const stepNumber = Number(token);
   return Number.isInteger(stepNumber) && stepNumber >= 1;
 }
@@ -148,14 +152,28 @@ for (let i = 0; i < rest.length; i += 1) {
 
 const stepToken = String(stepRaw).toLowerCase();
 const isStartCommand = START_COMMANDS.has(stepToken);
+const isOperatorCommand = OPERATOR_COMMANDS.has(stepToken);
 const terminalCommand = TERMINAL_COMMANDS.has(stepToken) ? stepToken : null;
 let stepNumber = null;
-if (!isStartCommand && !terminalCommand) {
+if (!isStartCommand && !isOperatorCommand && !terminalCommand) {
   stepNumber = Number(stepRaw);
   if (!Number.isInteger(stepNumber) || stepNumber < 1) usage();
 }
 
 if (isStartCommand && Object.keys(opts).length > 0) usage();
+if (stepToken === 'resume' && Object.keys(opts).length > 0) usage();
+if (stepToken === 'wait') {
+  if (
+    Object.keys(opts).some((key) => !['who', 'reason'].includes(key)) ||
+    !opts.who?.trim() ||
+    opts.who.trim().length > 128 ||
+    !opts.reason?.trim() ||
+    opts.reason.trim().length > 2048
+  ) {
+    console.error('wait requires --who (1-128 characters) and --reason (1-2048 characters)');
+    process.exit(1);
+  }
+}
 if (terminalCommand === 'no-change' || terminalCommand === 'blocked') {
   if (!opts.reason?.trim()) {
     console.error(`${terminalCommand} requires --reason`);
@@ -397,9 +415,14 @@ function assertTerminalPackagedEvidence(taskPath, taskDir, terminalCommand) {
 }
 
 function buildSignalUpdate(signal, terminal, target, timing, events, now, taskPath, _taskDir) {
+  const sameAttempt =
+    !isStartCommand ||
+    (signal.waitingForOperator && !process.env.FARMSLOT_SIGNAL_ATTEMPT_ID) ||
+    (process.env.FARMSLOT_SIGNAL_ATTEMPT_ID &&
+      signal.attemptId === process.env.FARMSLOT_SIGNAL_ATTEMPT_ID);
   const base = {
     ...pickSignalPassthrough(signal),
-    ...(isStartCommand
+    ...(isStartCommand && !sameAttempt
       ? { attemptId: process.env.FARMSLOT_SIGNAL_ATTEMPT_ID || randomUUID() }
       : {}),
     step: target?.label ?? signal.step ?? 'complete',
@@ -409,6 +432,16 @@ function buildSignalUpdate(signal, terminal, target, timing, events, now, taskPa
       events,
     },
     timestamp: now,
+    ...operatorWaitHistory(signal, now, { reset: !sameAttempt, closeWait: stepToken !== 'wait' }),
+    ...(stepToken === 'wait'
+      ? {
+          waitingForOperator: {
+            who: opts.who.trim(),
+            reason: opts.reason.trim(),
+            since: signal.waitingForOperator?.since ?? now,
+          },
+        }
+      : {}),
   };
 
   if (!terminal) {
@@ -513,19 +546,39 @@ if (
 ) {
   assertChecklistComplete(taskPath, { allowOneUnchecked: true });
 }
-const target = isStartCommand
-  ? { stepNumber: null, label: 'started' }
-  : resolveTarget(taskPath, stepNumber, Boolean(terminalCommand && opts['mark-last']));
+const target =
+  isStartCommand || isOperatorCommand
+    ? { stepNumber: null, label: 'started' }
+    : resolveTarget(taskPath, stepNumber, Boolean(terminalCommand && opts['mark-last']));
 
 const now = new Date().toISOString();
 const signal = readJson(signalPath);
+if (isOperatorCommand && (signal.status !== 'running' || !signal.attemptId)) {
+  console.error(`${stepToken} requires an active signal; use ./mark start first`);
+  process.exit(1);
+}
+if (
+  isOperatorCommand &&
+  process.env.FARMSLOT_SIGNAL_ATTEMPT_ID &&
+  signal.attemptId !== process.env.FARMSLOT_SIGNAL_ATTEMPT_ID
+) {
+  console.error('operator mark belongs to a different worker attempt');
+  process.exit(1);
+}
+if (stepToken === 'resume' && !signal.waitingForOperator) {
+  console.log('signal is already resumed');
+  process.exit(0);
+}
+if (isOperatorCommand || (isStartCommand && signal.waitingForOperator))
+  target.label = signal.step ?? 'started';
 // The launcher owns the attempt. Descendants may repeat bootstrap, but must not
 // replace the parent's identity or reset progress within that same attempt.
 if (
   isStartCommand &&
   process.env.FARMSLOT_SIGNAL_ATTEMPT_ID &&
   signal.attemptId === process.env.FARMSLOT_SIGNAL_ATTEMPT_ID &&
-  signal.status === 'running'
+  signal.status === 'running' &&
+  !signal.waitingForOperator
 ) {
   console.log('signal already started');
   process.exit(0);

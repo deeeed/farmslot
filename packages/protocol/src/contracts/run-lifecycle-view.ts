@@ -1,4 +1,5 @@
 import { isRecord } from '../recipe/common.js';
+import type { WorkerOperatorWait } from '../transport/signal.js';
 
 import type { RunGatePrerequisiteReason, RunGateReadiness } from './run-gate-readiness.js';
 import type { RunStatus } from './runs.js';
@@ -39,6 +40,7 @@ const labels: Record<RunStatus, string> = {
 export function deriveRunLifecycleView(input: {
   status: RunStatus;
   gateReadiness?: unknown;
+  waitingForOperator?: WorkerOperatorWait;
 }): RunLifecycleView {
   const readiness = isGateReadiness(input.gateReadiness) ? input.gateReadiness : undefined;
   const canAdvance = readiness?.state === 'ready' && input.status === 'human-gating';
@@ -55,9 +57,11 @@ export function deriveRunLifecycleView(input: {
   return {
     status: input.status,
     label: labels[input.status],
-    ...(['fixing', 'review-failed', 'reconciling'].includes(input.status)
-      ? { activityLabel: labels[input.status] }
-      : {}),
+    ...(input.waitingForOperator && ['monitoring', 'reviewing', 'fixing'].includes(input.status)
+      ? { activityLabel: `Waiting on operator: ${input.waitingForOperator.who}` }
+      : ['fixing', 'review-failed', 'reconciling'].includes(input.status)
+        ? { activityLabel: labels[input.status] }
+        : {}),
     tone,
     ...(readiness
       ? {

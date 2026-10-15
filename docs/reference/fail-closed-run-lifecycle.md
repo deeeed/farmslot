@@ -161,6 +161,67 @@ so another active or uncertain context retains its normal precedence. It MUST NO
 bypass acceptance, evidence, deterministic checks or resource ownership. Scenario
 mode and runners without this capability retain their existing observations.
 
+### Waiting for an operator
+
+Accepted by the lead, 2026-10-15, under ADR-065 Amendment 3. ADR-045 remains the terminal-contract owner.
+
+`@farmslot/agent-runtime` exports experimental
+`buildOperatorWaitInstructions(taskDir)`. The shared `buildTaskDocument` producer
+and the gateway's lightweight interactive TASK writer consume this single
+instruction definition. Interactive tasks MUST teach wait and resume in both
+document layouts. Harnesses inherit it through task initialization; they add no
+instruction copy or writer. This additive SDK helper ships with runtime 0.24.0.
+
+`./mark wait --who <name> --reason <text>` MUST write a nonterminal `running`
+signal through the existing atomic, role-owned writer. Its optional
+`waitingForOperator` object contains nonempty `who` and `reason` strings and an
+ISO `since` timestamp. It MUST retain the context, attempt, checklist events and
+unchecked rows. An identical repeated wait MUST retain its original timestamp;
+it is not a heartbeat or progress receipt. It MUST refuse a terminal signal.
+
+`./mark resume` MUST clear the wait and preserve the execution attempt and
+checklist. `start`, numeric checklist marks and terminal marks MUST also clear
+it. Clearing a wait MUST NOT imply completion, a checked row, approval or a new
+worker. Existing artifact and terminal-contract checks still apply.
+
+The signal retains closed waits in `operatorWaitIntervals`, ordered nonoverlapping
+`{ since, until }` ISO intervals within the signal timestamp and owned attempt.
+A new attempt MUST discard the preceding attempt's intervals. The monitor uses
+these intervals to recover excluded wait time across restart. Its persisted
+`operatorWaitMs` and `operatorResumedAt` are accounting and inactivity clocks,
+not worker-progress receipts. A stored `Run.waitingForOperator` MUST be cleared
+on load until the monitor revalidates live ownership.
+The latest validated interval's `until` MUST restore the inactivity resume clock
+even when the worker resumed while the gateway was offline. Re-reading that
+interval MUST NOT extend the clock.
+
+The gateway MUST validate shape, freshness, role/context and execution attempt
+before accepting a wait. A valid wait is healthy operator dependency, not
+making-progress or worker-done. The healthy waiting label and monitoring
+suspension also require structured confirmation that the same owned worker is
+still live. While both conditions hold the monitor MUST keep observing the
+owned signal and worker, retain the worker/slot, and suppress inactivity nudges,
+`monitor_max_nudges` and elapsed execution timeout. Worker failure, exit or
+uncertain liveness MUST retain existing guarded recovery and MUST NOT remain
+labelled healthy on the authority of a stored wait signal alone. Explicit
+cancellation and independent resource/credential safety checks remain available.
+Wait time MUST be excluded from the monitor's execution timeout, including
+across restart. Clearing it starts a fresh inactivity window while retaining
+execution time already consumed. A missing, invalid, stale or foreign signal
+MUST NOT suspend monitoring; a stored display label is never authority.
+
+The existing run DTO MUST project only the validated wait. The shared lifecycle
+view MUST expose `Waiting on operator: <who>` to CLI, Command Center and Companion
+while retaining the current nonterminal run status. Terminal settlement removes
+the activity label. Waiting MUST NOT satisfy COMPLETE, publish, output review or
+any human decision prerequisite.
+
+Acceptance MUST cover mark/resume and repeated-wait idempotence; stale/foreign
+signals; monitor nudges and timeout across a restart; resumed monitoring; shared
+client labels; and completion/publication remaining guarded. Live acceptance
+MUST use the production mark command and monitor with an owned native worker
+waiting for an operator, then resume that same execution without a replacement.
+
 ## Recovery invariants and six CI scenarios
 
 Slot re-selection MUST retain the device capabilities of the requested or previously

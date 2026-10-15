@@ -2,16 +2,37 @@ import {
   ARCHIVABLE_BACKLOG_STATUSES,
   BACKLOG_STATUSES,
   type BacklogItem,
+  type BacklogLaunchCandidate,
   type BacklogRefinementSessionGetResult,
   type BacklogRefineResult,
   type BacklogStatus,
   EDITABLE_BACKLOG_STATUSES,
   isTerminalRunStatus,
+  type ReviewSelection,
   type Run,
 } from '@farmslot/protocol';
+import { defaultModelForRunner, type ReviewDispatchCatalog } from '@farmslot/review-dispatch';
 
 import { linkedRunsForBacklogItems } from '../shared/linked-run-model.js';
 import { syncedDraftProject } from '../shared/planning-projects.js';
+
+/** Candidate omission inherits the parent item, so materialize the selected runner's default. */
+export function backlogCandidateExecution(
+  candidate: Pick<BacklogLaunchCandidate, 'runner' | 'role' | 'variant'>,
+  selection: Pick<ReviewSelection, 'runner' | 'model' | 'effort'>,
+  catalog: ReviewDispatchCatalog,
+) {
+  const model = selection.model ?? defaultModelForRunner(selection.runner, catalog) ?? '';
+  return {
+    runner: selection.runner,
+    model,
+    effort: selection.effort ?? '',
+    variant:
+      selection.runner !== candidate.runner && candidate.role === 'comparison'
+        ? `${selection.runner}-${model.replace(/[^a-z0-9]+/gi, '-')}`
+        : (candidate.variant ?? ''),
+  };
+}
 
 export const BACKLOG_SORT_KEYS = [
   'status',

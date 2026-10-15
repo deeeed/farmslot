@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Document modelPickerState as the renderer API and remove the unused modelChoices method.
+
+- Share model filtering and custom-model detection between the web and native execution pickers.
+
 - Share compact checklist-progress presentation across operator views.
 
 - Share client sign-in expiry and sign-out confirmation across operator apps.

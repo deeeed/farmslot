@@ -860,6 +860,7 @@ export async function runReviewRetryLoop({
     }
     let fixSignalBaseline: string | undefined;
     let fixTurnToken: string | undefined;
+    let fixDeliveryDeferred = false;
     try {
       const delivery = await deps.sendFeedbackToWorker(
         vars,
@@ -901,9 +902,12 @@ export async function runReviewRetryLoop({
             undefined,
             { priorPromptSendAttempted: false },
           );
-          if (delivery.status === 'delivered') {
+          if (delivery.status === 'delivered' || delivery.status === 'deferred') {
+            // Deferred acknowledgement is uncertain: the fresh worker may already
+            // be fixing. Keep observing its signal instead of failing the run.
             fixSignalBaseline = '';
-            fixTurnToken = delivery.turnToken;
+            fixDeliveryDeferred = delivery.status === 'deferred';
+            fixTurnToken = delivery.status === 'delivered' ? delivery.turnToken : undefined;
           } else deliveryError = new Error(`fresh-worker fix delivery ${delivery.status}`);
         }
       }
@@ -956,9 +960,13 @@ export async function runReviewRetryLoop({
     const nextLoopNumber = (attempts.at(-1)?.loopNumber ?? retryCount) + 1;
     deps.setProgressDetail?.(
       runId,
-      `Reviewer found ${result.issues.length} issue(s); worker applying fixes (${retryCount}/${maxRetries})...`,
+      fixDeliveryDeferred
+        ? `Reviewer found ${result.issues.length} issue(s); fix delivery unconfirmed, watching REVIEW-FIX-SIGNAL...`
+        : `Reviewer found ${result.issues.length} issue(s); worker applying fixes (${retryCount}/${maxRetries})...`,
     );
-    console.log(`[review] run ${runId.slice(0, 8)} — feedback sent to worker, waiting for fix`);
+    console.log(
+      `[review] run ${runId.slice(0, 8)} — ${fixDeliveryDeferred ? 'fix delivery deferred' : 'feedback sent to worker'}, waiting for fix signal`,
+    );
 
     // Watch the fix task for progress
     const fixTaskPath = slotTaskRelPath(vars, taskDir, REVIEW_FIX_CHECKLIST_TARGET.checklist);

@@ -684,7 +684,7 @@ export function registerRunCommand(program: Command): void {
         const result = await withProgress(
           'Loading runs',
           () =>
-            client.call<{ runs: Array<Record<string, unknown>> }>('run.list', {
+            client.call<{ runs: Run[] }>('run.list', {
               limit: Number(opts.limit),
               ...(opts.active ? { active: true } : {}),
               ...(opts.project ? { project: opts.project } : {}),
@@ -696,7 +696,7 @@ export function registerRunCommand(program: Command): void {
         } else {
           for (const r of result.runs) {
             output.write(
-              `${String(r.id).slice(0, 8)}  ${String(r.status).padEnd(14)} ${String(r.flowType ?? '-').padEnd(12)} ${String(r.ticketOrPr ?? '-')}\n`,
+              `${String(r.id).slice(0, 8)}  ${(deriveRunLifecycleView(r).activityLabel ?? r.status).padEnd(14)} ${String(r.flowType ?? '-').padEnd(12)} ${String(r.ticketOrPr ?? '-')}\n`,
             );
           }
         }
@@ -1168,7 +1168,7 @@ export function registerRunCommand(program: Command): void {
         else if (!result.run) output.write(`No run bound to ${slotId}.\n`);
         else
           output.write(
-            `${result.run.id.slice(0, 8)}  ${String(result.run.status)}  ${result.run.flowType}  ${result.run.ticketOrPr ?? '-'}\n`,
+            `${result.run.id.slice(0, 8)}  ${deriveRunLifecycleView(result.run).activityLabel ?? result.run.status}  ${result.run.flowType}  ${result.run.ticketOrPr ?? '-'}\n`,
           );
       } catch (err) {
         emit.fail(err);

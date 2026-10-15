@@ -679,7 +679,7 @@ process.stdout.write(JSON.stringify(body));
     assert.equal(inherited.machine, true);
     assert.deepEqual(
       evaluate(
-        `const picker=find('pr-execution-picker').element.shadowRoot.querySelector('review-dispatch-picker');return [...picker.shadowRoot.querySelector('[data-testid="review-dispatch-runner"]').options].map(option=>option.value);`,
+        `const picker=find('pr-execution-picker').element.shadowRoot.querySelector('review-dispatch-picker');return [...picker.shadowRoot.querySelector('[data-testid="review-dispatch-runner"]').querySelectorAll('[data-choice-value]')].map(option=>option.dataset.choiceValue);`,
       ),
       ['claude', 'codex', 'cursor', 'grok'],
       'Manual workspace review controls must retain the shared runner choices',

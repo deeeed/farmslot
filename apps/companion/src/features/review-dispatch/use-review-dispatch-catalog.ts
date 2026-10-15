@@ -12,7 +12,11 @@ import {
 
 import { useConnectionStore } from '../../store/connection';
 
-export function useReviewDispatchCatalog(model: ReviewDispatchViewModel, onChange?: () => void) {
+export function useReviewDispatchCatalog(
+  model: ReviewDispatchViewModel,
+  onChange?: () => void,
+  discover = true,
+) {
   const client = useConnectionStore((state) => state.client);
   const status = useConnectionStore((state) => state.status);
   const [, refresh] = useReducer((revision: number) => revision + 1, 0);
@@ -21,7 +25,7 @@ export function useReviewDispatchCatalog(model: ReviewDispatchViewModel, onChang
   useEffect(() => model.subscribe(refresh), [model]);
 
   useEffect(() => {
-    if (!client || status !== 'connected') return;
+    if (!discover || !client || status !== 'connected') return;
     let active = true;
     const generation = client.connectionGeneration;
     void client
@@ -48,7 +52,7 @@ export function useReviewDispatchCatalog(model: ReviewDispatchViewModel, onChang
     return () => {
       active = false;
     };
-  }, [client, model, status]);
+  }, [client, model, status, discover]);
 
   const change = (edit: () => void) => {
     try {

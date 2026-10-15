@@ -9,6 +9,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 - Stop loading checkout authentication in Companion development scripts.
 
 - Use the shared compact worker checklist view and preserve child-unit expansion.
+- Show who an active run is waiting on in run lists and detail status.
 
 - Confirm the secondary Settings sign-out action and retain sign-in with the shared 30-day expiry policy.
 
@@ -50,6 +51,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 - Preserve literal query values in phone deep links. Prepared dev leases watch source edits and clear first-run chrome; recipe sessions promptly release idle simulator runners through the provider lifecycle.
 - Add a live recipe for admin people reading service-owned review workspaces.
+
+- Use shared runner/model chips for new conversations, keep custom models behind Other model, and retain conversation-specific catalogs and profiles.
 
 ## 0.8.1 - 2026-10-11
 

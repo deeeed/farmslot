@@ -4,11 +4,17 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Resume an interrupted self-review fix after gateway restart without skipping its signal or waiting for an operator replay.
+- Keep deferred review fixes under signal observation and coalesce repeated review replays while the same attempt is active.
+
 - Scope review models to their configured runner and surface native reviewer launch errors without waiting for the review timeout.
 - Retain run output and publication evidence in gateway-owned bundles; serve reports, recipe metadata and artifact ranges from pinned local snapshots, with explicit backfill and retention limits.
+- Honor configured runner executables for native static reviews and account preflight, skip retained native startup failures during automatic placement, and report startup causes separately from checkout mismatches.
+
 - Load development provider settings separately from node credentials and stop loading the retired checkout auth file.
 
 - Refuse stale publication approvals before resolving their gate, and retain accepted approvals and their exact package through recovery without restarting reviews.
+- Retain live workers waiting for an operator and suspend inactivity monitoring until the same execution resumes.
 
 - Preserve unfinished reviewer requests during recovery, restore current-head review progress on replay, and record a COLD fallback when WARM lineage is unavailable.
 

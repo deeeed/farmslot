@@ -339,3 +339,57 @@ A schema-v1 report may add optional data without changing existing meaning. Inco
 The target matrix MUST cover each declared project runtime and target independently, including headless, browser, native simulator and physical-device rows where supported. Each phase needs a real dispatch reaching its gate for every adopter and selected flow. A verified row does not establish another row. Record baseline failures and unresolved targets without inflating evidence.
 
 Unit/fixture tests support regression diagnosis but cannot replace those live rows. Default tests must stay under five seconds each and suites under five minutes; longer runtime proof belongs in the manual live tier. Tests MUST NOT start or kill a real tmux server. No shared build output may be rewritten under readers.
+
+## Proposed helper cutover
+
+**Status:** Proposed, under ADR-068 Amendment 3. Existing published behavior remains authoritative until implementation and release.
+
+### Public surface
+
+| Canonical command                                               | Replaces                                       | Named consumer                                                  |
+| --------------------------------------------------------------- | ---------------------------------------------- | --------------------------------------------------------------- |
+| `farmslot task init`                                            | Project `task init` and `pin`                  | Task-template initialization and executable-resolution wrappers |
+| `farmslot task verify`                                          | Private executable/receipt verification        | Task execution wrappers before invoking the frozen entry        |
+| `farmslot task <mark\|closeout>`                                | Project `checklist mark`, `checklist closeout` | Generated task markers and closeout wrappers                    |
+| `farmslot review <checklist\|domain>`                           | Project `review checklist`, `domain`           | Review workflows and domain-selection callers                   |
+| `farmslot recipe quality <build\|plan\|advise\|advisor-status>` | Project `recipe-quality` operations            | Recipe authoring and quality-artifact consumers                 |
+
+The canonical grammar MUST retain each referenced operation's argument mapping, output fields, exit codes and refusal behavior. It MUST preserve task/template selection, role-specific checklist and signal targets, subtask handling, incremental review base/since ranges, domain and parity resolution, quality guidance and explicit advisor policy. Root controls retain their meanings. Validation MUST precede provider effects; generated help and references MUST use that grammar. There MUST be no second public `checklist` or `recipe-quality` alias.
+
+`@farmslot/recipe-cli/harness` owns these additive provider options and exports, consumed by the root CLI and project provider composition:
+
+| Surface                                                                      | Contract                                                                                                                             |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `ProjectProvider.commandOptions.task?: ProjectTaskCommandOptions`            | Extends `TaskInitCommandOptions` and `ChecklistCommandOptions`, with required `stepGates: readonly ChecklistStepGate[]`              |
+| `ProjectProvider.commandOptions.recipeQuality?: RecipeQualityCommandOptions` | Existing builder and optional advisor subcommands; `guidance?: string` carries project quality text                                  |
+| `ProjectProvider.commandOptions.review?: ReviewCommandOptions`               | Project rule data: `baseRules?: string`, `runtimeIds?: readonly string[]`, and `parityRuntimeIds?: Readonly<Record<string, string>>` |
+
+Generic parsing, task-directory production, marking, quality validation, domain matching and review rendering MUST have one shared implementation. Existing template/library resolution remains authoritative. Providers retain project gate predicates, closeout policy, supported runtime IDs, parity mappings and rule text. They MUST NOT invoke their retired CLI or copy a shared handler.
+
+### Task identity and gates
+
+Task initialization MUST freeze the actual Farmslot executable and implementation identity alongside the existing resolved provider, library and configuration identities in the task's execution provenance. The shared producer and provenance verification belong to `@farmslot/agent-runtime`; the recipe host supplies its existing binding and identity data. A provider package MUST NOT be recorded as the CLI executable. New wrappers MUST use the shared verifier, replacing their private resolver implementation.
+
+`@farmslot/agent-runtime`'s task producer owns pin creation and retention. The existing project `mm-harness pin` implementation MUST move/generalize there, with package and source selection supplied by the resolved binding. The CLI distribution/layout comes from the immutable snapshot installation stage in `scripts/deploy-node.sh`; task pinning retains that verified distribution and its dependencies, rather than creating a second CLI installer. `task init` owns this operation. RecipeCook's executable resolver moves to `task init`/`task verify`; its private pin implementation and the standalone `mm-harness pin` route retire after caller migration.
+
+Every frozen implementation input MUST be retained immutably for the task lifetime before generating the marker and receipt: CLI, required shared implementations, provider code/dependencies, canonical libraries and selected configuration bytes. Reuse package installations and task-owned input snapshots; paths to mutable working checkouts alone are insufficient. This adds no global registry. Global CLI pruning, provider rollouts, library pulls and mutable pool updates MUST leave the selected retained inputs usable. Task callbacks resolve those retained provider/library inputs while product and task-recipe source remain editable.
+
+The existing `artifacts/harness-provenance.json` receipt retains its `schemaVersion`, `package`, `source`, `resolvedExecutable`, `entrySha256`, `packageTreeSha256` and `recordedAt` fields and their meanings. New initialization adds `bindingIdentity: TaskRecipeBindingIdentity | null`. `null` means an unbound static task, not an omitted project check. A resolved project binding MUST NOT be discarded to obtain that mode. Missing identity in an older receipt MUST NOT be interpreted as a new unbound task.
+
+`TaskRecipeBindingIdentity` projects the existing `RecipeConformanceIdentity` fields `project`, `app`, `domain`, `adapter`, `target`, `provider`, `implementation`, `libraries` and `configuration`. It excludes `checkout`, `invocations`, `selection` and `trustDigest`: ordinary source and task-recipe edits MUST remain possible. Per-execution reports still bind the current checkout, invocation, resource selection and authorization. The host reconstructs expected tooling identity from retained selected inputs, so new pool defaults MUST NOT reselect a retained task's provider. Configuration verification uses the retained recipe-binding inputs, rather than later unrelated edits to mutable pool records.
+
+`@farmslot/agent-runtime` exports `TaskRecipeBindingIdentity`, `TaskExecutionProvenance` and `verifyTaskExecutionProvenance(taskDir, expectedBindingIdentity)`. The verifier returns the checked receipt or refuses before mutation; it checks the recorded executable/package/source bytes and the supplied tooling identity. Root `task verify`, marking and closeout consume it. Execution wrappers use `task verify --json` through the trusted installed CLI before invoking the verified frozen entry; they MUST NOT first execute a path supplied by an unchecked receipt. Recorded sources remain subject to existing configured/operator-authorized source policy; self-declared hashes alone do not authorize new executable code.
+
+Generated markers MUST target the frozen CLI's `task mark` operation. A bound project's provider MUST opt into task composition through `commandOptions.task` with an explicit `stepGates` array; absence is unsupported. A provider without project gates declares `[]`. A provider with existing gated templates MUST supply its existing predicates and closeout policy, verified by old/new refusal checks; it cannot replace them with `[]`. The framework uses these existing provider declarations, not inferred or new template gate metadata. Explicit caller options retain their existing authority; they MUST NOT waive required gates. Marking and closeout MUST verify recorded identities before changing task state and preserve project checks, required quality evidence, closeout refusals and explicit sharing consent. Missing required provider hooks MUST refuse; an ungated generic fallback is invalid. Helpers MUST NOT acquire resources, repair a runtime or manufacture recipe proof to satisfy a gate. Unbound static task creation remains supported with explicit template inputs; it does not imply project support.
+
+Existing tasks and receipts MUST retain their recorded meaning. The receipt's `schemaVersion` remains `1` for the additive field. For older receipts lacking `bindingIdentity`, new `task verify`, mark and closeout MUST return a typed legacy-receipt refusal without mutation; the original pinned marker remains unchanged and usable. The new commands MUST NOT automatically forward to a legacy CLI.
+
+Verification MUST NOT silently repin a task, rewrite markers, regenerate acceptance identities or replace retained evidence. This amendment introduces no in-place identity upgrade or implicit rebinding on resume. Missing or changed retained inputs refuse; restoring their exact recorded bytes through the owning installation mechanism preserves the receipt. Artifact schemas and selected engine publication remain unchanged.
+
+### Equivalence and deletion
+
+Before moving a caller, its replacement MUST prove the same positive result and refusal cases. Checks include rejected gates leaving checklist/signal state untouched; role and subtask targets; ordinary source edits; usable pins after global CLI pruning, provider rollout and library pull; refused tooling identity drift; review domain/parity/base/since output; invalid quality input writing nothing; and advisor opt-out making no model request. Builder success alone is not a quality judgment.
+
+Help, task verification, template selection and advisor status MUST preserve their read-only behavior. Explicit review generation and advice retain only their existing declared effects and authorization.
+
+Every active pack, skill, template, library and completion caller MUST move or be explicitly retired before its producer is deleted. Other legacy operations retain their existing disposition and equivalence requirements. In particular, `pr-body render` maps to `recipe artifacts --format markdown` only after authored prose and provenance are preserved; help/JSON and review-guide callers move to canonical command help with the existing review/quality data. Settings and provisioning also retain their named replacement requirements. This amendment does not authorize dropping them. Final acceptance still requires the original project/target, real-dispatch and tutorial checks.

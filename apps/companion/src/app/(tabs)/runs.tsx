@@ -229,7 +229,11 @@ function RunCard({
           )}
         </View>
         {(run.steps ?? []).length > 0 && (
-          <RunPipelineMini steps={run.steps} runStatus={run.status} />
+          <RunPipelineMini
+            steps={run.steps}
+            runStatus={run.status}
+            waitingForOperator={run.waitingForOperator}
+          />
         )}
         {primaryVisualPair ? (
           <View style={styles.runComparePreview}>

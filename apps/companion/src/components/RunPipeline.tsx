@@ -6,6 +6,7 @@ import {
   type RunStatus,
   type RunStep,
   type RunStepStatus,
+  type WorkerOperatorWait,
 } from '@farmslot/protocol';
 
 import { colors, fonts, spacing } from '../lib/theme';
@@ -50,7 +51,15 @@ function stepDuration(step: RunStep): string | null {
   return formatStepDuration(Math.max(0, Date.now() - startedAt));
 }
 
-export function RunPipelineMini({ steps, runStatus }: { steps: RunStep[]; runStatus?: RunStatus }) {
+export function RunPipelineMini({
+  steps,
+  runStatus,
+  waitingForOperator,
+}: {
+  steps: RunStep[];
+  runStatus?: RunStatus;
+  waitingForOperator?: WorkerOperatorWait;
+}) {
   const isCancelled = runStatus === 'cancelled';
   const visible = steps.filter((s) => s.status !== 'skipped');
   if (visible.length === 0) return null;
@@ -68,7 +77,9 @@ export function RunPipelineMini({ steps, runStatus }: { steps: RunStep[]; runSta
   const duration = active ? stepDuration(active) : null;
   const label = isCancelled
     ? 'cancelled'
-    : ((runStatus ? deriveRunLifecycleView({ status: runStatus }).activityLabel : undefined) ??
+    : ((runStatus
+        ? deriveRunLifecycleView({ status: runStatus, waitingForOperator }).activityLabel
+        : undefined) ??
       (allDone
         ? 'done'
         : hasFailed

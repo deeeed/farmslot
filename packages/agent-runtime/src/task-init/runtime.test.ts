@@ -14,6 +14,25 @@ import {
   ensureTaskRuntime,
 } from './index.js';
 
+test('interactive task documents teach the shared operator wait and resume commands', () => {
+  const input = {
+    flowType: 'dev',
+    modePreamble: '',
+    vars: { TASK_DIR: '.task/operator', MODE: 'interactive' },
+    description: 'Review the approach before continuing',
+    acceptanceCriteria: [],
+    hasTicketData: false,
+  };
+  const interactive = buildTaskDocument(input);
+  assert.match(interactive, /\.task\/operator\/mark wait --who .* --reason/);
+  assert.match(interactive, /\.task\/operator\/mark resume/);
+  assert.match(interactive, /Resuming grants no approval or completion/);
+  assert.doesNotMatch(
+    buildTaskDocument({ ...input, vars: { ...input.vars, MODE: 'autonomous' } }),
+    /## Waiting for an operator/,
+  );
+});
+
 test('task instructions consume supplied helper commands and leave verdicts to recipe execution', () => {
   const input = {
     flowType: 'dev',

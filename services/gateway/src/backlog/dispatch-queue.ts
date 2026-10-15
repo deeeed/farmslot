@@ -57,6 +57,7 @@ import {
 } from '../review-workspaces/admission.js';
 import { constrainDirectWorkflowExecution } from '../review-workspaces/direct-defaults.js';
 import { bindPRExecutionProfilesToPool } from '../review-workspaces/pool-policy.js';
+import { assertReviewNativeRunnerHealthy } from '../runners/native/review-health.js';
 import { normalizeRunner } from '../runners/registry.js';
 import { discardUndurableRun, getAllRuns, getRun, runRecordPath } from '../runs/store.js';
 import {
@@ -1322,6 +1323,11 @@ async function selectQueuedReviewWorkspace(
             },
             owner.principalId,
           ),
+      );
+      await assertReviewNativeRunnerHealthy(
+        { ...choice, model: execution.model },
+        owner.principalId,
+        admission.executionNodeId,
       );
       eligible = true;
       assertQueueClaimHeld(claim, 'workspace-selection');

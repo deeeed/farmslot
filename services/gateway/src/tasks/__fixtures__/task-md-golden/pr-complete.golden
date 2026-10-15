@@ -7,6 +7,7 @@
 ```text
 TICKET: farmslot-golden/missing#123
 TITLE: Golden task document
+MODE: autonomous
 RUN_ID: run-golden-pr-complete
 FAMILY_ID: family-golden-pr-complete
 BRANCH: feature/golden-pr

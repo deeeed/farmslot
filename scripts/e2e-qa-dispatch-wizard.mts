@@ -489,17 +489,15 @@ process.stdout.write(JSON.stringify(body));
       '#dispatch?flow=review-pr&project=wizard-farm&ticket=example%2Fwizard-farm%23199',
     );
     await waitUI(
-      `return find('[data-testid="review-dispatch-runner"]')?.element.value === 'cursor' && find('[data-testid="review-dispatch-model"]')?.element.value === 'cursor-grok-4.6-xhigh';`,
+      `return find('[data-testid="review-dispatch-runner"]')?.element.dataset.value === 'cursor' && find('[data-testid="review-dispatch-model"]')?.element.dataset.value === 'cursor-grok-4.6-xhigh';`,
     );
     assert.deepEqual(
       evaluate(
-        `return [...find('[data-testid="review-dispatch-runner"]').element.options].map(option=>option.value);`,
+        `return [...find('[data-testid="review-dispatch-runner"]').element.querySelectorAll('[data-choice-value]')].map(option=>option.dataset.choiceValue);`,
       ),
       ['claude', 'codex', 'cursor', 'grok', 'pi', 'opencode'],
     );
-    evaluate(
-      `find('[data-testid="dispatch-execution-options"]').element.querySelector('summary').click();return true;`,
-    );
+    click('review-dispatch-other-model');
     fill('review-dispatch-custom-model', 'composer-2.5-fast');
     evaluate(`find('[data-testid="dispatch-ticket"]').element.focus();return true;`);
     await waitUI(
@@ -715,7 +713,7 @@ process.stdout.write(JSON.stringify(body));
   );
   screenshot('after-static-publication-reviews');
   const publicationPanel = evaluate(
-    `const panel=find('.publication-review-panel').element;const rect=panel.getBoundingClientRect();return {text:panel.textContent.replace(/\\s+/g,' '),modes:[...panel.querySelector('review-dispatch-picker').shadowRoot.querySelectorAll('[data-testid="review-dispatch-mode"]')].map(e=>e.value),buttons:[...panel.querySelectorAll('button')].map(b=>b.textContent.trim()),visible:rect.height>0};`,
+    `const panel=find('.publication-review-panel').element;const rect=panel.getBoundingClientRect();return {text:panel.textContent.replace(/\\s+/g,' '),modes:[...panel.querySelector('review-dispatch-picker').shadowRoot.querySelectorAll('[data-testid="review-dispatch-mode"]')].map(e=>e.dataset.value),buttons:[...panel.querySelectorAll('button')].map(b=>b.textContent.trim()),visible:rect.height>0};`,
   );
   assert(publicationPanel.visible, 'Publication reviews panel must render');
   assert.deepEqual(publicationPanel.modes, ['cold', 'cold']);

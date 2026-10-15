@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.24.0 - 2026-10-15
+
+- Support explicit operator wait and resume marks without settling the worker or changing its checklist.
+
 ## 0.23.3 - 2026-10-15
 
 - Align the published dependency set with the plain runtime and action contract names.

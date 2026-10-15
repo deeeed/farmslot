@@ -148,6 +148,11 @@ test('write-task refuses unsafe account hooks before any support copy or task ma
   assert.equal(command.owner, 'review-owner');
   assert.equal(command.machine, 'review-node');
   assert.equal(command.timeout, 15_000);
+  assert.equal(
+    command.argv[5],
+    pool.grok_path,
+    'native preflight uses the same configured executable as launch',
+  );
   assert.equal(command.argv[3], '/owned/task', 'inspection uses engine-owned task, not PR source');
 });
 
