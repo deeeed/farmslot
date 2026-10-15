@@ -39,6 +39,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 - Release cuts ship production Android to Play internal and closed testing, verify both tracks, and require an explicit iOS platform.
 
 - Preserve literal query values in phone deep links. Prepared dev leases watch source edits and clear first-run chrome; recipe sessions promptly release idle simulator runners through the provider lifecycle.
+- Add a live recipe for admin people reading service-owned review workspaces.
+
 
 ## 0.8.1 - 2026-10-11
 
