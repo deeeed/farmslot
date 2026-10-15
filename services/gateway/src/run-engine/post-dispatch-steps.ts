@@ -74,6 +74,7 @@ import {
 } from './gate-policy.js';
 import { assertRunGateReady, RunGateNotReadyError } from './gate-prerequisites.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
+import { publicationFinalizationAction } from './publication-finalization.js';
 import {
   publicationReviewPolicyForRun,
   requiresPublicationApproval,
@@ -985,7 +986,11 @@ export async function executeHumanGateStep(
   } else if (current.flowType === 'review-pr') {
     await executeReviewGate(runId);
   } else {
-    if (publicationApprovalGate && !hasHeldPublicationApproval(current)) {
+    if (
+      publicationApprovalGate &&
+      !hasHeldPublicationApproval(current) &&
+      !isPublishApprovalAction(publicationFinalizationAction(current))
+    ) {
       // Restart mid-review recovery: a gateway restart during a publish-gate
       // review's await abandons the completed reviewer's result. Re-entering the
       // human gate, ingest any finished-but-lost reviews before re-presenting so
@@ -1210,7 +1215,11 @@ export async function executeHumanGateStep(
     const presentReadyGate = async (): Promise<string> => {
       // A refused approval reopens only the wait. A later explicit review request
       // or Continue Fixing decision still follows its existing owner below.
-      if (publicationApprovalGate && !hasHeldPublicationApproval(getRun(runId)!))
+      if (
+        publicationApprovalGate &&
+        !hasHeldPublicationApproval(getRun(runId)!) &&
+        !isPublishApprovalAction(publicationFinalizationAction(getRun(runId)!))
+      )
         await rerunReviewIfReviewedInputsChanged(runId, context);
       return executeReadyGate(runId);
     };

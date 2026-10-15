@@ -139,6 +139,7 @@ import {
   setRunFlags,
   startRun,
 } from '../run-engine/orchestrator.js';
+import { recordPublicationApproval } from '../run-engine/publication-finalization.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
 import {
   normalizeExhaustedReviewContinuationsForRun,
@@ -2237,6 +2238,16 @@ export async function resolveRunDecision(
       (decision.type === 'monitor_timeout' || interactiveHandoffAllowsExtend(decision));
     if (extendMonitorWindow) persistMonitorWindowStart(params.runId);
     updateRun(params.runId, { decisions: getRun(params.runId)!.decisions });
+    if (
+      isPublishApprovalAction(params.actionId) &&
+      decision.payload?.kind === 'ready' &&
+      decision.payload.prPackage
+    ) {
+      await persistRunNow(
+        recordPublicationApproval(params.runId, decision.payload.prPackage, decision),
+        'publication approval',
+      );
+    }
     releaseLearningsDraft?.();
 
     continueResolvedRunDecision(params, emit, dependencies, gateGeneration);

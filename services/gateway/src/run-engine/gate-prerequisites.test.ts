@@ -955,3 +955,26 @@ test('unresolved approval requires real current-head review inputs and cannot wa
   assert.ok(changed.reasons.some((reason) => reason.code === 'review-inputs-awaiting-review'));
   assert.deepEqual(gateActionsForReadiness(actions, changed), actions.slice(1));
 });
+
+test('zero-review publication policy still refuses changed reviewed inputs before approval', async () => {
+  const prepared = makeReadyGatePackage({
+    reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+  });
+  const readiness = await collectRunGateReadiness(makeRun(), prepared, {
+    deterministic: passed,
+    acceptance: emptyAcceptance,
+    progress: idle,
+    selectedEvidence: passed,
+    reviewedInputsAwaitingReview: async () => 'changed-proof',
+  });
+  const reason = readiness.reasons.find((entry) => entry.code === 'review-inputs-awaiting-review');
+  assert.ok(reason);
+  assert.match(reason.message, /Source or evidence changed after review.*Request reviews/);
+  assert.deepEqual(
+    gateActionsForReadiness(
+      [{ id: 'approve-publish' }, { id: 'approve-publish-unresolved' }, { id: 'hold' }],
+      readiness,
+    ),
+    [{ id: 'hold' }],
+  );
+});

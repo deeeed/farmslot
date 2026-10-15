@@ -1520,3 +1520,49 @@ test('held publication approval reopens only its wait despite persisted review p
   assert.equal(gates, 1);
   assert.deepEqual(getRun(run.id)!.engineState, before);
 });
+
+test('accepted publication resumes its gate without collecting reviews or replacing its package', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'APPROVED-PUBLISH',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  updateRun(run.id, {
+    status: 'human-gating',
+    slotId: null,
+    engineState: {
+      publishGate: {
+        publicationStatus: 'pending_publish',
+        approvedPackageHash: 'approved-package',
+        reviewPolicy: { minimumReviews: 2, requestedBy: 'dispatch' },
+        reviewSequence: [{ runner: 'grok', model: null, effort: null, mode: 'cold' }],
+      },
+    },
+    decisions: [
+      {
+        id: 'approved',
+        type: 'engine_human_gate',
+        title: 'Gate',
+        description: '',
+        actions: [],
+        createdAt: '2026-10-15T00:00:00Z',
+        resolvedAt: '2026-10-15T00:01:00Z',
+        resolvedAction: 'approve-publish-unresolved',
+      },
+    ],
+  });
+  let gates = 0;
+  await executeHumanGateStep(run.id, {
+    ...restartReplayContext(),
+    executePublishGateReviewPlan: async () => assert.fail('approval cannot launch another review'),
+    prepareCompletionPackageForRun: async () => assert.fail('approval cannot replace its package'),
+    executeReadyGate: async () => {
+      gates++;
+      return 'approve-publish-unresolved';
+    },
+  });
+  assert.equal(gates, 1);
+  assert.equal(getRun(run.id)!.decisions.length, 1);
+  assert.equal(getRun(run.id)!.engineState?.publishGate?.approvedPackageHash, 'approved-package');
+});
