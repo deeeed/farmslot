@@ -191,3 +191,34 @@ test('QA profile fields use the farm default and preserve opaque JSON input over
   assert.throws(() => qaDispatchFields(config, '', '{'), /JSON object/);
   assert.equal(config.profiles[1].inputs?.smoke, true);
 });
+
+test('QA dispatch has the same policy/default/sole choice and refuses unresolved profiles', () => {
+  const config: ProjectQaConfig = {
+    default_profile: 'full',
+    profiles: [
+      { id: 'smoke', title: 'Smoke', template_id: 'qa/shared', inputs: { target: 'smoke' } },
+      { id: 'full', title: 'Full', template_id: 'qa/shared', inputs: { target: 'full' } },
+    ],
+  };
+  const policy = {
+    qa: {
+      review: {
+        mode: 'cold' as const,
+        workflow: 'qa' as const,
+        qaProfileId: 'smoke',
+        qaInputs: { count: 2 },
+      },
+    },
+  };
+  assert.deepEqual(qaDispatchFields(config, '', '', policy), {
+    qaProfileId: 'smoke',
+    qaInputs: { target: 'smoke', count: 2 },
+  });
+  assert.deepEqual(qaDispatchFields(config, 'full', '{"count":3}', policy), {
+    qaProfileId: 'full',
+    qaInputs: { target: 'full', count: 3 },
+  });
+  const noDefault: ProjectQaConfig = { profiles: config.profiles };
+  assert.throws(() => qaDispatchFields(noDefault, '', ''), /Choose a QA profile/);
+  assert.equal(qaDispatchFields({ profiles: [config.profiles[0]] }, '', '').qaProfileId, 'smoke');
+});

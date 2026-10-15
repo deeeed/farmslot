@@ -4,6 +4,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { gitDiffArgs } = require('@farmslot/agent-runtime/scripts/git-diff.cjs');
 const {
   appendJsonl,
   assert,
@@ -124,8 +125,11 @@ function createPatchArtifact(
     });
     const diff =
       tracked.status === 0
-        ? spawnSync('git', ['diff', '--binary', '--', file], { cwd: baseDir, encoding: 'utf8' })
-        : spawnSync('git', ['diff', '--binary', '--no-index', '--', '/dev/null', file], {
+        ? spawnSync('git', gitDiffArgs(['--binary', '--', file]), {
+            cwd: baseDir,
+            encoding: 'utf8',
+          })
+        : spawnSync('git', gitDiffArgs(['--binary', '--no-index', '--', '/dev/null', file]), {
             cwd: baseDir,
             encoding: 'utf8',
           });
@@ -247,7 +251,7 @@ function main() {
   const autoDecision = decisionFromScores(scoreVector, laneResults, previousKept);
   const finalDecision = autoDecision.decision;
   const finalReason = autoDecision.reason;
-  const diffArgs = ['diff', '--name-only', '--', ...RECIPE_COOK_PATCH_ROOTS];
+  const diffArgs = gitDiffArgs(['--name-only', '--', ...RECIPE_COOK_PATCH_ROOTS]);
   const currentRecipeCookDiff = spawnSync('git', diffArgs, { cwd: baseDir, encoding: 'utf8' });
   const currentTouchedRecipeCook = currentRecipeCookDiff.stdout
     .split('\n')

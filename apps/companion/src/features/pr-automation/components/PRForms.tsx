@@ -131,7 +131,7 @@ export function PRForms({ viewModel: vm, actions }: PRAutomationController) {
             prReviewWorkflow(vm.effectiveRequest.review) === 'qa' ? 'Request QA' : 'Request review'
           }
           testID="companion-pr-request-submit"
-          disabled={vm.disabled || !vm.executionPickerValid}
+          disabled={vm.disabled || !vm.executionPickerValid || vm.requestQaProfileRequired}
           onPress={actions.saveEditor}
         />
       </View>

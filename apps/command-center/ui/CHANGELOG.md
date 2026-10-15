@@ -5,10 +5,14 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Keep report and evidence links bound to their gateway-retained snapshot, including read-only stale reports.
+- Share QA profile selection across Dispatch and PR requests, disable unresolved choices, and show the admitted profile id and title.
+- Keep pending visual judgments visible while evidence loads or fails; wait up to 60 seconds for gate evidence.
 
 - Review criteria, source-bound Before/After captures and fullscreen video moments together in the Evidence tab, with Unassigned media kept separate.
 
 - Show visual-review delegation and reviewer identity beside acceptance verdicts.
+
+- Add the shared Sign out / switch account control to forget this device login and disconnect until explicit login or pairing.
 
 - Require stored or explicitly supplied login credentials instead of build-time environment secrets, including in the sample configuration.
 

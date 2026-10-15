@@ -6,6 +6,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 - Document the retained-run artifact recovery operation in the generated gateway API.
 
+- Document safe quarantine of an unobserved native host that stopped before recording any session.
 - Update the gateway API reference to protocol 0.45.0 for retained-run attachment.
 
 - Document the typed retained-run stack attachment RPC and graph command.

@@ -300,3 +300,46 @@ for (const bad of [
     assert.equal(existsSync(join(f.root, 'cleanup-recoveries')), false);
   });
 }
+
+for (const observations of [undefined, []]) {
+  test(`quarantines ${observations ? 'empty' : 'missing'} first-census evidence without resetting historical sessions`, (t) => {
+    const f = fixture(t);
+    const original = {
+      hostPid: host,
+      state: observations ? 'unknown' : 'pending',
+      error: 'spawnSync ps ETIMEDOUT',
+      ...(observations ? { observedProcesses: observations } : {}),
+    };
+    f.write('cleanup.json', original);
+    const historical = JSON.stringify({ info: { ...f.info, hostPid: host - 1 } }) + '\n';
+    writeFileSync(join(f.root, 'sessions/session.journal'), historical, { mode: 0o600 });
+    recoverStoppedNativeHost(f.root, supervisor, host);
+    const cleanup = JSON.parse(readFileSync(join(f.root, 'cleanup.json'), 'utf8'));
+    assert.equal(cleanup.state, 'complete');
+    assert.match(cleanup.recoveryReceipt, /^cleanup-quarantine\//);
+    const receipt = JSON.parse(readFileSync(join(f.root, cleanup.recoveryReceipt), 'utf8'));
+    assert.equal(receipt.quarantined, true);
+    assert.deepEqual(receipt.originalCleanup, original);
+    assert.equal(
+      Buffer.from(receipt.originalCleanupBytesBase64, 'base64').toString(),
+      JSON.stringify(original),
+    );
+    assert.equal(readFileSync(join(f.root, 'sessions/session.journal'), 'utf8'), historical);
+    assert.deepEqual(receipt.verifiedStoppedPids, [supervisor, host]);
+  });
+}
+
+test('unobserved startup refuses a surviving supervisor group and keeps the marker intact', (t) => {
+  const f = fixture(t);
+  const original = { ...marker, observedProcesses: [] };
+  f.write('cleanup.json', original);
+  writeFileSync(
+    join(f.root, 'sessions/session.journal'),
+    JSON.stringify({ info: { ...f.info, hostPid: host - 1 } }) + '\n',
+    { mode: 0o600 },
+  );
+  f.live.add(-supervisor);
+  assert.throws(() => recoverStoppedNativeHost(f.root, supervisor, host), /recorded group stopped/);
+  assert.equal(readFileSync(join(f.root, 'cleanup.json'), 'utf8'), JSON.stringify(original));
+  assert.equal(existsSync(join(f.root, 'cleanup-quarantine')), false);
+});

@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import fs, { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 
+import { gitDiffArgs } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import { digestRecipeDocument, type RecipeConformanceSource } from '@farmslot/protocol';
 import type { RecipeArtifactFinalization, RecipeLibrarySource } from '@farmslot/recipe-runner';
 
@@ -341,14 +342,10 @@ function gitSourceFingerprint(topLevel: string, pathspecs: string[], head: Buffe
   hash.update(head);
   hash.update('\0diff\0');
   hash.update(
-    gitBuffer(topLevel, [
-      'diff',
-      '--no-ext-diff',
-      '--binary',
-      head.toString('utf8').trim(),
-      '--',
-      ...pathspecs,
-    ]),
+    gitBuffer(
+      topLevel,
+      gitDiffArgs(['--binary', head.toString('utf8').trim(), '--', ...pathspecs]),
+    ),
   );
   const untracked = gitText(topLevel, [
     'ls-files',

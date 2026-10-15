@@ -34,8 +34,11 @@ export async function writeQaInput(taskDir: string, run: Run): Promise<void> {
 
 export function buildQaTaskSection(taskDir: string, run: Run): string {
   if (run.flowType !== 'qa') return '';
+  if (!run.qa) throw new Error('QA task requires an admitted profile');
   return `
 ## QA inputs
+
+**QA profile:** ${run.qa.profile.title} (\`${run.qa.profile.id}\`)
 
 Read \`${taskDir}/${QA_INPUT}\` for the admitted farm profile, inputs and source reference.
 Use the selected skill to resolve the change scope into immutable revisions and a recipe plan.

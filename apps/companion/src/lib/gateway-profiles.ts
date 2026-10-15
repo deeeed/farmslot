@@ -85,10 +85,13 @@ export async function writeGatewayProfileSecret(
 ): Promise<void> {
   const key = profile.secretStorageKey ?? profileSecretStorageKey(profile.id);
   if (!secret.trim()) {
+    await SecureStore.deleteItemAsync(`${key}.explicit`);
     await SecureStore.deleteItemAsync(key);
     return;
   }
   await SecureStore.setItemAsync(key, secret.trim());
+  // An explicit login takes ownership, even if its value matches the launcher.
+  await SecureStore.setItemAsync(`${key}.explicit`, 'true');
 }
 
 export async function seedPresetGatewayProfileSecrets(profiles: GatewayProfile[]): Promise<void> {
@@ -102,7 +105,9 @@ export async function seedPresetGatewayProfileSecrets(profiles: GatewayProfile[]
       continue;
     }
     const existing = await SecureStore.getItemAsync(profile.secretStorageKey);
-    if (existing !== profile.presetSecret.trim()) {
+    const explicit = await SecureStore.getItemAsync(`${profile.secretStorageKey}.explicit`);
+    // Main-era devices have no marker and retain launcher rotation behavior.
+    if (!existing || explicit !== 'true') {
       await SecureStore.setItemAsync(profile.secretStorageKey, profile.presetSecret.trim());
     }
   }

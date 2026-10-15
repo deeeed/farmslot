@@ -25,6 +25,7 @@ import { isLeakedGatewayTestRun } from '../runs/test-run-leak.js';
 import { withSourcePlanning } from '../sources/runtime.js';
 
 import { pendingDecisionForRun } from './decision-projection.js';
+import { hasHeldPublicationApproval } from './decision-replay.js';
 import { pendingReviewContinuation } from './gate-policy.js';
 import { publicationFinalizationAction } from './publication-finalization.js';
 import { requiresPublicationApproval } from './publication-policy.js';
@@ -179,6 +180,7 @@ export interface RunRecoveryCollaborators {
     slotId: string,
   ) => Promise<PublicationReviewRecoveryResult>;
   replayHumanGate: (runId: string) => Promise<void>;
+  resumeHeldPublicationGate: (runId: string) => Promise<void>;
 }
 
 export async function markTerminalReviewArtifactOperatorRequired(
@@ -353,6 +355,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       continue;
     if (
       run.engineState?.publishGate?.reviewRecovery?.status === 'operator-required' &&
+      !hasHeldPublicationApproval(run) &&
       !run.decisions.some((decision) => !decision.resolvedAt)
     )
       continue;
@@ -404,6 +407,18 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       console.log(
         `[run-engine] run ${run.id.slice(0, 8)} — gate-parked (slot freed for dispatch), skipping slot recovery`,
       );
+      continue;
+    }
+
+    // An approval refused by the old gate is not a review/fix continuation.
+    // Reattach the engine to its running HUMAN_GATE without replaying steps or
+    // deleting task artifacts, ahead of every automatic review recovery branch.
+    if (
+      requiresPublicationApproval(run) &&
+      hasHeldPublicationApproval(run) &&
+      run.steps.some((step) => step.name === S.HUMAN_GATE && step.status === 'running')
+    ) {
+      await deps.resumeHeldPublicationGate(run.id);
       continue;
     }
 

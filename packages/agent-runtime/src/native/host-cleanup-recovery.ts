@@ -60,8 +60,7 @@ export function recoverStoppedNativeHost(
     !object(cleanup) ||
     cleanup.hostPid !== hostPid ||
     !['pending', 'unknown'].includes(String(cleanup.state)) ||
-    !Array.isArray(cleanup.observedProcesses) ||
-    !cleanup.observedProcesses.length
+    (cleanup.observedProcesses !== undefined && !Array.isArray(cleanup.observedProcesses))
   )
     throw new Error('Native cleanup recovery requires matching recorded host evidence');
   const pids = new Set([supervisorPid, hostPid]);
@@ -74,11 +73,13 @@ export function recoverStoppedNativeHost(
     return entry;
   };
   let hostObserved = false;
-  for (const entry of cleanup.observedProcesses) {
+  const observations = Array.isArray(cleanup.observedProcesses) ? cleanup.observedProcesses : [];
+  for (const entry of observations) {
     const observed = observe(processEvidence(entry));
     if (observed.pid === hostPid && observed.parent === supervisorPid) hostObserved = true;
   }
-  if (!hostObserved) throw new Error('Native cleanup recovery cannot identify the old host');
+  if (!hostObserved && observations.length)
+    throw new Error('Native cleanup recovery cannot identify the old host');
   const journals: Record<string, string> = {};
   const sessionRoot = join(root, 'sessions');
   for (const name of readdirSync(sessionRoot).filter((name) => name.endsWith('.journal'))) {
@@ -94,6 +95,11 @@ export function recoverStoppedNativeHost(
       if (entry.info !== undefined) {
         if (!object(entry.info) || typeof entry.info.generation !== 'string')
           throw new Error('Native cleanup recovery has malformed session identity');
+        // An unobserved startup can be quarantined only if it never owned a session.
+        if (!hostObserved && (!pid(entry.info.hostPid) || entry.info.hostPid === hostPid))
+          throw new Error(
+            'Unobserved native host recovery cannot exclude a session from that host',
+          );
         info = entry.info;
         projected.info = { generation: entry.info.generation };
       }
@@ -145,11 +151,14 @@ export function recoverStoppedNativeHost(
   for (const [name, hash] of Object.entries(journals))
     if (digest(privateBytes(join(sessionRoot, name))) !== hash)
       throw new Error('Native session journal changed during cleanup recovery');
-  const history = join(root, 'cleanup-recoveries');
+  const historyName = hostObserved ? 'cleanup-recoveries' : 'cleanup-quarantine';
+  const history = join(root, historyName);
   privateDirectory(history);
   const receipt = `${randomUUID()}.json`;
   durableWrite(join(history, receipt), {
     schemaVersion: 1,
+    quarantined: !hostObserved,
+    ...(!hostObserved ? { originalCleanupBytesBase64: original.toString('base64') } : {}),
     verifiedAt: new Date().toISOString(),
     supervisorPid,
     hostPid,
@@ -163,6 +172,6 @@ export function recoverStoppedNativeHost(
   durableWrite(cleanupPath, {
     ...cleanup,
     state: 'complete',
-    recoveryReceipt: `cleanup-recoveries/${receipt}`,
+    recoveryReceipt: `${historyName}/${receipt}`,
   });
 }

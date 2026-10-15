@@ -5,6 +5,7 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 ## Unreleased
 
 - Open an available retained report with a stale-review warning while keeping report-byte integrity and evidence admission checks.
+- Keep pending visual criteria visible while recorded evidence is loading or unavailable.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

@@ -13,6 +13,7 @@ import {
   type NoChangeGatePayload,
   PUBLISH_APPROVAL_ACTIONS,
   qualifyingPassingReviews,
+  qualifyingTerminalReviewInputs,
   type ReadyGatePrPackage,
   type ReviewAttempt,
   type ReviewDiffSnapshot,
@@ -75,7 +76,10 @@ export function publicationGateDecisionActions(opts: {
   unavailableSnapshotAction?: DecisionAction | null;
   pendingReviewContinuation?: ReviewStatus;
   reviews?: ReviewStatus[];
-  preparedPackage?: { headSha?: string | null; reviewSubjectHash?: string | null } | null;
+  preparedPackage?: Pick<
+    ReadyGatePrPackage,
+    'headSha' | 'reviewSubjectHash' | 'reviewSnapshot' | 'reviewPolicy'
+  > | null;
 }): DecisionAction[] {
   const exhausted = latestExhaustedReview(opts.reviews);
   const continueFix =
@@ -120,15 +124,22 @@ export function publicationGateDecisionActions(opts: {
           }
         : {}),
     },
-    ...(!opts.reviewSatisfied
+    ...(!opts.reviewSatisfied &&
+    opts.preparedPackage &&
+    qualifyingTerminalReviewInputs(opts.reviews ?? []).filter((review) =>
+      publicationReviewMatchesPreparedPackage(review, opts.preparedPackage!),
+    ).length >=
+      effectiveRequiredReviewCount(
+        opts.preparedPackage.reviewPolicy ?? { minimumReviews: 1, requestedBy: 'dispatch' },
+      )
       ? [
           {
             id: APPROVE_PUBLISH_UNRESOLVED_ACTION,
-            label: 'Bypass Review (dangerous)',
+            label: 'Accept Review Findings and Publish',
             style: 'danger' as const,
             description: exhausted
               ? reviewRetryCapReason(exhausted)
-              : 'Publish this package despite missing, failed, or stale reviews. Package and source freshness checks still apply.',
+              : 'Publish this reviewed package despite unresolved findings. Current-head native reviews and freshness checks still apply.',
           },
         ]
       : []),

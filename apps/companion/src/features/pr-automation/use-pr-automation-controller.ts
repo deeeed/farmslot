@@ -14,6 +14,7 @@ import {
   type PRPushListResult,
   type PRReviewIntent,
   type PRReviewSubmission,
+  prReviewWorkflow,
   type PRRulePreview,
   type PRRulePreviewResult,
   type PRRulesListResult,
@@ -348,7 +349,7 @@ export function usePRAutomationController(
       if (editor.kind === 'request') {
         requestKey.current ??= `companion-${Date.now()}-${++requestSequence}-${Math.random().toString(36).slice(2)}`;
         result = await mutate(Methods.PR_REVIEW_REQUEST, {
-          request: buildPRRequest(requestDraft, requestKey.current),
+          request: buildPRRequest(requestDraft, requestKey.current, effectiveRequest),
         });
       } else if (editor.kind === 'repair') {
         result = await mutate(Methods.PR_WATCH_REPAIR, {
@@ -439,6 +440,11 @@ export function usePRAutomationController(
       requestDraft,
       executionPickerValid: executionPicker?.canInvoke('configure') ?? true,
       effectiveRequest,
+      requestQaProfileRequired:
+        prReviewWorkflow(effectiveRequest.review) === 'qa' &&
+        !effectiveRequest.qa?.profiles.some(
+          (profile) => profile.id === effectiveRequest.review.qaProfileId,
+        ),
       requestReviewLineages,
       watches: data?.watches ?? { monitors: [] },
       reviews: data?.reviews ?? { teams: [], rules: [], intents: [] },

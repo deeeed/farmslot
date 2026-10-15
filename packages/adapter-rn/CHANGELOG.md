@@ -4,6 +4,8 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## Unreleased
 
+- Keep source and review diff identities stable across user Git settings; disable external diff and text conversion.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.22.9 - 2026-10-15

@@ -8,6 +8,8 @@ import {
   FLOW_STEPS,
   type FlowType,
   humanGateEnabled,
+  isGateParkInFlightOrFreed,
+  isTerminalRunStatus,
   PipelineSteps,
   type Run,
   type RunDecisionPayload,
@@ -77,7 +79,11 @@ import { schedulerTick } from '../work-graph/store.js';
 import { retainedMaintenanceStepOutputs } from './branch-maintenance.js';
 import { buildCIWatchChainedRunParams } from './ci-watch-chain.js';
 import { executeCIWatchStep } from './ci-watch-step.js';
-import { latestResolvedHumanGateDecision, requiresCollisionPrecheck } from './decision-replay.js';
+import {
+  hasHeldPublicationApproval,
+  latestResolvedHumanGateDecision,
+  requiresCollisionPrecheck,
+} from './decision-replay.js';
 import { DeferredSlotReleases } from './deferred-slot-release.js';
 import { executeDispatchStep, executePrepareStep } from './dispatch-lifecycle-steps.js';
 import {
@@ -89,6 +95,7 @@ import {
 import {
   createEngineDecision,
   handleCollisionDecision,
+  hasEngineDecisionWaiter,
   RedirectedError,
   setEngineDecisionRuntime,
 } from './engine-decisions.js';
@@ -1321,7 +1328,37 @@ const publicationReviewRecoveryWatchers = new Map<
   }
 >();
 
+async function resumeHeldPublicationGate(runId: string): Promise<void> {
+  const run = getRun(runId);
+  if (
+    !run ||
+    !hasHeldPublicationApproval(run) ||
+    isGateParkInFlightOrFreed(run) ||
+    run.status === 'paused' ||
+    isTerminalRunStatus(run.status) ||
+    !run.steps.some((step) => step.name === S.HUMAN_GATE && step.status === 'running') ||
+    run.steps.some(
+      (step) =>
+        step.outputs?.promptDeliveryUncertain || step.outputs?.nativeWorkerOperationUncertain,
+    )
+  )
+    return;
+  if (
+    run.decisions.some((decision) => !decision.resolvedAt && hasEngineDecisionWaiter(decision.id))
+  )
+    return;
+  // HUMAN_GATE stays running and FINALIZE stays pending. Only the existing
+  // driver may complete them after a new valid decision.
+  updateRun(runId, { status: 'human-gating' });
+  await startRunWithStepAcknowledgement(runId, getRunGeneration(runId));
+}
+
 async function replayHumanGateForRecovery(runId: string): Promise<void> {
+  const run = getRun(runId);
+  if (run && hasHeldPublicationApproval(run)) {
+    await resumeHeldPublicationGate(runId);
+    return;
+  }
   // replay-step.ts imports this module (startRun), so import lazily.
   const { runReplayStep } = await import('../methods/run/replay-step.js');
   await runReplayStep(
@@ -1583,6 +1620,7 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
     rearmPublicationReviewRecovery,
     recoverInflightPublicationReviews,
     replayHumanGate: replayHumanGateForRecovery,
+    resumeHeldPublicationGate,
   };
 }
 

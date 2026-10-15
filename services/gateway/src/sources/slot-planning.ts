@@ -1,4 +1,9 @@
-import type { DispatchPreviewParams, Run, SlotStatus } from '@farmslot/protocol';
+import {
+  type DispatchPreviewParams,
+  ReviewQaConfigurationError,
+  type Run,
+  type SlotStatus,
+} from '@farmslot/protocol';
 import { type ProjectSourceContext, withProjectSources } from '@farmslot/slot-config';
 import { assertSourceAttestation } from '@farmslot/slot-config/sources';
 
@@ -14,7 +19,11 @@ export interface SourceSlotPlan extends SlotSelectionPlan {
   run?: Run;
 }
 
-export type SourceSlotPlans = ReadonlyMap<string, SourceSlotPlan | SlotSelectionRefusal>;
+export interface SourceSlotRefusal extends SlotSelectionRefusal {
+  configurationError?: ReviewQaConfigurationError;
+}
+
+export type SourceSlotPlans = ReadonlyMap<string, SourceSlotPlan | SourceSlotRefusal>;
 
 export interface RunSlotSourcePlan extends SourceSlotPlan {
   run: Run;
@@ -24,12 +33,9 @@ export interface ProspectiveSlotSourcePlan extends SourceSlotPlan {
   creationPlan: RunCreationPlan;
 }
 
-export type RunSlotSourcePlans = Map<string, RunSlotSourcePlan | SlotSelectionRefusal>;
+export type RunSlotSourcePlans = Map<string, RunSlotSourcePlan | SourceSlotRefusal>;
 
-export type ProspectiveSlotSourcePlans = Map<
-  string,
-  ProspectiveSlotSourcePlan | SlotSelectionRefusal
->;
+export type ProspectiveSlotSourcePlans = Map<string, ProspectiveSlotSourcePlan | SourceSlotRefusal>;
 
 interface SourceContextPlanningDependencies {
   authority: Pick<SourceAuthority, 'lock'>;
@@ -83,8 +89,8 @@ async function collectSlotSourcePlans<T extends SourceSlotPlan>(
     slot: Pick<SlotStatus, 'slot' | 'machine' | 'project'>,
     sources: ProjectSourceContext,
   ) => Promise<T>,
-): Promise<Map<string, T | SlotSelectionRefusal>> {
-  const plans = new Map<string, T | SlotSelectionRefusal>();
+): Promise<Map<string, T | SourceSlotRefusal>> {
+  const plans = new Map<string, T | SourceSlotRefusal>();
   await Promise.all(
     slots
       .filter((slot) => slot.project === project)
@@ -94,7 +100,10 @@ async function collectSlotSourcePlans<T extends SourceSlotPlan>(
           plans.set(slot.slot, await withProjectSources(sources, () => plan(slot, sources)));
         } catch (error) {
           // Refusals stay per candidate; another node's verified closure can still be selected.
-          plans.set(slot.slot, { refusal: (error as Error).message });
+          plans.set(slot.slot, {
+            refusal: (error as Error).message,
+            ...(error instanceof ReviewQaConfigurationError ? { configurationError: error } : {}),
+          });
         }
       }),
   );

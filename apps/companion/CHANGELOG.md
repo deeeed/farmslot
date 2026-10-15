@@ -6,7 +6,10 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 - Keep report and evidence links bound to their gateway-retained snapshot, including read-only stale reports.
 
+- Show and submit the resolved QA profile, require a choice for ambiguous farms, and retain admitted profile identity in run detail.
 - Direct device setup to person pairing instead of build-time gateway token presets.
+
+- Add the shared Sign out / switch account control to forget this device login and disconnect until explicit login or pairing.
 
 - Reuse the shared criterion comparison model and synchronized Before/After zoom in the existing evidence workspace and player.
 
@@ -40,6 +43,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 - Release cuts ship production Android to Play internal and closed testing, verify both tracks, and require an explicit iOS platform.
 
 - Preserve literal query values in phone deep links. Prepared dev leases watch source edits and clear first-run chrome; recipe sessions promptly release idle simulator runners through the provider lifecycle.
+- Add a live recipe for admin people reading service-owned review workspaces.
 
 ## 0.8.1 - 2026-10-11
 

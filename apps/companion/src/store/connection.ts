@@ -12,6 +12,7 @@ import {
   type PRListUpdatedPayload,
   type PRUpdatedPayload,
   type Run,
+  signOutAccount,
   type SlotStatus,
 } from '@farmslot/protocol';
 
@@ -69,6 +70,7 @@ import { usePRStore } from './prs';
 import { resetFarmState } from './reset-farm-state';
 import { useRunStore } from './runs';
 
+const SIGNED_OUT_KEY = '@farmslot:signedOut';
 const GATEWAY_URL_KEY = '@farmslot:gatewayUrl';
 const GATEWAY_PROFILES_KEY = '@farmslot:gatewayProfiles';
 const ACTIVE_GATEWAY_PROFILE_KEY = '@farmslot:activeGatewayProfileId';
@@ -89,6 +91,8 @@ type DecisionNewEventPayload = {
 
 interface ConnectionStore {
   status: ConnectionState;
+  signedOut: boolean;
+  signOut: () => Promise<void>;
   principalId: string | null;
   workspaceAccess: WorkspaceAccess;
   authorityEpoch: number;
@@ -130,6 +134,7 @@ interface ConnectionStore {
 
 export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   status: 'disconnected',
+  signedOut: false,
   principalId: null,
   workspaceAccess: 'none',
   authorityEpoch: 0,
@@ -154,10 +159,11 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     if (get().client || get().initializing) return; // Prevent concurrent init and HMR duplication
     set({ initializing: true });
     try {
+      const signedOut = (await AsyncStorage.getItem(SIGNED_OUT_KEY)) === 'true';
       const saved = await AsyncStorage.getItem(GATEWAY_URL_KEY);
       const savedProfiles = await readSavedProfiles();
       const profiles = mergeGatewayProfiles(savedProfiles);
-      await seedPresetGatewayProfileSecrets(profiles);
+      if (!signedOut) await seedPresetGatewayProfileSecrets(profiles);
       const savedActiveProfileId = await AsyncStorage.getItem(ACTIVE_GATEWAY_PROFILE_KEY);
       const savedUrl = saved && !isLegacyPresetGatewayUrl(saved) ? saved : null;
       const { profile: activeProfile, url } = selectInitialGatewayConnection(
@@ -166,7 +172,8 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         savedActiveProfileId,
         DEFAULT_GATEWAY_URL,
       );
-      const auth = activeProfile ? await authCredentialsForProfile(activeProfile) : {};
+      const auth =
+        !signedOut && activeProfile ? await authCredentialsForProfile(activeProfile) : {};
       const client = new GatewayClient(url, auth);
 
       // Subscribe to fleet events
@@ -432,6 +439,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       });
 
       set({
+        signedOut,
         gatewayUrl: url,
         profiles,
         activeProfileId: activeProfile?.id ?? '',
@@ -458,7 +466,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       appStateSubscription = AppState.addEventListener('change', (nextState) => {
         livenessController?.setAppActive(nextState === 'active');
       });
-      client.connect();
+      if (!signedOut) client.connect();
     } finally {
       set({ initializing: false });
     }
@@ -507,6 +515,8 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     await AsyncStorage.setItem(ACTIVE_GATEWAY_PROFILE_KEY, profile.id);
     await AsyncStorage.setItem(GATEWAY_URL_KEY, profile.url);
     const auth = await authCredentialsForProfile(profile);
+    await AsyncStorage.removeItem(SIGNED_OUT_KEY);
+    set({ signedOut: false });
     const authMode = profile.authMode ?? 'none';
     const authHeaders = gatewayHttpAuthHeaders(auth);
     const state = get();
@@ -573,6 +583,8 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           : (profile.secretStorageKey ?? profileSecretStorageKey(profile.id)),
     };
     await get().saveProfile(updated, secret);
+    await AsyncStorage.removeItem(SIGNED_OUT_KEY);
+    set({ signedOut: false });
     if (profileId === get().activeProfileId) {
       const auth = await authCredentialsForProfile(updated);
       const authHeaders = gatewayHttpAuthHeaders(auth);
@@ -733,11 +745,42 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     if (transition.changed) void livenessController?.probeFresh();
   },
 
+  signOut: async () => {
+    await signOutAccount({
+      forgetLogin: async () => {
+        const profile = get().profiles.find((p) => p.id === get().activeProfileId);
+        if (profile) await writeGatewayProfileSecret(profile, '');
+        await AsyncStorage.setItem(SIGNED_OUT_KEY, 'true');
+      },
+      closeSession: () => {
+        livenessController?.stop();
+        appStateSubscription?.remove();
+        appStateSubscription = null;
+        get().client?.disconnect();
+        probeAttemptTracker.invalidate();
+        resetFarmState();
+        set((state) => ({
+          signedOut: true,
+          client: null,
+          principalId: null,
+          workspaceAccess: 'none',
+          activeProfileHttpAuthHeaders: {},
+          authorityEpoch: state.authorityEpoch + 1,
+          status: 'disconnected',
+          ...livenessPatch(INITIAL_CONNECTION_LIVENESS),
+        }));
+      },
+    });
+  },
+
   connect: () => {
-    get().client?.connect();
+    if (get().signedOut) return;
+    if (get().client) get().client!.connect();
+    else void get().init();
   },
 
   retryConnection: async () => {
+    if (get().signedOut) return { ok: false, error: 'Sign in or pair to connect.' };
     get().client?.reconnect();
     return get().testConnection();
   },

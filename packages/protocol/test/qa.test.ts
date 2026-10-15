@@ -6,7 +6,9 @@ import {
   assertStaticReviewSelections,
   type ProjectQaConfig,
   qaInputFieldValue,
+  resolveQaProfileId,
   resolveReviewQaDispatch,
+  ReviewQaConfigurationError,
   selectQaProfile,
   validateQaConfig,
 } from '../src/contracts/qa.js';
@@ -91,6 +93,41 @@ test('each farm controls its default and explicit selections stay in that farm',
   assert.equal(selectQaProfile(other).profile.id, 'quick');
   assert.throws(() => selectQaProfile(other, 'candidate'), /does not exist in this farm/);
   assert.throws(() => selectQaProfile(undefined), /no QA presets/);
+});
+
+test('optional defaults preserve configured choices and a sole profile needs no prompt', () => {
+  const single: ProjectQaConfig = { profiles: [config.profiles[1]] };
+  assert.doesNotThrow(() => validateQaConfig(single));
+  assert.equal(resolveQaProfileId(single), 'candidate');
+  assert.equal(selectQaProfile(single).profile.id, 'candidate');
+  assert.equal(resolveQaProfileId(config), 'changes');
+  assert.equal(resolveQaProfileId(config, 'candidate'), 'candidate');
+  assert.equal(resolveQaProfileId(config, undefined, 'candidate'), 'candidate');
+  assert.equal(resolveQaProfileId(config, 'changes', 'candidate'), 'changes');
+  assert.equal(resolveQaProfileId(undefined), undefined);
+  assert.throws(() => selectQaProfile(single, 'changes'), ReviewQaConfigurationError);
+});
+
+test('several profiles without a default require a typed choice with ids and titles', () => {
+  const multiple: ProjectQaConfig = { profiles: config.profiles };
+  assert.doesNotThrow(() => validateQaConfig(multiple));
+  assert.equal(resolveQaProfileId(multiple), undefined);
+  assert.throws(
+    () => selectQaProfile(multiple),
+    (error: unknown) => {
+      assert.ok(error instanceof ReviewQaConfigurationError);
+      assert.equal(error.code, 'REVIEW_QA_NEEDS_CONFIGURATION');
+      assert.match(error.message, /changes \(Validate changes\)/);
+      assert.match(error.message, /candidate \(Validate candidate\)/);
+      assert.deepEqual(error.details?.qaProfiles, [
+        { id: 'changes', title: 'Validate changes' },
+        { id: 'candidate', title: 'Validate candidate' },
+      ]);
+      return true;
+    },
+  );
+  assert.equal(selectQaProfile(multiple, 'candidate').profile.id, 'candidate');
+  assert.throws(() => selectQaProfile(multiple, 'missing'), /does not exist in this farm/);
 });
 
 test('explicit inputs replace defaults without interpreting project scope semantics', () => {
