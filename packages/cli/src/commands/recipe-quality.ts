@@ -36,10 +36,29 @@ export function registerRecipeQualityCommand(recipe: Command): void {
       ])
         command.option(flag);
     }
+    command.helpOption(false).option('-h, --help', 'display help for command');
     command.action(async () => {
       const options: CliOptions = { ...command.optsWithGlobals() };
       try {
         const shared = await import('@farmslot/recipe-cli/harness');
+        if (options.help === true) {
+          let guidance: string | undefined;
+          if (options.project !== undefined || process.env.RECIPE_TASK_DIR) {
+            await shared.withProjectRecipeHost(
+              {
+                ...(await projectRecipeHostOptions('recipe-quality', undefined, options)),
+                deferOutput: false,
+              },
+              async ({ provider }) => {
+                guidance = provider.commandOptions?.recipeQuality?.guidance;
+                return 0;
+              },
+            );
+          }
+          command.outputHelp();
+          if (guidance) console.log(`\n${guidance}`);
+          return;
+        }
         if (operation === 'build') {
           process.exitCode = await shared.handleRecipeQuality([
             operation,
