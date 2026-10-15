@@ -819,7 +819,30 @@ function decisionOwningStepIndex(type: string, flowSteps: readonly string[] | un
   return -1;
 }
 
+// Coalesce review replay preflight before its durable recovery attempt exists.
+const pendingReviewReplays = new Map<string, Promise<RunReplayStepResult>>();
+
 export async function runReplayStep(
+  params: RunReplayStepParams,
+  emit: Emit,
+  hooks: RunReplayStepHooks = {},
+): Promise<RunReplayStepResult> {
+  const run = getRun(params.runId);
+  if (run?.reviewWorkspaceTarget) assertNativeRunOwner(run);
+  if (params.stepName !== PS.REVIEW) return replayRunStep(params, emit, hooks);
+  const pending = pendingReviewReplays.get(params.runId);
+  if (pending) return pending;
+  const replay = replayRunStep(params, emit, hooks);
+  pendingReviewReplays.set(params.runId, replay);
+  try {
+    return await replay;
+  } finally {
+    if (pendingReviewReplays.get(params.runId) === replay)
+      pendingReviewReplays.delete(params.runId);
+  }
+}
+
+async function replayRunStep(
   params: RunReplayStepParams,
   emit: Emit,
   hooks: RunReplayStepHooks = {},
@@ -889,6 +912,24 @@ export async function runReplayStep(
     if (existing.transport !== 'native' && !existing.engineState?.flags?.warmSessionReuse) {
       throw new Error('freshDispatch requires a retained-session handoff run');
     }
+  }
+  const priorReplay = existing.recoveryAttempts?.at(-1);
+  if (
+    params.stepName === PS.REVIEW &&
+    priorReplay?.stepName === PS.REVIEW &&
+    priorReplay.status === 'started' &&
+    existing.recoveryProposal?.generation === (existing.engineState?.generation ?? 0) &&
+    (existing.recoveryProposal.status === 'manual-in-progress' ||
+      existing.recoveryProposal.status === 'auto-in-progress') &&
+    (existing.status === 'reviewing' ||
+      existing.status === 'fixing' ||
+      existing.status === 'reconciling') &&
+    existing.steps.some(
+      (step) => step.name === PS.REVIEW && (step.status === 'pending' || step.status === 'running'),
+    ) &&
+    existing.engineState?.publishGate?.reviewRecovery?.status !== 'operator-required'
+  ) {
+    return { run: existing };
   }
   // Replaying a cancelled run is supported (e.g. resuming ci-watch on an
   // update-branch run). Cancelling released the node, so the graph may have
