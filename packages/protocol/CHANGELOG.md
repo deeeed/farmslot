@@ -9,6 +9,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## 0.46.0 - 2026-10-15
 
 - Expose verified review exceptions so publication actions match their gate prerequisites.
+- Expose scoped review-budget grants and the effective review limit.
 - Resolve QA profiles from an explicit or policy id, an optional project default, or the sole profile; return typed choices for ambiguous requests.
 - Add the shared Sign out / switch account control to forget this device login and disconnect until explicit login or pairing.
 

@@ -1,19 +1,36 @@
-import type { ReviewRoundBudget, ReviewStatus } from '../contracts/runs.js';
+import type { ReviewBudgetExtension, ReviewRoundBudget, ReviewStatus } from '../contracts/runs.js';
 
 export const MAX_REVIEW_ROUNDS = 5;
 
 /** Round budget is separate from the number of qualifying passing reviewers. */
-export function reviewRoundBudget(used: number): ReviewRoundBudget {
+export function reviewRoundBudget(
+  used: number,
+  extensions: readonly ReviewBudgetExtension[] = [],
+): ReviewRoundBudget {
   const count = Number.isFinite(used) ? Math.max(0, Math.floor(used)) : 0;
+  const limit = Math.max(MAX_REVIEW_ROUNDS, ...extensions.map((entry) => entry.limit));
   return {
     used: count,
-    limit: MAX_REVIEW_ROUNDS,
-    remaining: Math.max(0, MAX_REVIEW_ROUNDS - count),
-    label: `Review rounds ${count}/${MAX_REVIEW_ROUNDS}`,
-    ...(count >= MAX_REVIEW_ROUNDS
+    limit,
+    remaining: Math.max(0, limit - count),
+    label: `Review rounds ${count}/${limit}`,
+    ...(extensions.length
+      ? {
+          extensions: [...extensions],
+          extensionSummary: extensions
+            .map(
+              (entry) =>
+                `${entry.previousLimit} → ${entry.limit}, ${entry.principalId}, ${entry.approvedAt}: ${entry.scopeBrief}`,
+            )
+            .join('\n'),
+        }
+      : {}),
+    ...(count >= limit
       ? {
           diagnosis:
-            'The five review rounds are spent. A design problem or scope creep has exhausted the review budget; stop and narrow the change or redesign it.',
+            limit === MAX_REVIEW_ROUNDS
+              ? 'The five review rounds are spent. A design problem or scope creep has exhausted the review budget; stop and narrow the change or redesign it.'
+              : `All ${limit} authorized review rounds are spent; stop and narrow the change or request a lead-approved scoped extension.`,
         }
       : {}),
   };

@@ -103,6 +103,7 @@ import {
   runRefreshPublishPackage,
   runRefreshReviewGate,
 } from '../methods/run/engine-ops.js';
+import { runExtendReviewBudget } from '../methods/run/extend-review-budget.js';
 import {
   runCancel,
   runForceComplete,
@@ -118,6 +119,7 @@ import { runBundleExport, runBundleImport, runBundleList } from '../methods/run-
 import { refreshPublishedEvidence } from '../run-completion/published-evidence-refresh.js';
 
 export interface RouteRunMethodContext {
+  authorizeReviewBudgetExtension?: () => import('@farmslot/protocol').Principal;
   authorizeSourceSelections?: () => void;
   /** Caller-only emitter retained in the routing context; shared run mutations use broadcast. */
   emit: (event: string, payload: unknown) => void;
@@ -145,6 +147,12 @@ export async function routeRunMethod(
   };
 
   switch (method) {
+    case Methods.RUN_EXTEND_REVIEW_BUDGET:
+      return handled(
+        runExtendReviewBudget(p as import('@farmslot/protocol').RunExtendReviewBudgetParams, emit, {
+          authorize: context.authorizeReviewBudgetExtension,
+        }),
+      );
     case Methods.RUN_ADOPT_PUBLISHED_PR:
       return handled(
         runAdoptPublishedPr(p as import('@farmslot/protocol').RunAdoptPublishedPrParams, emit, {

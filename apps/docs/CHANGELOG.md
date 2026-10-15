@@ -15,6 +15,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 - Document doctor recording controls in the generated recipe CLI reference.
 - Document attested human-published PR adoption and its protocol contract.
+- Document the scoped review-budget extension RPC and CLI.
 - Document the single engine-ledger cutover, read-only acceptance CLI and retained-data limits.
 
 - Document authenticated visual claim review in the generated gateway API reference.

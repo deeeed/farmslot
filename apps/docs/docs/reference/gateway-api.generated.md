@@ -305,6 +305,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `run.create`                            | run              | bounded-write | —      | —      | Run Create gateway method.                            |
 | `run.createNative`                      | run              | bounded-write | —      | —      | Run CreateNative gateway method.                      |
 | `run.delete`                            | run              | high-impact   | —      | —      | Run Delete gateway method.                            |
+| `run.extendReviewBudget`                | run              | bounded-write | —      | —      | Run ExtendReviewBudget gateway method.                |
 | `run.forSlot`                           | run              | bounded-write | —      | —      | Run ForSlot gateway method.                           |
 | `run.forceComplete`                     | run              | bounded-write | —      | —      | Run ForceComplete gateway method.                     |
 | `run.get`                               | run              | read-only     | —      | —      | Run Get gateway method.                               |

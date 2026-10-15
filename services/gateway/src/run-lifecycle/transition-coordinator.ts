@@ -29,6 +29,10 @@ export class RunTransitionCoordinator {
     return this.withKey(runKey(runId), operation);
   }
 
+  withReviewBudget<T>(scope: string, operation: TransitionOperation<T>): Promise<T> {
+    return this.withKey(`review-budget:${scope}`, operation);
+  }
+
   private async withKey<T>(key: string, operation: TransitionOperation<T>): Promise<T> {
     const previous = this.tails.get(key) ?? Promise.resolve();
     let release!: () => void;

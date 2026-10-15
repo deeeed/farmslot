@@ -827,12 +827,30 @@ export interface ReadyGateInputSnapshot {
   templateProvenance?: TemplateProvenance | null;
 }
 
+export interface ReviewBudgetExtension {
+  requestId: string;
+  runId: string;
+  project: string;
+  branch: string;
+  repository?: string;
+  prNumber?: number;
+  headSha: string;
+  previousLimit: number;
+  limit: number;
+  scopeBrief: string;
+  principalId: string;
+  principalSubject: import('../rpc/principal.js').PrincipalSubject;
+  approvedAt: string;
+}
+
 export interface ReviewRoundBudget {
   used: number;
   limit: number;
   remaining: number;
   label: string;
   diagnosis?: string;
+  extensions?: ReviewBudgetExtension[];
+  extensionSummary?: string;
 }
 
 export interface ReadyGatePayload {
@@ -2435,6 +2453,8 @@ export interface Run {
   sourceProvenance?: import('../sources/contracts.js').RunSourceProvenance;
   /** Gateway-owned, opaque reviewer admission receipts. Replay must retain these. */
   reviewRoundAdmissions?: string[];
+  /** Gateway-authorized scoped grants; copied with admissions when a PR scope is shared. */
+  reviewBudgetExtensions?: ReviewBudgetExtension[];
   /** Run cleanup preserved resources whose ownership could not be proven. */
   slotTeardownSkipped?: string;
   /** Gateway-owned automatic QA opt-in and durable follow-up status. */

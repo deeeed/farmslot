@@ -1535,6 +1535,11 @@
     "workGraph.attachRun": {
       "surface": "typed-command",
       "command": "farmslot graph attach-run"
+    },
+    "run.extendReviewBudget": {
+      "surface": "typed-command",
+      "command": "farmslot run extend-review-budget",
+      "note": "Authenticated admin grants scoped additional rounds on the owned unpublished run."
     }
   }
 }
