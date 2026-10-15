@@ -5,12 +5,22 @@ import type { Principal } from '@farmslot/protocol';
 import type { GatewayAuthRuntime, GatewayAuthSession } from './auth.js';
 import { systemWorkPrincipal } from './principal-resolver.js';
 
-export type WorkOriginator = { kind: 'principal'; principalId: string } | { kind: 'system' };
+export type WorkOriginator =
+  | { kind: 'principal'; principalId: string; principalGeneration?: number }
+  | { kind: 'system' };
+
+export function principalWorkOriginator(principal: Principal): WorkOriginator {
+  return {
+    kind: 'principal',
+    principalId: principal.id,
+    ...(principal.generation !== undefined ? { principalGeneration: principal.generation } : {}),
+  };
+}
 
 const sessionOriginator = new AsyncLocalStorage<WorkOriginator>();
 
 export function runWithSessionOriginator<T>(principal: Principal, operation: () => T): T {
-  return sessionOriginator.run({ kind: 'principal', principalId: principal.id }, operation);
+  return sessionOriginator.run(principalWorkOriginator(principal), operation);
 }
 
 /** Background scheduling must not adopt the user whose unrelated event woke it. */
@@ -42,7 +52,10 @@ export function resolveWorkOriginator(
 ): Principal | null {
   if (!originator) return null;
   if (originator.kind === 'system') return systemWorkPrincipal();
-  const resolution = runtime.resolver.resolvePrincipalId(originator.principalId);
+  const resolution = runtime.resolver.resolvePrincipalId(
+    originator.principalId,
+    originator.principalGeneration,
+  );
   return resolution.ok ? resolution.principal : null;
 }
 
@@ -53,7 +66,10 @@ export function isWorkOriginator(value: unknown): value is WorkOriginator {
     candidate.kind === 'system' ||
     (candidate.kind === 'principal' &&
       typeof candidate.principalId === 'string' &&
-      candidate.principalId.length > 0)
+      candidate.principalId.length > 0 &&
+      (candidate.principalGeneration === undefined ||
+        (Number.isSafeInteger(candidate.principalGeneration) &&
+          (candidate.principalGeneration as number) > 0)))
   );
 }
 
@@ -63,5 +79,5 @@ export function sessionOriginatorFor(
 ): WorkOriginator {
   const resolution = runtime.resolver.resolveSessionPrincipal(session);
   if (!resolution.ok) throw new Error('Cannot stamp work without an authenticated principal');
-  return { kind: 'principal', principalId: resolution.principal.id };
+  return principalWorkOriginator(resolution.principal);
 }

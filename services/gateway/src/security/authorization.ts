@@ -10,6 +10,7 @@ import { hasNativeWorkspaceAccess } from './native-owner.js';
 
 const IDENTITY_MANAGEMENT_METHODS = new Set([
   'principal.create',
+  'principal.reuseRetiredId',
   'principal.bindNativeOwner',
   'principal.list',
   'principal.grant',

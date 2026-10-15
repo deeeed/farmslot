@@ -35,6 +35,9 @@ mock.module('../../fleet/machine-registry.js', {
 mock.module('../../fleet/node-rpc.js', {
   namedExports: {
     ...nodeRpc,
+    assertNodeReconnectCurrent: () => assert.fail('Display must not reconnect a node'),
+    isNodeTransportUnavailableError: () => false,
+    waitForNode: async () => assert.fail('Display must not wait for a node'),
     getSlotLocality: async () => ({ isLocal: !remote }),
     nodeExec: async () => assert.fail('Display must not execute a remote command'),
     nodeExecArgv: async () => assert.fail('Display must not execute a remote command'),

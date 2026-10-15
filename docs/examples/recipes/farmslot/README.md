@@ -49,8 +49,8 @@ digest-keyed dependency recipes.
 
 ## Identity and credential proof
 
-`identity-credentials.recipe.json` starts disposable service and node identities,
-checks RPC/HTTP authorization and retirement, then drives the browser login form.
+`identity-credentials.recipe.json` starts isolated service, person and node identities,
+checks RPC/HTTP authorization, retirement and generation-bound id reuse, then drives the browser login form.
 It needs Node 22, installed workspace dependencies and an agent-owned Chrome CDP
 endpoint selected by `FARMSLOT_CDP_PORT`. It does not change a live farm.
 
