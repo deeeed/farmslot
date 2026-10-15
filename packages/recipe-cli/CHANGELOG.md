@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Preserve project-resolved parity reference metadata, missing-reference diagnostics and checklist rules in shared review output.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.19.1 - 2026-10-15
