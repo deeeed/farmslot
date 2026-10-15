@@ -129,6 +129,27 @@ mandatory report/lightweight-metadata capacity before admitting work/capture;
 media MUST NOT consume that reservation. Count in-progress copy reservations and
 mirror staging in the same budget. Recorder/transcode limits stay unchanged.
 
+The owning gateway reads overrides from `run-bundle-retention.json` beside its
+`run-bundles` directory, normally `${FARMSLOT_HOME}/run-bundle-retention.json`:
+
+```json
+{
+  "runBundleRetention": {
+    "maxBundleBytes": 2147483648,
+    "maxStoreBytes": 25769803776,
+    "metadataReserveBytes": 536870912,
+    "mediaRetentionDays": 30
+  }
+}
+```
+
+This example explicitly sets a 24 GiB store budget; the default remains 20 GiB.
+Inventory existing gateway acquisition trees before rollout and set the deployment
+budget against their full physical size and available disk headroom. Historical
+copies remain charged, including preserved unique media of deleted runs. Do not
+exclude legacy bytes to create apparent capacity. Admission reserves all selected
+media for a capture together; it does not rescan those trees for each media file.
+
 Capture and commit the report, manifests, ledger, trace/timeline and review
 metadata before media admission. Media quota exhaustion MUST NOT discard or hide
 a produced report: commit the available report/metadata with explicit missing

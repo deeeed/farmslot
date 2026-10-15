@@ -608,6 +608,7 @@ test('an in-flight media transfer reserves its ceiling without holding global ad
   const f = await fixture(t);
   await rm(path.join(f.taskDir, 'artifacts/capture.mp4'));
   const video = Buffer.alloc(25_000, 3);
+  let transfers = 0;
   let enter!: () => void;
   let release!: () => void;
   const entered = new Promise<void>((resolve) => {
@@ -621,14 +622,17 @@ test('an in-flight media transfer reserves its ceiling without holding global ad
     ...f.request,
     artifacts: [
       f.artifacts[0]!,
-      {
-        path: 'artifacts/capture.mp4',
-        purpose: 'video',
-        sha256: createHash('sha256').update(video).digest('hex'),
-        sizeBytes: video.length,
-      },
+      ...['capture.mp4', 'second.mp4', 'third.mp4'].map(
+        (name): ArtifactRef => ({
+          path: `artifacts/${name}`,
+          purpose: 'video',
+          sha256: createHash('sha256').update(video).digest('hex'),
+          sizeBytes: video.length,
+        }),
+      ),
     ],
     acquireMedia: async (_artifact, destination) => {
+      transfers++;
       enter();
       await held;
       await writeFile(destination, video);
@@ -663,4 +667,44 @@ test('an in-flight media transfer reserves its ceiling without holding global ad
     release();
     await capture;
   }
+  assert.equal(transfers, 3);
+});
+
+test('GC preserves a historical capture while its missing media is being repaired', async (t) => {
+  const f = await fixture(t);
+  const old = new Date(Date.now() - 2 * 86_400_000);
+  t.mock.timers.enable({ apis: ['Date'], now: old.getTime() });
+  const original = await materializeRunBundle(f.request);
+  t.mock.timers.reset();
+  await writeFile(
+    path.join(f.store.runsDir, `${f.run.id}.json`),
+    JSON.stringify({ ...f.run, artifactBundle: original.ref }),
+  );
+  const payload = await resolveRunBundleEntry({
+    store: f.store,
+    ref: original.ref,
+    runId: f.run.id,
+    path: 'artifacts/capture.mp4',
+  });
+  await rm(payload.path);
+  const [name] = await readdir(path.join(f.store.runsDir, 'bundle-intents'));
+  assert.ok(name);
+  const intent = path.join(f.store.runsDir, 'bundle-intents', name);
+  const repaired = await materializeRunBundle({
+    ...f.request,
+    existingRef: original.ref,
+    acquireMedia: async (_artifact, destination) => {
+      // Exercise lease ownership too, independently of a fresh retry's intent timestamp.
+      await utimes(intent, old, old);
+      await collectRunBundleGarbage(f.store);
+      await writeFile(destination, 'video bytes');
+      return {
+        sha256: createHash('sha256').update('video bytes').digest('hex'),
+        bytes: Buffer.byteLength('video bytes'),
+      };
+    },
+  });
+  assert.deepEqual(repaired.ref, original.ref);
+  assert.deepEqual(repaired.missingData, []);
+  assert.equal(await readFile(payload.path, 'utf8'), 'video bytes');
 });

@@ -214,10 +214,9 @@ async function withBundleLock<T>(
   name: string,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const release = await lockfile.lock(path.join(store.runsDir, name), {
-    lockfilePath: path.join(store.runsDir, name),
-    realpath: false,
-    stale: 30_000,
+  const options = bundleLockOptions(store, name);
+  const release = await lockfile.lock(options.lockfilePath, {
+    ...options,
     update: 2_000,
     retries: { retries: 1500, factor: 1, minTimeout: 20, maxTimeout: 50 },
   });
@@ -226,6 +225,14 @@ async function withBundleLock<T>(
   } finally {
     await release();
   }
+}
+
+function bundleLockOptions(store: RunBundleStore, name: string) {
+  return { lockfilePath: path.join(store.runsDir, name), realpath: false, stale: 30_000 };
+}
+
+function repairLockName(digest: string): string {
+  return `bundle-repair-${digest}.lock`;
 }
 
 export function isRunBundleMedia(file: string): boolean {
@@ -279,8 +286,20 @@ async function chargedStoreBytes(store: RunBundleStore): Promise<number> {
   return bytes;
 }
 
-/** Count every gateway acquisition tree, including preserved media of archived/deleted runs. */
+const acquisitionScans = new Map<string, Promise<number>>();
+
+/** Share only an in-flight scan, never a stale footprint or a separate accounting store. */
 async function acquisitionBytes(root: string): Promise<number> {
+  let scan = acquisitionScans.get(root);
+  if (!scan) {
+    scan = scanAcquisitionBytes(root).finally(() => acquisitionScans.delete(root));
+    acquisitionScans.set(root, scan);
+  }
+  return scan;
+}
+
+/** Count every gateway acquisition tree, including preserved media of archived/deleted runs. */
+async function scanAcquisitionBytes(root: string): Promise<number> {
   let bytes = 0;
   try {
     for (const project of await readdir(path.join(root, 'projects'), { withFileTypes: true })) {
@@ -306,11 +325,14 @@ async function acquisitionBytes(root: string): Promise<number> {
   return bytes + (await sandbox(path.join(root, '.sandbox')));
 }
 
-async function chargedCaptureBytes(request: MaterializeRunBundleRequest): Promise<number> {
+async function chargedCaptureBytes(
+  request: MaterializeRunBundleRequest,
+  acquisitionSize: number,
+): Promise<number> {
   return (
     (await chargedStoreBytes(request.store)) +
     (await reservedMetadataBytes(request.store, request.run.id)) +
-    (await acquisitionBytes(request.farmslotRoot)) +
+    acquisitionSize +
     (request.stagingBytes ?? 0)
   );
 }
@@ -349,6 +371,7 @@ export async function reserveRunBundleMetadata(
   await assertStorePairing(store);
   assertSafeBundleSegment(runId, 'run id');
   assertPolicy(policy);
+  const acquisitionSize = farmslotRoot ? await acquisitionBytes(farmslotRoot) : 0;
   return withRunBundleStoreLock(store, async () => {
     const file = path.join(store.root, 'reservations', `${runId}.json`);
     if (await readOptional(file)) return;
@@ -357,11 +380,7 @@ export async function reserveRunBundleMetadata(
     if (
       bytes === 0 ||
       reserved + bytes > policy.metadataReserveBytes ||
-      (await chargedStoreBytes(store)) +
-        reserved +
-        bytes +
-        (farmslotRoot ? await acquisitionBytes(farmslotRoot) : 0) >
-        policy.maxStoreBytes
+      (await chargedStoreBytes(store)) + reserved + bytes + acquisitionSize > policy.maxStoreBytes
     )
       throw new Error(
         'Retained report metadata capacity is exhausted; free storage before starting work.',
@@ -447,6 +466,7 @@ async function completeRetainedPayloads(
   ref: RunArtifactBundleRef,
   directory: string,
   manifest: RunBundleManifest,
+  acquisitionSize: number,
 ): Promise<string[]> {
   const policy = request.policy ?? DEFAULT_RUN_BUNDLE_RETENTION;
   // The capture-scoped lock excludes another repair. Global admission remains free during IO.
@@ -467,6 +487,7 @@ async function completeRetainedPayloads(
   });
   const restored = new Set<string>();
   try {
+    const pending: Array<[string, RunBundleManifest['entries'][string]]> = [];
     for (const [key, meta] of Object.entries(manifest.entries)) {
       if (!key.startsWith(prefix)) continue;
       const target = resolvePathInsideRoot(directory, key);
@@ -476,29 +497,55 @@ async function completeRetainedPayloads(
       } catch (error) {
         if (!hasCode(error, 'ENOENT')) throw error;
       }
-      const relative = key.slice(prefix.length);
-      const admitted = await withRunBundleStoreLock(request.store, async () => {
-        const used = await chargedCaptureBytes(request);
-        const available = Math.min(
-          policy.maxStoreBytes -
-            used -
-            (isRunBundleMedia(relative) ? policy.metadataReserveBytes : 0),
-          policy.maxBundleBytes - (await physicalBytes(directory)),
-        );
-        if (meta.bytes > available) return false;
-        // A sparse ceiling reserves the transfer without allocating a second payload copy.
+      pending.push([key, meta]);
+    }
+    let remaining = 0;
+    const admitted = await withRunBundleStoreLock(request.store, async () => {
+      const selected: typeof pending = [];
+      if (!pending.length) return selected;
+      let storeAvailable =
+        policy.maxStoreBytes - (await chargedCaptureBytes(request, acquisitionSize));
+      let bundleAvailable = policy.maxBundleBytes - (await physicalBytes(directory));
+      for (const [key, meta] of pending) {
+        const relative = key.slice(prefix.length);
+        const reserve = isRunBundleMedia(relative) ? policy.metadataReserveBytes : 0;
+        if (meta.bytes > Math.min(storeAvailable - reserve, bundleAvailable)) {
+          missing.push(`media-capacity:${relative}`);
+          continue;
+        }
+        selected.push([key, meta]);
+        storeAvailable -= meta.bytes;
+        bundleAvailable -= meta.bytes;
+        remaining += meta.bytes;
+      }
+      if (selected.length) {
+        // Reserve the complete transfer once, including its partially written bytes.
         const handle = await open(reservation, 'wx', 0o600);
         try {
-          await handle.truncate(meta.bytes);
+          await handle.truncate(remaining);
         } finally {
           await handle.close();
         }
-        return true;
-      });
-      if (!admitted) {
-        missing.push(`media-capacity:${relative}`);
-        continue;
       }
+      return selected;
+    });
+    // Called under the store lock with the payload commit or failed-transfer cleanup.
+    const consumeReservation = async (bytes: number) => {
+      const next = remaining - bytes;
+      if (!next) await rm(reservation, { force: true });
+      else {
+        const handle = await open(reservation, 'r+');
+        try {
+          await handle.truncate(next);
+        } finally {
+          await handle.close();
+        }
+      }
+      remaining = next;
+    };
+    for (const [key, meta] of admitted) {
+      const relative = key.slice(prefix.length);
+      const target = resolvePathInsideRoot(directory, key);
       const temp = path.join(repairStage, `${randomUUID()}.tmp`);
       try {
         let copied: RunBundlePayloadIdentity;
@@ -524,12 +571,12 @@ async function completeRetainedPayloads(
             await rename(temp, target);
             restored.add(key);
           }
-          await rm(reservation);
+          await consumeReservation(meta.bytes);
         });
       } catch (error) {
         await withRunBundleStoreLock(request.store, async () => {
           await rm(temp, { force: true });
-          await rm(reservation, { force: true });
+          await consumeReservation(meta.bytes);
         });
         if (!hasCode(error, 'ENOENT')) throw error;
         missing.push(`missing:${relative}`);
@@ -697,15 +744,21 @@ export async function collectRunBundleGarbage(
     const committedIntents = new Map<string, string[]>();
     for (const file of await readdir(intentsDir)) {
       if (!file.endsWith('.json')) continue;
-      const intent: CaptureIntent = JSON.parse(await readFile(path.join(intentsDir, file), 'utf8'));
+      const intentPath = path.join(intentsDir, file);
+      const intent: CaptureIntent = JSON.parse(await readFile(intentPath, 'utf8'));
       if (intent.committed && intent.bundleDigest) {
         const files = committedIntents.get(intent.bundleDigest) ?? [];
         files.push(path.join(intentsDir, file));
         committedIntents.set(intent.bundleDigest, files);
       }
       if (!intent.committed) {
-        if (!activeRuns.has(intent.runId) && now - Date.parse(intent.exportedAt) > 86_400_000) {
-          await rm(path.join(intentsDir, file));
+        const inactive = now - (await stat(intentPath)).mtimeMs > 86_400_000;
+        const repair = intent.bundleDigest
+          ? bundleLockOptions(store, repairLockName(intent.bundleDigest))
+          : null;
+        const repairing = repair ? await lockfile.check(repair.lockfilePath, repair) : false;
+        if (!activeRuns.has(intent.runId) && inactive && !repairing) {
+          await rm(intentPath);
           continue;
         }
         activeStages.add(intent.bundleId);
@@ -798,6 +851,7 @@ export async function materializeRunBundle(
   await assertStorePairing(store);
   const policy = request.policy ?? DEFAULT_RUN_BUNDLE_RETENTION;
   assertPolicy(policy);
+  const acquisitionSize = await acquisitionBytes(request.farmslotRoot);
   const captured = await withRunBundleStoreLock(store, async () => {
     const taskKey = run.id;
     const intentPath = path.join(
@@ -892,7 +946,7 @@ export async function materializeRunBundle(
     };
     const missingData: string[] = [];
     let bundleBytes = Buffer.byteLength(intent.runJson);
-    let storeBytes = await chargedCaptureBytes(request);
+    let storeBytes = await chargedCaptureBytes(request, acquisitionSize);
     const taskRoot = await realpath(request.taskDir);
     const ordered = [...request.artifacts].sort(
       (a, b) =>
@@ -1006,12 +1060,13 @@ export async function materializeRunBundle(
       throw error;
     }
   });
-  return withBundleLock(store, `bundle-repair-${captured.ref.bundleDigest}.lock`, async () => {
+  return withBundleLock(store, repairLockName(captured.ref.bundleDigest), async () => {
     const missingData = await completeRetainedPayloads(
       request,
       captured.ref,
       bundleDirectory(store, captured.ref.bundleDigest),
       captured.manifest,
+      acquisitionSize,
     );
     return withRunBundleStoreLock(store, async () => {
       await request.commit(captured.ref, missingData);
