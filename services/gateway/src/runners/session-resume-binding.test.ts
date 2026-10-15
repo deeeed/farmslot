@@ -4,12 +4,11 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
-  buildRunnerOpenFileProbeCommand,
   buildRunnerProcessArgvCommand,
   codexArgvResumesSession,
   codexResumeArgvVerdict,
-  parseOpenFilePaths,
 } from './codex-observability.js';
+import { buildRunnerOpenFileProbeCommand, parseOpenFilePaths } from './process-open-files.js';
 import { verifyExactLiveRunnerSessionBinding } from './session-process.js';
 import { makeVars } from './test-fixtures.js';
 

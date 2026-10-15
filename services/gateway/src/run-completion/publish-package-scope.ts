@@ -24,6 +24,8 @@
 
 import path from 'node:path';
 
+import { isRecord, type Run } from '@farmslot/protocol';
+
 import {
   ARTIFACT_COPY_EXCLUDED_DIR_NAMES,
   gatewayOwnedReviewDirFindPredicates,
@@ -37,6 +39,30 @@ import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 
 import { normalizeEvidenceManifestArtifactPath } from './evidence-manifest.js';
+
+/** Pipeline snapshots have no recipe package marker, but the gate reads their results. */
+export function pipelineReviewArtifactPaths(run: Run): string[] {
+  const output = run.steps.find((step) => step.name === 'review')?.outputs;
+  const reviews = (run.engineState?.publishGate?.reviews ?? []).filter(
+    (review) => review.source === 'pipeline',
+  );
+  const records = [output, ...reviews].flatMap((record) => [
+    record,
+    ...(isRecord(record) && Array.isArray(record.attempts) ? record.attempts : []),
+  ]);
+  return [
+    ...new Set(
+      records.flatMap((record) => {
+        if (!isRecord(record) || !Array.isArray(record.artifactPaths)) return [];
+        return record.artifactPaths.flatMap((entry: unknown) => {
+          if (typeof entry !== 'string' || !entry.startsWith('artifacts/')) return [];
+          const normalized = normalizeEvidenceManifestArtifactPath(entry, { mediaOnly: false });
+          return normalized ? [normalized.slice('artifacts/'.length)] : [];
+        });
+      }),
+    ),
+  ];
+}
 
 /**
  * Subdirectories of artifacts/ Farmslot templates write or Farmslot reads

@@ -12,8 +12,9 @@ import { readRunnerActivityFromObservability, readRunnerTurnState } from './regi
  *
  * Pane glyphs, token footers, and follow-up overlays are not proof that a turn
  * is alive or stuck. Event-driven runners expose getActivity / getTurnState.
- * Pane-only runners (Cursor) have no structured activity provider — unknown
- * activity fails closed (no stuck nudge) instead of scraping the composer.
+ * Runners without structured activity fail closed (no stuck nudge) instead
+ * of scraping the composer. Lifecycle-only providers can observe turns without
+ * proving exact prompt acceptance.
  */
 export type MonitorProgressKind = 'making-progress' | 'idle' | 'awaiting-input' | 'unproven';
 
@@ -37,7 +38,7 @@ export function classifyMonitorProgress(opts: {
 
   // Durable turn idle still counts after the activity heartbeat expires
   // (Codex/Claude at a prompt with stale statusline). Unknown turn+activity
-  // stays unproven (Cursor pane-only).
+  // stays unproven when the provider has no structured turn evidence.
   if (isObservabilityReadingAuthoritative(turn) && turn.value === 'idle') {
     return 'idle';
   }
