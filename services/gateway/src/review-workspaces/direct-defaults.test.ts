@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { after, test } from 'node:test';
+import { after, mock, test } from 'node:test';
 
 import type {
   Principal,
@@ -11,6 +11,21 @@ import type {
   ReviewSequence,
 } from '@farmslot/protocol';
 import { executionModelFromSelection } from '@farmslot/review-dispatch';
+
+import { GatewayMethodError } from '../core/method-error.js';
+
+const unhealthyMachines = new Set<string>();
+mock.module('../runners/native/review-health.js', {
+  namedExports: {
+    assertReviewNativeRunnerHealthy: async (input: { machine: string }) => {
+      if (unhealthyMachines.has(input.machine))
+        throw new GatewayMethodError(
+          'NATIVE_SESSION_ERROR',
+          `Native runner on ${input.machine} is unhealthy`,
+        );
+    },
+  },
+});
 
 const root = mkdtempSync(path.join(tmpdir(), 'direct-review-defaults-'));
 for (const directory of [
@@ -614,5 +629,44 @@ test('source replanning excludes its own provisional review but keeps foreign ca
   await assert.rejects(
     asOwner(() => planRunCreation({ ...params }, { replanningRunId: same.id })),
     { code: 'REVIEW_WORKSPACE_CAPACITY' },
+  );
+});
+
+test('automatic native review skips unhealthy machines across run, queue and monitored PR choices', async (t) => {
+  unhealthyMachines.add('one');
+  t.after(() => unhealthyMachines.clear());
+  const project = await loadProjectConfig('farm');
+  const result = await resolveDirectWorkflowDefaults(request, project, {
+    purpose: 'run',
+    ownerId: 'owner',
+  });
+  assert.equal(result.params.reviewWorkspaceTarget?.machine, 'two');
+  const queuedSelection = await resolveDirectWorkflowDefaults(request, project, {
+    purpose: 'queue',
+    ownerId: 'owner',
+  });
+  assert.equal(queuedSelection.params.reviewWorkspaceTarget?.machine, 'two');
+  const { resolvePRExecution } = await import('../backlog/pr-execution.js');
+  const resolved = await resolvePRExecution('farm', 'example/app', [execution], {
+    ownerId: 'owner',
+  });
+  assert.deepEqual(
+    resolved.choices.map((choice) => ('machine' in choice ? choice.machine : undefined)),
+    ['two'],
+  );
+  unhealthyMachines.add('two');
+  await assert.rejects(
+    resolveDirectWorkflowDefaults(request, project, { purpose: 'run', ownerId: 'owner' }),
+    /Native runner.*unhealthy/,
+  );
+  const explicit = await resolveDirectWorkflowDefaults(
+    { ...request, reviewWorkspaceTarget: { machine: 'one' } },
+    project,
+    { purpose: 'run', ownerId: 'owner' },
+  );
+  assert.equal(
+    explicit.params.reviewWorkspaceTarget?.machine,
+    'one',
+    'explicit direct placement permits a verified operator retry',
   );
 });

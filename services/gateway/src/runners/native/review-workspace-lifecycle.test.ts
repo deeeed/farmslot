@@ -47,6 +47,7 @@ let afterPersistence: (() => void | Promise<void>) | undefined;
 let profileFault: (() => void) | undefined;
 let transportFault: ((call: Call) => void) | undefined;
 let host: NativeSessionInfo | undefined;
+let createdSessionPatch: Partial<NativeSessionInfo> | undefined;
 let commands = new Map<string, NativeSessionSendResult>();
 let creations = 0;
 let turns = 0;
@@ -195,6 +196,7 @@ mock.module('./node.js', {
         }
         assert.equal(host.id, params.sessionId);
         assert.equal(host.workerLeaseId, params.leaseId);
+        if (createdSessionPatch) Object.assign(host, createdSessionPatch);
         result = { session: structuredClone(host) };
       } else if (method === NATIVE_WORKER_READ) {
         assert(host);
@@ -244,6 +246,7 @@ function reset() {
   calls = [];
   commands = new Map();
   host = undefined;
+  createdSessionPatch = undefined;
   creations = 0;
   turns = 0;
   metricWrites = 0;
@@ -501,4 +504,29 @@ test('native review pins the configured machine executable instead of PATH-selec
   assert.equal(executableSelections.length, 1);
   assert.equal(executableSelections[0]?.runner, 'claude');
   assert.equal(executableSelections[0]?.machine, configuredPool);
+});
+
+for (const state of ['failed', 'closed'] as const) {
+  test(`native review reports ${state} startup cause without claiming a workspace mismatch`, async () => {
+    reset();
+    createdSessionPatch = { state, error: 'Claude stream-json initialization timed out' };
+    await assert.rejects(
+      launch(),
+      /on local (failed|closed): Claude stream-json initialization timed out/,
+    );
+    assert.equal(
+      calls.some((call) => call.method === NATIVE_WORKER_SEND),
+      false,
+    );
+  });
+}
+
+test('native review names the actual and required checkout when its reservation differs', async () => {
+  reset();
+  createdSessionPatch = { cwd: '/other-checkout' };
+  await assert.rejects(launch(), /workspace mismatch.*\/other-checkout.*\/source/);
+  assert.equal(
+    calls.some((call) => call.method === NATIVE_WORKER_SEND),
+    false,
+  );
 });
