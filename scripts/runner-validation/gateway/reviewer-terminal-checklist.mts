@@ -184,7 +184,7 @@ if (process.argv[2] === 'serve') {
         runner: 'claude',
         model: 'sonnet',
         max_retries: 0,
-        review_timeout_min: 2,
+        review_timeout_min: 4,
       },
     });
     const template = path.join(root, 'projects', project, 'templates/worker/review.static-code.md');
@@ -402,6 +402,14 @@ if (process.argv[2] === 'serve') {
       killedRunner = observed;
       process.kill(Number(observed.pid), 'SIGTERM');
       await wait(() => {
+        if (existsSync(path.join(out, 'review-finished.json'))) {
+          const early = JSON.parse(readFileSync(path.join(out, 'review-finished.json'), 'utf8'));
+          assert.notEqual(
+            early.run.engineState.publishGate.reviews[0].verdict,
+            'failed',
+            JSON.stringify(early.run.engineState.publishGate.reviews[0]),
+          );
+        }
         if (existsSync(path.join(out, 'review-exited.json')))
           assert.fail(readFileSync(path.join(out, 'review-exited.json'), 'utf8'));
         const next = JSON.parse(readFileSync(path.join(out, 'runner-observed.json'), 'utf8'));

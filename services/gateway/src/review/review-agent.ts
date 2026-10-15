@@ -33,6 +33,7 @@ import {
   resolveTmuxWindowPaneCount,
   respawnTmuxWindowWithCommand,
   shellQuote,
+  throwIfTmuxQueryTimedOut,
   TMUX_WINDOW_RESPAWN_SETTLE_MS,
   tmuxShellSnippet,
   type TmuxWindowRef,
@@ -1890,13 +1891,12 @@ export async function waitForReviewCompletion(
 
     // Check the immutable reviewer target. Window names are not unique in tmux
     // and must never be used for lifecycle or completion decisions.
-    const hasWindow =
-      (
-        await execOnSlot(
-          vars,
-          tmuxShellSnippet(`list-panes -t ${shellQuote(reviewTarget)} 2>/dev/null`),
-        )
-      ).exitCode === 0;
+    const windowQuery = await execOnSlot(
+      vars,
+      tmuxShellSnippet(`list-panes -t ${shellQuote(reviewTarget)} 2>/dev/null`),
+    );
+    throwIfTmuxQueryTimedOut(windowQuery, 'reviewer window');
+    const hasWindow = windowQuery.exitCode === 0;
 
     if (!hasWindow) {
       if (await completeFromTerminalSignal()) return true;
@@ -1907,14 +1907,14 @@ export async function waitForReviewCompletion(
     }
 
     // Check if the configured runner process is still running in the review pane.
-    const panePid = (
-      await execOnSlot(
-        vars,
-        tmuxShellSnippet(
-          `list-panes -t ${shellQuote(reviewTarget)} -F '#{pane_pid}' 2>/dev/null | head -1`,
-        ),
-      )
-    ).stdout.trim();
+    const paneQuery = await execOnSlot(
+      vars,
+      tmuxShellSnippet(
+        `list-panes -t ${shellQuote(reviewTarget)} -F '#{pane_pid}' 2>/dev/null | head -1`,
+      ),
+    );
+    throwIfTmuxQueryTimedOut(paneQuery, 'reviewer pane');
+    const panePid = paneQuery.stdout.trim();
 
     if (panePid) {
       const runnerProbe = await probeRunnerDescendantPid(vars, panePid, runner);

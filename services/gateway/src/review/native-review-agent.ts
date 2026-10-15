@@ -78,7 +78,9 @@ import {
 import { expandReviewTemplate } from './templates.js';
 import {
   isTerminalReviewArtifactError,
+  nativeReviewerFailure,
   ReviewerExitedError,
+  reviewerExitForNativeSnapshot,
   TerminalReviewArtifactError,
   terminalReviewArtifactErrorForCompletion,
 } from './terminal-result.js';
@@ -408,9 +410,7 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
       if (['closed', 'failed'].includes(snapshot.session.state) || command?.outcome === 'failed') {
         const reason =
           snapshot.session.error ?? 'Native reviewer stopped without a valid terminal signal';
-        if (snapshot.session.processStopped || !snapshot.session.processPid)
-          throw new ReviewerExitedError(reason);
-        throw new Error(reason);
+        throw reviewerExitForNativeSnapshot(snapshot) ?? new Error(reason);
       }
       if (Date.now() >= deadline) {
         await cancelNativeWorkerContext(runId, context);
@@ -534,7 +534,13 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
       ],
     };
   } catch (error) {
-    primaryFailure = error;
+    context =
+      getRun(runId)?.agentContexts?.find((candidate) => candidate.id === contextId) ?? context;
+    const failure = await nativeReviewerFailure(error, async () => {
+      admit();
+      return readNativeWorkerSnapshot(runId, 'review', contextId);
+    });
+    primaryFailure = failure;
     invalidateWarmReviewerSessions(runId, runner);
     const run = getRun(runId);
     if (
@@ -549,15 +555,15 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
           markAgentContextStatus(
             runId,
             'review',
-            isTerminalReviewArtifactError(error) ? 'blocked' : 'failed',
+            isTerminalReviewArtifactError(failure) ? 'blocked' : 'failed',
             { id: contextId },
           ),
         );
       } catch (recordError) {
         primaryFailure = new AggregateError(
-          [error, recordError],
-          `${String(error)}; reviewer status recording also failed: ${String(recordError)}`,
-          { cause: error },
+          [failure, recordError],
+          `${String(failure)}; reviewer status recording also failed: ${String(recordError)}`,
+          { cause: failure },
         );
       }
     }

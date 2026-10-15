@@ -17,6 +17,7 @@ let currentRun: ReturnType<typeof makeRun> | undefined;
 let probes = 0;
 let terminalAt = 3;
 let windowPresent = true;
+let queryTimeout = false;
 let processStates: Array<'present' | 'absent' | 'unknown'> = [];
 const statuses: string[] = [];
 mock.module('../core/exec.js', {
@@ -36,7 +37,7 @@ mock.module('../core/exec.js', {
       }
       if (command.includes('list-panes'))
         return {
-          exitCode: windowPresent ? 0 : 1,
+          exitCode: queryTimeout ? 124 : windowPresent ? 0 : 1,
           stdout: command.includes('pane_pid') ? '123' : '%1',
           stderr: '',
         };
@@ -79,6 +80,36 @@ mock.module('../core/tmux.js', {
 const { waitForReviewCompletion, runReviewAgent } = await import('./review-agent.js');
 const { makeVars } = await import('../runners/test-fixtures.js');
 const vars = makeVars();
+
+test('a timed-out window query is never a confirmed reviewer exit', async (t) => {
+  queryTimeout = true;
+  probes = 0;
+  terminalAt = Infinity;
+  statuses.length = 0;
+  t.after(() => {
+    queryTimeout = false;
+  });
+  await assert.rejects(
+    waitForReviewCompletion(
+      vars,
+      '%1',
+      'tasks/review',
+      500,
+      'run',
+      'claude',
+      'reviewer',
+      'REVIEW-SIGNAL.json',
+      'artifacts/review-feedback.md',
+      null,
+      0,
+    ),
+    (error) =>
+      error instanceof Error &&
+      !(error instanceof ReviewerExitedError) &&
+      /timed out/.test(error.message),
+  );
+  assert.deepEqual(statuses, [], 'uncertain transport cannot authorize stopped-reviewer cleanup');
+});
 
 test('written feedback and an inactive runner still wait for their own terminal mark', async () => {
   probes = 0;
