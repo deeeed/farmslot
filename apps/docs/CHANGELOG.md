@@ -5,7 +5,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 ## Unreleased
 
 - Document safe quarantine of an unobserved native host that stopped before recording any session.
-- Update the gateway API reference to protocol 0.45.0 for retained-run attachment.
+- Update the gateway API reference to protocol 0.46.0 for optional QA profile defaults and required ambiguous choices.
 
 - Document the typed retained-run stack attachment RPC and graph command.
 - Document explicit retired principal-id replacement and its identity-generation guard.
