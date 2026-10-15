@@ -122,7 +122,7 @@ try {
   const [gatewayPort, uiPort, cdpPort] = await Promise.all([port(), port(), port()]);
   token = testGatewayIdentity(path.join(fixture, 'home'), `ws://127.0.0.1:${gatewayPort}`);
   const models = [{ runner: 'codex', model: 'gpt-5.6-luna', effort: 'low', mode: 'cold' }];
-  for (const name of ['wizard-farm', 'workspace-only']) {
+  for (const name of ['wizard-farm', 'workspace-only', 'sole-farm', 'choice-farm', 'policy-farm']) {
     const project = path.join(fixture, 'projects', name);
     for (const flow of ['review-pr', 'validation', 'dev', 'fix-bug']) {
       await mkdir(path.join(project, 'shared', flow), { recursive: true });
@@ -143,7 +143,7 @@ try {
       },
       static_review: { template_id: 'review-pr/shared' },
       qa: {
-        default_profile: 'daily',
+        ...(name === 'sole-farm' || name === 'choice-farm' ? {} : { default_profile: 'daily' }),
         profiles: [
           {
             id: 'pr',
@@ -189,7 +189,7 @@ try {
               },
             ],
           },
-        ],
+        ].filter((profile) => name !== 'sole-farm' || profile.id === 'pr'),
       },
       workflow_defaults: {
         'review-pr': {
@@ -204,11 +204,18 @@ try {
             ],
           },
         },
-        ...(name === 'wizard-farm'
+        ...(name !== 'workspace-only'
           ? {
               qa: {
+                ...(name === 'policy-farm'
+                  ? { review: { mode: 'cold', workflow: 'qa', qaProfileId: 'pr' } }
+                  : {}),
                 execution: {
-                  slotPolicy: { kind: 'pool', allowedSlots: ['qa-runtime', 'qa-runtime-other'] },
+                  slotPolicy: {
+                    kind: 'pool',
+                    allowedSlots:
+                      name === 'wizard-farm' ? ['qa-runtime', 'qa-runtime-other'] : [`qa-${name}`],
+                  },
                   models,
                 },
               },
@@ -226,10 +233,16 @@ try {
   };
   const secondSlot = { ...slot, id: 'qa-runtime-other', session: 'qa-wizard-unused-other' };
   const filterSlot = { ...slot, id: 'filter-only', session: 'qa-wizard-unused-filter' };
+  const selectionSlots = ['sole-farm', 'choice-farm', 'policy-farm'].map((name) => ({
+    ...slot,
+    id: `qa-${name}`,
+    session: `qa-${name}-unused`,
+  }));
   for (const [machine, project, slots] of [
     ['review-node', 'wizard-farm', [slot, secondSlot]],
     ['review-other', 'wizard-farm', [filterSlot]],
     ['zero-node', 'workspace-only', []],
+    ...selectionSlots.map((slot) => [slot.id, slot.id.slice(3), [slot]] as const),
   ] as const) {
     await json(path.join(fixture, 'pool', `${machine}.json`), {
       machine,
@@ -244,10 +257,14 @@ try {
   }
   await json(path.join(fixture, '.farm-status.json'), {
     checked_at: new Date().toISOString(),
-    slots: [slot, secondSlot, filterSlot].map((slot) => ({
+    slots: [slot, secondSlot, filterSlot, ...selectionSlots].map((slot) => ({
       slot: slot.id,
-      machine: slot === filterSlot ? 'review-other' : 'review-node',
-      project: 'wizard-farm',
+      machine: selectionSlots.includes(slot)
+        ? slot.id
+        : slot === filterSlot
+          ? 'review-other'
+          : 'review-node',
+      project: selectionSlots.includes(slot) ? slot.id.slice(3) : 'wizard-farm',
       platform: 'cli',
       repo: fixture,
       session: slot.session,
@@ -478,7 +495,7 @@ process.stdout.write(JSON.stringify(body));
       evaluate(
         `return [...find('[data-testid="review-dispatch-runner"]').element.options].map(option=>option.value);`,
       ),
-      ['claude', 'codex', 'cursor', 'grok', 'pi'],
+      ['claude', 'codex', 'cursor', 'grok', 'pi', 'opencode'],
     );
     evaluate(
       `find('[data-testid="dispatch-execution-options"]').element.querySelector('summary').click();return true;`,
@@ -537,7 +554,7 @@ process.stdout.write(JSON.stringify(body));
     click('dispatch-flow-qa');
     await waitUI(`return ${exists('dispatch-project-wizard-farm')};`);
     click('dispatch-project-wizard-farm');
-    await waitUI(`return find('[data-testid="dispatch-qa-profile"]')?.element.value==='';`);
+    await waitUI(`return find('[data-testid="dispatch-qa-profile"]')?.element.value==='daily';`);
     assert.match(
       evaluate(`return find('dispatch-wizard').element.shadowRoot.textContent;`),
       /Validate changes from the previous day/,
@@ -635,10 +652,10 @@ process.stdout.write(JSON.stringify(body));
     checkpoints.push('zero-slot-farm-queues-static-review');
 
     await navigate(
-      '#dispatch?flow=review-pr&validationDepth=full-live&project=wizard-farm&slot=qa-runtime-other&ticket=example%2Fwizard-farm%23105',
+      '#dispatch?flow=qa&project=wizard-farm&slot=qa-runtime-other&ticket=example%2Fwizard-farm%23105',
     );
     await waitUI(
-      `return find('[data-testid="dispatch-flow-qa"]').element.classList.contains('selected') && find('[data-testid="dispatch-qa-profile"]')?.element.value==='';`,
+      `return find('[data-testid="dispatch-flow-qa"]').element.classList.contains('selected') && find('[data-testid="dispatch-qa-profile"]')?.element.value==='daily';`,
     );
     assert(!evaluate(`return ${exists('dispatch-review-machine')};`));
     await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
@@ -649,7 +666,7 @@ process.stdout.write(JSON.stringify(body));
     assert.equal(legacy.slotId, 'qa-runtime-other');
     assert.equal(legacy.reviewWorkspaceTarget, undefined);
     await json(path.join(evidence, 'legacy-link-item.json'), legacy);
-    checkpoints.push('legacy-full-live-link-preserves-runtime-slot');
+    checkpoints.push('qa-link-preserves-runtime-slot');
 
     await navigate(
       '#dispatch?flow=review-pr&project=wizard-farm&slot=qa-runtime&ticket=example%2Fwizard-farm%23106',
@@ -863,6 +880,55 @@ process.stdout.write(JSON.stringify(body));
   });
   checkpoints.push('backlog-shared-picker-persists-model-effort-mode');
 
+  if (!reviewPickerOnly) {
+    for (const [project, initial, selected] of [
+      ['sole-farm', 'pr', 'pr'],
+      ['choice-farm', '', 'daily'],
+      ['policy-farm', 'pr', 'daily'],
+    ]) {
+      await navigate(`#dispatch?flow=qa&project=${project}&ticket=profile-selection-${project}`);
+      await waitUI(
+        `return find('[data-testid="dispatch-qa-profile"]')?.element.value===${JSON.stringify(initial)};`,
+      );
+      if (!initial) {
+        assert(
+          evaluate(
+            `return find('[data-testid="dispatch-submit"]').element.disabled && find('[data-testid="dispatch-queue"]').element.disabled;`,
+          ),
+        );
+        screenshot('qa-choice-required');
+      }
+      if (initial !== selected) await choose('dispatch-qa-profile', selected);
+      await waitUI(`return !find('[data-testid="dispatch-submit"]').element.disabled;`);
+      screenshot(`qa-selection-${project}`);
+      click('dispatch-submit');
+      const until = Date.now() + 30000;
+      let admitted;
+      while (Date.now() < until) {
+        const result = await connection.call<{
+          runs: Array<{
+            id: string;
+            project: string;
+            qa?: { profile: { id: string; title: string } };
+          }>;
+        }>('run.list');
+        admitted = result.runs.find((run) => run.project === project);
+        if (admitted) break;
+        await delay(100);
+      }
+      assert(admitted, `Missing admitted ${project} run`);
+      assert.equal(admitted.qa?.profile.id, selected);
+      assert.equal(admitted.qa?.profile.title, selected === 'pr' ? 'PR checks' : 'Daily changes');
+      await json(path.join(evidence, `${project}-admitted.json`), admitted);
+      cdp('goto', `#runs?run=${admitted.id}`);
+      activeRoute = 'runs';
+      await waitUI(
+        `return find('[data-testid="run-qa-profile"]')?.element.textContent.includes(${JSON.stringify(admitted.qa?.profile.title)}) && find('[data-testid="run-qa-profile"]')?.element.textContent.includes(${JSON.stringify(selected)});`,
+      );
+      screenshot(`${project}-retained-profile`);
+      checkpoints.push(`${project}-visible-selection-admitted`);
+    }
+  }
   await noExecution();
   await json(path.join(evidence, 'queue.json'), {
     observedItems: await queue(),

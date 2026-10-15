@@ -98,6 +98,7 @@ if (scenario === 'recipe') {
 assert(
   [
     'profiles',
+    'profile-selection',
     'qa-pool',
     'publication-defaults',
     'publication-accounts',
@@ -141,9 +142,29 @@ for (const name of ['scripts', 'services', 'packages'])
 await writeFile(path.join(fixture, 'CLAUDE.md'), '# Isolated gateway contract validation\n');
 await mkdir(path.join(fixture, 'pool'));
 await mkdir(path.join(fixture, 'repo'));
+if (scenario === 'profile-selection') {
+  // Disabled fixture slots are known locally; do not launch a startup fleet refresh.
+  await json(path.join(fixture, '.farm-status.json'), {
+    checked_at: new Date().toISOString(),
+    slots: ['first', 'second', 'sole'].map((project) => ({
+      slot: `${project}-disabled`,
+      machine: `${project}-node`,
+      project,
+      platform: 'cli',
+      repo: path.join(fixture, 'repo'),
+      session: `qa-${project}`,
+      enabled: false,
+      lifecycle: 'ready',
+      phase: null,
+      agent: 'idle',
+      health: { ssh: 'LOCAL', device: '-', devserver: '-', fixtures: '-' },
+    })),
+  });
+}
 for (const [name, profile] of [
   ['first', 'changes'],
   ['second', 'candidate'],
+  ...(scenario === 'profile-selection' ? [['sole', 'only']] : []),
 ]) {
   const project = path.join(fixture, 'projects', name);
   await mkdir(path.join(project, 'shared', 'validation'), { recursive: true });
@@ -220,8 +241,13 @@ for (const [name, profile] of [
       sources: [{ id: 'workspace:shared', kind: 'workspace', root: { projectPath: 'shared' } }],
     },
     qa: {
-      default_profile: profile,
+      ...(scenario !== 'profile-selection' || name === 'second'
+        ? { default_profile: profile }
+        : {}),
       profiles: [
+        ...(scenario === 'profile-selection' && name !== 'sole'
+          ? [{ id: 'release', title: 'Release validation', template_id: 'validation/shared' }]
+          : []),
         {
           id: profile,
           title: `Validate ${profile}`,
@@ -558,7 +584,7 @@ function launchGateway() {
       ...(depthScenario ? tmuxEnv : process.env),
       PATH: `${path.join(fixture, 'bin')}${path.delimiter}${process.env.PATH}`,
       FARMSLOT_ROOT: fixture,
-      ...(scenario === 'publication-direct'
+      ...(['publication-direct', 'profile-selection'].includes(scenario)
         ? { NODE_TEST_CONTEXT: '1', FARMSLOT_DISABLE_RUN_ENGINE_START: '1' }
         : {}),
       FARMSLOT_HOME: path.join(fixture, 'home'),
@@ -1291,6 +1317,321 @@ try {
     assert.equal(first.project.qa?.default_profile, 'changes');
     assert.equal(second.project.qa?.default_profile, 'candidate');
     assert.deepEqual(first.project.qa?.profiles[0].inputs, { scope: { kind: 'changes' } });
+  } else if (scenario === 'profile-selection') {
+    testGatewayProfile(path.join(fixture, 'home'), `ws://127.0.0.1:${port}`, token);
+    const invoke = (project: string, flags: string[] = []) => {
+      const child = spawnSync(
+        process.execPath,
+        [
+          '--import',
+          'tsx',
+          path.join(root, 'packages/cli/src/entry.ts'),
+          '--url',
+          `ws://127.0.0.1:${port}`,
+          '--timeout',
+          '10000',
+          '--json',
+          'run',
+          'create',
+          '--project',
+          project,
+          '--flow-type',
+          'qa',
+          '--ticket',
+          'profile-selection',
+          '--mode',
+          'autonomous',
+          '--slot',
+          `${project}-disabled`,
+          '--runner',
+          'codex',
+          '--model',
+          'gpt-6-luna',
+          '--effort',
+          'low',
+          '--transport',
+          'native',
+          ...flags,
+        ],
+        {
+          cwd: path.join(root, 'packages/cli'),
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            FARMSLOT_HOME: path.join(fixture, 'home'),
+            FARMSLOT_GATEWAY_PROFILE: 'proof',
+          },
+        },
+      );
+      assert(child.stdout, child.stderr);
+      return { code: child.status, envelope: JSON.parse(child.stdout) };
+    };
+    const before = await connection!.call('run.list');
+    const missing = invoke('first');
+    assert.notEqual(missing.code, 0);
+    assert.equal(missing.envelope.error.code, 'REVIEW_QA_NEEDS_CONFIGURATION');
+    assert.deepEqual(missing.envelope.error.details.qaProfiles, [
+      { id: 'release', title: 'Release validation' },
+      { id: 'changes', title: 'Validate changes' },
+    ]);
+    assert.match(missing.envelope.error.userAction, /--qa-profile/);
+    await assert.rejects(
+      connection!.call('run.createNative', { ...base, flowType: 'qa' }),
+      (error: unknown) => {
+        assert(error instanceof GatewayRpcError);
+        assert.equal(error.code, 'REVIEW_QA_NEEDS_CONFIGURATION');
+        assert.deepEqual(error.details, missing.envelope.error.details);
+        return true;
+      },
+    );
+    assert.deepEqual(await connection!.call('run.list'), before);
+    const captured = [];
+    for (const [project, flags, expected] of [
+      ['first', ['--qa-profile', 'release'], 'release'],
+      ['second', [], 'candidate'],
+      ['sole', [], 'only'],
+    ] as const) {
+      const result = invoke(project, [...flags]);
+      assert.equal(result.code, 0, JSON.stringify(result.envelope));
+      const run = result.envelope.data.run;
+      assert.equal(run.qa.profile.id, expected);
+      assert.equal(run.status, 'created');
+      captured.push({ id: run.id, qa: run.qa });
+    }
+    const invalid = invoke('second', ['--qa-profile', 'absent']);
+    assert.notEqual(invalid.code, 0);
+    assert.match(invalid.envelope.error.message, /does not exist/);
+    if (process.argv[4] === 'native') {
+      const simulator = process.env.IOS_SIMULATOR;
+      assert(simulator, 'Native proof requires an owned IOS_SIMULATOR and candidate Metro.');
+      const { createAgentDeviceClient } = await import('agent-device');
+      const { createAgentDeviceUiTransport } =
+        await import('../packages/adapter-rn/src/agent-device-ui-transport.js');
+      const nativeDir = path.join(
+        path.resolve(process.argv[3] ?? 'temp/qa-profile-selection'),
+        'native',
+      );
+      await mkdir(nativeDir, { recursive: true });
+      const session = 'qa-profile-selection';
+      const device = createAgentDeviceClient({ session, stateDir: nativeDir });
+      const transport = createAgentDeviceUiTransport({
+        platform: 'ios',
+        device: simulator,
+        app: 'net.siteed.farmslot.development',
+        session,
+        stateDir: nativeDir,
+        client: device,
+      });
+      const artifacts: unknown[] = [];
+      const context: import('../packages/recipe-runner/src/core/types.js').ActionExecutionContext =
+        {
+          nodeId: 'qa-profile-selection',
+          recipe: { title: 'Companion QA profile selection' },
+          projectRoot: root,
+          artifactsDir: nativeDir,
+          env: process.env,
+          outputs: new Map(),
+          getOutput: () => undefined,
+          getRunFileOffset: () => undefined,
+          resolveProjectPath: (file) => path.join(root, file),
+          resolveArtifactPath: (file) => path.join(nativeDir, file),
+          registerArtifact: (artifact) => {
+            artifacts.push(artifact);
+          },
+          logger: console,
+        };
+      const action = (name: string, node: Record<string, unknown>) =>
+        transport.execute(name, node, context);
+      const press = (test_id: string) => action('ui.press', { test_id });
+      const fill = (test_id: string, value: string) => action('ui.set_input', { test_id, value });
+      const wait = (test_id: string, enabled?: boolean) =>
+        action('ui.wait_for', {
+          test_id,
+          ...(enabled === undefined ? {} : { enabled }),
+          timeout_ms: 15000,
+        });
+      const teams: Array<{
+        project: string;
+        id: string;
+        initial: string | undefined;
+        chosen: string;
+      }> = [];
+      for (const [project, initial, chosen] of [
+        ['first', undefined, 'changes'],
+        ['second', 'candidate', 'release'],
+        ['sole', 'only', 'only'],
+      ] as const) {
+        const { team } = await connection!.call<{ team: PRTeamProfile }>('prRules.teamSave', {
+          config: {
+            name: `QA selection ${project}`,
+            account: { host: 'github.com', login: 'fixture-reviewer' },
+            sources: [{ kind: 'repository', repo: 'example/app' }],
+            predicate: { kind: 'compare', field: 'state', operator: 'equals', value: 'open' },
+            repositories: [
+              { repo: 'example/app', project, reviewProfile: 'standard', excludedLabels: [] },
+            ],
+            execution: {
+              slotPolicy: { kind: 'exact', slotId: `${project}-disabled` },
+              models: [{ mode: 'cold', runner: 'codex', model: 'gpt-6-luna', effort: 'low' }],
+            },
+            githubTeams: [],
+            notificationPrincipalIds: [],
+          },
+        });
+        teams.push({ project, id: team.id, initial, chosen });
+      }
+      try {
+        await device.apps.open({
+          platform: 'ios',
+          target: 'mobile',
+          udid: simulator,
+          session,
+          app: 'net.siteed.farmslot.development',
+          relaunch: true,
+          noRecord: true,
+        });
+        await transport.open();
+        execFileSync('xcrun', [
+          'simctl',
+          'openurl',
+          simulator,
+          'farmslot-development:///connection',
+        ]);
+        // Complete only visible first-launch/setup controls before entering the manual form.
+        const readyBy = Date.now() + 30000;
+        while (Date.now() < readyBy) {
+          const snapshot = await device.capture.snapshot({ session, forceFull: true });
+          const nodes = snapshot.nodes;
+          if (nodes.some((node) => node.label === 'Camera permission required'))
+            await action('ui.press', { text: 'OK' });
+          else if (nodes.some((node) => node.label === 'Continue'))
+            await action('ui.press', { text: 'Continue' });
+          else if (nodes.some((node) => node.identifier === 'xmark'))
+            await action('ui.press', { selector: 'id="xmark"' });
+          else if (nodes.some((node) => node.identifier === 'companion-pairing-scanner-cancel'))
+            await press('companion-pairing-scanner-cancel');
+          else if (nodes.some((node) => node.identifier === 'companion-connection-manual-toggle'))
+            break;
+          else await delay(100);
+        }
+        await wait('companion-connection-manual-toggle');
+        await press('companion-connection-manual-toggle');
+        await fill('companion-native-profile-name', 'QA selection isolated proof');
+        await fill('companion-native-profile-url', `ws://127.0.0.1:${port}`);
+        await action('ui.press', { text: 'Add gateway' });
+        await action('ui.scroll', { direction: 'down', pixels: 300 });
+        await fill('companion-native-profile-secret', token);
+        await action('ui.press', { text: 'Add gateway' });
+        await press('companion-native-profile-save');
+        await wait('companion-native-open-workspace', true);
+        execFileSync('xcrun', [
+          'simctl',
+          'openurl',
+          simulator,
+          'farmslot-development:///pr-automation',
+        ]);
+        await wait('companion-pr-tab-reviews');
+        await press('companion-pr-tab-reviews');
+        const observed = [];
+        for (const team of teams) {
+          await action('ui.scroll', { direction: 'up', pixels: 800 });
+          await press('companion-pr-request-open');
+          await fill('companion-pr-request-url', 'https://github.com/example/app/pull/42');
+          await action('ui.press', { text: 'Request PR review / QA' });
+          await press('companion-pr-request-team-picker');
+          await press(`companion-pr-request-team-${team.id}`);
+          await press('companion-pr-workflow-qa');
+          await action('ui.scroll', { direction: 'down', pixels: 300 });
+          const snapshot = await device.capture.snapshot({ session, forceFull: true });
+          const profileNodes = snapshot.nodes.filter((node) =>
+            /^(Validate|Release validation)/.test(node.label ?? ''),
+          );
+          if (team.initial) {
+            assert(
+              profileNodes.some(
+                (node) => node.label?.includes(`(${team.initial})`) && node.selected,
+              ),
+              `Native ${team.project} must preselect its resolved id`,
+            );
+          } else {
+            assert(
+              !profileNodes.some((node) => node.selected),
+              'Native multi-profile choice must start empty',
+            );
+            await wait('companion-pr-request-submit', false);
+          }
+          if (team.initial !== team.chosen) {
+            const label =
+              team.chosen === 'release'
+                ? 'Release validation (release)'
+                : 'Validate changes (changes)';
+            await action('ui.press', { text: label });
+          }
+          await wait('companion-pr-request-submit', true);
+          await action('ui.scroll', { direction: 'down', pixels: 300 });
+          await action('ui.screenshot', { path: `${team.project}-selected.png` });
+          await press('companion-pr-request-submit');
+          const deadline = Date.now() + 15000;
+          let submission;
+          while (Date.now() < deadline) {
+            const result = await connection!.call<PRRulesListResult>('prRules.list');
+            submission = result.submissions?.find((entry) => entry.request.teamId === team.id);
+            if (submission) break;
+            await delay(100);
+          }
+          assert(submission, 'Native submission must reach the production request endpoint');
+          assert.equal(submission.request.review?.qaProfileId, team.chosen);
+          assert.equal(submission.request.autoStart, false);
+          observed.push({
+            project: team.project,
+            initial: team.initial,
+            chosen: team.chosen,
+            submissionId: submission.id,
+          });
+        }
+        await json(path.join(nativeDir, 'receipt.json'), {
+          passed: true,
+          observed,
+          artifacts,
+          uiStateInjection: false,
+          workerExecution: false,
+        });
+      } finally {
+        await transport.close();
+      }
+    }
+    await stopGateway();
+    const projectPath = path.join(fixture, 'projects/second/project.json');
+    const changed = JSON.parse(await readFile(projectPath, 'utf8'));
+    changed.qa.default_profile = 'release';
+    changed.qa.profiles.find((profile: { id: string }) => profile.id === 'candidate').title =
+      'Changed configuration title';
+    await json(projectPath, changed);
+    gateway = launchGateway();
+    await connectGateway();
+    for (const saved of captured) {
+      const { run } = await connection!.call<{ run: { qa: unknown } }>('run.get', {
+        runId: saved.id,
+      });
+      assert.deepEqual(run.qa, saved.qa, 'Restart/config edits must preserve admitted QA');
+    }
+    await json(
+      path.join(path.resolve(process.argv[3] ?? 'temp/qa-profile-selection'), 'receipt.json'),
+      {
+        passed: true,
+        missing: missing.envelope.error,
+        captured,
+        controls: [
+          'missing-choice-cli-rpc-no-run',
+          'explicit',
+          'configured-default',
+          'sole',
+          'invalid-id',
+          'restart-frozen-profile',
+        ],
+        workerExecution: false,
+      },
+    );
   } else if (scenario === 'legacy-queue') {
     const result = await connection!.call<DispatchQueueAddResult>('dispatch.queue.add', {
       ...base,

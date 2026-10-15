@@ -190,5 +190,5 @@ test('project add refuses a missing QA flow before registration', (t) => {
     result.errors[0],
     /^projects\/example-app-farm\/project.json:1: missing required qa flow/,
   );
-  assert.match(result.errors[0], /qa.default_profile and qa.profiles/);
+  assert.match(result.errors[0], /configure qa.profiles/);
 });

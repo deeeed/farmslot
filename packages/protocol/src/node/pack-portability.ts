@@ -165,9 +165,7 @@ export function validatePackFilePortability(
           qa === undefined
             ? 'missing required qa flow'
             : `invalid qa flow: ${(error as Error).message}`;
-        flowErrors.push(
-          `${file}:1: ${reason}; configure qa.default_profile and qa.profiles selecting a QA checklist`,
-        );
+        flowErrors.push(`${file}:1: ${reason}; configure qa.profiles selecting a QA checklist`);
       }
     }
     const visit = (value: unknown) => {

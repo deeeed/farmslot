@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Refuse unresolved QA profile choices before run creation, preserve existing policy and admitted selections, and retain profile identity in QA task context.
+
 - Preserve the frozen run review policy in nested role contracts so valid pending visual claims reach their human gate without weakening evidence or CI checks.
 
 - Wait up to two minutes for node reconnection during task writing, preparation and dispatch; reattach static-review monitors after gateway restarts, retaining the exact worker command and reservation when observation remains unavailable.

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Resolve QA profiles from an explicit or policy id, an optional project default, or the sole profile; return typed choices for ambiguous requests.
+
 - Retain optional AC/role capture annotations and original execution/source identities with immutable comparison dependencies.
 - Add project-authorized delegated visual judgments with checked media and person-only claim policy.
 

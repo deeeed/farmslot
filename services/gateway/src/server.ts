@@ -746,6 +746,7 @@ async function handleMessage(
       details = err.details;
     } else if (err instanceof ReviewQaConfigurationError) {
       code = err.code;
+      details = err.details;
     } else if (err instanceof ChatActionRejectError) {
       // A specific err.code (e.g. 'RequiresExplicitMergeMain') wins over the
       // generic CHAT_ACTION_REJECT_<REASON> derivation so callers can

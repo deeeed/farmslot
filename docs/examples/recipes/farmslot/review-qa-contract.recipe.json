@@ -10,7 +10,7 @@
         "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts profiles",
         "timeout_ms": 60000,
         "intent": "Each farm exposes its own thin skill preset and inputs through the project API.",
-        "next": "qa-pool"
+        "next": "qa-profile-selection"
       },
       "legacy-live-request": {
         "action": "command",
@@ -148,6 +148,13 @@
         "timeout_ms": 90000,
         "intent": "The real scheduled publication tick cannot write a durable error while a manual publication POST is in progress.",
         "next": "publication-delivery-stale"
+      },
+      "qa-profile-selection": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/e2e-review-qa-contract.mts profile-selection",
+        "timeout_ms": 90000,
+        "intent": "Public CLI/RPC refuse ambiguous profiles before admission, resolve explicit/default/sole profiles, and retain their snapshots after restart and config edits.",
+        "next": "qa-pool"
       }
     }
   }
