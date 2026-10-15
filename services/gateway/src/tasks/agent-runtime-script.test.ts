@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -8,10 +18,15 @@ import test from 'node:test';
 import { WebSocket } from 'ws';
 
 import { farmslotRoot, type ProjectVars, type SlotVars } from '../core/config.js';
+import { expandTemplateWithReservedLast } from '../core/hooks.js';
 import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
 import { handleNodeResponse } from '../fleet/node-rpc.js';
 
-import { agentRuntimeCommandsForSlot, agentRuntimeScriptForSlot } from './agent-runtime-script.js';
+import {
+  agentRuntimeCommandsForSlot,
+  agentRuntimeScriptForSlot,
+  farmslotDirectoryForSlot,
+} from './agent-runtime-script.js';
 import { markCommandForSlot } from './checklist-target.js';
 
 async function fixture(t: test.TestContext) {
@@ -63,7 +78,29 @@ async function fixture(t: test.TestContext) {
       });
     },
   } as unknown as WebSocket;
-  const vars = { host: 'remote.invalid', machine: 'runtime-fixture' } as SlotVars;
+  const vars: SlotVars = {
+    slotId: 'fixture-1',
+    host: 'remote.invalid',
+    machine: 'runtime-fixture',
+    platform: 'cli',
+    sshUser: 'test',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: root,
+    remoteRepo: root,
+    session: 'fixture-1',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'remote.invalid',
+    projectName: 'fixture',
+    resourceVars: {},
+  };
   registerNode(vars.machine, 1, ws);
   t.after(() => unregisterByWs(ws));
   return {
@@ -71,6 +108,7 @@ async function fixture(t: test.TestContext) {
     roots,
     vars,
     requests,
+    ws,
     activate: (index: number) => {
       active = roots[index];
     },
@@ -185,5 +223,92 @@ test('local helpers and project harness marker overrides preserve their selectio
   assert.equal(
     await markCommandForSlot({ ...vars, host: 'unconnected.invalid' }, project),
     'harness checklist mark',
+  );
+});
+
+test('configured marker resolves its nested harness command in the connected installation', async (t) => {
+  const { roots, vars, requests, activate } = await fixture(t);
+  const project: ProjectVars = {
+    projectName: 'demo',
+    projectConfig: '/pack/project.json',
+    projectFixturesDir: '/pack/fixtures',
+    projectTemplatesDir: '/pack/templates',
+    projectJson: {
+      name: 'demo',
+      ci: { local_check: 'printf parity' },
+      vars: {
+        mark_cmd: '"$({{resolver}})" checklist mark',
+        resolver: 'node "{{farmslot_dir}}/resolve.mjs" "{{FARMSLOT_DIR}}"',
+      },
+    },
+    runtimeDir: '.agent',
+    artifactDir: '.task',
+  };
+  for (const index of [1, 0]) {
+    activate(index);
+    const harness = path.join(roots[index], 'harness with spaces');
+    await writeFile(harness, '#!/bin/sh\nprintf "%s\\n" "$@"\n');
+    await chmod(harness, 0o700);
+    await writeFile(
+      path.join(roots[index], 'resolve.mjs'),
+      `process.stdout.write(process.argv[2] + '/harness with spaces');\n`,
+    );
+    assert.equal(await farmslotDirectoryForSlot(vars), roots[index]);
+    assert.equal(
+      expandTemplateWithReservedLast(
+        '{{resolver}} {{feedback}}',
+        vars,
+        project,
+        { feedback: 'literal {{repo}}' },
+        { farmslot_dir: roots[index] },
+      ),
+      `node "${roots[index]}/resolve.mjs" "${roots[index]}" literal {{repo}}`,
+    );
+    const ciTemplate = expandTemplateWithReservedLast(
+      '{{resolver}}\n{{CI_PARITY_STEP}}\n{{feedback}}',
+      vars,
+      project,
+      { feedback: 'literal {{repo}}' },
+      { farmslot_dir: roots[index] },
+    );
+    assert.ok(ciTemplate.includes(`node "${roots[index]}/resolve.mjs"`));
+    assert.ok(ciTemplate.includes('[DETERMINISTIC: ci.local_check]'));
+    assert.ok(ciTemplate.includes('literal {{repo}}'));
+    const command = await markCommandForSlot(vars, project);
+    assert.ok(command.includes(roots[index]));
+    assert.ok(!command.includes('~/farmslot-node'));
+    const result = spawnSync('bash', ['-c', `${command} --checklist REVIEW.md 2`], {
+      cwd: roots[index],
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.stdout.trim().split('\n'), [
+      'checklist',
+      'mark',
+      '--checklist',
+      'REVIEW.md',
+      '2',
+    ]);
+  }
+  assert.ok(requests.every((request) => request.cwd === undefined));
+});
+
+test('framework directory resolution refuses failed or relative results instead of guessing a deployment', async (t) => {
+  const { vars, ws } = await fixture(t);
+  for (const response of [
+    { exitCode: 1, stdout: '' },
+    { exitCode: 0, stdout: 'relative-root' },
+  ]) {
+    ws.send = (raw) => {
+      handleNodeResponse(JSON.parse(String(raw)).id, true, { ...response, stderr: '' });
+    };
+    await assert.rejects(
+      farmslotDirectoryForSlot(vars),
+      /cannot resolve its Farmslot installation directory/,
+    );
+  }
+  assert.equal(
+    await farmslotDirectoryForSlot({ host: 'localhost', machine: 'local' }),
+    farmslotRoot,
   );
 });

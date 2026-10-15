@@ -44,3 +44,20 @@ export async function agentRuntimeCommandsForSlot(
   const command = `node ${shellQuote(entry)}`;
   return { AC_CMD: `${command} ac`, ARTIFACT_CHECK_CMD: `${command} artifact-check` };
 }
+
+/** Framework-relative pack commands use the connected node's installation, too. */
+export async function farmslotDirectoryForSlot(
+  vars: Pick<SlotVars, 'host' | 'machine'>,
+): Promise<string> {
+  if (isLocal(vars.host, vars.machine)) return farmslotRoot;
+  const result = await nodeExecArgv(vars.machine, ['node', '-p', 'process.cwd()'], undefined, {
+    timeout: 10_000,
+    maxBuffer: 16 * 1024,
+  });
+  const directory = result.stdout.trim();
+  if (result.exitCode !== 0 || !path.posix.isAbsolute(directory))
+    throw new Error(
+      `The connected node ${vars.machine} cannot resolve its Farmslot installation directory.`,
+    );
+  return directory;
+}

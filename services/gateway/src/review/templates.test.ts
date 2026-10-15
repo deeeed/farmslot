@@ -4,8 +4,12 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 
+import { WebSocket } from 'ws';
+
 import { invalidateProjectVarsCache } from '@farmslot/slot-config';
 
+import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
+import { handleNodeResponse } from '../fleet/node-rpc.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { createRun, deleteRun, updateRun } from '../runs/store.js';
 
@@ -184,6 +188,22 @@ test('expandReviewTemplate resolves farmslot_dir placeholders', async (t) => {
     ),
   );
 
+  const remoteRoot = '/relocated-node/development';
+  const ws = {
+    readyState: WebSocket.OPEN,
+    send(raw: string) {
+      const request = JSON.parse(String(raw));
+      const rootQuery = request.params.argv?.join(' ') === 'node -p process.cwd()';
+      if (rootQuery) assert.equal(request.params.cwd, undefined);
+      handleNodeResponse(request.id, true, {
+        exitCode: rootQuery ? 0 : 1,
+        stdout: rootQuery ? remoteRoot : '',
+        stderr: '',
+      });
+    },
+  } as WebSocket;
+  registerNode('remote-node', 1, ws);
+  t.after(() => unregisterByWs(ws));
   const remoteRendered = await expandReviewTemplate(
     {
       slotId: 'slot-remote',
@@ -202,6 +222,6 @@ test('expandReviewTemplate resolves farmslot_dir placeholders', async (t) => {
 
   assert.match(
     remoteRendered,
-    /~\/farmslot-node\/scripts\/quality\/check-task-artifact-contract\.mjs/,
+    /\/relocated-node\/development\/scripts\/quality\/check-task-artifact-contract\.mjs/,
   );
 });

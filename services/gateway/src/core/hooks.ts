@@ -20,14 +20,15 @@ export const expandTemplateWithReservedLast: typeof expandReservedTemplate = (
   vars,
   projectVars,
   reserved,
+  extraVars,
 ) => {
   template = expandSourceBindings(template, currentProjectSources() ?? projectVars?.sourceContext);
   if (!template.includes('{{CI_PARITY_STEP}}')) {
-    return expandReservedTemplate(template, vars, projectVars, reserved);
+    return expandReservedTemplate(template, vars, projectVars, reserved, extraVars);
   }
   assertNoUnknownPlaceholders(
     template,
-    [...knownTemplatePlaceholders(vars, projectVars), ...Object.keys(reserved)],
+    [...knownTemplatePlaceholders(vars, projectVars, extraVars), ...Object.keys(reserved)],
     'Role template',
   );
   const values = Object.fromEntries(
@@ -35,7 +36,7 @@ export const expandTemplateWithReservedLast: typeof expandReservedTemplate = (
       .filter((token) => token !== '{{CI_PARITY_STEP}}')
       .map((token) => [
         token.slice(2, -2),
-        expandReservedTemplate(token, vars, projectVars, reserved),
+        expandReservedTemplate(token, vars, projectVars, reserved, extraVars),
       ]),
   );
   const ci = projectVars?.projectJson.ci as { local_check?: string } | undefined;
@@ -43,7 +44,7 @@ export const expandTemplateWithReservedLast: typeof expandReservedTemplate = (
     template,
     {
       ...values,
-      TASK_DIR: expandReservedTemplate('{{TASK_DIR}}', vars, projectVars, reserved),
+      TASK_DIR: expandReservedTemplate('{{TASK_DIR}}', vars, projectVars, reserved, extraVars),
       'ci.local_check': ci?.local_check ?? '',
       CI_PARITY_CHECKLIST: reserved.CI_PARITY_CHECKLIST ?? '',
     },

@@ -44,7 +44,7 @@ import { expandTemplate } from '../core/hooks.js';
 import { shellQuote } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 
-import { agentRuntimeScriptForSlot } from './agent-runtime-script.js';
+import { agentRuntimeScriptForSlot, farmslotDirectoryForSlot } from './agent-runtime-script.js';
 import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
 import { syncTerminalContractForFlowOnSlot } from './worker-terminal-contract.js';
 
@@ -135,7 +135,14 @@ export async function markCommandForSlot(
   projectVars?: ProjectVars,
 ): Promise<string> {
   const raw = projectVars?.projectJson.vars?.mark_cmd;
-  if (typeof raw === 'string' && raw.trim()) return expandTemplate(raw, vars, projectVars);
+  if (typeof raw === 'string' && raw.trim()) {
+    // Resolve only commands that consume the root, including nested pack vars.
+    const directoryToken = '\u0000FARMSLOT_DIR\u0000';
+    const command = expandTemplate(raw, vars, projectVars, { farmslot_dir: directoryToken });
+    return command.includes(directoryToken)
+      ? command.replaceAll(directoryToken, await farmslotDirectoryForSlot(vars))
+      : command;
+  }
   const helper = await agentRuntimeScriptForSlot(vars, 'mark-checklist-step.cjs');
   return `node ${quoteMarkCommandWord(helper)}`;
 }

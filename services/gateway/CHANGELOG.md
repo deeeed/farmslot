@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Resolve task and reviewer pack commands from the connected node installation instead of a guessed deployment directory.
+
 - Relaunch a stopped reviewer once after cleanup, retaining failed-attempt evidence and its actual failure if recovery fails.
 - Retain pipeline review result snapshots in publication packages and use the pane-owned process's structured turn records for publication readiness, monitor nudges and safe-send busy checks.
 
