@@ -151,7 +151,13 @@ PY`;
 }
 
 type CodexTurnStateProbe =
-  | { status: 'matched'; state: 'active' | 'idle'; observedAt: number; turnId: string }
+  | {
+      status: 'matched';
+      state: 'active' | 'idle';
+      observedAt: number;
+      turnId: string;
+      failure?: string;
+    }
   | { status: 'unavailable' | 'identity-mismatch' };
 
 export function parseCodexTurnStateProbe(raw: string): CodexTurnStateProbe {
@@ -167,6 +173,7 @@ export function parseCodexTurnStateProbe(raw: string): CodexTurnStateProbe {
       state: parsed.state,
       observedAt: parsed.observedAt,
       turnId: parsed.turnId,
+      ...(typeof parsed.failure === 'string' && parsed.failure ? { failure: parsed.failure } : {}),
     };
   }
   if (parsed.status === 'unavailable' || parsed.status === 'identity-mismatch') {
@@ -240,10 +247,16 @@ try:
                 }))
                 raise SystemExit(0)
             if event_type in ('task_complete', 'turn_aborted'):
-                print(json.dumps({
+                result = {
                     'status': 'matched', 'state': 'idle',
                     'observedAt': observed_at, 'turnId': turn_id,
-                }))
+                }
+                error = payload.get('error')
+                if isinstance(error, dict):
+                    result['failure'] = error.get('message') or 'Runner turn failed'
+                elif error:
+                    result['failure'] = str(error)
+                print(json.dumps(result))
                 raise SystemExit(0)
 except (OSError, UnicodeDecodeError, json.JSONDecodeError):
     print(json.dumps({'status': 'unavailable'}))
@@ -628,6 +641,7 @@ async function readCodexNativeTurnState(vars: SlotVars, sessionId: string, sessi
         observedAt: probe.observedAt,
         sessionId,
         turnToken: `${sessionId}:${probe.turnId}`,
+        ...(probe.failure ? { failure: probe.failure } : {}),
       }
     : null;
 }

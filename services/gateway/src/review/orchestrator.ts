@@ -54,6 +54,7 @@ import {
   runnerNeedsPostLaunchPrompt,
   runnerRetainedSessionHandoff,
   runnerSupportsInteractivePrompt,
+  runnerSupportsModel,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
 import { resolvePersistedRunnerSessionBinding } from '../runners/session-process.js';
@@ -214,11 +215,18 @@ export function resolveReviewRunnerModel(
   const reviewRunner = normalizeRunner(
     options.reviewRunner?.trim() || config.runner?.trim() || 'codex',
   );
+  // Project models belong to the explicitly configured runner. An unqualified
+  // model must never leak into the default reviewer or an operator override.
+  const configuredModel =
+    config.runner?.trim() && normalizeRunner(config.runner) === reviewRunner
+      ? config.model?.trim()
+      : undefined;
   const model =
-    options.model?.trim() ||
-    (options.reviewRunner ? runnerDefaultModel(reviewRunner) : config.model?.trim()) ||
-    runnerDefaultModel(reviewRunner) ||
-    'unknown';
+    options.model?.trim() || configuredModel || runnerDefaultModel(reviewRunner) || 'unknown';
+  if (!runnerSupportsModel(reviewRunner, model))
+    throw new Error(
+      `Review runner '${reviewRunner}' does not support model '${model}'. Set review.runner and a compatible review.model, or select a compatible review override.`,
+    );
   return { reviewRunner, model };
 }
 

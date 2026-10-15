@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Scope review models to their configured runner and surface native reviewer launch errors without waiting for the review timeout.
+
 - Refuse stale publication approvals before resolving their gate, and retain accepted approvals and their exact package through recovery without restarting reviews.
 
 - Preserve unfinished reviewer requests during recovery, restore current-head review progress on replay, and record a COLD fallback when WARM lineage is unavailable.

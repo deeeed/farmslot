@@ -30,7 +30,11 @@ test('retained delivery uses native completion without bypassing ownership or ne
       {
         type: 'event_msg',
         timestamp: new Date(at).toISOString(),
-        payload: { type: 'task_complete', turn_id: 'turn-one' },
+        payload: {
+          type: 'task_complete',
+          turn_id: 'turn-one',
+          error: { message: "The 'opus' model is not supported", codex_error_info: 'other' },
+        },
       },
     ]
       .map((entry) => JSON.stringify(entry))
@@ -50,6 +54,7 @@ test('retained delivery uses native completion without bypassing ownership or ne
       session,
     );
   assert.equal((await read())?.value, 'idle');
+  assert.equal((await read())?.failure, "The 'opus' model is not supported");
   hooks.mock.mockImplementation(async () => ({
     value: 'active' as const,
     source: 'hook' as const,
@@ -57,6 +62,7 @@ test('retained delivery uses native completion without bypassing ownership or ne
     observedAt: at + 100,
   }));
   assert.equal((await read())?.value, 'active');
+  assert.equal((await read())?.failure, undefined, 'newer turn evidence supersedes old errors');
   hooks.mock.restore();
   await writeFile(
     session,

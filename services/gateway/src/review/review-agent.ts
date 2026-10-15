@@ -51,6 +51,7 @@ import {
 } from '../runners/prompt-delivery-evidence.js';
 import {
   captureRunnerPromptAcceptanceBaseline,
+  getRunnerObservability,
   runnerHasDurablePromptHandoff,
   runnerNeedsPostLaunchPrompt,
   runnerRetainedSessionHandoff,
@@ -728,6 +729,10 @@ async function recoverRunningReviewAgent(params: {
   }
   if (runnerProbe.state === 'absent') {
     return abandonRecoveredReviewer('inactive recovered reviewer cleanup');
+  }
+
+  if (context.model !== params.model) {
+    return abandonRecoveredReviewer('reviewer model changed; relaunching the exact reviewer');
   }
 
   debugReviewLog(
@@ -1727,7 +1732,10 @@ export async function waitForReviewCompletion(
     });
     return true;
   };
-  let reviewerWasObservedActive = false;
+  // A recorded acceptance already proves the runner launched, even if it exits
+  // before the first completion poll.
+  let reviewerWasObservedActive =
+    getRun(runId)?.agentContexts?.find((item) => item.id === reviewContextId)?.status === 'working';
 
   while (true) {
     const remainingMs = Math.max(0, timeoutMs - (Date.now() - start));
@@ -1735,6 +1743,28 @@ export async function waitForReviewCompletion(
     let reviewerActive = false;
 
     if (await completeFromTerminalSignal()) return true;
+
+    const context = getRun(runId)?.agentContexts?.find((item) => item.id === reviewContextId);
+    if (context?.runnerSessionId && context.runnerSessionPath) {
+      const reading = await getRunnerObservability(runner)?.getSessionDeliveryState(
+        vars,
+        reviewTarget,
+        context.runnerSessionId,
+        context.runnerSessionPath,
+      );
+      const attemptStartedAt = Date.parse(context.attemptStartedAt ?? context.startedAt ?? '');
+      if (
+        reading?.failure &&
+        reading.confidence === 'high' &&
+        reading.sessionId === context.runnerSessionId &&
+        reading.observedAt >= attemptStartedAt
+      ) {
+        await markAgentContextStatus(runId, 'review', 'failed', { id: reviewContextId });
+        throw new Error(
+          `Reviewer ${reviewContextId} failed: ${reading.failure}. Replay the review after correcting the runner configuration.`,
+        );
+      }
+    }
 
     // Check the immutable reviewer target. Window names are not unique in tmux
     // and must never be used for lifecycle or completion decisions.
