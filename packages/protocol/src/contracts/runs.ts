@@ -1564,7 +1564,7 @@ export interface RunStack {
   baseBranch: string;
   upstreamPrNumber: number;
   upstreamPrUrl?: string;
-  /** Commit the work branch was created from, recorded by prepare. */
+  /** Verified upstream commit, recorded by prepare or retained-run attachment. */
   resolvedSha?: string;
   /** Work-graph nodes stacked on this run, for the task brief. */
   downstream?: string[];

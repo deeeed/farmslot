@@ -7,7 +7,7 @@ unlisted: true
 
 This advanced reference is generated from `@farmslot/protocol` capability metadata plus TSDoc comments on protocol interfaces. Do not edit it by hand. For public onboarding, start with [Gateway API capability surface](./gateway-api.md). This raw table is intentionally unlisted because some low-level methods still have generated summaries while public-safe capability grouping and TSDoc coverage mature.
 
-Protocol version: `0.44.0`
+Protocol version: `0.45.0`
 
 ## WebSocket frame shape
 
@@ -404,6 +404,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `workGraph.activate`                    | workGraph        | bounded-write | —      | —      | WorkGraph Activate gateway method.                    |
 | `workGraph.addEdge`                     | workGraph        | bounded-write | —      | —      | WorkGraph AddEdge gateway method.                     |
 | `workGraph.addNode`                     | workGraph        | bounded-write | —      | —      | WorkGraph AddNode gateway method.                     |
+| `workGraph.attachRun`                   | workGraph        | bounded-write | —      | —      | WorkGraph AttachRun gateway method.                   |
 | `workGraph.create`                      | workGraph        | bounded-write | —      | —      | WorkGraph Create gateway method.                      |
 | `workGraph.gateResolve`                 | workGraph        | bounded-write | —      | —      | WorkGraph GateResolve gateway method.                 |
 | `workGraph.get`                         | workGraph        | read-only     | —      | —      | WorkGraph Get gateway method.                         |

@@ -65,8 +65,19 @@ farmslot credential list
 farmslot credential revoke <old-credential-id>
 ```
 
-After rotation, each node and `farm-automation` has one active credential. Tests
-use credentials issued into an isolated test home, never a person's profile.
+After rotation, each node and `farm-automation` has one active credential.
+Revoked records on surviving principals remain as audit history, with their ids
+reserved. They cannot authenticate. An audit should flag active credentials
+outside the allowed principals, not retained revoked records.
+
+Back up private auth files before removing obsolete copies. Keep the active
+person device login, separate automation CLI profiles and the gateway's
+hash-only store. A local node reads its credential from the gitignored startup
+file, `.env` fallback or private cache; a remote node reads its installed service declaration.
+Never embed person or service secrets in tracked samples, build environments or
+node startup declarations.
+
+Tests use credentials issued into an isolated test home, never a person's profile.
 
 ## Recover admin access
 

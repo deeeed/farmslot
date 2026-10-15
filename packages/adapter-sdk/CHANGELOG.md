@@ -6,8 +6,11 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Open an available retained report with a stale-review warning while keeping report-byte integrity and evidence admission checks.
 
-- Group evidence by registered criterion with explicit Before/After selections, independent video moments, filters and shared normalized zoom.
+- Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.14.0 - 2026-10-15
+
+- Group evidence by registered criterion with explicit Before/After selections, independent video moments, filters and shared normalized zoom.
 - Show assertion and visual-review provenance in the shared evidence model and publication text.
 
 ## 0.13.3 - 2026-10-15

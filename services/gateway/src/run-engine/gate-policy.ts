@@ -549,6 +549,7 @@ function reviewSnapshotDiffMatchesPackage(
       session.reviewId === review.id &&
       session.sessionId === review.reviewerSessionId &&
       !!session.lastReviewedHeadSha &&
+      snapshot.baseRef === preparedSnapshot.baseRef &&
       snapshot.baseSha === session.lastReviewedHeadSha &&
       snapshot.headSha === preparedSnapshot.headSha
     );

@@ -6,6 +6,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 - Keep report and evidence links bound to their gateway-retained snapshot, including read-only stale reports.
 
+- Direct device setup to person pairing instead of build-time gateway token presets.
+
 - Reuse the shared criterion comparison model and synchronized Before/After zoom in the existing evidence workspace and player.
 
 - Show the shared visual-review proof kind, delegation and reviewer identity.

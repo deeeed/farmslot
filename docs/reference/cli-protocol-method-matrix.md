@@ -635,6 +635,7 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `workGraph.activate`      | typed-command | `farmslot graph activate`     |     |                                                                                                |
 | `workGraph.pause`         | typed-command | `farmslot graph pause`        |     |                                                                                                |
 | `workGraph.retry`         | typed-command | `farmslot graph retry`        |     |                                                                                                |
+| `workGraph.attachRun`     | typed-command | `farmslot graph attach-run`   |     |                                                                                                |
 | `workGraph.gateResolve`   | typed-command | `farmslot graph gate-resolve` |     |                                                                                                |
 | `workGraph.schedulerTick` | typed-command | `farmslot graph tick`         |     |                                                                                                |
 

@@ -8,6 +8,7 @@ import type {
   NodeFailurePolicy,
   UnlockAction,
   WorkEdgeBlocks,
+  WorkGraphAttachRunResult,
   WorkGraphCreateResult,
   WorkGraphGetResult,
   WorkGraphListResult,
@@ -36,6 +37,7 @@ export const GRAPH_VERBS = [
   'activate',
   'pause',
   'retry',
+  'attach-run',
   'tick',
   'gate-resolve',
 ] as const;
@@ -54,6 +56,7 @@ export const GRAPH_VERB_METHODS: Record<GraphVerb, string> = {
   activate: 'workGraph.activate',
   pause: 'workGraph.pause',
   retry: 'workGraph.retry',
+  'attach-run': 'workGraph.attachRun',
   tick: 'workGraph.schedulerTick',
   'gate-resolve': 'workGraph.gateResolve',
 };
@@ -737,6 +740,46 @@ export function registerGraphCommand(program: Command): void {
         emit.fail(err);
       }
     });
+
+  graph
+    .command('attach-run <graphId> <nodeId> <runId>')
+    .description('Bind unpublished retained work to its declared stack without dispatching')
+    .requiredOption('--expected-head <sha>', 'Exact retained child commit')
+    .action(
+      async (
+        graphId: string,
+        nodeId: string,
+        runId: string,
+        opts: { expectedHead: string },
+        cmd: Command,
+      ) => {
+        const ctx = resolveContext(cmd);
+        const emit = createEmitter(ctx.output, cmd);
+        try {
+          const result = await withProgress(
+            `Attaching ${runId}`,
+            () =>
+              ctx.client.call<WorkGraphAttachRunResult>('workGraph.attachRun', {
+                graphId,
+                nodeId,
+                runId,
+                expectedHeadSha: opts.expectedHead,
+              }),
+            !emit.machine,
+          );
+          if (emit.machine) emit.ok(result);
+          else {
+            ctx.output.write(`${green('Attached')} ${cyan(runId)} to ${cyan(nodeId)}\n`);
+            if (result.publicationRefreshRequired)
+              ctx.output.write(
+                `Refresh the publication package before approval: farmslot rpc run.refreshPublishPackage '${JSON.stringify({ runId })}'\n`,
+              );
+          }
+        } catch (err) {
+          emit.fail(err);
+        }
+      },
+    );
 
   graph
     .command('tick')
