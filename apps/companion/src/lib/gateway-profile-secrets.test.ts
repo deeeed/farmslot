@@ -29,6 +29,8 @@ test('preset seeding rotates launcher credentials and preserves explicit logins'
     secretStorageKey: 'configured-secret',
     presetSecret: 'launcher-account-a',
   };
+  // Main wrote a launcher secret without ownership metadata. Adopt that state.
+  secrets.set('configured-secret', 'main-era-launcher');
   await seedPresetGatewayProfileSecrets([preset]);
   assert.equal(await readGatewayProfileSecret(preset), 'launcher-account-a');
   const rotated = { ...preset, presetSecret: 'rotated-launcher-account' };
