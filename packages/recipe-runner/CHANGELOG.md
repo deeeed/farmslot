@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
-- Rename the action contract and constructor to `ActionHandler` and `defineActionHandler`, removing the previous exports.
+- Replace `ActionAdapter` with `ActionHandler` and `defineActionAdapter` with `defineActionHandler`.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

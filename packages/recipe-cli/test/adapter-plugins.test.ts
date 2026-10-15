@@ -207,6 +207,28 @@ describe('adapter plugins', () => {
     assert.equal(imports().length, 2);
   });
 
+  test('a declared partial child inherits parent actions and doctor checks once', async () => {
+    const root = library('partial', {
+      echo: { source: pluginSource('echo') },
+      child: {
+        source: "export const adapter = { id: 'child', sdkVersion: 1 };",
+        extends: 'echo',
+      },
+    });
+    process.env.RECIPE_LIBRARY_PATH = `partial=${root}`;
+    await ensureAdapterLoaded('child');
+    const child = harnessAdapter('child');
+    assert.deepEqual(child.actions.manifestPaths?.(), ['/manifests/echo.json']);
+    assert.deepEqual(
+      (await child.actions.adapters?.())?.map((handler) => handler.action),
+      ['echo.ping'],
+    );
+    assert.deepEqual(
+      (await child.doctor?.('/t'))?.map((check) => check.id),
+      ['echo-ready'],
+    );
+  });
+
   test('a child replaces the parent members it declares', () => {
     const parent = builtin('web');
     const child = {
@@ -214,7 +236,7 @@ describe('adapter plugins', () => {
       sdkVersion: ADAPTER_SDK_VERSION,
       headless: false,
       hints: { launch: 'shop', relaunch: 'shop', runtimeProbeRecovery: () => 'shop' },
-    } as unknown as ProjectRuntime;
+    } satisfies Partial<ProjectRuntime>;
     const composed = composeAdapter(parent, child);
     assert.equal(composed.id, 'shop');
     assert.equal(composed.headless, false);
@@ -235,12 +257,12 @@ describe('adapter plugins', () => {
       id: 'shop',
       sdkVersion: ADAPTER_SDK_VERSION,
       readiness: { readyIndicator: () => 'OK' },
-    } as unknown as ProjectRuntime;
+    } satisfies Partial<ProjectRuntime>;
     const composed = composeAdapter(parent, child);
     assert.equal(composed.readiness?.readyIndicator?.([]), 'OK');
     assert.equal(composed.readiness?.liveChecks, liveChecks);
     assert.equal(composed.readiness?.statusRuntime, true);
-    const bare = { id: 'bare', sdkVersion: ADAPTER_SDK_VERSION } as unknown as ProjectRuntime;
+    const bare = { id: 'bare', sdkVersion: ADAPTER_SDK_VERSION } satisfies Partial<ProjectRuntime>;
     assert.equal(composeAdapter(parent, bare).readiness?.liveChecks, liveChecks);
     assert.equal(composeAdapter(builtin('web'), bare).readiness, undefined);
   });
