@@ -565,3 +565,103 @@ test('the PR alternative limit remains twenty while counted review sequences rem
     /5/,
   );
 });
+
+test('QA requests carry the visible sole or configured profile without implicit input overrides', () => {
+  const draft: ReturnType<typeof newPRRequestDraft> = {
+    ...newPRRequestDraft(),
+    url: 'https://github.com/owner/repo/pull/42',
+    teamId: team.id,
+    overrideReview: true,
+    review: { mode: 'cold', workflow: 'qa' },
+  };
+  const farms: NonNullable<Parameters<typeof effectivePRRequest>[2]> = [
+    {
+      name: 'project',
+      qa: {
+        profiles: [{ id: 'smoke', title: 'Smoke', template_id: 'qa/shared', inputs: { count: 1 } }],
+      },
+    },
+  ];
+  let effective = effectivePRRequest(draft, [team], farms);
+  assert.equal(effective.review.qaProfileId, 'smoke');
+  let request = buildPRRequest(draft, 'single', effective);
+  assert.equal(request.review?.qaProfileId, 'smoke');
+  assert.equal(request.review?.qaInputs, undefined);
+  farms[0].qa!.profiles.push({ id: 'full', title: 'Full', template_id: 'qa/shared' });
+  effective = effectivePRRequest(draft, [team], farms);
+  assert.equal(effective.review.qaProfileId, undefined);
+  assert.throws(() => buildPRRequest(draft, 'multiple', effective), /Choose a QA profile/);
+  farms[0].qa!.default_profile = 'full';
+  effective = effectivePRRequest(draft, [team], farms);
+  assert.equal(effective.review.qaProfileId, 'full');
+  request = buildPRRequest(draft, 'configured-default', effective);
+  assert.equal(request.review?.qaProfileId, 'full');
+});
+
+test('QA profile policy beats the configured default while an explicit user pick wins', () => {
+  const draft: ReturnType<typeof newPRRequestDraft> = {
+    ...newPRRequestDraft(),
+    url: 'https://github.com/owner/repo/pull/42',
+    teamId: team.id,
+    overrideReview: true,
+    review: { mode: 'cold', workflow: 'qa' },
+  };
+  const farms: NonNullable<Parameters<typeof effectivePRRequest>[2]> = [
+    {
+      name: 'project',
+      qa: {
+        default_profile: 'full',
+        profiles: [
+          { id: 'smoke', title: 'Smoke', template_id: 'qa/shared' },
+          { id: 'full', title: 'Full', template_id: 'qa/shared' },
+        ],
+      },
+      workflowDefaults: { qa: { review: { mode: 'cold', workflow: 'qa', qaProfileId: 'smoke' } } },
+    },
+  ];
+  let effective = effectivePRRequest(draft, [team], farms);
+  assert.equal(effective.review.qaProfileId, 'smoke');
+  assert.equal(buildPRRequest(draft, 'policy', effective).review?.qaProfileId, 'smoke');
+  draft.review.qaProfileId = 'full';
+  effective = effectivePRRequest(draft, [team], farms);
+  assert.equal(effective.review.qaProfileId, 'full');
+  assert.equal(buildPRRequest(draft, 'explicit', effective).review?.qaProfileId, 'full');
+});
+
+test('Run QA retains repository and team profile choices when the request only selects the QA workflow', () => {
+  const selectedTeam = structuredClone(team);
+  const draft: ReturnType<typeof newPRRequestDraft> = {
+    ...newPRRequestDraft(),
+    url: 'https://github.com/owner/repo/pull/42',
+    teamId: team.id,
+    overrideReview: true,
+    review: { mode: 'cold', workflow: 'qa' },
+  };
+  const farms: NonNullable<Parameters<typeof effectivePRRequest>[2]> = [
+    {
+      name: 'project',
+      qa: {
+        default_profile: 'default',
+        profiles: ['default', 'farm', 'team', 'repository'].map((id) => ({
+          id,
+          title: id,
+          template_id: 'qa/shared',
+        })),
+      },
+      workflowDefaults: { qa: { review: { mode: 'cold', workflow: 'qa', qaProfileId: 'farm' } } },
+    },
+  ];
+  selectedTeam.config.review = { mode: 'cold', workflow: 'qa', qaProfileId: 'team' };
+  selectedTeam.config.repositories[0].review = {
+    mode: 'cold',
+    workflow: 'qa',
+    qaProfileId: 'repository',
+  };
+  let resolved = effectivePRRequest(draft, [selectedTeam], farms);
+  assert.equal(resolved.review.qaProfileId, 'repository');
+  assert.equal(buildPRRequest(draft, 'repo-inherited', resolved).review?.qaProfileId, 'repository');
+  delete selectedTeam.config.repositories[0].review;
+  resolved = effectivePRRequest(draft, [selectedTeam], farms);
+  assert.equal(resolved.review.qaProfileId, 'team');
+  assert.equal(buildPRRequest(draft, 'team-inherited', resolved).review?.qaProfileId, 'team');
+});

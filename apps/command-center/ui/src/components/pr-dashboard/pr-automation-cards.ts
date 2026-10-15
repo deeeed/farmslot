@@ -366,7 +366,9 @@ export function reviewCard(
           </p>
           <p class="muted">
             ${prReviewWorkflow(review) === 'qa'
-              ? `QA · ${review.qaProfileId ?? 'farm default'}`
+              ? review.qaProfileId
+                ? `QA · ${review.qaProfileId}`
+                : 'QA'
               : `${review.mode.toUpperCase()} · Review`}
           </p>
           ${execution

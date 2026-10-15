@@ -121,6 +121,12 @@ export function resolvePRWorkflowDefaults(
     ?.review?.autoFinish;
   if (autoFinish !== undefined && typeof autoFinish !== 'boolean')
     throw new Error('autoFinish must be boolean');
+  // Choosing QA without an id retains the nearest declared profile, independently of review mode.
+  const qaProfileId =
+    workflow === 'qa'
+      ? layers.find(([, policy]) => policy?.review?.qaProfileId !== undefined)?.[1]?.review
+          ?.qaProfileId
+      : undefined;
   const executionLayer = layers.find(([, policy]) => policy?.execution !== undefined);
   const execution = executionLayer?.[1]?.execution;
   if (execution) assertPRExecutionProfile(execution);
@@ -129,6 +135,7 @@ export function resolvePRWorkflowDefaults(
     ...(execution ? { execution: structuredClone(execution) } : {}),
     review: structuredClone({
       ...(selectedReview ?? DEFAULT_PR_REVIEW_OPTIONS),
+      ...(qaProfileId === undefined ? {} : { qaProfileId }),
       ...(publishReview === undefined ? {} : { publishReview }),
       ...(workflow === 'review-pr' && autoFinish !== undefined ? { autoFinish } : {}),
       ...(selectedReview?.workflow === undefined

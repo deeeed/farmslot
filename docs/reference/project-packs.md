@@ -60,7 +60,7 @@ source — editor validation works after `project add`.
 Every project must declare nonempty `qa.profiles`; each profile selects a QA
 checklist with `template_id`. The same pack validator checks this declaration
 before `project add` registers anything and before gateway node-support sync.
-Until the accepted amendment below is implemented, `qa.default_profile` is required and must name a configured profile; invalid QA reports `project.json` and a configuration hint. QA presets remain separate from prepare profiles and runner/model defaults.
+`qa.default_profile` is optional and, when configured, must name a profile. Invalid QA reports `project.json` and a configuration hint. QA presets remain separate from prepare profiles and runner/model defaults.
 
 ### QA selection amendment, accepted
 
@@ -90,8 +90,8 @@ Existing run detail and QA report/PR evidence displays MUST identify the profile
 by id and title. First-party packs MUST remove their current defaults after the
 optional-default runtime is deployed; third-party defaults remain supported.
 
-Until the accepted amendment is implemented, the current required-default
-contract remains in force.
+The shared protocol, schema, gateway and clients implement this selection contract.
+Pack default removal follows deployment of the compatible runtime.
 
 ## Required fixture sources
 

@@ -20,8 +20,10 @@ import {
   type PRSlotExecutionProfile,
   type PRTeamProfile,
   resolvePRWorkflowDefaults,
+  resolveQaProfileId,
   reviewResultForRun,
   type Run,
+  selectQaProfile,
   workspacePolicyTargetLabel,
 } from '@farmslot/protocol';
 import {
@@ -95,13 +97,18 @@ export function effectivePRRequest(
     team: team?.config,
     farm: farm?.workflowDefaults,
   });
-  const profile = farm?.qa?.profiles.find(
-    (item) => item.id === (resolved.review.qaProfileId ?? farm.qa?.default_profile),
-  );
+  const review =
+    prReviewWorkflow(resolved.review) === 'qa'
+      ? {
+          ...resolved.review,
+          qaProfileId: resolveQaProfileId(farm?.qa, resolved.review.qaProfileId),
+        }
+      : resolved.review;
+  const profile = farm?.qa?.profiles.find((item) => item.id === review.qaProfileId);
   return {
     project: policy?.project ?? '',
     reviewProfile: policy?.reviewProfile ?? 'standard',
-    review: resolved.review,
+    review,
     execution: draft.overrideExecution ? draft.execution : resolved.execution,
     sources: resolved.sources,
     qa: farm?.qa,
@@ -125,15 +132,24 @@ export function updatePRReviewOptions(
   return next;
 }
 
-export function buildPRRequest(draft: PRRequestDraft, idempotencyKey: string): PRReviewRequest {
+export function buildPRRequest(
+  draft: PRRequestDraft,
+  idempotencyKey: string,
+  resolved?: ReturnType<typeof effectivePRRequest>,
+): PRReviewRequest {
   const pr = parseGitHubPullUrl(draft.url);
   if (!pr) throw new Error('Enter a GitHub pull request URL');
   let review = draft.overrideReview ? draft.review : undefined;
+  if (resolved && prReviewWorkflow(resolved.review) === 'qa') review = resolved.review;
   if (review && prReviewWorkflow(review) === 'qa' && draft.qaInputsText !== undefined) {
     const inputs: unknown = JSON.parse(draft.qaInputsText);
     if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs))
       throw new Error('QA inputs must be a JSON object');
-    review = { ...review, qaInputs: inputs as PRReviewOptions['qaInputs'] };
+    review = { ...review, qaInputs: { ...review.qaInputs, ...inputs } };
+  }
+  if (resolved && review && prReviewWorkflow(review) === 'qa') {
+    const qaProfileId = review.qaProfileId ?? selectQaProfile(resolved.qa).profile.id;
+    review = { ...review, qaProfileId };
   }
   const request: PRReviewRequest = {
     teamId: draft.teamId,
@@ -254,7 +270,8 @@ export function prExecutionText(profile?: PRExecutionProfile): string {
   return `${profile.slotPolicy.kind === 'exact' ? profile.slotPolicy.slotId : profile.slotPolicy.allowedSlots.join(', ')} · ${profile.models.map((model) => `${model.runner}/${model.model || 'default model'}/${model.effort || 'default effort'}${model.allowedSlots?.length ? ` on ${model.allowedSlots.join(', ')}` : ''}`).join(' or ')}`;
 }
 export function prReviewText(options: PRReviewOptions = DEFAULT_PR_REVIEW_OPTIONS): string {
-  if (prReviewWorkflow(options) === 'qa') return `QA · ${options.qaProfileId ?? 'farm default'}`;
+  if (prReviewWorkflow(options) === 'qa')
+    return options.qaProfileId ? `QA · ${options.qaProfileId}` : 'QA';
   return `${options.mode.toUpperCase()} review · Static review · ${options.publishReview === undefined ? 'Publication inherited' : options.publishReview ? 'Publish to PR' : 'Farmslot results only'}`;
 }
 export function prMonitorFreshness(monitor: PRMonitor, now = Date.now()): string {

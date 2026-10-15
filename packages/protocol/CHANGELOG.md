@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Resolve QA profiles from an explicit or policy id, an optional project default, or the sole profile; return typed choices for ambiguous requests.
 
 ## 0.45.0 - 2026-10-15
 
