@@ -183,7 +183,12 @@ test('retained artifact references preserve bytes even after their owner complet
   const f = await fixture(t);
   const cached = await f.support();
   const closed = f.run();
-  closed.taskFile = path.join(cached, 'retained-task.md');
+  closed.reviewResult = {
+    recommendation: 'approve',
+    reviewMd: 'Retained evidence',
+    lineComments: [],
+    artifactManifest: [{ path: path.join(cached, 'payload'), purpose: 'report', sizeBytes: 24 }],
+  };
   f.setRuns([closed]);
   assert.deepEqual(await cleanupReviewWorkspaceCaches(false, f.storage), []);
   assert(existsSync(cached));
@@ -214,6 +219,41 @@ for (const blocker of ['allocator lock', 'registered worktree'] as const) {
     assert(existsSync(repository));
   });
 }
+
+test('completed allocator pointers permit reclamation while unfinished receipts preserve it', async (t) => {
+  const f = await fixture(t);
+  const native = await f.support(path.join(f.ownerRoot, 'support'));
+  const repository = await f.repository();
+  const operation = path.join(f.ownerRoot, 'operations', '12345678-1234-1234-1234-123456789abc');
+  await f.json(path.join(operation, 'state.json'), { state: 'complete' });
+  await mkdir(path.join(f.ownerRoot, 'locks'), { recursive: true });
+  await symlink(operation, path.join(f.ownerRoot, 'locks', 'cache'));
+  const receipt = path.join(f.ownerRoot, 'runs', 'historical', 'allocation.json');
+  await f.json(receipt, { state: 'ready' });
+  assert.deepEqual(await cleanupReviewWorkspaceCaches(false, f.storage), []);
+  await f.json(receipt, { state: 'cleaned' });
+  assert.deepEqual(
+    await cleanupReviewWorkspaceCaches(false, f.storage),
+    [native, repository].sort(),
+  );
+});
+
+test('an interrupted deletion is reclaimed without touching a newly admitted copy', async (t) => {
+  const f = await fixture(t);
+  const current = await f.support();
+  const retired = path.join(
+    f.cacheRoot,
+    'bundles',
+    '.reclaim-' + digest + '-12345678-1234-1234-1234-123456789abc',
+  );
+  await f.json(path.join(retired, 'leftover'), { partialDeletion: true });
+  const active = f.run('new-admission');
+  active.status = 'monitoring';
+  f.setRuns([active]);
+  assert.deepEqual(await cleanupReviewWorkspaceCaches(false, f.storage), [retired]);
+  assert(!existsSync(retired));
+  assert(existsSync(path.join(current, 'manifest.json')));
+});
 
 test('admission and allocation uses stay concurrent but cannot overlap cache reclamation', async () => {
   let release!: () => void;

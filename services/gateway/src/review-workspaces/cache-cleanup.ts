@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
-import { lstat, readdir, readFile, rm } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { lstat, readdir, readFile, readlink, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { Run } from '@farmslot/protocol';
@@ -13,6 +13,7 @@ interface CleanupStorage {
 }
 
 const digestPattern = /^[a-f0-9]{64}$/;
+const retiredPattern = /^\.reclaim-[a-f0-9]{64}-[a-f0-9-]{36}$/;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 
 async function directory(file: string): Promise<boolean> {
@@ -45,6 +46,28 @@ async function metadata(file: string): Promise<Record<string, unknown> | undefin
       return undefined;
     throw error;
   }
+}
+
+async function allocatorIsIdle(ownerRoot: string): Promise<boolean> {
+  const operations = path.join(ownerRoot, 'operations');
+  for (const name of await entries(path.join(ownerRoot, 'locks'))) {
+    const file = path.join(ownerRoot, 'locks', name);
+    if (!(await lstat(file)).isSymbolicLink()) return false;
+    const target = path.resolve(path.dirname(file), await readlink(file));
+    if (path.dirname(target) !== operations || !/^[a-f0-9-]{36}$/.test(path.basename(target)))
+      return false;
+    if ((await metadata(path.join(target, 'state.json')))?.state !== 'complete') return false;
+  }
+  // Cleanup receipts cover historical workspaces whose run record is no longer live.
+  for (const name of await entries(path.join(ownerRoot, 'runs'))) {
+    const workspace = path.join(ownerRoot, 'runs', name);
+    if (
+      (await metadata(path.join(workspace, 'allocation.json')))?.state !== 'cleaned' ||
+      (await directory(path.join(workspace, 'source')))
+    )
+      return false;
+  }
+  return true;
 }
 
 function absolutePaths(value: unknown, paths: Set<string>): void {
@@ -96,8 +119,24 @@ export function cleanupReviewWorkspaceCaches(
     const removed: string[] = [];
     const remove = async (target: string) => {
       if (referenced(target) || !(await directory(target))) return false;
-      if (!dryRun) await rm(target, { recursive: true });
+      if (!dryRun) {
+        // Remove the published name atomically before deletion can be interrupted.
+        const retired = path.join(
+          path.dirname(target),
+          `.reclaim-${path.basename(target)}-${randomUUID()}`,
+        );
+        await rename(target, retired);
+        await rm(retired, { recursive: true });
+      }
       removed.push(target);
+      return true;
+    };
+    const reap = async (target: string) => {
+      if (!retiredPattern.test(path.basename(target))) return false;
+      if (!referenced(target) && (await directory(target))) {
+        if (!dryRun) await rm(target, { recursive: true });
+        removed.push(target);
+      }
       return true;
     };
     const sources = new Map<string, string[]>();
@@ -110,6 +149,7 @@ export function cleanupReviewWorkspaceCaches(
     }
     const support = async (root: string, gateway: boolean) => {
       for (const name of await entries(root)) {
+        if (await reap(path.join(root, name))) continue;
         if (!digestPattern.test(name) || protectedDigests.has(name)) continue;
         const target = path.join(root, name);
         if (referenced(target) || !(await directory(target))) continue;
@@ -133,12 +173,13 @@ export function cleanupReviewWorkspaceCaches(
         if (
           !(await directory(ownerRoot)) ||
           protectedOwners.has(ownerRoot) ||
-          (await entries(path.join(ownerRoot, 'locks'))).length
+          !(await allocatorIsIdle(ownerRoot))
         )
           continue;
         await support(path.join(ownerRoot, 'support'), false);
         const repositories = path.join(ownerRoot, 'repositories');
         for (const name of await entries(repositories)) {
+          if (await reap(path.join(repositories, name))) continue;
           if (!digestPattern.test(name)) continue;
           const target = path.join(repositories, name);
           const marker = path.join(repositories, name + '.json');

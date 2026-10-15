@@ -14,7 +14,7 @@ export function runNeedsExecutionStorage(run: Run): boolean {
   );
 }
 
-// Allocations can run concurrently; reclamation waits for an idle storage boundary.
+// Allocations run concurrently; reclamation starts only at an idle storage boundary.
 let users = 0;
 let reclamation: Promise<void> | undefined;
 
