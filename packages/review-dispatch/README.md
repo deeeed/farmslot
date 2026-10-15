@@ -16,8 +16,9 @@ const payload = picker.toRequestPayload();
 ```
 
 The model owns defaults, catalog choices, row edits and serialization. Thin
-renderers use `rows`, `catalog.runners`, `modelChoices`, `effortChoices` and
-`subscribe`. Context supplies defaults, allowed actions, row limits and workflow.
+renderers use `rows`, `catalog.runners`, `modelPickerState`, `effortChoices` and
+`subscribe`. `modelPickerState(rowId, filter)` returns the visible model chips,
+custom-model status and whether the catalog needs a filter. Context supplies defaults, allowed actions, row limits and workflow.
 Catalog helpers preserve custom model IDs and saved preferences.
 
 `toSelection`, `toSequence`, `toRequestPayload`, `toDispatchOptions` and
