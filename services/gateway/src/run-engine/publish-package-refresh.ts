@@ -324,7 +324,10 @@ async function refreshPublishPackageTransitionLocked(
 
   const oldPayload: ReadyGatePayload =
     decision?.payload?.kind === 'ready'
-      ? decision.payload
+      ? {
+          ...decision.payload,
+          prPackage: decision.payload.prPackage ?? (await readReadyGatePreparedPackage(run)),
+        }
       : {
           kind: 'ready',
           prNumber: null,

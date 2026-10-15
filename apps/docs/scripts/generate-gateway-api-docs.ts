@@ -128,6 +128,7 @@ function inferSafetyTier(method: string): string {
   ) {
     return 'lifecycle';
   }
+  if (method === 'run.extendReviewBudget') return 'bounded-write';
   if (
     method.includes('list') ||
     method.includes('ping') ||

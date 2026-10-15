@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -18,6 +19,7 @@ import { digest } from '../assessment/failure-triage/packet.js';
 import { beginAssessment, finishAssessment, reserveAssessment } from '../assessment/store.js';
 import { invalidateProjectVarsCache, projectsDir } from '../core/config.js';
 import { GatewayMethodError } from '../core/method-error.js';
+import { farmslotRoot } from '../fleet/state.js';
 import { admitReviewRound } from '../review/review-round-budget.js';
 import { computeReadyGatePackageHash } from '../run-completion/ready-gate-package.js';
 import { createRun, deleteRun, getAllRuns, getRun, updateRun } from '../runs/store.js';
@@ -3085,4 +3087,139 @@ test('refused publication approval stays pending without restoring, replaying or
   );
   assert.deepEqual(effects, []);
   assert.deepEqual(getRun(run.id), before);
+});
+
+test('real packaged approval restores a parked run before reading a reused slot checkout', async (t) => {
+  const projectDir = mkdtempSync(path.join(projectsDir, 'parked-package-'));
+  const project = path.basename(projectDir);
+  writeFileSync(
+    path.join(projectDir, 'project.json'),
+    JSON.stringify({ name: project, default_branch: 'main', hooks: {} }),
+  );
+  invalidateProjectVarsCache();
+  t.after(() => {
+    rmSync(projectDir, { recursive: true, force: true });
+    invalidateProjectVarsCache();
+  });
+  const root = mkdtempSync(path.join(tmpdir(), 'parked-publication-source-'));
+  const poolFile = path.join(farmslotRoot, 'pool', `parked-approval-${randomUUID()}.json`);
+  const oldRepo = path.join(root, 'foreign');
+  const ownedRepo = path.join(root, 'owned');
+  for (const repo of [oldRepo, ownedRepo]) {
+    mkdirSync(repo);
+    execFileSync('git', ['init', '-q', '-b', 'owned-change'], { cwd: repo });
+    execFileSync(
+      'git',
+      [
+        '-c',
+        'user.name=Fixture',
+        '-c',
+        'user.email=fixture@example.test',
+        '-c',
+        'commit.gpgsign=false',
+        'commit',
+        '-q',
+        '--allow-empty',
+        '-m',
+        repo,
+      ],
+      { cwd: repo },
+    );
+  }
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: ownedRepo,
+    encoding: 'utf8',
+  }).trim();
+  const task = path.join(root, 'task');
+  mkdirSync(path.join(task, 'artifacts'), { recursive: true });
+  writeFileSync(path.join(task, 'TASK.md'), '# Retained package');
+  const oldSlot = 'reused-' + randomUUID();
+  const ownedSlot = 'restored-' + randomUUID();
+  writeFileSync(
+    poolFile,
+    JSON.stringify({
+      machine: 'localhost',
+      host: 'localhost',
+      ssh_user: userInfo().username,
+      os: 'darwin',
+      project,
+      platform: 'cli',
+      slots: [
+        { id: oldSlot, enabled: true, repo: oldRepo, session: oldSlot },
+        { id: ownedSlot, enabled: true, repo: ownedRepo, session: ownedSlot },
+      ],
+    }),
+  );
+  const pkg = makeReadyGatePackage({
+    headSha: head,
+    branch: 'owned-change',
+    reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+  });
+  writeFileSync(path.join(task, 'artifacts/pr-package.json'), JSON.stringify(pkg));
+  const { run, decision } = gateParkedRun(
+    t,
+    'real-package-rehome',
+    gateParkRecord('x', oldSlot, { slotFreedAt: '2026-09-05T00:00:10Z' }),
+  );
+  t.after(() => {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(poolFile, { force: true });
+  });
+  decision.actions = [
+    { id: 'approve-publish-unresolved', label: 'Accept findings', style: 'danger' },
+  ];
+  decision.payload = {
+    kind: 'ready',
+    prNumber: null,
+    repo: null,
+    branch: pkg.branch,
+    workerReport: '',
+    diffStat: pkg.diffStat,
+    prPackage: pkg,
+  };
+  updateRun(run.id, {
+    project,
+    slotId: oldSlot,
+    branch: pkg.branch,
+    taskFile: path.join(task, 'TASK.md'),
+    decisions: [decision],
+  });
+  let restores = 0;
+  await runResolveDecision(
+    {
+      runId: run.id,
+      decisionId: decision.id,
+      actionId: 'approve-publish-unresolved',
+      selectionData: {
+        packageId: pkg.id,
+        packageHash: pkg.packageHash,
+        packageHeadSha: head,
+        selectedEvidenceKeys: [],
+      },
+    },
+    () => {},
+    {
+      assertGatePrerequisites: async () => {},
+      resumeRun: async () => {},
+      restoreGatePark: async () => {
+        restores++;
+        const park = getRun(run.id)!.park!;
+        updateRun(run.id, {
+          slotId: ownedSlot,
+          park: { ...park, slotId: ownedSlot, phase: 'restored', slotFreedAt: undefined },
+        });
+        return {
+          ok: true,
+          runId: run.id,
+          slotId: ownedSlot,
+          restoredGeneration: 1,
+          reloadedSessionId: 'retained',
+          gateReplayed: false,
+          record: getRun(run.id)!.park!,
+        };
+      },
+    },
+  );
+  assert.equal(restores, 1);
+  assert.equal(getRun(run.id)!.decisions[0].resolvedAction, 'approve-publish-unresolved');
 });

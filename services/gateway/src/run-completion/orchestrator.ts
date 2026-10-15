@@ -947,27 +947,28 @@ export async function prepareCompletionPackageTransitionLocked(
         JSON.stringify(prPackage, null, 2),
         'utf-8',
       );
-      await writeFile(
-        path.join(taskDir, 'artifacts/pr-package.md'),
-        [
-          '# PR Package',
-          '',
-          `- Package: ${prPackage.id}`,
-          `- Hash: ${prPackage.packageHash}`,
-          `- Branch: ${prPackage.branch || 'unknown'}`,
-          `- Head: ${prPackage.headSha ?? 'unknown'}`,
-          `- Target: ${prPackage.publicationTarget}`,
-          `- Status: ${prPackage.publicationStatus}`,
-          `- Reviews: ${reviews.length}/${effectiveRequiredReviewCount(reviewPolicy)}`,
-          '',
-          '## Draft title',
-          prPackage.draftTitle,
-          '',
-          '## Draft body',
-          prPackage.draftBody,
-        ].join('\n'),
-        'utf-8',
-      );
+      const markdown = [
+        '# PR Package',
+        '',
+        `- Package: ${prPackage.id}`,
+        `- Hash: ${prPackage.packageHash}`,
+        `- Branch: ${prPackage.branch || 'unknown'}`,
+        `- Head: ${prPackage.headSha ?? 'unknown'}`,
+        `- Target: ${prPackage.publicationTarget}`,
+        `- Status: ${prPackage.publicationStatus}`,
+        `- Reviews: ${reviews.length}/${effectiveRequiredReviewCount(reviewPolicy)}`,
+        '',
+        '## Draft title',
+        prPackage.draftTitle,
+        '',
+        '## Draft body',
+        prPackage.draftBody,
+      ].join('\n');
+      await writeFile(path.join(taskDir, artifactPath.replace(/\.json$/, '.md')), markdown, {
+        encoding: 'utf-8',
+        flag: 'wx',
+      });
+      await writeFile(path.join(taskDir, 'artifacts/pr-package.md'), markdown, 'utf-8');
     }
     const current = getRun(runId)!;
     updateRun(runId, {

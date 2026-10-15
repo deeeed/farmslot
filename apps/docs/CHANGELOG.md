@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document scoped review-budget extensions and current-head publication recovery.
+
 - Document the typed retained-run stack attachment RPC and graph command.
 - Document explicit retired principal-id replacement and its identity-generation guard.
 

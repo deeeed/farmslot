@@ -272,3 +272,17 @@ test('held approval cannot replay and only a later explicit action authorizes re
     );
   }
 });
+
+test('package history cannot hide a later approval on the refreshed live decision', () => {
+  const approval: RunDecision = {
+    ...makeCollisionDecision([]),
+    type: 'engine_human_gate',
+    resolvedAction: 'approve-publish',
+  };
+  const snapshot: RunDecision = {
+    ...approval,
+    id: 'history',
+    resolvedAction: 'superseded-by-package-refresh',
+  };
+  assert.equal(latestResolvedHumanGateDecision([approval, snapshot], true), approval);
+});

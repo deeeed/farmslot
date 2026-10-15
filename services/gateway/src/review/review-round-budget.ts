@@ -190,8 +190,23 @@ export async function assertReviewRoundAvailable(run: Run): Promise<void> {
 }
 
 export function reviewBudgetScopeBrief(run: Run): string {
-  const used = historicalAdmissions(run).length;
-  const extension = [...(run.reviewBudgetExtensions ?? [])]
+  return formatReviewBudgetScopeBrief(
+    historicalAdmissions(run).length,
+    run.reviewBudgetExtensions ?? [],
+  );
+}
+
+/** Static task inputs freeze before dispatch reserves its next admission. */
+export async function nextReviewBudgetScopeBrief(run: Run): Promise<string> {
+  const budget = await runReviewRoundBudget(run);
+  return formatReviewBudgetScopeBrief(budget.used + 1, budget.extensions ?? []);
+}
+
+function formatReviewBudgetScopeBrief(
+  used: number,
+  extensions: readonly ReviewBudgetExtension[],
+): string {
+  const extension = [...extensions]
     .reverse()
     .find((entry) => used > entry.previousLimit && used <= entry.limit);
   return extension

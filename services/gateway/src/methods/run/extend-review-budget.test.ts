@@ -10,6 +10,7 @@ import '../../runtime/mock-pty.test-support.js';
 
 import {
   admitReviewRound,
+  nextReviewBudgetScopeBrief,
   reviewBudgetScopeBrief,
   runReviewRoundBudget,
 } from '../../review/review-round-budget.js';
@@ -64,6 +65,10 @@ test('five spent rounds stay spent; durable grant admits sixth/seventh and block
   const result = await runExtendReviewBudget(params, emit, deps);
   assert.equal(result.budget.used, 5);
   assert.equal(result.budget.remaining, 2);
+  const upcoming = await nextReviewBudgetScopeBrief(getRun(run.id)!);
+  assert.match(upcoming, /Attempt 6\/7/);
+  assert.match(upcoming, /scoped correction/);
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 5);
   assert.equal(result.receipt.principalSubject.type, 'service');
   const persisted = JSON.parse(
     await readFile(path.join(runsDirectory(), `${run.id}.json`), 'utf8'),

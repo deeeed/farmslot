@@ -10,6 +10,7 @@ import { createRun, getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { BlockedRunError } from './errors.js';
 import {
   executePublishGateReviewPlan,
+  executeReadyGate,
   freedSlotGateResolutionBlocker,
   localVideoProofWarning,
   reconcileReviewLaunchRejectionForCurrentHead,
@@ -565,4 +566,56 @@ test('WARM recheck updates its existing lineage and preserves attempt provenance
   assert.equal(reviews[0].loopNumber, 1);
   assert.equal(reviews[0].attempts?.length, 2);
   assert.equal(reviews[0].reviewedHeadSha, 'new');
+});
+
+test('source-read failure keeps the publication wait and retained resources without approval actions', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'missing-source-proof',
+    ticketOrPr: 'SOURCE-WAIT',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  updateRun(run.id, {
+    status: 'human-gating',
+    slotId: 'retained-source-slot',
+    steps: [
+      { name: 'human-gate', status: 'running' },
+      { name: 'finalize', status: 'pending' },
+    ],
+    engineState: { publishGate: { packageId: 'retained', packageHash: 'retained-hash' } },
+  });
+  const before = structuredClone(getRun(run.id));
+  let waits = 0;
+  const action = await executeReadyGate(run.id, {
+    ensurePackage: async () => {
+      throw new Error('Owned source SSH connection unavailable');
+    },
+    createDecision: async (id, reason, description, actions, payload, options) => {
+      assert.equal(id, run.id);
+      assert.equal(reason, 'human_gate');
+      assert.match(description, /SSH connection unavailable.*Restore the owned source/);
+      assert.deepEqual(
+        actions.map((entry) => entry.id),
+        ['hold'],
+      );
+      assert.ok(payload?.kind === 'ready' && payload.stale && !payload.prPackage);
+      assert.equal(
+        options?.canReplay?.({
+          id: 'old',
+          type: 'engine_human_gate',
+          title: '',
+          description: '',
+          actions: [],
+          createdAt: '',
+        }),
+        false,
+      );
+      waits++;
+      return 'hold';
+    },
+  });
+  assert.equal(action, 'hold');
+  assert.equal(waits, 1);
+  assert.deepEqual(getRun(run.id), before);
 });

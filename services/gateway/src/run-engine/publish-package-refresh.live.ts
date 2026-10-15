@@ -319,6 +319,12 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
   const packageText = await readFile(path.join(taskDir, 'artifacts/pr-package.json'), 'utf-8');
   const packageJson = JSON.parse(packageText) as ReadyGatePrPackage;
   assert.equal(packageJson.id, first.packageId);
+  const immutableMarkdown = path.join(taskDir, packageJson.artifactPath.replace(/\.json$/, '.md'));
+  assert.equal(
+    await readFile(immutableMarkdown, 'utf8'),
+    await readFile(path.join(taskDir, 'artifacts/pr-package.md'), 'utf8'),
+  );
+  assert.match(await readFile(immutableMarkdown, 'utf8'), new RegExp(first.packageId));
   assert.ok(packageJson.evidenceManifest);
   assert.equal(
     packageJson.evidenceManifest.some((artifact) => artifact.sha256),

@@ -496,7 +496,7 @@ registerHooks({load(url, context, nextLoad) {
     if (control === 'rpc') after = after.replace(/await assertReviewRoundAvailable\\(getRun\\(params\\.runId\\)!?\\);/, 'void params.runId;');
     if (control === 'rpc' || control === 'consumption') after = after.replace(/assertReviewBudgetAtConsumption\\?\\.\\(\\);/, 'void params.runId;');
     if (control && control !== 'scope') assert.notEqual(after, before, 'RPC control must change its target');
-    const delayed = after.replace(/(const currentDescription = await assertReadyPublishResolveIsFresh\\(existing, decision, params\\);)/, '$1' + ${JSON.stringify(delaySource)});
+    const delayed = after.replace(/(const currentDescription = await assertReadyPublishResolveIsFresh\\([\\s\\S]*?\\);)/, '$1' + ${JSON.stringify(delaySource)});
     assert.notEqual(delayed, after, 'schedule must delay the real awaited probe boundary');
     after = delayed;
   } else return result;
@@ -932,7 +932,12 @@ registerHooks({load(url, context, nextLoad) {
       acceptLink();
       await waitFor(() => {
         const nodes = tree();
-        if (!nodes.some((node) => node.AXLabel?.includes('Review rounds 5/5'))) return false;
+        if (
+          !nodes.some((node) =>
+            node.AXLabel?.includes(`Review rounds ${effectiveLimit}/${effectiveLimit}`),
+          )
+        )
+          return false;
         assert.equal(
           nodes.find((node) => node.AXUniqueId === 'companion-gate-review-submit')?.enabled,
           false,

@@ -745,7 +745,15 @@ export function freedSlotGateResolutionBlocker(run: Run): BlockedRunError | null
   return new BlockedRunError(message, `Gate park in progress (${code}); restore or cancel the run`);
 }
 
-export async function executeReadyGate(runId: string): Promise<string> {
+interface ReadyGatePackageDependencies {
+  ensurePackage?: typeof ensureCurrentPublishPackage;
+  createDecision?: typeof createEngineDecision;
+}
+
+export async function executeReadyGate(
+  runId: string,
+  dependencies: ReadyGatePackageDependencies = {},
+): Promise<string> {
   const current = getRun(runId)!;
   if (current.engineState?.publishGate?.humanPublicationAdoption) {
     const { assertAdoptedPublicationContinuation } =
@@ -761,9 +769,36 @@ export async function executeReadyGate(runId: string): Promise<string> {
   // `??` would treat the prNumber=0 sentinel as a real value and skip rescue;
   // hasValidPrNumber filters it so findPRNumber actually runs.
   const publicationApprovalGate = requiresPublicationApproval(current);
-  const preparedPackage = publicationApprovalGate
-    ? await ensureCurrentPublishPackage(runId)
-    : undefined;
+  const decide = dependencies.createDecision ?? createEngineDecision;
+  let preparedPackage: ReadyGatePrPackage | undefined;
+  if (publicationApprovalGate) {
+    try {
+      preparedPackage = await (dependencies.ensurePackage ?? ensureCurrentPublishPackage)(runId);
+    } catch (error) {
+      // Unavailable source is a durable operator wait, never permission to fail
+      // the run and tear down its retained worker, slot or proof.
+      const message = `Publication package is unavailable: ${error instanceof Error ? error.message : String(error)}. Restore the owned source and retry this gate.`;
+      const action = await decide(
+        runId,
+        'human_gate',
+        message,
+        [{ id: 'hold', label: 'Retry Gate', style: 'secondary' }],
+        {
+          kind: 'ready',
+          prNumber: null,
+          repo: ciRepo,
+          branch: current.branch ?? '',
+          workerReport: message,
+          diffStat: { files: 0, additions: 0, deletions: 0 },
+          stale: true,
+        },
+        { canReplay: () => false },
+      );
+      // Inspection may restore this same pending gate. An approval must still
+      // traverse the normal package validation and publication-state writer.
+      return isPublishApprovalAction(action) ? 'hold' : action;
+    }
+  }
   const prNumber =
     artifactOnly || publicationApprovalGate
       ? null
@@ -1142,7 +1177,12 @@ export async function executeReadyGate(runId: string): Promise<string> {
   // ADR-054: entering a durable operator wait. The effective retention policy
   // applies before the operator chooses; their choice then governs what follows.
   await reconcileRunPosture({ runId, boundary: 'operator-wait' });
-  const actionId = await createEngineDecision(runId, 'human_gate', desc, actions, readyPayload);
+  const actionId = await decide(runId, 'human_gate', desc, actions, readyPayload, {
+    canReplay: (prior) =>
+      !isPublishApprovalAction(prior.resolvedAction ?? '') ||
+      (prior.payload?.kind === 'ready' &&
+        prior.payload.prPackage?.packageHash === preparedPackage?.packageHash),
+  });
 
   const afterDecisionRun = getRun(runId)!;
   // Bind to the latest decision matching the action we just resolved — not an

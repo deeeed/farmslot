@@ -44,7 +44,7 @@ import { shellQuote } from '../core/tmux.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import { collectSupportFiles } from '../node-support/files.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
-import { reviewBudgetScopeBrief } from '../review/review-round-budget.js';
+import { nextReviewBudgetScopeBrief } from '../review/review-round-budget.js';
 import { mirrorWorkerSubtasks } from '../run-completion/artifact-mirror.js';
 import { scanArtifacts } from '../run-completion/orchestrator.js';
 import {
@@ -291,7 +291,7 @@ export async function materializeReviewWorkspaceTask(
     const prompt = `Read ${shellQuote(path.posix.join(taskDir, 'TASK.md'))}. Run ${shellQuote(path.posix.join(taskDir, 'mark'))} start before reviewing. Follow the exact CHECKLIST.md and frozen inputs. Review source read-only and write reports only in the task directory. Finish through the shared mark command; native idle is not task completion.`;
     const instructions = [
       '## Static review execution',
-      reviewBudgetScopeBrief(getRun(runId) ?? run),
+      await nextReviewBudgetScopeBrief(getRun(runId) ?? run),
       '',
       ...(run.reviewWorkspace.support
         ? [
