@@ -15,6 +15,7 @@ import type {
 
 await import('../../runtime/mock-pty.test-support.js');
 const config = await import('../../core/config.js');
+const nodeRpc = await import('../../fleet/node-rpc.js');
 let remote = false;
 let root = '';
 let corrupt = false;
@@ -33,6 +34,7 @@ mock.module('../../fleet/machine-registry.js', {
 });
 mock.module('../../fleet/node-rpc.js', {
   namedExports: {
+    ...nodeRpc,
     getSlotLocality: async () => ({ isLocal: !remote }),
     nodeExec: async () => assert.fail('Display must not execute a remote command'),
     nodeExecArgv: async () => assert.fail('Display must not execute a remote command'),
