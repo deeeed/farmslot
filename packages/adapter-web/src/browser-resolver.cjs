@@ -38,6 +38,7 @@ const path = require('node:path');
 const { createRequire } = require('node:module');
 
 const cdp = require('./browser-cdp.cjs');
+const { disableMacCodeSignClone } = require('./chrome-args.cjs');
 
 const SCHEMA_VERSION = 2;
 const LOAD_EXTENSION = 'load-extension';
@@ -346,12 +347,7 @@ const HEADLESS = 'headless';
 const HEADFUL = 'headful';
 
 function effectiveLaunchMethod(executable, launchMethod, platform = process.platform) {
-  // Branded Chrome supports isolated direct launches. Launch Services creates
-  // persistent code_sign_clone bundles for every additional app instance.
-  return launchMethod === LAUNCH_SERVICES &&
-    platform === 'darwin' &&
-    appBundleFor(executable) &&
-    !isBrandedChrome(executable)
+  return launchMethod === LAUNCH_SERVICES && platform === 'darwin' && appBundleFor(executable)
     ? LAUNCH_SERVICES
     : SPAWN;
 }
@@ -685,7 +681,7 @@ async function probeLaunch(
     // window. Like the launchers, it keeps a window behind the operator's apps
     // rendering.
     const backgroundWindow = display === HEADFUL;
-    const args = [
+    const args = disableMacCodeSignClone([
       ...(display === HEADLESS ? ['--headless=new'] : ['--window-size=480,360']),
       `--user-data-dir=${profile}`,
       '--no-first-run',
@@ -697,7 +693,7 @@ async function probeLaunch(
       '--remote-debugging-address=127.0.0.1',
       `--remote-debugging-port=${port}`,
       backgroundWindow ? '--no-startup-window' : 'about:blank',
-    ];
+    ]);
     if (method === LAUNCH_SERVICES) {
       execFileSync('open', ['-g', '-n', '-a', appBundleFor(executable), '--args', ...args], {
         stdio: 'ignore',

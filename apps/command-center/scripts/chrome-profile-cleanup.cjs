@@ -10,6 +10,7 @@ const { execFileSync, spawn } = require('node:child_process');
 const { once } = require('node:events');
 const { withProbeLock } = require('../../../packages/adapter-web/src/browser-resolver.cjs');
 const { cdpListenerPids } = require('../../../packages/adapter-web/src/browser-cdp.cjs');
+const { disableMacCodeSignClone } = require('../../../packages/adapter-web/src/chrome-args.cjs');
 const {
   profileProcessPids,
 } = require('../../../packages/adapter-web/src/validation-process-ownership.cjs');
@@ -160,9 +161,27 @@ async function main([action, profile, chrome, ...args]) {
   if (action === 'launch') {
     await profileLock(profile, async () => {
       fs.mkdirSync(profile, { recursive: true });
-      const child = spawn(chrome, args, { detached: true, stdio: 'ignore' });
-      await once(child, 'spawn');
-      child.unref();
+      const browserArgs = disableMacCodeSignClone(args);
+      if (
+        process.platform === 'darwin' &&
+        chrome === '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+      ) {
+        execFileSync('/usr/bin/open', ['-na', 'Google Chrome', '--args', ...browserArgs], {
+          stdio: 'ignore',
+        });
+      } else {
+        const child = spawn(chrome, browserArgs, { detached: true, stdio: 'ignore' });
+        await once(child, 'spawn');
+        child.unref();
+      }
+      // Launch Services can return before the browser exists. Keep deletion
+      // locked out until its profile process appears; debug-chrome then checks
+      // ownership of the requested CDP address as before.
+      const deadline = Date.now() + Number(process.env.FARMSLOT_CDP_TIMEOUT || 15) * 1000;
+      while (profileProcessPids(profile).length === 0) {
+        if (Date.now() >= deadline) throw new Error(`Chrome did not start for ${profile}`);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
     });
     return;
   }

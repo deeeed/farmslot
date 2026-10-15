@@ -79,7 +79,13 @@ CHROME="${FARMSLOT_CHROME:-/Applications/Google Chrome.app/Contents/MacOS/Google
 HEADLESS="${FARMSLOT_CDP_HEADLESS:-0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLEANUP="$SCRIPT_DIR/chrome-profile-cleanup.cjs"
-cleanup_orphans() { node "$CLEANUP" schedule "$PROFILE"; }
+cleanup_orphans() {
+  # CDP ownership is already proven. A cache/log permission failure defers GC;
+  # it must not turn a live, ready browser into an ambiguous failed launch.
+  if ! node "$CLEANUP" schedule "$PROFILE"; then
+    echo "[debug-chrome] browser ready; profile cleanup deferred after scheduling error" >&2
+  fi
+}
 FARMSLOT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 DEFAULT_UI_PORT="5174"
 if [[ -f "$FARMSLOT_ROOT/.env.ports" ]]; then
@@ -290,9 +296,9 @@ else
   # Pin headed CDP Chrome to the primary display so capture-helper can record.
   CHROME_ARGS+=(--window-position=200,150 --window-size=1200,800)
 fi
-# The distinct profile already gives Chrome a distinct singleton. Launching its
-# binary avoids macOS Launch Services retaining a code_sign_clone per instance.
-node "$CLEANUP" launch "$PROFILE" "$CHROME" "${CHROME_ARGS[@]}" "$URL"
+# Launch under the maintenance lock, with macOS clone creation disabled by the
+# shared Chrome argument builder.
+FARMSLOT_CDP_TIMEOUT="$TIMEOUT_SECS" node "$CLEANUP" launch "$PROFILE" "$CHROME" "${CHROME_ARGS[@]}" "$URL"
 
 # Wait for CDP so callers can chain `scripts/cdp.mjs` immediately.
 attempts=$(( TIMEOUT_SECS * 5 ))

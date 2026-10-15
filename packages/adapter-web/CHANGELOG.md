@@ -4,7 +4,7 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## Unreleased
 
-- Launch branded Chrome directly to avoid macOS code-signing clones, and let profile cleanup locks retain live owners without a probe-age timeout.
+- Disable macOS code-signing clones across isolated browser launches, merging existing disabled features; let profile cleanup locks retain live owners without a probe-age timeout.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

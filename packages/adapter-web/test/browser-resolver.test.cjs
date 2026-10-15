@@ -16,14 +16,14 @@ const FAKE_BROWSER = path.join(__dirname, 'fixtures/fake-cdp-browser.cjs');
 let root;
 const savedEnv = { ...process.env };
 
-it('avoids branded Chrome app clones while retaining the Testing launch workaround', () => {
+it('retains the existing app launch method for branded Chrome and Testing', () => {
   const chrome = fakeApp('Google Chrome', 'com.google.Chrome', '155.0.0.0');
   const canary = fakeApp('Google Chrome Canary', 'com.google.Chrome.canary', '155.0.0.0');
   const cft = fakeApp('Google Chrome for Testing', 'com.google.chrome.for.testing', '147.0.0.0');
   for (const bin of [chrome, canary]) {
     assert.equal(
       resolver.effectiveLaunchMethod(bin, resolver.LAUNCH_SERVICES, 'darwin'),
-      resolver.SPAWN,
+      resolver.LAUNCH_SERVICES,
     );
   }
   assert.equal(

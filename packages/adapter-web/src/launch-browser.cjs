@@ -24,9 +24,7 @@ const { execFileSync, spawn, spawnSync } = require('node:child_process');
 const { cdpListenerPids } = require('./browser-cdp.cjs');
 const {
   CDP_LOAD_UNPACKED,
-  LAUNCH_SERVICES,
   describeBrowser,
-  effectiveLaunchMethod,
   extensionLaunchArgs,
   waitForCdpOwner,
 } = require('./browser-resolver.cjs');
@@ -36,6 +34,7 @@ const {
   clearValidationPortQuarantine,
   createRuntimeIdentityNonce,
   detachedLaunchUnprovenPath,
+  disableMacCodeSignClone,
   hasDetachedLaunchUnproven,
   isolatedProfileArgs,
   markDetachedLaunchUnproven,
@@ -227,7 +226,7 @@ function runLaunch(opts, acquireLock) {
   let owner = null;
   const runtimeNonce = createRuntimeIdentityNonce();
   const startedAt = Date.now();
-  const chromeArgs = [
+  const chromeArgs = disableMacCodeSignClone([
     `--user-data-dir=${profile}`,
     // Debug-port trio (address + port + scoped allow-origins) from the shared module,
     // so the DevTools origin allow-list can never drift away from the port.
@@ -243,7 +242,7 @@ function runLaunch(opts, acquireLock) {
     '--disable-extensions-content-verification',
     '--disable-features=ExtensionContentVerification,DisableLoadExtensionCommandLineSwitch',
     ...extensionLaunchArgs(extensionDir, browser.extensionLoading),
-  ];
+  ]);
   // Initial tab: the caller's URL when provided, else the extension home. The
   // extension home avoids leaving disposable chrome://newtab/ or extensions
   // manager tabs in the operator's slot browser. On macOS the browser starts
@@ -253,7 +252,6 @@ function runLaunch(opts, acquireLock) {
   // startup, so its window is opened after the load.
   const application =
     process.platform === 'darwin' ? macApplicationForExecutable(opts.chromeBin) : null;
-  const launchMethod = effectiveLaunchMethod(opts.chromeBin, LAUNCH_SERVICES);
   if (application) chromeArgs.push('--no-startup-window');
   else chromeArgs.push(loadsOverCdp ? 'about:blank' : initialUrl);
   // The wait ended without an owned listener: a foreign process took the port,
@@ -314,7 +312,7 @@ function runLaunch(opts, acquireLock) {
     try {
       beginDetachedLaunch(cdpPort, profile, activeValidationLease);
       opts.progress({ message: 'starting the browser' });
-      if (launchMethod === LAUNCH_SERVICES) {
+      if (application) {
         execFileSync('open', macBackgroundOpenArgs(application, chromeArgs), {
           env: sanitizedChildEnv(),
           stdio: ['ignore', logFd, logFd],
@@ -344,7 +342,6 @@ function runLaunch(opts, acquireLock) {
     fs.writeFileSync(opts.chromePid, `${browserPid}\n`);
     writeBrowserResolution(runtimeDir, {
       ...browser,
-      launchMethod,
       launch: {
         pid: browserPid,
         cdpPort,
