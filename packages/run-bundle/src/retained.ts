@@ -134,6 +134,15 @@ async function readOptional(file: string): Promise<string | undefined> {
   }
 }
 
+async function syncPath(file: string): Promise<void> {
+  const handle = await open(file, 'r');
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
 async function atomicJson(file: string, value: unknown): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
   const temp = `${file}.${randomUUID()}.tmp`;
@@ -145,6 +154,7 @@ async function atomicJson(file: string, value: unknown): Promise<void> {
     await handle.close();
   }
   await rename(temp, file);
+  await syncPath(path.dirname(file));
 }
 
 /** The Run store, rather than the caller's auth home, owns this durable pairing. */
@@ -420,7 +430,7 @@ async function copyHashed(
         },
       }),
       dest
-        ? createWriteStream(dest, { flags: 'wx', mode: 0o600 })
+        ? createWriteStream(dest, { flags: 'wx', mode: 0o600, flush: true })
         : new Writable({
             write(_chunk, _encoding, callback) {
               callback();
@@ -567,8 +577,10 @@ async function completeRetainedPayloads(
             await rm(temp, { force: true });
           } else {
             await chmod(temp, 0o400);
+            await syncPath(temp);
             await mkdir(path.dirname(target), { recursive: true });
             await rename(temp, target);
+            await syncPath(path.dirname(target));
             restored.add(key);
           }
           await consumeReservation(meta.bytes);
@@ -584,6 +596,7 @@ async function completeRetainedPayloads(
     }
     await withRunBundleStoreLock(request.store, async () => {
       if (!restored.size) return;
+      await readRetainedRunBundle(request.store, ref, request.run.id);
       const file = path.join(request.store.root, 'availability', `${ref.bundleDigest}.json`);
       const prior = await readOptional(file);
       const availability: RunBundleAvailability = prior
@@ -608,6 +621,7 @@ async function commitRetainedPayloads(
   directory: string,
   manifest: RunBundleManifest,
 ): Promise<string[]> {
+  await readRetainedRunBundle(request.store, ref, request.run.id);
   const prefix = `tasks/${ref.taskKey}/`;
   const unavailable = [...(manifest.missingData ?? [])];
   for (const key of Object.keys(manifest.entries)) {
@@ -644,11 +658,12 @@ export async function readRetainedRunBundle(
   assertSafeBundleSegment(ref.taskKey, 'task key');
   const directory = bundleDirectory(store, ref.bundleDigest);
   const cacheKey = `${store.id}:${ref.bundleDigest}`;
+  // Parsed metadata may be cached; the published manifest must still exist and match.
+  const raw = await readFile(path.join(directory, 'manifest.json'), 'utf8');
+  if (sha256Text(raw) !== ref.bundleDigest)
+    throw new Error('Retained bundle manifest digest mismatch.');
   let manifest = manifestCache.get(cacheKey);
   if (!manifest) {
-    const raw = await readFile(path.join(directory, 'manifest.json'), 'utf8');
-    if (sha256Text(raw) !== ref.bundleDigest)
-      throw new Error('Retained bundle manifest digest mismatch.');
     manifest = parseManifest(directory);
     for (const [key, meta] of Object.entries(manifest.entries)) {
       assertSafeBundleRelativePath(key);
@@ -746,6 +761,8 @@ export async function collectRunBundleGarbage(
       if (!file.endsWith('.json')) continue;
       const intentPath = path.join(intentsDir, file);
       const intent: CaptureIntent = JSON.parse(await readFile(intentPath, 'utf8'));
+      // A prepared package can outlive the current output pointer before its gate is recorded.
+      if (intent.bundleDigest && activeRuns.has(intent.runId)) pinned.add(intent.bundleDigest);
       if (intent.committed && intent.bundleDigest) {
         const files = committedIntents.get(intent.bundleDigest) ?? [];
         files.push(path.join(intentsDir, file));
@@ -900,6 +917,7 @@ export async function materializeRunBundle(
         if (sha256Text(raw) !== intent.bundleDigest)
           throw new Error('Interrupted retained capture is corrupt.');
         await rename(stage, destination);
+        await syncPath(path.dirname(destination));
       }
       const retained = await readRetainedRunBundle(store, ref, run.id);
       const missingData = await commitRetainedPayloads(
@@ -1033,8 +1051,10 @@ export async function materializeRunBundle(
         storeBytes + Buffer.byteLength(raw) > policy.maxStoreBytes
       )
         throw new Error('Run bundle manifest exceeds reserved capacity.');
-      await writeFile(path.join(stage, runPath), intent.runJson, { mode: 0o400 });
-      await writeFile(path.join(stage, 'manifest.json'), raw, { mode: 0o400 });
+      await writeFile(path.join(stage, runPath), intent.runJson, { mode: 0o400, flush: true });
+      await writeFile(path.join(stage, 'manifest.json'), raw, { mode: 0o400, flush: true });
+      await syncPath(path.join(stage, 'runs'));
+      await syncPath(stage);
       const bundleDigest = sha256Text(raw);
       const destination = bundleDirectory(store, bundleDigest);
       await mkdir(path.dirname(destination), { recursive: true });
@@ -1042,6 +1062,7 @@ export async function materializeRunBundle(
       intent.bundleDigest = bundleDigest;
       await atomicJson(intentPath, intent);
       await rename(stage, destination);
+      await syncPath(path.dirname(destination));
       const ref: RunArtifactBundleRef = {
         storeId: store.id,
         bundleDigest,
@@ -1069,6 +1090,7 @@ export async function materializeRunBundle(
       acquisitionSize,
     );
     return withRunBundleStoreLock(store, async () => {
+      await readRetainedRunBundle(store, captured.ref, run.id);
       await request.commit(captured.ref, missingData);
       const intentPath = path.join(
         store.runsDir,
