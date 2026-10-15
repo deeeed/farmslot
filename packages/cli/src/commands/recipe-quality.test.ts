@@ -9,6 +9,9 @@ import { format } from 'node:util';
 
 import { Command, CommanderError } from 'commander';
 
+import { projectTaskExecution, withProjectRecipeHost } from '@farmslot/recipe-cli/harness';
+
+import { retainTaskExecution } from '../../../agent-runtime/src/task-init/execution-provenance.js';
 import { environment, fixture } from '../../test/helpers/project-doctor.js';
 import { OutputContext } from '../output.js';
 
@@ -32,10 +35,20 @@ function project(t: TestContext) {
   const registry = fs.mkdtempSync(path.join(os.tmpdir(), 'quality-help-registry-'));
   fs.symlinkSync(root, path.join(registry, 'example'), 'dir');
   t.after(() => fs.rmSync(registry, { recursive: true, force: true }));
-  return { root, flags: ['--project', 'example', '--projects-dir', registry, '--target', root] };
+  return {
+    root,
+    registry,
+    flags: ['--project', 'example', '--projects-dir', registry, '--target', root],
+  };
 }
 
-async function invoke(t: TestContext, root: string, flags: string[], operation = 'build') {
+async function invoke(
+  t: TestContext,
+  root: string,
+  flags: string[],
+  operation = 'build',
+  overrides: Record<string, string> = {},
+) {
   const previousEnv = process.env;
   const previousExitCode = process.exitCode;
   let output = '';
@@ -47,6 +60,7 @@ async function invoke(t: TestContext, root: string, flags: string[], operation =
   });
   process.env = environment(root, {});
   delete process.env.RECIPE_TASK_DIR;
+  Object.assign(process.env, overrides);
   process.exitCode = 0;
   try {
     const program = new Command().name('farmslot').exitOverride();
@@ -97,10 +111,12 @@ for (const operation of ['build', 'advisor-status']) {
 test('public CLI quality help displays the configured project guidance', (t) => {
   const f = project(t);
   const entry = fileURLToPath(new URL('../../bin/farmslot.mjs', import.meta.url));
+  const env: NodeJS.ProcessEnv = environment(f.root, {});
+  delete env.RECIPE_TASK_DIR;
   const result = spawnSync(
     process.execPath,
     [entry, 'recipe', 'quality', 'build', ...f.flags, '--help'],
-    { env: environment(f.root, {}), cwd: f.root, encoding: 'utf8', timeout: 4900 },
+    { env, cwd: f.root, encoding: 'utf8', timeout: 4900 },
   );
   assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr);
@@ -138,5 +154,76 @@ test('project quality help refuses unauthorized discovered code before import', 
   ]);
   assert.equal(result.status, 2);
   assert.equal(JSON.parse(result.output).error.code, 'PROVIDER_UNAUTHORIZED');
+  assert.equal(fs.existsSync(`${f.root}.imported`), false);
+});
+
+for (const bound of [false, true]) {
+  test(`quality help in ${bound ? 'a bound' : 'an unbound'} retained task preserves its selection`, async (t) => {
+    const f = project(t);
+    const installed = path.join(f.root, 'installed');
+    const taskDir = path.join(f.root, 'task');
+    fs.mkdirSync(installed);
+    fs.writeFileSync(
+      path.join(installed, 'package.json'),
+      '{"name":"@farmslot/cli","version":"1.0.0"}',
+    );
+    fs.writeFileSync(path.join(installed, 'farmslot'), '#!/usr/bin/env node\n');
+    const installation = {
+      executable: path.join(installed, 'farmslot'),
+      packageRoot: installed,
+      distributionRoot: installed,
+    };
+    const previousEnv = process.env;
+    process.env = environment(f.root, {});
+    delete process.env.RECIPE_TASK_DIR;
+    try {
+      if (bound) {
+        await withProjectRecipeHost(
+          {
+            tokens: ['--project', 'example', '--target', f.root],
+            projectsDir: f.registry,
+            command: 'task',
+          },
+          async (host) => {
+            retainTaskExecution(taskDir, await projectTaskExecution(host, installation));
+          },
+        );
+      } else {
+        retainTaskExecution(taskDir, {
+          ...installation,
+          bindingIdentity: null,
+          inputs: [],
+          selectedConfiguration: '{"identity":null}',
+        });
+      }
+    } finally {
+      process.env = previousEnv;
+    }
+    fs.rmSync(`${f.root}.imported`, { force: true });
+    fs.writeFileSync(
+      path.join(f.root, 'provider.mjs'),
+      'throw new Error("Mutable provider loaded");',
+    );
+    const receiptPath = path.join(taskDir, 'artifacts/harness-provenance.json');
+    const receipt = fs.readFileSync(receiptPath, 'utf8');
+    const artifacts = fs.readdirSync(path.join(taskDir, 'artifacts'));
+    const result = await invoke(t, f.root, [], 'build', { RECIPE_TASK_DIR: taskDir });
+    assert.equal(result.status, 0, result.output);
+    assert.match(result.output, /Validate and build the quality artifact/);
+    assert.equal(result.output.includes(guidance), bound);
+    assert.equal(fs.existsSync(`${f.root}.imported`), false);
+    assert.equal(fs.readFileSync(receiptPath, 'utf8'), receipt);
+    assert.deepEqual(fs.readdirSync(path.join(taskDir, 'artifacts')), artifacts);
+    assert.equal(fs.existsSync(path.join(f.root, '.runtime')), false);
+  });
+}
+
+test('quality help in a task without a receipt remains provider-free grammar', async (t) => {
+  const f = project(t);
+  const result = await invoke(t, f.root, [], 'build', {
+    RECIPE_TASK_DIR: path.join(f.root, 'task'),
+  });
+  assert.equal(result.status, 0, result.output);
+  assert.match(result.output, /Validate and build the quality artifact/);
   assert.equal(fs.existsSync(`${f.root}.imported`), false);
 });

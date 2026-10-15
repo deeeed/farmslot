@@ -4,9 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
-- Include declared project quality guidance in quality subcommand help when a project or retained task is selected; keep bare help free of provider imports and refuse invalid flags before loading one.
-
-- Add canonical task, review and recipe quality commands with strict grammar and project helper composition. Refuse missing task projects selected by flags, runtime bindings or slots before creating an unbound task.
+- Add canonical task, review and recipe quality commands with strict grammar, project helper composition and declared project quality guidance in help. Keep static-task help provider-free. Refuse missing task projects selected by flags, runtime bindings or slots before creating an unbound task.
 
 - Add runs bundle retain for captured reports and evidence; portable export reads retained snapshots and import retains them in the target store.
 - Provision node credentials through --secret-file; remove the checkout auth-env writer.

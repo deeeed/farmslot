@@ -1,3 +1,6 @@
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+
 import type { Command } from 'commander';
 
 import type { CliOptions } from '@farmslot/recipe-cli/harness';
@@ -43,7 +46,12 @@ export function registerRecipeQualityCommand(recipe: Command): void {
         const shared = await import('@farmslot/recipe-cli/harness');
         if (options.help === true) {
           let guidance: string | undefined;
-          if (options.project !== undefined || process.env.RECIPE_TASK_DIR) {
+          const taskDir = process.env.RECIPE_TASK_DIR;
+          const taskBinding =
+            taskDir && existsSync(path.join(taskDir, 'artifacts/harness-provenance.json'))
+              ? shared.verifySelectedTask(taskDir).bindingIdentity
+              : null;
+          if (options.project !== undefined || taskBinding !== null) {
             await shared.withProjectRecipeHost(
               {
                 ...(await projectRecipeHostOptions('recipe-quality', undefined, options)),
