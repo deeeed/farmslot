@@ -17,7 +17,7 @@ mock.module('expo-secure-store', {
   },
 });
 
-test('preset seeding preserves an explicit login and restores only a missing preset', async () => {
+test('preset seeding rotates launcher credentials and preserves explicit logins', async () => {
   const { seedPresetGatewayProfileSecrets, writeGatewayProfileSecret, readGatewayProfileSecret } =
     await import('./gateway-profiles');
   const preset: GatewayProfile = {
@@ -31,9 +31,18 @@ test('preset seeding preserves an explicit login and restores only a missing pre
   };
   await seedPresetGatewayProfileSecrets([preset]);
   assert.equal(await readGatewayProfileSecret(preset), 'launcher-account-a');
+  const rotated = { ...preset, presetSecret: 'rotated-launcher-account' };
+  await seedPresetGatewayProfileSecrets([rotated]);
+  assert.equal(await readGatewayProfileSecret(preset), 'rotated-launcher-account');
   await writeGatewayProfileSecret(preset, 'explicit-account-b');
   await seedPresetGatewayProfileSecrets([preset]);
   assert.equal(await readGatewayProfileSecret(preset), 'explicit-account-b');
+  await seedPresetGatewayProfileSecrets([rotated]);
+  assert.equal(await readGatewayProfileSecret(preset), 'explicit-account-b');
+  // Saving the same value explicitly also takes ownership from the launcher.
+  await writeGatewayProfileSecret(preset, rotated.presetSecret);
+  await seedPresetGatewayProfileSecrets([preset]);
+  assert.equal(await readGatewayProfileSecret(preset), 'rotated-launcher-account');
   await writeGatewayProfileSecret(preset, '');
   assert.equal(await readGatewayProfileSecret(preset), null);
   await seedPresetGatewayProfileSecrets([preset]);

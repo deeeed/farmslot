@@ -85,10 +85,13 @@ export async function writeGatewayProfileSecret(
 ): Promise<void> {
   const key = profile.secretStorageKey ?? profileSecretStorageKey(profile.id);
   if (!secret.trim()) {
+    await SecureStore.deleteItemAsync(`${key}.seeded`);
     await SecureStore.deleteItemAsync(key);
     return;
   }
   await SecureStore.setItemAsync(key, secret.trim());
+  // An explicit login takes ownership, even if its value matches the launcher.
+  await SecureStore.deleteItemAsync(`${key}.seeded`);
 }
 
 export async function seedPresetGatewayProfileSecrets(profiles: GatewayProfile[]): Promise<void> {
@@ -102,9 +105,13 @@ export async function seedPresetGatewayProfileSecrets(profiles: GatewayProfile[]
       continue;
     }
     const existing = await SecureStore.getItemAsync(profile.secretStorageKey);
-    // A launcher default seeds a new device, never replaces an explicit login.
-    if (!existing) {
-      await SecureStore.setItemAsync(profile.secretStorageKey, profile.presetSecret.trim());
+    const seededKey = `${profile.secretStorageKey}.seeded`;
+    const lastSeeded = await SecureStore.getItemAsync(seededKey);
+    // Rotate launcher-owned credentials while preserving an explicit login.
+    if (!existing || existing === lastSeeded) {
+      const secret = profile.presetSecret.trim();
+      await SecureStore.setItemAsync(profile.secretStorageKey, secret);
+      await SecureStore.setItemAsync(seededKey, secret);
     }
   }
 }

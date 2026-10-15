@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Companion explicit account login",
-  "description": "After local sign-out, enter another service credential using Save Auth or select a configured preset. Run this read-only check after the real login action. A validation launcher can supply a different expired preset to verify that it cannot overwrite the saved login.",
+  "description": "After local sign-out, enter another service credential using Save Auth or select a configured preset. Run this read-only check after the real login action. Validate both launcher rotation on the same device and explicit login preservation: rotating a launcher-owned preset must change authentication, while a different expired launcher preset must not overwrite Save Auth.",
   "workflow": {
     "entry": "connected",
     "nodes": {
