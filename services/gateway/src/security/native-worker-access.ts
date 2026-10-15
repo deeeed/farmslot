@@ -8,9 +8,12 @@ import {
 
 import { loadSlotVars } from '../core/config.js';
 import { readSlotRow } from '../core/state.js';
+import { runNeedsExecutionStorage } from '../review-workspaces/storage-use.js';
 import { getAllRuns, getRun } from '../runs/store.js';
 
+import { isAdminPrincipal } from './authorization.js';
 import { assertNativeRunOwner } from './native-worker-owner.js';
+import { currentSessionPrincipal } from './work-originator.js';
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -76,6 +79,10 @@ export async function assertNativeWorkerRpcAccess(method: string, value: unknown
       !run.nativeOwnerPrincipalId &&
       !run.agentContexts?.some((context) => context.nativeSession)
     )
+      continue;
+    // Global maintenance of released data grants no runner input ownership.
+    const principal = currentSessionPrincipal();
+    if (cleanup && principal && isAdminPrincipal(principal) && !runNeedsExecutionStorage(run))
       continue;
     if (runIds.has(run.id) || cleanup) {
       assertNativeRunOwner(run);

@@ -1,12 +1,24 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  unlink,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
+import { farmslotRoot } from '../projects/repo-root.js';
 import { runnerDefaultSafetyTier } from '../runners/registry.js';
 
 import {
@@ -1311,3 +1323,62 @@ test('direct publication authority is detached, immutable and never accepted fro
     /immutable/,
   );
 });
+
+for (const reason of [
+  'open gate',
+  'retained report',
+  'shared active task',
+  'archived task reference',
+] as const) {
+  test(`cleanup preserves old task bytes for ${reason}`, async (t) => {
+    const age = 8 * 24 * 60 * 60 * 1000;
+    const old = Date.now() - age;
+    t.mock.timers.enable({ apis: ['Date'], now: old });
+    const project = 'cleanup-retention-' + randomUUID();
+    const projectRoot = path.join(farmslotRoot, 'projects', project);
+    const task = path.join(projectRoot, 'tasks', 'task');
+    await mkdir(task, { recursive: true });
+    await writeFile(path.join(task, 'report.html'), 'retained evidence');
+    await utimes(task, new Date(old), new Date(old));
+    const run = createRun({ flowType: 'fix-bug', project, ticketOrPr: 'RETENTION-1' });
+    updateRun(run.id, { status: 'failed', taskFile: path.join(task, 'TASK.md') });
+    const owned = [run.id];
+    t.after(async () => {
+      for (const id of owned) await cleanupRun(id);
+      await rm(projectRoot, { recursive: true, force: true });
+    });
+    if (reason === 'open gate')
+      updateRun(run.id, {
+        decisions: [
+          {
+            id: randomUUID(),
+            type: 'engine_output_review',
+            title: 'Review',
+            description: 'Retain evidence',
+            actions: [],
+            createdAt: new Date(old).toISOString(),
+          },
+        ],
+      });
+    if (reason === 'retained report')
+      updateRun(run.id, {
+        reviewResult: { recommendation: 'approve', reviewMd: 'Retained review', lineComments: [] },
+      });
+    if (reason === 'shared active task') {
+      const active = createRun({ flowType: 'fix-bug', project, ticketOrPr: 'RETENTION-2' });
+      owned.push(active.id);
+      updateRun(active.id, { status: 'monitoring', activeTaskFile: path.join(task, 'TASK.md') });
+    }
+    if (reason === 'archived task reference') {
+      const retained = createRun({ flowType: 'fix-bug', project, ticketOrPr: 'RETENTION-3' });
+      owned.push(retained.id);
+      updateRun(retained.id, { status: 'done', taskFile: path.join(task, 'TASK.md') });
+      assert(await archiveRun(retained.id));
+    }
+    t.mock.timers.tick(age);
+    const result = await cleanupRuns(false);
+    assert(!result.taskDirsRemoved.includes(task));
+    assert.equal(await readFile(path.join(task, 'report.html'), 'utf8'), 'retained evidence');
+    if (reason === 'open gate') assert(getRun(run.id), 'an unresolved gate cannot be archived');
+  });
+}

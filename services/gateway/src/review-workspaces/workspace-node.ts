@@ -124,15 +124,15 @@ export const REVIEW_WORKSPACE_SCRIPT =
 const input = JSON.parse(process.argv[1]);
 const root = path.resolve(input.root);
 const identity = input.identity;
-const workspace = path.join(root, 'runs', identity.workspaceId);
-const checkout = path.join(workspace, 'source');
-const cacheIdentity = {owner:identity.owner, project:identity.project, repositoryUrl:identity.repositoryUrl};
-const cacheKey = crypto.createHash('sha256').update(JSON.stringify(cacheIdentity)).digest('hex');
-const cache = path.join(root, 'repositories', cacheKey);
-const lock = path.join(root, 'locks', cacheKey);
+const workspace = identity && path.join(root, 'runs', identity.workspaceId);
+const checkout = workspace && path.join(workspace, 'source');
+const cacheIdentity = identity && {owner:identity.owner, project:identity.project, repositoryUrl:identity.repositoryUrl};
+const cacheKey = cacheIdentity && crypto.createHash('sha256').update(JSON.stringify(cacheIdentity)).digest('hex');
+const cache = cacheKey && path.join(root, 'repositories', cacheKey);
 const operations = path.join(root, 'operations');
 let operation;
 let operationPath;
+let storageOperationPath;
 const environment = {...process.env, GIT_TERMINAL_PROMPT:'0', GIT_CONFIG_NOSYSTEM:'1', GIT_OPTIONAL_LOCKS:'0'};
 for (const key of ['GIT_DIR','GIT_WORK_TREE','GIT_INDEX_FILE','GIT_COMMON_DIR','GIT_OBJECT_DIRECTORY','GIT_ALTERNATE_OBJECT_DIRECTORIES','BASH_ENV','ENV']) delete environment[key];
 function same(actual, expected) { return JSON.stringify(actual) === JSON.stringify(expected); }
@@ -144,7 +144,7 @@ function marker(file, expected, allowCreate) {
     write(file, expected);
   }
 }
-const cancellationPath = path.join(workspace, 'cancel.json');
+const cancellationPath = workspace && path.join(workspace, 'cancel.json');
 function assertWorkspaceOperationCurrent() {
   if (input.action !== 'allocate' && (input.action !== 'cleanup' || input.allowCancelled)) return;
   const cancelled = read(cancellationPath);
@@ -217,14 +217,18 @@ function repairPartialWorktree(previous, ownerPath) {
   }
   write(path.join(ownerPath, 'repair.json'), {workspaceId:previous.identity.workspaceId, sourceRetained:true, at:new Date().toISOString()});
 }
-async function recover(previousPath) {
+async function recover(previousPath, key = cacheKey) {
   if (!previousPath) return;
   const previous = read(path.join(previousPath, 'operation.json'));
-  if (!previous || previous.cacheKey !== cacheKey) throw new Error('Allocator operation belongs to another cache');
+  if (!previous || previous.cacheKey !== key) throw new Error('Allocator operation belongs to another cache');
   const state = read(path.join(previousPath, 'state.json'));
   if (state?.state === 'complete' || read(path.join(previousPath, 'recovered.json'))) return;
   if (matches(census().get(previous.process.pid), previous.process)) throw pending(previous);
-  await recover(previous.previousPath);
+  await recover(previous.previousPath, key);
+  if (key === 'storage') {
+    write(path.join(previousPath, 'recovered.json'), {by:operation.id, at:new Date().toISOString()});
+    return;
+  }
   await stopCommands(previousPath);
   for (const command of commandDirectories(previousPath)) {
     const request = read(path.join(command, 'request.json'));
@@ -238,13 +242,14 @@ async function recover(previousPath) {
   repairPartialWorktree(previous, previousPath);
   write(path.join(previousPath, 'recovered.json'), {by:operation.id, at:new Date().toISOString()});
 }
-function claim() {
+function claim(key = cacheKey) {
+  const lock = path.join(root, 'locks', key);
   const id = crypto.randomUUID();
   operationPath = path.join(operations, id);
   directory(operationPath);
   const owner = census().get(process.pid);
   if (!owner) throw new Error('Allocator process identity is unavailable');
-  operation = {id, cacheKey, identity, generation:input.generation, process:owner, action:input.action, startedAt:new Date().toISOString()};
+  operation = {id, cacheKey:key, identity, generation:input.generation, process:owner, action:input.action, startedAt:new Date().toISOString()};
   write(path.join(operationPath, 'operation.json'), operation);
   while (true) {
     let previousPath;
@@ -254,7 +259,7 @@ function claim() {
       while (fs.existsSync(path.join(previousPath, 'next'))) previousPath = linkTarget(path.join(previousPath, 'next'));
       const previous = read(path.join(previousPath, 'operation.json'));
       const state = read(path.join(previousPath, 'state.json'));
-      if (!previous || previous.cacheKey !== cacheKey) throw new Error('Invalid allocator owner');
+      if (!previous || previous.cacheKey !== key) throw new Error('Invalid allocator owner');
       if (state?.state !== 'complete' && matches(census().get(previous.process.pid), previous.process)) throw pending(previous);
     }
     operation.previousPath = previousPath;
@@ -337,6 +342,42 @@ async function verifyCheckout() {
     return;
   }
   assertWorkspaceOperationCurrent();
+  // Use the same durable claim protocol for owner storage and repository operations.
+  // A different gateway cannot allocate between reclamation's checks and retirement.
+  const previousStoragePath = claim('storage');
+  storageOperationPath = operationPath;
+  await recover(previousStoragePath, 'storage');
+  if (input.action === 'reclaim-support') {
+    const retired = [];
+    const idle = () => {
+      for (const name of fs.readdirSync(path.join(root,'locks'))) {
+        if (name === 'storage') continue;
+        const file = path.join(root,'locks',name);
+        if (!fs.lstatSync(file).isSymbolicLink()) return false;
+        if (read(path.join(linkTarget(file),'state.json'))?.state !== 'complete') return false;
+      }
+      for (const name of fs.readdirSync(path.join(root,'runs'))) {
+        const work = path.join(root,'runs',name);
+        const stat = fs.lstatSync(work);
+        if (!stat.isDirectory() || stat.isSymbolicLink() || read(path.join(work,'allocation.json'))?.state !== 'cleaned' || fs.existsSync(path.join(work,'source'))) return false;
+      }
+      return true;
+    };
+    if (idle()) for (const digest of input.digests) {
+      if (!/^[a-f0-9]{64}$/.test(digest)) throw new Error('Invalid support cache digest');
+      const target = path.join(root,'support',digest);
+      if (!fs.existsSync(target)) continue;
+      directory(target);
+      const manifest = read(path.join(target,'manifest.json'));
+      if (manifest?.version !== 1 || manifest.sha256 !== digest) continue;
+      const name = '.reclaim-' + digest + '-' + crypto.randomUUID();
+      fs.renameSync(target, path.join(root,'support',name));
+      syncDirectory(path.join(root,'support'));
+      retired.push(name);
+    }
+    process.stdout.write(JSON.stringify({retired}));
+    return;
+  }
   const previousPath = claim();
   await recover(previousPath);
   const identityPath = path.join(workspace,'identity.json');
@@ -401,5 +442,7 @@ async function verifyCheckout() {
   process.stderr.write(error.message);
   process.stdout.write(JSON.stringify({error:{code:error.code || 'REVIEW_WORKSPACE_ALLOCATION_FAILED',message:error.message}}));
   process.exitCode = 1;
+}).finally(() => {
+  if (storageOperationPath) write(path.join(storageOperationPath,'state.json'),{state:'complete'});
 });
 `;

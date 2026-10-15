@@ -848,6 +848,8 @@ export interface RunCleanupParams {
 }
 
 export interface RunCleanupResult {
+  /** Retired execution caches removed, or proposed by dry-run. Retained evidence is preserved. */
+  cacheDirsRemoved?: string[];
   taskDirsRemoved: string[];
   runsArchived: string[];
   syntheticRunsDeleted: string[];

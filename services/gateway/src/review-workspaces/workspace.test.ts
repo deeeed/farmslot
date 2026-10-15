@@ -431,3 +431,92 @@ if (matches) {
     }
   });
 }
+
+test('support retirement holds allocator ownership against another gateway until rename', async (t) => {
+  const f = fixture(t);
+  const digest = 'a'.repeat(64);
+  const support = path.join(f.root, 'support', digest);
+  mkdirSync(support, { recursive: true });
+  writeFileSync(
+    path.join(support, 'manifest.json'),
+    JSON.stringify({ version: 1, sha256: digest }),
+  );
+  const checkpoint = path.join(f.directory, 'retirement-ready');
+  const release = path.join(f.directory, 'release-retirement');
+  // Pause the real rename while the existing allocator claim is held in a separate process.
+  const instrument = `
+const originalRename = require('node:fs').renameSync;
+require('node:fs').renameSync = (from, to) => {
+  if (from === ${JSON.stringify(support)}) {
+    require('node:fs').writeFileSync(${JSON.stringify(checkpoint)}, 'ready');
+    const deadline = Date.now() + 10000;
+    while (!require('node:fs').existsSync(${JSON.stringify(release)})) {
+      if (Date.now() > deadline) throw Error('Retirement fixture was not released');
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
+  }
+  return originalRename(from, to);
+};
+`;
+  const child = spawn(
+    process.execPath,
+    [
+      '-e',
+      instrument + REVIEW_WORKSPACE_SCRIPT,
+      JSON.stringify({ root: f.root, action: 'reclaim-support', digests: [digest] }),
+    ],
+    { stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  t.after(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  });
+  let stdout = '',
+    stderr = '';
+  child.stdout.on('data', (data) => {
+    stdout += data;
+  });
+  child.stderr.on('data', (data) => {
+    stderr += data;
+  });
+  const completed = new Promise<number | null>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', resolve);
+  });
+  await waitUntil(() => existsSync(checkpoint));
+  const next = {
+    workspaceId: randomUUID(),
+    runId: 'another-gateway',
+    project: 'different-project',
+  };
+  assert.throws(() => f.execute('allocate', next), /REVIEW_WORKSPACE_OPERATION_PENDING/);
+  assert(existsSync(support));
+  writeFileSync(release, 'release');
+  assert.equal(await completed, 0, stderr);
+  const receipt: { retired: string[] } = JSON.parse(stdout);
+  assert.equal(receipt.retired.length, 1);
+  assert(!existsSync(support));
+  assert(existsSync(path.join(f.root, 'support', receipt.retired[0])));
+  const pending = path.join(f.root, 'runs', next.workspaceId);
+  mkdirSync(pending, { recursive: true });
+  writeFileSync(path.join(pending, 'allocation.json'), JSON.stringify({ state: 'ready' }));
+  mkdirSync(support);
+  writeFileSync(
+    path.join(support, 'manifest.json'),
+    JSON.stringify({ version: 1, sha256: digest }),
+  );
+  assert.deepEqual(
+    JSON.parse(
+      execFileSync(
+        process.execPath,
+        [
+          '-e',
+          REVIEW_WORKSPACE_SCRIPT,
+          JSON.stringify({ root: f.root, action: 'reclaim-support', digests: [digest] }),
+        ],
+        { encoding: 'utf8' },
+      ),
+    ),
+    { retired: [] },
+  );
+  assert(existsSync(support), 'another allocated workspace still needs its support');
+});
