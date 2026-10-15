@@ -24,12 +24,12 @@ This ADR is the **transport layer** for that workflow. It must not fork the eval
 
 Farmslot should converge on four distinct layers. Each layer has one job; conflating them creates the history-fragmentation and ontology drift problems we are trying to avoid.
 
-| Layer | Job | Durable home | Mutable? |
-| ----- | --- | ------------ | -------- |
-| **Operator plane** | Live dispatches, monitoring, decisions, Companion history | Main gateway `.runs/` + task trees | Yes — operational |
-| **Eval packages** | Comparison evidence, rubric inputs, regression identity | `ResultPackageManifest` under `projects/.../evals/...` | Immutable once `final` |
-| **Corpus / dataset** | Curated catalog of known-good references and recurring cases | Future gateway-owned corpus store (ADR-030 follow-up #6) | Curated append/replace |
-| **Portable bundles** | Explicit import/export between gateways, machines, and agents | `*.farmrun` files (transport only) | N/A — snapshots |
+| Layer                | Job                                                           | Durable home                                             | Mutable?               |
+| -------------------- | ------------------------------------------------------------- | -------------------------------------------------------- | ---------------------- |
+| **Operator plane**   | Live dispatches, monitoring, decisions, Companion history     | Main gateway `.runs/` + task trees                       | Yes — operational      |
+| **Eval packages**    | Comparison evidence, rubric inputs, regression identity       | `ResultPackageManifest` under `projects/.../evals/...`   | Immutable once `final` |
+| **Corpus / dataset** | Curated catalog of known-good references and recurring cases  | Future gateway-owned corpus store (ADR-030 follow-up #6) | Curated append/replace |
+| **Portable bundles** | Explicit import/export between gateways, machines, and agents | `*.farmrun` files (transport only)                       | N/A — snapshots        |
 
 **Canonical operator model (steady state):**
 
@@ -46,8 +46,8 @@ Companion history            optional promote-back of packages only
 
 **Relationship to ADR-030 suite/corpus:**
 
-- **Dataset / suite draft** (ADR-030 §13) = *planning* over many cases. The `#evals` cockpit already fans out `eval.experiment.create` / `eval.trial.start` per case.
-- **Suite execution history** (future) = gateway-owned progress over many experiments. Bundles are **not** a suite runtime; they are snapshots *of* suite/corpus selections for transport.
+- **Dataset / suite draft** (ADR-030 §13) = _planning_ over many cases. The `#evals` cockpit already fans out `eval.experiment.create` / `eval.trial.start` per case.
+- **Suite execution history** (future) = gateway-owned progress over many experiments. Bundles are **not** a suite runtime; they are snapshots _of_ suite/corpus selections for transport.
 - **Corpus** (future) = versioned reference packages keyed by `datasetId` / `datasetItemId`. Corpus export is a **batch bundle of packages**, not a second run database.
 
 **Relationship to portable replay delta (ADR-030 follow-up #8):**
@@ -59,7 +59,7 @@ Companion history            optional promote-back of packages only
 **Companion / Command Center steady state:**
 
 - **Companion:** read-only consumer of whichever gateway profile is active. No import UX — imported sandboxes appear automatically after CLI seed.
-- **Command Center:** corpus/suite surfaces own batch *selection*; export/import buttons call the same bundle library as CLI.
+- **Command Center:** corpus/suite surfaces own batch _selection_; export/import buttons call the same bundle library as CLI.
 - **CLI + agents:** primary automation path for worktree seeding and promote-back.
 
 ## Decision
@@ -81,16 +81,16 @@ farmrun-v1/
 
 `manifest.json` (minimum fields):
 
-| Field | Purpose |
-| ----- | ------- |
-| `version` | `1` |
-| `profile` | `reference` \| `family` \| `full` |
-| `exportedAt` | ISO timestamp |
-| `source.gatewayUrl` | e.g. `ws://localhost:7777` |
-| `source.farmslotRoot` | absolute path at export time (informational) |
-| `source.runIds` | original run IDs |
-| `entries` | map of logical keys → `{ sha256, bytes, path }` for integrity |
-| `remapPolicy` | hints for import (`preserve-ids` \| `remap-ids` \| `reference-only`) |
+| Field                 | Purpose                                                              |
+| --------------------- | -------------------------------------------------------------------- |
+| `version`             | `1`                                                                  |
+| `profile`             | `reference` \| `family` \| `full`                                    |
+| `exportedAt`          | ISO timestamp                                                        |
+| `source.gatewayUrl`   | e.g. `ws://localhost:7777`                                           |
+| `source.farmslotRoot` | absolute path at export time (informational)                         |
+| `source.runIds`       | original run IDs                                                     |
+| `entries`             | map of logical keys → `{ sha256, bytes, path }` for integrity        |
+| `remapPolicy`         | hints for import (`preserve-ids` \| `remap-ids` \| `reference-only`) |
 
 **Profiles:**
 
@@ -106,14 +106,14 @@ Bundles must be **public-safe**: no pool secrets, gateway tokens, or slot creden
 
 The `farmrun` format is intentionally **multi-entry** from v1 so batch and single export share one codec. What ships in phases:
 
-| Phase | Batch selector | Primary use |
-| ----- | -------------- | ----------- |
-| **v1** | `--family-id <id>` (implicit when exporting one run that has siblings) | Seed a comparison family into a sandbox |
-| **v1** | repeated `--run-id` or stdin list | Agent script: export N baselines in one archive |
-| **v1.1** | `--tag`, `--lane`, `--project`, `--since` | Operator collections, demo/review sets |
-| **v1.1** | `--eval-experiment <manifestPath>` | Export one experiment's reference + candidate packages |
-| **v2** | `--suite-draft <manifestPath>` | Snapshot a local `#evals` basket for offline replay on another gateway |
-| **v3** | `--corpus-slice datasetId/itemIds` | Corpus migration once ADR-030 follow-up #6 lands |
+| Phase    | Batch selector                                                         | Primary use                                                            |
+| -------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **v1**   | `--family-id <id>` (implicit when exporting one run that has siblings) | Seed a comparison family into a sandbox                                |
+| **v1**   | repeated `--run-id` or stdin list                                      | Agent script: export N baselines in one archive                        |
+| **v1.1** | `--tag`, `--lane`, `--project`, `--since`                              | Operator collections, demo/review sets                                 |
+| **v1.1** | `--eval-experiment <manifestPath>`                                     | Export one experiment's reference + candidate packages                 |
+| **v2**   | `--suite-draft <manifestPath>`                                         | Snapshot a local `#evals` basket for offline replay on another gateway |
+| **v3**   | `--corpus-slice datasetId/itemIds`                                     | Corpus migration once ADR-030 follow-up #6 lands                       |
 
 **v1 does not need** a parallel `farmslot runs export-batch` command. One `farmslot runs export` with selector flags produces one `*.farmrun` containing N runs/tasks/packages. Import always accepts multi-entry bundles; default import mode applies per entry.
 
@@ -148,11 +148,11 @@ farmslot runs export <runId> --as-package /tmp/candidate.result-package.json
 farmslot runs bundle ls baseline.farmrun
 ```
 
-| Human flag | Protocol profile | When |
-| ---------- | ---------------- | ---- |
-| *(none)* | `reference` | Default baseline export |
-| `--family-id` | `family` (auto) | Whole comparison family |
-| `--forensic` | `full` | Support / debug only |
+| Human flag    | Protocol profile | When                    |
+| ------------- | ---------------- | ----------------------- |
+| _(none)_      | `reference`      | Default baseline export |
+| `--family-id` | `family` (auto)  | Whole comparison family |
+| `--forensic`  | `full`           | Support / debug only    |
 
 **Import:**
 
@@ -163,21 +163,21 @@ farmslot runs import baseline.farmrun --keep-ids --force
 farmslot --url ws://localhost:7778 runs import baseline.farmrun
 ```
 
-| Human flag | Protocol mode | When |
-| ---------- | ------------- | ---- |
-| *(none)* | `seed` | **Default** — writable sandbox copy, new run IDs |
-| `--read-only` | `reference-only` | Packages + stubs; eval display only |
-| `--keep-ids` (+ `--force`) | `mirror` | Disaster recovery; not worktrees |
+| Human flag                 | Protocol mode    | When                                             |
+| -------------------------- | ---------------- | ------------------------------------------------ |
+| _(none)_                   | `seed`           | **Default** — writable sandbox copy, new run IDs |
+| `--read-only`              | `reference-only` | Packages + stubs; eval display only              |
+| `--keep-ids` (+ `--force`) | `mirror`         | Disaster recovery; not worktrees                 |
 
 Legacy hidden flags `--profile` and `--mode` remain for scripts and RPC callers.
 
 #### Protocol import modes (internal)
 
-| Mode | Behavior |
-| ---- | -------- |
-| `seed` (**CLI default**) | Imports run records + task trees with **new run IDs** and `provenance.importedFrom` pointing at source IDs. Enables `prior-run` and comparison sibling launches in the target gateway without ID collision. |
+| Mode                             | Behavior                                                                                                                                                                                                       |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `seed` (**CLI default**)         | Imports run records + task trees with **new run IDs** and `provenance.importedFrom` pointing at source IDs. Enables `prior-run` and comparison sibling launches in the target gateway without ID collision.    |
 | `reference-only` (`--read-only`) | Writes packages + minimal run stubs marked `imported: true`, `readOnly: true`. Enables `eval.experiment.create` `package` and read-only `prior-run` display; **does not** allow relaunch/monitor as if native. |
-| `mirror` (`--keep-ids`) | Preserves original run IDs. Refused when a conflicting ID already exists unless `--force`. For disaster recovery, not daily worktree use. |
+| `mirror` (`--keep-ids`)          | Preserves original run IDs. Refused when a conflicting ID already exists unless `--force`. For disaster recovery, not daily worktree use.                                                                      |
 
 Default target roots:
 
@@ -203,13 +203,13 @@ Import/export must align with ADR-030, not fork it:
 
 ### 6. UI scope
 
-| Surface | v1 | Rationale |
-| ------- | -- | --------- |
-| **CLI** | Yes | Agents and worktree scripts need deterministic, scriptable seeding. |
-| **Command Center `#evals`** | Light touch | Reuse existing manual `package` path field; add optional post-import "browse bundles" only if CLI proves insufficient. |
-| **Run detail** | Defer | Optional "Export reference bundle…" button in v1.1 once CLI stabilizes. |
-| **Companion** | **No** | Companion reads whatever the connected gateway exposes. After sandbox import, runs appear automatically — no mobile-specific import UX. Operators who need seeding use CLI or desktop. |
-| **Family compare / observability** | No change | Imported runs use normal family projections once seeded. |
+| Surface                            | v1          | Rationale                                                                                                                                                                              |
+| ---------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **CLI**                            | Yes         | Agents and worktree scripts need deterministic, scriptable seeding.                                                                                                                    |
+| **Command Center `#evals`**        | Light touch | Reuse existing manual `package` path field; add optional post-import "browse bundles" only if CLI proves insufficient.                                                                 |
+| **Run detail**                     | Defer       | Optional "Export reference bundle…" button in v1.1 once CLI stabilizes.                                                                                                                |
+| **Companion**                      | **No**      | Companion reads whatever the connected gateway exposes. After sandbox import, runs appear automatically — no mobile-specific import UX. Operators who need seeding use CLI or desktop. |
+| **Family compare / observability** | No change   | Imported runs use normal family projections once seeded.                                                                                                                               |
 
 ### 7. Operator model (canonical workflow)
 
@@ -283,3 +283,65 @@ Real dispatches/evals that must appear in Companion history still target `--gate
 5. **Promote-back flow:** sandbox candidate → `--as-package` export → main import as new comparison sibling.
 6. Corpus slice export once ADR-030 follow-up #6 lands (batch of curated reference packages, not raw runs).
 7. Coordinate with ADR-030 follow-up #8 so `full` profile bundles can embed replay-delta payloads.
+
+## Amendment 1: 2026-10-15 gateway-retained run artifacts
+
+**Status:** Accepted by the lead, 2026-10-15, at `978e2e27`. Implementation pending.
+**Normative specification:** [Retained run artifacts](../reference/retained-run-artifacts.md).
+
+### Decision
+
+Use the existing farmrun-v1 manifest and payload layout as the gateway's retained
+artifact home under `FARMSLOT_HOME`. Materialize immutable, digest-addressed bundles
+when completion, output review or publication produces a report or evidence.
+The owning Run store durably binds one bundle root under its data home. Gateways
+sharing that Run store use the same binding, not a sandbox's private auth home.
+The Run store keeps references; decisions, reviews and attestations pin their
+digest. This extends the original transport-only scope without
+creating another run database or changing eval-package authority.
+
+Command Center, Companion, CLI, publication and artifact HTTP reads use these
+bundles. Only explicit capture/backfill may read a slot. Slot reuse, cleanup,
+node downtime and mark-reviewed cannot change a retained report. Read a verified
+manifest index directly; do not unpack an archive or rescan a slot per view.
+
+A stale review binding is a visible warning when reading an available report,
+not a reason to hide it. Reading never grants proof or publication admission.
+ADR-062's canonical reader, package validation, selection and judgment rules
+remain authoritative.
+
+Default limits are 2 GiB per bundle and 20 GiB per owning store, including a
+protected 512 MiB report/metadata reserve. Reserve mandatory metadata before
+admission and commit produced reports before media. Media quota exhaustion must
+leave reports readable, with missing media explicit. Recording/transcode limits
+stay unchanged.
+
+Preserve ADR-062's separate lifetimes: history pins reports and lightweight frozen
+metadata; unresolved gates and required published references pin media.
+Unpinned media follows its existing 30-day Storage policy and may become pruned
+without changing manifest identity or historical verdicts. GC shares the capture
+commit lock and removes only eligible media, unreferenced bundles and abandoned
+staging. It cannot evict pinned evidence or active reservations.
+
+One supported backfill command captures existing done/failed runs while their
+source remains available. It preserves run identity, verdicts and historical
+bindings, records missing or changed bytes honestly, and never executes work.
+
+### Public surface
+
+- `farmslot runs bundle retain <runId>` in `@farmslot/cli` calls `run.bundle.retain`.
+  Operators use this idempotent command for historical backfill.
+- `@farmslot/run-bundle` owns experimental `materializeRunBundle` and
+  `resolveRunBundleEntry` exports, using the existing v1 codec and integrity rules.
+  Gateway capture, HTTP readers and export consume them.
+- Additive protocol bundle references carry the digest to existing run, gate and
+  artifact consumers. Existing SDK evidence reader/model/validator APIs remain.
+  New surface is experimental and ships with normal package versioning.
+
+### Rationale and consequences
+
+Remote artifact discovery makes report latency depend on the node and allows a
+reused slot to invalidate history. One local immutable capture removes that
+read-time dependency. It costs bounded gateway disk and copy work at capture.
+Incomplete historical data remains explicit; retention does not manufacture
+missing proof. Export/import continue to use the same portable bundle format.
