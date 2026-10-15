@@ -286,7 +286,7 @@ Real dispatches/evals that must appear in Companion history still target `--gate
 
 ## Amendment 1: 2026-10-15 gateway-retained run artifacts
 
-**Status:** Proposed. Base ADR remains Accepted; implementation awaits amendment acceptance.
+**Status:** Accepted by the lead, 2026-10-15, at `978e2e27`. Implementation pending.
 **Normative specification:** [Retained run artifacts](../reference/retained-run-artifacts.md).
 
 ### Decision

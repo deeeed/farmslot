@@ -82,7 +82,7 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [068](068-project-recipe-binding-and-conformance.md)     | Project recipe binding and conformance                                  | Accepted |
 | [069](069-declared-pinned-sources.md)                    | Declared and pinned farm sources                                        | Accepted |
 
-ADR-039 has a Proposed [gateway-retained artifact amendment](039-run-portable-bundles.md#amendment-1-2026-10-15-gateway-retained-run-artifacts) and [normative retention specification](../reference/retained-run-artifacts.md). Its existing portable-bundle decision remains Accepted; implementation awaits amendment acceptance.
+ADR-039 has an Accepted [gateway-retained artifact amendment](039-run-portable-bundles.md#amendment-1-2026-10-15-gateway-retained-run-artifacts) and [normative retention specification](../reference/retained-run-artifacts.md). The lead accepted the amendment on 2026-10-15 at `978e2e27`; implementation remains pending.
 
 ADR-062 includes accepted [completed evidence and storage](062-recorded-run-evidence.md#completed-evidence-review-and-run-footprint) design, with implementation pending, and shipped [review curation/results](062-recorded-run-evidence.md#shared-review-curation-and-saved-results). Its [evidence-policy amendment 3](062-recorded-run-evidence.md#amendment-3-2026-10-13-evidence-policy-and-human-attestation) is Accepted under [#1011](https://github.com/deeeed/farmslot/pull/1011). Attested approval shipped there; normal-policy binding rules remain separate implementation.
 

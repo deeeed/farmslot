@@ -1,6 +1,6 @@
 # Retained run artifacts
 
-Status: Proposed, [ADR-039 Amendment 1](../adr/039-run-portable-bundles.md#amendment-1-2026-10-15-gateway-retained-run-artifacts).
+Status: Accepted by the lead, 2026-10-15, [ADR-039 Amendment 1](../adr/039-run-portable-bundles.md#amendment-1-2026-10-15-gateway-retained-run-artifacts).
 This is the canonical retention/read contract, not a second evidence format.
 It extends [ADR-062](../adr/062-recorded-run-evidence.md)'s existing reader and review authority.
 
