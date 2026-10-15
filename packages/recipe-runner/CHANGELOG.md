@@ -4,9 +4,11 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
-- Retain AC/role/source capture bindings and immutable baseline closures, using one comparison projection for publication and both review clients.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.36.0 - 2026-10-15
+
+- Retain AC/role/source capture bindings and immutable baseline closures, using one comparison projection for publication and both review clients.
 
 ## 0.35.0 - 2026-10-15
 

@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.10.1 - 2026-10-15
+
+- Align the installed dependency closure with protocol 0.45.0 and retained-run stack attachment.
+
 ## 0.10.0 - 2026-10-15
 
 - Include browser chrome and extension side panels in unrecorded web-dapp screenshots through the owned browser's native capture, with CDP fallback.

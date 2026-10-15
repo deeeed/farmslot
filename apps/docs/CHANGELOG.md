@@ -5,6 +5,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 ## Unreleased
 
 - Document scoped review-budget extensions and current-head publication recovery.
+- Update the gateway API reference to protocol 0.45.0 for retained-run attachment.
 
 - Document the typed retained-run stack attachment RPC and graph command.
 - Document explicit retired principal-id replacement and its identity-generation guard.

@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.22.4 - 2026-10-15
+
+- Align the installed dependency closure with protocol 0.45.0 and retained-run stack attachment.
+
 ## 0.22.3 - 2026-10-15
 
 - Supply one minimal-diff policy and sensitive-path inventory for worker self-review, independent reviews and paired review packets.
