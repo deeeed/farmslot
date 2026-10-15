@@ -229,3 +229,96 @@ test('historical report discovery keeps the decision bundle after a successor ca
   assert.equal(await readRetainedRunText(current, 'artifacts/report.html', ref), f.body);
   assert.equal(await readRetainedRunText(current, 'inputs/diff.txt', ref), 'frozen review input');
 });
+
+test('publication selection and inventory come from the same capture after source removal', async () => {
+  const f = await fixture();
+  updateRun(f.runId, { recordedEvidenceContractVersion: 0 });
+  await writeFile(path.join(f.taskDir, 'artifacts/after.png'), 'retained image');
+  await writeFile(
+    path.join(f.taskDir, 'artifacts/evidence-manifest.json'),
+    JSON.stringify({
+      version: 1,
+      preferred_mode: 'screenshots',
+      standalone: [{ label: 'Result', file: 'after.png' }],
+    }),
+  );
+  await captureRunOutput(f.runId, false, true);
+  await rm(f.taskDir, { recursive: true });
+  const { readCurrentPackageEvidence } = await import('./package-evidence-manifest.js');
+  const evidence = await readCurrentPackageEvidence(getRun(f.runId)!);
+  assert.equal(evidence.manifest?.standalone?.[0]?.file, 'after.png');
+  assert.ok(
+    evidence.inventory.some(
+      (entry) =>
+        entry.path === 'artifacts/after.png' &&
+        entry.sha256 === createHash('sha256').update('retained image').digest('hex'),
+    ),
+  );
+});
+
+test('retained capacity refusal records a failed lifecycle step without dispatching work', async (t) => {
+  const policy = path.join(root, 'home/run-bundle-retention.json');
+  t.after(() => rm(policy, { force: true }));
+  await writeFile(
+    policy,
+    JSON.stringify({
+      runBundleRetention: {
+        maxBundleBytes: 1,
+        maxStoreBytes: 2,
+        metadataReserveBytes: 1,
+        mediaRetentionDays: 30,
+      },
+    }),
+  );
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example',
+    ticketOrPr: 'CAPACITY',
+    mode: 'validation',
+  });
+  t.after(async () => {
+    const { deleteTestRunIfPresent } = await import('../run-engine/test-fixtures.js');
+    await deleteTestRunIfPresent(run.id);
+  });
+  const { startRun } = await import('../run-engine/orchestrator.js');
+  await startRun(run.id);
+  const refused = getRun(run.id)!;
+  assert.equal(refused.status, 'failed');
+  assert.match(refused.error ?? '', /retained report metadata capacity is exhausted/i);
+  assert.equal(refused.steps[0]?.status, 'failed');
+  assert.equal(refused.slotId, null);
+});
+
+test('a metadata capture preserves the source video when bundle capacity defers its bytes', async (t) => {
+  const f = await fixture();
+  const { farmslotRoot } = await import('../projects/repo-root.js');
+  const taskDir = path.join(farmslotRoot, '.sandbox/retained-capacity/tasks', f.runId);
+  const policy = path.join(root, 'home/run-bundle-retention.json');
+  t.after(async () => {
+    await rm(taskDir, { recursive: true, force: true });
+    await rm(policy, { force: true });
+  });
+  await mkdir(path.join(taskDir, 'artifacts'), { recursive: true });
+  await writeFile(path.join(taskDir, 'artifacts/report.html'), f.body);
+  const video = Buffer.alloc(1024 * 1024, 3);
+  await writeFile(path.join(taskDir, 'artifacts/capture.mp4'), video);
+  await writeFile(
+    policy,
+    JSON.stringify({
+      runBundleRetention: {
+        maxBundleBytes: 512 * 1024,
+        maxStoreBytes: 100 * 1024 * 1024,
+        metadataReserveBytes: 1024 * 1024,
+        mediaRetentionDays: 30,
+      },
+    }),
+  );
+  updateRun(f.runId, { taskFile: path.join(taskDir, 'TASK.md') });
+  await captureRunOutput(f.runId, false, true);
+  const captured = getRun(f.runId)!;
+  assert.ok(
+    captured.output?.retentionMissingData?.includes('media-capacity:artifacts/capture.mp4'),
+  );
+  assert.equal(await readRetainedRunText(captured, 'artifacts/report.html'), f.body);
+  assert.deepEqual(await readFile(path.join(taskDir, 'artifacts/capture.mp4')), video);
+});

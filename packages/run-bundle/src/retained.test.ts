@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -427,4 +427,88 @@ test('GC removes committed retry intents with unreferenced bundles so explicit a
   assert.notEqual(repeated.ref.bundleDigest, first.ref.bundleDigest);
   const bundle = await readRetainedRunBundle(f.store, repeated.ref, f.run.id);
   assert.equal(await bundle.readText('artifacts/report.html'), '<h1>Retained report</h1>');
+});
+
+test('archived run references retain reports beyond media expiry without source files', async (t) => {
+  const f = await fixture(t);
+  const result = await materializeRunBundle(f.request);
+  const archive = path.join(f.store.runsDir, 'archive');
+  await mkdir(archive, { recursive: true });
+  await writeFile(
+    path.join(archive, `${f.run.id}.json`),
+    JSON.stringify({ ...f.run, artifactBundle: result.ref }),
+  );
+  await rm(f.taskDir, { recursive: true });
+  await collectRunBundleGarbage(f.store, undefined, Date.now() + 31 * 86_400_000);
+  const retained = await readRetainedRunBundle(f.store, result.ref, f.run.id);
+  assert.equal(await retained.readText('artifacts/report.html'), '<h1>Retained report</h1>');
+  assert.equal(retained.manifest.bundleId, result.manifest.bundleId);
+});
+
+test('a missing inventoried payload keeps its expected identity and can be restored on retry', async (t) => {
+  const f = await fixture(t);
+  await rm(path.join(f.taskDir, 'artifacts/capture.mp4'));
+  const first = await materializeRunBundle(f.request);
+  assert.ok(first.missingData.includes('missing:artifacts/capture.mp4'));
+  assert.ok(first.manifest.entries[`tasks/${f.run.id}/artifacts/capture.mp4`]);
+  await writeFile(path.join(f.taskDir, 'artifacts/capture.mp4'), 'video bytes');
+  const restored = await materializeRunBundle(f.request);
+  assert.deepEqual(restored.ref, first.ref);
+  assert.deepEqual(restored.missingData, []);
+  const bundle = await readRetainedRunBundle(f.store, restored.ref, f.run.id);
+  assert.equal(await bundle.readText('artifacts/capture.mp4'), 'video bytes');
+});
+
+test('GC releases terminal and deleted run reservations while retaining active admission', async (t) => {
+  const f = await fixture(t);
+  const active = { ...f.run, status: 'created' as const };
+  await writeFile(path.join(f.store.runsDir, `${active.id}.json`), JSON.stringify(active));
+  await reserveRunBundleMetadata(f.store, active.id);
+  await reserveRunBundleMetadata(f.store, 'terminal-run');
+  await reserveRunBundleMetadata(f.store, 'deleted-run');
+  await writeFile(
+    path.join(f.store.runsDir, 'terminal-run.json'),
+    JSON.stringify({ ...f.run, id: 'terminal-run', status: 'cancelled' }),
+  );
+  await collectRunBundleGarbage(f.store);
+  assert.deepEqual(await readdir(path.join(f.store.root, 'reservations')), [`${active.id}.json`]);
+});
+
+test('an unresolved imported decision pins its target-owned payload through its original digest alias', async (t) => {
+  const f = await fixture(t);
+  const result = await materializeRunBundle(f.request);
+  const sourceRef = { ...result.ref, storeId: 'source-store', bundleDigest: 'f'.repeat(64) };
+  const imported: Run = {
+    ...f.run,
+    importProvenance: {
+      importedFromRunId: f.run.id,
+      importedAt: f.run.createdAt,
+      mode: 'mirror',
+      artifactBundleRefs: { [sourceRef.bundleDigest]: result.ref },
+    },
+    decisions: [
+      {
+        id: 'review',
+        type: 'engine_output_review',
+        title: 'Review',
+        description: '',
+        actions: [],
+        createdAt: f.run.createdAt,
+        payload: {
+          kind: 'output-review',
+          manifestDigest: 'original-inventory',
+          reportPath: 'artifacts/report.html',
+          artifactBundle: sourceRef,
+        },
+      },
+    ],
+  };
+  await writeFile(path.join(f.store.runsDir, `${imported.id}.json`), JSON.stringify(imported));
+  assert.equal(
+    (await collectRunBundleGarbage(f.store, undefined, Date.now() + 31 * 86_400_000))
+      .reclaimedBytes,
+    0,
+  );
+  const bundle = await readRetainedRunBundle(f.store, result.ref, f.run.id);
+  assert.equal(await bundle.readText('artifacts/capture.mp4'), 'video bytes');
 });

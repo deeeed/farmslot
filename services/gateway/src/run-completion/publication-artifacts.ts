@@ -1162,7 +1162,7 @@ export async function readEvidenceManifest(run: Run): Promise<EvidenceManifest |
   return run.taskFile
     ? ((
         await resolvePublicationManifest(
-          path.dirname(run.taskFile),
+          await retainedRunTaskDirectory(run),
           undefined,
           undefined,
           run.recordedEvidenceContractVersion ?? 0,

@@ -722,9 +722,6 @@ export interface StartRunOptions {
 export async function startRun(runId: string, options: StartRunOptions = {}): Promise<void> {
   const generation = options.expectedGeneration ?? getRunGeneration(runId);
   try {
-    const admitted = getRun(runId);
-    if (admitted && !['done', 'failed', 'cancelled'].includes(admitted.status))
-      await reserveRunArtifactMetadata(admitted);
     await driveRun(runId, { ...options, expectedGeneration: generation });
   } finally {
     // Every exit, not just the completion tail: a run that deferred a release
@@ -826,6 +823,7 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
     });
 
     try {
+      if (i === startIdx) await reserveRunArtifactMetadata(current);
       const stepIO = await executeStep(runId, stepName, myGen);
 
       // Re-check cancellation/pause after async step

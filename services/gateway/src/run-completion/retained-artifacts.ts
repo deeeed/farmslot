@@ -8,6 +8,7 @@ import {
 } from '@farmslot/adapter-sdk';
 import {
   type ArtifactRef,
+  decisionArtifactBundleRef,
   isRecord,
   type RecipeRunArtifactGroup,
   type Run,
@@ -29,6 +30,7 @@ import {
   readRetainedRunBundle,
   readRunBundleAvailability,
   reserveRunBundleMetadata,
+  resolveRetainedRunBundleRef as localBundleRef,
 } from '@farmslot/run-bundle';
 
 import { inferArtifactPurpose } from '../core/index.js';
@@ -44,6 +46,8 @@ import {
 } from '../runs/store.js';
 
 export function runBundleStore(create = false) {
+  if (create && process.env.FARMSLOT_SANDBOX_HOME)
+    throw new Error('Sandbox gateways may only read the owning gateway retained bundle store.');
   const home =
     !process.env.FARMSLOT_RUNS_DIR &&
     !process.env.FARMSLOT_HOME &&
@@ -53,7 +57,7 @@ export function runBundleStore(create = false) {
   return openRunBundleStore({
     runsDir: runsDirectory(),
     home,
-    create: create && !process.env.FARMSLOT_RUNS_DIR && !process.env.FARMSLOT_SANDBOX_HOME,
+    create: create && !process.env.FARMSLOT_SANDBOX_HOME,
   });
 }
 
@@ -64,27 +68,15 @@ export function retainedRunBundleRef(
 ): RunArtifactBundleRef {
   const decision = decisionId ? run.decisions.find(({ id }) => id === decisionId) : undefined;
   const payload = decision?.payload;
-  let selected =
-    payload?.kind === 'ready'
-      ? payload.prPackage?.artifactBundle
-      : payload?.kind === 'output-review'
-        ? (payload.artifactBundle ??
-          (payload.manifestDigest === run.output?.manifestDigest
-            ? run.output.artifactBundle
-            : undefined))
-        : (run.artifactBundle ?? run.output?.artifactBundle);
+  let selected = decisionId
+    ? decisionArtifactBundleRef(run, payload)
+    : (run.artifactBundle ?? run.output?.artifactBundle);
   if (decisionId && !decision) throw new Error('The retained decision no longer exists.');
   if (digest) {
     const known = [
       run.artifactBundle,
       run.output?.artifactBundle,
-      ...run.decisions.map(({ payload }) =>
-        payload?.kind === 'ready'
-          ? payload.prPackage?.artifactBundle
-          : payload?.kind === 'output-review'
-            ? payload.artifactBundle
-            : undefined,
-      ),
+      ...run.decisions.map(({ payload }) => decisionArtifactBundleRef(run, payload)),
     ];
     const requested = known.find(
       (ref) =>
@@ -102,10 +94,6 @@ export function retainedRunBundleRef(
   if (!selected)
     throw new Error(`Run artifacts are not retained. Run farmslot runs bundle retain ${run.id}.`);
   return localBundleRef(run, selected);
-}
-
-function localBundleRef(run: Run, ref: RunArtifactBundleRef): RunArtifactBundleRef {
-  return run.importProvenance?.artifactBundleRefs?.[ref.bundleDigest] ?? ref;
 }
 
 export async function retainedRunTaskDirectory(
@@ -253,9 +241,15 @@ export async function qualifyRetainedRunMetadata(run: Run): Promise<void> {
     await readOptionalRetainedRunText(run, file);
 }
 
+export async function collectRunArtifactGarbage(): Promise<void> {
+  if (process.env.FARMSLOT_SANDBOX_HOME) return;
+  await collectRunBundleGarbage(await runBundleStore(true), await retentionPolicy());
+}
+
 export async function reserveRunArtifactMetadata(run: Run): Promise<void> {
   const store = await runBundleStore(true);
   const policy = await retentionPolicy();
+  await persistRunNow(getRun(run.id) ?? run, 'retention admission');
   await collectRunBundleGarbage(store, policy);
   await reserveRunBundleMetadata(store, run.id, policy);
 }
@@ -345,8 +339,17 @@ export async function retainCapturedRunArtifacts(input: {
         input.releaseStagingMedia &&
         strictTaskRelativePathFromFarmslotRoot(farmslotRoot, input.run.taskFile)
       ) {
+        const unavailable = new Set(
+          missingData.map((reason) => reason.slice(reason.indexOf(':') + 1)),
+        );
         for (const artifact of input.artifacts) {
-          if (!isRunBundleMedia(artifact.path)) continue;
+          // Quota-deferred, changed or unidentified media may be the last source copy.
+          if (
+            !isRunBundleMedia(artifact.path) ||
+            !artifact.sha256 ||
+            unavailable.has(artifact.path)
+          )
+            continue;
           await rm(path.join(path.dirname(input.run.taskFile!), artifact.path), { force: true });
         }
       }
@@ -381,9 +384,7 @@ export async function retainRunArtifacts(runId: string): Promise<RunBundleRetain
     if (present.every(Boolean))
       return {
         ref: output.artifactBundle,
-        missingData: (bundle.manifest.missingData ?? []).filter(
-          (reason) => !reason.startsWith('missing:') && !reason.startsWith('media-capacity:'),
-        ),
+        missingData: output.retentionMissingData ?? bundle.manifest.missingData ?? [],
       };
   }
   // Acquisition is explicit. A viewer never refreshes a mirror or asks a slot for files.

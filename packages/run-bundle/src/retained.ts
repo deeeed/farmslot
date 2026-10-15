@@ -21,6 +21,7 @@ import lockfile from 'proper-lockfile';
 
 import {
   type ArtifactRef,
+  decisionArtifactBundleRef,
   type Run,
   RUN_BUNDLE_VERSION,
   type RunArtifactBundleRef,
@@ -240,6 +241,14 @@ async function reservedMetadataBytes(store: RunBundleStore, exceptRunId?: string
   return bytes;
 }
 
+/** Resolve target-owned imported bytes without rewriting the receipt's original identity. */
+export function resolveRetainedRunBundleRef(
+  run: Run,
+  ref: RunArtifactBundleRef,
+): RunArtifactBundleRef {
+  return run.importProvenance?.artifactBundleRefs?.[ref.bundleDigest] ?? ref;
+}
+
 /** Reserve lightweight output capacity before starting work, under the capture/GC lock. */
 export async function reserveRunBundleMetadata(
   store: RunBundleStore,
@@ -310,6 +319,17 @@ function bundleDirectory(store: RunBundleStore, digest: string): string {
   return path.join(store.root, 'sha256', digest);
 }
 
+function recordExpectedArtifact(
+  manifest: RunBundleManifest,
+  taskKey: string,
+  artifact: ArtifactRef,
+  bytes = artifact.sizeBytes,
+): void {
+  if (!artifact.sha256 || bytes === undefined) return;
+  const key = `tasks/${taskKey}/${artifact.path}`;
+  manifest.entries[key] = { path: key, sha256: artifact.sha256.replace(/^sha256:/u, ''), bytes };
+}
+
 async function assertStorePairing(store: RunBundleStore): Promise<void> {
   const binding = await openRunBundleStore({
     runsDir: store.runsDir,
@@ -331,9 +351,14 @@ async function completeRetainedPayloads(
   let used = (await physicalBytes(request.store.root)) + (request.stagingBytes ?? 0);
   let bundleBytes = await physicalBytes(directory);
   const prefix = `tasks/${ref.taskKey}/`;
-  const missing: string[] = (manifest.missingData ?? []).filter(
-    (reason) => !reason.startsWith('media-capacity:') && !reason.startsWith('missing:'),
-  );
+  const missing: string[] = (manifest.missingData ?? []).filter((reason) => {
+    const relative = reason.startsWith('missing:')
+      ? reason.slice('missing:'.length)
+      : reason.startsWith('media-capacity:')
+        ? reason.slice('media-capacity:'.length)
+        : null;
+    return relative === null || !manifest.entries[`${prefix}${relative}`];
+  });
   const restored = new Set<string>();
   for (const [key, meta] of Object.entries(manifest.entries)) {
     if (!key.startsWith(prefix)) continue;
@@ -480,38 +505,36 @@ export async function collectRunBundleGarbage(
     const referenced = new Set<string>();
     const activeRuns = new Set<string>();
     const pinned = new Set<string>();
-    const retain = (ref: RunArtifactBundleRef | undefined, pin: boolean) => {
+    const retainReference = (ref: RunArtifactBundleRef | undefined, pin: boolean) => {
       if (!ref || ref.storeId !== store.id) return;
       referenced.add(ref.bundleDigest);
       if (pin) pinned.add(ref.bundleDigest);
     };
-    for (const run of loadAllRunRecords(store.runsDir)) {
+    for (const run of [
+      ...loadAllRunRecords(store.runsDir),
+      ...loadAllRunRecords(path.join(store.runsDir, 'archive')),
+    ]) {
+      const retain = (ref: RunArtifactBundleRef | undefined, pin: boolean) =>
+        retainReference(ref ? resolveRetainedRunBundleRef(run, ref) : undefined, pin);
       const active = !['done', 'failed', 'cancelled'].includes(run.status);
       if (active) activeRuns.add(run.id);
       retain(run.artifactBundle, active);
       retain(run.output?.artifactBundle, active);
       for (const decision of run.decisions) {
-        if (decision.payload?.kind === 'output-review')
-          retain(
-            decision.payload.artifactBundle ??
-              (decision.payload.manifestDigest === run.output?.manifestDigest
-                ? run.output.artifactBundle
-                : undefined),
-            !decision.resolvedAt,
-          );
-        if (decision.payload?.kind === 'ready')
-          retain(
-            decision.payload.prPackage?.artifactBundle,
-            !decision.resolvedAt ||
+        retain(
+          decisionArtifactBundleRef(run, decision.payload),
+          !decision.resolvedAt ||
+            (decision.payload?.kind === 'ready' &&
               ['published_draft', 'published_ready'].includes(
                 decision.payload.prPackage?.publicationStatus ?? '',
-              ),
-          );
+              )),
+        );
       }
     }
     const intentsDir = path.join(store.runsDir, 'bundle-intents');
     await mkdir(intentsDir, { recursive: true });
     const activeStages = new Set<string>();
+    const captureRuns = new Set<string>();
     const committedIntents = new Map<string, string[]>();
     for (const file of await readdir(intentsDir)) {
       if (!file.endsWith('.json')) continue;
@@ -527,8 +550,17 @@ export async function collectRunBundleGarbage(
           continue;
         }
         activeStages.add(intent.bundleId);
+        captureRuns.add(intent.runId);
         if (intent.bundleDigest) pinned.add(intent.bundleDigest);
       }
+    }
+    const reservations = path.join(store.root, 'reservations');
+    await mkdir(reservations, { recursive: true });
+    for (const name of await readdir(reservations)) {
+      if (!name.endsWith('.json')) continue;
+      const runId = name.slice(0, -5);
+      if (!activeRuns.has(runId) && !captureRuns.has(runId))
+        await rm(path.join(reservations, name));
     }
     let reclaimedBytes = 0;
     const prunedPaths: string[] = [];
@@ -732,6 +764,7 @@ export async function materializeRunBundle(
           size = (await stat(source)).size;
         } catch (error) {
           if (!hasCode(error, 'ENOENT')) throw error;
+          recordExpectedArtifact(manifest, taskKey, artifact);
           missingData.push(`missing:${artifact.path}`);
           continue;
         }
@@ -749,14 +782,7 @@ export async function materializeRunBundle(
             throw new Error(
               'Run bundle metadata capacity exhausted; free storage or raise gateway retention limits.',
             );
-          if (artifact.sha256) {
-            const key = `tasks/${taskKey}/${artifact.path}`;
-            manifest.entries[key] = {
-              path: key,
-              sha256: artifact.sha256.replace(/^sha256:/u, ''),
-              bytes: size,
-            };
-          }
+          recordExpectedArtifact(manifest, taskKey, artifact, size);
           missingData.push(`media-capacity:${artifact.path}`);
           continue;
         }

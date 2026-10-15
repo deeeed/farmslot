@@ -70,6 +70,14 @@ mock.module('../runs/store.js', {
     getRunWithArchived: async (id: string) =>
       id === lineageParent?.id ? lineageParent : id === run?.id ? run : null,
     updateRun: (_id: string, patch: Partial<Run>) => (run = { ...run, ...patch }),
+    // The native store fences writes against its own map, which this fixture replaces.
+    persistRunNow: async (record: Run) => {
+      await mkdir(nativeStore.runsDirectory(), { recursive: true });
+      await writeFile(
+        path.join(nativeStore.runsDirectory(), `${record.id}.json`),
+        JSON.stringify(record),
+      );
+    },
   },
 });
 mock.module('./artifact-mirror.js', {

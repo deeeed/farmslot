@@ -1,3 +1,5 @@
+import type { Run, RunDecisionPayload } from './runs.js';
+
 export const RUN_BUNDLE_VERSION = 1 as const;
 
 export type RunBundleProfile = 'reference' | 'family' | 'full';
@@ -128,4 +130,20 @@ export function isRunBundleManifest(value: unknown): value is RunBundleManifest 
     !!record.entries &&
     typeof record.entries === 'object'
   );
+}
+
+/** The reader and collector must pin the same captured decision snapshot. */
+export function decisionArtifactBundleRef(
+  run: Pick<Run, 'output'>,
+  payload: RunDecisionPayload | undefined,
+): RunArtifactBundleRef | undefined {
+  if (payload?.kind === 'ready') return payload.prPackage?.artifactBundle;
+  if (payload?.kind === 'output-review')
+    return (
+      payload.artifactBundle ??
+      (payload.manifestDigest === run.output?.manifestDigest
+        ? run.output.artifactBundle
+        : undefined)
+    );
+  return undefined;
 }
