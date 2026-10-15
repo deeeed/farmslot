@@ -5,8 +5,7 @@
   "proofTargets": [
     {
       "id": "unassigned-viewer",
-      "claim": "Unassigned media opens its own recorded selection.",
-      "proofMode": "state"
+      "claim": "Unassigned media opens its own recorded selection."
     }
   ],
   "workflow": {
