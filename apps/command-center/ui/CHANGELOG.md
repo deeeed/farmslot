@@ -55,7 +55,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 - PR previews load explicit task-artifact screenshot links even from older packages with incomplete inventories, and repeated references to one image stay resolvable.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
-- Restore styled, searchable runner/model/effort controls across dispatch, review, backlog launch plans and Eval candidates through the shared picker.
+- Show runner/model/effort as visible shared chips across dispatch, review, backlog launch plans and Eval candidates, with execution options always open.
 
 ## 0.20.7 - 2026-10-10
 

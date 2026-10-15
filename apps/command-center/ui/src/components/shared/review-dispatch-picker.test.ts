@@ -18,13 +18,15 @@ const { ReviewDispatchPicker } = await import('./review-dispatch-picker.js');
 function markup(value: unknown): string {
   if (Array.isArray(value)) return value.map(markup).join('');
   if (value && typeof value === 'object' && 'strings' in value && 'values' in value) {
-    if (Array.isArray(value.strings) && Array.isArray(value.values))
-      return value.strings.join('') + value.values.map(markup).join('');
+    if (Array.isArray(value.strings) && Array.isArray(value.values)) {
+      const values = value.values;
+      return value.strings.map((text, index) => text + markup(values[index])).join('');
+    }
   }
-  return '';
+  return typeof value === 'string' || typeof value === 'number' ? String(value) : '';
 }
 
-test('dispatch and warm review render searchable choices without native selects', () => {
+test('dispatch and warm review render visible execution chips without dropdowns', () => {
   const picker = new ReviewDispatchPicker();
   picker.viewModel = new ReviewDispatchViewModel({
     context: {
@@ -37,13 +39,42 @@ test('dispatch and warm review render searchable choices without native selects'
     picker.review = review;
     const rendered = markup(picker.render());
     assert.doesNotMatch(rendered, /<select\b/i);
-    for (const field of ['runner', 'model', 'effort', ...(review ? ['mode', 'lineage'] : [])]) {
+    for (const field of ['runner', 'model', 'effort']) {
+      assert.match(rendered, new RegExp(`role="group"[^>]*data-testid=review-dispatch-${field}`));
+      assert.doesNotMatch(
+        rendered,
+        new RegExp(`<choice-picker\\s+data-testid="review-dispatch-${field}"`),
+      );
+    }
+    assert.match(rendered, /aria-pressed=true/);
+    assert.match(rendered, /data-choice-value=codex/);
+    assert.match(rendered, /Other model/);
+    assert.doesNotMatch(rendered, /data-testid="review-dispatch-custom-model"/);
+    for (const field of review ? ['mode', 'lineage'] : []) {
       assert.match(
         rendered,
         new RegExp(`<choice-picker\\s+data-testid="review-dispatch-${field}"`),
       );
     }
   }
+});
+
+test('saved custom model opens its secondary editor', () => {
+  const picker = new ReviewDispatchPicker();
+  picker.viewModel = new ReviewDispatchViewModel({
+    context: { allowedActions: ['request-review'] },
+    sequence: [{ runner: 'codex', model: 'my-custom-model', effort: null, mode: 'cold' }],
+  });
+  assert.match(markup(picker.render()), /data-testid="review-dispatch-custom-model"/);
+});
+
+test('dispatch execution options stay visible without a disclosure', () => {
+  const source = readFileSync(
+    new URL('../dispatch/dispatch-wizard-primary-controls-renderer.ts', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /<section[^>]*data-testid="dispatch-execution-options"/);
+  assert.doesNotMatch(source, /<details[\s\S]*?renderRunnerModelConfig/);
 });
 
 const choiceValue = /\.[\w$]*(?:runner|model|effort)[\w$]*\b/i;

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { REVIEW_MODES } from '@farmslot/protocol';
@@ -38,10 +38,17 @@ export function ReviewDispatchPicker({
   discover?: boolean;
 }) {
   const { error, change } = useReviewDispatchCatalog(model, onChange, discover);
+  const [otherModels, setOtherModels] = useState<Record<string, boolean>>({});
+  const [modelFilters, setModelFilters] = useState<Record<string, string>>({});
   return (
     <View style={styles.picker} testID={testID}>
       {model.rows.map((row, index) => {
         const runner = model.catalog.runners.find((entry) => entry.id === row.selection.runner);
+        const customKey = `${row.id}:${row.selection.runner}`;
+        const customModel =
+          row.selection.model !== null &&
+          !runner?.models.some((option) => option.id === row.selection.model);
+        const showOtherModel = Boolean(otherModels[customKey] || customModel);
         return (
           <View style={styles.card} key={row.id} testID={`${testID}-row-${index}`}>
             <View style={styles.row}>
@@ -84,26 +91,69 @@ export function ReviewDispatchPicker({
             <View style={styles.modelEffort}>
               <View style={styles.field}>
                 <Text style={styles.label}>Model</Text>
+                {runner && runner.models.length > 8 && (
+                  <TextInput
+                    accessibilityLabel="Filter models"
+                    style={styles.input}
+                    placeholder="Filter models"
+                    placeholderTextColor={colors.textMuted}
+                    value={modelFilters[customKey] ?? ''}
+                    editable={!disabled}
+                    onChangeText={(value) =>
+                      setModelFilters((current) => ({ ...current, [customKey]: value }))
+                    }
+                  />
+                )}
                 <View style={styles.row}>
                   <Choice
                     label={`Runner default: ${runner?.defaultModel ?? 'automatic'}`}
                     testID={`${testID}-model-${index}-default`}
                     selected={row.selection.model === null}
                     disabled={disabled}
-                    onPress={() => change(() => model.setModel(row.id, null))}
+                    onPress={() =>
+                      change(() => {
+                        setOtherModels((current) => ({ ...current, [customKey]: false }));
+                        model.setModel(row.id, null);
+                      })
+                    }
                   />
-                  {(runner ? model.modelChoices(row.id) : []).map((choice) => (
-                    <Choice
-                      key={choice.id}
-                      label={choice.label ?? choice.id}
-                      testID={`${testID}-model-${index}-${choice.id}`}
-                      selected={row.selection.model === choice.id}
-                      disabled={disabled}
-                      onPress={() => change(() => model.setModel(row.id, choice.id))}
-                    />
-                  ))}
+                  {(runner?.models ?? [])
+                    .filter((choice) =>
+                      (choice.label ?? choice.id)
+                        .toLowerCase()
+                        .includes((modelFilters[customKey] ?? '').toLowerCase()),
+                    )
+                    .map((choice) => (
+                      <Choice
+                        key={choice.id}
+                        label={choice.label ?? choice.id}
+                        testID={`${testID}-model-${index}-${choice.id}`}
+                        selected={row.selection.model === choice.id}
+                        disabled={disabled}
+                        onPress={() =>
+                          change(() => {
+                            setOtherModels((current) => ({ ...current, [customKey]: false }));
+                            model.setModel(row.id, choice.id);
+                          })
+                        }
+                      />
+                    ))}
                 </View>
                 {runner?.allowCustomModels && (
+                  <Choice
+                    label="Other model"
+                    testID={`${testID}-other-model-${index}`}
+                    selected={showOtherModel}
+                    disabled={disabled}
+                    onPress={() =>
+                      setOtherModels((current) => ({
+                        ...current,
+                        [customKey]: !current[customKey],
+                      }))
+                    }
+                  />
+                )}
+                {runner?.allowCustomModels && showOtherModel && (
                   <TextInput
                     testID={`${testID}-custom-model-${index}`}
                     style={styles.input}

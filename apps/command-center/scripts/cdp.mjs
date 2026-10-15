@@ -395,15 +395,29 @@ async function inputInTab(hash, selector, value, select) {
     return result.result?.value;
   };
   try {
-    if (select && (await evaluate(`return control.localName==='choice-picker';`))) {
-      const expanded = await evaluate(
-        `return control.shadowRoot.querySelector('.trigger').getAttribute('aria-expanded')==='true';`,
-      );
-      if (!expanded) await clickInTab(hash, `${selector} >>> .trigger`);
-      await inputInTab(hash, `${selector} >>> input`, '', false);
+    const choiceKind = select
+      ? await evaluate(
+          `return control.localName==='choice-picker' ? 'dropdown' : control.matches('.choice-grid[data-value]') ? 'chips' : null;`,
+        )
+      : null;
+    if (choiceKind) {
+      if (choiceKind === 'dropdown') {
+        const expanded = await evaluate(
+          `return control.shadowRoot.querySelector('.trigger').getAttribute('aria-expanded')==='true';`,
+        );
+        if (!expanded) await clickInTab(hash, `${selector} >>> .trigger`);
+        await inputInTab(hash, `${selector} >>> input`, '', false);
+      }
       const escaped = await evaluate(`return CSS.escape(${JSON.stringify(value)});`);
-      await clickInTab(hash, `${selector} >>> [data-choice-value="${escaped}"]`);
-      if (!(await evaluate(`return control.value===${JSON.stringify(value)};`)))
+      await clickInTab(
+        hash,
+        `${selector}${choiceKind === 'chips' ? ' ' : ' >>> '}[data-choice-value="${escaped}"]`,
+      );
+      if (
+        !(await evaluate(
+          `return (control.dataset.value ?? control.value)===${JSON.stringify(value)};`,
+        ))
+      )
         throw new Error('Browser choice did not produce the requested value');
       return { selected: true };
     }
