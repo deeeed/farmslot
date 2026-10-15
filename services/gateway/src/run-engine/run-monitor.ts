@@ -37,6 +37,7 @@ import {
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import {
+  nativeWorkerLiveStatus,
   readNativeWorkerSnapshot,
   sendNativeWorkerInstruction,
 } from '../runners/native/worker-control.js';
@@ -59,13 +60,9 @@ import {
   sendRunnerInstructionWithOutcome,
   stripRunnerNoise,
 } from '../runners/registry.js';
+import { readRunProgress, runDecisionWaitingStatus } from '../runners/run-progress.js';
 import {
-  readAgentContextProgress,
-  readRunProgress,
-  runDecisionWaitingStatus,
-} from '../runners/run-progress.js';
-import {
-  isRunnerAliveUnderPane,
+  probeRunnerDescendantPid,
   resolveRunnerSessionForRun,
   resolveRunRetainedSessionBinding,
   retainedSessionSendOption,
@@ -1933,42 +1930,57 @@ async function detectViolations(
   return violations;
 }
 
-/** Live tmux+pgrep check — avoids stale .farm-status.json agent field for gateway-dispatched runs */
-async function checkAgentLive(
+interface MonitorLivenessReaders {
+  native: typeof readNativeWorkerSnapshot;
+  slot: typeof loadSlotVars;
+  target: typeof resolveAgentTarget;
+  exec: typeof execOnSlot;
+  process: typeof probeRunnerDescendantPid;
+}
+
+/** A live worker can wait between turns without completing its task. */
+export async function checkAgentLive(
   slotId: string,
   runner?: string | null,
   runId?: string,
   role?: AgentRole,
   contextId?: string,
+  readers: Partial<MonitorLivenessReaders> = {},
 ): Promise<AgentLiveStatus> {
+  const source = {
+    native: readNativeWorkerSnapshot,
+    slot: loadSlotVars,
+    target: resolveAgentTarget,
+    exec: execOnSlot,
+    process: probeRunnerDescendantPid,
+    ...readers,
+  };
   try {
-    const run = runId ? getRun(runId) : undefined;
-    if (run) {
-      const context = selectAgentContext(run, { role, contextId }) ?? undefined;
-      const progress = await readAgentContextProgress(run, context);
-      return progress.kind === 'idle'
-        ? 'idle'
-        : progress.kind === 'unproven'
-          ? 'unknown'
-          : 'working';
-    }
-    const vars = await loadSlotVars(slotId);
+    if (runId && getRun(runId)?.transport === 'native')
+      return nativeWorkerLiveStatus(await source.native(runId, role, contextId));
+    const vars = await source.slot(slotId);
     if (!vars.session) return 'idle';
-    const session = (await resolveAgentTarget(slotId, { runId, role, contextId })).target;
-    const r = await execOnSlot(
+    const session = (await source.target(slotId, { runId, role, contextId })).target;
+    const r = await source.exec(
       vars,
       tmuxShellSnippet(
         `list-panes -t ${shellQuote(session)} -F '#{pane_pid}' 2>/dev/null | head -1`,
       ),
     );
+    if (r.exitCode !== 0) return 'unknown';
     const panePid = r.stdout.trim();
     if (!panePid) return 'no-tmux';
-    return (await isRunnerAliveUnderPane(vars, panePid, runner)) ? 'working' : 'idle';
+    const process = await source.process(vars, panePid, runner);
+    return process.state === 'present'
+      ? 'working'
+      : process.state === 'absent'
+        ? 'idle'
+        : 'unknown';
   } catch (err) {
     console.warn(
       `[run-monitor] live agent check failed for slot=${slotId} run=${runId?.slice(0, 8) ?? '-'} role=${role ?? '-'}: ${(err as Error).message}`,
     );
-    return runId && getRun(runId)?.transport === 'native' ? 'unknown' : 'no-tmux';
+    return 'unknown';
   }
 }
 

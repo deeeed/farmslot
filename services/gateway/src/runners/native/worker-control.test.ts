@@ -3,7 +3,15 @@ import test from 'node:test';
 
 import type { NativeSessionReadResult, NativeWorkerSessionBinding } from '@farmslot/protocol';
 
-import { shouldHoldForMissingTerminalSignal } from '../../run-engine/run-monitor.js';
+import '../../runtime/mock-pty.test-support.js';
+
+import {
+  checkAgentLive,
+  shouldHoldForMissingTerminalSignal,
+} from '../../run-engine/run-monitor.js';
+import { deleteTestRunIfPresent } from '../../run-engine/test-fixtures.js';
+import { createRun } from '../../runs/store.js';
+import { makeVars } from '../test-fixtures.js';
 
 import { assertNativeWorkerSnapshot, nativeWorkerLiveStatus } from './worker-control.js';
 
@@ -84,6 +92,66 @@ test('native idle and waiting remain live; uncertain process cleanup is never a 
     ),
     false,
   );
+});
+
+test('monitor keeps a retained native worker live between turns and requires confirmed shutdown', async (t) => {
+  const previousOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'fixture-service';
+  t.after(() => {
+    if (previousOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = previousOwner;
+  });
+  const run = createRun(
+    {
+      project: 'fixture',
+      flowType: 'dev',
+      mode: 'autonomous',
+      ticketOrPr: 'WAIT-1',
+      transport: 'native',
+      runner: 'codex',
+    },
+    { nativeOwnerPrincipalId: 'fixture-service' },
+  );
+  t.after(() => deleteTestRunIfPresent(run.id));
+  for (const state of ['idle', 'running', 'waiting', 'closed', 'failed'] as const) {
+    const read = snapshot(state);
+    const observe = () =>
+      checkAgentLive('fixture-slot', 'codex', run.id, undefined, undefined, {
+        native: async () => read,
+      });
+    const terminal = state === 'closed' || state === 'failed';
+    assert.equal(await observe(), terminal ? 'unknown' : 'working', state);
+    if (terminal) {
+      read.session.processStopped = true;
+      assert.equal(await observe(), 'idle', state);
+    }
+  }
+});
+
+test('monitor distinguishes a live prompt, confirmed exit, lost pane and uncertain process evidence', async () => {
+  for (const state of ['present', 'absent', 'unknown', 'no-pane'] as const) {
+    const live = await checkAgentLive('fixture-slot', 'claude', undefined, undefined, undefined, {
+      slot: async () => makeVars(),
+      target: async () => ({ target: '%1', session: 'fixture' }),
+      exec: async () => ({ exitCode: 0, stdout: state === 'no-pane' ? '' : '123', stderr: '' }),
+      process: async () =>
+        state === 'present'
+          ? { state: 'present', pid: '124' }
+          : state === 'absent'
+            ? { state: 'absent' }
+            : { state: 'unknown', code: 'probe-transport', reason: 'Process census unavailable' },
+    });
+    assert.equal(
+      live,
+      state === 'present'
+        ? 'working'
+        : state === 'absent'
+          ? 'idle'
+          : state === 'no-pane'
+            ? 'no-tmux'
+            : 'unknown',
+    );
+  }
 });
 
 test('native observation rejects another owner, node, session, generation or task lease', () => {

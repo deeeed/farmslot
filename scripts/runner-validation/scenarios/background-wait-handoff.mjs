@@ -1,7 +1,8 @@
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { sleepMs } from '../lib/common.mjs';
+import { ROOT, sleepMs } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 import { runGatewayMonitorStuck } from '../lib/gateway-post-launch.mjs';
 import { eventName, readHookLines } from '../lib/hooks.mjs';
@@ -14,6 +15,29 @@ export const SCENARIO_ID = 'background-wait-handoff';
 // Manual live proof only. The delay creates a real background task, never a CI sleep.
 const PROMPT =
   'Use Bash once to run "sleep 45" with run_in_background=true. Immediately end your turn without polling, waiting for, stopping, or reading that task. When the completion notification arrives, reply DONE without more tools.';
+
+function monitorDecision(repo, target, phase) {
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      path.join(ROOT, 'scripts/runner-validation/gateway/background-wait-monitor.mts'),
+      repo,
+      target,
+      phase,
+    ],
+    { cwd: ROOT, encoding: 'utf8', timeout: 30000, env: process.env },
+  );
+  if (result.status !== 0)
+    throw new Error(result.stderr || result.stdout || 'Monitor proof failed');
+  return JSON.parse(
+    result.stdout
+      .trim()
+      .split('\n')
+      .findLast((line) => line.startsWith('{')),
+  );
+}
 
 export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
   const runner = runnerAdapter.RUNNER_ID;
@@ -70,10 +94,14 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
           probe.runnerAlive &&
           !probe.wouldNudge
         ) {
-          report.active = probe;
+          report.active = { ...probe, monitor: monitorDecision(repo, paneId, 'active') };
         }
         if (report.active && probe.kind === 'idle' && probe.stuck && probe.wouldNudge) {
-          report.settled = probe;
+          report.settled = {
+            ...probe,
+            monitor: monitorDecision(repo, paneId, 'settled'),
+            operatorWait: monitorDecision(repo, paneId, 'operator-wait'),
+          };
           break;
         }
       }
