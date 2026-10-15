@@ -163,6 +163,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 - Allow managed runner resumes to suppress startup update checks.
+- Preserve advisory inline comments on passing static reviews while refusing blocking comments and mismatched issue reviews.
 
 ## 0.21.0 - 2026-10-10
 

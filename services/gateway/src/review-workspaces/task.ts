@@ -17,7 +17,9 @@ import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import {
   ACCEPTANCE_STATUS_ARTIFACT,
   enumerateChecklistCheckboxes,
+  isRecord,
   isTerminalRunStatus,
+  type ReviewLineComment,
   type ReviewWorkspaceBinding,
   type ReviewWorkspaceSubject,
   type Run,
@@ -68,8 +70,40 @@ import {
 const exec = promisify(execFile);
 const SUBJECT = 'inputs/review-subject.json';
 const RESULT = 'artifacts/review-result.json';
+const ADVISORY_COMMENT_SEVERITIES = ['minor', 'nit', 'suggestion', 'nitpick', 'comment'];
 /** The gateway's own filesystem, for the operator-visible copy of a review task. */
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
+
+export function resolveStaticReviewLineComments(
+  verdict: 'pass' | 'issues',
+  expected: ReviewLineComment[],
+  comments: unknown,
+): ReviewLineComment[] {
+  let lineComments = expected;
+  if (
+    verdict === 'pass' &&
+    Array.isArray(comments) &&
+    comments.every(
+      (comment): comment is ReviewLineComment =>
+        isRecord(comment) &&
+        typeof comment.path === 'string' &&
+        comment.path.trim().length > 0 &&
+        !path.posix.isAbsolute(comment.path) &&
+        within('.', comment.path) &&
+        typeof comment.line === 'number' &&
+        Number.isInteger(comment.line) &&
+        comment.line > 0 &&
+        typeof comment.body === 'string' &&
+        comment.body.trim().length > 0 &&
+        typeof comment.severity === 'string' &&
+        ADVISORY_COMMENT_SEVERITIES.includes(comment.severity),
+    )
+  )
+    lineComments = comments;
+  if (!isDeepStrictEqual(comments, lineComments))
+    throw new Error('Static review line comments disagree with its authoritative findings');
+  return lineComments;
+}
 
 function sameWorkspaceIdentity(
   a: ReviewWorkspaceBinding | undefined,
@@ -340,7 +374,7 @@ export async function materializeReviewWorkspaceTask(
       `Write ${RESULT} using schemaVersion 1, verdict "pass" with issues [] or "issues" with at least one {file,line,description,severity}. Severity is blocker, major, minor, or nit. Add recommendation APPROVE, REQUEST_CHANGES or COMMENT matching the report.`,
       `Add runId ${JSON.stringify(run.id)}, workspaceId ${JSON.stringify(run.reviewWorkspace.workspaceId)}, headSha ${JSON.stringify(subject.headSha)}, baseSha ${JSON.stringify(subject.baseSha)}, attemptId copied from SIGNAL.json, and reportSha256 containing the SHA-256 of the exact review.md bytes.`,
       `Required artifacts: ${terminalContract.commands.complete.artifacts.join(', ')}.`,
-      'Each line-comments entry must exactly match the corresponding issue: path=file, body=description, with the same line and severity.',
+      `For verdict issues, each line-comments entry must exactly match the corresponding issue: path=file, body=description, with the same line and severity. For verdict pass with issues [], optional non-blocking line comments may use severity ${ADVISORY_COMMENT_SEVERITIES.join(', ')}. Never put a blocker or major finding in a passing review.`,
       'Complete every checklist item, then run ./mark complete --mark-last. Do not use skip flags or write SIGNAL.json manually. Findings and unavailable comparison evidence still complete a static review: record every criterion outcome, end in APPROVE or REQUEST_CHANGES, complete the child, and finish the parent. APPROVE needs no blocking findings; non-blocking nits are allowed. A check you could not run is recorded as not verified by this review and does not block APPROVE. Evidence the author owes is a finding with a concrete ask. Use COMMENT only for a draft PR or an explicitly informational request. Block only when you cannot produce a review report. Never claim unchecked evidence passed.',
     ].join('\n');
     const handoff = buildHandoffMetadata({
@@ -643,14 +677,16 @@ export async function readReviewWorkspaceCompletion(
   const comments = JSON.parse(await confinedRead(io, taskDir, 'artifacts/line-comments.json')) as {
     comments?: unknown;
   };
-  const lineComments = issues.map((issue) => ({
-    path: issue.file,
-    line: issue.line,
-    body: issue.description,
-    severity: issue.severity,
-  }));
-  if (!isDeepStrictEqual(comments.comments, lineComments))
-    throw new Error('Static review line comments disagree with its authoritative findings');
+  const lineComments = resolveStaticReviewLineComments(
+    feedback.verdict,
+    issues.map((issue) => ({
+      path: issue.file,
+      line: issue.line,
+      body: issue.description,
+      severity: issue.severity,
+    })),
+    comments.comments,
+  );
   const mirror = await mkdtemp(path.join(os.tmpdir(), 'workspace-review-completion-'));
   const viewer = viewDirFor(run.id, deps);
   try {
