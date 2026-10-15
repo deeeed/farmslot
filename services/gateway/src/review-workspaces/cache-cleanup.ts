@@ -1,10 +1,13 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { lstat, readdir, readFile, readlink, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { Run } from '@farmslot/protocol';
 
+import { execFileArgv } from '../core/exec.js';
+
 import { reclaimReviewWorkspaceStorage, runNeedsExecutionStorage } from './storage-use.js';
+import { REVIEW_WORKSPACE_SCRIPT } from './workspace-node.js';
 
 interface CleanupStorage {
   runs: () => Promise<Run[]>;
@@ -14,7 +17,6 @@ interface CleanupStorage {
 
 const digestPattern = /^[a-f0-9]{64}$/;
 const retiredPattern = /^\.reclaim-[a-f0-9]{64}-[a-f0-9-]{36}$/;
-const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 
 async function directory(file: string): Promise<boolean> {
   try {
@@ -62,6 +64,7 @@ async function allocatorIsIdle(ownerRoot: string): Promise<boolean> {
   for (const name of await entries(path.join(ownerRoot, 'runs'))) {
     const workspace = path.join(ownerRoot, 'runs', name);
     if (
+      !(await directory(workspace)) ||
       (await metadata(path.join(workspace, 'allocation.json')))?.state !== 'cleaned' ||
       (await directory(path.join(workspace, 'source')))
     )
@@ -105,7 +108,6 @@ export function cleanupReviewWorkspaceCaches(
         (file) => file === directory || file.startsWith(directory + path.sep),
       );
     const cacheRoot = path.join(storage.runsDir, 'review-workspace-support');
-    if (!(await directory(storage.runsDir))) return [];
     if (await directory(cacheRoot)) {
       // Interrupted admission can precede publication of reviewWorkspace.support.
       for (const name of await entries(path.join(cacheRoot, 'admissions'))) {
@@ -148,6 +150,7 @@ export function cleanupReviewWorkspaceCaches(
         sources.set(index.digest, [...(sources.get(index.digest) ?? []), file]);
     }
     const support = async (root: string, gateway: boolean) => {
+      const candidates: string[] = [];
       for (const name of await entries(root)) {
         if (await reap(path.join(root, name))) continue;
         if (!digestPattern.test(name) || protectedDigests.has(name)) continue;
@@ -157,8 +160,10 @@ export function cleanupReviewWorkspaceCaches(
         if (manifest?.version !== 1 || manifest.sha256 !== name) continue;
         // Evict the lookup first: the next admission rebuilds instead of reading a stale index.
         if (gateway && !dryRun) for (const file of sources.get(name) ?? []) await rm(file);
-        await remove(target);
+        if (gateway) await remove(target);
+        else candidates.push(name);
       }
+      return candidates;
     };
     if (await directory(cacheRoot)) await support(path.join(cacheRoot, 'bundles'), true);
 
@@ -176,34 +181,43 @@ export function cleanupReviewWorkspaceCaches(
           !(await allocatorIsIdle(ownerRoot))
         )
           continue;
-        await support(path.join(ownerRoot, 'support'), false);
-        const repositories = path.join(ownerRoot, 'repositories');
-        for (const name of await entries(repositories)) {
-          if (await reap(path.join(repositories, name))) continue;
-          if (!digestPattern.test(name)) continue;
-          const target = path.join(repositories, name);
-          const marker = path.join(repositories, name + '.json');
-          const identity = await metadata(marker);
-          if (
-            !identity ||
-            typeof identity.owner !== 'string' ||
-            typeof identity.project !== 'string' ||
-            typeof identity.repositoryUrl !== 'string' ||
-            hash(identity.owner) !== ownerHash ||
-            hash(
-              JSON.stringify({
-                owner: identity.owner,
-                project: identity.project,
-                repositoryUrl: identity.repositoryUrl,
-              }),
-            ) !== name ||
-            (await entries(path.join(target, 'worktrees'))).length
-          )
-            continue;
-          if (await remove(target)) {
-            if (!dryRun) await rm(marker);
+        const supportRoot = path.join(ownerRoot, 'support');
+        const digests = await support(supportRoot, false);
+        if (dryRun) removed.push(...digests.map((digest) => path.join(supportRoot, digest)));
+        else if (digests.length) {
+          // The node allocator owns the cross-process claim through receipt checks and rename.
+          const result = await execFileArgv(
+            [
+              process.execPath,
+              '-e',
+              REVIEW_WORKSPACE_SCRIPT,
+              JSON.stringify({ root: ownerRoot, action: 'reclaim-support', digests }),
+            ],
+            { timeout: 30_000 },
+          );
+          const receipt: unknown = JSON.parse(result.stdout);
+          if (!record(receipt)) throw new Error('Invalid review cache retirement receipt');
+          if (result.exitCode !== 0) {
+            if (
+              record(receipt.error) &&
+              receipt.error.code === 'REVIEW_WORKSPACE_OPERATION_PENDING'
+            )
+              continue;
+            throw new Error(result.stderr || 'Review cache retirement failed');
+          }
+          if (!Array.isArray(receipt.retired)) throw new Error('Missing cache retirement paths');
+          for (const name of receipt.retired) {
+            if (
+              typeof name !== 'string' ||
+              !retiredPattern.test(name) ||
+              !digests.includes(name.slice(9, 73))
+            )
+              throw new Error('Invalid cache retirement path');
+            await rm(path.join(supportRoot, name), { recursive: true });
+            removed.push(path.join(supportRoot, name.slice(9, 73)));
           }
         }
+        // Bare repositories retain the Git objects used by saved Code/Diff views.
       }
     }
     return removed.sort();

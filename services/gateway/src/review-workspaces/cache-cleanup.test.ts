@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
@@ -93,6 +94,20 @@ test('dry-run and cleanup reclaim closed/archived caches while retaining reports
   const gateway = await f.support();
   const native = await f.support(path.join(f.ownerRoot, 'support'));
   const repository = await f.repository();
+  const git = (...args: string[]) =>
+    execFileSync('git', ['--git-dir', repository, ...args], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: 'Fixture',
+        GIT_AUTHOR_EMAIL: 'fixture@example.test',
+        GIT_COMMITTER_NAME: 'Fixture',
+        GIT_COMMITTER_EMAIL: 'fixture@example.test',
+      },
+    }).trim();
+  git('init', '--bare', repository);
+  const emptyTree = git('mktree');
+  const commit = git('commit-tree', emptyTree, '-m', 'Retained review');
   const closed = f.run();
   closed.archivedAt = '2026-01-02T00:00:00Z';
   f.setRuns([closed]);
@@ -110,19 +125,29 @@ test('dry-run and cleanup reclaim closed/archived caches while retaining reports
   const record = path.join(f.runsDir, 'archive', closed.id + '.json');
   await f.json(record, closed);
   const before = await readFile(record);
-  const expected = [gateway, native, repository].sort();
+  const expected = [gateway, native].sort();
   assert.deepEqual(await cleanupReviewWorkspaceCaches(true, f.storage), expected);
   assert(expected.every(existsSync));
   assert(existsSync(sourceIndex));
   assert.deepEqual(await cleanupReviewWorkspaceCaches(false, f.storage), expected);
   assert(expected.every((file) => !existsSync(file)));
   assert(!existsSync(sourceIndex));
+  assert(existsSync(repository));
+  assert(existsSync(repository + '.json'));
+  assert.equal(git('show', '--format=%s', '--no-patch', commit), 'Retained review');
   assert(existsSync(admission));
   assert(existsSync(report));
   assert.deepEqual(await readFile(record), before);
 });
 
-for (const reason of ['active', 'open gate', 'unclosed worker', 'uncleaned checkout'] as const) {
+for (const reason of [
+  'active',
+  'open gate',
+  'unclosed worker',
+  'recovery',
+  'pending closeout',
+  'uncleaned checkout',
+] as const) {
   test(`preserves shared execution bytes for ${reason}`, async (t) => {
     const f = await fixture(t);
     const gateway = await f.support();
@@ -142,7 +167,15 @@ for (const reason of ['active', 'open gate', 'unclosed worker', 'uncleaned check
         },
       ];
     if (reason === 'uncleaned checkout') delete held.reviewWorkspace!.cleanedAt;
-    if (reason === 'unclosed worker')
+    if (reason === 'pending closeout')
+      held.output = {
+        capturedAt: held.updatedAt,
+        workerFinished: true,
+        artifactManifest: [],
+        manifestDigest: 'c'.repeat(64),
+        cleanupPending: true,
+      };
+    if (reason === 'unclosed worker' || reason === 'recovery')
       held.agentContexts = [
         {
           id: 'review',
@@ -158,6 +191,12 @@ for (const reason of ['active', 'open gate', 'unclosed worker', 'uncleaned check
             leaseId: 'lease',
             ownerPrincipalId: 'owner',
             executionNodeId: 'local',
+            ...(reason === 'recovery'
+              ? {
+                  closedAt: held.updatedAt,
+                  recovery: { fromGeneration: 'old', commandId: 'recover' },
+                }
+              : {}),
           },
         },
       ];
@@ -232,10 +271,8 @@ test('completed allocator pointers permit reclamation while unfinished receipts 
   await f.json(receipt, { state: 'ready' });
   assert.deepEqual(await cleanupReviewWorkspaceCaches(false, f.storage), []);
   await f.json(receipt, { state: 'cleaned' });
-  assert.deepEqual(
-    await cleanupReviewWorkspaceCaches(false, f.storage),
-    [native, repository].sort(),
-  );
+  assert.deepEqual(await cleanupReviewWorkspaceCaches(false, f.storage), [native]);
+  assert(existsSync(repository));
 });
 
 test('an interrupted deletion is reclaimed without touching a newly admitted copy', async (t) => {
