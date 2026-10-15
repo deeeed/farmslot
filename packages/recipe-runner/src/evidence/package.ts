@@ -5,18 +5,22 @@ import {
   type RecipeClaimDeclaration,
   type RecipeClaimEvidence,
   type RecipeResolutionDocument,
+  recipeTraceEntries,
   type RecipeValidationFinding,
   type RecipeValidationResult,
   type RecipeVisualJudgment,
   type RecipeVisualReviewAuthority,
+  recordedEvidenceClosureIdentity,
   type RecordedEvidencePackageInput,
   recordedVisualJudgments,
+  type ReviewDiffSnapshot,
   validateAcceptanceStatusLedger,
   validateRecipeArtifactPackage,
   validateRecipeRecordingTimelineBinding,
 } from '@farmslot/protocol';
 
 import type { ProofDocument, ProofTraceEntry } from './assertions.js';
+import { groupRecipeCaptureComparisons } from './capture-comparisons.js';
 import { deriveRecipeClaims } from './claims.js';
 import { indexRecordingTimelines } from './moments.js';
 import { planRecipeEvidence } from './plan.js';
@@ -70,6 +74,15 @@ export function deriveReviewedRecipeClaims(
 /** Validate actual package identities before consumers derive a moment or publish evidence. */
 export function validateRecordedEvidencePackage(
   input: RecordedEvidencePackageInput,
+  snapshot?: Pick<ReviewDiffSnapshot, 'baseSha' | 'headSha'>,
+): RecipeValidationResult {
+  return validatePackage(input, new Set(), snapshot);
+}
+
+function validatePackage(
+  input: RecordedEvidencePackageInput,
+  ancestors: ReadonlySet<string>,
+  snapshot?: Pick<ReviewDiffSnapshot, 'baseSha' | 'headSha'>,
 ): RecipeValidationResult {
   const base = validateRecipeArtifactPackage(input);
   const findings: RecipeValidationFinding[] = [...base.findings];
@@ -83,6 +96,115 @@ export function validateRecordedEvidencePackage(
     isRecord(input.summary) && typeof input.summary.recipeRunId === 'string'
       ? input.summary.recipeRunId
       : undefined;
+  const trace = recipeTraceEntries(input.trace) ?? [];
+  for (const artifact of indexed) {
+    if (artifact.capture === undefined) continue;
+    const capture = artifact.capture;
+    const occurrence =
+      isRecord(capture) && Number.isInteger(capture.traceIndex)
+        ? trace[Number(capture.traceIndex)]
+        : undefined;
+    if (
+      !isRecord(capture) ||
+      capture.recipeRunId !== recipeRunId ||
+      !isRecord(occurrence) ||
+      occurrence.nodeId !== capture.nodeId ||
+      (capture.ac !== undefined &&
+        (typeof capture.ac !== 'string' ||
+          !input.claims?.criteria.some((claim) => claim.id === capture.ac))) ||
+      (capture.role !== undefined &&
+        !['before', 'after', 'review'].includes(String(capture.role))) ||
+      (capture.sourceCommit !== undefined &&
+        (typeof capture.sourceCommit !== 'string' ||
+          !/^[a-f0-9]{40,64}$/u.test(capture.sourceCommit))) ||
+      (capture.sourceDirty !== undefined && typeof capture.sourceDirty !== 'boolean')
+    )
+      issue(
+        `artifacts.${String(artifact.path)}.capture`,
+        'Capture binding does not match the retained claim, source or occurrence.',
+      );
+  }
+  const dependencies =
+    isRecord(input.manifest) && Array.isArray(input.manifest.comparisonDependencies)
+      ? input.manifest.comparisonDependencies
+      : [];
+  if (
+    isRecord(input.invocation) &&
+    JSON.stringify(input.invocation.comparisonDependencies ?? []) !== JSON.stringify(dependencies)
+  )
+    issue('comparisonDependencies', 'Comparison dependencies differ from the retained invocation.');
+  if (
+    input.comparisonDependencies?.length !== dependencies.length &&
+    dependencies.length + (input.comparisonDependencies?.length ?? 0) > 0
+  )
+    issue('comparisonDependencies', 'Every declared comparison closure must be supplied.');
+  const nextAncestors = new Set([...ancestors, recipeRunId ?? '']);
+  const seenRoots = new Set<string>();
+  for (const ref of dependencies) {
+    if (
+      !isRecord(ref) ||
+      typeof ref.recipeRunId !== 'string' ||
+      !/^[A-Za-z0-9._-]+$/u.test(ref.recipeRunId) ||
+      ['.', '..'].includes(ref.recipeRunId) ||
+      ref.artifactRoot !== `comparison-dependencies/${ref.recipeRunId}` ||
+      nextAncestors.has(ref.recipeRunId) ||
+      ancestors.size >= 16 ||
+      seenRoots.has(String(ref.artifactRoot))
+    ) {
+      issue('comparisonDependencies', 'Invalid, duplicate or cyclic comparison dependency.');
+      continue;
+    }
+    seenRoots.add(String(ref.artifactRoot));
+    const child = input.comparisonDependencies?.find(
+      (entry) => entry.artifactRoot === ref.artifactRoot,
+    )?.input;
+    if (!child) {
+      issue('comparisonDependencies', 'A retained comparison package is missing.');
+      continue;
+    }
+    try {
+      if (
+        child.claims?.recipeRunId !== ref.recipeRunId ||
+        recordedEvidenceClosureIdentity(child) !== ref.closureIdentity
+      )
+        issue(String(ref.artifactRoot), 'Comparison dependency has changed execution or bytes.');
+    } catch (error) {
+      issue(String(ref.artifactRoot), error instanceof Error ? error.message : String(error));
+    }
+    const validation = validatePackage(child, nextAncestors, snapshot);
+    findings.push(
+      ...validation.findings.map((finding) => ({
+        ...finding,
+        path: `${String(ref.artifactRoot)}/${finding.path}`,
+      })),
+    );
+    for (const claim of child.claims?.criteria ?? []) {
+      const current = input.claims?.criteria.find((entry) => entry.id === claim.id);
+      if (current && current.text !== claim.text)
+        issue(
+          String(ref.artifactRoot),
+          `Comparison claim ${claim.id} differs from the selected claim text.`,
+        );
+    }
+  }
+  if (input.claims?.schemaVersion === 2) {
+    const captures = groupRecipeCaptureComparisons(input, input.claims.criteria, snapshot);
+    for (const media of captures.media) {
+      if (
+        media.root &&
+        media.capture?.ac &&
+        !input.claims.criteria.some((claim) => claim.id === media.capture?.ac)
+      )
+        issue(media.path, 'Comparison capture names a claim outside the selected registration.');
+      if (snapshot && media.reasonCode === 'comparison-source-mismatch')
+        findings.push({
+          severity: 'error',
+          code: 'comparison-source-mismatch',
+          path: media.path,
+          message: media.reason!,
+        });
+    }
+  }
   if (input.claims) {
     if (!input.recipe)
       issue('recipe.json', 'The retained root recipe must be supplied for claim derivation.');

@@ -228,7 +228,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   get _isRecovering(): boolean {
-    return this._recoveryPhase !== 'live';
+    return !this.decision?.resolvedAt && this._recoveryPhase !== 'live';
   }
 
   get _usesMockData(): boolean {
@@ -441,6 +441,11 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   async _beginRecovery() {
+    if (this.decision?.resolvedAt) {
+      this._recoveryPhase = 'live';
+      this._recoveryMessage = '';
+      return;
+    }
     if (this._usesMockData) {
       this._diffFiles = [{ path: 'src/gate.ts', status: 'M', additions: 2, deletions: 1 }];
       if (!this._selectedFile) this._selectedFile = 'src/gate.ts';
@@ -669,7 +674,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   _openReviewRequestModal() {
-    if (this._isRecovering || this._acting) return;
+    if (this.decision?.resolvedAt || this._isRecovering || this._acting) return;
     this._reviewPicker = new ReviewDispatchViewModel({
       context: {
         allowedActions: ['request-review'],
@@ -695,7 +700,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
   }
 
   async _resolve(actionId: string, extraSelectionData: Record<string, unknown> = {}) {
-    if (this._isRecovering) return;
+    if (this._isRecovering || this.decision?.resolvedAt) return;
     // A posture choice the Gateway already refused must not ride along with a
     // resolution: the decision would be consumed and the refusal repeated.
     if (this.postureBlockedReason) {

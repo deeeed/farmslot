@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 
+import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   Events,
@@ -17,17 +18,21 @@ import {
   reviewRequestContextForRun,
 } from '@farmslot/review-dispatch';
 
+import type { MediaViewerItem } from '../../components/MediaViewer';
 import { useConnectedTransport } from '../../hooks/useConnectedTransport';
 import { useHumanGateGuard } from '../../hooks/useHumanGateGuard';
 import type { RunAcceptance } from '../../hooks/useRunAcceptance';
+import { acceptanceEvidenceHref } from '../../lib/acceptance-evidence';
 import {
-  acceptanceEvidenceHref,
-  acceptanceEvidenceStrip,
-  type AcceptanceEvidenceStripItem,
-} from '../../lib/acceptance-evidence';
-import { type ArtifactHttpHeaders, artifactUrl } from '../../lib/artifact-url';
+  type ArtifactHttpHeaders,
+  type ArtifactManifestEntry,
+  artifactUrlForEntry,
+  groupVisualArtifactPairs,
+  type VisualArtifactPair,
+} from '../../lib/artifact-url';
 import { requestClaimUntestableOverride } from '../../lib/claim-overrides';
 import { decisionResolveRequest } from '../../lib/decision-resolve';
+import { evidenceMediaItems, selectedEvidenceMediaItem } from '../../lib/evidence-media-items';
 import {
   type ApprovePublishGuard,
   type GateReviewAction,
@@ -47,7 +52,8 @@ export interface GateReviewRouteParams {
   decisionId: string;
 }
 
-export interface GateReviewEvidenceThumb extends AcceptanceEvidenceStripItem {
+export interface GateReviewMedia {
+  items: MediaViewerItem[];
   uri: string;
 }
 
@@ -58,7 +64,10 @@ export interface GateReviewViewModel {
   summary: GateReviewSummary;
   reviews: GateReviewVerdict[];
   acceptance: RunAcceptance;
-  evidence: GateReviewEvidenceThumb[];
+  gatewayUrl: string;
+  artifacts: ArtifactManifestEntry[];
+  pairs: VisualArtifactPair[];
+  media: GateReviewMedia | null;
   guard: ApprovePublishGuard;
   actions: GateReviewAction[];
   authHeaders: ArtifactHttpHeaders;
@@ -94,6 +103,8 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
   const [run, setRun] = useState<Run | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sendingActionId, setSendingActionId] = useState<string | null>(null);
+  const [media, setMedia] = useState<GateReviewMedia | null>(null);
+  useEffect(() => setMedia(null), [authorityEpoch, runId, decisionId]);
   const [evidenceReason, setEvidenceReason] = useState<{ decisionId: string; text: string } | null>(
     null,
   );
@@ -182,6 +193,10 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
   const viewModel = useMemo((): Omit<GateReviewViewModel, 'sendingActionId' | 'error'> | null => {
     if (!run || !decision || !gate) return null;
     const { acceptance } = gate;
+    const artifacts =
+      decision.payload?.kind === 'ready'
+        ? (decision.payload.prPackage?.evidenceManifest ?? decision.payload.artifactManifest ?? [])
+        : [];
     return {
       run,
       reviewPicker,
@@ -189,18 +204,20 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
       summary: gateReviewSummary(decision),
       reviews: gate.reviews,
       acceptance,
-      evidence: acceptance.view
-        ? acceptanceEvidenceStrip(acceptance.view, acceptance.evidenceModel).map((item) => ({
-            ...item,
-            uri: artifactUrl(gatewayUrl, run.id, item.path, acceptance.recipeRunId ?? undefined),
-          }))
-        : [],
+      gatewayUrl,
+      artifacts,
+      pairs: groupVisualArtifactPairs(
+        artifacts,
+        (artifact) => artifactUrlForEntry(gatewayUrl, run.id, artifact),
+        acceptance.evidenceModel,
+      ).pairs,
+      media,
       guard: gate.guard,
       actions: gate.actions,
       attestationReason,
       authHeaders,
     };
-  }, [attestationReason, authHeaders, decision, gate, gatewayUrl, reviewPicker, run]);
+  }, [attestationReason, authHeaders, decision, gate, gatewayUrl, media, reviewPicker, run]);
 
   const openEvidence = useCallback(
     (criterionId: string, path: string) => {
@@ -221,10 +238,10 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
     (artifact: string) => {
       router.push({
         pathname: '/workspace/run/[runId]/files',
-        params: { runId, artifact, recipeRun: 'decision-evidence' },
+        params: { runId, artifact, recipeRun: 'decision-evidence', evidenceDecision: decision?.id },
       });
     },
-    [router, runId],
+    [decision?.id, router, runId],
   );
 
   const resolve = useCallback(
@@ -309,6 +326,38 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
   return {
     state,
     actions: {
+      closeMedia: () => setMedia(null),
+      openVisual: (uri: string) => {
+        if (!viewModel) return;
+        setMedia({
+          uri,
+          items: evidenceMediaItems(
+            viewModel.artifacts,
+            (artifact) => artifactUrlForEntry(gatewayUrl, runId, artifact),
+            authHeaders,
+            viewModel.acceptance.evidenceModel,
+          ),
+        });
+      },
+      openRecordedEvidence: (model: EvidenceReviewModel, path: string) => {
+        const item = selectedEvidenceMediaItem(
+          model,
+          path,
+          (artifactPath) =>
+            artifactUrlForEntry(gatewayUrl, runId, { path: artifactPath, purpose: 'evidence' }),
+          authHeaders,
+        );
+        setMedia({ items: [item], uri: item.uri });
+      },
+      recordVisualReview: async (
+        claimId: string,
+        verdict: 'confirmed' | 'rejected',
+        reason: string,
+      ) => {
+        if (!gate) throw new Error('The gate evidence review is unavailable.');
+        await gate.acceptance.recordVisualReview(claimId, verdict, reason);
+        await refresh('visual review');
+      },
       markUntestable: async (claimId: string, reason: string) => {
         const model = viewModel?.acceptance.evidenceModel;
         if (!client || !run || !decision || !model) return;

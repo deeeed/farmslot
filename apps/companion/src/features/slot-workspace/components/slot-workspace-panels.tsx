@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
 import { Image, Pressable, ScrollView, Text, View } from 'react-native';
 
+import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import type {
   FamilyObservabilitySnapshot,
   RecipeRunArtifactGroup,
@@ -97,6 +98,7 @@ export function SlotWorkspaceSection({
   slotCurrentRunId,
   run,
   recipeRuns,
+  evidenceModel,
   recipeRunsLoaded,
   selectedRecipeRunId,
   familySnapshot,
@@ -118,6 +120,7 @@ export function SlotWorkspaceSection({
   slotCurrentRunId?: string | null;
   run: Run | null;
   recipeRuns: RecipeRunArtifactGroup[];
+  evidenceModel?: EvidenceReviewModel | null;
   recipeRunsLoaded: boolean;
   selectedRecipeRunId: string | null;
   familySnapshot: FamilyObservabilitySnapshot | null;
@@ -352,6 +355,7 @@ export function SlotWorkspaceSection({
         <ActiveRunWorkspaceCard
           run={run}
           recipeRuns={recipeRuns}
+          evidenceModel={evidenceModel}
           recipeRunsLoaded={recipeRunsLoaded}
           selectedRecipeRunId={selectedRecipeRunId}
           familySummary={summarizeSlotFamilyContext(familySnapshot)}
@@ -1044,6 +1048,7 @@ export function shouldOpenFocusedArtifactAsDiff(artifactPath: string): boolean {
 export function ActiveRunWorkspaceCard({
   run,
   recipeRuns,
+  evidenceModel,
   recipeRunsLoaded,
   selectedRecipeRunId,
   familySummary,
@@ -1074,6 +1079,7 @@ export function ActiveRunWorkspaceCard({
 }: {
   run: Run;
   recipeRuns: RecipeRunArtifactGroup[];
+  evidenceModel?: EvidenceReviewModel | null;
   recipeRunsLoaded: boolean;
   selectedRecipeRunId: string | null;
   familySummary: SlotFamilyContextSummary | null;
@@ -1109,8 +1115,10 @@ export function ActiveRunWorkspaceCard({
   const runArtifacts = extractRunArtifactManifest(run);
   const artifactCount = runArtifacts.length;
   const runPreviewArtifacts = selectSlotRunEvidencePreviewArtifacts(runArtifacts);
-  const visualPairSummary = groupVisualArtifactPairs(runArtifacts, (artifact) =>
-    artifactUrlForEntry(gatewayUrl, run.id, artifact),
+  const visualPairSummary = groupVisualArtifactPairs(
+    runArtifacts,
+    (artifact) => artifactUrlForEntry(gatewayUrl, run.id, artifact),
+    evidenceModel,
   );
   const primaryVisualPair = visualPairSummary.pairs[0] ?? null;
   const selectedRecipeRun = recipeRuns.find((group) => group.id === selectedRecipeRunId) ?? null;
@@ -1126,6 +1134,7 @@ export function ActiveRunWorkspaceCard({
   const recipeVisualPairSummary = groupVisualArtifactPairs(
     selectSlotRecipeArtifactsForPreviewScope(recipeRuns, selectedRecipeRunId),
     (artifact) => artifactUrlForEntry(gatewayUrl, run.id, artifact),
+    evidenceModel,
   );
   const recipePrimaryVisualPair = recipeVisualPairSummary.pairs[0] ?? null;
   const priorityVisualPair = primaryVisualPair ?? recipePrimaryVisualPair;
@@ -1147,6 +1156,7 @@ export function ActiveRunWorkspaceCard({
     runArtifacts,
     recipeRuns,
     selectedRecipeRunId,
+    evidenceModel,
   });
   const openPriorityVisualArtifact = (artifactPath: string) => {
     if (!priorityVisualPairIsRecipe) {

@@ -109,7 +109,7 @@ test('family visible lightbox artifacts preserve override and evidence fallback 
   );
 });
 
-test('family lightbox item and pair derivation keeps run provenance and compare lookup', () => {
+test('unbound family media keeps run navigation and remains separate', () => {
   const snap = snapshot({
     runs: [run({ runId: 'run-after', branch: 'fix/demo' })],
     evidence: [
@@ -121,9 +121,10 @@ test('family lightbox item and pair derivation keeps run provenance and compare 
   const pairs = familyLightboxPairsForSnapshot(snap);
 
   assert.equal(items[1].path, 'captures/after-login.png');
-  assert.equal(items[1].provenance, 'fix @ fix/demo');
-  assert.equal(pairs.length, 1);
-  assert.equal(pairs[0].stem, 'login');
-  assert.deepEqual(familyLightboxPairForArtifact(pairs, snap.evidence[1]), { index: 0 });
+  assert.equal(items[1].provenance, undefined);
+  assert.match(items[1].viewUrl!, /^#run\/run-after\?/);
+  assert.equal(items.length, 2);
+  assert.deepEqual(pairs, []);
+  assert.equal(familyLightboxPairForArtifact(pairs, snap.evidence[1]), null);
   assert.equal(familyLightboxPairForArtifact(pairs, artifact('other.png', 'after')), null);
 });

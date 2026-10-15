@@ -19,7 +19,7 @@ test('artifactLightboxItems maps included artifacts to media-lightbox items', ()
   );
 });
 
-test('artifactLightboxPairs maps before/after artifacts and preserves video kind', () => {
+test('unbound videos stay playable without filename-derived pairs', () => {
   const artifacts = [
     { path: 'artifacts/ac1-before.mp4', purpose: 'video-before' },
     { path: 'artifacts/ac1-after.mp4', purpose: 'video-after' },
@@ -33,21 +33,14 @@ test('artifactLightboxPairs maps before/after artifacts and preserves video kind
       (artifact) => artifact.purpose.startsWith('video'),
       (artifact) => artifact.path.endsWith('.mp4'),
     ),
-    [
-      {
-        before: {
-          url: '/artifact/artifacts/ac1-before.mp4',
-          path: 'artifacts/ac1-before.mp4',
-          purpose: 'video-before',
-        },
-        after: {
-          url: '/artifact/artifacts/ac1-after.mp4',
-          path: 'artifacts/ac1-after.mp4',
-          purpose: 'video-after',
-        },
-        stem: 'ac1',
-        kind: 'video',
-      },
-    ],
+    [],
+  );
+  assert.deepEqual(
+    artifactLightboxItems(
+      artifacts,
+      (artifact) => `/artifact/${artifact.path}`,
+      (artifact) => artifact.path.endsWith('.mp4'),
+    ).map((item) => item.path),
+    ['artifacts/ac1-before.mp4', 'artifacts/ac1-after.mp4'],
   );
 });

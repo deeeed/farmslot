@@ -18,6 +18,10 @@ export type RecipeRunStatus = 'pass' | 'fail' | 'unknown';
 export type RecipeVideoRecordingMode = 'off' | 'full-run';
 
 export interface RecipeRunRequest {
+  /** Contained original packages retained by the engine for explicit comparisons. */
+  comparisonDependencies?: readonly string[];
+  /** Frozen review identity supplied by the trusted host, never recipe parameters. */
+  comparisonSnapshot?: Pick<import('@farmslot/protocol').ReviewDiffSnapshot, 'baseSha' | 'headSha'>;
   /** Trusted host closeout, after recording stops and before package publication/validation. */
   finalizeArtifacts?(context: RecipeArtifactFinalization): Promise<void>;
   /** Cancels execution; authored teardown runs without the cancelled signal. */

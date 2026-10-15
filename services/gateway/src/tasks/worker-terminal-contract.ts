@@ -310,6 +310,18 @@ export async function syncTerminalContractForFlowOnSlot(
     flowType,
     { mode },
   );
+  if (checklistBasename && (await slotFileExists(vars, parentContractPath))) {
+    // A nested role changes its artifacts and CI commands, not the run's frozen
+    // claim-review authority or evidence-contract era.
+    const parent: WorkerTerminalContractDocument = JSON.parse(
+      await slotReadFile(vars, parentContractPath),
+    );
+    contract = {
+      ...contract,
+      claimReviewGate: parent.claimReviewGate,
+      recordedEvidenceContractVersion: parent.recordedEvidenceContractVersion,
+    };
+  }
   if (reportPath) contract = withTerminalReportPath(contract, reportPath, additionalArtifactPaths);
   const localCheck = getProjectField(projectVars.projectJson, 'ci.local_check');
   if (localCheck) {

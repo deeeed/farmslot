@@ -1,3 +1,5 @@
+import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
+
 import {
   type ArtifactManifestEntry,
   classifyArtifact,
@@ -105,9 +107,13 @@ function artifactWorkspaceHeaderTitle(activeFilter: ArtifactWorkspaceFilter): st
   }
 }
 
-export function artifactWorkspaceGroup(artifact: ArtifactManifestEntry): ArtifactWorkspaceGroup {
-  if (isBeforeVisualArtifact(artifact)) return 'before';
-  if (isAfterVisualArtifact(artifact)) return 'after';
+export function artifactWorkspaceGroup(
+  artifact: ArtifactManifestEntry,
+  model?: EvidenceReviewModel | null,
+): ArtifactWorkspaceGroup {
+  if (isBeforeVisualArtifact(artifact, model)) return 'before';
+  if (isAfterVisualArtifact(artifact, model)) return 'after';
+  if (model?.artifactRole(artifact.path) === 'review') return 'review';
   const normalized = `${artifact.path} ${artifact.purpose} ${artifact.label ?? ''} ${
     artifact.type ?? ''
   }`.toLowerCase();
@@ -124,6 +130,7 @@ export function artifactWorkspaceGroup(artifact: ArtifactManifestEntry): Artifac
 
 export function buildArtifactWorkspaceCounts(
   artifacts: ArtifactManifestEntry[],
+  model?: EvidenceReviewModel | null,
 ): ArtifactWorkspaceCounts {
   const counts: ArtifactWorkspaceCounts = {
     all: artifacts.length,
@@ -138,7 +145,7 @@ export function buildArtifactWorkspaceCounts(
     recipes: 0,
   };
   for (const artifact of artifacts) {
-    counts[artifactWorkspaceGroup(artifact)] += 1;
+    counts[artifactWorkspaceGroup(artifact, model)] += 1;
     const mediaType = classifyArtifact(artifact);
     const purpose = artifact.purpose.toLowerCase();
     const path = artifact.path.toLowerCase();
@@ -155,10 +162,11 @@ export function filterArtifactWorkspace(
   artifacts: ArtifactManifestEntry[],
   filter: ArtifactWorkspaceFilter,
   query: string,
+  model?: EvidenceReviewModel | null,
 ): ArtifactManifestEntry[] {
   const normalizedQuery = query.trim().toLowerCase();
   return artifacts.filter((artifact) => {
-    if (!matchesArtifactWorkspaceFilter(artifact, filter)) return false;
+    if (!matchesArtifactWorkspaceFilter(artifact, filter, model)) return false;
     if (!normalizedQuery) return true;
     return (
       artifact.path.toLowerCase().includes(normalizedQuery) ||
@@ -172,10 +180,11 @@ export function filterArtifactWorkspace(
 export function matchesArtifactWorkspaceFilter(
   artifact: ArtifactManifestEntry,
   filter: ArtifactWorkspaceFilter,
+  model?: EvidenceReviewModel | null,
 ): boolean {
   if (filter === 'all') return true;
   if (filter === 'before' || filter === 'after' || filter === 'review' || filter === 'supporting') {
-    return artifactWorkspaceGroup(artifact) === filter;
+    return artifactWorkspaceGroup(artifact, model) === filter;
   }
   const mediaType = classifyArtifact(artifact);
   const purpose = artifact.purpose.toLowerCase();

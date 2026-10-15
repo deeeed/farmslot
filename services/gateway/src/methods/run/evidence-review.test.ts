@@ -8,28 +8,34 @@ import { mock, test } from 'node:test';
 import type {
   ReadyGatePrPackage,
   RecipeRunArtifactGroup,
+  RecordedEvidencePackageInput,
   Run,
   RunDecision,
 } from '@farmslot/protocol';
 
 await import('../../runtime/mock-pty.test-support.js');
+const config = await import('../../core/config.js');
 let remote = false;
 let root = '';
 let corrupt = false;
 let hashes: Array<{ path: string; sha256: string }> = [];
 const reads: string[] = [];
 mock.module('../../core/config.js', {
-  namedExports: { loadSlotVars: async () => ({ machine: 'test-node' }) },
+  namedExports: { ...config, loadSlotVars: async () => ({ machine: 'test-node' }) },
 });
 mock.module('../../qa/completion.js', {
   namedExports: {
     parseQaResult: () => assert.fail('Display must not qualify visual-review registration'),
   },
 });
-mock.module('../../fleet/machine-registry.js', { namedExports: { getNode: () => ({}) } });
+mock.module('../../fleet/machine-registry.js', {
+  namedExports: { getNode: () => ({}), getAllNodes: () => [] },
+});
 mock.module('../../fleet/node-rpc.js', {
   namedExports: {
     getSlotLocality: async () => ({ isLocal: !remote }),
+    nodeExec: async () => assert.fail('Display must not execute a remote command'),
+    nodeExecArgv: async () => assert.fail('Display must not execute a remote command'),
     sendNodeRequest: async (
       _node: unknown,
       method: string,
@@ -58,7 +64,8 @@ mock.module('../../live-recipe/context.js', {
     scanSlotArtifactRootDetailed: async () => ({ refs: hashes, unavailable: false }),
   },
 });
-const { readRunRecordedEvidence } = await import('./evidence-review.js');
+const { readRunRecordedEvidence, retainedComparisonSnapshot } =
+  await import('./evidence-review.js');
 const { computeReadyGatePackageHash } = await import('../../run-completion/ready-gate-package.js');
 
 async function fixture(): Promise<RecipeRunArtifactGroup> {
@@ -87,7 +94,23 @@ async function fixture(): Promise<RecipeRunArtifactGroup> {
   return { artifactRoot: root } as RecipeRunArtifactGroup;
 }
 
-const run = { slotId: 'test-slot' } as Run;
+const run: Run = {
+  id: 'retained-run',
+  familyId: 'retained-family',
+  lane: 'production',
+  flowType: 'dev',
+  status: 'done',
+  project: 'sample',
+  ticketOrPr: 'sample',
+  slotId: 'test-slot',
+  branch: 'feature',
+  taskFile: null,
+  steps: [],
+  decisions: [],
+  metrics: { nudgeCount: 0, model: null, runner: null },
+  createdAt: '2026-10-15T00:00:00Z',
+  updatedAt: '2026-10-15T00:00:00Z',
+};
 test('a finished current run with no execution returns a typed missing selection, without backfilling history', async () => {
   const source = await readRunRecordedEvidence(
     { ...run, status: 'done', recordedEvidenceContractVersion: 1 },
@@ -254,4 +277,102 @@ test('package display paths use the selected artifact root even when the run tas
   root = original;
   assert.equal(source.packagePath, 'recipe-run');
   assert.deepEqual(source.errors, []);
+});
+
+test('historical comparisons require the same execution, package prefix and summary bytes in a retained ready snapshot', async (t) => {
+  const group = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  remote = false;
+  const source = await readRunRecordedEvidence(run, group);
+  assert.ok(source.input);
+  const input: RecordedEvidencePackageInput = {
+    ...source.input,
+    claims: {
+      schemaVersion: 2,
+      recipeRunId: 'selected-execution',
+      criteria: [],
+      recording: { status: 'not-required', segments: [] },
+    },
+  };
+  assert.ok(input.claims);
+  const snapshot = {
+    baseSha: '1'.repeat(40),
+    headSha: '2'.repeat(40),
+    source: 'local-git' as const,
+    capturedAt: '2026-10-15T00:00:00Z',
+  };
+  const prepared: ReadyGatePrPackage = {
+    id: 'comparison',
+    packageHash: 'retained',
+    artifactPath: 'package.md',
+    branch: 'feature',
+    diffStat: { files: 1, additions: 1, deletions: 0 },
+    reviewSnapshot: snapshot,
+    draftTitle: 'Change',
+    draftBody: 'Proof',
+    reviewArtifactIds: [],
+    gatePolicy: { owner: 'human', publishAuthority: 'human', reason: 'Review comparison' },
+    publicationTarget: 'draft',
+    publicationStatus: 'not_published',
+    createdAt: snapshot.capturedAt,
+    evidenceManifest: Object.entries(input.artifactDigests).map(([file, sha256]) => ({
+      path: `artifacts/recipe-runs/selected/${file}`,
+      purpose: 'evidence',
+      sha256: sha256.replace(/^sha256:/u, ''),
+    })),
+  };
+  const decision: RunDecision = {
+    id: 'gate',
+    createdAt: snapshot.capturedAt,
+    type: 'engine_human_gate',
+    title: 'Review',
+    description: 'Inspect proof',
+    actions: [],
+    payload: {
+      kind: 'ready',
+      branch: 'feature',
+      prNumber: null,
+      repo: null,
+      diffStat: prepared.diffStat,
+      workerReport: 'Proof',
+      acceptanceStatus: input.claims,
+      prPackage: prepared,
+    },
+  };
+  const retained: Run = { ...run, decisions: [decision] };
+  assert.equal(retainedComparisonSnapshot(retained, input, 'recipe-runs/selected'), snapshot);
+  assert.equal(retainedComparisonSnapshot(retained, input, 'recipe-runs/other'), undefined);
+  assert.equal(
+    retainedComparisonSnapshot(
+      retained,
+      {
+        ...input,
+        artifactDigests: { ...input.artifactDigests, 'trace.json': 'sha256:' + '4'.repeat(64) },
+      },
+      'recipe-runs/selected',
+    ),
+    undefined,
+  );
+  assert.equal(
+    retainedComparisonSnapshot(
+      retained,
+      {
+        ...source.input,
+        artifactDigests: {
+          ...input.artifactDigests,
+          'summary.json': 'sha256:' + '3'.repeat(64),
+        },
+      },
+      'recipe-runs/selected',
+    ),
+    undefined,
+  );
+  assert.equal(
+    retainedComparisonSnapshot(
+      retained,
+      { ...input, claims: { ...input.claims, recipeRunId: 'another-execution' } },
+      'recipe-runs/selected',
+    ),
+    undefined,
+  );
 });

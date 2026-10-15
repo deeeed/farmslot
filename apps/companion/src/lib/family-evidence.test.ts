@@ -53,7 +53,7 @@ test('family evidence groups by source run and capture batch', () => {
   assert.match(groups[1].subtitle, /slot runner-mobile-1/);
 });
 
-test('family evidence filters before after review diff recipe and setup artifacts', () => {
+test('family evidence keeps legacy visuals unassigned and preserves review diff recipe filters', () => {
   const evidence = [
     artifact('before-balance.png'),
     artifact('after-balance.png'),
@@ -66,21 +66,21 @@ test('family evidence filters before after review diff recipe and setup artifact
   const groups = buildFamilyEvidenceGroups({ evidence }, () => null);
 
   assert.deepEqual(evidence.map(familyArtifactKind), [
-    'before',
-    'after',
+    'setup',
+    'setup',
     'recipes',
     'review',
     'diffs',
     'recipes',
     'setup',
   ]);
-  assert.equal(filterFamilyEvidenceGroups(groups, 'before')[0].artifacts.length, 1);
-  assert.equal(filterFamilyEvidenceGroups(groups, 'after')[0].artifacts.length, 1);
+  assert.deepEqual(filterFamilyEvidenceGroups(groups, 'before'), []);
+  assert.deepEqual(filterFamilyEvidenceGroups(groups, 'after'), []);
   assert.equal(filterFamilyEvidenceGroups(groups, 'videos')[0].artifacts.length, 1);
   assert.equal(filterFamilyEvidenceGroups(groups, 'review')[0].artifacts.length, 1);
   assert.equal(filterFamilyEvidenceGroups(groups, 'diffs')[0].artifacts.length, 1);
   assert.equal(filterFamilyEvidenceGroups(groups, 'recipes')[0].artifacts.length, 2);
-  assert.equal(filterFamilyEvidenceGroups(groups, 'setup')[0].artifacts.length, 1);
+  assert.equal(filterFamilyEvidenceGroups(groups, 'setup')[0].artifacts.length, 3);
   assert.equal(isFamilyVideoArtifact(evidence[2]), true);
   assert.equal(visibleFamilyEvidenceArtifacts(groups).length, 6);
 });

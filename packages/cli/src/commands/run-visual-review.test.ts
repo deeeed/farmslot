@@ -56,7 +56,7 @@ mock.module('../envelope.js', {
 });
 const { registerRunCommand } = await import('./run.js');
 
-async function review(action: string) {
+async function review(action: string, kind?: string) {
   calls.length = 0;
   output.length = 0;
   const program = new Command('farmslot');
@@ -74,6 +74,7 @@ async function review(action: string) {
       'execution',
       '--reason',
       'The recording matches.',
+      ...(kind ? ['--judgment-kind', kind] : []),
     ],
     { from: 'user' },
   );
@@ -107,6 +108,21 @@ test('CLI selects captured execution directly and uses the same execution for re
     });
     assert.deepEqual(output, [{ receipt: { id: 'review' } }]);
   }
+});
+
+test('delegated review uses the existing command and snapshot, without an actor field', async () => {
+  errors = [];
+  await review('confirm-visual', 'lead-agent-reviewed');
+  const request = calls.find(({ method }) => method === Methods.RUN_REVIEW_VISUAL_CLAIM)!;
+  assert.equal((request.params as { kind: string }).kind, 'lead-agent-reviewed');
+  assert.equal((request.params as { snapshotIdentity: string }).snapshotIdentity, 'review-fence');
+  assert.equal('actor' in (request.params as object), false);
+  await review('confirm-visual', 'human-impersonation');
+  assert.equal(
+    calls.some(({ method }) => method === Methods.RUN_REVIEW_VISUAL_CLAIM),
+    false,
+  );
+  assert.deepEqual(output, ['--judgment-kind must be person-reviewed or lead-agent-reviewed.']);
 });
 
 test('an unreadable package never reaches the human review writer', async () => {

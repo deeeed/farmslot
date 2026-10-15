@@ -6,6 +6,7 @@ import {
 } from '@farmslot/protocol';
 
 export interface ProofNode extends Record<string, unknown> {
+  captureClaimBindings?: Record<string, string>;
   action: string;
   ref?: string;
   intent?: string;

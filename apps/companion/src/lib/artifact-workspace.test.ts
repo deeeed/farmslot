@@ -21,9 +21,9 @@ const artifacts: ArtifactManifestEntry[] = [
   { path: 'logs/worker.txt', purpose: 'log', type: 'log' },
 ];
 
-test('artifactWorkspaceGroup mirrors command-center before→after/review/support grouping', () => {
-  assert.equal(artifactWorkspaceGroup(artifacts[0]), 'before');
-  assert.equal(artifactWorkspaceGroup(artifacts[1]), 'after');
+test('artifactWorkspaceGroup keeps unbound capture filenames in supporting files', () => {
+  assert.equal(artifactWorkspaceGroup(artifacts[0]), 'supporting');
+  assert.equal(artifactWorkspaceGroup(artifacts[1]), 'supporting');
   assert.equal(artifactWorkspaceGroup(artifacts[2]), 'review');
   assert.equal(artifactWorkspaceGroup(artifacts[3]), 'review');
   assert.equal(artifactWorkspaceGroup(artifacts[6]), 'supporting');
@@ -32,10 +32,10 @@ test('artifactWorkspaceGroup mirrors command-center before→after/review/suppor
 test('buildArtifactWorkspaceCounts produces group and type counts for mobile filter chips', () => {
   assert.deepEqual(buildArtifactWorkspaceCounts(artifacts), {
     all: 7,
-    before: 1,
-    after: 1,
+    before: 0,
+    after: 0,
     review: 2,
-    supporting: 3,
+    supporting: 5,
     visual: 2,
     docs: 5,
     diffs: 1,
@@ -121,55 +121,14 @@ test('artifact workspace presentation promotes before-after pairs over generic v
   );
 });
 
-test('deriveBaselineVisualArtifactPairs matches ready-gate one-baseline evidence shape', () => {
-  const readyGateEvidence: ArtifactManifestEntry[] = [
-    {
-      path: 'artifacts/after-ac1-volume-label-on-hover.png',
-      purpose: 'screenshot',
-      sizeBytes: 42766,
-    },
-    {
-      path: 'artifacts/after-ac3-label-reverted.png',
-      purpose: 'screenshot',
-      sizeBytes: 38215,
-    },
-    { path: 'artifacts/after.mp4', purpose: 'video-after', sizeBytes: 328179 },
-    {
-      path: 'artifacts/before-baseline-chart.png',
-      purpose: 'screenshot',
-      sizeBytes: 34704,
-    },
-  ];
-
+test('unbound baseline filenames never assign a comparison to unrelated ACs', () => {
   assert.deepEqual(
-    deriveBaselineVisualArtifactPairs(readyGateEvidence, (artifact) => artifact.path).map(
-      (pair) => ({
-        stem: pair.stem,
-        before: pair.before.path,
-        after: pair.after.path,
-      }),
-    ),
-    [
-      {
-        stem: 'ac1',
-        before: 'artifacts/before-baseline-chart.png',
-        after: 'artifacts/after-ac1-volume-label-on-hover.png',
-      },
-      {
-        stem: 'ac3',
-        before: 'artifacts/before-baseline-chart.png',
-        after: 'artifacts/after-ac3-label-reverted.png',
-      },
-      {
-        stem: 'before-baseline-chart.png → after.mp4',
-        before: 'artifacts/before-baseline-chart.png',
-        after: 'artifacts/after.mp4',
-      },
-    ],
+    deriveBaselineVisualArtifactPairs(artifacts, (artifact) => artifact.path),
+    [],
   );
 });
 
-test('debug screenshots use filename before-after markers from recipe packages', () => {
+test('debug screenshot names do not replace checked capture bindings', () => {
   const recipePackageScreenshots: ArtifactManifestEntry[] = [
     {
       path: 'artifacts/screenshots/after-ac1-perps-tab-hover.png',
@@ -190,10 +149,10 @@ test('debug screenshots use filename before-after markers from recipe packages',
 
   assert.deepEqual(buildArtifactWorkspaceCounts(recipePackageScreenshots), {
     all: 3,
-    before: 1,
-    after: 2,
+    before: 0,
+    after: 0,
     review: 0,
-    supporting: 0,
+    supporting: 3,
     visual: 3,
     docs: 0,
     diffs: 0,

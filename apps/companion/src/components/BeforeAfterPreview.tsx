@@ -17,6 +17,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
+
 import {
   type ArtifactHttpHeaders,
   type ArtifactManifestEntry,
@@ -31,6 +33,7 @@ type CompareSide = 'before' | 'after';
 
 interface BeforeAfterPreviewProps<T extends ArtifactManifestEntry = ArtifactManifestEntry> {
   pair: VisualArtifactPair<T>;
+  evidenceModel?: EvidenceReviewModel;
   authHeaders?: ArtifactHttpHeaders;
   onOpenArtifact?: (artifactPath: string) => void;
   onOpenBefore?: () => void;
@@ -48,6 +51,7 @@ interface BeforeAfterPreviewProps<T extends ArtifactManifestEntry = ArtifactMani
 /** Shared Companion renderer for every before/after evidence pair. */
 export function BeforeAfterPreview<T extends ArtifactManifestEntry = ArtifactManifestEntry>({
   pair,
+  evidenceModel,
   authHeaders,
   onOpenArtifact,
   onOpenBefore,
@@ -69,6 +73,7 @@ export function BeforeAfterPreview<T extends ArtifactManifestEntry = ArtifactMan
   );
   const fullscreenBottomInset = Math.max(insets.bottom, Platform.OS === 'ios' ? 10 : 0);
   const scrollRef = useRef<ScrollView>(null);
+  const [, refreshTransform] = useState(0);
   const [side, setSide] = useState<CompareSide>(initialSide);
   const [viewportWidth, setViewportWidth] = useState(0);
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
@@ -120,7 +125,7 @@ export function BeforeAfterPreview<T extends ArtifactManifestEntry = ArtifactMan
   };
 
   return (
-    <View style={styles.card} testID={`${resolvedTestIdPrefix}-preview`}>
+    <View onLayout={handleLayout} style={styles.card} testID={`${resolvedTestIdPrefix}-preview`}>
       <View style={styles.header}>
         <View style={styles.titleBlock}>
           <Text style={styles.eyebrow}>{eyebrow}</Text>
@@ -132,71 +137,157 @@ export function BeforeAfterPreview<T extends ArtifactManifestEntry = ArtifactMan
         <Text style={styles.hint}>{hint}</Text>
       </View>
 
-      <View style={styles.segmentedControl} accessibilityRole="tablist">
-        <SideTab
-          side="before"
-          selected={side === 'before'}
-          onPress={() => selectSide('before')}
-          testIdPrefix={resolvedTestIdPrefix}
-        />
-        <SideTab
-          side="after"
-          selected={side === 'after'}
-          onPress={() => selectSide('after')}
-          testIdPrefix={resolvedTestIdPrefix}
-        />
-      </View>
-
-      <View style={styles.viewport} onLayout={handleLayout}>
-        {viewportWidth > 0 ? (
-          <ScrollView
-            key={`${pairIdentity}:${initialSide}:${viewportWidth}`}
-            ref={scrollRef}
-            horizontal
-            pagingEnabled
-            nestedScrollEnabled
-            contentOffset={{ x: initialSide === 'after' ? viewportWidth : 0, y: 0 }}
-            showsHorizontalScrollIndicator={false}
-            onMomentumScrollEnd={handleScrollEnd}
-            onScrollEndDrag={handleScrollEnd}
-          >
-            <ComparePage
+      {evidenceModel ? (
+        <>
+          <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+            <Pressable
+              onPress={() => {
+                evidenceModel.setComparisonTransform({
+                  ...evidenceModel.comparisonTransform,
+                  scale: evidenceModel.comparisonTransform.scale - 0.25,
+                });
+                refreshTransform((value) => value + 1);
+              }}
+              accessibilityLabel="Zoom out"
+            >
+              <Text style={styles.title}>−</Text>
+            </Pressable>
+            <Text style={styles.title}>
+              {Math.round(evidenceModel.comparisonTransform.scale * 100)}%
+            </Text>
+            <Pressable
+              onPress={() => {
+                evidenceModel.setComparisonTransform({
+                  ...evidenceModel.comparisonTransform,
+                  scale: evidenceModel.comparisonTransform.scale + 0.25,
+                });
+                refreshTransform((value) => value + 1);
+              }}
+              accessibilityLabel="Zoom in"
+            >
+              <Text style={styles.title}>+</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                evidenceModel.resetComparisonTransform();
+                refreshTransform((value) => value + 1);
+              }}
+            >
+              <Text style={styles.title}>Reset zoom</Text>
+            </Pressable>
+          </View>
+          <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+            {(['before', 'after'] as const).map((role) => (
+              <View
+                key={role}
+                style={{ flex: 1, overflow: 'hidden' }}
+                onTouchMove={(event) => {
+                  if (viewportWidth <= 0) return;
+                  evidenceModel.setComparisonTransform({
+                    ...evidenceModel.comparisonTransform,
+                    x: event.nativeEvent.locationX / (viewportWidth / 2),
+                    y: event.nativeEvent.locationY / imageHeight,
+                  });
+                  refreshTransform((value) => value + 1);
+                }}
+              >
+                <Text style={styles.title}>{role === 'before' ? 'Before' : 'After'}</Text>
+                <Pressable onPress={() => openSide(role)}>
+                  <Image
+                    source={artifactSource(pair[role].url, authHeaders)}
+                    resizeMode="contain"
+                    style={{
+                      height: imageHeight,
+                      width: '100%',
+                      transform: [
+                        {
+                          translateX:
+                            (((0.5 - evidenceModel.comparisonTransform.x) * viewportWidth) / 2) *
+                            (evidenceModel.comparisonTransform.scale - 1),
+                        },
+                        {
+                          translateY:
+                            (0.5 - evidenceModel.comparisonTransform.y) *
+                            imageHeight *
+                            (evidenceModel.comparisonTransform.scale - 1),
+                        },
+                        { scale: evidenceModel.comparisonTransform.scale },
+                      ],
+                    }}
+                  />
+                </Pressable>
+              </View>
+            ))}
+          </View>
+        </>
+      ) : (
+        <>
+          <View style={styles.segmentedControl} accessibilityRole="tablist">
+            <SideTab
               side="before"
-              artifact={pair.before}
-              width={viewportWidth}
-              imageHeight={imageHeight}
-              authHeaders={authHeaders}
-              active={playVideo && side === 'before'}
-              onOpen={() => openSide('before')}
-              openLabel={allowFullscreen ? 'Fullscreen' : 'Open file'}
+              selected={side === 'before'}
+              onPress={() => selectSide('before')}
               testIdPrefix={resolvedTestIdPrefix}
             />
-            <ComparePage
+            <SideTab
               side="after"
-              artifact={pair.after}
-              width={viewportWidth}
-              imageHeight={imageHeight}
-              authHeaders={authHeaders}
-              active={playVideo && side === 'after'}
-              onOpen={() => openSide('after')}
-              openLabel={allowFullscreen ? 'Fullscreen' : 'Open file'}
+              selected={side === 'after'}
+              onPress={() => selectSide('after')}
               testIdPrefix={resolvedTestIdPrefix}
             />
-          </ScrollView>
-        ) : (
-          <View style={{ height: imageHeight }} />
-        )}
-      </View>
+          </View>
 
-      <View style={styles.swipeHint}>
-        <Text style={styles.swipeArrow}>‹</Text>
-        <Text style={styles.swipeText}>
-          {side === 'before' ? 'Before' : 'After'} · swipe ·{' '}
-          {allowFullscreen ? 'tap for fullscreen' : 'tap to open file'}
-        </Text>
-        <Text style={styles.swipeArrow}>›</Text>
-      </View>
+          <View style={styles.viewport} onLayout={handleLayout}>
+            {viewportWidth > 0 ? (
+              <ScrollView
+                key={`${pairIdentity}:${initialSide}:${viewportWidth}`}
+                ref={scrollRef}
+                horizontal
+                pagingEnabled
+                nestedScrollEnabled
+                contentOffset={{ x: initialSide === 'after' ? viewportWidth : 0, y: 0 }}
+                showsHorizontalScrollIndicator={false}
+                onMomentumScrollEnd={handleScrollEnd}
+                onScrollEndDrag={handleScrollEnd}
+              >
+                <ComparePage
+                  side="before"
+                  artifact={pair.before}
+                  width={viewportWidth}
+                  imageHeight={imageHeight}
+                  authHeaders={authHeaders}
+                  active={playVideo && side === 'before'}
+                  onOpen={() => openSide('before')}
+                  openLabel={allowFullscreen ? 'Fullscreen' : 'Open file'}
+                  testIdPrefix={resolvedTestIdPrefix}
+                />
+                <ComparePage
+                  side="after"
+                  artifact={pair.after}
+                  width={viewportWidth}
+                  imageHeight={imageHeight}
+                  authHeaders={authHeaders}
+                  active={playVideo && side === 'after'}
+                  onOpen={() => openSide('after')}
+                  openLabel={allowFullscreen ? 'Fullscreen' : 'Open file'}
+                  testIdPrefix={resolvedTestIdPrefix}
+                />
+              </ScrollView>
+            ) : (
+              <View style={{ height: imageHeight }} />
+            )}
+          </View>
 
+          <View style={styles.swipeHint}>
+            <Text style={styles.swipeArrow}>‹</Text>
+            <Text style={styles.swipeText}>
+              {side === 'before' ? 'Before' : 'After'} · swipe ·{' '}
+              {allowFullscreen ? 'tap for fullscreen' : 'tap to open file'}
+            </Text>
+            <Text style={styles.swipeArrow}>›</Text>
+          </View>
+        </>
+      )}
       {allowFullscreen && fullscreenOpen ? (
         <Modal
           visible={fullscreenOpen}
@@ -247,6 +338,7 @@ export function BeforeAfterPreview<T extends ArtifactManifestEntry = ArtifactMan
                   120,
                   windowHeight - fullscreenTopInset - fullscreenBottomInset - 220,
                 )}
+                evidenceModel={evidenceModel}
                 allowFullscreen={false}
                 playVideo
                 initialSide={side}

@@ -55,7 +55,27 @@ export interface RecipeRecordingInterruption {
   cause: string;
 }
 
+export type RecipeEvidenceRole = 'before' | 'after' | 'review';
+
+/** Engine-stamped capture identity. Annotation never establishes a claim verdict. */
+export interface RecipeEvidenceCaptureBinding {
+  ac?: string;
+  role?: RecipeEvidenceRole;
+  recipeRunId: string;
+  nodeId: string;
+  traceIndex: number;
+  sourceCommit?: string;
+  sourceDirty?: boolean;
+}
+
+export interface RecipeComparisonDependency {
+  artifactRoot: string;
+  recipeRunId: string;
+  closureIdentity: string;
+}
+
 export interface RecipeArtifactManifestEntry {
+  capture?: RecipeEvidenceCaptureBinding;
   /** Provider capture facts retained with this artifact, including live HUD observations. */
   metadata?: Record<string, unknown>;
   path: string;
@@ -93,9 +113,11 @@ export interface RecipeArtifactManifestDocument {
     runner?: RecipeRunnerProvenance;
   };
   artifacts: RecipeArtifactManifestEntry[];
+  comparisonDependencies?: RecipeComparisonDependency[];
 }
 
 export interface ArtifactRef {
+  capture?: RecipeEvidenceCaptureBinding;
   path: string; // relative to task dir
   purpose: string; // "task-md", "report", "review", "recipe", "video-before", etc.
   sha256?: string;

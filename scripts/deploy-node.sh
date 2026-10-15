@@ -25,6 +25,8 @@
 # An existing launchd capture-helper override is retained when this is unset.
 # Set FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID to opt this node into native sessions
 # for that gateway principal. Runner installation and login remain node-owned.
+# An explicit caller value (including empty) overrides auth-file defaults;
+# ordinary macOS updates retain the target instance's installed native owner.
 #
 # One-time prerequisites:
 #   macOS: node installed + Screen Recording permission for `node` binary
@@ -102,11 +104,19 @@ NODE_SRC="$REPO_ROOT/services/node"
 PACKAGES_DIR="$REPO_ROOT/packages"
 AUTH_ENV_FILE="$REPO_ROOT/.env.local-auth"
 
+# Auth-file defaults are not an explicit request to replace a node's enrollment.
+NATIVE_OWNER_EXPLICIT="${FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID+x}"
+NATIVE_OWNER_REQUESTED="${FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID-}"
+
 if [[ -f "$AUTH_ENV_FILE" ]]; then
   set -a
   # shellcheck source=/dev/null
   source "$AUTH_ENV_FILE"
   set +a
+fi
+
+if [[ "$NATIVE_OWNER_EXPLICIT" == x ]]; then
+  FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID="$NATIVE_OWNER_REQUESTED"
 fi
 
 if [[ -n "$NODE_TOKEN_FILE" ]]; then
@@ -336,7 +346,7 @@ if [[ "$REMOTE_OS" == "Darwin" ]]; then
 fi
 # Updates retain the target instance's native enrollment unless explicitly overridden.
 # An explicit empty value still disables native execution. Read only this public field.
-if [[ "${FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID+x}" != x && "$REMOTE_OS" == Darwin ]]; then
+if [[ "$NATIVE_OWNER_EXPLICIT" != x && "$REMOTE_OS" == Darwin ]]; then
   native_plist="$REMOTE_HOME/Library/LaunchAgents/com.farmslot.node${LAUNCHD_LABEL_SUFFIX}.plist"
   native_plist_quoted=$(printf '%q' "$native_plist")
   if run "test -f $native_plist_quoted"; then

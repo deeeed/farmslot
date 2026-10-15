@@ -1,3 +1,4 @@
+import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import {
   type ArtifactRef,
   isPublishEvidenceArtifact,
@@ -64,10 +65,13 @@ export function recipeRunArtifactUrl(
 
 export function workspaceArtifactGroup(
   artifact: Pick<ArtifactRef, 'path' | 'purpose'>,
+  model?: EvidenceReviewModel | null,
 ): ArtifactGroup {
-  const lower = `${artifact.path} ${artifact.purpose}`.toLowerCase();
-  if (lower.includes('review')) return 'review';
-  const kind = artifactKind(artifact.path, artifact.purpose);
+  const role = model?.artifactRole(artifact.path);
+  if (role === 'review') return role;
+  if (!MEDIA_EXTS.test(artifact.path) && artifact.purpose.toLowerCase().includes('review'))
+    return 'review';
+  const kind = artifactKind(artifact.path, artifact.purpose, model);
   if (kind === 'before' || kind === 'after') return kind;
   return 'other';
 }
@@ -81,7 +85,7 @@ export function workspaceArtifactGroupLabel(group: ArtifactGroup): string {
     case 'review':
       return 'Review artifacts';
     case 'other':
-      return 'Supporting artifacts';
+      return 'Unassigned and supporting artifacts';
   }
 }
 

@@ -1,5 +1,6 @@
 import { html, nothing, type TemplateResult } from 'lit';
 
+import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import type { ArtifactRef, RecipeRunArtifactGroup } from '@farmslot/protocol';
 
 import { buildBeforeAfterPairs } from '../../utils/artifact-pairs.js';
@@ -29,6 +30,7 @@ import {
 export interface ReadySelectedRecipeRunArtifactsContext {
   group: RecipeRunArtifactGroup | null;
   artifacts: ArtifactRef[];
+  evidenceModel?: EvidenceReviewModel | null;
   evidenceCollapsed: boolean;
   toggleEvidenceCollapsed: () => void;
   openCompare: (group: RecipeRunArtifactGroup, artifacts: ArtifactRef[]) => void;
@@ -46,7 +48,7 @@ export function renderReadySelectedRecipeRunArtifacts(ctx: ReadySelectedRecipeRu
   const displayArtifacts = dedupeWorkspaceEvidenceArtifacts(ctx.artifacts);
   const previewArtifacts = displayArtifacts.slice(0, 12);
   const hiddenCount = displayArtifacts.length - previewArtifacts.length;
-  const pairCount = buildBeforeAfterPairs(displayArtifacts).length;
+  const pairCount = buildBeforeAfterPairs(displayArtifacts, ctx.evidenceModel).length;
   const sectionLabel = `${group.label} evidence`;
   return html`
     <section class="rdy-quality-card rdy-package-evidence-section">
@@ -104,6 +106,7 @@ export function renderReadySelectedRecipeRunArtifacts(ctx: ReadySelectedRecipeRu
 
 export interface ReadyArtifactGroupsContext {
   artifacts: ArtifactRef[];
+  evidenceModel?: EvidenceReviewModel | null;
   artifactFilter: ArtifactFilter;
   artifactTypeFilter: ArtifactTypeFilter;
   hideFilter?: boolean;
@@ -119,12 +122,15 @@ export interface ReadyArtifactGroupsContext {
 
 export function renderReadyArtifactGroups(ctx: ReadyArtifactGroupsContext) {
   const counts: Record<ArtifactGroup, number> = { before: 0, after: 0, review: 0, other: 0 };
-  for (const artifact of ctx.artifacts) counts[workspaceArtifactGroup(artifact)] += 1;
+  for (const artifact of ctx.artifacts)
+    counts[workspaceArtifactGroup(artifact, ctx.evidenceModel)] += 1;
   const activeFilter = ctx.hideFilter ? 'all' : ctx.artifactFilter;
   const groupFiltered =
     activeFilter === 'all'
       ? ctx.artifacts
-      : ctx.artifacts.filter((artifact) => workspaceArtifactGroup(artifact) === activeFilter);
+      : ctx.artifacts.filter(
+          (artifact) => workspaceArtifactGroup(artifact, ctx.evidenceModel) === activeFilter,
+        );
   const typeCounts: Record<ArtifactTypeFilter, number> = {
     all: ctx.artifacts.length,
     image: 0,
@@ -143,6 +149,7 @@ export function renderReadyArtifactGroups(ctx: ReadyArtifactGroupsContext) {
   const groups: ArtifactGroup[] = ['before', 'after', 'review', 'other'];
   const pairCount = buildBeforeAfterPairs(
     ctx.artifacts.filter((artifact) => MEDIA_EXTS.test(artifact.path)),
+    ctx.evidenceModel,
   ).length;
   const filters: Array<{ value: ArtifactFilter; label: string; count: number }> = [
     { value: 'all', label: 'All', count: ctx.artifacts.length },
@@ -210,7 +217,7 @@ export function renderReadyArtifactGroups(ctx: ReadyArtifactGroupsContext) {
           `}
       ${groups.map((group) => {
         const groupArtifacts = filtered.filter(
-          (artifact) => workspaceArtifactGroup(artifact) === group,
+          (artifact) => workspaceArtifactGroup(artifact, ctx.evidenceModel) === group,
         );
         if (!groupArtifacts.length) return nothing;
         return html`

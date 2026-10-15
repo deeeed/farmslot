@@ -137,6 +137,7 @@ export class MediaLightbox extends MediaLightboxState {
     )
       void this._loadActiveVideoTimeline();
     if (changed.has('open') && this.open) {
+      if (this.items[this.selectedIndex]?.fullscreen) this._maximized = true;
       this.updateComplete.then(() => {
         this.renderRoot.querySelector<HTMLElement>('.ml-modal')?.focus();
       });
@@ -179,7 +180,7 @@ export class MediaLightbox extends MediaLightboxState {
     if (this._kindFilter === 'all') return this.items.map((_, i) => i);
     const want = this._kindFilter;
     return this.items
-      .map((item, i) => ({ i, kind: artifactKind(item.path, item.purpose) }))
+      .map((item, i) => ({ i, kind: artifactKind(item.path, item.purpose, item.evidenceModel) }))
       .filter(({ kind }) => kind === want)
       .map(({ i }) => i);
   }
@@ -624,8 +625,23 @@ export class MediaLightbox extends MediaLightboxState {
       const key = this._evidenceCueKey();
       if (key === this._appliedVideoMarker || clip?.videoPath !== data.videoPath) return;
       this._appliedVideoMarker = key;
-      video.currentTime = clip.startMs / 1000;
-      if (this._resumeEvidencePlayback || item.evidenceModel) {
+      const selectedMoment =
+        item.initialTraceIndex === clip.traceIndex && !this._resumeEvidencePlayback
+          ? model.markerSeekMs(
+              data.videoPath,
+              clip.traceIndex,
+              item.initialTracePhase ?? 'start',
+              video.duration * 1000,
+            )
+          : null;
+      video.currentTime = (selectedMoment ?? clip.startMs) / 1000;
+      if (
+        item.fullscreen &&
+        item.initialTraceIndex !== undefined &&
+        !this._resumeEvidencePlayback
+      ) {
+        video.pause();
+      } else if (this._resumeEvidencePlayback || item.evidenceModel) {
         this._resumeEvidencePlayback = false;
         void video.play().catch((error: Error) => {
           this._videoPlayError = `Playback paused: ${error.message}`;
