@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.22.16 - 2026-10-15
+
+- Use runtime 0.25.1 for retained task input lookup.
+
 ## 0.22.15 - 2026-10-15
 
 - Use the retained task-tooling runtime dependency set.
