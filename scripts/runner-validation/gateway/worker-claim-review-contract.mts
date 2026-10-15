@@ -101,6 +101,7 @@ if (process.argv[2] === 'serve') {
     dispatchTask: string;
     repo: string;
     checker?: string;
+    checklist?: 'REVIEW-FIX.md';
   };
   const snapshot = JSON.parse(await fs.readFile(input.runSnapshot, 'utf8')) as { run: Run };
   const original = snapshot.run;
@@ -138,6 +139,9 @@ if (process.argv[2] === 'serve') {
   const checker =
     input.checker ??
     path.join(source, 'packages/agent-runtime/scripts/check-task-artifact-contract.mjs');
+  const contractInput = input.checklist
+    ? 'inputs/worker-terminal-contract.REVIEW-FIX.json'
+    : 'inputs/worker-terminal-contract.json';
   const check = () =>
     spawnSync(
       process.execPath,
@@ -145,7 +149,7 @@ if (process.argv[2] === 'serve') {
         checker,
         workerTask,
         '--contract',
-        path.join(workerTask, 'inputs/worker-terminal-contract.json'),
+        path.join(workerTask, contractInput),
         '--terminal',
         'complete',
       ],
@@ -180,9 +184,13 @@ if (process.argv[2] === 'serve') {
     execFileSync('git', ['-C', repo, 'checkout', '--quiet', '--detach', productHead]);
     await fs.cp(input.workerTask, workerTask, { recursive: true });
     await fs.cp(input.dispatchTask, dispatchTask, { recursive: true });
+    const staleScoped = input.checklist
+      ? JSON.parse(await fs.readFile(path.join(workerTask, contractInput), 'utf8'))
+      : null;
     await json(path.join(root, 'projects', project, 'project.json'), {
       name: project,
       task_dir: 'tasks',
+      ci: { local_check: staleScoped?.deterministicChecks?.[0]?.command },
       hooks: {},
     });
     await json(path.join(root, 'pool/local.json'), {
@@ -214,7 +222,7 @@ if (process.argv[2] === 'serve') {
       path.join(workerTask, 'inputs/worker-terminal-contract.json'),
       'utf8',
     );
-    assert.equal(JSON.parse(staleContract).claimReviewGate, undefined);
+    assert.equal((staleScoped ?? JSON.parse(staleContract)).claimReviewGate, undefined);
     const handoff = JSON.parse(
       await fs.readFile(path.join(dispatchTask, 'inputs/handoff.json'), 'utf8'),
     );
@@ -226,7 +234,15 @@ if (process.argv[2] === 'serve') {
       transport: undefined,
       taskFile: path.join(dispatchTask, 'TASK.md'),
       slotId,
-      agentContexts: [],
+      activeTaskFile: input.checklist ? `tasks/${taskRel}/${input.checklist}` : null,
+      agentContexts: input.checklist
+        ? original.agentContexts
+            .filter((context) => context.role === 'review-fix')
+            .map((context) => ({
+              ...context,
+              taskFile: `tasks/${taskRel}/${input.checklist}`,
+            }))
+        : [],
       decisions: [],
       engineState: { generation: 0 },
       recoveryAttempts: [],
@@ -297,6 +313,20 @@ if (process.argv[2] === 'serve') {
       await fs.readFile(path.join(workerTask, 'inputs/worker-terminal-contract.json'), 'utf8'),
       frozen,
     );
+    const recovered = await fs.readFile(path.join(workerTask, contractInput), 'utf8');
+    if (input.checklist) {
+      const scoped = JSON.parse(recovered);
+      assert.equal(scoped.flowType, 'review-fix');
+      assert.equal(scoped.claimReviewGate, true);
+      assert.equal(
+        scoped.recordedEvidenceContractVersion,
+        JSON.parse(frozen).recordedEvidenceContractVersion,
+      );
+      assert.deepEqual(scoped.deterministicChecks, staleScoped.deterministicChecks);
+      checks.push(
+        'Active REVIEW-FIX inherits the frozen run review policy and preserves its own CI commands.',
+      );
+    }
     const passed = check();
     assert.equal(passed.status, 0, passed.stderr + passed.stdout);
     checks.push(
@@ -317,13 +347,31 @@ if (process.argv[2] === 'serve') {
     );
     checks.push('A foreign dispatch identity refuses recovery through the same RPC.');
     await fs.writeFile(
-      path.join(workerTask, 'inputs/worker-terminal-contract.json'),
-      frozen.replace('"claimReviewGate": true', '"claimReviewGate": false'),
+      path.join(workerTask, contractInput),
+      recovered.replace('"claimReviewGate": true', '"claimReviewGate": false'),
     );
     const noGate = check();
     assert.equal(noGate.status, 1);
     assert.match(noGate.stderr + noGate.stdout, /awaiting-review/);
     checks.push('A contract without review authority still refuses unresolved visual claims.');
+    await fs.writeFile(path.join(workerTask, contractInput), recovered);
+    const selection = JSON.parse(
+      await fs.readFile(path.join(workerTask, 'artifacts/latest-valid-recipe-run.json'), 'utf8'),
+    );
+    const tracePath = path.join(
+      workerTask,
+      'artifacts',
+      selection.relativeArtifactRoot,
+      'trace.json',
+    );
+    const trace = await fs.readFile(tracePath);
+    await json(tracePath, { ...JSON.parse(trace.toString('utf8')), entries: [] });
+    const corrupt = check();
+    assert.equal(corrupt.status, 1, corrupt.stderr + corrupt.stdout);
+    await fs.writeFile(tracePath, trace);
+    checks.push(
+      'Corrupt selected evidence still refuses completion even with inherited review authority.',
+    );
     await stop(child);
     child = undefined;
     await json(path.join(dispatchTask, 'inputs/handoff.json'), {
