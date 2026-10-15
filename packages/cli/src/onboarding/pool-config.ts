@@ -81,14 +81,6 @@ export function validatePoolConfig(pool: unknown): string[] {
         errors.push(`slots[${i}]: '${field}' must be a non-empty string`);
       }
     }
-    // A slot changes refs between runs; its path must not imply a tested release.
-    if (
-      typeof s.repo === 'string' &&
-      (/\d+\.\d+\.\d+/.test(s.repo) ||
-        /(?:^|\D)\d{4}[-_/.]?(?:0[1-9]|1[0-2])[-_/.]?(?:0[1-9]|[12]\d|3[01])(?:\D|$)/.test(s.repo))
-    ) {
-      errors.push(`slots[${i}]: 'repo' must use a stable path without a release version or date`);
-    }
     if (typeof s.id === 'string') {
       if (seen.has(s.id)) errors.push(`slots[${i}]: duplicate slot id '${s.id}'`);
       seen.add(s.id);
