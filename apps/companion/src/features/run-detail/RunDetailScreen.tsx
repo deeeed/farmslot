@@ -631,6 +631,11 @@ export default function RunDetailScreen() {
           </View>
           <Text style={styles.ticketText}>{run.ticketOrPr}</Text>
           {run.summary && <RunTitle style={baseStyles.textSecondary} title={run.summary} />}
+          {run.qa && (
+            <Text style={baseStyles.textSecondary} testID="companion-run-qa-profile">
+              QA profile: {run.qa.profile.title} ({run.qa.profile.id})
+            </Text>
+          )}
           <View style={[styles.row, { marginTop: spacing.lg }]}>
             {run.slotId && (
               <Text style={baseStyles.textMuted} testID="companion-run-detail-slot">

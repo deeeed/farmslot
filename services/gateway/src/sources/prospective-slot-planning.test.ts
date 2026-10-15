@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { ReviewQaConfigurationError } from '@farmslot/protocol';
 import { currentProjectSources } from '@farmslot/slot-config';
 
 import { getAllRuns } from '../runs/store.js';
@@ -80,4 +81,21 @@ test('an unverified prospective materialization cannot read executable pack conf
       (plan) => 'refusal' in plan && !plan.refusal.includes('config must not be read'),
     ),
   );
+});
+
+test('candidate collection retains typed QA choices and still permits another valid node', async () => {
+  const f = fixture();
+  const original = f.deps.plan;
+  const error = new ReviewQaConfigurationError('Choose a QA profile: release (Release validation)');
+  error.details = { qaProfiles: [{ id: 'release', title: 'Release validation' }] };
+  f.deps.plan = async (slotId) => {
+    if (slotId === 'a') throw error;
+    return original(slotId);
+  };
+  const plans = await planProspectiveSlotSources('demo', slots, f.deps);
+  const refusal = plans.get('a')!;
+  assert('refusal' in refusal);
+  assert.equal(refusal.configurationError, error);
+  assert.deepEqual(refusal.configurationError.details, error.details);
+  assert('creationPlan' in plans.get('b')!);
 });

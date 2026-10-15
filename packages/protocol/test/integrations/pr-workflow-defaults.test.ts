@@ -273,3 +273,27 @@ test('review lineage context survives inherited PR option resolution without mut
   result.review.reviewContext!.reviewLineages[0]!.reviewId = 'changed';
   assert.equal(reviewContext.reviewLineages[0].reviewId, 'review-a');
 });
+
+test('QA without a request profile inherits the nearest declared id without broadening review or execution', () => {
+  const request: PRWorkflowPolicy = { review: { workflow: 'qa', mode: 'cold' } };
+  const policies: Partial<Record<'rule' | 'repository' | 'team', PRWorkflowPolicy>> = {};
+  assert.equal(resolvePRWorkflowDefaults({ request, farm }).review.qaProfileId, 'daily');
+  for (const layer of ['team', 'repository', 'rule'] as const) {
+    policies[layer] = { review: { workflow: 'qa', mode: 'warm', qaProfileId: layer } };
+    const resolved = resolvePRWorkflowDefaults({ request, ...policies, farm });
+    assert.equal(resolved.review.qaProfileId, layer);
+    assert.equal(resolved.review.mode, 'cold');
+    assert.deepEqual(resolved.execution, qaExecution);
+  }
+  for (const id of ['explicit', 'removed']) {
+    assert.equal(
+      resolvePRWorkflowDefaults({
+        request: { review: { workflow: 'qa', mode: 'cold', qaProfileId: id } },
+        ...policies,
+        farm,
+      }).review.qaProfileId,
+      id,
+      'Explicit IDs are never replaced by inherited choices',
+    );
+  }
+});

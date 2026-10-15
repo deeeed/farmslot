@@ -161,6 +161,8 @@ test('an admitted manual QA title can replay COMPLETE without replacing its froz
     metrics: { ...result.run.metrics, outcome: 'partial' },
   });
   const frozenQa = structuredClone(result.run.qa);
+  f.config.qa.profiles[0].title = 'Changed after admission';
+  f.save();
   const frozenSteps = structuredClone(result.run.steps.filter((step) => step.name !== 'complete'));
   const replayed = await runReplayStep(
     { runId: result.run.id, stepName: 'complete', triggeredBy: 'operator' },
@@ -216,5 +218,33 @@ test('RPC parameters cannot supply a trusted queued expectation', async () => {
   await assert.rejects(
     runCreate(forged, () => {}),
     /cannot be supplied in run parameters/,
+  );
+});
+
+test('ambiguous QA without a profile refuses with choices before creating a Run', async () => {
+  const f = fixture();
+  delete f.config.qa.default_profile;
+  f.config.qa.profiles.push({
+    id: 'release',
+    title: 'Release validation',
+    template_id: 'validation/shared',
+  });
+  f.save();
+  const before = getAllRuns().map((run) => run.id);
+  await assert.rejects(
+    runCreate({ ...f.params, qaProfileId: undefined, executionTemplateId: undefined }, () => {}),
+    (error: unknown) => {
+      assert.ok(error instanceof ReviewQaConfigurationError);
+      assert.equal(error.code, 'REVIEW_QA_NEEDS_CONFIGURATION');
+      assert.deepEqual(error.details?.qaProfiles, [
+        { id: 'pr', title: 'PR validation' },
+        { id: 'release', title: 'Release validation' },
+      ]);
+      return true;
+    },
+  );
+  assert.deepEqual(
+    getAllRuns().map((run) => run.id),
+    before,
   );
 });

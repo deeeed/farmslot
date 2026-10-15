@@ -7,6 +7,7 @@ import {
   type ProjectQaConfig,
   type PRReviewOptions,
   prReviewWorkflow,
+  resolveQaProfileId,
   type ReviewContinuationContext,
   type ReviewMode,
   type ReviewRequestContext,
@@ -33,6 +34,7 @@ export function PRReviewFields({
   qa?: ProjectQaConfig;
 }) {
   const runtime = prReviewWorkflow(value) === 'qa';
+  const qaProfileId = resolveQaProfileId(qa, value.qaProfileId);
   const change = (patch: Partial<PRReviewOptions>) => onChange(updatePRReviewOptions(value, patch));
   return (
     <View style={styles.card}>
@@ -53,22 +55,19 @@ export function PRReviewFields({
         <>
           <Text style={styles.muted}>Farm QA profile</Text>
           <View style={styles.row}>
-            <PRButton
-              label="Farm default"
-              selected={!value.qaProfileId}
-              disabled={disabled}
-              onPress={() => change({ qaProfileId: undefined, qaInputs: undefined })}
-            />
             {qa?.profiles.map((profile) => (
               <PRButton
                 key={profile.id}
-                label={profile.title}
-                selected={value.qaProfileId === profile.id}
+                label={`${profile.title} (${profile.id})${qa?.default_profile === profile.id ? ' (default)' : ''}`}
+                selected={qaProfileId === profile.id}
                 disabled={disabled}
                 onPress={() => change({ qaProfileId: profile.id, qaInputs: undefined })}
               />
             ))}
           </View>
+          {!qaProfileId && (
+            <Text style={styles.muted}>Choose a QA profile before dispatching.</Text>
+          )}
           <Text style={styles.muted}>
             QA executes the farm validation skill and requires runtime evidence.
           </Text>

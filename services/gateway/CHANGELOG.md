@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Keep refused publication approvals pending and prevent recovery from resuming review fixes without an explicit action.
+- Refuse unresolved QA profile choices before run creation, preserve existing policy and admitted selections, and retain profile identity in QA task context.
 
 - Use the shared bounded, close-awaited file reader for local evidence hashes so repeated evidence requests cannot exhaust gateway descriptors.
 - Bind retained unpublished runs to declared graph stacks through existing run and graph authority, refusing stale source and preserving proof.
@@ -14,6 +14,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Wait up to two minutes for node reconnection during task writing, preparation and dispatch; reattach static-review monitors after gateway restarts, retaining the exact worker command and reservation when observation remains unavailable.
 - Keep publication gates open across review-fix recovery and retain workers, slots and evidence when finalization lacks approval or publication; completed step flags cannot bypass publication before DONE.
+- Keep refused publication approvals pending and prevent recovery from resuming review fixes without an explicit action.
 - Persist and reconcile one verified stack-maintenance checkpoint across worker rebases and graph catch-up without changing retained evidence. Install the compatible task runtime before deploying enforcement or migrating pack templates; stacked lint fixes require retained publication ownership too. Graph catch-up requires a configured signing key; local recovery requires Git 2.40 or later.
 - Wait for confirmed worker progress to reach idle before completing a run, preserving prerequisite refusals and operator pause, cancellation and replay ownership.
 - Preserve gateway startup and existing credential authentication when upgrading a store with historical `env-migrated` origin metadata.
