@@ -210,7 +210,7 @@ newer head. Exact retries retain the first receipt; conflicting adoption refuses
 
 ## Amendment 4: current-head publication recovery, 2026-10-15
 
-**Status:** Proposed.
+**Status:** Accepted (lead, 2026-10-15).
 **Specification:** [Current-head publication recovery](../reference/fail-closed-run-lifecycle.md#current-head-publication-recovery).
 **Related:** ADR-063 Amendment 1; ADR-038's gate-held publication contract.
 

@@ -80,7 +80,12 @@ export function renderReadyTopBar(input: {
     <div class="rdy-top-bar">
       <span class="rdy-branch">${branch}</span>
       ${input.payload.reviewRoundBudget
-        ? html`<span role="status" data-testid="rdy-review-round-budget"
+        ? html`<span
+            role="status"
+            data-testid="rdy-review-round-budget"
+            title=${input.payload.reviewRoundBudget.extensionSummary ??
+            input.payload.reviewRoundBudget.diagnosis ??
+            ''}
             >${input.payload.reviewRoundBudget.label}</span
           >`
         : nothing}

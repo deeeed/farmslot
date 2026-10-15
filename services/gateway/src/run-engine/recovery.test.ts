@@ -2286,3 +2286,53 @@ test('orphan reconcile retains failed completion resources after restart until o
   await reconcileOrphanedSlots(deps);
   assert.deepEqual(reset, [owner.slotId]);
 });
+
+test('restart restores a held approval wait before stale review continuation or operator-required recovery', async () => {
+  const run = withRecoverableReviewer(
+    minimalActiveRun({
+      flowType: 'fix-bug',
+      status: 'blocked',
+      ticketOrPr: 'HELD-APPROVAL-RECOVERY',
+      familyRootTicketOrPr: 'HELD-APPROVAL-RECOVERY',
+      taskFile: '/tmp/held-approval/TASK.md',
+      steps: FLOW_STEPS['fix-bug'].map((name) => ({
+        name,
+        status: name === 'human-gate' ? 'running' : name === 'finalize' ? 'pending' : 'done',
+      })),
+      decisions: [
+        {
+          ...humanGateDecision('held'),
+          resolvedAt: '2026-10-15T00:01:00Z',
+          resolvedAction: 'approve-publish-unresolved',
+          context: { approvalHeldAt: '2026-10-15T00:01:01Z' },
+        },
+      ],
+      engineState: {
+        publishGate: {
+          reviewSequence: [{ runner: 'grok', model: null, effort: null, mode: 'cold' }],
+          reviewRecovery: {
+            status: 'operator-required',
+            attempts: 1,
+            startedAt: '2026-10-15T00:00:00Z',
+            updatedAt: '2026-10-15T00:01:00Z',
+          },
+        },
+      },
+    }),
+  );
+  const { deps, calls } = publicationReviewRecoveryDeps(run);
+  let waits = 0;
+  deps.resumeHeldPublicationGate = async (id) => {
+    assert.equal(id, run.id);
+    waits++;
+  };
+  deps.recoverInflightPublicationReviews = async () =>
+    assert.fail('held approval cannot restart reviews');
+  const before = structuredClone(run);
+  await recoverActiveRuns(deps);
+  assert.equal(waits, 1);
+  assert.deepEqual(calls.replayed, []);
+  assert.deepEqual(calls.rearmed, []);
+  assert.equal(calls.reconciled, 0);
+  assert.deepEqual(run, before);
+});

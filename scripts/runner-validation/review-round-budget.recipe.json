@@ -1,15 +1,15 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
-  "title": "Five-round reviewer budget",
+  "title": "Scoped native review budget extension",
   "description": "Manual local native reviewer and gateway recovery proof. Set FARMSLOT_CDP_PORT for the owned browser; use a fresh artifact directory.",
   "workflow": {
     "entry": "round-budget",
     "nodes": {
       "round-budget": {
         "action": "command",
-        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/review-round-budget.mts --ui",
-        "timeout_ms": 300000,
-        "intent": "The gateway admits a fifth native review, refuses a sixth without consuming the gate, and retains N/5 through restart.",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/review-round-budget.mts --ui --extend",
+        "timeout_ms": 600000,
+        "intent": "The gateway refuses stale approval without consuming the gate, records an extension, admits native sixth/seventh reviews and retains N/L through restart.",
         "next": "done"
       },
       "done": { "action": "end", "status": "pass" }

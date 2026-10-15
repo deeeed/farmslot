@@ -41,7 +41,7 @@ are satisfied.
 
 ### Scoped extension
 
-**Status:** Proposed under ADR-063 Amendment 1, 2026-10-15.
+**Status:** Accepted (lead, 2026-10-15) under ADR-063 Amendment 1.
 
 `run.extendReviewBudget` MUST use existing admin authorization and capture the
 authenticated request origin. Caller-supplied approver names or system/worker
@@ -172,3 +172,4 @@ MUST exercise the shared picker through user input, not injected UI state.
 The shared minimal-diff policy is owned by `@farmslot/agent-runtime/scripts/review-diff-scope.cjs`. Worker task documents, independent review prompts and the cross-review orchestrator consume that definition. Every verdict includes its `Diff scope` table. Warm review narrows correctness review to the saved delta; its scope inventory still covers the whole contribution against the publication base.
 
 The public read-only script prints the policy with `instructions`, or the policy plus changed paths and sensitive-path candidates with `packet <repository> <publication-base> <head>`. Candidates require review against the frozen ticket; the scanner neither grants an exception nor detects semantic refactors or formatting churn. It does not change source, review results or publication authority.
+Grant-time head records provenance. Later fix heads on the same owned branch use current-head review rules and the recorded scope. An extension survives retirement of its granting run within the same PR scope. The command requires `--request-id` and accepts `--expected-limit` for a compare-and-set grant.

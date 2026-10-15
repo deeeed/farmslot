@@ -409,7 +409,7 @@ none of implementation completion, publication, merging or rollout.
 
 ## Current-head publication recovery
 
-**Status:** Proposed under ADR-065 Amendment 4, 2026-10-15.
+**Status:** Accepted (lead, 2026-10-15) under ADR-065 Amendment 4.
 
 The existing package owner MUST reconcile the live owned branch head with the
 publication package at review completion, review-fix completion, gate refresh,

@@ -6,6 +6,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Bind retained unpublished runs to declared graph stacks through existing run and graph authority, refusing stale source and preserving proof.
 - Allow admins to explicitly replace a retired principal id without restoring old credentials or stored-work authority; freshly authored queued work carries its identity generation.
+- Keep publication packages current and preserve the gate on refused approvals; support attested review-budget extensions.
+
 - Preserve the frozen run review policy in nested role contracts so valid pending visual claims reach their human gate without weakening evidence or CI checks.
 - Include the shared minimal-diff review policy and whole-contribution sensitive-path inventory in independent review packets.
 

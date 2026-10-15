@@ -364,6 +364,28 @@ export async function persistRunNow(run: Run, reason = 'explicit'): Promise<void
   }
 }
 
+/** A budget grant is durable before admissions can observe its effective limit. */
+export async function commitRunReviewBudgetExtension(
+  id: string,
+  receipt: import('@farmslot/protocol').ReviewBudgetExtension,
+  assertCurrent: (run: Run) => void | Promise<void>,
+): Promise<void> {
+  await enqueueRunWrite(id, async () => {
+    const run = runs.get(id);
+    if (!run) throw new Error('Run is unavailable');
+    await assertCurrent(run);
+    const receipts = [...(run.reviewBudgetExtensions ?? []), receipt];
+    await persistBody(run, { ...run, reviewBudgetExtensions: receipts }, true);
+    try {
+      await assertCurrent(run);
+    } catch (error) {
+      await persistBody(run);
+      throw error;
+    }
+    updateRun(id, { reviewBudgetExtensions: receipts });
+  });
+}
+
 /** Commit the receipt before publishing its effective row. Shares the existing per-run write queue. */
 type RunEvidenceReceipt =
   | import('@farmslot/protocol').ClaimUntestableOverrideReceipt

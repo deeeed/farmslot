@@ -5,6 +5,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 ## Unreleased
 
 - Direct device setup to person pairing instead of build-time gateway token presets.
+- Show authorized review-budget extensions in the publication workspace.
 
 - Reuse the shared criterion comparison model and synchronized Before/After zoom in the existing evidence workspace and player.
 

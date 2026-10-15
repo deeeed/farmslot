@@ -1,13 +1,18 @@
 import {
+  type Principal,
   PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   type ReviewAttempt,
+  type ReviewBudgetExtension,
   type ReviewRoundBudget,
   reviewRoundBudget,
   type Run,
+  type RunExtendReviewBudgetParams,
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
+import { runTransitionCoordinator } from '../run-lifecycle/transition-coordinator.js';
 import {
+  commitRunReviewBudgetExtension,
   getAllRuns,
   getAllRunsWithArchived,
   getRun,
@@ -115,8 +120,42 @@ function admissionsFor(runs: readonly Run[]): string[] {
   return [...new Set(runs.flatMap(historicalAdmissions))];
 }
 
+function extensionsFor(runs: readonly Run[]): ReviewBudgetExtension[] {
+  return [
+    ...new Map(
+      runs
+        .flatMap((run) => run.reviewBudgetExtensions ?? [])
+        .map((entry) => [JSON.stringify([entry.runId, entry.requestId]), entry]),
+    ).values(),
+  ].sort((a, b) => a.limit - b.limit);
+}
+
+function budgetFor(runs: readonly Run[]): ReviewRoundBudget {
+  return reviewRoundBudget(admissionsFor(runs).length, extensionsFor(runs));
+}
+
+function budgetScopeKey(run: Run): string {
+  const identity = reviewPRIdentity(run, { requirePRContext: true });
+  return identity ? JSON.stringify([identity.repository.toLowerCase(), identity.prNumber]) : run.id;
+}
+
+function withBudget<T>(
+  runId: string,
+  operation: (run: Run, scope: Run[]) => Promise<T>,
+): Promise<T> {
+  const run = getRun(runId);
+  if (!run) throw new Error(`Run not found: ${runId}`);
+  const key = budgetScopeKey(run);
+  return runTransitionCoordinator.withReviewBudget(key, async () => {
+    const stored = await getAllRunsWithArchived();
+    const current = getRun(runId);
+    if (!current || budgetScopeKey(current) !== key) throw new Error('Review budget scope changed');
+    return operation(current, scopedRuns(current, stored));
+  });
+}
+
 export async function runReviewRoundBudget(run: Run): Promise<ReviewRoundBudget> {
-  return reviewRoundBudget(admissionsFor(scopedRuns(run, await getAllRunsWithArchived())).length);
+  return budgetFor(scopedRuns(run, await getAllRunsWithArchived()));
 }
 
 function refuseSpentBudget(budget: ReviewRoundBudget): void {
@@ -150,39 +189,122 @@ export async function assertReviewRoundAvailable(run: Run): Promise<void> {
   refuseSpentBudget(await runReviewRoundBudget(run));
 }
 
+export function reviewBudgetScopeBrief(run: Run): string {
+  const used = historicalAdmissions(run).length;
+  const extension = [...(run.reviewBudgetExtensions ?? [])]
+    .reverse()
+    .find((entry) => used > entry.previousLimit && used <= entry.limit);
+  return extension
+    ? `\n## Authorized additional-review scope\n\nAttempt ${used}/${extension.limit}, granted by ${extension.principalId} (${extension.principalSubject.type}) at ${extension.approvedAt}. Grant-time head ${extension.headSha} is provenance; review the current captured head on this owned branch.\n\n${extension.scopeBrief}\n\nThis grants review scope only. Retain the immutable input/session and publication contracts.\n`
+    : '';
+}
+
 /** Load history first, then check fresh live state synchronously at consumption. */
 export async function prepareReviewRoundAvailabilityCheck(runId: string): Promise<() => void> {
   const stored = await getAllRunsWithArchived();
   return () => {
     const run = getRun(runId);
     if (!run) throw new Error(`Run not found: ${runId}`);
-    refuseSpentBudget(reviewRoundBudget(admissionsFor(scopedRuns(run, stored)).length));
+    refuseSpentBudget(budgetFor(scopedRuns(run, stored)));
   };
 }
 
 /** Reserve synchronously from fresh state, then persist before any runner launch. */
 export async function admitReviewRound(runId: string, attemptId: string): Promise<void> {
-  const stored = await getAllRunsWithArchived();
-  const run = getRun(runId);
-  if (!run) throw new Error(`Run not found: ${runId}`);
-  const scope = scopedRuns(run, stored);
-  const admissions = admissionsFor(scope);
-  if (!admissions.includes(attemptId)) {
-    refuseSpentBudget(reviewRoundBudget(admissions.length));
-    admissions.push(attemptId);
-  }
-  const budget = reviewRoundBudget(admissions.length);
-  const runs = scope.flatMap((current) => {
-    const live = getRun(current.id);
-    return live ? [live] : [];
-  });
-  // Keep the receipts in each existing snapshot so retiring an earlier run
-  // does not refund its rounds while this PR still has a surviving run.
-  for (const current of runs) {
-    updateRun(current.id, {
-      reviewRoundAdmissions: admissions,
-      decisions: decisionsWithBudget(current, budget),
+  return withBudget(runId, async (run, scope) => {
+    const admissions = admissionsFor(scope);
+    if (!admissions.includes(attemptId)) {
+      refuseSpentBudget(budgetFor(scope));
+      admissions.push(attemptId);
+    }
+    const extensions = extensionsFor(scope);
+    const budget = reviewRoundBudget(admissions.length, extensions);
+    const runs = scope.flatMap((current) => {
+      const live = getRun(current.id);
+      return live ? [live] : [];
     });
-  }
-  await Promise.all(runs.map((current) => persistRunNow(getRun(current.id)!)));
+    // Keep the receipts in each existing snapshot so retiring an earlier run
+    // does not refund its rounds while this PR still has a surviving run.
+    for (const current of runs) {
+      updateRun(current.id, {
+        reviewRoundAdmissions: admissions,
+        ...(extensions.length ? { reviewBudgetExtensions: extensions } : {}),
+        decisions: decisionsWithBudget(current, budget),
+      });
+    }
+    await Promise.all(runs.map((current) => persistRunNow(getRun(current.id)!)));
+  });
+}
+
+export function extendReviewRoundBudget(
+  params: RunExtendReviewBudgetParams,
+  principal: Principal,
+  assertCurrent: (run: Run) => Promise<void>,
+): Promise<{ receipt: ReviewBudgetExtension; budget: ReviewRoundBudget }> {
+  return withBudget(params.runId, async (run, scope) => {
+    const extensions = extensionsFor(scope);
+    const prior = extensions.find(
+      (entry) => entry.runId === run.id && entry.requestId === params.requestId,
+    );
+    if (prior) {
+      if (
+        prior.previousLimit !== params.expectedLimit ||
+        prior.limit !== params.limit ||
+        prior.headSha !== params.headSha ||
+        prior.scopeBrief !== params.scopeBrief ||
+        prior.principalId !== principal.id ||
+        JSON.stringify(prior.principalSubject) !== JSON.stringify(principal.subject)
+      )
+        throw new Error('Review budget request ID already records a different grant');
+      return { receipt: prior, budget: budgetFor(scope) };
+    }
+    const budget = budgetFor(scope);
+    if (params.expectedLimit !== budget.limit)
+      throw new Error(
+        `Review budget changed; expected ${params.expectedLimit}, current ${budget.limit}`,
+      );
+    if (
+      !Number.isSafeInteger(params.limit) ||
+      params.limit <= budget.limit ||
+      params.limit > budget.limit + 5
+    )
+      throw new Error('A review budget grant must add between one and five rounds');
+    await assertCurrent(run);
+    const identity = reviewPRIdentity(run, { requirePRContext: true });
+    const receipt: ReviewBudgetExtension = {
+      requestId: params.requestId,
+      runId: run.id,
+      project: run.project,
+      branch: run.branch!,
+      ...(identity ? { repository: identity.repository, prNumber: identity.prNumber } : {}),
+      headSha: params.headSha,
+      previousLimit: budget.limit,
+      limit: params.limit,
+      scopeBrief: params.scopeBrief,
+      principalId: principal.id,
+      principalSubject: structuredClone(principal.subject),
+      approvedAt: new Date().toISOString(),
+    };
+    await commitRunReviewBudgetExtension(run.id, receipt, assertCurrent);
+    const nextExtensions = [...extensions, receipt];
+    const nextBudget = reviewRoundBudget(budget.used, nextExtensions);
+    const live = scope.flatMap((entry) => (getRun(entry.id) ? [getRun(entry.id)!] : []));
+    for (const current of live) {
+      const gate = current.engineState?.publishGate;
+      updateRun(current.id, {
+        reviewBudgetExtensions: nextExtensions,
+        decisions: decisionsWithBudget(current, nextBudget),
+        ...(gate?.reviewLaunchRejection?.code === 'REVIEW_ROUND_LIMIT_REACHED'
+          ? {
+              engineState: {
+                ...current.engineState,
+                publishGate: { ...gate, reviewLaunchRejection: undefined },
+              },
+            }
+          : {}),
+      });
+    }
+    await Promise.all(live.map((entry) => persistRunNow(getRun(entry.id)!)));
+    return { receipt, budget: nextBudget };
+  });
 }

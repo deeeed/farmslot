@@ -6,6 +6,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Add typed retained-run stack attachment to the existing work-graph RPC.
 - Expose explicit retired principal-id replacement and identity generations while retaining retired credential ids.
+- Expose scoped review-budget grants and checked publication action readiness.
+
 - Retain optional AC/role capture annotations and original execution/source identities with immutable comparison dependencies.
 - Add project-authorized delegated visual judgments with checked media and person-only claim policy.
 

@@ -3021,3 +3021,68 @@ test('a live gate resolver retains its continuation without starting a second lo
   assert.equal(resumes, 0);
   assert.equal(getRun(run.id)!.steps[0].status, 'running');
 });
+
+test('refused publication approval stays pending without restoring, replaying or resuming a fix', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'approval-refusal',
+    ticketOrPr: 'APPROVAL-REFUSAL',
+    runner: 'scripted',
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'cancelled' });
+    await deleteRun(run.id);
+  });
+  const decision: RunDecision = {
+    id: 'approval-refused',
+    type: 'engine_human_gate',
+    title: 'Gate',
+    description: '',
+    createdAt: '2026-10-15T00:00:00Z',
+    actions: [{ id: 'approve-publish-unresolved', label: 'Approve', style: 'danger' }],
+    payload: {
+      kind: 'ready',
+      prNumber: null,
+      repo: null,
+      branch: 'fix/subject',
+      workerReport: 'Proof retained',
+      diffStat: { files: 1, additions: 1, deletions: 0 },
+    },
+  };
+  updateRun(run.id, {
+    status: 'human-gating',
+    decisions: [decision],
+    steps: [
+      { name: 'human-gate', status: 'running' },
+      { name: 'finalize', status: 'pending' },
+    ],
+    engineState: {
+      generation: 4,
+      publishGate: {
+        reviewSequence: [{ runner: 'grok', model: null, effort: null, mode: 'cold' }],
+      },
+    },
+  });
+  const before = structuredClone(getRun(run.id)!);
+  const effects: string[] = [];
+  await assert.rejects(
+    runResolveDecision(
+      { runId: run.id, decisionId: decision.id, actionId: 'approve-publish-unresolved' },
+      () => effects.push('broadcast'),
+      {
+        assertGatePrerequisites: async () => {
+          throw new Error(
+            'Review budget 5/5 exhausted; extend-review-budget then request current-head reviews',
+          );
+        },
+        restoreGatePark: async () => assert.fail('refusal cannot restore a worker'),
+        resumeRun: async () => {
+          effects.push('resume');
+        },
+      },
+    ),
+    /Review budget 5\/5 exhausted; extend-review-budget/,
+  );
+  assert.deepEqual(effects, []);
+  assert.deepEqual(getRun(run.id), before);
+});

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show authorized review-budget extensions in the publication workspace.
+
 - Review criteria, source-bound Before/After captures and fullscreen video moments together in the Evidence tab, with Unassigned media kept separate.
 
 - Show visual-review delegation and reviewer identity beside acceptance verdicts.

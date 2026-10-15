@@ -117,6 +117,7 @@ import {
   publicationReviewPolicyForRun,
   requiresPublicationApproval,
 } from './publication-policy.js';
+import { ensureCurrentPublishPackage } from './publish-package-refresh.js';
 import {
   gateChoiceFromSelectionData,
   reconcileRunPosture,
@@ -760,7 +761,9 @@ export async function executeReadyGate(runId: string): Promise<string> {
   // `??` would treat the prNumber=0 sentinel as a real value and skip rescue;
   // hasValidPrNumber filters it so findPRNumber actually runs.
   const publicationApprovalGate = requiresPublicationApproval(current);
-  const preparedPackage = publicationApprovalGate ? await readPreparedPackage(current) : undefined;
+  const preparedPackage = publicationApprovalGate
+    ? await ensureCurrentPublishPackage(runId)
+    : undefined;
   const prNumber =
     artifactOnly || publicationApprovalGate
       ? null
@@ -1190,7 +1193,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
     console.log(
       `[run-engine] run ${runId.slice(0, 8)} — '${actionId}' held: evidence or HEAD changed since the last review`,
     );
-    return 'hold';
+    return executeReadyGate(runId);
   }
   // The operator's posture choice for the wait they just ended.
   const postureChoice = gateChoiceFromSelectionData(selectionData);

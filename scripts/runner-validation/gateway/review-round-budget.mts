@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { centerOfRect } from 'agent-device';
 
 import { NativeSessionClient } from '@farmslot/agent-runtime/native';
+import { reviewRequestFromSequence } from '@farmslot/review-dispatch';
 import { matchesProcess } from '@farmslot/agent-runtime/native/storage';
 import type {
   ReadyGatePrPackage,
@@ -34,6 +35,8 @@ import { computeReadyGatePackageHash } from '../../../services/gateway/src/run-c
 
 const source = fileURLToPath(new URL('../../../', import.meta.url));
 const phase = process.argv[2];
+const extensionProof =
+  process.argv.includes('--extend') || process.env.FARMSLOT_PROOF_EXTEND_BUDGET === '1';
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const writeJson = (file: string, value: unknown) => {
   mkdirSync(path.dirname(file), { recursive: true });
@@ -80,6 +83,9 @@ if (phase === 'serve') {
     [
       { id: 'request-review', label: 'Review', style: 'secondary' },
       { id: 'hold', label: 'Hold', style: 'secondary' },
+      ...(extensionProof
+        ? [{ id: 'approve-publish-unresolved', label: 'Accept findings', style: 'danger' as const }]
+        : []),
     ],
     gatePayload,
   );
@@ -87,7 +93,7 @@ if (phase === 'serve') {
   const requested = getRun(runId)!.decisions.find(
     (decision) => decision.resolvedAction === 'request-review',
   );
-  assert.deepEqual(requested?.selectionData?.reviewRequest, selection);
+  assert.deepEqual(requested?.selectionData?.reviewRequest, reviewRequestFromSequence([selection]));
   const result = await executePublishGateReviewPlan(
     runId,
     getRun(runId)!.slotId!,
@@ -102,17 +108,44 @@ if (phase === 'serve') {
   assert.equal(result.rejection, undefined);
   assert.equal(getRun(runId)!.reviewRoundAdmissions!.length, 5);
   writeJson(path.join(fixture, 'fifth.json'), getRun(runId));
-  void createEngineDecision(
-    runId,
-    'human_gate',
-    'Five rounds spent.',
-    [
-      { id: 'request-review', label: 'Review', style: 'secondary' },
-      { id: 'hold', label: 'Hold', style: 'secondary' },
-    ],
-    gatePayload,
-    { canReplay: () => false },
-  );
+  const extraGate = () =>
+    createEngineDecision(
+      runId,
+      'human_gate',
+      'Scoped native reviews.',
+      [
+        { id: 'request-review', label: 'Review', style: 'secondary' },
+        { id: 'hold', label: 'Hold', style: 'secondary' },
+        ...(extensionProof
+          ? [
+              {
+                id: 'approve-publish-unresolved',
+                label: 'Accept findings',
+                style: 'danger' as const,
+              },
+            ]
+          : []),
+      ],
+      gatePayload,
+      { canReplay: () => false },
+    );
+  let waiting = extraGate();
+  if (extensionProof) {
+    for (const round of [6, 7]) {
+      assert.equal(await waiting, 'request-review');
+      const additional = await executePublishGateReviewPlan(
+        runId,
+        getRun(runId)!.slotId!,
+        [selection],
+        'human-gate',
+      );
+      assert.equal(additional.reviewIds.length, 1);
+      assert.equal(additional.rejection, undefined);
+      assert.equal(getRun(runId)!.reviewRoundAdmissions!.length, round);
+      writeJson(path.join(fixture, `round-${round}.json`), getRun(runId));
+      waiting = extraGate();
+    }
+  }
 } else {
   const temporary = mkdtempSync(path.join(tmpdir(), 'review-round-proof-'));
   const root = path.join(temporary, 'root');
@@ -218,12 +251,22 @@ if (phase === 'serve') {
     execFileSync('git', ['clone', '--quiet', '--local', repo, raceRepo]);
     const taskDir = path.join(repo, 'tasks/control');
     mkdirSync(taskDir, { recursive: true });
-    writeFileSync(path.join(repo, '.git/info/exclude'), 'tasks/\n');
+    writeFileSync(path.join(repo, '.git/info/exclude'), 'tasks/\n.task/\n.omc/\n');
     writeFileSync(path.join(taskDir, 'TASK.md'), '# Review budget control\n');
+    mkdirSync(path.join(taskDir, 'artifacts'), { recursive: true });
+    writeFileSync(
+      path.join(taskDir, 'artifacts/pr-description.md'),
+      '## Fixture change\nReview budget control.\n',
+    );
     writeJson(path.join(taskDir, 'inputs/handoff.json'), { task: { acceptanceCriteria: [] } });
     const retained = path.join(root, 'projects', project, 'tasks/control');
     mkdirSync(retained, { recursive: true });
     writeFileSync(path.join(retained, 'TASK.md'), '# Review budget control\n');
+    mkdirSync(path.join(retained, 'artifacts'), { recursive: true });
+    writeFileSync(
+      path.join(retained, 'artifacts/pr-description.md'),
+      '## Fixture change\nReview budget control.\n',
+    );
     writeJson(path.join(retained, 'inputs/handoff.json'), { task: { acceptanceCriteria: [] } });
     writeJson(path.join(root, 'projects', project, 'project.json'), {
       name: project,
@@ -288,6 +331,7 @@ if (phase === 'serve') {
           lifecycle: 'busy',
           phase: 'review-gate',
           current_run_id: runId,
+          slot_epoch: 1,
         },
         {
           slot: raceSlotId,
@@ -297,6 +341,7 @@ if (phase === 'serve') {
           lifecycle: 'busy',
           phase: 'review-gate',
           current_run_id: raceRunId,
+          slot_epoch: 1,
         },
       ],
     });
@@ -313,7 +358,7 @@ if (phase === 'serve') {
       selectedEvidenceKeys: [],
       reviewArtifactIds: [],
       gatePolicy: { owner: 'human', publishAuthority: 'human', reason: 'Review budget control' },
-      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+      reviewPolicy: { minimumReviews: extensionProof ? 2 : 0, requestedBy: 'dispatch' },
       publicationTarget: 'ready',
       publicationStatus: 'not_published',
       createdAt: now,
@@ -328,6 +373,7 @@ if (phase === 'serve') {
       lane: 'validation',
       flowType: 'dev',
       mode: 'interactive',
+      ...(extensionProof ? { devInteractiveProfile: 'reviewed' as const } : {}),
       status: 'human-gating',
       project,
       ticketOrPr: 'MANUAL-REVIEW-BUDGET',
@@ -391,6 +437,7 @@ if (phase === 'serve') {
     env = {
       ...process.env,
       FARMSLOT_ROOT: root,
+      FARMSLOT_PROOF_EXTEND_BUDGET: extensionProof ? '1' : '0',
       FARMSLOT_PROJECTS_DIR: path.join(root, 'projects'),
       FARMSLOT_POOL_DIR: path.join(root, 'pool'),
       FARMSLOT_RUNS_DIR: path.join(root, '.runs'),
@@ -541,7 +588,7 @@ registerHooks({load(url, context, nextLoad) {
           runId: raceRunId,
           decisionId: raceDecision.id,
           actionId: 'request-review',
-          selectionData: { reviewRequest: selection },
+          selectionData: { reviewRequest: reviewRequestFromSequence([selection]) },
         }),
       ],
       { cwd: source, env, stdio: ['ignore', 'pipe', 'pipe'] },
@@ -554,7 +601,7 @@ registerHooks({load(url, context, nextLoad) {
       runId,
       decisionId: firstGate.id,
       actionId: 'request-review',
-      selectionData: { reviewRequest: selection },
+      selectionData: { reviewRequest: reviewRequestFromSequence([selection]) },
     });
     await waitFor(
       () => readRun().reviewRoundAdmissions?.length === 5,
@@ -611,7 +658,7 @@ registerHooks({load(url, context, nextLoad) {
       'five-round gate',
     );
     const after = readRun();
-    const gate = after.decisions.find((decision) => !decision.resolvedAt)!;
+    let gate = after.decisions.find((decision) => !decision.resolvedAt)!;
     assert.equal((gate.payload as ReadyGatePayload).reviewRoundBudget?.label, 'Review rounds 5/5');
     assert.throws(
       () =>
@@ -619,7 +666,7 @@ registerHooks({load(url, context, nextLoad) {
           runId,
           decisionId: gate.id,
           actionId: 'request-review',
-          selectionData: { reviewRequest: selection },
+          selectionData: { reviewRequest: reviewRequestFromSequence([selection]) },
         }),
       /REVIEW_ROUND_LIMIT_REACHED/,
     );
@@ -628,6 +675,76 @@ registerHooks({load(url, context, nextLoad) {
       undefined,
     );
     writeJson(path.join(out, 'sixth-refused.json'), readRun());
+    let effectiveLimit = 5;
+    if (extensionProof) {
+      assert.equal(
+        gate.actions.some((action) => action.id === 'approve-publish-unresolved'),
+        false,
+      );
+      const beforeRefusal = readRun();
+      assert.throws(
+        () =>
+          rpc('run.resolveDecision', {
+            runId,
+            decisionId: gate.id,
+            actionId: 'approve-publish-unresolved',
+            selectionData: {
+              packageId: prepared.id,
+              packageHash: prepared.packageHash,
+              packageHeadSha: prepared.headSha,
+              selectedEvidenceKeys: prepared.selectedEvidenceKeys,
+            },
+          }),
+        /RUN_GATE_NOT_READY/,
+      );
+      const refused = readRun();
+      assert.equal(refused.decisions.find((entry) => entry.id === gate.id)!.resolvedAt, undefined);
+      assert.deepEqual(refused.reviewRoundAdmissions, beforeRefusal.reviewRoundAdmissions);
+      assert.deepEqual(refused.agentContexts, beforeRefusal.agentContexts);
+      assert.match(
+        JSON.stringify(
+          (refused.decisions.find((entry) => entry.id === gate.id)!.payload as ReadyGatePayload)
+            .gateReadiness,
+        ),
+        /5\/5.*extend-review-budget/,
+      );
+      writeJson(path.join(out, 'approval-refused.json'), refused);
+      const request = {
+        runId,
+        requestId: randomUUID(),
+        expectedLimit: 5,
+        limit: 7,
+        headSha: prepared.headSha,
+        scopeBrief:
+          'Review the current fixture head in two independent native sessions after the original five spent rounds.',
+      };
+      const granted = rpc('run.extendReviewBudget', request);
+      assert.deepEqual(rpc('run.extendReviewBudget', request), granted);
+      writeJson(path.join(out, 'extension.json'), granted);
+      effectiveLimit = 7;
+      for (const round of [6, 7]) {
+        const pending = readRun().decisions.find((entry) => !entry.resolvedAt)!;
+        rpc('run.resolveDecision', {
+          runId,
+          decisionId: pending.id,
+          actionId: 'request-review',
+          selectionData: { reviewRequest: reviewRequestFromSequence([selection]) },
+        });
+        await waitFor(
+          () => existsSync(path.join(out, `round-${round}.json`)),
+          `native review round ${round}`,
+          180_000,
+        );
+        const afterRound = readRun();
+        assert.equal(afterRound.reviewRoundAdmissions!.length, round);
+        assert.equal(afterRound.reviewBudgetExtensions!.length, 1);
+        const reviewed = afterRound.engineState!.publishGate!.reviews!.at(-1)!;
+        assert.ok(reviewed.reviewerSessionId);
+        assert.equal(reviewed.reviewedHeadSha, prepared.headSha);
+        writeJson(path.join(out, `observed-round-${round}.json`), afterRound);
+      }
+    }
+    if (extensionProof) gate = readRun().decisions.find((entry) => !entry.resolvedAt)!;
     await stop(gateway);
     gateway = spawn(process.execPath, ['--import', 'tsx', 'services/gateway/src/index.ts'], {
       cwd: source,
@@ -647,7 +764,7 @@ registerHooks({load(url, context, nextLoad) {
     assert.equal(
       (readRun().decisions.find((decision) => decision.id === gate.id)!.payload as ReadyGatePayload)
         .reviewRoundBudget?.used,
-      5,
+      effectiveLimit,
     );
     assert.throws(
       () =>
@@ -655,12 +772,15 @@ registerHooks({load(url, context, nextLoad) {
           runId,
           decisionId: gate.id,
           actionId: 'request-review',
-          selectionData: { reviewRequest: selection },
+          selectionData: { reviewRequest: reviewRequestFromSequence([selection]) },
         }),
       /REVIEW_ROUND_LIMIT_REACHED/,
     );
     if (route) {
-      await waitFor(() => browserBudget().label === 'Review rounds 5/5', 'browser round count');
+      await waitFor(
+        () => browserBudget().label === `Review rounds ${effectiveLimit}/${effectiveLimit}`,
+        'browser round count',
+      );
       assert.equal(browserBudget().disabled, true, 'browser review action is disabled');
       writeJson(path.join(out, 'browser-budget.json'), browserBudget());
       helper('screenshot', route, path.join(out, 'round-budget.png'));
@@ -856,7 +976,13 @@ registerHooks({load(url, context, nextLoad) {
         'concurrent fifth during awaited validation preserves the waiting gate',
         'public RPC starts actual native fifth reviewer',
         'sixth refusal preserves pending decision',
-        'gateway restart retains five-round budget',
+        'gateway restart retains the effective budget',
+        ...(extensionProof
+          ? [
+              'refused stale approval retains the pending gate and worker contexts',
+              'recorded idempotent grant enables real sixth and seventh native reviews',
+            ]
+          : []),
       ],
       limits: [
         'Private local gateway and immutable source fixture; browser screenshots are operator UI and HUD-exempt.',

@@ -3,6 +3,7 @@ import {
   type DecisionAction,
   type FlowType,
   PUBLICATION_ADOPTION_ACTION,
+  type Run,
   type RunDecision,
 } from '@farmslot/protocol';
 
@@ -41,6 +42,22 @@ export function latestResolvedHumanGateDecision(
   return undefined;
 }
 
+/** A held approval survives new pending cards until the operator explicitly chooses another action. */
+export function hasHeldPublicationApproval(run: Pick<Run, 'decisions'>): boolean {
+  for (const decision of [...run.decisions].reverse()) {
+    if (decision.type !== 'engine_human_gate' || !decision.resolvedAt) continue;
+    // Re-presenting or holding the wait grants no review/fix authority.
+    if (
+      decision.resolvedAction === 'superseded' ||
+      decision.resolvedAction === 'superseded-by-package-refresh' ||
+      decision.resolvedAction === 'hold'
+    )
+      continue;
+    return typeof decision.context?.[HUMAN_GATE_APPROVAL_HELD_CONTEXT_KEY] === 'string';
+  }
+  return false;
+}
+
 export function isHumanGateReviewRequestAction(actionId: string | undefined): boolean {
   return HUMAN_GATE_REVIEW_REQUEST_ACTIONS.has(actionId ?? '');
 }
@@ -50,7 +67,8 @@ export function isReplayableResolvedHumanGateDecision(
   actions: DecisionAction[] = [],
 ): boolean {
   const actionId = decision.resolvedAction;
-  if (!actionId) return false;
+  if (!actionId || typeof decision.context?.[HUMAN_GATE_APPROVAL_HELD_CONTEXT_KEY] === 'string')
+    return false;
   if (actionId === PUBLICATION_ADOPTION_ACTION) return true;
   if (actions.length > 0 && !actions.some((action) => action.id === actionId)) return false;
   if (HUMAN_GATE_APPROVAL_ACTIONS.has(actionId)) return true;
