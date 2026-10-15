@@ -4,6 +4,8 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## Unreleased
 
+- Launch branded Chrome directly to avoid macOS code-signing clones, and let profile cleanup locks retain live owners without a probe-age timeout.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.10.6 - 2026-10-15

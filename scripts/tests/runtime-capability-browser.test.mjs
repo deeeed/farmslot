@@ -18,6 +18,7 @@ async function fixture(t, listenerPid = '') {
   const bin = path.join(directory, 'bin');
   const profile = path.join(directory, 'profile');
   await mkdir(bin);
+  await symlink(process.execPath, path.join(bin, 'node'));
   await mkdir(profile);
   await writeFile(path.join(bin, 'curl'), '#!/usr/bin/env bash\nexit 1\n');
   await writeFile(

@@ -24,7 +24,9 @@ const { execFileSync, spawn, spawnSync } = require('node:child_process');
 const { cdpListenerPids } = require('./browser-cdp.cjs');
 const {
   CDP_LOAD_UNPACKED,
+  LAUNCH_SERVICES,
   describeBrowser,
+  effectiveLaunchMethod,
   extensionLaunchArgs,
   waitForCdpOwner,
 } = require('./browser-resolver.cjs');
@@ -251,6 +253,7 @@ function runLaunch(opts, acquireLock) {
   // startup, so its window is opened after the load.
   const application =
     process.platform === 'darwin' ? macApplicationForExecutable(opts.chromeBin) : null;
+  const launchMethod = effectiveLaunchMethod(opts.chromeBin, LAUNCH_SERVICES);
   if (application) chromeArgs.push('--no-startup-window');
   else chromeArgs.push(loadsOverCdp ? 'about:blank' : initialUrl);
   // The wait ended without an owned listener: a foreign process took the port,
@@ -311,7 +314,7 @@ function runLaunch(opts, acquireLock) {
     try {
       beginDetachedLaunch(cdpPort, profile, activeValidationLease);
       opts.progress({ message: 'starting the browser' });
-      if (application) {
+      if (launchMethod === LAUNCH_SERVICES) {
         execFileSync('open', macBackgroundOpenArgs(application, chromeArgs), {
           env: sanitizedChildEnv(),
           stdio: ['ignore', logFd, logFd],
@@ -341,6 +344,7 @@ function runLaunch(opts, acquireLock) {
     fs.writeFileSync(opts.chromePid, `${browserPid}\n`);
     writeBrowserResolution(runtimeDir, {
       ...browser,
+      launchMethod,
       launch: {
         pid: browserPid,
         cdpPort,

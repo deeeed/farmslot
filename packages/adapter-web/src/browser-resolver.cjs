@@ -346,7 +346,12 @@ const HEADLESS = 'headless';
 const HEADFUL = 'headful';
 
 function effectiveLaunchMethod(executable, launchMethod, platform = process.platform) {
-  return launchMethod === LAUNCH_SERVICES && platform === 'darwin' && appBundleFor(executable)
+  // Branded Chrome supports isolated direct launches. Launch Services creates
+  // persistent code_sign_clone bundles for every additional app instance.
+  return launchMethod === LAUNCH_SERVICES &&
+    platform === 'darwin' &&
+    appBundleFor(executable) &&
+    !isBrandedChrome(executable)
     ? LAUNCH_SERVICES
     : SPAWN;
 }
@@ -445,14 +450,15 @@ const { START_TIME_SLACK_MS } = cdp;
 function ticketFree(
   dir,
   number,
-  { nowMs = Date.now(), budgetMs = 30000, readStartTime = startTimeOf } = {},
+  { nowMs = Date.now(), budgetMs = 30000, readStartTime = startTimeOf, keepLiveOwner = false } = {},
 ) {
   if (number === 0 || fs.existsSync(path.join(dir, `${number}.released`))) return true;
   const ticket = readTicket(path.join(dir, String(number)));
   if (!ticket) return true;
   const { holder } = ticket;
   if (holder && Number.isInteger(holder.pid) && Number.isFinite(holder.at)) {
-    if (!pidAlive(holder.pid) || nowMs - holder.at > PROBE_LOCK_STALE_MS) return true;
+    if (!pidAlive(holder.pid) || (!keepLiveOwner && nowMs - holder.at > PROBE_LOCK_STALE_MS))
+      return true;
     if (typeof holder.started !== 'string' || holder.pid === process.pid || budgetMs <= 0)
       return false;
     const started = readStartTime(holder.pid, budgetMs);
@@ -491,11 +497,13 @@ function newestTicket(dir) {
 // the next one. The directory grows by two small files per probe; a crashed
 // holder's unreleased ticket stays, judged free once its holder is gone.
 // `beforeClaim` and `readStartTime` are test seams.
+// keepLiveOwner is used by profile deletion: an old but still-live cleanup
+// owner cannot be displaced while removing a large directory.
 async function withProbeLock(
   cachePath,
   key,
   fn,
-  { waitMs = 150000, beforeClaim = null, readStartTime = startTimeOf } = {},
+  { waitMs = 150000, beforeClaim = null, readStartTime = startTimeOf, keepLiveOwner = false } = {},
 ) {
   const dir = `${cachePath}.${key.slice(0, 16)}.locks`;
   fs.mkdirSync(dir, { recursive: true });
@@ -505,7 +513,9 @@ async function withProbeLock(
   let fd = null;
   for (;;) {
     const newest = newestTicket(dir);
-    if (ticketFree(dir, newest, { budgetMs: deadline - Date.now(), readStartTime })) {
+    if (
+      ticketFree(dir, newest, { budgetMs: deadline - Date.now(), readStartTime, keepLiveOwner })
+    ) {
       if (beforeClaim) await beforeClaim(newest);
       if (Date.now() > deadline) throw timedOut();
       try {

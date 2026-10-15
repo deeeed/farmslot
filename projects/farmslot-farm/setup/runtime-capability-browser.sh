@@ -40,6 +40,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="${FARMSLOT_SLOT_REPO:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}"
 PROFILE="${FARMSLOT_CDP_PROFILE:-${HOME}/.chrome-farmslot-${CDP_PORT}}"
 CDP_ENDPOINT="http://127.0.0.1:${CDP_PORT}/json/version"
+cleanup_profile() {
+  node "${REPO_ROOT}/apps/command-center/scripts/chrome-profile-cleanup.cjs" reap-one "$PROFILE"
+}
 
 profile_owner_pid() {
   local link
@@ -102,6 +105,7 @@ case "$MODE" in
         echo "refusing to stop unowned CDP endpoint :${CDP_PORT}" >&2
         exit 1
       fi
+      cleanup_profile
       exit 0
     fi
     owner_matches_provider "$owner" || {
@@ -118,7 +122,10 @@ case "$MODE" in
     fi
     kill -TERM "$owner"
     for _ in $(seq 1 50); do
-      kill -0 "$owner" 2>/dev/null || exit 0
+      if ! kill -0 "$owner" 2>/dev/null; then
+        cleanup_profile
+        exit 0
+      fi
       sleep 0.1
     done
     echo "Chrome pid ${owner} did not stop after SIGTERM" >&2

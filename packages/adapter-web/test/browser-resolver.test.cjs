@@ -16,6 +16,42 @@ const FAKE_BROWSER = path.join(__dirname, 'fixtures/fake-cdp-browser.cjs');
 let root;
 const savedEnv = { ...process.env };
 
+it('avoids branded Chrome app clones while retaining the Testing launch workaround', () => {
+  const chrome = fakeApp('Google Chrome', 'com.google.Chrome', '155.0.0.0');
+  const canary = fakeApp('Google Chrome Canary', 'com.google.Chrome.canary', '155.0.0.0');
+  const cft = fakeApp('Google Chrome for Testing', 'com.google.chrome.for.testing', '147.0.0.0');
+  for (const bin of [chrome, canary]) {
+    assert.equal(
+      resolver.effectiveLaunchMethod(bin, resolver.LAUNCH_SERVICES, 'darwin'),
+      resolver.SPAWN,
+    );
+  }
+  assert.equal(
+    resolver.effectiveLaunchMethod(cft, resolver.LAUNCH_SERVICES, 'darwin'),
+    resolver.LAUNCH_SERVICES,
+  );
+});
+
+it('profile cleanup never steals an aged lock from a live process', async () => {
+  const cache = path.join(root, 'profile-maintenance');
+  const key = 'fixture-profile-lock';
+  const dir = `${cache}.${key.slice(0, 16)}.locks`;
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, '1'), JSON.stringify({ pid: process.pid, at: 0 }));
+  await assert.rejects(
+    resolver.withProbeLock(cache, key, () => assert.fail('live holder displaced'), {
+      waitMs: 30,
+      keepLiveOwner: true,
+    }),
+    /Timed out/,
+  );
+  let ran = false;
+  await resolver.withProbeLock(cache, key, () => {
+    ran = true;
+  });
+  assert.equal(ran, true, 'the existing probe-age policy remains unchanged by default');
+});
+
 function fakeApp(name, bundleId, version) {
   const app = path.join(root, `${name}.app`);
   const executable = path.join(app, 'Contents/MacOS', name);
