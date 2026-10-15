@@ -153,3 +153,34 @@ test('an unqualified capture keeps its original and limitation browsable', () =>
   assert.ok(text.includes(row.after[0]!.name));
   assert.ok(text.includes(row.after[0]!.limitation!));
 });
+
+test('pending visual judgment controls render while evidence loads and after a read failure', () => {
+  const input: RecordedEvidencePackageInput = JSON.parse(
+    readFileSync(
+      new URL(
+        '../../../../../../packages/recipe-runner/test/fixtures/visual-review-package.json',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  ).input;
+  for (const readErrors of [[], ['Evidence request timed out']]) {
+    const model = createEvidenceReviewModel({ ledger: input.claims, readErrors });
+    const text = litText(
+      renderWorkspaceEvidencePreview({
+        title: 'Evidence',
+        items: [],
+        comparison: {
+          model,
+          artifactUrl: (path) => path,
+          openMedia() {},
+          openMoment() {},
+          changed() {},
+        },
+      }),
+    );
+    assert.match(text, /Confirm visual proof/);
+    assert.match(text, /Reject visual proof/);
+    assert.match(text, /check-1/);
+  }
+});

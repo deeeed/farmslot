@@ -298,6 +298,9 @@ function fakeDocument(origin) {
       const tag = selector.replace(':scope > ', '').toUpperCase();
       return this.children.find((child) => child.tagName === tag) ?? null;
     }
+    getBoundingClientRect() {
+      return { height: 22.4 };
+    }
   }
   const html = new Element('html');
   const body = new Element('body');
@@ -305,7 +308,12 @@ function fakeDocument(origin) {
   html.append(body);
   const text = (node) => [node.textContent, ...node.children.map(text)].join(' ');
   return {
-    document: { documentElement: html, body, createElement: (tag) => new Element(tag) },
+    document: {
+      documentElement: html,
+      body,
+      createElement: (tag) => new Element(tag),
+      getElementById: (id) => body.children.find((child) => child.id === id) ?? null,
+    },
     location: { origin },
     requestAnimationFrame: (callback) => callback(),
     setTimeout,
@@ -431,5 +439,60 @@ describe('web-dapp HUD drawing', async () => {
       reason: 'not-app-origin',
     });
     assert.equal(page.html.querySelector(HUD_ELEMENT), null);
+  });
+
+  it('reserves bottom-dock space on the selected wallet origin and restores its padding', async () => {
+    const origin = 'chrome-extension://wallet';
+    const page = fakeDocument(origin);
+    page.document.body.style.paddingBottom = '4px';
+    const options = { layout: 'bottom-dock' };
+    assert.deepEqual(await draw(hudRenderExpression(state, origin, options), page), {
+      hud: true,
+      seq: 1,
+      docked: true,
+      height: 23,
+    });
+    const host = page.html.querySelector(HUD_ELEMENT);
+    const box = host.shadow.children.find((child) => child.className === 'hud');
+    assert.equal(host.shadowMode, 'closed');
+    assert.equal(host.inert, true);
+    assert.equal(box.style.bottom, '0');
+    assert.equal(box.style.top, 'auto');
+    assert.ok(page.text(host.shadow).includes(state.current.intent));
+    assert.equal(page.document.body.style.paddingBottom, '23px');
+    const space = page.document.getElementById(`${HUD_ELEMENT}-space`);
+    assert.equal(space.style.height, '23px');
+    assert.equal(space.inert, true);
+    assert.equal(space.attributes['aria-hidden'], 'true');
+    assert.ok(!page.text(page.document.body).includes(state.current.intent));
+
+    await draw(hudRenderExpression(null, origin, options), page);
+    assert.equal(page.document.body.style.paddingBottom, '4px');
+    assert.equal(page.document.getElementById(`${HUD_ELEMENT}-space`), null);
+    assert.equal(page.html.querySelector(HUD_ELEMENT), null);
+  });
+
+  it('updates and changes layout without accumulating padding or retaining a spacer', async () => {
+    const origin = 'http://localhost:9341';
+    const page = fakeDocument(origin);
+    page.document.body.style.paddingBottom = '';
+    const options = { layout: 'bottom-dock' };
+    await draw(hudRenderExpression(state, origin, options), page);
+    const next = nextHudState(state, { status: 'running', intent: 'Inspect the request' }, 'next');
+    await draw(hudRenderExpression(next, origin, options), page);
+    assert.equal(page.document.body.children.length, 1);
+    assertMatch(await draw(hudRenderExpression(next, origin, options), page), { unchanged: true });
+
+    const card = await draw(hudRenderExpression(next, origin), page);
+    assert.equal(card.unchanged, undefined);
+    assert.equal(page.document.body.style.paddingBottom, '');
+    assert.equal(page.document.body.children.length, 0);
+    assert.equal(page.html.querySelector(HUD_ELEMENT).dataset.layout, 'card');
+
+    const dock = await draw(hudRenderExpression(next, origin, options), page);
+    assert.equal(dock.docked, true);
+    await draw(hudRenderExpression(null, origin), page);
+    assert.equal(page.document.body.style.paddingBottom, '');
+    assert.equal(page.document.body.children.length, 0);
   });
 });

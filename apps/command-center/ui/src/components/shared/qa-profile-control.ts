@@ -1,6 +1,6 @@
 import { html, nothing } from 'lit';
 
-import type { ProjectQaConfig, QaInput } from '@farmslot/protocol';
+import { type ProjectQaConfig, type QaInput, resolveQaProfileId } from '@farmslot/protocol';
 
 import './choice-picker.js';
 
@@ -24,27 +24,25 @@ export function renderQaProfileControl(options: {
     </p>`;
   if (!config?.profiles.length)
     return html`<p class="section-help muted" data-testid=${`${testId}-empty`}>
-      QA needs a default validation profile for this project. No inputs are required from you here.
+      QA profiles are not configured for this project.
     </p>`;
-  const selectedId = options.value || config.default_profile;
+  const selectedId = resolveQaProfileId(config, options.value || undefined);
   const selected = config.profiles.find((profile) => profile.id === selectedId);
   return html`<label class="section-label"
       >Validation
       <choice-picker
         data-testid=${testId}
-        .value=${options.value || ''}
+        .value=${selectedId ?? ''}
+        required
         ?disabled=${options.disabled}
         @change=${(event: Event) => options.change((event.target as HTMLSelectElement).value)}
       >
-        <option value="">
-          Farm default ·
-          ${config.profiles.find((profile) => profile.id === config.default_profile)?.title ??
-          config.default_profile}
-        </option>
+        <option value="">Choose a QA profile</option>
         ${config.profiles.map(
           (profile) =>
             html`<option value=${profile.id}>
-              ${profile.title}${profile.id === config.default_profile ? ' (default)' : ''}
+              ${profile.title}
+              (${profile.id})${profile.id === config.default_profile ? ' (default)' : ''}
             </option>`,
         )}
       </choice-picker>

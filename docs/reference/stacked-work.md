@@ -1,12 +1,12 @@
 # Retained-run stack attachment
 
-**Status:** Proposed for the retained-run attachment in [ADR-040 Amendment 3](../adr/040-work-graph-orchestration.md#amendment-3-retained-run-stack-attachment). Existing graph-dispatched stacking remains available. Attachment requires acceptance and implementation rollout.
+**Status:** Accepted; accepted by lead 2026-10-15 after R2 paired review of [#1006](https://github.com/deeeed/farmslot/pull/1006), under [ADR-040 Amendment 3](../adr/040-work-graph-orchestration.md#amendment-3-retained-run-stack-attachment). Existing graph-dispatched stacking remains available. Attachment requires implementation rollout.
 
-The [stacked-runs specification](stacked-runs.md) owns the shipped lifecycle, `contributionStack` lineage, `publicationBaseForRun`, and the [accepted maintenance checkpoint](stacked-runs.md#maintenance-checkpoint-contract). This proposal adds attachment through those owners. It introduces no second stack resolver, history parser, store or checkpoint writer.
+The [stacked-runs specification](stacked-runs.md) owns the shipped lifecycle, `contributionStack` lineage, `publicationBaseForRun`, and the [accepted maintenance checkpoint](stacked-runs.md#maintenance-checkpoint-contract). This contract adds attachment through those owners. It introduces no second stack resolver, history parser, store or checkpoint writer.
 
 ## Public surface
 
-The Proposed RPC is `workGraph.attachRun`. Its parameters are:
+The RPC is `workGraph.attachRun`. Its parameters are:
 
 | Field             | Requirement                                                                                               |
 | ----------------- | --------------------------------------------------------------------------------------------------------- |

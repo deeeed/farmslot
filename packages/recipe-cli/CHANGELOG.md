@@ -5,9 +5,11 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 ## Unreleased
 
 - Keep source and review diff identities stable across user Git settings; disable external diff and text conversion.
-- Accept a contained retained evidenceBaseline through the existing recipe parameter option.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.18.0 - 2026-10-15
+
+- Accept a contained retained evidenceBaseline through the existing recipe parameter option.
 
 ## 0.17.5 - 2026-10-15
 

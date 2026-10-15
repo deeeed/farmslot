@@ -8,6 +8,10 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.6.8 - 2026-10-15
+
+- Align the installed dependency closure with protocol 0.45.0 and retained-run stack attachment.
+
 ## 0.6.7 - 2026-10-15
 
 - Use agent-runtime 0.22.1 for verified stopped-host recovery while preserving native session journals.

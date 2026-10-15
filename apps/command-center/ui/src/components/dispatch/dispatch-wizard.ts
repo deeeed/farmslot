@@ -79,6 +79,7 @@ import {
   projectPrepareProfiles,
   publicationReviewsEnabled,
   qaDispatchFields,
+  qaDispatchReview,
   selectedDispatchApp,
   selectedTaskTemplate,
   selectedTemplateMode,
@@ -1508,10 +1509,12 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _qaFields() {
+    const project = this._projectConfigs.find((entry) => entry.name === this._project);
     return qaDispatchFields(
-      this._projectConfigs.find((entry) => entry.name === this._project)?.qa,
+      project?.qa,
       this._qaProfileId,
       this._qaInputsText,
+      project?.workflowDefaults,
     );
   }
 
@@ -1639,15 +1642,17 @@ export class DispatchWizard extends DispatchWizardState {
       </div>`;
     }
     if (this._flowType !== 'qa') return nothing;
-    const config = this._projectConfigs.find((entry) => entry.name === this._project)?.qa;
-    const selectedId = this._qaProfileId || config?.default_profile || '';
+    const project = this._projectConfigs.find((entry) => entry.name === this._project);
+    const config = project?.qa;
+    const review = qaDispatchReview(config, this._qaProfileId, project?.workflowDefaults);
+    const selectedId = review.qaProfileId;
     const selected = config?.profiles.find((profile) => profile.id === selectedId);
     const error = this._workflowSelectionError();
     const domains =
       this._templateOptionsCache.get(this._project)?.executionTemplates?.availableDomains ?? [];
     let fieldInputs: Record<string, QaInput> | undefined;
     try {
-      fieldInputs = parseQaInputOverrides(this._qaInputsText);
+      fieldInputs = { ...review.qaInputs, ...parseQaInputOverrides(this._qaInputsText) };
     } catch {
       // Invalid advanced JSON is already shown by the workflow error below. Preserve it for correction.
       fieldInputs = undefined;
@@ -1670,7 +1675,7 @@ export class DispatchWizard extends DispatchWizardState {
         : nothing}
       ${renderQaProfileControl({
         config,
-        value: this._qaProfileId,
+        value: selectedId,
         projectSelected: !!this._project,
         testId: 'dispatch-qa-profile',
         inputs: fieldInputs,
@@ -1771,15 +1776,16 @@ export class DispatchWizard extends DispatchWizardState {
     this.requestUpdate();
   }
 
-  /** Farm-default QA preset shown beside static review rounds; runtime QA is a separate flow. */
+  /** Resolved QA preset shown beside static review rounds; runtime QA is a separate flow. */
   private _effectiveQaPresetTitle(): string | null | undefined {
     const project = this._projectConfigs.find((entry) => entry.name === this._project);
     // Unknown until the selected project's config has loaded.
     if (!project) return undefined;
     const config = project.qa;
     if (!config?.profiles.length) return null;
-    const preset = config.profiles.find((profile) => profile.id === config.default_profile);
-    return preset?.title ?? config.default_profile;
+    const selection = qaDispatchReview(config, this._qaProfileId, project.workflowDefaults);
+    const preset = config.profiles.find((profile) => profile.id === selection.qaProfileId);
+    return preset?.title ?? 'Choose a QA profile';
   }
 
   static styles = [dispatchWizardStyles, qaInputFieldStyles];

@@ -1727,11 +1727,11 @@ export interface RunPublicationMutation {
   decisions?: Run['decisions'];
 }
 
-/** Publication-only transaction. Archived execution is never loaded into the live map. */
-export async function commitRunPublication(
+/** Narrow callers share the existing per-run durable mutation queue. */
+async function commitRetainedRunMutation(
   id: string,
-  build: (run: Run) => RunPublicationMutation,
-  assertCurrent: (run: Run) => void = () => {},
+  build: (run: Run) => Run,
+  assertCurrent: (run: Run) => void,
 ): Promise<Run> {
   let committed!: Run;
   await enqueueRunWrite(id, async () => {
@@ -1744,17 +1744,7 @@ export async function commitRunPublication(
     if (!live) normalizePersistedRun(authority);
     assertCurrent(authority);
     const baseline = structuredClone(run);
-    const patch = build(run);
-    const snapshot: Run = {
-      ...run,
-      prNumber: patch.prNumber,
-      links: patch.links,
-      prPublications: patch.prPublications,
-      ...(patch.publishGate
-        ? { engineState: { ...run.engineState, publishGate: patch.publishGate } }
-        : {}),
-      ...(patch.decisions ? { decisions: patch.decisions } : {}),
-    };
+    const snapshot = build(run);
     if (live && !isTerminalRunStatus(snapshot.status))
       assertPRRunActivation(snapshot, getAllRuns());
     if (live) {
@@ -1794,6 +1784,40 @@ export async function commitRunPublication(
     }
   });
   return committed;
+}
+
+/** Publication-only transaction. Archived execution is never loaded into the live map. */
+export function commitRunPublication(
+  id: string,
+  build: (run: Run) => RunPublicationMutation,
+  assertCurrent: (run: Run) => void = () => {},
+): Promise<Run> {
+  return commitRetainedRunMutation(
+    id,
+    (run) => {
+      const patch = build(run);
+      return {
+        ...run,
+        prNumber: patch.prNumber,
+        links: patch.links,
+        prPublications: patch.prPublications,
+        ...(patch.publishGate
+          ? { engineState: { ...run.engineState, publishGate: patch.publishGate } }
+          : {}),
+        ...(patch.decisions ? { decisions: patch.decisions } : {}),
+      };
+    },
+    assertCurrent,
+  );
+}
+
+/** Persist all attachment links before exposing them; execution and proof stay byte-preserved. */
+export function commitRunGraphAttachment(
+  id: string,
+  binding: Pick<Run, 'workGraphId' | 'workNodeId' | 'stack'>,
+  assertCurrent: (run: Run) => void,
+): Promise<Run> {
+  return commitRetainedRunMutation(id, (run) => ({ ...run, ...binding }), assertCurrent);
 }
 
 export async function archiveRun(id: string): Promise<boolean> {

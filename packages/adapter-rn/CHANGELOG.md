@@ -8,6 +8,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.22.9 - 2026-10-15
+
+- Align the installed dependency closure with protocol 0.45.0 and retained-run stack attachment.
+
 ## 0.22.8 - 2026-10-15
 
 - Rotate Android capture at 180 seconds, retain ordered original segments and stop owned recorder processes on interruption.

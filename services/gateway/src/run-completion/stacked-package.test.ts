@@ -19,11 +19,13 @@ const nativeStore = await import('../runs/store.js');
 const nativeMirror = await import('./artifact-mirror.js');
 const nativeSession = await import('../runners/session-process.js');
 const nativeTemplate = await import('./pr-template.js');
+const nativeGithub = await import('../integrations/github-client.js');
 let run: Run;
 let lineageParent: Run | null = null;
 let repo = '';
 const templateBases: string[] = [];
 let mirrorCopied = 1;
+let githubRequests = 0;
 let mirrorOptions: Parameters<typeof nativeMirror.refreshArtifactMirror>[1];
 const vars = () =>
   makeVars({ slotId: 'stack-fixture', projectName: 'stack-fixture', remoteRepo: repo, repo });
@@ -35,11 +37,21 @@ mock.module('../core/config.js', {
       projectJson: {
         name: 'stack-fixture',
         default_branch: 'main',
+        ci: { repo: 'fixture/stacked-package' },
         paths: { artifact_dir: '.task' },
       },
       runtimeDir: '.agent',
       artifactDir: '.task',
     }),
+  },
+});
+mock.module('../integrations/github-client.js', {
+  namedExports: {
+    ...nativeGithub,
+    ghRequest: async () => {
+      githubRequests++;
+      throw new Error('Publication must refuse before contacting GitHub');
+    },
   },
 });
 mock.module('../core/exec.js', {
@@ -85,8 +97,13 @@ mock.module('./pr-template.js', {
     },
   },
 });
-const { prepareCompletionPackage, renderCurrentDescription, runCompletionPipeline } =
-  await import('./orchestrator.js');
+const {
+  assertReadyGatePackageInputsCurrent,
+  prepareCompletionPackage,
+  publishCompletionPackage,
+  renderCurrentDescription,
+  runCompletionPipeline,
+} = await import('./orchestrator.js');
 const { publicationBaseForRun, stackPrBase } = await import('../run-engine/stack-base.js');
 const { parseGitNumstat } = await import('../run-engine/diff-artifacts.js');
 const { captureCurrentReviewSnapshot } = await import('../review/snapshots.js');
@@ -245,6 +262,51 @@ test('standalone publication keeps the default 18-file package', async () => {
   assert.equal(standalone.reviewSnapshot?.baseRef, 'origin/main');
   assert.deepEqual(standalone.reviewSnapshot?.diffStat, fullDiff);
   assert.equal(templateBases.at(-1), 'main');
+});
+
+test('attachment at unchanged HEAD refuses the old publication base at approval and publication', async () => {
+  resetRun();
+  const prepared = (
+    await prepareCompletionPackage(run.id, {
+      diffStat: fullDiff,
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    })
+  ).prPackage;
+  const retained = structuredClone(prepared);
+  run = { ...run, stack };
+  githubRequests = 0;
+  await assert.rejects(
+    assertReadyGatePackageInputsCurrent(run, prepared),
+    /publication base.*refresh/i,
+  );
+  await assert.rejects(publishCompletionPackage(run.id, prepared), /publication base.*refresh/i);
+  assert.equal(githubRequests, 0);
+  assert.deepEqual(prepared, retained);
+  const refreshed = (
+    await prepareCompletionPackage(run.id, {
+      diffStat: parentDiff,
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    })
+  ).prPackage;
+  assert.equal(refreshed.headSha, prepared.headSha);
+  assert.equal(refreshed.reviewSnapshot?.baseRef, 'origin/feature/parent');
+  await assertReadyGatePackageInputsCurrent(run, refreshed);
+});
+
+test('an unavailable diff still captures the publication base without granting diff proof', async () => {
+  resetRun(stack);
+  run = { ...run, slotId: null };
+  const prepared = (
+    await prepareCompletionPackage(run.id, {
+      headSha,
+      diffStat: parentDiff,
+      reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+    })
+  ).prPackage;
+  assert.equal(prepared.reviewSnapshot?.source, 'unavailable');
+  assert.equal(prepared.reviewSnapshot?.baseRef, 'origin/feature/parent');
+  assert.equal(prepared.reviewSnapshot?.diffHash, undefined);
+  await assertReadyGatePackageInputsCurrent(run, prepared);
 });
 
 test('a follow-up package and preview use the stacked parent contribution', async () => {

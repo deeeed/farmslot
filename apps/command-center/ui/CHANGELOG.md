@@ -4,6 +4,9 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Share QA profile selection across Dispatch and PR requests, disable unresolved choices, and show the admitted profile id and title.
+- Keep pending visual judgments visible while evidence loads or fails; wait up to 60 seconds for gate evidence.
+
 - Review criteria, source-bound Before/After captures and fullscreen video moments together in the Evidence tab, with Unassigned media kept separate.
 
 - Show visual-review delegation and reviewer identity beside acceptance verdicts.

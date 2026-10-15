@@ -222,6 +222,7 @@ import {
   type WorkGraphActivateParams,
   type WorkGraphAddEdgeParams,
   type WorkGraphAddNodeParams,
+  type WorkGraphAttachRunParams,
   type WorkGraphCreateParams,
   type WorkGraphGateResolveParams,
   type WorkGraphGetParams,
@@ -541,6 +542,7 @@ import {
   workGraphActivate,
   workGraphAddEdge,
   workGraphAddNode,
+  workGraphAttachRun,
   workGraphCreate,
   workGraphGateResolve,
   workGraphGet,
@@ -897,6 +899,8 @@ async function routeAuthorizedMethod(
       return workGraphActivate(p as WorkGraphActivateParams);
     case Methods.WORK_GRAPH_PAUSE:
       return workGraphPause(p as WorkGraphPauseParams);
+    case Methods.WORK_GRAPH_ATTACH_RUN:
+      return workGraphAttachRun(p as WorkGraphAttachRunParams);
     case Methods.WORK_GRAPH_RETRY:
       return workGraphRetry(p as WorkGraphRetryParams);
     case Methods.WORK_GRAPH_GATE_RESOLVE:

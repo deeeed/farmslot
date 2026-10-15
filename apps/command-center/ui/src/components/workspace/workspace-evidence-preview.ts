@@ -515,50 +515,56 @@ function renderComparisonPreview(input: WorkspaceEvidenceComparison): TemplateRe
               </p>`
             : nothing}
           ${model.pendingVisualClaimIds.includes(row.claim.id)
-            ? model.visualReviewKind(row.claim.id, input.reviewer ?? null) && input.recordReview
-              ? html`<div
-                  data-visual-review=${row.claim.id}
-                  style="display:flex;flex-direction:column;gap:8px;"
+            ? html`<div
+                data-visual-review=${row.claim.id}
+                style="display:flex;flex-direction:column;gap:8px;"
+              >
+                <strong
+                  >${model.visualReviewKind(row.claim.id, input.reviewer ?? null) ===
+                  'lead-agent-reviewed'
+                    ? 'Delegated visual review'
+                    : model.visualReviewKind(row.claim.id, input.reviewer ?? null)
+                      ? 'Person visual review'
+                      : 'Visual review'}
+                  ${input.reviewer ? `· ${input.reviewer.displayName}` : ''}</strong
                 >
-                  <strong
-                    >${model.visualReviewKind(row.claim.id, input.reviewer ?? null) ===
-                    'lead-agent-reviewed'
-                      ? 'Delegated visual review'
-                      : 'Person visual review'}
-                    · ${input.reviewer?.displayName}</strong
-                  >
-                  <label
-                    >What did you inspect?
-                    <textarea
-                      aria-label=${`Visual review rationale for ${row.claim.id}`}
-                      .value=${input.reviewReason?.(row.claim.id) ?? ''}
-                      ?disabled=${input.reviewing}
-                      @input=${(event: Event) =>
-                        input.changeReviewReason?.(
-                          row.claim.id,
-                          (event.currentTarget as HTMLTextAreaElement).value,
-                        )}
-                    ></textarea>
-                  </label>
-                  <div>
-                    ${(['confirmed', 'rejected'] as const).map(
-                      (verdict) =>
-                        html`<button
-                          type="button"
-                          data-review-verdict=${verdict}
-                          ?disabled=${input.reviewing || !input.reviewReason?.(row.claim.id).trim()}
-                          @click=${() => input.recordReview?.(row.claim.id, verdict)}
-                        >
-                          ${verdict === 'confirmed'
-                            ? 'Confirm visual proof'
-                            : 'Reject visual proof'}
-                        </button>`,
-                    )}
-                  </div>
-                </div>`
-              : html`<p>
-                  Sign in with an authorized reviewer account to record a visual judgment.
-                </p>`
+                ${!model.visualReviewKind(row.claim.id, input.reviewer ?? null)
+                  ? html`<p role="status">
+                      Visual judgments become available after evidence loads and reviewer authority
+                      is verified.
+                    </p>`
+                  : nothing}
+                <label
+                  >What did you inspect?
+                  <textarea
+                    aria-label=${`Visual review rationale for ${row.claim.id}`}
+                    .value=${input.reviewReason?.(row.claim.id) ?? ''}
+                    ?disabled=${input.reviewing ||
+                    !model.visualReviewKind(row.claim.id, input.reviewer ?? null)}
+                    @input=${(event: Event) =>
+                      input.changeReviewReason?.(
+                        row.claim.id,
+                        (event.currentTarget as HTMLTextAreaElement).value,
+                      )}
+                  ></textarea>
+                </label>
+                <div>
+                  ${(['confirmed', 'rejected'] as const).map(
+                    (verdict) =>
+                      html`<button
+                        type="button"
+                        data-review-verdict=${verdict}
+                        ?disabled=${input.reviewing ||
+                        !model.visualReviewKind(row.claim.id, input.reviewer ?? null) ||
+                        !input.recordReview ||
+                        !input.reviewReason?.(row.claim.id).trim()}
+                        @click=${() => input.recordReview?.(row.claim.id, verdict)}
+                      >
+                        ${verdict === 'confirmed' ? 'Confirm visual proof' : 'Reject visual proof'}
+                      </button>`,
+                  )}
+                </div>
+              </div>`
             : nothing}
         </article>`,
     )}

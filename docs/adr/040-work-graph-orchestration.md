@@ -870,7 +870,7 @@ Operator steps: [Stacked work](../operations/stacked-work.md).
 ## Amendment 3: retained-run stack attachment
 
 - **Date:** 2026-10-13
-- **Status:** Proposed. The base ADR and the shipped stacked-run amendment remain Accepted.
+- **Status:** Accepted; accepted by lead 2026-10-15 after R2 paired review of [#1006](https://github.com/deeeed/farmslot/pull/1006). Implementation and rollout are tracked separately.
 - **Normative specification:** [Stacked work](../reference/stacked-work.md).
 
 ### Decision
@@ -887,13 +887,13 @@ A worker can branch manually from an open PR while its run remains standalone. T
 
 ### Public surface
 
-| Surface     | Proposed contract                                                                                            | Consumer                                               |
+| Surface     | Contract                                                                                                     | Consumer                                               |
 | ----------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
 | Gateway RPC | `workGraph.attachRun` with `graphId`, `nodeId`, `runId`, `expectedHeadSha`                                   | Graph attachment CLI and typed gateway clients         |
 | CLI         | `farmslot graph attach-run <graphId> <nodeId> <runId> --expected-head <sha>`                                 | Operators recovering retained standalone work          |
 | SDK types   | `WorkGraphAttachRunParams`, `WorkGraphAttachRunResult`, `WorkGraphMethods.attachRun` in `@farmslot/protocol` | CLI and harnesses using the existing gateway transport |
 
-These are Proposed additive interfaces, enabled through the normal compatible protocol, CLI and gateway release after acceptance. Harnesses consume the same RPC and existing `Run.stack`; resource and recipe declaration contracts keep their current owners and formats.
+These are additive interfaces enabled through the normal compatible protocol, CLI and gateway release. Harnesses consume the same RPC and existing `Run.stack`; resource and recipe declaration contracts keep their current owners and formats.
 
 ### Alternatives considered
 
@@ -903,7 +903,7 @@ These are Proposed additive interfaces, enabled through the normal compatible pr
 
 ### Consequences
 
-Existing stores and stack retargeting maintain attached runs. No task or evidence rewrite is needed. A base change may require a fresh review under the existing budget, even when code has not changed. Keep the stacked root retained until its upstream merge and retarget are recorded. Existing graph retry supplies stopped-plan authoring, followed by explicit activation. Implementation and live proof follow acceptance of this amendment.
+Existing stores and stack retargeting maintain attached runs. No task or evidence rewrite is needed. A base change may require a fresh review under the existing budget, even when code has not changed. Keep the stacked root retained until its upstream merge and retarget are recorded. Existing graph retry supplies stopped-plan authoring, followed by explicit activation. Implementation and live proof must satisfy the accepted specification.
 
 ## Amendment: graph-owned planning retry (2026-10-13)
 

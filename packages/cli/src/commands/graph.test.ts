@@ -74,3 +74,17 @@ test('graph retry requires its reason before any gateway operation', async () =>
     code: 'commander.missingMandatoryOptionValue',
   });
 });
+
+test('graph attach-run requires its exact head before resolving a gateway', async () => {
+  const program = new Command();
+  program.exitOverride();
+  program.configureOutput({ writeErr: () => {} });
+  registerGraphCommand(program);
+  await assert.rejects(
+    program.parseAsync(['graph', 'attach-run', 'graph-1', 'node-1', 'run-1'], { from: 'user' }),
+    {
+      code: 'commander.missingMandatoryOptionValue',
+    },
+  );
+  assert.equal(GRAPH_VERB_METHODS['attach-run'], 'workGraph.attachRun');
+});

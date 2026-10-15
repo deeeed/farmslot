@@ -1059,6 +1059,7 @@ test('a verified WARM delta certifies the current full PR package head', () => {
       source: 'local-git',
       capturedAt: 'now',
       baseSha: 'pr-base',
+      baseRef: 'origin/main',
       headSha: 'current',
       diffHash: 'whole-pr',
     },
@@ -1083,11 +1084,25 @@ test('a verified WARM delta certifies the current full PR package head', () => {
       source: 'local-git',
       capturedAt: 'now',
       baseSha: 'previous',
+      baseRef: 'origin/main',
       headSha: 'current',
       diffHash: 'delta',
     },
   };
   assert.equal(reviewFinalSnapshotMatchesPreparedPackage(review, pkg), true);
+  const attached = {
+    ...pkg,
+    reviewSnapshot: { ...pkg.reviewSnapshot!, baseRef: 'origin/feature/parent' },
+  };
+  assert.equal(reviewFinalSnapshotMatchesPreparedPackage(review, attached), false);
+  assert.throws(
+    () =>
+      assertPublicationReviewPolicySatisfied(
+        makeRun({ engineState: { publishGate: { reviews: [review] } } }),
+        attached,
+      ),
+    /requires passing reviews/,
+  );
   assert.equal(
     reviewFinalSnapshotMatchesPreparedPackage(
       { ...review, session: { ...review.session!, lastReviewedHeadSha: 'current' } },

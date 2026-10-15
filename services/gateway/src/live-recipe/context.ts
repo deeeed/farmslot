@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { createReadStream, existsSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { lstat, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -24,6 +24,7 @@ import {
   resolveProjectTaskDirName,
   resolveTaskRelDir,
 } from '../core/config.js';
+import { sha256File } from '../core/file-hash.js';
 import {
   inferArtifactPurpose,
   inferTypedArtifactPurpose,
@@ -47,17 +48,6 @@ import {
 interface ArtifactScanResult {
   refs: ArtifactRef[];
   unavailable: boolean;
-}
-
-async function sha256File(filePath: string): Promise<string> {
-  const hash = createHash('sha256');
-  await new Promise<void>((resolve, reject) => {
-    const stream = createReadStream(filePath);
-    stream.on('data', (chunk) => hash.update(chunk));
-    stream.on('error', reject);
-    stream.on('end', resolve);
-  });
-  return hash.digest('hex');
 }
 
 async function sha256SlotFile(

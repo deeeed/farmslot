@@ -876,6 +876,7 @@ export class RunDetail extends RunDetailState {
       let result = await gateway.request<RunRecipeRunsForRunResult>(
         Methods.RUN_RECIPE_RUNS_FOR_RUN,
         params,
+        60_000,
       );
       // A completion can fail before publishing a group. A missing preference
       // must not replace the last available package with its hint refusal.
@@ -883,10 +884,14 @@ export class RunDetail extends RunDetailState {
         !outputDecision && recipeRunId && recipeRunId !== result.selectedRecipeRunId,
       );
       if (missingHint && result.selectedRecipeRunId) {
-        result = await gateway.request<RunRecipeRunsForRunResult>(Methods.RUN_RECIPE_RUNS_FOR_RUN, {
-          ...params,
-          recipeRunId: result.selectedRecipeRunId,
-        });
+        result = await gateway.request<RunRecipeRunsForRunResult>(
+          Methods.RUN_RECIPE_RUNS_FOR_RUN,
+          {
+            ...params,
+            recipeRunId: result.selectedRecipeRunId,
+          },
+          60_000,
+        );
       }
       if (refreshToken !== this._recipeRunsRefreshToken || this.run?.id !== run.id) return;
       this._recipeRuns = result.recipeRuns;
