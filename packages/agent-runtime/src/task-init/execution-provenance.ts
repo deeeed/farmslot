@@ -310,7 +310,7 @@ export function retainTaskExecution(
         )
       )
         continue;
-      const relative = path.join('inputs', String(retainedInputs.length));
+      const relative = path.join('inputs', String(retainedInputs.length), path.basename(source));
       const copied = retainTaskInput(source, path.join(staging, relative), [
         path.resolve(taskDir),
         store,

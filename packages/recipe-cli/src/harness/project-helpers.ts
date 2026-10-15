@@ -123,6 +123,24 @@ function readSelection(taskDir: string): TaskProjectSelection {
   };
 }
 
+/** Retain the installed dependency tree without including its owner's product files. */
+function installedInputRoot(providerRoot: string): string {
+  let modules = path.dirname(providerRoot);
+  if (path.basename(modules).startsWith('@')) modules = path.dirname(modules);
+  if (path.basename(modules) !== 'node_modules') return providerRoot;
+  const installation = path.dirname(modules);
+  const manifest = path.join(installation, 'package.json');
+  if (!fs.existsSync(manifest)) return providerRoot;
+  const config: unknown = JSON.parse(fs.readFileSync(manifest, 'utf8'));
+  if (!isRecord(config)) return providerRoot;
+  const installedName = path.relative(modules, providerRoot).split(path.sep).join('/');
+  const declared = ['dependencies', 'devDependencies', 'optionalDependencies'].some((field) => {
+    const dependencies = config[field];
+    return isRecord(dependencies) && typeof dependencies[installedName] === 'string';
+  });
+  return declared ? modules : providerRoot;
+}
+
 /** Freeze tooling only; the product checkout and task recipes stay editable. */
 export async function projectTaskExecution(
   host: ProjectRecipeHost,
@@ -185,9 +203,9 @@ export async function projectTaskExecution(
     bindingIdentity,
     inputs: [
       ...new Set([
-        binding.root,
-        binding.provider.root,
-        ...host.librarySources.map((entry) => entry.root),
+        installedInputRoot(binding.root),
+        installedInputRoot(binding.provider.root),
+        ...host.librarySources.map((entry) => installedInputRoot(entry.root)),
         ...configuration.map((entry) => entry.path),
       ]),
     ],

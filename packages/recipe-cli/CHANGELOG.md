@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
+- Preserve hoisted dependencies with retained project, provider and library packages.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.19.0 - 2026-10-15
