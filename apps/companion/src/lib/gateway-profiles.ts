@@ -102,7 +102,8 @@ export async function seedPresetGatewayProfileSecrets(profiles: GatewayProfile[]
       continue;
     }
     const existing = await SecureStore.getItemAsync(profile.secretStorageKey);
-    if (existing !== profile.presetSecret.trim()) {
+    // A launcher default seeds a new device, never replaces an explicit login.
+    if (!existing) {
       await SecureStore.setItemAsync(profile.secretStorageKey, profile.presetSecret.trim());
     }
   }

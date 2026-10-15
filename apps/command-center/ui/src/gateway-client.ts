@@ -224,6 +224,10 @@ export class GatewayClient {
     this.url = this.urls[0];
     this.auth = auth ?? resolved.auth;
     this.source = url ? 'configured' : resolved.source;
+    // Desktop settings return a newly saved credential after sign-out.
+    if (isDesktopClient() && (this.auth.token || this.auth.password)) {
+      localStorage.removeItem(GATEWAY_SIGNED_OUT_STORAGE_KEY);
+    }
     if (localStorage.getItem(GATEWAY_SIGNED_OUT_STORAGE_KEY) === 'true') {
       this.authBlocked = true;
       this.state = 'auth_required';
@@ -296,7 +300,7 @@ export class GatewayClient {
   async signOut(): Promise<void> {
     await signOutAccount({
       forgetLogin: async () => {
-        await saveDesktopCredentials({}, false);
+        await saveDesktopCredentials({});
         replaceStoredGatewayAuthForHttp({});
         localStorage.setItem(GATEWAY_SIGNED_OUT_STORAGE_KEY, 'true');
       },

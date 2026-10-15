@@ -127,4 +127,27 @@ test('sign-out disconnects, rejects pending work, survives refresh and allows de
   await assert.rejects(refreshed.signOut(), /Keychain unavailable/);
   assert.equal(refreshed.connectionState, 'connected');
   assert.equal(refreshed.authenticatedPrincipalId, 'operator');
+  const desktopSaves: Array<{ token?: string; rememberMe?: boolean; url: string }> = [];
+  window.farmslotDesktop!.loadConnection = async () => ({
+    url: 'ws://localhost:1234/ws',
+    token: 'new-settings-secret',
+    rememberMe: true,
+  });
+  window.farmslotDesktop!.saveConnection = async (value) => {
+    desktopSaves.push(value);
+  };
+  await initializeDesktopConnection();
+  store.set(GATEWAY_SIGNED_OUT_STORAGE_KEY, 'true');
+  const desktopLogin = new GatewayClient();
+  t.after(() => desktopLogin.disconnect());
+  const desktopConnected = new Promise<void>((resolve) =>
+    desktopLogin.onConnectionChange((state) => {
+      if (state === 'connected') resolve();
+    }),
+  );
+  desktopLogin.connect();
+  await desktopConnected;
+  assert.equal(desktopLogin.authenticatedPrincipalId, 'operator');
+  await desktopLogin.signOut();
+  assert.deepEqual(desktopSaves.at(-1), { url: 'ws://localhost:1234/ws', rememberMe: true });
 });

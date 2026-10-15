@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { signOutAccount } from './account-session.js';
+import { signOutAccount } from '../src/surfaces/account-session.js';
 
 test('sign-out closes the session only after durable forgetting succeeds', async () => {
   const events: string[] = [];

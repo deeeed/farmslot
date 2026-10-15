@@ -697,7 +697,9 @@ export default function SettingsScreen() {
         >
           <Text style={styles.buttonText}>{ACCOUNT_SESSION_CONTROL.label}</Text>
         </Pressable>
-        {signedOut ? <Text>{ACCOUNT_SESSION_CONTROL.signedOut}</Text> : null}
+        {signedOut ? (
+          <Text style={styles.helperTextNoMargin}>{ACCOUNT_SESSION_CONTROL.signedOut}</Text>
+        ) : null}
       </View>
 
       <View style={styles.infoSection}>

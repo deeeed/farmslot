@@ -14,6 +14,7 @@ import {
   type GatewayProfileAuthMode,
   mobileGatewayProfileUrlError,
   readGatewayProfileSecret,
+  seedPresetGatewayProfileSecrets,
 } from '../../lib/gateway-profiles';
 import { useConnectionStore } from '../../store/connection';
 
@@ -71,8 +72,11 @@ export function useGatewayProfileController(options: GatewayProfileControllerOpt
 
   const testProfileConnection = async (
     profile: GatewayProfile,
+    restorePresetSecret = false,
   ): Promise<ProfileConnectionTestState> => {
     try {
+      // Explicit selection can restore a bundled preset after local sign-out.
+      if (restorePresetSecret) await seedPresetGatewayProfileSecrets([profile]);
       const auth = await authCredentialsForProfile(profile);
       if (profile.authMode !== 'none' && Object.keys(auth).length === 0) {
         throw new Error(`No ${profile.authMode} credential is saved for this profile.`);
@@ -142,7 +146,7 @@ export function useGatewayProfileController(options: GatewayProfileControllerOpt
       ...current,
       [profile.id]: testingState(profile, 'Validating'),
     }));
-    const result = await testProfileConnection(profile);
+    const result = await testProfileConnection(profile, true);
     setProfileConnectionTests((current) => ({ ...current, [profile.id]: result }));
     if (result.status !== 'healthy') {
       Alert.alert(
