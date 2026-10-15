@@ -65,6 +65,7 @@ import { diffArtifactCandidate } from '../../lib/diff';
 import {
   evidenceMediaItems,
   evidenceViewerSelection,
+  recordedEvidenceArtifactUrl,
   selectedEvidenceMediaItem,
 } from '../../lib/evidence-media-items';
 import { gateReviewHref, HUMAN_GATE_DECISION_TYPE } from '../../lib/gate-review';
@@ -1619,23 +1620,15 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
                   });
               }}
               onOpenRecordedEvidence={(model, path) => {
-                const uri = artifactUrlForEntry(gatewayUrl, presentation.runId!, {
+                const item = selectedEvidenceMediaItem(
+                  model,
                   path,
-                  purpose: 'evidence',
-                });
-                setComparisonViewerItems([
-                  selectedEvidenceMediaItem(
-                    model,
-                    path,
-                    (path) =>
-                      artifactUrlForEntry(gatewayUrl, presentation.runId!, {
-                        path,
-                        purpose: 'evidence',
-                      }),
-                    artifactAuthHeaders,
-                  ),
-                ]);
-                setViewerUri(uri);
+                  (path) =>
+                    recordedEvidenceArtifactUrl(gatewayUrl, presentation.runId!, model, path),
+                  artifactAuthHeaders,
+                );
+                setComparisonViewerItems([item]);
+                setViewerUri(item.uri);
               }}
               authHeaders={artifactAuthHeaders}
               onOpenVisual={openVisualArtifact}

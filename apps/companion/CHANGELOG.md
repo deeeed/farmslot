@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Keep recorded comparison previews and media on their captured bundle when newer output is retained.
+
 - Open Unassigned comparison media through its recorded selection, replacing the previous proof gallery.
 
 - Show selected AC proof first and keep supporting files and checks collapsed in run reviews.

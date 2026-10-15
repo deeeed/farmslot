@@ -5,8 +5,29 @@ import type { MediaViewerItem } from '../components/MediaViewer';
 import {
   type ArtifactHttpHeaders,
   type ArtifactManifestEntry,
+  artifactUrl,
   classifyArtifact,
+  CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
 } from './artifact-url';
+
+/** Keep the model's captured bundle and distinguish task paths from selected-root refs. */
+export function recordedEvidenceArtifactUrl(
+  gatewayUrl: string,
+  runId: string,
+  model: EvidenceReviewModel,
+  path: string,
+): string {
+  return artifactUrl(
+    gatewayUrl,
+    runId,
+    path,
+    model.report?.artifactManifest.some((entry) => entry.path === path)
+      ? CURRENT_ARTIFACTS_RECIPE_RUN_PARAM
+      : undefined,
+    undefined,
+    model.report?.artifactBundle?.bundleDigest,
+  );
+}
 
 /** Native transport adapter. Captions and range selection belong to the shared SDK model. */
 export function evidenceMediaItems(

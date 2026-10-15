@@ -11,6 +11,7 @@ import type { RecordedEvidencePackageInput } from '@farmslot/protocol';
 import {
   evidenceRecordingForPath,
   evidenceViewerSelection,
+  recordedEvidenceArtifactUrl,
   selectedEvidenceMediaItem,
 } from './evidence-media-items';
 
@@ -97,4 +98,50 @@ test('selecting Unassigned media replaces a prior claim in the recorded viewer',
   assert.equal(model.playback.clip, null);
   assert.equal(item.mediaType, 'image');
   assert.equal(evidenceViewerSelection(item.uri, [], [item]).index, 0);
+});
+
+test('recorded media and dependent URLs keep the model bundle and full task path', () => {
+  const digest = 'a'.repeat(64);
+  const videoPath = `artifacts/head/${fixture.input.claims?.recording.segments[0]?.videoPath}`;
+  const model = createEvidenceReviewModel({
+    package: fixture.input,
+    artifactPrefix: 'artifacts/head/',
+    report: {
+      artifactManifest: [
+        { path: videoPath, purpose: 'evidence' },
+        { path: 'artifacts/head/timeline.json', purpose: 'evidence' },
+      ],
+      manifestDigest: 'recorded-inventory',
+      artifactBundle: {
+        storeId: 'recorded-store',
+        taskKey: 'recorded-task',
+        bundleDigest: digest,
+        manifestDigest: 'recorded-inventory',
+      },
+    },
+  });
+  model.selectClaim('check-1');
+  const path = model.artifactPath(model.playback.clip!.videoPath);
+  const resolve = (path: string) =>
+    recordedEvidenceArtifactUrl('ws://gateway/ws', 'retained-run', model, path);
+  const item = selectedEvidenceMediaItem(model, path, resolve, {});
+  for (const uri of [item.uri, item.resolveArtifactUrl!('artifacts/head/timeline.json')]) {
+    const url = new URL(uri);
+    assert.equal(url.searchParams.get('bundleDigest'), digest);
+    assert.equal(url.searchParams.get('recipeRunId'), 'current-artifacts');
+    assert.equal(url.searchParams.get('runId'), 'retained-run');
+  }
+  assert.equal(new URL(item.uri).searchParams.get('path'), path);
+  assert.equal(
+    new URL(item.resolveArtifactUrl!('artifacts/head/timeline.json')).searchParams.get('path'),
+    'artifacts/head/timeline.json',
+  );
+  assert.equal(
+    new URL(resolve('artifacts/selected-root.png')).searchParams.get('recipeRunId'),
+    null,
+  );
+  assert.equal(
+    new URL(resolve('artifacts/selected-root.png')).searchParams.get('bundleDigest'),
+    digest,
+  );
 });
