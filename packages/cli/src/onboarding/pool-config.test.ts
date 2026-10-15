@@ -30,6 +30,34 @@ test('validatePoolConfig accepts a minimal valid pool', () => {
   );
 });
 
+test('validatePoolConfig rejects release versions and dates in slot repo paths', () => {
+  for (const repo of [
+    '/repos/mobile-8.14.0/source',
+    '/repos/release/v8.16.0',
+    '/repos/mobile-20260930',
+    '/repos/mobile-2026-09-30/source',
+    '/repos/mobile_2026_09_30',
+    '/repos/2026/09/30/mobile',
+  ]) {
+    const errors = validatePoolConfig(pool([{ id: 'm-app-1', repo, session: 'app-1' }]));
+    assert.ok(
+      errors.some((error) => error.includes("slots[0]: 'repo'") && error.includes('stable')),
+      repo,
+    );
+  }
+  for (const repo of [
+    '/repos/mobile-pixel6/source',
+    '/repos/app-2',
+    '/repos/device-21261FDF6001SP',
+  ]) {
+    assert.deepEqual(
+      validatePoolConfig(pool([{ id: 'm-app-1', repo, session: 'app-1' }])),
+      [],
+      repo,
+    );
+  }
+});
+
 test('validatePoolConfig reports actionable errors', () => {
   assert.deepEqual(validatePoolConfig('nope'), ['pool config must be a JSON object']);
   const errors = validatePoolConfig({ machine: '', slots: [{ id: 'a', repo: '', session: 's' }] });
