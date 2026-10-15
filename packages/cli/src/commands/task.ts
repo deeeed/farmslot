@@ -111,7 +111,8 @@ export async function runTaskCommand(
     if (
       options.project !== undefined ||
       !(error instanceof shared.ProjectBindingError) ||
-      error.code !== 'PROJECT_NOT_FOUND'
+      error.code !== 'PROJECT_NOT_FOUND' ||
+      error.selectedProject !== undefined
     )
       throw error;
     return shared.handleTaskInit(
