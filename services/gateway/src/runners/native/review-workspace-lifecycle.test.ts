@@ -15,10 +15,29 @@ import type {
   NativeWorkerSessionBinding,
   Run,
 } from '@farmslot/protocol';
+import type { RawPoolJson } from '@farmslot/slot-config';
 
 import { GatewayMethodError } from '../../core/method-error.js';
 
 import { NativeWorkerOperationUncertainError } from './worker-error.js';
+
+await import('../../runtime/mock-pty.test-support.js');
+const config = await import('../../core/config.js');
+const configuredPool: RawPoolJson = {
+  machine: 'host',
+  os: 'macos',
+  host: 'localhost',
+  project: 'demo',
+  platform: 'test',
+  ssh_user: 'fixture',
+  slots: [],
+  claude_path: '/configured/outside-path/claude',
+};
+mock.module('../../core/config.js', {
+  namedExports: { ...config, loadMachinePool: async () => configuredPool },
+});
+let selectedExecutable = 'codex';
+let executableSelections: Array<{ runner: string; machine?: RawPoolJson }> = [];
 
 type Call = { method: string; params: Record<string, unknown> };
 let run: Run;
@@ -108,6 +127,10 @@ mock.module('../../security/native-worker-owner.js', {
 });
 mock.module('../launch-command.js', {
   namedExports: {
+    interactiveRunnerExecutable: (options: { runner: string; machine?: RawPoolJson }) => {
+      executableSelections.push(options);
+      return selectedExecutable;
+    },
     resolveRunnerEffort: () => undefined,
     taskRecipeTrustEnvironment: () => ({ set: {}, unset: [] }),
   },
@@ -150,7 +173,7 @@ mock.module('./node.js', {
             workerLeaseId: String(params.leaseId),
             workerManaged: true,
             nativeSessionId: 'saved-conversation',
-            runner: 'codex',
+            runner: String(params.runner),
             cwd: '/source',
             executable: 'codex',
             version: '0.154.0',
@@ -216,6 +239,8 @@ const { launchReviewWorkspaceWorker, readReviewWorkspaceWorker, cancelReviewWork
   await import('./review-workspace.js');
 
 function reset() {
+  selectedExecutable = 'codex';
+  executableSelections = [];
   calls = [];
   commands = new Map();
   host = undefined;
@@ -460,4 +485,20 @@ test('native launch binds recorded reference paths and keeps them read-only', as
     '/support',
     '/dev/mobile-ref',
   ]);
+});
+
+test('native review pins the configured machine executable instead of PATH-selected project shims', async () => {
+  reset();
+  run.metrics.runner = 'claude';
+  run.metrics.model = 'opus';
+  selectedExecutable = configuredPool.claude_path!;
+  await launch();
+  const ensure = calls.find((call) => call.method === NATIVE_WORKER_ENSURE);
+  assert.ok(ensure);
+  const launchInput = ensure.params.launch;
+  assert.ok(launchInput && typeof launchInput === 'object');
+  assert.equal(Reflect.get(launchInput, 'executable'), configuredPool.claude_path);
+  assert.equal(executableSelections.length, 1);
+  assert.equal(executableSelections[0]?.runner, 'claude');
+  assert.equal(executableSelections[0]?.machine, configuredPool);
 });
