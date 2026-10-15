@@ -23,7 +23,7 @@ existing review result; retry attempts do not increase the qualifying-review cou
 
 ## Round budget
 
-The gateway MUST admit at most five reviewer rounds for a repository/PR. Before
+The gateway MUST default to at most five reviewer rounds for a repository/PR. Before
 a PR identity exists, admission is scoped to its canonical run. Initial, retry,
 WARM/COLD, pipeline, standalone and publish-gate reviewer attempts MUST spend
 this same budget, including failed and interrupted attempts. A worker fix is
@@ -36,11 +36,55 @@ can start. Replay, restart and a different gate or run MUST NOT refund rounds.
 Copied review histories MUST NOT count the same admitted attempt twice. The
 round budget is separate from the number of qualifying passing reviewer sessions.
 
-The gate MUST show `N/5` and refuse a sixth round before consuming its request
+Without an authorized extension, the gate MUST show `N/5` and refuse a sixth round before consuming its request
 or starting a reviewer. The refusal MUST tell the operator to stop and diagnose
 a design problem or scope creep, then narrow the scope or redesign. Spending all
 five rounds MUST NOT prevent publication when all existing approval conditions
 are satisfied.
+
+### Scoped extension
+
+**Status:** Accepted (lead, 2026-10-15) under ADR-063 Amendment 1.
+
+`run.extendReviewBudget` MUST use existing admin authorization and capture the
+authenticated request origin. Caller-supplied approver names or system/worker
+signals MUST NOT grant authority. The operator must have lead approval for the
+recorded scope; a service credential retains its service identity and cannot
+claim to be a person. Existing credential and principal revocation checks apply.
+
+The request names a stored, nonarchived unpublished run, including a failed or
+interrupted run, its full current head SHA, a finite integer absolute limit
+greater than its effective limit by one to five rounds, a nonempty scope brief, an idempotency key and
+the expected prior limit. A new grant MUST refuse an already published, archived
+or unrelated run, invalid inputs, unknown/live-head drift, unauthorized origin
+or conflicting prior limit before any state or runner mutation.
+
+The receipt MUST retain the request identity, run and source/PR identity,
+approved head, prior/new limits, scope brief, authenticated origin and time.
+Serialize the grant with review admission, recheck state/head after asynchronous
+reads, and persist the receipt before using its extra capacity. An exact retry
+returns the original receipt; reuse of its key for different inputs refuses.
+Existing admissions MUST remain unchanged. Restart, replay and a copied result
+MUST NOT refund attempts or apply the same extension twice.
+
+The effective limit and used count MUST come from the existing admission owner.
+Before a PR exists, the receipt applies only to its canonical run. Once the run
+has a verified repository/PR identity, the existing shared scope MUST preserve
+that receipt and its admissions across active and archived history. A different
+run MUST NOT obtain a fresh default budget for the same PR. The original run
+remains the execution and publication owner.
+
+The gate shows `N/L` and the grant's scope/provenance. The current approved
+scope brief MUST accompany additional reviewer instructions. A grant does not
+start a reviewer, reset worker-fix retries, mark a result passed or authorize
+publication. Existing review requests/replay collect real results on the same
+run, preserving WARM lineage, immutable ranges, failed-attempt accounting and
+the number of required qualifying reviewers.
+
+Validation MUST cover unauthorized/stale requests, exact retry and conflicting
+keys, concurrent grants/admissions, restart/archive scope preservation, refusal
+without an extension and real sixth/seventh admissions after a bounded grant.
+An extension MUST NOT make stale reviews or an old package publishable.
 
 ## Session and range
 
@@ -125,3 +169,10 @@ Tests and live receipts MUST prove fresh COLD identity/full range, retained WARM
 identity/delta range, unavailable-WARM refusal, runner-choice-independent
 eligibility, effort preservation and sequence round trips. Web/mobile proof
 MUST exercise the shared picker through user input, not injected UI state.
+
+## Diff scope
+
+The shared minimal-diff policy is owned by `@farmslot/agent-runtime/scripts/review-diff-scope.cjs`. Worker task documents, independent review prompts and the cross-review orchestrator consume that definition. Every verdict includes its `Diff scope` table. Warm review narrows correctness review to the saved delta; its scope inventory still covers the whole contribution against the publication base.
+
+The public read-only script prints the policy with `instructions`, or the policy plus changed paths and sensitive-path candidates with `packet <repository> <publication-base> <head>`. Candidates require review against the frozen ticket; the scanner neither grants an exception nor detects semantic refactors or formatting churn. It does not change source, review results or publication authority.
+Grant-time head records provenance. Later fix heads on the same owned branch use current-head review rules and the recorded scope. An extension survives retirement of its granting run within the same PR scope. The command requires `--request-id` and accepts `--expected-limit` for a compare-and-set grant.

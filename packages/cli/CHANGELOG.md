@@ -7,6 +7,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 - Show available QA profiles and the --qa-profile recovery flag when a multi-profile farm needs a choice.
 - Add graph attach-run for verified unpublished retained work, without dispatching another run.
 - Add explicit retired principal-id replacement to principal create for approved identity cutovers.
+- Add run extend-review-budget for scoped additional native review rounds.
 
 - Use explicit local credentials for startup and gateway profiles for authentication; retire unused principals through guarded online or offline commands.
 - Let live conformance use the shared recording mode and opt-out reason, and report missing HUD observations as warnings while retaining required captures and cleanup proof.
