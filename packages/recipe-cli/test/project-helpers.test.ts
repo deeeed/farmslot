@@ -157,6 +157,94 @@ test('retained provider gates survive a provider update and ordinary source edit
   });
 });
 
+test('retained installed providers keep hoisted dependencies after installation removal', async (t) => {
+  const f = fixture(t);
+  const installation = path.join(f.root, 'provider-installation');
+  const providerRoot = path.join(installation, 'node_modules/@fixture/provider');
+  const dependencyRoot = path.join(installation, 'node_modules/provider-dependency');
+  fs.mkdirSync(providerRoot, { recursive: true });
+  fs.mkdirSync(dependencyRoot, { recursive: true });
+  fs.writeFileSync(
+    path.join(installation, 'package.json'),
+    JSON.stringify({ private: true, dependencies: { '@fixture/provider': '1.0.0' } }),
+  );
+  fs.writeFileSync(path.join(installation, 'private-note.txt'), 'Unrelated product input.');
+  fs.writeFileSync(
+    path.join(providerRoot, 'package.json'),
+    JSON.stringify({
+      name: '@fixture/provider',
+      version: '1.0.0',
+      type: 'module',
+      exports: './provider.mjs',
+      dependencies: { 'provider-dependency': '1.0.0' },
+    }),
+  );
+  fs.writeFileSync(
+    path.join(dependencyRoot, 'package.json'),
+    JSON.stringify({
+      name: 'provider-dependency',
+      version: '1.0.0',
+      type: 'module',
+      exports: './index.mjs',
+    }),
+  );
+  fs.writeFileSync(
+    path.join(dependencyRoot, 'index.mjs'),
+    "import fs from 'node:fs'; import path from 'node:path'; export const ready = task => fs.existsSync(path.join(task, 'allowed'));",
+  );
+  fs.writeFileSync(
+    path.join(providerRoot, 'provider.mjs'),
+    "import {ready} from 'provider-dependency';\n" +
+      fs
+        .readFileSync(path.join(f.pack, 'provider.mjs'), 'utf8')
+        .replace("ready: (task) => fs.existsSync(path.join(task, 'allowed'))", 'ready'),
+  );
+  const entry = f.options.projects?.[0];
+  assert.ok(entry?.config.recipe);
+  const config = {
+    ...entry.config,
+    recipe: {
+      ...entry.config.recipe,
+      provider: {
+        package: '@fixture/provider',
+        module: '@fixture/provider',
+        root: { projectPath: path.relative(f.checkout, providerRoot) },
+      },
+    },
+  };
+  fs.writeFileSync(path.join(f.pack, 'project.json'), JSON.stringify(config));
+  const options = { ...f.options, projects: [{ root: f.pack, config }] };
+  await withProjectRecipeHost(options, async (host) => {
+    const execution = await projectTaskExecution(host, {
+      executable: path.join(f.installed, 'farmslot'),
+      packageRoot: f.installed,
+      distributionRoot: f.installed,
+    });
+    const receipt = retainTaskExecution(f.taskDir, execution);
+    const dependencies = receipt.retainedInputs.find(
+      (entry) => entry.source === path.join(installation, 'node_modules'),
+    );
+    assert.ok(dependencies);
+    assert.equal(fs.existsSync(path.join(dependencies.path, 'private-note.txt')), false);
+  });
+  fs.rmSync(installation, { recursive: true });
+  let loaded = false;
+  const refused = await withTaskProjectHost(options, f.taskDir, async ({ provider }) => {
+    loaded = true;
+    return handleChecklist(['mark', f.taskDir, '1'], provider.commandOptions?.task);
+  });
+  assert.equal(loaded, true);
+  assert.notEqual(refused, 0);
+  assert.doesNotMatch(fs.readFileSync(path.join(f.taskDir, 'CHECKLIST.md'), 'utf8'), /\[x\]/);
+  fs.writeFileSync(path.join(f.taskDir, 'allowed'), 'yes');
+  assert.equal(
+    await withTaskProjectHost(options, f.taskDir, async ({ provider }) =>
+      handleChecklist(['mark', f.taskDir, '1'], provider.commandOptions?.task),
+    ),
+    0,
+  );
+});
+
 test('an unconfigured discovered provider refuses before pin creation', async (t) => {
   const f = fixture(t);
   const config = f.options.projects?.[0]?.config;
