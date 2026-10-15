@@ -1,6 +1,9 @@
 {
   "description": "UI-only gateway methods deliberately without a dedicated farmslot subcommand. Generated from surface=na entries in cli-protocol-method-matrix.json by scripts/quality/check-method-matrix.mjs. Every registry method must have a typed CLI surface, an interim rpc-only classification, or an entry here with a reason.",
   "methods": {
+    "auth.session.refresh": {
+      "reason": "Transport-private renewal through the shared PersonSessionClient; refresh tokens never authenticate general RPCs."
+    },
     "chat.abort": {
       "reason": "Command Center chat surface (web UI)."
     },

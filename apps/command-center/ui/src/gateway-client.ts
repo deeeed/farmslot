@@ -39,7 +39,7 @@ import {
   GATEWAY_URL_STORAGE_KEY,
   gatewayWebSocketToHttpOrigin,
   parseHostedGatewayConnection,
-  readGatewayAuth,
+  readStoredGatewayAuth,
   replaceStoredGatewayAuthForHttp,
   resolveGatewayConnectionSource,
   resolveGatewayWebSocketUrls,
@@ -137,7 +137,7 @@ function resolveBrowserGatewayConnection(): BrowserGatewayConnection {
     };
   }
   const env = (import.meta as ImportMetaWithEnv).env ?? {};
-  const storedAuth = readGatewayAuth();
+  const storedAuth = readStoredGatewayAuth();
   const hosted = parseHostedGatewayConnection(location.hash);
   const signedOut = localStorage.getItem(GATEWAY_SIGNED_OUT_STORAGE_KEY) === 'true';
   const token = signedOut ? undefined : (hosted.token ?? storedAuth.token);
@@ -302,7 +302,7 @@ export class GatewayClient {
       query.delete('connect');
       history.replaceState(null, '', `#${route}${query.size ? `?${query}` : ''}`);
     }
-    clearGatewayMemoryAuth();
+    setGatewayMemoryAuth({}, this.url);
     syncBrowserHttpAuthCookie({}, this.url);
   }
 
@@ -363,6 +363,8 @@ export class GatewayClient {
     this.person = this.createPersonClient();
     this.rememberMe = rememberMe;
     this.auth = auth;
+    setGatewayMemoryAuth({}, this.url);
+    syncBrowserHttpAuthCookie({}, this.url);
     this.explicitSignIn = true;
     localStorage.removeItem(GATEWAY_SIGNED_OUT_STORAGE_KEY);
     this.authBlocked = false;

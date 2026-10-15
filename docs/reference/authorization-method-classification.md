@@ -20,6 +20,10 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `assessment.summary`                    | admin          |                                                                                    |
 | `assessment.test`                       | admin          |                                                                                    |
 | `auth.connect`                          | admin          |                                                                                    |
+| `auth.session.exchange`                 | admin          |                                                                                    |
+| `auth.session.list`                     | admin          |                                                                                    |
+| `auth.session.refresh`                  | admin          |                                                                                    |
+| `auth.session.revoke`                   | admin          |                                                                                    |
 | `backlog.archive`                       | admin          |                                                                                    |
 | `backlog.autoDispatchTick`              | admin          |                                                                                    |
 | `backlog.closeShipped`                  | admin          |                                                                                    |

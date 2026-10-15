@@ -189,7 +189,15 @@ export function readGatewayAuth(): { token?: string; password?: string } {
     (typeof localStorage === 'undefined' ? null : localStorage.getItem(GATEWAY_URL_STORAGE_KEY));
   if (memoryAuth && (!selected || gatewayWebSocketToHttpOrigin(selected) === memoryAuth.origin))
     return memoryAuth.auth;
-  if (isDesktopClient()) return { token: desktop?.token, password: desktop?.password };
+  return readStoredGatewayAuth();
+}
+
+/** Unverified legacy credentials are read only for the authentication handshake. */
+export function readStoredGatewayAuth(): { token?: string; password?: string } {
+  if (isDesktopClient()) {
+    const connection = getDesktopConnection();
+    return { token: connection?.token, password: connection?.password };
+  }
   if (typeof localStorage === 'undefined') return {};
   return {
     token: localStorage.getItem(GATEWAY_TOKEN_STORAGE_KEY) ?? undefined,

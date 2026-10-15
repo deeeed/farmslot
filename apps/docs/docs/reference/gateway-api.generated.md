@@ -64,6 +64,10 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `assessment.summary`                    | assessment       | read-only     | —      | —      | Assessment Summary gateway method.                    |
 | `assessment.test`                       | assessment       | bounded-write | —      | —      | Assessment Test gateway method.                       |
 | `auth.connect`                          | auth             | bounded-write | —      | —      | Auth Connect gateway method.                          |
+| `auth.session.exchange`                 | auth             | bounded-write | —      | —      | Auth Session Exchange gateway method.                 |
+| `auth.session.list`                     | auth             | read-only     | —      | —      | Auth Session List gateway method.                     |
+| `auth.session.refresh`                  | auth             | bounded-write | —      | —      | Auth Session Refresh gateway method.                  |
+| `auth.session.revoke`                   | auth             | bounded-write | —      | —      | Auth Session Revoke gateway method.                   |
 | `backlog.archive`                       | backlog          | bounded-write | —      | —      | Backlog Archive gateway method.                       |
 | `backlog.autoDispatchTick`              | backlog          | bounded-write | —      | —      | Backlog AutoDispatchTick gateway method.              |
 | `backlog.closeShipped`                  | backlog          | bounded-write | —      | —      | Backlog CloseShipped gateway method.                  |
