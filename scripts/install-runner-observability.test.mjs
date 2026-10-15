@@ -1483,3 +1483,56 @@ test('pi install seeds PI xAI oauth from Grok CLI when PI has none', () => {
   assert.equal(piAuth.xai.refresh, 'refresh-token');
   assert.equal(typeof piAuth.xai.expires, 'number');
 });
+
+test('cursor launch setup disables commit attribution and preserves unrelated settings', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-attribution-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  for (const location of ['home', 'xdg', 'override']) {
+    const dir = path.join(home, location);
+    const configDir =
+      location === 'xdg'
+        ? path.join(dir, 'cursor')
+        : location === 'home'
+          ? path.join(dir, '.cursor')
+          : dir;
+    const configPath = path.join(configDir, 'cli-config.json');
+    fs.mkdirSync(configDir, { recursive: true });
+    const original = {
+      version: 1,
+      editor: { vimMode: true },
+      permissions: { allow: ['Shell(git)'], deny: [] },
+      attribution: { attributeCommitsToAgent: true, attributePRsToAgent: true },
+      authInfo: { email: 'fixture@example.test' },
+    };
+    fs.writeFileSync(configPath, JSON.stringify(original));
+    const env = {
+      HOME: dir,
+      CURSOR_CONFIG_DIR: location === 'override' ? dir : '',
+      XDG_CONFIG_HOME: location === 'xdg' ? dir : '',
+    };
+    installToTempDir('cursor', home, env);
+    assert.deepEqual(JSON.parse(fs.readFileSync(configPath, 'utf8')), {
+      ...original,
+      attribution: { ...original.attribution, attributeCommitsToAgent: false },
+    });
+    assert.equal(fs.statSync(configPath).mode & 0o777, 0o600);
+    const first = fs.readFileSync(configPath, 'utf8');
+    installToTempDir('cursor', home, env);
+    assert.equal(fs.readFileSync(configPath, 'utf8'), first);
+  }
+});
+
+test('cursor launch setup creates missing config and refuses malformed config', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-attribution-empty-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const env = { HOME: dir, CURSOR_CONFIG_DIR: dir, XDG_CONFIG_HOME: '' };
+  const config = path.join(dir, 'cli-config.json');
+  installToTempDir('cursor', dir, env);
+  assert.equal(
+    JSON.parse(fs.readFileSync(config, 'utf8')).attribution.attributeCommitsToAgent,
+    false,
+  );
+  fs.writeFileSync(config, '{invalid');
+  assert.throws(() => installToTempDir('cursor', dir, env));
+  assert.equal(fs.readFileSync(config, 'utf8'), '{invalid');
+});

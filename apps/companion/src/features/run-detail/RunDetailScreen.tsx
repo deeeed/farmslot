@@ -521,7 +521,7 @@ export default function RunDetailScreen() {
     );
   }
 
-  const lifecycle = deriveRunLifecycleView({ status: run.status });
+  const lifecycle = deriveRunLifecycleView(run);
   const statusColor =
     STATUS_COLORS[run.status] ??
     {
@@ -626,7 +626,9 @@ export default function RunDetailScreen() {
               <Text style={[styles.flowText, { color: colors.accent }]}>{run.flowType}</Text>
             </View>
             <View style={[styles.statusBadge, { backgroundColor: statusColor + '30' }]}>
-              <Text style={[styles.statusText, { color: statusColor }]}>{lifecycle.label}</Text>
+              <Text style={[styles.statusText, { color: statusColor }]}>
+                {lifecycle.activityLabel ?? lifecycle.label}
+              </Text>
             </View>
           </View>
           <Text style={styles.ticketText}>{run.ticketOrPr}</Text>

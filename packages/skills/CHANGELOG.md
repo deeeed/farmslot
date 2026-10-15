@@ -6,6 +6,14 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.6.14 - 2026-10-15
+
+- Use the retained task-tooling runtime dependency set.
+
+## 0.6.13 - 2026-10-15
+
+- Use the operator-wait runtime and protocol dependency set.
+
 ## 0.6.12 - 2026-10-15
 
 - Align the published dependency set with the plain runtime and action contract names.

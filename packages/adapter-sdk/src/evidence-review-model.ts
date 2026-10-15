@@ -16,6 +16,7 @@ import {
   projectClaimUntestableOverride,
   type RecipeClaimDeclaration,
   type RecipeClaimKind,
+  type RecipeRecordingMarker,
   type RecipeRecordingTimelineBinding,
   type RecipeRecordingTimelineDocument,
   recipeTraceEntries,
@@ -66,6 +67,10 @@ import {
   type EvidenceReviewPackageStatus,
   evidenceReviewPackageStatus,
 } from './evidence-review-status.js';
+import {
+  type EvidenceReviewTimelineGroup,
+  evidenceReviewTimelineGroups,
+} from './evidence-review-timeline.js';
 
 export type EvidenceReviewContext = 'gate' | 'pr-preview' | 'run-detail' | 'artifact';
 export type EvidenceReviewTiming = 'measured' | 'untimed' | 'outside-recording';
@@ -187,6 +192,12 @@ export interface EvidenceReviewPlaybackEffect {
   sourceChanged: boolean;
 }
 
+export interface EvidenceReviewRecordingSelection {
+  videoPath: string;
+  mediaDurationMs?: number;
+  phase?: 'start' | 'end';
+}
+
 export interface EvidenceReviewModel {
   artifactRole(path: string): 'before' | 'after' | 'review' | null;
   pairedArtifacts<T extends { path: string }>(
@@ -239,7 +250,20 @@ export interface EvidenceReviewModel {
   readonly report: EvidenceReviewInput['report'];
   readonly packageStatus: EvidenceReviewPackageStatus | null;
   selectClaim(id: string, artifactPath?: string): EvidenceReviewSelection | null;
-  selectOccurrence(traceIndex: number): EvidenceReviewSelection | null;
+  selectOccurrence(
+    traceIndex: number,
+    recording?: EvidenceReviewRecordingSelection,
+  ): EvidenceReviewSelection | null;
+  timelineGroups(
+    videoPath: string,
+    claimId?: string,
+    mediaDurationMs?: number,
+  ): readonly EvidenceReviewTimelineGroup[];
+  selectTimelineGroup(
+    videoPath: string,
+    groupId: string,
+    mediaDurationMs?: number,
+  ): EvidenceReviewPlaybackEffect;
   selectReport(): EvidenceReviewSelection | null;
   clearSelection(): void;
   artifactPath(path: string): string;
@@ -574,6 +598,21 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     clipIndex++;
     return effect(next.startMs, false, true);
   };
+  const clipForSpan = (
+    timeline: RecipeRecordingTimelineDocument,
+    first: RecipeRecordingMarker,
+    last: RecipeRecordingMarker,
+    caption: string,
+    videoDigest = timeline.videoDigest,
+  ): EvidenceReviewClip => ({
+    videoPath: timeline.videoPath,
+    videoDigest,
+    traceIndex: first.traceIndex,
+    momentMs: (first.startRangeMs[0] + first.startRangeMs[1]) / 2,
+    startMs: Math.max(0, first.startRangeMs[0] - EVIDENCE_PADDING_MS),
+    endMs: Math.min(timeline.durationMs, last.endRangeMs[1] + EVIDENCE_PADDING_MS),
+    caption,
+  });
   const clipsFor = (traceIndex: number): EvidenceReviewClip[] => {
     if (errors.length) return [];
     const coverage = occurrenceRecordingCoverage(traceIndex, segments, timelines);
@@ -582,13 +621,13 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       const timeline = timelines.get(segment.videoPath)!;
       const marker = timeline.markers.find((marker) => marker.traceIndex === traceIndex)!;
       return {
-        videoPath: segment.videoPath,
-        videoDigest: segment.videoDigest,
-        traceIndex,
-        momentMs: (marker.startRangeMs[0] + marker.startRangeMs[1]) / 2,
-        startMs: Math.max(0, marker.startRangeMs[0] - EVIDENCE_PADDING_MS),
-        endMs: Math.min(timeline.durationMs, marker.endRangeMs[1] + EVIDENCE_PADDING_MS),
-        caption: byOccurrence.get(traceIndex)?.intent ?? marker.nodeId,
+        ...clipForSpan(
+          timeline,
+          marker,
+          marker,
+          byOccurrence.get(traceIndex)?.intent ?? marker.nodeId,
+          segment.videoDigest,
+        ),
         ...(recipeRunId
           ? { moment: { recipeRunId, videoDigest: segment.videoDigest, traceIndex } }
           : {}),
@@ -754,6 +793,75 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
           : (offeredNext?.label ?? nextReason?.message ?? 'Use the current gate action'),
       }
     : null;
+  const markerSeekMs: EvidenceReviewModel['markerSeekMs'] = (
+    videoPath,
+    traceIndex,
+    phase,
+    mediaDurationMs,
+  ) => {
+    if (
+      errors.length ||
+      !playbackSources.has(videoPath) ||
+      occurrenceRecordingCoverage(
+        traceIndex,
+        playbackSources.get(videoPath)!.segments,
+        playbackSources.get(videoPath)!.timelines,
+      ).timing !== 'measured'
+    )
+      return null;
+    const timeline = timelines.get(videoPath);
+    const marker = timeline?.markers.find((marker) => marker.traceIndex === traceIndex);
+    if (!timeline || !marker) return null;
+    const bounds = phase === 'start' ? marker.startRangeMs : marker.endRangeMs;
+    const first = timeline.framesMs[0];
+    const last = timeline.framesMs.at(-1);
+    const duration = Math.min(timeline.durationMs, mediaDurationMs ?? timeline.durationMs);
+    if (
+      first === undefined ||
+      last === undefined ||
+      bounds[1] < first ||
+      !Number.isFinite(duration) ||
+      bounds[0] >= duration
+    )
+      return null;
+    return clamp((bounds[0] + bounds[1]) / 2, first, Math.min(last, duration));
+  };
+  const markerBelongsToClaim = (
+    videoPath: string,
+    marker: RecipeRecordingMarker,
+    claimId: string,
+  ): boolean =>
+    Boolean(marker.proves?.includes(claimId)) ||
+    Boolean(
+      pkg &&
+      packageClaims &&
+      !errors.length &&
+      headTimelines.has(videoPath) &&
+      byClaim
+        .get(claimId)
+        ?.occurrences.some(
+          (occurrence) =>
+            occurrence.traceIndex === marker.traceIndex && occurrence.nodeId === marker.nodeId,
+        ),
+    );
+  const timelineGroups: EvidenceReviewModel['timelineGroups'] = (
+    videoPath,
+    claimId = selection?.claimId,
+    mediaDurationMs,
+  ) => {
+    const timeline = timelines.get(videoPath);
+    return timeline
+      ? evidenceReviewTimelineGroups(
+          timeline.markers,
+          (marker, phase) => markerSeekMs(videoPath, marker.traceIndex, phase, mediaDurationMs),
+          claimId,
+          (marker) => (claimId ? markerBelongsToClaim(videoPath, marker, claimId) : false),
+        ).map((group) => ({
+          ...group,
+          id: `${timeline.videoDigest}:${timeline.traceDigest}:${videoPath}:${group.id}`,
+        }))
+      : [];
+  };
   return {
     artifactRole(path) {
       const media = comparison.media.find((entry) => entry.artifactPath === path && entry.eligible);
@@ -946,11 +1054,61 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       }
       return selected;
     },
-    selectOccurrence(traceIndex) {
+    selectOccurrence(traceIndex, recording) {
+      if (recording) {
+        const timeline = timelines.get(recording.videoPath);
+        const marker = timeline?.markers.find((entry) => entry.traceIndex === traceIndex);
+        if (
+          !timeline ||
+          !marker ||
+          markerSeekMs(
+            recording.videoPath,
+            traceIndex,
+            recording.phase ?? 'start',
+            recording.mediaDurationMs,
+          ) === null
+        )
+          return null;
+        const claimId = selection?.claimId;
+        if (claimId && !markerBelongsToClaim(recording.videoPath, marker, claimId)) return null;
+        const occurrence = headTimelines.has(recording.videoPath)
+          ? byOccurrence.get(traceIndex)
+          : undefined;
+        const clips = headTimelines.has(recording.videoPath)
+          ? clipsFor(traceIndex).filter((clip) => clip.videoPath === recording.videoPath)
+          : [];
+        return select(
+          marker.intent ?? marker.nodeId,
+          occurrence?.artifacts ?? [],
+          clips.length
+            ? clips
+            : [clipForSpan(timeline, marker, marker, marker.intent ?? marker.nodeId)],
+          traceIndex,
+          claimId,
+        );
+      }
       const occurrence = byOccurrence.get(traceIndex);
       return occurrence
         ? select(occurrence.intent, occurrence.artifacts, clipsFor(traceIndex), traceIndex)
         : null;
+    },
+    timelineGroups,
+    selectTimelineGroup(videoPath, groupId, mediaDurationMs) {
+      const group = timelineGroups(videoPath, selection?.claimId, mediaDurationMs).find(
+        (entry) => entry.id === groupId,
+      );
+      const timeline = timelines.get(videoPath);
+      if (!timeline || !group?.startMarker || !group.endMarker || group.startMs === null)
+        return effect(null, true);
+      select(
+        group.summary,
+        [],
+        [clipForSpan(timeline, group.startMarker, group.endMarker, group.summary)],
+        group.startMarker.traceIndex,
+        selection?.claimId,
+        group.unrecorded ? 'outside-recording' : 'measured',
+      );
+      return effect(group.startMs, false, true);
     },
     clearSelection() {
       selection = null;
@@ -990,34 +1148,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       if (timeMs < availableEnd) return effect();
       return advanceClip(availableEnd);
     },
-    markerSeekMs(videoPath, traceIndex, phase, mediaDurationMs) {
-      if (
-        errors.length ||
-        !playbackSources.has(videoPath) ||
-        occurrenceRecordingCoverage(
-          traceIndex,
-          playbackSources.get(videoPath)!.segments,
-          playbackSources.get(videoPath)!.timelines,
-        ).timing !== 'measured'
-      )
-        return null;
-      const timeline = timelines.get(videoPath);
-      const marker = timeline?.markers.find((marker) => marker.traceIndex === traceIndex);
-      if (!timeline || !marker) return null;
-      const bounds = phase === 'start' ? marker.startRangeMs : marker.endRangeMs;
-      const first = timeline.framesMs[0];
-      const last = timeline.framesMs.at(-1);
-      const duration = Math.min(timeline.durationMs, mediaDurationMs ?? timeline.durationMs);
-      if (
-        first === undefined ||
-        last === undefined ||
-        bounds[1] < first ||
-        !Number.isFinite(duration) ||
-        bounds[0] >= duration
-      )
-        return null;
-      return clamp((bounds[0] + bounds[1]) / 2, first, Math.min(last, duration));
-    },
+    markerSeekMs,
     adjacentFrameMs(videoPath, timeMs, direction) {
       const timeline = errors.length ? undefined : timelines.get(videoPath);
       if (!timeline?.framesMs.length || !Number.isFinite(timeMs)) return null;

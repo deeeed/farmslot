@@ -38,6 +38,75 @@ const entry = (nodeId: string, start: number, end: number) => ({
   durationMs: end - start,
 });
 
+function groupedRecording(path = 'video.mp4') {
+  const trace = [
+    { ...entry('setup', 0, 200), proves: [] },
+    { ...entry('first-a', 1000, 1200), proves: ['AC-1'] },
+    { ...entry('other-ac', 1800, 2100), proves: ['AC-2'] },
+    { ...entry('second-a', 2200, 2400), proves: ['AC-1'] },
+    { ...entry('teardown', 3000, 3200), proves: [] },
+  ];
+  const source = recording(trace, 0, 4000, path);
+  for (const marker of source.timeline.markers) marker.proves = trace[marker.traceIndex]!.proves;
+  return source;
+}
+
+test('group selection seeks the complete AC range without changing claims or narrowing a full-run timeline', () => {
+  const model = createEvidenceReviewModel({
+    criteria: [{ id: 'AC-1', text: 'Both observations hold.' }],
+    recordings: [groupedRecording()],
+  });
+  assert.deepEqual(model.errors, []);
+  assert.deepEqual(
+    model.timelineGroups('video.mp4').map((group) => group.label),
+    ['Setup', 'AC-1', 'AC-2', 'Teardown'],
+  );
+  const claims = structuredClone(model.claims);
+  const group = model.timelineGroups('video.mp4').find((entry) => entry.claimId === 'AC-1');
+  assert.ok(group);
+  const playback = model.selectTimelineGroup('video.mp4', group.id);
+  assert.equal(playback.seekMs, 1000);
+  assert.ok(playback.clip && playback.clip.startMs <= 1000 && playback.clip.endMs >= 2400);
+  assert.equal(model.selection?.claimId, undefined);
+  assert.equal(model.timelineGroups('video.mp4').length, 4);
+  assert.ok(model.selectClaim('AC-1'));
+  assert.deepEqual(
+    model.timelineGroups('video.mp4').map((group) => group.label),
+    ['AC-1'],
+  );
+  model.selectTimelineGroup('video.mp4', group.id);
+  model.selectOccurrence(3, { videoPath: 'video.mp4' });
+  assert.equal(model.selection?.claimId, 'AC-1');
+  assert.deepEqual(model.claims, claims);
+  model.clearSelection();
+  assert.deepEqual(
+    model.timelineGroups('video.mp4').map((group) => group.label),
+    ['Setup', 'AC-1', 'AC-2', 'Teardown'],
+  );
+});
+
+test('timeline selection stays on the requested original and preserves timing refusal', () => {
+  const model = createEvidenceReviewModel({
+    recordings: [groupedRecording(), { ...groupedRecording('second.mp4'), gapBefore: false }],
+  });
+  assert.deepEqual(model.errors, []);
+  const selected = model.selectOccurrence(1, { videoPath: 'second.mp4' });
+  assert.equal(selected?.clips.length, 1);
+  assert.equal(selected?.clips[0]?.videoPath, 'second.mp4');
+  const group = model.timelineGroups('second.mp4').find((entry) => entry.claimId === 'AC-1');
+  assert.ok(group);
+  assert.equal(model.selectTimelineGroup('second.mp4', group.id).clip?.videoPath, 'second.mp4');
+  const invalid = createEvidenceReviewModel({
+    recordings: [groupedRecording()],
+    readErrors: ['Retained recording could not be qualified.'],
+  });
+  assert.equal(invalid.timelineGroups('video.mp4')[1]?.startMs, null);
+  const unavailable = invalid.timelineGroups('video.mp4').find((entry) => entry.claimId === 'AC-1');
+  assert.ok(unavailable);
+  assert.equal(invalid.selectTimelineGroup('video.mp4', unavailable.id).seekMs, null);
+  assert.equal(invalid.selection, null);
+});
+
 function recording(
   trace: ReturnType<typeof entry>[],
   start = 0,
@@ -326,6 +395,14 @@ test('continuous source segments play in order while restart gaps remain outside
       ['first.mp4', 500, 2_000],
       ['next.mp4', 0, 1_500],
     ],
+  );
+  const scoped = createEvidenceReviewModel({ recordings: [first, next] });
+  assert.equal(scoped.markerSeekMs('next.mp4', 0, 'start'), null);
+  assert.equal(scoped.markerSeekMs('next.mp4', 0, 'end'), 500);
+  assert.equal(scoped.selectOccurrence(0, { videoPath: 'next.mp4' }), null);
+  assert.equal(
+    scoped.selectOccurrence(0, { videoPath: 'next.mp4', phase: 'end' })?.clips[0]?.videoPath,
+    'next.mp4',
   );
   const gap = createEvidenceReviewModel({ recordings: [first, { ...next, gapBefore: true }] });
   assert.equal(gap.selectOccurrence(0)?.timing, 'outside-recording');

@@ -314,6 +314,25 @@ function summarize(...args: Parameters<typeof runProgressSummary>) {
   return summary;
 }
 
+test('run progress shows a validated operator and clears it on resume', () => {
+  const now = Date.parse('2026-05-14T05:00:00.000Z');
+  const waiting = run('operator', {
+    status: 'monitoring',
+    waitingForOperator: {
+      who: 'fixture-operator',
+      reason: 'Review approach',
+      since: '2026-05-14T00:00:00Z',
+      contextId: 'worker',
+      attemptId: 'attempt',
+    },
+  });
+  assert.equal(summarize(waiting, now).text, 'Waiting on operator: fixture-operator');
+  assert.notEqual(
+    summarize({ ...waiting, waitingForOperator: undefined }, now).text,
+    'Waiting on operator: fixture-operator',
+  );
+});
+
 test('run progress: a pending gate names its primary action, however old', () => {
   const now = Date.parse('2026-05-14T05:00:00.000Z');
   const summary = summarize(

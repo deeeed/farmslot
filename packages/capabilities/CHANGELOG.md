@@ -6,6 +6,10 @@ All notable changes to `@farmslot/capabilities` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.1.11 - 2026-10-15
+
+- Use the operator-wait runtime and protocol dependency set.
+
 ## 0.1.10 - 2026-10-15
 
 - Align the published dependency set with protocol 0.47.0 initial resource proof modes.

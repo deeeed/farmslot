@@ -17,6 +17,8 @@ Options:
   -h, --help                       display help for command
 
 Commands:
+  quality                          Build canonical quality artifacts or request
+                                   explicit project advice
   actions [options] [query]        Discover actions from the selected project provider
                                    and libraries
   status [options]                 Status the selected project runtime
@@ -33,6 +35,153 @@ Commands:
                                    the Farmslot gateway
   run [options] [args...]          Run a recipe through the selected project provider
   help [command]                   display help for command
+```
+
+## farmslot recipe quality
+
+```text
+Usage: farmslot recipe quality [options] [command]
+
+Build canonical quality artifacts or request explicit project advice
+
+Options:
+  -h, --help                display help for command
+
+Commands:
+  build [options]           Validate and build the quality artifact
+  plan [options]            Request explicit recipe plan
+  advise [options]          Request explicit recipe advise
+  advisor-status [options]  Inspect advisor policy without requesting advice
+  help [command]            display help for command
+```
+
+## farmslot recipe quality build
+
+```text
+Usage: farmslot recipe quality build [options]
+
+Validate and build the quality artifact
+
+Options:
+  --project <name>               Select a registered project
+  --projects-dir <path>          Operator-owned project registry
+  --authorize-provider <module>  Authorize an exact discovered provider source
+                                 (default: [])
+  --adapter <name>               Select the project runtime
+  --app <name>                   Select a monorepo app
+  --slot <id>                    Select one pool slot
+  --device <id>                  Select one device
+  --platform <name>              Select a provider platform
+  --watcher-port <port>          Select the app transport port
+  --cdp-port <port>              Select the CDP transport port
+  --runtime-dir <path>           Target-relative recipe runtime directory
+  --library <name=path>          Override a recipe library (default: [])
+  --target <path>                Product checkout
+  --input <path>                 Compact quality verdict
+  --output <path>                Output artifact
+  -h, --help                     display help for command
+```
+
+## farmslot recipe quality plan
+
+```text
+Usage: farmslot recipe quality plan [options]
+
+Request explicit recipe plan
+
+Options:
+  --project <name>               Select a registered project
+  --projects-dir <path>          Operator-owned project registry
+  --authorize-provider <module>  Authorize an exact discovered provider source
+                                 (default: [])
+  --adapter <name>               Select the project runtime
+  --app <name>                   Select a monorepo app
+  --slot <id>                    Select one pool slot
+  --device <id>                  Select one device
+  --platform <name>              Select a provider platform
+  --watcher-port <port>          Select the app transport port
+  --cdp-port <port>              Select the CDP transport port
+  --runtime-dir <path>           Target-relative recipe runtime directory
+  --library <name=path>          Override a recipe library (default: [])
+  --target <path>                Product checkout
+  --input <path>                 Compact quality verdict
+  --output <path>                Output artifact
+  --recipe <path>
+  --task <path>
+  --evidence <path>
+  --params <json>
+  --advisor <provider>
+  --advisor-model <model>
+  --advisor-stages <csv>
+  -h, --help                     display help for command
+```
+
+## farmslot recipe quality advise
+
+```text
+Usage: farmslot recipe quality advise [options]
+
+Request explicit recipe advise
+
+Options:
+  --project <name>               Select a registered project
+  --projects-dir <path>          Operator-owned project registry
+  --authorize-provider <module>  Authorize an exact discovered provider source
+                                 (default: [])
+  --adapter <name>               Select the project runtime
+  --app <name>                   Select a monorepo app
+  --slot <id>                    Select one pool slot
+  --device <id>                  Select one device
+  --platform <name>              Select a provider platform
+  --watcher-port <port>          Select the app transport port
+  --cdp-port <port>              Select the CDP transport port
+  --runtime-dir <path>           Target-relative recipe runtime directory
+  --library <name=path>          Override a recipe library (default: [])
+  --target <path>                Product checkout
+  --input <path>                 Compact quality verdict
+  --output <path>                Output artifact
+  --recipe <path>
+  --task <path>
+  --evidence <path>
+  --params <json>
+  --advisor <provider>
+  --advisor-model <model>
+  --advisor-stages <csv>
+  -h, --help                     display help for command
+```
+
+## farmslot recipe quality advisor-status
+
+```text
+Usage: farmslot recipe quality advisor-status [options]
+
+Inspect advisor policy without requesting advice
+
+Options:
+  --project <name>               Select a registered project
+  --projects-dir <path>          Operator-owned project registry
+  --authorize-provider <module>  Authorize an exact discovered provider source
+                                 (default: [])
+  --adapter <name>               Select the project runtime
+  --app <name>                   Select a monorepo app
+  --slot <id>                    Select one pool slot
+  --device <id>                  Select one device
+  --platform <name>              Select a provider platform
+  --watcher-port <port>          Select the app transport port
+  --cdp-port <port>              Select the CDP transport port
+  --runtime-dir <path>           Target-relative recipe runtime directory
+  --library <name=path>          Override a recipe library (default: [])
+  --target <path>                Product checkout
+  --input <path>                 Compact quality verdict
+  --output <path>                Output artifact
+  --recipe <path>
+  --task <path>
+  --evidence <path>
+  --params <json>
+  --advisor <provider>
+  --advisor-model <model>
+  --advisor-stages <csv>
+  -h, --help                     display help for command
 ```
 
 ## farmslot recipe actions
@@ -495,5 +644,222 @@ Options:
   --param <key=value>            Supply checked invocation parameters (default: [])
   --source-trust <trust>         Explicit recipe source trust
   --source-kind <kind>           Explicit recipe source kind
+  -h, --help                     display help for command
+```
+
+## farmslot task
+
+```text
+Usage: farmslot task [options] [command]
+
+Initialize, verify and close tasks with retained tooling
+
+Options:
+  -h, --help                                  display help for command
+
+Commands:
+  init [options] <task-dir>                   Create a task from an execution template
+  verify <task-dir>                           Verify retained task tooling without
+                                              running it
+  mark [options] <task-dir> <step> [args...]  Mark task progress through provider gates
+  closeout [options] <task-dir>               Stage task closeout under project policy
+  help [command]                              display help for command
+```
+
+## farmslot task init
+
+```text
+Usage: farmslot task init [options] <task-dir>
+
+Create a task from an execution template
+
+Options:
+  --project <name>               Select a registered project
+  --projects-dir <path>          Operator-owned project registry
+  --authorize-provider <module>  Authorize an exact discovered provider source
+                                 (default: [])
+  --adapter <name>               Select the project runtime
+  --app <name>                   Select a monorepo app
+  --slot <id>                    Select one pool slot
+  --device <id>                  Select one device
+  --platform <name>              Select a provider platform
+  --watcher-port <port>          Select the app transport port
+  --cdp-port <port>              Select the CDP transport port
+  --runtime-dir <path>           Target-relative recipe runtime directory
+  --library <name=path>          Override a recipe library (default: [])
+  --target <path>                Product checkout
+  --flow <flow>                  Execution flow
+  --template <id>                Execution template
+  --title <text>                 Task title
+  --run-mode <mode>              Execution mode (choices: "interactive", "autonomous",
+                                 "validation")
+  --domain <name>                Domain selection
+  --task-text <text>             Task description
+  --task-file <path>             Read the task description
+  --ticket <key>                 Ticket identity
+  --source-ref <ref>             Task source
+  --surface <surface>            Task surface
+  --repo <owner/name>            Repository identity
+  --attempt-id <id>              Attempt identity
+  --task-dir-label <label>       Rendered task directory
+  --mode-preamble <text>         Mode instructions
+  --addendum-file <path>         Authored task addendum
+  --project-worker <path>        Project worker templates
+  --project-name <name>          Project template identity
+  --package-templates <path>     Package template catalog
+  --package-id <id>              Package template identity
+  --dir <path>                   Template source (default: [])
+  --domain-dir <name=path>       Domain templates (default: [])
+  --var <key=value>              Template variable (default: [])
+  --acceptance <criterion>       Acceptance criterion (default: [])
+  -h, --help                     display help for command
+```
+
+## farmslot task verify
+
+```text
+Usage: farmslot task verify [options] <task-dir>
+
+Verify retained task tooling without running it
+
+Options:
+  -h, --help  display help for command
+```
+
+## farmslot task mark
+
+```text
+Usage: farmslot task mark [options] <task-dir> <step> [args...]
+
+Mark task progress through provider gates
+
+Options:
+  --project <name>               Select a registered project
+  --projects-dir <path>          Operator-owned project registry
+  --authorize-provider <module>  Authorize an exact discovered provider source
+                                 (default: [])
+  --adapter <name>               Select the project runtime
+  --app <name>                   Select a monorepo app
+  --slot <id>                    Select one pool slot
+  --device <id>                  Select one device
+  --platform <name>              Select a provider platform
+  --watcher-port <port>          Select the app transport port
+  --cdp-port <port>              Select the CDP transport port
+  --runtime-dir <path>           Target-relative recipe runtime directory
+  --library <name=path>          Override a recipe library (default: [])
+  --reason <text>
+  --checklist <path>
+  --signal <path>
+  --who <name>
+  --report <path>
+  --skip-learnings
+  --mark-last
+  --already-fixed
+  --no-review
+  --skip-checklist
+  --allow-empty
+  --step <number>
+  --from <path>
+  --var <key=value>              Subtask template variable (default: [])
+  -h, --help                     display help for command
+```
+
+## farmslot task closeout
+
+```text
+Usage: farmslot task closeout [options] <task-dir>
+
+Stage task closeout under project policy
+
+Options:
+  --project <name>               Select a registered project
+  --projects-dir <path>          Operator-owned project registry
+  --authorize-provider <module>  Authorize an exact discovered provider source
+                                 (default: [])
+  --adapter <name>               Select the project runtime
+  --app <name>                   Select a monorepo app
+  --slot <id>                    Select one pool slot
+  --device <id>                  Select one device
+  --platform <name>              Select a provider platform
+  --watcher-port <port>          Select the app transport port
+  --cdp-port <port>              Select the CDP transport port
+  --runtime-dir <path>           Target-relative recipe runtime directory
+  --library <name=path>          Override a recipe library (default: [])
+  --share                        Explicitly share the staged learning package
+  --config <path>
+  --destination <path>
+  --metadata <json>
+  -h, --help                     display help for command
+```
+
+## farmslot review
+
+```text
+Usage: farmslot review [options] [command]
+
+Compose review rules from the selected project and libraries
+
+Options:
+  -h, --help           display help for command
+
+Commands:
+  checklist [options]  Materialize a review checklist
+  domain [options]     Resolve ownership of changed files
+  help [command]       display help for command
+```
+
+## farmslot review checklist
+
+```text
+Usage: farmslot review checklist [options]
+
+Materialize a review checklist
+
+Options:
+  --project <name>               Select a registered project
+  --projects-dir <path>          Operator-owned project registry
+  --authorize-provider <module>  Authorize an exact discovered provider source
+                                 (default: [])
+  --adapter <name>               Select the project runtime
+  --app <name>                   Select a monorepo app
+  --slot <id>                    Select one pool slot
+  --device <id>                  Select one device
+  --platform <name>              Select a provider platform
+  --watcher-port <port>          Select the app transport port
+  --cdp-port <port>              Select the CDP transport port
+  --runtime-dir <path>           Target-relative recipe runtime directory
+  --library <name=path>          Override a recipe library (default: [])
+  --target <path>                Checkout to review
+  --domain <name>                Declared domain
+  --base <ref>                   Diff base
+  --since <ref>                  Incremental review since this revision
+  --out <path>                   Write the generated checklist
+  -h, --help                     display help for command
+```
+
+## farmslot review domain
+
+```text
+Usage: farmslot review domain [options]
+
+Resolve ownership of changed files
+
+Options:
+  --project <name>               Select a registered project
+  --projects-dir <path>          Operator-owned project registry
+  --authorize-provider <module>  Authorize an exact discovered provider source
+                                 (default: [])
+  --adapter <name>               Select the project runtime
+  --app <name>                   Select a monorepo app
+  --slot <id>                    Select one pool slot
+  --device <id>                  Select one device
+  --platform <name>              Select a provider platform
+  --watcher-port <port>          Select the app transport port
+  --cdp-port <port>              Select the CDP transport port
+  --runtime-dir <path>           Target-relative recipe runtime directory
+  --library <name=path>          Override a recipe library (default: [])
+  --target <path>                Checkout to review
+  --domain <name>                Declared domain
+  --base <ref>                   Diff base
   -h, --help                     display help for command
 ```

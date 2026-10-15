@@ -4,9 +4,13 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
-- Open an available retained report with a stale-review warning while keeping report-byte integrity and evidence admission checks.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.15.1 - 2026-10-15
+
+- Group recorded timeline markers by their existing AC bindings and setup/teardown, sharing range selection and failure summaries across review clients.
+- Use the operator-wait runtime and protocol dependency set.
+- Open an available retained report with a stale-review warning while keeping report-byte integrity and evidence admission checks.
 
 ## 0.15.0 - 2026-10-15
 

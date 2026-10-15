@@ -4,6 +4,15 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.25.0 - 2026-10-15
+
+- Retain task tooling and selected inputs with shared byte verification and frozen task callbacks.
+
+## 0.24.0 - 2026-10-15
+
+- Preserve native host census provenance after process exit and reconcile stopped hosts from retained kernel parent evidence without deleting journals or relaxing process-safety checks.
+- Support explicit operator wait and resume marks without settling the worker or changing its checklist.
+
 ## 0.23.3 - 2026-10-15
 
 - Align the published dependency set with the plain runtime and action contract names.

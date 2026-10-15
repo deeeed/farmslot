@@ -118,6 +118,66 @@ test('hasRecoverablePublicationReviewer ignores an already-ingested completed co
   );
 });
 
+test('a failed scopeless reviewer cannot hold a gate after a passing pipeline review', () => {
+  const run = minimalActiveRun({
+    status: 'reconciling',
+    steps: [{ name: 'human-gate', status: 'running' }],
+    decisions: [humanGateDecision('settled-review')],
+    agentContexts: [
+      {
+        id: 'rev-codex',
+        role: 'review',
+        label: 'Reviewer',
+        status: 'failed',
+        slotId: 'slot-1',
+        runId: 'run-1',
+        artifactScope: null,
+      },
+      {
+        id: 'rev-claude',
+        role: 'review',
+        label: 'Reviewer',
+        status: 'complete',
+        slotId: 'slot-1',
+        runId: 'run-1',
+        artifactScope: null,
+      },
+    ],
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            id: 'pipeline-review-settled',
+            source: 'pipeline',
+            mode: 'cold',
+            loopNumber: 1,
+            verdict: 'pass',
+            unresolvedCount: 0,
+            reviewedHeadSha: 'fixture-head',
+          },
+        ],
+      },
+    },
+  });
+
+  assert.equal(hasRecoverablePublicationReviewer(run), false);
+  assert.equal(
+    hasRecoverablePublicationReviewer({ ...run, engineState: { publishGate: { reviews: [] } } }),
+    false,
+    'a failed scopeless context cannot identify a delivery-failure placeholder',
+  );
+  for (const status of ['working', 'launching'] as const) {
+    assert.equal(
+      hasRecoverablePublicationReviewer({
+        ...run,
+        agentContexts: [{ ...run.agentContexts![0]!, status }],
+      }),
+      true,
+      `a scopeless ${status} reviewer still needs recovery`,
+    );
+  }
+});
+
 test('hasPendingPublicationReviewContinuation requires the explicit recovery marker', () => {
   const run = minimalActiveRun({
     engineState: {

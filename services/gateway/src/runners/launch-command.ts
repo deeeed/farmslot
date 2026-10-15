@@ -1008,17 +1008,25 @@ export function buildLaunchCommand(
   // runner-aware dispatch_cmd that omits `{task_prompt}` still has to receive
   // the prompt or review respawns an idle composer.
   if (runner === 'cursor') {
-    if (cmdIsRunnerAware) {
-      return withRecipeTrust(expanded);
-    }
+    const installCommand = buildRunnerObservabilityInstallCommand(
+      vars,
+      runner,
+      repo,
+      opts.runtimeDir,
+    );
     return withRecipeTrust(
-      buildCursorAgentLaunch({
-        binary: resolveCursorAgentBinary(vars.cursorPath),
-        model,
-        prompt,
-        repo,
-        safetyTier: tier,
-      }),
+      withRequiredRunnerInstall(
+        cmdIsRunnerAware
+          ? expanded
+          : buildCursorAgentLaunch({
+              binary: resolveCursorAgentBinary(vars.cursorPath),
+              model,
+              prompt,
+              repo,
+              safetyTier: tier,
+            }),
+        installCommand,
+      ),
     );
   }
 

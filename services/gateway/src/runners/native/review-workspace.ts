@@ -28,13 +28,17 @@ import {
 import { currentProjectSources, sourceWorkerEnvironment } from '@farmslot/slot-config';
 
 import { upsertAgentContext } from '../../agents/contexts.js';
-import type { RawProjectJson } from '../../core/config.js';
+import { loadMachinePool, type RawProjectJson } from '../../core/config.js';
 import { resolveProjectCommandEnv } from '../../core/project-env.js';
 import { isNodeTransportUnavailableError } from '../../fleet/node-rpc.js';
 import { bindReviewWorkspaceSupportValue } from '../../review-workspaces/skills.js';
 import { getRun, persistRunNow, updateRun } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
-import { resolveRunnerEffort, taskRecipeTrustEnvironment } from '../launch-command.js';
+import {
+  interactiveRunnerExecutable,
+  resolveRunnerEffort,
+  taskRecipeTrustEnvironment,
+} from '../launch-command.js';
 import { runnerSupportsEffort } from '../registry.js';
 
 import { validateNativeRunner } from './manager.js';
@@ -332,7 +336,9 @@ export async function launchReviewWorkspaceWorker(input: {
   }
   const launch: NativeWorkerLaunch = {
     leaseId: binding.leaseId,
-    executable: input.executable ?? nativeRunnerDefinitions[runner].binary,
+    executable:
+      input.executable ??
+      interactiveRunnerExecutable({ runner, machine: await loadMachinePool(workspace.machine) }),
     environment,
     safetyTier: 'sandboxed',
     effort,
@@ -371,11 +377,14 @@ export async function launchReviewWorkspaceWorker(input: {
   } as NativeSessionReadResult);
   if (binding.generation && binding.generation !== created.session.generation)
     throw new Error('Static review worker generation changed during creation');
-  if (
-    created.session.cwd !== workspace.checkoutPath ||
-    ['closed', 'failed'].includes(created.session.state)
-  )
-    throw new Error('Static review reservation is terminal or belongs to another workspace');
+  if (['closed', 'failed'].includes(created.session.state))
+    throw new Error(
+      `Static review native ${runner} session on ${binding.executionNodeId} ${created.session.state}: ${created.session.error || created.session.recovery || 'No startup diagnostic was reported'}`,
+    );
+  if (created.session.cwd !== workspace.checkoutPath)
+    throw new Error(
+      `Static review workspace mismatch: session uses ${JSON.stringify(created.session.cwd)}, expected ${JSON.stringify(workspace.checkoutPath)}`,
+    );
   context = await saveContext(
     run.id,
     {

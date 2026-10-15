@@ -1,5 +1,6 @@
 import type { ArtifactRef, ReviewIssue } from '../recipes/step-io.js';
 import type {
+  WorkerOperatorWait,
   WorkerSignalChecklistEvent,
   WorkerSignalChecklistTiming,
   WorkerSignalStatus,
@@ -1774,6 +1775,11 @@ export interface RunBudgetDeliveryState {
   firstHeldAt?: number;
 }
 
+export interface RunOperatorWait extends WorkerOperatorWait {
+  contextId: string;
+  attemptId: string;
+}
+
 export interface RunMonitorState {
   nudgeCount: number;
   lastPollAt: string;
@@ -1781,6 +1787,10 @@ export interface RunMonitorState {
   lastPaneHash?: string;
   /** ISO time of last structured runner progress; used to restore stuck clocks. */
   lastStructuredProgressAt?: string;
+  /** Confirmed operator wait time excluded from the monitor's execution timeout. */
+  operatorWaitMs?: number;
+  /** Inactivity grace after explicit resume; this is not worker progress. */
+  operatorResumedAt?: string;
   /** True after a one-shot usage-budget warning was emitted for this monitor session. */
   budgetWarned?: boolean;
   /** True after a budget nudge was confirmed delivered (may retry while false). */
@@ -2648,6 +2658,8 @@ export interface Run {
    */
   redirectedToRunId?: string | null;
   monitorState?: RunMonitorState;
+  /** Monitor-validated dependency; the worker signal remains the authority. */
+  waitingForOperator?: RunOperatorWait;
   /** CI-watch inline-fix dedup + counters. Persisted so the circuit breaker survives gateway restart (ADR-027). */
   ciWatchState?: RunCiWatchState;
   /** Run-engine runtime flags + replay generation counter. Persisted so warm-recovery hints

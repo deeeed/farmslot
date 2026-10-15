@@ -7,9 +7,10 @@ import { customElement, state } from 'lit/decorators.js';
 import { keyed } from 'lit/directives/keyed.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
-import type {
-  EvidenceReviewModel,
-  EvidenceReviewPlaybackEffect,
+import {
+  type EvidenceReviewModel,
+  type EvidenceReviewPlaybackEffect,
+  formatEvidenceReviewVideoTime,
 } from '@farmslot/adapter-sdk/evidence';
 import type { RecipeRecordingMarker, RecipeRecordingTimelineDocument } from '@farmslot/protocol';
 
@@ -53,6 +54,7 @@ interface LightboxEvidenceState {
 
 @customElement('media-lightbox')
 export class MediaLightbox extends MediaLightboxState {
+  private readonly _timelineGroupOpen = new Map<string, boolean>();
   private _logTimer?: ReturnType<typeof setInterval>;
   private _logLoading = false;
   private _logText = '';
@@ -159,6 +161,7 @@ export class MediaLightbox extends MediaLightboxState {
 
   private _close() {
     this._maximized = false;
+    this._timelineGroupOpen.clear();
     this.dispatchEvent(new CustomEvent('lightbox-close'));
   }
 
@@ -599,7 +602,15 @@ export class MediaLightbox extends MediaLightboxState {
     const seekMs =
       model?.markerSeekMs(timing.videoPath, marker.traceIndex, phase, duration * 1000) ?? null;
     if (seekMs === null) return;
-    if (!preserveClaim || !model?.selection?.claimId) model?.selectOccurrence(marker.traceIndex);
+    if (
+      (!preserveClaim || !model?.selection?.claimId) &&
+      !model?.selectOccurrence(marker.traceIndex, {
+        videoPath: timing.videoPath,
+        mediaDurationMs: duration * 1000,
+        phase,
+      })
+    )
+      return;
     this._appliedVideoMarker = this._evidenceCueKey();
     this._pauseVideoPlayback();
     this._scrubVideo(String(seekMs / 1000));
@@ -669,68 +680,120 @@ export class MediaLightbox extends MediaLightboxState {
       Number.isFinite(mediaDuration) && mediaDuration && mediaDuration > 0
         ? mediaDuration * 1000
         : timing.durationMs;
+    const groups = state.model?.timelineGroups(timing.videoPath, undefined, mediaDurationMs) ?? [];
     const uncertainty = timing.clock.latestZeroUnixMs - timing.clock.earliestZeroUnixMs;
-    return html`<details class="ml-video-markers" data-testid="video-markers">
-      <summary>Actions and proof markers (${timing.markers.length})</summary>
-      <p class="ml-count">
-        ${timing.framesMs.length} decoded frames · clock calibration window
-        ${Math.ceil(uncertainty)} ms. Frame hold intervals below describe visual sampling,
-        separately from clock precision.
-      </p>
-      <div class="ml-marker-list">
-        ${timing.markers.map(
-          (marker) =>
-            html`<div class="ml-marker">
-              <span
-                >${marker.intent ?? marker.nodeId}<small
-                  >${marker.nodeId} ·
-                  ${marker.action}${marker.proves?.length
-                    ? ` · ${marker.proves.join(', ')}`
-                    : ''}</small
-                ></span
-              >
-              ${(['start', 'end'] as const).map((phase) => {
-                const bounds = phase === 'start' ? marker.startRangeMs : marker.endRangeMs;
-                const seekMs =
-                  state.model?.markerSeekMs(
-                    timing.videoPath,
-                    marker.traceIndex,
-                    phase,
-                    mediaDurationMs,
-                  ) ?? null;
-                const outside = seekMs === null;
-                const frame = outside
-                  ? null
-                  : (state.model?.displayedFrameRangeMs(
-                      timing.videoPath,
-                      seekMs,
-                      mediaDurationMs,
-                    ) ?? null);
-                return html`<button
-                  class="ml-btn"
-                  data-testid="video-marker"
-                  data-trace-index=${marker.traceIndex}
-                  data-phase=${phase}
-                  ?disabled=${outside}
-                  title=${outside
-                    ? 'Outside recorded footage'
-                    : `Action clock window ${bounds[0].toFixed(1)}–${bounds[1].toFixed(1)} ms. The displayed frame may precede the action result.`}
-                  @click=${() => this._seekMarker(marker, phase)}
+    return html`<details class="ml-video-markers" data-testid="video-markers" open>
+      <summary>Timeline (${groups.length} groups)</summary>
+      ${groups.map((group) => {
+        const expanded = this._timelineGroupOpen.get(group.id) ?? group.defaultOpen;
+        return html`<details
+          class="ml-marker-group ${group.failed ? 'failed' : ''}"
+          ?open=${expanded}
+          @toggle=${(event: Event) => {
+            const element = event.currentTarget;
+            if (!(element instanceof HTMLDetailsElement)) return;
+            const initial = !this._timelineGroupOpen.has(group.id);
+            this._timelineGroupOpen.set(group.id, element.open);
+            this.requestUpdate();
+            if (initial && element.open && group.firstFailureTraceIndex !== null)
+              void this.updateComplete.then(() =>
+                element
+                  .querySelector(`[data-marker-trace-index="${group.firstFailureTraceIndex}"]`)
+                  ?.scrollIntoView({ block: 'nearest' }),
+              );
+          }}
+        >
+          <summary>
+            <button
+              class="ml-btn"
+              data-testid="video-marker-group"
+              ?disabled=${group.startMs === null}
+              @click=${(event: Event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const effect = state.model?.selectTimelineGroup(
+                  timing.videoPath,
+                  group.id,
+                  mediaDurationMs,
+                );
+                if (effect?.seekMs === null || effect?.seekMs === undefined) return;
+                this._appliedVideoMarker = this._evidenceCueKey();
+                this._pauseVideoPlayback();
+                this._scrubVideo(String(effect.seekMs / 1000));
+              }}
+            >
+              ${group.summary}
+            </button>
+            <small>${expanded ? 'Hide nodes' : 'Show nodes'}</small>
+          </summary>
+          <div class="ml-marker-list">
+            ${group.markers.map(
+              (marker) =>
+                html`<div
+                  class="ml-marker ${marker.ok ? '' : 'failed'}"
+                  data-marker-trace-index=${marker.traceIndex}
                 >
-                  ${phase} ${outside ? 'unrecorded' : this._formatVideoTime(seekMs / 1000)}
-                  ${frame
-                    ? html`<small
-                        >frame held
-                        ${this._formatVideoTime(frame[0] / 1000)}–${this._formatVideoTime(
-                          frame[1] / 1000,
-                        )}</small
-                      >`
-                    : nothing}
-                </button>`;
-              })}
-            </div>`,
-        )}
-      </div>
+                  <span
+                    >${marker.intent ?? marker.nodeId}<small
+                      >${marker.nodeId} ·
+                      ${marker.action}${marker.proves?.length
+                        ? ` · ${marker.proves.join(', ')}`
+                        : ''}</small
+                    ></span
+                  >
+                  ${(['start', 'end'] as const).map((phase) => {
+                    const bounds = phase === 'start' ? marker.startRangeMs : marker.endRangeMs;
+                    const seekMs =
+                      state.model?.markerSeekMs(
+                        timing.videoPath,
+                        marker.traceIndex,
+                        phase,
+                        mediaDurationMs,
+                      ) ?? null;
+                    const outside = seekMs === null;
+                    const frame = outside
+                      ? null
+                      : (state.model?.displayedFrameRangeMs(
+                          timing.videoPath,
+                          seekMs,
+                          mediaDurationMs,
+                        ) ?? null);
+                    return html`<button
+                      class="ml-btn"
+                      data-testid="video-marker"
+                      data-trace-index=${marker.traceIndex}
+                      data-phase=${phase}
+                      ?disabled=${outside}
+                      title=${outside
+                        ? 'Outside recorded footage'
+                        : `Action clock window ${bounds[0].toFixed(1)}–${bounds[1].toFixed(1)} ms. The displayed frame may precede the action result.`}
+                      @click=${() => this._seekMarker(marker, phase)}
+                    >
+                      ${phase}
+                      ${outside ? 'unrecorded' : formatEvidenceReviewVideoTime(seekMs / 1000)}
+                      ${frame
+                        ? html`<small
+                            >frame held
+                            ${formatEvidenceReviewVideoTime(
+                              frame[0] / 1000,
+                            )}–${formatEvidenceReviewVideoTime(frame[1] / 1000)}</small
+                          >`
+                        : nothing}
+                    </button>`;
+                  })}
+                </div>`,
+            )}
+          </div>
+        </details>`;
+      })}
+      <details class="ml-timing-info">
+        <summary>Timing details</summary>
+        <p class="ml-count">
+          ${timing.framesMs.length} decoded frames · clock calibration window
+          ${Math.ceil(uncertainty)} ms. Frame hold intervals describe visual sampling, separately
+          from clock precision.
+        </p>
+      </details>
     </details>`;
   }
 
@@ -759,14 +822,6 @@ export class MediaLightbox extends MediaLightboxState {
     for (const candidate of this._videoSet()) {
       candidate.playbackRate = rate;
     }
-  }
-
-  private _formatVideoTime(seconds: number): string {
-    if (!Number.isFinite(seconds) || seconds < 0) return '0:00.00';
-    const minutes = Math.floor(seconds / 60);
-    const wholeSeconds = Math.floor(seconds % 60);
-    const hundredths = Math.floor((seconds % 1) * 100);
-    return `${minutes}:${String(wholeSeconds).padStart(2, '0')}.${String(hundredths).padStart(2, '0')}`;
   }
 
   private _renderVideoControls(compare = false) {
@@ -828,7 +883,7 @@ export class MediaLightbox extends MediaLightboxState {
             aria-label="Video timeline"
           />
           <span class="ml-count">
-            ${this._formatVideoTime(time)} / ${this._formatVideoTime(duration)}
+            ${formatEvidenceReviewVideoTime(time)} / ${formatEvidenceReviewVideoTime(duration)}
           </span>
         </div>
         ${this._renderVideoMarkers()}

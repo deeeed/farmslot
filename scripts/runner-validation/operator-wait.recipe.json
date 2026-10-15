@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Native operator wait and resume",
+  "description": "Manual release proof through an isolated gateway and real native worker. Set FARMSLOT_CDP_PORT to the owned Agent Chrome profile.",
+  "workflow": {
+    "entry": "operator-wait",
+    "nodes": {
+      "operator-wait": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/operator-wait.mts",
+        "timeout_ms": 300000,
+        "intent": "The same live worker waits beyond two inactivity windows without nudges, renders its operator dependency, then resumes without changing its execution identity.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

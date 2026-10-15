@@ -5,9 +5,11 @@ All notable changes to `@farmslot/mobile` are tracked here.
 ## Unreleased
 
 - Keep report and evidence links bound to their gateway-retained snapshot, including read-only stale reports.
+- Use the shared timeline groups in the existing video viewer, keeping node details collapsed and failures expanded.
 - Stop loading checkout authentication in Companion development scripts.
 
 - Use the shared compact worker checklist view and preserve child-unit expansion.
+- Show who an active run is waiting on in run lists and detail status.
 
 - Confirm the secondary Settings sign-out action and retain sign-in with the shared 30-day expiry policy.
 

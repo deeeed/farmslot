@@ -50,6 +50,7 @@ type ProgressRun = Pick<
   | 'decisions'
   | 'ciWatchState'
   | 'monitorState'
+  | 'waitingForOperator'
 >;
 
 // When a held step stopped for the operator: its duration is stamped at the hold.
@@ -102,7 +103,7 @@ export function runProgressSummary(
     text,
   });
   const pending = run.decisions.find((decision) => !decision.resolvedAt);
-  const activity = deriveRunLifecycleView({ status: run.status }).activityLabel;
+  const activity = deriveRunLifecycleView(run).activityLabel;
   if (activity) return summary(run.status === 'fixing' ? 'step' : 'gate', activity);
   if (pending) {
     const action = pending.actions.find((item) => item.style === 'primary') ?? pending.actions[0];
