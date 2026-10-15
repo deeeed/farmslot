@@ -227,7 +227,10 @@ test('active adoption retains three heads and exhausted reviews; only the public
     ]),
     true,
   );
-  await assert.rejects(refreshPublishedEvidence({ runId: run.id }, noop), /grants no package/);
+  await assert.rejects(
+    refreshPublishedEvidence({ runId: run.id }, noop),
+    /Wait for the published run/,
+  );
   await assert.rejects(prepareCompletionPackage(run.id), /preserves the prior package/);
   const published = await publishCompletionPackage(run.id, makeReadyGatePackage());
   assert.equal(published.prNumber, 192);

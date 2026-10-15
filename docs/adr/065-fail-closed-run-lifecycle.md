@@ -296,3 +296,45 @@ the existing recovery action without discarding earlier evidence.
 - Harnesses provide their existing PR-body renderer and evidence declaration.
   They inherit media upload and publication enforcement; no second template,
   adoption action, direct PR creation or review-result importer is added.
+
+## Amendment 5: evidence delivery after human publication adoption, 2026-10-15
+
+**Status:** Accepted for implementation under the lead continuation, 2026-10-16, after paired R2 approval at `62e73a1a486ed5454fe272b6116a8bef8120e229`.
+**Specification:** [Adopted publication evidence delivery](../reference/fail-closed-run-lifecycle.md#adopted-publication-evidence-delivery).
+
+### Decision
+
+Extend the existing published-evidence refresh owner to adopted publications.
+This grants limited authority to deliver media under the existing authorization
+for run mutations, separately from Amendment 2's person-only adoption authority.
+Bind delivery to the receipt's repository, PR and exact attested head, and to
+the frozen package identity recorded at adoption. Only its previously selected,
+integrity-checked media may be delivered.
+
+Keep an older package and its evidence provenance historical. Display its head
+separately from the attested publication head; never promote old or unknown
+evidence into a passing result for that head. The shared renderer appends a
+delimited block owned by this run and replaces it only when it still matches the
+last recorded farm delivery. Human sections and links remain unchanged. This is
+the separate package/head authorization required by Amendment 2, not permission
+to overwrite the manually published body. Code, title, publication state,
+reviews and frozen QA stay unchanged.
+
+### Rationale and consequences
+
+Adoption currently blocks all evidence refresh, leaving retained media stranded
+after a human publishes the reviewed code. An exception bound to that head fixes
+that gap while preserving the incomplete or older pipeline. Active and archived
+records use the same owner; archive location and execution state stay unchanged.
+Missing retained authority or observed head/body changes refuse explicitly.
+
+### Public surface
+
+- Reuse `run.refreshPublishedEvidence` and its existing `@farmslot/protocol`
+  request/result. The operator consumer is `farmslot rpc
+run.refreshPublishedEvidence '{"runId":"<run-id>"}'`.
+- The gateway owns authorization, freshness, media delivery and persistence.
+  Existing run/decision readers consume the recorded description. No new CLI
+  command, protocol field, package format or harness hook is introduced.
+- This additive experimental eligibility change ships with the gateway. The
+  person-only adoption contract and normal publication approval remain intact.
