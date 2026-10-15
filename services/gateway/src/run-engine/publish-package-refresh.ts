@@ -72,8 +72,19 @@ export async function ensureCurrentPublishPackage(
 ): Promise<ReadyGatePrPackage | undefined> {
   return withRunTransition(runId, async () => {
     const run = getRun(runId);
-    if (!run || publicationStatusForRun(run) !== 'not_published') return undefined;
+    if (!run) return undefined;
+    const status = publicationStatusForRun(run);
+    if (status !== 'not_published' && status !== 'pending_publish') return undefined;
     const prepared = await readReadyGatePreparedPackage(run);
+    // Approval already bound this package. A restarted gate must replay that
+    // approval without preparing a replacement or losing its package identity.
+    if (status === 'pending_publish') {
+      if (!prepared)
+        throw new BlockedRunError(
+          'Approved publication package is unavailable; restore its artifacts',
+        );
+      return prepared;
+    }
     const head = await currentPublicationHead(run);
     if (!head)
       throw new BlockedRunError(
@@ -414,10 +425,7 @@ async function refreshPublishPackageTransitionLocked(
     .map((entry) => (entry.payload as ReadyGatePayload | undefined)?.prPackage)
     .filter((entry): entry is ReadyGatePrPackage => Boolean(entry));
   const reviews = restampReviewsForRefreshedPackage(
-    await refreshReviewDiffIdentities(
-      refreshedRun,
-      refreshedRun.engineState?.publishGate?.reviews ?? [],
-    ),
+    await refreshReviewDiffIdentities(refreshedRun, prepared.reviews),
     [oldPayload.prPackage, ...historicalReadyGatePackages],
     prPackage,
   );
@@ -536,25 +544,26 @@ async function refreshPublishPackageTransitionLocked(
       ...getRun(params.runId)!.engineState,
       publishGate: { ...getRun(params.runId)!.engineState?.publishGate, reviews },
     },
-    decisions: [
-      ...refreshedRun.decisions.map((entry) =>
-        nextDecision && entry.id === nextDecision.id ? nextDecision : entry,
-      ),
-      ...(decision && oldPayload.prPackage && oldPayload.prPackage.id !== prPackage.id
-        ? [
-            {
-              ...decision,
-              id: `${decision.id}-snapshot-${oldPayload.prPackage.id}`,
-              resolvedAt: new Date().toISOString(),
-              resolvedAction: 'superseded-by-package-refresh',
-              payload: {
-                ...oldPayload,
-                prPackage: { ...oldPayload.prPackage, supersededByPackageId: prPackage.id },
+    decisions: refreshedRun.decisions.flatMap((entry): RunDecision[] => {
+      if (!nextDecision || entry.id !== nextDecision.id) return [entry];
+      return [
+        ...(oldPayload.prPackage && oldPayload.prPackage.id !== prPackage.id
+          ? [
+              {
+                ...entry,
+                id: `${entry.id}-snapshot-${oldPayload.prPackage.id}`,
+                resolvedAt: new Date().toISOString(),
+                resolvedAction: 'superseded-by-package-refresh',
+                payload: {
+                  ...oldPayload,
+                  prPackage: { ...oldPayload.prPackage, supersededByPackageId: prPackage.id },
+                },
               },
-            },
-          ]
-        : []),
-    ],
+            ]
+          : []),
+        nextDecision,
+      ];
+    }),
   });
   await refreshRunGateReadiness(getRun(params.runId)!);
   await persistRunNow(getRun(params.runId)!, 'publication package refresh');

@@ -10,9 +10,10 @@ import type { ReadyGatePayload, ReviewGatePayload, RunDecision } from '@farmslot
 import { execLocal } from '../core/exec.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { capturePublicationSource } from '../run-completion/publication-source.js';
-import { createRun, getRun, updateRun } from '../runs/store.js';
+import { createRun, getRun, loadAllRuns, persistRunNow, updateRun } from '../runs/store.js';
 
 import {
+  ensureCurrentPublishPackage,
   reconcilePublicationPackageForInspection,
   refreshPublishPackage,
   reviewPolicyForPublishPackageRefresh,
@@ -20,6 +21,39 @@ import {
 } from './publish-package-refresh.js';
 import { refreshReviewGate } from './review-gate.js';
 import { deleteTestRunIfPresent, makeReadyGatePackage, makeRun } from './test-fixtures.js';
+
+test('pending publication reload retains its approved package without reading live source', async (t) => {
+  const taskDir = await mkdtemp(path.join(os.tmpdir(), 'approved-package-reload-'));
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'recovery',
+    ticketOrPr: 'RECOVER-1',
+  });
+  t.after(async () => {
+    await deleteTestRunIfPresent(run.id);
+    await rm(taskDir, { recursive: true, force: true });
+  });
+  const prepared = makeReadyGatePackage({ publicationStatus: 'pending_publish' });
+  await mkdir(path.join(taskDir, path.dirname(prepared.artifactPath)), { recursive: true });
+  await writeFile(path.join(taskDir, prepared.artifactPath), JSON.stringify(prepared));
+  updateRun(run.id, {
+    status: 'human-gating',
+    taskFile: path.join(taskDir, 'TASK.md'),
+    engineState: {
+      publishGate: {
+        publicationStatus: 'pending_publish',
+        packageId: prepared.id,
+        packageHash: prepared.packageHash,
+        packageArtifactPath: prepared.artifactPath,
+      },
+    },
+  });
+  await persistRunNow(getRun(run.id)!, 'approved package reload regression');
+  await loadAllRuns();
+  assert.equal(JSON.stringify(await ensureCurrentPublishPackage(run.id)), JSON.stringify(prepared));
+  assert.equal(getRun(run.id)!.engineState?.publishGate?.publicationStatus, 'pending_publish');
+});
 
 test('publish package refresh evidence summary preserves valid selection and reports drops', () => {
   const oldPackage = makeReadyGatePackage({

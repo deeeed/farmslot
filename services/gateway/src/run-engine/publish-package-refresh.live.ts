@@ -17,8 +17,9 @@ import { execLocal } from '../core/exec.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { runResolveDecision } from '../methods/run.js';
 import { capturePublicationSource } from '../run-completion/publication-source.js';
-import { createRun, getRun, updateRun } from '../runs/store.js';
+import { createRun, getRun, updateRun, updateRunStep } from '../runs/store.js';
 
+import { findLatestResolvedDecision } from './decision-replay.js';
 import { APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION } from './gate-policy.js';
 import { refreshPublishPackage } from './publish-package-refresh.js';
 import { deleteTestRunIfPresent, makeReadyGatePackage } from './test-fixtures.js';
@@ -85,7 +86,7 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
       cwd: workerRepo,
     },
   );
-  const headSha = (await execLocal('git rev-parse HEAD', { cwd: workerRepo })).stdout.trim();
+  let headSha = (await execLocal('git rev-parse HEAD', { cwd: workerRepo })).stdout.trim();
   await writeFile(
     poolFile,
     JSON.stringify(
@@ -267,8 +268,28 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
     first.droppedEvidence[0]?.reason,
     'missing from refreshed package evidence manifest',
   );
-  const refreshedDecision = getRun(run.id)!.decisions[0];
+  const refreshedDecision = getRun(run.id)!.decisions.find((entry) => entry.id === decision.id)!;
   const refreshedPayload = refreshedDecision.payload as ReadyGatePayload;
+  assert.equal(
+    getRun(run.id)!.decisions.at(-1)?.id,
+    decision.id,
+    'package history must precede the live decision for every array-order reader',
+  );
+  const requested: RunDecision = {
+    ...refreshedDecision,
+    resolvedAt: '2026-05-17T00:16:00.000Z',
+    resolvedAction: 'request-review',
+  };
+  const requestedDecisions = getRun(run.id)!.decisions.map((entry) =>
+    entry.id === decision.id ? requested : entry,
+  );
+  assert.equal(findLatestResolvedDecision(requestedDecisions, 'human_gate'), requested);
+  assert.equal(
+    [...requestedDecisions]
+      .reverse()
+      .find((entry) => entry.type === 'engine_human_gate' && entry.payload?.kind === 'ready'),
+    requested,
+  );
   assert.equal(refreshedPayload.publicationTarget, 'draft');
   const refreshedReview = getRun(run.id)!.engineState!.publishGate!.reviews![0]!;
   assert.equal(getRun(run.id)!.engineState!.publishGate!.reviews!.length, 1);
@@ -388,11 +409,59 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
     oldReviewSubjectHash,
   );
 
+  const priorHead = headSha;
+  await writeFile(path.join(workerRepo, 'review-fix.txt'), 'later reviewed source\n');
+  await execLocal('git add review-fix.txt', { cwd: workerRepo });
+  await execLocal('git commit -m "fix: later reviewed source"', { cwd: workerRepo });
+  headSha = (await execLocal('git rev-parse HEAD', { cwd: workerRepo })).stdout.trim();
+  assert.notEqual(headSha, priorHead);
+  updateRunStep(run.id, 'review', {
+    status: 'done',
+    outputs: {
+      reviewId: 'pipeline-review-recovered',
+      mode: 'cold',
+      attempts: [
+        {
+          mode: 'cold',
+          loopNumber: 1,
+          verdict: 'pass',
+          unresolvedCount: 0,
+          completedAt: '2026-05-17T00:20:00.000Z',
+          reviewSnapshot: { source: 'local-git', headSha, capturedAt: '2026-05-17T00:20:00.000Z' },
+        },
+      ],
+    },
+  });
+  const recovered = await refreshPublishPackage(
+    { runId: run.id, decisionId: decision.id },
+    {
+      progress: async () => ({ kind: 'idle' }),
+      source: (current) =>
+        capturePublicationSource(current, {
+          slot: async () => ({ current_run_id: current.id, slot_epoch: 1 }),
+        }),
+    },
+  );
+  const recoveredReviews = getRun(run.id)!.engineState!.publishGate!.reviews!;
+  const materialized = recoveredReviews.find((review) => review.id === 'pipeline-review-recovered');
+  assert.ok(materialized, 'deferred commit must retain newly materialized reviews');
+  assert.equal(materialized.verdict, 'pass');
+  assert.equal(materialized.attempts?.length, 1);
+  assert.equal(materialized.reviewSnapshot?.headSha, headSha);
+  assert.equal(recovered.packageHeadSha, headSha);
+  const recoveredPackage = (
+    getRun(run.id)!.decisions.find((entry) => entry.id === decision.id)!.payload as ReadyGatePayload
+  ).prPackage!;
+  assert.deepEqual(
+    [...recoveredPackage.reviewArtifactIds].sort(),
+    recoveredReviews.flatMap((review) => review.artifactPaths ?? [review.id]).sort(),
+  );
+
   await rm(poolFile, { force: true });
   // Re-seed stale fields after the configured slot is removed while the
   // durable run still retains its slot id.
   const beforeRelease = getRun(run.id)!;
-  const beforeReleaseDecision = beforeRelease.decisions[0];
+  const beforeReleaseDecision = beforeRelease.decisions.find((entry) => entry.id === decision.id)!;
   updateRun(run.id, {
     decisions: beforeRelease.decisions.map((entry) =>
       entry.id === beforeReleaseDecision.id
@@ -409,7 +478,8 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
         : entry,
     ),
   });
-  const releasedPayload = getRun(run.id)!.decisions[0].payload as ReadyGatePayload;
+  const releasedPayload = getRun(run.id)!.decisions.find((entry) => entry.id === decision.id)!
+    .payload as ReadyGatePayload;
   const released = await refreshPublishPackage({
     runId: run.id,
     decisionId: decision.id,
@@ -418,7 +488,8 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
   });
   assert.equal(released.packageHeadSha, headSha);
   assert.deepEqual(released.droppedEvidenceKeys, []);
-  const afterRelease = getRun(run.id)!.decisions[0].payload as ReadyGatePayload;
+  const afterRelease = getRun(run.id)!.decisions.find((entry) => entry.id === decision.id)!
+    .payload as ReadyGatePayload;
   assert.equal(afterRelease.behindMain, undefined);
   assert.equal(afterRelease.mergeConflicts, undefined);
   assert.equal(afterRelease.mergeConflictPaths, undefined);
