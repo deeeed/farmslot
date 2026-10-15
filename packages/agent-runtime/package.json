@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/agent-runtime",
-  "version": "0.22.2",
+  "version": "0.22.3",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -35,11 +35,15 @@
       "types": "./dist/native/*.d.ts",
       "import": "./dist/native/*.js"
     },
-    "./scripts/branch-update.mjs": "./scripts/branch-update.mjs"
+    "./scripts/branch-update.mjs": "./scripts/branch-update.mjs",
+    "./scripts/review-diff-scope.cjs": {
+      "types": "./scripts/review-diff-scope.d.cts",
+      "default": "./scripts/review-diff-scope.cjs"
+    }
   },
   "scripts": {
     "typecheck": "yarn workspace @farmslot/protocol build && tsc --noEmit --project tsconfig.json",
-    "test": "node --test test/claim-review-gate.test.mjs test/deterministic-checks.test.cjs && node test/mark-checklist-step.test.cjs && node test/mark-subtask.test.cjs && node --test test/acceptance-ledger.test.cjs test/acceptance-ledger-cutover.test.cjs && node test/checklist-target-sync.test.mjs && node test/acceptance-ledger-sync.test.mjs && node test/package-exports.test.cjs && node test/check-task-artifact-contract.test.cjs && node test/recipe-quality-builder.test.cjs && node test/task-init.test.mjs && node --import tsx ../../scripts/e2e-subtask-mark.mts && node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src/execution-template && node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src/task-init && node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src/native",
+    "test": "node --test test/review-diff-scope.test.cjs test/claim-review-gate.test.mjs test/deterministic-checks.test.cjs && node test/mark-checklist-step.test.cjs && node test/mark-subtask.test.cjs && node --test test/acceptance-ledger.test.cjs test/acceptance-ledger-cutover.test.cjs && node test/checklist-target-sync.test.mjs && node test/acceptance-ledger-sync.test.mjs && node test/package-exports.test.cjs && node test/check-task-artifact-contract.test.cjs && node test/recipe-quality-builder.test.cjs && node test/task-init.test.mjs && node --import tsx ../../scripts/e2e-subtask-mark.mts && node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src/execution-template && node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src/task-init && node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src/native",
     "format": "prettier --write --ignore-path ../../.prettierignore .",
     "format:check": "prettier --check --ignore-path ../../.prettierignore .",
     "lint": "eslint \"src/**/*.ts\"",
@@ -91,7 +95,8 @@
     "scripts/**/*.cjs",
     "scripts/**/*.mjs",
     "scripts/retained-recipe-attempt.d.cts",
-    "scripts/execution-template-cli.mjs"
+    "scripts/execution-template-cli.mjs",
+    "scripts/review-diff-scope.d.cts"
   ],
   "publishConfig": {
     "access": "public"

@@ -52,6 +52,8 @@ class ReviewTests(unittest.TestCase):
             output = self.head
         elif argv[:2] == ["git", "merge-base"]:
             output = self.base
+        elif argv[0] == "node" and argv[1].endswith("review-diff-scope.cjs"):
+            output = "## Diff scope\nShared packet for entire contribution"
         elif argv[:3] == ["git", "diff", "--name-only"]:
             output = "\0".join(self.conflict_paths) + "\0"
         else:
@@ -137,6 +139,9 @@ class ReviewTests(unittest.TestCase):
         self.assertIn("user-data loss", prompt)
         self.assertIn("Nits never block", prompt)
         self.assertIn("Round 1, claude", prompt)
+        self.assertIn("## Diff scope", prompt)
+        scope_commands = [command for command in self.commands if command[0] == "node"]
+        self.assertTrue(all(command[-2] == "main" for command in scope_commands))
 
     def test_real_reviewer_failure_cannot_inherit_prior_approval(self):
         review.review(self.config, self.args)

@@ -83,7 +83,7 @@ def _save_text(path, text):
         handle.write(text)
 
 
-def _prompt(repo, pr, sha, base, number, mode, previous):
+def _prompt(repo, pr, sha, base, number, mode, previous, diff_scope=""):
     scope = (
         "Review the complete PR diff for this first round."
         if number == 1
@@ -118,6 +118,8 @@ of 1 second or more and no background processes without teardown. Require measur
 
 Earlier independent reviews, supplied only to verify fixes and preserve settled decisions:
 {previous or 'None, this is the first round.'}
+
+{diff_scope}
 """
 
 
@@ -358,7 +360,9 @@ def _locked_review(config, args, directory):
     round_dir = directory / f"r{number}"
     round_dir.mkdir()
     fields = {"repo": args.repo, "pr": str(args.pr), "head": sha, "base": base, "round": str(number)}
-    prompt = _prompt(args.repo, args.pr, sha, base, number, mode, _previous(directory, state["rounds"]))
+    scope_script = Path(__file__).resolve().parents[4] / "packages/agent-runtime/scripts/review-diff-scope.cjs"
+    diff_scope = run(["node", str(scope_script), "packet", str(cwd), args.base, sha], cwd=cwd).stdout
+    prompt = _prompt(args.repo, args.pr, sha, base, number, mode, _previous(directory, state["rounds"]), diff_scope)
     prompt_file = round_dir / "prompt.md"
     _save_text(prompt_file, prompt)
     item = {"number": number, "head": sha, "base": base, "mode": mode, "started_at": time.time()}
