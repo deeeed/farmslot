@@ -107,6 +107,8 @@ export function rollbackReclaimedSlotReleaseOptions(
 export interface RunReplayStepHooks {
   /** Test-only: pause after the replay-owned generation bump. */
   afterGenerationBump?(): Promise<void>;
+  /** Test-only: retain a controlled engine observer without starting workers. */
+  startEngine?(runId: string): Promise<void>;
   /**
    * A blocked monitor accepts the blocked attempt running again as live
    * (resumeBlockedRunWhoseWorkerContinued), not only finished.
@@ -819,8 +821,17 @@ function decisionOwningStepIndex(type: string, flowSteps: readonly string[] | un
   return -1;
 }
 
-// Coalesce review replay preflight before its durable recovery attempt exists.
-const pendingReviewReplays = new Map<string, Promise<RunReplayStepResult>>();
+interface ReviewReplayFlight {
+  generation: number;
+  driver?: Promise<void>;
+}
+
+// Persisted fixing state can outlive its observer after a gateway restart.
+// Coalesce only a replay whose preflight or engine driver is still here.
+const pendingReviewReplays = new Map<
+  string,
+  { flight: ReviewReplayFlight; result: Promise<RunReplayStepResult> }
+>();
 
 export async function runReplayStep(
   params: RunReplayStepParams,
@@ -831,14 +842,33 @@ export async function runReplayStep(
   if (run?.reviewWorkspaceTarget) assertNativeRunOwner(run);
   if (params.stepName !== PS.REVIEW) return replayRunStep(params, emit, hooks);
   const pending = pendingReviewReplays.get(params.runId);
-  if (pending) return pending;
-  const replay = replayRunStep(params, emit, hooks);
-  pendingReviewReplays.set(params.runId, replay);
+  if (
+    pending &&
+    pending.flight.generation === (run?.engineState?.generation ?? 0) &&
+    (!pending.flight.driver ||
+      (run &&
+        !isTerminalRunStatus(run.status) &&
+        run.status !== 'paused' &&
+        run.steps.some(
+          (step) =>
+            step.name === PS.REVIEW && (step.status === 'pending' || step.status === 'running'),
+        )))
+  ) {
+    await pending.result;
+    return { run: getRun(params.runId)! };
+  }
+  const flight: ReviewReplayFlight = { generation: run?.engineState?.generation ?? 0 };
+  const result = replayRunStep(params, emit, hooks, flight);
+  const entry = { flight, result };
+  pendingReviewReplays.set(params.runId, entry);
+  const release = () => {
+    if (pendingReviewReplays.get(params.runId) === entry) pendingReviewReplays.delete(params.runId);
+  };
   try {
-    return await replay;
+    return await result;
   } finally {
-    if (pendingReviewReplays.get(params.runId) === replay)
-      pendingReviewReplays.delete(params.runId);
+    if (flight.driver) void flight.driver.then(release);
+    else release();
   }
 }
 
@@ -846,6 +876,7 @@ async function replayRunStep(
   params: RunReplayStepParams,
   emit: Emit,
   hooks: RunReplayStepHooks = {},
+  reviewFlight?: ReviewReplayFlight,
 ): Promise<RunReplayStepResult> {
   if (params.freshDispatch !== undefined && typeof params.freshDispatch !== 'boolean')
     throw new Error('freshDispatch must be a boolean');
@@ -912,24 +943,6 @@ async function replayRunStep(
     if (existing.transport !== 'native' && !existing.engineState?.flags?.warmSessionReuse) {
       throw new Error('freshDispatch requires a retained-session handoff run');
     }
-  }
-  const priorReplay = existing.recoveryAttempts?.at(-1);
-  if (
-    params.stepName === PS.REVIEW &&
-    priorReplay?.stepName === PS.REVIEW &&
-    priorReplay.status === 'started' &&
-    existing.recoveryProposal?.generation === (existing.engineState?.generation ?? 0) &&
-    (existing.recoveryProposal.status === 'manual-in-progress' ||
-      existing.recoveryProposal.status === 'auto-in-progress') &&
-    (existing.status === 'reviewing' ||
-      existing.status === 'fixing' ||
-      existing.status === 'reconciling') &&
-    existing.steps.some(
-      (step) => step.name === PS.REVIEW && (step.status === 'pending' || step.status === 'running'),
-    ) &&
-    existing.engineState?.publishGate?.reviewRecovery?.status !== 'operator-required'
-  ) {
-    return { run: existing };
   }
   // Replaying a cancelled run is supported (e.g. resuming ci-watch on an
   // update-branch run). Cancelling released the node, so the graph may have
@@ -1196,6 +1209,7 @@ async function replayRunStep(
     // Capture immediately: sampling generation after later awaits reads a
     // force-complete bump and makes the fence compare equal to itself.
     const ownedGeneration = bumpRunGeneration(params.runId);
+    if (reviewFlight) reviewFlight.generation = ownedGeneration;
     nativeReplayGeneration = ownedGeneration;
     const assertNativeReplayCurrent = () => {
       if (initialNativeStatus === undefined) return;
@@ -1922,12 +1936,14 @@ async function replayRunStep(
     // engine start (same switch runCreate honors) to assert the primed
     // pipeline state deterministically.
     if (
+      hooks.startEngine ||
       process.env.NODE_TEST_CONTEXT !== '1' ||
       process.env.FARMSLOT_DISABLE_RUN_ENGINE_START !== '1'
     ) {
-      startRun(params.runId).catch((err) => {
+      const driver = (hooks.startEngine ?? startRun)(params.runId).catch((err) => {
         console.error(`[run] replay failed: ${(err as Error).message}`);
       });
+      if (reviewFlight) reviewFlight.driver = driver;
     }
 
     console.log(`[run] replaying ${params.runId.slice(0, 8)} from step ${replayStepName}`);

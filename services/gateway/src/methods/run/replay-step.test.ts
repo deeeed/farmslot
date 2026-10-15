@@ -695,8 +695,13 @@ test(
     });
     let release: (() => void) | undefined;
     const replayTasks: Promise<unknown>[] = [];
+    let finishDriver!: () => void;
+    const driver = new Promise<void>((resolve) => {
+      finishDriver = resolve;
+    });
     t.after(async () => {
       release?.();
+      finishDriver();
       await Promise.allSettled(replayTasks);
       if (previousDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
       else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previousDisableStart;
@@ -721,6 +726,7 @@ test(
     });
     const params = { runId: run.id, stepName: 'review' };
     const replay = runReplayStep(params, () => {}, {
+      startEngine: () => driver,
       afterGenerationBump: async () => {
         entered();
         await held;
@@ -750,6 +756,17 @@ test(
       assert.deepEqual(getRun(run.id), before);
     }
 
+    finishDriver();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    // Simulate retained state after observer exit/restart. The durable attempt
+    // still says started, but manual recovery must create a new observer.
+    for (const status of ['fixing', 'reconciling'] as const) {
+      updateRun(run.id, { status });
+      const priorGeneration = getRun(run.id)?.engineState?.generation ?? 0;
+      await runReplayStep(params, () => {});
+      assert.equal(getRun(run.id)?.engineState?.generation, priorGeneration + 1);
+    }
+
     const current = getRun(run.id)!;
     updateRun(run.id, {
       engineState: {
@@ -765,13 +782,13 @@ test(
       },
     });
     await runReplayStep(params, () => {});
-    assert.equal(getRun(run.id)?.engineState?.generation, (generation ?? 0) + 1);
-    assert.equal(getRun(run.id)?.recoveryAttempts?.length, 2);
+    assert.equal(getRun(run.id)?.engineState?.generation, (generation ?? 0) + 3);
+    assert.equal(getRun(run.id)?.recoveryAttempts?.length, 4);
 
     updateRun(run.id, { status: 'failed' });
     await runReplayStep(params, () => {});
-    assert.equal(getRun(run.id)?.engineState?.generation, (generation ?? 0) + 2);
-    assert.equal(getRun(run.id)?.recoveryAttempts?.length, 3);
+    assert.equal(getRun(run.id)?.engineState?.generation, (generation ?? 0) + 4);
+    assert.equal(getRun(run.id)?.recoveryAttempts?.length, 5);
   },
 );
 
