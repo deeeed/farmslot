@@ -13,6 +13,29 @@ export interface RunImportProvenance {
   sourceFarmslotRoot?: string;
   bundleId?: string;
   mode: RunBundleImportMode;
+  /** Source digest aliases resolve only to target-owned captures after import. */
+  artifactBundleRefs?: Record<string, RunArtifactBundleRef>;
+}
+
+/** Gateway-owned immutable capture; the Run store remains lifecycle authority. */
+export interface RunArtifactBundleRef {
+  storeId: string;
+  bundleDigest: string;
+  taskKey: string;
+  /** Original output inventory identity, including historical reviews. */
+  manifestDigest: string;
+}
+
+export interface RunBundleRetentionPolicy {
+  maxBundleBytes: number;
+  maxStoreBytes: number;
+  metadataReserveBytes: number;
+  mediaRetentionDays: number;
+}
+
+export interface RunBundleRetainResult {
+  ref: RunArtifactBundleRef;
+  missingData: string[];
 }
 
 export interface RunBundleSource {
@@ -31,6 +54,7 @@ export interface RunBundleRunEntry {
   originalRunId: string;
   runPath: string;
   taskKey?: string;
+  artifactBundleDigests?: string[];
   taskRelativePath?: string;
   packagePaths?: string[];
   missingData?: string[];

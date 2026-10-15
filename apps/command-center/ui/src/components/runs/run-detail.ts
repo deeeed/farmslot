@@ -1351,7 +1351,12 @@ export class RunDetail extends RunDetailState {
     const resolveArtifactUrl = this._captureEvidenceResolver();
     try {
       const report = await readEvidenceReviewReport(model, async (path) => {
-        const response = await gatewayHttpFetch(runArtifactUrl(run.id, { path }));
+        const response = await gatewayHttpFetch(
+          runArtifactUrl(
+            run.id,
+            model.report?.artifactManifest.find((file) => file.path === path) ?? { path },
+          ),
+        );
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return new Uint8Array(await response.arrayBuffer());
       });
@@ -1363,6 +1368,8 @@ export class RunDetail extends RunDetailState {
             purpose: 'report',
             url: runArtifactUrl(run.id, {
               path: report.path,
+              bundleDigest: model.report?.artifactManifest.find((file) => file.path === report.path)
+                ?.bundleDigest,
               sha256: model.report?.artifactManifest.find((file) => file.path === report.path)
                 ?.sha256,
             }),

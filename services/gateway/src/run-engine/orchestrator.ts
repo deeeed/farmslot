@@ -50,6 +50,7 @@ import {
   teardownReviewWorkspace,
 } from '../review-workspaces/pipeline.js';
 import { scanArtifacts } from '../run-completion/orchestrator.js';
+import { reserveRunArtifactMetadata } from '../run-completion/retained-artifacts.js';
 import { isCompletionPrerequisiteFailure, STEP_TO_STATUS } from '../run-lifecycle/step-status.js';
 import {
   routeTerminalRunTransition,
@@ -714,6 +715,9 @@ export interface StartRunOptions {
 export async function startRun(runId: string, options: StartRunOptions = {}): Promise<void> {
   const generation = options.expectedGeneration ?? getRunGeneration(runId);
   try {
+    const admitted = getRun(runId);
+    if (admitted && !['done', 'failed', 'cancelled'].includes(admitted.status))
+      await reserveRunArtifactMetadata(admitted);
     await driveRun(runId, { ...options, expectedGeneration: generation });
   } finally {
     // Every exit, not just the completion tail: a run that deferred a release

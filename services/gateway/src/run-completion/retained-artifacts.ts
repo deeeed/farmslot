@@ -1,0 +1,530 @@
+import { createHash } from 'node:crypto';
+import { readdir, readFile, rm, stat } from 'node:fs/promises';
+import path from 'node:path';
+
+import {
+  readRecordedEvidencePackage,
+  type RecordedEvidencePackageReadIO,
+} from '@farmslot/adapter-sdk';
+import {
+  type ArtifactRef,
+  isRecord,
+  type RecipeRunArtifactGroup,
+  type Run,
+  type RunArtifactBundleRef,
+  type RunBundleRetainResult,
+  type RunBundleRetentionPolicy,
+  sanitizeLatestValidRecipeRunPointer,
+  WORKER_TERMINAL_CONTRACT_INPUT,
+} from '@farmslot/protocol';
+import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+import { strictTaskRelativePathFromFarmslotRoot } from '@farmslot/protocol/runs/portable-bundle';
+import {
+  collectRunBundleGarbage,
+  DEFAULT_RUN_BUNDLE_RETENTION,
+  isRunBundleMedia,
+  type MaterializedRunBundle,
+  materializeRunBundle,
+  openRunBundleStore,
+  readRetainedRunBundle,
+  readRunBundleAvailability,
+  reserveRunBundleMetadata,
+} from '@farmslot/run-bundle';
+
+import { isolatedTestPath } from '../core/isolated-test-path.js';
+import { loadContextFromArtifactRoot } from '../live-recipe/context.js';
+import { farmslotRoot } from '../projects/repo-root.js';
+import {
+  getRun,
+  persistRunNow,
+  runsDirectory,
+  shouldUseIsolatedRunsDir,
+  updateRun,
+} from '../runs/store.js';
+
+export function runBundleStore(create = false) {
+  const home =
+    !process.env.FARMSLOT_RUNS_DIR &&
+    !process.env.FARMSLOT_HOME &&
+    shouldUseIsolatedRunsDir(process.env, process.argv)
+      ? isolatedTestPath('farmslot-test-bundle-home')
+      : farmslotHome();
+  return openRunBundleStore({
+    runsDir: runsDirectory(),
+    home,
+    create: create && !process.env.FARMSLOT_RUNS_DIR && !process.env.FARMSLOT_SANDBOX_HOME,
+  });
+}
+
+export function retainedRunBundleRef(
+  run: Run,
+  decisionId?: string,
+  digest?: string,
+): RunArtifactBundleRef {
+  const decision = decisionId ? run.decisions.find(({ id }) => id === decisionId) : undefined;
+  const payload = decision?.payload;
+  let selected =
+    payload?.kind === 'ready'
+      ? payload.prPackage?.artifactBundle
+      : payload?.kind === 'output-review'
+        ? (payload.artifactBundle ??
+          (payload.manifestDigest === run.output?.manifestDigest
+            ? run.output.artifactBundle
+            : undefined))
+        : (run.artifactBundle ?? run.output?.artifactBundle);
+  if (decisionId && !decision) throw new Error('The retained decision no longer exists.');
+  if (digest) {
+    const known = [
+      run.artifactBundle,
+      run.output?.artifactBundle,
+      ...run.decisions.map(({ payload }) =>
+        payload?.kind === 'ready'
+          ? payload.prPackage?.artifactBundle
+          : payload?.kind === 'output-review'
+            ? payload.artifactBundle
+            : undefined,
+      ),
+    ];
+    const requested = known.find(
+      (ref) =>
+        ref && (ref.bundleDigest === digest || localBundleRef(run, ref).bundleDigest === digest),
+    );
+    if (
+      decisionId &&
+      (!selected ||
+        !requested ||
+        localBundleRef(run, selected).bundleDigest !== localBundleRef(run, requested).bundleDigest)
+    )
+      throw new Error('The requested retained snapshot does not match this decision.');
+    selected = requested;
+  }
+  if (!selected)
+    throw new Error(`Run artifacts are not retained. Run farmslot runs bundle retain ${run.id}.`);
+  return localBundleRef(run, selected);
+}
+
+function localBundleRef(run: Run, ref: RunArtifactBundleRef): RunArtifactBundleRef {
+  return run.importProvenance?.artifactBundleRefs?.[ref.bundleDigest] ?? ref;
+}
+
+export async function retainedRunTaskDirectory(
+  run: Run,
+  ref = retainedRunBundleRef(run),
+): Promise<string> {
+  ref = localBundleRef(run, ref);
+  return (await readRetainedRunBundle(await runBundleStore(), ref, run.id)).taskDir;
+}
+
+/** Verify only the requested file, never all media just to open a report. */
+export async function readRetainedRunText(
+  run: Run,
+  file: string,
+  ref = retainedRunBundleRef(run),
+): Promise<string> {
+  ref = localBundleRef(run, ref);
+  const bundle = await readRetainedRunBundle(await runBundleStore(), ref, run.id);
+  return bundle.readText(file);
+}
+
+export async function retainedRunArtifactManifest(
+  run: Run,
+  ref = retainedRunBundleRef(run),
+): Promise<ArtifactRef[]> {
+  ref = localBundleRef(run, ref);
+  const store = await runBundleStore();
+  const { manifest, directory } = await readRetainedRunBundle(store, ref, run.id);
+  const availability = await readRunBundleAvailability(store, ref, run.id);
+  const pruned = new Set(availability.prunedPaths);
+  const prefix = `tasks/${ref.taskKey}/`;
+  const original = new Map(
+    (run.output?.artifactManifest ?? []).map((artifact) => [artifact.path, artifact]),
+  );
+  return Promise.all(
+    Object.entries(manifest.entries)
+      .filter(([key]) => key.startsWith(prefix))
+      .map(async ([key, entry]): Promise<ArtifactRef> => {
+        const file = key.slice(prefix.length);
+        let state: ArtifactRef['availability'] = pruned.has(key) ? 'pruned' : 'available';
+        try {
+          await stat(path.join(directory, key));
+        } catch (error) {
+          if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
+            state = pruned.has(key) ? 'pruned' : 'missing';
+          else throw error;
+        }
+        return {
+          ...original.get(file),
+          availability: state,
+          retentionRevision: availability.revision,
+          bundleDigest: ref.bundleDigest,
+          path: file,
+          purpose: original.get(file)?.purpose ?? 'artifact',
+          sha256: entry.sha256,
+          sizeBytes: entry.bytes,
+        };
+      }),
+  );
+}
+
+/** Optional retained metadata has one lookup policy shared by gate/report consumers. */
+export async function readOptionalRetainedRunText(
+  run: Run,
+  file: string,
+  selectedRef?: RunArtifactBundleRef,
+): Promise<string | undefined> {
+  if (!selectedRef && !run.artifactBundle && !run.output?.artifactBundle) return undefined;
+  const ref = selectedRef ? localBundleRef(run, selectedRef) : retainedRunBundleRef(run);
+  const bundle = await readRetainedRunBundle(await runBundleStore(), ref, run.id);
+  if (!bundle.manifest.entries[`tasks/${ref.taskKey}/${file}`]) return undefined;
+  return readRetainedRunText(run, file, ref);
+}
+
+/** Manifest-indexed I/O feeds the sole SDK package reader. Missing/pruned files remain failures. */
+export async function retainedEvidenceReadIO(
+  run: Run,
+  root: string,
+  ref = retainedRunBundleRef(run),
+): Promise<RecordedEvidencePackageReadIO> {
+  ref = localBundleRef(run, ref);
+  const store = await runBundleStore();
+  const bundle = await readRetainedRunBundle(store, ref, run.id);
+  const prefix = `tasks/${ref.taskKey}/${root.replace(/\/$/u, '')}/`;
+  const paths = Object.keys(bundle.manifest.entries)
+    .filter((key) => key.startsWith(prefix))
+    .map((key) => key.slice(prefix.length));
+  return {
+    listPaths: async () => paths,
+    readJson: async (relative) =>
+      JSON.parse(await bundle.readText(path.posix.join(root, relative))),
+    digestFile: async (relative) => {
+      const entry = await bundle.resolveEntry(path.posix.join(root, relative));
+      return `sha256:${entry.sha256}`;
+    },
+  };
+}
+
+export async function readRetainedEvidencePackage(
+  run: Run,
+  root: string,
+  ref = retainedRunBundleRef(run),
+) {
+  return readRecordedEvidencePackage(root, await retainedEvidenceReadIO(run, root, ref));
+}
+
+async function retentionPolicy(): Promise<RunBundleRetentionPolicy> {
+  const store = await runBundleStore();
+  try {
+    const value: unknown = JSON.parse(
+      await readFile(path.join(path.dirname(store.root), 'run-bundle-retention.json'), 'utf8'),
+    );
+    if (!isRecord(value) || !isRecord(value.runBundleRetention))
+      throw new Error('Invalid runBundleRetention settings.');
+    const policy = { ...DEFAULT_RUN_BUNDLE_RETENTION };
+    for (const key of Object.keys(policy) as Array<keyof RunBundleRetentionPolicy>) {
+      const setting = value.runBundleRetention[key];
+      if (setting !== undefined) {
+        if (typeof setting !== 'number') throw new Error(`Invalid runBundleRetention.${key}`);
+        policy[key] = setting;
+      }
+    }
+    return policy;
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
+      return { ...DEFAULT_RUN_BUNDLE_RETENTION };
+    throw error;
+  }
+}
+
+const RETAINED_TASK_INPUTS = [
+  'inputs/handoff.json',
+  'inputs/commit.json',
+  WORKER_TERMINAL_CONTRACT_INPUT,
+];
+
+/** Qualify bytes before existing local task/contract parsers consume the captured tree. */
+export async function qualifyRetainedRunMetadata(run: Run): Promise<void> {
+  for (const file of [
+    ...RETAINED_TASK_INPUTS,
+    'artifacts/acceptance-status.json',
+    'artifacts/latest-valid-recipe-run.json',
+  ])
+    await readOptionalRetainedRunText(run, file);
+}
+
+export async function reserveRunArtifactMetadata(run: Run): Promise<void> {
+  const store = await runBundleStore(true);
+  const policy = await retentionPolicy();
+  await collectRunBundleGarbage(store, policy);
+  await reserveRunBundleMetadata(store, run.id, policy);
+}
+
+export async function retainCapturedRunArtifacts(input: {
+  run: Run;
+  artifacts: readonly ArtifactRef[];
+  manifestDigest: string;
+  allowChanged?: boolean;
+  existingRef?: RunArtifactBundleRef;
+  releaseStagingMedia?: boolean;
+  commit(ref: RunArtifactBundleRef, missingData: string[]): Promise<void>;
+}): Promise<MaterializedRunBundle> {
+  if (!input.run.taskFile) throw new Error('Run has no captured task artifacts.');
+  const store = await runBundleStore(true);
+  await collectRunBundleGarbage(store, await retentionPolicy());
+  const artifacts = [...input.artifacts];
+  // Task-local inputs are the frozen control metadata consumed by review and QA readers.
+  // The materializer checks containment and hashes each file while copying it.
+  const taskDir = path.dirname(input.run.taskFile);
+  try {
+    for (const entry of await readdir(path.join(taskDir, 'inputs'), {
+      recursive: true,
+      withFileTypes: true,
+    })) {
+      if (!entry.isFile()) continue;
+      const file = path
+        .relative(taskDir, path.join(entry.parentPath, entry.name))
+        .split(path.sep)
+        .join('/');
+      if (!artifacts.some((artifact) => artifact.path === file))
+        artifacts.push({
+          path: file,
+          purpose: 'task-input',
+          sizeBytes: (await stat(path.join(taskDir, file))).size,
+        });
+    }
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  for (const file of [path.basename(input.run.taskFile), 'CHECKLIST.md', ...RETAINED_TASK_INPUTS]) {
+    if (artifacts.some((artifact) => artifact.path === file)) continue;
+    try {
+      const bytes = await readFile(path.join(path.dirname(input.run.taskFile), file));
+      artifacts.push({
+        path: file,
+        purpose: 'task-input',
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+        sizeBytes: bytes.length,
+      });
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    }
+  }
+  return materializeRunBundle({
+    store,
+    farmslotRoot,
+    run: input.run,
+    artifacts,
+    taskDir: path.dirname(input.run.taskFile),
+    manifestDigest: input.manifestDigest,
+    captureKey: JSON.stringify([
+      input.run.taskFile,
+      input.run.engineState?.generation,
+      input.manifestDigest,
+    ]),
+    policy: await retentionPolicy(),
+    stagingBytes: artifacts.reduce((bytes, artifact) => bytes + (artifact.sizeBytes ?? 0), 0),
+    allowChanged: input.allowChanged,
+    existingRef: input.existingRef,
+    commit: async (ref, missingData) => {
+      const latest = getRun(input.run.id);
+      if (
+        latest &&
+        latest.artifactBundle?.bundleDigest !== input.run.artifactBundle?.bundleDigest &&
+        latest.artifactBundle?.bundleDigest !== ref.bundleDigest
+      )
+        throw new Error(
+          'A newer retained capture committed while this snapshot was being acquired.',
+        );
+      await input.commit(ref, missingData);
+      // Only the gateway's acquisition tree is regenerable. Slot trees and task inputs stay intact.
+      if (
+        input.releaseStagingMedia &&
+        strictTaskRelativePathFromFarmslotRoot(farmslotRoot, input.run.taskFile)
+      ) {
+        for (const artifact of input.artifacts) {
+          if (!isRunBundleMedia(artifact.path)) continue;
+          await rm(path.join(path.dirname(input.run.taskFile!), artifact.path), { force: true });
+        }
+      }
+    },
+  });
+}
+
+/** Explicit backfill preserves the captured inventory and every historical decision/verdict. */
+export async function retainRunArtifacts(runId: string): Promise<RunBundleRetainResult> {
+  const run = getRun(runId);
+  if (!run?.taskFile || !run.output)
+    throw new Error('Run has no captured output inventory to retain.');
+  const output = run.output;
+  if (output.artifactBundle) {
+    const bundle = await readRetainedRunBundle(
+      await runBundleStore(),
+      localBundleRef(run, output.artifactBundle),
+      run.id,
+    );
+    const entries = Object.keys(bundle.manifest.entries);
+    const present = await Promise.all(
+      entries.map(async (file) => {
+        try {
+          await stat(path.join(bundle.directory, file));
+          return true;
+        } catch (error) {
+          if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
+          throw error;
+        }
+      }),
+    );
+    if (present.every(Boolean))
+      return {
+        ref: output.artifactBundle,
+        missingData: (bundle.manifest.missingData ?? []).filter(
+          (reason) => !reason.startsWith('missing:') && !reason.startsWith('media-capacity:'),
+        ),
+      };
+  }
+  // Acquisition is explicit. A viewer never refreshes a mirror or asks a slot for files.
+  const missing = await Promise.all(
+    output.artifactManifest.map(async (artifact) => {
+      try {
+        await stat(path.join(path.dirname(run.taskFile!), artifact.path));
+        return false;
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return true;
+        throw error;
+      }
+    }),
+  );
+  if (missing.some(Boolean) && run.slotId) {
+    const { refreshArtifactMirror } = await import('./artifact-mirror.js');
+    await refreshArtifactMirror(run);
+  }
+  const result = await retainCapturedRunArtifacts({
+    run,
+    artifacts: output.artifactManifest,
+    manifestDigest: output.manifestDigest,
+    allowChanged: true,
+    existingRef: output.artifactBundle,
+    releaseStagingMedia: true,
+    commit: async (ref, missingData) => {
+      const current = getRun(runId);
+      if (
+        !current ||
+        current.taskFile !== run.taskFile ||
+        current.engineState?.generation !== run.engineState?.generation ||
+        current.output?.manifestDigest !== output.manifestDigest
+      )
+        throw new Error('Run output changed during retention. Retry the current snapshot.');
+      const updated = updateRun(runId, {
+        artifactBundle: ref,
+        output: { ...current.output, artifactBundle: ref, retentionMissingData: missingData },
+      });
+      await persistRunNow(updated, 'retained artifact backfill');
+    },
+  });
+  return { ref: result.ref, missingData: result.missingData };
+}
+
+/** Group discovery uses only the immutable manifest and lightweight execution metadata. */
+export async function retainedRecipeRunGroups(
+  run: Run,
+  ref = retainedRunBundleRef(run),
+): Promise<RecipeRunArtifactGroup[]> {
+  const inventory = await retainedRunArtifactManifest(run, ref);
+  const taskDir = await retainedRunTaskDirectory(run, ref);
+  const paths = new Set(inventory.map(({ path }) => path));
+  const pointer = paths.has('artifacts/latest-valid-recipe-run.json')
+    ? sanitizeLatestValidRecipeRunPointer(
+        JSON.parse(await readRetainedRunText(run, 'artifacts/latest-valid-recipe-run.json', ref)),
+      )
+    : null;
+  const roots = [
+    ...new Set(
+      inventory
+        .filter(({ path: file }) => path.posix.basename(file) === 'summary.json')
+        .map(({ path: file }) => path.posix.dirname(file)),
+    ),
+  ];
+  const groups: RecipeRunArtifactGroup[] = [];
+  for (const root of ['artifacts', ...roots.filter((root) => root !== 'artifacts')]) {
+    let raw: unknown = null;
+    if (paths.has(`${root}/summary.json`)) {
+      const text = await readRetainedRunText(run, `${root}/summary.json`, ref);
+      try {
+        raw = JSON.parse(text);
+      } catch (error) {
+        // A malformed execution must not hide the run's report. The canonical package reader reports it.
+        if (!(error instanceof SyntaxError)) throw error;
+      }
+    }
+    const recipeRunId =
+      isRecord(raw) && typeof raw.recipeRunId === 'string' ? raw.recipeRunId : null;
+    const promoted = Boolean(pointer && root === `artifacts/${pointer.relativeArtifactRoot}`);
+    const artifacts = inventory
+      .filter(({ path: file }) => file.startsWith(`${root}/`))
+      .map((artifact) => ({
+        ...artifact,
+        path: `artifacts/${artifact.path.slice(root.length + 1)}`,
+      }));
+    const context = await loadContextFromArtifactRoot({
+      run,
+      artifactRoot: path.join(taskDir, root),
+      recipeRunId,
+      source: 'recipe-run-artifacts',
+      selectionReason: 'latest-run',
+      isStale: false,
+      retained: {
+        artifactManifest: artifacts,
+        readText: async (relative) =>
+          paths.has(`${root}/${relative}`)
+            ? readRetainedRunText(run, `${root}/${relative}`, ref)
+            : null,
+      },
+    });
+    groups.push({
+      source: 'recipe-run-artifacts',
+      selectionReason: 'latest-run',
+      isStale: false,
+      recipeRunId,
+      artifactRoot: path.join(taskDir, root),
+      artifactManifest: artifacts,
+      recipeJson: null,
+      recipeQualityArtifact: null,
+      qualityReport: null,
+      workerLearnings: null,
+      ...context,
+      artifactBundle: ref,
+      id: root === 'artifacts' ? 'current-artifacts' : (recipeRunId ?? root),
+      label:
+        root === 'artifacts'
+          ? 'Retained run artifacts'
+          : promoted
+            ? 'Latest passing evidence'
+            : root.slice('artifacts/'.length),
+      groupKind:
+        root === 'artifacts' ? 'current-artifacts' : promoted ? 'latest-valid' : 'live-run',
+      promoted,
+      status:
+        isRecord(raw) && (raw.status === 'pass' || raw.status === 'fail') ? raw.status : 'unknown',
+    });
+  }
+  return groups;
+}
+
+export function selectedRetainedRecipeGroup<
+  T extends Pick<RecipeRunArtifactGroup, 'promoted' | 'recipeRunId'>,
+>(groups: T[]): T | undefined {
+  return (
+    groups.find((group) => group.promoted) ?? groups.find((group) => group.recipeRunId) ?? groups[0]
+  );
+}
+
+/** Presentation reads get a retained task root without rewriting lifecycle authority. */
+export async function retainedArtifactRun(run: Run): Promise<Run> {
+  if (!run.artifactBundle && !run.output?.artifactBundle)
+    return { ...run, taskFile: null, liveRecipeContext: null };
+  const taskDir = await retainedRunTaskDirectory(run);
+  return {
+    ...run,
+    taskFile: path.join(taskDir, path.basename(run.taskFile ?? 'TASK.md')),
+    liveRecipeContext: null,
+  };
+}

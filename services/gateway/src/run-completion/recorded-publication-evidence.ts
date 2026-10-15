@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { readRecordedEvidencePackage } from '@farmslot/adapter-sdk';
 import { validateRecordedEvidencePackage } from '@farmslot/adapter-sdk/evidence';
-import type { ArtifactRef, Run } from '@farmslot/protocol';
+import type { ArtifactRef, Run, RunArtifactBundleRef } from '@farmslot/protocol';
 
 import {
   isGatewayOwnedArtifactPath,
@@ -27,6 +27,7 @@ import {
   sha256Text,
   verifyReadyGateSelectedEvidenceFiles,
 } from './ready-gate-package.js';
+import { readRetainedRunText } from './retained-artifacts.js';
 
 const SELECTION_MANIFEST_PATH = 'artifacts/evidence-manifest.json';
 
@@ -153,6 +154,7 @@ export async function recordedPublicationDependencies(
 export async function readFrozenPublicationManifest(
   run: Run,
   inventory: readonly ArtifactRef[],
+  bundleRef?: RunArtifactBundleRef,
 ): Promise<EvidenceManifest | null> {
   const manifest =
     inventory.find(
@@ -163,13 +165,17 @@ export async function readFrozenPublicationManifest(
   if (!manifest) return null;
   if (!run.taskFile || !manifest.sha256)
     throw new Error('The frozen publication selection manifest has no retained byte identity.');
-  await verifyReadyGateSelectedEvidenceFiles(run, { evidenceManifest: [...inventory] }, [
-    manifest.path,
-    ...inventory
-      .filter((artifact) => artifact.purpose === 'evidence-manifest-source')
-      .map((artifact) => artifact.path),
-  ]);
-  const text = await readFile(path.resolve(path.dirname(run.taskFile), manifest.path), 'utf8');
+  await verifyReadyGateSelectedEvidenceFiles(
+    run,
+    { evidenceManifest: [...inventory], artifactBundle: bundleRef },
+    [
+      manifest.path,
+      ...inventory
+        .filter((artifact) => artifact.purpose === 'evidence-manifest-source')
+        .map((artifact) => artifact.path),
+    ],
+  );
+  const text = await readRetainedRunText(run, manifest.path, bundleRef);
   if (sha256Text(text) !== manifest.sha256.replace(/^sha256:/u, ''))
     throw new Error('The frozen publication selection manifest bytes changed.');
   const value: unknown = JSON.parse(text);
@@ -184,12 +190,15 @@ export async function verifyFrozenPublicationEvidence(
   run: Run,
   inventory: readonly ArtifactRef[],
   selectedEvidenceKeys: readonly string[],
+  bundleRef?: RunArtifactBundleRef,
 ): Promise<void> {
   if (!inventory.length && !selectedEvidenceKeys.length) return;
-  await verifyReadyGateSelectedEvidenceFiles(run, { evidenceManifest: [...inventory] }, [
-    ...selectedEvidenceKeys,
-  ]);
-  await readFrozenPublicationManifest(run, inventory);
+  await verifyReadyGateSelectedEvidenceFiles(
+    run,
+    { evidenceManifest: [...inventory], artifactBundle: bundleRef },
+    [...selectedEvidenceKeys],
+  );
+  await readFrozenPublicationManifest(run, inventory, bundleRef);
   const media = selectedEvidenceKeys.filter(isUploadableMediaPath).flatMap((key) => {
     const selected = resolveSelectedEvidenceRef(key, [...inventory]);
     return selected ? [selected.path] : [];
@@ -198,7 +207,12 @@ export async function verifyFrozenPublicationEvidence(
   const selectedRecordedMedia = media.filter((key) =>
     roots.some((root) => key.startsWith(`${root}/`)),
   );
-  const sources = await readFrozenPublicationRecipeSources(run, inventory, selectedRecordedMedia);
+  const sources = await readFrozenPublicationRecipeSources(
+    run,
+    inventory,
+    selectedRecordedMedia,
+    bundleRef,
+  );
   for (const source of sources) {
     const issues = validateRecordedEvidencePackage(source.input).findings.filter(
       (finding) => finding.severity === 'error',

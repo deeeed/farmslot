@@ -19,7 +19,7 @@ import type { TaskTemplateSelection, TemplateProvenance } from './evals.js';
 import type { EvidenceQualityReport, RecipeQualityArtifact } from './recipes.js';
 import type { ResourcePostureWaitPolicy, RunResourcePostureState } from './resource-posture.js';
 import type { ResourceType } from './resources.js';
-import type { RunImportProvenance } from './run-bundles.js';
+import type { RunArtifactBundleRef, RunImportProvenance } from './run-bundles.js';
 import type { EvidencePolicyAttestation, RunGateReadiness } from './run-gate-readiness.js';
 import type { RuntimeCapabilityProofRequirement } from './runtime-capabilities.js';
 import type { SlotHealth } from './slots.js';
@@ -155,6 +155,7 @@ export type LiveRecipeSelectionReason =
   | 'fallback-none';
 
 export interface LiveRecipeContext {
+  artifactBundle?: RunArtifactBundleRef;
   source: LiveRecipeSource;
   recipeRunId: string | null;
   artifactRoot: string | null;
@@ -783,6 +784,7 @@ export interface GateTokenSummary {
 }
 
 export interface ReadyGatePrPackage {
+  artifactBundle?: RunArtifactBundleRef;
   /** Gateway override receipts applied when this package was prepared. */
   claimOverrideReceiptIds?: string[];
   /** Authenticated visual judgments captured by this review snapshot. */
@@ -1242,6 +1244,7 @@ export type RunDecisionPayload =
 
 /** Review retained output independently of worker outcome or publication. */
 export interface OutputReviewPayload {
+  artifactBundle?: RunArtifactBundleRef;
   kind: 'output-review';
   claimOverrideReceiptIds?: string[];
   /** Authenticated visual judgments captured by this review snapshot. */
@@ -1251,6 +1254,8 @@ export interface OutputReviewPayload {
 }
 
 export interface RunOutput {
+  artifactBundle?: RunArtifactBundleRef;
+  retentionMissingData?: string[];
   capturedAt: string;
   workerFinished: boolean;
   artifactManifest: ArtifactRef[];
@@ -2527,6 +2532,8 @@ export interface Run {
   completionPolicy?: RunCompletionPolicy;
   /** Local retained output; viewing or acknowledging it never changes the verdict. */
   output?: RunOutput;
+  /** Most recent explicit retained capture. Historical decisions keep their own refs. */
+  artifactBundle?: RunArtifactBundleRef;
   /** Principal-stamped one-dispatch pressure override requested for this run.
    * Bound to one machine + pressure generation; dispatch execution recomputes
    * the admission decision and rejects the override when the generation moved. */

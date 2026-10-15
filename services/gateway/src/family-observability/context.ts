@@ -7,6 +7,7 @@ import {
   invalidateArtifactTextCache,
   invalidateLiveRecipeContextMemo,
 } from '../live-recipe/context.js';
+import { retainedArtifactRun } from '../run-completion/retained-artifacts.js';
 import { getAllRuns, listRuns } from '../runs/store.js';
 
 export const FOLLOW_UP_SCOPE_VERDICTS = [
@@ -150,8 +151,9 @@ const RECIPE_PACKAGE_STATIC_FILES = [
   'runtime-exceptions.json',
 ] as const;
 
-function runTaskDir(run: Pick<Run, 'taskFile'>): string | null {
-  return run.taskFile ? path.dirname(run.taskFile) : null;
+async function runTaskDir(run: Run): Promise<string | null> {
+  const retained = await retainedArtifactRun(run);
+  return retained.taskFile ? path.dirname(retained.taskFile) : null;
 }
 
 async function pathExists(filePath: string): Promise<boolean> {
@@ -380,12 +382,12 @@ export function getFamilyRuns(
   return { familyId, familyRootTicketOrPr, parentRun, rootRun, otherFamilyRuns };
 }
 
-function buildArtifactCandidates(
+async function buildArtifactCandidates(
   run: Run,
   taskAbsDir: string,
   allRuns: Run[],
   spec: FamilyArtifactSpec,
-): FamilyArtifactCandidate[] {
+): Promise<FamilyArtifactCandidate[]> {
   const candidates: FamilyArtifactCandidate[] = [];
   const seen = new Set<string>();
   const addCandidate = (tier: ResolutionTier, sourcePath: string, sourceRunId?: string) => {
@@ -396,7 +398,7 @@ function buildArtifactCandidates(
 
   addCandidate('task-local-inherited', path.join(taskAbsDir, spec.materializedRelativePath));
 
-  const currentRunTaskDir = runTaskDir(run);
+  const currentRunTaskDir = await runTaskDir(run);
   if (currentRunTaskDir)
     addCandidate(
       'current-run-artifact',
@@ -405,7 +407,7 @@ function buildArtifactCandidates(
     );
 
   const { parentRun, rootRun, otherFamilyRuns } = getFamilyRuns(run, allRuns);
-  const parentTaskDir = parentRun ? runTaskDir(parentRun) : null;
+  const parentTaskDir = parentRun ? await runTaskDir(parentRun) : null;
   if (parentTaskDir)
     addCandidate(
       'parent-run-artifact',
@@ -413,7 +415,7 @@ function buildArtifactCandidates(
       parentRun!.id,
     );
 
-  const rootTaskDir = runTaskDir(rootRun);
+  const rootTaskDir = await runTaskDir(rootRun);
   if (rootTaskDir)
     addCandidate(
       'family-root-artifact',
@@ -422,7 +424,7 @@ function buildArtifactCandidates(
     );
 
   for (const familyRun of otherFamilyRuns) {
-    const familyTaskDir = runTaskDir(familyRun);
+    const familyTaskDir = await runTaskDir(familyRun);
     if (!familyTaskDir) continue;
     addCandidate(
       'family-member-artifact',
@@ -445,7 +447,7 @@ async function materializeInheritedEvidencePackage(
     sourceRelativePath: 'artifacts/evidence-manifest.json',
     materializedRelativePath: 'inputs/inherited/evidence-manifest.json',
   };
-  const candidates = buildArtifactCandidates(run, taskAbsDir, allRuns, spec);
+  const candidates = await buildArtifactCandidates(run, taskAbsDir, allRuns, spec);
   const attempts: FamilyArtifactManifestEntry['attempts'] = [];
 
   for (const candidate of candidates) {
@@ -548,7 +550,7 @@ export async function materializeInheritedContext(
   };
 
   for (const spec of FAMILY_ARTIFACT_SPECS) {
-    const candidates = buildArtifactCandidates(run, taskAbsDir, relevantRuns, spec);
+    const candidates = await buildArtifactCandidates(run, taskAbsDir, relevantRuns, spec);
     const attempts: FamilyArtifactManifestEntry['attempts'] = [];
     let resolved: FamilyArtifactManifestEntry | null = null;
 

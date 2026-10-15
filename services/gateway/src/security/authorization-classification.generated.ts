@@ -274,6 +274,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'run.bundle.export': { classification: 'admin' },
   'run.bundle.import': { classification: 'admin' },
   'run.bundle.list': { classification: 'admin' },
+  'run.bundle.retain': { classification: 'admin' },
   'run.cancel': { classification: 'admin' },
   'run.ciWatch.poke': { classification: 'admin' },
   'run.cleanup': { classification: 'admin' },

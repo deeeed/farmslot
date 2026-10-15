@@ -46,7 +46,7 @@ import { readFrozenRecordedEvidenceSources } from '../run-engine/recorded-eviden
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
 import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
-import { getRun, updateRun } from '../runs/store.js';
+import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import {
   extractRunnerSessionUsage,
   runnerUsageMetrics,
@@ -70,6 +70,7 @@ import {
 import { withEvidenceAttestation } from './evidence-attestation.js';
 import type { EvidenceManifest } from './evidence-manifest.js';
 import { evidenceKeyVariants } from './evidence-paths.js';
+import { captureRunOutput, outputManifestDigest } from './output.js';
 import {
   buildPackageEvidenceManifest,
   readCurrentPackageEvidence,
@@ -111,6 +112,7 @@ import {
   readFrozenPublicationManifest,
   verifyFrozenPublicationEvidence,
 } from './recorded-publication-evidence.js';
+import { retainCapturedRunArtifacts, retainedRunArtifactManifest } from './retained-artifacts.js';
 import { augmentReviewAttemptsFromArtifacts, materializeReviewArtifacts } from './reviews.js';
 
 export {
@@ -788,7 +790,32 @@ export async function prepareCompletionPackageTransitionLocked(
   const draftBody = await buildPreparedDraftPrBody(run, report, draftBodyArtifacts, baseBranch, {
     tolerateMissingSlot: Boolean(options?.headSha),
   });
+  const retentionInventory = [
+    ...new Map(
+      [...artifacts, ...evidenceManifest].map((artifact) => [artifact.path, artifact]),
+    ).values(),
+  ];
+  const retained = await retainCapturedRunArtifacts({
+    run,
+    artifacts: retentionInventory,
+    manifestDigest: outputManifestDigest(retentionInventory),
+    releaseStagingMedia: true,
+    commit: async (ref) => {
+      const latest = getRun(runId);
+      if (
+        !latest ||
+        latest.taskFile !== run.taskFile ||
+        latest.engineState?.generation !== run.engineState?.generation
+      )
+        throw new Error('Run attempt changed while retaining the publication package.');
+      await persistRunNow(
+        updateRun(runId, { artifactBundle: ref }),
+        'retained publication dependencies',
+      );
+    },
+  });
   const basePackage: Omit<ReadyGatePrPackage, 'packageHash'> = {
+    artifactBundle: retained.ref,
     id: packageId,
     artifactPath,
     branch,
@@ -821,6 +848,7 @@ export async function prepareCompletionPackageTransitionLocked(
       run,
       evidenceManifest,
       basePackage.selectedEvidenceKeys,
+      retained.ref,
     );
     basePackage.visualJudgmentReceiptIds = appliedVisualJudgmentReceiptIds(
       run,
@@ -883,6 +911,10 @@ export async function prepareCompletionPackageTransitionLocked(
     );
   }
 
+  if (getRun(runId)?.artifactBundle?.bundleDigest !== retained.ref.bundleDigest)
+    throw new Error(
+      'The retained publication snapshot changed during preparation. Refresh the gate package.',
+    );
   updateRun(runId, {
     engineState: {
       ...run.engineState,
@@ -917,7 +949,7 @@ export async function runCompletionPipeline(
     requireArtifactMirror?: boolean;
   },
 ): Promise<CompletionResult> {
-  const run = getRun(runId);
+  let run = getRun(runId);
   if (!run) throw new Error(`Run not found: ${runId}`);
 
   const flags: CompletionResult = {
@@ -960,6 +992,10 @@ export async function runCompletionPipeline(
       );
     }
   }
+
+  if (flags.artifactsCopied || !run.output?.artifactBundle)
+    await captureRunOutput(runId, false, true);
+  run = getRun(runId) ?? run;
 
   // 0b. Extract worker session cost
   await extractAndPersistSessionCost(runId);
@@ -1291,6 +1327,7 @@ export async function publishCompletionPackage(
     const evidenceManifest = await readFrozenPublicationManifest(
       run,
       approvedPackage.evidenceManifest ?? [],
+      approvedPackage.artifactBundle,
     );
     const publishableSelectedEvidenceKeys = assertPublicationEvidenceSelection({
       selectedEvidenceKeys: approvedSelectedEvidenceKeys,
@@ -1344,14 +1381,19 @@ export async function publishCompletionPackage(
       name: 'upload-artifacts',
       detail: `Uploading ${selectedEvidenceKeys.length} evidence artifact(s)`,
     });
-    const publishedEvidence = await publishSelectedEvidence(latestRun, prNumber, {
-      selectedEvidenceKeys,
-      evidenceManifest: approvedPackage.evidenceManifest ?? [],
-      trustedEvidenceManifest: evidenceManifest,
-    });
+    const publishedEvidence = await publishSelectedEvidence(
+      latestRun,
+      prNumber,
+      {
+        selectedEvidenceKeys,
+        evidenceManifest: approvedPackage.evidenceManifest ?? [],
+        trustedEvidenceManifest: evidenceManifest,
+      },
+      approvedPackage.artifactBundle,
+    );
     const artifactUrls = publishedEvidence.artifactUrls;
     selectedEvidenceKeys = publishedEvidence.selectedEvidenceKeys;
-    if (latestRun.taskFile) flags.artifacts = await scanArtifacts(path.dirname(latestRun.taskFile));
+    flags.artifacts = await retainedRunArtifactManifest(latestRun, approvedPackage.artifactBundle);
 
     emit('substep', {
       name: 'post-process-pr-body',
@@ -1372,6 +1414,7 @@ export async function publishCompletionPackage(
             latestRun,
             approvedPackage.evidenceManifest ?? [],
             selectedEvidenceKeys,
+            approvedPackage.artifactBundle,
           );
           if (prTemplate) reportTemplateDrift(body, 'published body');
         },

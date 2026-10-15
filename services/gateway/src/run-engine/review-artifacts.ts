@@ -2,7 +2,11 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { DEFAULT_TASK_DIR, type PlanningContextProjection } from '@farmslot/protocol';
+import {
+  DEFAULT_TASK_DIR,
+  type PlanningContextProjection,
+  type RunArtifactBundleRef,
+} from '@farmslot/protocol';
 
 import {
   isGatewayOwnedArtifactMirrorEntry,
@@ -11,6 +15,10 @@ import {
 } from '../core/artifact-copy-policy.js';
 import { loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
 import { slotCopyDir, slotCopyFile, slotFileExists, slotListDir } from '../core/slot-io.js';
+import {
+  readOptionalRetainedRunText,
+  retainedRunTaskDirectory,
+} from '../run-completion/retained-artifacts.js';
 import { getRun } from '../runs/store.js';
 import { buildPlanningContextSection, PLANNING_CONTEXT_INPUT } from '../tasks/planning-context.js';
 
@@ -209,7 +217,10 @@ export async function buildReviewPlanningBrief(
   );
 }
 
-export async function readReviewArtifacts(runId: string): Promise<ReviewArtifacts> {
+export async function readReviewArtifacts(
+  runId: string,
+  artifactBundle?: RunArtifactBundleRef,
+): Promise<ReviewArtifacts> {
   let markdownRecommendation: string | null = null;
   const run = getRun(runId);
   const result: ReviewArtifacts = {
@@ -222,14 +233,15 @@ export async function readReviewArtifacts(runId: string): Promise<ReviewArtifact
   };
 
   if (!run?.taskFile) return result;
-  const taskDir = path.dirname(run.taskFile);
+  if (!artifactBundle && !run.artifactBundle && !run.output?.artifactBundle) return result;
+  const taskDir = await retainedRunTaskDirectory(run, artifactBundle);
   const reviewPath = path.join(taskDir, 'artifacts', 'review.md');
   const lcPath = path.join(taskDir, 'artifacts', 'line-comments.json');
 
   // Read review.md
-  if (existsSync(reviewPath)) {
+  const reviewMd = await readOptionalRetainedRunText(run, 'artifacts/review.md', artifactBundle);
+  if (reviewMd !== undefined) {
     try {
-      const reviewMd = await readFile(reviewPath, 'utf-8');
       result.hasReview = true;
       result.reviewMd = reviewMd;
 
@@ -250,9 +262,13 @@ export async function readReviewArtifacts(runId: string): Promise<ReviewArtifact
   }
 
   // Read line-comments.json
-  if (existsSync(lcPath)) {
+  const raw = await readOptionalRetainedRunText(
+    run,
+    'artifacts/line-comments.json',
+    artifactBundle,
+  );
+  if (raw !== undefined) {
     try {
-      const raw = await readFile(lcPath, 'utf-8');
       const data: unknown = JSON.parse(raw);
       const comments = reviewLineCommentsFromArtifact(data);
       const counts: Record<string, number> = {};

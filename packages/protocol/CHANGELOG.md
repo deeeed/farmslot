@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add gateway-retained artifact references and the run.bundle.retain recovery contract; artifact links preserve their capture digest and availability.
+
 - Expose explicit retired principal-id replacement and identity generations while retaining retired credential ids.
 - Retain optional AC/role capture annotations and original execution/source identities with immutable comparison dependencies.
 - Add project-authorized delegated visual judgments with checked media and person-only claim policy.

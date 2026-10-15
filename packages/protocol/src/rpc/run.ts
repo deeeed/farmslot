@@ -592,7 +592,7 @@ export interface RunRecordedEvidenceReview {
   /** Full retained report inventory; run-list projections deliberately omit it. */
   report?: Pick<
     import('../contracts/runs.js').RunOutput,
-    'reportPath' | 'manifestDigest' | 'artifactManifest'
+    'reportPath' | 'manifestDigest' | 'artifactManifest' | 'artifactBundle'
   >;
   input?: import('../recipe/index.js').RecordedEvidencePackageInput;
   /** Package-relative refs map to the existing selected-root artifact endpoint. */
@@ -881,6 +881,10 @@ export interface RunBundleImportParams {
   bundlePath: string;
   mode?: import('../contracts/run-bundles.js').RunBundleImportMode;
   force?: boolean;
+}
+
+export interface RunBundleRetainParams {
+  runId: string;
 }
 
 export interface RunBundleListParams {

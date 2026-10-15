@@ -26,11 +26,8 @@ import {
   type RunGateReadiness,
 } from '@farmslot/protocol';
 
-import { selectAgentContext } from '../agents/contexts.js';
-import { loadSlotVars } from '../core/config.js';
-import { execOnSlot, isLocal } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
-import { shellQuote } from '../core/tmux.js';
+import { ORCHESTRATOR_LOCALITY } from '../core/slot-io.js';
 import { assertQaCompletion } from '../qa/completion.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
 import { readReviewWorkspaceCompletion } from '../review-workspaces/task.js';
@@ -41,6 +38,10 @@ import {
   verifyReadyGateSelectedEvidenceFiles,
 } from '../run-completion/ready-gate-package.js';
 import {
+  qualifyRetainedRunMetadata,
+  retainedRunTaskDirectory,
+} from '../run-completion/retained-artifacts.js';
+import {
   readRunProgress,
   runDecisionWaitingStatus,
   type RunProgressObservation,
@@ -50,10 +51,8 @@ import {
   type AcceptanceStatusRead,
   readAcceptanceStatusForDisplay,
 } from '../tasks/acceptance-status.js';
-import { agentRuntimeScriptForSlot } from '../tasks/agent-runtime-script.js';
-import { resolveContextFilePath } from '../tasks/watcher.js';
 import {
-  loadTerminalContractForRun,
+  readFrozenWorkerTerminalContractForRun,
   validateDeterministicChecksForRun,
 } from '../tasks/worker-terminal-contract.js';
 
@@ -117,13 +116,7 @@ const { acceptanceContractIssues } =
     ): string[];
   };
 
-export async function readGateAcceptance(
-  run: Run,
-  sources: { slot: typeof loadSlotVars; contract: typeof loadTerminalContractForRun } = {
-    slot: loadSlotVars,
-    contract: loadTerminalContractForRun,
-  },
-): Promise<GateAcceptanceRead> {
+export async function readGateAcceptance(run: Run): Promise<GateAcceptanceRead> {
   const expected = run.ticketData?.acceptanceCriteria?.filter((text) => text.trim()) ?? [];
   if (!run.taskFile)
     return {
@@ -146,15 +139,9 @@ export async function readGateAcceptance(
         ...(!result ? { error: 'Workspace review completion is unavailable' } : {}),
       };
     }
-    // The dispatched primary task is the authority. The retained orchestrator copy
-    // can lag behind a fix or lose registration; neither can approve current work.
-    if (!run.slotId) throw new Error('Task checkout is unavailable');
-    const vars = await sources.slot(run.slotId);
-    const primary = selectAgentContext(run, { role: 'primary' });
-    if (!primary?.taskFile) throw new Error('Primary task binding is missing');
-    const taskFile = resolveContextFilePath(vars.remoteRepo, primary.taskFile, '');
-    const taskDir = path.posix.dirname(taskFile);
-    const acceptance = await readAcceptanceStatusForDisplay(vars, taskDir);
+    const taskDir = await retainedRunTaskDirectory(run);
+    await qualifyRetainedRunMetadata(run);
+    const acceptance = await readAcceptanceStatusForDisplay(ORCHESTRATOR_LOCALITY, taskDir);
     if (acceptance.error) return { ...acceptance, issues: [] };
     if (
       expected.length &&
@@ -167,26 +154,19 @@ export async function readGateAcceptance(
         error: 'Original acceptance registration is missing or changed',
       };
     if (!acceptance.criteria.length) return { ...acceptance, issues: [] };
-    const contract = await sources.contract(run, run.slotId);
+    const contractText = await readFrozenWorkerTerminalContractForRun({
+      ...run,
+      taskFile: path.join(taskDir, path.basename(run.taskFile)),
+    });
+    const contract: unknown = contractText ? JSON.parse(contractText) : null;
     const options = {
-      allowWeak: contract.acceptance?.allowWeak === true,
+      allowWeak:
+        isRecord(contract) &&
+        isRecord(contract.acceptance) &&
+        contract.acceptance.allowWeak === true,
       deferClaimVerdicts: true,
     };
-    if (isLocal(vars.host, vars.machine))
-      return { ...acceptance, issues: acceptanceContractIssues(taskDir, options) };
-    const guard = await agentRuntimeScriptForSlot(vars, 'acceptance-ledger.cjs');
-    const script =
-      'const { acceptanceContractIssues } = require(process.argv[1]); process.stdout.write(JSON.stringify(acceptanceContractIssues(process.argv[2], JSON.parse(process.argv[3]))));';
-    const result = await execOnSlot(
-      vars,
-      `node -e ${shellQuote(script)} ${shellQuote(guard)} ${shellQuote(taskDir)} ${shellQuote(JSON.stringify(options))}`,
-      { timeout: 15_000 },
-    );
-    if (result.exitCode !== 0) throw new Error('Acceptance guard is unavailable on the task node');
-    const issues: unknown = JSON.parse(result.stdout);
-    if (!Array.isArray(issues) || issues.some((issue) => typeof issue !== 'string'))
-      throw new Error('Acceptance guard returned an invalid result');
-    return { ...acceptance, issues: issues as string[] };
+    return { ...acceptance, issues: acceptanceContractIssues(taskDir, options) };
   } catch (error) {
     // Unreadable authority is an explicit refusal; it never erases the task's ACs.
     return {
@@ -226,7 +206,12 @@ export async function readGateRecordedEvidence(
     throw new Error(
       'A required QA case is absent from the captured output. Refresh the artifact mirror.',
     );
-  const sources = await readFrozenRecordedEvidenceSources(captured, inventory);
+  const sources = await readFrozenRecordedEvidenceSources(
+    captured,
+    inventory,
+    [],
+    captured.output?.artifactBundle,
+  );
   let applicable = sources;
   if (run.flowType === 'qa') {
     // QA owns case selection and revision checks. Retained failed attempts are
@@ -255,7 +240,7 @@ const readers: GatePrerequisiteReaders = {
   deterministic: validateDeterministicChecksForRun,
   acceptance: readGateAcceptance,
   progress: readRunProgress,
-  qaCompletion: assertQaCompletion,
+  qaCompletion: (run) => assertQaCompletion(run, { retained: true }),
   recordedEvidence: readGateRecordedEvidence,
   reviewDocument: async (run) => {
     if (run.reviewWorkspace)
@@ -264,9 +249,11 @@ const readers: GatePrerequisiteReaders = {
           ? run.reviewResult
           : (await readReviewWorkspaceCompletion(run.id))?.result,
       );
+    const taskDir = await retainedRunTaskDirectory(run);
+    await qualifyRetainedRunMetadata(run);
     const [review, input] = await Promise.all([
-      readReviewArtifacts(run.id),
-      readReviewInputSnapshot(run.taskFile),
+      readReviewArtifacts(run.id, run.artifactBundle),
+      readReviewInputSnapshot(path.join(taskDir, path.basename(run.taskFile ?? 'TASK.md'))),
     ]);
     const snapshot = input.snapshot;
     return (
@@ -334,10 +321,13 @@ export async function collectRunGateReadiness(
       });
     }
   }
+  const artifactRun = preparedPackage?.artifactBundle
+    ? { ...run, artifactBundle: preparedPackage.artifactBundle }
+    : run;
   if (run.flowType === 'review-pr') {
     let valid = false;
     try {
-      valid = await source.reviewDocument(run);
+      valid = await source.reviewDocument(artifactRun);
     } catch {
       // Invalid completion must remain inspectable with the refusal below.
       valid = false;
@@ -351,7 +341,7 @@ export async function collectRunGateReadiness(
       });
   }
   try {
-    await source.deterministic(run);
+    await source.deterministic(artifactRun);
   } catch {
     // The owner validator rejects absent/stale/failed receipts. Preserve that refusal.
     reasons.push({
@@ -361,7 +351,7 @@ export async function collectRunGateReadiness(
       actionId: 'hold',
     });
   }
-  let acceptance = await source.acceptance(run);
+  let acceptance = await source.acceptance(artifactRun);
   if (acceptance.error) {
     reasons.push({
       code: 'acceptance-unreadable',
@@ -390,7 +380,7 @@ export async function collectRunGateReadiness(
       });
     } else {
       try {
-        const qa = qaOutput ? await source.qaCompletion(run) : undefined;
+        const qa = qaOutput ? await source.qaCompletion(artifactRun) : undefined;
         const inputs = await source.recordedEvidence(run, preparedPackage, qa);
         const visualPolicy = await readVisualReviewPolicy(run);
         acceptance = projectGateAcceptance(acceptance, run, inputs, visualPolicy);

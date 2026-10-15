@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Add runs bundle retain for captured reports and evidence; portable export reads retained snapshots and import retains them in the target store.
+
 - Add explicit retired principal-id replacement to principal create for approved identity cutovers.
 
 - Use explicit local credentials for startup and gateway profiles for authentication; retire unused principals through guarded online or offline commands.

@@ -11,6 +11,7 @@ import {
   validateRecipeArtifactPackage,
   validateRecipeSuitePackage,
 } from '@farmslot/protocol';
+import { resolveRunBundleEntry } from '@farmslot/run-bundle';
 
 import {
   getOrchestratorTaskRoot,
@@ -21,6 +22,11 @@ import {
 } from '../core/config.js';
 import { execArgvOnSlot } from '../core/exec.js';
 import { slotFileExists, slotReadFile, slotRealpath, slotStat } from '../core/slot-io.js';
+import {
+  readRetainedRunText,
+  retainedRunBundleRef,
+  runBundleStore,
+} from '../run-completion/retained-artifacts.js';
 import { BlockedRunError } from '../run-engine/errors.js';
 import { getRun } from '../runs/store.js';
 
@@ -367,19 +373,18 @@ export function validateQaPackage(
   return digestRecipeDocument(bundle.recipe);
 }
 
-/** Read only from the current worker task and verify its source before completion releases the slot. */
-async function readQaCompletion(
-  run: Run,
-): Promise<{ packages: Array<{ path: string; digest: string }>; headSha: string }> {
-  requireProof(
-    run.flowType === 'qa' && run.slotId && run.taskFile && run.qa,
-    'QA run has no admitted preset, task or slot',
-  );
-  const generation = run.engineState?.generation ?? 0;
-  const vars = await loadSlotVars(run.slotId);
+interface QaCompletionIO {
+  read(name: string): Promise<unknown>;
+  file(name: string, nonempty?: boolean): Promise<string>;
+  head(): Promise<string>;
+  base(sha: string): Promise<void>;
+}
+
+async function workerQaCompletionIO(run: Run): Promise<QaCompletionIO> {
+  const vars = await loadSlotVars(run.slotId!);
   const project = await loadProjectVars(run.project);
   const taskRelative = resolveTaskRelDir(
-    run.taskFile,
+    run.taskFile!,
     getOrchestratorTaskRoot(run.project, project.projectJson),
   );
   requireProof(taskRelative, 'QA task directory cannot be resolved');
@@ -413,20 +418,75 @@ async function readQaCompletion(
   }
   const read = async (name: string): Promise<unknown> =>
     JSON.parse(await slotReadFile(vars, await file(name)));
-  const head = await execArgvOnSlot(vars, ['git', 'rev-parse', 'HEAD']);
-  requireProof(head.exitCode === 0, 'prepared checkout HEAD is unavailable');
+  return {
+    read,
+    file,
+    head: async () => {
+      const head = await execArgvOnSlot(vars, ['git', 'rev-parse', 'HEAD']);
+      requireProof(head.exitCode === 0, 'prepared checkout HEAD is unavailable');
+      return head.stdout.trim();
+    },
+    base: async (sha: string) => {
+      const base = await execArgvOnSlot(vars, ['git', 'cat-file', '-t', sha]);
+      requireProof(
+        base.exitCode === 0 && base.stdout.trim() === 'commit',
+        'resolved base commit is unavailable',
+      );
+    },
+  };
+}
+
+async function retainedQaCompletionIO(run: Run): Promise<QaCompletionIO> {
+  requireProof(run.qaSource, 'the retained QA execution has no frozen source identity');
+  const ref = run.output?.artifactBundle ?? retainedRunBundleRef(run);
+  const store = await runBundleStore();
+  return {
+    read: async (name) => JSON.parse(await readRetainedRunText(run, `artifacts/${name}`, ref)),
+    file: async (name, nonempty = true) => {
+      relative(name);
+      const entry = await resolveRunBundleEntry({
+        store,
+        ref,
+        runId: run.id,
+        path: `artifacts/${name}`,
+      });
+      requireProof(!nonempty || entry.bytes > 0, `artifact is empty: ${name}`);
+      return entry.path;
+    },
+    head: async () => run.qaSource!.headSha,
+    base: async (sha) => {
+      requireProof(
+        sha === run.qaSource!.baseSha,
+        'retained QA base differs from the frozen source',
+      );
+    },
+  };
+}
+
+/** One QA validator consumes producer I/O or the captured output, with unchanged source/case policy. */
+async function readQaCompletion(
+  run: Run,
+  retained: boolean,
+): Promise<{ packages: Array<{ path: string; digest: string }>; headSha: string }> {
+  requireProof(
+    run.flowType === 'qa' && run.slotId && run.taskFile && run.qa,
+    'QA run has no admitted preset, task or slot',
+  );
+  const generation = run.engineState?.generation ?? 0;
+  const capturedDigest = retained
+    ? (run.output?.artifactBundle?.bundleDigest ?? run.artifactBundle?.bundleDigest)
+    : undefined;
+  const io = await (retained ? retainedQaCompletionIO(run) : workerQaCompletionIO(run));
+  const { read, file } = io;
+  const head = await io.head();
   let result: QaResult;
   try {
-    result = parseQaResult(await read('qa-result.json'), run, head.stdout.trim());
+    result = parseQaResult(await read('qa-result.json'), run, head);
   } catch (error) {
     if (error instanceof BlockedRunError) throw error;
     throw new BlockedRunError(`QA evidence incomplete: ${String(error)}`, 'qa-runtime-evidence');
   }
-  const base = await execArgvOnSlot(vars, ['git', 'cat-file', '-t', result.source.baseSha]);
-  requireProof(
-    base.exitCode === 0 && base.stdout.trim() === 'commit',
-    'resolved base commit is unavailable',
-  );
+  await io.base(result.source.baseSha);
   const packages: Array<{ path: string; digest: string }> = [];
   const scope = await read(`${result.suitePath}/suite-scope.json`);
   const suiteResult = await read(`${result.suitePath}/suite-result.json`);
@@ -531,11 +591,7 @@ async function readQaCompletion(
     );
     packages.push({ path: item.path, digest });
   }
-  const after = await execArgvOnSlot(vars, ['git', 'rev-parse', 'HEAD']);
-  requireProof(
-    after.exitCode === 0 && after.stdout.trim() === result.source.headSha,
-    'checkout changed during validation',
-  );
+  requireProof((await io.head()) === result.source.headSha, 'checkout changed during validation');
   const latest = getRun(run.id);
   requireProof(
     latest &&
@@ -544,12 +600,18 @@ async function readQaCompletion(
       !['cancelled', 'failed', 'paused'].includes(latest.status),
     'run ownership changed during validation',
   );
+  if (retained)
+    requireProof(
+      (latest.output?.artifactBundle?.bundleDigest ?? latest.artifactBundle?.bundleDigest) ===
+        capturedDigest,
+      'captured QA snapshot changed during validation',
+    );
   return { packages, headSha: result.source.headSha };
 }
 
-export async function assertQaCompletion(run: Run) {
+export async function assertQaCompletion(run: Run, options: { retained?: boolean } = {}) {
   try {
-    return await readQaCompletion(run);
+    return await readQaCompletion(run, Boolean(options.retained));
   } catch (error) {
     if (error instanceof BlockedRunError) throw error;
     throw new BlockedRunError(

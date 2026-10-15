@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Keep report and evidence links bound to their gateway-retained snapshot, including read-only stale reports.
+
 - Review criteria, source-bound Before/After captures and fullscreen video moments together in the Evidence tab, with Unassigned media kept separate.
 
 - Show visual-review delegation and reviewer identity beside acceptance verdicts.

@@ -777,7 +777,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
   // Read worker report for summary
   const report = await readWorkerReport(runId);
 
-  const workerLearnings = await readTaskArtifactText(current.taskFile, 'learnings.md');
+  const workerLearnings = await readTaskArtifactText(current, 'learnings.md');
 
   // Build diff stat
   // The publication package must describe the final reviewed HEAD. Earlier
@@ -959,12 +959,9 @@ export async function executeReadyGate(runId: string): Promise<string> {
           { id: 'hold', label: 'Hold', style: 'secondary' },
         ];
 
-  const recipeJson = await readTaskArtifactText(current.taskFile, 'recipe.json');
+  const recipeJson = await readTaskArtifactText(current, 'recipe.json');
   // Coverage is rendered from the engine ledger. Worker prose cannot replace it.
-  const acceptanceLedgerText = await readTaskArtifactText(
-    current.taskFile,
-    ACCEPTANCE_STATUS_FILENAME,
-  );
+  const acceptanceLedgerText = await readTaskArtifactText(current, ACCEPTANCE_STATUS_FILENAME);
   const acceptanceStatus = ledgerFromArtifactText(acceptanceLedgerText);
   const acceptanceHandoff = handoffCriteriaFromText(
     await readTaskInputText(current.taskFile, 'handoff.json'),

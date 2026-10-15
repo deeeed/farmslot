@@ -5,7 +5,6 @@ import path from 'node:path';
 
 import {
   type CommentsTriageSummary,
-  DEFAULT_TASK_DIR,
   Events,
   FLOW_WORKER_REPORT_ARTIFACTS,
   GATE_SUMMARY_KINDS,
@@ -14,8 +13,6 @@ import {
   type RunDecision,
 } from '@farmslot/protocol';
 
-import { loadProjectVars, loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
-import { slotFileExists, slotReadFile } from '../core/slot-io.js';
 import { getFamilyRuns } from '../family-observability/context.js';
 import {
   collectFeedbackCandidates,
@@ -27,6 +24,7 @@ import { buildGateSummary } from '../run-engine/gate-summary.js';
 import { getAllRuns, getRun, updateRun } from '../runs/store.js';
 
 import { workerReportText } from './report-text.js';
+import { readOptionalRetainedRunText, retainedArtifactRun } from './retained-artifacts.js';
 
 // ─── Worker report ───
 
@@ -36,50 +34,11 @@ export interface WorkerReportArtifact {
 }
 
 export async function readWorkerReportArtifact(run: Run): Promise<WorkerReportArtifact | null> {
-  if (!run.taskFile) return null;
-  // Per-flow artifact preference — pr-complete writes comments-report.md, review-pr
-  // writes review.md, others use report.md. See FLOW_WORKER_REPORT_ARTIFACTS for the
-  // canonical mapping; adding a new flow's artifact name is a one-line change there.
   const candidates = FLOW_WORKER_REPORT_ARTIFACTS[run.flowType] ?? ['report.md'];
-  const taskDir = path.dirname(run.taskFile);
-
   for (const fileName of candidates) {
-    const localPath = path.join(taskDir, 'artifacts', fileName);
-    if (existsSync(localPath)) {
-      const text = await readFile(localPath, 'utf-8');
-      if (text.trim()) return { fileName, text: await workerReportText(fileName, text) };
-    }
+    const text = await readOptionalRetainedRunText(run, `artifacts/${fileName}`);
+    if (text?.trim()) return { fileName, text: await workerReportText(fileName, text) };
   }
-
-  // Fallback: artifacts may not be copied back yet — read from the slot directly.
-  if (run.slotId) {
-    try {
-      const vars = await loadSlotVars(run.slotId);
-      const taskRelDir = run.taskFile.includes('/tasks/')
-        ? run.taskFile.split('/tasks/')[1].replace('/TASK.md', '')
-        : null;
-      if (taskRelDir) {
-        const pv = await loadProjectVars(run.project).catch(() => null);
-        const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
-        for (const fileName of candidates) {
-          const workerReport = path.join(
-            vars.remoteRepo,
-            taskDirName,
-            taskRelDir,
-            'artifacts',
-            fileName,
-          );
-          if (await slotFileExists(vars, workerReport)) {
-            const text = await slotReadFile(vars, workerReport);
-            if (text.trim()) return { fileName, text: await workerReportText(fileName, text) };
-          }
-        }
-      }
-    } catch {
-      /* slot may not be accessible */
-    }
-  }
-
   return null;
 }
 
@@ -88,14 +47,7 @@ export async function readWorkerReport(run: Run): Promise<string | null> {
 }
 
 export async function readTaskArtifactText(run: Run, fileName: string): Promise<string | null> {
-  if (!run.taskFile) return null;
-  const artifactPath = path.join(path.dirname(run.taskFile), 'artifacts', fileName);
-  if (!existsSync(artifactPath)) return null;
-  try {
-    return await readFile(artifactPath, 'utf-8');
-  } catch {
-    return null;
-  }
+  return (await readOptionalRetainedRunText(run, `artifacts/${fileName}`)) ?? null;
 }
 
 function uniqueRuns(runs: Run[], excludeIds: ReadonlySet<string> = new Set()): Run[] {
@@ -161,7 +113,9 @@ async function readLatestFamilyCommentsTriageSummary(
   );
   for (const candidate of ordered) {
     if (!candidate.taskFile) continue;
-    const summary = await readCommentsTriageSummary(path.dirname(candidate.taskFile));
+    const retained = await retainedArtifactRun(candidate);
+    if (!retained.taskFile) continue;
+    const summary = await readCommentsTriageSummary(path.dirname(retained.taskFile));
     if (summary && summary.total > 0) return summary;
   }
   return null;

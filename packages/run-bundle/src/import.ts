@@ -21,6 +21,7 @@ import {
   type RunBundleImportResult,
   type RunBundleManifest,
 } from '@farmslot/protocol';
+import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import {
   assertApprovedTaskRestoreRelativePath,
   resolveTaskFileAbsolute,
@@ -28,8 +29,14 @@ import {
 } from '@farmslot/protocol/runs/portable-bundle';
 
 import { readBundleManifestFromDir, unpackFarmrunArchive } from './archive.js';
-import { sha256File } from './hashing.js';
+import { sha256File, sha256Text } from './hashing.js';
 import { resolveRunsDir } from './paths.js';
+import {
+  isRunBundleMedia,
+  materializeRunBundle,
+  openRunBundleStore,
+  type RunBundleStore,
+} from './retained.js';
 import {
   assertSafeBundleRelativePath,
   assertSafeBundleSegment,
@@ -37,7 +44,7 @@ import {
   resolvePathInsideRoot,
 } from './safe-paths.js';
 
-function parseManifest(bundleDir: string): RunBundleManifest {
+export function parseManifest(bundleDir: string): RunBundleManifest {
   const parsed = JSON.parse(readBundleManifestFromDir(bundleDir)) as unknown;
   if (!isRunBundleManifest(parsed)) throw new Error('Invalid farmrun manifest.json');
   return parsed;
@@ -260,7 +267,9 @@ function remapNestedRunIdReferences(run: Run, idMap: Record<string, string>): Ru
   return next;
 }
 
-export function importBundle(request: RunBundleImportRequest): RunBundleImportResult {
+export async function importBundle(
+  request: RunBundleImportRequest & { retentionStore?: RunBundleStore },
+): Promise<RunBundleImportResult> {
   const bundleDir = unpackFarmrunArchive(request.bundlePath);
   try {
     const manifest = parseManifest(bundleDir);
@@ -304,7 +313,7 @@ export function importBundle(request: RunBundleImportRequest): RunBundleImportRe
     }
 
     for (const staged of stagedRuns) {
-      const next = remapNestedRunIdReferences(
+      let next = remapNestedRunIdReferences(
         remapImportedRunLineage(staged, idMap, request.mode),
         idMap,
       );
@@ -314,7 +323,79 @@ export function importBundle(request: RunBundleImportRequest): RunBundleImportRe
           if (existsSync(candidate)) packagePaths.push(candidate);
         }
       }
-      persistRunRecord(runsDir, stripRunnerSessionArchives(next));
+      const entry = manifest.runs.find(
+        (entry) => entry.originalRunId === staged.importProvenance?.importedFromRunId,
+      );
+      if (entry?.taskKey && next.taskFile) {
+        const prefix = `tasks/${entry.taskKey}/`;
+        const originals = new Map(
+          (next.output?.artifactManifest ?? []).map((artifact) => [artifact.path, artifact]),
+        );
+        const artifacts = Object.entries(manifest.entries)
+          .filter(([key]) => key.startsWith(prefix))
+          .map(([key, meta]) => {
+            const file = key.slice(prefix.length);
+            return {
+              ...originals.get(file),
+              path: file,
+              purpose: originals.get(file)?.purpose ?? 'artifact',
+              sha256: meta.sha256,
+              sizeBytes: meta.bytes,
+            };
+          });
+        const store =
+          request.retentionStore ??
+          (await openRunBundleStore({
+            runsDir,
+            home: farmslotHome(),
+            create: !process.env.FARMSLOT_RUNS_DIR && !process.env.FARMSLOT_SANDBOX_HOME,
+          }));
+        await materializeRunBundle({
+          store,
+          farmslotRoot: request.farmslotRoot,
+          run: next,
+          taskDir: path.dirname(next.taskFile),
+          artifacts,
+          stagingBytes: artifacts.reduce((bytes, artifact) => bytes + artifact.sizeBytes, 0) * 2,
+          manifestDigest: next.output?.manifestDigest ?? sha256Text(JSON.stringify(artifacts)),
+          captureKey: `import:${manifest.bundleId}:${next.id}`,
+          commit: async (ref, missingData) => {
+            next = {
+              ...next,
+              artifactBundle: ref,
+              ...(next.output
+                ? {
+                    output: {
+                      ...next.output,
+                      artifactBundle: ref,
+                      retentionMissingData: missingData,
+                    },
+                  }
+                : {}),
+              ...(next.importProvenance
+                ? {
+                    importProvenance: {
+                      ...next.importProvenance,
+                      artifactBundleRefs: Object.fromEntries(
+                        (entry.artifactBundleDigests ?? []).map((source) => [source, ref]),
+                      ),
+                    },
+                  }
+                : {}),
+            };
+            persistRunRecord(runsDir, stripRunnerSessionArchives(next));
+            for (const artifact of artifacts) {
+              if (isRunBundleMedia(artifact.path))
+                rmSync(path.join(path.dirname(next.taskFile!), artifact.path), { force: true });
+            }
+          },
+        });
+      } else {
+        // Imported missing data stays unavailable; it never points back into the source gateway.
+        delete next.artifactBundle;
+        if (next.output) delete next.output.artifactBundle;
+        persistRunRecord(runsDir, stripRunnerSessionArchives(next));
+      }
       importedRunIds.push(next.id);
     }
 

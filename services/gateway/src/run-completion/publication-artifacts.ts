@@ -8,6 +8,7 @@ import {
   isRecord,
   RecordedEvidenceReadError,
   type Run,
+  type RunArtifactBundleRef,
   validateArtifactManifestDocument,
 } from '@farmslot/protocol';
 
@@ -40,6 +41,7 @@ import {
   type PublicationEvidenceSelection,
 } from './publication-evidence-policy.js';
 import { verifyFrozenPublicationEvidence } from './recorded-publication-evidence.js';
+import { retainedRunArtifactManifest, retainedRunTaskDirectory } from './retained-artifacts.js';
 
 // ─── LLM PR body rewrite ───
 
@@ -295,7 +297,7 @@ export async function uploadArtifacts(
   run: Run,
   prNumber: number,
   selectedEvidenceKeys?: string[],
-  options: { failOnError?: boolean } = {},
+  options: { failOnError?: boolean; artifactBundle?: RunArtifactBundleRef } = {},
 ): Promise<Map<string, string>> {
   const urlMap = new Map<string, string>();
   const failOrReturnEmpty = (message: string): Map<string, string> => {
@@ -327,7 +329,7 @@ export async function uploadArtifacts(
       : urlMap;
   }
 
-  const taskDir = path.dirname(run.taskFile);
+  const taskDir = await retainedRunTaskDirectory(run, options.artifactBundle);
   const artifactsDir = path.join(taskDir, 'artifacts');
   if (!existsSync(artifactsDir)) {
     return hasSelectedEvidence
@@ -337,7 +339,12 @@ export async function uploadArtifacts(
 
   let files: string[];
   try {
-    files = await collectUploadableMediaFiles(artifactsDir);
+    files = (await retainedRunArtifactManifest(run, options.artifactBundle))
+      .filter(
+        (artifact) =>
+          artifact.path.startsWith('artifacts/') && isUploadableMediaPath(artifact.path),
+      )
+      .map((artifact) => artifact.path.slice('artifacts/'.length));
   } catch (err) {
     return failOrReturnEmpty(
       `artifact upload failed while scanning media: ${(err as Error).message}`,
@@ -442,13 +449,20 @@ export async function publishSelectedEvidence(
   run: Run,
   prNumber: number,
   selection: PublicationEvidenceSelection,
+  artifactBundle?: RunArtifactBundleRef,
 ): Promise<PublishedEvidence> {
   const selectedEvidenceKeys = expandPublicationEvidenceSelection(selection);
   if (selectedEvidenceKeys.length) {
-    await verifyFrozenPublicationEvidence(run, selection.evidenceManifest, selectedEvidenceKeys);
+    await verifyFrozenPublicationEvidence(
+      run,
+      selection.evidenceManifest,
+      selectedEvidenceKeys,
+      artifactBundle,
+    );
   }
   const artifactUrls = await uploadArtifacts(run, prNumber, selectedEvidenceKeys, {
     failOnError: true,
+    artifactBundle,
   });
   assertSelectedEvidencePublished(selectedEvidenceKeys, artifactUrls);
   return { selectedEvidenceKeys, artifactUrls };

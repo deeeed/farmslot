@@ -16,6 +16,7 @@ import { dirname, resolve } from 'node:path';
 
 import { type EvalTrialStartParams, Events, primaryRoleForFlow } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+import { collectRunBundleGarbage } from '@farmslot/run-bundle';
 
 import {
   initAutoRecovery,
@@ -98,6 +99,7 @@ import { serveStaticUi } from './methods/static-ui.js';
 import { startMonitor } from './observability/fleet-monitor.js';
 import { initReview } from './review/orchestrator.js';
 import { initRunCompletion } from './run-completion/orchestrator.js';
+import { runBundleStore } from './run-completion/retained-artifacts.js';
 import {
   initRunEngine,
   rearmPublicationReviewRecoveryForRun,
@@ -369,6 +371,7 @@ async function main(): Promise<void> {
   });
   // Restore PR ownership before periodic monitoring can perform its first check.
   await loadAllRuns();
+  await collectRunBundleGarbage(await runBundleStore(true));
   const prMonitoring = await initPRMonitoring(
     gatewayAuthRuntime,
     broadcastPrincipalEvent,

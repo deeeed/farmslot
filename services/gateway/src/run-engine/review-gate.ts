@@ -209,15 +209,13 @@ export async function executeReviewGate(runId: string): Promise<void> {
     }
   }
 
-  const recipeJson = await readTaskArtifactText(current.taskFile, 'recipe.json');
+  const recipeJson = await readTaskArtifactText(current, 'recipe.json');
   // Coverage is a structured engine projection; worker prose is not a verdict.
   const recipeCoverage = acceptanceCoverageMarkdown(
-    ledgerFromArtifactText(
-      await readTaskArtifactText(current.taskFile, ACCEPTANCE_STATUS_FILENAME),
-    ),
+    ledgerFromArtifactText(await readTaskArtifactText(current, ACCEPTANCE_STATUS_FILENAME)),
   );
-  const workerReport = await readTaskArtifactText(current.taskFile, 'report.md');
-  const workerLearnings = await readTaskArtifactText(current.taskFile, 'learnings.md');
+  const workerReport = await readTaskArtifactText(current, 'report.md');
+  const workerLearnings = await readTaskArtifactText(current, 'learnings.md');
 
   // 3e. Phase 2 evidence quality audit (non-fatal)
   let qualityReport: import('@farmslot/protocol').EvidenceQualityReport | null = null;
@@ -586,7 +584,7 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
   }
   await copyWorkerArtifacts(runId);
   const review = await readReviewArtifacts(runId);
-  const workerLearnings = await readTaskArtifactText(run.taskFile, 'learnings.md');
+  const workerLearnings = await readTaskArtifactText(run, 'learnings.md');
 
   let artifactManifest: ArtifactRef[] | undefined;
   if (run.taskFile) {

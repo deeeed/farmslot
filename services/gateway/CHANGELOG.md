@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Retain run output and publication evidence in gateway-owned bundles; serve reports, recipe metadata and artifact ranges from pinned local snapshots, with explicit backfill and retention limits.
+
 - Allow admins to explicitly replace a retired principal id without restoring old credentials or stored-work authority; freshly authored queued work carries its identity generation.
 - Preserve the frozen run review policy in nested role contracts so valid pending visual claims reach their human gate without weakening evidence or CI checks.
 - Include the shared minimal-diff review policy and whole-contribution sensitive-path inventory in independent review packets.

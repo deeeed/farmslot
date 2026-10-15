@@ -7,6 +7,7 @@ import test from 'node:test';
 import type { Run } from '@farmslot/protocol';
 
 import { exportRunsToBundle, importBundle, listBundle } from './index.js';
+import { fixtureBundleStore, retainFixtureTask } from './retained.test-support.js';
 
 function writeFixtureRun(root: string, run: Run, taskBody = '# Task'): void {
   const runsDir = path.join(root, '.runs');
@@ -54,7 +55,7 @@ function writeMinimalFarmslotRoot(root: string): void {
   writeFileSync(path.join(root, 'services', 'gateway', 'package.json'), '{}\n', 'utf-8');
 }
 
-test('farmrun export/import round-trip remaps ids in seed mode', () => {
+test('farmrun export/import round-trip remaps ids in seed mode', async () => {
   const sourceRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-src-'));
   const targetRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-dst-'));
   const bundlePath = path.join(tmpdir(), `bundle-${Date.now()}.farmrun`);
@@ -92,7 +93,8 @@ test('farmrun export/import round-trip remaps ids in seed mode', () => {
   writeFixtureRun(sourceRoot, run);
 
   try {
-    exportRunsToBundle({
+    await retainFixtureTask(sourceRoot, run);
+    await exportRunsToBundle({
       farmslotRoot: sourceRoot,
       outputPath: bundlePath,
       profile: 'reference',
@@ -103,8 +105,9 @@ test('farmrun export/import round-trip remaps ids in seed mode', () => {
 
     writeMinimalFarmslotRoot(targetRoot);
 
-    const imported = importBundle({
+    const imported = await importBundle({
       farmslotRoot: targetRoot,
+      retentionStore: await fixtureBundleStore(targetRoot),
       bundlePath,
       mode: 'seed',
     });
@@ -123,7 +126,7 @@ test('farmrun export/import round-trip remaps ids in seed mode', () => {
   }
 });
 
-test('farmrun export/import round-trip persists reference-only imports', () => {
+test('farmrun export/import round-trip persists reference-only imports', async () => {
   const sourceRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-src-'));
   const targetRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-dst-'));
   const bundlePath = path.join(tmpdir(), `bundle-ref-${Date.now()}.farmrun`);
@@ -161,15 +164,17 @@ test('farmrun export/import round-trip persists reference-only imports', () => {
   writeFixtureRun(sourceRoot, run);
 
   try {
-    exportRunsToBundle({
+    await retainFixtureTask(sourceRoot, run);
+    await exportRunsToBundle({
       farmslotRoot: sourceRoot,
       outputPath: bundlePath,
       profile: 'reference',
       positionalRunId: runId,
     });
     writeMinimalFarmslotRoot(targetRoot);
-    const imported = importBundle({
+    const imported = await importBundle({
       farmslotRoot: targetRoot,
+      retentionStore: await fixtureBundleStore(targetRoot),
       bundlePath,
       mode: 'reference-only',
     });
@@ -189,12 +194,12 @@ test('farmrun export/import round-trip persists reference-only imports', () => {
   }
 });
 
-test('farmrun seed import remaps parentRunId redirectedToRunId and familyId', () => {
+test('farmrun seed import remaps parentRunId redirectedToRunId and familyId', async () => {
   const sourceRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-lineage-src-'));
   const targetRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-lineage-dst-'));
   const bundlePath = path.join(tmpdir(), `bundle-lineage-${Date.now()}.farmrun`);
   const parentId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
-  const childId = 'bbbbbbbb-bbbb-cccc-dddd-ffffffffffffffff';
+  const childId = 'bbbbbbbb-bbbb-cccc-dddd-ffffffffffff';
   const familyId = parentId;
   const parentTask = path.join(
     sourceRoot,
@@ -272,15 +277,18 @@ test('farmrun seed import remaps parentRunId redirectedToRunId and familyId', ()
   writeFixtureRun(sourceRoot, child);
 
   try {
-    exportRunsToBundle({
+    await retainFixtureTask(sourceRoot, parent);
+    await retainFixtureTask(sourceRoot, child);
+    await exportRunsToBundle({
       farmslotRoot: sourceRoot,
       outputPath: bundlePath,
       profile: 'family',
       runIds: [parentId, childId],
     });
     writeMinimalFarmslotRoot(targetRoot);
-    const imported = importBundle({
+    const imported = await importBundle({
       farmslotRoot: targetRoot,
+      retentionStore: await fixtureBundleStore(targetRoot),
       bundlePath,
       mode: 'seed',
     });

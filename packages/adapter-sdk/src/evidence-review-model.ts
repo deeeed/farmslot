@@ -113,7 +113,7 @@ export interface EvidenceReviewInput {
   ledger?: AcceptanceStatusLedger | null;
   evidenceLinks?: readonly AcceptanceEvidenceLink[];
   recordings?: readonly EvidenceReviewRecordingInput[];
-  report?: Pick<RunOutput, 'reportPath' | 'manifestDigest' | 'artifactManifest'>;
+  report?: Pick<RunOutput, 'reportPath' | 'manifestDigest' | 'artifactManifest' | 'artifactBundle'>;
   reportSnapshot?: OutputReviewPayload;
 }
 
@@ -237,7 +237,6 @@ export interface EvidenceReviewModel {
   readonly selection: EvidenceReviewSelection | null;
   readonly playback: EvidenceReviewPlaybackEffect;
   readonly report: EvidenceReviewInput['report'];
-  readonly reportError?: string;
   readonly packageStatus: EvidenceReviewPackageStatus | null;
   selectClaim(id: string, artifactPath?: string): EvidenceReviewSelection | null;
   selectOccurrence(traceIndex: number): EvidenceReviewSelection | null;
@@ -286,13 +285,15 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
   const warnings = findings
     .filter((finding) => finding.severity === 'warning')
     .map((finding) => finding.message);
-  const reportError =
-    input.reportSnapshot &&
-    (input.report?.manifestDigest !== input.reportSnapshot.manifestDigest ||
-      input.report?.reportPath !== input.reportSnapshot.reportPath)
-      ? 'The output report no longer matches the reviewed snapshot.'
-      : undefined;
-  if (reportError) errors.push(reportError);
+  const reportWarning =
+    input.report && !input.reportSnapshot
+      ? 'This retained report has no recorded review binding.'
+      : input.reportSnapshot &&
+          (input.report?.manifestDigest !== input.reportSnapshot.manifestDigest ||
+            input.report?.reportPath !== input.reportSnapshot.reportPath)
+        ? 'The output report no longer matches the reviewed snapshot.'
+        : undefined;
+  if (reportWarning) warnings.push(reportWarning);
   if (
     packageClaims &&
     ['incomplete', 'failed', 'explicit-off'].includes(packageClaims.recording.status)
@@ -893,7 +894,6 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       (warning) => packageStatus?.status !== 'Legacy' || !warning.startsWith('Legacy package'),
     ),
     report: input.report,
-    reportError,
     packageStatus,
     get selection() {
       return selection;
@@ -958,13 +958,16 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     },
     selectReport() {
       const path = input.report?.reportPath;
-      if (
-        reportError ||
-        !path ||
-        !input.report?.artifactManifest.some((artifact) => artifact.path === path)
-      )
+      if (!path || !input.report?.artifactManifest.some((artifact) => artifact.path === path))
         return null;
-      return select(`Report snapshot ${input.report.manifestDigest}`, artifacts([path]), []);
+      const selected = select(
+        `Report snapshot ${input.report.artifactBundle?.bundleDigest ?? input.report.manifestDigest}`,
+        artifacts([path]),
+        [],
+      );
+      if (reportWarning)
+        selected.caption += ` ${reportWarning} Retained snapshot ${input.report.artifactBundle?.bundleDigest ?? input.report.manifestDigest}${input.reportSnapshot ? `; expected ${input.reportSnapshot.manifestDigest}` : ''}. Read-only access does not approve it.`;
+      return selected;
     },
     cueClip(index) {
       if (!selection?.clips[index]) return effect(null, true);

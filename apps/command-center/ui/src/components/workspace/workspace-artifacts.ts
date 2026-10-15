@@ -3,6 +3,7 @@ import {
   type ArtifactRef,
   isPublishEvidenceArtifact,
   type RecipeRunArtifactGroup,
+  withArtifactBundleDigest,
 } from '@farmslot/protocol';
 
 import { artifactKind } from '../../utils/artifact-kind.js';
@@ -29,38 +30,46 @@ export function isWorkspaceDiffArtifact(artifact: Pick<ArtifactRef, 'path' | 'pu
 /** Internal path template — always pair with gatewayAuthenticatedUrl or gatewayProxiedFetchUrl. */
 export function runArtifactApiPath(
   runId: string,
-  artifact: Pick<ArtifactRef, 'path' | 'sha256'>,
+  artifact: Pick<ArtifactRef, 'path' | 'sha256' | 'bundleDigest'>,
 ): string {
-  return `/api/run-artifact?runId=${encodeURIComponent(runId)}&path=${encodeURIComponent(
-    artifact.path,
-  )}${artifact.sha256 ? `&v=${encodeURIComponent(artifact.sha256)}` : ''}`;
+  return withArtifactBundleDigest(
+    `/api/run-artifact?runId=${encodeURIComponent(runId)}&path=${encodeURIComponent(
+      artifact.path,
+    )}${artifact.sha256 ? `&v=${encodeURIComponent(artifact.sha256)}` : ''}`,
+    artifact.bundleDigest,
+  );
 }
 
 export function runArtifactFetchUrl(
   runId: string,
-  artifact: Pick<ArtifactRef, 'path' | 'sha256'>,
+  artifact: Pick<ArtifactRef, 'path' | 'sha256' | 'bundleDigest'>,
 ): string {
   return gatewayResourceUrl(runArtifactApiPath(runId, artifact));
 }
 
 export function runArtifactUrl(
   runId: string,
-  artifact: Pick<ArtifactRef, 'path' | 'sha256'>,
+  artifact: Pick<ArtifactRef, 'path' | 'sha256' | 'bundleDigest'>,
 ): string {
   return runArtifactFetchUrl(runId, artifact);
 }
 
 export function recipeRunArtifactUrl(
   runId: string,
-  group: Pick<RecipeRunArtifactGroup, 'id' | 'groupKind'>,
-  artifact: Pick<ArtifactRef, 'path' | 'sha256' | 'sizeBytes'>,
+  group: Pick<RecipeRunArtifactGroup, 'id' | 'groupKind' | 'artifactBundle'>,
+  artifact: Pick<ArtifactRef, 'path' | 'sha256' | 'sizeBytes' | 'bundleDigest'>,
 ): string {
   const params = new URLSearchParams({ runId, path: artifact.path });
   if (group.groupKind !== 'current-artifacts') params.set('recipeRunId', group.id);
   if (artifact.sha256) params.set('v', artifact.sha256.slice(0, 12));
   else if (typeof artifact.sizeBytes === 'number') params.set('v', `s${artifact.sizeBytes}`);
   if (typeof artifact.sizeBytes === 'number') params.set('vsize', String(artifact.sizeBytes));
-  return gatewayResourceUrl(`/api/run-artifact?${params.toString()}`);
+  return gatewayResourceUrl(
+    withArtifactBundleDigest(
+      `/api/run-artifact?${params.toString()}`,
+      artifact.bundleDigest ?? group.artifactBundle?.bundleDigest,
+    ),
+  );
 }
 
 export function workspaceArtifactGroup(

@@ -34,7 +34,7 @@ function buildMaliciousBundle(
   );
 }
 
-test('import rejects manifest path traversal in taskRelativePath', () => {
+test('import rejects manifest path traversal in taskRelativePath', async () => {
   const targetRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-dst-'));
   const bundleDir = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-pack-'));
   const runId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
@@ -98,7 +98,7 @@ test('import rejects manifest path traversal in taskRelativePath', () => {
   writeMinimalRoot(targetRoot);
 
   try {
-    assert.throws(
+    await assert.rejects(
       () =>
         importBundle({
           farmslotRoot: targetRoot,
@@ -114,7 +114,7 @@ test('import rejects manifest path traversal in taskRelativePath', () => {
   }
 });
 
-test('import rejects tampered task payload hashes', () => {
+test('import rejects tampered task payload hashes', async () => {
   const targetRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-dst3-'));
   const bundleDir = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-pack3-'));
   const runId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
@@ -179,7 +179,7 @@ test('import rejects tampered task payload hashes', () => {
   writeMinimalRoot(targetRoot);
 
   try {
-    assert.throws(
+    await assert.rejects(
       () =>
         importBundle({
           farmslotRoot: targetRoot,
@@ -195,7 +195,7 @@ test('import rejects tampered task payload hashes', () => {
   }
 });
 
-test('import rejects manifest entry path aliases for run JSON', () => {
+test('import rejects manifest entry path aliases for run JSON', async () => {
   const targetRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-dst4-'));
   const bundleDir = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-pack4-'));
   const runId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
@@ -276,7 +276,7 @@ test('import rejects manifest entry path aliases for run JSON', () => {
   writeMinimalRoot(targetRoot);
 
   try {
-    assert.throws(
+    await assert.rejects(
       () =>
         importBundle({
           farmslotRoot: targetRoot,
@@ -292,7 +292,7 @@ test('import rejects manifest entry path aliases for run JSON', () => {
   }
 });
 
-test('import rejects taskRelativePath outside orchestrator task roots', () => {
+test('import rejects taskRelativePath outside orchestrator task roots', async () => {
   const targetRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-dst6-'));
   const bundleDir = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-pack6-'));
   const runId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
@@ -357,7 +357,7 @@ test('import rejects taskRelativePath outside orchestrator task roots', () => {
   writeMinimalRoot(targetRoot);
 
   try {
-    assert.throws(
+    await assert.rejects(
       () =>
         importBundle({
           farmslotRoot: targetRoot,
@@ -373,7 +373,7 @@ test('import rejects taskRelativePath outside orchestrator task roots', () => {
   }
 });
 
-test('import rejects unlisted files under task tree', () => {
+test('import rejects unlisted files under task tree', async () => {
   const targetRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-dst5-'));
   const bundleDir = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-pack5-'));
   const runId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
@@ -439,7 +439,7 @@ test('import rejects unlisted files under task tree', () => {
   writeMinimalRoot(targetRoot);
 
   try {
-    assert.throws(
+    await assert.rejects(
       () =>
         importBundle({
           farmslotRoot: targetRoot,
@@ -455,7 +455,7 @@ test('import rejects unlisted files under task tree', () => {
   }
 });
 
-test('import clears stale taskFile when bundle has no task tree', () => {
+test('import clears stale taskFile when bundle has no task tree', async () => {
   const targetRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-dst7-'));
   const bundleDir = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-pack7-'));
   const runId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
@@ -518,7 +518,7 @@ test('import clears stale taskFile when bundle has no task tree', () => {
   writeMinimalRoot(targetRoot);
 
   try {
-    const imported = importBundle({
+    const imported = await importBundle({
       farmslotRoot: targetRoot,
       bundlePath,
       mode: 'seed',
@@ -540,7 +540,7 @@ test('import clears stale taskFile when bundle has no task tree', () => {
   }
 });
 
-test('import rejects unlisted runPath entries', () => {
+test('import rejects unlisted runPath entries', async () => {
   const targetRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-dst2-'));
   const bundleDir = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-pack2-'));
   const runId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
@@ -591,7 +591,7 @@ test('import rejects unlisted runPath entries', () => {
   writeMinimalRoot(targetRoot);
 
   try {
-    assert.throws(
+    await assert.rejects(
       () =>
         importBundle({
           farmslotRoot: targetRoot,

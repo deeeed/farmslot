@@ -17,6 +17,7 @@ import {
 
 import { diffKindForFlow } from '../core/diff-kind.js';
 import { readCommentsTriageSummary } from '../run-completion/orchestrator.js';
+import { retainedArtifactRun } from '../run-completion/retained-artifacts.js';
 
 import { dedupeArtifacts } from './artifacts.js';
 import { readJsonIfExists, statIfPresent } from './io.js';
@@ -226,7 +227,8 @@ export async function buildFamilyChangeLedger(
   const byRunId = new Map(runs.map((run) => [run.id, run]));
   const entries: FamilyChangeLedgerEntry[] = await Promise.all(
     runSummaries.map(async (summary): Promise<FamilyChangeLedgerEntry> => {
-      const run = byRunId.get(summary.runId);
+      const sourceRun = byRunId.get(summary.runId);
+      const run = sourceRun ? await retainedArtifactRun(sourceRun) : undefined;
       const taskDir = run?.taskFile ? path.dirname(run.taskFile) : null;
       const completeOutputs = (run?.steps.find((step) => step.name === 'complete')?.outputs ??
         {}) as Record<string, unknown>;
