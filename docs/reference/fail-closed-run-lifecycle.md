@@ -518,3 +518,63 @@ replay after a bounded budget extension, and current-head required reviews.
 Live acceptance MUST publish the original run through its gate, verify its
 linked PR head and hosted per-AC images/video, and retain all earlier attempts.
 No hand-created PR or adoption may substitute for that publication receipt.
+
+## Adopted publication evidence delivery
+
+**Status:** Proposed under ADR-065 Amendment 5. This section does not change the
+accepted adoption restrictions until the amendment is accepted and implemented.
+
+`run.refreshPublishedEvidence` MAY deliver retained media for an adopted
+publication under its existing scoped authorization for run mutations. Adoption itself
+remains person-only. This operation MUST NOT impersonate the adopter or treat
+their code-publication attestation as a new review or evidence verdict.
+
+### Binding and selection
+
+- Resolve the same active or archived run through the canonical store. Refuse
+  imported/read-only records, nonterminal execution or an active task.
+- Require the immutable adoption receipt, its recorded prior decision/package
+  identity and the matching retained frozen package. Validate its hash and
+  evidence manifest through the existing owners. Missing identity or bytes
+  MUST refuse; do not prepare a replacement package or widen its selection.
+- Deliver only media selected in that package, or a requested subset under the
+  existing selection rules. Validate original bytes and provenance. A package
+  from an older head MAY supply historical media, but its head and known capture
+  identities MUST remain visible separately from the attested PR head. Unknown
+  provenance remains unknown; no current-head pass, coverage or baseline is
+  inferred. Existing evidence-policy refusals remain enforced.
+- The live repository, PR, branch and head MUST match the receipt exactly.
+  Historical adoption does not authorize writing to an advanced head. Refuse
+  unknown identity and closed-unmerged PRs before media delivery.
+
+### Mutation and persistence
+
+Use the current PR body as the base. The existing uploader and shared renderer
+MUST update only farm-owned evidence/provenance sections, preserving unrelated
+human edits. Never restore the old package draft body or mutate source, title,
+publication state, review budget, verdicts or frozen QA.
+
+Serialize through the existing lifecycle owner. Recheck the generation, receipt,
+archive location, frozen selection and live head/body after asynchronous work
+and immediately before editing the body. Observed drift MUST refuse without
+replaying a worker, gate or publication action. Retain already uploaded artifacts
+on refusal; never invent successful delivery or silently retry a public write.
+
+Record the delivered description and body hash through the existing publication
+recorder, retaining its adoption and package identities. Archived records MUST
+stay archived with status, completion time, generation and successor ownership
+preserved. Repeated refreshes MUST replace the owned section without duplicating
+it or changing the original adoption/package receipt.
+
+### Public contract and acceptance
+
+Keep `RunRefreshPublishedEvidenceParams` and `RunRefreshPublishedEvidenceResult`
+compatible. The existing raw RPC CLI is the operator consumer; harnesses inherit
+the common uploader and renderer with no new hook or parallel writer.
+
+Regression and public-RPC proof MUST cover exact-head and historical-package
+delivery, subset selection, source labels, changed/missing media, foreign or
+advanced PR heads, concurrent body/head changes, idempotent rendering and
+archived persistence. Assert original receipts, packages, QA and execution state
+remain unchanged. Use a fixture person for adoption setup, never a real person's
+credential held by automation.
