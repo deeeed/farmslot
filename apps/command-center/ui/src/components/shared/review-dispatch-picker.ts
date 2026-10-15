@@ -16,6 +16,8 @@ import {
   ReviewDispatchViewModel,
 } from '@farmslot/review-dispatch';
 
+import './choice-picker.js';
+
 import { gateway } from '../../gateway-client.js';
 import {
   onVisibleModelsChange,
@@ -23,6 +25,8 @@ import {
   rememberedVisibleModels,
   rememberRunnerVisibleState,
 } from '../../utils/runner-visible-cache.js';
+
+import type { ChoicePicker } from './choice-picker.js';
 
 export interface ReviewDispatchChangeDetail {
   selection: ReviewSelection | undefined;
@@ -60,7 +64,7 @@ export class ReviewDispatchPicker extends LitElement {
     .row {
       display: flex;
       flex-wrap: wrap;
-      align-items: end;
+      align-items: start;
       gap: 10px;
     }
     label {
@@ -68,14 +72,16 @@ export class ReviewDispatchPicker extends LitElement {
       flex-direction: column;
       gap: 4px;
       font-size: 11px;
+      min-width: 0;
+      flex: 1 1 150px;
     }
     .model-effort {
       display: flex;
       flex-wrap: wrap;
-      align-items: end;
+      align-items: start;
       gap: 10px;
+      flex: 2 1 320px;
     }
-    select,
     input,
     button {
       background: #12121a;
@@ -88,8 +94,7 @@ export class ReviewDispatchPicker extends LitElement {
     button {
       cursor: pointer;
     }
-    button:disabled,
-    select:disabled {
+    button:disabled {
       opacity: 0.5;
       cursor: default;
     }
@@ -239,12 +244,12 @@ export class ReviewDispatchPicker extends LitElement {
         return html`<div class="row" data-testid="review-dispatch-row">
           ${vm.context.allowSequence ? html`<span class="index">${index + 1}</span>` : nothing}
           <label
-            >RUNNER<select
+            >RUNNER<choice-picker
               data-testid="review-dispatch-runner"
               .value=${selected.runner}
               ?disabled=${this.disabled}
               @change=${(event: Event) =>
-                this.change(() => vm.setRunner(row.id, (event.target as HTMLSelectElement).value))}
+                this.change(() => vm.setRunner(row.id, (event.target as ChoicePicker).value))}
             >
               ${vm.catalog.runners.map(
                 (option) =>
@@ -252,17 +257,17 @@ export class ReviewDispatchPicker extends LitElement {
                     ${option.label ?? option.id}
                   </option>`,
               )}
-            </select></label
+            </choice-picker></label
           >
           <div class="model-effort">
             <label
-              >MODEL<select
+              >MODEL<choice-picker
                 data-testid="review-dispatch-model"
                 .value=${selected.model ?? ''}
                 ?disabled=${this.disabled}
                 @change=${(event: Event) =>
                   this.change(() =>
-                    vm.setModel(row.id, (event.target as HTMLSelectElement).value || null),
+                    vm.setModel(row.id, (event.target as ChoicePicker).value || null),
                   )}
               >
                 <option value="" ?selected=${selected.model === null}>
@@ -276,17 +281,17 @@ export class ReviewDispatchPicker extends LitElement {
                         ${option.label ?? option.id}
                       </option>`,
                   )}
-              </select></label
+              </choice-picker></label
             >
             <label
-              >EFFORT<select
+              >EFFORT<choice-picker
                 data-testid="review-dispatch-effort"
                 .value=${selected.effort ?? ''}
                 ?disabled=${this.disabled ||
                 efforts.filter((effort) => effort.value !== null).length === 0}
                 @change=${(event: Event) =>
                   this.change(() =>
-                    vm.setEffort(row.id, (event.target as HTMLSelectElement).value || null),
+                    vm.setEffort(row.id, (event.target as ChoicePicker).value || null),
                   )}
               >
                 ${efforts.map(
@@ -300,7 +305,7 @@ export class ReviewDispatchPicker extends LitElement {
                         : effort.label}
                     </option>`,
                 )}
-              </select></label
+              </choice-picker></label
             >
           </div>
           ${runner?.allowCustomModels !== false
@@ -370,7 +375,7 @@ export class ReviewDispatchPicker extends LitElement {
             : nothing}
           ${this.review
             ? html`<label
-                >MODE<select
+                >MODE<choice-picker
                   data-testid="review-dispatch-mode"
                   .value=${selected.mode}
                   ?disabled=${this.disabled}
@@ -378,7 +383,7 @@ export class ReviewDispatchPicker extends LitElement {
                     this.change(() =>
                       vm.setMode(
                         row.id,
-                        (event.target as HTMLSelectElement).value as ReviewSelection['mode'],
+                        (event.target as ChoicePicker).value as ReviewSelection['mode'],
                       ),
                     )}
                 >
@@ -388,12 +393,12 @@ export class ReviewDispatchPicker extends LitElement {
                   <option value="warm" ?selected=${selected.mode === 'warm'}>
                     WARM · retained session, changes since review
                   </option>
-                </select></label
+                </choice-picker></label
               >`
             : nothing}
           ${this.review && selected.mode === 'warm'
             ? html`<label
-                >Retained review<select
+                >Retained review<choice-picker
                   data-testid="review-dispatch-lineage"
                   .value=${row.context?.reviewId ?? ''}
                   ?disabled=${this.disabled}
@@ -406,8 +411,7 @@ export class ReviewDispatchPicker extends LitElement {
                           vm.context.reviewContext?.reviewLineages ??
                           []
                         ).find(
-                          (context) =>
-                            context?.reviewId === (event.target as HTMLSelectElement).value,
+                          (context) => context?.reviewId === (event.target as ChoicePicker).value,
                         ) ?? null,
                       ),
                     )}
@@ -424,7 +428,7 @@ export class ReviewDispatchPicker extends LitElement {
                         </option>`
                       : nothing,
                   )}
-                </select></label
+                </choice-picker></label
               >`
             : nothing}
           ${vm.context.allowSequence

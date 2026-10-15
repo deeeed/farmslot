@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Restore styled, searchable runner/model/effort controls across dispatch, review and backlog launch plans through the shared picker.
+
 - Use one compact worker checklist in pipeline, step inspection and slot views.
 
 - Move sign-out into the account menu with confirmation; retain sign-in for 30 days and reconnect through gateway restarts.

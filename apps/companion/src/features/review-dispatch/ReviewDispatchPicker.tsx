@@ -24,6 +24,7 @@ export function ReviewDispatchPicker({
   actionLabel,
   onInvoke,
   renderRowResources,
+  discover = true,
 }: {
   model: ReviewDispatchViewModel;
   disabled?: boolean;
@@ -34,8 +35,9 @@ export function ReviewDispatchPicker({
   actionLabel?: string;
   onInvoke?: (action: ReviewDispatchAction, payload: ReviewRequestPayload) => void;
   renderRowResources?: (row: ReviewDispatchRow, index: number) => React.ReactNode;
+  discover?: boolean;
 }) {
-  const { error, change } = useReviewDispatchCatalog(model, onChange);
+  const { error, change } = useReviewDispatchCatalog(model, onChange, discover);
   return (
     <View style={styles.picker} testID={testID}>
       {model.rows.map((row, index) => {

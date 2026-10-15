@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Use the shared runner/model picker for new conversations while retaining the conversation-specific catalog and profile controls.
+
 - Use the shared compact worker checklist view and preserve child-unit expansion.
 
 - Confirm the secondary Settings sign-out action and retain sign-in with the shared 30-day expiry policy.
