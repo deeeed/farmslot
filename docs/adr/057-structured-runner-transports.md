@@ -123,8 +123,14 @@ supervisor/host processes and groups, and terminal session journals with confirm
 process stops and stopped original runner groups. Journal observations are scoped
 to the failed host's latest generations; OS birth identities distinguish unrelated
 PID/group reuse. Orphaned or unreadable groups remain blocked.
-Missing, malformed or unreadable evidence
-and any surviving process keep ownership blocked. Recovery never signals a process.
+Missing host ownership, malformed or unreadable evidence, and any surviving process
+keep ownership blocked. Recovery never signals a process.
+
+A host whose first census failed before recording any session may have no process
+observations. Under the same startup claim, fresh and independent absence checks
+may quarantine that marker and start a new host. Historical journals must remain
+terminal and confirmed stopped; any session recorded by the unobserved host blocks
+this fallback. No journal is reset, and starting a host never resumes a worker.
 
 Archive the original cleanup record and a durable verification receipt before
 reclaiming the stale host lock. Preserve journals, native IDs, generations, command
