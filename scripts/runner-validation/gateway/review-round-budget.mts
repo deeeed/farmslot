@@ -227,12 +227,22 @@ if (phase === 'serve') {
     execFileSync('git', ['clone', '--quiet', '--local', repo, raceRepo]);
     const taskDir = path.join(repo, 'tasks/control');
     mkdirSync(taskDir, { recursive: true });
-    writeFileSync(path.join(repo, '.git/info/exclude'), 'tasks/\n');
+    writeFileSync(path.join(repo, '.git/info/exclude'), 'tasks/\n.task/\n.omc/\n');
     writeFileSync(path.join(taskDir, 'TASK.md'), '# Review budget control\n');
+    mkdirSync(path.join(taskDir, 'artifacts'), { recursive: true });
+    writeFileSync(
+      path.join(taskDir, 'artifacts/pr-description.md'),
+      '## Fixture change\nReview budget control.\n',
+    );
     writeJson(path.join(taskDir, 'inputs/handoff.json'), { task: { acceptanceCriteria: [] } });
     const retained = path.join(root, 'projects', project, 'tasks/control');
     mkdirSync(retained, { recursive: true });
     writeFileSync(path.join(retained, 'TASK.md'), '# Review budget control\n');
+    mkdirSync(path.join(retained, 'artifacts'), { recursive: true });
+    writeFileSync(
+      path.join(retained, 'artifacts/pr-description.md'),
+      '## Fixture change\nReview budget control.\n',
+    );
     writeJson(path.join(retained, 'inputs/handoff.json'), { task: { acceptanceCriteria: [] } });
     writeJson(path.join(root, 'projects', project, 'project.json'), {
       name: project,
