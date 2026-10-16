@@ -222,15 +222,29 @@ test('a steering proof newer than the inspected frame is kept', async (t) => {
   assert.deepEqual(saved.accepted, receipt.accepted);
 });
 
-test('a steering block still drawn keeps its proof while the same text sits in the composer', async (t) => {
+// Counts attempts to take a receipt lock; each one is a write the inspection wanted to make.
+function lockAttempts(t) {
+  const attempts = [];
+  const mkdir = fs.mkdirSync;
+  t.mock.method(fs, 'mkdirSync', function (target, ...args) {
+    if (String(target).endsWith('.lock')) attempts.push(target);
+    return mkdir.call(fs, target, ...args);
+  });
+  return attempts;
+}
+
+test('a steering block still drawn keeps its saved proof without rewriting it', async (t) => {
   const f = fixture(t);
   const message = captured('payload');
   f.setCapturedPanes(`› ${message}\n\ncontext left`, () => codexSteering(message));
-  await send('%1', 'codex', message);
+  const sent = await send('%1', 'codex', message);
+  const attempts = lockAttempts(t);
+  // The same text is also back in the composer, so the saved proof is re-proven from the block.
   process.env.TMUX_PANE_STATE_TAIL_CAPTURE = `• Messages to be submitted after next tool call\n  ↳ ${message}\n\n› ${message}\n\ncontext left`;
-  assert.equal(paneState('%1', 'codex').accepted.source, 'runner-steering');
+  assert.deepEqual(paneState('%1', 'codex').accepted, sent.evidence);
   process.env.TMUX_PANE_STATE_TAIL_CAPTURE = codexSteering(message);
-  assert.equal(paneState('%1', 'codex').accepted.source, 'runner-steering');
+  assert.deepEqual(paneState('%1', 'codex').accepted, sent.evidence);
+  assert.deepEqual(attempts, []);
 });
 
 for (const delivered of [true, false]) {
@@ -784,6 +798,24 @@ test('a resumed Claude session reads its live transcript, not an older copy', as
   const result = await send('%1', 'claude', f.payload);
   assert.equal(result.before.session_path.includes('-0-older'), false);
   assert.equal(result.evidence?.turn_token, 'live');
+});
+
+test('re-proving a saved Claude queue proof takes no lock and writes nothing', async (t) => {
+  const f = claudeFixture(t, 'busy');
+  f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
+    f.record({ type: 'queue-operation', operation: 'enqueue', content: pasted });
+    return claudeBox('Press up to edit queued messages', `❯ ${pasted}`);
+  });
+  const sent = await send('%1', 'claude', f.payload);
+  assert.equal(sent.evidence.source, 'native-queue');
+  const [file] = fs.readdirSync(f.dir).filter((name) => /^[a-f0-9]{64}\.json$/.test(name));
+  const saved = fs.readFileSync(path.join(f.dir, file), 'utf8');
+  const attempts = lockAttempts(t);
+  // Every inspection rechecks the queue proof against the transcript.
+  assert.deepEqual(paneState('%1', 'claude').accepted, sent.evidence);
+  assert.deepEqual(paneState('%1', 'claude').accepted, sent.evidence);
+  assert.deepEqual(attempts, []);
+  assert.equal(fs.readFileSync(path.join(f.dir, file), 'utf8'), saved);
 });
 
 test('a busy Claude turn takes Enter input through its native queue', async (t) => {
