@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -9,6 +8,7 @@ import {
   type RecipeConformanceIdentity,
   type RecipeConformanceSource,
 } from '@farmslot/protocol';
+import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { retainTaskInput, taskInputDigest } from './pin.js';
 
@@ -73,11 +73,10 @@ export class TaskProvenanceError extends Error {
 
 const receiptFile = 'artifacts/harness-provenance.json';
 const pinPaths = new WeakMap<TaskExecutionInput, Map<string, string>>();
+// The shared machine home expands `~`; a raw FARMSLOT_HOME would resolve
+// against the task checkout and retain the tooling inside the product source.
 function taskPinRoot(): string {
-  return path.resolve(
-    process.env.FARMSLOT_HOME || path.join(os.homedir(), '.farmslot'),
-    'task-pins',
-  );
+  return path.resolve(farmslotHome(), 'task-pins');
 }
 /** Producer-owned pin identity, allocated before rendering but written only after validation. */
 export function taskExecutionPin(taskDir: string, input: TaskExecutionInput): string {
