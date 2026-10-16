@@ -66,6 +66,18 @@ test('a question typed into the live composer is unsent input, not an open quest
   ].join('\n');
   assert.equal(paneOpenQuestion(codexBusy), null);
   assert.equal(paneOpenQuestion(claudeDraft), null);
+  // A draft taller than the five-line window.
+  const tallDraft = [
+    '• Working (3m 35s • esc to interrupt)',
+    '› Follow-up for the lane:',
+    '  1. rebase onto main',
+    '  2. rerun the focused tests',
+    '  3. refresh the PR body',
+    '  4. request paired review',
+    '  Would you like me to open the follow-up PR now?',
+    '  tab to queue message                                                          87% context left',
+  ].join('\n');
+  assert.equal(paneOpenQuestion(tallDraft), null);
   // A prompt the runner shows above its composer still counts.
   assert.match(
     paneOpenQuestion(

@@ -1721,21 +1721,32 @@ test('a worker question handoff resumes monitoring without a terminal signal; ot
       createdAt: new Date().toISOString(),
       context: { signalFile: null, ...(workerQuestion ? { workerQuestion: true } : {}) },
     };
-    updateRun(run.id, { status: 'blocked', decisions: [decision] });
+    updateRun(run.id, {
+      status: 'blocked',
+      decisions: [decision],
+      steps: [{ name: 'monitor', status: 'running' }],
+    });
     t.after(async () => {
       if (getRun(run.id)) {
         updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
         await deleteRun(run.id);
       }
     });
+    let resumeRun: (() => void) | undefined;
+    const resumed = new Promise<void>((resolve) => {
+      resumeRun = resolve;
+    });
     const resolve = () =>
       runResolveDecision(
         { runId: run.id, decisionId: decision.id, actionId: 'question-closed' },
         () => {},
+        { resumeRun: async () => resumeRun?.() },
       );
     if (workerQuestion) {
       await resolve();
       assert.equal(getRun(run.id)?.decisions[0]?.resolvedAction, 'question-closed');
+      // Without a live monitor (gateway restart) the resolution re-enters the engine.
+      await resumed;
     } else {
       await assert.rejects(resolve, /fresh terminal SIGNAL\.json/);
       assert.equal(getRun(run.id)?.decisions[0]?.resolvedAt, undefined);

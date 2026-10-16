@@ -481,3 +481,40 @@ test(
     assert.deepEqual(resolved, ['question-closed']);
   },
 );
+
+test(
+  'a monitor started after a restart adopts the pending question handoff instead of raising another',
+  { timeout: 4000 },
+  async (t) => {
+    // The live Claude case keeps the run in monitoring while its question handoff is pending.
+    const f = await fixture(t);
+    await f.writeSignal({ ...f.waiting, waitingForOperator: undefined });
+    const pending = {
+      id: `question-${randomUUID()}`,
+      type: 'monitor_interactive_handoff' as const,
+      title: 'Worker question',
+      description: 'The worker asked a question and is waiting for an answer.',
+      actions: [{ id: 'question-closed', label: 'Resume monitoring', style: 'primary' as const }],
+      createdAt: new Date().toISOString(),
+      context: { signalFile: null, workerQuestion: true },
+    };
+    updateRun(f.run.id, { status: 'monitoring', decisions: [pending] });
+    let open = true;
+    const execution = f.start({
+      workerStatus: async () => 'working',
+      violations: async () => [],
+      question: async () => (open ? 'Detach?' : null),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(getRun(f.run.id)!.decisions[0].resolvedAt, undefined);
+    open = false;
+    for (let i = 0; i < 200 && !getRun(f.run.id)!.decisions[0].resolvedAt; i++)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    const decisions = getRun(f.run.id)!.decisions;
+    assert.equal(decisions.length, 1, 'the pending handoff is adopted, not duplicated');
+    assert.equal(decisions[0].resolvedAction, 'question-closed');
+    assert.equal(getRun(f.run.id)!.status, 'monitoring');
+    f.controller.abort();
+    await execution;
+  },
+);

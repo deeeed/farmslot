@@ -1547,28 +1547,34 @@ export async function monitorRun(
       if (signal.aborted) break;
 
       // 2a. An open worker question waits for a person: hand it to the operator.
+      // A question handoff an earlier monitor left pending (gateway restart) is adopted.
       if (waitingForOperator) state.openQuestion = undefined;
-      if (state.openQuestion && state.openQuestion.polls >= 2) {
+      const pendingQuestion = getRun(runId)?.decisions.find(
+        (decision) =>
+          !decision.resolvedAt &&
+          decision.type === 'monitor_interactive_handoff' &&
+          decision.context?.workerQuestion === true,
+      );
+      const openQuestion =
+        state.openQuestion && state.openQuestion.polls >= 2 ? state.openQuestion.text : undefined;
+      if (pendingQuestion || openQuestion !== undefined) {
         console.log(
-          `[run-monitor] run ${runId.slice(0, 8)} — worker question open; handing off to the operator`,
+          `[run-monitor] run ${runId.slice(0, 8)} — worker question open; ${pendingQuestion ? 'adopting its pending handoff' : 'handing off to the operator'}`,
         );
-        snapshots.push({ timestamp: new Date().toISOString(), trigger: 'decision' });
-        const actionId = await createMonitorDecision(
-          runId,
-          'interactive_handoff',
-          workerQuestionHandoffDescription(state.openQuestion.text),
-          undefined,
-          {
-            pollMs: config.pollIntervalMs,
-            open: async () =>
-              (await observeQuestion(
-                runId,
-                slotId,
-                violationContext?.role,
-                violationContext?.id,
-              )) !== null,
-          },
-        );
+        const question = workerQuestionProbe(runId, slotId, config.pollIntervalMs, observeQuestion);
+        let actionId: string;
+        if (pendingQuestion) {
+          actionId = await waitForMonitorDecision(runId, pendingQuestion, generation, question);
+        } else {
+          snapshots.push({ timestamp: new Date().toISOString(), trigger: 'decision' });
+          actionId = await createMonitorDecision(
+            runId,
+            'interactive_handoff',
+            workerQuestionHandoffDescription(openQuestion ?? ''),
+            undefined,
+            question,
+          );
+        }
         state.openQuestion = undefined;
         if (actionId === 'abort') {
           exitReason = 'aborted';
@@ -2067,6 +2073,23 @@ async function waitForWorkerStart(
     await sleep(500);
   }
   return lastStatus;
+}
+
+/** Reports whether the worker's question is still open, for the handoff watcher. */
+function workerQuestionProbe(
+  runId: string,
+  slotId: string,
+  pollMs: number,
+  read: typeof readOpenWorkerQuestion = readOpenWorkerQuestion,
+): HandoffQuestionProbe {
+  return {
+    pollMs,
+    open: async () => {
+      const run = getRun(runId);
+      const ctx = run && selectAgentContext(run, { role: primaryRoleForFlow(run.flowType) });
+      return (await read(runId, slotId, ctx?.role, ctx?.id)) !== null;
+    },
+  };
 }
 
 /** The question the worker is waiting on now, or null. */
@@ -2827,17 +2850,14 @@ export function rearmInteractiveHandoffAutoRecovery(
     (d) => !d.resolvedAt && d.type === 'monitor_interactive_handoff',
   );
   if (!decision) return undefined;
-  const question: HandoffQuestionProbe | undefined =
+  const question =
     decision.context?.workerQuestion === true
-      ? {
-          pollMs: readers.pollMs ?? HANDOFF_AUTO_RECOVERY_POLL_MS,
-          open: async () => {
-            const latest = getRun(run.id) ?? run;
-            const ctx = selectAgentContext(latest, { role: primaryRoleForFlow(latest.flowType) });
-            const read = readers.question ?? readOpenWorkerQuestion;
-            return (await read(run.id, slotId, ctx?.role, ctx?.id)) !== null;
-          },
-        }
+      ? workerQuestionProbe(
+          run.id,
+          slotId,
+          readers.pollMs ?? HANDOFF_AUTO_RECOVERY_POLL_MS,
+          readers.question,
+        )
       : undefined;
   return armInteractiveHandoffAutoRecovery(
     run.id,
@@ -2964,15 +2984,31 @@ async function createBlockedDecision(
   });
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
 
+  return waitForMonitorDecision(
+    runId,
+    decision,
+    generation,
+    reason === 'interactive_handoff' ? question : undefined,
+  );
+}
+
+/** Wait for a monitor decision, then settle it and resume monitoring. */
+async function waitForMonitorDecision(
+  runId: string,
+  decision: RunDecision,
+  generation: number,
+  question?: HandoffQuestionProbe,
+): Promise<string> {
+  const slotId = getRun(runId)?.slotId;
   // Wait for resolution. Interactive handoffs also auto-resolve when a fresh
   // terminal signal lands on the slot — no operator round-trip required.
   let disarmAutoRecovery: (() => void) | undefined;
   const actionId = await new Promise<string>((resolve) => {
     decisionResolvers.set(decision.id, resolve);
-    if (reason === 'interactive_handoff' && run.slotId) {
+    if (decision.type === 'monitor_interactive_handoff' && slotId) {
       disarmAutoRecovery = armInteractiveHandoffAutoRecovery(
         runId,
-        run.slotId,
+        slotId,
         decision,
         resolve,
         question,
