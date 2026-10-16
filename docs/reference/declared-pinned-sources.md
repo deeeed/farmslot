@@ -224,6 +224,46 @@ require a schema transition and a breaking package release under repository
 version policy. Unsupported peers MUST refuse admission. Accepted exports are
 not stable APIs until the reviewed implementation release ships.
 
+## Live source status
+
+This section implements [ADR-069 Amendment 1](../adr/069-declared-pinned-sources.md#amendment-1-2026-10-17-live-source-status)
+as the pilot slice of ADR-071 (gateway change notifications, proposed and not yet
+published).
+
+The gateway MUST publish a `ResourceChangedPayload` with `version: 1`, an `epoch`
+and `changes`. `epoch` is an opaque identity created at gateway process start.
+`changes` MUST contain `{ key: { family: 'sources', scope: 'declaration' }, revision, kind: 'updated' }`
+with the declaration revision and the same entry for `scope: 'pin'` with the pin
+revision. Revisions are the existing nonnegative integers returned by
+`sources.status`; clients MUST NOT compare revisions across epochs. The payload
+MUST NOT contain credentials, paths, source IDs or pin contents.
+
+Until ADR-071 is accepted, every `fleet.updated` event from a gateway with source
+declarations, including the snapshot sent on connection, MUST carry the current
+payload as `resourceChanges`. Every change to the pin revision, including pins
+created with a run, MUST broadcast `fleet.updated` once `sources.status` can
+return the new revision. Declarations load at gateway start, where the new epoch
+and connection snapshot announce them; any later declaration change MUST publish
+the same way. Duplicate and older revisions are harmless.
+
+The shared source status controller MUST reread `sources.status` for its current
+context when a `sources` revision is greater than the one in its current status,
+when the epoch differs from the last one seen, and after every reconnect. It
+MUST ignore duplicate and older revisions. If a read returns revisions older
+than the newest observed, it MUST schedule one more read. Panels MUST NOT poll or
+offer Refresh. A failed read MUST stay visible with Retry.
+
+A source panel MUST render nothing when its context has no declared sources and
+no pins. Otherwise it MUST summarize each effective pin's source, branch and
+scope in one line and keep other facts behind a one-line toggle. It MUST NOT
+repeat the run ID or add explanatory text for read-only contexts. Pin controls
+remain where the context allows them.
+
+Acceptance: a pin or unpin made by another client appears in an open panel
+without user action in both clients; an unconfigured, unpinned context renders
+nothing; a change made while disconnected appears after reconnect. Evidence
+includes light and dark screenshots.
+
 ## Migration and acceptance
 
 The implementation MUST inventory consumers privately, then publish portable

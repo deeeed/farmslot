@@ -109,3 +109,46 @@ superseded copies and source-sync mechanisms in the implementation cut-over.
 Arthur accepted this ADR and its specification on 2026-10-12 and approved
 implementation in three staged PRs. This docs PR neither deploys the source
 manager nor converts any live checkout.
+
+## Amendment 1 (2026-10-17): Live source status
+
+**Status:** Proposed, awaiting lead approval after paired review
+
+### Decision
+
+The gateway publishes its source declaration and pin revisions whenever either
+changes. The shared source status controller rereads `sources.status` for its
+context when a published revision is newer than the status it holds, and after
+every reconnect. Source panels in Command Center and Companion have no Refresh
+control and do not poll. Retry stays available after a failed read.
+
+The signal uses the exact payload, key family and revision rules that ADR-071
+(gateway change notifications, proposed and not yet published) defines for
+`resource.changed`. Sources is ADR-071's pilot slice. Until ADR-071 is accepted,
+the payload rides on the existing `fleet.updated` event. Accepting ADR-071 moves
+it to `resource.changed` by changing only the shared carrier decoder. The
+controller, renderers and payload stay as they are. If ADR-071 is rejected, this
+carrier remains the sources contract.
+
+A source panel shows nothing when its context has no declared sources and no
+pins. Otherwise it summarizes the effective pins in one line, with details
+behind a toggle. It does not repeat the run ID or explain read-only state.
+
+### Rationale and consequences
+
+Operators saw stale pins until they pressed Refresh, and empty runs showed a
+panel with no information. A view or connection change cannot show that
+another client changed a pin, so the gateway's own revisions drive rereads.
+Using ADR-071's shape now avoids a second migration of the same clients. Every
+writer of declarations or pins must publish the new revisions after they become
+readable.
+
+### Public surface
+
+`@farmslot/protocol` exports `ResourceChangedPayload`, `ResourceChange` and
+`ResourceKey` with ADR-071's fields. Only the `sources` key family is defined
+until ADR-071 is accepted. `FleetUpdatedPayload` gains optional
+`resourceChanges`. The shared decoder `sourceResourceChanges` and the existing
+`SourceStatusController` consume them for Command Center and Companion. The
+gateway is the only producer. There are no new CLI commands, flags or RPC
+methods. Harnesses are not consumers.
