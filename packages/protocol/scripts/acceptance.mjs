@@ -18,8 +18,8 @@ function acceptanceCriterionId(index) {
 
 function registeredAcceptanceCriteria(criteria) {
   return criteria
-    .map((text, index) => ({ id: acceptanceCriterionId(index), text: String(text) }))
-    .filter((criterion) => criterion.text.trim().length > 0);
+    .filter((text) => String(text).trim().length > 0)
+    .map((text, index) => ({ id: acceptanceCriterionId(index), text: String(text) }));
 }
 
 function acceptanceCriteriaMatch(expected, actual) {

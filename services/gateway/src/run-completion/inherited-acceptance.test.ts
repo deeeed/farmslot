@@ -189,6 +189,35 @@ test('a no-criteria child with a ledger-free parent remains ready without inheri
   assert.equal(readiness.state, 'ready', JSON.stringify(readiness.reasons));
 });
 
+test('ordinary completion matches normalized registration when a ticket has a blank middle criterion', async (t) => {
+  const f = await fixture(t, false, true);
+  f.child.flowType = 'dev';
+  await writeFile(
+    path.join(path.dirname(f.child.taskFile!), 'inputs/worker-terminal-contract.json'),
+    JSON.stringify({ schemaVersion: 1, flowType: 'dev', mode: f.child.mode }),
+  );
+  delete f.child.parentRunId;
+  f.child.ticketData!.acceptanceCriteria = ['First criterion', '   ', 'Second criterion'];
+  const taskDir = path.dirname(f.child.taskFile!);
+  await writeFile(
+    path.join(taskDir, 'inputs/handoff.json'),
+    JSON.stringify({
+      attemptId: f.child.id,
+      project: f.child.project,
+      flow: f.child.flowType,
+      task: { acceptanceCriteria: ['First criterion', 'Second criterion'] },
+    }),
+  );
+  await retainFixtureTask(path.dirname(taskDir), f.child, await runBundleStore(true));
+  const { readGateAcceptance } = await import('../run-engine/gate-prerequisites.js');
+  const acceptance = await readGateAcceptance(f.child);
+  assert.equal(acceptance.error, undefined);
+  assert.deepEqual(acceptance.criteria, [
+    { id: 'AC-1', text: 'First criterion' },
+    { id: 'AC-2', text: 'Second criterion' },
+  ]);
+});
+
 test('a ledger-free parent cannot block fresh child acceptance or supply provenance', async (t) => {
   const f = await fixture(t, false, true);
   f.child.ticketData!.acceptanceCriteria = ['The follow-up must prove this.'];
