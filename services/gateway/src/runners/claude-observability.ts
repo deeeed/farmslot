@@ -137,7 +137,7 @@ for line in reversed(data.splitlines()):
         if observed < since:
             unavailable()
         candidate = (prompt, observed)
-    elif isinstance(content, str) or any(isinstance(b, dict) and b.get('type') == 'text' for b in blocks):
+    elif not blocks or any(not isinstance(b, dict) or b.get('type') != 'tool_result' for b in blocks):
         unavailable()  # A new root prompt is not the earlier interrupted request.
 unavailable()
 PY`;

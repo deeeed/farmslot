@@ -81,10 +81,17 @@ test('native interruption refines only the bound parent turn and fails closed on
   for (const newer of [
     row('assistant', 1, [{ type: 'tool_use', id: 'tool', name: 'Read', input: {} }]),
     row('user', 1, [{ type: 'text', text: 'New parent work' }], { promptId: 'later-prompt' }),
+    row(
+      'user',
+      1,
+      [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'image' } }],
+      { promptId: 'image-prompt' },
+    ),
   ]) {
     write([parent, interrupt, newer]);
-    assert.equal(probe().status, 'unavailable');
-    assert.equal(applyClaudeInterruptionProbe(hook, session, probe())?.value, 'active');
+    const refused = probe();
+    assert.equal(refused.status, 'unavailable');
+    assert.equal(applyClaudeInterruptionProbe(hook, session, refused)?.value, 'active');
   }
   write([parent, { ...interrupt, promptId: 'new-literal-input' }]);
   assert.equal(
