@@ -14,6 +14,7 @@ import {
   latestReview,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
+  type ReviewSummary,
   type Run,
   type RunGateReadiness,
 } from '@farmslot/protocol';
@@ -36,6 +37,7 @@ export interface PublicationGateInput {
   judgmentRows?: readonly EvidenceReviewJudgmentRow[];
   pendingVisualClaimIds?: readonly string[];
   readiness?: RunGateReadiness;
+  reviewSummary?: ReviewSummary;
   blockedReason?: string;
   attestationReason?: string;
   resolved?: boolean;
@@ -256,6 +258,7 @@ export function publicationGateView(input: PublicationGateInput) {
               : '');
   const reasonRequired = approval?.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION;
   return {
+    warnings: input.reviewSummary?.noCodeReview ? ['No code review ran'] : [],
     claims,
     status:
       blockedReason || (attestation ? 'Evidence attestation is available.' : 'Ready to publish'),

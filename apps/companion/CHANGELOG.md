@@ -5,6 +5,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 ## Unreleased
 
 - Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review.
+- Show the shared no-code-review warning at publication gates.
 
 - Reserve loading layouts and retries for gate, output-review acceptance, evidence and run views with shared skeleton shapes.
 
