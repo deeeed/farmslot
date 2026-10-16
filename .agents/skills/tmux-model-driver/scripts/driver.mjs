@@ -284,6 +284,20 @@ function updateReceipt(files, receipt, change, held = false) {
   }
 }
 
+// A rendered steering proof is stamped with the time it was seen; every other field, and every
+// other source's timestamp, comes from the runner and must match exactly.
+function sameProof(saved, fresh) {
+  if (!saved || saved.source !== fresh.source) return false;
+  const fields = (proof) =>
+    JSON.stringify(
+      Object.keys(proof)
+        .filter((key) => !(key === 'observed_at' && proof.source === 'runner-steering'))
+        .sort()
+        .map((key) => [key, proof[key]]),
+    );
+  return fields(saved) === fields(fresh);
+}
+
 function clearAcceptedReceipt(files, receipt) {
   const ids = JSON.parse(readOptional(files.acknowledged) || '[]');
   const id = receiptIdentity(receipt);
@@ -338,12 +352,16 @@ export function paneState(pane, expectedRunner, selection) {
       if (accepted) {
         accepted.payload_hash = receipt.payload_hash;
         accepted.receipt_id = receiptIdentity(receipt);
-        updateReceipt(
-          files,
-          receipt,
-          (current) => ({ ...current, session_id: accepted.session_id, accepted }),
-          selection?.held,
-        );
+        // Re-proving the saved proof changes nothing, so it takes neither the lock nor a write.
+        if (sameProof(receipt.accepted, accepted) && receipt.session_id === accepted.session_id)
+          accepted = receipt.accepted;
+        else
+          updateReceipt(
+            files,
+            receipt,
+            (current) => ({ ...current, session_id: accepted.session_id, accepted }),
+            selection?.held,
+          );
       } else if (pulledBack) {
         // The steering block is gone, so a later edit or clear of the composer must not bring
         // the old proof back. A proof saved meanwhile by a retry is newer and stays.
