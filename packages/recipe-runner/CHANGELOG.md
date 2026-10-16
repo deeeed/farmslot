@@ -4,9 +4,11 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
-- Accept reasonless person confirmations only from qualified visual-review receipts, preserving raw evidence validation.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.38.0 - 2026-10-16
+
+- Accept reasonless person confirmations only from qualified visual-review receipts, preserving raw evidence validation.
 
 ## 0.37.2 - 2026-10-16
 
