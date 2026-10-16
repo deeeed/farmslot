@@ -74,6 +74,15 @@ function fixture(t) {
 const captured = (name) =>
   fs.readFileSync(new URL(`./fixtures/handoff-${name}.txt`, import.meta.url), 'utf8');
 
+test('the captured rate-limit choice blocks delivery without selecting a model', async (t) => {
+  const f = fixture(t);
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = captured('rate-limit-question');
+  const result = await send('%1', 'codex', f.payload);
+  assert.equal(result.verification, 'pending_question');
+  assert.equal(result.submitted, false);
+  assert.equal(f.keys.length, 0);
+});
+
 test('the captured clipped working composer queues with Tab and verifies its owned follow-up preview', async (t) => {
   const f = fixture(t);
   f.setCapturedPanes(captured('clipped-composer'), () => captured('queued-followup'));

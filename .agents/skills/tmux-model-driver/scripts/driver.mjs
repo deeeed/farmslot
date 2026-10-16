@@ -155,7 +155,9 @@ export function processState(meta) {
 export function paneSafety(tail, runner) {
   const lines = tail.trimEnd().split('\n');
   const footer = lines.slice(-5).join('\n');
-  const menu = /enter to (?:confirm|select)|esc to cancel|use arrow keys/i.test(footer);
+  const menu = /enter (?:to )?(?:confirm|select)|esc (?:to cancel|back)|use arrow keys/i.test(
+    footer,
+  );
   const active = menu ? lines.slice(-25).join('\n') : footer;
   const pending =
     menu ||
