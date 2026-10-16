@@ -2,6 +2,7 @@ export * from './config.js';
 export * from './error.js';
 export * from './fixtures.js';
 export * from './hooks.js';
+export * from './provider-cli.js';
 export { farmslotRoot, resolveFarmslotRoot } from './repo-root.js';
 export type {
   IncrementalSessionUsageResult,

@@ -9,6 +9,7 @@ import type {
   NodeProcessSample,
 } from '@farmslot/protocol';
 
+import { collectProviderCliHealth } from './provider-cli-health.js';
 import { getCachedResourceWatchPids, getResourceWatchRuntimeStats } from './resource-watch.js';
 import { getCachedTmuxPanePids } from './tmux.js';
 
@@ -365,6 +366,7 @@ export async function collectMetrics(
   const [loadAvg1, loadAvg5] = os.loadavg();
   const cpuCores = os.cpus().length;
   const cpuPercent = getCpuPercent();
+  const providerCliHealth = await collectProviderCliHealth();
   const memoryPercent = Math.round((usedMem / totalMem) * 100);
   const diskPercent = getDiskPercent();
   const thermalPressure = getThermalPressure();
@@ -428,6 +430,7 @@ export async function collectMetrics(
       load5: ratio(loadAvg5 / Math.max(1, cpuCores)),
     },
     ...(processInventory ? { processInventory } : {}),
+    providerCliHealth,
     thermalPressure,
     resourceWatches: getResourceWatchRuntimeStats(),
     collectedAt: new Date().toISOString(),

@@ -334,3 +334,21 @@ Gateway expands template vars to absolute paths before sending to the node. The 
 - Hook execution for resource control (boot/shutdown) may have long timeouts — need progress streaming
 - Resource index bits (3 bits = 8 slots) sufficient for foreseeable use cases but not extensible without header change
 - Split layout resizing may interact poorly with Monaco editor (needs explicit `editor.layout()` calls on resize)
+
+## Amendment 5: pinned provider CLI health, 2026-10-16
+
+Status: Proposed. Lead routing approved; acceptance follows paired review.
+
+### Decision
+
+A provider root declared in machine pool `env.*_PACKAGE_ROOT` supplies its package identity, exact version and public binaries. The same version must be installed globally. Versioned roots remain immutable run pins. Rollout must reject success if any public binary on the node, login, interactive or non-interactive shell PATH reports another version or is missing. Inspect without inherited provider selectors, so delegation cannot hide a stale installation.
+
+The node samples this read-only check through its existing metrics cadence, sharing one probe and caching for at most 60 seconds. A changed pool invalidates the cache. Failures appear in `MachineHealth.providerCliHealth`, fleet machine health and critical pressure concerns. They mark headroom red without changing run, gate or slot ownership.
+
+### Rationale and consequences
+
+Updating only pool variables left SSH-based operator skills using old global installations. A global exact-version install plus the same health/read-back probe removes that disagreement. Keep current and previous versioned providers and all versions referenced by active runs, retained gates or live processes. Do not rewrite frozen task inputs or delete referenced roots.
+
+### Public surface
+
+The existing `node.health`, `node.health.all` and `fleet.status` responses gain optional provider diagnostics through `@farmslot/protocol` types. Existing nodes may omit them. No new RPC, provider contract or harness command is introduced. The operator rollout script consumes the same pool metadata and exact-version global installation policy. The reference is `docs/reference/provider-cli-health.md`.

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Detect pinned provider CLI drift across node and SSH shell paths, report unhealthy nodes, and verify exact-version global rollout.
+
 - Share existing template provenance validators with node-local hosted task initialization.
 
 - Active-development baseline; add user-facing changes here before release or package publication.

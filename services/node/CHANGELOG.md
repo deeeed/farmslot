@@ -4,6 +4,8 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
+- Detect pinned provider CLI drift across node and SSH shell paths, report unhealthy nodes, and verify exact-version global rollout.
+
 - Read worker pane observations from the external slot runtime after checkout cleanup.
 
 - Bound transient gateway reconnects to two seconds and time out stalled WebSocket opening handshakes while preserving authentication refusal pacing.
