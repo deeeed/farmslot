@@ -11,11 +11,71 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { mock, test } from 'node:test';
 
 import type { ResourceDefinition, SlotStatus } from '@farmslot/protocol';
 
-import {
+// Exercise the real shutdown front door without starting processes or a server.
+const cleanupCommands: string[] = [];
+const realConfig = await import('../core/config.js');
+mock.module('../core/config.js', {
+  namedExports: {
+    ...realConfig,
+    resolveSlot: async () => ({
+      pool: { project: 'cleanup-fixture' },
+      slot: {
+        id: 'cleanup-slot',
+        resources: { server: {}, browser: {}, device: {} },
+      },
+    }),
+    loadSlotVars: async () => ({
+      slotId: 'cleanup-slot',
+      host: 'localhost',
+      machine: 'fixture',
+      repo: '/fixture',
+      remoteRepo: '/fixture',
+      resourceVars: {},
+    }),
+    loadProjectVars: async () => ({
+      projectJson: {
+        resources: {
+          server: {
+            type: 'dev-server',
+            hooks: { health: 'probe-stopped', shutdown: 'stop-owned-helper' },
+          },
+          browser: {
+            type: 'browser',
+            hooks: { health: 'probe-stopped', shutdown: 'stop-owned-helper' },
+          },
+          device: {
+            type: 'device',
+            hooks: { health: 'probe-stopped', shutdown: 'stop-owned-helper' },
+          },
+        },
+      },
+    }),
+  },
+});
+const realExec = await import('../core/exec.js');
+mock.module('../core/exec.js', {
+  namedExports: {
+    ...realExec,
+    execLocal: async (cmd: string) => {
+      cleanupCommands.push(cmd);
+      return { stdout: '', stderr: '', exitCode: cmd.endsWith('probe-stopped') ? 1 : 0 };
+    },
+  },
+});
+const realNodeRpc = await import('./node-rpc.js');
+mock.module('./node-rpc.js', {
+  namedExports: {
+    ...realNodeRpc,
+    getSlotLocality: async () => ({ isLocal: true, machine: 'fixture' }),
+  },
+});
+
+const {
+  executeResourceControl,
   buildBrowserNodeWatchCommand,
   buildBrowserPidFileOwnsCdpCommand,
   buildBrowserPidRecoveryCommand,
@@ -28,7 +88,7 @@ import {
   resourceStatusFromHealth,
   shouldProbeResourceForSlot,
   slotHasActiveRun,
-} from './resource-manager.js';
+} = await import('./resource-manager.js');
 
 test('purgeRemovedSlotWarnings drops warnings for slots removed from the fleet', () => {
   const warnings = new Map([
@@ -386,4 +446,23 @@ test('a resource with no health hook is unknown, never running', () => {
   assert.equal(resourceStatusFromHealth(withHook, undefined), 'error');
   assert.equal(resourceStatusFromHealth({ hooks: {} }, { ok: true }), 'unknown');
   assert.equal(resourceStatusFromHealth(undefined, { ok: true }), 'unknown');
+});
+
+test('a stopped server or browser still runs its shutdown hook to reap owned helpers', async () => {
+  for (const resourceId of ['server', 'browser']) {
+    cleanupCommands.length = 0;
+    const result = await executeResourceControl('cleanup-slot', resourceId, 'shutdown');
+    assert.equal(result.ok, true);
+    assert.ok(cleanupCommands.some((cmd) => cmd.endsWith('stop-owned-helper')));
+    assert.notEqual(result.detail, 'already stopped');
+  }
+});
+
+test('an already stopped device retains its idempotent shutdown shortcut', async () => {
+  cleanupCommands.length = 0;
+  assert.equal(
+    (await executeResourceControl('cleanup-slot', 'device', 'shutdown')).detail,
+    'already stopped',
+  );
+  assert.ok(!cleanupCommands.some((cmd) => cmd.endsWith('stop-owned-helper')));
 });

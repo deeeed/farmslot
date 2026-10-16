@@ -8,6 +8,17 @@ export interface ReviewPublicationPolicy {
   account: PRSourceAccount;
 }
 
+/** Best-effort GitHub display state; never publication or review authority. */
+export interface ReviewViewedFilesResult {
+  headSha: string;
+  account?: PRSourceAccount;
+  attemptedAt: string;
+  state: 'complete' | 'partial' | 'skipped' | 'failed';
+  paths: string[];
+  markedPaths: string[];
+  reason?: string;
+}
+
 export interface ReviewPublicationReceipt {
   version: 1;
   state: 'prepared' | 'posting' | 'published';
@@ -25,6 +36,7 @@ export interface ReviewPublicationReceipt {
   reviewId?: number;
   url?: string;
   publishedAt?: string;
+  viewedFiles?: ReviewViewedFilesResult;
 }
 
 /** Gateway-created authority for a direct static run, independent of PR-intake intent state. */

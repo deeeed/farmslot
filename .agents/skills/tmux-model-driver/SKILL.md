@@ -79,11 +79,18 @@ returns existing delivery evidence without typing, or submits only Enter when th
 original remains in the composer. It never pastes that prompt again. A synchronously
 native-verified send clears its receipt under the transport lock and returns its
 evidence, so direct callers can send again after the turn completes. Late native acceptance
-remains recorded across inspections. Ordinary sends refuse
-`acceptance_unacknowledged` for a different prompt until the owner records completion of the handoff in its registry
-and calls `scripts/ack-acceptance.sh <pane> <runner> <receipt_id>`. The lane CLI performs this
-acknowledgement after persisting its state. Receipt and lock identity uses the server socket,
-not the caller session. Old caller-specific receipts remain discoverable without migration.
+remains recorded across inspections. For Codex, an accepted receipt does not block a different
+handoff once the live queue and composer are clear. The old receipt remains available for
+its exact-payload retry and explicit acknowledgement; a fresh handoff gets its own receipt.
+Questions, foreign drafts and live queued input still refuse delivery. Idle-only runners
+and explicit flush retain the `acceptance_unacknowledged` guard.
+
+The caller that persists delivery evidence owns the transport ACK, not the receiving lane.
+Direct callers retain their result or trace, then call
+`scripts/ack-acceptance.sh <pane> <runner> <receipt_id>` with the same state directory and socket.
+The lane CLI performs this acknowledgement after persisting its registry state. A recipient's
+task-level reply does not consume a transport receipt. Never ACK another caller's receipt to
+unblock a new handoff. Receipt and lock identity uses the server socket, not the caller session. Old caller-specific receipts remain discoverable without migration.
 Repeated acknowledgements are harmless; inspection
 never consumes a late receipt. Receipt updates share the send lock and use atomic private writes.
 
