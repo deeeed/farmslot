@@ -784,6 +784,49 @@ test('Claude input pulled back into the composer withdraws its saved proof for s
   assert.equal(ack.verification, 'receipt_unverified');
 });
 
+for (const draft of ['edited', 'cleared']) {
+  test(`a pulled-back Claude handoff stays withdrawn once its draft is ${draft}`, async (t) => {
+    const f = claudeFixture(t, 'busy');
+    f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
+      f.record({ type: 'queue-operation', operation: 'enqueue', content: pasted });
+      return claudeBox('Press up to edit queued messages', `❯ ${pasted}`);
+    });
+    const first = await send('%1', 'claude', f.payload);
+    assert.equal(first.evidence.source, 'native-queue');
+    f.record({ type: 'queue-operation', operation: 'popAll', content: f.payload });
+    process.env.TMUX_PANE_STATE_TAIL_CAPTURE = claudeRestored(
+      draft === 'edited' ? `${f.payload} but skip the e2e step` : '',
+    );
+    assert.equal(paneState('%1', 'claude').accepted, null);
+    process.env.TMUX_MODEL_DRIVER_READ_ONLY = '1';
+    assert.equal(paneState('%1', 'claude').accepted, null, 'read-only status agrees');
+    delete process.env.TMUX_MODEL_DRIVER_READ_ONLY;
+    const ack = acknowledgeAcceptance('%1', 'claude', first.evidence.receipt_id);
+    assert.equal(ack.verification, 'receipt_unverified');
+  });
+}
+
+test('a delivered Claude prompt recalled from history keeps its proof and is never resent', async (t) => {
+  const f = claudeFixture(t, 'idle');
+  f.setDrop(true);
+  f.setCapturedPanes(claudeBox(f.payload));
+  const first = await send('%1', 'claude', f.payload);
+  assert.equal(first.verification, 'not_sent');
+  // The prompt was accepted late, and the operator then recalled it from Up history.
+  f.record({ type: 'user', promptId: 'late', message: { role: 'user', content: f.payload } });
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = claudeRestored(f.payload);
+  assert.equal(paneState('%1', 'claude').accepted.source, 'native-session');
+  const keys = f.keys.length;
+  const retry = await send('%1', 'claude', f.payload);
+  assert.equal(retry.verification, 'submitted');
+  assert.equal(retry.evidence.turn_token, 'late');
+  assert.equal(f.keys.length, keys, 'a delivered prompt is never submitted again');
+  assert.equal(
+    acknowledgeAcceptance('%1', 'claude', retry.evidence.receipt_id).verification,
+    'acceptance_acknowledged',
+  );
+});
+
 test('an enqueue later pulled back by popAll never proves the handoff', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'driver-popall-'));
   try {
@@ -813,20 +856,6 @@ test('an enqueue later pulled back by popAll never proves the handoff', () => {
   } finally {
     fs.rmSync(dir, { recursive: true });
   }
-});
-
-test('a retry into owned Claude text ignores records from before it, saved proof or not', async (t) => {
-  const f = claudeFixture(t, 'busy');
-  f.setDrop(true);
-  f.setCapturedPanes(claudeBox(f.payload));
-  const first = await send('%1', 'claude', f.payload);
-  assert.equal(first.verification, 'not_sent');
-  // A late record from the first submission arrives after it was reported unsent.
-  f.record({ type: 'queue-operation', operation: 'enqueue', content: f.payload });
-  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = claudeRestored(f.payload);
-  const retry = await send('%1', 'claude', f.payload);
-  assert.equal(retry.verification, 'not_sent', 'only records after the retry can prove it');
-  assert.equal(retry.evidence, null);
 });
 
 test('a stale Claude record appended after the send never proves it', async (t) => {

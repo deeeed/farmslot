@@ -54,8 +54,9 @@ queue can also use its matching truncated steering preview and separate overflow
 Claude transcript records written after the send prove delivery: an exact human prompt
 (`native-session`), or input queued during a turn (`native-queue`) that Claude attaches
 at its next step (`native-steering`). A `native-queue` receipt stays until its caller
-acknowledges delivery. Up pulls queued input back into the composer (`popAll`), which
-withdraws that proof: status no longer reports it and acknowledgement keeps the receipt. Claude's own queued input never blocks a handoff; a draft in its
+acknowledges delivery. It is rechecked against the transcript on every inspection: Up pulls
+queued input back (`popAll`), which withdraws it for status, acknowledgement and retries,
+whatever the composer shows next. A delivered prompt recalled from history keeps its proof. Claude's own queued input never blocks a handoff; a draft in its
 boxed composer does.
 Codex native history supplies exact prompt and turn evidence. Native `/goal` delivery requires
 a matching active `thread_goal_updated` objective followed by its new `task_started` turn. Pane-bound hook

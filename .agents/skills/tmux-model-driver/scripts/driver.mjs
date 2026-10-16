@@ -298,11 +298,10 @@ export function paneState(pane, expectedRunner, selection) {
         : accepted.session_id !== native.session_id))
   )
     accepted = null;
-  const buffered = supportsMidTurnPrompt(state) && Boolean(runnerPaneBufferedInstruction(tail));
-  const ownedBuffer = buffered && bufferedPrompt({ ...meta, tail }, state, receipt);
-  // Text pulled back into the composer withdraws any saved proof, for status and ACK too.
-  if (ownedBuffer) accepted = null;
-  if (receipt && runners.has(state) && !ownedBuffer) {
+  // Queued Claude input can be pulled back (popAll) at any time, so a saved queue proof is
+  // rechecked against the transcript on every inspection, whatever the composer shows.
+  if (accepted?.source === 'native-queue') accepted = null;
+  if (receipt && runners.has(state)) {
     if (!accepted) {
       accepted = acceptedPrompt({ ...meta, tail }, state, obs, receipt);
       if (accepted) {
@@ -344,6 +343,8 @@ export function paneState(pane, expectedRunner, selection) {
         }),
       )
     : null;
+  const buffered = supportsMidTurnPrompt(state) && Boolean(runnerPaneBufferedInstruction(tail));
+  const ownedBuffer = buffered && bufferedPrompt({ ...meta, tail }, state, receipt);
   // A model receipt stays intact after exit, but cannot be a live shell composer.
   const pendingOtherRunner =
     runners.has(state) && !supportsMidTurnPrompt(state) && Boolean(receipt && !accepted);
@@ -607,9 +608,10 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
     if (!verification) {
       let receipt = runner === 'shell' ? null : readReceipt(files);
       const retry = ownedRetry(before);
-      // Retained evidence never covers owned text that is back in the composer.
       const restored = ownsComposer(before, runner, receipt);
-      if (retry && before.accepted && !restored) {
+      // Codex steering pulled back (⇧←) leaves its rendered proof saved; the composer decides.
+      // Claude queue withdrawal comes from the transcript, so a recalled delivered prompt keeps it.
+      if (retry && before.accepted && !(restored && before.accepted.source === 'runner-steering')) {
         evidence = before.accepted;
         verification = 'submitted';
       } else if (flush || retry) {
@@ -625,7 +627,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
           verification = 'queued_payload_mismatch';
         payload = receipt.payload;
         if (retry) receipt.queue_was_empty = true;
-        if (retry && restored) {
+        if ((retry || flush) && restored) {
           // Only records after this submission can prove it.
           delete receipt.accepted;
           receipt.sent_at = Date.now();
