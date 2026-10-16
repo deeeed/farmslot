@@ -5,7 +5,8 @@ import { useGateReviewController } from '../../features/gate-review/use-gate-rev
 import { routeParamString } from '../../features/workspace-shared/route-params';
 
 export default function GateReviewRoute() {
-  const { decisionId, runId } = useLocalSearchParams<{
+  const { decisionId, runId, ac } = useLocalSearchParams<{
+    ac?: string | string[];
     decisionId: string | string[];
     runId: string | string[];
   }>();
@@ -13,5 +14,5 @@ export default function GateReviewRoute() {
     runId: routeParamString(runId),
     decisionId: routeParamString(decisionId),
   });
-  return <GateReviewScreen {...screen} />;
+  return <GateReviewScreen {...screen} initialClaimId={routeParamString(ac)} />;
 }

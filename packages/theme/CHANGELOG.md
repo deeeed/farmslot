@@ -4,6 +4,8 @@ All notable changes to `@farmslot/theme` are tracked here.
 
 ## Unreleased
 
+- Add accessible light and dark publication decision tokens.
+
 - Color token for the `pi` runner.
 
 - Label runtime QA consistently across clients.

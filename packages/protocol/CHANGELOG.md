@@ -4,9 +4,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Expose optional Viewed-file diagnostics on review publication receipts and slot posting gates.
+- Allow authenticated person visual confirmations without a written reason; retain rationale for issues and delegated reviews.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Expose optional Viewed-file diagnostics on review publication receipts and slot posting gates.
 
 ## 0.49.0 - 2026-10-16
 

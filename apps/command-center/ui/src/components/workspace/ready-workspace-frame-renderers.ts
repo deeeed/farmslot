@@ -70,6 +70,15 @@ export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
     ? (input.renderReportEvidence?.() ?? nothing)
     : nothing;
 
+  const reviewContent = html` ${input.payload.prPackage
+      ? html`<details class="rdy-package-details">
+          <summary>Checks and history</summary>
+          ${input.renderPackagePanel()}
+        </details>`
+      : nothing}
+    ${input.renderTabBar()}
+    <div class="rdy-tab-pane-host">${input.renderTabContent()}</div>`;
+
   return html`
     <style>
       ${readyWorkspaceLightStyles()}
@@ -95,9 +104,12 @@ export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
             <div class="rdy-resize" @mousedown=${input.onResizeStart}></div>
           `}
       <div class="rdy-bottom" style="flex: ${packageGate ? 1 : 100 - input.splitPct} 1 0%">
-        ${input.payload.prPackage ? html`${input.renderPackagePanel()}` : nothing}
-        ${input.renderTabBar()}
-        <div class="rdy-tab-pane-host">${input.renderTabContent()}</div>
+        ${packageGate
+          ? html`<details class="rdy-review-content">
+              <summary>Evidence and details</summary>
+              ${reviewContent}
+            </details>`
+          : reviewContent}
       </div>
     </div>
     <media-lightbox

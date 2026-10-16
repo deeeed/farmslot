@@ -3,6 +3,8 @@
   "compilerOptions": {
     "rootDir": "../../..",
     "paths": {
+      "@farmslot/adapter-sdk/evidence": ["../../adapter-sdk/src/evidence.ts"],
+      "@farmslot/recipe-runner/*": ["../../recipe-runner/src/*"],
       "@farmslot/protocol": ["../../protocol/src/index.ts"],
       "@farmslot/protocol/*": ["../../protocol/src/*"],
       "@farmslot/review-dispatch": ["../src/index.ts"]

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Image, Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type {
   EvidenceReviewComparisonFilter,
@@ -27,6 +27,7 @@ import { recordedEvidenceArtifactUrl } from '../lib/evidence-media-items';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 
 import { BeforeAfterPreview, CompareMedia } from './BeforeAfterPreview';
+import { VisualClaimJudgment } from './VisualClaimJudgment';
 
 interface EvidenceReviewWorkspaceProps {
   runId: string;
@@ -38,9 +39,10 @@ interface EvidenceReviewWorkspaceProps {
   onRecordVisualReview?(
     claimId: string,
     verdict: 'confirmed' | 'rejected',
-    reason: string,
+    reason?: string,
   ): Promise<void>;
   onFocusClaim?(offset: number): void;
+  focusClaim?: { claimId: string };
   onOpenRecordedEvidence?(model: EvidenceReviewModel, path: string): void;
   onOpenVisual: (uri: string) => void;
   onOpenDocument: (artifact: ArtifactManifestEntry) => void;
@@ -51,10 +53,7 @@ interface EvidenceReviewWorkspaceProps {
 }
 
 type ReviewArtifact = ArtifactManifestEntry & { url: string };
-interface VisualReviewFailure {
-  claimId: string;
-  message: string;
-}
+
 interface ComparisonLayouts {
   workspace: number;
   rail: number;
@@ -82,6 +81,7 @@ export function EvidenceReviewWorkspace({
   reviewer,
   onRecordVisualReview,
   onFocusClaim,
+  focusClaim,
   onOpenRecordedEvidence,
   onOpenVisual,
   onOpenDocument,
@@ -100,21 +100,6 @@ export function EvidenceReviewWorkspace({
         );
   const [, refreshComparisons] = useState(0);
   const layouts = useRef<ComparisonLayouts>({ workspace: 0, rail: 0, rows: {} });
-  const [reviewReasons, setReviewReasons] = useState<Record<string, string>>({});
-  const [reviewing, setReviewing] = useState(false);
-  const [reviewError, setReviewError] = useState<VisualReviewFailure | null>(null);
-  const recordReview = async (claimId: string, verdict: 'confirmed' | 'rejected') => {
-    if (!onRecordVisualReview || reviewing) return;
-    setReviewing(true);
-    setReviewError(null);
-    try {
-      await onRecordVisualReview(claimId, verdict, reviewReasons[claimId] ?? '');
-    } catch (error) {
-      setReviewError({ claimId, message: error instanceof Error ? error.message : String(error) });
-    } finally {
-      setReviewing(false);
-    }
-  };
   const [evidenceFilter, setEvidenceFilter] = useState<ArtifactWorkspaceFilter>('all');
   const [showRawArtifacts, setShowRawArtifacts] = useState(false);
   useEffect(() => setShowRawArtifacts(false), [runId]);
@@ -157,6 +142,19 @@ export function EvidenceReviewWorkspace({
     setCompareIndex(0);
   }, [compareIdentity]);
 
+  useEffect(() => {
+    if (!focusClaim || !evidenceModel) return;
+    const id = focusClaim.claimId;
+    const offset = layouts.current.rows[id];
+    if (evidenceModel.comparisonFilter === 'all' && typeof offset === 'number')
+      onFocusClaim?.(layouts.current.workspace + layouts.current.rail + offset);
+    else {
+      layouts.current.pending = id;
+      evidenceModel.setComparisonFilter('all');
+      refreshComparisons((value) => value + 1);
+    }
+  }, [focusClaim, evidenceModel]);
+
   return (
     <View
       style={styles.workspace}
@@ -172,28 +170,6 @@ export function EvidenceReviewWorkspace({
           }}
         >
           <Text style={styles.railTitle}>Compare by AC</Text>
-          {evidenceModel.pendingVisualClaimIds.length > 0 && (
-            <View style={styles.deltaActionRow}>
-              {evidenceModel.pendingVisualClaimIds.map((id) => (
-                <Pressable
-                  key={id}
-                  onPress={() => {
-                    const offset = layouts.current.rows[id];
-                    if (evidenceModel.comparisonFilter === 'all' && typeof offset === 'number')
-                      onFocusClaim?.(layouts.current.workspace + layouts.current.rail + offset);
-                    else {
-                      layouts.current.pending = id;
-                      evidenceModel.setComparisonFilter('all');
-                      refreshComparisons((value) => value + 1);
-                    }
-                  }}
-                >
-                  <Text style={styles.deltaActionText}>{id}</Text>
-                </Pressable>
-              ))}
-              <Text style={styles.railSubtitle}>need a visual judgment.</Text>
-            </View>
-          )}
           {evidenceModel.gateSnapshot ? (
             <View style={styles.largeCard}>
               <Text style={styles.railSubtitle}>
@@ -330,59 +306,14 @@ export function EvidenceReviewWorkspace({
                     <Text style={styles.deltaActionText}>Original Jira AC</Text>
                   </Pressable>
                 ) : null}
-                {evidenceModel.pendingVisualClaimIds.includes(row.claim.id) &&
-                  (evidenceModel.visualReviewKind(row.claim.id, reviewer ?? null) &&
-                  onRecordVisualReview ? (
-                    <View>
-                      <Text style={styles.railSubtitle}>
-                        {evidenceModel.visualReviewKind(row.claim.id, reviewer ?? null) ===
-                        'lead-agent-reviewed'
-                          ? 'Delegated visual review'
-                          : 'Person visual review'}{' '}
-                        · {reviewer?.displayName}
-                      </Text>
-                      <TextInput
-                        accessibilityLabel={`Visual review rationale for ${row.claim.id}`}
-                        placeholder="What did you inspect?"
-                        placeholderTextColor={colors.textMuted}
-                        value={reviewReasons[row.claim.id] ?? ''}
-                        editable={!reviewing}
-                        multiline
-                        style={{
-                          color: colors.textPrimary,
-                          backgroundColor: colors.bgCard,
-                          borderColor: colors.textMuted,
-                          borderWidth: 1,
-                          padding: 8,
-                        }}
-                        onChangeText={(reason) =>
-                          setReviewReasons((current) => ({ ...current, [row.claim.id]: reason }))
-                        }
-                      />
-                      {(['confirmed', 'rejected'] as const).map((verdict) => (
-                        <Pressable
-                          key={verdict}
-                          disabled={reviewing || !reviewReasons[row.claim.id]?.trim()}
-                          onPress={() => void recordReview(row.claim.id, verdict)}
-                        >
-                          <Text style={styles.deltaActionText}>
-                            {verdict === 'confirmed'
-                              ? 'Confirm visual proof'
-                              : 'Reject visual proof'}
-                          </Text>
-                        </Pressable>
-                      ))}
-                      {reviewError?.claimId === row.claim.id && (
-                        <Text accessibilityRole="alert" style={styles.railSubtitle}>
-                          {reviewError.message}
-                        </Text>
-                      )}
-                    </View>
-                  ) : (
-                    <Text style={styles.railSubtitle}>
-                      Sign in with an authorized reviewer account to record a visual judgment.
-                    </Text>
-                  ))}
+                {(() => {
+                  const judgment = evidenceModel
+                    .judgmentRows(reviewer ?? null)
+                    .find((entry) => entry.claim.id === row.claim.id);
+                  return judgment ? (
+                    <VisualClaimJudgment row={judgment} onRecord={onRecordVisualReview} />
+                  ) : null;
+                })()}
                 {(['before', 'after'] as const).map((role) =>
                   row[role].length > 1 ? (
                     <View key={role}>

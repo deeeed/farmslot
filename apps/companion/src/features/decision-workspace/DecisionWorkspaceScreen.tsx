@@ -116,10 +116,7 @@ import {
 } from '../../lib/workspace-navigation';
 import { useConnectionStore } from '../../store/connection';
 import { useDecisionStore } from '../../store/decisions';
-import {
-  GateReviewEntryCard,
-  PublishGuardNotice,
-} from '../gate-review/components/gate-review-panels';
+import { GateActions, GateReviewEntryCard } from '../gate-review/components/gate-review-panels';
 import { PlanningChoices } from '../planning/PlanningControls';
 import { ReviewDispatchPicker } from '../review-dispatch/ReviewDispatchPicker';
 import { ReviewHistoryPanel } from '../run-detail/components/ReviewHistoryPanel';
@@ -1858,64 +1855,106 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
           ) : (
             <>
               {humanGate ? (
-                <PublishGuardNotice
-                  actions={humanGate.actions}
-                  testID="companion-decision-publish-guard"
+                <GateActions
+                  decision={decision}
+                  actions={humanGate.actions.map((action) =>
+                    action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
+                    !decisionWithRunContext?.runMeta
+                      ? { ...action, disabledReason: 'Run context is unavailable.' }
+                      : action,
+                  )}
+                  disabled={!client}
+                  reviewDisabled={reviewBudget?.remaining === 0}
+                  sendingActionId={null}
+                  reviewPicker={reviewPicker}
+                  claims={humanGate.acceptance.evidenceModel?.claims}
+                  judgmentRows={humanGate.acceptance.evidenceModel?.judgmentRows(
+                    humanGate.acceptance.reviewer,
+                  )}
+                  onRecordVisualReview={humanGate.acceptance.recordVisualReview}
+                  onRefreshPackage={() => {
+                    if (!client || !sourceRunId) return;
+                    void client
+                      .request('run.refreshPublishPackage', {
+                        runId: sourceRunId,
+                        decisionId: decision.id,
+                      })
+                      .then(() => {
+                        refreshDecision();
+                        return refreshSourceRun('package refresh');
+                      })
+                      .catch((failure) =>
+                        setError(failure instanceof Error ? failure.message : String(failure)),
+                      );
+                  }}
+                  pendingVisualClaimIds={humanGate.acceptance.evidenceModel?.pendingVisualClaimIds}
+                  readiness={
+                    decision.payload?.kind === 'ready' ? decision.payload.gateReadiness : undefined
+                  }
+                  onFocusClaim={(id) =>
+                    sourceRunId &&
+                    router.push({
+                      ...gateReviewHref(sourceRunId, decision.id),
+                      params: { ...gateReviewHref(sourceRunId, decision.id).params, ac: id },
+                    })
+                  }
                   attestationReason={attestationReason}
                   onAttestationReason={(text) =>
                     setEvidenceReason({ decisionId: decision.id, text })
                   }
+                  onResolve={(action, selection) => resolveAction(action.id, selection)}
                 />
-              ) : null}
-              {presentation.actions.map((action) => {
-                const disabled =
-                  withheldActions.has(action.id) ||
-                  (action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
-                    (!isValidEvidenceAttestationReason(attestationReason) ||
-                      !decisionWithRunContext?.runMeta)) ||
-                  (decision.type === 'engine_review_posting' &&
-                    action.id === 'post' &&
-                    (!reviewPublication.curation ||
-                      reviewPublication.disabled ||
-                      reviewPublication.busy ||
-                      !decisionWithRunContext?.runMeta)) ||
-                  (!!slotPicker && action.id === 'pick' && !slotPicker.selectedSlotId);
-                if (action.id === 'request-review') {
+              ) : (
+                presentation.actions.map((action) => {
+                  const disabled =
+                    withheldActions.has(action.id) ||
+                    (action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION &&
+                      (!isValidEvidenceAttestationReason(attestationReason) ||
+                        !decisionWithRunContext?.runMeta)) ||
+                    (decision.type === 'engine_review_posting' &&
+                      action.id === 'post' &&
+                      (!reviewPublication.curation ||
+                        reviewPublication.disabled ||
+                        reviewPublication.busy ||
+                        !decisionWithRunContext?.runMeta)) ||
+                    (!!slotPicker && action.id === 'pick' && !slotPicker.selectedSlotId);
+                  if (action.id === 'request-review') {
+                    return (
+                      <ReviewDispatchPicker
+                        key={action.id}
+                        model={reviewPicker}
+                        testID="companion-gate-review"
+                        disabled={!client || disabled || reviewBudget?.remaining === 0}
+                        action="request-review"
+                        actionLabel={action.label}
+                        onInvoke={(actionId, payload) =>
+                          resolveAction(actionId, { reviewRequest: payload })
+                        }
+                      />
+                    );
+                  }
                   return (
-                    <ReviewDispatchPicker
+                    <Pressable
                       key={action.id}
-                      model={reviewPicker}
-                      testID="companion-gate-review"
-                      disabled={!client || disabled || reviewBudget?.remaining === 0}
-                      action="request-review"
-                      actionLabel={action.label}
-                      onInvoke={(actionId, payload) =>
-                        resolveAction(actionId, { reviewRequest: payload })
-                      }
-                    />
+                      testID={`companion-decision-action-${action.id}`}
+                      disabled={disabled}
+                      accessibilityState={{ disabled }}
+                      style={[
+                        styles.actionButton,
+                        action.style === 'primary' && { backgroundColor: colors.accent },
+                        action.style === 'danger' && { backgroundColor: colors.statusFail },
+                        disabled && styles.actionButtonDisabled,
+                      ]}
+                      onPress={() => resolveAction(action.id)}
+                    >
+                      <Text style={styles.actionText}>{action.label}</Text>
+                      {action.description && (
+                        <Text style={styles.actionDescription}>{action.description}</Text>
+                      )}
+                    </Pressable>
                   );
-                }
-                return (
-                  <Pressable
-                    key={action.id}
-                    testID={`companion-decision-action-${action.id}`}
-                    disabled={disabled}
-                    accessibilityState={{ disabled }}
-                    style={[
-                      styles.actionButton,
-                      action.style === 'primary' && { backgroundColor: colors.accent },
-                      action.style === 'danger' && { backgroundColor: colors.statusFail },
-                      disabled && styles.actionButtonDisabled,
-                    ]}
-                    onPress={() => resolveAction(action.id)}
-                  >
-                    <Text style={styles.actionText}>{action.label}</Text>
-                    {action.description && (
-                      <Text style={styles.actionDescription}>{action.description}</Text>
-                    )}
-                  </Pressable>
-                );
-              })}
+                })
+              )}
             </>
           )}
           <View

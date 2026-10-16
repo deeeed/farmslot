@@ -44,6 +44,7 @@ import {
   type RunSessionCommandResult,
   runStepExecutionMs,
   runStepQueuedMs,
+  validVisualJudgmentReason,
   visibleInteractiveHandoffActions,
 } from '@farmslot/protocol';
 import {
@@ -847,8 +848,16 @@ export function registerRunCommand(program: Command): void {
             !['person-reviewed', 'lead-agent-reviewed'].includes(opts.judgmentKind)
           )
             throw new Error('--judgment-kind must be person-reviewed or lead-agent-reviewed.');
-          if (!opts.claim?.trim() || !opts.recipeRun?.trim() || !opts.reason?.trim())
-            throw new Error('Visual review requires --claim, --recipe-run and --reason.');
+          if (!opts.claim?.trim() || !opts.recipeRun?.trim())
+            throw new Error('Visual review requires --claim and --recipe-run.');
+          if (
+            !validVisualJudgmentReason(
+              opts.judgmentKind ?? 'person-reviewed',
+              actionId === CONFIRM_VISUAL_CLAIM_ACTION ? 'confirmed' : 'rejected',
+              opts.reason,
+            )
+          )
+            throw new Error('Rejections and delegated visual reviews require --reason.');
           const candidates = opts.decision
             ? current.decisions.filter(({ id }) => id === opts.decision)
             : current.decisions
@@ -886,7 +895,7 @@ export function registerRunCommand(program: Command): void {
               snapshotIdentity: review.snapshotIdentity,
               claimId: opts.claim,
               recipeRunId: opts.recipeRun,
-              reason: opts.reason,
+              ...(opts.reason?.trim() ? { reason: opts.reason.trim() } : {}),
               verdict: actionId === CONFIRM_VISUAL_CLAIM_ACTION ? 'confirmed' : 'rejected',
               ...(opts.judgmentKind ? { kind: opts.judgmentKind } : {}),
             }),

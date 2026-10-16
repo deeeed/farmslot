@@ -17,6 +17,15 @@ export const REJECT_VISUAL_CLAIM_ACTION = 'reject-visual';
 
 export type RecipeVisualJudgmentKind = 'person-reviewed' | 'lead-agent-reviewed';
 
+/** Undefined kind is unqualified embedded input, which always needs rationale. */
+export function validVisualJudgmentReason(
+  kind: RecipeVisualJudgmentKind | undefined,
+  verdict: RecipeVisualJudgment['verdict'],
+  reason?: string,
+): boolean {
+  return Boolean(reason?.trim()) || (kind === 'person-reviewed' && verdict === 'confirmed');
+}
+
 export interface ProjectVisualClaimReviewPolicy {
   delegatedReviewerPrincipalIds: string[];
   delegatorPrincipalId: string;
@@ -94,7 +103,11 @@ export function reviewedVisualFiles(
 }
 
 /** The gateway owns reviewer identity and time; the engine owns the reviewed moments. */
-export interface RecipeVisualJudgmentReceipt extends Omit<RecipeVisualJudgment, 'actor'> {
+export interface RecipeVisualJudgmentReceipt extends Omit<
+  RecipeVisualJudgment,
+  'actor' | 'reason'
+> {
+  reason?: string;
   id: string;
   runId: string;
   decisionId?: string;
@@ -119,7 +132,8 @@ export interface RecipeVisualReviewAuthority {
   historical?: boolean;
 }
 
-export interface QualifiedRecipeVisualJudgment extends RecipeVisualJudgment {
+export interface QualifiedRecipeVisualJudgment extends Omit<RecipeVisualJudgment, 'reason'> {
+  reason?: string;
   receiptId: string;
   kind: RecipeVisualJudgmentKind;
   reviewer: EvidenceAttestationApprover;
@@ -149,7 +163,7 @@ export function recordedVisualJudgments(
       receipt.closureIdentity !== authority.closureIdentity ||
       !receipt.id?.trim() ||
       !isEvidenceAttestationApprover(receipt.approver) ||
-      !receipt.reason?.trim() ||
+      !validVisualJudgmentReason(kind, receipt.verdict, receipt.reason) ||
       !['confirmed', 'rejected'].includes(receipt.verdict) ||
       !Number.isFinite(Date.parse(receipt.judgedAt)) ||
       digestRecipeDocument(receipt.moments) !== digestRecipeDocument(claim.moments) ||
@@ -187,7 +201,7 @@ export function recordedVisualJudgments(
         verdict: receipt.verdict,
         moments: receipt.moments,
         actor: receipt.approver.principalId,
-        reason: receipt.reason,
+        ...(receipt.reason !== undefined ? { reason: receipt.reason } : {}),
         judgedAt: receipt.judgedAt,
       },
     ];

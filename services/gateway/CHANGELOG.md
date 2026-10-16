@@ -4,7 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Mark reviewed PR files as Viewed using the publication account, recording best-effort results without failing publication or clearing earlier marks.
+- Record one-tap person visual confirmations without invented prose, preserving receipt identity and package refresh requirements.
+- Preserve the task marker and its frozen tooling when switching between worker and review checklists.
 
 - Refuse publication and evidence refresh when frozen text or PR prose contains detected secret values, preserving retained bytes and reporting only fingerprints.
 - Surface structured recipe artifact renderer failures during PR-body publication preparation.
@@ -21,6 +22,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Refresh unapproved publication packages with missing retained bundles even when source HEAD is unchanged; preserve approved package identity on failure.
 
 - Retain pipeline review result snapshots in publication packages and use the pane-owned process's structured turn records for publication readiness, monitor nudges and safe-send busy checks.
+- Mark reviewed PR files as Viewed using the publication account, recording best-effort results without failing publication or clearing earlier marks.
 
 - Keep failed reviewers without an artifact scope from holding publication gates in recovery after a settled review.
 

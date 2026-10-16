@@ -10,6 +10,8 @@ import {
   type RecordedEvidencePackageInput,
 } from '@farmslot/protocol';
 
+import { litText } from '../../testing/lit-text.js';
+
 import {
   dedupeWorkspaceEvidenceArtifacts,
   renderWorkspaceEvidencePreview,
@@ -97,16 +99,6 @@ test('All keeps selected file links visible when retained timing is unavailable'
   assert.match(litText(rendered), /proof\.mp4/);
   assert.deepEqual(model.claims[0]?.status?.verdict, 'weak');
 });
-
-function litText(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string' || typeof value === 'number') return String(value);
-  if (Array.isArray(value)) return value.map(litText).join('');
-  if (typeof value === 'object' && 'values' in value) {
-    return (value as { values: unknown[] }).values.map(litText).join('');
-  }
-  return '';
-}
 
 test('dedupeWorkspaceEvidenceArtifacts collapses mirrored media by content hash', () => {
   const out = dedupeWorkspaceEvidenceArtifacts([
@@ -258,8 +250,8 @@ test('pending visual judgment controls render while evidence loads and after a r
         },
       }),
     );
-    assert.match(text, /Confirm visual proof/);
-    assert.match(text, /Reject visual proof/);
+    assert.match(text, /Looks right/);
+    assert.match(text, /Issue/);
     assert.match(text, /check-1/);
   }
 });

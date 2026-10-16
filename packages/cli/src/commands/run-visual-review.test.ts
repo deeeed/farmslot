@@ -56,7 +56,7 @@ mock.module('../envelope.js', {
 });
 const { registerRunCommand } = await import('./run.js');
 
-async function review(action: string, kind?: string) {
+async function review(action: string, kind?: string, reason = true) {
   calls.length = 0;
   output.length = 0;
   const program = new Command('farmslot');
@@ -72,8 +72,7 @@ async function review(action: string, kind?: string) {
       'AC-1',
       '--recipe-run',
       'execution',
-      '--reason',
-      'The recording matches.',
+      ...(reason ? ['--reason', 'The recording matches.'] : []),
       ...(kind ? ['--judgment-kind', kind] : []),
     ],
     { from: 'user' },
@@ -133,4 +132,23 @@ test('an unreadable package never reaches the human review writer', async () => 
     false,
   );
   assert.deepEqual(output, ['Select valid captured evidence before visual review.']);
+});
+
+test('person confirmation omits reason; Issue and delegated review cannot', async () => {
+  errors = [];
+  await review('confirm-visual', undefined, false);
+  const request = calls.find(({ method }) => method === Methods.RUN_REVIEW_VISUAL_CLAIM)!;
+  assert.ok(request);
+  assert.equal('reason' in (request.params as object), false);
+  for (const [action, kind] of [
+    ['reject-visual', undefined],
+    ['confirm-visual', 'lead-agent-reviewed'],
+  ]) {
+    await review(action!, kind, false);
+    assert.equal(
+      calls.some(({ method }) => method === Methods.RUN_REVIEW_VISUAL_CLAIM),
+      false,
+    );
+    assert.deepEqual(output, ['Rejections and delegated visual reviews require --reason.']);
+  }
 });
