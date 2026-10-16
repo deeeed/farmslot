@@ -1,13 +1,13 @@
 import DOMPurify from 'dompurify';
 import { html, LitElement, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { marked } from 'marked';
 
 import type { PRReviewThread } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
+import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
 
 import { prCommentsPanelStyles } from './pr-comments-panel-styles.js';
 
@@ -528,7 +528,7 @@ export class PRCommentsPanel extends LitElement {
             `
           : html`
               <div class="thread-body md-body" @click=${() => this._navigateToThread(thread)}>
-                ${unsafeHTML(renderMarkdown(first.body))}
+                ${gatewayMediaHtml(renderMarkdown(first.body))}
               </div>
             `}
         ${expanded
@@ -573,7 +573,7 @@ export class PRCommentsPanel extends LitElement {
                               `
                             : html`
                                 <div class="comment-body md-body">
-                                  ${unsafeHTML(renderMarkdown(c.body))}
+                                  ${gatewayMediaHtml(renderMarkdown(c.body))}
                                 </div>
                                 ${this.currentUser && c.author === this.currentUser
                                   ? html`

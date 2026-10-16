@@ -4,7 +4,6 @@
 
 import { html, nothing } from 'lit';
 import { customElement } from 'lit/decorators.js';
-import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import type {
   ArtifactRef,
@@ -39,6 +38,7 @@ import { currentRecoveryEpoch, isRecoveryEpochCurrent } from '../../utils/reconn
 import { renderRecipeQualityCockpit } from '../recipe/recipe-quality-cockpit.js';
 import { createReviewWorkspaceRecipeHostEntry } from '../recipe/recipe-quality-hosts.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
+import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import {
   committedReviewBranchDiffRequest,
@@ -862,7 +862,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       case 'review':
       default:
         return html`<div class="rw-md-section">
-          ${unsafeHTML(renderMarkdown(payload.reviewMd))}
+          ${gatewayMediaHtml(renderMarkdown(payload.reviewMd))}
           <step-artifacts
             stepName="Review artifacts"
             status="done"

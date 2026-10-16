@@ -1,5 +1,4 @@
 import { html, nothing } from 'lit';
-import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import type { ArtifactRef } from '@farmslot/protocol';
 
@@ -10,6 +9,7 @@ import {
 } from '../../utils/artifact-markdown.js';
 import { renderMarkdown } from '../../utils/markdown.js';
 import { createSlotViewRecipeHostEntry } from '../recipe/recipe-quality-hosts.js';
+import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
 import { gatewayMediaSrc } from '../shared/gateway-media-src.js';
 import {
   dedupeWorkspaceEvidenceArtifacts,
@@ -155,7 +155,7 @@ export function renderRecipeArtifactPreview(
                     ? html`<span style="color:${colors.statusWarn};"
                         >Failed to load artifact: ${view._selectedRecipeArtifactError}</span
                       >`
-                    : unsafeHTML(renderedMarkdown)}
+                    : gatewayMediaHtml(renderedMarkdown)}
               </div>`
             : /\.(json)$/i.test(lower)
               ? html`<pre

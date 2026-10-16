@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Load inline Markdown evidence through authenticated headers in PR previews, reports and other review views, without credentials in media URLs.
+
 - Remember person sign-ins through gateway device sessions, list signed-in devices and revoke confirmed sign-outs without storing access tokens.
 
 - Open the retained reviewer conversation directly on slot-free reviews and distinguish it from the worktree shell.

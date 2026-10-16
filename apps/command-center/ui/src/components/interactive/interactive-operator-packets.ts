@@ -1,6 +1,5 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import type { ArtifactRef, InteractiveOperatorPacket, RunDecision } from '@farmslot/protocol';
 import {
@@ -12,6 +11,7 @@ import {
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { gatewayHttpFetch, gatewayResourceUrl } from '../../utils/gateway-origin.js';
+import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
 import { openMediaLightbox } from '../shared/media-lightbox.js';
 import { renderReadyWorkspaceMarkdown } from '../workspace/ready-workspace-markdown.js';
 
@@ -310,7 +310,9 @@ export class InteractiveOperatorPackets extends LitElement {
           <span class="packet-badge">${packet.intent}</span>
         </div>
         <div class="packet-md">
-          ${unsafeHTML(renderReadyWorkspaceMarkdown(entry.bodyText ?? packet.body.text ?? ''))}
+          ${gatewayMediaHtml(
+            renderReadyWorkspaceMarkdown(entry.bodyText ?? packet.body.text ?? ''),
+          )}
         </div>
         ${packet.anchors?.length
           ? html`

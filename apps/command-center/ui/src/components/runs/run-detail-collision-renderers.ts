@@ -1,6 +1,5 @@
 import DOMPurify from 'dompurify';
 import { html, nothing } from 'lit';
-import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { marked } from 'marked';
 
 import type {
@@ -13,6 +12,7 @@ import type {
 import './run-pipeline-mini.js';
 
 import { colors } from '../../styles/theme-tokens.js';
+import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
 
 import { runStatusColor } from './run-utils.js';
 
@@ -91,7 +91,7 @@ export function renderCollisionDescription(
   if (!payload) {
     return html`
       <div class="gate-description md-body">
-        ${unsafeHTML(
+        ${gatewayMediaHtml(
           DOMPurify.sanitize(marked.parse(decision.description ?? '', { async: false }) as string),
         )}
       </div>

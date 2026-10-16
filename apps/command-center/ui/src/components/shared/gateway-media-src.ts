@@ -1,15 +1,18 @@
 import { noChange, nothing } from 'lit';
 import { AsyncDirective } from 'lit/async-directive.js';
 import { directive } from 'lit/directive.js';
-
-import { parsePersonSessionToken } from '@farmslot/protocol';
+import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import { readGatewayAuth } from '../../gateway-url.js';
 import { gatewayHttpFetch, gatewayHttpOrigin } from '../../utils/gateway-origin.js';
 
+function hasGatewayMediaAuth(): boolean {
+  const { token, password } = readGatewayAuth();
+  return Boolean(token || password);
+}
+
 export function requiresGatewayMediaHeaders(url: string): boolean {
-  const token = readGatewayAuth().token;
-  if (!token || !parsePersonSessionToken(token, 'fsa')) return false;
+  if (!hasGatewayMediaAuth()) return false;
   const parsed = new URL(url, gatewayHttpOrigin());
   return parsed.origin === gatewayHttpOrigin() && parsed.pathname.startsWith('/api/');
 }
@@ -20,7 +23,10 @@ export async function loadGatewayMedia(
   signal: AbortSignal,
 ): Promise<{ url: string; dispose(): void }> {
   if (!requiresGatewayMediaHeaders(url)) return { url, dispose() {} };
-  const response = await gatewayHttpFetch(url, { signal });
+  const resource = new URL(url, gatewayHttpOrigin());
+  resource.searchParams.delete('token');
+  resource.searchParams.delete('password');
+  const response = await gatewayHttpFetch(resource.toString(), { signal });
   if (!response.ok) throw new Error(`Could not load gateway media (${response.status}).`);
   const blob = await response.blob();
   signal.throwIfAborted();
@@ -34,32 +40,39 @@ export async function loadGatewayMedia(
   return { url: objectUrl, dispose: () => URL.revokeObjectURL(objectUrl) };
 }
 
-class GatewayMediaSrc extends AsyncDirective {
+type GatewayMediaFormat = 'url' | 'html';
+
+export class GatewayMedia extends AsyncDirective {
   private source: string | undefined;
   private lastUrl: string | undefined;
+  private lastFormat: GatewayMediaFormat = 'url';
   private abort: AbortController | undefined;
   private media: Awaited<ReturnType<typeof loadGatewayMedia>> | undefined;
 
-  render(url: string) {
+  render(url: string, format: GatewayMediaFormat = 'url') {
     this.lastUrl = url;
-    if (!requiresGatewayMediaHeaders(url)) {
+    this.lastFormat = format;
+    if (!(format === 'html' ? hasGatewayMediaAuth() : requiresGatewayMediaHeaders(url))) {
       this.release();
       this.source = undefined;
-      return url;
+      return this.value(url, format);
     }
-    if (this.source === url) return noChange;
+    const source = `${format}:${url}`;
+    if (this.source === source) return noChange;
     this.release();
-    this.source = url;
+    this.source = source;
     const abort = new AbortController();
     this.abort = abort;
-    loadGatewayMedia(url, abort.signal)
+    const loading =
+      format === 'html' ? this.loadDocument(url) : loadGatewayMedia(url, abort.signal);
+    loading
       .then((media) => {
         if (abort.signal.aborted) {
           media.dispose();
           return;
         }
         this.media = media;
-        this.setValue(media.url);
+        this.setValue(this.value(media.url, format));
       })
       .catch((error: unknown) => {
         if (abort.signal.aborted) return;
@@ -76,7 +89,20 @@ class GatewayMediaSrc extends AsyncDirective {
   }
 
   protected reconnected(): void {
-    if (this.lastUrl) this.setValue(this.render(this.lastUrl));
+    if (this.lastUrl) this.setValue(this.render(this.lastUrl, this.lastFormat));
+  }
+
+  private value(content: string, format: GatewayMediaFormat) {
+    return format === 'html' ? unsafeHTML(content) : content;
+  }
+
+  private async loadDocument(html: string) {
+    const document = new GatewayMediaDocument();
+    const media = { url: '', dispose: () => document.dispose() };
+    // Own partially loaded blobs before awaiting the rest of the document.
+    this.media = media;
+    media.url = await document.html(html);
+    return media;
   }
 
   private release(): void {
@@ -87,7 +113,8 @@ class GatewayMediaSrc extends AsyncDirective {
   }
 }
 
-export const gatewayMediaSrc = directive(GatewayMediaSrc);
+export const gatewayMediaSrc = directive(GatewayMedia);
+export const gatewayMediaHtml = (html: string) => gatewayMediaSrc(html, 'html');
 
 /** Sanitized report HTML keeps its inline media on the same header-only path. */
 export class GatewayMediaDocument {
@@ -95,8 +122,7 @@ export class GatewayMediaDocument {
   private readonly resources = new Map<string, Awaited<ReturnType<typeof loadGatewayMedia>>>();
 
   async html(html: string): Promise<string> {
-    const token = readGatewayAuth().token;
-    if (!token || !parsePersonSessionToken(token, 'fsa')) return html;
+    if (!hasGatewayMediaAuth()) return html;
     const document = new DOMParser().parseFromString(html, 'text/html');
     for (const node of document.querySelectorAll('img[src],video[src],source[src],a[href]')) {
       const attribute = node.hasAttribute('src') ? 'src' : 'href';
