@@ -1267,7 +1267,7 @@ acting as a person. Public `RunReviewVisualClaimParams.kind` excludes
 
 Legacy delegation fields are required together only for the public delegated-service
 judgment RPC, CLI and client action. They MUST NOT restrict native pipeline
-verification. Removed person-only configuration is not parsed or enforced.
+verification. Removed person-only configuration is rejected; no compatibility policy is retained.
 Normal approval stores `RunDecision.publicationApproval`, including principal,
 subject kind, frozen package hash and receipt IDs. PR provenance renders that
 resolution; historical missing actors display "Not recorded". These additions

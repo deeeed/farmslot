@@ -25,9 +25,9 @@
       },
       "feedback-regression": {
         "action": "command",
-        "cmd": "node scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig apps/command-center/ui/tsconfig.json apps/command-center/ui/src/components/workspace/ready-workspace-shell-renderers.test.ts",
+        "cmd": "node scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig apps/command-center/ui/tsconfig.json apps/command-center/ui/src/components/workspace/ready-workspace-shell-renderers.test.ts apps/companion/src/hooks/useRunAcceptance.test.ts",
         "timeout_ms": 60000,
-        "intent": "Verify that stale-snapshot refusals remain visible outside collapsed package details.",
+        "intent": "Verify visible action refusals and Companion acceptance-read retry fencing after the shared judgment helper integration.",
         "next": "feedback-verified"
       },
       "feedback-verified": {
@@ -111,6 +111,24 @@
           "value": 0
         },
         "intent": "Require the default verification, precedence and no-policy regression checks to pass.",
+        "next": "gateway-types"
+      },
+      "gateway-types": {
+        "action": "command",
+        "cmd": "yarn workspace @farmslot/gateway typecheck",
+        "timeout_ms": 120000,
+        "intent": "Compile the gateway and engine-written test fixture from source without a built runner subpath.",
+        "next": "gateway-types-verified"
+      },
+      "gateway-types-verified": {
+        "action": "assert_output",
+        "source": "gateway-types",
+        "assert": {
+          "path": "$.exitCode",
+          "operator": "eq",
+          "value": 0
+        },
+        "intent": "Require gateway typechecking to resolve the fixture writer directly from source.",
         "next": "done"
       }
     }

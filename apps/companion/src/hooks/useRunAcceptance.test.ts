@@ -8,6 +8,8 @@ import ts from 'typescript';
 
 import { Events, Methods } from '@farmslot/protocol';
 
+import { recordVisualClaimReview } from '../lib/visual-claim-review';
+
 import type { RunAcceptanceSource } from './useRunAcceptance';
 
 const run: RunAcceptanceSource = {
@@ -69,6 +71,7 @@ function mount(request: (method: string) => Promise<unknown>) {
     '@farmslot/protocol': { Methods, Events },
     '@farmslot/adapter-sdk/evidence': { createEvidenceReviewModel: () => null },
     '../lib/recoverable-errors': { isGatewayBackgroundPauseError: () => false },
+    '../lib/visual-claim-review': { recordVisualClaimReview },
     '../lib/task-progress': {
       taskProgressRequestForRun: () => ({ runId: run.id, slotId: run.slotId }),
       taskProgressUpdateTargetsRun: () => false,

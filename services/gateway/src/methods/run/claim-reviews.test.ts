@@ -18,7 +18,8 @@ import {
   type RunDecision,
   type RunReviewVisualClaimParams,
 } from '@farmslot/protocol';
-import { JsonArtifactWriter } from '@farmslot/recipe-runner/writers';
+
+import { JsonArtifactWriter } from '../../../../../packages/recipe-runner/src/node/writers.js';
 
 await import('../../runtime/mock-pty.test-support.js');
 const { createRun, updateRun, getRun, runsDirectory } = await import('../../runs/store.js');
