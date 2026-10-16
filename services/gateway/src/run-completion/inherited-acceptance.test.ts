@@ -58,7 +58,7 @@ const { readInheritedAcceptanceCandidate: readInheritedAcceptanceSource } =
   await import('./inherited-acceptance.js');
 const { postPRComment } = await import('./pr-publication.js');
 
-async function fixture(t: TestContext, requireFresh = false) {
+async function fixture(t: TestContext, requireFresh = false, noLedger = false) {
   existingComment = '';
   createdComments = 0;
   patchedComments = 0;
@@ -78,7 +78,7 @@ async function fixture(t: TestContext, requireFresh = false) {
     }),
   );
   const raw = JSON.stringify({ schemaVersion: 2, recipeRunId: 'original-execution', criteria: [] });
-  await writeFile(path.join(parentDir, 'artifacts/acceptance-status.json'), raw);
+  if (!noLedger) await writeFile(path.join(parentDir, 'artifacts/acceptance-status.json'), raw);
   parent = makeRun({
     id: randomUUID(),
     flowType: 'dev',
@@ -91,9 +91,9 @@ async function fixture(t: TestContext, requireFresh = false) {
   await retainFixtureTask(root, parent, await runBundleStore(true));
   const prepared = makeReadyGatePackage({
     headSha: 'a'.repeat(40),
-    evidenceManifest: [
-      { path: 'artifacts/acceptance-status.json', purpose: 'json', sha256: sha256Text(raw) },
-    ],
+    evidenceManifest: noLedger
+      ? []
+      : [{ path: 'artifacts/acceptance-status.json', purpose: 'json', sha256: sha256Text(raw) }],
   });
   prepared.artifactBundle = parent.artifactBundle;
   prepared.packageHash = computeReadyGatePackageHash(prepared);
@@ -133,7 +133,27 @@ async function fixture(t: TestContext, requireFresh = false) {
     ticketOrPr: 'owner/repo#210',
     prNumber: 210,
     taskFile: path.join(childDir, 'TASK.md'),
+    ticketData: {
+      source: 'manual',
+      title: 'Follow-up',
+      description: '',
+      affectedArea: '',
+      stepsToReproduce: [],
+      screenshots: [],
+      labels: [],
+      comments: [],
+      acceptanceCriteria: noLedger ? [] : ['The parent criterion.'],
+    },
   });
+  await writeFile(
+    path.join(childDir, 'inputs/handoff.json'),
+    JSON.stringify({
+      attemptId: child.id,
+      project: child.project,
+      flow: child.flowType,
+      task: { acceptanceCriteria: child.ticketData!.acceptanceCriteria },
+    }),
+  );
   await retainFixtureTask(root, child, await runBundleStore(true));
   return { child, prepared, raw };
 }
@@ -156,6 +176,23 @@ test('PR completion selects the approved original parent and records its head an
     await readInheritedAcceptanceSource(f.child),
     'CI follow-up dispatch may overlap the parent settling',
   );
+});
+
+test('a no-criteria child with a ledger-free parent remains ready without inherited provenance', async (t) => {
+  const f = await fixture(t, false, true);
+  assert.equal(await readInheritedAcceptanceSource(f.child), null);
+  const { collectRunGateReadiness } = await import('../run-engine/gate-prerequisites.js');
+  const readiness = await collectRunGateReadiness(f.child, null, {
+    deterministic: async () => {},
+    progress: async () => ({ kind: 'idle' as const }),
+  });
+  assert.equal(readiness.state, 'ready', JSON.stringify(readiness.reasons));
+});
+
+test('a ledger-free parent cannot block fresh child acceptance or supply provenance', async (t) => {
+  const f = await fixture(t, false, true);
+  f.child.ticketData!.acceptanceCriteria = ['The follow-up must prove this.'];
+  assert.equal(await readInheritedAcceptanceSource(f.child), null);
 });
 
 test('a project requiring fresh proof keeps completion on the follow-up task', async (t) => {

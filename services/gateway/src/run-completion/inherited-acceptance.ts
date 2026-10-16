@@ -4,11 +4,11 @@ import path from 'node:path';
 import {
   ACCEPTANCE_STATUS_ARTIFACT,
   acceptanceCriteriaMatch,
-  acceptanceCriterionId,
   INHERITED_ACCEPTANCE_INPUT,
   type InheritedAcceptanceProvenance,
   isRecord,
   type ReadyGatePrPackage,
+  registeredAcceptanceCriteria,
   type Run,
   type TaskInheritedAcceptanceReference,
   WORKER_TERMINAL_CONTRACT_INPUT,
@@ -35,7 +35,7 @@ import {
   verifyReadyGatePackageHash,
   verifyReadyGateSelectedEvidenceFiles,
 } from './ready-gate-package.js';
-import { readRetainedRunText } from './retained-artifacts.js';
+import { readOptionalRetainedRunText, readRetainedRunText } from './retained-artifacts.js';
 
 export interface InheritedAcceptanceCandidate {
   run: Run;
@@ -52,6 +52,7 @@ export async function readInheritedAcceptanceCandidate(
   run: Run,
 ): Promise<InheritedAcceptanceCandidate | null> {
   if (run.flowType !== 'pr-complete' || !run.parentRunId) return null;
+  if (!registeredAcceptanceCriteria(run.ticketData?.acceptanceCriteria ?? []).length) return null;
   const childPr = reviewPRIdentity(run, { requirePRContext: true });
   const parent = await getRunWithArchived(run.parentRunId);
   if (!childPr || !parent || parent.project !== run.project || parent.id === run.id) return null;
@@ -95,12 +96,13 @@ export async function readInheritedAcceptanceCandidate(
   const prPackage = payload.prPackage;
   if (!prPackage.headSha) throw new Error('Parent acceptance proof has no captured head');
   verifyReadyGatePackageHash(prPackage);
-  await verifyReadyGateSelectedEvidenceFiles(parent, prPackage, [ACCEPTANCE_STATUS_ARTIFACT]);
-  const ledger = await readRetainedRunText(
+  const ledger = await readOptionalRetainedRunText(
     parent,
     ACCEPTANCE_STATUS_ARTIFACT,
     prPackage.artifactBundle,
   );
+  if (ledger === undefined) return null;
+  await verifyReadyGateSelectedEvidenceFiles(parent, prPackage, [ACCEPTANCE_STATUS_ARTIFACT]);
   return {
     run: { ...parent, artifactBundle: prPackage.artifactBundle },
     prPackage,
@@ -133,9 +135,7 @@ export async function readInheritedAcceptanceSource(
     claimOverrideReceiptIds: source.prPackage.claimOverrideReceiptIds,
     visualJudgmentReceiptIds: source.prPackage.visualJudgmentReceiptIds,
   });
-  const expected = (run.ticketData?.acceptanceCriteria ?? [])
-    .map((text, index) => ({ id: acceptanceCriterionId(index), text }))
-    .filter(({ text }) => text.trim());
+  const expected = registeredAcceptanceCriteria(run.ticketData?.acceptanceCriteria ?? []);
   if (
     acceptance.error ||
     acceptance.issues.length ||

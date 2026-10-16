@@ -697,5 +697,7 @@ guard. Harnesses inherit this behavior through their existing terminal rules.
 retention and the existing runtime artifact checker. The checker accepts only a
 matching provisional reference; gateway completion revalidates parent authority.
 `acceptanceCriteriaMatch` supplies their shared criterion identity/text binding.
+`registeredAcceptanceCriteria` supplies the existing positional registration to
+both runtime and gateway readers.
 There is no new command, endpoint, verdict writer or client gate component.
 The additive contract follows the existing coordinated package versioning.

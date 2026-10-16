@@ -16,6 +16,12 @@ function acceptanceCriterionId(index) {
   return `AC-${index + 1}`;
 }
 
+function registeredAcceptanceCriteria(criteria) {
+  return criteria
+    .map((text, index) => ({ id: acceptanceCriterionId(index), text: String(text) }))
+    .filter((criterion) => criterion.text.trim().length > 0);
+}
+
 function acceptanceCriteriaMatch(expected, actual) {
   return (
     Array.isArray(expected) &&
@@ -247,6 +253,7 @@ export {
   acceptanceCriteriaView,
   acceptanceCriterionId,
   INHERITED_ACCEPTANCE_INPUT,
+  registeredAcceptanceCriteria,
   renderAcceptanceCoverage,
   summarizeAcceptanceStatus,
   validateAcceptanceStatusLedger,

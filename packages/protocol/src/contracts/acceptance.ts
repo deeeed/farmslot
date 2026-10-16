@@ -40,6 +40,7 @@ export const ACCEPTANCE_CRITERION_ID_PATTERN = contract.ACCEPTANCE_CRITERION_ID_
  */
 export const acceptanceCriterionId = contract.acceptanceCriterionId;
 export const acceptanceCriteriaMatch = contract.acceptanceCriteriaMatch;
+export const registeredAcceptanceCriteria = contract.registeredAcceptanceCriteria;
 
 export interface AcceptanceCriterionStatus {
   /** `AC-<N>`, N the 1-based position in the handoff criteria array. */

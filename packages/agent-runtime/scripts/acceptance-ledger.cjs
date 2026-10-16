@@ -22,6 +22,7 @@ const {
   ACCEPTANCE_CRITERION_ID_PATTERN,
   acceptanceCriterionId,
   acceptanceCriteriaMatch,
+  registeredAcceptanceCriteria,
   validateAcceptanceStatusLedger,
   acceptanceCriteriaView,
   summarizeAcceptanceStatus,
@@ -61,9 +62,7 @@ function handoffAcceptanceCriteria(taskDir) {
 function criteriaFromHandoff(handoff) {
   const task = isRecord(handoff.task) ? handoff.task : {};
   const criteria = Array.isArray(task.acceptanceCriteria) ? task.acceptanceCriteria : [];
-  return criteria
-    .map((text, index) => ({ id: acceptanceCriterionId(index), text: String(text) }))
-    .filter((criterion) => criterion.text.trim().length > 0);
+  return registeredAcceptanceCriteria(criteria);
 }
 
 /**

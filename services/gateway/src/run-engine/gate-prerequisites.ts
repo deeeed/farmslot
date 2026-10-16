@@ -18,6 +18,7 @@ import {
   qualifyingPassingReviews,
   qualifyingTerminalReviewInputs,
   type ReadyGatePrPackage,
+  registeredAcceptanceCriteria,
   type ReviewStatus,
   type Run,
   type RunDecision,
@@ -122,7 +123,7 @@ const { acceptanceContractIssues } =
   };
 
 export async function readGateAcceptance(run: Run): Promise<GateAcceptanceRead> {
-  const expected = run.ticketData?.acceptanceCriteria?.filter((text) => text.trim()) ?? [];
+  const expected = registeredAcceptanceCriteria(run.ticketData?.acceptanceCriteria ?? []);
   if (!run.taskFile)
     return {
       criteria: [],
@@ -142,9 +143,7 @@ export async function readGateAcceptance(run: Run): Promise<GateAcceptanceRead> 
       const registered = await readHandoffAcceptanceCriteria(ORCHESTRATOR_LOCALITY, taskDir);
       const acceptance = inheritedSource.acceptance;
       if (
-        (expected.length &&
-          (expected.length !== registered.length ||
-            expected.some((text, index) => registered[index]?.text.trim() !== text.trim()))) ||
+        (expected.length && !acceptanceCriteriaMatch(expected, registered)) ||
         !acceptanceCriteriaMatch(registered, acceptance.criteria)
       )
         throw new Error('Parent acceptance criteria differ from the follow-up task');
@@ -167,11 +166,7 @@ export async function readGateAcceptance(run: Run): Promise<GateAcceptanceRead> 
     await qualifyRetainedRunMetadata(run);
     const acceptance = await readAcceptanceStatusForDisplay(ORCHESTRATOR_LOCALITY, taskDir);
     if (acceptance.error) return { ...acceptance, issues: [] };
-    if (
-      expected.length &&
-      (acceptance.criteria.length !== expected.length ||
-        expected.some((text, index) => acceptance.criteria[index]?.text.trim() !== text.trim()))
-    )
+    if (expected.length && !acceptanceCriteriaMatch(expected, acceptance.criteria))
       return {
         ...acceptance,
         issues: [],

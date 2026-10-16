@@ -11,6 +11,9 @@ export const ACCEPTANCE_VERDICTS: readonly [
 export const ACCEPTANCE_PROOF_MODES: readonly ['state', 'visual', 'mixed'];
 export const ACCEPTANCE_CRITERION_ID_PATTERN: RegExp;
 export function acceptanceCriterionId(index: number): string;
+export function registeredAcceptanceCriteria(
+  criteria: readonly unknown[],
+): Array<{ id: string; text: string }>;
 export function acceptanceCriteriaMatch(
   expected: readonly unknown[],
   actual: readonly unknown[],
