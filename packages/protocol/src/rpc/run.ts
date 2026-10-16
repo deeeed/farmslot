@@ -657,7 +657,8 @@ export interface RunReviewVisualClaimParams {
   recipeRunId: string;
   snapshotIdentity: string;
   verdict: 'confirmed' | 'rejected';
-  reason: string;
+  /** Optional only for authenticated person confirmation. */
+  reason?: string;
   kind?: import('../recipe/claim-reviews.js').RecipeVisualJudgmentKind;
 }
 

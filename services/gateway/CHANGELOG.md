@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Refresh stale fleet snapshots from the monitor, stop leftover service helpers when their health is down, and re-probe retired worker targets before retaining cleanup holds.
+- Record one-tap person visual confirmations without invented prose, preserving receipt identity and package refresh requirements.
 - Preserve the task marker and its frozen tooling when switching between worker and review checklists.
 
 - Refuse publication and evidence refresh when frozen text or PR prose contains detected secret values, preserving retained bytes and reporting only fingerprints.
@@ -22,6 +23,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Refresh unapproved publication packages with missing retained bundles even when source HEAD is unchanged; preserve approved package identity on failure.
 
 - Retain pipeline review result snapshots in publication packages and use the pane-owned process's structured turn records for publication readiness, monitor nudges and safe-send busy checks.
+- Retain recovered publication reviews' original snapshots and structured artifacts, repairing missing evidence without another review or budget spend.
 
 - Keep failed reviewers without an artifact scope from holding publication gates in recovery after a settled review.
 

@@ -1,20 +1,19 @@
 import { html, nothing } from 'lit';
 
+import type { EvidenceReviewJudgmentRow } from '@farmslot/adapter-sdk/evidence';
 import {
-  APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
-  APPROVE_PUBLISH_UNRESOLVED_ACTION,
   type ArtifactRef,
   deriveRunLifecycleView,
   type GitBranchDiffFile,
-  isValidEvidenceAttestationReason,
-  latestExhaustedReview,
   type ReadyGatePayload,
   type RunDecision,
 } from '@farmslot/protocol';
+import type { PublicationGateAction, PublicationGateClaim } from '@farmslot/review-dispatch';
 
 import { colors } from '../../styles/theme-tokens.js';
 import type { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 
+import { renderPublicationGatePanel } from './publication-gate-panel.js';
 import { readyReviewBlockingReason } from './ready-workspace-renderers.js';
 import { workspaceArtifactBasename } from './workspace-artifacts.js';
 import type { ReadyWorkspaceTab } from './workspace-url-state.js';
@@ -25,6 +24,8 @@ export function renderReadyTopBar(input: {
   publicationTarget: 'draft' | 'ready';
   pendingConfirm: string | null;
   attestationReason?: string;
+  attesting?: boolean;
+  chooseAttestation?: () => void;
   setAttestationReason?: (value: string) => void;
   acting: boolean;
   recovering: boolean;
@@ -36,6 +37,12 @@ export function renderReadyTopBar(input: {
   openDiff: (title: string, artifact?: ArtifactRef) => void;
   openReviewRequestModal: () => void;
   confirmAction: (actionId: string) => void;
+  claims?: readonly PublicationGateClaim[];
+  judgmentRows?: readonly EvidenceReviewJudgmentRow[];
+  reviewReason?: (id: string) => string;
+  changeReviewReason?: (id: string, reason: string) => void;
+  recordReview?: (id: string, verdict: 'confirmed' | 'rejected') => void;
+  refreshPackage?: () => void;
   pendingVisualClaimIds?: readonly string[];
   focusClaim?: (id: string) => void | Promise<void>;
 }) {
@@ -45,195 +52,79 @@ export function renderReadyTopBar(input: {
     gateReadiness: input.payload.gateReadiness,
   });
   const prUrl = prNumber && repo ? `https://github.com/${repo}/pull/${prNumber}` : null;
-  const packageGate = !!input.payload.prPackage;
-  const hasApprovePublish =
-    input.decision?.actions?.some((action) => action.id === 'approve-publish') ?? false;
-  const offeredApproval =
-    input.decision?.actions?.some(
-      (action) => action.id === 'approve-publish' || action.id === 'ready',
-    ) ?? !packageGate;
-  const canApprove = offeredApproval && (!input.payload.gateReadiness || lifecycle.canAdvance);
-  const claimVerdictsBlocked = input.payload.gateReadiness?.reasons.some(
-    (reason) => reason.evidencePolicy === 'claim-verdict',
-  );
-  const extraReviewAction = input.decision?.actions?.find(
-    (action) => action.id === 'request-review',
-  );
-  const exhaustedReview = latestExhaustedReview(input.payload.reviews);
-  // Only actions the decision itself carries. The gateway refuses any other id
-  // and still verifies the selected package and current source before publishing.
-  const bypassAction = input.decision?.actions?.find(
-    (action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION,
-  );
-  const attestationAction = input.decision?.actions.find(
-    (action) => action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
-  );
-  const reviewBlockingReason = !canApprove ? readyReviewBlockingReason(input.payload) : '';
-  const approveLabel = hasApprovePublish
-    ? `Approve Publish (${input.publicationTarget === 'ready' ? 'ready' : 'draft'})`
-    : 'Mark Ready';
-  const approveActionId = hasApprovePublish ? 'approve-publish' : 'ready';
-  const pendingApproveConfirm = input.pendingConfirm === approveActionId;
-  const pendingBypassConfirm = input.pendingConfirm === APPROVE_PUBLISH_UNRESOLVED_ACTION;
-
+  const actions: readonly PublicationGateAction[] =
+    input.decision?.actions ??
+    (!input.payload.prPackage ? [{ id: 'ready', label: 'Mark Ready', style: 'primary' }] : []);
   return html`
-    <div class="rdy-top-bar">
-      <span class="rdy-branch">${branch}</span>
-      ${input.payload.reviewRoundBudget
-        ? html`<span role="status" data-testid="rdy-review-round-budget"
-            >${input.payload.reviewRoundBudget.label}</span
-          >`
-        : nothing}
-      ${input.decision?.resolvedAt
-        ? html`<span role="status">Retained evidence</span>`
-        : lifecycle.gateLabel
-          ? html`<span role="status">${lifecycle.gateLabel}</span>`
+    ${renderPublicationGatePanel({
+      actions,
+      claims: input.claims,
+      judgmentRows: input.judgmentRows,
+      reviewReason: input.reviewReason,
+      changeReviewReason: input.changeReviewReason,
+      recordReview: input.recordReview,
+      refreshPackage: input.refreshPackage,
+      pendingVisualClaimIds: input.pendingVisualClaimIds,
+      readiness: input.payload.gateReadiness,
+      blockedReason: readyReviewBlockingReason(input.payload),
+      attestationReason: input.attestationReason,
+      attesting: input.attesting,
+      chooseAttestation: () => input.chooseAttestation?.(),
+      resolved: Boolean(input.decision?.resolvedAt),
+      busy: input.acting || input.recovering,
+      pendingConfirm: input.pendingConfirm,
+      reviewDisabled: input.payload.reviewRoundBudget?.remaining === 0,
+      changeReason: (reason) => input.setAttestationReason?.(reason),
+      focusClaim: input.focusClaim,
+      invoke: input.confirmAction,
+      requestReview: input.openReviewRequestModal,
+    })}
+    ${input.actionMessage && (!input.reviewProgress || input.actionTone === 'error')
+      ? html`<div
+          class="rdy-action-feedback ${input.actionTone}"
+          role=${input.actionTone === 'error' ? 'alert' : 'status'}
+        >
+          ${input.actionMessage}
+        </div>`
+      : nothing}
+    ${input.reviewProgress
+      ? html`<div role="status" class="rdy-action-feedback" data-testid="rdy-review-progress">
+          ${input.reviewProgress}
+        </div>`
+      : nothing}
+    <details class="rdy-gate-details">
+      <summary>Package</summary>
+      <div class="rdy-top-bar">
+        <span class="rdy-branch">${branch}</span>
+        ${input.payload.reviewRoundBudget
+          ? html`<span role="status" data-testid="rdy-review-round-budget"
+              >${input.payload.reviewRoundBudget.label}</span
+            >`
           : nothing}
-      ${prUrl
-        ? html`
-            <a class="rdy-pr-link" href=${prUrl} target="_blank" rel="noopener">#${prNumber}</a>
-          `
-        : html`<span class="rdy-pr-link rdy-local-only">local package</span>`}
-      <button
-        class="rdy-diff-stat"
-        title="Open diff viewer"
-        ?disabled=${!input.diffArtifact && !input.fileDiffAvailable}
-        @click=${() => input.openDiff(`${branch} diff`, input.diffArtifact)}
-      >
-        <span class="rdy-stat-add">+${diffStat.additions}</span>
-        <span class="rdy-stat-del">-${diffStat.deletions}</span>
-        <span class="rdy-stat-files">${diffStat.files} files</span>
-      </button>
-      ${input.reviewProgress
-        ? html`<span role="status" data-testid="rdy-review-progress">${input.reviewProgress}</span>`
-        : nothing}
-      ${input.actionMessage && (!input.reviewProgress || input.actionTone === 'error')
-        ? html`
-            <div
-              class="rdy-action-feedback ${input.actionTone === 'error'
-                ? 'error'
-                : input.actionTone === 'success'
-                  ? 'success'
-                  : ''}"
-            >
-              ${input.actionMessage}
-            </div>
-          `
-        : nothing}
-      <span class="rdy-spacer"></span>
-      ${input.decision?.resolvedAt
-        ? html`
-            <!-- Resolved gate: render the decision outcome instead of live actions.
-             Workspace is now read-only; actions would re-resolve an already-
-             resolved decision. Users revisiting the slot still get the full
-             report / diff / recipe / artifacts panes for post-hoc review. -->
-            <span class="rdy-resolved-badge" title="Resolved at ${input.decision.resolvedAt}">
-              ${input.reviewProgress
-                ? 'Review in progress'
-                : `Resolved · ${input.decision.resolvedAction ?? 'done'}`}
-            </span>
-          `
-        : html`
-            ${packageGate && extraReviewAction
-              ? html`
-                  <button
-                    class="rdy-btn ${extraReviewAction.style === 'primary'
-                      ? 'rdy-btn-primary'
-                      : 'rdy-btn-secondary'}"
-                    data-testid="rdy-request-review"
-                    title=${input.payload.reviewRoundBudget?.diagnosis ??
-                    extraReviewAction.description ??
-                    ''}
-                    ?disabled=${input.acting ||
-                    input.recovering ||
-                    input.payload.reviewRoundBudget?.remaining === 0}
-                    @click=${input.openReviewRequestModal}
-                  >
-                    Review
-                  </button>
-                `
-              : nothing}
-            ${attestationAction
-              ? html` <label class="rdy-attestation-field">
-                    Reason for evidence policy attestation
-                    <textarea
-                      class="rdy-attestation-reason"
-                      data-testid="evidence-attestation-reason"
-                      aria-label="Reason for evidence policy attestation"
-                      .value=${input.attestationReason ?? ''}
-                      ?disabled=${input.acting || input.recovering}
-                      @input=${(event: Event) =>
-                        input.setAttestationReason?.((event.target as HTMLTextAreaElement).value)}
-                    ></textarea>
-                  </label>
-                  <span>${attestationAction.description}</span>
-                  <button
-                    class="rdy-btn rdy-btn-danger"
-                    data-testid="rdy-attest-evidence"
-                    ?disabled=${input.acting ||
-                    input.recovering ||
-                    !isValidEvidenceAttestationReason(input.attestationReason)}
-                    @click=${() => input.confirmAction(APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION)}
-                  >
-                    ${input.pendingConfirm === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION
-                      ? 'Confirm attestation and publish?'
-                      : attestationAction.label}
-                  </button>`
-              : nothing}
-            ${bypassAction
-              ? html`
-                  <button
-                    class="rdy-btn ${pendingBypassConfirm ? 'rdy-confirming' : 'rdy-btn-danger'}"
-                    data-testid="rdy-bypass-review"
-                    title=${bypassAction.description ?? reviewBlockingReason}
-                    ?disabled=${input.acting || input.recovering}
-                    @click=${() => input.confirmAction(APPROVE_PUBLISH_UNRESOLVED_ACTION)}
-                  >
-                    ${input.acting
-                      ? 'Submitting…'
-                      : pendingBypassConfirm
-                        ? 'Confirm bypass?'
-                        : 'Bypass Review (dangerous)'}
-                  </button>
-                `
-              : nothing}
-            ${!canApprove && claimVerdictsBlocked
-              ? html`<p role="status" data-testid="blocking-visual-claims">
-                  ${input.pendingVisualClaimIds?.length
-                    ? html`${input.pendingVisualClaimIds.map(
-                        (id, index) =>
-                          html`${index ? ', ' : ''}<a
-                              href=${`#ac-${encodeURIComponent(id)}`}
-                              @click=${(event: Event) => {
-                                event.preventDefault();
-                                void input.focusClaim?.(id);
-                              }}
-                              >${id}</a
-                            >`,
-                      )}
-                      need a visual judgment.`
-                    : 'Recorded claim proof does not yet satisfy publication policy. Review the acceptance criteria.'}
-                </p>`
-              : html`<button
-                  class="rdy-btn ${pendingApproveConfirm ? 'rdy-confirming' : 'rdy-btn-primary'}"
-                  ?disabled=${input.acting || input.recovering || !canApprove}
-                  title=${canApprove
-                    ? ''
-                    : reviewBlockingReason || 'Required review policy is not satisfied yet'}
-                  @click=${() => input.confirmAction(approveActionId)}
-                >
-                  ${input.acting
-                    ? 'Submitting…'
-                    : pendingApproveConfirm
-                      ? 'Confirm Publish?'
-                      : canApprove
-                        ? approveLabel
-                        : exhaustedReview
-                          ? 'Retries exhausted'
-                          : reviewBlockingReason || 'Review Required'}
-                </button>`}
-          `}
-    </div>
+        ${input.decision?.resolvedAt
+          ? html`<span class="rdy-resolved-badge"
+              >Resolved · ${input.decision.resolvedAction ?? 'done'}</span
+            >`
+          : lifecycle.gateLabel
+            ? html`<span role="status">${lifecycle.gateLabel}</span>`
+            : nothing}
+        ${prUrl
+          ? html`<a class="rdy-pr-link" href=${prUrl} target="_blank" rel="noopener"
+              >#${prNumber}</a
+            >`
+          : html`<span class="rdy-pr-link rdy-local-only">local package</span>`}
+        <button
+          class="rdy-diff-stat"
+          title="Open diff viewer"
+          ?disabled=${!input.diffArtifact && !input.fileDiffAvailable}
+          @click=${() => input.openDiff(`${branch} diff`, input.diffArtifact)}
+        >
+          <span class="rdy-stat-add">+${diffStat.additions}</span
+          ><span class="rdy-stat-del">-${diffStat.deletions}</span
+          ><span class="rdy-stat-files">${diffStat.files} files</span>
+        </button>
+      </div>
+    </details>
   `;
 }
 

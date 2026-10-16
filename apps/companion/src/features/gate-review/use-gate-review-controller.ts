@@ -8,6 +8,7 @@ import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   Events,
   isValidEvidenceAttestationReason,
+  Methods,
   type Run,
   type RunDecision,
   type RunGetResult,
@@ -362,7 +363,7 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
       recordVisualReview: async (
         claimId: string,
         verdict: 'confirmed' | 'rejected',
-        reason: string,
+        reason?: string,
       ) => {
         if (!gate) throw new Error('The gate evidence review is unavailable.');
         await gate.acceptance.recordVisualReview(claimId, verdict, reason);
@@ -376,6 +377,28 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
           await refresh('claim override');
         } catch (error) {
           setLoadError(error instanceof Error ? error.message : String(error));
+        }
+      },
+      refreshPackage: async () => {
+        if (
+          sendingActionId ||
+          !client ||
+          !run ||
+          decision?.payload?.kind !== 'ready' ||
+          !decision.payload.prPackage
+        )
+          return;
+        setSendingActionId('refresh-package');
+        try {
+          await client.request(Methods.RUN_REFRESH_PUBLISH_PACKAGE, {
+            runId: run.id,
+            decisionId: decision.id,
+          });
+          await refresh('package refresh');
+        } catch (error) {
+          setLoadError(error instanceof Error ? error.message : String(error));
+        } finally {
+          setSendingActionId(null);
         }
       },
       refresh: () => void refresh('manual refresh'),

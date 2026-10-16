@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Use one publication decision panel for gate and decision workspaces with explicit AC evidence actions.
+
 - Remember person logins through gateway device sessions and confirm revocation before sign-out, while preserving service profiles.
 - Keep recorded comparisons, gate galleries and AC evidence on their captured bundle when newer output is retained.
 

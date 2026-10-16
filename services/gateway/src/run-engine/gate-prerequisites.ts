@@ -34,6 +34,7 @@ import { assertQaCompletion } from '../qa/completion.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
 import { runReviewRoundBudget } from '../review/review-round-budget.js';
 import { reviewedInputsAwaitingReview } from '../review/reviewed-inputs.js';
+import { reviewResultArtifactPath } from '../review/terminal-result.js';
 import { readReviewWorkspaceCompletion } from '../review-workspaces/task.js';
 import { isArtifactOnlyRun } from '../run-completion/orchestrator.js';
 import { verifyRunOutputReview } from '../run-completion/output.js';
@@ -282,18 +283,6 @@ const readers: GatePrerequisiteReaders = {
       preparedPackage.selectedEvidenceKeys ?? [],
     ),
 };
-
-function resultArtifact(review: ReviewStatus): string | undefined {
-  return (review.attempts?.at(-1)?.artifactPaths ?? review.artifactPaths)
-    ?.slice()
-    .reverse()
-    .find(
-      (entry) =>
-        entry.startsWith('artifacts/') &&
-        !entry.split('/').includes('..') &&
-        path.posix.basename(entry) === 'review-result.json',
-    );
-}
 
 /** Compose owner validators; absent validation is a refusal, never a success. */
 export async function collectRunGateReadiness(
@@ -568,7 +557,7 @@ export async function collectRunGateReadiness(
     for (const review of qualifyingTerminalReviewInputs(
       run.engineState?.publishGate?.reviews ?? [],
     )) {
-      const artifact = resultArtifact(review);
+      const artifact = reviewResultArtifactPath(review);
       const raw = artifact ? await source.reviewResult(run, artifact) : undefined;
       if (raw) {
         const result = parseStructuredReviewFeedback(raw, artifact!);

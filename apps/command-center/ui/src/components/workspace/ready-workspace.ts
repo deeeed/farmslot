@@ -16,6 +16,7 @@ import {
   MARK_CLAIM_UNTESTABLE_ACTION,
   Methods,
   type ReadyGatePayload,
+  validVisualJudgmentReason,
 } from '@farmslot/protocol';
 import { resolveReviewDispatchDefaults } from '@farmslot/review-dispatch';
 
@@ -84,6 +85,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   @state() private _claimOverrideId: string | null = null;
   @state() private _claimOverrideReason = '';
   @state() private _visualReviewReasons: Record<string, string> = {};
+  @state() private _attestingDecisionId: string | null = null;
   @state() private _evidenceModel: EvidenceReviewModel | null = null;
   private _evidenceRequest = 0;
   private _evidenceScope = '';
@@ -226,14 +228,21 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
         claimId,
         gateway.authenticatedPrincipal,
         verdict,
-        this._visualReviewReasons[claimId] ?? '',
+        validVisualJudgmentReason(
+          model.visualReviewKind(claimId, gateway.authenticatedPrincipal) ?? undefined,
+          verdict,
+        )
+          ? undefined
+          : this._visualReviewReasons[claimId],
       );
       if (params.runId !== this.runId) throw new Error('The run changed. Refresh the evidence.');
       await gateway.request(Methods.RUN_REVIEW_VISUAL_CLAIM, params);
       await this._loadReviewEvidence();
       this._actionMessage = 'Visual judgment recorded.';
+      this._actionTone = 'success';
     } catch (error) {
       this._actionMessage = error instanceof Error ? error.message : String(error);
+      this._actionTone = 'error';
     } finally {
       this._acting = false;
     }
@@ -419,6 +428,10 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       publicationTarget: this._publicationTarget,
       pendingConfirm: this._pendingConfirm,
       attestationReason: this._evidenceAttestationReason,
+      attesting: this._attestingDecisionId === this.decision?.id,
+      chooseAttestation: () => {
+        this._attestingDecisionId = this.decision?.id ?? null;
+      },
       setAttestationReason: (value) => this._setEvidenceAttestationReason(value),
       acting: this._acting,
       recovering: this._isRecovering,
@@ -430,8 +443,18 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       openDiff: (title, artifact) => this._openDiffModal(title, artifact),
       openReviewRequestModal: () => this._openReviewRequestModal(),
       confirmAction: (actionId) => this._confirmAction(actionId),
+      claims: this._evidenceModel?.claims,
+      judgmentRows: this._evidenceModel?.judgmentRows(gateway.authenticatedPrincipal),
+      reviewReason: (id) => this._visualReviewReasons[id] ?? '',
+      changeReviewReason: (id, reason) => {
+        this._visualReviewReasons = { ...this._visualReviewReasons, [id]: reason };
+      },
+      recordReview: (id, verdict) => void this._recordVisualReview(id, verdict),
+      refreshPackage: () => void this._refreshPublishPackage(payload),
       pendingVisualClaimIds: this._evidenceModel?.pendingVisualClaimIds,
       focusClaim: async (id) => {
+        const details = this.querySelector<HTMLDetailsElement>('.rdy-review-content');
+        if (details) details.open = true;
         this._setActiveTab('evidence');
         this._evidenceModel?.setComparisonFilter('all');
         this._evidenceModel?.selectClaim(id);

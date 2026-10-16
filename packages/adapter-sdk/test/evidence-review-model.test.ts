@@ -1166,6 +1166,13 @@ test('authenticated review uses one engine projection in every view and preserve
       },
     });
     assert.equal(delegated.summary.proven, 2);
+    const row = delegated.judgmentRows(null).find(({ claim }) => claim.id === 'check-1')!;
+    assert.equal(row.prevalidation?.reason, receipt.reason);
+    assert.equal(row.prevalidation?.verdict, 'confirmed');
+    assert.equal(
+      confirmed.judgmentRows(null).find(({ claim }) => claim.id === 'check-1')!.prevalidation,
+      null,
+    );
     assert.match(delegated.visualReviewMarkdown, /agent-reviewed \(delegated by Operator\)/);
     assert.doesNotMatch(delegated.visualReviewMarkdown, /human-reviewed/);
     for (const claim of delegated.claims) {
@@ -1239,9 +1246,16 @@ test('the shared visual review request binds an eligible claim to its captured s
     reason: 'Observed the recorded view.',
   });
   assert.equal(model.visualReviewKind('check-1', { ...lead, id: 'other' }), null);
+  const person = { ...lead, subjectKind: 'person' as const };
+  assert.equal('reason' in model.visualReviewRequest('check-1', person, 'confirmed'), false);
+  assert.throws(() => model.visualReviewRequest('check-1', person, 'rejected'), /needs a reason/);
+  assert.equal(
+    model.judgmentRows(person).find(({ claim }) => claim.id === 'check-1')!.prevalidation,
+    null,
+  );
   assert.throws(
     () => model.visualReviewRequest('check-1', lead, 'confirmed', ''),
-    /Describe the visual proof/,
+    /needs a reason/,
   );
   const personOnly = createEvidenceReviewModel({
     package: input,

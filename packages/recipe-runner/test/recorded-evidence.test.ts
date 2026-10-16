@@ -560,6 +560,17 @@ test('a visual judgment binds exact moments and cannot turn missing proof into p
     judgedAt: '2026-01-01T00:00:00Z',
   };
   assert.equal(deriveRecipeClaims({ ...visual, judgments: [judgment] })[0]?.verdict, 'proven');
+  const forged = { ...judgment, reason: '', kind: 'person-reviewed' as const, receiptId: 'forged' };
+  assert.throws(() => deriveRecipeClaims({ ...visual, judgments: [forged] }), /does not bind/);
+  assert.equal(
+    deriveRecipeClaims(visual, [
+      {
+        ...forged,
+        reviewer: { principalId: 'reviewer', credentialId: 'credential', displayName: 'Reviewer' },
+      },
+    ])[0]?.verdict,
+    'proven',
+  );
   assert.equal(
     deriveRecipeClaims({ ...visual, judgments: [{ ...judgment, verdict: 'rejected' }] })[0]
       ?.verdict,
