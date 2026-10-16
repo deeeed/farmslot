@@ -2,9 +2,11 @@
 
 ## Unreleased
 
-- Produce hosted and authored tasks with retained node tooling, replay policy, metadata and independently retained workspace dependencies.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.25.5 - 2026-10-16
+
+- Produce hosted and authored tasks with retained node tooling, replay policy, metadata and independently retained workspace dependencies.
 
 ## 0.25.4 - 2026-10-16
 
