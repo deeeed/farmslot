@@ -21,7 +21,13 @@ import {
   isTemplateProvenance,
   type WorkerTerminalContractDocument,
 } from '@farmslot/protocol';
-import { loadProjectVars, loadSlotVars, resolveProjectTaskDirName } from '@farmslot/slot-config';
+import {
+  executionSourceContext,
+  loadProjectVars,
+  loadSlotVars,
+  resolveProjectTaskDirName,
+  resolveSourceBinding,
+} from '@farmslot/slot-config';
 
 import { isLocalPool } from '../slot-context.js';
 
@@ -360,9 +366,19 @@ export async function runHostedTaskInit(inputFile: string): Promise<TaskInitResu
         'Task initialization is incomplete; preserve its files and recover the original initialization.',
         'TASK_INIT_PARTIAL',
       );
+    const admittedSources = await executionSourceContext();
     const configured = resolveConfiguredExecutionTemplateSources(
       project.projectJson.execution_templates,
-      { projectPackRoot: path.dirname(project.projectConfig) },
+      {
+        projectPackRoot: path.dirname(project.projectConfig),
+        env: { ...slot.machineEnv, ...process.env },
+        ...(admittedSources
+          ? {
+              resolveSourceBinding: (selection) =>
+                resolveSourceBinding(selection, admittedSources.materialization),
+            }
+          : {}),
+      },
     );
     const sources = [
       projectWorkerTemplateSource(slot.projectName, project.projectTemplatesDir),

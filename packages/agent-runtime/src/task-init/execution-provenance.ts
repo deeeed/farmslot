@@ -204,9 +204,18 @@ export function verifyTaskExecutionProvenance(
     );
   const authority: unknown = JSON.parse(fs.readFileSync(path.join(pin, 'provenance.json'), 'utf8'));
   if (
+    isRecord(authority) &&
+    typeof authority.taskDir === 'string' &&
+    authority.taskDir !== fs.realpathSync(taskDir)
+  )
+    throw new TaskProvenanceError(
+      'TASK_PROVENANCE_RELOCATED',
+      'This receipt belongs to another task directory. Keep the original task and pin; author a fresh task for a new allocation. Never remove the receipt or copy foreign pinned commands.',
+    );
+
+  if (
     !isRecord(authority) ||
     typeof authority.taskDir !== 'string' ||
-    fs.realpathSync(authority.taskDir) !== fs.realpathSync(taskDir) ||
     !isDeepStrictEqual(authority.receipt, value)
   ) {
     throw new TaskProvenanceError(

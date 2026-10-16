@@ -54,6 +54,14 @@ function fixture(t: TestContext) {
   );
   fs.writeFileSync(path.join(installed, 'farmslot'), '#!/usr/bin/env node\n');
   fs.writeFileSync(
+    path.join(pack, 'package.json'),
+    JSON.stringify({
+      private: true,
+      type: 'module',
+      files: ['provider.mjs', 'project.json', 'actions.json'],
+    }),
+  );
+  fs.writeFileSync(
     path.join(pack, 'provider.mjs'),
     `
     import fs from 'node:fs';
@@ -239,9 +247,17 @@ test('retained installed providers keep hoisted dependencies after installation 
         });
         const receipt = retainTaskExecution(f.taskDir, execution);
         const dependencies = receipt.retainedInputs.find(
-          (entry) => entry.source === path.join(installation, 'node_modules'),
+          (entry) => entry.source === dependencyRoot,
         );
         assert.ok(dependencies);
+        assert.equal(
+          receipt.retainedInputs.some(
+            (entry) =>
+              entry.source === installation ||
+              entry.source === path.join(installation, 'node_modules'),
+          ),
+          false,
+        );
         assert.equal(fs.existsSync(path.join(dependencies.path, 'private-note.txt')), false);
       });
       fs.rmSync(installation, { recursive: true });

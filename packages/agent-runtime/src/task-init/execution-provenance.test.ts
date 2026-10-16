@@ -186,3 +186,18 @@ test('missing declared dependency refuses before a receipt can authorize a marke
   );
   assert.equal(fs.existsSync(path.join(taskDir, 'artifacts', 'harness-provenance.json')), false);
 });
+
+test('a relocated receipt refuses with the original bytes preserved', (t) => {
+  const { root, taskDir, input } = fixture(t);
+  retainTaskExecution(taskDir, input);
+  const relocated = path.join(root, 'relocated');
+  fs.cpSync(taskDir, relocated, { recursive: true });
+  const before = fs.readFileSync(path.join(relocated, 'artifacts/harness-provenance.json'), 'utf8');
+  assert.throws(() => verifyTaskExecutionProvenance(relocated, null), {
+    code: 'TASK_PROVENANCE_RELOCATED',
+  });
+  assert.equal(
+    fs.readFileSync(path.join(relocated, 'artifacts/harness-provenance.json'), 'utf8'),
+    before,
+  );
+});

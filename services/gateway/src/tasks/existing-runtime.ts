@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -14,7 +15,7 @@ import {
 } from '@farmslot/protocol';
 import { resolveProjectTaskDirName } from '@farmslot/slot-config';
 
-import { loadProjectVars, loadSlotVars } from '../core/config.js';
+import { loadProjectVars, loadSlotVars, type SlotVars } from '../core/config.js';
 
 import { resolveConfiguredExecutionTemplateForSlot } from './execution-template-catalog.js';
 import { initializeHostedTaskOnSlot, verifyHostedTaskOnSlot } from './hosted-task-init.js';
@@ -24,24 +25,48 @@ import {
   withTerminalReportPath,
 } from './worker-terminal-contract.js';
 
+interface AuthoredTaskContext extends Partial<
+  Pick<Run, 'domain' | 'mode' | 'ticketData' | 'executionTemplateId' | 'devInteractiveProfile'>
+> {
+  taskFile: string;
+  project: string;
+  flowType: Run['flowType'];
+  ticketOrPr: string;
+  attemptId?: string;
+}
+
 export async function initializeExistingTaskRuntime(run: Run): Promise<void> {
   if (!run.taskFile) throw new Error('Existing task runtime requires its task');
-  const project = await loadProjectVars(run.project);
+  // A retained legacy session resumes with its original marker and metadata.
+  if (
+    run.metrics.runnerSessionId &&
+    !existsSync(path.join(path.dirname(run.taskFile), 'artifacts/harness-provenance.json'))
+  )
+    return;
   const slot = run.slotId ? await loadSlotVars(run.slotId) : undefined;
   if (!slot) throw new Error('Existing task initialization requires its execution slot.');
+  await initializeAuthoredTaskOnSlot(slot, { ...run, taskFile: run.taskFile, attemptId: run.id });
+}
+
+/** Direct dispatch and run adoption share the node producer; neither invents a Run. */
+export async function initializeAuthoredTaskOnSlot(
+  slot: SlotVars,
+  run: AuthoredTaskContext,
+): Promise<void> {
+  const project = await loadProjectVars(run.project);
+  const retained = existsSync(
+    path.join(path.dirname(run.taskFile), 'artifacts/harness-provenance.json'),
+  );
   const workerTaskDir = path.posix.join(
     slot.remoteRepo,
     resolveProjectTaskDirName(project.projectJson),
     path.basename(path.dirname(path.dirname(run.taskFile))),
     path.basename(path.dirname(run.taskFile)),
   );
-  if (existsSync(path.join(path.dirname(run.taskFile), 'artifacts/harness-provenance.json'))) {
+  if (retained) {
     await verifyHostedTaskOnSlot(slot, workerTaskDir);
     return;
   }
-  // A structured existing runner session proves this is a same-run legacy resume.
-  // Its original marker and metadata remain untouched.
-  if (run.metrics.runnerSessionId) return;
   const task = await readFile(run.taskFile, 'utf8');
   let authored: HandoffMetadata | undefined;
   try {
@@ -78,7 +103,7 @@ export async function initializeExistingTaskRuntime(run: Run): Promise<void> {
   const handoff =
     authored ??
     buildHandoffMetadata({
-      attemptId: run.id,
+      attemptId: run.attemptId ?? randomUUID(),
       surface: 'farmslot',
       project: run.project,
       flow: run.flowType,

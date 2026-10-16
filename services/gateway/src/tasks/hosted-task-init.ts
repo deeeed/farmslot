@@ -11,7 +11,13 @@ import {
 
 import type { SlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
-import { slotDeletePath, slotFileExists, slotReadFile, slotWriteFiles } from '../core/slot-io.js';
+import {
+  slotDeletePath,
+  slotFileExists,
+  slotMkdir,
+  slotReadFile,
+  slotWriteFiles,
+} from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
 
 import { farmslotDirectoryForSlot } from './agent-runtime-script.js';
@@ -60,16 +66,17 @@ export async function initializeHostedTaskOnSlot(
       path.posix.join(input.task.taskDir, 'artifacts/harness-provenance.json'),
     ))
   ) {
+    await slotMkdir(slot, input.task.taskDir);
     await syncHostedTaskSidecars(slot, gatewayTaskDir, input.task.taskDir);
   }
-  await slotWriteFiles(slot, path.posix.dirname(requestPath), [
-    {
-      path: path.posix.basename(requestPath),
-      content: Buffer.from(request).toString('base64'),
-      mode: 0o600,
-    },
-  ]);
   try {
+    await slotWriteFiles(slot, path.posix.dirname(requestPath), [
+      {
+        path: path.posix.basename(requestPath),
+        content: Buffer.from(request).toString('base64'),
+        mode: 0o600,
+      },
+    ]);
     const command = await hostedTaskCommand(slot, ['internal', 'task-init', requestPath]);
     const result = await execOnSlot(slot, command, {
       timeout: 120_000,

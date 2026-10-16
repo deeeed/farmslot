@@ -1,5 +1,4 @@
 import { existsSync } from 'node:fs';
-import { copyFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -15,10 +14,7 @@ import {
 import { selectAgentContext, upsertAgentContext } from '../../agents/contexts.js';
 import {
   claimSlotStatusIf,
-  execLocal,
-  execOnSlot,
   farmslotRoot,
-  isLocal,
   loadProjectVars,
   loadSlotVars,
   type RawProjectJson,
@@ -27,8 +23,7 @@ import {
   resolveProjectTaskDirName,
   SLOT_PHASE_RELEASING,
 } from '../../core/index.js';
-import { SSH_CONNECT_SHELL_OPTIONS } from '../../core/ssh-options.js';
-import { resolveTmuxPaneId, resolveTmuxSession, shellQuote } from '../../core/tmux.js';
+import { resolveTmuxPaneId, resolveTmuxSession } from '../../core/tmux.js';
 import { isWorkerAlive } from '../../review/worker-lifecycle.js';
 import { readLaunchAckSignalSnapshot } from '../../runners/prompt-delivery-evidence.js';
 import { normalizeRunner, runnerRetainedSessionHandoff } from '../../runners/registry.js';
@@ -43,7 +38,7 @@ import {
   runnerSessionContextPatch,
 } from '../../runners/session-record.js';
 import { resolveWorkerNudgePrompt } from '../../runners/worker-prompt.js';
-import { copyPreparedTaskRootSidecars, copyTaskDirSubdirectories } from '../../tasks/sidecars.js';
+import { verifyHostedTaskOnSlot } from '../../tasks/hosted-task-init.js';
 import { unwatchContext, unwatchSlot, watchContext, watchSlot } from '../../tasks/watcher.js';
 
 import {
@@ -312,34 +307,8 @@ export async function warmSessionHandoffDispatch(
   const workerTaskDir = `${taskDirName}/${flowSubdir}/${taskFolderId}`;
   const workerTaskAbs = `${vars.remoteRepo}/${workerTaskDir}`;
 
-  step('copy', `Copying TASK.md to ${workerTaskDir}/TASK.md for warm handoff`);
-  if (isLocal(vars.host, vars.machine)) {
-    await mkdir(workerTaskAbs, { recursive: true });
-    await copyFile(taskFilePath, path.join(workerTaskAbs, 'TASK.md'));
-  } else {
-    await execOnSlot(vars, `mkdir -p ${shellQuote(workerTaskAbs)}`);
-    await execLocal(
-      `scp -q ${SSH_CONNECT_SHELL_OPTIONS} ${shellQuote(taskFilePath)} ${shellQuote(`${vars.sshTarget}:${workerTaskAbs}/TASK.md`)}`,
-    );
-  }
-  for (const sidecar of await copyPreparedTaskRootSidecars({
-    taskDir,
-    workerTaskAbs,
-    host: vars.host,
-    machine: vars.machine,
-    sshTarget: vars.sshTarget,
-  })) {
-    step('copy', `${sidecar} copied`);
-  }
-  for (const subdir of await copyTaskDirSubdirectories({
-    taskDir,
-    workerTaskAbs,
-    host: vars.host,
-    machine: vars.machine,
-    sshTarget: vars.sshTarget,
-  })) {
-    step('copy', `${subdir}/ copied`);
-  }
+  await verifyHostedTaskOnSlot(vars, workerTaskAbs);
+  step('copy', 'Node-owned task verified; task documents and evidence preserved');
 
   step('resolve', 'Resolving warm worker role target (no pane teardown)');
   const session = await resolveTmuxSession(vars.slotId, vars, { strict: true });

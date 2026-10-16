@@ -130,12 +130,18 @@ function providerWorkspace(host: ProjectRecipeHost): string {
   if (binding.provider.package) return binding.provider.root;
   let root = path.dirname(binding.provider.module);
   const checkout = fs.realpathSync(binding.checkoutRoot);
-  while (root !== checkout && !fs.existsSync(path.join(root, 'package.json'))) {
-    const parent = path.dirname(root);
-    if (parent === root || !root.startsWith(`${checkout}${path.sep}`))
+  const within = (parent: string, child: string) =>
+    child === parent || child.startsWith(`${parent}${path.sep}`);
+  const boundary = within(checkout, root) ? checkout : fs.realpathSync(binding.provider.root);
+  if (!within(boundary, root)) throw new Error('Provider module is outside its authorized source.');
+  while (!fs.existsSync(path.join(root, 'package.json'))) {
+    if (root === boundary)
       throw new Error(
-        'Provider tooling must have a workspace manifest within its authorized checkout.',
+        'Provider tooling must declare a workspace manifest within its authorized source.',
       );
+    const parent = path.dirname(root);
+    if (parent === root || !within(boundary, parent))
+      throw new Error('Provider tooling workspace escapes its authorized source.');
     root = parent;
   }
   if (

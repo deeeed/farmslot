@@ -11,6 +11,7 @@ import {
   DEFAULT_CLAUDE_MODEL,
   type DispatchExecuteParams,
   nativeWorkerBindingIsHeld,
+  normalizeFlowType,
   type PressureAdmissionDecision,
   type PressureAdmissionReference,
   type PressureAdmissionRejected,
@@ -113,6 +114,7 @@ import { resolveRunnerAccountForDispatch } from '../../runners/status-provider.j
 import { createProviderUsageLimitError } from '../../runners/usage-limit-error.js';
 import { resolveWorkerDispatchPrompt } from '../../runners/worker-prompt.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
+import { initializeAuthoredTaskOnSlot } from '../../tasks/existing-runtime.js';
 import { verifyHostedTaskOnSlot } from '../../tasks/hosted-task-init.js';
 import { copyPreparedTaskRootSidecars, copyTaskDirSubdirectories } from '../../tasks/sidecars.js';
 import { watchContext, watchSlot } from '../../tasks/watcher.js';
@@ -1534,6 +1536,15 @@ export async function dispatchExecute(
   step('copy', 'Copying task files...');
   const workerTaskAbs = `${vars.remoteRepo}/${workerTaskDir}`;
 
+  if (!currentRun && !existsSync(path.join(taskDir, 'artifacts/harness-provenance.json'))) {
+    await initializeAuthoredTaskOnSlot(vars, {
+      taskFile: taskFilePath,
+      project: vars.projectName,
+      flowType: normalizeFlowType(flowType),
+      ticketOrPr: taskId,
+      mode: params.mode,
+    });
+  }
   const retainedReceipt = `${workerTaskAbs}/artifacts/harness-provenance.json`;
   if (await slotFileExists(vars, retainedReceipt)) {
     await verifyHostedTaskOnSlot(vars, workerTaskAbs);
