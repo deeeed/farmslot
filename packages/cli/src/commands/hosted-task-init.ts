@@ -370,6 +370,21 @@ export function selectHostedTaskTemplate(
   return { sources, selected };
 }
 
+/**
+ * Recipe-host options for a hosted task, scoped like the gateway's slot recipe
+ * calls. The shared slot context derives the adapter from the slot; its pool
+ * platform is a device kind (`chrome-extension`, `cli`), not an adapter flag.
+ */
+export function hostedTaskRecipeHostOptions(
+  slot: Pick<SlotVars, 'remoteRepo' | 'projectName' | 'slotId' | 'resourceVars'>,
+): ReturnType<typeof projectRecipeHostOptions> {
+  return projectRecipeHostOptions('task', slot.remoteRepo, {
+    project: slot.projectName,
+    slot: slot.slotId,
+    app: slot.resourceVars.app,
+  });
+}
+
 export async function runHostedTaskInit(inputFile: string): Promise<TaskInitResult> {
   const file = path.resolve(inputFile);
   if (!/^\.task-init-[0-9a-f-]{36}\.json$/.test(path.basename(file)))
@@ -510,12 +525,7 @@ export async function runHostedTaskInit(inputFile: string): Promise<TaskInitResu
         selectedConfiguration: '{"identity":null}',
       });
     }
-    const host = await projectRecipeHostOptions('task', slot.remoteRepo, {
-      project: slot.projectName,
-      slot: slot.slotId,
-      platform: slot.platform,
-      app: slot.resourceVars.app,
-    });
+    const host = await hostedTaskRecipeHostOptions(slot);
     return shared.withProjectRecipeHost(host, async (selectedHost) => {
       if (
         !selectedHost.provider.commandOptions?.task ||
