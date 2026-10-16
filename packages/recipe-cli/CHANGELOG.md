@@ -4,9 +4,11 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 ## Unreleased
 
-- Retain provider tooling workspaces and declared installed dependencies independently of recipe-library roots.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.22.3 - 2026-10-16
+
+- Retain provider tooling workspaces and declared installed dependencies independently of recipe-library roots.
 
 ## 0.22.2 - 2026-10-16
 
