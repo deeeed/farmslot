@@ -99,6 +99,21 @@ An authenticated owner can retry a requested publication through
 owned publication marker. If the outcome cannot be established, Farmslot reports
 uncertainty and does not post again.
 
+After confirmed publication, the gateway marks the complete reviewed PR diff as
+Viewed using the same GitHub credential. `receipt.viewedFiles` records the reviewed
+head, account, file paths, confirmed marks, outcome and any failure. Slot posting
+records the same diagnostic on its accepted gate payload. Marking is best-effort
+and limited to eight seconds; it never changes a successful publication into a
+failure. Slot posting freezes its existing default credential when available,
+with a five-second limit; failure skips marking and preserves normal posting.
+
+The gateway checks the reviewed head and holds the PR base stable throughout
+marking, including between batches. GitHub provides no expected-commit argument for `markFileAsViewed`, so
+observed races are recorded rather than presented as complete. Viewed flags are
+display hints, not review evidence. Retrying an already published review or
+requesting a re-review does not reapply or clear earlier marks; GitHub invalidates
+changed files when new commits arrive.
+
 Command Center exposes inheritance and explicit publication choices in PR requests and
 policy editors. Run detail shows the account, policy source, receipt link and retry errors.
 Direct `run create` also captures publication policy while returning the normal Run result:

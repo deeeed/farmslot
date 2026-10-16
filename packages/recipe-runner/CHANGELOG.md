@@ -5,9 +5,15 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 ## Unreleased
 
 - Coordinate MetaMask provider 0.92.12 checkout-scoped iOS companion shutdown; runtime contracts are unchanged.
-- Accept reasonless person confirmations only from qualified visual-review receipts, preserving raw evidence validation.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.38.1 - 2026-10-16
+
+- Use bounded filesystem-safe still filenames for nested recipe nodes, preserving their distinct artifact identities.
+
+## 0.38.0 - 2026-10-16
+
+- Accept reasonless person confirmations only from qualified visual-review receipts, preserving raw evidence validation.
 
 ## 0.37.2 - 2026-10-16
 
