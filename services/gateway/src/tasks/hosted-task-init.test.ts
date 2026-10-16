@@ -127,7 +127,7 @@ test('transport forwards node pool and captured pack roots through the installed
   const cli = path.join(root, 'installed-cli');
   fs.writeFileSync(
     cli,
-    `#!${process.execPath}\nprocess.stdout.write(JSON.stringify({args:process.argv.slice(2),root:process.env.FARMSLOT_ROOT,pool:process.env.FARMSLOT_POOL_DIR,projects:process.env.FARMSLOT_PROJECTS_DIR}));\n`,
+    `#!${process.execPath}\nprocess.stdout.write(JSON.stringify({args:process.argv.slice(2),root:process.env.FARMSLOT_ROOT??null,pool:process.env.FARMSLOT_POOL_DIR,projects:process.env.FARMSLOT_PROJECTS_DIR}));\n`,
     { mode: 0o755 },
   );
   const slot = {
@@ -155,7 +155,7 @@ test('transport forwards node pool and captured pack roots through the installed
   });
   assert.deepEqual(JSON.parse(output), {
     args: ['--json', 'internal', 'slot-vars', 'fixture-1'],
-    root: support,
+    root: null,
     pool: path.join(fixtureFarm, 'pool'),
     projects: path.join(support, 'projects'),
   });
