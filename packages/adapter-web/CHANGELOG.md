@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.10.12 - 2026-10-16
+
+- Align the worker dependency set with Protocol 0.52.0 and default pipeline visual review.
+
 ## 0.10.11 - 2026-10-16
 
 - Align the worker dependency set with Protocol 0.51.0.
