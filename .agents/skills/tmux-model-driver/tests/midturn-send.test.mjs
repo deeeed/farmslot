@@ -9,6 +9,7 @@ import test from 'node:test';
 
 import { runnerPaneBufferedInstruction } from '../../../../services/gateway/src/runners/runner-pane-input.ts';
 import { acknowledgeAcceptance, paneState, send } from '../scripts/driver.mjs';
+import { acceptedClaudePrompt } from '../scripts/native-evidence.mjs';
 
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'driver-midturn-'));
@@ -763,6 +764,69 @@ test('a long handoff is proved only from its whole text, never a truncated recor
   });
   const cut = await send('%1', 'claude', payload);
   assert.equal(cut.submitted, false, 'a truncated record never proves the whole handoff');
+});
+
+test('Claude input pulled back into the composer withdraws its saved proof for status and ACK', async (t) => {
+  const f = claudeFixture(t, 'busy');
+  f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
+    f.record({ type: 'queue-operation', operation: 'enqueue', content: pasted });
+    return claudeBox('Press up to edit queued messages', `❯ ${pasted}`);
+  });
+  const first = await send('%1', 'claude', f.payload);
+  assert.equal(first.evidence.source, 'native-queue');
+  assert.equal(paneState('%1', 'claude').accepted.source, 'native-queue');
+
+  f.record({ type: 'queue-operation', operation: 'popAll', content: f.payload });
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = claudeRestored(f.payload);
+  assert.equal(paneState('%1', 'claude').accepted, null);
+  const ack = acknowledgeAcceptance('%1', 'claude', first.evidence.receipt_id);
+  assert.equal(ack.acknowledged, false);
+  assert.equal(ack.verification, 'receipt_unverified');
+});
+
+test('an enqueue later pulled back by popAll never proves the handoff', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'driver-popall-'));
+  try {
+    const file = path.join(dir, 'claude.jsonl');
+    const now = Date.now();
+    const payload = 'Handoff that the operator pulled back';
+    const at = (ms) => new Date(now + ms).toISOString();
+    const write = (records) =>
+      fs.writeFileSync(file, records.map((record) => `${JSON.stringify(record)}\n`).join(''));
+    const receipt = { payload, sent_at: now, session_offset: 0 };
+    const enqueue = (ms) => ({
+      type: 'queue-operation',
+      operation: 'enqueue',
+      timestamp: at(ms),
+      content: payload,
+    });
+    const popAll = {
+      type: 'queue-operation',
+      operation: 'popAll',
+      timestamp: at(2),
+      content: payload,
+    };
+    write([enqueue(1), popAll]);
+    assert.equal(acceptedClaudePrompt(file, 'session', receipt), null);
+    write([enqueue(1), popAll, enqueue(3)]);
+    assert.equal(acceptedClaudePrompt(file, 'session', receipt).source, 'native-queue');
+  } finally {
+    fs.rmSync(dir, { recursive: true });
+  }
+});
+
+test('a retry into owned Claude text ignores records from before it, saved proof or not', async (t) => {
+  const f = claudeFixture(t, 'busy');
+  f.setDrop(true);
+  f.setCapturedPanes(claudeBox(f.payload));
+  const first = await send('%1', 'claude', f.payload);
+  assert.equal(first.verification, 'not_sent');
+  // A late record from the first submission arrives after it was reported unsent.
+  f.record({ type: 'queue-operation', operation: 'enqueue', content: f.payload });
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = claudeRestored(f.payload);
+  const retry = await send('%1', 'claude', f.payload);
+  assert.equal(retry.verification, 'not_sent', 'only records after the retry can prove it');
+  assert.equal(retry.evidence, null);
 });
 
 test('a stale Claude record appended after the send never proves it', async (t) => {
