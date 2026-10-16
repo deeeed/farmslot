@@ -20,6 +20,8 @@ steering when the driver proves the exact native message or the complete driver-
 without claiming a new turn. The receipt remains until delivery acknowledgement.
 For a fresh driver submit from an empty queue, a single matching native truncated preview
 also proves queue delivery. Older uncertain receipts still require the complete message or native proof.
+Claude accepts Enter-submitted input in any phase when its native session is bound; its
+transcript proves the exact human prompt, or input queued during a turn for its next step.
 Retrying
 the same handoff reuses its evidence or sends only Enter to its exact owned composer.
 Receipts and locks use server socket identity across callers; old receipt files remain discoverable.

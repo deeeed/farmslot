@@ -91,7 +91,8 @@ test('send permits capable mid-turn input while protecting runner, question and 
   assert.equal(refusal({ ...ready, delivery_phase: 'unknown' }, 'codex'), null);
   for (const phase of ['busy', 'unknown']) {
     const state = { ...ready, state: 'claude', delivery_phase: phase, phase };
-    assert.equal(refusal(state, 'claude'), phase === 'busy' ? 'busy' : 'observability_unavailable');
+    assert.equal(refusal(state, 'claude'), 'observability_unavailable');
+    assert.equal(refusal({ ...state, session_id: 'native' }, 'claude'), null);
     assert.equal(
       refusal({ ...ready, delivery_phase: phase, phase }, 'codex', true),
       phase === 'busy' ? 'busy' : 'observability_unavailable',

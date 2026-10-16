@@ -11,6 +11,16 @@ export function runnerPaneBufferedInstruction(pane: string): string {
     .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
     .trimEnd()
     .split('\n');
+  // Claude draws its live composer between two rules; plugin status lines below vary.
+  const rule = (line: string) => /^\s*─{8,}\s*$/.test(line);
+  const boxed = lines.map((line) => /^\s*❯(?:\s|$)/.test(line)).lastIndexOf(true);
+  const boxEnd = lines.findIndex((line, index) => index > boxed && rule(line));
+  if (boxed > 0 && rule(lines[boxed - 1]) && boxEnd !== -1) {
+    const text = normalizeInstructionText(
+      [lines[boxed].replace(/^\s*❯\s?/, ''), ...lines.slice(boxed + 1, boxEnd)].join('\n'),
+    );
+    return text === 'Press up to edit queued messages' ? '' : text;
+  }
   const footer = lines
     .map((line) =>
       /\? for shortcuts|\bcontext(?:\s+\d+%)?\s+left\b|\btab to queue message\b|← for agents|⚠\s+\d+\s+warnings?\b/i.test(

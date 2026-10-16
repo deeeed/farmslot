@@ -24,13 +24,16 @@ cat prompt.txt | scripts/send-and-verify.sh <pane> <runner> [trace.jsonl]
 The process tree and argv identify Codex, Claude, Cursor, Gemini, Grok or a
 shell. A rendered prompt cannot establish runner identity. Native session
 records and pane-bound hooks establish idle or active turns. An unhooked Codex
-process can bind its sole kernel-owned parent rollout, excluding subagents, for exact native acceptance. Missing or stale
+process can bind its sole kernel-owned parent rollout, excluding subagents, for exact native acceptance.
+An unhooked Claude process binds through its own `sessions/<pid>.json` registration, started no earlier
+than the process, which names its transcript and busy or idle status. Missing or stale
 observability means `unknown`, even when the screen looks idle.
 
 `send-and-verify.sh` returns JSON and exits nonzero when refused or unverified.
 It refuses the wrong runner, a shell when a model is expected, a pending question
-or a foreign queue. Codex accepts Enter-submitted steering during busy or unknown
-phases. Other runners and explicit flush still require idle native readiness.
+or a foreign queue. Codex and Claude accept Enter-submitted input during busy or unknown
+phases. Claude also needs its bound native session, because only its transcript proves
+delivery. Other runners and explicit flush still require idle native readiness.
 It pastes the payload once and presses `Enter`. If the exact owned text remains in the
 composer, it presses `Enter` once more and re-verifies. An unchanged composer then reports
 `not_sent`; its receipt is retained. The driver never presses `Tab` or answers a question.
@@ -43,6 +46,10 @@ delivery at the next tool call, with no new-turn claim. "Queued follow-up inputs
 postponed input and never proves delivery. Its receipt is preserved without another key.
 A marker or shared prefix alone is insufficient. A fresh Enter submission into an empty
 queue can also use its matching truncated steering preview and separate overflow line.
+Claude transcript records written after the send prove delivery: an exact human prompt
+(`native-session`), or input queued during a turn (`native-queue`) that Claude attaches
+at its next step (`native-steering`). Claude's own queued input never blocks a handoff;
+a draft in its boxed composer does.
 Codex native history supplies exact prompt and turn evidence. Native `/goal` delivery requires
 a matching active `thread_goal_updated` objective followed by its new `task_started` turn. Pane-bound hook
 digests supply acceptance and new-turn evidence for hook-capable runners.
