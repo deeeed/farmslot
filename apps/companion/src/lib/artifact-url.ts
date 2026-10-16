@@ -3,6 +3,7 @@ import {
   type ArtifactRef,
   dedupeRunArtifacts,
   inferRunArtifactPurpose,
+  isRunArtifactImagePath,
   isRunEvidenceVideoArtifact,
   type RecipeRunArtifactGroup,
   withArtifactBundleDigest,
@@ -125,7 +126,6 @@ function wsToHttpBase(wsUrl: string): string {
   return url;
 }
 
-const IMAGE_EXTS = /\.(png|jpg|jpeg|gif|svg|webp)$/i;
 const DOC_EXTS = /\.(md|txt|json|log)$/i;
 export type ArtifactMediaType = 'image' | 'video' | 'document' | 'other';
 
@@ -162,7 +162,7 @@ export function classifyArtifact(
   }
   if (purpose === 'screenshot' || purpose === 'image') return 'image';
   if (purpose === 'video') return 'video';
-  if (IMAGE_EXTS.test(path)) return 'image';
+  if (isRunArtifactImagePath(path)) return 'image';
   if (isRunEvidenceVideoArtifact({ path })) return 'video';
   return 'other';
 }
