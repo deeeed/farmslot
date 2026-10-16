@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.17.1 - 2026-10-16
+
+- Align the worker dependency set with parent acceptance inheritance and Protocol 0.53.0.
+
 ## 0.17.0 - 2026-10-16
 
 - Show independent pipeline visual verification for every visual AC in shared acceptance views, without person-only configuration.
