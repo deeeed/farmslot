@@ -11,6 +11,7 @@ import { deflateSync } from 'node:zlib';
 
 import {
   Methods,
+  type NativeCommandReceipt,
   type NativeSessionInfo,
   type NativeSessionReadResult,
   PIPELINE_VISUAL_RESULT_SCHEMA,
@@ -195,7 +196,9 @@ test(
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       assert.ok(snapshot);
-      const command = snapshot.commands.find((c) => c.commandId === commandId)!;
+      const command: NativeCommandReceipt = snapshot.commands.find(
+        (c) => c.commandId === commandId,
+      )!;
       assert.equal(command.generation, session.generation);
       assert.equal(command.accepted, true);
       assert.equal(command.structuredResult?.schema, PIPELINE_VISUAL_RESULT_SCHEMA);
