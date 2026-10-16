@@ -669,3 +669,29 @@ test('authored Markdown preserves selected package provenance and refuses eviden
   assert.match(JSON.stringify(invalid), /Artifact validation failed/);
   await assert.rejects(readFile(out), { code: 'ENOENT' });
 });
+
+test('legacy task-root packages allow the usual PR body output while preserving evidence inputs', async (t) => {
+  const task = await mkdtemp(path.join(os.tmpdir(), 'legacy-markdown-'));
+  const original = await createArtifactPackage({ metadata: { runner }, entries: [traceEntry] });
+  t.after(() => rm(task, { recursive: true, force: true }));
+  t.after(() => rm(original, { recursive: true, force: true }));
+  const artifacts = path.join(task, 'artifacts');
+  await rename(original, artifacts);
+  await writeFile(path.join(artifacts, 'pr-description.md'), '## Description\n\nAuthored PR.\n');
+  await writeFile(
+    path.join(artifacts, 'report.md'),
+    'Status: pass\nNodes: 1/1 passed\nLEGACY_REPORT\n',
+  );
+  const invoke = artifactInvocation(t, task);
+  const out = path.join(artifacts, 'pr-body.md');
+  const rendered = JSON.parse(await invoke(['--format', 'markdown', '--out', out, '--json']));
+  assert.equal(process.exitCode, 0, JSON.stringify(rendered));
+  assert.equal(rendered.out, out);
+  assert.match(await readFile(out, 'utf8'), /Authored PR\./);
+  assert.match(await readFile(out, 'utf8'), /LEGACY_REPORT/);
+  const summary = path.join(artifacts, 'summary.json');
+  const before = await readFile(summary, 'utf8');
+  await invoke(['--format', 'markdown', '--out', summary, '--json']);
+  assert.equal(process.exitCode, 1);
+  assert.equal(await readFile(summary, 'utf8'), before);
+});

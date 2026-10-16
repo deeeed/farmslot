@@ -366,18 +366,26 @@ function formatValidationResult(result: RecipeValidationResult): string {
   return `${lines.join('\n')}\n`;
 }
 
-function evidenceMarkdown(artifactDir: string, summary: unknown, manifest: unknown): string {
+function artifactManifestPaths(manifest: unknown): string[] {
+  const entries = isRecord(manifest) && Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
+  return entries.flatMap((entry) =>
+    isRecord(entry) && typeof entry.path === 'string' ? [entry.path] : [],
+  );
+}
+
+function evidenceMarkdown(
+  artifactDir: string,
+  summary: unknown,
+  artifactPaths: readonly string[],
+): string {
   const literal = (value: string) =>
     `<code>${value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')}</code>`;
-  const entries = isRecord(manifest) && Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
   return [
     `Recipe evidence: ${literal(artifactDir)}`,
     '',
     `Result: ${literal(isRecord(summary) ? String(summary.status) : 'unknown')}`,
     '',
-    ...entries.flatMap((entry) =>
-      isRecord(entry) && typeof entry.path === 'string' ? [`- ${literal(entry.path)}`] : [],
-    ),
+    ...artifactPaths.map((file) => `- ${literal(file)}`),
     '',
   ].join('\n');
 }
@@ -387,12 +395,23 @@ async function writeArtifactsMarkdown(
   body: string,
   taskDir: string | undefined,
   artifactDir: string | undefined,
+  artifactPaths: readonly string[],
 ): Promise<void> {
   const shared = await import('@farmslot/recipe-cli/harness');
   let parent = path.dirname(out);
   while (!existsSync(parent)) parent = path.dirname(parent);
   const protectedPaths = [
-    ...(artifactDir ? [artifactDir] : []),
+    ...(artifactDir
+      ? [
+          'artifact-manifest.json',
+          'summary.json',
+          'trace.json',
+          'recipe.json',
+          'recipe-resolution.json',
+          'report.md',
+          ...artifactPaths,
+        ].map((file) => path.resolve(artifactDir, file))
+      : []),
     ...(taskDir
       ? [
           'recipe-runs',
@@ -563,6 +582,7 @@ export function registerRecipeCommand(program: Command): void {
         const manifest = artifactDir
           ? await readRecipeCliJsonFileWithinRoot(artifactDir, 'artifact-manifest.json')
           : undefined;
+        const artifactPaths = artifactManifestPaths(manifest);
         const checked =
           artifactDir && (options.validate || authoredTask)
             ? await validateRecipeArtifactDirectory(artifactDir, { requireRunnerProvenance: true })
@@ -578,12 +598,19 @@ export function registerRecipeCommand(program: Command): void {
             })
           : undefined;
         const body =
-          markdown?.body ?? (artifactDir ? evidenceMarkdown(artifactDir, summary, manifest) : '');
+          markdown?.body ??
+          (artifactDir ? evidenceMarkdown(artifactDir, summary, artifactPaths) : '');
         const out = options.out ? path.resolve(options.out) : undefined;
         if (out) {
           if (validation?.status === 'fail')
             throw new Error('Artifact validation failed; Markdown was not written.');
-          await writeArtifactsMarkdown(out, body, authoredTask ? taskDir : undefined, artifactDir);
+          await writeArtifactsMarkdown(
+            out,
+            body,
+            authoredTask ? taskDir : undefined,
+            artifactDir,
+            artifactPaths,
+          );
         }
         const result = {
           artifactDir,
