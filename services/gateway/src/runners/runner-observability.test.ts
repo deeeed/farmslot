@@ -34,10 +34,8 @@ test('remote observability install prefers the prepared immutable node-support b
   );
 
   assert.match(command, /node-support-hash/);
-  assert.match(
-    command,
-    /farmslot-node\/support\/\$\{support_hash\}\/scripts\/install-runner-observability\.mjs/,
-  );
+  assert.match(command, /"\$\{HOME\}\/farmslot-node\/support"\/"\$hash"/);
+  assert.match(command, /installer="\$support_dir\/scripts\/install-runner-observability\.mjs"/);
   assert.match(command, /farmslot-node\/scripts\/install-runner-observability\.mjs/);
   assert.match(command, /scripts\/lib\/provider-accounts\.mjs/);
 });

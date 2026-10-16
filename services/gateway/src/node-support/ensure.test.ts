@@ -12,7 +12,12 @@ import {
   RUNNER_OBSERVABILITY_SUPPORT_PATHS,
 } from '../runners/runner-observability.js';
 
-import { ensureNodeSupportBundle, type NodeSupportIo, selectedNodeSupportDir } from './ensure.js';
+import {
+  ensureNodeSupportBundle,
+  fixtureCheckVars,
+  type NodeSupportIo,
+  selectedNodeSupportDir,
+} from './ensure.js';
 import { remapRemoteFarmRefs } from './remote-command.js';
 import { fakeSupportHomeResult, isSupportHomeCommand } from './support-test-fixtures.js';
 
@@ -308,4 +313,13 @@ test('fixture checks read the bundle the slot selected, from the pointer ensure 
   assert.equal(await selectedNodeSupportDir(vars, '.agent', projectVars, shellIo), undefined);
   const local = { ...vars, host: 'localhost', machine: 'local' };
   assert.equal(await selectedNodeSupportDir(local, '.agent', projectVars, shellIo), farmslotRoot);
+});
+
+test('a fixture check whose node drops renders without a selection instead of failing the check', async () => {
+  const dropped: Pick<NodeSupportIo, 'exec'> = {
+    exec: async () => {
+      throw new Error('node disconnected');
+    },
+  };
+  assert.equal(await fixtureCheckVars(remoteVars(), projectVars, 5_000, dropped), undefined);
 });

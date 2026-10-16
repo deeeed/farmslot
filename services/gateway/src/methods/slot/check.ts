@@ -24,7 +24,7 @@ import {
 } from '../../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { loadFleetStatus } from '../../fleet/state.js';
-import { selectedNodeSupportDir } from '../../node-support/ensure.js';
+import { fixtureCheckVars } from '../../node-support/ensure.js';
 import {
   resolveClaudeBinary,
   resolveCodexBinary,
@@ -426,13 +426,7 @@ async function checkFixtures(
 
   const templates = projectJson.fixtures.templates ?? [];
   let mismatches = 0;
-  // Fixture sync renders {{node_support_dir}} from the slot's selected bundle.
-  const nodeSupportDir = await selectedNodeSupportDir(
-    vars,
-    projectVars.runtimeDir || '.agent',
-    projectVars,
-  );
-  const extraVars = nodeSupportDir ? { node_support_dir: nodeSupportDir } : undefined;
+  const extraVars = await fixtureCheckVars(vars, projectVars);
 
   // Check templates (skip compose entries without src)
   for (const tpl of templates) {

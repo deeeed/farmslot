@@ -74,9 +74,6 @@ if [ -n "${SLOT_ID}" ]; then
   else
     FARMSLOT_DIR="~/farmslot-node"
   fi
-  # node_support_dir: the slot's selected node-support bundle (ADR-035). The
-  # gateway passes the bundle it ensured; direct callers get the deployment dir.
-  NODE_SUPPORT_DIR="${NODE_SUPPORT_DIR:-$FARMSLOT_DIR}"
 
   echo "  host:     ${SSH_TARGET} $([ "$is_local_slot" = true ] && echo '(local)')"
   echo "  repo:     ${REMOTE_REPO}"
@@ -187,7 +184,7 @@ if [ -n "${SLOT_ID}" ]; then
     ${FLOW_TYPE:+--flow-type "$FLOW_TYPE"} \
     ${APP:+--app "$APP"} \
     ${DOMAIN:+--domain "$DOMAIN"} \
-    --node-support-dir "$NODE_SUPPORT_DIR" \
+    ${NODE_SUPPORT_DIR:+--node-support-dir "$NODE_SUPPORT_DIR"} \
     --stage "$FIXTURE_STAGE" --manifest "$FIXTURE_MANIFEST" || {
       fixture_status=$?
       rm -rf "$FIXTURE_STAGE" "$FIXTURE_MANIFEST"
@@ -253,8 +250,8 @@ if [ -n "${SLOT_ID}" ]; then
         -e "s|{{RECIPE_DIR}}|${RECIPE_DIR:-${RUNTIME_DIR:-.agent}/recipes}|g" \
         -e "s|{{domain}}|${DOMAIN:-}|g" \
         -e "s|{{DOMAIN}}|${DOMAIN:-}|g" \
-        -e "s|{{node_support_dir}}|${NODE_SUPPORT_DIR}|g" \
-        -e "s|{{NODE_SUPPORT_DIR}}|${NODE_SUPPORT_DIR}|g" \
+        -e "s|{{node_support_dir}}|${NODE_SUPPORT_DIR:-$FARMSLOT_DIR}|g" \
+        -e "s|{{NODE_SUPPORT_DIR}}|${NODE_SUPPORT_DIR:-$FARMSLOT_DIR}|g" \
         {} +
     find "$STAGED_DIR" -name '*.bak' -delete
 

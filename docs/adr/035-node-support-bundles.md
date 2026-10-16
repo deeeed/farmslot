@@ -112,8 +112,8 @@ Add a project-agnostic validation gate that checks all enabled slots across supp
 
 - Prepare renders fixtures with the bundle it has just ensured, before fixture sync.
 - Fixture refresh and task writing ensure the bundle first, like every launch path.
-- Fixture drift checks read the slot's existing selection and never publish or repoint.
-- The selection pointer lives at `<runner runtime dir>/.observability/node-support-hash`, outside the checkout. One gateway helper defines that path for its writer and readers. Packs never read it.
+- Gateway fixture drift checks (slot check, fleet refresh) read the slot's existing selection with the probe timeout and never publish or repoint. Without a readable selection they render the direct-caller default, `farmslot_dir`, which `preflight-slot.sh` also uses.
+- The selection pointer lives at `<runner runtime dir>/.observability/node-support-hash`, outside the checkout. One gateway helper defines that path and one emits the validated read, shared by the runner installer and the drift checks. Packs never read it.
 
 ### Rationale
 

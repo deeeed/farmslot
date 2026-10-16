@@ -561,5 +561,25 @@ export async function renderFixtureTemplate(
   extraVars?: Record<string, string>,
 ): Promise<string> {
   const content = await readFile(srcPath, 'utf-8');
-  return expandTemplate(content, slotVars, projectVars, extraVars);
+  return expandTemplate(
+    content,
+    slotVars,
+    projectVars,
+    fixtureTemplateVars(slotVars, projectVars, extraVars),
+  );
+}
+
+/**
+ * Fixture extras: the gateway supplies the slot's selected node-support bundle
+ * as node_support_dir; a direct caller renders farmslot_dir, as sync-fixtures.sh does.
+ */
+export function fixtureTemplateVars(
+  slotVars: SlotVars,
+  projectVars?: ProjectVars,
+  extraVars?: Record<string, string>,
+): Record<string, string> {
+  return {
+    node_support_dir: expandTemplate('{{farmslot_dir}}', slotVars, projectVars),
+    ...extraVars,
+  };
 }

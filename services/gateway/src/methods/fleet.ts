@@ -40,7 +40,7 @@ import {
 } from '../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
-import { selectedNodeSupportDir } from '../node-support/ensure.js';
+import { fixtureCheckVars } from '../node-support/ensure.js';
 import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
 import { isRunnerAliveUnderPane } from '../runners/session-process.js';
 import { listRuns } from '../runs/store.js';
@@ -1042,8 +1042,7 @@ async function checkFixtures(
   const templates = pj.fixtures.templates ?? [];
   let total = 0;
   let ok = 0;
-  const nodeSupportDir = await selectedNodeSupportDir(vars, pv.runtimeDir || '.agent', pv);
-  const extraVars = nodeSupportDir ? { node_support_dir: nodeSupportDir } : undefined;
+  const extraVars = await fixtureCheckVars(vars, pv, SLOT_CHECK_TIMEOUT_MS);
 
   for (const tpl of templates) {
     if (!tpl.src) continue; // compose entries have no src — skip for fixture check

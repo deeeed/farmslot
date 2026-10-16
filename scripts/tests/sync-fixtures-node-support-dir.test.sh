@@ -43,15 +43,18 @@ sync --node-support-dir "$BUNDLE" >/dev/null
 [ "$(cat "$TMP/repo/temp/tree/run.sh")" = "ROOT=$BUNDLE" ] \
   || fail "directory fixture: $(cat "$TMP/repo/temp/tree/run.sh")"
 
-# 2. Without the flag a direct caller renders farmslot_dir (the checkout for a local slot).
+# 2. Without the flag a direct caller renders farmslot_dir: the CLI checkout
+#    for a local slot (the sandbox's copied scripts for directory fixtures).
 sync >/dev/null
-[ "$(cat "$TMP/repo/temp/ci-parity")" = "root=$TMP/projects/support-test-farm" ] \
+[ "$(cat "$TMP/repo/temp/ci-parity")" = "root=$REPO_ROOT/projects/support-test-farm" ] \
   || fail "default template fixture: $(cat "$TMP/repo/temp/ci-parity")"
+[ "$(cat "$TMP/repo/temp/tree/run.sh")" = "ROOT=$TMP" ] \
+  || fail "default directory fixture: $(cat "$TMP/repo/temp/tree/run.sh")"
 
-# 3. A ~/ bundle path stays literal for the fixture's own expansion.
-sync --node-support-dir '~/farmslot-node' >/dev/null
-[ "$(cat "$TMP/repo/temp/ci-parity")" = "root=~/farmslot-node/projects/support-test-farm" ] \
-  || fail "tilde template fixture: $(cat "$TMP/repo/temp/ci-parity")"
+# 3. The bash drift check (preflight-slot.sh) renders the same default, so a
+#    direct sync followed by preflight matches.
+"$FARMSLOT_CLI" internal render-fixture-template ns-1 "$TMP/projects/support-test-farm/fixtures/ci-parity" \
+  | cmp -s - "$TMP/repo/temp/ci-parity" || fail "render-fixture-template differs from the synced default"
 
 # 4. Relative, quoted, sed-delimiter and multi-line values are refused before any write.
 NEWLINE_DIR="$(printf '/ok\n/evil')"

@@ -36,7 +36,9 @@ import {
 } from '../core/index.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import {
+  NODE_SUPPORT_ROOT,
   nodeSupportHashPath,
+  nodeSupportSelectionCommand,
   RUNNER_OBSERVABILITY_SUPPORT_PATHS,
 } from '../runners/runner-observability.js';
 
@@ -46,8 +48,6 @@ import {
   buildNodeSupportPublishCommand,
   buildNodeSupportVerifyCommand,
 } from './publish-command.js';
-
-const REMOTE_SUPPORT_ROOT = '~/farmslot-node/support';
 
 export interface NodeSupportBundleState {
   /** Directory the slot's hook and installer commands resolve against. */
@@ -169,7 +169,7 @@ export async function collectNodeSupportBundle(projectName: string, supportPaths
 
 /** Where a bundle lives on a node. */
 function nodeSupportDir(hash: string): string {
-  return path.posix.join(REMOTE_SUPPORT_ROOT, hash);
+  return path.posix.join(NODE_SUPPORT_ROOT, hash);
 }
 
 /**
@@ -287,9 +287,9 @@ export async function ensureNodeSupportBundle(
   const incomingResult = await io.exec(
     vars,
     [
-      `mkdir -p ${shellExpressionForRemotePath(`${REMOTE_SUPPORT_ROOT}/.incoming`)}`,
+      `mkdir -p ${shellExpressionForRemotePath(`${NODE_SUPPORT_ROOT}/.incoming`)}`,
       `mktemp -d ${shellExpressionForRemotePath(
-        path.posix.join(REMOTE_SUPPORT_ROOT, '.incoming', `${manifest.hash}.XXXXXX`),
+        path.posix.join(NODE_SUPPORT_ROOT, '.incoming', `${manifest.hash}.XXXXXX`),
       )}`,
     ].join(' && '),
   );
@@ -361,14 +361,39 @@ export async function selectedNodeSupportDir(
   runtimeDir: string,
   projectVars?: ProjectVars,
   io: Pick<NodeSupportIo, 'exec'> = defaultIo,
+  timeout?: number,
 ): Promise<string | undefined> {
   if (isLocal(vars.host, vars.machine)) return farmslotRoot;
   if (currentProjectSources() ?? projectVars?.sourceContext) return '~/farmslot-node';
-  const selection = shellExpressionForRemotePath(nodeSupportHashPath(vars.remoteRepo, runtimeDir));
   const result = await io.exec(
     vars,
-    `hash="$(cat ${selection} 2>/dev/null)" && [ \${#hash} -eq 64 ] && case "$hash" in *[!0-9a-f]*) exit 1 ;; esac && printf '%s\\n' ${shellExpressionForRemotePath(REMOTE_SUPPORT_ROOT)}/"$hash"`,
+    nodeSupportSelectionCommand(vars.remoteRepo, runtimeDir),
+    timeout ? { timeout } : undefined,
   );
   const directory = result.stdout.trim();
   return result.exitCode === 0 && path.posix.isAbsolute(directory) ? directory : undefined;
+}
+
+/**
+ * Extra fixture vars a drift check renders with, matching fixture sync. An
+ * unreadable selection leaves the placeholder to the renderer's default.
+ */
+export async function fixtureCheckVars(
+  vars: SlotVars,
+  projectVars: ProjectVars,
+  timeout?: number,
+  io: Pick<NodeSupportIo, 'exec'> = defaultIo,
+): Promise<Record<string, string> | undefined> {
+  try {
+    const dir = await selectedNodeSupportDir(
+      vars,
+      projectVars.runtimeDir || '.agent',
+      projectVars,
+      io,
+      timeout,
+    );
+    return dir ? { node_support_dir: dir } : undefined;
+  } catch {
+    return undefined;
+  }
 }
