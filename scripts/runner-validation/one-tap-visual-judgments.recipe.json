@@ -69,8 +69,30 @@
       "native-result-verified": {
         "action": "assert_output",
         "source": "native-result",
-        "assert": { "path": "$.exitCode", "operator": "eq", "value": 0 },
+        "assert": {
+          "path": "$.exitCode",
+          "operator": "eq",
+          "value": 0
+        },
         "intent": "Require actual native visual inspection and clean process teardown; contract fixtures alone cannot satisfy this proof.",
+        "next": "mixed-regressions"
+      },
+      "mixed-regressions": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks --test services/gateway/src/run-lifecycle/mixed-review-cleanup.test.ts services/gateway/src/agents/runtime-recovery-mixed.test.ts services/gateway/src/run-engine/review-plan.test.ts packages/protocol/test/recipe/claim-reviews.test.ts",
+        "timeout_ms": 120000,
+        "intent": "Check the cancellation, restart, WARM lineage and frozen-person-precedence regressions alongside the public transport proof.",
+        "next": "mixed-regressions-verified"
+      },
+      "mixed-regressions-verified": {
+        "action": "assert_output",
+        "source": "mixed-regressions",
+        "assert": {
+          "path": "$.exitCode",
+          "operator": "eq",
+          "value": 0
+        },
+        "intent": "Require the migration regressions, including controls known to fail with the old branches.",
         "next": "done"
       }
     }

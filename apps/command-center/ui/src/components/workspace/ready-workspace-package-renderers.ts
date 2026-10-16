@@ -198,3 +198,15 @@ export function renderReadyResolvedBanner(input: {
     : `Decision resolved ${input.resolvedAt}. The diff below is the slot's current HEAD — no snapshot SHA was captured for this gate, so it may differ from what was reviewed.`;
   return html`<div class="rdy-resolved-banner" role="status">${message}</div>`;
 }
+
+export function renderReadyPackageSkeleton() {
+  return html`<farm-hydrating message="Loading package"
+    ><div style="display:grid;gap:12px">
+      <farm-skeleton width="40%"></farm-skeleton>
+      <div style="display:flex;gap:12px">
+        <farm-skeleton kind="button" width="136px"></farm-skeleton
+        ><farm-skeleton kind="button" width="112px"></farm-skeleton>
+      </div>
+      <farm-skeleton kind="row"></farm-skeleton><farm-skeleton width="70%"></farm-skeleton></div
+  ></farm-hydrating>`;
+}

@@ -1,7 +1,9 @@
 import { html, nothing } from 'lit';
 
 import { type PublicationGateInput, publicationGateView } from '@farmslot/review-dispatch';
-import { publicationGateCssVariables } from '@farmslot/theme';
+import { publicationGateCssVariables, skeletonTokens } from '@farmslot/theme';
+
+import '../shared/skeleton.js';
 
 import { fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import {
@@ -11,6 +13,11 @@ import {
 
 export interface PublicationGatePanelInput extends PublicationGateInput {
   busy: boolean;
+  pausedReason?: string;
+  pausedRetry?: () => void;
+  loading?: boolean;
+  loadError?: string;
+  retry?: () => void;
   showClaims?: boolean;
   feedback?: import('@farmslot/review-dispatch').VisualJudgmentFeedback;
   reviewReason?: (id: string) => string;
@@ -28,11 +35,17 @@ export interface PublicationGatePanelInput extends PublicationGateInput {
 
 export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
   const view = publicationGateView(input);
-  return html`<section class="publication-gate" aria-label="Publication decision">
+  const disabled = input.busy || Boolean(input.pausedReason);
+  return html`<section
+    class="publication-gate"
+    aria-label="Publication decision"
+    aria-busy=${String(Boolean(input.loading))}
+    style=${`--gate-row-count:${view.claims.length}`}
+  >
     ${input.showClaims !== false && view.claims.length
       ? html`<section aria-label="Acceptance judgments">
           <h3>Acceptance judgments</h3>
-          ${renderAcceptanceClaimList(view.claims, input)}
+          ${renderAcceptanceClaimList(view.claims, { ...input, busy: disabled })}
         </section>`
       : nothing}
     ${view.attestation && input.attesting
@@ -43,7 +56,7 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
               data-testid="evidence-attestation-reason"
               aria-label="Reason for evidence policy attestation"
               .value=${input.attestationReason ?? ''}
-              ?disabled=${input.busy}
+              ?disabled=${disabled}
               @input=${(event: Event) =>
                 input.changeReason((event.target as HTMLTextAreaElement).value)}
             ></textarea>
@@ -53,18 +66,31 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
     ${input.resolved
       ? nothing
       : html`<section class="gate-actions" aria-label="Publication actions">
-          <p class="gate-status" role="status">
-            ${input.busy
-              ? input.feedback
-                ? 'Saving judgment and refreshing…'
-                : 'Submitting…'
-              : view.status}
+          <p class="gate-status" role=${input.loadError ? 'alert' : 'status'}>
+            ${input.pausedReason
+              ? html`<span class="gate-status-message">${input.pausedReason}</span
+                  >${input.pausedRetry
+                    ? html`<button class="gate-secondary" @click=${input.pausedRetry}>
+                        Retry
+                      </button>`
+                    : nothing}`
+              : input.loadError
+                ? html`<span class="gate-read-error" title=${input.loadError}
+                      >Evidence unavailable</span
+                    ><button class="gate-secondary" @click=${input.retry}>Retry</button>`
+                : input.loading
+                  ? html`<farm-skeleton width="42%"></farm-skeleton>`
+                  : input.busy
+                    ? input.feedback
+                      ? 'Saving judgment and refreshing…'
+                      : 'Submitting…'
+                    : view.status}
           </p>
           ${view.refreshRequired && input.refreshPackage
             ? html`<button
                 class="gate-primary"
                 type="button"
-                ?disabled=${input.busy}
+                ?disabled=${disabled}
                 @click=${input.refreshPackage}
               >
                 Refresh package
@@ -74,7 +100,7 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
             class="gate-primary"
             data-testid="gate-approve"
             type="button"
-            ?disabled=${input.busy || Boolean(view.blockedReason) || !view.approval}
+            ?disabled=${disabled || Boolean(view.blockedReason) || !view.approval}
             title=${view.blockedReason}
             @click=${() => view.approval && input.invoke(view.approval.id)}
           >
@@ -106,7 +132,7 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
                       data-action=${action.id}
                       data-testid=${action.id === 'request-review' ? 'rdy-request-review' : nothing}
                       title=${action.description ?? ''}
-                      ?disabled=${input.busy ||
+                      ?disabled=${disabled ||
                       Boolean(action.disabledReason) ||
                       (action.id === 'request-review' && input.reviewDisabled)}
                       @click=${() =>
@@ -125,7 +151,7 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
   </section>`;
 }
 
-export function publicationGatePanelStyles() {
+export function publicationGatePanelStyles(scope = 'ready-workspace') {
   return `
     ready-workspace { ${publicationGateCssVariables('dark')} }
     @media (prefers-color-scheme: light) { ready-workspace { ${publicationGateCssVariables('light')} } }
@@ -139,6 +165,10 @@ export function publicationGatePanelStyles() {
     ready-workspace .publication-gate h3 { font-size: ${fonts.sizeSm}; margin-bottom: ${spacing.sm}; }
     ready-workspace .gate-status { flex: 1; min-width: 120px; font-size: ${fonts.sizeMd}; font-weight: 600; }
     ${acceptanceClaimListStyles()}
+    ready-workspace .gate-status { min-height:44px; display:flex; align-items:center; gap:12px; }
+    ready-workspace .gate-status-message { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    ready-workspace .gate-read-error { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+    ready-workspace .gate-claims { box-sizing:border-box; height:min(${skeletonTokens.gateViewport * 100}vh, calc(var(--gate-row-count) * ${skeletonTokens.gateRow}px)); overflow-y:auto; padding-bottom:12px; }
     ready-workspace .gate-attestation { display: grid; grid-template-columns: 1fr; gap: ${spacing.lg}; align-items: center; }
     ready-workspace .gate-attestation label { display: grid; gap: ${spacing.sm}; font-weight: 600; }
     ready-workspace .gate-more-actions summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: var(--gate-secondary); padding: ${spacing.md}; }
@@ -158,5 +188,5 @@ export function publicationGatePanelStyles() {
     ready-workspace .gate-extra-tabs > summary { min-height: 44px; padding: 8px; display: flex; align-items: center; cursor: pointer; }
     @media (max-width: 720px) { ready-workspace .rdy-tab-bar[role="tablist"] { grid-template-columns: repeat(4, minmax(0, 1fr)); } ready-workspace .gate-extra-tabs { grid-column: 1 / -1; } }
     @media (max-width: 720px) { ready-workspace .gate-attestation { grid-template-columns: 1fr; } }
-  `;
+  `.replaceAll('ready-workspace', scope);
 }

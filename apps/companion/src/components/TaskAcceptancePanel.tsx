@@ -17,6 +17,7 @@ import { acceptanceLedgerView } from '../lib/task-progress-view';
 import { baseStyles, colors, fonts, radii, spacing } from '../lib/theme';
 
 import { AcceptanceClaimList } from './AcceptanceClaimList';
+import { Skeleton, SkeletonError } from './Skeleton';
 
 /**
  * The run's acceptance ledger (ADR-060), read-only and compact: the assessed and
@@ -38,7 +39,9 @@ export function TaskAcceptancePanel({
   onMarkUntestable,
   judgmentRows,
   onRecordVisualReview,
+  onRetry,
 }: {
+  onRetry?: () => void;
   judgmentRows?: readonly EvidenceReviewJudgmentRow[];
   onRecordVisualReview?: (
     id: string,
@@ -130,7 +133,7 @@ export function TaskAcceptancePanel({
           {view.counts}
         </Text>
       </Pressable>
-      {expanded && error ? <Text style={styles.error}>ledger unreadable: {error}</Text> : null}
+      {expanded && error ? <SkeletonError message={error} retry={onRetry} /> : null}
       {expanded && packageStatus ? (
         <View testID="companion-evidence-package-status" style={styles.row}>
           <View style={styles.rowHeader}>
@@ -357,6 +360,7 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   header: {
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
@@ -436,3 +440,31 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
 });
+
+export function TaskAcceptanceSkeleton({ rows = 3 }: { rows?: number }) {
+  return (
+    <View
+      style={styles.panel}
+      accessibilityLabel="Acceptance criteria"
+      accessibilityState={{ busy: true }}
+    >
+      <View style={[styles.header, { minHeight: 44 }]}>
+        <Skeleton width="48%" />
+        <Skeleton width="24%" />
+      </View>
+      <View style={{ padding: 12, gap: 12 }}>
+        {Array.from({ length: rows }, (_, index) => (
+          <View key={index} style={{ minHeight: 56, gap: 8 }}>
+            <Skeleton width="85%" />
+            <Skeleton width="55%" />
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+/** Keep evidence below the AC details fixed even when the loaded ledger collapses. */
+export function acceptancePanelViewportHeight(rows: number, viewportHeight: number): number {
+  return Math.min(44 + Math.max(0, rows) * 56, viewportHeight * 0.4);
+}

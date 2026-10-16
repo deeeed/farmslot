@@ -4,6 +4,7 @@ import { isSlotFreedByPark } from '@farmslot/protocol';
 import { checklistProgressView } from '@farmslot/review-dispatch';
 
 import '../chat/native-session-view.js';
+import '../shared/hydrating-placeholder.js';
 
 import { getState } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
@@ -74,20 +75,8 @@ export function renderSlotViewAgentContexts(view: SlotView) {
 }
 
 export function renderSlotViewSidebarFiles(view: SlotView) {
-  if (view._wsLoading) {
-    return html`<div
-      style="padding: ${spacing.lg}; color: ${colors.textMuted}; font-size: ${fonts.sizeSm}"
-    >
-      Loading...
-    </div>`;
-  }
-  if (view._wsError) {
-    return html`<div
-      style="padding: ${spacing.lg}; color: ${colors.statusFail}; font-size: ${fonts.sizeSm}"
-    >
-      ${view._wsError}
-    </div>`;
-  }
+  if (view._wsLoading || view._wsError)
+    return renderSlotFilesSkeleton(view._wsError, () => void view._reloadTree());
   return html`<file-tree
     .entries=${view._entries}
     .gitStatus=${view._gitStatusMap}
@@ -178,17 +167,8 @@ export function renderSlotViewActivityPanel(view: SlotView) {
 }
 
 export function renderSlotViewChangesPanel(view: SlotView) {
-  if (view._branchDiffLoading) {
-    return html`<div style="padding: 12px; color: ${colors.textMuted}; font-size: ${fonts.sizeSm}">
-      Loading branch diff...
-    </div>`;
-  }
-  if (view._branchDiffError && view._branchDiffFiles.length === 0) {
-    return html`<div style="padding: 12px; color: ${colors.statusWarn}; font-size: ${fonts.sizeSm}">
-      Branch diff unavailable — retrying with status poll.
-      <div style="color: ${colors.textMuted}; margin-top: 4px">${view._branchDiffError}</div>
-    </div>`;
-  }
+  if (view._branchDiffLoading || (view._branchDiffError && !view._branchDiffFiles.length))
+    return renderSlotFilesSkeleton(view._branchDiffError ?? '', () => void view._loadBranchDiff());
   return html`<branch-changed-files
     .files=${view._branchDiffFiles}
     .changes=${view._git?.changes ?? []}
@@ -862,4 +842,18 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
       </div>
     </div>
   `;
+}
+
+export function renderSlotFilesSkeleton(error = '', retry?: () => void) {
+  return html`<farm-hydrating message="Workspace files" .error=${error} @retry=${retry}
+    ><div style="display:grid;gap:12px;min-height:340px">
+      <farm-skeleton width="45%"></farm-skeleton>${Array.from(
+        { length: 7 },
+        (_, index) =>
+          html`<div style=${`padding-left:${(index % 3) * 12}px`}>
+            <farm-skeleton kind="row" width="80%"></farm-skeleton>
+          </div>`,
+      )}
+    </div></farm-hydrating
+  >`;
 }

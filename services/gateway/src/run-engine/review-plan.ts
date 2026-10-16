@@ -332,7 +332,35 @@ export function assertWarmReviewRequestAvailable(
         'pr-mismatch',
         'the requested lineage belongs to a different repository/PR',
       );
-    if (run.transport !== 'native' && !runnerSupportsSessionReload(row.runner))
+    const nativeOwners = new Set(
+      runs
+        .filter((candidate) => {
+          const source = reviewPRIdentity(candidate);
+          return (
+            candidate.project === run.project &&
+            source?.repository.toLowerCase() === identity.repository.toLowerCase() &&
+            source.prNumber === identity.prNumber
+          );
+        })
+        .flatMap(
+          (candidate) =>
+            candidate.agentContexts?.flatMap((context) =>
+              context.role === 'review' &&
+              context.reviewId === lineage.reviewId &&
+              context.nativeSession
+                ? [context.nativeSession.ownerPrincipalId]
+                : [],
+            ) ?? [],
+        ),
+    );
+    if (nativeOwners.size > 1)
+      throw new WarmReviewRefusal(
+        'session-unavailable',
+        'the reviewer lineage has ambiguous native ownership',
+      );
+    const nativeOwner = [...nativeOwners][0];
+    const transport = nativeOwner ? 'native' : (run.transport ?? 'tmux');
+    if (transport !== 'native' && !runnerSupportsSessionReload(row.runner))
       throw new WarmReviewRefusal(
         'unsupported-runner',
         'the selected runner cannot reload a reviewer',
@@ -343,8 +371,9 @@ export function assertWarmReviewRequestAvailable(
         runId: run.id,
         reviewId: lineage.reviewId,
         project: run.project,
-        ownerPrincipalId: run.nativeOwnerPrincipalId ?? run.createdByPrincipalId ?? null,
-        transport: run.transport ?? 'tmux',
+        ownerPrincipalId:
+          nativeOwner ?? run.nativeOwnerPrincipalId ?? run.createdByPrincipalId ?? null,
+        transport,
         taskDir: run.taskFile ? path.dirname(run.taskFile) : '',
         artifactScope: lineage.reviewId,
         runner: execution.runner,

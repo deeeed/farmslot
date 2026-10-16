@@ -37,6 +37,8 @@ import { useConnectionStore } from '../store/connection';
 import { useConnectedTransport } from './useConnectedTransport';
 
 export interface RunAcceptance {
+  /** Re-read acceptance and selected evidence even when the run has not changed. */
+  retry(): void;
   evidenceModel: EvidenceReviewModel | null;
   reviewer: SelfPrincipalSummary | null;
   recordVisualReview(
@@ -224,6 +226,9 @@ export function useRunAcceptance(
         })
       : null;
     return {
+      retry() {
+        setBroadcasts((value) => value + 1);
+      },
       evidenceModel,
       reviewer: client?.authenticatedPrincipal ?? null,
       async recordVisualReview(claimId, verdict, reason) {

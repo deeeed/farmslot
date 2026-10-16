@@ -5,6 +5,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Use compact shared acceptance rows, inline judgment progress and evidence-first gate tabs with a persistent approval action; keep supporting details on demand.
+- Keep async gate and panel layouts stable with component-specific skeletons and in-place retries.
 
 ## 0.21.0 - 2026-10-16
 

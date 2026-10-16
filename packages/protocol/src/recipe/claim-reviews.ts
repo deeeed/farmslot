@@ -169,6 +169,8 @@ export interface RecipeVisualJudgmentReceipt extends Omit<
   delegation?: { principalId: string; displayName: string; policyDigest: string };
   /** Internal pipeline collection only; manual judgment RPC cannot supply this binding. */
   pipeline?: PipelineVisualReviewerBinding;
+  /** New captures retain the same winner in current and frozen projections. */
+  precedence?: 'person-first-v1';
 }
 
 /** Consumers load receipts from the gateway store, never from a recipe/task file. */
@@ -284,7 +286,12 @@ export function recordedVisualJudgments(
       },
     ];
   });
-  return authority.historical
+  const currentPrecedence = authority.receipts.some(
+    (receipt) =>
+      (receipt.precedence === 'person-first-v1' || receipt.kind === 'pipeline-reviewed') &&
+      qualified.some((judgment) => judgment.receiptId === receipt.id),
+  );
+  return authority.historical && !currentPrecedence
     ? qualified
     : qualified.sort(
         (a, b) =>

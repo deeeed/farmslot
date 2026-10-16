@@ -1,16 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, Text, useColorScheme, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { PUBLICATION_GATE_TABS } from '@farmslot/review-dispatch';
+import { PUBLICATION_GATE_TABS, publicationGateCriteria } from '@farmslot/review-dispatch';
 import { publicationGateColors } from '@farmslot/theme';
 
 import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
 import { MediaViewer } from '../../components/MediaViewer';
-import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
+import { TaskAcceptancePanel, TaskAcceptanceSkeleton } from '../../components/TaskAcceptancePanel';
 import { baseStyles } from '../../lib/theme';
 
 import { GateActions, GateReviewVerdicts, GateSummaryCard } from './components/gate-review-panels';
+import { GateReviewSkeleton } from './components/GateReviewSkeleton';
 import { gateReviewStyles as styles } from './styles/gate-review.styles';
 import type { GateReviewActions, GateReviewScreenState } from './use-gate-review-controller';
 
@@ -36,22 +37,23 @@ export function GateReviewScreen({
     }
   }, [initialClaimId]);
   const insets = useSafeAreaInsets();
+  const scroll = useRef<ScrollView>(null);
+  const evidenceOffset = useRef(0);
   if (state.status !== 'ready') {
     return (
-      <View style={[baseStyles.container, styles.center]} testID="companion-screen-gate-review">
-        <Text style={baseStyles.textSecondary}>
-          {state.status === 'error' ? state.message : 'Loading gate...'}
-        </Text>
-        {state.status === 'error' ? (
-          <Pressable onPress={actions.refresh}>
-            <Text style={baseStyles.textSecondary}>Retry</Text>
-          </Pressable>
-        ) : null}
+      <View style={[baseStyles.container, { padding: 16 }]} testID="companion-screen-gate-review">
+        <GateReviewSkeleton
+          error={state.status === 'error' ? state.message : undefined}
+          retry={actions.refresh}
+        />
       </View>
     );
   }
   const { viewModel } = state;
   const { acceptance } = viewModel;
+  const expectedRows = publicationGateCriteria(
+    viewModel.decision.payload?.kind === 'ready' ? viewModel.decision.payload : undefined,
+  ).length;
   const recordVisualReview: GateReviewActions['recordVisualReview'] = async (...args) => {
     setJudging(true);
     try {
@@ -92,6 +94,7 @@ export function GateReviewScreen({
         ))}
       </View>
       <ScrollView
+        ref={scroll}
         testID="companion-gate-review-content"
         style={{ flex: 1 }}
         contentContainerStyle={styles.scrollContent}
@@ -114,10 +117,11 @@ export function GateReviewScreen({
                   acceptanceCriteria={acceptance.acceptanceCriteria}
                   acceptanceEvidenceLinks={acceptance.acceptanceEvidenceLinks}
                   error={acceptance.error}
+                  onRetry={acceptance.retry}
                   onOpenEvidence={actions.openEvidence}
                 />
               ) : (
-                <Text style={styles.muted}>Loading acceptance criteria...</Text>
+                <TaskAcceptanceSkeleton rows={expectedRows} />
               )}
               {acceptance.view?.rows.length === 0 && !acceptance.error ? (
                 <Text style={styles.muted}>This run registered no acceptance criteria.</Text>
@@ -126,13 +130,23 @@ export function GateReviewScreen({
           </View>
         ) : null}
         {tab === 'evidence' ? (
-          <View>
+          <View
+            onLayout={(event) => {
+              evidenceOffset.current = event.nativeEvent.layout.y;
+            }}
+          >
             <EvidenceReviewWorkspace
               runId={viewModel.run.id}
               gatewayUrl={viewModel.gatewayUrl}
               artifacts={viewModel.artifacts}
               pairs={viewModel.pairs}
               evidenceModel={acceptance.evidenceModel}
+              loading={!acceptance.view && !acceptance.error}
+              error={acceptance.error ?? undefined}
+              retry={acceptance.retry}
+              onFocusClaim={(y) =>
+                scroll.current?.scrollTo({ y: evidenceOffset.current + y, animated: true })
+              }
               reviewer={acceptance.reviewer}
               onRecordVisualReview={recordVisualReview}
               focusClaim={focusClaim}
@@ -163,6 +177,7 @@ export function GateReviewScreen({
       <View style={styles.section}>
         <GateActions
           showClaims={false}
+          loading={!acceptance.view && !acceptance.error}
           disabled={judging}
           reviewPicker={viewModel.reviewPicker}
           decision={viewModel.decision}

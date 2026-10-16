@@ -256,6 +256,7 @@ export async function stampPipelineVisualReviews(
         moments: judgment.moments,
         reviewedFiles: judgment.reviewedFiles,
         kind: 'pipeline-reviewed',
+        precedence: 'person-first-v1',
         reviewerSubjectKind: 'service',
         pipeline: verified.binding,
         approver: {

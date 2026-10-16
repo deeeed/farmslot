@@ -110,6 +110,19 @@ test('a person Issue outranks later agent confirmations until a later person con
     recordedVisualJudgments(input, authority([confirmation, pipeline, person])).at(-1)?.verdict,
     'confirmed',
   );
+  for (const receipts of [
+    [person, pipeline],
+    [confirmation, pipeline, person],
+  ]) {
+    const current = recordedVisualJudgments(input, authority(receipts));
+    const frozen = recordedVisualJudgments(input, { ...authority(receipts), historical: true });
+    assert.deepEqual(frozen, current);
+  }
+  const newerManual = { ...person, precedence: 'person-first-v1' as const };
+  assert.deepEqual(
+    recordedVisualJudgments(input, { ...authority([newerManual, confirmation]), historical: true }),
+    recordedVisualJudgments(input, authority([newerManual, confirmation])),
+  );
 });
 
 test('delegated receipts bind own identity, policy, parent restrictions and checked visual bytes', () => {

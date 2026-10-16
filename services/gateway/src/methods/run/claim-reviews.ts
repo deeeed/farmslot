@@ -125,6 +125,7 @@ export async function runReviewVisualClaim(
     moments: claim.moments,
     approver,
     kind,
+    precedence: 'person-first-v1' as const,
     reviewerSubjectKind: subjectKind,
     reviewedFiles: reviewedVisualFiles(input, claim.id),
     ...(delegated && delegator

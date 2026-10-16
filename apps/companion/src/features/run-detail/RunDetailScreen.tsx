@@ -92,6 +92,7 @@ import {
   RunFocusedArtifactCard,
   RunReviewWorkspaceSummary,
 } from './components/run-detail-panels';
+import { RunDetailSkeleton } from './components/RunDetailSkeleton';
 import { RunPosturePanel } from './components/RunPosturePanel';
 import { runDetailStyles as styles } from './styles/run-detail.styles';
 
@@ -507,22 +508,18 @@ export default function RunDetailScreen() {
     [recipeRuns, run, selectedRecipeRunId, evidenceModel],
   );
 
-  if (!run) {
+  if (!run)
     return (
-      <View
-        style={[baseStyles.container, styles.center, { paddingBottom: insets.bottom + spacing.xl }]}
-      >
-        <Text style={baseStyles.textSecondary}>
-          {client && connectionStatus === 'connected'
-            ? 'Loading run...'
-            : 'Connect to the gateway to load this run.'}
-        </Text>
+      <View style={[baseStyles.container, { paddingBottom: insets.bottom }]}>
+        <RunDetailSkeleton
+          error={error ?? (connectionStatus !== 'connected' ? 'Connect to the gateway' : undefined)}
+          retry={() => void loadRun()}
+        />
         <Pressable style={styles.backFallbackButton} onPress={goBackOrRuns}>
           <Text style={styles.backFallbackText}>Back to runs</Text>
         </Pressable>
       </View>
     );
-  }
 
   const lifecycle = deriveRunLifecycleView(run);
   const statusColor =

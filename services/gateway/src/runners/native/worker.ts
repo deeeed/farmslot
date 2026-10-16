@@ -314,7 +314,9 @@ export async function cancelNativeRunWorkers(
   runId: string,
   options: { machineTransitionHeld?: boolean } = {},
 ): Promise<void> {
-  const run = ownedRun(runId);
+  const run = getRun(runId);
+  if (!run) throw new Error('Native worker run not found');
+  assertNativeRunOwner(run);
   for (const context of run.agentContexts ?? [])
     if (context.nativeSession) await cancelNativeWorkerContext(run.id, context, options);
 }

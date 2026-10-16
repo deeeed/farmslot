@@ -1275,3 +1275,8 @@ subject kind, frozen package hash and receipt IDs. PR provenance renders that
 resolution; historical missing actors display "Not recorded". These additions
 use the existing package release process and require compatible readers before
 the new native result producer is activated.
+
+New visual receipts carry `precedence: person-first-v1`; pipeline receipts also
+identify the new precedence contract by kind. Frozen readers retain person-first
+ordering for those receipts. Legacy-only frozen captures keep their shipped
+stored-order interpretation. Policy qualification remains bound to the capture.

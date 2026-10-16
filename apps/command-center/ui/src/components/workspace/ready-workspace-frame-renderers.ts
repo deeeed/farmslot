@@ -22,6 +22,7 @@ export function readyWorkspaceShowsReportEvidencePreview(
 
 export interface ReadyWorkspaceFrameInput {
   payload: ReadyGatePayload;
+  packagePending?: boolean;
   splitPct: number;
   recovering: boolean;
   recoveryPhase: string;
@@ -65,13 +66,18 @@ export interface ReadyWorkspaceFrameInput {
 }
 
 export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
-  const packageGate = !!input.payload.prPackage;
+  const packageGate = Boolean(input.payload.prPackage || input.packagePending);
   const reportEvidence = readyWorkspaceShowsReportEvidencePreview(input.payload)
     ? (input.renderReportEvidence?.() ?? nothing)
     : nothing;
 
   const reviewContent = html`${input.renderTabBar()}
-    <div class="rdy-tab-pane-host">${input.renderTabContent()}</div>`;
+    <div
+      class="rdy-tab-pane-host"
+      style=${packageGate ? 'height:min(65vh,640px);flex:none' : nothing}
+    >
+      ${input.renderTabContent()}
+    </div>`;
 
   return html`
     <style>

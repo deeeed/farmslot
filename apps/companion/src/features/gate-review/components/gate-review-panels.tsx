@@ -1,15 +1,25 @@
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, useColorScheme, View } from 'react-native';
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  useColorScheme,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 
 import type { EvidenceReviewJudgmentRow } from '@farmslot/adapter-sdk/evidence';
 import { type RunDecision, type RunGateReadiness } from '@farmslot/protocol';
 import {
   type PublicationGateAction,
   type PublicationGateClaim,
+  publicationGateCriteria,
   publicationGateView,
   type ReviewDispatchViewModel,
 } from '@farmslot/review-dispatch';
-import { publicationGateColors } from '@farmslot/theme';
+import { gateClaimsHeight, publicationGateColors, skeletonTokens } from '@farmslot/theme';
 
 import { AcceptanceClaimList } from '../../../components/AcceptanceClaimList';
 import type {
@@ -20,6 +30,8 @@ import type {
 import { fonts, radii, spacing } from '../../../lib/theme';
 import { ReviewDispatchPicker } from '../../review-dispatch/ReviewDispatchPicker';
 import { gateReviewStyles as styles } from '../styles/gate-review.styles';
+
+import { GateClaimSkeleton } from './GateReviewSkeleton';
 
 /** Entry from run detail and the decision workspace into the gate review. */
 export function GateReviewEntryCard({ onOpen, testID }: { onOpen: () => void; testID: string }) {
@@ -142,10 +154,12 @@ export function GateActions({
   readiness,
   onFocusClaim,
   showClaims = true,
+  loading = false,
   disabled = false,
   reviewDisabled = false,
 }: {
   showClaims?: boolean;
+  loading?: boolean;
   disabled?: boolean;
   reviewDisabled?: boolean;
   claims?: readonly PublicationGateClaim[];
@@ -168,6 +182,7 @@ export function GateActions({
   onResolve: (action: GateReviewAction, selectionData?: Record<string, unknown>) => void;
 }) {
   const appearance = useColorScheme();
+  const viewport = useWindowDimensions();
   const [attestingDecisionId, setAttestingDecisionId] = useState<string | null>(null);
   const [judging, setJudging] = useState(false);
   const [moreActions, setMoreActions] = useState(false);
@@ -190,6 +205,10 @@ export function GateActions({
     attestationReason,
     attesting: attestingDecisionId === decision.id,
   });
+  const declaredRows = publicationGateCriteria(
+    decision.payload?.kind === 'ready' ? decision.payload : undefined,
+  ).length;
+  const rowCount = Math.max(view.claims.length, declaredRows);
   const palette = publicationGateColors[appearance === 'light' ? 'light' : 'dark'];
   const renderAction = (action: PublicationGateAction, primary = false) => {
     const actionDisabled =
@@ -247,6 +266,8 @@ export function GateActions({
       <Text
         testID="companion-gate-review-approve-reason"
         accessibilityRole="header"
+        accessibilityLabel={view.status}
+        numberOfLines={2}
         style={[gateStyles.status, { color: palette.text }]}
       >
         {judging
@@ -255,10 +276,21 @@ export function GateActions({
             ? 'Refreshing…'
             : view.status}
       </Text>
-      {showClaims && view.claims.length ? (
+      {showClaims && rowCount ? (
         <View accessibilityLabel="Acceptance judgments">
           <Text style={[gateStyles.label, { color: palette.text }]}>Acceptance judgments</Text>
-          <View>
+          <ScrollView
+            nestedScrollEnabled
+            style={{ height: gateClaimsHeight(rowCount, viewport.height) }}
+          >
+            {loading && !view.claims.length
+              ? Array.from({ length: rowCount }, (_, index) => (
+                  <GateClaimSkeleton
+                    key={index}
+                    color={skeletonTokens.colors[appearance === 'light' ? 'light' : 'dark']}
+                  />
+                ))
+              : null}
             <AcceptanceClaimList
               rows={view.claims}
               onFocus={onFocusClaim}
@@ -267,7 +299,7 @@ export function GateActions({
               onBusyChange={setJudging}
               testIDPrefix="gate-ac"
             />
-          </View>
+          </ScrollView>
         </View>
       ) : null}
       {view.attestation && attestingDecisionId === decision.id ? (
@@ -293,7 +325,13 @@ export function GateActions({
           />
         </View>
       ) : null}
-      <View style={gateStyles.section} accessibilityLabel="Publication actions">
+      <View
+        style={[
+          gateStyles.section,
+          { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' },
+        ]}
+        accessibilityLabel="Publication actions"
+      >
         {view.refreshRequired && onRefreshPackage ? (
           <Pressable
             accessibilityRole="button"
