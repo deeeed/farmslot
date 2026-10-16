@@ -602,7 +602,10 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
     if (!verification) {
       let receipt = runner === 'shell' ? null : readReceipt(files);
       const retry = ownedRetry(before);
-      if (retry && before.accepted) {
+      // Retained evidence never covers owned text that is back in the composer.
+      const restored =
+        before.queue_kind === 'driver-buffer' && bufferedPrompt(before, runner, receipt);
+      if (retry && before.accepted && !restored) {
         evidence = before.accepted;
         verification = 'submitted';
       } else if (flush || retry) {
@@ -618,6 +621,12 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
           verification = 'queued_payload_mismatch';
         payload = receipt.payload;
         if (retry) receipt.queue_was_empty = true;
+        if (retry && receipt.accepted) {
+          // Only records after this submission can prove it.
+          delete receipt.accepted;
+          receipt.sent_at = Date.now();
+          receipt.session_offset = sessionSize(before.session_path) ?? receipt.session_offset;
+        }
       } else {
         if (!payload.trim()) verification = 'empty_payload';
         if (!verification && runner !== 'shell') {
@@ -737,7 +746,8 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
                 receipt_id: receiptIdentity(receipt),
                 payload_hash: receipt.payload_hash,
               };
-              verification = payload.startsWith('/goal ') ? 'queued' : 'submitted';
+              // Only /goal reaches here; a rendered queue never proves its goal turn.
+              verification = 'queued';
               break;
             }
             // Only this receipt's unchanged live composer can authorize another Enter.
@@ -780,8 +790,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
     before_state: before.state,
     after_state: after.state,
     verification,
-    submitted:
-      verification === 'submitted' || (verification === 'queued' && !payload.startsWith('/goal ')),
+    submitted: verification === 'submitted',
     queued: verification === 'queued',
     typed,
     flush,

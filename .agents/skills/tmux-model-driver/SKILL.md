@@ -49,7 +49,8 @@ queue can also use its matching truncated steering preview and separate overflow
 Claude transcript records written after the send prove delivery: an exact human prompt
 (`native-session`), or input queued during a turn (`native-queue`) that Claude attaches
 at its next step (`native-steering`). A `native-queue` receipt stays until its caller
-acknowledges delivery. Claude's own queued input never blocks a handoff; a draft in its
+acknowledges delivery. Up pulls queued input back into the composer (`popAll`), which
+withdraws that proof. Claude's own queued input never blocks a handoff; a draft in its
 boxed composer does.
 Codex native history supplies exact prompt and turn evidence. Native `/goal` delivery requires
 a matching active `thread_goal_updated` objective followed by its new `task_started` turn. Pane-bound hook
@@ -87,9 +88,10 @@ Retained uncertain receipts do not block a different fresh handoff into an empty
 the new handoff gets its own receipt. Retrying an uncertain original with no live buffer
 returns `unverified` without typing or Enter. The original receipt remains intact.
 
-An unverified send retains a private receipt. A retry of the same owned Codex prompt
+An unverified send retains a private receipt. A retry of the same owned Codex or Claude prompt
 returns existing delivery evidence without typing, or submits only Enter when the exact
-original remains in the composer. It never pastes that prompt again. A synchronously
+original remains in the composer. Owned text back in the composer always gets Enter, even
+with retained evidence, and only records after that submission prove it. It never pastes that prompt again. A synchronously
 native-verified send clears its receipt under the transport lock and returns its
 evidence, so direct callers can send again after the turn completes. Late native acceptance
 remains recorded across inspections. For Codex, an accepted receipt does not block a different

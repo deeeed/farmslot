@@ -351,7 +351,6 @@ export function queuedPrompt(meta, runner, receipt) {
     runnerPaneHasQueuedInstruction(
       meta.tail || '',
       receipt.payload,
-      true,
       receipt.queue_was_empty === true,
     )
   )
@@ -459,6 +458,13 @@ export function acceptedClaudePrompt(sessionPath, sessionId, receipt) {
           : record.type === 'queue-operation' && record.operation === 'enqueue'
             ? ['native-queue', record.content]
             : [null, null];
+    // Up pulls queued input back into the composer; that enqueue no longer proves delivery.
+    if (
+      record.type === 'queue-operation' &&
+      record.operation === 'popAll' &&
+      normalizeInstructionText(String(record.content || '')).includes(expected)
+    )
+      queued = null;
     if (typeof text !== 'string' || normalizeInstructionText(text) !== expected) continue;
     const proof = {
       source,

@@ -1635,10 +1635,6 @@ export function runnerPaneHasProgressAfterInstruction(pane: string, message: str
   );
 }
 
-function claudePaneShowsQueuedInstruction(pane: string, message: string): boolean {
-  return runnerPaneHasQueuedInstruction(pane, message);
-}
-
 function claudePaneShowsSubmittedInstruction(pane: string, message: string): boolean {
   const needle = instructionNeedle(message);
   if (!needle) return false;
@@ -1843,7 +1839,6 @@ export function runnerPaneHasPendingInstruction(
     return compactTail.includes(needle) && /(^|\s|[│┃])❯(?:\s|[│┃]|$)/.test(compactTail);
   }
   if (runner === 'claude') {
-    if (claudePaneShowsQueuedInstruction(pane, message)) return true;
     if (claudePaneShowsSubmittedInstruction(pane, message)) return false;
     return (
       compactTail.includes(needle) && (compactTail.includes('❯') || /ctx:\d+%/i.test(compactTail))
@@ -1864,14 +1859,6 @@ export function runnerPaneHasBufferedInstruction(
     runnerPaneContainsInstruction(pane, message) &&
     !runnerPaneHasProgressAfterInstruction(pane, message)
   );
-}
-
-export function runnerBufferedInstructionSubmitKey(
-  _pane: string,
-  runnerId?: string | null,
-): 'Enter' | 'C-m' {
-  // Codex "tab to queue message" postpones input until the turn ends. Enter steers it now.
-  return getRunnerDefinition(runnerId).promptSubmitKey;
 }
 
 export function runnerPromptSubmitKey(runnerId?: string | null): 'Enter' | 'C-m' {
@@ -2614,7 +2601,7 @@ async function submitRunnerInstruction(
       );
       return 'not-buffered';
     }
-    const submitKey = runnerBufferedInstructionSubmitKey(pane, runner);
+    const submitKey = runnerPromptSubmitKey(runner);
     const submit = await execRunnerKeys(vars, target, runner, submitKey, execOnSlot, () =>
       promptMutationStore.getStore()?.started(),
     );
@@ -2639,7 +2626,7 @@ async function submitRunnerInstruction(
       return 'ok';
     }
     if (attempt < 5) {
-      const submitKey = runnerBufferedInstructionSubmitKey(pane, runner);
+      const submitKey = runnerPromptSubmitKey(runner);
       console.warn(`[${logPrefix}] instruction appears buffered in ${target}; sending submit key`);
       await execRunnerKeys(vars, target, runner, submitKey);
     }
@@ -3824,8 +3811,7 @@ export async function sendRunnerPostLaunchPrompt(
       console.log(
         `[${logPrefix}] recovering buffered instruction in ${target} with submit-only delivery`,
       );
-      sendCommand = (paneId) =>
-        runnerKeysCommand(paneId, runnerBufferedInstructionSubmitKey(preSendPane, runner));
+      sendCommand = (paneId) => runnerKeysCommand(paneId, runnerPromptSubmitKey(runner));
     } else {
       try {
         await writeRunnerPromptSentinel(vars, message);

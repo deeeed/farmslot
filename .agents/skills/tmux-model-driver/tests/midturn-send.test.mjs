@@ -701,6 +701,55 @@ test('a busy Claude turn takes Enter input through its native queue', async (t) 
   assert.equal(later.evidence.source, 'native-steering');
 });
 
+// Captured Claude 2.1.292 after Up during a busy turn: the queued handoff is back in the composer.
+const claudeRestored = (text) =>
+  [
+    '  ⎿  Interrupted · What should Claude do instead?',
+    '❯ Esc probe: after the sleep, reply with exactly RESTORED-CHECK.',
+    '  ⎿  $ sleep 40 (39s)',
+    '     (ctrl+b to run in background)',
+    '✽ Hyperspacing… (42s · ↓ 166 tokens)',
+    '─'.repeat(160),
+    `❯ ${text}`,
+    '─'.repeat(160),
+    '  [OMC#4.9.3] | 5h:57%(0h42m) wk:72%(2d13h) | thinking | session:0m | ctx:21% | 🔧2',
+    '  ⏵⏵ bypass permissions on (shift+tab to cycle)',
+  ].join('\n');
+
+for (const delivered of [true, false]) {
+  test(`Claude input pulled back into the composer gets Enter again, never old evidence (${delivered ? 'resubmitted' : 'still unsent'})`, async (t) => {
+    const f = claudeFixture(t, 'busy');
+    f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
+      f.record({ type: 'queue-operation', operation: 'enqueue', content: pasted });
+      return claudeBox('Press up to edit queued messages', `❯ ${pasted}`);
+    });
+    const first = await send('%1', 'claude', f.payload);
+    assert.equal(first.evidence.source, 'native-queue');
+
+    f.record({ type: 'queue-operation', operation: 'popAll', content: f.payload });
+    process.env.TMUX_PANE_STATE_TAIL_CAPTURE = claudeRestored(f.payload);
+    f.setDrop(!delivered);
+    const retriedAt = Date.now();
+    const retry = await send('%1', 'claude', f.payload);
+    const submits = f.keys.filter((args) => args[0] === 'send-keys').length;
+    assert.equal(
+      f.keys.filter((args) => args[0] === 'paste-buffer').length,
+      1,
+      'never pasted again',
+    );
+    assert.equal(retry.typed, false);
+    if (delivered) {
+      assert.equal(retry.verification, 'submitted');
+      assert.ok(retry.evidence.observed_at >= retriedAt, 'proved by the new enqueue only');
+      assert.equal(submits, 2);
+    } else {
+      assert.equal(retry.verification, 'not_sent');
+      assert.equal(retry.evidence, null);
+      assert.equal(submits, 3);
+    }
+  });
+}
+
 test('a stale Claude record appended after the send never proves it', async (t) => {
   const f = claudeFixture(t, 'busy');
   f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {

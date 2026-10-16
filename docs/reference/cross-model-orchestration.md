@@ -23,7 +23,8 @@ also proves queue delivery. Older uncertain receipts still require the complete 
 Claude accepts Enter-submitted input in any phase when its native session is bound; its
 transcript proves the exact human prompt, or input queued during a turn for its next step.
 Retrying
-the same handoff reuses its evidence or sends only Enter to its exact owned composer.
+the same handoff reuses its evidence or sends only Enter to its exact owned composer; owned
+text back in the composer always gets Enter, and only later records prove it.
 Receipts and locks use server socket identity across callers; old receipt files remain discoverable.
 A steering acknowledgement does not claim a new turn started.
 `restore` recovers missing sessions, leaving surviving sessions alone.
