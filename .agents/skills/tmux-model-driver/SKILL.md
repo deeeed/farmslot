@@ -5,7 +5,8 @@ description: Send to a model in tmux with process identity checks, native turn p
 
 # Tmux model driver
 
-Use this transport for lane messages. Submission always uses named `Enter`.
+Use this transport for lane messages. The shared runner adapter selects the submission key.
+For a working Codex composer that requests `Tab`, the driver queues its owned paste with `Tab`.
 The shell entry points resolve their TypeScript loader from the owning Farmslot checkout,
 so they also work when invoked from another checkout or a temporary directory.
 
@@ -30,12 +31,15 @@ observability means `unknown`, even when the screen looks idle.
 It refuses the wrong runner, a shell when a model is expected, a pending question
 or a foreign queue. Codex accepts Enter-submitted steering during busy or unknown
 phases. Other runners and explicit flush still require idle native readiness.
-It pastes the payload once and submits with `Enter`. It never answers a question.
+It pastes the payload once. If `Enter` leaves its exact owned text in a working composer,
+the driver may queue it once with `Tab` and re-verify. It never answers a question.
 
 `submitted` requires exact acceptance of the owned prompt. Codex native history
 can prove steering within the active turn, without claiming a new turn started.
 A complete driver-owned "Messages to be submitted after next tool call" block reports
-`queued`, with `submitted: true`, for the same pane process. This proves queue delivery,
+`queued`, with `submitted: true`, for the same pane process. The newer
+"Queued follow-up inputs" block uses the same receipt and exact-content checks.
+This proves queue delivery,
 with no new-turn claim. Its receipt stays until the owner acknowledges delivery.
 Cancellation or a disappearing banner never clears that evidence.
 A marker or shared prefix alone is insufficient for an older uncertain receipt.
@@ -46,6 +50,9 @@ a matching active `thread_goal_updated` objective followed by its new `task_star
 digests supply acceptance and new-turn evidence for hook-capable runners.
 Rendered output vetoes questions, foreign queues and launch gates. The exact owned
 Codex submitted-queue block also proves delivery. It does not establish a native turn.
+Callers must use the driver's structured result. A matching prefix anywhere in a pane,
+an empty composer, or a working indicator never authorizes a caller to claim delivery,
+paste again, pull back a queued message, or acknowledge another caller's receipt.
 Cursor, Gemini and Grok identities can be detected, but sends fail closed unless
 compatible structured observability is installed.
 

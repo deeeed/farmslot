@@ -6,6 +6,12 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+- Use the shared submit key and verify owned follow-up queues; retry a retained working composer with Tab without retyping.
+
+## 0.6.19 - 2026-10-16
+
+- Align the worker dependency set with Protocol 0.51.0.
+
 ## 0.6.18 - 2026-10-16
 
 - Consume the recipe-runner 0.38.1 still-filename fix throughout the worker dependency set.

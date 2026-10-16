@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-node` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.1.31 - 2026-10-16
+
+- Align the worker dependency set with Protocol 0.51.0.
+
 ## 0.1.30 - 2026-10-16
 
 - Consume the recipe-runner 0.38.1 still-filename fix throughout the worker dependency set.

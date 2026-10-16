@@ -8,20 +8,25 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Restore the publication decision after recovered review findings were already ingested, instead of polling indefinitely with no operator action.
 
+- Recognize owned follow-up queue previews and keep unsubmitted composer text out of delivery verification.
+
+- Detect pinned provider CLI drift across node and SSH shell paths, report unhealthy nodes, and verify exact-version global rollout.
+
 - Resolve PR and ticket branches before automatic slot scoring, preferring a free matching checkout without prompting that every branch is stale.
-
 - Disclose skipped code review in the publish gate and published PR provenance while preserving project approval policy.
-
 - Resolve CI and review follow-up helpers from the connected node installation and report retained delivery refusals without labelling every held handoff busy.
 - Recognize quiescent configured slot sessions across completed runs while preserving foreign sessions and live workers during teardown.
-
 - Keep machine connection health current in cached fleet reads and wait for execution nodes at retained publication gates after gateway restart.
 - Read native parent interruption receipts when hooks retain an active turn, preserving child-stop and later-parent activity guards.
 - Encode artifact URL path segments so publication verifies and embeds filenames containing literal percent escapes and other URL characters.
+- Keep runner runtime and observability outside product checkouts, preserve active session paths, and retain explicitly indexed hidden proof files in immutable evidence bundles.
+
+- Run independent pipeline reviews in native sessions, qualify their recorded visual judgments, and audit publication approval against the frozen evidence.
+- Refresh the publication package after a visual judgment; preserve the saved judgment and report a recoverable failure when refresh is unavailable.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
-- Keep runner runtime and observability outside product checkouts, preserve active session paths, and retain explicitly indexed hidden proof files in immutable evidence bundles.
+## 0.22.1 - 2026-10-16
 
 - Initialize hosted tasks through the execution node’s immutable CLI and mirror its frozen marker, metadata and receipts instead of rendering a second task.
 

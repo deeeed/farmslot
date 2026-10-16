@@ -1873,7 +1873,10 @@ export function runnerBufferedInstructionSubmitKey(
   // still busy. In that state a bare Enter does not submit the visible composer
   // text; it leaves dispatch with a false "prompt delivery failed" even though
   // the prompt is clearly buffered. Use the key the TUI explicitly requests.
-  if (normalizeRunner(runnerId) === 'codex' && /tab to queue message/i.test(pane)) {
+  if (
+    normalizeRunner(runnerId) === 'codex' &&
+    /^\s*tab to queue message(?:\s|$)/im.test(paneTailText(pane.trimEnd(), 4))
+  ) {
     return 'Tab';
   }
   return getRunnerDefinition(runnerId).promptSubmitKey;

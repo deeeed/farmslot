@@ -2,12 +2,14 @@
 
 ## Unreleased
 
-- Produce hosted and authored tasks with retained node tooling, replay policy, metadata and independently retained workspace dependencies.
-- Retain hoisted packages' workspace-provided peers without relaxing missing ordinary dependency checks.
+- Capture validated native review results on the completed command without treating streamed text as proof.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
-- Capture validated native review results on the completed command without treating streamed text as proof.
+## 0.26.0 - 2026-10-16
+
+- Produce hosted and authored tasks with retained node tooling, replay policy, metadata and independently retained workspace dependencies.
+- Retain hoisted packages' workspace-provided peers without relaxing missing ordinary dependency checks.
 
 ## 0.25.4 - 2026-10-16
 

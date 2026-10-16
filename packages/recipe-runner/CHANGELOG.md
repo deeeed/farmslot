@@ -5,9 +5,13 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 ## Unreleased
 
 - MetaMask provider teardown can stop checkout console viewers while retaining the borrowed browser and development server.
-
 - Coordinate MetaMask provider 0.92.12 checkout-scoped iOS companion shutdown; runtime contracts are unchanged.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.38.2 - 2026-10-16
+
+- Align the worker dependency set with Protocol 0.51.0.
 
 ## 0.38.1 - 2026-10-16
 
