@@ -37,6 +37,8 @@ import { useConnectionStore } from '../store/connection';
 import { useConnectedTransport } from './useConnectedTransport';
 
 export interface RunAcceptance {
+  /** No acceptance data or read error is available yet. */
+  loading: boolean;
   /** Re-read acceptance and selected evidence even when the run has not changed. */
   retry(): void;
   evidenceModel: EvidenceReviewModel | null;
@@ -228,6 +230,7 @@ export function useRunAcceptance(
         })
       : null;
     return {
+      loading: !data && !error,
       retry() {
         setBroadcasts((value) => value + 1);
       },

@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, Text, useColorScheme, View } from 'react-native';
+import {
+  Pressable,
+  ScrollView,
+  Text,
+  useColorScheme,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PUBLICATION_GATE_TABS, publicationGateCriteria } from '@farmslot/review-dispatch';
@@ -7,7 +14,10 @@ import { publicationGateColors } from '@farmslot/theme';
 
 import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
 import { MediaViewer } from '../../components/MediaViewer';
-import { TaskAcceptancePanel, TaskAcceptanceSkeleton } from '../../components/TaskAcceptancePanel';
+import {
+  acceptancePanelViewportHeight,
+  TaskAcceptancePanel,
+} from '../../components/TaskAcceptancePanel';
 import { baseStyles } from '../../lib/theme';
 
 import { GateActions, GateReviewVerdicts, GateSummaryCard } from './components/gate-review-panels';
@@ -36,6 +46,7 @@ export function GateReviewScreen({
       setFocusClaim({ claimId: initialClaimId });
     }
   }, [initialClaimId]);
+  const viewport = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const scroll = useRef<ScrollView>(null);
   const evidenceOffset = useRef(0);
@@ -107,8 +118,13 @@ export function GateReviewScreen({
           <View>
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Acceptance criteria</Text>
-              {acceptance.view || acceptance.error ? (
+              <ScrollView
+                nestedScrollEnabled
+                style={{ height: acceptancePanelViewportHeight(expectedRows, viewport.height) }}
+              >
                 <TaskAcceptancePanel
+                  loading={acceptance.loading}
+                  expectedRows={expectedRows}
                   evidenceModel={acceptance.evidenceModel}
                   judgmentRows={acceptance.evidenceModel?.judgmentRows(acceptance.reviewer)}
                   onRecordVisualReview={recordVisualReview}
@@ -120,9 +136,7 @@ export function GateReviewScreen({
                   onRetry={acceptance.retry}
                   onOpenEvidence={actions.openEvidence}
                 />
-              ) : (
-                <TaskAcceptanceSkeleton rows={expectedRows} />
-              )}
+              </ScrollView>
               {acceptance.view?.rows.length === 0 && !acceptance.error ? (
                 <Text style={styles.muted}>This run registered no acceptance criteria.</Text>
               ) : null}
@@ -141,8 +155,8 @@ export function GateReviewScreen({
               artifacts={viewModel.artifacts}
               pairs={viewModel.pairs}
               evidenceModel={acceptance.evidenceModel}
-              loading={!acceptance.view && !acceptance.error}
-              error={acceptance.error ?? undefined}
+              loading={acceptance.loading}
+              error={!acceptance.evidenceModel ? acceptance.error : null}
               retry={acceptance.retry}
               onFocusClaim={(y) =>
                 scroll.current?.scrollTo({ y: evidenceOffset.current + y, animated: true })
@@ -177,7 +191,7 @@ export function GateReviewScreen({
       <View style={styles.section}>
         <GateActions
           showClaims={false}
-          loading={!acceptance.view && !acceptance.error}
+          loading={acceptance.loading}
           disabled={judging}
           reviewPicker={viewModel.reviewPicker}
           decision={viewModel.decision}
