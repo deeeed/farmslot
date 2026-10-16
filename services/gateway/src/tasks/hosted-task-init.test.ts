@@ -1,0 +1,102 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { mock, test } from 'node:test';
+
+import { projectWorkerTemplateSource, selectExecutionTemplate } from '@farmslot/agent-runtime';
+
+import type { SlotVars } from '../core/config.js';
+import * as realExec from '../core/exec.js';
+
+mock.module('../core/exec.js', {
+  namedExports: {
+    ...realExec,
+    execOnSlot: async () => ({ exitCode: 2, stdout: 'TASK_INIT_PARTIAL', stderr: '' }),
+  },
+});
+const fresh: string = './hosted-task-init.js?partial-preservation';
+const { initializeHostedTaskOnSlot } = (await import(
+  fresh
+)) as typeof import('./hosted-task-init.js');
+
+test('partial initialization refuses before any gateway sidecar replaces retained files', async (t) => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'partial-hosted-task-')));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const gateway = path.join(root, 'gateway');
+  const worker = path.join(root, 'worker');
+  const templates = path.join(root, 'templates');
+  fs.mkdirSync(path.join(templates, 'worker'), { recursive: true });
+  fs.writeFileSync(path.join(templates, 'worker/dev.md'), '# Task\n- [ ] Observe\n');
+  const selected = selectExecutionTemplate({
+    sources: [projectWorkerTemplateSource('fixture', templates)],
+    flow: 'dev',
+    platform: 'cli',
+  });
+  for (const directory of [gateway, worker]) {
+    fs.mkdirSync(path.join(directory, 'inputs'), { recursive: true });
+    for (const file of ['mark', 'CHECKLIST.md', 'inputs/handoff.json'])
+      fs.writeFileSync(
+        path.join(directory, file),
+        directory === worker ? 'keep-owned' : 'old-gateway',
+      );
+  }
+  fs.writeFileSync(
+    path.join(worker, 'checklist-target.json'),
+    '{"checklist":"REVIEW.md","signal":"REVIEW-SIGNAL.json"}',
+  );
+  fs.writeFileSync(path.join(worker, 'inputs/recipe-binding.json'), '{}');
+  const files = [
+    'mark',
+    'CHECKLIST.md',
+    'inputs/handoff.json',
+    'checklist-target.json',
+    'inputs/recipe-binding.json',
+  ];
+  const before = files.map((file) => fs.readFileSync(path.join(worker, file), 'utf8'));
+  const slot: SlotVars = {
+    slotId: 'fixture-1',
+    host: 'localhost',
+    machine: 'local',
+    platform: 'cli',
+    sshUser: 'test',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: root,
+    remoteRepo: root,
+    session: 'fixture-1',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'localhost',
+    projectName: 'fixture',
+    resourceVars: {},
+  };
+  await assert.rejects(
+    initializeHostedTaskOnSlot(slot, gateway, {
+      binding: 'static',
+      template: selected,
+      task: {
+        taskDir: worker,
+        flow: 'dev',
+        platform: 'cli',
+        task: { title: 'Partial task', sourceKind: 'text' },
+        handoff: { surface: 'farmslot', project: 'fixture', attemptId: 'original' },
+      },
+    }),
+    /TASK_INIT_PARTIAL/,
+  );
+  assert.deepEqual(
+    files.map((file) => fs.readFileSync(path.join(worker, file), 'utf8')),
+    before,
+  );
+  assert.equal(
+    fs.readdirSync(worker).some((file) => file.startsWith('.task-init-')),
+    false,
+  );
+});

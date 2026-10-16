@@ -23,6 +23,17 @@ import { shellQuote } from '../core/tmux.js';
 import { farmslotDirectoryForSlot } from './agent-runtime-script.js';
 import { copyPreparedTaskRootSidecars, copyTaskDirSubdirectories } from './sidecars.js';
 
+const producedTaskFiles = [
+  'TASK.md',
+  'CHECKLIST.md',
+  'mark',
+  'inputs/handoff.json',
+  'inputs/worker-terminal-contract.json',
+  'inputs/bug-input.json',
+  'inputs/recipe-binding.json',
+  'artifacts/harness-provenance.json',
+] as const;
+
 export interface HostedTaskInput {
   binding: 'project' | 'static';
   task: Omit<TaskInitSpec, 'execution' | 'markCommand' | 'template'>;
@@ -33,7 +44,7 @@ export interface HostedTaskInput {
 export async function hostedTaskCommand(slot: SlotVars, args: readonly string[]): Promise<string> {
   const farm = await farmslotDirectoryForSlot(slot);
   const script =
-    'farm="$1"; shift; source "$farm/scripts/lib/resolve-farmslot-cli.sh" && exec "$FARMSLOT_CLI" --json "$@"';
+    'farm="$1"; shift; export FARMSLOT_CLI="${FARMSLOT_CLI:-$HOME/.local/bin/farmslot}"; source "$farm/scripts/lib/resolve-farmslot-cli.sh" && exec "$FARMSLOT_CLI" --json "$@"';
   return `bash -c ${shellQuote(script)} hosted-task ${shellQuote(farm)} ${args.map(shellQuote).join(' ')}`;
 }
 
@@ -60,15 +71,11 @@ export async function initializeHostedTaskOnSlot(
   });
   if (Buffer.byteLength(request) > 8 * 1024 * 1024)
     throw new Error('Hosted task request exceeds 8 MiB.');
-  if (
-    !(await slotFileExists(
-      slot,
-      path.posix.join(input.task.taskDir, 'artifacts/harness-provenance.json'),
-    ))
-  ) {
-    await slotMkdir(slot, input.task.taskDir);
-    await syncHostedTaskSidecars(slot, gatewayTaskDir, input.task.taskDir);
-  }
+  const hadReceipt = await slotFileExists(
+    slot,
+    path.posix.join(input.task.taskDir, 'artifacts/harness-provenance.json'),
+  );
+  await slotMkdir(slot, input.task.taskDir);
   try {
     await slotWriteFiles(slot, path.posix.dirname(requestPath), [
       {
@@ -94,16 +101,9 @@ export async function initializeHostedTaskOnSlot(
     )
       throw new Error('Node task initialization returned an invalid result.');
     const reference = envelope.data.executionTemplate;
-    for (const file of [
-      'TASK.md',
-      'CHECKLIST.md',
-      'mark',
-      'inputs/handoff.json',
-      'inputs/worker-terminal-contract.json',
-      'inputs/bug-input.json',
-      'inputs/recipe-binding.json',
-      'artifacts/harness-provenance.json',
-    ]) {
+    if (!hadReceipt)
+      await syncHostedTaskSidecars(slot, gatewayTaskDir, input.task.taskDir, producedTaskFiles);
+    for (const file of producedTaskFiles) {
       const remote = path.posix.join(input.task.taskDir, file);
       if (
         ['CHECKLIST.md', 'inputs/bug-input.json'].includes(file) &&
@@ -139,8 +139,10 @@ export async function syncHostedTaskSidecars(
   slot: SlotVars,
   gatewayTaskDir: string,
   workerTaskDir: string,
+  excludeRelativePaths: readonly string[] = [],
 ): Promise<void> {
   const transfer = {
+    excludeRelativePaths,
     taskDir: gatewayTaskDir,
     workerTaskAbs: workerTaskDir,
     host: slot.host,

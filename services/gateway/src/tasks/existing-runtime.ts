@@ -63,10 +63,6 @@ export async function initializeAuthoredTaskOnSlot(
     path.basename(path.dirname(path.dirname(run.taskFile))),
     path.basename(path.dirname(run.taskFile)),
   );
-  if (retained) {
-    await verifyHostedTaskOnSlot(slot, workerTaskDir);
-    return;
-  }
   const task = await readFile(run.taskFile, 'utf8');
   let authored: HandoffMetadata | undefined;
   try {
@@ -78,6 +74,11 @@ export async function initializeAuthoredTaskOnSlot(
   }
   if (authored && (authored.project !== run.project || authored.flow !== run.flowType))
     throw new Error('Existing task handoff belongs to a different project or flow');
+  if (retained) {
+    if (!authored) throw new Error('Retained task identity is missing its handoff.');
+    await verifyHostedTaskOnSlot(slot, workerTaskDir);
+    return;
+  }
   let authoredContract: ReturnType<typeof resolveWorkerTerminalContract> | undefined;
   try {
     authoredContract = JSON.parse(
@@ -100,6 +101,14 @@ export async function initializeAuthoredTaskOnSlot(
       ? withTerminalReportPath(configuredContract, authored.report, [authored.learnings])
       : configuredContract;
   }
+  const selected = resolveConfiguredExecutionTemplateForSlot(project, {
+    flow: run.flowType,
+    platform: slot.platform,
+    runMode: run.mode ?? 'interactive',
+    ...(run.domain ? { explicitDomain: run.domain } : {}),
+    ...(slot.domain ? { slotDomain: slot.domain } : {}),
+    ...(run.executionTemplateId ? { explicitId: run.executionTemplateId } : {}),
+  });
   const handoff =
     authored ??
     buildHandoffMetadata({
@@ -107,7 +116,7 @@ export async function initializeAuthoredTaskOnSlot(
       surface: 'farmslot',
       project: run.project,
       flow: run.flowType,
-      domain: run.domain,
+      domain: selected.effectiveDomain ?? undefined,
       repo: portableProjectRepo(project.projectJson as Record<string, unknown>),
       title: run.ticketData?.title ?? run.ticketOrPr,
       sourceKind: 'text',
@@ -119,14 +128,6 @@ export async function initializeAuthoredTaskOnSlot(
   const checklist = enumerateChecklistCheckboxes(task)
     .map((item) => lines[item.lineIndex])
     .join('\n');
-  const selected = resolveConfiguredExecutionTemplateForSlot(project, {
-    flow: run.flowType,
-    platform: slot.platform,
-    runMode: run.mode ?? 'interactive',
-    ...(run.domain ? { explicitDomain: run.domain } : {}),
-    ...(slot.domain ? { slotDomain: slot.domain } : {}),
-    ...(run.executionTemplateId ? { explicitId: run.executionTemplateId } : {}),
-  });
   const checklistFile = path.join(path.dirname(run.taskFile), 'CHECKLIST.md');
   const checklistMarkdown = existsSync(checklistFile)
     ? await readFile(checklistFile, 'utf8')
@@ -141,7 +142,7 @@ export async function initializeAuthoredTaskOnSlot(
       flow: run.flowType,
       platform: slot.platform,
       runMode: run.mode ?? undefined,
-      domain: run.domain ?? undefined,
+      domain: selected.effectiveDomain ?? undefined,
       task: {
         title: run.ticketData?.title ?? run.ticketOrPr,
         sourceKind: 'text',

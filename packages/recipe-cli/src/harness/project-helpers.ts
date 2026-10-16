@@ -11,7 +11,7 @@ import { isRecord, type RecipeConformanceSource } from '@farmslot/protocol';
 
 import { optionValues } from './command-contract.js';
 import { recipeConformanceIdentity } from './conformance.js';
-import { readProject } from './context.js';
+import { readProject, recipePackageRoot } from './context.js';
 import { ProjectBindingError } from './context-state.js';
 import {
   type ProjectRecipeHost,
@@ -128,22 +128,8 @@ function providerWorkspace(host: ProjectRecipeHost): string {
   const binding = host.context.project;
   if (!binding) throw new Error('Task initialization requires a resolved project.');
   if (binding.provider.package) return binding.provider.root;
-  let root = path.dirname(binding.provider.module);
+  const root = recipePackageRoot(binding.provider.module);
   const checkout = fs.realpathSync(binding.checkoutRoot);
-  const within = (parent: string, child: string) =>
-    child === parent || child.startsWith(`${parent}${path.sep}`);
-  const boundary = within(checkout, root) ? checkout : fs.realpathSync(binding.provider.root);
-  if (!within(boundary, root)) throw new Error('Provider module is outside its authorized source.');
-  while (!fs.existsSync(path.join(root, 'package.json'))) {
-    if (root === boundary)
-      throw new Error(
-        'Provider tooling must declare a workspace manifest within its authorized source.',
-      );
-    const parent = path.dirname(root);
-    if (parent === root || !within(boundary, parent))
-      throw new Error('Provider tooling workspace escapes its authorized source.');
-    root = parent;
-  }
   if (
     root === checkout ||
     root === fs.realpathSync(host.context.target.value) ||

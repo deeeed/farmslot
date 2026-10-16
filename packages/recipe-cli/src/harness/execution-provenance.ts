@@ -1,6 +1,7 @@
 // What a run executed, bound at its start and compared before and after it
 // runs: the recipe, the product checkout, the runner (the host package), the
 // recipe libraries and any command helper scripts. Drift invalidates the run.
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs, { constants as fsConstants } from 'node:fs';
@@ -15,6 +16,16 @@ import { harnessHost } from './host.js';
 import { isPathWithin } from './paths.js';
 
 const DIRECTORY_IGNORED_ROOTS = new Set(['.git', 'node_modules', 'temp']);
+
+const retainedSourceRoot = new AsyncLocalStorage<string | undefined>();
+
+/** Only the receipt-verified task host permits file aliases inside its immutable pin. */
+export function withRetainedSourceProvenance<T>(
+  root: string | undefined,
+  invoke: () => Promise<T>,
+): Promise<T> {
+  return retainedSourceRoot.run(root ? fs.realpathSync(root) : undefined, invoke);
+}
 
 const gitContexts = new Map<string, { topLevel: string; pathspec: string } | null>();
 
@@ -438,6 +449,16 @@ function hashDirectory(
     return;
   }
   if (stat.isSymbolicLink()) {
+    const pin = retainedSourceRoot.getStore();
+    if (pin && isPathWithin(pin, absolute)) {
+      const target = fs.realpathSync(absolute);
+      if (isPathWithin(pin, target) && fs.statSync(target).isFile()) {
+        hash.update(`link\0${relative}\0${fs.readlinkSync(absolute)}\0`);
+        hash.update(readRegularFileNoFollow(target));
+        hash.update('\0');
+        return;
+      }
+    }
     throw new Error(`Execution provenance source must not be a symbolic link: ${absolute}`);
   }
   hash.update(`file\0${relative}\0`);

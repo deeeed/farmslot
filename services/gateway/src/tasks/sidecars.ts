@@ -50,6 +50,8 @@ export interface CopyTaskDirSubdirectoriesParams {
   host: string;
   machine: string;
   sshTarget?: string;
+  /** Node-produced identity/documents are never replaced by gateway staging. */
+  excludeRelativePaths?: readonly string[];
 }
 
 /**
@@ -76,13 +78,19 @@ export async function copyTaskDirSubdirectories(
       await cp(source, dest, {
         recursive: true,
         // Called for the root and every entry; a rejected path is not descended.
-        filter: (entry) => !isWorkerMirrorEntry(entry),
+        filter: (entry) =>
+          !isWorkerMirrorEntry(entry) &&
+          !params.excludeRelativePaths?.includes(path.relative(params.taskDir, entry)),
       });
     } else {
       if (!params.sshTarget) throw new Error(`missing ssh target for ${subdir}/ copy`);
+      const exclusions = (params.excludeRelativePaths ?? [])
+        .filter((entry) => entry.startsWith(`${subdir}/`))
+        .map((entry) => `--exclude=${shellQuote(`/${entry.slice(subdir.length + 1)}`)} `)
+        .join('');
       const result = await execLocal(
         `rsync -az ${RSYNC_SSH_SHELL_OPTION} --exclude=${shellQuote(`*${WORKER_MIRROR_SUFFIX}`)} ` +
-          `${shellQuote(`${source}/`)} ${shellQuote(`${params.sshTarget}:${dest}/`)}`,
+          `${exclusions}${shellQuote(`${source}/`)} ${shellQuote(`${params.sshTarget}:${dest}/`)}`,
       );
       if (result.exitCode !== 0) {
         throw new Error(
@@ -102,6 +110,8 @@ export interface CopyPreparedTaskRootSidecarsParams {
   host: string;
   machine: string;
   sshTarget?: string;
+  /** Node-produced identity/documents are never replaced by gateway staging. */
+  excludeRelativePaths?: readonly string[];
 }
 
 export async function copyPreparedTaskRootSidecars(
@@ -111,6 +121,7 @@ export async function copyPreparedTaskRootSidecars(
   const local = isLocal(params.host, params.machine);
 
   for (const sidecar of TASK_ROOT_SIDECARS) {
+    if (params.excludeRelativePaths?.includes(sidecar)) continue;
     const source = path.join(params.taskDir, sidecar);
     const dest = path.join(params.workerTaskAbs, sidecar);
     if (!existsSync(source)) {

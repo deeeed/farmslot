@@ -467,3 +467,40 @@ test('retained hosts preserve recipe runtime, farm runtime and declared conforma
     assert.deepEqual(host.context.project?.checks, checks);
   });
 });
+
+test('external providers retain the owning workspace without widening their recipe root', async (t) => {
+  const f = fixture(t);
+  const recipe = path.join(f.pack, 'recipe');
+  const library = path.join(f.pack, 'lib');
+  fs.mkdirSync(recipe);
+  fs.mkdirSync(library);
+  fs.writeFileSync(path.join(library, 'policy.mjs'), 'export const ready = true;\n');
+  const provider = fs.readFileSync(path.join(f.pack, 'provider.mjs'), 'utf8');
+  fs.writeFileSync(
+    path.join(recipe, 'provider.mjs'),
+    `if (!(await import('../lib/policy.mjs')).ready) throw new Error('Missing policy');\n${provider}`,
+  );
+  fs.rmSync(path.join(f.pack, 'provider.mjs'));
+  fs.writeFileSync(
+    path.join(f.pack, 'package.json'),
+    JSON.stringify({ private: true, type: 'module', files: ['recipe', 'lib', 'project.json'] }),
+  );
+  const config = f.options.projects?.[0]?.config;
+  assert.ok(config?.recipe);
+  config.recipe.provider = { module: 'provider.mjs', root: { projectPath: recipe } };
+  fs.writeFileSync(path.join(f.pack, 'project.json'), JSON.stringify(config));
+  await withProjectRecipeHost(f.options, async (host) => {
+    assert.equal(host.context.project?.provider.root, recipe);
+    const execution = await projectTaskExecution(host, {
+      executable: path.join(f.installed, 'farmslot'),
+      packageRoot: f.installed,
+      distributionRoot: f.installed,
+    });
+    retainTaskExecution(f.taskDir, execution);
+  });
+  fs.rmSync(f.pack, { recursive: true, force: true });
+  await withTaskProjectHost(f.options, f.taskDir, async (host) => {
+    assert.equal(path.basename(host.context.project!.provider.root), 'recipe');
+    assert.equal(host.provider.runtime.id, 'headless');
+  });
+});
