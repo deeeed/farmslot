@@ -4,6 +4,8 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- Expose provider CLI checks through a standalone entry that does not require a checkout.
+
 - Detect pinned provider CLI drift across node and SSH shell paths, report unhealthy nodes, and verify exact-version global rollout.
 
 - Expose existing recipe provider declarations to typed hosted-task consumers.

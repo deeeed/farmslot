@@ -6,7 +6,8 @@
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./sources": "./src/sources/index.ts"
+    "./sources": "./src/sources/index.ts",
+    "./provider-cli": "./src/provider-cli.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
