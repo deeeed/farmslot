@@ -21,6 +21,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Initialize hosted tasks through the execution node’s immutable CLI and mirror its frozen marker, metadata and receipts instead of rendering a second task.
 
+- Recognize owned follow-up queue previews and keep unsubmitted composer text out of delivery verification.
+
 ## 0.22.0 - 2026-10-16
 
 - Refresh stale fleet snapshots from the monitor, stop leftover service helpers when their health is down, and re-probe retired worker targets before retaining cleanup holds.

@@ -8,7 +8,10 @@ import { fileURLToPath } from 'node:url';
 import { durableWrite } from '../../../../packages/agent-runtime/src/native/storage.ts';
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { readPaneStateFromCapture } from '../../../../services/gateway/src/runners/pane-state-script.ts';
-import { runnerLaunchBlockerAutoActionKey } from '../../../../services/gateway/src/runners/registry.ts';
+import {
+  runnerBufferedInstructionSubmitKey,
+  runnerLaunchBlockerAutoActionKey,
+} from '../../../../services/gateway/src/runners/registry.ts';
 import { runnerPaneBufferedInstruction } from '../../../../services/gateway/src/runners/runner-pane-input.ts';
 
 import {
@@ -667,14 +670,20 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
               ? 'busy'
               : null;
         if (!verification) {
-          tmux(['send-keys', '-t', pane, 'Enter']);
+          const submitKey =
+            supportsMidTurnPrompt(runner) && !payload.startsWith('/goal ')
+              ? runnerBufferedInstructionSubmitKey(after.tail, runner)
+              : 'Enter';
+          tmux(['send-keys', '-t', pane, submitKey]);
           if (receipt) {
             receipt.submitted_at = Date.now();
+            receipt.submit_key = submitKey;
             durableWrite(files.receipt, receipt);
           }
         }
         verification ||= 'unverified';
-        const deadline = Date.now() + timeout;
+        let deadline = Date.now() + timeout;
+        let queuedWithTab = receipt?.submit_key === 'Tab';
         if (verification === 'unverified') {
           do {
             after = paneState(pane, runner, selection);
@@ -725,6 +734,24 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
               };
               verification = 'queued';
               break;
+            }
+            // Only this receipt's unchanged live composer can authorize queue recovery.
+            // Historical prompt text and foreign queues never authorize another key.
+            if (
+              !queuedWithTab &&
+              !flush &&
+              !payload.startsWith('/goal ') &&
+              after.queue_kind === 'driver-buffer' &&
+              bufferedPrompt(after, runner, receipt) &&
+              runnerBufferedInstructionSubmitKey(after.tail, runner) === 'Tab'
+            ) {
+              queuedWithTab = true;
+              tmux(['send-keys', '-t', pane, 'Tab']);
+              receipt.submit_key = 'Tab';
+              receipt.submitted_at = Date.now();
+              durableWrite(files.receipt, receipt);
+              deadline = Date.now() + timeout;
+              continue;
             }
             await delay(40);
           } while (Date.now() < deadline);
