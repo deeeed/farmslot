@@ -648,13 +648,17 @@ the gate redesign; it does not change publication authority.
 
 When a package contains qualified visual Issues, both clients offer one primary
 action, "Send back to agent". The gateway derives its ACs, reasons and exact
-files/moments from the current trusted receipts. The existing `send-feedback`
-action enters the retained self-review fix path and its delivery recovery.
+files/moments from the current trusted receipts. The previously handled but
+unoffered `send-feedback` action enters the retained self-review fix path and
+its delivery recovery.
 Writing feedback alone is not delivery. One accepted request spends one existing
 worker-fix round; a duplicate or uncertain retry keeps the same charge and turn.
 
-The retained worker fixes and records only the rejected criteria, with their
-setup/teardown dependencies. The engine retains the previous proof packages and
+The retained worker authors a self-contained repair recipe for the rejected
+criteria, composing normal setup, checks and teardown. Its entire graph runs;
+there is no node skipping, assertion suppression or partial-run waiver. Fresh
+failures always block and cannot be replaced with earlier proof.
+The engine retains the previous proof packages and
 writes one explicit claim-to-source selection covering the whole task. Each
 selected claim keeps its original execution, closure, media and receipt identity.
 Neither a client-combined ledger nor relabelled old proof is permitted.
@@ -664,8 +668,9 @@ An independent native reviewer must explicitly assess each retained claim
 against the actual repair diff at the new head. Its typed result binds the
 repair scope and old source closure to that head. A missing or negative result
 requires fresh proof; it cannot clear an Issue. Earlier confirmed receipts are
-qualified against their original sources and are never reissued. Source changes
-outside the repair scope stop the loop for a new operator decision.
+qualified against their original sources and are never reissued. The repair
+head must descend from the frozen package head with the same review base;
+otherwise a new operator-approved scope is required.
 
 Completion refreshes the package and returns the same run to its gate only after
 current-head CI, required reviews and complete qualifying proof pass. Reasons

@@ -1295,6 +1295,11 @@ Stale selection, missing rationale, ownership conflict, another active fix or
 exhausted existing fix/review budget MUST refuse before dispatch.
 The scope MUST name the retained review loop whose existing worker-fix budget
 is used; an unavailable loop is a refusal, not permission to create a counter.
+Every required reviewer MUST support the repair result schema, and remaining
+review admissions MUST cover the required re-reviews, before fix reservation.
+Use a v2-capable session, cold when the retained session has fixed v1 schema.
+`run.resolveDecision` MUST perform admission before consuming the decision; an
+engine-side race/refusal MUST retain or recreate the held gate, not fail the run.
 
 The gateway MUST persist one repair identity, budget reservation and delivery
 state before calling the existing self-review `sendFeedbackToWorker` path. The
@@ -1304,14 +1309,34 @@ structured acceptance and uncertain-delivery recovery; artifact creation or
 terminal text MUST NOT establish acceptance. No second sender or retry counter
 is permitted. An unaccepted reservation MUST remain recoverable and MUST NOT
 make its capacity available to a concurrent request.
+The reservation is the persisted increment of the named review's `retryCount`;
+the existing retry loop MUST consume it without another increment. Undeliverable
+reservations stay charged and recoverable through the same repair or normal run
+cancellation. An accepted turn MUST NOT be refunded.
 
 ### Scoped recording and retained claims
 
 The gateway-owned scope is `RecipeRepairScope` in `@farmslot/protocol`, retained
 as `artifacts/visual-repair-scope.json`. The normal hosted task recipe wrapper
 passes its checked contents through `RecipeRunRequest.repairScope` in
-`@farmslot/recipe-runner`. The scope authorises the rejected ACs and their declared
-setup/teardown; it MUST NOT suppress a required assertion within those ACs.
+`@farmslot/recipe-runner`. The authoritative digest and active repair identity
+MUST remain in the run store. File presence alone MUST NOT activate a scope;
+completed/refused scopes MUST be retired and ignored by normal recipe runs.
+
+The worker MUST author a complete, self-contained repair recipe using the normal
+recipe/library composition model. It MUST explicitly establish its prerequisites
+and run from its own `workflow.entry` through normal teardown. It MUST NOT skip
+nodes from the original graph, use `stopAfterNode`, introduce per-AC setup fields
+or relax normal partial-run refusal. The full task registry remains in the fresh
+invocation; unexecuted sibling claims remain `missing` there. Only the checked
+source selection below may supply their retained proof.
+
+Every executed assertion MUST retain its normal effect, including setup and
+incidental sibling checks. The whole fresh attempt MUST pass the existing
+failure-to-status rules. A fresh `failed` or `weak` claim MUST select fresh proof
+and block; retained proof MUST NOT hide it. A non-rejected AC may select retained
+proof only if the fresh graph did not execute its proof nodes, or its fresh
+verdict is `proven`/`awaiting-review`. Rejected ACs always require fresh proof.
 
 The existing engine closure-retention/finalization utilities MUST retain each
 referenced original package and write `repair-selection.json` as engine-owned
@@ -1333,8 +1358,11 @@ An independent native review of the actual old-head/new-head repair diff MUST
 explicitly classify each retained AC as unaffected. The typed applicability
 result MUST bind current head, scope digest, AC ID, original source closure and
 rationale to the admitted review command. Missing or affected claims require
-fresh proof and block return to a publishable gate. Changed source outside the
-authorised repair MUST hold for an operator decision. Old confirmed receipts
+fresh proof and block return to a publishable gate. For each retained source,
+the diff starts at that source's recorded revision, even across several repairs.
+The new head MUST descend from the scope's frozen package head with the same
+review base; a different ancestry/base requires a new operator-approved scope.
+Old confirmed receipts
 remain valid only for their original qualifying source; this applicability
 result MUST NOT restamp, replace or override any person's Issue.
 
@@ -1347,12 +1375,14 @@ Both clients MUST use the existing shared action/list model and show progress
 or recovery at the triggering action. No automatic approval is permitted.
 
 Every reason MUST remain bound to its source receipt and repair ID in retained
-feedback and the existing retrospective learning input. Learning adoption and
+feedback and the existing retrospective `feedbackCandidates` input, using a
+stable receipt/repair source key. Learning adoption and
 recipe-library publication retain their existing authority.
 
 Conformance MUST cover one rejected AC with a retained confirmed sibling,
 current-head applicability refusal, changed/foreign source refusal, no omitted
-required check, duplicate and uncertain delivery, exhausted budgets, restart
+required check, fresh sibling failure that retained proof cannot hide, complete
+repair-graph execution, duplicate and uncertain delivery, exhausted budgets, restart
 recovery, learning retention and gate refresh. Live proof MUST use a disposable
 retained worker through the production delivery path, with no publication.
 
@@ -1364,6 +1394,9 @@ operator entry points. Protocol owns `RecipeRepairScope`,
 gateway recovery and recipe-runner are their consumers. The native adapter MUST
 advertise that result capability before the gateway admits its review. SDK and
 review-dispatch consume the canonical selected sources for both clients.
+`capturePipelineVisualInput` and pipeline receipt stamping MUST consume that
+per-source selection, replacing their single-source/package-head assumptions
+only for an authorised repair; ordinary v1 review binding is unchanged.
 `PipelineRepairVisualJudgments` uses `pipeline-visual-judgments-v2`: current
 `headSha`, `scopeDigest`, per-source existing visual-judgment results, and retained
 rows containing `claimId`, original `recipeRunId`/`closureIdentity`, `unaffected`
