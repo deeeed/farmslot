@@ -939,6 +939,11 @@ function buildPressureConcerns(
   } else if (!health.online) {
     concerns.push({ severity: 'critical', reason: 'Machine is offline.' });
   } else {
+    if (health.workerCliHealth?.ok === false)
+      concerns.push({
+        severity: 'critical',
+        reason: health.workerCliHealth.reason ?? 'Worker CLI verification failed',
+      });
     for (const provider of health.providerCliHealth ?? []) {
       if (provider.confirmedMismatch)
         concerns.push({

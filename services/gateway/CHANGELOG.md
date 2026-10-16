@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Keep failed dev worker CLI verification visible as critical node and fleet health.
+
 - Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review.
 
 - Restore publication decisions after recovered findings, preserve fix checklists during gate replay, and continue the recorded review mode with the latest completed worker CI receipt.

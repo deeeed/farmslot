@@ -451,6 +451,10 @@ const cliFixture = (t, { tmuxServer = true } = {}) => {
   write(
     'bin/tmux',
     `#!/bin/sh
+if [ -f "$HOME/tmux-unresponsive" ] && [ "$(cat "$HOME/tmux-unresponsive")" = "$1" ]; then
+  echo $$ > "$HOME/tmux-unresponsive.pid"
+  exec node -e 'setInterval(() => {}, 60000)'
+fi
 case "$1" in
   list-sessions) [ -f "$HOME/tmux-server" ] ;;
   new-session)
@@ -1276,6 +1280,7 @@ for (const tmuxServer of [true, false]) {
       SCRIPT_DIR: path.join(fixture.root, 'scripts'),
       MACHINE: 'fixture-machine',
       CLI_ENTRY: fixture.entry,
+      NODE_PATH: path.join(fixture.root, 'node-bin/node'),
       NODE_GATEWAY_URL: 'ws://127.0.0.1:7777',
       INSTANCE: 'prod',
       CLI_VERIFY_TIMEOUT_SECONDS: '5',
@@ -1310,4 +1315,105 @@ for (const tmuxServer of [true, false]) {
       );
     }
   });
+}
+
+for (const phase of ['list-sessions', 'new-session', 'kill-session', 'success']) {
+  test(
+    phase === 'success'
+      ? 'worker verify clears earlier dev health failure after successful verification'
+      : `worker verify bounds an unresponsive tmux ${phase} client and reports dev health`,
+    async (t) => {
+      const fixture = cliFixture(t);
+      fixture.write('home/tmux-unresponsive', phase);
+      const entry = seedSnapshot(fixture, fixture.sha);
+      link(fixture, '.local/bin/farmslot', entry);
+      const script = fs.readFileSync(path.join(repo, 'scripts/deploy-node.sh'), 'utf8');
+      const verify = /<< 'VERIFY'\n([\s\S]*?)\nVERIFY\n/.exec(script)[1];
+      const healthFile = path.join(fixture.home, '.farmslot-dev/node-worker-cli-health.json');
+      fixture.write(
+        'home/.farmslot-dev/node-worker-cli-health.json',
+        JSON.stringify({
+          ok: false,
+          checkedAt: new Date().toISOString(),
+          reason: 'earlier failure',
+        }),
+      );
+      const env = {
+        ...process.env,
+        HOME: fixture.home,
+        PATH: `${fixture.root}/bin:${fixture.root}/node-bin:/usr/bin:/bin:/usr/sbin:/sbin`,
+      };
+      for (const key of ['FARMSLOT_HOME', 'BASH_ENV', 'ZDOTDIR', 'TMUX', 'TMUX_PANE'])
+        delete env[key];
+      const child = spawn(
+        'bash',
+        [
+          '-s',
+          entry,
+          'ws://127.0.0.1:7801',
+          fs.readFileSync(path.join(repo, 'scripts/lib/worker-env-prefix.sh'), 'utf8').trimEnd(),
+          fs.readFileSync(path.join(repo, 'scripts/lib/tmux-bin.sh'), 'utf8'),
+          '1',
+          'dev',
+          '',
+          path.join(fixture.root, 'node-bin/node'),
+          'fixture-machine',
+          healthFile,
+        ],
+        {
+          detached: true,
+          env,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        },
+      );
+      const stop = () => {
+        if (!child.pid) return;
+        try {
+          process.kill(-child.pid, 'SIGKILL');
+        } catch (error) {
+          if (error.code !== 'ESRCH') throw error;
+        } // Only this owned fixture group.
+      };
+      t.after(stop);
+      // A failure ceiling, not a wait: removing the production bound cannot hang the test.
+      const ceiling = setTimeout(stop, 3_000);
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (chunk) => {
+        stdout += chunk;
+      });
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk;
+      });
+      try {
+        const finished = new Promise((resolve, reject) => {
+          child.once('error', reject);
+          child.once('close', (code) => resolve(code));
+        });
+        child.stdin.end(verify);
+        assert.equal(await finished, phase === 'success' ? 0 : 1, stderr);
+      } finally {
+        clearTimeout(ceiling);
+      }
+      if (phase !== 'success') assert.match(stderr, /tmux server unresponsive on fixture-machine/);
+      assert.doesNotMatch(stdout, /no tmux server running/);
+      const health = JSON.parse(fs.readFileSync(healthFile, 'utf8'));
+      assert.equal(health.ok, phase === 'success');
+      assert.equal(
+        health.reason,
+        phase === 'success' ? undefined : 'tmux server unresponsive on fixture-machine',
+      );
+      assert(Number.isFinite(Date.parse(health.checkedAt)));
+      if (phase !== 'success') {
+        const client = Number(
+          fs.readFileSync(path.join(fixture.home, 'tmux-unresponsive.pid'), 'utf8'),
+        );
+        assert.throws(
+          () => process.kill(client, 0),
+          { code: 'ESRCH' },
+          'timed-out client was reaped',
+        );
+      }
+    },
+  );
 }

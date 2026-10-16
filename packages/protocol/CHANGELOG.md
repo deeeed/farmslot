@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Expose optional dev deployment worker CLI verification health on node and fleet metrics.
+
 - Expose optional provider probe status, load, retry and retained mismatch diagnostics.
 
 - Project skipped code review as a nonblocking publication disclosure.
