@@ -11,6 +11,26 @@ export function runnerPaneBufferedInstruction(pane: string): string {
     .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
     .trimEnd()
     .split('\n');
+  // Claude draws its live composer between the last two rules; plugin status lines below vary.
+  // Locate it by the rules, since a draft line can itself start with the prompt marker.
+  // Bash mode keeps its `!` marker, so it never reads as an empty composer.
+  const rule = (line: string) => /^\s*─{8,}\s*$/.test(line);
+  const boxEnd = lines.map(rule).lastIndexOf(true);
+  const boxStart = lines
+    .map(
+      (line, index) =>
+        index < boxEnd - 1 && rule(line) && /^\s*[❯!](?:\s|$)/.test(lines[index + 1]),
+    )
+    .lastIndexOf(true);
+  if (boxStart !== -1) {
+    const text = normalizeInstructionText(
+      lines
+        .slice(boxStart + 1, boxEnd)
+        .join('\n')
+        .replace(/^\s*❯\s?/, ''),
+    );
+    return text === 'Press up to edit queued messages' ? '' : text;
+  }
   const footer = lines
     .map((line) =>
       /\? for shortcuts|\bcontext(?:\s+\d+%)?\s+left\b|\btab to queue message\b|← for agents|⚠\s+\d+\s+warnings?\b/i.test(

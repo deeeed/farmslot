@@ -681,6 +681,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
 const KNOWN_RUNNER_OBSERVABILITY: Record<string, RunnerObservability> = {
   claude: {
     ...claudeHookObservability,
+    supportsMidTurnPrompt: true,
     getBackgroundWorkState: async (vars, target) =>
       (await import('./claude-background-work.js')).readClaudeBackgroundWorkState(vars, target),
   },

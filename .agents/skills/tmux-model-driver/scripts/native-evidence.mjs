@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import {
@@ -11,7 +12,6 @@ import {
   buildCodexPromptProbeCommand,
   buildCodexSessionBindingProbeCommand,
   buildCodexTurnStateProbeCommand,
-  codexSessionObservability,
   parseCodexPromptProbe,
   parseCodexSessionBindingProbe,
   parseCodexTurnStateProbe,
@@ -26,20 +26,43 @@ import {
 } from '../../../../services/gateway/src/runners/observability-files.ts';
 import {
   instructionNeedle,
+  normalizeInstructionText,
   runnerPromptDigest,
 } from '../../../../services/gateway/src/runners/observability-prompt-digest.ts';
 import {
   buildRunnerOpenFileProbeCommand,
   parseOpenFilePaths,
 } from '../../../../services/gateway/src/runners/process-open-files.ts';
+import { getRunnerObservability } from '../../../../services/gateway/src/runners/registry.ts';
 import {
   runnerPaneHasBufferedInstruction,
   runnerPaneHasQueuedInstruction,
 } from '../../../../services/gateway/src/runners/runner-pane-input.ts';
 
-export function readOptional(file) {
+// A positive start reads from that byte offset; a negative start reads that many trailing bytes.
+export function readOptional(file, start = 0) {
   try {
-    return fs.readFileSync(file, 'utf8');
+    if (!start) return fs.readFileSync(file, 'utf8');
+    const fd = fs.openSync(file, 'r');
+    try {
+      const size = fs.fstatSync(fd).size;
+      const from = start < 0 ? Math.max(0, size + start) : start;
+      if (from > size) return '';
+      const buffer = Buffer.alloc(size - from);
+      fs.readSync(fd, buffer, 0, buffer.length, from);
+      return buffer.toString('utf8');
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+export function sessionSize(sessionPath) {
+  try {
+    return sessionPath ? fs.statSync(sessionPath).size : null;
   } catch (error) {
     if (error.code === 'ENOENT') return null;
     throw error;
@@ -47,10 +70,16 @@ export function readOptional(file) {
 }
 
 export const supportsMidTurnPrompt = (runner) =>
-  runner === 'codex' && codexSessionObservability.supportsMidTurnPrompt === true;
+  getRunnerObservability(runner)?.supportsMidTurnPrompt === true;
+
+// Codex renders its pending steering queue. Claude proves queued input only in its transcript.
+const rendersSteeringQueue = (runner) => runner === 'codex' && supportsMidTurnPrompt(runner);
+
+export const requiresNativeSession = (runner) =>
+  supportsMidTurnPrompt(runner) && !rendersSteeringQueue(runner);
 
 export const hasSubmittedQueue = (runner, tail) =>
-  supportsMidTurnPrompt(runner) && runnerPaneHasQueuedInstruction(tail);
+  rendersSteeringQueue(runner) && runnerPaneHasQueuedInstruction(tail);
 
 export const paneIdentity = (meta) =>
   JSON.stringify([meta.pane_pid, meta.process_started_at, meta.runner_pids]);
@@ -125,10 +154,10 @@ function unansweredQuestion(hooks, transcriptPath) {
   };
 }
 
-export function transcriptQuestion(transcriptPath) {
+export function transcriptQuestion(transcriptPath, start = 0) {
   if (!transcriptPath) return null;
   const unresolved = new Map();
-  for (const record of parseHookJsonl(readOptional(transcriptPath))) {
+  for (const record of parseHookJsonl(readOptional(transcriptPath, start))) {
     const items =
       record.type === 'response_item' ? [record.payload] : record.message?.content || [];
     for (const item of items) {
@@ -153,9 +182,51 @@ export function transcriptQuestion(transcriptPath) {
   return [...unresolved.values()].at(-1) || null;
 }
 
+const claudeTranscripts = new Map();
+
+function claudeTranscript(root, sessionId) {
+  const key = path.join(root, sessionId);
+  if (!claudeTranscripts.has(key)) {
+    const projects = path.join(root, 'projects');
+    const directory = (fs.existsSync(projects) ? fs.readdirSync(projects) : []).find((name) =>
+      fs.existsSync(path.join(projects, name, `${sessionId}.jsonl`)),
+    );
+    if (!directory) return null;
+    claudeTranscripts.set(key, path.join(projects, directory, `${sessionId}.jsonl`));
+  }
+  return claudeTranscripts.get(key);
+}
+
+// Claude Code registers each interactive process with its current session and turn status.
+function claudeProcessSession(meta) {
+  const root = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+  for (const pid of meta.runner_pids || []) {
+    const record = parseHookJsonl(readOptional(path.join(root, 'sessions', `${pid}.json`)))[0];
+    // A reused pid keeps an older record until the new process registers itself.
+    if (String(record?.pid) !== String(pid) || !(record.startedAt >= meta.process_started_at))
+      continue;
+    if (!record.sessionId) return null;
+    return {
+      sessionId: record.sessionId,
+      // A fresh session writes its transcript with the first prompt.
+      sessionPath: claudeTranscript(root, record.sessionId),
+      hooks: [],
+      snapshot: {},
+      processBound: true,
+      status: record.status,
+      observedAt: record.statusUpdatedAt || null,
+      // An unanswered question blocks the turn, so it is in the latest records.
+      questionStart: -4 * 1024 * 1024,
+    };
+  }
+  return null;
+}
+
 function sessionBinding(meta, runner, obsDir) {
   const bound = hookSnapshot(meta, runner, obsDir);
-  if (bound || runner !== 'codex') return bound;
+  if (bound) return bound;
+  if (runner === 'claude') return claudeProcessSession(meta);
+  if (runner !== 'codex') return null;
   const paths = new Set();
   for (const pid of meta.runner_pids || []) {
     for (const file of runProbe(buildRunnerOpenFileProbeCommand(pid), parseOpenFilePaths)) {
@@ -214,7 +285,14 @@ export function nativeState(meta, runner, obsDir) {
       observedAt = probe.observedAt;
     }
   }
-  if (runner === 'claude') {
+  if (runner === 'claude' && bound.processBound) {
+    phase = bound.status === 'busy' ? 'busy' : bound.status === 'idle' ? 'idle' : 'unknown';
+    source =
+      process.env.TMUX_MODEL_DRIVER_READ_ONLY === '1'
+        ? 'native-session-read-only'
+        : 'native-session';
+    observedAt = bound.observedAt;
+  } else if (runner === 'claude') {
     const command = buildClaudeInterruptionProbeCommand(bound.snapshot, bound.sessionId);
     if (command) {
       const turn = applyClaudeInterruptionProbe(
@@ -231,7 +309,8 @@ export function nativeState(meta, runner, obsDir) {
     }
   }
   const question =
-    transcriptQuestion(bound.sessionPath) || unansweredQuestion(bound.hooks, bound.sessionPath);
+    transcriptQuestion(bound.sessionPath, bound.questionStart) ||
+    unansweredQuestion(bound.hooks, bound.sessionPath);
   return {
     phase,
     source,
@@ -259,7 +338,7 @@ export function writeSentinel(obsDir, payload, sentAt) {
 }
 
 export function queuedPrompt(meta, runner, receipt) {
-  if (!receipt || !supportsMidTurnPrompt(runner)) return null;
+  if (!receipt || !rendersSteeringQueue(runner)) return null;
   if (
     receipt.submitted_at &&
     receipt.submit_key === 'Enter' &&
@@ -327,6 +406,11 @@ export function acceptedPrompt(meta, runner, obsDir, receipt) {
     // Do not compare native turn ids with hook timestamp tokens or override an exact-history miss.
     return null;
   }
+  const transcript =
+    runner === 'claude' &&
+    Number.isSafeInteger(receipt.session_offset) &&
+    acceptedClaudePrompt(bound.sessionPath, bound.sessionId, receipt);
+  if (transcript) return transcript;
   const proof = promptAcceptedFromHooks(
     bound.hooks,
     receipt.digest,
@@ -350,6 +434,37 @@ export function acceptedPrompt(meta, runner, obsDir, receipt) {
     };
   }
   return null;
+}
+
+// Claude records idle input as a human prompt. Input during a turn is queued at once and
+// attached to the turn at its next step. Only records written after the send can match.
+export function acceptedClaudePrompt(sessionPath, sessionId, receipt) {
+  if (!sessionPath) return null;
+  const expected = normalizeInstructionText(receipt.payload);
+  let queued = null;
+  for (const record of parseHookJsonl(readOptional(sessionPath, receipt.session_offset))) {
+    const observed = Date.parse(record.timestamp);
+    if (!(observed >= receipt.sent_at) || (record.sessionId && record.sessionId !== sessionId))
+      continue;
+    const [source, text] =
+      record.type === 'user' && !record.isMeta
+        ? ['native-session', record.message?.content]
+        : record.type === 'attachment' && record.attachment?.type === 'queued_command'
+          ? ['native-steering', record.attachment.prompt]
+          : record.type === 'queue-operation' && record.operation === 'enqueue'
+            ? ['native-queue', record.content]
+            : [null, null];
+    if (typeof text !== 'string' || normalizeInstructionText(text) !== expected) continue;
+    const proof = {
+      source,
+      session_id: sessionId,
+      turn_token: record.promptId || null,
+      observed_at: observed,
+    };
+    if (source !== 'native-queue') return proof;
+    queued ||= proof;
+  }
+  return queued;
 }
 
 export function acceptedCodexGoal(sessionPath, sessionId, receipt) {
