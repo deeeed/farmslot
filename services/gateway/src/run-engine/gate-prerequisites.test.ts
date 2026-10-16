@@ -1237,6 +1237,20 @@ test('unresolved approval cannot waive findings, missing reviews or changed inpu
     /Review budget 5\/5.*extend-review-budget/,
   );
   assert.deepEqual(gateActionsForReadiness(actions, exhausted), actions.slice(1));
+  // A published run cannot be extended, so its gate says so instead of naming the command.
+  const published = await collectRunGateReadiness(
+    { ...exhaustedRun, engineState: { publishGate: { publicationStatus: 'published_ready' } } },
+    prepared,
+    inputs,
+  );
+  const publishedMessage = published.reasons.find(
+    (reason) => reason.prerequisite === 'review',
+  )!.message;
+  assert.match(
+    publishedMessage,
+    /this run is already published; only the unpublished dev or fix-bug/,
+  );
+  assert.doesNotMatch(publishedMessage, /extend-review-budget/);
   const run = makeRun({ engineState: { publishGate: { reviews: [review] } } });
   const missing = await collectRunGateReadiness(run, prepared, {
     ...inputs,

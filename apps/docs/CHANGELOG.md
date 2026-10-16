@@ -4,8 +4,6 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
-- Document `node_support_dir` for hooks and fixtures and `NODE_SUPPORT_DIR` for worker templates.
-
 - Align the API reference with the parent acceptance worker release.
 
 - Document node-owned hosted task initialization and workspace dependency retention without changing recipe-library roots.
@@ -192,3 +190,5 @@ All notable changes to `@farmslot/docs` are tracked here.
 - Add a Domains reference guide and update worker-prompt customization docs for the team→domain rename.
 - Active-development baseline; add user-facing changes here before release or package publication.
 - The published `recipe-suite-result-v1` schema allows `evidence_incomplete` on a suite verdict (`reason: capture_interrupted`, `detail`, `evidence_path`).
+
+- Document `node_support_dir` for hooks and fixtures and `NODE_SUPPORT_DIR` for worker templates.
