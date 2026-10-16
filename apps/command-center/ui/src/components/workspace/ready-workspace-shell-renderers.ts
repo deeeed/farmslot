@@ -1,5 +1,6 @@
 import { html, nothing } from 'lit';
 
+import type { EvidenceReviewJudgmentRow } from '@farmslot/adapter-sdk/evidence';
 import {
   type ArtifactRef,
   deriveRunLifecycleView,
@@ -37,6 +38,11 @@ export function renderReadyTopBar(input: {
   openReviewRequestModal: () => void;
   confirmAction: (actionId: string) => void;
   claims?: readonly PublicationGateClaim[];
+  judgmentRows?: readonly EvidenceReviewJudgmentRow[];
+  reviewReason?: (id: string) => string;
+  changeReviewReason?: (id: string, reason: string) => void;
+  recordReview?: (id: string, verdict: 'confirmed' | 'rejected') => void;
+  refreshPackage?: () => void;
   pendingVisualClaimIds?: readonly string[];
   focusClaim?: (id: string) => void | Promise<void>;
 }) {
@@ -53,6 +59,11 @@ export function renderReadyTopBar(input: {
     ${renderPublicationGatePanel({
       actions,
       claims: input.claims,
+      judgmentRows: input.judgmentRows,
+      reviewReason: input.reviewReason,
+      changeReviewReason: input.changeReviewReason,
+      recordReview: input.recordReview,
+      refreshPackage: input.refreshPackage,
       pendingVisualClaimIds: input.pendingVisualClaimIds,
       readiness: input.payload.gateReadiness,
       blockedReason: readyReviewBlockingReason(input.payload),

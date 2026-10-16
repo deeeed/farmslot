@@ -1,6 +1,7 @@
 import {
   digestRecipeDocument,
   normalizeRecipeClaimId,
+  type QualifiedRecipeVisualJudgment,
   type RecipeArtifactManifestEntry,
   type RecipeClaimDeclaration,
   type RecipeClaimEvidence,
@@ -41,7 +42,10 @@ const parentVerdictOrder: readonly RecipeClaimVerdict[] = [
 ];
 
 /** Successful actions/captures are evidence, never the assertion that proves a claim. */
-export function deriveRecipeClaims(input: DeriveRecipeClaimsInput): RecipeClaimEvidence[] {
+export function deriveRecipeClaims(
+  input: DeriveRecipeClaimsInput,
+  qualifiedJudgments: readonly QualifiedRecipeVisualJudgment[] = [],
+): RecipeClaimEvidence[] {
   const validation = validateRecipeClaimDeclarations(input.declarations);
   if (validation.status !== 'valid')
     throw new Error(validation.findings.map((finding) => finding.message).join('\n'));
@@ -146,14 +150,18 @@ export function deriveRecipeClaims(input: DeriveRecipeClaimsInput): RecipeClaimE
         traceIndex,
       })),
     );
-    const judgment = input.judgments
-      ?.filter((entry) => normalizeRecipeClaimId(entry.claimId) === id)
+    const qualified = qualifiedJudgments
+      .filter((entry) => normalizeRecipeClaimId(entry.claimId) === id)
       .at(-1);
+    const judgment =
+      qualified ??
+      input.judgments?.filter((entry) => normalizeRecipeClaimId(entry.claimId) === id).at(-1);
     if (verdict === 'awaiting-review' && judgment) {
       if (
         judgment.recipeRunId !== input.recipeRunId ||
         !judgment.actor.trim() ||
-        !judgment.reason.trim() ||
+        (!judgment.reason?.trim() &&
+          !(qualified?.kind === 'person-reviewed' && judgment.verdict === 'confirmed')) ||
         !Number.isFinite(Date.parse(judgment.judgedAt)) ||
         digestRecipeDocument(judgment.moments) !== digestRecipeDocument(moments)
       )

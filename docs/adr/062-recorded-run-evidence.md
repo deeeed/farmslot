@@ -566,56 +566,73 @@ cutover; package release and deployment remain separate delivery records.
 
 ## Amendment 9 (2026-10-16): Per-criterion confirmation without a text form
 
-**Status:** Proposed; awaiting maintainer approval before contract implementation.
+**Status:** Accepted. Arthur approved the wording and existing per-AC audit trail on 2026-10-16; paired design review approved revision 2 before implementation.
 **Specification:** [Per-criterion confirmation](../reference/recorded-run-evidence.md#per-criterion-confirmation).
 
 ### Decision
 
-Both operator clients show each criterion's recorded pre-validation before its
-person judgment: visual verdict, a one-line note and the bound still or moment.
-Use the selected claim's recorded assessment and authenticated delegated review
-when present. Missing pre-validation is labeled "Not recorded"; never infer it
-from execution success or present a worker note as a person's confirmation.
+Both clients show the selected criterion's recorded pre-validation before its
+judgment controls. A qualified `lead-agent-reviewed` receipt supplies its visual
+verdict, written rationale and bound reviewed files/moments. Engine assertion
+results and moments are labeled checks, not visual pre-validation. Task-ledger
+and worker notes are not visual pre-validation sources. Where no qualified
+visual review exists, show "Not recorded"; never invent an assessment.
 
-"Looks right" records `confirmed` in one tap without a reason field. "Issue"
-records `rejected` and requires a nonblank reason. Change the existing request,
-receipt validation, SDK projection and both clients together. Do not synthesize
-prose on behalf of the reviewer or add a second judgment writer.
+Under Amendment 7, a permitted qualified delegated judgment already satisfies
+its AC and retains its delegated provenance label. A person's additional "Looks
+right" on that AC is optional. Person-only criteria remain person-only; this
+amendment does not invalidate delegation or require another person judgment.
 
-The existing authenticated writer still binds every judgment to the selected
-execution, input closure, claim, exact files/moments, trusted identity and time.
-A confirmation without prose is a complete receipt. Rejection without prose is
-refused by the server. Retained judgments with written reasons remain immutable.
-Person-only criteria and delegated-review restrictions remain unchanged.
+"Looks right" records a `person-reviewed` + `confirmed` judgment in one tap,
+without a reason field. "Issue" records `rejected` and requires a nonblank reason.
+Only authenticated person confirmation may omit prose. Delegated judgments of
+either verdict and ledger-embedded recipe judgments retain their written-rationale
+requirement. No synthesized reviewer prose, new judgment writer or compatibility
+adapter is introduced. Existing request/receipt qualification, engine validation,
+SDK request construction, CLI and both clients change together.
 
-When all required criteria are satisfied by their bound assertions and current
-person confirmations or authorized exceptions, normal publish approval requires
-no additional free-text evidence attestation. The approver identity and frozen
-per-criterion receipt IDs provide the audit trail. CI, source/head, integrity,
-independent reviews, package freshness and publication authority still apply.
-Changed judgments require the existing package refresh before approval. An
-unconfirmed or rejected criterion cannot become confirmed by pressing approve.
-The exceptional evidence-policy waiver stays separate and is available only
-when the gateway explicitly offers it; this amendment does not turn confirmation
-into a blanket waiver or remove the reason from a genuine policy override.
+The authenticated writer still binds every receipt to the selected execution,
+input closure, claim, exact files/moments, trusted reviewer and time. The server
+refuses a rejection or delegated judgment without its rationale. Raw package
+validation still refuses a reasonless embedded judgment. Historical recorded
+bytes stay immutable; the existing reducer consumes only qualified receipts.
+
+After all required ACs are satisfied by their bound assertions and permitted
+qualified judgments or authorized exceptions, the refreshed package uses normal
+publish approval without another evidence-attestation text field. Its audit is
+the authenticated per-AC reviewers and the existing frozen
+`prPackage.visualJudgmentReceiptIds`, including the existing PR provenance.
+Normal publication authority remains unchanged: this adds no separate normal-
+publish approver receipt, person-only publication rule or identity field.
+
+Changed judgments still require the existing package refresh. While that is
+outstanding, show "Refresh package" and withhold approval. Source/head, CI,
+integrity, independent reviews, package freshness and existing publication
+authority remain mandatory. Approval cannot confirm an unjudged AC. A genuine
+separately offered evidence-policy waiver keeps its explicit scope and written
+reason; AC confirmation is not a blanket policy waiver.
 
 ### Rationale and consequences
 
-A second text form repeats the per-criterion decision. A rejected criterion
-still needs enough information to repair it. Presentation stays compact and the
-recorded evidence and authenticated receipts retain their existing authority.
+The per-AC receipt records the person's decision without a second text form.
+An issue retains enough information to repair it, and a delegated pre-validation
+retains its rationale. The existing evidence, authority and publication models
+remain the sources of truth.
 
 ### Public surface and migration
 
-`RunRpc.reviewVisualClaim` and its protocol request/receipt types keep their
-existing owner, `@farmslot/protocol`. `confirmed` may omit `reason`; `rejected`
-requires it. `farmslot run gate --action confirm-visual` no longer requires
-`--reason`; `reject-visual` still does. The gateway owns the write and refusal.
-`@farmslot/adapter-sdk/evidence` projects pre-validation and constructs these
-requests; `@farmslot/review-dispatch` supplies the shared decision presentation.
-Command Center and Companion consume these same models and switch together.
-The recipe engine consumes the existing receipts through its existing reducer;
-harnesses inherit the coordinated protocol/runner/SDK release with no new hook.
-No new endpoint, task mark, manifest field, compatibility writer or synthesized
-review reason is introduced. Release changed installed packages together before
-worker/provider cutover; preserve the existing experimental package versioning.
+`RunRpc.reviewVisualClaim` and its request/receipt types remain owned by
+`@farmslot/protocol`. Omitted `kind` still means `person-reviewed`.
+`reason` may be omitted only for person confirmation. `farmslot run gate --action
+confirm-visual` does not require `--reason` for person review; `reject-visual`
+and either delegated action require it. The canonical protocol qualifier,
+runner's claim/package validation, gateway writer and CLI validation must agree.
+
+`@farmslot/adapter-sdk/evidence` owns per-claim pre-validation, selected media and
+judgment requests. `@farmslot/review-dispatch` consumes those rows and owns the
+shared approval/waiver presentation. Command Center and Companion switch together.
+The existing engine reducer consumes the receipts; harnesses inherit the
+coordinated protocol/runner/SDK release without a new hook. No endpoint, manifest
+field, task mark, publication identity rule or second reducer is added. Release
+changed installed packages together before provider cutover, under their existing
+experimental versioning.

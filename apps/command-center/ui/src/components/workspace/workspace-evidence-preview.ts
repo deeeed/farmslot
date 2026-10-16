@@ -10,6 +10,7 @@ import type { ArtifactRef, SelfPrincipalSummary } from '@farmslot/protocol';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { gatewayMediaSrc } from '../shared/gateway-media-src.js';
 
+import { renderVisualClaimJudgment } from './visual-claim-judgment.js';
 import {
   IMAGE_EXTS,
   VIDEO_EXTS,
@@ -531,58 +532,22 @@ function renderComparisonPreview(input: WorkspaceEvidenceComparison): TemplateRe
                 No AC-bound capture. Retained unbound media is in Unassigned.
               </p>`
             : nothing}
-          ${model.pendingVisualClaimIds.includes(row.claim.id)
-            ? html`<div
-                data-visual-review=${row.claim.id}
-                style="display:flex;flex-direction:column;gap:8px;"
-              >
-                <strong
-                  >${model.visualReviewKind(row.claim.id, input.reviewer ?? null) ===
-                  'lead-agent-reviewed'
-                    ? 'Delegated visual review'
-                    : model.visualReviewKind(row.claim.id, input.reviewer ?? null)
-                      ? 'Person visual review'
-                      : 'Visual review'}
-                  ${input.reviewer ? `· ${input.reviewer.displayName}` : ''}</strong
-                >
-                ${!model.visualReviewKind(row.claim.id, input.reviewer ?? null)
-                  ? html`<p role="status">
-                      Visual judgments become available after evidence loads and reviewer authority
-                      is verified.
-                    </p>`
-                  : nothing}
-                <label
-                  >What did you inspect?
-                  <textarea
-                    aria-label=${`Visual review rationale for ${row.claim.id}`}
-                    .value=${input.reviewReason?.(row.claim.id) ?? ''}
-                    ?disabled=${input.reviewing ||
-                    !model.visualReviewKind(row.claim.id, input.reviewer ?? null)}
-                    @input=${(event: Event) =>
-                      input.changeReviewReason?.(
-                        row.claim.id,
-                        (event.currentTarget as HTMLTextAreaElement).value,
-                      )}
-                  ></textarea>
-                </label>
-                <div>
-                  ${(['confirmed', 'rejected'] as const).map(
-                    (verdict) =>
-                      html`<button
-                        type="button"
-                        data-review-verdict=${verdict}
-                        ?disabled=${input.reviewing ||
-                        !model.visualReviewKind(row.claim.id, input.reviewer ?? null) ||
-                        !input.recordReview ||
-                        !input.reviewReason?.(row.claim.id).trim()}
-                        @click=${() => input.recordReview?.(row.claim.id, verdict)}
-                      >
-                        ${verdict === 'confirmed' ? 'Confirm visual proof' : 'Reject visual proof'}
-                      </button>`,
-                  )}
-                </div>
-              </div>`
-            : nothing}
+          ${(() => {
+            const judgment = model
+              .judgmentRows(input.reviewer ?? null)
+              .find((entry) => entry.claim.id === row.claim.id);
+            return judgment
+              ? renderVisualClaimJudgment({
+                  row: judgment,
+                  busy: input.reviewing || !input.recordReview,
+                  reason: input.reviewReason?.(row.claim.id) ?? '',
+                  changeReason: (reason) => input.changeReviewReason?.(row.claim.id, reason),
+                  record: (verdict) => {
+                    void input.recordReview?.(row.claim.id, verdict);
+                  },
+                })
+              : nothing;
+          })()}
         </article>`,
     )}
     ${model.comparisonFilter === 'all' && rawArtifacts.length

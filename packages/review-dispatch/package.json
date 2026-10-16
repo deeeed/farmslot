@@ -32,6 +32,7 @@
     "prepublishOnly": "node ../../scripts/quality/check-farmslot-package-readiness.mjs --publish --packages @farmslot/review-dispatch"
   },
   "dependencies": {
+    "@farmslot/adapter-sdk": "workspace:*",
     "@farmslot/protocol": "workspace:*"
   },
   "devDependencies": {

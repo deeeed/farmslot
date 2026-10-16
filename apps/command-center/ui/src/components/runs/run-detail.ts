@@ -1283,7 +1283,10 @@ export class RunDetail extends RunDetailState {
         claimId,
         gateway.authenticatedPrincipal,
         verdict,
-        this._visualReviewReasons[claimId] ?? '',
+        verdict === 'confirmed' &&
+          model.visualReviewKind(claimId, gateway.authenticatedPrincipal) === 'person-reviewed'
+          ? undefined
+          : this._visualReviewReasons[claimId],
       );
       if (request.runId !== run.id)
         throw new Error('The evidence selection changed. Refresh the run.');

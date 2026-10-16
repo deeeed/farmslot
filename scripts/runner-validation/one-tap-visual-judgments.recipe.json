@@ -1,0 +1,28 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "One-tap visual judgment contract",
+  "description": "Disposable authenticated loopback gateway. Confirms without prose, reads back the qualified receipt and derived claim, rejects an empty Issue, and preserves the gate. No production run is touched.",
+  "workflow": {
+    "entry": "rpc",
+    "nodes": {
+      "rpc": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks --test services/gateway/src/methods/run/claim-reviews.rpc.live.ts",
+        "timeout_ms": 180000,
+        "intent": "Exercise the public visual-review RPC and integrity/delegation/refresh controls.",
+        "next": "verified"
+      },
+      "verified": {
+        "action": "assert_output",
+        "source": "rpc",
+        "contains": "authenticated public RPC records a text-free confirmation and refuses an empty Issue",
+        "intent": "The real authenticated endpoint and state readback passed.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

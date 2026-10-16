@@ -41,7 +41,7 @@ export interface RunAcceptance {
   recordVisualReview(
     claimId: string,
     verdict: 'confirmed' | 'rejected',
-    reason: string,
+    reason?: string,
   ): Promise<void>;
   recipeRunId: string | null;
   acceptanceStatus: AcceptanceStatusLedger | null;

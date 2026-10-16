@@ -116,3 +116,41 @@ test('resolved gates do not expose attestation', () => {
   assert.equal(view.attestation, null);
   assert.equal(view.status, 'This decision is resolved.');
 });
+
+test('changed visual judgments require a visible refresh, never approval', () => {
+  const view = publicationGateView({
+    actions: [
+      { id: 'approve-publish-evidence-refresh', label: 'Approve publish', style: 'primary' },
+    ],
+    readiness: {
+      ...evidenceOnly,
+      reasons: [
+        {
+          code: 'evidence-override-refresh-required',
+          prerequisite: 'evidence',
+          message: 'Visual review changed.',
+        },
+      ],
+    },
+  });
+  assert.equal(view.refreshRequired, true);
+  assert.equal(view.blockedReason, 'Refresh package');
+  const refreshed = publicationGateView({
+    actions: [
+      { id: 'approve-publish-evidence-refresh', label: 'Approve publish', style: 'primary' },
+    ],
+    readiness: {
+      ...evidenceOnly,
+      reasons: [
+        {
+          code: 'review-result-required',
+          prerequisite: 'review',
+          message: 'Reviews bound to previous evidence.',
+          allowedReviewOverrides: ['approve-publish-evidence-refresh'],
+        },
+      ],
+    },
+  });
+  assert.equal(refreshed.blockedReason, '');
+  assert.equal(refreshed.approval?.id, 'approve-publish-evidence-refresh');
+});

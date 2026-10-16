@@ -227,7 +227,10 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
         claimId,
         gateway.authenticatedPrincipal,
         verdict,
-        this._visualReviewReasons[claimId] ?? '',
+        verdict === 'confirmed' &&
+          model.visualReviewKind(claimId, gateway.authenticatedPrincipal) === 'person-reviewed'
+          ? undefined
+          : this._visualReviewReasons[claimId],
       );
       if (params.runId !== this.runId) throw new Error('The run changed. Refresh the evidence.');
       await gateway.request(Methods.RUN_REVIEW_VISUAL_CLAIM, params);
@@ -436,6 +439,13 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       openReviewRequestModal: () => this._openReviewRequestModal(),
       confirmAction: (actionId) => this._confirmAction(actionId),
       claims: this._evidenceModel?.claims,
+      judgmentRows: this._evidenceModel?.judgmentRows(gateway.authenticatedPrincipal),
+      reviewReason: (id) => this._visualReviewReasons[id] ?? '',
+      changeReviewReason: (id, reason) => {
+        this._visualReviewReasons = { ...this._visualReviewReasons, [id]: reason };
+      },
+      recordReview: (id, verdict) => void this._recordVisualReview(id, verdict),
+      refreshPackage: () => void this._refreshPublishPackage(payload),
       pendingVisualClaimIds: this._evidenceModel?.pendingVisualClaimIds,
       focusClaim: async (id) => {
         const details = this.querySelector<HTMLDetailsElement>('.rdy-review-content');

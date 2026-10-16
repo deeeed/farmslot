@@ -149,6 +149,19 @@ export interface EvidenceReviewClaim extends AcceptanceCriterionView {
   occurrences: readonly EvidenceReviewOccurrence[];
 }
 
+/** Qualified visual review only; assertions and worker notes are not pre-validation. */
+export interface EvidenceReviewJudgmentRow {
+  claim: EvidenceReviewClaim;
+  reviewKind: RecipeVisualJudgmentKind | null;
+  prevalidation: {
+    verdict: 'confirmed' | 'rejected';
+    reason: string;
+    reviewer: string;
+    receiptId: string;
+  } | null;
+  media: EvidenceReviewClaimDisplay;
+}
+
 export interface EvidenceReviewOccurrence {
   traceIndex: number;
   nodeId: string;
@@ -212,6 +225,7 @@ export interface EvidenceReviewComparisonViewRow extends EvidenceReviewCompariso
 export interface EvidenceReviewModel {
   readonly artifactInventory: readonly ArtifactRef[];
   claimDisplay(claimId: string): EvidenceReviewClaimDisplay;
+  judgmentRows(principal: SelfPrincipalSummary | null): readonly EvidenceReviewJudgmentRow[];
   rawArtifacts<T extends { path: string }>(inventory: readonly T[]): readonly T[];
   artifactRole(path: string): 'before' | 'after' | 'review' | null;
   pairedArtifacts<T extends { path: string }>(
@@ -226,7 +240,7 @@ export interface EvidenceReviewModel {
     claimId: string,
     principal: SelfPrincipalSummary | null,
     verdict: 'confirmed' | 'rejected',
-    reason: string,
+    reason?: string,
   ): RunReviewVisualClaimParams;
   readonly gateSnapshot: EvidenceReviewGateSnapshot | null;
   readonly comparisons: readonly EvidenceReviewComparisonRow[];
@@ -901,6 +915,28 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
   return {
     artifactInventory: input.artifacts ?? [],
     claimDisplay,
+    judgmentRows(principal) {
+      return claims.map((claim) => {
+        const delegated = judgments
+          .filter(
+            (judgment) => judgment.claimId === claim.id && judgment.kind === 'lead-agent-reviewed',
+          )
+          .at(-1);
+        return {
+          claim,
+          reviewKind: visualReviewKind(claim.id, principal),
+          prevalidation: delegated?.reason
+            ? {
+                verdict: delegated.verdict,
+                reason: delegated.reason,
+                reviewer: delegated.reviewer.displayName,
+                receiptId: delegated.receiptId,
+              }
+            : null,
+          media: claimDisplay(claim.id),
+        };
+      });
+    },
     rawArtifacts(inventory) {
       const paths = new Set([
         ...comparison.rows.flatMap((row) =>
@@ -941,7 +977,8 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
         throw new Error(
           'This claim requires an authorized reviewer and a captured evidence selection.',
         );
-      if (!reason.trim()) throw new Error('Describe the visual proof you inspected.');
+      if (!reason?.trim() && (kind !== 'person-reviewed' || verdict !== 'confirmed'))
+        throw new Error('An issue or delegated review needs a reason.');
       return {
         runId: input.visualReviewAuthority.runId,
         decisionId: input.visualReviewContext.decisionId,
@@ -950,7 +987,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
         claimId,
         kind,
         verdict,
-        reason: reason.trim(),
+        ...(reason?.trim() ? { reason: reason.trim() } : {}),
       };
     },
     gateSnapshot,

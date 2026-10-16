@@ -1868,6 +1868,25 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
                   sendingActionId={null}
                   reviewPicker={reviewPicker}
                   claims={humanGate.acceptance.evidenceModel?.claims}
+                  judgmentRows={humanGate.acceptance.evidenceModel?.judgmentRows(
+                    humanGate.acceptance.reviewer,
+                  )}
+                  onRecordVisualReview={humanGate.acceptance.recordVisualReview}
+                  onRefreshPackage={() => {
+                    if (!client || !sourceRunId) return;
+                    void client
+                      .request('run.refreshPublishPackage', {
+                        runId: sourceRunId,
+                        decisionId: decision.id,
+                      })
+                      .then(() => {
+                        refreshDecision();
+                        return refreshSourceRun('package refresh');
+                      })
+                      .catch((failure) =>
+                        setError(failure instanceof Error ? failure.message : String(failure)),
+                      );
+                  }}
                   pendingVisualClaimIds={humanGate.acceptance.evidenceModel?.pendingVisualClaimIds}
                   readiness={
                     decision.payload?.kind === 'ready' ? decision.payload.gateReadiness : undefined

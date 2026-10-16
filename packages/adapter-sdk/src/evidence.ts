@@ -12,6 +12,7 @@ export type {
   EvidenceReviewContext,
   EvidenceReviewGateSnapshot,
   EvidenceReviewInput,
+  EvidenceReviewJudgmentRow,
   EvidenceReviewMediaType,
   EvidenceReviewModel,
   EvidenceReviewOccurrence,

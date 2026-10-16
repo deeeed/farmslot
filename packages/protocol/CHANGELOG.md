@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Allow authenticated person visual confirmations without a written reason; retain rationale for issues and delegated reviews.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.49.0 - 2026-10-16

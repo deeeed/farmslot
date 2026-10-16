@@ -1,6 +1,16 @@
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, useColorScheme, View } from 'react-native';
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  useColorScheme,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 
+import type { EvidenceReviewJudgmentRow } from '@farmslot/adapter-sdk/evidence';
 import { type RunDecision, type RunGateReadiness } from '@farmslot/protocol';
 import {
   type PublicationGateAction,
@@ -10,6 +20,7 @@ import {
 } from '@farmslot/review-dispatch';
 import { publicationGateColors } from '@farmslot/theme';
 
+import { VisualClaimJudgment } from '../../../components/VisualClaimJudgment';
 import type {
   GateReviewAction,
   GateReviewSummary,
@@ -133,6 +144,9 @@ export function GateActions({
   attestationReason,
   onAttestationReason,
   claims,
+  judgmentRows,
+  onRecordVisualReview,
+  onRefreshPackage,
   pendingVisualClaimIds,
   readiness,
   onFocusClaim,
@@ -142,6 +156,13 @@ export function GateActions({
   disabled?: boolean;
   reviewDisabled?: boolean;
   claims?: readonly PublicationGateClaim[];
+  judgmentRows?: readonly EvidenceReviewJudgmentRow[];
+  onRecordVisualReview?: (
+    id: string,
+    verdict: 'confirmed' | 'rejected',
+    reason?: string,
+  ) => Promise<void>;
+  onRefreshPackage?: () => void;
   pendingVisualClaimIds?: readonly string[];
   readiness?: RunGateReadiness;
   onFocusClaim?: (id: string) => void;
@@ -154,6 +175,7 @@ export function GateActions({
   onResolve: (action: GateReviewAction, selectionData?: Record<string, unknown>) => void;
 }) {
   const appearance = useColorScheme();
+  const viewport = useWindowDimensions();
   const [attestingDecisionId, setAttestingDecisionId] = useState<string | null>(null);
   const [moreActions, setMoreActions] = useState(false);
   if (decision.resolvedAt) {
@@ -169,6 +191,7 @@ export function GateActions({
   const view = publicationGateView({
     actions,
     claims,
+    judgmentRows,
     pendingVisualClaimIds,
     readiness,
     attestationReason,
@@ -233,40 +256,56 @@ export function GateActions({
       {view.claims.length ? (
         <View accessibilityLabel="Acceptance judgments">
           <Text style={[gateStyles.label, { color: palette.text }]}>Acceptance judgments</Text>
-          {view.claims.map((claim) => (
-            <View
-              key={claim.id}
-              testID={`gate-ac-${claim.id}`}
-              style={[gateStyles.claim, { borderColor: palette.border }]}
-            >
-              <Text style={[gateStyles.label, { color: palette.text }]}>{claim.id}</Text>
-              <Text numberOfLines={2} style={[gateStyles.claimText, { color: palette.text }]}>
-                {claim.text}
-              </Text>
-              <Text
-                style={[
-                  gateStyles.chip,
-                  {
-                    borderColor: palette.border,
-                    color: claim.pending ? palette.warning : palette.text,
-                  },
-                ]}
+          <ScrollView nestedScrollEnabled style={{ maxHeight: viewport.height * 0.4 }}>
+            {view.claims.map((claim) => (
+              <View
+                key={claim.id}
+                testID={`gate-ac-${claim.id}`}
+                style={[gateStyles.claim, { borderColor: palette.border }]}
               >
-                {claim.state}
-              </Text>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Review evidence for ${claim.id}`}
-                onPress={() => onFocusClaim?.(claim.id)}
-                style={[
-                  gateStyles.button,
-                  { backgroundColor: palette.surface, borderColor: palette.border },
-                ]}
-              >
-                <Text style={{ color: palette.text }}>Review evidence</Text>
-              </Pressable>
-            </View>
-          ))}
+                <Text style={[gateStyles.label, { color: palette.text }]}>{claim.id}</Text>
+                <Text numberOfLines={2} style={[gateStyles.claimText, { color: palette.text }]}>
+                  {claim.text}
+                </Text>
+                <Text
+                  style={[
+                    gateStyles.chip,
+                    {
+                      borderColor: palette.border,
+                      color: claim.pending ? palette.warning : palette.text,
+                    },
+                  ]}
+                >
+                  {claim.state}
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Review evidence for ${claim.id}`}
+                  onPress={() => onFocusClaim?.(claim.id)}
+                  style={[
+                    gateStyles.button,
+                    { backgroundColor: palette.surface, borderColor: palette.border },
+                  ]}
+                >
+                  <Text style={{ color: palette.text }}>
+                    Review evidence
+                    {claim.judgment?.media.clip
+                      ? ` · ${Math.floor(claim.judgment.media.clip.startMs / 1000)}s`
+                      : ''}
+                  </Text>
+                </Pressable>
+                {claim.judgment ? (
+                  <VisualClaimJudgment
+                    row={claim.judgment}
+                    onRecord={onRecordVisualReview}
+                    disabled={disabled || sendingActionId !== null}
+                  />
+                ) : (
+                  <Text style={{ color: palette.secondary }}>Agent review · Not recorded</Text>
+                )}
+              </View>
+            ))}
+          </ScrollView>
         </View>
       ) : null}
       {view.attestation && attestingDecisionId === decision.id ? (
@@ -293,15 +332,27 @@ export function GateActions({
         </View>
       ) : null}
       <View style={gateStyles.section} accessibilityLabel="Publication actions">
+        {view.refreshRequired && onRefreshPackage ? (
+          <Pressable
+            accessibilityRole="button"
+            style={gateStyles.button}
+            onPress={onRefreshPackage}
+            disabled={disabled || sendingActionId !== null}
+          >
+            <Text style={{ color: palette.text }}>Refresh package</Text>
+          </Pressable>
+        ) : null}
         {view.approval ? (
           renderAction(view.approval, true)
         ) : (
-          <View
+          <Pressable
+            disabled
+            accessibilityRole="button"
             accessibilityState={{ disabled: true }}
             style={[gateStyles.button, gateStyles.disabled, { backgroundColor: palette.accent }]}
           >
             <Text style={{ color: palette.onAccent }}>Approve publish</Text>
-          </View>
+          </Pressable>
         )}
         {view.attestation || view.secondaryActions.length ? (
           <Pressable
@@ -319,6 +370,7 @@ export function GateActions({
               <Pressable
                 accessibilityRole="button"
                 accessibilityHint={view.attestation.description}
+                style={gateStyles.button}
                 onPress={() => setAttestingDecisionId(decision.id)}
               >
                 <Text style={{ color: palette.text }}>Attest evidence</Text>

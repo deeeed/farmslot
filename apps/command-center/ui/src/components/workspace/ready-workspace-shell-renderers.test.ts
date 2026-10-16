@@ -114,7 +114,7 @@ test('blocked visual claims show judgment rows and keep attestation out of the a
   );
   assert.match(text, /2 criteria need your visual judgment.*AC-1.*AC-2/s);
   assert.doesNotMatch(text, /Reason for evidence policy attestation/);
-  assert.match(text, /Review evidence/);
+  assert.match(text, /Review\s+evidence/);
 });
 
 const files: GitBranchDiffFile[] = [

@@ -75,6 +75,9 @@ export function GateReviewScreen({
           sendingActionId={viewModel.sendingActionId}
           onResolve={actions.resolve}
           claims={acceptance.evidenceModel?.claims}
+          judgmentRows={acceptance.evidenceModel?.judgmentRows(acceptance.reviewer)}
+          onRecordVisualReview={actions.recordVisualReview}
+          onRefreshPackage={() => void actions.refreshPackage()}
           pendingVisualClaimIds={acceptance.evidenceModel?.pendingVisualClaimIds}
           readiness={
             viewModel.decision.payload?.kind === 'ready'

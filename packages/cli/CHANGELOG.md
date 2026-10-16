@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Allow person confirm-visual without --reason while keeping it mandatory for issues and delegated judgments.
+
 - Use refresh-only person-device profiles for login, startup and activation; renew access silently, confirm sign-out and hand browsers one-use invitations while preserving service credentials.
 
 - Render authored task Markdown with selected recipe evidence and public-safe provenance, preserving explicit output selection and refusing missing prose, invalid packages or evidence overwrites. Artifact inspection honors the retained selected attempt.

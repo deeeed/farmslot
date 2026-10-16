@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Record one-tap person visual confirmations without invented prose, preserving receipt identity and package refresh requirements.
+
 - Surface structured recipe artifact renderer failures during PR-body publication preparation.
 
 - Cover person-device lifetime and revocation through the shared credential store.
