@@ -76,6 +76,7 @@ import {
   runnerDefaultSafetyTier,
 } from '../runners/registry.js';
 import {
+  inheritableParentOwner,
   resolveNativeWorkerOwner,
   resolveReviewWorkspaceOwner,
 } from '../security/native-worker-owner.js';
@@ -817,7 +818,7 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
   const nativeOwnerPrincipalId =
     transport === 'native' || (transport === 'tmux' && params.reviewWorkspaceTarget)
       ? (params.reviewWorkspaceTarget ? resolveReviewWorkspaceOwner : resolveNativeWorkerOwner)(
-          options?.nativeOwnerPrincipalId ?? parent?.nativeOwnerPrincipalId,
+          options?.nativeOwnerPrincipalId ?? inheritableParentOwner(parent),
         )
       : undefined;
   const selectedProfile = params.nativeProfile;

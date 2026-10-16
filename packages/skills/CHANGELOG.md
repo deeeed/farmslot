@@ -4,7 +4,7 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 ## Unreleased
 
-- Use the shared submit key and verify owned follow-up queues; retry a retained working composer with Tab without retyping.
+- Submit lane handoffs with Enter only and prove delivery from native transcripts or the exact next-tool-call steering block; a retry presses Enter for owned text left in the composer without retyping.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

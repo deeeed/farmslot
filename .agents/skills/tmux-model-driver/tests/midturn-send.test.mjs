@@ -579,3 +579,220 @@ test('an old Tab queue receipt cannot claim delivery or authorize another key', 
   assert.equal(f.keys.length, before);
   assert.equal(fs.existsSync(file), true);
 });
+
+const claudeBox = (text, above = '⏺ Working') =>
+  `${above}\n${'─'.repeat(40)}\n❯ ${text}\n${'─'.repeat(40)}\n  ⏵⏵ bypass permissions on (shift+tab to cycle)`;
+
+function claudeFixture(t, status, startedAt = 2, fresh = false) {
+  const f = fixture(t);
+  const root = path.join(f.dir, 'claude');
+  const transcript = path.join(root, 'projects', '-repo', 'claude-session.jsonl');
+  fs.mkdirSync(path.dirname(transcript), { recursive: true });
+  fs.mkdirSync(path.join(root, 'sessions'));
+  if (!fresh) fs.writeFileSync(transcript, '');
+  fs.writeFileSync(
+    path.join(root, 'sessions', '42.json'),
+    JSON.stringify({ pid: 42, sessionId: 'claude-session', startedAt, status }),
+  );
+  Object.assign(process.env, {
+    CLAUDE_CONFIG_DIR: root,
+    TMUX_PANE_STATE_CURRENT_COMMAND: 'claude',
+    TMUX_PANE_STATE_RUNNER_PIDS: '42',
+    TMUX_PANE_STATE_TAIL_CAPTURE: claudeBox(''),
+  });
+  const record = (value) =>
+    fs.appendFileSync(
+      transcript,
+      `${JSON.stringify({ sessionId: 'claude-session', timestamp: new Date().toISOString(), ...value })}\n`,
+    );
+  return { ...f, record };
+}
+
+test('Claude composer parsing reads only the boxed live input', () => {
+  assert.equal(runnerPaneBufferedInstruction(claudeBox('')), '');
+  assert.equal(runnerPaneBufferedInstruction(claudeBox('Press up to edit queued messages')), '');
+  assert.equal(
+    runnerPaneBufferedInstruction(claudeBox('first line\n  second line', '❯ old prompt')),
+    'first line second line',
+  );
+  assert.equal(
+    runnerPaneBufferedInstruction(claudeBox('draft\n❯ quoted prompt\n\n  ⏵⏵ quoted footer')),
+    'draft ❯ quoted prompt ⏵⏵ quoted footer',
+  );
+  const bashMode = claudeBox('').replace('❯ ', '! ');
+  assert.equal(runnerPaneBufferedInstruction(bashMode), '!');
+});
+
+test('an idle Claude pane gets one Enter and proves the human prompt in its transcript', async (t) => {
+  const f = claudeFixture(t, 'idle');
+  f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
+    f.record({ type: 'user', promptId: 'p1', message: { role: 'user', content: pasted } });
+    return claudeBox('');
+  });
+  const result = await send('%1', 'claude', f.payload);
+  assert.equal(result.verification, 'submitted');
+  assert.equal(result.evidence.source, 'native-session');
+  assert.equal(result.evidence.turn_token, 'p1');
+  assert.deepEqual(
+    f.keys.filter((args) => args[0] === 'send-keys'),
+    [['send-keys', '-t', '%1', 'Enter']],
+  );
+});
+
+test('a fresh Claude session proves its first prompt once the transcript appears', async (t) => {
+  const f = claudeFixture(t, 'idle', 2, true);
+  assert.equal(paneState('%1', 'claude').session_id, 'claude-session');
+  f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
+    f.record({ type: 'user', promptId: 'first', message: { role: 'user', content: pasted } });
+    return claudeBox('');
+  });
+  const result = await send('%1', 'claude', f.payload);
+  assert.equal(result.submitted, true);
+  assert.equal(result.evidence.turn_token, 'first');
+});
+
+test('a resumed Claude session reads its live transcript, not an older copy', async (t) => {
+  const f = claudeFixture(t, 'idle');
+  const stale = path.join(f.dir, 'claude', 'projects', '-0-older', 'claude-session.jsonl');
+  fs.mkdirSync(path.dirname(stale));
+  fs.writeFileSync(stale, '');
+  fs.utimesSync(stale, new Date(0), new Date(0));
+  f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
+    f.record({ type: 'user', promptId: 'live', message: { role: 'user', content: pasted } });
+    return claudeBox('');
+  });
+  const result = await send('%1', 'claude', f.payload);
+  assert.equal(result.before.session_path.includes('-0-older'), false);
+  assert.equal(result.evidence?.turn_token, 'live');
+});
+
+test('a busy Claude turn takes Enter input through its native queue', async (t) => {
+  const f = claudeFixture(t, 'busy');
+  f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
+    f.record({ type: 'queue-operation', operation: 'enqueue', content: pasted });
+    return claudeBox('Press up to edit queued messages', `❯ ${pasted}`);
+  });
+  const result = await send('%1', 'claude', f.payload);
+  assert.equal(result.before.phase, 'busy');
+  assert.equal(result.submitted, true);
+  assert.equal(result.evidence.source, 'native-queue');
+  assert.equal(paneState('%1', 'claude').queued, false, 'its own queue never blocks a handoff');
+  const keys = f.keys.length;
+  const retry = await send('%1', 'claude', f.payload);
+  assert.equal(
+    retry.evidence.receipt_id,
+    result.evidence.receipt_id,
+    'retained until acknowledged',
+  );
+  assert.equal(f.keys.length, keys, 'a retry never pastes queued input again');
+
+  f.setCapturedPanes(claudeBox('later'), (key, pasted) => {
+    const stale = new Date(Date.now() - 60000).toISOString();
+    f.record({
+      type: 'attachment',
+      timestamp: stale,
+      attachment: { type: 'queued_command', prompt: pasted },
+    });
+    f.record({ type: 'attachment', attachment: { type: 'queued_command', prompt: pasted } });
+    return claudeBox('');
+  });
+  const later = await send('%1', 'claude', 'later');
+  assert.equal(later.submitted, true);
+  assert.equal(later.evidence.source, 'native-steering');
+});
+
+// Captured Claude 2.1.292 after Up during a busy turn: the queued handoff is back in the composer.
+const claudeRestored = (text) =>
+  [
+    '  ⎿  Interrupted · What should Claude do instead?',
+    '❯ Esc probe: after the sleep, reply with exactly RESTORED-CHECK.',
+    '  ⎿  $ sleep 40 (39s)',
+    '     (ctrl+b to run in background)',
+    '✽ Hyperspacing… (42s · ↓ 166 tokens)',
+    '─'.repeat(160),
+    `❯ ${text}`,
+    '─'.repeat(160),
+    '  [OMC#4.9.3] | 5h:57%(0h42m) wk:72%(2d13h) | thinking | session:0m | ctx:21% | 🔧2',
+    '  ⏵⏵ bypass permissions on (shift+tab to cycle)',
+  ].join('\n');
+
+for (const delivered of [true, false]) {
+  test(`Claude input pulled back into the composer gets Enter again, never old evidence (${delivered ? 'resubmitted' : 'still unsent'})`, async (t) => {
+    const f = claudeFixture(t, 'busy');
+    f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
+      f.record({ type: 'queue-operation', operation: 'enqueue', content: pasted });
+      return claudeBox('Press up to edit queued messages', `❯ ${pasted}`);
+    });
+    const first = await send('%1', 'claude', f.payload);
+    assert.equal(first.evidence.source, 'native-queue');
+
+    f.record({ type: 'queue-operation', operation: 'popAll', content: f.payload });
+    process.env.TMUX_PANE_STATE_TAIL_CAPTURE = claudeRestored(f.payload);
+    f.setDrop(!delivered);
+    const retriedAt = Date.now();
+    const retry = await send('%1', 'claude', f.payload);
+    const submits = f.keys.filter((args) => args[0] === 'send-keys').length;
+    assert.equal(
+      f.keys.filter((args) => args[0] === 'paste-buffer').length,
+      1,
+      'never pasted again',
+    );
+    assert.equal(retry.typed, false);
+    if (delivered) {
+      assert.equal(retry.verification, 'submitted');
+      assert.ok(retry.evidence.observed_at >= retriedAt, 'proved by the new enqueue only');
+      assert.equal(submits, 2);
+    } else {
+      assert.equal(retry.verification, 'not_sent');
+      assert.equal(retry.evidence, null);
+      assert.equal(submits, 3);
+    }
+  });
+}
+
+test('a stale Claude record appended after the send never proves it', async (t) => {
+  const f = claudeFixture(t, 'busy');
+  f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
+    const stale = new Date(Date.now() - 60000).toISOString();
+    f.record({ type: 'queue-operation', operation: 'enqueue', timestamp: stale, content: pasted });
+    return claudeBox('');
+  });
+  const result = await send('%1', 'claude', f.payload);
+  assert.equal(result.submitted, false);
+  assert.equal(result.evidence, null);
+});
+
+test('Claude refuses before typing without its own registered native session', async (t) => {
+  const f = claudeFixture(t, 'idle', 0);
+  const reused = await send('%1', 'claude', f.payload);
+  assert.equal(reused.verification, 'observability_unavailable');
+  process.env.TMUX_PANE_STATE_RUNNER_PIDS = '43';
+  const missing = await send('%1', 'claude', f.payload);
+  assert.equal(missing.verification, 'observability_unavailable');
+  assert.equal(f.keys.length, 0);
+});
+
+test('a foreign Claude draft refuses delivery without keystrokes', async (t) => {
+  const f = claudeFixture(t, 'busy');
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = claudeBox('operator draft');
+  const result = await send('%1', 'claude', f.payload);
+  assert.equal(result.verification, 'queued_input');
+  assert.equal(f.keys.length, 0);
+});
+
+test('an older matching Claude prompt never proves a new send', async (t) => {
+  const f = claudeFixture(t, 'idle');
+  f.record({ type: 'user', promptId: 'old', message: { role: 'user', content: f.payload } });
+  f.setDrop(true);
+  f.setCapturedPanes(claudeBox(f.payload));
+  const result = await send('%1', 'claude', f.payload);
+  assert.equal(result.verification, 'not_sent');
+  assert.equal(result.evidence, null);
+  assert.deepEqual(
+    f.keys.filter((args) => args[0] === 'send-keys'),
+    [
+      ['send-keys', '-t', '%1', 'Enter'],
+      ['send-keys', '-t', '%1', 'Enter'],
+    ],
+  );
+});

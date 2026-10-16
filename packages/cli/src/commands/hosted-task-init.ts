@@ -18,6 +18,7 @@ import {
   type TaskInitSpec,
 } from '@farmslot/agent-runtime';
 import {
+  DEVICE_INVENTORY_PLATFORMS,
   isExecutionTemplateReference,
   isRecord,
   isTemplateProvenance,
@@ -370,6 +371,25 @@ export function selectHostedTaskTemplate(
   return { sources, selected };
 }
 
+/**
+ * Recipe-host options for a hosted task, scoped like the gateway's slot recipe
+ * calls. A native slot's device platform selects its provider family, as device
+ * targeting does. Other pool platforms (`chrome-extension`, `cli`, `web`) name a
+ * slot kind, not an adapter, so the shared slot context applies the pack's.
+ */
+export function hostedTaskRecipeHostOptions(
+  slot: Pick<SlotVars, 'remoteRepo' | 'projectName' | 'slotId' | 'platform' | 'resourceVars'>,
+): ReturnType<typeof projectRecipeHostOptions> {
+  return projectRecipeHostOptions('task', slot.remoteRepo, {
+    project: slot.projectName,
+    slot: slot.slotId,
+    ...(DEVICE_INVENTORY_PLATFORMS.some((platform) => platform === slot.platform)
+      ? { platform: slot.platform }
+      : {}),
+    app: slot.resourceVars.app,
+  });
+}
+
 export async function runHostedTaskInit(inputFile: string): Promise<TaskInitResult> {
   const file = path.resolve(inputFile);
   if (!/^\.task-init-[0-9a-f-]{36}\.json$/.test(path.basename(file)))
@@ -510,12 +530,7 @@ export async function runHostedTaskInit(inputFile: string): Promise<TaskInitResu
         selectedConfiguration: '{"identity":null}',
       });
     }
-    const host = await projectRecipeHostOptions('task', slot.remoteRepo, {
-      project: slot.projectName,
-      slot: slot.slotId,
-      platform: slot.platform,
-      app: slot.resourceVars.app,
-    });
+    const host = await hostedTaskRecipeHostOptions(slot);
     return shared.withProjectRecipeHost(host, async (selectedHost) => {
       if (
         !selectedHost.provider.commandOptions?.task ||

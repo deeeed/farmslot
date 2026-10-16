@@ -61,7 +61,6 @@ import {
   resolveSafeSendTimeoutMs,
   RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS,
   RUNNER_PANE_SAFE_SEND_TIMEOUT_MS,
-  runnerBufferedInstructionSubmitKey,
   runnerContinueCommand,
   runnerDefaultModel,
   runnerIdsMatchingPaneCommand,
@@ -86,6 +85,7 @@ import {
   runnerPersistsSessionFiles,
   runnerProcessPattern,
   runnerProcessPatternSource,
+  runnerPromptSubmitKey,
   runnerResolvesPreTaskLaunchBlockers,
   runnerSessionArchiveKind,
   runnerSessionPortability,
@@ -981,44 +981,54 @@ describe('cursor runner', () => {
   after next
   tool call
   ↳ ${message}
+
+› Ask Codex to do anything
 `;
 
     assert.equal(runnerPaneHasQueuedInstruction(after, message), true);
     assert.equal(runnerPaneShowsPromptAccepted(after, before, message, 'TASK.md', 'claude'), true);
   });
 
-  it('submits buffered Codex prompts with Enter despite the queue hint', () => {
-    const pane = `
-› Read temp/tasks/feat/tat-3215-0601-200704/TASK.md and execute all steps. Mark each checkbox as you complete it.
+  it('never treats a queue hint, postponed follow-up or Claude queue placeholder as delivery', () => {
+    const message =
+      'Read temp/tasks/feat/tat-3215-0601-200704/TASK.md and execute all steps. Mark each checkbox as you complete it.';
+    // Captured Codex composer: the text was never submitted while the turn stayed busy.
+    const unsent = `
+› ${message}
 
 
   tab to queue message                                                                                                100% context left
 `;
+    // Captured Codex Tab postponement: follow-up input waits for the turn to end.
+    const postponed = `
+• Working (11m 34s • esc to interrupt) · 1 background terminal running · /ps to…
 
-    assert.equal(runnerBufferedInstructionSubmitKey(pane, 'codex'), 'Enter');
-    assert.equal(runnerBufferedInstructionSubmitKey(pane, 'claude'), 'Enter');
-    assert.equal(
-      runnerBufferedInstructionSubmitKey(
-        '› A handoff reports "tab to queue message".\n\n  Model high\n  ? for shortcuts',
-        'codex',
-      ),
-      'Enter',
-      'message text is not the active queue-key hint',
-    );
-  });
+• Queued follow-up inputs
+  ↳ ${message}
+    ⇧← edit last queued message
+                                             ⚠ weekly limit: 11% left · /status
 
-  it('uses carriage return to submit buffered Cursor Run Everything prompts', () => {
-    const pane = `
-  Cursor Agent
-  v2026.06.19-20-24-33-653a7fb
+› Ask Codex to do anything
 
-  → Read .task/feat/tat-3215-comparison-cursor-0622-132834/TASK.md and
-    execute all steps. Mark each checkbox as you complete it.
-
-  Composer 2.5                                                  Run Everything
+  ← for agents · ? for shortcuts                      ⚠ 3 warnings · f2 to view
 `;
-
-    assert.equal(runnerBufferedInstructionSubmitKey(pane, 'cursor'), 'C-m');
+    // Captured Claude busy turn: its own queue placeholder holds no proof for this prompt.
+    const rule = '─'.repeat(40);
+    const claudeQueued = `
+❯ ${message}
+  ctrl+x ctrl+s to send now
+✳ Determining… (22s · ↓ 159 tokens)
+${rule}
+❯ Press up to edit queued messages
+${rule}
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+`;
+    for (const pane of [unsent, postponed, claudeQueued]) {
+      assert.equal(runnerPaneHasQueuedInstruction(pane, message), false);
+    }
+    assert.equal(runnerPromptSubmitKey('codex'), 'Enter');
+    assert.equal(runnerPromptSubmitKey('claude'), 'Enter');
+    assert.equal(runnerPromptSubmitKey('cursor'), 'C-m');
   });
 
   it('submits instead of duplicating a post-launch prompt when Cursor already shows the TASK marker', async () => {

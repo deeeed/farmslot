@@ -5,7 +5,16 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Send back to agent: admit a qualified Issue set from the frozen gate, reserve one existing fix round, deliver it through the retained review loop, require unanimous current-head applicability for retained proof and keep each reason as a learning candidate.
+
+- Accept only the complete next-tool-call steering block as rendered queue proof; the "tab to queue message" hint, postponed follow-ups and queue placeholders never prove delivery. Buffered input uses the runner's normal submit key.
+
+- Deliver lane handoffs to busy Claude sessions with Enter, and treat a draft in Claude's boxed composer as live input that blocks delivery.
+
 - Publish the PR title from the approved body's leading `# type(scope): summary` heading, else the ticket title, and refuse approval when neither names more than a ticket key.
+
+- Let a new review on a PR whose earlier finished review belonged to a since-retired principal take the caller's ownership while keeping its family lineage; live runs and reused ids keep refusing another owner.
+
+- Re-claim a failed run's slot before replaying write-task, and refuse the replay before any step runs when another live run holds that slot, naming the holder.
 
 - Submit buffered Codex input with Enter, never Tab, and accept only the next-tool-call steering block as delivery proof; queued follow-up input stays undelivered.
 

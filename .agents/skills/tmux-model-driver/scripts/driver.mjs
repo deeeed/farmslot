@@ -19,6 +19,8 @@ import {
   paneIdentity,
   queuedPrompt,
   readOptional,
+  requiresNativeSession,
+  sessionSize,
   supportsMidTurnPrompt,
   writeSentinel,
 } from './native-evidence.mjs';
@@ -64,6 +66,7 @@ function metadata(pane) {
       foreground_commands: (process.env.TMUX_PANE_STATE_FOREGROUND_COMMANDS || '')
         .split('\n')
         .filter(Boolean),
+      runner_pids: (process.env.TMUX_PANE_STATE_RUNNER_PIDS || '').split(',').filter(Boolean),
     };
   }
   const values = tmux([
@@ -510,6 +513,8 @@ export function refusal(before, runner, flush = false) {
   if (before.confidence !== 'high') return 'unknown';
   if (before.pending_question) return 'pending_question';
   if (before.launch_blocker) return 'launch_blocker';
+  // Without its native session, Claude delivery can never be proven.
+  if (requiresNativeSession(runner) && !before.session_id) return 'observability_unavailable';
   // Retain delivery bookkeeping without locking fresh mid-turn handoffs out.
   // Live queues, questions and drafts still veto below or above.
   if (before.accepted && (flush || !supportsMidTurnPrompt(runner)))
@@ -597,7 +602,10 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
     if (!verification) {
       let receipt = runner === 'shell' ? null : readReceipt(files);
       const retry = ownedRetry(before);
-      if (retry && before.accepted) {
+      // Retained evidence never covers owned text that is back in the composer.
+      const restored =
+        before.queue_kind === 'driver-buffer' && bufferedPrompt(before, runner, receipt);
+      if (retry && before.accepted && !restored) {
         evidence = before.accepted;
         verification = 'submitted';
       } else if (flush || retry) {
@@ -613,6 +621,12 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
           verification = 'queued_payload_mismatch';
         payload = receipt.payload;
         if (retry) receipt.queue_was_empty = true;
+        if (retry && receipt.accepted) {
+          // Only records after this submission can prove it.
+          delete receipt.accepted;
+          receipt.sent_at = Date.now();
+          receipt.session_offset = sessionSize(before.session_path) ?? receipt.session_offset;
+        }
       } else {
         if (!payload.trim()) verification = 'empty_payload';
         if (!verification && runner !== 'shell') {
@@ -630,6 +644,8 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
             pane_id: before.pane_id,
             socket: files.socket,
             queue_was_empty: !before.queued,
+            // A session without a transcript yet proves delivery from its first record.
+            session_offset: before.session_id ? (sessionSize(before.session_path) ?? 0) : null,
             typed: false,
           };
           // A fresh handoff must not overwrite an older unverified receipt discovered by alias lookup.
@@ -710,7 +726,8 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
                   verification = 'receipt_mismatch';
                   break;
                 }
-                if (evidence.source === 'runner-steering')
+                // Queued input stays retained until its caller acknowledges delivery.
+                if (['runner-steering', 'native-queue'].includes(evidence.source))
                   durableWrite(files.receipt, { ...current, accepted: evidence });
                 else clearAcceptedReceipt(files, current);
               }
@@ -729,7 +746,8 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
                 receipt_id: receiptIdentity(receipt),
                 payload_hash: receipt.payload_hash,
               };
-              verification = payload.startsWith('/goal ') ? 'queued' : 'submitted';
+              // Only /goal reaches here; a rendered queue never proves its goal turn.
+              verification = 'queued';
               break;
             }
             // Only this receipt's unchanged live composer can authorize another Enter.
@@ -772,8 +790,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
     before_state: before.state,
     after_state: after.state,
     verification,
-    submitted:
-      verification === 'submitted' || (verification === 'queued' && !payload.startsWith('/goal ')),
+    submitted: verification === 'submitted',
     queued: verification === 'queued',
     typed,
     flush,

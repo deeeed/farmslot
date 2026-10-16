@@ -5,8 +5,11 @@ import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
+import { fixture } from '../../test/helpers/project-doctor.js';
+
 import {
   type HostedTaskInitRequest,
+  hostedTaskRecipeHostOptions,
   type HostedTaskTemplateCatalog,
   parseHostedTaskInitRequest,
   runHostedTaskInit,
@@ -182,6 +185,96 @@ test('a template source whose root only the gateway has refuses with its name an
       error.message ===
         'Execution-template source "package:fixture-cook" is unavailable on this node (missing-environment); set FIXTURE_COOK_ROOT in the slot machine environment.',
   );
+});
+
+test('hosted task host options let the slot select its adapter, not its device platform', async (t) => {
+  // A real pack and provider (adapter "headless") on a slot whose pool platform
+  // is a device kind, like the Extension pack's chrome-extension slots.
+  const { root } = fixture(t);
+  const registry = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'hosted-slot-adapter-')));
+  t.after(() => fs.rmSync(registry, { recursive: true, force: true }));
+  const pack = path.join(registry, 'projects/example');
+  fs.cpSync(root, pack, { recursive: true });
+  fs.mkdirSync(path.join(registry, 'pool'));
+  fs.writeFileSync(
+    path.join(registry, 'pool/local.json'),
+    JSON.stringify({
+      host: 'localhost',
+      project: 'example',
+      slots: [{ id: 'fixture-ext-1', repo: pack, platform: 'chrome-extension' }],
+    }),
+  );
+  const keys = [
+    'FARMSLOT_ROOT',
+    'FARMSLOT_WORKSPACE',
+    'FARMSLOT_POOL_DIR',
+    'FARMSLOT_PROJECTS_DIR',
+  ];
+  const previous = keys.map((key) => [key, process.env[key]] as const);
+  t.after(() => {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  delete process.env.FARMSLOT_ROOT;
+  delete process.env.FARMSLOT_WORKSPACE;
+  process.env.FARMSLOT_POOL_DIR = path.join(registry, 'pool');
+  process.env.FARMSLOT_PROJECTS_DIR = path.join(registry, 'projects');
+
+  const host = await hostedTaskRecipeHostOptions({
+    remoteRepo: pack,
+    projectName: 'example',
+    slotId: 'fixture-ext-1',
+    platform: 'chrome-extension',
+    resourceVars: {},
+  });
+  assert.deepEqual(host.tokens, [
+    '--target',
+    pack,
+    '--project',
+    'example',
+    '--slot',
+    'fixture-ext-1',
+  ]);
+  const shared = await import('@farmslot/recipe-cli/harness');
+  const selected = await shared.withProjectRecipeHost(host, async ({ context }) => ({
+    adapter: context.adapter?.value,
+    slot: context.slot?.value,
+  }));
+  assert.deepEqual(selected, { adapter: 'headless', slot: 'fixture-ext-1' });
+  // Forwarding the pool platform as a flag selected it as the adapter. This
+  // single-runtime provider refuses it as incompatible; MetaMask's registry
+  // refused it as an unknown adapter on release QA.
+  await assert.rejects(
+    shared.withProjectRecipeHost(
+      { ...host, tokens: [...host.tokens, '--platform', 'chrome-extension'] },
+      async () => undefined,
+    ),
+    /does not support chrome-extension/,
+  );
+});
+
+test('a native slot keeps selecting its provider family by device platform', async () => {
+  for (const platform of ['ios', 'android']) {
+    const host = await hostedTaskRecipeHostOptions({
+      remoteRepo: '/fixture/checkout',
+      projectName: 'example',
+      slotId: `fixture-${platform}-1`,
+      platform,
+      resourceVars: {},
+    });
+    assert.deepEqual(host.tokens, [
+      '--target',
+      '/fixture/checkout',
+      '--project',
+      'example',
+      '--platform',
+      platform,
+      '--slot',
+      `fixture-${platform}-1`,
+    ]);
+  }
 });
 
 test('normal hosted tasks cannot weaken configured terminal gates', async () => {
