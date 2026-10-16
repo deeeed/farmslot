@@ -8,7 +8,10 @@ import {
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../../core/method-error.js';
-import { extendReviewRoundBudget } from '../../review/review-round-budget.js';
+import {
+  extendReviewRoundBudget,
+  reviewBudgetExtensionRefusal,
+} from '../../review/review-round-budget.js';
 import { publicationStatusForRun } from '../../run-completion/orchestrator.js';
 import { capturePublicationSource } from '../../run-completion/publication-source.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
@@ -79,13 +82,10 @@ export async function runExtendReviewBudget(
     const assertCurrent = async (current: Run) => {
       if (JSON.stringify(authorize()) !== actor)
         throw new GatewayMethodError('AUTH_FORBIDDEN', 'Review budget approver changed');
+      const refusal = reviewBudgetExtensionRefusal(current);
+      if (refusal) throw new Error(`Review budget extension refused: ${refusal}.`);
       if (
         identity(current) !== expected ||
-        current.archivedAt ||
-        current.readOnly ||
-        !['dev', 'fix-bug'].includes(current.flowType) ||
-        current.completionPolicy === 'artifact-only' ||
-        publicationStatusForRun(current) !== 'not_published' ||
         !current.branch ||
         !current.slotId ||
         isGateParkInFlightOrFreed(current)

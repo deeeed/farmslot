@@ -103,6 +103,7 @@ import {
   defaultSelectedEvidenceKeysForPublication,
 } from './publication-evidence-policy.js';
 import { assertPublicationTextSafe, PublicationSecretError } from './publication-secrets.js';
+import { publicationStatusForRun } from './publication-status.js';
 import {
   computeReadyGatePackageHash,
   computeReadyGatePackageInputHash,
@@ -579,12 +580,10 @@ export async function assertReadyGatePackageInputsCurrent(
   return { ...preparedPackage, draftTitle, draftBody: currentDraftBody };
 }
 
+export { publicationStatusForRun };
+
 export function isPublishedStatus(status: PublicationStatus | undefined | null): boolean {
   return status === 'published_draft' || status === 'published_ready';
-}
-
-export function publicationStatusForRun(run: Run | null | undefined): PublicationStatus {
-  return run?.engineState?.publishGate?.publicationStatus ?? 'not_published';
 }
 
 async function currentDeterministicChecks(run: Run) {

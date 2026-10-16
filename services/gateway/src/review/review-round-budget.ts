@@ -10,6 +10,7 @@ import {
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
+import { publicationStatusForRun } from '../run-completion/publication-status.js';
 import { runTransitionCoordinator } from '../run-lifecycle/transition-coordinator.js';
 import {
   commitRunReviewBudgetExtension,
@@ -154,8 +155,41 @@ function withBudget<T>(
   });
 }
 
+/**
+ * Why `run.extendReviewBudget` can never grant this run more rounds, or
+ * undefined when it can.
+ */
+export function reviewBudgetExtensionRefusal(run: Run): string | undefined {
+  const reason = !['dev', 'fix-bug'].includes(run.flowType)
+    ? `is a ${run.flowType} run`
+    : run.completionPolicy === 'artifact-only'
+      ? 'is an artifact-only run'
+      : run.archivedAt
+        ? 'is archived'
+        : run.readOnly
+          ? 'is read-only'
+          : publicationStatusForRun(run) !== 'not_published'
+            ? 'is already published'
+            : undefined;
+  return (
+    reason &&
+    `this run ${reason}; only the unpublished dev or fix-bug run that owns the branch can be granted more review rounds`
+  );
+}
+
+// A spent budget points at an extension only for a run that can receive one.
+function budgetForRun(run: Run, budget: ReviewRoundBudget): ReviewRoundBudget {
+  const refusal = budget.diagnosis && reviewBudgetExtensionRefusal(run);
+  return refusal
+    ? {
+        ...budget,
+        diagnosis: `All ${budget.limit} review rounds for this work are spent, and ${refusal}. Stop and narrow the change or redesign it.`,
+      }
+    : budget;
+}
+
 export async function runReviewRoundBudget(run: Run): Promise<ReviewRoundBudget> {
-  return budgetFor(scopedRuns(run, await getAllRunsWithArchived()));
+  return budgetForRun(run, budgetFor(scopedRuns(run, await getAllRunsWithArchived())));
 }
 
 function refuseSpentBudget(budget: ReviewRoundBudget): void {
@@ -220,7 +254,7 @@ export async function prepareReviewRoundAvailabilityCheck(runId: string): Promis
   return () => {
     const run = getRun(runId);
     if (!run) throw new Error(`Run not found: ${runId}`);
-    refuseSpentBudget(budgetFor(scopedRuns(run, stored)));
+    refuseSpentBudget(budgetForRun(run, budgetFor(scopedRuns(run, stored))));
   };
 }
 
@@ -229,7 +263,7 @@ export async function admitReviewRound(runId: string, attemptId: string): Promis
   return withBudget(runId, async (run, scope) => {
     const admissions = admissionsFor(scope);
     if (!admissions.includes(attemptId)) {
-      refuseSpentBudget(budgetFor(scope));
+      refuseSpentBudget(budgetForRun(run, budgetFor(scope)));
       admissions.push(attemptId);
     }
     const extensions = extensionsFor(scope);
@@ -244,7 +278,7 @@ export async function admitReviewRound(runId: string, attemptId: string): Promis
       updateRun(current.id, {
         reviewRoundAdmissions: admissions,
         ...(extensions.length ? { reviewBudgetExtensions: extensions } : {}),
-        decisions: decisionsWithBudget(current, budget),
+        decisions: decisionsWithBudget(current, budgetForRun(current, budget)),
       });
     }
     await Promise.all(runs.map((current) => persistRunNow(getRun(current.id)!)));
