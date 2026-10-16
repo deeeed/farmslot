@@ -302,13 +302,15 @@ function buildPrepareWindowTeardownCommand(sessionName: string, selectWindows: s
       `done; ` +
       `done; ` +
       // Wait about 2s on the cheap signal probe; it also counts zombies, so the
-      // KILL decision uses the zombie-aware check.
+      // KILL decision uses the zombie-aware check. The lists are split through
+      // `$(echo ...)`: remote macOS nodes run this under `zsh -f`, which does
+      // not split a bare `$groups`.
       `n=0; while [ "$n" -lt 20 ]; do alive=false; ` +
-      `for group in $groups; do if kill -0 -"$group" 2>/dev/null; then alive=true; fi; done; ` +
+      `for group in $(echo $groups); do if kill -0 -"$group" 2>/dev/null; then alive=true; fi; done; ` +
       `$alive || break; sleep 0.1; n=$((n+1)); done; ` +
       `${PREPARE_GROUP_ALIVE_FN}; ` +
-      `for group in $groups; do if group_alive "$group"; then kill -KILL -"$group" 2>/dev/null; fi; done; ` +
-      `for id in $ids; do "$TMUX_BIN" kill-window -t "$id" 2>/dev/null || true; done; ` +
+      `for group in $(echo $groups); do if group_alive "$group"; then kill -KILL -"$group" 2>/dev/null; fi; done; ` +
+      `for id in $(echo $ids); do "$TMUX_BIN" kill-window -t "$id" 2>/dev/null || true; done; ` +
       `}`,
   );
 }
@@ -548,7 +550,9 @@ export function buildPrepareWrappedCommand(
     // returns, so a closed window's tree kept running and kept its phase lock.
     // `wait` returns as soon as a trapped signal arrives. The explicit stdin
     // keeps the pane's terminal, which an asynchronous command would otherwise
-    // trade for /dev/null.
+    // trade for /dev/null. An asynchronous command also starts with SIGINT
+    // ignored, so Ctrl-C in the pane reaches the command through the INT
+    // trap's TERM cleanup rather than directly.
     '(',
     cmd,
     ') <&0 &',
@@ -589,6 +593,24 @@ export function parsePrepareSentinel(content: string, attemptNonce: string): num
   if (!code || nonce !== attemptNonce) return null;
   const parsed = Number.parseInt(code, 10);
   return Number.isFinite(parsed) ? parsed : 1;
+}
+
+/**
+ * Remove the sentinels and staged scripts of earlier launches of one prepare
+ * phase, including the fixed-path pair of gateways that predate per-launch
+ * sentinels. The nonce shape keeps a sibling phase's files out of the match.
+ * `find`, not a glob: remote macOS nodes run commands under `zsh -f`, which
+ * aborts the whole command when a glob matches nothing.
+ */
+export function buildPrepareStaleLaunchCleanupCommand(
+  scratchDir: string,
+  phaseFileName: string,
+): string {
+  const nonce = '[0-9a-f]'.repeat(12);
+  const names = ['.exit', `-${nonce}.exit`, '.sh', `-${nonce}.sh`]
+    .map((suffix) => `-name ${shellQuote(`${phaseFileName}${suffix}`)}`)
+    .join(' -o ');
+  return `find ${shellQuote(scratchDir)} -maxdepth 1 -type f \\( ${names} \\) -exec rm -f -- {} +`;
 }
 
 export function buildDevServerPortCleanup(
@@ -671,7 +693,8 @@ export async function runPrepareCommand(
   // the target path must exist there.
   const slotHostScratchDir = '/tmp/farmslot-prepare';
   const phasePart = '';
-  const phaseBase = `${slotHostScratchDir}/${sessionName}-${windowName}${phasePart}`;
+  const phaseFileName = `${sessionName}-${windowName}${phasePart}`;
+  const phaseBase = `${slotHostScratchDir}/${phaseFileName}`;
   // Each launch owns its sentinel and staged script. A tree left by an earlier
   // launch of this phase (a re-driven prepare after a gateway restart) writes
   // its late exit code to its own sentinel, never into this launch's result.
@@ -797,7 +820,7 @@ export async function runPrepareCommand(
   // call can exec it directly without going through a host-shell parser.
   const stageHeredocLimit = `__FARMSLOT_PREPARE_${windowName.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()}__`;
   const stageR = await exec(
-    `mkdir -p ${shellQuote(slotHostScratchDir)} && rm -f -- ${shellQuote(phaseBase)}.exit ${shellQuote(phaseBase)}-*.exit ${shellQuote(phaseBase)}.sh ${shellQuote(phaseBase)}-*.sh && : > ${shellQuote(slotHostLogPath)} && cat > ${shellQuote(wrappedScriptPath)} <<'${stageHeredocLimit}'\n${wrappedCmd}\n${stageHeredocLimit}\n`,
+    `mkdir -p ${shellQuote(slotHostScratchDir)} && ${buildPrepareStaleLaunchCleanupCommand(slotHostScratchDir, phaseFileName)} && : > ${shellQuote(slotHostLogPath)} && cat > ${shellQuote(wrappedScriptPath)} <<'${stageHeredocLimit}'\n${wrappedCmd}\n${stageHeredocLimit}\n`,
     { cwd: opts?.cwd, timeout: 10_000 },
   );
   if (stageR.exitCode !== 0) {

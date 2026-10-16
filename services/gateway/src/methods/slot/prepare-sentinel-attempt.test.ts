@@ -39,7 +39,8 @@ mock.module('../../core/tmux.js', {
   namedExports: { ...realTmux, resolveTmuxSession: async () => 'mm-pixel6' },
 });
 
-const { runPrepareCommand } = await import('./prepare-command.js');
+const { buildPrepareStaleLaunchCleanupCommand, runPrepareCommand } =
+  await import('./prepare-command.js');
 
 const vars = {
   slotId: 'macwork-mm-pixel6',
@@ -86,7 +87,12 @@ test("an earlier launch's late exit code never decides the current launch", asyn
   const stage = commands.find((cmd) => /cat > '[^']+' <</.test(cmd));
   assert.ok(stage, 'the wrapper is staged');
   assert.ok(
-    stage.includes(`rm -f -- '${base}'.exit '${base}'-*.exit '${base}'.sh '${base}'-*.sh`),
+    stage.includes(
+      buildPrepareStaleLaunchCleanupCommand(
+        '/tmp/farmslot-prepare',
+        'mm-pixel6-prepare-3e2f400a-deps',
+      ),
+    ),
     'staging removes earlier launches of this phase',
   );
 });
