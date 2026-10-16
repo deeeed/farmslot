@@ -45,7 +45,7 @@ export function runnerPaneHasQueuedInstruction(
   const lines = pane.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').split('\n');
   const marker = lines
     .map((_, index) =>
-      /^[•│┃║\s]*(?:messages? to be submitted after next tool call|(?:\d+\s+)?queued messages?|message queued)(?=[:\s]|$)/i.test(
+      /^[•│┃║\s]*(?:messages? to be submitted after next tool call|queued follow-up inputs?|(?:\d+\s+)?queued messages?|message queued)(?=[:\s]|$)/i.test(
         normalizeInstructionText(lines.slice(index).join(' ')),
       ),
     )
@@ -53,7 +53,7 @@ export function runnerPaneHasQueuedInstruction(
   if (message === undefined)
     return (
       marker !== -1 &&
-      /submitted after next tool call/i.test(
+      /submitted after next tool call|queued follow-up inputs?/i.test(
         normalizeInstructionText(lines.slice(marker).join(' ')),
       )
     );
@@ -63,8 +63,10 @@ export function runnerPaneHasQueuedInstruction(
     const composer = body.map((line) => /^\s*[›❯](?:\s|$)/.test(line)).lastIndexOf(true);
     const firstMessage = body.findIndex((line) => /^\s*[↳›❯](?:\s|$)/.test(line));
     if (composer === -1 || firstMessage === -1 || firstMessage >= composer) return false;
+    const editHint = body.findIndex((line) => /^\s*⇧←\s+edit last queued message\b/i.test(line));
+    const end = editHint !== -1 ? Math.min(editHint, composer) : composer;
     const queuedLines = body
-      .slice(firstMessage, composer)
+      .slice(firstMessage, end)
       .map((line) => line.replace(/^\s*[↳›❯]\s?/, ''))
       .filter((line) => line.trim());
     const expected = normalizeInstructionText(message);
@@ -75,7 +77,7 @@ export function runnerPaneHasQueuedInstruction(
     return (
       allowTruncatedPreview &&
       queuedLines.at(-1)?.trim() === '…' &&
-      body.slice(firstMessage, composer).filter((line) => /^\s*↳\s/.test(line)).length === 1 &&
+      body.slice(firstMessage, end).filter((line) => /^\s*↳\s/.test(line)).length === 1 &&
       Boolean(preview) &&
       expected.startsWith(preview)
     );

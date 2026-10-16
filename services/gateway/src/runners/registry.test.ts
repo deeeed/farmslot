@@ -997,6 +997,14 @@ describe('cursor runner', () => {
 
     assert.equal(runnerBufferedInstructionSubmitKey(pane, 'codex'), 'Tab');
     assert.equal(runnerBufferedInstructionSubmitKey(pane, 'claude'), 'Enter');
+    assert.equal(
+      runnerBufferedInstructionSubmitKey(
+        '› A handoff reports "tab to queue message".\n\n  Model high\n  ? for shortcuts',
+        'codex',
+      ),
+      'Enter',
+      'message text is not the active queue-key hint',
+    );
   });
 
   it('uses carriage return to submit buffered Cursor Run Everything prompts', () => {

@@ -21,7 +21,7 @@ This skill does not grant permission to commit, publish, or merge.
 All lane input goes through [tmux-model-driver](../tmux-model-driver/SKILL.md).
 Use `launch <lane>`, `lanes-status`, `send <lane> --file <message>`, and `restore`.
 Launch syntax, resume, hooks, and acceptance evidence come from the shared runner adapter.
-Submit with named Enter. Never queue with Tab, resend buffered text, or send a model prompt to
+Let the transport select the runner's submission key. Never resend buffered text or send a model prompt to
 a shell. A send reports exact native acceptance or complete driver-owned Codex queue delivery
 with a retained receipt. Queue delivery does not claim a new turn.
 

@@ -18,6 +18,8 @@ function fixture(t) {
   let queuedPayload = payload;
   let drop = false;
   let pasted = '';
+  let capturedPaste = null;
+  let capturedSubmit = null;
   Object.assign(process.env, {
     TMUX_MODEL_DRIVER_STATE_DIR: dir,
     TMUX_MODEL_DRIVER_OBSERVABILITY_DIR: path.join(dir, 'obs'),
@@ -37,9 +39,11 @@ function fixture(t) {
     keys.push(args);
     if (args[0] === 'load-buffer') pasted = options.input;
     if (args[0] === 'paste-buffer')
-      process.env.TMUX_PANE_STATE_TAIL_CAPTURE = `› ${pasted}\n\ncontext left\n`;
+      process.env.TMUX_PANE_STATE_TAIL_CAPTURE = capturedPaste ?? `› ${pasted}\n\ncontext left\n`;
     if (args[0] === 'send-keys' && !drop)
-      process.env.TMUX_PANE_STATE_TAIL_CAPTURE = `Old transcript: ${payload}\n• Messages to be submitted after\nnext tool call (press esc to interrupt and send\n  immediately)\n  ↳ ${queuedPayload}\n\n› Ask Codex to do anything\ncontext left`;
+      process.env.TMUX_PANE_STATE_TAIL_CAPTURE = capturedSubmit
+        ? capturedSubmit(args.at(-1), pasted)
+        : `Old transcript: ${payload}\n• Messages to be submitted after\nnext tool call (press esc to interrupt and send\n  immediately)\n  ↳ ${queuedPayload}\n\n› Ask Codex to do anything\ncontext left`;
     return '';
   });
   syncBuiltinESMExports();
@@ -54,6 +58,10 @@ function fixture(t) {
     dir,
     keys,
     payload,
+    setCapturedPanes(paste, submit) {
+      capturedPaste = paste;
+      capturedSubmit = submit;
+    },
     setQueuedPayload(value) {
       queuedPayload = value;
     },
@@ -62,6 +70,75 @@ function fixture(t) {
     },
   };
 }
+
+const captured = (name) =>
+  fs.readFileSync(new URL(`./fixtures/handoff-${name}.txt`, import.meta.url), 'utf8');
+
+test('the captured rate-limit choice blocks delivery without selecting a model', async (t) => {
+  const f = fixture(t);
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = captured('rate-limit-question');
+  const result = await send('%1', 'codex', f.payload);
+  assert.equal(result.verification, 'pending_question');
+  assert.equal(result.submitted, false);
+  assert.equal(f.keys.length, 0);
+});
+
+test('the captured clipped working composer queues with Tab and verifies its owned follow-up preview', async (t) => {
+  const f = fixture(t);
+  f.setCapturedPanes(captured('clipped-composer'), () => captured('queued-followup'));
+  const result = await send('%1', 'codex', captured('payload'));
+  assert.equal(result.submitted, true);
+  assert.equal(result.verification, 'queued');
+  assert.equal(result.evidence.source, 'runner-queue');
+  assert.equal(result.evidence.turn_token, null);
+  assert.deepEqual(
+    f.keys.filter((args) => args[0] === 'send-keys'),
+    [['send-keys', '-t', '%1', 'Tab']],
+  );
+});
+
+test('a captured composer is never verified merely because its message prefix is visible', async (t) => {
+  const f = fixture(t);
+  f.setCapturedPanes(captured('clipped-composer'), () => captured('clipped-composer'));
+  const result = await send('%1', 'codex', captured('payload'));
+  assert.equal(result.submitted, false);
+  assert.equal(result.verification, 'unverified');
+  assert.equal(result.evidence, null);
+  assert.equal(
+    fs.readdirSync(f.dir).some((name) => name.endsWith('.json')),
+    true,
+  );
+  assert.equal(f.keys.filter((args) => args[0] === 'paste-buffer').length, 1);
+});
+
+test('a working composer left after Enter receives only one Tab and is re-verified', async (t) => {
+  const f = fixture(t);
+  const message = captured('payload');
+  const buffered = `Old transcript: ${message}\n\n› ${message}\n\ncontext left\n  tab to queue message`;
+  f.setCapturedPanes(`› ${message}\n\ncontext left`, (key) =>
+    key === 'Tab' ? captured('queued-followup') : buffered,
+  );
+  const result = await send('%1', 'codex', message);
+  assert.equal(result.submitted, true);
+  assert.equal(result.evidence.source, 'runner-queue');
+  assert.deepEqual(
+    f.keys.filter((args) => args[0] === 'send-keys'),
+    [
+      ['send-keys', '-t', '%1', 'Enter'],
+      ['send-keys', '-t', '%1', 'Tab'],
+    ],
+  );
+  assert.equal(f.keys.filter((args) => args[0] === 'paste-buffer').length, 1);
+});
+
+test('a captured foreign follow-up queue refuses a fresh handoff without keystrokes', async (t) => {
+  const f = fixture(t);
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = captured('queued-followup');
+  const result = await send('%1', 'codex', 'Different fresh handoff');
+  assert.equal(result.verification, 'queued_input');
+  assert.equal(result.submitted, false);
+  assert.equal(f.keys.length, 0);
+});
 
 test('unknown Codex delivers the complete owned queue and retries without keystrokes', async (t) => {
   const f = fixture(t);
