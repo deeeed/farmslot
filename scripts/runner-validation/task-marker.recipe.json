@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Task marker survives role changes",
+  "description": "Public immutable CLI task initialization and marking through production role routing. Set FARMSLOT_PROOF_CLI; no farm run or device is created.",
+  "workflow": {
+    "entry": "role-routing",
+    "nodes": {
+      "role-routing": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/task-marker.mts",
+        "timeout_ms": 180000,
+        "intent": "A task retains its marker and CLI receipt through review and worker roles; marking changes only the selected checklist.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

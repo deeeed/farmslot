@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Preserve the task marker and its frozen tooling when switching between worker and review checklists.
+
 - Refuse publication and evidence refresh when frozen text or PR prose contains detected secret values, preserving retained bytes and reporting only fingerprints.
 - Surface structured recipe artifact renderer failures during PR-body publication preparation.
 
