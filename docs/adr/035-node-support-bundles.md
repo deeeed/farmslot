@@ -101,3 +101,33 @@ Add a project-agnostic validation gate that checks all enabled slots across supp
 3. Update those hooks to use `{{node_support_dir}}`.
 4. Turn undeclared Farmslot-owned hook references from warnings into validation failures.
 5. Remove stale global `~/farmslot-node/projects/*` dependencies from nodes.
+
+## Amendment 1: Fixtures and worker templates use the selected bundle (2026-10-17)
+
+**Status:** Proposed
+
+### Decision
+
+`{{node_support_dir}}` is also rendered in fixtures (template and directory entries) and, as `NODE_SUPPORT_DIR`, in worker templates. Its value is the bundle the gateway selected for the slot: the Farmslot checkout for a local slot, the content-addressed `~/farmslot-node/support/<hash>` bundle (resolved on the node) for a remote slot, and the service deployment under verified pack sources. `{{node_support_dir}}/projects/<pack>` resolves through verified pack sources exactly like `{{farmslot_dir}}/projects/<pack>`.
+
+- Prepare renders fixtures with the bundle it has just ensured, before fixture sync.
+- Fixture refresh and task writing ensure the bundle first, like every launch path.
+- Fixture drift checks read the slot's existing selection and never publish or repoint.
+- The selection pointer lives at `<runner runtime dir>/.observability/node-support-hash`, outside the checkout. One gateway helper defines that path for its writer and readers. Packs never read it.
+
+### Rationale
+
+Fixtures such as `ci-parity` run pack scripts after prepare. They used `{{farmslot_dir}}`, which on a node is the install root and can lack the pack (Extension QA exit 127), or read the bundle pointer from the checkout, which runtime isolation moved out (every Mobile prepare failed). Hooks already had the right value. Giving fixtures and worker templates the same value removes both failure modes and keeps pack code free of framework paths.
+
+### Consequences
+
+- Pack fixtures and worker templates that run pack scripts use `{{node_support_dir}}` / `NODE_SUPPORT_DIR`, never `{{farmslot_dir}}/projects/...` on a node.
+- A fixture rendered by prepare pins that prepare's bundle. Bundles are immutable, so a later launch that selects a newer bundle leaves the prepared fixture working; the next prepare re-renders it.
+- A gateway without this amendment cannot render packs that use the placeholder. Deploy the gateway before such packs.
+
+### Public surface
+
+- Placeholders: `{{node_support_dir}}` in hooks and fixtures; `NODE_SUPPORT_DIR` (also `node_support_dir`) in worker templates. Catalogued in [template variables](../reference/template-variables.md).
+- CLI: `scripts/sync-fixtures.sh --node-support-dir <path>` and `farmslot internal fixture-plan --node-support-dir <path>` are internal plumbing the gateway calls. Direct callers that omit it render `farmslot_dir`. No public `farmslot` command or flag changes.
+- SDK: no new export.
+- Harnesses and packs: consumers are the Mobile, Extension, Core and Terminal packs' `fixtures/ci-parity` and Mobile's `pr-complete` worker template. Harnesses inherit the value through fixtures and need no change.
