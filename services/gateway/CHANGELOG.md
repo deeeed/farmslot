@@ -22,6 +22,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Refresh unapproved publication packages with missing retained bundles even when source HEAD is unchanged; preserve approved package identity on failure.
 
 - Retain pipeline review result snapshots in publication packages and use the pane-owned process's structured turn records for publication readiness, monitor nudges and safe-send busy checks.
+- Retain recovered publication reviews' original snapshots and structured artifacts, repairing missing evidence without another review or budget spend.
 
 - Keep failed reviewers without an artifact scope from holding publication gates in recovery after a settled review.
 
