@@ -905,7 +905,8 @@ for (const delivered of [true, false]) {
       path.join(f.dir, 'claude', 'sessions', '42.json'),
       JSON.stringify({ pid: 42, sessionId: 'claude-session', startedAt: 2, status: 'idle' }),
     );
-    f.setCapturedPanes(claudeBox(f.payload), () => {
+    f.setCapturedPanes(claudeBox(f.payload), (key) => {
+      assert.equal(key, 'Enter');
       f.record({
         type: 'user',
         promptId: 'flushed',
@@ -914,9 +915,15 @@ for (const delivered of [true, false]) {
       return claudeBox('');
     });
     f.setDrop(!delivered);
+    const keysBefore = f.keys.length;
     const flushedAt = Date.now();
     const flushed = await send('%1', 'claude', '', null, true);
     assert.equal(flushed.typed, false);
+    // A flush presses Enter once, delivered or not.
+    assert.deepEqual(
+      f.keys.slice(keysBefore).filter((args) => args[0] === 'send-keys'),
+      [['send-keys', '-t', '%1', 'Enter']],
+    );
     assert.equal(
       f.keys.filter((args) => args[0] === 'paste-buffer').length,
       1,
@@ -927,8 +934,13 @@ for (const delivered of [true, false]) {
       assert.equal(flushed.evidence.turn_token, 'flushed');
       assert.ok(flushed.evidence.observed_at >= flushedAt);
     } else {
-      assert.equal(flushed.submitted, false);
+      assert.equal(flushed.verification, 'not_sent');
       assert.equal(flushed.evidence, null);
+      // The flush moved the proof window: the popped enqueue's proof is gone from the receipt.
+      const [file] = fs.readdirSync(f.dir).filter((name) => /^[a-f0-9]{64}\.json$/.test(name));
+      const saved = JSON.parse(fs.readFileSync(path.join(f.dir, file), 'utf8'));
+      assert.equal(saved.accepted, undefined);
+      assert.ok(saved.sent_at >= flushedAt);
     }
   });
 }
