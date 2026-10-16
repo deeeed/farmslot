@@ -84,18 +84,11 @@ test('unknown Codex delivers the complete owned queue and retries without keystr
   assert.equal(retry.typed, false);
   assert.equal(retry.evidence.receipt_id, result.evidence.receipt_id);
   assert.equal(keys.length, before);
-  assert.equal(
-    (await send('%1', 'codex', 'foreign queue')).verification,
-    'acceptance_unacknowledged',
-  );
+  assert.equal((await send('%1', 'codex', 'foreign queue')).verification, 'queued_input');
   assert.equal(keys.length, before);
 
   process.env.TMUX_PANE_STATE_TAIL_CAPTURE = '›';
   assert.equal((await send('%1', 'codex', payload)).submitted, true);
-  assert.equal(
-    (await send('%1', 'codex', 'after queue vanished')).verification,
-    'acceptance_unacknowledged',
-  );
   assert.equal(keys.length, before);
   process.env.TMUX_MODEL_DRIVER_STATE_DIR = path.join(dir, 'foreign');
   process.env.TMUX_PANE_STATE_TAIL_CAPTURE =
@@ -407,4 +400,48 @@ test('a fresh owned submission accepts the native truncated queue preview', asyn
     null,
     'multiple queued messages cannot use preview ownership',
   );
+});
+
+test('a retained accepted handoff does not lock another caller out of the same pane', async (t) => {
+  const f = fixture(t);
+  delete process.env.TMUX_MODEL_DRIVER_SOCKET;
+  process.env.TMUX = '/tmp/shared-driver-fixture,10,1';
+  const first = await send('%1', 'codex', f.payload);
+  assert.equal(first.submitted, true);
+  const originalFile = path.join(
+    f.dir,
+    fs.readdirSync(f.dir).find((name) => /^[a-f0-9]{64}\.json$/.test(name)),
+  );
+  const originalBytes = fs.readFileSync(originalFile);
+  const guardedKeys = f.keys.length;
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = 'Do you want to continue? [y/n]';
+  assert.equal(
+    (await send('%1', 'codex', 'Second caller handoff')).verification,
+    'pending_question',
+  );
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = '› Foreign current draft\n\ncontext left';
+  assert.equal((await send('%1', 'codex', 'Second caller handoff')).verification, 'queued_input');
+  assert.equal(f.keys.length, guardedKeys);
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = '›';
+  assert.equal(
+    (await send('%1', 'codex', '', undefined, true)).verification,
+    'acceptance_unacknowledged',
+  );
+  process.env.TMUX = '/tmp/shared-driver-fixture,10,2';
+  f.setQueuedPayload('Second caller handoff');
+  const next = await send('%1', 'codex', 'Second caller handoff');
+  assert.equal(next.submitted, true, next.verification);
+  assert.equal(next.typed, true);
+  assert.notEqual(next.evidence.receipt_id, first.evidence.receipt_id);
+  assert.deepEqual(fs.readFileSync(originalFile), originalBytes);
+  const keyCount = f.keys.length;
+  const retry = await send('%1', 'codex', f.payload);
+  assert.equal(retry.submitted, true);
+  assert.equal(retry.typed, false);
+  assert.equal(retry.evidence.receipt_id, first.evidence.receipt_id);
+  assert.equal(f.keys.length, keyCount);
+  assert.equal(acknowledgeAcceptance('%1', 'codex', next.evidence.receipt_id).acknowledged, true);
+  assert.deepEqual(fs.readFileSync(originalFile), originalBytes);
+  assert.equal(acknowledgeAcceptance('%1', 'codex', first.evidence.receipt_id).acknowledged, true);
+  assert.equal(fs.existsSync(originalFile), false);
 });
