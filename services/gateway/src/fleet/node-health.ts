@@ -66,7 +66,9 @@ export function updateMachineMetrics(machine: string, metrics: NodeMetricsSample
     system,
     providerCliHealth: providers,
     capacity,
-    headroom: providers?.some((health) => !health.ok && health.status !== 'probe-timeout')
+    headroom: providers?.some(
+      (health) => !health.ok && (health.status !== 'probe-timeout' || health.confirmedMismatch),
+    )
       ? 'red'
       : headroom === 'green' && providers?.some((health) => health.status === 'probe-timeout')
         ? 'yellow'

@@ -940,6 +940,11 @@ function buildPressureConcerns(
     concerns.push({ severity: 'critical', reason: 'Machine is offline.' });
   } else {
     for (const provider of health.providerCliHealth ?? []) {
+      if (provider.confirmedMismatch)
+        concerns.push({
+          severity: 'critical',
+          reason: `Provider CLI ${provider.packageName}: ${provider.confirmedMismatch.reason} (confirmed ${provider.confirmedMismatch.checkedAt})`,
+        });
       if (!provider.ok)
         concerns.push({
           severity: provider.status === 'probe-timeout' ? 'warn' : 'critical',

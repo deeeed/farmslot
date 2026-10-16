@@ -421,6 +421,19 @@ test('provider timeouts are warnings while confirmed drift stays critical', asyn
     ),
   );
   assert(!timeout.machines[0].concerns.some((concern) => /drift|mismatch/.test(concern.reason)));
+  providerHealth.providerCliHealth![0].confirmedMismatch = {
+    checkedAt: collectedAt,
+    reason: '1.0.0, expected 1.2.3',
+  };
+  const retained = await resourcePressureSnapshot({ machines: ['macpro'] });
+  assert(
+    retained.machines[0].concerns.some(
+      (concern) =>
+        concern.severity === 'critical' && concern.reason.includes('1.0.0, expected 1.2.3'),
+    ),
+  );
+  assert.equal(providerHealth.providerCliHealth![0].status, 'probe-timeout');
+  providerHealth.providerCliHealth![0].confirmedMismatch = undefined;
   providerHealth.providerCliHealth![0].status = 'version-mismatch';
   providerHealth.providerCliHealth![0].reason = '1.0.0, expected 1.2.3';
   providerHealth.headroom = 'red';

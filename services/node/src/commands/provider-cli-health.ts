@@ -82,6 +82,12 @@ async function sample(
           continue;
         }
         const result = await probe(root);
+        if (!result.ok && result.status !== 'version-mismatch' && prior) {
+          result.confirmedMismatch =
+            prior.status === 'version-mismatch'
+              ? { checkedAt: prior.checkedAt, reason: prior.reason ?? 'Measured version mismatch' }
+              : prior.confirmedMismatch;
+        }
         if (prior?.status === 'probe-timeout') result.retryAttempted = true;
         health.push(result);
       }

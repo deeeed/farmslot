@@ -131,3 +131,53 @@ test('a successful load-drop retry publishes verified health', async (t) => {
   assert.equal(health[0].ok, true);
   assert.equal(health[0].retryAttempted, true);
 });
+
+test('confirmed drift survives a later sample timeout until successful requalification', async (t) => {
+  const root = await fixture(t);
+  t.mock.timers.enable({ apis: ['Date'] });
+  let load = 178;
+  t.mock.method(os, 'loadavg', () => [load, load, load]);
+  t.mock.method(os, 'availableParallelism', () => 16);
+  await writeFile(
+    path.join(root, 'pool.json'),
+    JSON.stringify({
+      machine: 'drift-timeout',
+      env: { TOOL_PACKAGE_ROOT: root },
+    }),
+  );
+  let calls = 0;
+  const probe = async (): Promise<ProviderCliHealth> => {
+    calls++;
+    return {
+      root,
+      packageName: 'fixture',
+      expectedVersion: '1.2.3',
+      ok: calls > 2,
+      status: calls === 1 ? 'version-mismatch' : calls === 2 ? 'probe-timeout' : 'verified',
+      reason:
+        calls === 1
+          ? '1.0.0, expected 1.2.3'
+          : calls === 2
+            ? 'Probe timed out under load'
+            : undefined,
+      loadAvg1: load,
+      checkedAt: new Date().toISOString(),
+      binaries: [],
+    };
+  };
+  const mismatch = (await collectProviderCliHealth('drift-timeout', probe))[0];
+  t.mock.timers.tick(60_001);
+  const timeout = (await collectProviderCliHealth('drift-timeout', probe))[0];
+  assert.equal(timeout.status, 'probe-timeout');
+  assert.deepEqual(timeout.confirmedMismatch, {
+    checkedAt: mismatch.checkedAt,
+    reason: mismatch.reason,
+  });
+  await collectProviderCliHealth('drift-timeout', probe);
+  assert.equal(calls, 2, 'the timeout still waits for load to fall');
+  load = 22;
+  const verified = (await collectProviderCliHealth('drift-timeout', probe))[0];
+  assert.equal(calls, 3);
+  assert.equal(verified.status, 'verified');
+  assert.equal(verified.confirmedMismatch, undefined);
+});

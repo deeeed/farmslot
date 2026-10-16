@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Expose pinned provider CLI diagnostics in node metrics and machine health, distinguishing verified versions, mismatches, probe timeouts and errors.
+- Expose optional provider probe status, load, retry and retained mismatch diagnostics.
 
 - Project skipped code review as a nonblocking publication disclosure.
 - Expose optional Viewed-file diagnostics on review publication receipts and slot posting gates.
