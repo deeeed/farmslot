@@ -82,6 +82,23 @@ export function terminalReviewArtifactErrorForCompletion(
     `Reviewer ${reviewerContextId} completed with an invalid result artifact: ${terminalInvalidReason}`,
   );
 }
-import type { NativeSessionReadResult } from '@farmslot/protocol';
+import path from 'node:path';
+
+import type { NativeSessionReadResult, ReviewStatus } from '@farmslot/protocol';
 
 import { NativeWorkerOperationUncertainError } from '../runners/native/worker-error.js';
+
+/** The final native attempt is the sole structured verdict used for publication. */
+export function reviewResultArtifactPath(
+  review: Pick<ReviewStatus, 'attempts' | 'artifactPaths'>,
+): string | undefined {
+  return (review.attempts?.at(-1)?.artifactPaths ?? review.artifactPaths)
+    ?.slice()
+    .reverse()
+    .find(
+      (entry) =>
+        entry.startsWith('artifacts/') &&
+        !entry.split('/').includes('..') &&
+        path.posix.basename(entry) === 'review-result.json',
+    );
+}
