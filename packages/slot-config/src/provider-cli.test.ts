@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import {
   inspectProviderCli,
@@ -124,4 +126,27 @@ test('rollout succeeds only after every declared binary matches the pin', async 
 test('SSH defaults cover Linux global npm without changing the macOS baseline', () => {
   assert(providerShellPath('linux').split(path.delimiter).includes('/usr/local/bin'));
   assert.equal(providerShellPath('darwin'), '/usr/bin:/bin:/usr/sbin:/sbin');
+});
+
+test('standalone node imports provider health without a Farmslot checkout', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'provider-standalone-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const installed = path.join(directory, 'node_modules/@farmslot/slot-config');
+  await mkdir(path.join(installed, 'src'), { recursive: true });
+  await writeFile(
+    path.join(installed, 'package.json'),
+    await readFile(new URL('../package.json', import.meta.url)),
+  );
+  await copyFile(
+    new URL('./provider-cli.ts', import.meta.url),
+    path.join(installed, 'src/provider-cli.ts'),
+  );
+  const resolve = createRequire(path.join(directory, 'consumer.cjs')).resolve;
+  const entry = resolve('@farmslot/slot-config/provider-cli');
+  const provider = await import(pathToFileURL(entry).href);
+  assert.equal(typeof provider.inspectProviderCli, 'function');
+  assert.equal(typeof provider.installProviderCli, 'function');
+  const pool = path.join(directory, 'pool.json');
+  await writeFile(pool, '{}');
+  assert.deepEqual(await provider.poolProviderRoots(pool), []);
 });

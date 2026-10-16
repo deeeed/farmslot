@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import type { ProviderCliHealth } from '@farmslot/protocol';
 import { isIgnoredPoolFile } from '@farmslot/protocol/node/slot-by-repo';
-import { inspectProviderCli, poolProviderRoots } from '@farmslot/slot-config';
+import { inspectProviderCli, poolProviderRoots } from '@farmslot/slot-config/provider-cli';
 
 import { resolveExecPoolDir } from './exec.js';
 
