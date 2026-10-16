@@ -1,6 +1,5 @@
 import DOMPurify from 'dompurify';
 import { html, nothing } from 'lit';
-import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { marked } from 'marked';
 
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
@@ -28,6 +27,7 @@ import {
   renderAcceptancePanel,
 } from '../progress-tracker/acceptance-panel.js';
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
+import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
 import { readyReviewRequestProgress } from '../workspace/ready-workspace-review-request-model.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 import {
@@ -455,7 +455,7 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                       ? html`
                           <details>
                             <summary>Run summary</summary>
-                            ${unsafeHTML(
+                            ${gatewayMediaHtml(
                               DOMPurify.sanitize(
                                 marked.parse(pending.description, { async: false }) as string,
                               ),
@@ -479,7 +479,7 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
               ? html`
                   <div class="gate-body">
                     <div class="gate-description md-body">
-                      ${unsafeHTML(
+                      ${gatewayMediaHtml(
                         DOMPurify.sanitize(
                           marked.parse(pending.description ?? '', { async: false }) as string,
                         ),
@@ -492,7 +492,7 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                 ? html`
                     <div class="gate-body">
                       <div class="gate-description md-body">
-                        ${unsafeHTML(
+                        ${gatewayMediaHtml(
                           DOMPurify.sanitize(
                             marked.parse(pending.description ?? '', { async: false }) as string,
                           ),
@@ -522,7 +522,7 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                             ? renderCollisionDescription(pending, run.project, context.allRuns)
                             : html`
                                 <div class="gate-description md-body">
-                                  ${unsafeHTML(
+                                  ${gatewayMediaHtml(
                                     DOMPurify.sanitize(
                                       marked.parse(pending.description ?? '', {
                                         async: false,

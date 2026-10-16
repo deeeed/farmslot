@@ -1,6 +1,5 @@
 import { html, LitElement, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import type {
   ConfigPoolsResult,
@@ -31,6 +30,7 @@ import {
   getAttentionAlertPreferences,
   setAttentionAlertPreferences,
 } from '../../utils/notifications.js';
+import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
 import { renderRunnerAccountInventory } from '../shared/runner-account-inventory.js';
 
 import {
@@ -686,7 +686,7 @@ export class ConfigPanel extends LitElement {
                       : ''}
                   </div>
                   <div class="cp-learnings-body">
-                    ${unsafeHTML(renderMarkdown(learnings.content))}
+                    ${gatewayMediaHtml(renderMarkdown(learnings.content))}
                   </div>
                 `}
       </div>

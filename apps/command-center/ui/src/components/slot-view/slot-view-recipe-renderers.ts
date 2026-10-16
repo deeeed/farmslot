@@ -1,5 +1,4 @@
 import { html, nothing } from 'lit';
-import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import type { ArtifactRef, RecipeRunArtifactGroup } from '@farmslot/protocol';
 
@@ -13,6 +12,7 @@ import {
   slotRecipeReplayBlockReason,
 } from '../recipe/recipe-rerun-model.js';
 import { renderCollapsibleSectionHeader } from '../shared/collapsible-section-header.js';
+import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 
 import { renderSlotRecipeDrawer } from './slot-recipe-drawer.js';
@@ -634,7 +634,7 @@ function renderRecipeHostBody(
         learningsContent: recipeHost.workerLearnings
           ? html`
               <div style="font-size:${fonts.sizeSm};line-height:1.6;color:${colors.textSecondary}">
-                ${unsafeHTML(renderMarkdown(recipeHost.workerLearnings))}
+                ${gatewayMediaHtml(renderMarkdown(recipeHost.workerLearnings))}
               </div>
             `
           : undefined,

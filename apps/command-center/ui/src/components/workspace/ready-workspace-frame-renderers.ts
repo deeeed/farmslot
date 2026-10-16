@@ -1,9 +1,9 @@
 import { html, nothing, type TemplateResult } from 'lit';
-import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import type { ReadyGatePayload } from '@farmslot/protocol';
 
 import { acceptancePanelStyles } from '../progress-tracker/acceptance-panel.js';
+import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
 import type {
   LightboxItem,
   LightboxPair,
@@ -84,7 +84,7 @@ export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
             <div class="rdy-report" style="flex: ${input.splitPct} 1 0%">
               ${input.payload.workerReport
                 ? html`<div class="rdy-md-section">
-                    ${unsafeHTML(renderReadyWorkspaceMarkdown(input.payload.workerReport))}
+                    ${gatewayMediaHtml(renderReadyWorkspaceMarkdown(input.payload.workerReport))}
                     ${reportEvidence}
                   </div>`
                 : html`<div class="rdy-md-section">

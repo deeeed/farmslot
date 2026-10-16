@@ -1,5 +1,4 @@
 import { html, nothing } from 'lit';
-import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import type {
   FamilyLearningEntry,
@@ -9,6 +8,7 @@ import type {
 } from '@farmslot/protocol';
 
 import { renderMarkdown } from '../../utils/markdown.js';
+import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
 
 import { familyArtifactUrl } from './family-observability-artifact-model.js';
 import { prStateColor } from './family-observability-display-model.js';
@@ -141,7 +141,9 @@ function renderFamilyLearningCard(entry: FamilyLearningEntry) {
       ${entry.detail
         ? html`<details class="learning-detail">
             <summary>Detail</summary>
-            <div class="learning-detail-body">${unsafeHTML(renderMarkdown(entry.detail))}</div>
+            <div class="learning-detail-body">
+              ${gatewayMediaHtml(renderMarkdown(entry.detail))}
+            </div>
           </details>`
         : nothing}
       <div class="learning-foot">
