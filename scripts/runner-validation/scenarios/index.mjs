@@ -79,10 +79,12 @@ import * as tokenUsageSmoke from './token-usage-smoke.mjs';
 import * as turnBoundary from './turn-boundary.mjs';
 import * as warmPublicationReview from './warm-publication-review.mjs';
 import * as warmReplacementSmoke from './warm-replacement-smoke.mjs';
+import * as workerQuestionHandoff from './worker-question-handoff.mjs';
 import * as workspaceReviewLifecycle from './workspace-review-lifecycle.mjs';
 
 export const SCENARIOS = {
   [backgroundWaitHandoff.SCENARIO_ID]: backgroundWaitHandoff,
+  [workerQuestionHandoff.SCENARIO_ID]: workerQuestionHandoff,
   [nativeAdditionalProfiles.SCENARIO_ID]: nativeAdditionalProfiles,
   'native-additional-runners': nativeAdditionalRunners,
   'hook-smoke': hookSmoke,

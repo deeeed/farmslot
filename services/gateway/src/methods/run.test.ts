@@ -1699,6 +1699,50 @@ test('runResolveDecision rejects interactive PR-complete handoff resume without 
   assert.equal(getRun(run.id)?.decisions[0]?.resolvedAt, undefined);
 });
 
+test('a worker question handoff resumes monitoring without a terminal signal; other handoffs do not', async (t) => {
+  for (const workerQuestion of [true, false]) {
+    const run = createRun({
+      flowType: 'dev',
+      project: 'example-mobile-farm',
+      ticketOrPr: `QUESTION-${Date.now()}-${workerQuestion}`,
+      mode: 'autonomous',
+      ticketData: manualTicketData('Worker question handoff'),
+    });
+    const decision: RunDecision = {
+      id: `question-handoff-${workerQuestion}`,
+      type: 'monitor_interactive_handoff',
+      title: 'Worker question',
+      description: 'The worker asked a question and is waiting for an answer.',
+      actions: [
+        { id: 'signal-written', label: 'Check SIGNAL.json & resume', style: 'primary' },
+        { id: 'question-closed', label: 'Resume monitoring', style: 'primary' },
+        { id: 'abort', label: 'Abort Run', style: 'danger' },
+      ],
+      createdAt: new Date().toISOString(),
+      context: { signalFile: null, ...(workerQuestion ? { workerQuestion: true } : {}) },
+    };
+    updateRun(run.id, { status: 'blocked', decisions: [decision] });
+    t.after(async () => {
+      if (getRun(run.id)) {
+        updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+        await deleteRun(run.id);
+      }
+    });
+    const resolve = () =>
+      runResolveDecision(
+        { runId: run.id, decisionId: decision.id, actionId: 'question-closed' },
+        () => {},
+      );
+    if (workerQuestion) {
+      await resolve();
+      assert.equal(getRun(run.id)?.decisions[0]?.resolvedAction, 'question-closed');
+    } else {
+      await assert.rejects(resolve, /fresh terminal SIGNAL\.json/);
+      assert.equal(getRun(run.id)?.decisions[0]?.resolvedAt, undefined);
+    }
+  }
+});
+
 test('resolving a CI abort without a live resolver re-enters the persisted CI-watch step', async (t) => {
   const run = createRun({
     flowType: 'dev',

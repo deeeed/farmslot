@@ -2,10 +2,19 @@
 // The monitor hands the run to the operator with the question instead of
 // nudging or calling it stuck.
 
-import type { NativeSessionEvent } from '@farmslot/protocol';
+import type { DecisionAction, NativeSessionEvent } from '@farmslot/protocol';
 
 /** Resolution recorded when the question closes and monitoring resumes. */
 export const WORKER_QUESTION_CLOSED_ACTION = 'question-closed';
+
+/** The operator's way back to monitoring, also used by a re-armed probe after restart. */
+export const WORKER_QUESTION_RESUME_ACTION: DecisionAction = {
+  id: WORKER_QUESTION_CLOSED_ACTION,
+  label: 'Resume monitoring',
+  style: 'primary',
+  description:
+    'After answering the worker question. A question that is still open hands off again.',
+};
 
 /** Readable text for a native worker's pending approval or question requests. */
 export function nativePendingRequestText(requests: readonly NativeSessionEvent[]): string | null {

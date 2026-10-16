@@ -50,6 +50,31 @@ test('paneOpenQuestion returns an open menu or prompt and nothing for a working 
   assert.equal(paneOpenQuestion(CLAUDE_WORKING_PANE), null);
 });
 
+test('a question typed into the live composer is unsent input, not an open question', () => {
+  const codexBusy = [
+    '• Working (3m 35s • esc to interrupt) · 1 background terminal running',
+    '› Would you like to review #1240 next?',
+    '  tab to queue message                                                          87% context left',
+  ].join('\n');
+  const claudeDraft = [
+    '⏺ Rebase finished.',
+    '',
+    '────────────────────────────────────────────────────────────────',
+    '❯ Do you want me to push the branch now?',
+    '────────────────────────────────────────────────────────────────',
+    '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents',
+  ].join('\n');
+  assert.equal(paneOpenQuestion(codexBusy), null);
+  assert.equal(paneOpenQuestion(claudeDraft), null);
+  // A prompt the runner shows above its composer still counts.
+  assert.match(
+    paneOpenQuestion(
+      `Overwrite the lockfile? [y/n]\n${claudeDraft.split('\n').slice(2).join('\n')}`,
+    ) ?? '',
+    /\[y\/n\]/,
+  );
+});
+
 test('a pane question counts on its second poll; a native request counts at once', () => {
   const state: { openQuestion?: { text: string; polls: number } } = {};
   assert.equal(trackOpenQuestion(state, 'Detach?'), null);

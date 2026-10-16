@@ -160,6 +160,7 @@ import {
   readFreshTerminalSignalForRun,
   resolveMonitorDecision,
 } from '../run-engine/run-monitor.js';
+import { WORKER_QUESTION_CLOSED_ACTION } from '../run-engine/worker-question.js';
 import {
   assertSupportedRunnerSpelling,
   normalizeRunner,
@@ -2063,6 +2064,9 @@ export async function resolveRunDecision(
   const skipHandoffSignal =
     params.actionId === 'abort' ||
     resumeNative ||
+    // A question handoff resumes monitoring; it does not claim the task finished.
+    (params.actionId === WORKER_QUESTION_CLOSED_ACTION &&
+      decision.context?.workerQuestion === true) ||
     (params.actionId === INTERACTIVE_HANDOFF_EXTEND_ACTION &&
       interactiveHandoffAllowsExtend(decision));
   if (decision.type === 'monitor_interactive_handoff' && !skipHandoffSignal) {

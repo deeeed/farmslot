@@ -1,3 +1,6 @@
+import { normalizeInstructionText } from './observability-prompt-digest.js';
+import { runnerPaneBufferedInstruction } from './runner-pane-input.js';
+
 function normalizeRunnerId(runnerId?: string | null): string {
   return String(runnerId ?? '')
     .trim()
@@ -179,12 +182,15 @@ export function paneOpenQuestion(tail: string): string | null {
     footer,
   );
   const active = menu ? lines.slice(-25).join('\n') : footer;
-  const pending =
-    menu ||
-    /(?:\[y\/n\]|\[Y\/n\]|\[y\/N\]|do you (?:want|wish)|would you like|select an option)/i.test(
-      active,
-    );
-  return pending ? active : null;
+  if (menu) return active;
+  // Text in the live composer is unsent input, not a question the runner waits on.
+  const draft = runnerPaneBufferedInstruction(tail);
+  const asked = draft ? normalizeInstructionText(active).replace(draft, '') : active;
+  return /(?:\[y\/n\]|\[Y\/n\]|\[y\/N\]|do you (?:want|wish)|would you like|select an option)/i.test(
+    asked,
+  )
+    ? active
+    : null;
 }
 
 /** Classify captured pane text in-process so gateway polling never blocks on child processes. */

@@ -113,6 +113,7 @@ import {
   nativePendingRequestText,
   trackOpenQuestion,
   WORKER_QUESTION_CLOSED_ACTION,
+  WORKER_QUESTION_RESUME_ACTION,
   workerQuestionHandoffDescription,
 } from './worker-question.js';
 
@@ -2079,9 +2080,10 @@ async function readOpenWorkerQuestion(
     return nativePendingRequestText(
       (await readNativeWorkerSnapshot(runId, role, contextId)).pendingRequests,
     );
-  return paneOpenQuestion(
-    await capturePaneContent(await loadSlotVars(slotId), runId, role, contextId),
-  );
+  const pane = await capturePaneContent(await loadSlotVars(slotId), runId, role, contextId);
+  // A live runner pane always renders something; an empty capture is unreadable, not answered.
+  if (!pane.trim()) throw new Error('worker pane capture is empty');
+  return paneOpenQuestion(pane);
 }
 
 async function capturePaneContent(
@@ -2703,13 +2705,21 @@ function armInteractiveHandoffAutoRecovery(
   // A question handoff ends when the worker's question closes. An unreadable
   // pane or session keeps it open.
   let probing = false;
+  let probeFailureLogged = false;
   if (question)
     questionPoll = setInterval(() => {
       if (settled || probing) return;
       probing = true;
       void question
         .open()
-        .catch(() => true)
+        .catch((err: unknown) => {
+          if (!probeFailureLogged)
+            console.warn(
+              `[run-monitor] run ${runId.slice(0, 8)} — worker question probe failed; keeping the handoff open: ${(err as Error).message}`,
+            );
+          probeFailureLogged = true;
+          return true;
+        })
         .then((open) => {
           probing = false;
           if (open || settled) return;
@@ -2809,6 +2819,7 @@ function armInteractiveHandoffAutoRecovery(
 export function rearmInteractiveHandoffAutoRecovery(
   run: Run,
   resolveDecision: (runId: string, decisionId: string, actionId: string) => Promise<void>,
+  readers: { question?: typeof readOpenWorkerQuestion; pollMs?: number } = {},
 ): (() => void) | undefined {
   const slotId = run.slotId;
   if (!slotId) return undefined;
@@ -2816,20 +2827,50 @@ export function rearmInteractiveHandoffAutoRecovery(
     (d) => !d.resolvedAt && d.type === 'monitor_interactive_handoff',
   );
   if (!decision) return undefined;
-  return armInteractiveHandoffAutoRecovery(run.id, slotId, decision, (actionId) => {
-    resolveDecision(run.id, decision.id, actionId).catch((err) => {
-      // The watcher disarmed itself before this resolve ran, so a transient
-      // failure (e.g. the signal file momentarily unreadable, or losing the
-      // race to a concurrent operator resolve) would otherwise permanently
-      // strand auto-recovery. Warn and re-arm: if the decision is already
-      // resolved the re-arm declines, otherwise the next poll retries.
-      console.warn(
-        `[run-monitor] run ${run.id.slice(0, 8)} — auto-resolve of interactive handoff failed after restart: ${(err as Error).message}`,
-      );
-      const latest = getRun(run.id);
-      if (latest) rearmInteractiveHandoffAutoRecovery(latest, resolveDecision);
-    });
-  });
+  const question: HandoffQuestionProbe | undefined =
+    decision.context?.workerQuestion === true
+      ? {
+          pollMs: readers.pollMs ?? HANDOFF_AUTO_RECOVERY_POLL_MS,
+          open: async () => {
+            const latest = getRun(run.id) ?? run;
+            const ctx = selectAgentContext(latest, { role: primaryRoleForFlow(latest.flowType) });
+            const read = readers.question ?? readOpenWorkerQuestion;
+            return (await read(run.id, slotId, ctx?.role, ctx?.id)) !== null;
+          },
+        }
+      : undefined;
+  return armInteractiveHandoffAutoRecovery(
+    run.id,
+    slotId,
+    decision,
+    (actionId) => {
+      resolveDecision(run.id, decision.id, actionId).catch((err) => {
+        // The watcher disarmed itself before this resolve ran, so a transient
+        // failure (e.g. the signal file momentarily unreadable, or losing the
+        // race to a concurrent operator resolve) would otherwise permanently
+        // strand auto-recovery. Warn and re-arm: if the decision is already
+        // resolved the re-arm declines, otherwise the next poll retries.
+        console.warn(
+          `[run-monitor] run ${run.id.slice(0, 8)} — auto-resolve of interactive handoff failed after restart: ${(err as Error).message}`,
+        );
+        const latest = getRun(run.id);
+        if (latest) rearmInteractiveHandoffAutoRecovery(latest, resolveDecision, readers);
+      });
+    },
+    question,
+  );
+}
+
+// A question handoff offers a way back to monitoring ahead of Abort.
+function withWorkerQuestionAction(
+  actions: RunDecision['actions'],
+  question: HandoffQuestionProbe | undefined,
+): RunDecision['actions'] {
+  if (!question) return actions;
+  const abort = actions.findIndex((action) => action.id === 'abort');
+  return abort === -1
+    ? [...actions, WORKER_QUESTION_RESUME_ACTION]
+    : [...actions.slice(0, abort), WORKER_QUESTION_RESUME_ACTION, ...actions.slice(abort)];
 }
 
 async function createBlockedDecision(
@@ -2890,10 +2931,13 @@ async function createBlockedDecision(
         : description,
     actions:
       reason === 'interactive_handoff'
-        ? interactiveHandoffDecisionActions({
-            extendMinutes,
-            resumeNativeWorker,
-          })
+        ? withWorkerQuestionAction(
+            interactiveHandoffDecisionActions({
+              extendMinutes,
+              resumeNativeWorker,
+            }),
+            question,
+          )
         : actions,
     createdAt: new Date().toISOString(),
     context:
@@ -2901,6 +2945,7 @@ async function createBlockedDecision(
         ? {
             signalFile: monitorCtx?.signalFile ?? null,
             ...(extendMinutes != null ? { extendMinutes } : {}),
+            ...(question ? { workerQuestion: true } : {}),
           }
         : undefined,
   };
