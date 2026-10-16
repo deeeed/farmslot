@@ -445,7 +445,9 @@ const cliFixture = (t, { tmuxServer = true } = {}) => {
       'echo "$PWD $* immutable=$YARN_ENABLE_IMMUTABLE_INSTALLS via=${YARN_VIA:-path}" >> "$HOME/yarn.log"\n' +
       'case "$*" in workspaces\\ focus*)\n' +
       '  [ ! -f "$HOME/yarn-fails" ] || { echo "fixture yarn failure"; exit 1; }\n' +
-      '  [ ! -f "$HOME/yarn-edits-lock" ] || echo "# resolved anew" >> yarn.lock ;;\nesac\n',
+      '  [ ! -f "$HOME/yarn-edits-lock" ] || echo "# resolved anew" >> yarn.lock ;;\n' +
+      'workspace\\ @farmslot/recipe-cli\\ build)\n' +
+      '  [ ! -f "$HOME/build-fails" ] || { echo "fixture build failure"; exit 1; } ;;\nesac\n',
     true,
   );
   write(
@@ -561,6 +563,8 @@ esac
     tmuxLaunches: () => read('tmux.log'),
     tmuxKills: () => read('tmux-kills.log'),
     snapshotInstalls: () => read('yarn.log').filter((line) => line.includes(' workspaces focus ')),
+    snapshotBuilds: () =>
+      read('yarn.log').filter((line) => line.includes(' workspace @farmslot/recipe-cli build')),
   };
 };
 
@@ -609,6 +613,13 @@ for (const instance of ['prod', 'dev']) {
         `^${fixture.snapshot}\\.partial\\.\\w+ workspaces focus @farmslot/cli immutable=1 via=corepack$`,
       ),
     );
+    // Plain-node task tooling imports dist/, so the packages are built in place, after the install.
+    assert.deepEqual(fixture.snapshotBuilds(), [
+      installs[0].replace(
+        / workspaces focus @farmslot\/cli immutable=1 /,
+        ' workspace @farmslot/recipe-cli build immutable= ',
+      ),
+    ]);
     assert.deepEqual(fs.readdirSync(fixture.cliRoot).sort(), [previous, fixture.sha].sort());
     assert.match(output, new RegExp(`pruned .*/${stale}`));
     for (const relative of ['.local/bin/farmslot', '.npm-global/bin/farmslot'])
@@ -653,6 +664,7 @@ test('deploy-node reuses an installed snapshot and moves nothing when the revisi
 
   assert.match(output, /node CLI snapshot [0-9a-f]+ already installed/);
   assert.equal(fixture.snapshotInstalls().length, 0);
+  assert.equal(fixture.snapshotBuilds().length, 0);
   assert.doesNotMatch(output, / → .*\/bin\/farmslot|pruned/);
   assert.ok(fs.existsSync(path.join(fixture.cliRoot, older)), 'a redeploy prunes nothing');
   assert.equal(fixture.calls().length, 2);
@@ -948,6 +960,24 @@ test('deploy-node keeps the yarn log and installs nothing when the CLI install f
   assert.match(
     fs.readFileSync(path.join(fixture.cliRoot, `${fixture.sha}.yarn-install.log`), 'utf8'),
     /fixture yarn failure/,
+  );
+  assert.equal(fs.existsSync(path.join(fixture.home, '.local/bin/farmslot')), false);
+});
+
+test('deploy-node keeps the log and installs nothing when building the CLI packages fails', (t) => {
+  const fixture = cliFixture(t);
+  fixture.write('home/build-fails', '');
+  assert.throws(fixture.deploy, (error) => {
+    assert.match(
+      String(error.stderr),
+      /building the node CLI's packages failed; full log: .*\.yarn-install\.log/,
+    );
+    return true;
+  });
+  assert.deepEqual(fs.readdirSync(fixture.cliRoot), [`${fixture.sha}.yarn-install.log`]);
+  assert.match(
+    fs.readFileSync(path.join(fixture.cliRoot, `${fixture.sha}.yarn-install.log`), 'utf8'),
+    /fixture build failure/,
   );
   assert.equal(fs.existsSync(path.join(fixture.home, '.local/bin/farmslot')), false);
 });
