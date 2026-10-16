@@ -305,6 +305,8 @@ class LaneTests(unittest.TestCase):
         self.assertEqual(sum(Path(argv[1]).name == "ack-acceptance.sh" for argv in calls), 1)
 
     def test_concurrent_acknowledgements_do_not_abort_observers(self):
+        # No retry window: a lock still held at the deadline leaves the receipt for the next observer.
+        self.config["lanes"][0]["send_timeout"] = 0
         for verification in ("driver_busy", "no_accepted_receipt"):
             with self.subTest(verification=verification):
                 def command(argv, **kwargs):
@@ -317,6 +319,62 @@ class LaneTests(unittest.TestCase):
                 with patch.object(lanes, "run", side_effect=command):
                     self.assertEqual(lanes.observe(self.config, "one")["status"], "idle")
                 self.assertEqual(lanes._record(self.config, "one")["last_delivery"]["receipt_id"], "shared-accepted-receipt")
+
+    def test_busy_acknowledgement_is_retried_until_the_lock_frees(self):
+        answers = ["driver_busy", "driver_busy", "acceptance_acknowledged"]
+        acks = []
+        def command(argv, **kwargs):
+            if "list-panes" in argv:
+                return result("%1\n")
+            if Path(argv[1]).name == "ack-acceptance.sh":
+                acks.append(argv[-1])
+                verification = answers[len(acks) - 1]
+                return result(json.dumps({"acknowledged": verification == "acceptance_acknowledged",
+                                          "verification": verification}), 0 if acks[2:] else 2)
+            return result(json.dumps({"state": "claude", "phase": "busy", "accepted": {
+                "receipt_id": "queued-handoff", "payload_hash": "handoff"}}))
+        with patch.object(lanes, "run", side_effect=command), \
+             patch.object(lanes.time, "sleep") as sleep:
+            self.assertEqual(lanes.observe(self.config, "two")["status"], "busy")
+        self.assertEqual(acks, ["queued-handoff"] * 3)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_pulled_back_send_is_recorded_undelivered(self):
+        evidence = {"receipt_id": "pulled-handoff", "payload_hash": "handoff", "source": "native-queue"}
+        def command(argv, **kwargs):
+            if "list-panes" in argv:
+                return result("%1\n")
+            if Path(argv[1]).name == "ack-acceptance.sh":
+                self.assertEqual(argv[-1], "pulled-handoff")
+                return result(json.dumps({"acknowledged": False, "verification": "receipt_unverified",
+                                          "accepted": None}), 2)
+            # Up or Esc took the queued text back before the owner acknowledged it.
+            return result(json.dumps({"state": "claude", "phase": "busy", "accepted": None}))
+        with patch.object(lanes, "_send", return_value={"submitted": True, "evidence": evidence}), \
+             patch.object(lanes, "run", side_effect=command):
+            output = lanes.send(self.config, "two", "handoff")
+        self.assertTrue(output["pulled_back"])
+        self.assertEqual(lanes._record(self.config, "two")["last_delivery"],
+                         {**evidence, "pulled_back": True})
+
+    def test_pulled_back_observation_keeps_a_newer_delivery(self):
+        for recorded, pulled_back in (("withdrawn", True), ("newer", False)):
+            with self.subTest(recorded=recorded):
+                def command(argv, **kwargs):
+                    if "list-panes" in argv:
+                        return result("%1\n")
+                    if Path(argv[1]).name == "ack-acceptance.sh":
+                        # Another sender recorded its own delivery while this one was pulled back.
+                        lanes._update(self.config, "two", {"last_delivery": {"receipt_id": recorded}})
+                        return result(json.dumps({"acknowledged": False,
+                                                  "verification": "receipt_unverified"}), 2)
+                    return result(json.dumps({"state": "claude", "phase": "busy", "accepted": {
+                        "receipt_id": "withdrawn", "payload_hash": "handoff"}}))
+                with patch.object(lanes, "run", side_effect=command):
+                    self.assertEqual(lanes.observe(self.config, "two")["status"], "busy")
+                delivery = lanes._record(self.config, "two")["last_delivery"]
+                self.assertEqual(delivery["receipt_id"], recorded)
+                self.assertEqual(delivery.get("pulled_back", False), pulled_back)
 
     def test_send_records_its_queue_delivery_before_acknowledging_the_exact_receipt(self):
         accepted = {"receipt_id": "this-handoff", "payload_hash": "payload", "source": "runner-queue", "session_id": None}

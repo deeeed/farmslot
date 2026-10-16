@@ -120,16 +120,36 @@ def _env(config, lane, record):
     return env
 
 
+def _pulled_back(config, lane, accepted):
+    with _registry(config) as registry:
+        record = registry["lanes"][lane["id"]]
+        # A newer delivery recorded meanwhile keeps its own outcome.
+        if (record.get("last_delivery") or {}).get("receipt_id") == accepted["receipt_id"]:
+            record["last_delivery"] = {**accepted, "pulled_back": True}
+
+
 def _acknowledge(config, lane, pane, accepted):
     if not accepted.get("receipt_id"):
-        return
-    result = run(["bash", str(DRIVER_DIR / "ack-acceptance.sh"), pane, lane["runner"],
-                  accepted["receipt_id"]], cwd=str(DRIVER_DIR.parents[3]),
-                 env=_env(config, lane, _record(config, lane["id"])), check=False)
-    acknowledgement = json.loads(result.stdout)
-    if not acknowledgement.get("acknowledged") and acknowledgement.get("verification") not in {
+        return None
+    # A concurrent send or inspection holds the driver lock only briefly. An unacknowledged
+    # receipt would hand its retained evidence to a later identical payload, so wait it out.
+    deadline = time.monotonic() + lane.get("send_timeout", 30)
+    while True:
+        result = run(["bash", str(DRIVER_DIR / "ack-acceptance.sh"), pane, lane["runner"],
+                      accepted["receipt_id"]], cwd=str(DRIVER_DIR.parents[3]),
+                     env=_env(config, lane, _record(config, lane["id"])), check=False)
+        acknowledgement = json.loads(result.stdout)
+        verification = acknowledgement.get("verification")
+        if verification != "driver_busy" or time.monotonic() >= deadline:
+            break
+        time.sleep(0.1)
+    if verification == "receipt_unverified":
+        # The runner no longer proves the recorded delivery: its input was pulled back unsent.
+        _pulled_back(config, lane, accepted)
+    elif not acknowledgement.get("acknowledged") and verification not in {
             "driver_busy", "no_accepted_receipt"}:
         raise RuntimeError(f"lane {lane['id']} acceptance acknowledgement failed: {acknowledgement}")
+    return verification
 
 
 def _observe(config, lane, pane, record, *, persist=True):
@@ -217,11 +237,13 @@ def send(config, lane_id, payload):
         raise ValueError(f"lane {lane_id} is missing; launch or restore it first")
     delivery = _send(config, lane, pane, record, payload)
     _observe(config, lane, pane, record)
+    output = {"lane": lane_id, "pane_id": pane, "delivery": delivery}
     if delivery.get("submitted") and delivery.get("evidence"):
         # Observation can find an older alias receipt. Persist and acknowledge this handoff too.
         _update(config, lane_id, {"last_delivery": delivery["evidence"]})
-        _acknowledge(config, lane, pane, delivery["evidence"])
-    return {"lane": lane_id, "pane_id": pane, "delivery": delivery}
+        if _acknowledge(config, lane, pane, delivery["evidence"]) == "receipt_unverified":
+            output["pulled_back"] = True
+    return output
 
 
 def flush(config, lane_id):

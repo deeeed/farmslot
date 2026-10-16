@@ -28,7 +28,10 @@ with a retained receipt. Queue delivery does not claim a new turn.
 Read and surface pending questions before answering. A blocked question, shell, or foreign queue stops a send. Codex busy/unknown
 phases accept steering with exact native proof or the complete owned submitted-queue marker.
 The queue receipt survives until delivery acknowledgement; a same-prompt retry uses its
-evidence or submits only the owned composer with Enter. Other runners
+evidence or submits only the owned composer with Enter. The lane CLI retries an acknowledgement
+while the driver is busy, up to `send_timeout`. When the runner no longer proves a recorded delivery
+because its input was pulled back unsent, the lane's `last_delivery` gets `pulled_back: true` and
+`send` reports `pulled_back: true`. Other runners
 still require idle readiness. After reading its choices, use the driver's `answer-question.sh <pane> <runner> <question_fingerprint>`
 with an explicit JSON key list on stdin. It refuses if the pane, session, or question changed.
 A response acknowledgement does not itself prove a new turn. Interactive attachment is also available. Flush only driver-owned buffered input with `flush <lane>`.
