@@ -24,7 +24,7 @@ import {
 } from '../core/index.js';
 import { ghRequest } from '../integrations/github-client.js';
 
-import { withEvidenceAttestation } from './evidence-attestation.js';
+import { withPublicationProvenance } from './evidence-attestation.js';
 import {
   autoDetectEvidenceManifest,
   buildEvidenceSection,
@@ -1361,7 +1361,7 @@ export async function postProcessPRBody(
     }
     // The gateway-owned explanation is literal provenance, not a local media
     // reference. Restore it after body rewrites so they cannot drop its text.
-    body = withEvidenceAttestation(run, body);
+    body = withPublicationProvenance(run, body);
     if (options.adoptedEvidence)
       body = mergeOwnedEvidenceBody(run.id, humanBody, options.adoptedEvidence.previousBody, body);
     assertPublicationTextSafe(body);

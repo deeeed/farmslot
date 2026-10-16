@@ -91,6 +91,37 @@ test('the existing top bar shows the shared attestation reason and explicit conf
   assert.doesNotMatch(text, /Integrity, source, CI and review checks remain required/);
 });
 
+test('the publication panel consumes the gateway skipped-review disclosure', () => {
+  const input = topBarFixture();
+  input.payload.gateSummary = {
+    kind: 'publication',
+    worker: { model: null, turns: null },
+    review: {
+      noCodeReview: true,
+      reviews: [],
+      passingReviews: 0,
+      totalUnresolved: 0,
+      didAnyReviewTriggerReWork: false,
+    },
+    tokens: {
+      mainWorker: {
+        model: null,
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheCreation: 0,
+        total: 0,
+        turns: 0,
+      },
+      reviews: [],
+      byModel: [],
+      familyTotalTokens: 0,
+      perTurnDetailsAvailable: false,
+    },
+  };
+  assert.match(litText(renderReadyTopBar(input)), /No code review ran/);
+});
+
 test('blocked visual claims show judgment rows and keep attestation out of the action row', () => {
   const payload = gateFixture();
   payload.gateReadiness = {

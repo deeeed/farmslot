@@ -8,6 +8,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## 0.8.2 - 2026-10-16
 
+- Show the shared no-code-review warning at publication gates.
+
 - Reserve loading layouts and retries for gate, output-review acceptance, evidence and run views with shared skeleton shapes.
 - Use one publication decision panel for gate and decision workspaces with explicit AC evidence actions.
 - Remember person logins through gateway device sessions and confirm revocation before sign-out, while preserving service profiles.

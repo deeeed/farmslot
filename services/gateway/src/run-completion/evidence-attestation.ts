@@ -11,6 +11,7 @@ import {
 
 import { latestResolvedHumanGateDecision } from '../run-engine/decision-replay.js';
 import { validatePackageApprovalSelection } from '../run-engine/gate-policy.js';
+import { buildReviewSummary } from '../run-engine/gate-summary.js';
 
 import { replaceMarkdownSection } from './publication-artifacts.js';
 
@@ -46,31 +47,42 @@ export function assertEvidenceAttestationReceipt(
   return receipt;
 }
 
-/** One retained receipt feeds initial publication and subsequent refreshes. */
-export function withEvidenceAttestation(run: Run, body: string): string {
+/** One projection and retained receipt feed publication and subsequent refreshes. */
+export function withPublicationProvenance(run: Run, body: string): string {
   const decision = latestResolvedHumanGateDecision(run.decisions, true);
   const prepared = decision?.payload?.kind === 'ready' ? decision.payload.prPackage : undefined;
-  if (!prepared) return body;
-  const receipt = assertEvidenceAttestationReceipt(run, decision, prepared);
-  if (!receipt) return body;
-  const plain = (value: string) =>
-    value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const fence = '`'.repeat(
-    Math.max(3, ...[...receipt.reason.matchAll(/`+/g)].map((match) => match[0].length + 1)),
-  );
-  const section = [
-    `Approved by ${plain(receipt.approver.displayName)} (${plain(receipt.approver.principalId)}) at ${receipt.approvedAt}.`,
-    `Package: \`${receipt.packageHash}\`. Decision: \`${receipt.decisionId}\`.`,
-    '',
-    'Reason:',
-    `${fence}text`,
-    receipt.reason,
-    fence,
-    '',
-    'Waived claim-policy findings:',
-    ...receipt.waivedReasons.map((reason) => `- ${plain(reason.message)}`),
-    '',
-    'Original evidence and verdicts are retained. Integrity, source, CI and review checks remain required.',
+  const receipt = prepared ? assertEvidenceAttestationReceipt(run, decision, prepared) : undefined;
+  if (receipt) {
+    const plain = (value: string) =>
+      value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const fence = '`'.repeat(
+      Math.max(3, ...[...receipt.reason.matchAll(/`+/g)].map((match) => match[0].length + 1)),
+    );
+    const section = [
+      `Approved by ${plain(receipt.approver.displayName)} (${plain(receipt.approver.principalId)}) at ${receipt.approvedAt}.`,
+      `Package: \`${receipt.packageHash}\`. Decision: \`${receipt.decisionId}\`.`,
+      '',
+      'Reason:',
+      `${fence}text`,
+      receipt.reason,
+      fence,
+      '',
+      'Waived claim-policy findings:',
+      ...receipt.waivedReasons.map((reason) => `- ${plain(reason.message)}`),
+      '',
+      'Original evidence and verdicts are retained. Integrity, source, CI and review checks remain required.',
+    ].join('\n');
+    body = replaceMarkdownSection(body, '## Evidence policy attestation', section).trimEnd() + '\n';
+  }
+  const noReviewNotice = [
+    '<!-- farmslot-code-review:start -->',
+    'Code review: No code review ran.',
+    '<!-- farmslot-code-review:end -->',
   ].join('\n');
-  return replaceMarkdownSection(body, '## Evidence policy attestation', section).trimEnd() + '\n';
+  if (buildReviewSummary(run).noCodeReview) {
+    if (!body.includes(noReviewNotice)) body = `${body.trimEnd()}\n\n${noReviewNotice}\n`;
+  } else if (body.includes(noReviewNotice)) {
+    body = body.replace(noReviewNotice, '').trimEnd() + '\n';
+  }
+  return body;
 }

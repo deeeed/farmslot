@@ -161,6 +161,7 @@ export function retainTaskInput(
           ? ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']
           : ['dependencies', 'optionalDependencies', 'peerDependencies'];
       const dependencies = new Map<string, boolean>();
+      const peerDependencies = new Set<string>();
       for (const field of fields) {
         const declared = manifest[field];
         if (declared === undefined) continue;
@@ -168,6 +169,10 @@ export function retainTaskInput(
         for (const [name, version] of Object.entries(declared)) {
           if (typeof version !== 'string' || !/^(?:@[^/]+\/)?[^/@.][^/]*$/.test(name))
             throw new Error(`Invalid dependency declaration: ${name}`);
+          if (field === 'peerDependencies') {
+            if (dependencies.has(name)) continue;
+            peerDependencies.add(name);
+          }
           const peerMeta = isRecord(manifest.peerDependenciesMeta)
             ? manifest.peerDependenciesMeta[name]
             : undefined;
@@ -177,7 +182,10 @@ export function retainTaskInput(
         }
       }
       for (const [name, optional] of dependencies) {
-        const dependency = resolveDependency(original, name);
+        // Hoisted packages may receive peers from the selected owning workspace.
+        const dependency =
+          resolveDependency(original, name) ??
+          (peerDependencies.has(name) ? resolveDependency(source, name) : undefined);
         if (!dependency) {
           if (optional) continue;
           throw new Error(`Declared task dependency ${name} is not installed for ${original}.`);
