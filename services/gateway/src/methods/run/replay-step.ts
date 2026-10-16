@@ -718,13 +718,22 @@ export async function readAdoptableTaskSignal(
   }
 }
 
+/**
+ * The slot a replay must re-claim before it runs, for every target after
+ * find-slot, or prepare onward in a flow without one. A run that failed before prepare
+ * keeps its slotId after cleanup freed the slot, so the binding is stale until
+ * re-claimed.
+ */
 function recoverReplaySlotId(
   existing: NonNullable<ReturnType<typeof getRun>>,
   targetIdx: number,
+  findSlotIdx: number,
   prepareIdx: number,
 ): string | null {
-  if (targetIdx < 0 || prepareIdx < 0 || targetIdx < prepareIdx) return null;
-  return resolveRunSlotId(existing);
+  if (targetIdx < 0) return null;
+  const afterSelection =
+    (findSlotIdx >= 0 && targetIdx > findSlotIdx) || (prepareIdx >= 0 && targetIdx >= prepareIdx);
+  return afterSelection ? resolveRunSlotId(existing) : null;
 }
 
 function assertReplayAfterDispatchAllowed(
@@ -1318,13 +1327,8 @@ async function replayRunStep(
       console.log(
         `[run] replay from ${replayStepName} — cleared slotId + taskFile for re-selection`,
       );
-    } else if (targetIdx >= 0 && targetIdx <= writeTaskIdx) {
-      // Replaying from write-task: clear taskFile so it regenerates with current slot
-      replayTaskFile = null;
-      updateRun(params.runId, { taskFile: null });
-      console.log(`[run] replay from ${replayStepName} — cleared taskFile for regeneration`);
     } else {
-      const replaySlotId = recoverReplaySlotId(replaySnapshot, targetIdx, prepareIdx);
+      const replaySlotId = recoverReplaySlotId(replaySnapshot, targetIdx, findSlotIdx, prepareIdx);
       if (replaySlotId) {
         // Re-claim only when the slot is free or still owned by this run. A released run
         // can keep stale agentContext.slotId history after its slot is reassigned; blindly
@@ -1335,6 +1339,7 @@ async function replayRunStep(
           // Claim-type write: bumps the ownership epoch so a teardown racing this
           // reclaim aborts its remaining writes instead of clobbering it.
           const { claimSlotStatusIf } = await import('../../core/index.js');
+          let holder = '';
           const { claimed, epoch } = await claimSlotStatusIf(
             replaySlotId,
             (slot) => {
@@ -1347,6 +1352,11 @@ async function replayRunStep(
               const reclaim = replaySlotReclaimCheck(slot, params.runId, {
                 ownerRunExists: (ownerId) => Boolean(getRun(ownerId)),
               });
+              if (!reclaim.ok)
+                holder =
+                  reclaim.reason === 'owned-by-other'
+                    ? ` (run ${reclaim.owner} holds it)`
+                    : ` (it is ${reclaim.lifecycle})`;
               if (
                 reclaim.ok &&
                 existing.status === 'blocked' &&
@@ -1390,7 +1400,7 @@ async function replayRunStep(
           );
           if (!claimed) {
             throw new Error(
-              `slot ${replaySlotId} is no longer safely reclaimable; replay from find-slot to select a fresh worker`,
+              `slot ${replaySlotId} is no longer safely reclaimable${holder}; replay from find-slot to select a fresh worker`,
             );
           }
           reclaimedSlotId = replaySlotId;
@@ -1442,6 +1452,12 @@ async function replayRunStep(
           console.warn(`[run] slot re-claim failed (${(err as Error).message})`);
           throw err;
         }
+      }
+      if (targetIdx >= 0 && targetIdx <= writeTaskIdx) {
+        // Replaying from write-task: clear taskFile so it regenerates with current slot
+        replayTaskFile = null;
+        updateRun(params.runId, { taskFile: null });
+        console.log(`[run] replay from ${replayStepName} — cleared taskFile for regeneration`);
       }
     }
 
