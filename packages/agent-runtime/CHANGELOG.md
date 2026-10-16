@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Accept qualified parent proof references during PR-follow-up closeout while preserving explicit fresh-proof requirements.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.27.0 - 2026-10-16

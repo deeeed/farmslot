@@ -149,7 +149,11 @@ and supplies no measured timeline. Current readers do not derive AC links from
 manifest `covers` or read `recipe-coverage.md` as a coverage fallback.
 
 Successful completion requires every registered criterion to have an engine
-verdict, including contracts without an opt-in. Missing ledgers or unreadable
+verdict, including contracts without an opt-in. For PR follow-ups,
+[ADR-062 inherited acceptance](recorded-run-evidence.md#inherited-acceptance-for-pr-completion)
+permits a matching provisional parent reference instead of a new task ledger;
+gateway completion independently qualifies the original proof. `acceptance.requireFresh`
+retains the task-owned requirement. Otherwise, missing ledgers or unreadable
 handoffs refuse. Weak or missing engine verdicts refuse unless
 `acceptance.allowWeak` is set. No-change and self-review keep their existing
 outcome contracts. `acceptance.require` cannot disable successful-completion

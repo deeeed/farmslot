@@ -35,18 +35,28 @@ export function visualReviewAuthority(
   };
 }
 
+export interface VisualReviewReadSelection {
+  capturedIds?: readonly string[];
+  historical?: boolean;
+}
+
 export function reviewedRecipeClaims(
   run: Run,
   input: RecordedEvidencePackageInput,
   policy?: ProjectVisualClaimReviewPolicy,
+  selection: VisualReviewReadSelection = {},
 ) {
-  return deriveReviewedRecipeClaims(input, visualReviewAuthority(run, input, undefined, policy));
+  return deriveReviewedRecipeClaims(
+    input,
+    visualReviewAuthority(run, input, selection.capturedIds, policy, selection.historical),
+  );
 }
 
 export function appliedVisualJudgmentReceiptIds(
   run: Run,
   inputs: readonly RecordedEvidencePackageInput[],
   policy?: ProjectVisualClaimReviewPolicy,
+  selection: VisualReviewReadSelection = {},
 ): string[] {
   return [
     ...new Set(
@@ -54,7 +64,13 @@ export function appliedVisualJudgmentReceiptIds(
         input.claims
           ? recordedVisualJudgments(
               input,
-              visualReviewAuthority(run, input, undefined, policy),
+              visualReviewAuthority(
+                run,
+                input,
+                selection.capturedIds,
+                policy,
+                selection.historical,
+              ),
             ).map(({ receiptId }) => receiptId)
           : [],
       ),

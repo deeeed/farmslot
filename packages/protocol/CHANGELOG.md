@@ -7,6 +7,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 - Expose optional dev deployment worker CLI verification health on node and fleet metrics.
 
 - Expose optional provider probe status, load, retry and retained mismatch diagnostics.
+- Add inherited acceptance references and shared criterion binding, with per-flow fresh-proof requirements.
 
 - Project skipped code review as a nonblocking publication disclosure.
 - Expose optional Viewed-file diagnostics on review publication receipts and slot posting gates.

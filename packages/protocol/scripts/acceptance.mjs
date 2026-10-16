@@ -1,5 +1,6 @@
 // Portable acceptance contract. Operator scripts and clients consume the same implementation.
 const ACCEPTANCE_STATUS_ARTIFACT = 'artifacts/acceptance-status.json';
+const INHERITED_ACCEPTANCE_INPUT = 'inputs/inherited-acceptance.json';
 const ACCEPTANCE_VERDICTS = [
   'proven',
   'weak',
@@ -13,6 +14,29 @@ const ACCEPTANCE_CRITERION_ID_PATTERN = /^AC-[1-9][0-9]*$/;
 
 function acceptanceCriterionId(index) {
   return `AC-${index + 1}`;
+}
+
+function registeredAcceptanceCriteria(criteria) {
+  return criteria
+    .filter((text) => String(text).trim().length > 0)
+    .map((text, index) => ({ id: acceptanceCriterionId(index), text: String(text) }));
+}
+
+function acceptanceCriteriaMatch(expected, actual) {
+  return (
+    Array.isArray(expected) &&
+    Array.isArray(actual) &&
+    expected.length === actual.length &&
+    expected.every(
+      (criterion, index) =>
+        isRecord(criterion) &&
+        isRecord(actual[index]) &&
+        criterion.id === actual[index].id &&
+        typeof criterion.text === 'string' &&
+        typeof actual[index].text === 'string' &&
+        criterion.text.trim() === actual[index].text.trim(),
+    )
+  );
 }
 
 function isRecord(value) {
@@ -225,8 +249,11 @@ export {
   ACCEPTANCE_PROOF_MODES,
   ACCEPTANCE_STATUS_ARTIFACT,
   ACCEPTANCE_VERDICTS,
+  acceptanceCriteriaMatch,
   acceptanceCriteriaView,
   acceptanceCriterionId,
+  INHERITED_ACCEPTANCE_INPUT,
+  registeredAcceptanceCriteria,
   renderAcceptanceCoverage,
   summarizeAcceptanceStatus,
   validateAcceptanceStatusLedger,

@@ -27,6 +27,8 @@ export interface WorkerTerminalWhenPresentRule {
 export interface WorkerTerminalAcceptanceRules {
   require?: boolean;
   allowWeak?: boolean;
+  /** Require this task's proof instead of eligible parent-run acceptance. */
+  requireFresh?: boolean;
 }
 
 export interface WorkerTerminalProjectConfig {

@@ -1341,6 +1341,7 @@ for (const phase of ['list-sessions', 'new-session', 'kill-session', 'success'])
       const env = {
         ...process.env,
         HOME: fixture.home,
+        ASDF_DATA_DIR: '',
         PATH: `${fixture.root}/bin:${fixture.root}/node-bin:/usr/bin:/bin:/usr/sbin:/sbin`,
       };
       for (const key of ['FARMSLOT_HOME', 'BASH_ENV', 'ZDOTDIR', 'TMUX', 'TMUX_PANE'])
