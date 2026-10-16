@@ -13,26 +13,9 @@ import { baseStyles, colors, fonts, radii, spacing } from '../lib/theme';
 
 import { Skeleton, SkeletonError } from './Skeleton';
 
-/**
- * The run's acceptance ledger (ADR-060), read-only and compact: the assessed and
- * proven counts always visible, the per-criterion rows collapsed until tapped so a
- * long criteria list does not push the checklist off a phone screen.
- *
- * With `onOpenEvidence`, each evidence file opens in the artifact viewer. Verdicts
- * are the worker's claim, rendered as recorded.
- */
-export function TaskAcceptancePanel({
-  acceptanceStatus,
-  acceptanceCriteria,
-  acceptanceEvidenceLinks,
-  error,
-  onOpenEvidence,
-  evidenceModel,
-  showOccurrences,
-  onOpenOccurrence,
-  onMarkUntestable,
-  onRetry,
-}: {
+interface TaskAcceptancePanelProps {
+  loading?: boolean;
+  expectedRows?: number;
   onRetry?: () => void;
   onMarkUntestable?: (id: string, reason: string) => void;
   evidenceModel?: EvidenceReviewModel | null;
@@ -46,7 +29,40 @@ export function TaskAcceptancePanel({
   /** Why the ledger could not be read; shown instead of an empty panel. */
   error?: string | null;
   onOpenEvidence?: (criterionId: string, path: string) => void;
-}) {
+}
+
+/**
+ * The run's acceptance ledger (ADR-060), read-only and compact: the assessed and
+ * proven counts always visible, the per-criterion rows collapsed until tapped so a
+ * long criteria list does not push the checklist off a phone screen.
+ *
+ * With `onOpenEvidence`, each evidence file opens in the artifact viewer. Verdicts
+ * are the worker's claim, rendered as recorded.
+ */
+export function TaskAcceptancePanel({
+  loading = false,
+  expectedRows,
+  ...props
+}: TaskAcceptancePanelProps) {
+  return loading ? (
+    <TaskAcceptanceSkeleton rows={expectedRows} />
+  ) : (
+    <TaskAcceptanceContent {...props} />
+  );
+}
+
+function TaskAcceptanceContent({
+  acceptanceStatus,
+  acceptanceCriteria,
+  acceptanceEvidenceLinks,
+  error,
+  onOpenEvidence,
+  evidenceModel,
+  showOccurrences,
+  onOpenOccurrence,
+  onMarkUntestable,
+  onRetry,
+}: TaskAcceptancePanelProps) {
   const ledger = acceptanceStatus ?? { schemaVersion: 1 as const, criteria: [] };
   const view = acceptanceLedgerView(
     ledger,
@@ -394,7 +410,7 @@ const styles = StyleSheet.create({
   },
 });
 
-export function TaskAcceptanceSkeleton({ rows = 3 }: { rows?: number }) {
+function TaskAcceptanceSkeleton({ rows = 3 }: { rows?: number }) {
   return (
     <View
       style={styles.panel}
@@ -418,6 +434,10 @@ export function TaskAcceptanceSkeleton({ rows = 3 }: { rows?: number }) {
 }
 
 /** Keep evidence below the AC details fixed even when the loaded ledger collapses. */
-export function acceptancePanelViewportHeight(rows: number, viewportHeight: number): number {
-  return Math.min(44 + Math.max(0, rows) * 56, viewportHeight * 0.4);
+export function acceptancePanelViewportHeight(
+  rows: number | undefined,
+  viewportHeight: number,
+): number {
+  const maximum = viewportHeight * 0.4;
+  return rows === undefined ? maximum : Math.min(44 + Math.max(0, rows) * 56, maximum);
 }
