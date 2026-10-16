@@ -216,3 +216,68 @@ test('native goal update plus its new turn proves /goal acceptance without a use
     fs.rmSync(dir, { recursive: true });
   }
 });
+
+test('native parent interruption clears inherited active state without treating child stops as parent stops', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'interrupted-parent-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, 'panes'));
+  const session = 'interrupted-parent';
+  const file = path.join(dir, session + '.jsonl');
+  const now = Date.now();
+  const hook = {
+    runner: 'claude',
+    tmuxPane: '%1',
+    session_id: session,
+    rootSessionId: session,
+    transcript_path: file,
+    hook_event_name: 'SubagentStop',
+    observedAt: now,
+    turnStartedAt: now - 5000,
+    turnActive: true,
+  };
+  fs.writeFileSync(path.join(dir, 'panes', '%251.json'), JSON.stringify(hook));
+  fs.writeFileSync(path.join(dir, 'hooks.jsonl'), JSON.stringify(hook) + '\n');
+  const record = (type, offset, content, extra = {}) => ({
+    type,
+    isSidechain: false,
+    sessionId: session,
+    session_id: session,
+    timestamp: new Date(now + offset).toISOString(),
+    promptId: 'prompt-one',
+    uuid: 'event-' + offset,
+    parentUuid: 'previous',
+    message: { role: type, content },
+    ...extra,
+  });
+  const records = [
+    record('user', -5000, [{ type: 'text', text: 'Check the retained task' }]),
+    record('assistant', -2000, [{ type: 'thinking', thinking: 'checking' }]),
+    record('user', -1000, [{ type: 'text', text: '[Request interrupted by user]' }]),
+    record('assistant', -500, [{ type: 'text', text: 'child completion' }], { isSidechain: true }),
+  ];
+  const write = () => fs.writeFileSync(file, records.map(JSON.stringify).join('\n') + '\n');
+  const meta = { pane_id: '%1', process_started_at: now - 10000 };
+  write();
+  const idle = nativeState(meta, 'claude', dir);
+  assert.equal(idle.phase, 'idle');
+  assert.equal(idle.source, 'native-session');
+  records.push(
+    record('assistant', 1, [{ type: 'tool_use', id: 'next-tool', name: 'Read', input: {} }]),
+  );
+  write();
+  assert.equal(
+    nativeState(meta, 'claude', dir).phase,
+    'busy',
+    'later parent work vetoes the old interruption',
+  );
+  records.pop();
+  records.push(
+    record('user', 2, [{ type: 'text', text: 'New parent request' }], { promptId: 'prompt-two' }),
+  );
+  write();
+  assert.equal(
+    nativeState(meta, 'claude', dir).phase,
+    'busy',
+    'a later parent prompt is not the interrupted turn',
+  );
+});

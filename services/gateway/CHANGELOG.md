@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Read native parent interruption receipts when hooks retain an active turn, preserving child-stop and later-parent activity guards.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.22.0 - 2026-10-16
