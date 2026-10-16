@@ -32,6 +32,7 @@ import {
 
 import '../slot-view/worker-session-history.js';
 import '../shared/workspace-pin.js';
+import '../shared/hydrating-placeholder.js';
 
 import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
@@ -443,16 +444,10 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
       </div>`;
   if (!ctx.run) {
     if (ctx._hydrating) {
-      return html`
-        ${backToRuns}
-        <farm-hydrating message="Loading runs…"></farm-hydrating>
-      `;
+      return html` ${backToRuns} ${renderRunDetailSkeleton()} `;
     }
     if (ctx._bootstrapFailed) {
-      return html`
-        ${backToRuns}
-        <div class="empty">Run data refresh failed during reconnect</div>
-      `;
+      return html` ${backToRuns} ${renderRunDetailSkeleton('Run unavailable')} `;
     }
     if (ctx._directRunUnavailable) {
       return html`
@@ -461,10 +456,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
       `;
     }
     if (ctx._directRunRefreshFailed) {
-      return html`
-        ${backToRuns}
-        <div class="empty">Run data refresh failed during reconnect</div>
-      `;
+      return html` ${backToRuns} ${renderRunDetailSkeleton('Run unavailable')} `;
     }
     return html`<div class="empty">Run not found</div>`;
   }
@@ -1304,4 +1296,24 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         `
       : nothing}
   `;
+}
+
+export function renderRunDetailSkeleton(error = '') {
+  return html`<farm-hydrating
+    message="Run details"
+    .error=${error}
+    @retry=${() => location.reload()}
+    ><div style="display:grid;gap:16px;min-height:520px">
+      <farm-skeleton width="65%" height="32"></farm-skeleton>
+      <div style="display:flex;gap:12px">
+        <farm-skeleton kind="button" width="120px"></farm-skeleton
+        ><farm-skeleton kind="button" width="144px"></farm-skeleton>
+      </div>
+      <farm-skeleton kind="block" height="120"></farm-skeleton
+      ><farm-skeleton width="35%"></farm-skeleton>${Array.from(
+        { length: 5 },
+        () => html`<farm-skeleton kind="row"></farm-skeleton>`,
+      )}
+    </div></farm-hydrating
+  >`;
 }

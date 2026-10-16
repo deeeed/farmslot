@@ -6,6 +6,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Initialize hosted tasks through the execution node’s immutable CLI and mirror its frozen marker, metadata and receipts instead of rendering a second task.
 
+- Recognize quiescent configured slot sessions across completed runs while preserving foreign sessions and live workers during teardown.
+
 - Keep machine connection health current in cached fleet reads and wait for execution nodes at retained publication gates after gateway restart.
 - Read native parent interruption receipts when hooks retain an active turn, preserving child-stop and later-parent activity guards.
 - Encode artifact URL path segments so publication verifies and embeds filenames containing literal percent escapes and other URL characters.

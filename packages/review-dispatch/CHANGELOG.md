@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Share declared gate criteria across client loading layouts.
+
 - Share publication decision status, AC judgment rows and attestation availability across operator clients.
 
 - Use gateway device-session expiry in clients instead of the temporary local sign-in lifetime.

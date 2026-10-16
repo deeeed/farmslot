@@ -367,7 +367,7 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
             ])}
           ></decision-advice-panel>`
         : nothing}
-      ${hasPayload && context.actionsBlocked
+      ${hasPayload && context.actionsBlocked && !isReady
         ? html`
             <div class="gate-body">
               <div class="gate-description">
@@ -404,6 +404,10 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                       <div class="gate-workspace">
                         <ready-workspace
                           .runId=${run.id}
+                          .actionsBlocked=${context.actionsBlocked}
+                          .loadError=${context.bootstrapFailed || context.directRunRefreshFailed
+                            ? 'Run unavailable'
+                            : ''}
                           .decision=${pending}
                           .run=${run}
                           .recipeRuns=${context.recipeRuns}

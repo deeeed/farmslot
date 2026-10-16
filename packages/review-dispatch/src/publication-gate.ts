@@ -1,10 +1,13 @@
 import type { EvidenceReviewJudgmentRow } from '@farmslot/adapter-sdk/evidence';
 import {
+  acceptanceCriterionId,
+  type AcceptanceCriterionRef,
   type AcceptanceCriterionView,
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   type DecisionAction,
   evidenceAttestationAvailable,
   isValidEvidenceAttestationReason,
+  type ReadyGatePayload,
   type RunGateReadiness,
 } from '@farmslot/protocol';
 
@@ -26,6 +29,18 @@ export interface PublicationGateInput {
   attestationReason?: string;
   resolved?: boolean;
   attesting?: boolean;
+}
+
+/** Declared labels size both clients; older gates retain their recorded criterion rows. */
+export function publicationGateCriteria(
+  payload: Pick<ReadyGatePayload, 'acceptanceCriteria' | 'acceptanceStatus'> | undefined,
+): readonly AcceptanceCriterionRef[] {
+  if (payload?.acceptanceCriteria?.length)
+    return payload.acceptanceCriteria.map((text, index) => ({
+      id: acceptanceCriterionId(index),
+      text,
+    }));
+  return payload?.acceptanceStatus?.criteria ?? [];
 }
 
 /** Presentation only: action availability and evidence judgments remain gateway-owned. */

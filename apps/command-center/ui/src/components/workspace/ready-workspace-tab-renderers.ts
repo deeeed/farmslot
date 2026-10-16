@@ -2,6 +2,8 @@ import { html, nothing, type TemplateResult } from 'lit';
 
 import type { ArtifactRef, PublicationTarget, ReadyGatePayload } from '@farmslot/protocol';
 
+import '../shared/hydrating-placeholder.js';
+
 import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
 
 import type { ReadyInputArtifact } from './ready-workspace-inputs.js';
@@ -9,6 +11,7 @@ import { renderReadyWorkspaceMarkdown } from './ready-workspace-markdown.js';
 import { readyPrDescription } from './ready-workspace-selection-model.js';
 import type { RecipeRunnerUiOptions } from './recipe-runner-options-model.js';
 import { VIDEO_EXTS } from './workspace-artifacts.js';
+import { renderEvidenceGridSkeleton } from './workspace-evidence-preview.js';
 
 export function renderReadyPrPreviewTab(input: {
   payload: ReadyGatePayload;
@@ -133,7 +136,13 @@ export function renderReadyEvidenceTab(input: {
   artifacts: ArtifactRef[];
   selectionToolbar: TemplateResult | typeof nothing;
   artifactGroups: TemplateResult | typeof nothing;
+  loading?: boolean;
+  error?: string;
+  retry?: () => void;
 }) {
+  if (input.loading && !input.artifacts.length) return renderEvidenceGridSkeleton();
+  if (input.error && !input.artifacts.length)
+    return renderEvidenceGridSkeleton(input.error, input.retry);
   if (input.artifacts.length === 0) return html`<div class="rdy-tab-empty">No evidence</div>`;
   return html`
     <div class="rdy-evidence-tab">
@@ -270,4 +279,18 @@ export function renderWorkspaceLearningsTab(input: { workerLearnings?: string })
       ${gatewayMediaHtml(renderReadyWorkspaceMarkdown(input.workerLearnings))}
     </div>
   `;
+}
+
+/** Title and Markdown lines occupy the existing preview viewport. */
+export function renderPrPreviewSkeleton(error = '', retry?: () => void) {
+  return html`<farm-hydrating message="PR preview" .error=${error} @retry=${retry}
+    ><div style="display:grid;gap:16px;min-height:300px">
+      <farm-skeleton width="32%"></farm-skeleton
+      ><farm-skeleton width="72%" height="26"></farm-skeleton>${Array.from(
+        { length: 7 },
+        (_, index) =>
+          html`<farm-skeleton width=${index % 3 === 2 ? '65%' : '95%'}></farm-skeleton>`,
+      )}
+    </div></farm-hydrating
+  >`;
 }
