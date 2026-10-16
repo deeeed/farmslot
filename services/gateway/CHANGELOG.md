@@ -4,6 +4,10 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review.
+
+- Restore publication decisions after recovered findings, preserve fix checklists during gate replay, and continue the recorded review mode with the latest completed worker CI receipt.
+
 - Recognize owned follow-up queue previews and keep unsubmitted composer text out of delivery verification.
 
 - Detect pinned provider CLI drift across node and SSH shell paths, report unhealthy nodes, and verify exact-version global rollout.

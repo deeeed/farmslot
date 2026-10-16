@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review.
 - Share the gateway no-code-review warning without disabling publication approval.
 
 - Share declared gate criteria across client loading layouts.

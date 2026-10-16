@@ -28,7 +28,9 @@ import {
   type WorkerTerminalDisposition,
   type WorkerTerminalEvidence,
 } from '@farmslot/protocol';
-import { resolveReviewMode } from '@farmslot/review-dispatch';
+import { publicationReviewBlockingReason, resolveReviewMode } from '@farmslot/review-dispatch';
+
+export { publicationReviewBlockingReason } from '@farmslot/review-dispatch';
 
 import { REQUESTED_REVIEW_SOURCE, reviewLoopNumberFromId } from '../quality/review-sources.js';
 import type { ReviewResult } from '../review/orchestrator.js';
@@ -865,6 +867,8 @@ export function assertPublicationReviewPolicySatisfied(
   current: Run,
   preparedPackage: ReadyGatePrPackage,
 ): void {
+  const blocked = publicationReviewBlockingReason(current, preparedPackage);
+  if (blocked) throw new Error(`Publication approval requires passing reviews: ${blocked}`);
   const reviewPolicy = preparedPackage.reviewPolicy ?? publicationReviewPolicyForRun(current);
   const reviews = current.engineState?.publishGate?.reviews ?? [];
   const freshReviews = qualifyingPassingReviews(reviews).filter((review) =>

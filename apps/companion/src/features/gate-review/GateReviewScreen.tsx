@@ -190,6 +190,7 @@ export function GateReviewScreen({
       </ScrollView>
       <View style={styles.section}>
         <GateActions
+          run={viewModel.run}
           showClaims={false}
           loading={acceptance.loading}
           disabled={judging}

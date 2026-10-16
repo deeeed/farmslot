@@ -1,13 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { EVIDENCE_ATTESTATION_ACTION, type RunGateReadiness } from '@farmslot/protocol';
+import {
+  EVIDENCE_ATTESTATION_ACTION,
+  type ReviewStatus,
+  type RunGateReadiness,
+} from '@farmslot/protocol';
 
 import {
   acceptanceClaimRows,
   type PublicationGateClaim,
   publicationGateCriteria,
   publicationGateView,
+  publicationReviewBlockingReason,
 } from '../src/publication-gate.js';
 
 const evidenceOnly: RunGateReadiness = {
@@ -255,4 +260,138 @@ test('older gate row counts use the same recorded fallback in both clients', () 
     rows,
   );
   assert.deepEqual(publicationGateCriteria(undefined), []);
+});
+
+test('both publication clients hide all approval variants behind an unresolved-review status', () => {
+  const actions = [
+    { id: 'approve-publish', label: 'Approve publish', style: 'primary' as const },
+    { ...EVIDENCE_ATTESTATION_ACTION },
+    {
+      id: 'approve-publish-unresolved',
+      label: 'Accept findings and publish',
+      style: 'danger' as const,
+    },
+    { id: 'continue-review-fix', label: 'Continue fixing', style: 'primary' as const },
+  ];
+  for (const message of [
+    'Review found 1 issue. Fix and pass review before publishing.',
+    'Review found 1 issue, fix in progress.',
+  ]) {
+    const view = publicationGateView({
+      actions,
+      readiness: {
+        state: 'not-ready',
+        identity: evidenceOnly.identity,
+        reasons: [{ code: 'review-fix-required', prerequisite: 'review', message }],
+      },
+    });
+    assert.equal(view.status, message);
+    assert.equal(view.approval, null);
+    assert.equal(view.attestation, null);
+    assert.deepEqual(
+      view.secondaryActions.map((action) => action.id),
+      ['continue-review-fix'],
+    );
+  }
+  const ready = publicationGateView({
+    actions,
+    readiness: { state: 'ready', identity: evidenceOnly.identity, reasons: [] },
+  });
+  assert.equal(ready.approval?.id, 'approve-publish');
+  assert.equal(publicationGateView({ actions, resolved: true }).approval, null);
+});
+
+test('live run state overrides stale approval actions even without a decision or readiness payload', () => {
+  const run: NonNullable<Parameters<typeof publicationGateView>[0]['run']> = {
+    status: 'human-gating',
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            id: 'rv3',
+            source: 'human-gate',
+            mode: 'cold',
+            loopNumber: 3,
+            verdict: 'issues',
+            unresolvedCount: 1,
+          },
+        ],
+      },
+    },
+  };
+  const actions = [{ id: 'approve-publish', label: 'Approve publish', style: 'primary' as const }];
+  const view = publicationGateView({ actions, run });
+  assert.equal(view.approval, null);
+  assert.match(view.status, /Review found 1 issue/);
+  assert.deepEqual(view.secondaryActions, []);
+  run.status = 'fixing';
+  assert.equal(
+    publicationGateView({ actions, run }).status,
+    'Review found 1 issue, fix in progress.',
+  );
+});
+
+test('failed same-ID continuations retain findings after the fix context is blocked', () => {
+  const review: ReviewStatus[] = [
+    {
+      id: 'rv3',
+      source: 'human-gate',
+      mode: 'cold',
+      loopNumber: 3,
+      verdict: 'failed',
+      unresolvedCount: 1,
+      feedbackSent: true,
+      attempts: [
+        { mode: 'cold', loopNumber: 1, verdict: 'issues', unresolvedCount: 1 },
+        { mode: 'warm', loopNumber: 2, verdict: 'failed', unresolvedCount: 1 },
+      ],
+    },
+  ];
+  const run: NonNullable<Parameters<typeof publicationGateView>[0]['run']> = {
+    status: 'human-gating',
+    engineState: { publishGate: { reviews: review } },
+    agentContexts: [
+      {
+        id: 'review-fix',
+        role: 'review-fix',
+        label: 'Fix',
+        status: 'blocked',
+        runId: 'run',
+        slotId: 'slot',
+      },
+    ],
+  };
+  const actions = [{ id: 'approve-publish', label: 'Approve publish', style: 'primary' as const }];
+  assert.equal(publicationGateView({ actions, run }).approval, null);
+  assert.match(publicationGateView({ actions, run }).status, /Review found 1 issue/);
+});
+
+test('unchanged-head PASS retains findings; a PASS on the fixed head clears them', () => {
+  const issue: ReviewStatus = {
+    id: 'a',
+    source: 'human-gate',
+    mode: 'cold',
+    loopNumber: 1,
+    verdict: 'issues',
+    unresolvedCount: 1,
+    reviewedHeadSha: 'bad-head',
+  };
+  const pass: ReviewStatus = { ...issue, id: 'b', verdict: 'pass', unresolvedCount: 0 };
+  const run = {
+    status: 'human-gating' as const,
+    engineState: { publishGate: { reviews: [issue, pass] } },
+  };
+  assert.match(publicationReviewBlockingReason(run) ?? '', /Review found 1 issue/);
+  assert.equal(
+    publicationReviewBlockingReason(
+      {
+        ...run,
+        engineState: {
+          publishGate: { reviews: [issue, { ...pass, reviewedHeadSha: 'fixed-head' }] },
+        },
+      },
+      { headSha: 'fixed-head' },
+    ),
+    undefined,
+  );
 });

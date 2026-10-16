@@ -1579,8 +1579,9 @@ async function replayRunStep(
             assertNativeReplayCurrent();
           }
           contractRestored = true;
-          // Review and later replays also clear nested-loop task variants.
-          if (reviewIdx >= 0 && targetIdx >= reviewIdx) {
+          // Only restarting review invalidates its role artifacts. Later gate
+          // and publication replays still need completed fix signals and CI receipts.
+          if (reviewIdx >= 0 && targetIdx === reviewIdx) {
             const preserveReviewFix = hasActiveReviewFix(getRun(params.runId) ?? existing);
             const {
               CHECKLIST_TARGET_BY_AGENT_ROLE,

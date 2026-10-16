@@ -6,6 +6,7 @@ import {
   checklistBasenameFromTaskPath,
   type DeterministicChecklistCheck,
   type ExecResult,
+  primaryRoleForFlow,
   type Run,
   taskDirRelPath,
   terminalContractInputForChecklist,
@@ -440,12 +441,16 @@ function terminalTaskDirOnSlot(
   return `${vars.remoteRepo}/${taskDir}/${taskRel}`;
 }
 
-/** Role cleanup clears activeTaskFile, but a completed fix owns the final source proof. */
-export function deterministicChecklistTaskFileForPublication(run: Run): string | null {
+/** The latest completed source worker owns CI proof after its role target is restored. */
+export function deterministicChecklistTaskFileForPublication(
+  run: Pick<Run, 'flowType' | 'taskFile' | 'activeTaskFile' | 'agentContexts'>,
+): string | null {
   const fixes = (run.agentContexts ?? [])
     .filter(
       (context) =>
-        (context.role === 'review-fix' || context.role === 'ci-fix') &&
+        (context.role === primaryRoleForFlow(run.flowType) ||
+          context.role === 'review-fix' ||
+          context.role === 'ci-fix') &&
         context.status === 'complete' &&
         context.taskFile,
     )

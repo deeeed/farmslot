@@ -24,6 +24,7 @@ import {
   type TaskProgressStructured,
   type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
+import { publicationReviewBlockingReason } from '@farmslot/review-dispatch';
 
 import { RunPipelineFull } from '../../components/RunPipeline';
 import { RunTitle } from '../../components/RunTitle';
@@ -610,6 +611,8 @@ export default function RunDetailScreen() {
     (decision) => workspaceDecisionKind(decision) === 'retrospective',
   );
 
+  const reviewStatus = publicationReviewBlockingReason(run);
+
   return (
     <View style={baseStyles.container}>
       <Animated.ScrollView
@@ -659,6 +662,11 @@ export default function RunDetailScreen() {
           </View>
         </View>
 
+        {reviewStatus ? (
+          <Text accessibilityLiveRegion="polite" style={baseStyles.textSecondary}>
+            {reviewStatus}
+          </Text>
+        ) : null}
         {openGate ? (
           <GateReviewEntryCard
             testID="companion-open-gate-review"
