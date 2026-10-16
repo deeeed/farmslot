@@ -4,21 +4,18 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.14.0 - 2026-10-16
+
 - Disable Chrome's macOS code-signing clones for isolated launches and reap stopped per-port profiles only when browser and slot ownership are clear.
-
 - Worker launch preparation disables automatic commit trailers while preserving the active CLI configuration.
-
 - Let the CDP select helper choose shared execution chips and verify their selected value.
-
 - Run automation and proof helpers with explicit gateway profiles.
-
 - Bind task recipe claims to registered criteria and transport only successful selected results through the shared task ledger.
-
 - Add a connected roadmap delivery probe for grouping, filters and projected PR links.
-
 - Clarify stored-profile requirements for shell-exported CLI gateway URLs.
 - Dev and sandbox stacks discard inherited node/gateway credentials, auth mode and bind host before loading checkout-local configuration, so an auth-free sandbox cannot reuse its parent gateway token. Physical-device LAN sandboxes need their own local-auth configuration.
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.13.1 - 2026-10-05
 

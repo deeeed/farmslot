@@ -352,13 +352,19 @@ export async function waitForNode(
   };
   check();
   const connected = getNode(machine);
-  if (connected?.ws.readyState === WebSocket.OPEN) return connected;
+  if (connected?.ws.readyState === WebSocket.OPEN) {
+    if (scope) scope.deadline = undefined;
+    return connected;
+  }
   if (scope) timeoutMs = 120_000;
   const deadline = scope ? (scope.deadline ??= Date.now() + timeoutMs) : Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     check();
     const node = getNode(machine);
-    if (node && node.ws.readyState === WebSocket.OPEN) return node;
+    if (node && node.ws.readyState === WebSocket.OPEN) {
+      if (scope) scope.deadline = undefined;
+      return node;
+    }
     await new Promise((r) => setTimeout(r, Math.min(100, deadline - Date.now())));
   }
   check();

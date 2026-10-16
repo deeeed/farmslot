@@ -29,7 +29,7 @@ import {
 } from '../run-engine/terminal-teardown-registry.js';
 import { assertNativeSlotReplacementOwner } from '../runners/native/worker.js';
 import { NativeSlotOwnershipError } from '../runners/native/worker-error.js';
-import { stopRunOwnedTmuxWorkers } from '../runners/owned-stop.js';
+import { quiescentHistoricalWorkerPanes, stopRunOwnedTmuxWorkers } from '../runners/owned-stop.js';
 import { archiveRunnerSessionsForSlotRelease } from '../runners/session-archive.js';
 import { isShellProcessCommand, probeRunnerDescendantPid } from '../runners/session-process.js';
 import { contextPaneId } from '../runners/session-record.js';
@@ -144,6 +144,20 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
       ?.map((context) => context.target && contextPaneId(context.target))
       .filter(Boolean),
   );
+  for (const context of run.agentContexts ?? []) {
+    if (
+      (context.slotId ?? run.slotId) !== run.slotId ||
+      !context.target ||
+      context.nativeSession ||
+      context.nativeSessionOwner ||
+      contextPaneId(context.target)
+    )
+      continue;
+    const historical = await quiescentHistoricalWorkerPanes(vars, run, context);
+    if (historical === null)
+      return `Worker ${context.id} target is not quiescent; verify it before retrying slot release`;
+    for (const paneId of historical) ownedPanes.add(paneId);
+  }
   const ownedShells = new Set<string>();
   for (const line of listed.stdout.split('\n')) {
     const [session, paneId, panePid, cwd] = line.split('\t');
@@ -228,6 +242,15 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
       }
     }
   }
+  // An unreadable identity is still a live occupant, never evidence of exit.
+  const livePids = new Set(
+    processes.stdout.split('\n').flatMap((line) => {
+      const match = /^\s*(\d+)\s/.exec(line);
+      return match ? [match[1]] : [];
+    }),
+  );
+  if (census.stdout.trim() && livePids.size === 0)
+    return 'Workspace process identity census is unreadable; slot teardown was skipped';
   let pid = '';
   for (const line of census.stdout.split('\n')) {
     if (line.startsWith('p')) pid = line.slice(1);
@@ -235,6 +258,7 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
       const cwd = line.slice(1);
       if (
         (cwd === repo || cwd.startsWith(`${repo}/`)) &&
+        livePids.has(pid) &&
         !ownedShells.has(pid) &&
         !passive.has(pid) &&
         !ownedProviders.has(pid)

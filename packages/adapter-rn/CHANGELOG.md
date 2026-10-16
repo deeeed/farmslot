@@ -6,6 +6,14 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.22.19 - 2026-10-16
+
+- Consume the recipe-runner 0.38.1 still-filename fix throughout the worker dependency set.
+
+## 0.22.18 - 2026-10-16
+
+- Align the worker dependency set with Protocol 0.50.0 and the qualified one-tap visual review readers.
+
 ## 0.22.17 - 2026-10-16
 
 - Align the worker dependency set with Protocol 0.49.0 person-device sessions.

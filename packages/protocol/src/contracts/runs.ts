@@ -254,6 +254,8 @@ export interface ReviewGatePayload {
   recipeQualityArtifact?: RecipeQualityArtifact | null;
   qualityReport?: EvidenceQualityReport | null;
   workerLearnings?: string;
+  /** Diagnostic from slot publication, independent of a formal provider receipt. */
+  viewedFiles?: import('./review-publication.js').ReviewViewedFilesResult;
 }
 
 /** Review evidence retained independently of the decision to publish it. */
