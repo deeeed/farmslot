@@ -250,4 +250,17 @@ test('provider PATH drift remains a node health failure visible to fleet readers
   metrics.providerCliHealth![0].ok = true;
   updateMachineMetrics(machine, metrics);
   assert.equal(getMachineHealth(machine)?.headroom, 'green');
+  metrics.providerCliHealth![0].ok = false;
+  metrics.providerCliHealth![0].status = 'probe-timeout';
+  metrics.providerCliHealth![0].reason = 'Probe timed out under load';
+  updateMachineMetrics(machine, metrics);
+  assert.equal(getMachineHealth(machine)?.headroom, 'yellow');
+  assert.equal(
+    getAllMachineHealth().find((health) => health.machine === machine)?.providerCliHealth?.[0]
+      .status,
+    'probe-timeout',
+  );
+  metrics.cpuPercent = 99;
+  updateMachineMetrics(machine, metrics);
+  assert.equal(getMachineHealth(machine)?.headroom, 'red', 'real resource pressure is preserved');
 });

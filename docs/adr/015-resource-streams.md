@@ -352,3 +352,11 @@ Updating only pool variables left SSH-based operator skills using old global ins
 ### Public surface
 
 The existing `node.health`, `node.health.all` and `fleet.status` responses gain optional provider diagnostics through `@farmslot/protocol` types. Existing nodes may omit them. No new RPC, provider contract or harness command is introduced. The operator rollout script consumes the same pool metadata and exact-version global installation policy. The reference is `docs/reference/provider-cli-health.md`.
+
+## Amendment 6: timed-out provider probes, 2026-10-16
+
+Status: Proposed. Continues the approved ADR-015 routing for provider health; acceptance follows paired review.
+
+A deadline expiry is an unverified `probe-timeout`, separate from a measured version mismatch or command error. Under CPU load its diagnostic is "Probe timed out under load". Keep the existing command deadlines. Timeouts produce a health warning; confirmed mismatches remain failures, and system pressure remains authoritative. After load falls, retry once for the unchanged pool selection. If that retry times out, retain the refusal without a retry loop. This avoids calling a slow but current installation stale during file-system load.
+
+Public surface: existing `@farmslot/protocol` provider diagnostics gain optional status, load and retry fields consumed by node sampling and gateway fleet/pressure readers. No new command, RPC or harness/provider contract. Normative retry bounds are in `docs/reference/provider-cli-health.md`. This clarifies Amendment 5's treatment of probe failures.

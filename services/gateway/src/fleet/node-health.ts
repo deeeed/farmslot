@@ -57,16 +57,20 @@ export function updateMachineMetrics(machine: string, metrics: NodeMetricsSample
   updateProcessInventory(machine, metrics.processInventory);
   recordPressureSample(machine, metrics, capacity.cpuCores);
   const { processInventory: _processInventory, providerCliHealth, ...system } = metrics;
+  const providers = providerCliHealth ?? existing?.providerCliHealth;
+  const headroom = computeHeadroom(metrics.cpuPercent, metrics.memoryPercent, metrics.diskPercent);
   healthMap.set(machine, {
     machine,
     online: true,
     ...(existing?.capabilities ? { capabilities: existing.capabilities } : {}),
     system,
-    providerCliHealth: providerCliHealth ?? existing?.providerCliHealth,
+    providerCliHealth: providers,
     capacity,
-    headroom: (providerCliHealth ?? existing?.providerCliHealth)?.some((health) => !health.ok)
+    headroom: providers?.some((health) => !health.ok && health.status !== 'probe-timeout')
       ? 'red'
-      : computeHeadroom(metrics.cpuPercent, metrics.memoryPercent, metrics.diskPercent),
+      : headroom === 'green' && providers?.some((health) => health.status === 'probe-timeout')
+        ? 'yellow'
+        : headroom,
   });
 }
 

@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
+import type { MachineHealth } from '@farmslot/protocol';
+
 const collectedAt = new Date().toISOString();
+let providerHealth: MachineHealth | undefined;
 let tmuxFailure = false;
 let omitPollStatus = false;
 let failedResolutionSlot = '';
@@ -88,7 +91,7 @@ mock.module('../fleet/node-health.js', {
         },
       ],
     }),
-    getMachineHealth: () => undefined,
+    getMachineHealth: () => providerHealth,
     getMachinePressureHistoryFreshness: () => ({
       source: 'live',
       latestSampleAt: collectedAt,
@@ -158,6 +161,7 @@ mock.module('../fleet/state.js', {
             loadAvg5: 1,
             collectedAt,
           },
+          ...providerHealth,
         },
         ...Array.from({ length: 33 }, (_, index) => ({
           machine: index === 32 ? 'zz-critical' : `extra-${String(index).padStart(2, '0')}`,
@@ -385,4 +389,47 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
   assert.match(serialized, /"degradedReason":"Tmux attribution unavailable"/);
   assert.equal(modelProjection.machines[0].processAttribution.omittedGroups, 2);
   assert.equal(modelProjection.machines[0].processAttribution.classCounts.active, 10);
+});
+
+test('provider timeouts are warnings while confirmed drift stays critical', async (t) => {
+  t.after(() => {
+    providerHealth = undefined;
+  });
+  providerHealth = {
+    machine: 'macpro',
+    online: true,
+    headroom: 'yellow',
+    providerCliHealth: [
+      {
+        root: '/fixture/provider',
+        packageName: 'fixture',
+        expectedVersion: '1.2.3',
+        ok: false,
+        status: 'probe-timeout',
+        reason: 'Probe timed out under load',
+        checkedAt: collectedAt,
+        binaries: [],
+      },
+    ],
+  };
+  const timeout = await resourcePressureSnapshot({ machines: ['macpro'] });
+  assert(
+    timeout.machines[0].concerns.some(
+      (concern) =>
+        concern.severity === 'warn' &&
+        concern.reason === 'Provider CLI fixture: Probe timed out under load',
+    ),
+  );
+  assert(!timeout.machines[0].concerns.some((concern) => /drift|mismatch/.test(concern.reason)));
+  providerHealth.providerCliHealth![0].status = 'version-mismatch';
+  providerHealth.providerCliHealth![0].reason = '1.0.0, expected 1.2.3';
+  providerHealth.headroom = 'red';
+  const mismatch = await resourcePressureSnapshot({ machines: ['macpro'] });
+  assert(
+    mismatch.machines[0].concerns.some(
+      (concern) =>
+        concern.severity === 'critical' &&
+        concern.reason === 'Provider CLI fixture: 1.0.0, expected 1.2.3',
+    ),
+  );
 });

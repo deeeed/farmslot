@@ -6,7 +6,7 @@ All notable changes to `@farmslot/node` are tracked here.
 
 - Load provider health in standalone node deployments without checkout discovery.
 
-- Detect pinned provider CLI drift across node and SSH shell paths, report unhealthy nodes, and verify exact-version global rollout.
+- Detect pinned provider CLI drift across shell paths and retry timed-out probes once after load drops without increasing deadlines.
 
 - Read worker pane observations from the external slot runtime after checkout cleanup.
 

@@ -91,6 +91,34 @@ test('health detects SSH drift even when node/login resolution is current', asyn
       .every((bin) => bin.version === '1.2.3'),
   );
   assert.match(health.reason ?? '', /non-interactive/);
+  assert.equal(health.status, 'version-mismatch');
+});
+
+test('a version timeout under load is unverified rather than drift', async (t) => {
+  const f = await fixture(t);
+  t.mock.method(os, 'loadavg', () => [178, 178, 178]);
+  t.mock.method(os, 'availableParallelism', () => 16);
+  const health = await inspectProviderCli(f.root, async (file, args, env, timeout) => {
+    if (args[0] === '--version') throw new DOMException('deadline expired', 'TimeoutError');
+    return f.runner(file, args, env, timeout);
+  });
+  assert.equal(health.ok, false);
+  assert.equal(health.status, 'probe-timeout');
+  assert.equal(health.reason, 'Probe timed out under load');
+  assert.equal(health.loadAvg1, 178);
+});
+
+test('measured drift survives a later version timeout', async (t) => {
+  const f = await fixture(t);
+  f.sshPath([f.stale, f.current].join(path.delimiter));
+  const health = await inspectProviderCli(f.root, async (file, args, env, timeout) => {
+    if (path.dirname(file) === f.current && env.PATH?.startsWith(f.stale))
+      throw new DOMException('deadline expired', 'TimeoutError');
+    return f.runner(file, args, env, timeout);
+  });
+  assert.equal(health.ok, false);
+  assert.equal(health.status, 'version-mismatch');
+  assert.match(health.reason ?? '', /1.0.0, expected 1.2.3/);
 });
 
 test('rollout installs the exact pinned version but refuses stale PATH read-back', async (t) => {

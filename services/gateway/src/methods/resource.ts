@@ -942,8 +942,8 @@ function buildPressureConcerns(
     for (const provider of health.providerCliHealth ?? []) {
       if (!provider.ok)
         concerns.push({
-          severity: 'critical',
-          reason: `Provider CLI ${provider.packageName}: ${provider.reason ?? 'PATH drift'}`,
+          severity: provider.status === 'probe-timeout' ? 'warn' : 'critical',
+          reason: `Provider CLI ${provider.packageName}: ${provider.reason ?? 'probe failed'}`,
         });
     }
     if (health.headroom === 'red') {
