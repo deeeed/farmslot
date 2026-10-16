@@ -15,6 +15,7 @@ import { createRun, getRun, loadAllRuns, persistRunNow, updateRun } from '../run
 
 import { type MonitorObservations, monitorRun, resolveMonitorDecision } from './run-monitor.js';
 import { deleteTestRunIfPresent } from './test-fixtures.js';
+import { trackOpenQuestion } from './worker-question.js';
 
 async function fixture(t: TestContext, consumedBeforeWaitMs = 2000) {
   const project = `operator-monitor-${randomUUID()}`;
@@ -371,3 +372,50 @@ test('an explicit pause removes the live wait projection', { timeout: 4000 }, as
   assert.equal(getRun(f.run.id)!.status, 'paused');
   assert.equal(getRun(f.run.id)!.waitingForOperator, undefined);
 });
+
+test(
+  'an open worker question raises an interactive handoff with the question and clears when answered',
+  { timeout: 4000 },
+  async (t) => {
+    // QA run 3e2f400a sat in monitoring with no decision while its worker asked a question.
+    const f = await fixture(t);
+    await f.writeSignal({ ...f.waiting, waitingForOperator: undefined });
+    const question = 'Detach the checkout to the frozen scope head before testing?';
+    let open = true;
+    let nudgeable = 0;
+    const execution = f.start({
+      workerStatus: async () => 'working',
+      violations: async (_run, _slot, state) => {
+        if (trackOpenQuestion(state, open ? question : null, true) === null) nudgeable++;
+        return [];
+      },
+      question: async () => (open ? question : null),
+    });
+    const handoff = async () => {
+      for (let i = 0; i < 200; i++) {
+        const decision = getRun(f.run.id)!.decisions.find(
+          (entry) => entry.type === 'monitor_interactive_handoff',
+        );
+        if (decision) return decision;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      return assert.fail('no handoff for the open question');
+    };
+    const decision = await handoff();
+    assert.match(
+      decision.description,
+      new RegExp(`\`\`\`text\n${question.replace(/\?/g, '\\?')}\n\`\`\``),
+    );
+    assert.equal(getRun(f.run.id)!.status, 'blocked');
+    assert.equal(nudgeable, 0, 'an open question is never classified for a nudge');
+
+    open = false;
+    for (let i = 0; i < 200 && !getRun(f.run.id)!.decisions[0]?.resolvedAt; i++)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    const resolved = getRun(f.run.id)!.decisions.find((entry) => entry.id === decision.id)!;
+    assert.equal(resolved.resolvedAction, 'question-closed');
+    assert.equal(getRun(f.run.id)!.status, 'monitoring');
+    f.controller.abort();
+    await execution;
+  },
+);

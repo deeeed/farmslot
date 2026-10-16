@@ -7,7 +7,10 @@ import { fileURLToPath } from 'node:url';
 
 import { durableWrite } from '../../../../packages/agent-runtime/src/native/storage.ts';
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
-import { readPaneStateFromCapture } from '../../../../services/gateway/src/runners/pane-state-script.ts';
+import {
+  paneOpenQuestion,
+  readPaneStateFromCapture,
+} from '../../../../services/gateway/src/runners/pane-state-script.ts';
 import { runnerLaunchBlockerAutoActionKey } from '../../../../services/gateway/src/runners/registry.ts';
 import { runnerPaneBufferedInstruction } from '../../../../services/gateway/src/runners/runner-pane-input.ts';
 
@@ -158,16 +161,7 @@ export function processState(meta) {
 // Rendered text vetoes unsafe sends. Only receipt-bound steering can prove delivery.
 export function paneSafety(tail, runner) {
   const lines = tail.trimEnd().split('\n');
-  const footer = lines.slice(-5).join('\n');
-  const menu = /enter (?:to )?(?:confirm|select)|esc (?:to cancel|back)|use arrow keys/i.test(
-    footer,
-  );
-  const active = menu ? lines.slice(-25).join('\n') : footer;
-  const pending =
-    menu ||
-    /(?:\[y\/n\]|\[Y\/n\]|\[y\/N\]|do you (?:want|wish)|would you like|select an option)/i.test(
-      active,
-    );
+  const question = paneOpenQuestion(tail);
   const queued =
     hasSubmittedQueue(runner, tail) ||
     lines
@@ -180,12 +174,12 @@ export function paneSafety(tail, runner) {
   const busy = /tab to queue message/i.test(tail);
   const blocker = readPaneStateFromCapture(tail, runner);
   return {
-    pending_question: pending,
+    pending_question: question !== null,
     queued,
     busy,
     launch_blocker: blocker.launchBlocker,
     auto_action: blocker.autoAction,
-    question: pending ? { source: 'pane-safety', text: active } : null,
+    question: question === null ? null : { source: 'pane-safety', text: question },
   };
 }
 

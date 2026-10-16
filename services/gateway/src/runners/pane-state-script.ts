@@ -168,6 +168,25 @@ function detectLaunchBlocker(
   return { kind: null, autoAction: null };
 }
 
+/**
+ * The question or selection menu a runner pane is waiting on, or null. A menu
+ * shows its keyboard hint in the footer; a plain prompt asks in the last lines.
+ */
+export function paneOpenQuestion(tail: string): string | null {
+  const lines = tail.trimEnd().split('\n');
+  const footer = lines.slice(-5).join('\n');
+  const menu = /enter (?:to )?(?:confirm|select)|esc (?:to cancel|back)|use arrow keys/i.test(
+    footer,
+  );
+  const active = menu ? lines.slice(-25).join('\n') : footer;
+  const pending =
+    menu ||
+    /(?:\[y\/n\]|\[Y\/n\]|\[y\/N\]|do you (?:want|wish)|would you like|select an option)/i.test(
+      active,
+    );
+  return pending ? active : null;
+}
+
 /** Classify captured pane text in-process so gateway polling never blocks on child processes. */
 export function readPaneStateFromCapture(
   pane: string,
