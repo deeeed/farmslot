@@ -21,3 +21,29 @@ Keep the current and immediately previous versioned provider, plus versions refe
 ## Public surface
 
 `node.health`, `node.health.all` and `fleet.status` retain their existing RPCs. `@farmslot/protocol` adds optional provider diagnostics to node samples and machine health. Existing nodes may omit the field. `@farmslot/slot-config` owns the shared probe and exact global installation helper; the node and rollout script are its consumers. No new provider schema or harness flags are required.
+
+## Providers without public binaries (ADR-015 Amendment 8)
+
+Status: Proposed by [ADR-015 Amendment 8](../adr/015-resource-streams.md#amendment-8-provider-packages-without-public-binaries-2026-10-17).
+
+A root whose manifest declares no `bin` is a binary-free provider. Its probe replaces the PATH binary check with these checks, in order:
+
+1. **Package.** `package.json` declares an exact name and version, as above.
+2. **Modules.** Read the registered projects from the pool's `env.FARMSLOT_PROJECTS_DIR`, or the node's configured registry when that is unset. For each binding whose `recipe.provider.root.env` names this pool variable, resolve `recipe.provider.module` through the root's `exports`. The target must stay inside the root. Then import it in a child Node process with the probe environment and the 5-second command deadline, and require the binding's export (default `createProvider`) to be a function. With no matching binding, only the package check applies.
+3. **Selectors.** In the node, non-interactive, login and interactive scopes, read the pool variable from the same marker-delimited shell output used for PATH. It must be absent or resolve to the root's real path. A different value is a `version-mismatch` with reason `<scope> <VAR>: <value>, expected <root>`.
+4. **Global installs.** In each scope where `npm` is on PATH, `<npm root -g>/<package>` must not exist. If it does, that is a `version-mismatch` with reason `<scope> global install: <path>`.
+
+Probe environments still drop inherited `*_BIN` and `*_PACKAGE_ROOT` selectors before executing anything. Step 3 reads each shell's own startup result, never the node's inherited value. Load failures, unresolved modules and contained-path violations are `probe-error`. Deadlines are `probe-timeout`, handled as above.
+
+Diagnostics add `modules: [{ ref, path, ok, reason? }]` and `selectors: [{ scope, name, value? }]`. `binaries` stays empty for this form. A confirmed mismatch is retained in `confirmedMismatch` until requalification or a changed pool selection, as for binaries.
+
+### Rollout without binaries
+
+For a binary-free provider, `scripts/rollout-provider.mjs`:
+
+1. installs the exact version into its immutable versioned root and runs the module check against it;
+2. selects that root in the operator and node pool copies;
+3. runs `npm uninstall --global <package>` under each node's `--prefix`;
+4. runs the shared probe on every node, and succeeds only when every node passes.
+
+The final non-interactive SSH check runs `farmslot doctor --json` with provider selectors unset and compares `provider.version` with the pin, in place of `<public-bin> --version`. Retention and pruning rules are unchanged.

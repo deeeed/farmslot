@@ -370,3 +370,28 @@ Bound every tmux client in the deployment worker-shell probe, including cleanup.
 Dev deployment persists the verification outcome in its existing selected home. Node metrics publish failure as optional worker CLI health, and fleet/pressure readers retain it until a later successful verification. Cleanup failure cannot leave a success receipt. This makes an online node's failed worker environment visible without changing worker ownership or process gauges.
 
 Public surface: optional `WorkerCliHealth` on existing `@farmslot/protocol` node metrics and machine health. Private deployment writes the receipt; the node sampler and gateway health readers consume it. No new command, RPC or harness/provider contract. Normative rules are in `docs/reference/node-worker-cli-health.md`.
+
+## Amendment 8: provider packages without public binaries, 2026-10-17
+
+Status: Proposed. Continues the approved ADR-015 routing for provider health; acceptance follows paired review.
+
+A pinned provider root may declare no public binaries. Health then checks the package and the provider selection instead of PATH binaries:
+
+- The root declares an exact package name and version.
+- Every provider module that a registered project binding imports from that root resolves inside it, and loads in a child process within the existing command deadline.
+- In the node, login, interactive and non-interactive shells, the pool's `*_PACKAGE_ROOT` variable is unset or names the same real path. A process value overrides `pool.env` when `farmslot` resolves a binding, so a stale profile export would select another provider.
+- No shell's global npm installation contains the package, since its leftover binaries would still run outside the pin.
+
+A root that still declares binaries keeps the Amendment 5 checks unchanged. The timeout, retry, cache, retention and pressure rules of Amendments 5 and 6 apply to both forms. A selector or global-install mismatch is a `version-mismatch`; a module that fails to resolve or load is a `probe-error`.
+
+Rollout of a binary-free root installs and checks the versioned root, selects it in the operator and node pool copies, then removes the package's global installation on each node before running the shared probe. It has no `npm install --global` step.
+
+### Rationale and consequences
+
+Amendment 5 kept SSH callers and workers on one version by requiring every PATH binary to match the pin. Once callers reach the provider only through `farmslot`, drift comes from two places: a stale selector in a shell profile, and an old global install whose binaries still run. Checking both keeps the same guarantee without requiring a binary the provider no longer ships.
+
+This has to ship and roll out before the MetaMask provider drops its binary. Until then, every node would report that provider's pinned root as invalid. Frozen run inputs and retained versioned roots are unchanged.
+
+### Public surface
+
+`ProviderCliHealth` in `@farmslot/protocol` gains optional `modules` (binding ref, resolved path, load result) and `selectors` (shell scope, variable, value) arrays. Existing nodes may omit them, and status values are unchanged. `@farmslot/slot-config` owns the probe. Its consumers are the node sampler, `scripts/rollout-provider.mjs` and the fleet and pressure readers. No new RPC, command or provider contract is introduced. Normative rules are in `docs/reference/provider-cli-health.md`.
