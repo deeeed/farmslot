@@ -3,6 +3,7 @@ import { mock, test } from 'node:test';
 
 import type { ReviewViewedFilesResult } from '@farmslot/protocol';
 
+import { parseGhFields } from '../../../../scripts/runner-validation/gh-fixture-fields.cjs';
 import type { GhRequestOpts } from '../integrations/github-client.js';
 
 const head = 'a'.repeat(40);
@@ -45,14 +46,7 @@ mock.module('../integrations/github-client.js', {
         'Every observation and mutation uses the posting token',
       );
       calls.push(args);
-      const fields = Object.fromEntries(
-        args
-          .filter((value) => /^[a-zA-Z0-9_]+=/.test(value))
-          .map((value) => {
-            const split = value.indexOf('=');
-            return [value.slice(0, split), value.slice(split + 1)];
-          }),
-      );
+      const fields = parseGhFields(args);
       const pr = () => ({ id: 'PR_fixture', headRefOid: liveHead, baseRefOid: base });
       let data;
       if (fields.query.includes('markFileAsViewed')) {

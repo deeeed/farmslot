@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 const fs = require('node:fs');
+const { parseGhFields } = require('./gh-fixture-fields.cjs');
 const file = process.env.PUBLICATION_FIXTURE_STATE;
 if (!file) throw new Error('Fixture state missing; refusing provider access');
 const state = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -34,14 +35,7 @@ const method = args.includes('--method')
     : 'GET';
 let body;
 if (endpoint === 'graphql') {
-  const fields = Object.fromEntries(
-    args
-      .filter((value) => /^[a-zA-Z0-9_]+=/.test(value))
-      .map((value) => {
-        const split = value.indexOf('=');
-        return [value.slice(0, split), value.slice(split + 1)];
-      }),
-  );
+  const fields = parseGhFields(args);
   const pr = {
     id: 'PR_fixture42',
     headRefOid: state.head,
@@ -82,14 +76,7 @@ else if (endpoint.endsWith('/issues/42/comments')) {
   if (args.includes('--jq')) process.exit(0);
   body = [];
 } else if (endpoint.endsWith('/pulls/42/comments') && method === 'POST') {
-  const fields = Object.fromEntries(
-    args
-      .filter((value) => /^(body|commit_id|path|line|side)=/.test(value))
-      .map((value) => {
-        const split = value.indexOf('=');
-        return [value.slice(0, split), value.slice(split + 1)];
-      }),
-  );
+  const fields = parseGhFields(args);
   (state.slotComments ??= []).push(fields);
   fs.writeFileSync(file, JSON.stringify(state));
   body = { id: state.slotComments.length };
