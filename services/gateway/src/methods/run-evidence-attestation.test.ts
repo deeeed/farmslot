@@ -12,6 +12,8 @@ import {
   type RunDecision,
 } from '@farmslot/protocol';
 
+import { manualTicketData } from '../run-completion/test-fixtures.js';
+
 await import('../runtime/mock-pty.test-support.js');
 const github = await import('../integrations/github-client.js');
 const postedBodies: string[] = [];
@@ -75,7 +77,12 @@ test('normal approval audits the actual person or service and frozen receipt ids
 async function fixture(t: test.TestContext) {
   const root = await mkdtemp(path.join(tmpdir(), 'gate-attestation-resolve-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const run = createRun({ flowType: 'fix-bug', project: 'attestation-test', ticketOrPr: 'TEST-1' });
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'attestation-test',
+    ticketOrPr: 'TEST-1',
+    ticketData: manualTicketData('Attest retained evidence'),
+  });
   t.after(() => deleteTestRunIfPresent(run.id));
   await mkdir(path.join(root, 'artifacts'));
   const taskFile = path.join(root, 'TASK.md');

@@ -1,4 +1,17 @@
-import type { Run } from '@farmslot/protocol';
+import type { Run, RunTicketData } from '@farmslot/protocol';
+
+export function manualTicketData(title: string): RunTicketData {
+  return {
+    source: 'manual',
+    title,
+    description: '',
+    acceptanceCriteria: [],
+    affectedArea: '',
+    stepsToReproduce: [],
+    screenshots: [],
+    labels: [],
+  };
+}
 
 export function makeRun(overrides: Partial<Run> = {}): Run {
   return {

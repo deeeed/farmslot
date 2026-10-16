@@ -262,6 +262,7 @@ export function queuedPrompt(meta, runner, receipt) {
   if (!receipt || !supportsMidTurnPrompt(runner)) return null;
   if (
     receipt.submitted_at &&
+    receipt.submit_key === 'Enter' &&
     receipt.pane_identity === paneIdentity(meta) &&
     runnerPaneHasQueuedInstruction(
       meta.tail || '',
@@ -271,7 +272,7 @@ export function queuedPrompt(meta, runner, receipt) {
     )
   )
     return {
-      source: 'runner-queue',
+      source: 'runner-steering',
       session_id: receipt.session_id,
       turn_token: null,
       observed_at: Date.now(),
@@ -289,7 +290,7 @@ export function bufferedPrompt(meta, runner, receipt) {
 }
 
 export function acceptedPrompt(meta, runner, obsDir, receipt) {
-  // An Enter-submitted, complete driver-owned queue proves delivery, not a new turn.
+  // The owned Enter steering block proves delivery, not a new turn.
   // Native /goal still needs its objective and turn boundary below.
   const queued = !receipt.payload.startsWith('/goal ') && queuedPrompt(meta, runner, receipt);
   if (queued) return queued;

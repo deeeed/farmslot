@@ -22,15 +22,23 @@ export type ProviderCliRunner = (
   timeoutMs?: number,
 ) => Promise<string>;
 
-const run: ProviderCliRunner = async (executable, args, env, timeoutMs = 5_000) =>
-  (
-    await execute(executable, args, {
-      env,
-      cwd: os.homedir(),
-      timeout: timeoutMs,
-      maxBuffer: 1024 * 1024,
-    })
-  ).stdout;
+const run: ProviderCliRunner = async (executable, args, env, timeoutMs = 5_000) => {
+  const signal = AbortSignal.timeout(timeoutMs);
+  try {
+    return (
+      await execute(executable, args, {
+        env,
+        cwd: os.homedir(),
+        signal,
+        maxBuffer: 1024 * 1024,
+      })
+    ).stdout;
+  } catch (error) {
+    // Keep deadline expiry distinct from a command failure or a version result.
+    if (signal.aborted) throw signal.reason;
+    throw error;
+  }
+};
 
 function probeEnvironment(): NodeJS.ProcessEnv {
   const env = { ...process.env };
@@ -90,6 +98,7 @@ export async function inspectProviderCli(
     packageName: 'unknown',
     expectedVersion: 'unknown',
     ok: false,
+    status: 'probe-error',
     checkedAt: new Date().toISOString(),
     binaries: [],
   };
@@ -133,8 +142,10 @@ export async function inspectProviderCli(
       return result;
     };
     for (const [name, relative] of Object.entries(metadata.bins)) {
-      if ((await version(path.join(root, relative))) !== metadata.version)
+      if ((await version(path.join(root, relative))) !== metadata.version) {
+        health.status = 'version-mismatch';
         throw new Error(`${name}: pinned binary does not match its package version`);
+      }
       for (const item of shellPaths) {
         let found = false;
         const candidates = [
@@ -159,17 +170,31 @@ export async function inspectProviderCli(
         if (!found) throw new Error(`${name}: missing from ${item.scope} PATH`);
       }
     }
-    const mismatches = health.binaries.filter((binary) => binary.version !== metadata.version);
-    health.ok = mismatches.length === 0;
-    if (!health.ok)
-      health.reason = mismatches
-        .map(
-          (binary) =>
-            `${binary.scope} ${binary.name}: ${binary.version}, expected ${metadata.version}`,
-        )
-        .join('; ');
+    health.ok = true;
+    health.status = 'verified';
   } catch (error) {
-    health.reason = error instanceof Error ? error.message : String(error);
+    if (error instanceof Error && error.name === 'TimeoutError') {
+      health.status = 'probe-timeout';
+      health.loadAvg1 = os.loadavg()[0];
+      health.reason =
+        health.loadAvg1 > os.availableParallelism()
+          ? 'Probe timed out under load'
+          : 'Probe timed out';
+    } else {
+      health.reason = error instanceof Error ? error.message : String(error);
+    }
+  }
+  // A later timeout must never hide drift already measured on another PATH.
+  const mismatches = health.binaries.filter((binary) => binary.version !== health.expectedVersion);
+  if (mismatches.length) {
+    health.ok = false;
+    health.status = 'version-mismatch';
+    health.reason = mismatches
+      .map(
+        (binary) =>
+          `${binary.scope} ${binary.name}: ${binary.version}, expected ${health.expectedVersion}`,
+      )
+      .join('; ');
   }
   return health;
 }

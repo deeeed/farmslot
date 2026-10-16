@@ -7,6 +7,22 @@ import type { EvidenceMomentRef, RecipeClaimKind } from '../recipe/evidence.js';
 
 /** Task-relative path of the selected engine-ledger projection. */
 export const ACCEPTANCE_STATUS_ARTIFACT: string = contract.ACCEPTANCE_STATUS_ARTIFACT;
+export const INHERITED_ACCEPTANCE_INPUT: string = contract.INHERITED_ACCEPTANCE_INPUT;
+
+export interface InheritedAcceptanceProvenance {
+  source: 'parent-run';
+  parentRunId: string;
+  headSha: string;
+  ledgerHash: string;
+}
+
+/** Provisional task transport; the gateway independently revalidates its parent. */
+export interface TaskInheritedAcceptanceReference extends InheritedAcceptanceProvenance {
+  schemaVersion: 1;
+  childRunId: string;
+  project: string;
+  criteria: AcceptanceCriterionRef[];
+}
 
 export const ACCEPTANCE_VERDICTS = contract.ACCEPTANCE_VERDICTS;
 export type AcceptanceVerdict = (typeof ACCEPTANCE_VERDICTS)[number];
@@ -23,6 +39,8 @@ export const ACCEPTANCE_CRITERION_ID_PATTERN = contract.ACCEPTANCE_CRITERION_ID_
  * @param index 0-based position in `inputs/handoff.json` `task.acceptanceCriteria`.
  */
 export const acceptanceCriterionId = contract.acceptanceCriterionId;
+export const acceptanceCriteriaMatch = contract.acceptanceCriteriaMatch;
+export const registeredAcceptanceCriteria = contract.registeredAcceptanceCriteria;
 
 export interface AcceptanceCriterionStatus {
   /** `AC-<N>`, N the 1-based position in the handoff criteria array. */

@@ -2,9 +2,15 @@
 
 ## Unreleased
 
-- Capture validated native review results on the completed command without treating streamed text as proof.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.28.0 - 2026-10-16
+
+- Accept qualified parent proof references during PR-follow-up closeout while preserving explicit fresh-proof requirements.
+
+## 0.27.0 - 2026-10-16
+
+- Capture validated native review results on the completed command without treating streamed text as proof.
 
 ## 0.26.0 - 2026-10-16
 

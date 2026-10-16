@@ -4,9 +4,21 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Publish the PR title from the approved body's leading `# type(scope): summary` heading, else the ticket title, and refuse approval when neither names more than a ticket key.
+
+- Submit buffered Codex input with Enter, never Tab, and accept only the next-tool-call steering block as delivery proof; queued follow-up input stays undelivered.
+
+- Keep failed dev worker CLI verification visible as critical node and fleet health.
+
+- Reuse verified parent acceptance for PR follow-up completion, retain proof provenance in completion and PR comments, and keep current-checkout CI independent.
+
+- Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review.
+
+- Restore publication decisions after recovered findings, preserve fix checklists during gate replay, and continue the recorded review mode with the latest completed worker CI receipt.
+
 - Recognize owned follow-up queue previews and keep unsubmitted composer text out of delivery verification.
 
-- Detect pinned provider CLI drift across node and SSH shell paths, report unhealthy nodes, and verify exact-version global rollout.
+- Keep confirmed provider CLI drift critical while reporting timed-out probes as unverified load warnings.
 
 - Resolve PR and ticket branches before automatic slot scoring, preferring a free matching checkout without prompting that every branch is stale.
 - Disclose skipped code review in the publish gate and published PR provenance while preserving project approval policy.

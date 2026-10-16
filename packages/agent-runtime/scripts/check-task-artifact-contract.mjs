@@ -758,6 +758,7 @@ if (
   }
   for (const issue of acceptanceContractIssues(taskDir, {
     allowWeak: terminalContract?.acceptance?.allowWeak === true,
+    requireFresh: terminalContract?.acceptance?.requireFresh === true,
     deferClaimVerdicts,
   })) {
     issues.push(issue);

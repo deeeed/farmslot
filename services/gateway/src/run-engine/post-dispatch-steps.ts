@@ -5,6 +5,7 @@ import {
   type DiffStat,
   Events,
   FLOW_STEPS,
+  type InheritedAcceptanceProvenance,
   isInteractiveDevRun,
   isLightweightInteractiveDevRun,
   isPublishEvidenceArtifact,
@@ -745,7 +746,7 @@ export async function executeReviewStep(
     if (actionId === 'send_feedback') {
       const retryResult = await executeReviewForRun(runId, current.slotId, {
         validationDepth,
-        mode: 'warm',
+        mode: result.mode ?? 'cold',
         reviewId: result.reviewId,
         resumeFromResult: result,
       });
@@ -1322,6 +1323,7 @@ export async function executeCompleteStep(
 ): Promise<StepIO> {
   const { broadcastFn, getDiffStat, refreshRunLinks } = context;
   let current = getRun(runId)!;
+  let inheritedAcceptance: InheritedAcceptanceProvenance | undefined;
   const generation = current.engineState?.generation ?? 0;
   if (current.engineState?.publishGate?.humanPublicationAdoption) {
     const { assertAdoptedPublicationContinuation } =
@@ -1352,6 +1354,11 @@ export async function executeCompleteStep(
       current = latest!;
       try {
         await (context.assertGatePrerequisites ?? assertRunGateReady)(current, null, 'complete');
+        if (current.parentRunId) {
+          const { readInheritedAcceptanceSource } =
+            await import('../run-completion/inherited-acceptance.js');
+          inheritedAcceptance = (await readInheritedAcceptanceSource(current))?.provenance;
+        }
         break;
       } catch (error) {
         if (runSupersededSince(getRun(runId), generation))
@@ -1425,6 +1432,7 @@ export async function executeCompleteStep(
   const completion = await runCompletionPipeline(runId, {
     skipRetrospective,
     suppressPrMutation: noCodeDisposition || artifactOnly,
+    inheritedAcceptance,
   });
   await refreshRunLinks(runId);
   if (completion.prNumber && current.flowType !== 'review-pr') {
@@ -1484,6 +1492,9 @@ export async function executeCompleteStep(
       prTitleUpdated: completion.prTitleUpdated,
       prMarkedReady: completion.prMarkedReady,
       retrospectiveCreated: completion.retrospectiveCreated,
+      ...(completion.inheritedAcceptance
+        ? { inheritedAcceptance: completion.inheritedAcceptance }
+        : {}),
       slotDisposition,
       artifacts: completion.artifacts,
       cliCommand,

@@ -83,17 +83,16 @@ test('the captured rate-limit choice blocks delivery without selecting a model',
   assert.equal(f.keys.length, 0);
 });
 
-test('the captured clipped working composer queues with Tab and verifies its owned follow-up preview', async (t) => {
+test('the captured postponed follow-up is not delivered and never receives Tab', async (t) => {
   const f = fixture(t);
   f.setCapturedPanes(captured('clipped-composer'), () => captured('queued-followup'));
   const result = await send('%1', 'codex', captured('payload'));
-  assert.equal(result.submitted, true);
-  assert.equal(result.verification, 'queued');
-  assert.equal(result.evidence.source, 'runner-queue');
-  assert.equal(result.evidence.turn_token, null);
+  assert.equal(result.submitted, false);
+  assert.equal(result.verification, 'not_sent');
+  assert.equal(result.evidence, null);
   assert.deepEqual(
     f.keys.filter((args) => args[0] === 'send-keys'),
-    [['send-keys', '-t', '%1', 'Tab']],
+    [['send-keys', '-t', '%1', 'Enter']],
   );
 });
 
@@ -111,24 +110,61 @@ test('a captured composer is never verified merely because its message prefix is
   assert.equal(f.keys.filter((args) => args[0] === 'paste-buffer').length, 1);
 });
 
-test('a working composer left after Enter receives only one Tab and is re-verified', async (t) => {
+test('a working composer left after Enter receives one more Enter and verifies steering', async (t) => {
   const f = fixture(t);
   const message = captured('payload');
   const buffered = `Old transcript: ${message}\n\n› ${message}\n\ncontext left\n  tab to queue message`;
-  f.setCapturedPanes(`› ${message}\n\ncontext left`, (key) =>
-    key === 'Tab' ? captured('queued-followup') : buffered,
-  );
+  let submits = 0;
+  f.setCapturedPanes(`› ${message}\n\ncontext left`, (key) => {
+    assert.equal(key, 'Enter');
+    return ++submits === 1
+      ? buffered
+      : `• Messages to be submitted after next tool call\n  ↳ ${message}\n\n› Ask Codex to do anything\ncontext left`;
+  });
   const result = await send('%1', 'codex', message);
   assert.equal(result.submitted, true);
-  assert.equal(result.evidence.source, 'runner-queue');
+  assert.equal(result.evidence.source, 'runner-steering');
   assert.deepEqual(
     f.keys.filter((args) => args[0] === 'send-keys'),
     [
       ['send-keys', '-t', '%1', 'Enter'],
-      ['send-keys', '-t', '%1', 'Tab'],
+      ['send-keys', '-t', '%1', 'Enter'],
     ],
   );
   assert.equal(f.keys.filter((args) => args[0] === 'paste-buffer').length, 1);
+});
+
+test('an unchanged owned composer stops after two Enters without another paste', async (t) => {
+  const f = fixture(t);
+  f.setDrop(true);
+  const result = await send('%1', 'codex', f.payload);
+  assert.equal(result.submitted, false);
+  assert.equal(result.verification, 'not_sent');
+  assert.equal(result.evidence, null);
+  assert.deepEqual(
+    f.keys.filter((args) => args[0] === 'send-keys'),
+    [
+      ['send-keys', '-t', '%1', 'Enter'],
+      ['send-keys', '-t', '%1', 'Enter'],
+    ],
+  );
+  assert.equal(f.keys.filter((args) => args[0] === 'paste-buffer').length, 1);
+});
+
+test('the captured clipped composer can deliver an Enter steering preview without a native binding', async (t) => {
+  const f = fixture(t);
+  const steering = captured('queued-followup').replace(
+    'Queued follow-up inputs',
+    'Messages to be submitted after next tool call',
+  );
+  f.setCapturedPanes(captured('clipped-composer'), () => steering);
+  const result = await send('%1', 'codex', captured('payload'));
+  assert.equal(result.submitted, true);
+  assert.equal(result.evidence.source, 'runner-steering');
+  assert.deepEqual(
+    f.keys.filter((args) => args[0] === 'send-keys'),
+    [['send-keys', '-t', '%1', 'Enter']],
+  );
 });
 
 test('a captured foreign follow-up queue refuses a fresh handoff without keystrokes', async (t) => {
@@ -145,10 +181,10 @@ test('unknown Codex delivers the complete owned queue and retries without keystr
   const { dir, keys, payload } = f;
   assert.equal(paneState('%1', 'codex').phase, 'unknown');
   const result = await send('%1', 'codex', payload);
-  assert.equal(result.verification, 'queued');
+  assert.equal(result.verification, 'submitted');
   assert.equal(result.submitted, true);
-  assert.equal(result.queued, true);
-  assert.equal(result.evidence.source, 'runner-queue');
+  assert.equal(result.queued, false);
+  assert.equal(result.evidence.source, 'runner-steering');
   assert.equal(result.evidence.turn_token, null);
   assert.deepEqual(
     keys.filter((args) => args[0] === 'send-keys'),
@@ -176,14 +212,14 @@ test('unknown Codex delivers the complete owned queue and retries without keystr
   process.env.TMUX_PANE_STATE_TAIL_CAPTURE = 'tab to queue message\n›';
   const busy = await send('%1', 'codex', payload);
   assert.equal(busy.before.phase, 'busy');
-  assert.equal(busy.queued, true);
+  assert.equal(busy.queued, false);
   assert.equal(busy.submitted, true);
 
   process.env.TMUX_MODEL_DRIVER_STATE_DIR = path.join(dir, 'mismatch');
   process.env.TMUX_PANE_STATE_TAIL_CAPTURE = '›';
   f.setQueuedPayload(`${'shared prefix '.repeat(20)}different suffix`);
   const mismatch = await send('%1', 'codex', payload);
-  assert.equal(mismatch.verification, 'unverified');
+  assert.equal(mismatch.verification, 'not_sent');
   assert.equal(
     mismatch.evidence,
     null,
@@ -218,7 +254,7 @@ test('unknown Codex delivers the complete owned queue and retries without keystr
 test('an exited model receipt remains intact while its shell accepts a guarded recovery script', async (t) => {
   const f = fixture(t);
   f.setDrop(true);
-  assert.equal((await send('%1', 'codex', f.payload)).verification, 'unverified');
+  assert.equal((await send('%1', 'codex', f.payload)).verification, 'not_sent');
   const receipts = fs.readdirSync(f.dir).filter((name) => name.endsWith('.json'));
   const originals = receipts.map((name) => fs.readFileSync(path.join(f.dir, name), 'utf8'));
   process.env.TMUX_PANE_STATE_CURRENT_COMMAND = 'zsh';
@@ -240,14 +276,14 @@ test('a retry submits only the owned composer through Enter while Codex is unkno
   const f = fixture(t);
   f.setDrop(true);
   const first = await send('%1', 'codex', f.payload);
-  assert.equal(first.verification, 'unverified');
+  assert.equal(first.verification, 'not_sent');
   assert.equal(paneState('%1', 'codex').queue_kind, 'driver-buffer');
   f.setDrop(false);
   const retry = await send('%1', 'codex', f.payload);
   assert.equal(retry.submitted, true);
   assert.equal(retry.typed, false);
   assert.equal(f.keys.filter((args) => args[0] === 'paste-buffer').length, 1);
-  assert.equal(f.keys.filter((args) => args[0] === 'send-keys').length, 2);
+  assert.equal(f.keys.filter((args) => args[0] === 'send-keys').length, 3);
 });
 
 test('owned multiline composer retry preserves paragraph breaks and ignores the footer', async (t) => {
@@ -255,7 +291,7 @@ test('owned multiline composer retry preserves paragraph breaks and ignores the 
   const payload = 'First paragraph\n\nSecond paragraph with its exact suffix';
   f.setDrop(true);
   f.setQueuedPayload(payload);
-  assert.equal((await send('%1', 'codex', payload)).verification, 'unverified');
+  assert.equal((await send('%1', 'codex', payload)).verification, 'not_sent');
   f.setDrop(false);
   const retry = await send('%1', 'codex', payload);
   assert.equal(retry.submitted, true);
@@ -268,7 +304,7 @@ test('legacy caller receipts share a socket lock and survive read-only observati
   process.env.TMUX = '/tmp/fixture-socket,10,1';
   delete process.env.TMUX_MODEL_DRIVER_SOCKET;
   f.setDrop(true);
-  assert.equal((await send('%1', 'codex', f.payload)).verification, 'unverified');
+  assert.equal((await send('%1', 'codex', f.payload)).verification, 'not_sent');
   const current = fs.readdirSync(f.dir).find((name) => /^[a-f0-9]{64}\.json$/.test(name));
   const legacy = createHash('sha256').update(`${process.env.TMUX}:%1:1:1`).digest('hex') + '.json';
   const legacyFile = path.join(f.dir, legacy);
@@ -334,7 +370,7 @@ for (const [name, phase] of [
       .find((line) => line.startsWith('› '))
       .slice(2);
     f.setDrop(true);
-    assert.equal((await send('%1', 'codex', oldPayload)).verification, 'unverified');
+    assert.equal((await send('%1', 'codex', oldPayload)).verification, 'not_sent');
     const file = path.join(
       f.dir,
       fs.readdirSync(f.dir).find((name) => /^[a-f0-9]{64}\.json$/.test(name)),
@@ -455,7 +491,7 @@ test('a fresh owned submission accepts the native truncated queue preview', asyn
   f.setQueuedPayload(lines.slice(0, 3).join('\n') + '\n    …');
   const delivered = await send('%1', 'codex', payload);
   assert.equal(delivered.submitted, true);
-  assert.equal(delivered.evidence.source, 'runner-queue');
+  assert.equal(delivered.evidence.source, 'runner-steering');
   const file = path.join(
     f.dir,
     fs.readdirSync(f.dir).find((name) => /^[a-f0-9]{64}\.json$/.test(name)),
@@ -521,4 +557,25 @@ test('a retained accepted handoff does not lock another caller out of the same p
   assert.deepEqual(fs.readFileSync(originalFile), originalBytes);
   assert.equal(acknowledgeAcceptance('%1', 'codex', first.evidence.receipt_id).acknowledged, true);
   assert.equal(fs.existsSync(originalFile), false);
+});
+
+test('an old Tab queue receipt cannot claim delivery or authorize another key', async (t) => {
+  const f = fixture(t);
+  const sent = await send('%1', 'codex', f.payload);
+  const file = path.join(
+    f.dir,
+    fs.readdirSync(f.dir).find((name) => /^[a-f0-9]{64}\.json$/.test(name)),
+  );
+  const receipt = JSON.parse(fs.readFileSync(file, 'utf8'));
+  receipt.submit_key = 'Tab';
+  receipt.accepted = { ...sent.evidence, source: 'runner-queue' };
+  fs.writeFileSync(file, JSON.stringify(receipt));
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = captured('queued-followup');
+  assert.equal(paneState('%1', 'codex').accepted, null);
+  const before = f.keys.length;
+  const retry = await send('%1', 'codex', f.payload);
+  assert.equal(retry.submitted, false);
+  assert.equal(retry.verification, 'queued_input');
+  assert.equal(f.keys.length, before);
+  assert.equal(fs.existsSync(file), true);
 });

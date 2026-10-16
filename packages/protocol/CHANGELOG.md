@@ -4,13 +4,22 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Bind pipeline visual verification to native review commands and publication approval receipts, with no person-only policy or project setup.
-- Detect pinned provider CLI drift across node and SSH shell paths, report unhealthy nodes, and verify exact-version global rollout.
+- Expose optional dev deployment worker CLI verification health on node and fleet metrics.
 
+- Expose optional provider probe status, load, retry and retained mismatch diagnostics.
 - Project skipped code review as a nonblocking publication disclosure.
 - Expose optional Viewed-file diagnostics on review publication receipts and slot posting gates.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.53.0 - 2026-10-16
+
+- Add inherited acceptance references and shared criterion binding, with per-flow fresh-proof requirements.
+
+## 0.52.0 - 2026-10-16
+
+- Bind pipeline visual verification to native review commands and publication approval receipts, with no person-only policy or project setup.
+- Detect pinned provider CLI drift across node and SSH shell paths, report unhealthy nodes, and verify exact-version global rollout.
 
 ## 0.51.0 - 2026-10-16
 

@@ -6,6 +6,14 @@ All notable changes to `@farmslot/adapter-node` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.1.33 - 2026-10-16
+
+- Align the worker dependency set with parent acceptance inheritance and Protocol 0.53.0.
+
+## 0.1.32 - 2026-10-16
+
+- Align the worker dependency set with Protocol 0.52.0 and default pipeline visual review.
+
 ## 0.1.31 - 2026-10-16
 
 - Align the worker dependency set with Protocol 0.51.0.

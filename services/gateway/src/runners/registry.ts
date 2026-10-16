@@ -1866,19 +1866,10 @@ export function runnerPaneHasBufferedInstruction(
 }
 
 export function runnerBufferedInstructionSubmitKey(
-  pane: string,
+  _pane: string,
   runnerId?: string | null,
-): 'Enter' | 'Tab' | 'C-m' {
-  // Codex's TUI shows "tab to queue message" while the current turn/hooks are
-  // still busy. In that state a bare Enter does not submit the visible composer
-  // text; it leaves dispatch with a false "prompt delivery failed" even though
-  // the prompt is clearly buffered. Use the key the TUI explicitly requests.
-  if (
-    normalizeRunner(runnerId) === 'codex' &&
-    /^\s*tab to queue message(?:\s|$)/im.test(paneTailText(pane.trimEnd(), 4))
-  ) {
-    return 'Tab';
-  }
+): 'Enter' | 'C-m' {
+  // Codex "tab to queue message" postpones input until the turn ends. Enter steers it now.
   return getRunnerDefinition(runnerId).promptSubmitKey;
 }
 

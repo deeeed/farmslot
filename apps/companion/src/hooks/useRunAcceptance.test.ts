@@ -273,3 +273,81 @@ test('a disconnected cold Retry keeps its error until a connected read starts', 
   await settle();
   assert.notEqual(mounted.render().view, null);
 });
+
+test('evidence stays loading after criteria arrive and a cold evidence Retry clears its error', async (t) => {
+  let reads = 0;
+  let rejectFirst: (error: Error) => void = () => assert.fail('evidence read did not start');
+  let finish: (result: unknown) => void = () => assert.fail('retry did not start');
+  const first = new Promise<unknown>((_resolve, reject) => {
+    rejectFirst = reject;
+  });
+  const second = new Promise<unknown>((resolve) => {
+    finish = resolve;
+  });
+  const mounted = mount(async (method) => {
+    if (method === Methods.TASK_PROGRESS) return progress;
+    assert.equal(method, Methods.RUN_RECIPE_RUNS_FOR_RUN);
+    return ++reads === 1 ? first : second;
+  });
+  t.after(mounted.cleanup);
+  assert.equal(mounted.render().evidenceLoading, true);
+  await settle();
+  const waiting = mounted.render();
+  assert.equal(waiting.loading, false);
+  assert.equal(waiting.evidenceLoading, true);
+  assert.notEqual(waiting.view, null);
+  rejectFirst(new Error('temporary evidence failure'));
+  await settle();
+  const failed = mounted.render();
+  assert.equal(failed.error, null, 'Evidence failure must not discard the acceptance read');
+  assert.match(String(failed.evidenceError), /temporary evidence failure/);
+  assert.equal(failed.evidenceLoading, false);
+  retry(failed);
+  mounted.render();
+  await settle();
+  assert.equal(reads, 2);
+  assert.equal(mounted.render().evidenceError, null);
+  assert.equal(mounted.render().evidenceLoading, true);
+  finish({ recipeRuns: [], selectedRecipeRunId: 'retained-execution' });
+  await settle();
+  const loaded = mounted.render();
+  assert.equal(loaded.evidenceLoading, false);
+  assert.equal(loaded.evidenceError, null);
+  assert.equal(loaded.recipeRunId, 'retained-execution');
+});
+
+test('a failed evidence refresh preserves the retained selection until a successful Retry', async (t) => {
+  let reads = 0;
+  let finish: (result: unknown) => void = () => assert.fail('retry did not start');
+  const pending = new Promise<unknown>((resolve) => {
+    finish = resolve;
+  });
+  const mounted = mount(async (method) => {
+    if (method === Methods.TASK_PROGRESS) return progress;
+    assert.equal(method, Methods.RUN_RECIPE_RUNS_FOR_RUN);
+    if (++reads === 1) return { recipeRuns: [], selectedRecipeRunId: 'retained-execution' };
+    if (reads === 2) throw new Error('temporary evidence refresh failure');
+    return pending;
+  });
+  t.after(mounted.cleanup);
+  mounted.render();
+  await settle();
+  retry(mounted.render());
+  mounted.render();
+  await settle();
+  const failed = mounted.render();
+  assert.match(String(failed.evidenceError), /temporary evidence refresh failure/);
+  assert.equal(failed.recipeRunId, 'retained-execution');
+  assert.equal(failed.evidenceLoading, false);
+  retry(failed);
+  mounted.render();
+  await settle();
+  const waiting = mounted.render();
+  assert.equal(waiting.evidenceError, failed.evidenceError);
+  assert.equal(waiting.recipeRunId, 'retained-execution');
+  assert.equal(waiting.evidenceLoading, false);
+  finish({ recipeRuns: [], selectedRecipeRunId: 'refreshed-execution' });
+  await settle();
+  assert.equal(mounted.render().evidenceError, null);
+  assert.equal(mounted.render().recipeRunId, 'refreshed-execution');
+});

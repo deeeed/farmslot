@@ -10,6 +10,7 @@ import {
   buildRecoveredReview,
   isRecoverableReviewerContext,
   normalizeExhaustedReviewContinuationsForRun,
+  publicationReviewRecoveryNeedsReplay,
   recoveredReviewAlreadyIngested,
   recoveredReviewArtifactScope,
   recoveredReviewerActionForPromptRecovery,
@@ -17,6 +18,45 @@ import {
   reviewerContextNeedsRecovery,
 } from './recover-inflight-reviews.js';
 import { deleteTestRunIfPresent, makeReadyGatePackage, makeRun } from './test-fixtures.js';
+
+test('an already-ingested ISSUES verdict restores its operator gate instead of polling forever', () => {
+  const result = { recoveredIds: [], terminalErrors: [] };
+  const review: ReviewStatus = {
+    id: 'retained-review',
+    source: 'human-gate',
+    mode: 'cold',
+    loopNumber: 1,
+    verdict: 'issues',
+    unresolvedCount: 1,
+    issues: [{ file: 'icon.service.ts', description: 'exponential SVG parsing' }],
+    feedbackSent: false,
+    recoveryContinuationPending: true,
+  };
+  assert.equal(publicationReviewRecoveryNeedsReplay(result, [review]), true);
+  assert.equal(publicationReviewRecoveryNeedsReplay(result), false);
+  assert.equal(
+    publicationReviewRecoveryNeedsReplay(result, [{ ...review, feedbackSent: true }]),
+    false,
+  );
+  assert.equal(
+    publicationReviewRecoveryNeedsReplay(result, [{ ...review, maxRetriesExhausted: true }]),
+    false,
+  );
+  assert.equal(
+    publicationReviewRecoveryNeedsReplay(result, [
+      review,
+      { ...review, id: 'later-pass', verdict: 'pass', unresolvedCount: 0, issues: [] },
+    ]),
+    false,
+  );
+  for (const change of [
+    { recoveredIds: ['review'] },
+    { repairedIds: ['review'] },
+    { relaunchIds: ['review'] },
+  ]) {
+    assert.equal(publicationReviewRecoveryNeedsReplay({ ...result, ...change }), true);
+  }
+});
 
 test('retired reviewer recovery requests a fresh launch for the same artifact scope', () => {
   assert.deepEqual(

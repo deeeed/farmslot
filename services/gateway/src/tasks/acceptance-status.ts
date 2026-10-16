@@ -16,6 +16,7 @@ import {
   type AcceptanceEvidenceLink,
   type AcceptanceStatusLedger,
   type AcceptanceStatusSource,
+  registeredAcceptanceCriteria,
   renderAcceptanceCoverage,
   validateAcceptanceStatusLedger,
 } from '@farmslot/protocol';
@@ -126,9 +127,7 @@ export async function readHandoffAcceptanceCriteria(
       `invalid ${handoffPath}: task.acceptanceCriteria must be an array`,
     );
   }
-  return criteria
-    .map((text, index) => ({ id: acceptanceCriterionId(index), text: String(text) }))
-    .filter((criterion) => criterion.text.trim().length > 0);
+  return registeredAcceptanceCriteria(criteria);
 }
 
 /**

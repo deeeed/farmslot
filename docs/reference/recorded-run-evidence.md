@@ -1408,3 +1408,48 @@ recipe wrapper. No manual manifest/pointer writer or separate proof command is
 added. Publish and qualify compatible Protocol/runtime/runner/SDK/provider
 versions before activating this producer; existing v1 review results retain
 their current meaning and cannot supply repair applicability.
+
+## Inherited acceptance for PR completion
+
+Status: Accepted, 2026-10-16, ADR-062 Amendment 12.
+
+For `pr-complete`, the completion guard MAY consume the direct parent's approved
+retained evidence when project, repository, PR number and registered criterion
+identities/text match. It MUST validate the selected parent package and the
+existing verified review projection. A raw `awaiting-review` verdict MUST NOT
+become proven merely because the parent is terminal.
+The approved parent's captured receipt IDs and historical qualification remain
+authoritative, including the frozen legacy precedence defined by Amendment 11.
+Later review changes MUST be reconciled before that snapshot grants inheritance.
+
+Completion and the published PR comment MUST record `source: parent-run`,
+`parentRunId`, `headSha` and `ledgerHash`, computed from the original retained
+ledger bytes. Original task IDs, recipe run IDs, evidence and frozen decisions
+MUST remain unchanged. Inheritance MUST NOT imply proof at the follow-up head.
+The required provenance comment MUST succeed before completion. Worker reports
+and metrics remain subject to the existing report-publication opt-in. Replay
+adds missing provenance to its existing comment without creating a duplicate.
+Unavailable, substituted or insufficient evidence MUST retain normal refusal.
+
+The frozen per-flow terminal rule `acceptance.requireFresh: true` MUST select
+follow-up evidence instead. Omission permits eligible parent inheritance only
+for `pr-complete`; other flows retain their existing acceptance contract.
+Fresh completion validates the follow-up's retained selected execution and
+its qualified current reviews, without requiring a publication package for
+an already published PR. It MUST NOT substitute a parent's task namespace.
+Current-checkout deterministic checks and every unrelated ADR-065 prerequisite
+MUST still pass independently of the acceptance source.
+
+Before worker delivery, the gateway MAY stage `inputs/inherited-acceptance.json`
+with version 1, child run/project identity, original proof provenance and the
+matching criterion references. This is a provisional task-closeout reference,
+not an engine ledger or publication authority. The local artifact checker MUST
+refuse mismatched identity/criteria and ignore it when fresh proof is required.
+Gateway completion MUST independently qualify the original retained parent;
+a worker-written reference MUST NOT grant completion.
+
+The version-1 reference carries `schemaVersion`, `source`, `childRunId`,
+`project`, `parentRunId`, `headSha`, `ledgerHash` and `criteria` as registered
+`{ id, text }` references. It contains no replacement engine verdicts. Protocol
+owns the shared types and path; gateway preparation stages it, retention freezes
+it, and agent-runtime's existing artifact checker consumes it.

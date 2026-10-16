@@ -250,4 +250,54 @@ test('provider PATH drift remains a node health failure visible to fleet readers
   metrics.providerCliHealth![0].ok = true;
   updateMachineMetrics(machine, metrics);
   assert.equal(getMachineHealth(machine)?.headroom, 'green');
+  metrics.providerCliHealth![0].ok = false;
+  metrics.providerCliHealth![0].status = 'probe-timeout';
+  metrics.providerCliHealth![0].reason = 'Probe timed out under load';
+  updateMachineMetrics(machine, metrics);
+  assert.equal(getMachineHealth(machine)?.headroom, 'yellow');
+  assert.equal(
+    getAllMachineHealth().find((health) => health.machine === machine)?.providerCliHealth?.[0]
+      .status,
+    'probe-timeout',
+  );
+  metrics.cpuPercent = 99;
+  updateMachineMetrics(machine, metrics);
+  assert.equal(getMachineHealth(machine)?.headroom, 'red', 'real resource pressure is preserved');
+  metrics.cpuPercent = 1;
+  metrics.providerCliHealth![0].confirmedMismatch = {
+    checkedAt: '2026-10-16T00:00:00.000Z',
+    reason: '1.0.0, expected 1.2.3',
+  };
+  updateMachineMetrics(machine, metrics);
+  assert.equal(getMachineHealth(machine)?.headroom, 'red', 'confirmed drift survives a timeout');
+});
+
+test('failed dev worker verification is a fleet health failure until a successful probe', () => {
+  const machine = 'worker-verify-fixture';
+  const metrics: NodeMetricsSample = {
+    cpuPercent: 1,
+    memoryPercent: 2,
+    memoryUsedGb: 1,
+    memoryTotalGb: 16,
+    diskPercent: 3,
+    loadAvg1: 0,
+    loadAvg5: 0,
+    collectedAt: new Date().toISOString(),
+    workerCliHealth: {
+      ok: false,
+      checkedAt: new Date().toISOString(),
+      reason: 'tmux server unresponsive on fixture',
+    },
+  };
+  updateMachineMetrics(machine, metrics);
+  assert.equal(getMachineHealth(machine)?.headroom, 'red');
+  assert.equal(
+    getAllMachineHealth().find((item) => item.machine === machine)?.workerCliHealth?.reason,
+    metrics.workerCliHealth?.reason,
+  );
+  assert(!('workerCliHealth' in getMachineHealth(machine)!.system!));
+  metrics.workerCliHealth!.ok = true;
+  metrics.workerCliHealth!.reason = undefined;
+  updateMachineMetrics(machine, metrics);
+  assert.equal(getMachineHealth(machine)?.headroom, 'green');
 });

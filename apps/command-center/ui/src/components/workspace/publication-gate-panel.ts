@@ -97,22 +97,24 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
                 Refresh package
               </button>`
             : nothing}
-          <button
-            class="gate-primary"
-            data-testid="gate-approve"
-            type="button"
-            ?disabled=${disabled || Boolean(view.blockedReason) || !view.approval}
-            title=${view.blockedReason}
-            @click=${() => view.approval && input.invoke(view.approval.id)}
-          >
-            ${input.busy
-              ? 'Submitting…'
-              : input.pendingConfirm === view.approval?.id
-                ? view.attestation
-                  ? 'Confirm attestation and publish?'
-                  : 'Confirm Publish?'
-                : (view.approval?.label ?? 'Approve publish')}
-          </button>
+          ${view.approval
+            ? html`<button
+                class="gate-primary"
+                data-testid="gate-approve"
+                type="button"
+                ?disabled=${disabled || Boolean(view.blockedReason) || !view.approval}
+                title=${view.blockedReason}
+                @click=${() => view.approval && input.invoke(view.approval.id)}
+              >
+                ${input.busy
+                  ? 'Submitting…'
+                  : input.pendingConfirm === view.approval?.id
+                    ? view.attestation
+                      ? 'Confirm attestation and publish?'
+                      : 'Confirm Publish?'
+                    : (view.approval?.label ?? 'Approve publish')}
+              </button>`
+            : nothing}
           ${view.attestation || view.secondaryActions.length
             ? html`<details class="gate-more-actions">
                 <summary>More actions</summary>

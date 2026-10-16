@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import type { AgentContext, Run } from '@farmslot/protocol';
 
 await import('../runtime/mock-pty.test-support.js');
 
@@ -77,6 +77,40 @@ test('publication uses the last completed source-fix checklist after role cleanu
   assert.equal(deterministicChecklistTaskFileForPublication(run), '.task/proof/REVIEW-FIX.md');
   run.activeTaskFile = '.task/proof/CI-FIX.md';
   assert.equal(deterministicChecklistTaskFileForPublication(run), run.activeTaskFile);
+});
+
+test('a later completed primary worker supersedes an older fix CI receipt', () => {
+  const context = (
+    role: AgentContext['role'],
+    taskFile: string,
+    lastSignalAt: string,
+  ): AgentContext => ({
+    id: role,
+    role,
+    taskFile,
+    lastSignalAt,
+    status: 'complete',
+    runId: 'run',
+    slotId: 'slot',
+    label: role,
+    runner: 'claude',
+    model: 'opus',
+    target: null,
+    startedAt: lastSignalAt,
+    updatedAt: lastSignalAt,
+  });
+  const run: Parameters<typeof deterministicChecklistTaskFileForPublication>[0] = {
+    flowType: 'dev',
+    taskFile: '/tasks/proof/TASK.md',
+    agentContexts: [
+      context('review-fix', '.task/proof/REVIEW-FIX.md', '2026-01-01T10:00:00Z'),
+      context('dev', '.task/proof/TASK.md', '2026-01-01T11:00:00Z'),
+      context('review', '.task/proof/REVIEW.md', '2026-01-01T12:00:00Z'),
+    ],
+  };
+  assert.equal(deterministicChecklistTaskFileForPublication(run), '.task/proof/TASK.md');
+  run.agentContexts![1].status = 'blocked';
+  assert.equal(deterministicChecklistTaskFileForPublication(run), '.task/proof/REVIEW-FIX.md');
 });
 
 test('role cleanup preserves the entire frozen parent contract byte for byte', async (t) => {

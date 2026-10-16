@@ -34,6 +34,12 @@ export async function bindRunToSlot(
   }
   step('bind', `Bound run ${params.bindRunId.slice(0, 8)} to ${params.slotId}`);
   if (boundRun) {
+    if (boundRun.parentRunId) {
+      const { stageInheritedAcceptance } =
+        await import('../../run-completion/inherited-acceptance.js');
+      if (await stageInheritedAcceptance(boundRun, vars))
+        step('bind', 'Staged verified parent acceptance proof');
+    }
     const synced = await pushRunRecipeToSlot(boundRun, vars);
     step('bind', `Synced ${synced} recipe file(s) to slot`);
   }

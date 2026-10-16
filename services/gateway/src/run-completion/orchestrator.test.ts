@@ -32,7 +32,7 @@ import {
   shouldMarkReadyAfterCompletion,
 } from './orchestrator.js';
 import { readCurrentPackageEvidence } from './package-evidence-manifest.js';
-import { makeRun } from './test-fixtures.js';
+import { makeRun, manualTicketData } from './test-fixtures.js';
 
 test('monitor repair completion preserves draft publication state', () => {
   assert.equal(shouldMarkReadyAfterCompletion({}), true);
@@ -701,6 +701,7 @@ test('assertReadyGatePackageInputsCurrent publishes an edited body instead of re
       flowType: 'dev',
       mode: 'autonomous',
       ticketOrPr: 'PROJ-1',
+      ticketData: manualTicketData('Implement the order form'),
       taskFile,
     });
     await retainRunFixture(run);
@@ -726,7 +727,7 @@ test('assertReadyGatePackageInputsCurrent publishes an edited body instead of re
       branch: 'feature/pkg-inputs',
       headSha: 'abc123',
       diffStat: { files: 1, additions: 1, deletions: 0 },
-      draftTitle: 'feat: implement PROJ-1',
+      draftTitle: 'feat: implement the order form',
       draftBody,
       evidenceManifest: (await readCurrentPackageEvidence(run)).inventory,
       selectedEvidenceKeys: ['artifacts/after-ac1.png'],

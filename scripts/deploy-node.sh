@@ -15,7 +15,8 @@
 # A local deploy leaves the CLI as is unless --refresh-cli is passed: there it
 # is the operator's own CLI. CLI_LOCK_WAIT_SECONDS (default 600) bounds the wait
 # for another deploy's CLI refresh on the same machine, and
-# CLI_VERIFY_TIMEOUT_SECONDS (default 120) the worker-shell verify.
+# CLI_VERIFY_TIMEOUT_SECONDS (default 120) the CLI body; each tmux client is
+# separately bounded to at most five seconds.
 #
 # Instances: a machine can run a prod node and a dev node side by side —
 # distinct install dir, service name, gateway URL, and IPC state. Default
@@ -925,8 +926,8 @@ REFRESH
 
   # Verify the way a tmux slot worker runs: `exec bash -lc '<worker prefix> &&
   # export GW_URL=… && …'` in a throwaway session on the node user's tmux server,
-  # falling back to plain `bash -lc` when no server is running; either way within
-  # CLI_VERIFY_TIMEOUT_SECONDS. The worker prefix and the tmux lookup are the gateway's own
+  # falling back to plain `bash -lc` when no server is running. The CLI body uses
+  # CLI_VERIFY_TIMEOUT_SECONDS; each tmux client is bounded to at most five seconds. The worker prefix and the tmux lookup are the gateway's own
   # (scripts/lib/worker-env-prefix.sh, scripts/lib/tmux-bin.sh); the prefix puts
   # ~/.local/bin, where the links above live, first on PATH. GW_URL is the URL
   # this node dials, and no control-plane credential is set, so the CLI
@@ -953,22 +954,75 @@ if (existsSync(poolDir)) {
 }
 WORKER_HOME
   )
-  if ! run "bash -s $(printf '%q ' "$CLI_ENTRY" "$NODE_GATEWAY_URL" "$WORKER_ENV_PREFIX" "$TMUX_BIN_LOOKUP" "${CLI_VERIFY_TIMEOUT_SECONDS:-120}" "$INSTANCE" "$WORKER_FARMSLOT_HOME")" << 'VERIFY'
+  WORKER_CLI_HEALTH_FILE=""
+  if [[ "$INSTANCE" == dev ]]; then
+    WORKER_CLI_HEALTH_FILE="$REMOTE_HOME/.farmslot-dev/node-worker-cli-health.json"
+  fi
+  if ! run "bash -s $(printf '%q ' "$CLI_ENTRY" "$NODE_GATEWAY_URL" "$WORKER_ENV_PREFIX" "$TMUX_BIN_LOOKUP" "${CLI_VERIFY_TIMEOUT_SECONDS:-120}" "$INSTANCE" "$WORKER_FARMSLOT_HOME" "$NODE_PATH" "$MACHINE" "$WORKER_CLI_HEALTH_FILE")" << 'VERIFY'
 set -uo pipefail
 entry=$1 gw_url=$2 prefix=$3 tmux_lookup=$4 timeout=$5 instance=$6 worker_home=$7
+node=$8 machine=$9 health_file=${10}
+failure_reason=""
+tmux_with_timeout() {
+  "$node" - "$TMUX_BIN" "$timeout" "$@" << 'TMUX_TIMEOUT'
+const { spawnSync } = require('node:child_process');
+const [command, budget, ...args] = process.argv.slice(2);
+const result = spawnSync(command, args, {
+  timeout: Math.min(5_000, Number(budget) * 1_000),
+  killSignal: 'SIGKILL',
+  stdio: 'inherit',
+});
+if (result.error?.code === 'ETIMEDOUT') process.exit(124);
+if (result.error) process.stderr.write(result.error.message + '\n');
+process.exit(result.status ?? 1);
+TMUX_TIMEOUT
+}
+tmux_unresponsive() {
+  failure_reason="tmux server unresponsive on $machine"
+  echo "[deploy] ERROR: $failure_reason" >&2
+}
+write_health() {
+  [ -n "$health_file" ] || return 0
+  "$node" - "$health_file" "$1" "$failure_reason" "$machine" << 'WORKER_HEALTH'
+const fs = require('node:fs');
+const path = require('node:path');
+const [file, status, detail, machine] = process.argv.slice(2);
+const ok = status === '0';
+fs.mkdirSync(path.dirname(file), { recursive: true });
+const temporary = file + '.' + process.pid + '.tmp';
+fs.writeFileSync(temporary, JSON.stringify({
+  ok,
+  checkedAt: new Date().toISOString(),
+  ...(ok ? {} : { reason: detail || 'Worker CLI verification failed on ' + machine }),
+}) + '\n', { mode: 0o600 });
+fs.renameSync(temporary, file);
+WORKER_HEALTH
+}
 work=$(mktemp -d "${TMPDIR:-/tmp}/farmslot-cli-verify.XXXXXX")
 session=""
 fallback_pid=""
 cleanup() {
-  if [ -n "$session" ]; then "$TMUX_BIN" kill-session -t "=$session" 2> /dev/null || true; fi
+  local failed=0 result=0
+  if [ -n "$session" ]; then
+    tmux_with_timeout kill-session -t "=$session" > /dev/null 2>&1 || result=$?
+    if [ "$result" = 124 ]; then tmux_unresponsive; failed=1; fi
+  fi
   # The fallback runs as its own process group: stop the probe's CLI too.
   if [ -n "$fallback_pid" ]; then
     kill -TERM -- "-$fallback_pid" 2> /dev/null || true
     wait "$fallback_pid" 2> /dev/null || true
   fi
   rm -rf "$work"
+  return "$failed"
 }
-trap cleanup EXIT
+finish() {
+  local result=$?
+  trap - EXIT
+  cleanup || result=1
+  write_health "$result" || result=1
+  exit "$result"
+}
+trap finish EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 cat > "$work/probe.sh" << 'PROBE'
@@ -1022,11 +1076,22 @@ if [ -n "$worker_home" ]; then prefix="$prefix; export FARMSLOT_HOME=$(printf '%
 probe="$prefix && export GW_URL=$(printf '%q' "$gw_url") && bash $(printf '%q' "$work/probe.sh") $(printf '%q ' "$entry" "$instance")"
 launch="exec bash -lc $(printf '%q' "$probe > $(printf '%q' "$work/out") 2>&1; echo \$? > $(printf '%q' "$work/status")")"
 eval "$tmux_lookup"
-if [ -n "$TMUX_BIN" ] && "$TMUX_BIN" list-sessions > /dev/null 2>&1; then
+list_status=1
+if [ -n "$TMUX_BIN" ]; then
+  list_status=0
+  tmux_with_timeout list-sessions > /dev/null 2>&1 || list_status=$?
+fi
+if [ "$list_status" = 124 ]; then tmux_unresponsive; exit 1; fi
+if [ "$list_status" = 0 ]; then
   session="farmslot-cli-verify-$$"
-  if ! "$TMUX_BIN" new-session -d -s "$session" "$launch"; then
-    session=""
-    echo "[deploy] ERROR: could not start a verify session on the tmux server ($TMUX_BIN)" >&2
+  launch_status=0
+  tmux_with_timeout new-session -d -s "$session" "$launch" || launch_status=$?
+  if [ "$launch_status" != 0 ]; then
+    if [ "$launch_status" = 124 ]; then
+      tmux_unresponsive
+    else
+      echo "[deploy] ERROR: could not start a verify session on the tmux server ($TMUX_BIN)" >&2
+    fi
     exit 1
   fi
 else

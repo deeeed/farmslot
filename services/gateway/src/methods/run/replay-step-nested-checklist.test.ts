@@ -15,6 +15,7 @@ import { PipelineSteps as PS } from '@farmslot/protocol';
 // missing-export chain (isLocal, resolveSlot, isIgnoredPoolFile, …).
 import * as realConfig from '../../core/config.js';
 import * as realCoreIndex from '../../core/index.js';
+import * as realOutput from '../../run-completion/output.js';
 import * as realOrchestrator from '../../run-engine/orchestrator.js';
 
 let workspace = '';
@@ -78,6 +79,10 @@ mock.module('../../run-engine/orchestrator.js', {
   },
 });
 
+mock.module('../../run-completion/output.js', {
+  namedExports: { ...realOutput, captureRunOutput: async () => 0 },
+});
+
 const { runReplayStep } = await import('./replay-step.js');
 const { createRun, deleteRun, getRun, updateRun } = await import('../../runs/store.js');
 const { CHECKLIST_TARGET_BY_AGENT_ROLE, CHECKLIST_TARGET_MANIFEST } =
@@ -85,7 +90,7 @@ const { CHECKLIST_TARGET_BY_AGENT_ROLE, CHECKLIST_TARGET_MANIFEST } =
 const { resolveWorkerTerminalContract } = await import('../../tasks/worker-terminal-contract.js');
 const { buildHandoffMetadata, ensureTaskRuntime } = await import('@farmslot/agent-runtime');
 
-for (const stepName of [PS.MONITOR, PS.REVIEW]) {
+for (const stepName of [PS.MONITOR, PS.REVIEW, PS.HUMAN_GATE]) {
   test(`runReplayStep ${stepName} restores frozen dispatch policy without changing evidence`, async (t) => {
     workspace = await mkdtemp(path.join(os.tmpdir(), 'replay-nested-checklist-'));
     orchestratorTaskRoot = path.join(workspace, 'orchestrator-tasks');
@@ -100,6 +105,11 @@ for (const stepName of [PS.MONITOR, PS.REVIEW]) {
 
     const review = CHECKLIST_TARGET_BY_AGENT_ROLE['review'];
     await writeFile(path.join(taskDirOnSlot, review.checklist), '# review\n');
+    const fix = CHECKLIST_TARGET_BY_AGENT_ROLE['review-fix'];
+    const fixChecklist = '# fix\n- [x] Current CI receipt\n';
+    const fixSignal = JSON.stringify({ status: 'complete', attemptId: 'retained-fix' });
+    await writeFile(path.join(taskDirOnSlot, fix.checklist), fixChecklist);
+    await writeFile(path.join(taskDirOnSlot, fix.signal), fixSignal);
     await writeFile(
       path.join(taskDirOnSlot, CHECKLIST_TARGET_MANIFEST),
       `${JSON.stringify({ checklist: review.checklist }, null, 2)}\n`,
@@ -192,8 +202,12 @@ for (const stepName of [PS.MONITOR, PS.REVIEW]) {
     // means CHECKLIST.md + SIGNAL.json to the mark engine.
     assert.equal(
       existsSync(path.join(taskDirOnSlot, CHECKLIST_TARGET_MANIFEST)),
-      stepName === PS.MONITOR,
+      stepName !== PS.REVIEW,
     );
+    if (stepName === PS.HUMAN_GATE) {
+      assert.equal(await readFile(path.join(taskDirOnSlot, fix.checklist), 'utf8'), fixChecklist);
+      assert.equal(await readFile(path.join(taskDirOnSlot, fix.signal), 'utf8'), fixSignal);
+    }
   });
 }
 

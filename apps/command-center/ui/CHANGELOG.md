@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review.
 - Show the shared no-code-review warning at publication gates.
 
 - Keep async gate and panel layouts stable with component-specific skeletons and visible retries after loading errors.

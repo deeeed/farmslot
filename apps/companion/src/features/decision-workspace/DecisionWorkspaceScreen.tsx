@@ -463,6 +463,8 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   );
   const checkedEvidenceModel =
     humanGate?.acceptance.evidenceModel ?? outputAcceptance.evidenceModel;
+  const evidenceAcceptance =
+    humanGate?.acceptance ?? (outputReviewPayload ? outputAcceptance : null);
   const pairs = useMemo(
     () =>
       presentation?.runId
@@ -1613,6 +1615,9 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
           >
             <Text style={styles.sectionTitle}>Evidence</Text>
             <EvidenceReviewWorkspace
+              loading={evidenceAcceptance?.evidenceLoading}
+              error={evidenceAcceptance?.evidenceError}
+              retry={taskProgressRequestForRun(sourceRun) ? evidenceAcceptance?.retry : undefined}
               runId={presentation.runId}
               gatewayUrl={gatewayUrl}
               artifacts={presentation.artifactManifest}

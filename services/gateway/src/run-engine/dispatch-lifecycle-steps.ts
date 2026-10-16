@@ -568,6 +568,13 @@ export async function executeDispatchStep(
     app: current.app,
   };
 
+  if (current.parentRunId) {
+    // All delivery modes pass here, including skip-prepare and warm handoffs.
+    // Qualify/stage only after task initialization and before worker execution.
+    const { stageInheritedAcceptance } = await import('../run-completion/inherited-acceptance.js');
+    await stageInheritedAcceptance(current, await loadSlotVars(current.slotId));
+  }
+
   if (current.engineState?.flags?.warmSessionReuse || current.engineState?.flags?.nudgeReuse)
     await prepareConfiguredRunCapabilities(runId);
 

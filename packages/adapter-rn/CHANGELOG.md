@@ -6,6 +6,14 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.22.22 - 2026-10-16
+
+- Align the worker dependency set with parent acceptance inheritance and Protocol 0.53.0.
+
+## 0.22.21 - 2026-10-16
+
+- Align the worker dependency set with Protocol 0.52.0 and default pipeline visual review.
+
 ## 0.22.20 - 2026-10-16
 
 - Align the worker dependency set with Protocol 0.51.0.
