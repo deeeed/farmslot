@@ -10,6 +10,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Publish the PR title from the approved body's leading `# type(scope): summary` heading, else the ticket title, and refuse approval when neither names more than a ticket key.
 
+- Let a new review on a PR whose earlier finished review belonged to a since-retired principal take the caller's ownership while keeping its family lineage; live runs and reused ids keep refusing another owner.
+
 - Re-claim a failed run's slot before replaying write-task, and refuse the replay before any step runs when another live run holds that slot, naming the holder.
 
 - Submit buffered Codex input with Enter, never Tab, and accept only the next-tool-call steering block as delivery proof; queued follow-up input stays undelivered.
