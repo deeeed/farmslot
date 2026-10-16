@@ -16,6 +16,7 @@ import {
   GatewayMediaDocument,
   gatewayMediaHtml,
   loadGatewayMedia,
+  requiresGatewayMediaHeaders,
 } from './gateway-media-src.js';
 
 test('person media uses headers, preserves bytes and releases its object URL', async (t) => {
@@ -184,4 +185,34 @@ test('the real PR-preview renderer binds Markdown to the authenticated HTML tran
       value._$litDirective$ === GatewayMedia,
   );
   assert.deepEqual(transport, gatewayMediaHtml(markup));
+});
+
+test('placeholder links cannot hide authenticated Markdown', (t) => {
+  setGatewayMemoryAuth({ token: 'service-fixture' }, 'ws://localhost:7777/ws');
+  t.after(clearGatewayMemoryAuth);
+  assert.equal(requiresGatewayMediaHeaders('http://localhost:PORT/#runs'), false);
+  assert.equal(requiresGatewayMediaHeaders('http://localhost:${PORT}/#runs'), false);
+  assert.equal(requiresGatewayMediaHeaders('/api/file?path=proof.png'), true);
+});
+
+test('Markdown text renders before media and survives an unexpected loader failure', async (t) => {
+  setGatewayMemoryAuth({ token: 'service-fixture' }, 'ws://localhost:7777/ws');
+  t.after(clearGatewayMemoryAuth);
+  const safeText = '<p>Review stays readable</p><img alt="Pending image">';
+  const input = '<p>Review stays readable</p><img src="/api/file?path=proof.png">';
+  t.mock.method(
+    GatewayMediaDocument.prototype,
+    'html',
+    async function (this: GatewayMediaDocument) {
+      this.initialHtml = safeText;
+      throw new Error('Unexpected document failure');
+    },
+  );
+  t.mock.method(console, 'error', () => {});
+  const view = new MediaHarness({ type: PartType.CHILD });
+  assert.deepEqual(view.render(input, 'html'), unsafeHTML(safeText));
+  await flush();
+  assert.deepEqual(view.values, [unsafeHTML(safeText)]);
+  assert.deepEqual(view.render(input, 'html'), unsafeHTML(safeText));
+  view.disconnect();
 });

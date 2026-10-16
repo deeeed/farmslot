@@ -9,8 +9,7 @@ import {
 } from '../../utils/artifact-markdown.js';
 import { renderMarkdown } from '../../utils/markdown.js';
 import { createSlotViewRecipeHostEntry } from '../recipe/recipe-quality-hosts.js';
-import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
-import { gatewayMediaSrc } from '../shared/gateway-media-src.js';
+import { gatewayMediaHtml, gatewayMediaSrc } from '../shared/gateway-media-src.js';
 import {
   dedupeWorkspaceEvidenceArtifacts,
   renderWorkspaceEvidencePreview,

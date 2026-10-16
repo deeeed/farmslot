@@ -13,8 +13,11 @@ function hasGatewayMediaAuth(): boolean {
 
 export function requiresGatewayMediaHeaders(url: string): boolean {
   if (!hasGatewayMediaAuth()) return false;
-  const parsed = new URL(url, gatewayHttpOrigin());
-  return parsed.origin === gatewayHttpOrigin() && parsed.pathname.startsWith('/api/');
+  const origin = gatewayHttpOrigin();
+  // Authored Markdown can contain placeholder ports or otherwise invalid links.
+  if (!URL.canParse(url, origin)) return false;
+  const parsed = new URL(url, origin);
+  return parsed.origin === origin && parsed.pathname.startsWith('/api/');
 }
 
 /** The owner releases the object URL when its view closes or changes source. */
@@ -48,6 +51,7 @@ export class GatewayMedia extends AsyncDirective {
   private lastFormat: GatewayMediaFormat = 'url';
   private abort: AbortController | undefined;
   private media: Awaited<ReturnType<typeof loadGatewayMedia>> | undefined;
+  private initial: ReturnType<typeof unsafeHTML> | typeof nothing = nothing;
 
   render(url: string, format: GatewayMediaFormat = 'url') {
     this.lastUrl = url;
@@ -76,11 +80,12 @@ export class GatewayMedia extends AsyncDirective {
       })
       .catch((error: unknown) => {
         if (abort.signal.aborted) return;
-        this.setValue(nothing);
+        this.source = undefined;
+        this.setValue(this.initial);
         // Fetch failures remain visible and never fall back to a credential-bearing URL.
         console.error('Gateway media could not be loaded.', error);
       });
-    return nothing;
+    return this.initial;
   }
 
   protected disconnected(): void {
@@ -101,7 +106,9 @@ export class GatewayMedia extends AsyncDirective {
     const media = { url: '', dispose: () => document.dispose() };
     // Own partially loaded blobs before awaiting the rest of the document.
     this.media = media;
-    media.url = await document.html(html);
+    const loaded = document.html(html);
+    if (document.initialHtml) this.initial = unsafeHTML(document.initialHtml);
+    media.url = await loaded;
     return media;
   }
 
@@ -110,6 +117,7 @@ export class GatewayMedia extends AsyncDirective {
     this.abort = undefined;
     this.media?.dispose();
     this.media = undefined;
+    this.initial = nothing;
   }
 }
 
@@ -120,17 +128,42 @@ export const gatewayMediaHtml = (html: string) => gatewayMediaSrc(html, 'html');
 export class GatewayMediaDocument {
   private readonly abort = new AbortController();
   private readonly resources = new Map<string, Awaited<ReturnType<typeof loadGatewayMedia>>>();
+  initialHtml = '';
 
   async html(html: string): Promise<string> {
     if (!hasGatewayMediaAuth()) return html;
     const document = new DOMParser().parseFromString(html, 'text/html');
+    const serialize = () =>
+      /^\s*(?:<!doctype|<html)/i.test(html)
+        ? document.documentElement.outerHTML
+        : document.body.innerHTML;
+    const targets: Array<{ node: Element; attribute: string; url: string }> = [];
     for (const node of document.querySelectorAll('img[src],video[src],source[src],a[href]')) {
       const attribute = node.hasAttribute('src') ? 'src' : 'href';
       const url = node.getAttribute(attribute);
       if (!url || !requiresGatewayMediaHeaders(url)) continue;
+      targets.push({ node, attribute, url });
+      node.removeAttribute(attribute);
+    }
+    // Keep review text readable immediately, without issuing unauthenticated media requests.
+    this.initialHtml = serialize();
+    for (const { node, attribute, url } of targets) {
       let resource = this.resources.get(url);
       if (!resource) {
-        resource = await loadGatewayMedia(url, this.abort.signal);
+        try {
+          resource = await loadGatewayMedia(url, this.abort.signal);
+        } catch (error) {
+          if (this.abort.signal.aborted) throw error;
+          // A missing attachment must not hide the review or restore an uncredentialed URL.
+          node.setAttribute('title', error instanceof Error ? error.message : 'Media unavailable');
+          if (node.tagName === 'IMG') {
+            node.setAttribute('alt', `${node.getAttribute('alt') || 'Image'} (unavailable)`);
+          } else {
+            const label = node.tagName === 'SOURCE' ? node.parentElement : node;
+            label?.insertAdjacentText('afterend', ' (Media unavailable)');
+          }
+          continue;
+        }
         this.resources.set(url, resource);
       }
       node.setAttribute(attribute, resource.url);
@@ -145,9 +178,7 @@ export class GatewayMediaDocument {
           policy.replace(/(?:img-src|media-src) [^;]*/g, (rule) => `${rule} blob:`),
         );
     }
-    return /^\s*(?:<!doctype|<html)/i.test(html)
-      ? document.documentElement.outerHTML
-      : document.body.innerHTML;
+    return serialize();
   }
 
   dispose(): void {
