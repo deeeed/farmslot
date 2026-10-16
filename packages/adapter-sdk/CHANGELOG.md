@@ -4,9 +4,7 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
-- Remove person-only visual claim policy; qualified independent pipeline receipts satisfy every visual AC without project setup.
-
-- Show independent pipeline visual verification and explicit person-only criteria in shared acceptance views.
+- Show independent pipeline visual verification for every visual AC in shared acceptance views, without person-only configuration.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
