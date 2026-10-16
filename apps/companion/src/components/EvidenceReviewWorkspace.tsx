@@ -37,6 +37,7 @@ import { colors, fonts, radii, spacing } from '../lib/theme';
 
 import { BeforeAfterPreview, CompareMedia } from './BeforeAfterPreview';
 import { EvidenceReviewSkeleton } from './EvidenceReviewSkeleton';
+import { SkeletonError } from './Skeleton';
 import { VisualClaimJudgment } from './VisualClaimJudgment';
 
 interface EvidenceReviewWorkspaceProps {
@@ -177,16 +178,18 @@ export function EvidenceReviewWorkspace({
     }
   }, [focusClaim, evidenceModel]);
 
-  if (loading || error) return <EvidenceReviewSkeleton error={error ?? undefined} retry={retry} />;
+  if (loading && !artifacts.length) return <EvidenceReviewSkeleton />;
   return (
     <ScrollView
       ref={workspaceScroll}
       nestedScrollEnabled
-      style={[styles.workspace, { height: Math.min(640, viewport.height * 0.65) }]}
+      style={{ height: Math.min(640, viewport.height * 0.65) }}
+      contentContainerStyle={styles.workspace}
       onLayout={(event) => {
         layouts.current.workspace = event.nativeEvent.layout.y;
       }}
     >
+      {error ? <SkeletonError message={error} retry={retry} /> : null}
       {evidenceModel ? (
         <View
           style={styles.railSection}

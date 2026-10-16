@@ -9,7 +9,6 @@ import {
 } from '@farmslot/adapter-sdk/evidence';
 import type { RunRecipeRunsForRunResult } from '@farmslot/protocol';
 import {
-  acceptanceCriterionId,
   type ArtifactRef,
   buildRunDecisionActionRequest,
   isInternalRunArtifactPath,
@@ -18,6 +17,7 @@ import {
   type ReadyGatePayload,
   validVisualJudgmentReason,
 } from '@farmslot/protocol';
+import { publicationGateCriteria } from '@farmslot/review-dispatch';
 import { resolveReviewDispatchDefaults } from '@farmslot/review-dispatch';
 
 import '../diff-viewer/diff-review.js';
@@ -55,6 +55,7 @@ import {
 } from './ready-workspace-modal-renderers.js';
 import {
   renderReadyPackagePanel,
+  renderReadyPackageSkeleton,
   renderReadyResolvedBanner,
 } from './ready-workspace-package-renderers.js';
 import { readyReviewRequestProgress } from './ready-workspace-review-request-model.js';
@@ -64,6 +65,7 @@ import {
   renderReadyTopBar,
 } from './ready-workspace-shell-renderers.js';
 import {
+  renderPrPreviewSkeleton,
   renderReadyEvidenceSelectionToolbar,
   renderReadyEvidenceTab,
   renderReadyInputTab,
@@ -80,6 +82,12 @@ import {
 } from './workspace-artifacts.js';
 import { renderWorkspaceEvidencePreview } from './workspace-evidence-preview.js';
 
+interface EvidenceReadScope {
+  runId: string;
+  decisionId: string | undefined;
+  packageHash: string | undefined;
+}
+
 @customElement('ready-workspace')
 export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   @state() private _claimOverrideId: string | null = null;
@@ -90,51 +98,83 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   @state() private _evidenceError = '';
   @state() private _evidenceModel: EvidenceReviewModel | null = null;
   private _evidenceRequest = 0;
-  private _evidenceScope = '';
+  private _evidenceRead: Promise<void> | undefined;
+  private _evidenceLoaded = false;
+  private _evidenceScope: EvidenceReadScope | undefined;
   private _evidenceRecipeRunId: string | null = null;
   private _evidenceItems: import('../shared/media-lightbox-types.js').LightboxItem[] | null = null;
-  private async _loadReviewEvidence(): Promise<void> {
-    const request = ++this._evidenceRequest;
-    const scope = JSON.stringify([
-      this.runId,
-      this.decision?.id,
-      this._payload?.prPackage?.packageHash,
-    ]);
-    if (scope !== this._evidenceScope) {
-      this._evidenceModel = this._reviewEvidenceModel();
-      this._claimOverrideId = null;
-      this._claimOverrideReason = '';
-      this._visualReviewReasons = {};
-      this._evidenceScope = scope;
-      this._evidenceItems = null;
-      this._lightboxOpen = false;
+  private get _actionsPaused(): boolean {
+    return this.actionsBlocked || this._packagePending;
+  }
+  private _resetReviewEvidence(scope: EvidenceReadScope): void {
+    this._evidenceScope = scope;
+    this._evidenceLoaded = false;
+    this._evidenceLoading = true;
+    this._evidenceError = '';
+    this._evidenceModel = this._reviewEvidenceModel();
+    this._claimOverrideId = null;
+    this._claimOverrideReason = '';
+    this._visualReviewReasons = {};
+    this._evidenceItems = null;
+    this._evidenceRecipeRunId = null;
+    this._lightboxOpen = false;
+  }
+  private _loadReviewEvidence(force = false): Promise<void> {
+    const scope = {
+      runId: this.runId,
+      decisionId: this.decision?.id,
+      packageHash: this._payload?.prPackage?.packageHash,
+    };
+    const sameDecision =
+      scope.runId === this._evidenceScope?.runId &&
+      scope.decisionId === this._evidenceScope?.decisionId;
+    // Compact list snapshots disclose omitted metadata; retain a cached answer until run.get lands.
+    if (this._packagePending) {
+      if (!sameDecision) {
+        ++this._evidenceRequest;
+        this._evidenceRead = undefined;
+        this._resetReviewEvidence(scope);
+      }
+      return Promise.resolve();
     }
+    const sameScope = sameDecision && scope.packageHash === this._evidenceScope?.packageHash;
+    if (!force && sameScope && this._evidenceRead) return this._evidenceRead;
+    const task: Promise<void> = this._readReviewEvidence(scope, sameScope).finally(() => {
+      if (this._evidenceRead === task) this._evidenceRead = undefined;
+    });
+    this._evidenceRead = task;
+    return task;
+  }
+  private async _readReviewEvidence(scope: EvidenceReadScope, sameScope: boolean): Promise<void> {
+    const request = ++this._evidenceRequest;
+    if (!sameScope) this._resetReviewEvidence(scope);
     if (!this.runId || this.mockData) {
       this._evidenceLoading = false;
       return;
     }
-    this._evidenceLoading = true;
-    this._evidenceError = '';
     try {
       const source = await gateway.request<RunRecipeRunsForRunResult>(
         'run.recipeRunsForRun',
         {
-          runId: this.runId,
+          runId: scope.runId,
           includeRecordedEvidence: true,
-          decisionId: this.decision?.id,
-          evidenceSnapshotHash: this._payload?.prPackage?.packageHash,
+          decisionId: scope.decisionId,
+          evidenceSnapshotHash: scope.packageHash,
         },
         60_000,
       );
-      if (request !== this._evidenceRequest || !this.isConnected) return;
+      if (request !== this._evidenceRequest || !this.isConnected || this._packagePending) return;
       this._evidenceModel = this._reviewEvidenceModel(source.recordedEvidence);
+      this._evidenceLoaded = true;
+      this._evidenceError = '';
       this._evidenceRecipeRunId = source.selectedRecipeRunId;
     } catch (error) {
       if (request === this._evidenceRequest && this.isConnected) {
         this._evidenceError = error instanceof Error ? error.message : String(error);
-        this._evidenceModel = this._reviewEvidenceModel(undefined, [
-          error instanceof Error ? error.message : String(error),
-        ]);
+        if (!this._evidenceLoaded)
+          this._evidenceModel = this._reviewEvidenceModel(undefined, [
+            error instanceof Error ? error.message : String(error),
+          ]);
       }
     } finally {
       if (request === this._evidenceRequest) this._evidenceLoading = false;
@@ -147,12 +187,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     return createEvidenceReviewModel({
       context: 'pr-preview',
       gateDecision: this.decision,
-      criteria:
-        this._payload?.acceptanceStatus?.criteria ??
-        this._payload?.acceptanceCriteria?.map((text, index) => ({
-          id: acceptanceCriterionId(index),
-          text,
-        })),
+      criteria: publicationGateCriteria(this._payload),
       ledger: this._payload?.acceptanceStatus,
       artifacts: this._payload ? this._evidenceArtifacts(this._payload) : [],
       comparisonSnapshot: this._payload?.prPackage?.reviewSnapshot,
@@ -200,7 +235,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
                   claimOverrideReason: reason,
                 });
                 await gateway.request(request.method, request.params);
-                await this._loadReviewEvidence();
+                await this._loadReviewEvidence(true);
                 this._actionMessage =
                   'Claim marked untestable. Refresh and review the gate package.';
               } catch (error) {
@@ -248,7 +283,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       );
       if (params.runId !== this.runId) throw new Error('The run changed. Refresh the evidence.');
       await gateway.request(Methods.RUN_REVIEW_VISUAL_CLAIM, params);
-      await this._loadReviewEvidence();
+      await this._loadReviewEvidence(true);
       this._actionMessage = 'Visual judgment recorded.';
       this._actionTone = 'success';
     } catch (error) {
@@ -301,6 +336,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     if (!payload) return renderReadyWorkspaceEmpty();
     return renderReadyWorkspaceFrame({
       payload,
+      packagePending: this._packagePending,
       splitPct: this._splitPct,
       recovering: this._isRecovering,
       recoveryPhase: this._recoveryPhase,
@@ -379,7 +415,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     return renderReadyReviewRequestModal({
       open: this._reviewModalOpen,
       viewModel: this._reviewPicker,
-      acting: this._acting || this.actionsBlocked,
+      acting: this._acting || this._actionsPaused,
       close: () => this._closeReviewRequestModal(),
       changed: () => this.requestUpdate(),
       submit: () => this._submitReviewRequest(),
@@ -444,7 +480,13 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
         this._attestingDecisionId = this.decision?.id ?? null;
       },
       setAttestationReason: (value) => this._setEvidenceAttestationReason(value),
-      acting: this._acting || this.actionsBlocked,
+      acting: this._acting,
+      pausedRetry: this.loadError ? () => location.reload() : undefined,
+      pausedReason: this._actionsPaused
+        ? this.loadError
+          ? 'Run unavailable; actions paused'
+          : 'Refreshing run; actions paused'
+        : undefined,
       recovering: this._isRecovering,
       diffArtifact,
       fileDiffAvailable: Boolean(this._fileDiff),
@@ -454,8 +496,8 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       openDiff: (title, artifact) => this._openDiffModal(title, artifact),
       openReviewRequestModal: () => this._openReviewRequestModal(),
       confirmAction: (actionId) => this._confirmAction(actionId),
-      loading: this.actionsBlocked || (this._evidenceLoading && !this.mockData),
-      loadError: this.loadError || this._evidenceError,
+      loading: this._evidenceLoading && !this.mockData,
+      loadError: this._evidenceError,
       retry: () => (this.loadError ? location.reload() : void this._loadReviewEvidence()),
       claims: (this._evidenceModel ?? this._reviewEvidenceModel()).claims,
       judgmentRows: this._evidenceModel?.judgmentRows(gateway.authenticatedPrincipal),
@@ -482,6 +524,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   }
 
   private _renderPackagePanel(payload: ReadyGatePayload) {
+    if (this._packagePending && !payload.prPackage) return renderReadyPackageSkeleton();
     const packageArtifact = this._packagePreviewArtifact(payload);
     const publishEvidence = this._publishEvidenceArtifacts(payload);
     return renderReadyPackagePanel({
@@ -493,7 +536,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       expanded: this._packagePanelExpanded,
       resolved: Boolean(this.decision?.resolvedAt),
       refreshingPackage: this._refreshingPackage,
-      acting: this._acting || this.actionsBlocked,
+      acting: this._acting || this._actionsPaused,
       recovering: this._isRecovering,
       publicationTarget: this._publicationTarget,
       openPackageArtifact: (artifact) => this._openArtifact(payload, artifact),
@@ -551,6 +594,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   private _renderTabBar(payload: ReadyGatePayload) {
     return renderReadyTabBar({
       payload,
+      packagePending: this._packagePending,
       activeTab: this._activeTab,
       hideRecipeTab: this.hideRecipeTab,
       evidenceCount: this._evidenceArtifacts(payload).length,
@@ -583,6 +627,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   }
 
   private _renderPrPreviewTab(payload: ReadyGatePayload) {
+    if (this._packagePending && !payload.prPackage) return renderPrPreviewSkeleton();
     return renderReadyPrPreviewTab({
       payload,
       publicationTarget: this._publicationTarget,
@@ -674,7 +719,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     return renderReadyEvidenceTab({
       payload,
       artifacts,
-      loading: this.actionsBlocked || (this._evidenceLoading && !this.mockData),
+      loading: this._evidenceLoading && !this.mockData,
       error: this._evidenceError,
       retry: () => (this.loadError ? location.reload() : void this._loadReviewEvidence()),
       selectionToolbar: this._renderEvidenceSelectionToolbar(payload),
@@ -689,7 +734,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
               changeReviewReason: (id, reason) => {
                 this._visualReviewReasons = { ...this._visualReviewReasons, [id]: reason };
               },
-              reviewing: this._acting || this.actionsBlocked,
+              reviewing: this._acting || this._actionsPaused,
               recordReview: (id, verdict) => this._recordVisualReview(id, verdict),
               artifactUrl: (path) => this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
               changed: () => this.requestUpdate(),

@@ -1,7 +1,10 @@
 import { html, LitElement } from 'lit';
-import { customElement, state } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 
+import type { ReadyGatePayload, RunDecision } from '@farmslot/protocol';
 import type { PublicationGateClaim } from '@farmslot/review-dispatch';
+
+import '../components/workspace/ready-workspace.js';
 
 import { renderFleetSkeleton } from '../components/fleet-map/fleet-skeleton.js';
 import { renderPrBoardSkeleton } from '../components/pr-dashboard/pr-board-skeleton.js';
@@ -11,7 +14,6 @@ import { renderSlotFilesSkeleton } from '../components/slot-view/slot-view-panel
 import {
   publicationGatePanelStyles,
   renderPublicationGatePanel,
-  renderPublicationGateSkeleton,
 } from '../components/workspace/publication-gate-panel.js';
 
 const claims: PublicationGateClaim[] = [
@@ -21,16 +23,45 @@ const claims: PublicationGateClaim[] = [
   { id: 'AC-4', text: 'Open orders appear on the chart at their retained price.', status: null },
 ];
 
+const fullPayload: ReadyGatePayload = {
+  kind: 'ready',
+  branch: 'fixture',
+  prNumber: null,
+  repo: null,
+  workerReport: '',
+  diffStat: { files: 1, additions: 1, deletions: 0 },
+  acceptanceCriteria: claims.map((claim) => claim.text),
+  prPackage: {
+    id: 'layout-package',
+    artifactPath: 'artifacts/pr-package.json',
+    packageHash: 'a'.repeat(64),
+    branch: 'fixture',
+    headSha: 'b'.repeat(40),
+    draftTitle: 'Layout fixture',
+    draftBody: 'Captured description. '.repeat(200),
+    diffStat: { files: 1, additions: 1, deletions: 0 },
+    reviewArtifactIds: [],
+    createdAt: '2026-10-16T00:00:00Z',
+    publicationTarget: 'draft',
+    publicationStatus: 'not_published',
+    gatePolicy: { owner: 'human', publishAuthority: 'human', reason: 'Fixture only' },
+  },
+};
+
 /** Manual state story. Transitions use buttons; no application-store injection. */
 @customElement('async-section-fixtures')
 export class AsyncSectionFixtures extends LitElement {
-  @state() private phase: 'loading' | 'loaded' | 'error' = 'loading';
+  @property({ type: Boolean }) workspace = false;
+  @state() private snapshot = 0;
+
+  @state() private phase: 'loading' | 'loaded' | 'refreshing' | 'paused' | 'error' = 'loading';
 
   protected override createRenderRoot() {
     return this;
   }
 
   render() {
+    if (this.workspace) return this.renderWorkspace();
     const error = this.phase === 'error' ? 'Evidence read failed' : '';
     const retry = () => {
       this.phase = 'loading';
@@ -67,7 +98,7 @@ export class AsyncSectionFixtures extends LitElement {
       </style>
       <main class="async-story" data-phase=${this.phase}>
         <nav class="async-story-controls" aria-label="Loading story states">
-          ${(['loading', 'loaded', 'error'] as const).map(
+          ${(['loading', 'loaded', 'refreshing', 'paused', 'error'] as const).map(
             (phase) =>
               html`<button
                 data-phase-choice=${phase}
@@ -81,34 +112,79 @@ export class AsyncSectionFixtures extends LitElement {
           )}
         </nav>
         <div class="async-gate" data-testid="gate-layout-frame">
-          ${this.phase !== 'loaded'
-            ? renderPublicationGateSkeleton(claims.length, error, retry)
-            : renderPublicationGatePanel({
-                actions: [
-                  { id: 'approve-publish', label: 'Approve publish', style: 'primary' },
-                  { id: 'hold', label: 'Hold', style: 'secondary' },
-                ],
-                claims,
-                busy: false,
-                pendingConfirm: null,
-                reviewDisabled: false,
-                changeReason: () => undefined,
-                chooseAttestation: () => undefined,
-                invoke: () => undefined,
-                requestReview: () => undefined,
-              })}
+          ${renderPublicationGatePanel({
+            actions: [
+              { id: 'approve-publish', label: 'Approve publish', style: 'primary' },
+              { id: 'hold', label: 'Hold', style: 'secondary' },
+            ],
+            claims,
+            loading: this.phase === 'loading',
+            loadError: error,
+            retry,
+            pausedReason: this.phase === 'paused' ? 'Refreshing run; actions paused' : undefined,
+            busy: false,
+            pendingConfirm: null,
+            reviewDisabled: false,
+            changeReason: () => undefined,
+            chooseAttestation: () => undefined,
+            invoke: () => undefined,
+            requestReview: () => undefined,
+          })}
         </div>
         <h2 data-testid="gate-layout-anchor">Package and evidence</h2>
-        <h2>Run details</h2>
+        <h2>Run detail skeleton</h2>
         ${renderRunDetailSkeleton(error)}
-        <h2>Run inventory</h2>
+        <h2>Run inventory skeleton</h2>
         ${renderRunListSkeleton(error, retry)}
-        <h2>Fleet</h2>
+        <h2>Fleet skeleton</h2>
         ${renderFleetSkeleton(error, retry)}
-        <h2>Workspace files</h2>
+        <h2>Workspace file skeleton</h2>
         ${renderSlotFilesSkeleton(error, retry)}
-        <h2>Pull requests</h2>
+        <h2>PR skeleton</h2>
         ${renderPrBoardSkeleton(false, error, retry)}
       </main>`;
+  }
+  private renderWorkspace() {
+    const compact = this.phase === 'loading';
+    const { prPackage: _omitted, ...partial } = fullPayload;
+    const decision: RunDecision = {
+      id: 'layout-gate',
+      type: 'engine_human_gate',
+      title: 'Layout fixture',
+      description: `Snapshot ${this.snapshot}`,
+      createdAt: '2026-10-16T00:00:00Z',
+      actions: [{ id: 'hold', label: 'Hold', style: 'secondary' }],
+      payload: compact ? partial : fullPayload,
+      ...(compact ? { payloadTrimmed: ['prPackage'] } : {}),
+    };
+    return html`<main
+      style="padding:16px;overflow:auto;height:100%;box-sizing:border-box"
+      data-workspace-story
+    >
+      <nav style="display:flex;gap:12px;margin-bottom:16px">
+        ${(['loading', 'loaded', 'refreshing', 'paused'] as const).map(
+          (phase) =>
+            html`<button
+              style="min-height:44px;min-width:44px"
+              data-workspace-phase=${phase}
+              @click=${() => {
+                this.phase = phase;
+                this.snapshot++;
+              }}
+            >
+              ${phase}
+            </button>`,
+        )}
+      </nav>
+      <div style="min-height:400px;overflow:hidden" data-testid="workspace-layout-frame">
+        <ready-workspace
+          .runId=${'layout-fixture'}
+          .decision=${decision}
+          .actionsBlocked=${compact || this.phase === 'paused'}
+          .loadError=${this.phase === 'paused' ? 'Run unavailable' : ''}
+        ></ready-workspace>
+      </div>
+      <p data-testid="workspace-layout-anchor">Content below workspace</p>
+    </main>`;
   }
 }

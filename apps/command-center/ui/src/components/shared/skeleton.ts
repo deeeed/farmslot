@@ -20,15 +20,10 @@ export class FarmSkeleton extends LitElement {
       display: block;
       max-width: 100%;
       border-radius: ${unsafeCSS(skeletonTokens.radius)}px;
-      background: ${unsafeCSS(skeletonTokens.colors.dark)};
+      background: var(--skeleton-color, ${unsafeCSS(skeletonTokens.colors.dark)});
     }
     :host([kind='avatar']) span {
       border-radius: 50%;
-    }
-    @media (prefers-color-scheme: light) {
-      span {
-        background: ${unsafeCSS(skeletonTokens.colors.light)};
-      }
     }
   `;
 

@@ -4,12 +4,11 @@ import {
   type StyleProp,
   StyleSheet,
   Text,
-  useColorScheme,
   View,
   type ViewStyle,
 } from 'react-native';
 
-import { publicationGateColors, type SkeletonKind, skeletonTokens } from '@farmslot/theme';
+import { type SkeletonKind, skeletonTokens } from '@farmslot/theme';
 
 import { colors } from '../lib/theme';
 
@@ -19,13 +18,14 @@ export function Skeleton({
   width = '100%',
   height,
   style,
+  color = skeletonTokens.colors.dark,
 }: {
+  color?: string;
   kind?: SkeletonKind;
   width?: DimensionValue;
   height?: number;
   style?: StyleProp<ViewStyle>;
 }) {
-  const appearance = useColorScheme();
   return (
     <View
       accessible={false}
@@ -36,7 +36,7 @@ export function Skeleton({
           height: height ?? skeletonTokens.heights[kind],
           borderRadius:
             kind === 'avatar' ? skeletonTokens.heights.avatar / 2 : skeletonTokens.radius,
-          backgroundColor: skeletonTokens.colors[appearance === 'light' ? 'light' : 'dark'],
+          backgroundColor: color,
         },
         style,
       ]}
@@ -44,17 +44,23 @@ export function Skeleton({
   );
 }
 
-export function SkeletonError({ message, retry }: { message: string; retry?: () => void }) {
-  const appearance = useColorScheme();
-  const foreground = publicationGateColors[appearance === 'light' ? 'light' : 'dark'].secondary;
+export function SkeletonError({
+  message,
+  retry,
+  color = colors.textSecondary,
+}: {
+  message: string;
+  retry?: () => void;
+  color?: string;
+}) {
   return (
     <View accessibilityRole="alert" style={styles.error}>
-      <Text numberOfLines={1} style={[styles.message, { color: foreground }]}>
+      <Text numberOfLines={1} style={[styles.message, { color }]}>
         {message}
       </Text>
       {retry ? (
         <Pressable accessibilityRole="button" style={styles.retry} onPress={retry}>
-          <Text style={[styles.message, { color: foreground }]}>Retry</Text>
+          <Text style={[styles.message, { color }]}>Retry</Text>
         </Pressable>
       ) : null}
     </View>

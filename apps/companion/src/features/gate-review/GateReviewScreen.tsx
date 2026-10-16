@@ -1,10 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { publicationGateCriteria } from '@farmslot/review-dispatch';
 
 import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
 import { MediaViewer } from '../../components/MediaViewer';
-import { TaskAcceptancePanel, TaskAcceptanceSkeleton } from '../../components/TaskAcceptancePanel';
+import {
+  acceptancePanelViewportHeight,
+  TaskAcceptancePanel,
+  TaskAcceptanceSkeleton,
+} from '../../components/TaskAcceptancePanel';
 import { baseStyles } from '../../lib/theme';
 
 import { GateActions, GateReviewVerdicts, GateSummaryCard } from './components/gate-review-panels';
@@ -35,6 +41,7 @@ export function GateReviewScreen({
       setFocusClaim({ claimId: initialClaimId });
     }
   }, [initialClaimId]);
+  const viewport = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const scroll = useRef<ScrollView>(null);
   if (state.status !== 'ready')
@@ -48,6 +55,9 @@ export function GateReviewScreen({
     );
   const { viewModel } = state;
   const { acceptance } = viewModel;
+  const expectedRows = publicationGateCriteria(
+    viewModel.decision.payload?.kind === 'ready' ? viewModel.decision.payload : undefined,
+  ).length;
   return (
     <ScrollView
       ref={scroll}
@@ -108,34 +118,33 @@ export function GateReviewScreen({
           <GateReviewVerdicts reviews={viewModel.reviews} />
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Acceptance criteria</Text>
-            {acceptance.view || acceptance.error ? (
-              <TaskAcceptancePanel
-                evidenceModel={acceptance.evidenceModel}
-                onMarkUntestable={actions.markUntestable}
-                acceptanceStatus={acceptance.acceptanceStatus}
-                acceptanceCriteria={acceptance.acceptanceCriteria}
-                acceptanceEvidenceLinks={acceptance.acceptanceEvidenceLinks}
-                error={acceptance.error}
-                onRetry={actions.refresh}
-                onOpenEvidence={actions.openEvidence}
-              />
-            ) : (
-              <TaskAcceptanceSkeleton
-                rows={
-                  viewModel.decision.payload?.kind === 'ready'
-                    ? viewModel.decision.payload.acceptanceCriteria?.length
-                    : undefined
-                }
-              />
-            )}
-            {acceptance.view?.rows.length === 0 && !acceptance.error ? (
-              <Text style={styles.muted}>This run registered no acceptance criteria.</Text>
-            ) : null}
+            <ScrollView
+              nestedScrollEnabled
+              style={{ height: acceptancePanelViewportHeight(expectedRows, viewport.height) }}
+            >
+              {acceptance.view || acceptance.error ? (
+                <TaskAcceptancePanel
+                  evidenceModel={acceptance.evidenceModel}
+                  onMarkUntestable={actions.markUntestable}
+                  acceptanceStatus={acceptance.acceptanceStatus}
+                  acceptanceCriteria={acceptance.acceptanceCriteria}
+                  acceptanceEvidenceLinks={acceptance.acceptanceEvidenceLinks}
+                  error={acceptance.error}
+                  onRetry={acceptance.retry}
+                  onOpenEvidence={actions.openEvidence}
+                />
+              ) : (
+                <TaskAcceptanceSkeleton rows={expectedRows} />
+              )}
+              {acceptance.view?.rows.length === 0 && !acceptance.error ? (
+                <Text style={styles.muted}>This run registered no acceptance criteria.</Text>
+              ) : null}
+            </ScrollView>
           </View>
           <EvidenceReviewWorkspace
             loading={!acceptance.evidenceModel && !acceptance.error}
             error={!acceptance.evidenceModel ? acceptance.error : null}
-            retry={actions.refresh}
+            retry={acceptance.retry}
             runId={viewModel.run.id}
             gatewayUrl={viewModel.gatewayUrl}
             artifacts={viewModel.artifacts}

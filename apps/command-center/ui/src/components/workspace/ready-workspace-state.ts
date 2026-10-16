@@ -37,6 +37,14 @@ export abstract class ReadyWorkspaceState extends LitElement {
   @property() runId = '';
   @property({ type: Boolean }) actionsBlocked = false;
   @property() loadError = '';
+  get _packagePending(): boolean {
+    const payload = this.decision?.payload;
+    return (
+      payload?.kind === 'ready' &&
+      !payload.prPackage &&
+      Boolean(this.decision?.payloadTrimmed?.includes('prPackage'))
+    );
+  }
   @property({ attribute: false }) decision!: RunDecision;
   @property({ attribute: false }) run: Run | null = null;
   @property() slotId = '';

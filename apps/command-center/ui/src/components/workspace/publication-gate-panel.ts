@@ -15,6 +15,8 @@ import { renderVisualClaimJudgment, visualClaimJudgmentStyles } from './visual-c
 
 export interface PublicationGatePanelInput extends PublicationGateInput {
   busy: boolean;
+  pausedReason?: string;
+  pausedRetry?: () => void;
   loading?: boolean;
   loadError?: string;
   retry?: () => void;
@@ -33,19 +35,24 @@ export interface PublicationGatePanelInput extends PublicationGateInput {
 
 export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
   const view = publicationGateView(input);
+  const disabled = input.busy || Boolean(input.pausedReason);
   return html`<section
     class="publication-gate"
     aria-label="Publication decision"
     aria-busy=${String(Boolean(input.loading))}
     style=${`--gate-row-count:${view.claims.length}`}
   >
-    <div class="gate-status" role="status">
-      ${input.loadError
-        ? html`<span class="gate-read-error" title=${input.loadError}>Evidence unavailable</span
-            ><button class="gate-secondary" @click=${input.retry}>Retry</button>`
-        : input.loading
-          ? html`<farm-skeleton width="42%"></farm-skeleton>`
-          : html`<span class="gate-status-message" title=${view.status}>${view.status}</span>`}
+    <div class="gate-status" role=${input.loadError ? 'alert' : 'status'}>
+      ${input.pausedReason
+        ? html`<span class="gate-status-message">${input.pausedReason}</span>${input.pausedRetry
+              ? html`<button class="gate-secondary" @click=${input.pausedRetry}>Retry</button>`
+              : nothing}`
+        : input.loadError
+          ? html`<span class="gate-read-error" title=${input.loadError}>Evidence unavailable</span
+              ><button class="gate-secondary" @click=${input.retry}>Retry</button>`
+          : input.loading
+            ? html`<farm-skeleton width="42%"></farm-skeleton>`
+            : html`<span class="gate-status-message" title=${view.status}>${view.status}</span>`}
     </div>
     ${view.claims.length
       ? html`<section aria-label="Acceptance judgments">
@@ -66,16 +73,16 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
                       ? ` · ${Math.floor(claim.judgment.media.clip.startMs / 1000)}s`
                       : ''}<span class="gate-sr-only"> for ${claim.id}</span>
                   </button>
-                  ${claim.judgment
-                    ? renderVisualClaimJudgment({
-                        row: claim.judgment,
-                        busy: input.busy || !input.recordReview,
-                        reason: input.reviewReason?.(claim.id) ?? '',
-                        changeReason: (reason) => input.changeReviewReason?.(claim.id, reason),
-                        record: (verdict) => input.recordReview?.(claim.id, verdict),
-                      })
-                    : input.loading
-                      ? renderGateJudgmentSkeleton()
+                  ${input.loading
+                    ? renderGateJudgmentSkeleton()
+                    : claim.judgment
+                      ? renderVisualClaimJudgment({
+                          row: claim.judgment,
+                          busy: disabled || !input.recordReview,
+                          reason: input.reviewReason?.(claim.id) ?? '',
+                          changeReason: (reason) => input.changeReviewReason?.(claim.id, reason),
+                          record: (verdict) => input.recordReview?.(claim.id, verdict),
+                        })
                       : html`<span class="gate-prevalidation">${visualPrevalidationLabel()}</span>`}
                 </li>`,
             )}
@@ -90,7 +97,7 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
               data-testid="evidence-attestation-reason"
               aria-label="Reason for evidence policy attestation"
               .value=${input.attestationReason ?? ''}
-              ?disabled=${input.busy}
+              ?disabled=${disabled}
               @input=${(event: Event) =>
                 input.changeReason((event.target as HTMLTextAreaElement).value)}
             ></textarea>
@@ -104,7 +111,7 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
             ? html`<button
                 class="gate-primary"
                 type="button"
-                ?disabled=${input.busy}
+                ?disabled=${disabled}
                 @click=${input.refreshPackage}
               >
                 Refresh package
@@ -114,7 +121,7 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
             class="gate-primary"
             data-testid="gate-approve"
             type="button"
-            ?disabled=${input.busy || Boolean(view.blockedReason) || !view.approval}
+            ?disabled=${disabled || Boolean(view.blockedReason) || !view.approval}
             title=${view.blockedReason}
             @click=${() => view.approval && input.invoke(view.approval.id)}
           >
@@ -146,7 +153,7 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
                       data-action=${action.id}
                       data-testid=${action.id === 'request-review' ? 'rdy-request-review' : nothing}
                       title=${action.description ?? ''}
-                      ?disabled=${input.busy ||
+                      ?disabled=${disabled ||
                       Boolean(action.disabledReason) ||
                       (action.id === 'request-review' && input.reviewDisabled)}
                       @click=${() =>
@@ -169,7 +176,7 @@ export function publicationGatePanelStyles(scope = 'ready-workspace') {
   const variables = (mode: 'dark' | 'light') =>
     Object.entries(publicationGateColors[mode])
       .map(([name, value]) => `--gate-${name}: ${value};`)
-      .join('');
+      .join('') + `--skeleton-color:${skeletonTokens.colors[mode]};`;
   return `
     ready-workspace .publication-gate { ${variables('dark')}
       color: var(--gate-text); background: var(--gate-background);
@@ -214,40 +221,4 @@ function renderGateJudgmentSkeleton() {
     <farm-skeleton width="38%"></farm-skeleton><farm-skeleton width="24%"></farm-skeleton
     ><farm-skeleton kind="button" width="112px"></farm-skeleton>
   </div>`;
-}
-
-/** Same status, criterion viewport and actions geometry as the loaded panel. */
-export function renderPublicationGateSkeleton(rows = 3, error = '', retry?: () => void) {
-  return html`<section
-    class="publication-gate"
-    aria-label="Publication decision"
-    aria-busy=${String(!error)}
-    style=${`--gate-row-count:${rows}`}
-  >
-    <div class="gate-status" role=${error ? 'alert' : 'status'}>
-      ${error
-        ? html`<span class="gate-read-error" title=${error}>Gate unavailable</span
-            ><button class="gate-secondary" @click=${retry}>Retry</button>`
-        : html`<farm-skeleton width="42%"></farm-skeleton>`}
-    </div>
-    <section aria-label="Acceptance judgments">
-      <h3>Acceptance judgments</h3>
-      <ul class="gate-claims" aria-hidden="true">
-        ${Array.from(
-          { length: rows },
-          () =>
-            html`<li class="gate-loading-row">
-              <farm-skeleton width="40px"></farm-skeleton><farm-skeleton width="85%"></farm-skeleton
-              ><farm-skeleton kind="button" width="80px"></farm-skeleton
-              ><farm-skeleton kind="button" width="136px"></farm-skeleton
-              >${renderGateJudgmentSkeleton()}
-            </li>`,
-        )}
-      </ul>
-    </section>
-    <div class="gate-actions" aria-hidden="true">
-      <farm-skeleton kind="button" width="144px"></farm-skeleton
-      ><farm-skeleton kind="button" width="100px"></farm-skeleton>
-    </div>
-  </section>`;
 }

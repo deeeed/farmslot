@@ -15,11 +15,12 @@ import { type RunDecision, type RunGateReadiness } from '@farmslot/protocol';
 import {
   type PublicationGateAction,
   type PublicationGateClaim,
+  publicationGateCriteria,
   publicationGateView,
   type ReviewDispatchViewModel,
   visualPrevalidationLabel,
 } from '@farmslot/review-dispatch';
-import { gateClaimsHeight, publicationGateColors } from '@farmslot/theme';
+import { gateClaimsHeight, publicationGateColors, skeletonTokens } from '@farmslot/theme';
 
 import { VisualClaimJudgment } from '../../../components/VisualClaimJudgment';
 import type {
@@ -202,12 +203,9 @@ export function GateActions({
     attestationReason,
     attesting: attestingDecisionId === decision.id,
   });
-  const declaredRows =
-    decision.payload?.kind === 'ready'
-      ? (decision.payload.acceptanceStatus?.criteria.length ??
-        decision.payload.acceptanceCriteria?.length ??
-        0)
-      : 0;
+  const declaredRows = publicationGateCriteria(
+    decision.payload?.kind === 'ready' ? decision.payload : undefined,
+  ).length;
   const rowCount = Math.max(view.claims.length, declaredRows);
   const palette = publicationGateColors[appearance === 'light' ? 'light' : 'dark'];
   const renderAction = (action: PublicationGateAction, primary = false) => {
@@ -281,7 +279,12 @@ export function GateActions({
             style={{ height: gateClaimsHeight(rowCount, viewport.height) }}
           >
             {!view.claims.length && loading
-              ? Array.from({ length: rowCount }, (_, index) => <GateClaimSkeleton key={index} />)
+              ? Array.from({ length: rowCount }, (_, index) => (
+                  <GateClaimSkeleton
+                    color={skeletonTokens.colors[appearance === 'light' ? 'light' : 'dark']}
+                    key={index}
+                  />
+                ))
               : null}
             {view.claims.map((claim) => (
               <View

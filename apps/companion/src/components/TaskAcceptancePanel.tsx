@@ -320,6 +320,7 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   header: {
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
@@ -414,4 +415,9 @@ export function TaskAcceptanceSkeleton({ rows = 3 }: { rows?: number }) {
       </View>
     </View>
   );
+}
+
+/** Keep evidence below the AC details fixed even when the loaded ledger collapses. */
+export function acceptancePanelViewportHeight(rows: number, viewportHeight: number): number {
+  return Math.min(44 + Math.max(0, rows) * 56, viewportHeight * 0.4);
 }

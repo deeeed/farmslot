@@ -4,15 +4,15 @@ import { gateClaimsHeight, publicationGateColors, skeletonTokens } from '@farmsl
 
 import { Skeleton, SkeletonError } from '../../../components/Skeleton';
 
-export function GateClaimSkeleton() {
+export function GateClaimSkeleton({ color = skeletonTokens.colors.dark }: { color?: string } = {}) {
   return (
     <View style={styles.claim}>
-      <Skeleton width="25%" />
-      <Skeleton width="85%" />
-      <Skeleton width="65%" />
-      <Skeleton kind="button" width={140} />
-      <Skeleton width="45%" />
-      <Skeleton kind="button" width={112} />
+      <Skeleton color={color} width="25%" />
+      <Skeleton color={color} width="85%" />
+      <Skeleton color={color} width="65%" />
+      <Skeleton color={color} kind="button" width={140} />
+      <Skeleton color={color} width="45%" />
+      <Skeleton color={color} kind="button" width={112} />
     </View>
   );
 }
@@ -29,7 +29,9 @@ export function GateReviewSkeleton({
 }) {
   const viewport = useWindowDimensions();
   const appearance = useColorScheme();
-  const palette = publicationGateColors[appearance === 'light' ? 'light' : 'dark'];
+  const tone = appearance === 'light' ? 'light' : 'dark';
+  const palette = publicationGateColors[tone];
+  const color = skeletonTokens.colors[tone];
   return (
     <View
       accessibilityLabel="Gate"
@@ -37,21 +39,25 @@ export function GateReviewSkeleton({
       style={[styles.panel, { backgroundColor: palette.background, borderColor: palette.border }]}
     >
       <View style={styles.status}>
-        {error ? <SkeletonError message={error} retry={retry} /> : <Skeleton width="60%" />}
+        {error ? (
+          <SkeletonError color={palette.secondary} message={error} retry={retry} />
+        ) : (
+          <Skeleton color={color} width="60%" />
+        )}
       </View>
       <View>
         <View style={styles.label}>
-          <Skeleton width="40%" />
+          <Skeleton color={color} width="40%" />
         </View>
         <View style={{ height: gateClaimsHeight(rows, viewport.height), overflow: 'hidden' }}>
           {Array.from({ length: rows }, (_, index) => (
-            <GateClaimSkeleton key={index} />
+            <GateClaimSkeleton color={color} key={index} />
           ))}
         </View>
       </View>
       <View style={styles.actions}>
-        <Skeleton kind="button" width={144} />
-        <Skeleton kind="button" width={100} />
+        <Skeleton color={color} kind="button" width={144} />
+        <Skeleton color={color} kind="button" width={100} />
       </View>
     </View>
   );
