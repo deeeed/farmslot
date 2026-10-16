@@ -1082,3 +1082,24 @@ test('admitted byte limits refuse local overflow and remote growth before excess
   );
   if (existsSync(destination)) assert.ok((await readFile(destination)).length <= 4);
 });
+
+test('local slot writes expand execution-host home paths for runner sentinels', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'slot-home-write-'));
+  const originalHome = process.env.HOME;
+  try {
+    process.env.HOME = root;
+    await slotWriteFiles(
+      { host: 'localhost', machine: 'local', sshTarget: '' },
+      '~/runner-state/.observability/sent',
+      [{ path: 'prompt.json', content: Buffer.from('receipt').toString('base64') }],
+    );
+    assert.equal(
+      await readFile(path.join(root, 'runner-state/.observability/sent/prompt.json'), 'utf8'),
+      'receipt',
+    );
+  } finally {
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    await rm(root, { recursive: true, force: true });
+  }
+});

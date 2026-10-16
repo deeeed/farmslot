@@ -1461,6 +1461,40 @@ export async function scanArtifacts(taskDir: string): Promise<ArtifactRef[]> {
   }
   await walk(artifactsDir, '');
   const byPath = new Map(refs.map((ref) => [ref.path, ref]));
+  async function retainDeclaredFile(artifactPath: string): Promise<ArtifactRef | undefined> {
+    const existing = byPath.get(artifactPath);
+    if (existing) return existing;
+    // Indexed proof JSON can live in hidden package directories. Retain only
+    // declared files, never arbitrary hidden runtime/configuration trees.
+    const relative = path.posix.relative('artifacts', artifactPath);
+    if (!shouldScanArtifactPath(relative)) return undefined;
+    let full = taskDir;
+    let fileStat;
+    try {
+      for (const segment of artifactPath.split('/')) {
+        full = path.join(full, segment);
+        fileStat = await lstat(full);
+        if (fileStat.isSymbolicLink()) break;
+      }
+      if (!fileStat?.isFile() || fileStat.isSymbolicLink()) return undefined;
+      const bytes = await readFile(full);
+      const ref: ArtifactRef = {
+        path: artifactPath,
+        purpose: inferArtifactPurpose(relative),
+        sizeBytes: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+      };
+      refs.push(ref);
+      byPath.set(artifactPath, ref);
+      return ref;
+    } catch (error) {
+      // A missing indexed file remains a validation failure in the package
+      // reader; the scanner must not invent a retained file for it.
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
+        return undefined;
+      throw error;
+    }
+  }
   for (const manifest of refs.filter(
     (ref) => path.posix.basename(ref.path) === 'artifact-manifest.json',
   )) {
@@ -1477,11 +1511,13 @@ export async function scanArtifacts(taskDir: string): Promise<ArtifactRef[]> {
     if (validateArtifactManifestDocument(document).status !== 'valid') continue;
     const directory = path.posix.dirname(manifest.path);
     for (const entry of document.artifacts) {
-      const ref = byPath.get(path.posix.join(directory, entry.path));
-      if (!ref || entry.type !== 'video') continue;
+      const artifactPath = path.posix.join(directory, entry.path);
+      const ref = await retainDeclaredFile(artifactPath);
+      if (!ref) continue;
+      if (entry.type !== 'video') continue;
       if (entry.timelinePath) {
         const timelinePath = path.posix.join(directory, entry.timelinePath);
-        if (byPath.has(timelinePath)) ref.timelinePath = timelinePath;
+        if (await retainDeclaredFile(timelinePath)) ref.timelinePath = timelinePath;
       }
       if (entry.timelineUnavailableReason)
         ref.timelineUnavailableReason = entry.timelineUnavailableReason;

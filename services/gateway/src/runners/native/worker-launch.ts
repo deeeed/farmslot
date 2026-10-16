@@ -4,6 +4,7 @@ import type { NativeWorkerLaunch } from '@farmslot/agent-runtime/native';
 import type { NativeProfileReference, SafetyTier } from '@farmslot/protocol';
 import { currentProjectSources, sourceWorkerEnvironment } from '@farmslot/slot-config';
 
+import { runnerRuntimeDir } from '../../../../../scripts/lib/runner-runtime.cjs';
 import { execOnSlot } from '../../core/exec.js';
 import {
   expandTemplate,
@@ -111,7 +112,7 @@ export async function prepareNativeWorkerLaunch(input: {
       input.sessionId,
     );
     const installRepo = input.stateDirectory ?? vars.remoteRepo;
-    const runtimeDir = input.stateDirectory ? '.' : legacyRuntimeDir;
+    const runtimeDir = input.stateDirectory ?? legacyRuntimeDir;
     if (input.prepareAccount) {
       const support = await ensureNodeSupportBundle(
         vars,
@@ -132,7 +133,7 @@ export async function prepareNativeWorkerLaunch(input: {
           `Native worker account setup failed on ${vars.machine} (exit ${installed.exitCode})`,
         );
     }
-    const home = path.posix.join(installRepo, runtimeDir, 'codex-home');
+    const home = path.posix.join(runnerRuntimeDir(installRepo, runtimeDir), 'codex-home');
     const ready = await execOnSlot(
       vars,
       `test -f ${shellQuote(path.posix.join(home, 'config.toml'))}`,

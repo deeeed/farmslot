@@ -21,6 +21,7 @@ import { pipeline } from 'node:stream/promises';
 
 import { type FSWatcher, watch } from 'chokidar';
 
+import { expandTilde } from '@farmslot/capabilities/fs-watch';
 import {
   FILE_TRANSFER_CHUNK_MAX_BYTES,
   FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
@@ -170,7 +171,7 @@ export async function slotReadFile(ctx: SlotLocality, filePath: string): Promise
 }
 
 export async function slotRealpath(ctx: SlotLocality, filePath: string): Promise<string> {
-  if (local(ctx)) return realpath(filePath);
+  if (local(ctx)) return realpath(expandTilde(filePath));
   const result = (await requestFor(ctx)('fs.realpath', {
     ...nodePathParams(filePath),
   })) as { path: string };
@@ -181,7 +182,7 @@ export async function slotRealpath(ctx: SlotLocality, filePath: string): Promise
 
 export async function slotFileExists(ctx: SlotLocality, filePath: string): Promise<boolean> {
   if (local(ctx)) {
-    return existsSync(filePath);
+    return existsSync(expandTilde(filePath));
   }
   const result = (await requestFor(ctx)('fs.exists', {
     ...nodePathParams(filePath),
@@ -237,7 +238,7 @@ export async function slotWriteFiles(
 ): Promise<void> {
   if (local(ctx)) {
     for (const file of files) {
-      const dest = path.join(baseDir, file.path);
+      const dest = path.join(expandTilde(baseDir), file.path);
       await mkdir(path.dirname(dest), { recursive: true });
       await fsWriteFile(dest, Buffer.from(file.content, 'base64'));
       if (typeof file.mode === 'number') await fsChmod(dest, file.mode);

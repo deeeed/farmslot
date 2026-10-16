@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import type { SlotVars } from '../core/config.js';
 
 await import('../runtime/mock-pty.test-support.js');
@@ -287,3 +288,69 @@ test('a release without a task path retains the shared task root', async (t) => 
     'completed task',
   );
 });
+
+test('release archives external observations as bytes and clears them while retaining the runner home', async (t) => {
+  const f = fixture(t);
+  const runtime = runnerRuntimeDir(f.repo);
+  const obs = path.join(runtime, '.observability');
+  mkdirSync(path.join(obs, 'sessions'), { recursive: true });
+  writeFileSync(path.join(obs, 'hooks.jsonl'), 'retained hooks');
+  writeFileSync(path.join(obs, 'sessions/session.json'), 'retained session');
+  mkdirSync(path.join(runtime, 'codex-home'), { recursive: true });
+  writeFileSync(path.join(runtime, 'codex-home/history.jsonl'), 'history');
+  mkdirSync(path.join(f.repo, '.agent'), { recursive: true });
+  symlinkSync(obs, path.join(f.repo, '.agent/.observability'));
+  symlinkSync(obs, path.join(f.repo, '.observability'));
+  const result = await archiveSlotScaffolding(
+    f.vars,
+    {},
+    { destination: f.destination, taskRelativeDir: null, beforeRemove: async () => undefined },
+  );
+  const extracted = path.join(f.root, 'observations');
+  mkdirSync(extracted);
+  execFileSync('tar', [
+    '-xf',
+    path.join(result.directory, 'runner-observability.tar'),
+    '-C',
+    extracted,
+  ]);
+  assert.equal(readFileSync(path.join(extracted, 'hooks.jsonl'), 'utf8'), 'retained hooks');
+  assert.equal(
+    readFileSync(path.join(extracted, 'sessions/session.json'), 'utf8'),
+    'retained session',
+  );
+  assert.equal(existsSync(obs), false);
+  assert.equal(readFileSync(path.join(runtime, 'codex-home/history.jsonl'), 'utf8'), 'history');
+});
+
+for (const homeRelative of [false, true]) {
+  test(`release archives configured ${homeRelative ? 'home-relative' : 'absolute'} runtime bytes`, async (t) => {
+    const f = fixture(t);
+    const beforeHome = process.env.HOME;
+    try {
+      process.env.HOME = f.root;
+      const runtime = path.join(f.root, 'state');
+      const obs = path.join(runtime, '.observability');
+      mkdirSync(obs, { recursive: true });
+      writeFileSync(path.join(obs, 'hooks.jsonl'), 'configured hooks');
+      const result = await archiveSlotScaffolding(
+        f.vars,
+        { paths: { runtime_dir: homeRelative ? '~/state' : runtime } },
+        { destination: f.destination, taskRelativeDir: null, beforeRemove: async () => undefined },
+      );
+      const extracted = path.join(f.root, 'extracted-observations');
+      mkdirSync(extracted);
+      execFileSync('tar', [
+        '-xf',
+        path.join(result.directory, 'runner-observability.tar'),
+        '-C',
+        extracted,
+      ]);
+      assert.equal(readFileSync(path.join(extracted, 'hooks.jsonl'), 'utf8'), 'configured hooks');
+      assert.equal(existsSync(obs), false);
+    } finally {
+      if (beforeHome === undefined) delete process.env.HOME;
+      else process.env.HOME = beforeHome;
+    }
+  });
+}

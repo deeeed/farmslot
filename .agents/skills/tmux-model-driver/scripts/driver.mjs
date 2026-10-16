@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { durableWrite } from '../../../../packages/agent-runtime/src/native/storage.ts';
+import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { readPaneStateFromCapture } from '../../../../services/gateway/src/runners/pane-state-script.ts';
 import { runnerLaunchBlockerAutoActionKey } from '../../../../services/gateway/src/runners/registry.ts';
 import { runnerPaneBufferedInstruction } from '../../../../services/gateway/src/runners/runner-pane-input.ts';
@@ -180,9 +181,12 @@ export function paneSafety(tail, runner) {
 }
 
 function paths(meta, selection = {}) {
+  const external = path.join(runnerRuntimeDir(meta.current_path), '.observability');
   const obs =
     process.env.TMUX_MODEL_DRIVER_OBSERVABILITY_DIR ||
-    path.join(meta.current_path, '.agent', '.observability');
+    (fs.existsSync(path.join(external, 'install.json'))
+      ? external
+      : path.join(meta.current_path, '.agent', '.observability'));
   const root =
     process.env.TMUX_MODEL_DRIVER_STATE_DIR ||
     path.join(os.tmpdir(), `tmux-model-driver-${process.getuid?.() ?? 'user'}`);

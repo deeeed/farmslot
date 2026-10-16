@@ -13,6 +13,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+- Keep runner runtime and observability outside product checkouts, preserve active session paths, and retain explicitly indexed hidden proof files in immutable evidence bundles.
+
 - Initialize hosted tasks through the execution node’s immutable CLI and mirror its frozen marker, metadata and receipts instead of rendering a second task.
 
 ## 0.22.0 - 2026-10-16

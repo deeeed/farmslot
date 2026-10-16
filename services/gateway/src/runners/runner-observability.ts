@@ -1,6 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 
+import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import type { loadSlotVars } from '../core/config.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { shellQuote } from '../core/tmux.js';
@@ -17,6 +18,7 @@ export const RUNNER_OBSERVABILITY_COPY_PATHS = [
 
 export const RUNNER_OBSERVABILITY_SUPPORT_PATHS = [
   INSTALLER_RELATIVE_PATH,
+  'scripts/lib/runner-runtime.cjs',
   'scripts/lib/provider-accounts.mjs',
   'packages/agent-runtime/scripts/toml-scan.cjs',
   'packages/agent-runtime/scripts/review-account-preflight.cjs',
@@ -27,7 +29,11 @@ export const NODE_SUPPORT_HASH_FILENAME = 'node-support-hash';
 const localHostname = os.hostname().replace(/\.local$/, '');
 
 export function claudeObservabilitySettingsPath(repo: string, runtimeDir: string): string {
-  return path.posix.join(repo, runtimeDir, '.observability', 'claude-settings.json');
+  return path.posix.join(
+    runnerRuntimeDir(repo, runtimeDir),
+    '.observability',
+    'claude-settings.json',
+  );
 }
 
 export function buildClaudeObservabilityFallbackCommand(settingsPath: string): string {
@@ -84,8 +90,7 @@ export function buildRunnerObservabilityInstallCommand(
   }
 
   const supportHashPath = path.posix.join(
-    repo,
-    runtimeDir,
+    runnerRuntimeDir(repo, runtimeDir),
     '.observability',
     NODE_SUPPORT_HASH_FILENAME,
   );

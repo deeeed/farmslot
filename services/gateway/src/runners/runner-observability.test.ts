@@ -6,6 +6,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
+
 import {
   buildClaudeObservabilityFallbackCommand,
   buildRunnerObservabilityInstallCommand,
@@ -120,12 +122,12 @@ test('remote observability install falls back when an immutable bundle is incomp
 
     mkdirSync(path.dirname(fallbackInstaller), { recursive: true });
     mkdirSync(path.dirname(immutableInstaller), { recursive: true });
-    mkdirSync(path.join(repo, runtimeDir, '.observability'), { recursive: true });
+    mkdirSync(path.join(runnerRuntimeDir(repo, runtimeDir), '.observability'), { recursive: true });
     mkdirSync(fakeBin, { recursive: true });
     writeFileSync(fallbackInstaller, 'fallback\n');
     writeFileSync(immutableInstaller, 'immutable\n');
     writeFileSync(
-      path.join(repo, runtimeDir, '.observability', 'node-support-hash'),
+      path.join(runnerRuntimeDir(repo, runtimeDir), '.observability', 'node-support-hash'),
       `${supportHash}\n`,
     );
     writeFileSync(fakeNode, '#!/bin/sh\nprintf "%s\\n" "$1" > "$SELECTED_INSTALLER"\n', {
@@ -159,6 +161,7 @@ test('remote observability install falls back when an immutable bundle is incomp
     mkdirSync(path.join(supportRoot, 'scripts/lib'), { recursive: true });
     mkdirSync(path.join(supportRoot, 'scripts/runners'), { recursive: true });
     writeFileSync(path.join(supportRoot, 'scripts/lib/provider-accounts.mjs'), 'dependency\n');
+    writeFileSync(path.join(supportRoot, 'scripts/lib/runner-runtime.cjs'), 'dependency\n');
     mkdirSync(path.join(supportRoot, 'packages/agent-runtime/scripts'), { recursive: true });
     writeFileSync(
       path.join(supportRoot, 'packages/agent-runtime/scripts/toml-scan.cjs'),
