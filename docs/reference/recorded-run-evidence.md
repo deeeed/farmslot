@@ -850,7 +850,8 @@ An output-review gate preserves eligible visual claims as awaiting review until 
 person judges them; execution completion does not confirm their visual meaning.
 
 Public human commands use `farmslot run gate <run> --action confirm-visual|reject-visual
---claim <id> --recipe-run <execution> --reason <text>`. The existing CLI owns this
+--claim <id> --recipe-run <execution>`. Under Amendment 9, `--reason <text>` is
+required for rejection and either delegated verdict; person confirmation omits it. The existing CLI owns this
 human gate operation; recipe execution and artifact commands keep their single
 family. Its reader uses the existing `RunRpc.recipeRunsForRun` execution selector
 `recordedRecipeRunId` against captured registration, without requiring a display
@@ -906,8 +907,9 @@ inputs.
 
 Extend `RecipeVisualJudgmentReceipt` with the kind and gateway-stamped reviewer
 subject kind, delegation identity and policy digest. Both kinds retain the run,
-selected `recipeRunId`, claim, exact moments, closure identity, verdict, rationale
-and time. The receipt MUST list the reviewed claim's visual files and their
+selected `recipeRunId`, claim, exact moments, closure identity, verdict and time.
+Under Amendment 9, a rationale is required for delegated judgments and all
+rejections; authenticated person confirmation may omit it. The receipt MUST list the reviewed claim's visual files and their
 checked digests, derived from the canonical input rather than supplied hashes.
 The existing Run store remains the sole writer. Existing authenticated person
 receipts retain their provenance and meaning; no package or task ledger is rewritten.
@@ -1190,3 +1192,52 @@ identity refusal, unknown criterion/path refusal, separate error captions, ledge
 precedence, no parsing for uninventoried tasks and unchanged original bytes. The
 retained inventory's relationships MUST survive through the actual display reader,
 `task.progress` and shared model without fabricated status or timeline fields.
+
+## Per-criterion confirmation
+
+**Status:** Accepted under ADR-062 Amendment 9 on 2026-10-16. Enable after coordinated reader and writer deployment.
+
+Clients MUST show a qualified delegated receipt's visual verdict, written rationale
+and bound still/moment as the recorded pre-validation. Engine assertions MUST be
+labeled checks, never visual pre-validation. Task-ledger/worker notes MUST NOT
+substitute. Absent visual review MUST show "Not recorded". A permitted qualified
+delegated receipt already satisfies its AC under Amendment 7; another person
+confirmation is optional, and person-only restrictions remain unchanged.
+
+The existing authenticated visual writer MUST accept `person-reviewed` +
+`confirmed` without `reason`. Both clients MUST offer "Looks right" in one tap.
+"Issue" MUST open a reason field and submit `rejected`; blank rejection reasons
+MUST be refused by the gateway. Delegated judgments of both verdicts MUST retain
+reasons, and raw recipe-package/ledger judgments MUST retain their existing
+rationale requirement. No fabricated default text is permitted.
+
+The protocol receipt qualifier, runner's claim/package validator and existing
+reducer, gateway writer, SDK, CLI and both clients MUST agree. Historical receipts
+and packages MUST retain their original bytes. Reviewer, snapshot, execution,
+closure and exact-file/moment qualification MUST remain enforced.
+
+Normal approval after required ACs are satisfied MUST NOT request another
+evidence-attestation reason. The existing authenticated per-AC reviewers, frozen
+receipt IDs and PR provenance are its audit; normal publication authority MUST
+remain unchanged. No separate normal-publish approver receipt is introduced.
+A changed judgment MUST still block approval until the existing package refresh;
+clients show "Refresh package". Unjudged/rejected claims cannot be confirmed by
+approval. Source/CI/reviews/integrity still apply. A separately offered policy
+waiver retains its explicit reason and scope.
+
+Conformance MUST cover person confirmation without prose, blank rejection and
+blank delegated judgment refusal, raw reasonless embedded judgment refusal,
+recorded/missing pre-validation, unchanged delegated qualification, person-only
+criteria, identity/snapshot/selection refusals, refreshed receipt binding and
+normal approval without redundant text. All gate actions MUST provide at least
+44-pixel touch targets and MUST NOT depend on hover.
+
+Public surfaces and coordinated release are specified in ADR-062 Amendment 9.
+
+Amendment 9 implementation exports `validVisualJudgmentReason` from
+`@farmslot/protocol` for the gateway, receipt qualifier, runner, SDK, CLI and
+both clients. An undefined kind denotes unqualified embedded input and always
+requires rationale. The SDK's judgment row owns `pending`;
+`visualPrevalidationLabel` in `@farmslot/review-dispatch` supplies the label to
+both clients. These additive exports share the existing package versioning.
+Implementation: [#1179](https://github.com/deeeed/farmslot/pull/1179).

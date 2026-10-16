@@ -1,6 +1,7 @@
 import {
   digestRecipeDocument,
   isRecord,
+  type QualifiedRecipeVisualJudgment,
   type RecipeArtifactManifestEntry,
   type RecipeClaimDeclaration,
   type RecipeClaimEvidence,
@@ -29,6 +30,7 @@ import { planRecipeEvidence } from './plan.js';
 function deriveClaimsFromInput(
   input: RecordedEvidencePackageInput,
   judgments: readonly RecipeVisualJudgment[] = [],
+  qualifiedJudgments: readonly QualifiedRecipeVisualJudgment[] = [],
 ): RecipeClaimEvidence[] {
   const resolution = input.recipeResolution as RecipeResolutionDocument;
   const documents = new Map(
@@ -47,17 +49,20 @@ function deriveClaimsFromInput(
     : isRecord(input.trace) && Array.isArray(input.trace.entries)
       ? input.trace.entries
       : [];
-  return deriveRecipeClaims({
-    recipeRunId: input.claims!.recipeRunId,
-    ...plan,
-    trace: trace as ProofTraceEntry[],
-    artifacts: (isRecord(input.manifest)
-      ? input.manifest.artifacts
-      : []) as RecipeArtifactManifestEntry[],
-    segments: input.claims!.recording.segments,
-    judgments,
-    timelines: indexRecordingTimelines(Object.values(input.timelines)),
-  });
+  return deriveRecipeClaims(
+    {
+      recipeRunId: input.claims!.recipeRunId,
+      ...plan,
+      trace: trace as ProofTraceEntry[],
+      artifacts: (isRecord(input.manifest)
+        ? input.manifest.artifacts
+        : []) as RecipeArtifactManifestEntry[],
+      segments: input.claims!.recording.segments,
+      judgments,
+      timelines: indexRecordingTimelines(Object.values(input.timelines)),
+    },
+    qualifiedJudgments,
+  );
 }
 
 /** Current human review is a projection; original package bytes and facts remain intact. */
@@ -68,7 +73,11 @@ export function deriveReviewedRecipeClaims(
   const validation = validateRecordedEvidencePackage(input);
   if (validation.status !== 'valid' || !input.claims)
     throw new TypeError('Visual review requires a valid retained engine claim package.');
-  return deriveClaimsFromInput(input, authority ? recordedVisualJudgments(input, authority) : []);
+  return deriveClaimsFromInput(
+    input,
+    [],
+    authority ? recordedVisualJudgments(input, authority) : [],
+  );
 }
 
 /** Validate actual package identities before consumers derive a moment or publish evidence. */

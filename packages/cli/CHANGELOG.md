@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Allow person confirm-visual without --reason while keeping it mandatory for issues and delegated judgments.
+
 - Start the Gateway with its own source mappings so publication checks resolve current workspace dependencies after a clean install.
 
 - Use refresh-only person-device profiles for login, startup and activation; renew access silently, confirm sign-out and hand browsers one-use invitations while preserving service credentials.
