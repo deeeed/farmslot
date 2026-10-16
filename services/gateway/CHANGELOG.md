@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Send back to agent: admit a qualified Issue set from the frozen gate, reserve one existing fix round, deliver it through the retained review loop, require unanimous current-head applicability for retained proof and keep each reason as a learning candidate.
 - Publish the PR title from the approved body's leading `# type(scope): summary` heading, else the ticket title, and refuse approval when neither names more than a ticket key.
 
 - Submit buffered Codex input with Enter, never Tab, and accept only the next-tool-call steering block as delivery proof; queued follow-up input stays undelivered.

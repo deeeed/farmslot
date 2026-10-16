@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Native Claude and Codex adapters advertise and constrain the repair applicability result contract.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.28.0 - 2026-10-16

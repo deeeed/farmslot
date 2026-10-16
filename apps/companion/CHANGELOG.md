@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Show Send back to agent as the gate's primary action.
 - Show evidence loading and Retry independently of acceptance criteria, retaining loaded evidence if a refresh fails.
 
 - Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review.

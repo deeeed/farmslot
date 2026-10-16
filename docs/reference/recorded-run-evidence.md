@@ -1301,6 +1301,9 @@ review admissions MUST cover the required re-reviews, before fix reservation.
 Use a v2-capable session, cold when the retained session has fixed v1 schema.
 `run.resolveDecision` MUST perform admission before consuming the decision; an
 engine-side race/refusal MUST retain or recreate the held gate, not fail the run.
+A registration with nested criteria (`parentId`) or without a task registration
+MUST refuse; claim selection repairs flat task criteria only. Clients receive
+the action only while admission can succeed, and `selectionData` MUST be empty.
 
 The gateway MUST persist one repair identity, budget reservation and delivery
 state before calling the existing self-review `sendFeedbackToWorker` path. The
@@ -1314,6 +1317,9 @@ The reservation is the persisted increment of the named review's `retryCount`;
 the existing retry loop MUST consume it without another increment. Undeliverable
 reservations stay charged and recoverable through the same repair or normal run
 cancellation. An accepted turn MUST NOT be refunded.
+The run-store record moves from `reserved` to `delivered` on structured
+acceptance and to `completed` when the retained loop returns; an undelivered
+record keeps its reason for the re-presented gate.
 
 ### Scoped recording and retained claims
 
@@ -1323,6 +1329,8 @@ passes its checked contents through `RecipeRunRequest.repairScope` in
 `@farmslot/recipe-runner`. The authoritative digest and active repair identity
 MUST remain in the run store. File presence alone MUST NOT activate a scope;
 completed/refused scopes MUST be retired and ignored by normal recipe runs.
+The scope names its task-relative repair recipe (`recipes/<repairId>.json`); the
+wrapper activates repair only when its recipe argument resolves to that file.
 
 The worker MUST author a complete, self-contained repair recipe using the normal
 recipe/library composition model. It is a separate task-owned file passed through
@@ -1341,6 +1349,8 @@ failure-to-status rules. A fresh `failed` or `weak` claim MUST select fresh proo
 and block; retained proof MUST NOT hide it. A non-rejected AC may select retained
 proof only if the fresh graph did not execute its proof nodes, or its fresh
 verdict is `proven`/`awaiting-review`. Rejected ACs always require fresh proof.
+The engine rule is narrower than this bound: any non-`missing` fresh verdict
+selects fresh proof, so only unexecuted non-rejected ACs keep retained proof.
 A rejected AC's fresh claim MUST keep the scope's frozen `proofMode`; `state`
 proof MUST NOT clear a `visual` or `mixed` Issue.
 
@@ -1356,7 +1366,8 @@ include the selection and all dependency bytes consumed by its reader.
 
 Canonical package validation MUST validate each source with its own invocation,
 recorded source revision and receipt authority. Retained source heads MUST NOT
-be rewritten to the repair head. The shared reader MUST select claims according
+be rewritten to the repair head; only the fresh attempt binds the current review
+head. A retained source MUST supply its own fresh claim, never one it retained. The shared reader MUST select claims according
 to the engine selection before the existing claim reducer and UI projection;
 there is no fabricated combined execution or client ledger writer.
 

@@ -3,8 +3,10 @@ import test from 'node:test';
 
 import {
   EVIDENCE_ATTESTATION_ACTION,
+  type RecipeRepairScope,
   type ReviewStatus,
   type RunGateReadiness,
+  SEND_BACK_TO_AGENT_ACTION,
 } from '@farmslot/protocol';
 
 import {
@@ -394,4 +396,93 @@ test('unchanged-head PASS retains findings; a PASS on the fixed head clears them
     ),
     undefined,
   );
+});
+
+const repairScope: RecipeRepairScope = {
+  schemaVersion: 1,
+  repairId: 'repair-1',
+  runId: 'run',
+  generation: 1,
+  decisionId: 'gate',
+  packageHash: `sha256:${'b'.repeat(64)}`,
+  packageHeadSha: 'c'.repeat(40),
+  reviewBaseSha: 'd'.repeat(40),
+  reviewId: 'review',
+  workerContextId: 'run:dev',
+  repairRecipe: 'recipes/repair-1.json',
+  claims: [{ id: 'AC-1', claim: 'The chart renders.' }],
+  sources: [],
+  retained: [],
+  rejected: [],
+};
+
+test('an offered Send back is the one primary action and shows its recovery state', () => {
+  const actions = [
+    { id: 'approve-publish', label: 'Approve publish', style: 'primary' as const },
+    { id: SEND_BACK_TO_AGENT_ACTION, label: 'Send back to agent', style: 'primary' as const },
+    { id: 'hold', label: 'Hold', style: 'secondary' as const },
+  ];
+  const view = publicationGateView({ actions, readiness: evidenceOnly });
+  assert.equal(view.sendBack?.id, SEND_BACK_TO_AGENT_ACTION);
+  assert.equal(
+    view.approval,
+    null,
+    'an Issue blocks publication; approve is not offered beside it',
+  );
+  assert.deepEqual(
+    view.secondaryActions.map(({ id }) => id),
+    ['hold'],
+  );
+  assert.equal(view.status, 'Issues found');
+  const undelivered = publicationGateView({
+    actions,
+    readiness: evidenceOnly,
+    run: {
+      status: 'human-gating',
+      engineState: {
+        publishGate: {
+          visualRepairs: [
+            {
+              repairId: 'repair-1',
+              scopeDigest: 'digest',
+              decisionId: 'gate',
+              packageHash: 'hash',
+              reviewId: 'review',
+              status: 'reserved',
+              reservedRetryCount: 1,
+              reservedAt: '2026-10-16T00:00:00.000Z',
+              reason: 'The agent has not accepted the repair yet. Send back again to retry.',
+              rejected: [],
+              scope: repairScope,
+            },
+          ],
+        },
+      },
+    },
+  });
+  assert.equal(
+    undelivered.status,
+    'The agent has not accepted the repair yet. Send back again to retry.',
+  );
+  assert.equal(publicationGateView({ actions, resolved: true }).sendBack, null);
+});
+
+test('retained criteria show their earlier proof revision in the shared row detail', () => {
+  const [row] = acceptanceClaimRows({
+    claims: [
+      {
+        id: 'AC-1',
+        text: 'The header shows the price.',
+        status: {
+          id: 'AC-1',
+          text: 'The header shows the price.',
+          verdict: 'proven',
+          evidence: [],
+          recipeNodes: [],
+        },
+        retained: { recipeRunId: 'original', revision: 'c'.repeat(40) },
+      },
+    ],
+  });
+  assert.equal(row!.detail, 'Earlier proof · ccccccc');
 });

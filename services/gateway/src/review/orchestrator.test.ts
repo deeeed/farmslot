@@ -1118,6 +1118,48 @@ test('runReviewRetryLoop: exhausts retries when every re-review still finds issu
   );
 });
 
+test('runReviewRetryLoop: a reserved Send back pass spends its persisted charge once, even at the cap', async () => {
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: ['issues'],
+    fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+  });
+  let delivered = 0;
+  const result = await runReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 2,
+    reviewResult: { verdict: 'issues', issues: ISSUES } satisfies ReviewAgentResult,
+    // The reservation already raised the persisted count to the cap.
+    retryCount: 2,
+    reservedFixPass: { onDelivered: () => (delivered += 1) },
+    deps,
+  });
+  assert.equal(calls.sendFeedback, 1, 'the reserved pass is delivered although the cap is reached');
+  assert.equal(delivered, 1);
+  assert.equal(result.retryCount, 2, 'no second increment for the reserved pass');
+  assert.equal(calls.reviewAgent, 1, 'the repair is re-reviewed; no unreserved pass follows');
+});
+
+test('runReviewRetryLoop: later passes after a reserved Send back spend the normal budget', async () => {
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: ['issues', 'pass'],
+    fixSignals: [
+      { status: 'complete', timestamp: new Date().toISOString() },
+      { status: 'complete', timestamp: new Date().toISOString() },
+    ],
+  });
+  const result = await runReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 2,
+    reviewResult: { verdict: 'issues', issues: ISSUES } satisfies ReviewAgentResult,
+    retryCount: 1,
+    reservedFixPass: {},
+    deps,
+  });
+  assert.equal(calls.sendFeedback, 2);
+  assert.equal(result.retryCount, 2, 'only the unreserved pass increments');
+  assert.equal(result.verdict, 'pass');
+});
+
 test('runReviewRetryLoop: a failed mid-loop relaunch drops a prior generation feedbackSent', async () => {
   const { deps, calls } = buildDeps({
     reviewVerdicts: [],

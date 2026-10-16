@@ -5,6 +5,7 @@ import {
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   type ReviewStatus,
   type RunDecision,
+  SEND_BACK_TO_AGENT_ACTION,
 } from '@farmslot/protocol';
 
 import {
@@ -703,3 +704,17 @@ for (const verdict of [undefined, 'pass', 'skipped', 'issues'] as const) {
     );
   });
 }
+
+test('Send back is offered as a primary gate action only when admissible', () => {
+  const offered = publicationGateDecisionActions({ reviewSatisfied: false, sendBackToAgent: true });
+  assert.deepEqual(
+    offered.find(({ id }) => id === SEND_BACK_TO_AGENT_ACTION),
+    { id: SEND_BACK_TO_AGENT_ACTION, label: 'Send back to agent', style: 'primary' },
+  );
+  assert.equal(
+    publicationGateDecisionActions({ reviewSatisfied: false }).some(
+      ({ id }) => id === SEND_BACK_TO_AGENT_ACTION,
+    ),
+    false,
+  );
+});

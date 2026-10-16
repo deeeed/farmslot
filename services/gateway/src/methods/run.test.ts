@@ -12,8 +12,12 @@ import {
   DEFAULT_CURSOR_MODEL,
   PUBLISH_APPROVAL_ACTIONS,
   type ReadyGatePrPackage,
+  recipeRepairId,
+  type RecipeRepairScope,
   type ReviewGatePayload,
+  type Run,
   type RunDecision,
+  SEND_BACK_TO_AGENT_ACTION,
 } from '@farmslot/protocol';
 
 import { digest } from '../assessment/failure-triage/packet.js';
@@ -25,6 +29,7 @@ import { admitReviewRound } from '../review/review-round-budget.js';
 import { computeReadyGatePackageHash } from '../run-completion/ready-gate-package.js';
 import { manualTicketData } from '../run-completion/test-fixtures.js';
 import { overwriteRetainedFixture, retainRunFixture } from '../run-engine/test-fixtures.js';
+import type { VisualRepairAdmission } from '../run-engine/visual-repair.js';
 import { createRun, deleteRun, getAllRuns, getRun, updateRun } from '../runs/store.js';
 import { runWithSessionOriginator } from '../security/work-originator.js';
 
@@ -485,6 +490,150 @@ test('runResolveDecision retains a launch rejection for non-review gate actions'
   await runResolveDecision({ runId: run.id, decisionId: decision.id, actionId: 'hold' }, () => {});
 
   assert.deepEqual(getRun(run.id)?.engineState?.publishGate?.reviewLaunchRejection, rejection);
+});
+
+function sendBackFixture(t: import('node:test').TestContext, ticket: string) {
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: ticket,
+    runner: 'claude',
+    slotId: 'test-send-back-slot',
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            id: 'review-1',
+            mode: 'cold',
+            loopNumber: 1,
+            verdict: 'pass',
+            unresolvedCount: 0,
+            retryCount: 0,
+            maxRetries: 1,
+          },
+        ],
+      },
+    },
+  });
+  const gate = (id: string): RunDecision => ({
+    id,
+    type: 'engine_human_gate',
+    title: 'Publication gate',
+    description: 'Return Issues',
+    actions: [{ id: SEND_BACK_TO_AGENT_ACTION, label: 'Send back to agent', style: 'primary' }],
+    createdAt: '2026-10-16T00:00:00.000Z',
+  });
+  updateRun(run.id, { status: 'done', decisions: [gate('gate-1'), gate('gate-2')] });
+  t.after(async () => deleteRun(run.id));
+  const packageHash = `sha256:${'b'.repeat(64)}`;
+  const scope: RecipeRepairScope = {
+    schemaVersion: 1,
+    repairId: recipeRepairId({ runId: run.id, packageHash, receiptIds: ['receipt-1'] }),
+    runId: run.id,
+    generation: 0,
+    decisionId: 'gate-1',
+    packageHash,
+    packageHeadSha: 'c'.repeat(40),
+    reviewBaseSha: 'd'.repeat(40),
+    reviewId: 'review-1',
+    workerContextId: `${run.id}:dev`,
+    repairRecipe: 'recipes/visual-repair.json',
+    claims: [{ id: 'AC-1', claim: 'The chart renders.' }],
+    sources: [
+      {
+        recipeRunId: 'original',
+        closureIdentity: `sha256:${'e'.repeat(64)}`,
+        artifactRoot: 'artifacts/recipe-runs/original',
+        headSha: 'c'.repeat(40),
+      },
+    ],
+    retained: [],
+    rejected: [
+      {
+        claimId: 'AC-1',
+        proofMode: 'visual',
+        receiptId: 'receipt-1',
+        reason: 'The chart is blank.',
+        recipeRunId: 'original',
+        closureIdentity: `sha256:${'e'.repeat(64)}`,
+        reviewedFiles: [],
+        moments: [],
+      },
+    ],
+  };
+  const admission = async (current: Run): Promise<VisualRepairAdmission> => {
+    const review = current.engineState!.publishGate!.reviews![0]!;
+    const reuse = current.engineState?.publishGate?.visualRepairs?.find(
+      ({ repairId }) => repairId === scope.repairId,
+    );
+    return {
+      scope,
+      review,
+      issues: [{ ...scope.rejected[0]!, reviewer: 'Reviewer' }],
+      ...(reuse ? { reuse } : {}),
+    };
+  };
+  return { run, admission };
+}
+
+test('Send back refusals keep the gate pending and charge nothing', async (t) => {
+  const { run } = sendBackFixture(t, 'PROJ-SEND-BACK-REFUSED');
+  let admitted = 0;
+  await assert.rejects(
+    runResolveDecision(
+      {
+        runId: run.id,
+        decisionId: 'gate-1',
+        actionId: SEND_BACK_TO_AGENT_ACTION,
+        selectionData: { feedback: 'Use this text instead' },
+      },
+      () => {},
+      { admitVisualRepair: async () => (admitted++, Promise.reject(new Error('unreachable'))) },
+    ),
+    /Send no selection data/u,
+  );
+  assert.equal(admitted, 0, 'client-supplied repair content is refused before admission');
+  await assert.rejects(
+    runResolveDecision(
+      { runId: run.id, decisionId: 'gate-1', actionId: SEND_BACK_TO_AGENT_ACTION },
+      () => {},
+      {
+        admitVisualRepair: async () => {
+          throw new GatewayMethodError('VISUAL_REPAIR_REFUSED', 'No fix round left.');
+        },
+      },
+    ),
+    { code: 'VISUAL_REPAIR_REFUSED' },
+  );
+  const persisted = getRun(run.id)!;
+  assert.equal(persisted.decisions[0]?.resolvedAt, undefined);
+  assert.equal(persisted.engineState?.publishGate?.reviews?.[0]?.retryCount, 0);
+  assert.equal(persisted.engineState?.publishGate?.visualRepairs, undefined);
+});
+
+test('Send back reserves one fix round when the gate is consumed and a retry reuses it', async (t) => {
+  const { run, admission } = sendBackFixture(t, 'PROJ-SEND-BACK-RESERVED');
+  await runResolveDecision(
+    { runId: run.id, decisionId: 'gate-1', actionId: SEND_BACK_TO_AGENT_ACTION },
+    () => {},
+    { admitVisualRepair: admission },
+  );
+  let persisted = getRun(run.id)!;
+  assert.equal(persisted.decisions[0]?.resolvedAction, SEND_BACK_TO_AGENT_ACTION);
+  assert.equal(persisted.engineState?.publishGate?.reviews?.[0]?.retryCount, 1);
+  assert.equal(persisted.engineState?.publishGate?.visualRepairs?.length, 1);
+  assert.equal(persisted.engineState?.publishGate?.visualRepairs?.[0]?.status, 'reserved');
+  // An undelivered repair re-presented at a new gate keeps the same identity and charge.
+  await runResolveDecision(
+    { runId: run.id, decisionId: 'gate-2', actionId: SEND_BACK_TO_AGENT_ACTION },
+    () => {},
+    { admitVisualRepair: admission },
+  );
+  persisted = getRun(run.id)!;
+  assert.equal(persisted.decisions[1]?.resolvedAction, SEND_BACK_TO_AGENT_ACTION);
+  assert.equal(persisted.engineState?.publishGate?.reviews?.[0]?.retryCount, 1);
+  assert.equal(persisted.engineState?.publishGate?.visualRepairs?.length, 1);
 });
 
 function makeReadyGatePackage(overrides: Partial<ReadyGatePrPackage> = {}): ReadyGatePrPackage {

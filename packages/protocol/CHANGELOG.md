@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add the Send back repair contract: `RecipeRepairScope`, the engine claim-source selection, the `pipeline-visual-judgments-v2` applicability result, the run-store repair record and a receipt/repair `FeedbackCandidate` variant.
 - Expose optional dev deployment worker CLI verification health on node and fleet metrics.
 
 - Expose optional provider probe status, load, retry and retained mismatch diagnostics.

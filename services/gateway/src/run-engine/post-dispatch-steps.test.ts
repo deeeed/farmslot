@@ -4,13 +4,14 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type {
-  CompleteStepOutput,
-  PublicationReviewLaunchRejection,
-  ReviewSelection,
-  ReviewStatus,
-  Run,
-  RunGatePrerequisiteReason,
+import {
+  type CompleteStepOutput,
+  type PublicationReviewLaunchRejection,
+  type ReviewSelection,
+  type ReviewStatus,
+  type Run,
+  type RunGatePrerequisiteReason,
+  SEND_BACK_TO_AGENT_ACTION,
 } from '@farmslot/protocol';
 import { reviewRequestFromSequence } from '@farmslot/review-dispatch';
 
@@ -1520,6 +1521,54 @@ test('held publication approval reopens only its wait despite persisted review p
   });
   assert.equal(gates, 1);
   assert.deepEqual(getRun(run.id)!.engineState, before);
+});
+
+test('Send back delivers through the retained repair step and re-presents the same gate', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'SEND-BACK-LOOP',
+    runner: 'grok',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  updateRun(run.id, {
+    status: 'human-gating',
+    slotId: 'send-back-slot',
+    engineState: {
+      publishGate: {
+        reviewPolicy: { minimumReviews: 2, requestedBy: 'dispatch' },
+        reviewSequence: [{ runner: 'grok', model: null, effort: null, mode: 'cold' }],
+      },
+    },
+    decisions: [
+      {
+        id: 'held',
+        type: 'engine_human_gate',
+        title: 'Gate',
+        description: '',
+        actions: [],
+        createdAt: '2026-10-16T00:00:00Z',
+        resolvedAt: '2026-10-16T00:01:00Z',
+        resolvedAction: 'approve-publish-unresolved',
+        context: { approvalHeldAt: '2026-10-16T00:01:01Z' },
+      },
+    ],
+  });
+  const gateActions = [SEND_BACK_TO_AGENT_ACTION, 'approve-publish'];
+  const repairs: string[] = [];
+  await executeHumanGateStep(run.id, {
+    ...restartReplayContext(),
+    executePublishGateReviewPlan: async () => assert.fail('Send back starts no review plan'),
+    resumeInterruptedPublicationReviewForRun: async () =>
+      assert.fail('Send back is not a Continue Fixing continuation'),
+    resumeVisualRepairForRun: async (runId, slotId) => {
+      repairs.push(`${runId}:${slotId}`);
+      return null;
+    },
+    executeReadyGate: async () => gateActions.shift()!,
+  });
+  assert.deepEqual(repairs, [`${run.id}:send-back-slot`]);
+  assert.equal(gateActions.length, 0, 'the gate is re-presented after the repair step');
 });
 
 test('accepted publication resumes its gate without collecting reviews or replacing its package', async (t) => {

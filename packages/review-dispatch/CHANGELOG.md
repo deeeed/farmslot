@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Make Send back to agent the gate's one primary action when offered, with recovery status and earlier-proof row details.
 - Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review.
 - Share the gateway no-code-review warning without disabling publication approval.
 

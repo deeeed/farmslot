@@ -765,3 +765,53 @@ test('a failed automatic refresh preserves the judgment and retry reuses its rec
   assert.equal(f.decision.resolvedAt, undefined);
   assert.deepEqual(await readFile(path.join(f.directory, 'acceptance-status.json')), before);
 });
+
+test('a person Issue is a qualified Send back Issue until a later Looks right replaces it', async (t) => {
+  const f = await fixture(t);
+  const { qualifiedVisualIssues, admitVisualRepair } =
+    await import('../../run-engine/visual-repair.js');
+  await runReviewVisualClaim(
+    { ...f.params, verdict: 'rejected', reason: 'The value shown is 2, not 1.' },
+    () => {},
+    f.dependencies,
+  );
+  const issues = qualifiedVisualIssues(getRun(f.run.id)!, f.input);
+  assert.deepEqual(
+    issues.map(({ claimId, reason, recipeRunId, proofMode }) => ({
+      claimId,
+      reason,
+      recipeRunId,
+      proofMode,
+    })),
+    [
+      {
+        claimId: 'check-1',
+        reason: 'The value shown is 2, not 1.',
+        recipeRunId: f.input.claims!.recipeRunId,
+        proofMode: 'visual',
+      },
+    ],
+  );
+  assert.equal(issues[0]!.receiptId, getRun(f.run.id)!.visualJudgmentReceipts!.at(-1)!.id);
+  // Admission derives everything from the frozen gate and refuses before the decision
+  // is consumed or any budget is charged: first a stale package, then nested criteria
+  // without a task registration.
+  const gate = () => getRun(f.run.id)!.decisions.find(({ id }) => id === 'gate')!;
+  await assert.rejects(admitVisualRepair(getRun(f.run.id)!, gate()), {
+    code: 'VISUAL_REPAIR_REFUSED',
+    message: 'Visual review changed after this package was prepared.',
+  });
+  f.prepared.visualJudgmentReceiptIds = [issues[0]!.receiptId];
+  await retainRunFixture(getRun(f.run.id)!, f.prepared);
+  await assert.rejects(admitVisualRepair(getRun(f.run.id)!, gate()), {
+    code: 'VISUAL_REPAIR_REFUSED',
+    message: 'The package has no valid task registration.',
+  });
+  assert.equal(getRun(f.run.id)!.engineState?.publishGate?.visualRepairs, undefined);
+  await runReviewVisualClaim(
+    { ...f.params, snapshotIdentity: visualReviewSnapshotIdentity(getRun(f.run.id)!, 'gate') },
+    () => {},
+    f.dependencies,
+  );
+  assert.deepEqual(qualifiedVisualIssues(getRun(f.run.id)!, f.input), []);
+});
