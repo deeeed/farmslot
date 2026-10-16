@@ -15,7 +15,7 @@ import { recordPublishedDescription } from '../run-engine/finalize-step.js';
 import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import { getCachedRunWithArchived, getRunWithArchived } from '../runs/store.js';
 
-import { withEvidenceAttestation } from './evidence-attestation.js';
+import { withPublicationProvenance } from './evidence-attestation.js';
 import { isPublishedStatus, publicationStatusForRun } from './orchestrator.js';
 import {
   expandPublicationEvidenceSelection,
@@ -191,7 +191,7 @@ async function refreshPublishedEvidenceLocked(
   assertCurrent();
   const postedBody = await postProcessPRBody(run, ciRepo, run.prNumber, artifactUrls, expanded, {
     failOnError: true,
-    baseBody: adoption ? before.body : withEvidenceAttestation(run, before.body),
+    baseBody: adoption ? before.body : withPublicationProvenance(run, before.body),
     ...(adoption
       ? {
           adoptedEvidence: {
