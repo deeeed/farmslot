@@ -36,7 +36,12 @@ export function nativeNodeDeclaration(
       'Native node owner must match its server-issued assignment',
     );
   const capabilities = value as Record<string, unknown>;
-  for (const field of ['supportsEnsure', 'supportsWorkers', 'supportsProfiles'] as const) {
+  for (const field of [
+    'supportsEnsure',
+    'supportsWorkers',
+    'supportsProfiles',
+    'supportsStructuredResults',
+  ] as const) {
     const capability = capabilities[field];
     if (capability === undefined) continue;
     if (typeof capability !== 'boolean')

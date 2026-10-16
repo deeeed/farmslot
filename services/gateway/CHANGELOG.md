@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Run independent pipeline reviews in native sessions, qualify their recorded visual judgments, and audit publication approval against the frozen evidence.
+
 - Refresh the publication package after a visual judgment; preserve the saved judgment and report a recoverable failure when refresh is unavailable.
 
 ## 0.22.0 - 2026-10-16

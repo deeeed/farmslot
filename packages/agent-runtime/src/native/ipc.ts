@@ -31,6 +31,7 @@ export interface HostIdentity {
   supportsWorkers?: boolean;
   supportsWorkerResumeFence?: boolean;
   supportsWorkerStopAttestation?: boolean;
+  supportsStructuredResults?: boolean;
   supportsWorkerRelocation?: boolean;
   supportsProfiles?: boolean;
   pid: number;

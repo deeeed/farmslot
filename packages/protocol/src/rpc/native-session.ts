@@ -67,6 +67,7 @@ export interface NativeExecutionNodeDeclaration {
   /** Private worker launch contract, separate from ordinary session creation. */
   supportsWorkers?: boolean;
   supportsWorkerStopAttestation?: boolean;
+  supportsStructuredResults?: boolean;
   supportsProfiles?: boolean;
 }
 export interface NativeSessionListResult {

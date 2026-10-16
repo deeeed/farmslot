@@ -76,6 +76,7 @@ test('recipe module exposes only the public recipe protocol surface', async () =
     'runClaimOverrideSnapshotIdentity',
     'sanitizeLatestValidRecipeRunPointer',
     'validVisualJudgmentReason',
+    'visualClaimRequiresPerson',
     'validateArtifactManifestDocument',
     'validateRecipeActionManifestDocument',
     'validateRecipeActionRelationships',

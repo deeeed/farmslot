@@ -47,6 +47,7 @@ import { unwatchContext, watchContext } from '../../tasks/watcher.js';
 import { RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../launch-command.js';
 
 import { routeNativeExecution } from './node.js';
+import { nativeReviewerOwner } from './review-owner.js';
 import { NativeSlotOwnershipError, NativeWorkerOperationUncertainError } from './worker-error.js';
 import { prepareNativeWorkerLaunch } from './worker-launch.js';
 import {
@@ -55,16 +56,26 @@ import {
   nativeWorkerProfileMatches,
 } from './worker-profile.js';
 
-function ownedRun(runId: string) {
+function ownedRun(runId: string, reviewAdmission = false) {
   const run = getRun(runId);
-  if (!run || run.transport !== 'native' || !run.nativeOwnerPrincipalId)
+  if (
+    !run ||
+    (run.transport !== 'native' &&
+      !reviewAdmission &&
+      !run.agentContexts?.some((context) => context.nativeSession))
+  )
     throw new Error('Native worker dispatch requires an owned native run');
   assertNativeRunOwner(run);
   return run;
 }
 
-function runnable(runId: string, slotId: string, allowOperatorWait = false) {
-  const run = ownedRun(runId);
+function runnable(
+  runId: string,
+  slotId: string,
+  allowOperatorWait = false,
+  reviewAdmission = false,
+) {
+  const run = ownedRun(runId, reviewAdmission);
   if (
     run.slotId !== slotId ||
     isTerminalRunStatus(run.status) ||
@@ -84,6 +95,7 @@ function checkedSession(info: NativeSessionInfo, binding: NativeWorkerSessionBin
     info.executionNodeId !== binding.executionNodeId ||
     info.ownerPrincipalId !== binding.ownerPrincipalId ||
     info.workerLeaseId !== binding.leaseId ||
+    info.resultSchema !== binding.resultSchema ||
     !nativeWorkerProfileMatches(info, binding)
   )
     throw new Error('Native worker session identity or task lease changed');
@@ -103,11 +115,15 @@ async function finishNativeHandoffSource(
   const sourceRun = getRun(from.runId);
   if (!sourceRun) return;
   assertNativeRunOwner(sourceRun);
-  if (sourceRun.nativeOwnerPrincipalId !== binding.ownerPrincipalId)
+  if (
+    sourceRun.nativeOwnerPrincipalId &&
+    sourceRun.nativeOwnerPrincipalId !== binding.ownerPrincipalId
+  )
     throw new Error('Native handoff source owner changed');
   const sourceContext = sourceRun.agentContexts?.find((context) => context.id === from.contextId);
   if (
     !sourceContext?.nativeSession ||
+    sourceContext.nativeSession.ownerPrincipalId !== binding.ownerPrincipalId ||
     sourceContext.nativeSession.sessionId !== binding.sessionId ||
     sourceContext.nativeSession.leaseId !== from.leaseId
   )
@@ -136,7 +152,11 @@ async function finishNativeHandoffSource(
     },
   );
   await persistRunNow(ownedRun(sourceRun.id), 'native task lease released');
-  if (sourceRun.id !== destinationRunId && !isTerminalRunStatus(sourceRun.status)) {
+  if (
+    sourceRun.transport === 'native' &&
+    sourceRun.id !== destinationRunId &&
+    !isTerminalRunStatus(sourceRun.status)
+  ) {
     const { runCancel, runCancelTransitionLocked } =
       await import('../../methods/run/lifecycle-control.js');
     const params = { runId: sourceRun.id, reason: `Worker handed to run ${destinationRunId}` };
@@ -312,7 +332,17 @@ export function assertNativeSlotReplacementOwner(slotId: string, incomingRunId?:
     const held = previous.agentContexts?.some((context) =>
       nativeWorkerBindingIsHeld(context.nativeSession),
     );
-    if (held && (!principalId || principalId !== previous.nativeOwnerPrincipalId))
+    const contextOwners = new Set(
+      previous.agentContexts?.flatMap((context) =>
+        nativeWorkerBindingIsHeld(context.nativeSession)
+          ? [context.nativeSession!.ownerPrincipalId]
+          : [],
+      ) ?? [],
+    );
+    const previousOwner =
+      previous.nativeOwnerPrincipalId ??
+      (contextOwners.size === 1 ? [...contextOwners][0] : undefined);
+    if (held && (!principalId || principalId !== previousOwner))
       throw new NativeSlotOwnershipError(
         'Native worker slot replacement requires its profile owner',
       );
@@ -353,6 +383,7 @@ export async function dispatchNativeWorker(input: {
   runId: string;
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
   role: AgentRole;
+  resultSchema?: import('@farmslot/protocol').NativeResultSchema;
   contextId?: string;
   allowOperatorWait?: boolean;
   initialPrompt?: string;
@@ -382,10 +413,18 @@ export async function dispatchNativeWorker(input: {
       input.runId,
       vars.slotId,
       input.allowOperatorWait === true && input.role === 'review',
+      input.role === 'review',
     );
   };
   const run = checkRun();
   const contextId = input.contextId ?? contextIdFor(input.role);
+  if (
+    run.transport !== 'native' &&
+    (input.role !== 'review' ||
+      run.agentContexts?.some((context) => context.id === contextId && context.role !== 'review'))
+  )
+    throw new Error('Native reviewer launch must not replace a producing worker context');
+  const ownerPrincipalId = run.nativeOwnerPrincipalId ?? nativeReviewerOwner(run, vars);
   const node = isLocal(vars.host, vars.machine) ? 'local' : vars.machine;
   const existingBinding = run.agentContexts?.find(
     (context) => context.id === contextId,
@@ -399,7 +438,8 @@ export async function dispatchNativeWorker(input: {
     const source = retained?.nativeSession;
     if (
       sourceRun.slotId !== vars.slotId ||
-      sourceRun.nativeOwnerPrincipalId !== run.nativeOwnerPrincipalId ||
+      source?.ownerPrincipalId !== ownerPrincipalId ||
+      source?.resultSchema !== input.resultSchema ||
       !source?.generation ||
       (source.closedAt && !retained?.runnerSessionId) ||
       source.releasedAt ||
@@ -422,7 +462,7 @@ export async function dispatchNativeWorker(input: {
   const selectedProfile =
     source?.profile ?? existingBinding?.profile ?? nativeWorkerProfileForRunner(run, input.runner);
   if (selectedProfile && !existingBinding) {
-    await inspectNativeWorkerProfile(run.nativeOwnerPrincipalId!, selectedProfile);
+    await inspectNativeWorkerProfile(ownerPrincipalId, selectedProfile);
     checkRun();
   }
   const proposed: NativeWorkerSessionBinding = source
@@ -441,7 +481,8 @@ export async function dispatchNativeWorker(input: {
         sessionId: randomUUID(),
         leaseId: randomUUID(),
         commandId: randomUUID(),
-        ownerPrincipalId: run.nativeOwnerPrincipalId!,
+        ownerPrincipalId,
+        resultSchema: input.resultSchema,
         executionNodeId: node,
         ...(selectedProfile ? { profile: selectedProfile } : {}),
       };
@@ -481,7 +522,7 @@ export async function dispatchNativeWorker(input: {
   let binding = context.nativeSession;
   if (binding.closedAt || binding.releasedAt)
     throw new Error('Native worker task lease is closed; use explicit recovery');
-  if (binding.ownerPrincipalId !== run.nativeOwnerPrincipalId || binding.executionNodeId !== node)
+  if (binding.ownerPrincipalId !== ownerPrincipalId || binding.executionNodeId !== node)
     throw new Error('Native worker reservation belongs to another execution context');
   await persistRunNow(ownedRun(run.id), 'native worker reservation');
 
@@ -743,6 +784,7 @@ export async function dispatchNativeWorker(input: {
       ...nativeProfileSessionParams(binding.profile),
       runner: input.runner,
       model: input.model,
+      resultSchema: binding.resultSchema,
       cwd: vars.remoteRepo,
       launch: prepared.launch,
     })) as { session: NativeSessionInfo };

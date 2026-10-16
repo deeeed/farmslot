@@ -11,6 +11,7 @@ import {
   recordedVisualJudgments,
   reviewedVisualFiles,
   validVisualJudgmentReason,
+  visualClaimRequiresPerson,
 } from '../../src/recipe/index.js';
 
 const input: RecordedEvidencePackageInput = JSON.parse(
@@ -37,6 +38,78 @@ const authority = (receipts: RecipeVisualJudgmentReceipt[]) => ({
   recipeRunId: receipt.recipeRunId,
   closureIdentity: receipt.closureIdentity,
   receipts,
+});
+
+const pipelineReceipt = (): RecipeVisualJudgmentReceipt => ({
+  ...receipt,
+  id: 'pipeline-review',
+  kind: 'pipeline-reviewed',
+  reviewerSubjectKind: 'service',
+  approver: { principalId: 'native-review:session:lease', displayName: 'Independent review' },
+  reviewedFiles: reviewedVisualFiles(input, receipt.claimId),
+  pipeline: {
+    contextId: 'review',
+    sessionId: 'session',
+    generation: 'generation',
+    leaseId: 'lease',
+    commandId: 'command',
+    executionNodeId: 'node',
+    ownerPrincipalId: 'owner',
+  },
+});
+
+test('qualified pipeline receipts satisfy visual claims by default and respect explicit person policy', () => {
+  const pipeline = pipelineReceipt();
+  assert.equal(recordedVisualJudgments(input, authority([pipeline]))[0]?.kind, 'pipeline-reviewed');
+  assert.deepEqual(parseProjectVisualClaimReviewPolicy({ personOnly: true }), { personOnly: true });
+  assert.deepEqual(parseProjectVisualClaimReviewPolicy({ personOnlyClaimIds: ['ac1'] }), {
+    personOnlyClaimIds: ['AC-1'],
+  });
+  for (const policy of [
+    { personOnly: true },
+    { personOnlyClaimIds: ['check-1'] },
+    { personOnlyClaimIds: ['case-1'] },
+  ]) {
+    assert.equal(visualClaimRequiresPerson(input, receipt.claimId, policy), true);
+    assert.equal(
+      recordedVisualJudgments(input, { ...authority([pipeline]), projectPolicy: policy }).length,
+      0,
+    );
+    assert.equal(
+      recordedVisualJudgments(input, {
+        ...authority([pipeline]),
+        projectPolicy: policy,
+        historical: true,
+      }).length,
+      1,
+    );
+  }
+  for (const invalid of [
+    { ...pipeline, pipeline: undefined },
+    { ...pipeline, reviewedFiles: [] },
+    { ...pipeline, approver: receipt.approver },
+    { ...pipeline, reason: '' },
+  ])
+    assert.deepEqual(recordedVisualJudgments(input, authority([invalid])), []);
+});
+
+test('a person Issue outranks later agent confirmations until a later person confirms', () => {
+  const person = {
+    ...receipt,
+    id: 'person-issue',
+    verdict: 'rejected' as const,
+    judgedAt: '2026-10-16T01:00:00Z',
+  };
+  const pipeline = { ...pipelineReceipt(), judgedAt: '2026-10-16T02:00:00Z' };
+  assert.equal(
+    recordedVisualJudgments(input, authority([person, pipeline])).at(-1)?.verdict,
+    'rejected',
+  );
+  const confirmation = { ...receipt, id: 'person-confirmation', judgedAt: '2026-10-16T03:00:00Z' };
+  assert.equal(
+    recordedVisualJudgments(input, authority([confirmation, pipeline, person])).at(-1)?.verdict,
+    'confirmed',
+  );
 });
 
 test('delegated receipts bind own identity, policy, parent restrictions and checked visual bytes', () => {
@@ -69,7 +142,7 @@ test('delegated receipts bind own identity, policy, parent restrictions and chec
   assert.deepEqual(recordedVisualJudgments(input, authority([delegated])), []);
   const changedPolicy = {
     ...policy,
-    delegatedReviewerPrincipalIds: [...policy.delegatedReviewerPrincipalIds, 'unrelated-reviewer'],
+    delegatedReviewerPrincipalIds: [...policy.delegatedReviewerPrincipalIds!, 'unrelated-reviewer'],
   };
   assert.deepEqual(
     recordedVisualJudgments(input, { ...authorized, projectPolicy: changedPolicy }),
@@ -127,7 +200,6 @@ test('delegated receipts bind own identity, policy, parent restrictions and chec
 test('project review policy rejects malformed grants and normalizes claim identifiers', () => {
   assert.equal(parseProjectVisualClaimReviewPolicy(undefined), undefined);
   for (const policy of [
-    {},
     { delegatorPrincipalId: '', delegatedReviewerPrincipalIds: [] },
     { delegatorPrincipalId: 'person', delegatedReviewerPrincipalIds: [''] },
     { delegatorPrincipalId: 'person', delegatedReviewerPrincipalIds: [], actor: 'spoof' },
@@ -147,14 +219,17 @@ test('project review policy rejects malformed grants and normalizes claim identi
   );
 });
 
-test('visual judgments use the gateway person and preserve recorded order', () => {
+test('visual judgments use the gateway person and preserve frozen historical order', () => {
   const later = {
     ...receipt,
     id: 'review-2',
     verdict: 'rejected' as const,
     judgedAt: '2026-10-13T00:00:00Z',
   };
-  const result = recordedVisualJudgments(input, authority([receipt, later]));
+  const result = recordedVisualJudgments(input, {
+    ...authority([receipt, later]),
+    historical: true,
+  });
   assert.deepEqual(
     result.map(({ receiptId, actor, verdict }) => ({ receiptId, actor, verdict })),
     [

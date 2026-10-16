@@ -659,7 +659,10 @@ export interface RunReviewVisualClaimParams {
   verdict: 'confirmed' | 'rejected';
   /** Optional only for authenticated person confirmation. */
   reason?: string;
-  kind?: import('../recipe/claim-reviews.js').RecipeVisualJudgmentKind;
+  kind?: Exclude<
+    import('../recipe/claim-reviews.js').RecipeVisualJudgmentKind,
+    'pipeline-reviewed'
+  >;
 }
 
 export interface RunReviewVisualClaimResult {

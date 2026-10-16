@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
 
+import '../runtime/mock-pty.test-support.js';
+
 const fixture = await mkdtemp(path.join(os.tmpdir(), 'native-review-operation-'));
 process.env.NODE_TEST_CONTEXT = '1';
 process.env.FARMSLOT_RUNS_DIR = path.join(fixture, 'runs');
@@ -23,16 +25,19 @@ const {
 
 after(() => rm(fixture, { recursive: true, force: true }));
 
-async function makeRun() {
+async function makeRun(transport: 'native' | 'tmux' = 'native') {
   const run = createRun(
     {
       flowType: 'dev',
       project: 'native-operation-test',
       ticketOrPr: `TEST-${Date.now()}`,
       slotId: 'operation-slot',
-      transport: 'native',
+      transport,
     },
-    { nativeOwnerPrincipalId: 'review-operation-owner', deferBackgroundPersist: true },
+    {
+      ...(transport === 'native' ? { nativeOwnerPrincipalId: 'review-operation-owner' } : {}),
+      deferBackgroundPersist: true,
+    },
   );
   await writeFile(
     process.env.FARMSLOT_TEST_STATUS_FILE!,
@@ -134,6 +139,28 @@ test('a remote callback retains its original ownership check outside the async s
     assert.equal(check(), true);
     updateRun(run.id, { engineState: { generation: 1 } });
     assert.equal(check(), false);
+  } finally {
+    await removeRun(run.id);
+  }
+});
+
+test('native review fencing also follows replay generations of a tmux worker', async () => {
+  const run = await makeRun('tmux');
+  try {
+    await withNativeReviewOperation(run, async () => {
+      const current = captureNativeReviewOperationCheck();
+      assert.equal(current(), true);
+      updateRun(run.id, {
+        engineState: {
+          ...getRun(run.id)!.engineState,
+          generation: (getRun(run.id)!.engineState?.generation ?? 0) + 1,
+        },
+      });
+      assert.equal(current(), false);
+      assert.throws(assertNativeReviewOperationCurrent, /superseded/);
+    });
+    assert.equal(getRun(run.id)?.transport, 'tmux');
+    assert.equal(getRun(run.id)?.nativeOwnerPrincipalId, undefined);
   } finally {
     await removeRun(run.id);
   }

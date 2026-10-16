@@ -66,7 +66,7 @@ async function resumeNativeWorkerExclusive(
   const run = structuredClone(getRun(runId));
   if (
     !run ||
-    run.transport !== 'native' ||
+    (run.transport !== 'native' && options?.purpose !== 'review') ||
     isTerminalRunStatus(run.status) ||
     (!options && run.status !== 'paused') ||
     (options?.purpose === 'blocked-worker' && run.status !== 'blocked') ||
@@ -356,6 +356,7 @@ async function resumeNativeWorkerExclusive(
       resumeSessionId: context.runnerSessionId,
       runner: context.runner,
       model: context.model,
+      resultSchema: binding.resultSchema,
       cwd: vars.remoteRepo,
       launch: prepared.launch,
       ...(options?.purpose === 'parking' && options.relocation
@@ -430,5 +431,8 @@ async function resumeNativeWorkerExclusive(
     );
     await persistRunNow(getRun(runId)!, 'native fix resumed instruction');
   }
-  await save({ recovery: undefined });
+  await save({
+    recovery: undefined,
+    ...(options?.purpose === 'review' ? { commandId: intent.commandId } : {}),
+  });
 }

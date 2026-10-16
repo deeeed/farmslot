@@ -42,7 +42,12 @@ const context = {
     leaseId: binding.leaseId,
   },
 } as AgentContext;
-const run = { id: 'run', status: 'monitoring', agentContexts: [owner, context] } as Run;
+const run = {
+  id: 'run',
+  transport: 'native',
+  status: 'monitoring',
+  agentContexts: [owner, context],
+} as Run;
 
 test('task history resolves an exact archived owner lease without adopting its successor', () => {
   assert.deepEqual(nativeWorkerHistoryBinding(run, target), { binding, readOnly: true });

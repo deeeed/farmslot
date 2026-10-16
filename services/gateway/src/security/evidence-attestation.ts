@@ -47,14 +47,17 @@ export function authorizeVisualClaimReview(
     session.authentication?.kind !== (delegated ? 'credential' : 'person-session') ||
     principal.id === 'legacy-env' ||
     principal.subject.type !== (delegated ? 'service' : 'person') ||
-    (delegated && !policy?.delegatedReviewerPrincipalIds.includes(principal.id))
+    kind === 'pipeline-reviewed' ||
+    (delegated && !policy?.delegatedReviewerPrincipalIds?.includes(principal.id))
   )
     throw new GatewayMethodError(
       'AUTH_FORBIDDEN',
       "Visual review requires the authorized reviewer's own active credential.",
     );
   const delegator =
-    delegated && policy ? runtime.store.findPrincipal(policy.delegatorPrincipalId) : undefined;
+    delegated && policy?.delegatorPrincipalId
+      ? runtime.store.findPrincipal(policy.delegatorPrincipalId)
+      : undefined;
   if (delegated && (!delegator || delegator.subject.type !== 'person'))
     throw new GatewayMethodError(
       'AUTH_FORBIDDEN',

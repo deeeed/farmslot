@@ -4,6 +4,8 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
+- Show independent pipeline visual verification and explicit person-only criteria in shared acceptance views.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.16.0 - 2026-10-16

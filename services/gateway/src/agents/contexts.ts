@@ -29,6 +29,7 @@ import { resolveTmuxSession } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { canonicalAgentContextTarget } from '../methods/dispatch/role-target.js';
 import { getRun, listRuns, updateRunAgentContexts } from '../runs/store.js';
+import { resolveReviewWorkspaceOwner } from '../security/native-worker-owner.js';
 
 import { resolveNativeContext } from './native-context.js';
 
@@ -427,8 +428,15 @@ export async function upsertAgentContext(
       if (
         context.nativeSession?.ownerPrincipalId !== undefined &&
         context.nativeSession.ownerPrincipalId !== currentRun.nativeOwnerPrincipalId
-      )
-        throw new Error('Native agent context must preserve its run owner');
+      ) {
+        if (
+          currentRun.transport === 'native' ||
+          currentRun.nativeOwnerPrincipalId ||
+          role !== 'review'
+        )
+          throw new Error('Native agent context must preserve its run owner');
+        resolveReviewWorkspaceOwner(context.nativeSession.ownerPrincipalId);
+      }
       if (!context.startedAt) context.startedAt = now;
       nextContext = context;
       return [...contexts, context];

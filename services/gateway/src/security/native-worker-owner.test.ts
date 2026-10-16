@@ -6,6 +6,8 @@ import test, { type TestContext } from 'node:test';
 
 import { Methods, type Principal, type Run, type RunDecision } from '@farmslot/protocol';
 
+import '../runtime/mock-pty.test-support.js';
+
 import { resolveAgentTarget, upsertAgentContext } from '../agents/contexts.js';
 import { rewriteStatusFile } from '../core/state.js';
 import { decisionResolve } from '../methods/decisions.js';
@@ -389,4 +391,54 @@ test('native worker configuration is copied, persisted and cannot silently chang
     /configuration is fixed/,
   );
   assert.doesNotThrow(() => updateRun(run.id, { nativeProfile: { ...nativeProfile } }));
+});
+
+test('native review bindings preserve a tmux worker and do not grant native worker or fix authority', async (t) => {
+  const { params, runs } = setup(t);
+  const run = runWithSessionOriginator(owner, () => createRun({ ...params, transport: 'tmux' }));
+  runs.push(run);
+  const worker = {
+    id: 'dev',
+    role: 'dev' as const,
+    label: 'Dev',
+    status: 'working' as const,
+    slotId: 'owner-fixture',
+    runId: run.id,
+  };
+  const reviewer = {
+    id: 'review-native',
+    role: 'review' as const,
+    label: 'Review',
+    status: 'complete' as const,
+    slotId: 'owner-fixture',
+    runId: run.id,
+    nativeSession: {
+      sessionId: randomUUID(),
+      generation: randomUUID(),
+      leaseId: randomUUID(),
+      commandId: randomUUID(),
+      ownerPrincipalId: owner.id,
+      executionNodeId: 'local',
+      closedAt: new Date().toISOString(),
+    },
+  };
+  updateRun(run.id, { agentContexts: [worker, reviewer] });
+  assert.doesNotThrow(() => runWithSessionOriginator(owner, () => assertNativeRunOwner(run)));
+  assert.throws(
+    () => runWithSessionOriginator(other, () => assertNativeRunOwner(run)),
+    /another principal/,
+  );
+  assert.equal(run.transport, 'tmux');
+  assert.equal(run.nativeOwnerPrincipalId, undefined);
+  assert.equal(run.createdByPrincipalId, owner.id);
+  assert.deepEqual(run.agentContexts?.[0], worker);
+  try {
+    updateRun(run.id, { agentContexts: [worker, { ...reviewer, role: 'review-fix' }] });
+    assert.throws(
+      () => runWithSessionOriginator(owner, () => assertNativeRunOwner(run)),
+      /Only independent reviewers/,
+    );
+  } finally {
+    updateRun(run.id, { agentContexts: [worker, reviewer] });
+  }
 });

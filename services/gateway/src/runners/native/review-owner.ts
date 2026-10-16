@@ -1,0 +1,51 @@
+import {
+  type NativeResultSchema,
+  PIPELINE_VISUAL_RESULT_SCHEMA,
+  type Run,
+} from '@farmslot/protocol';
+
+import { isLocal, type loadSlotVars } from '../../core/index.js';
+import { getNode } from '../../fleet/machine-registry.js';
+import {
+  assertNativeRunOwner,
+  resolveReviewWorkspaceOwner,
+} from '../../security/native-worker-owner.js';
+import { runnerNativeResultSchemas } from '../registry.js';
+
+import { resolveNativeExecutionNode } from './node.js';
+
+/** Reviewer sessions use their execution owner's profile without changing the producing worker. */
+export function nativeReviewerOwner(
+  run: Run,
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+): string {
+  if (run.transport === 'native') {
+    assertNativeRunOwner(run);
+    if (!run.nativeOwnerPrincipalId) throw new Error('Native review has no recorded profile owner');
+    return run.nativeOwnerPrincipalId;
+  }
+  const local = isLocal(vars.host, vars.machine);
+  const owner = local
+    ? process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID
+    : getNode(vars.machine)?.nativeSessions?.ownerPrincipalId;
+  if (!owner) throw new Error('The review slot has no native execution owner');
+  if (!local) {
+    const node = resolveNativeExecutionNode(owner, vars.machine);
+    if (!node.nativeSessions.supportsWorkers || !node.nativeSessions.supportsEnsure)
+      throw new Error('The review node does not support owned native sessions');
+  }
+  return resolveReviewWorkspaceOwner(owner);
+}
+
+export function nativeReviewerResultSchema(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runner: string,
+): NativeResultSchema | undefined {
+  if (!runnerNativeResultSchemas(runner).includes(PIPELINE_VISUAL_RESULT_SCHEMA)) return undefined;
+  if (
+    !isLocal(vars.host, vars.machine) &&
+    !getNode(vars.machine)?.nativeSessions?.supportsStructuredResults
+  )
+    return undefined;
+  return PIPELINE_VISUAL_RESULT_SCHEMA;
+}

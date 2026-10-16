@@ -16,6 +16,7 @@ export interface NativeWorkerSessionBinding {
   leaseId: string;
   /** Persisted before sending the current task prompt. Reused after uncertain delivery. */
   commandId: string;
+  resultSchema?: import('../recipe/pipeline-visual-judgments.js').NativeResultSchema;
   /** Confirmed native acceptance of this task's initial command. */
   acceptedAt?: string;
   /** Private launch settings are represented by a digest, never environment values. */
@@ -128,6 +129,8 @@ export interface AgentContext {
   reviewLoopNumber?: number | null;
   /** Gateway validation completed for the structured reviewer result and archived artifacts. */
   reviewResultValidatedAt?: string;
+  pipelineVisualReviewInput?: import('../recipe/pipeline-visual-judgments.js').PipelineVisualReviewInput;
+  pipelineVisualReviewResult?: import('../recipe/pipeline-visual-judgments.js').PipelineVisualReviewResult;
   runner?: string | null;
   model?: string | null;
   /** Reasoning / thinking level for this reviewer or worker attempt. */

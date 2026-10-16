@@ -1,3 +1,4 @@
+import type { PipelineVisualReviewerBinding } from './claim-reviews.js';
 import { isRecord } from './common.js';
 import type { EvidenceMomentRef } from './evidence.js';
 import { validateRecipeParams } from './params.js';
@@ -23,6 +24,23 @@ export interface PipelineVisualJudgments {
 export interface NativeStructuredResult {
   schema: NativeResultSchema;
   value: PipelineVisualJudgments;
+}
+
+/** Gateway-captured review input; shared task files cannot supply it. */
+export interface PipelineVisualReviewInput {
+  headSha: string;
+  recipeRunId: string;
+  closureIdentity: string;
+  artifactPrefix: string;
+  claims: Array<Omit<PipelineVisualJudgment, 'verdict' | 'reason'> & { text: string }>;
+}
+
+/** Validated completed native turn retained until a matching package is prepared. */
+export interface PipelineVisualReviewResult {
+  headSha: string;
+  binding: PipelineVisualReviewerBinding;
+  result: PipelineVisualJudgments;
+  completedAt: string;
 }
 
 const text = { type: 'string', pattern: '\\S' };
