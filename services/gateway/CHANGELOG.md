@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Keep a QA run's evidence window when a dispatch replay resumes the same task. The first dispatch of a task identity records its start, and QA completion checks recipe evidence against it instead of the latest dispatch; a new task file or a fresh native dispatch starts a new window. Runs recorded before this use the primary worker's first launch on the same task.
+- Keep a QA run's evidence window when a dispatch replay resumes the same task. The first dispatch of a task identity records when it began, and QA completion checks recipe evidence against that instead of the latest dispatch. A new task or a fresh dispatch starts a new window. For runs dispatched before this, the primary worker's first launch counts when it happened after the current task was written; their next dispatch records it as the anchor.
 
 - Point a spent review budget at an extension only when the run can receive one; review-pr, published, artifact-only and archived runs now say why their rounds cannot be extended, and the extension refusal names the same reason.
 

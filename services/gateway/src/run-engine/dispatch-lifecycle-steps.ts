@@ -26,6 +26,7 @@ import {
 import { captureHostLoadSnapshot } from '../runs/analytics.js';
 import { ensureRunSlotBinding } from '../runs/slot-binding.js';
 import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
+import { taskExecutionAtDispatch } from '../runs/task-execution.js';
 
 import { prepareConfiguredRunCapabilities } from './declared-capabilities.js';
 import { RETAINED_SESSION_HANDOFF_HOLD } from './errors.js';
@@ -550,19 +551,6 @@ export function prepareSkipReason(operatorSkip: boolean): 'operator-skip' | null
 export interface DispatchStepContext {
   stepPartialIO: Map<string, StepIO>;
   blockedRunError: (message: string, reason: string) => Error;
-}
-
-/**
- * The task-execution anchor after this dispatch starts, or null when it is
- * unchanged: a dispatch that resumes the anchored task keeps its start.
- */
-export function taskExecutionAtDispatch(
-  run: Pick<Run, 'taskFile' | 'steps' | 'engineState'>,
-): NonNullable<Run['engineState']>['taskExecution'] | null {
-  const startedAt = run.steps.find((step) => step.name === 'dispatch')?.startedAt;
-  if (!run.taskFile || !startedAt) return null;
-  if (run.engineState?.taskExecution?.taskFile === run.taskFile) return null;
-  return { taskFile: run.taskFile, startedAt };
 }
 
 export async function executeDispatchStep(

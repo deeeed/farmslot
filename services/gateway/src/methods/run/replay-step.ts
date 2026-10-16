@@ -131,7 +131,7 @@ export function freshDispatchEngineStateForReplay(
   const flags = { ...engineState?.flags };
   delete flags.warmSessionReuse;
   delete flags.warmHandoffSucceeded;
-  // A fresh native task is a new task identity: its dispatch starts a new evidence window.
+  // A fresh dispatch starts a new task identity, so its own dispatch opens the evidence window.
   const { taskExecution: _resumedTask, ...rest } = engineState ?? {};
   return { ...rest, flags };
 }

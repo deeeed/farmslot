@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Add optional `RunEngineState.taskExecution`, the start of the dispatch that began the current task identity.
+- Add `RunTaskExecution` and optional `RunEngineState.taskExecution`, the start of the dispatch that began the current task identity.
 
 - `extractRunArtifactManifest` keeps a gate's recorded metadata for files the run output captured again, skips host paths and prose in step outputs, and shares `isRunArtifactImagePath` with clients.
 

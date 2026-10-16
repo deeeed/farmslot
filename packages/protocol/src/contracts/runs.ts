@@ -2722,6 +2722,16 @@ export interface RunSlotCapabilityRequirements {
   capabilityIds: string[];
 }
 
+/**
+ * Start of the dispatch that began the current task identity. A dispatch replay that
+ * resumes the same task keeps it; a new task or a fresh dispatch replaces it. QA
+ * evidence must not predate it.
+ */
+export interface RunTaskExecution {
+  taskFile: string;
+  startedAt: string;
+}
+
 export interface RunEngineState {
   slotCapabilityRequirements?: RunSlotCapabilityRequirements;
   /**
@@ -2770,12 +2780,8 @@ export interface RunEngineState {
      */
     warmHandoffSucceeded?: boolean;
   };
-  /**
-   * Start of the dispatch that began the current task identity. A dispatch replay
-   * that resumes the same task file keeps it; a new task file or a fresh native
-   * dispatch replaces it. QA evidence must not predate it.
-   */
-  taskExecution?: { taskFile: string; startedAt: string };
+  /** Start of the current task identity's execution; see {@link RunTaskExecution}. */
+  taskExecution?: RunTaskExecution;
   /** Monotonic replay generation counter; startRun bails if the run has been superseded. */
   generation?: number;
   /** Operator `run.forceComplete` on a failed run. Replay must not treat this as ordinary done. */

@@ -29,6 +29,7 @@ import {
 } from '../run-completion/retained-artifacts.js';
 import { BlockedRunError } from '../run-engine/errors.js';
 import { getRun } from '../runs/store.js';
+import { qaEvidenceStartedAt } from '../runs/task-execution.js';
 
 const assertions = new Set(['assert_json', 'assert_output', 'ui.wait_for']);
 const controls = new Set([
@@ -213,39 +214,6 @@ export interface QaPackage {
   recipeResolution: unknown;
   resolvedRecipes: Record<string, unknown>;
   artifactPaths: string[];
-}
-
-const taskDirName = (taskFile: string) => path.basename(path.dirname(taskFile));
-
-/**
- * QA evidence must not predate the execution of the task it proves. A dispatch
- * replay that resumes the same task keeps the start of the dispatch that began
- * it; a new task identity starts its own window. Runs recorded before that
- * anchor fall back to the primary worker's first launch on the same task.
- */
-export function qaEvidenceStartedAt(
-  run: Pick<
-    Run,
-    'taskFile' | 'steps' | 'engineState' | 'agentContexts' | 'startedAt' | 'createdAt'
-  >,
-): string {
-  const dispatchStartedAt = run.steps.find((s) => s.name === 'dispatch')?.startedAt;
-  const fallback = dispatchStartedAt ?? run.startedAt ?? run.createdAt;
-  const anchor = run.engineState?.taskExecution;
-  if (anchor) return anchor.taskFile === run.taskFile ? anchor.startedAt : fallback;
-  const primary = run.agentContexts?.find((context) => context.role === 'primary');
-  const legacyStart = primary?.startedAt;
-  const sameTask =
-    run.taskFile &&
-    primary?.taskFile &&
-    taskDirName(primary.taskFile) === taskDirName(run.taskFile);
-  // NaN from an unparseable time compares false, keeping the dispatch start.
-  return sameTask &&
-    legacyStart &&
-    dispatchStartedAt &&
-    Date.parse(legacyStart) <= Date.parse(dispatchStartedAt)
-    ? legacyStart
-    : fallback;
 }
 
 /** Validate runtime traces, not prose, checklist status or an end-only recipe. */
