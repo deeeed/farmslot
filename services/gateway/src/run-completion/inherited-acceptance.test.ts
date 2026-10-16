@@ -20,12 +20,27 @@ mock.module('../runs/store.js', {
 });
 const github = await import('../integrations/github-client.js');
 let posted = '';
+let existingComment = '';
+let createdComments = 0;
+let patchedComments = 0;
+let refuseCommentWrite = false;
 mock.module('../integrations/github-client.js', {
   namedExports: {
     ...github,
     ghRequest: async (args: string[]) => {
+      if (args[0] === 'api' && args.includes('--paginate'))
+        return { stdout: existingComment, stderr: '', exitCode: 0 };
       if (args[0] === 'pr' && args[1] === 'comment') {
+        if (refuseCommentWrite) throw new Error('Comment permission denied');
+        createdComments++;
         posted = await readFile(args[args.indexOf('--body-file') + 1]!, 'utf8');
+      }
+      if (args.includes('PATCH')) {
+        if (refuseCommentWrite) throw new Error('Comment permission denied');
+        patchedComments++;
+        const file = args[args.indexOf('-F') + 1]!;
+        posted = await readFile(file.slice('body=@'.length), 'utf8');
+        existingComment = JSON.stringify({ id: 777, body: posted });
       }
       return { stdout: '[]', stderr: '', exitCode: 0 };
     },
@@ -44,6 +59,10 @@ const { readInheritedAcceptanceCandidate: readInheritedAcceptanceSource } =
 const { postPRComment } = await import('./pr-publication.js');
 
 async function fixture(t: TestContext, requireFresh = false) {
+  existingComment = '';
+  createdComments = 0;
+  patchedComments = 0;
+  refuseCommentWrite = false;
   const root = await mkdtemp(path.join(os.tmpdir(), 'parent-acceptance-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const childDir = path.join(root, 'child');
@@ -177,8 +196,55 @@ test('the normal PR comment boundary appends inherited provenance after report r
     }),
     true,
   );
-  assert.ok(posted.includes('Acceptance proof inherited from run'));
+  assert.ok(posted.includes('Acceptance proof inherited from parent run'));
   for (const identity of [parent!.id, 'a'.repeat(40), sha256Text(f.raw)])
     assert.ok(posted.includes(identity));
   assert.ok(posted.includes('Follow-up work completed.'));
+});
+
+test('a provenance-only comment does not disclose the optional worker report or metrics', async (t) => {
+  const f = await fixture(t);
+  const proof = await readInheritedAcceptanceSource(f.child);
+  assert.ok(proof);
+  t.after(() => rm(`/tmp/farmslot-pr-comment-${f.child.id.slice(0, 8)}.md`, { force: true }));
+  assert.equal(
+    await postPRComment(f.child, null, 'owner/repo', 210, {
+      failOnError: true,
+      inheritedAcceptance: proof.provenance,
+    }),
+    true,
+  );
+  assert.ok(posted.includes(proof.provenance.ledgerHash));
+  assert.ok(!posted.includes('Worker report'));
+  assert.ok(!posted.includes('| Model |'));
+});
+
+test('replay adds missing provenance to the existing run comment once and preserves its content', async (t) => {
+  const f = await fixture(t);
+  const proof = await readInheritedAcceptanceSource(f.child);
+  assert.ok(proof);
+  t.after(() => rm(`/tmp/farmslot-pr-comment-${f.child.id.slice(0, 8)}.md`, { force: true }));
+  existingComment = JSON.stringify({
+    id: 777,
+    body: `<!-- farmslot-run:${f.child.id} -->\nEarlier approved report with image https://example.test/proof.png`,
+  });
+  const options = { failOnError: true, inheritedAcceptance: proof.provenance };
+  assert.equal(await postPRComment(f.child, null, 'owner/repo', 210, options), true);
+  assert.ok(posted.includes('Earlier approved report with image https://example.test/proof.png'));
+  assert.ok(posted.includes(proof.provenance.ledgerHash));
+  assert.equal(await postPRComment(f.child, null, 'owner/repo', 210, options), true);
+  assert.equal(patchedComments, 1);
+  assert.equal(createdComments, 0);
+});
+
+test('a required provenance comment refuses a write failure instead of claiming publication', async (t) => {
+  const f = await fixture(t);
+  const proof = await readInheritedAcceptanceSource(f.child);
+  assert.ok(proof);
+  t.after(() => rm(`/tmp/farmslot-pr-comment-${f.child.id.slice(0, 8)}.md`, { force: true }));
+  refuseCommentWrite = true;
+  await assert.rejects(
+    postPRComment(f.child, null, 'owner/repo', 210, { inheritedAcceptance: proof.provenance }),
+    /permission denied/,
+  );
 });

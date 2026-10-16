@@ -125,6 +125,7 @@ export async function readInheritedAcceptanceSource(
     ({ input }) => input,
   );
   const assessed = assessRecordedAcceptance({
+    reviewBinding: 'approved',
     run: source.run,
     acceptance,
     inputs,
@@ -183,7 +184,7 @@ export async function stageInheritedAcceptance(run: Run, vars: SlotVars): Promis
 
 export function inheritedAcceptanceMarkdown(proof: InheritedAcceptanceProvenance): string {
   return (
-    `Acceptance proof inherited from run \`${proof.parentRunId}\` at head ` +
+    `Acceptance proof inherited from parent run \`${proof.parentRunId}\` at head ` +
     `\`${proof.headSha}\`. Ledger SHA-256: \`${proof.ledgerHash}\`.`
   );
 }

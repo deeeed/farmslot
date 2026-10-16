@@ -425,8 +425,9 @@ export async function collectRunGateReadiness(
           inputs,
           visualPolicy,
           qaOutput,
-          reviewBinding:
-            run.flowType === 'pr-complete' && !evidencePackage && !outputDecision
+          reviewBinding: acceptance.inheritedSource
+            ? 'approved'
+            : run.flowType === 'pr-complete' && !evidencePackage && !outputDecision
               ? 'current'
               : 'captured',
           claimOverrideReceiptIds:

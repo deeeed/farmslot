@@ -26,7 +26,7 @@ interface RecordedAcceptanceContext {
   claimOverrideReceiptIds?: readonly string[];
   visualJudgmentReceiptIds?: readonly string[];
   qaOutput?: boolean;
-  reviewBinding?: 'captured' | 'current';
+  reviewBinding?: 'captured' | 'current' | 'approved';
 }
 
 /** One evidence/claim assessment for completion, publication and inherited proof. */
@@ -34,13 +34,31 @@ export function assessRecordedAcceptance(context: RecordedAcceptanceContext): {
   acceptance: GateAcceptanceRead;
   reasons: RunGatePrerequisiteReason[];
 } {
-  const { run, inputs, visualPolicy, qaOutput = false } = context;
-  const acceptance = projectGateAcceptance(context.acceptance, run, inputs, visualPolicy);
+  const { inputs, visualPolicy, qaOutput = false } = context;
+  const approved = context.reviewBinding === 'approved';
+  const run = approved
+    ? {
+        ...context.run,
+        claimOverrideReceipts: context.run.claimOverrideReceipts?.filter(({ id }) =>
+          context.claimOverrideReceiptIds?.includes(id),
+        ),
+      }
+    : context.run;
+  const selection = approved
+    ? { historical: true, capturedIds: context.visualJudgmentReceiptIds ?? [] }
+    : undefined;
+  const acceptance = projectGateAcceptance(
+    context.acceptance,
+    run,
+    inputs,
+    visualPolicy,
+    selection,
+  );
   const reasons: RunGatePrerequisiteReason[] = [];
   if (
     context.reviewBinding !== 'current' &&
     !isDeepStrictEqual(
-      appliedClaimOverrideReceiptIds(run, inputs),
+      appliedClaimOverrideReceiptIds(context.run, inputs),
       [...(context.claimOverrideReceiptIds ?? [])].sort(),
     )
   )
@@ -53,7 +71,12 @@ export function assessRecordedAcceptance(context: RecordedAcceptanceContext): {
   if (
     context.reviewBinding !== 'current' &&
     !isDeepStrictEqual(
-      appliedVisualJudgmentReceiptIds(run, inputs, visualPolicy),
+      appliedVisualJudgmentReceiptIds(
+        context.run,
+        inputs,
+        visualPolicy,
+        approved ? { historical: true } : selection,
+      ),
       [...(context.visualJudgmentReceiptIds ?? [])].sort(),
     )
   )
@@ -82,7 +105,7 @@ export function assessRecordedAcceptance(context: RecordedAcceptanceContext): {
   );
   const reviewed = inputs.map((input) =>
     valid && input.claims
-      ? reviewedRecipeClaims(run, input, visualPolicy)
+      ? reviewedRecipeClaims(run, input, visualPolicy, selection)
       : (input.claims?.criteria ?? []),
   );
   const claimsSatisfied = inputs.every(

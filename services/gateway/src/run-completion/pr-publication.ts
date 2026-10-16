@@ -7,6 +7,7 @@ import path from 'node:path';
 import {
   type FlowType,
   type InheritedAcceptanceProvenance,
+  isRecord,
   modelsMatch,
   type Run,
 } from '@farmslot/protocol';
@@ -31,18 +32,43 @@ export function prCommentBelongsToRun(body: string, runId: string): boolean {
   return looksLikeLegacyAutomatedComment && body.includes(runId.slice(0, 8));
 }
 
-export function paginatedPrCommentOutputContainsRun(output: string, runId: string): boolean {
+interface PrCommentMatch {
+  body: string;
+  id?: number;
+}
+
+function findRunPrComment(
+  output: string,
+  runId: string,
+  requireId = false,
+): PrCommentMatch | undefined {
   for (const line of output.split('\n')) {
     if (!line) continue;
     try {
-      const body: unknown = JSON.parse(line);
-      if (typeof body === 'string' && prCommentBelongsToRun(body, runId)) return true;
+      const value: unknown = JSON.parse(line);
+      const body = typeof value === 'string' ? value : isRecord(value) ? value.body : undefined;
+      if (typeof body !== 'string' || !prCommentBelongsToRun(body, runId)) continue;
+      const id =
+        isRecord(value) &&
+        typeof value.id === 'number' &&
+        Number.isSafeInteger(value.id) &&
+        value.id > 0
+          ? value.id
+          : undefined;
+      if (requireId && !id) throw new Error('Existing run comment has no usable identity');
+      return { body, id };
     } catch {
+      if (requireId)
+        throw new Error('Could not verify the existing run comment for inherited acceptance');
       // A malformed pagination row is not positive evidence that this run
       // already posted a comment.
     }
   }
-  return false;
+  return undefined;
+}
+
+export function paginatedPrCommentOutputContainsRun(output: string, runId: string): boolean {
+  return Boolean(findRunPrComment(output, runId));
 }
 
 export function shouldPostWorkerReportComment(
@@ -194,10 +220,11 @@ export async function postPRComment(
     inheritedAcceptance?: InheritedAcceptanceProvenance;
   } = {},
 ): Promise<boolean> {
+  const strict = options.failOnError || Boolean(options.inheritedAcceptance);
   // Defensive short-circuit — callers already gate on a non-empty report,
   // but this catches any future caller that forgets so we never post a
   // comment whose Worker report section is literally "No report available.".
-  if (!report || report.trim().length === 0) {
+  if ((!report || report.trim().length === 0) && !options.inheritedAcceptance) {
     console.log(
       `[run-completion] postPRComment refused for ${run.id.slice(0, 8)}: report=${report ? 'empty' : 'null'}`,
     );
@@ -206,13 +233,13 @@ export async function postPRComment(
   try {
     // Read workflow diagram if present
     let workflowMmd: string | null = null;
-    if (run.taskFile) {
+    if (report && run.taskFile) {
       const mmdPath = path.join(path.dirname(run.taskFile), 'artifacts', 'workflow.mmd');
       if (existsSync(mmdPath)) {
         try {
           workflowMmd = (await readFile(mmdPath, 'utf-8')).trim();
         } catch (err) {
-          if (options.failOnError) throw err;
+          if (strict) throw err;
           console.warn(
             `[run-completion] workflow diagram read failed: ${(err as Error).message.slice(0, 200)}`,
           );
@@ -220,11 +247,13 @@ export async function postPRComment(
       }
     }
 
-    assertPublicationTextSafe(report, workflowMmd ?? '');
-    let generatedComment = await buildPRComment(run, report, workflowMmd);
+    assertPublicationTextSafe(report ?? '', workflowMmd ?? '');
+    let generatedComment = report?.trim() ? await buildPRComment(run, report, workflowMmd) : '';
+    let inheritedText: string | undefined;
     if (options.inheritedAcceptance) {
       const { inheritedAcceptanceMarkdown } = await import('./inherited-acceptance.js');
-      generatedComment += `\n\n${inheritedAcceptanceMarkdown(options.inheritedAcceptance)}`;
+      inheritedText = inheritedAcceptanceMarkdown(options.inheritedAcceptance);
+      generatedComment = [generatedComment, inheritedText].filter(Boolean).join('\n\n');
     }
     assertPublicationTextSafe(generatedComment);
     const identityMarker = prCommentIdentityMarker(run.id);
@@ -234,7 +263,7 @@ export async function postPRComment(
     const localResidues = localPrBodyPathResidues(comment);
     if (localResidues.length > 0) {
       const message = `PR comment still contains local artifact path(s): ${localResidues.join(', ')}`;
-      if (options.failOnError) throw new Error(message);
+      if (strict) throw new Error(message);
       console.warn(`[run-completion] skipping PR comment: ${message}`);
       return false;
     }
@@ -250,15 +279,37 @@ export async function postPRComment(
         '--paginate',
         `repos/${ciRepo}/issues/${prNumber}/comments`,
         '--jq',
-        '.[].body | @json',
+        options.inheritedAcceptance ? '.[] | {id,body} | @json' : '.[].body | @json',
       ]);
+      if (options.inheritedAcceptance) {
+        const previous = findRunPrComment(existing.stdout, run.id, true);
+        if (previous) {
+          if (!previous.body.includes(inheritedText!)) {
+            const updated = `${previous.body}\n\n${inheritedText}`;
+            assertPublicationTextSafe(updated);
+            await writeFile(tmpFile, updated, 'utf8');
+            await ghRequest(
+              [
+                'api',
+                `repos/${ciRepo}/issues/comments/${previous.id}`,
+                '--method',
+                'PATCH',
+                '-F',
+                `body=@${tmpFile}`,
+              ],
+              { force: true },
+            );
+          }
+          return true;
+        }
+      }
       const alreadyPosted = paginatedPrCommentOutputContainsRun(existing.stdout, run.id);
       if (alreadyPosted) {
         console.log(`[run-completion] comment already posted for run ${run.id.slice(0, 8)}`);
         return true;
       }
     } catch (err) {
-      if (options.failOnError) throw err;
+      if (strict) throw err;
       console.warn(`[run-completion] bot comment dedup check failed: ${(err as Error).message}`);
     }
 
@@ -269,7 +320,7 @@ export async function postPRComment(
     return true;
   } catch (err) {
     if (err instanceof PublicationSecretError) throw err;
-    if (options.failOnError) throw err;
+    if (strict) throw err;
     console.warn(`[run-completion] PR comment failed: ${(err as Error).message}`);
     return false;
   }

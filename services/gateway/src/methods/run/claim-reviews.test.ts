@@ -143,6 +143,7 @@ test('PR completion consumes the parent visual review without rewriting its awai
   const before = await readFile(path.join(f.directory, 'acceptance-status.json'));
   const result = await runReviewVisualClaim(f.params, () => {}, f.dependencies);
   f.prepared.visualJudgmentReceiptIds = [result.receipt.id];
+  f.prepared.packageHash = computeReadyGatePackageHash(f.prepared);
   const { makeRun } = await import('../../run-engine/test-fixtures.js');
   const child = makeRun({ flowType: 'pr-complete', parentRunId: f.run.id });
   const sources = {
@@ -203,6 +204,28 @@ test('PR completion consumes the parent visual review without rewriting its awai
     ownSources,
   );
   assert.equal(foreignNamespace.state, 'not-ready');
+  await runReviewVisualClaim(
+    {
+      ...f.params,
+      snapshotIdentity: visualReviewSnapshotIdentity(f.run, f.decision.id),
+      verdict: 'rejected',
+      reason: 'A current check found a different result.',
+    },
+    () => {},
+    f.dependencies,
+  );
+  assert.equal(
+    (await collectRunGateReadiness(child, null, sources)).state,
+    'not-ready',
+    'A later issue must be reconciled before inheriting the captured proof',
+  );
+  fresh.visualJudgmentReceipts = f.run.visualJudgmentReceipts;
+  assert.equal(
+    (await collectRunGateReadiness(fresh, null, ownSources)).state,
+    'not-ready',
+    'Fresh proof still consumes the current issue',
+  );
+  assert.deepEqual(await readFile(path.join(f.directory, 'acceptance-status.json')), before);
 });
 
 test('delegated judgments retain their own identity/digests and drive the same parent reducer', async (t) => {
