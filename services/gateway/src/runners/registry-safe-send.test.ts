@@ -554,6 +554,44 @@ test('digest-required prompt delivery rejects text left in the runner queue', as
   );
 });
 
+test('non-digest delivery never accepts a prompt left under the Codex queue hint', async (t) => {
+  t.after(() => {
+    paneTextAfterLiteralSend = null;
+    paneTextAfterBareSend = null;
+    paneClearsAfterSubmit = true;
+    paneText = '❯\nctx:12%\n';
+  });
+  const taskMessage =
+    'Read temp/tasks/feat/tat-3215-0601-200704/TASK.md and execute all steps. Mark each checkbox as you complete it.';
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = false;
+  paneText = '› Ask Codex to do anything\n\n  ? for shortcuts\n';
+  paneTextByCapture = null;
+  // Captured Codex composer: the text stays unsent under the queue hint.
+  paneTextAfterLiteralSend = `› ${taskMessage}\n\n\n  tab to queue message                                   100% context left\n`;
+  paneTextAfterBareSend = paneTextAfterLiteralSend;
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+    exactPromptMatch: false,
+  };
+
+  await assert.rejects(
+    sendRunnerPostLaunchPrompt(vars, target, 'codex', taskMessage, 'TASK.md', '[test]', {
+      readyTimeoutMs: 100,
+      stabilityPolls: 1,
+      pollIntervalMs: 0,
+      verifyWaitMs: 0,
+      maxAttempts: 1,
+      requirePromptDigest: false,
+    }),
+    /Prompt delivery failed/,
+  );
+});
+
 test('digest-required prompt delivery does not accept pane-only task progress', async (t) => {
   const reviewMessage = `${message}\nFollow REVIEW.md`;
   callOrder.length = 0;
