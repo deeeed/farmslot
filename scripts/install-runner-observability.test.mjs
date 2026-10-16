@@ -77,7 +77,9 @@ for (const runner of ['claude', 'pi']) {
     installToTempDir(runner, repo, env);
     const alias = path.join(scratch, runner + '-alias');
     fs.symlinkSync(repo, alias, 'dir');
-    installToTempDir(runner, alias, env);
+    const otherTemporary = path.join(scratch, 'other-temporary');
+    fs.mkdirSync(otherTemporary);
+    installToTempDir(runner, alias, { ...env, TMPDIR: otherTemporary });
     const lint = new ESLint({
       cwd: repo,
       overrideConfigFile: true,

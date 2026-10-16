@@ -1164,7 +1164,7 @@ function ensureObservabilityBin(obsDir) {
   fs.mkdirSync(obsDir, { recursive: true });
   const binDir = path.join(obsDir, 'bin');
   const identity = createHash('sha256').update(fs.realpathSync(obsDir)).digest('hex');
-  const storageDir = path.join(os.tmpdir(), 'farmslot-observability-bin', identity);
+  const storageDir = path.join(os.homedir(), '.cache', 'farmslot', 'observability-bin', identity);
   fs.mkdirSync(storageDir, { recursive: true });
   const existing = fs.lstatSync(binDir, { throwIfNoEntry: false });
   if (existing?.isSymbolicLink()) {
