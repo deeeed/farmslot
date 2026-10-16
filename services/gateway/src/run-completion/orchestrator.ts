@@ -12,6 +12,7 @@ import {
   type DiffStat,
   effectiveRequiredReviewCount,
   type GatePolicy,
+  type InheritedAcceptanceProvenance,
   modelsMatch,
   type PublicationStatus,
   type PublicationTarget,
@@ -26,6 +27,7 @@ import {
 import { getProjectField, loadProjectVars, loadSlotVars, SlotConfigError } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { execLocal } from '../core/index.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import { shellQuote } from '../core/tmux.js';
 import { ghRequest } from '../integrations/github-client.js';
 import {
@@ -202,6 +204,7 @@ export function initRunCompletion(broadcast: BroadcastFn): void {
 }
 
 export interface CompletionResult {
+  inheritedAcceptance?: InheritedAcceptanceProvenance;
   prNumber: number | null;
   ciRepo: string | null;
   artifactsCopied: boolean;
@@ -1055,12 +1058,14 @@ export async function runCompletionPipeline(
     suppressPrMutation?: boolean;
     forPublication?: boolean;
     requireArtifactMirror?: boolean;
+    inheritedAcceptance?: InheritedAcceptanceProvenance;
   },
 ): Promise<CompletionResult> {
   let run = getRun(runId);
   if (!run) throw new Error(`Run not found: ${runId}`);
 
   const flags: CompletionResult = {
+    ...(options?.inheritedAcceptance ? { inheritedAcceptance: options.inheritedAcceptance } : {}),
     prNumber: null,
     ciRepo: null,
     artifactsCopied: false,
@@ -1145,9 +1150,28 @@ export async function runCompletionPipeline(
   const pv = await loadProjectVars(updatedRun.project).catch(() => null);
   const ciRepo: string | null = (pv?.projectJson as any)?.ci?.repo ?? null;
   flags.ciRepo = ciRepo;
+  const inheritedTarget = options?.inheritedAcceptance
+    ? (await import('../review/session-mode.js')).reviewPRIdentity(updatedRun, {
+        requirePRContext: true,
+      })
+    : null;
+  if (
+    options?.inheritedAcceptance &&
+    (!inheritedTarget ||
+      (ciRepo && ciRepo.toLowerCase() !== inheritedTarget.repository.toLowerCase()))
+  )
+    throw new GatewayMethodError(
+      'RUN_GATE_NOT_READY',
+      'Inherited acceptance completion must target the same pull request.',
+    );
 
   // 2. Find PR number
   const prNumber = !suppressPrMutation && ciRepo ? await findPRNumber(updatedRun, ciRepo) : null;
+  if (inheritedTarget && prNumber && prNumber !== inheritedTarget.prNumber)
+    throw new GatewayMethodError(
+      'RUN_GATE_NOT_READY',
+      'Inherited acceptance completion resolved a different pull request.',
+    );
   flags.prNumber = prNumber;
   if (prNumber) {
     await persistRunPrNumber(runId, prNumber);
@@ -1159,6 +1183,8 @@ export async function runCompletionPipeline(
   // PR with metadata-only comments whose `Worker report` collapsible reads
   // "No report available." — each run has a unique short-id so the body-dedup
   // check at postPRComment can't catch these.
+  // Required inherited provenance is separate from the optional report. Its
+  // comment contains only the proof receipt unless report publication is enabled.
   //
   // We deliberately do NOT gate on `run.status === 'done'` here — this helper
   // runs inside the `complete` step, and startRun() doesn't flip the run to
@@ -1170,8 +1196,34 @@ export async function runCompletionPipeline(
     reportArtifact?.fileName,
     pv?.projectJson.ci?.post_worker_report_comment === true,
   );
-  if (!isReviewPR && shouldPostReport && ciRepo && prNumber && reportIsSubstantive) {
-    flags.prCommentPosted = await postPRComment(run, report, ciRepo, prNumber);
+  const commentRepo = inheritedTarget?.repository ?? ciRepo;
+  const commentNumber = inheritedTarget?.prNumber ?? prNumber;
+  const commentReport =
+    shouldPostReport && ciRepo && prNumber && reportIsSubstantive ? report : null;
+  if (
+    !isReviewPR &&
+    commentRepo &&
+    commentNumber &&
+    (commentReport || options?.inheritedAcceptance)
+  ) {
+    try {
+      flags.prCommentPosted = await postPRComment(run, commentReport, commentRepo, commentNumber, {
+        failOnError: Boolean(options?.inheritedAcceptance),
+        inheritedAcceptance: options?.inheritedAcceptance,
+      });
+    } catch (error) {
+      if (!options?.inheritedAcceptance) throw error;
+      // Required provenance is a completion prerequisite. Preserve this run's
+      // checkout and proof so replay can reconcile a lost acknowledgement.
+      throw new GatewayMethodError(
+        'RUN_GATE_NOT_READY',
+        `Inherited acceptance provenance could not be recorded: ${error instanceof Error ? error.message : String(error)}`,
+        {
+          details: { inheritedAcceptance: options.inheritedAcceptance },
+          userAction: 'Fix GitHub publication access, then replay complete on this run.',
+        },
+      );
+    }
   } else if (!isReviewPR && shouldPostReport && ciRepo && prNumber) {
     console.log(
       `[run-completion] skipping pr-comment for ${runId.slice(0, 8)}: status=${run.status} report=${reportIsSubstantive ? 'present' : 'missing'}`,

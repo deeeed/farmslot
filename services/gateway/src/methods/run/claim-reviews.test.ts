@@ -138,6 +138,96 @@ export async function fixture(t: TestContext) {
   return { run, decision, params, dependencies, input, prepared, directory, person, inventory };
 }
 
+test('PR completion consumes the parent visual review without rewriting its awaiting-review ledger', async (t) => {
+  const f = await fixture(t);
+  const before = await readFile(path.join(f.directory, 'acceptance-status.json'));
+  const result = await runReviewVisualClaim(f.params, () => {}, f.dependencies);
+  f.prepared.visualJudgmentReceiptIds = [result.receipt.id];
+  f.prepared.packageHash = computeReadyGatePackageHash(f.prepared);
+  const { makeRun } = await import('../../run-engine/test-fixtures.js');
+  const child = makeRun({ flowType: 'pr-complete', parentRunId: f.run.id });
+  const sources = {
+    deterministic: async () => {},
+    progress: async () => ({ kind: 'idle' as const }),
+    recordedEvidence: async () => [f.input],
+    acceptance: async () => ({
+      criteria: f.input.claims!.criteria.slice(0, 1).map(({ id, text }) => ({ id, text })),
+      ledger: f.input.claims!,
+      issues: [],
+      inheritedSource: {
+        run: f.run,
+        prPackage: f.prepared,
+        provenance: {
+          source: 'parent-run' as const,
+          parentRunId: f.run.id,
+          headSha: 'a'.repeat(40),
+          ledgerHash: 'retained-ledger',
+        },
+      },
+    }),
+  };
+  const ready = await collectRunGateReadiness(child, null, sources);
+  assert.equal(ready.state, 'ready', JSON.stringify(ready.reasons));
+  const staleCI = await collectRunGateReadiness(child, null, {
+    ...sources,
+    deterministic: async () => {
+      throw new Error('Child CI is stale');
+    },
+  });
+  assert.ok(staleCI.reasons.some(({ code }) => code === 'deterministic-not-passed'));
+  const active = await collectRunGateReadiness(child, null, {
+    ...sources,
+    progress: async () => ({ kind: 'making-progress' as const }),
+  });
+  assert.equal(active.state, 'collecting');
+  assert.deepEqual(await readFile(path.join(f.directory, 'acceptance-status.json')), before);
+  const receipts = f.run.visualJudgmentReceipts;
+  f.run.visualJudgmentReceipts = [];
+  const unreviewed = await collectRunGateReadiness(child, null, sources);
+  assert.equal(unreviewed.state, 'not-ready');
+  f.run.visualJudgmentReceipts = receipts;
+  const fresh = { ...f.run, flowType: 'pr-complete' as const, decisions: [], engineState: {} };
+  const ownSources = {
+    deterministic: sources.deterministic,
+    progress: sources.progress,
+    acceptance: async () => ({
+      criteria: f.input.claims!.criteria.slice(0, 1).map(({ id, text }) => ({ id, text })),
+      ledger: f.input.claims!,
+      issues: [],
+    }),
+  };
+  const freshReady = await collectRunGateReadiness(fresh, null, ownSources);
+  assert.equal(freshReady.state, 'ready', JSON.stringify(freshReady.reasons));
+  const foreignNamespace = await collectRunGateReadiness(
+    { ...fresh, id: 'foreign-task' },
+    null,
+    ownSources,
+  );
+  assert.equal(foreignNamespace.state, 'not-ready');
+  await runReviewVisualClaim(
+    {
+      ...f.params,
+      snapshotIdentity: visualReviewSnapshotIdentity(f.run, f.decision.id),
+      verdict: 'rejected',
+      reason: 'A current check found a different result.',
+    },
+    () => {},
+    f.dependencies,
+  );
+  assert.equal(
+    (await collectRunGateReadiness(child, null, sources)).state,
+    'not-ready',
+    'A later issue must be reconciled before inheriting the captured proof',
+  );
+  fresh.visualJudgmentReceipts = f.run.visualJudgmentReceipts;
+  assert.equal(
+    (await collectRunGateReadiness(fresh, null, ownSources)).state,
+    'not-ready',
+    'Fresh proof still consumes the current issue',
+  );
+  assert.deepEqual(await readFile(path.join(f.directory, 'acceptance-status.json')), before);
+});
+
 test('delegated judgments retain their own identity/digests and drive the same parent reducer', async (t) => {
   const f = await fixture(t);
   const policy = parseProjectVisualClaimReviewPolicy({

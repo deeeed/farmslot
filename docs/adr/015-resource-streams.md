@@ -360,3 +360,13 @@ Status: Proposed. Continues the approved ADR-015 routing for provider health; ac
 A deadline expiry is an unverified `probe-timeout`, separate from a measured version mismatch or command error. Under CPU load its diagnostic is "Probe timed out under load". Keep the existing command deadlines. Timeouts produce a health warning; confirmed mismatches remain failures until successful requalification or a changed pool selection, including across later probe timeouts, and system pressure remains authoritative. After load falls, retry once for the unchanged pool selection. If that retry times out, retain the refusal without a retry loop. This avoids calling a slow but current installation stale during file-system load.
 
 Public surface: existing `@farmslot/protocol` provider diagnostics gain optional status, load and retry fields consumed by node sampling and gateway fleet/pressure readers. No new command, RPC or harness/provider contract. Normative retry bounds are in `docs/reference/provider-cli-health.md`. This clarifies Amendment 5's treatment of probe failures.
+
+## Amendment 7: bounded deploy worker verification, 2026-10-16
+
+Status: Proposed. Continues node-health diagnostics under the approved ADR-015 routing; acceptance follows paired review.
+
+Bound every tmux client in the deployment worker-shell probe, including cleanup. A stuck client must fail promptly with its machine identity instead of holding the deployment loop before the CLI-body deadline starts. Keep missing-server fallback and the existing CLI-body deadline. Never terminate the shared tmux server.
+
+Dev deployment persists the verification outcome in its existing selected home. Node metrics publish failure as optional worker CLI health, and fleet/pressure readers retain it until a later successful verification. Cleanup failure cannot leave a success receipt. This makes an online node's failed worker environment visible without changing worker ownership or process gauges.
+
+Public surface: optional `WorkerCliHealth` on existing `@farmslot/protocol` node metrics and machine health. Private deployment writes the receipt; the node sampler and gateway health readers consume it. No new command, RPC or harness/provider contract. Normative rules are in `docs/reference/node-worker-cli-health.md`.

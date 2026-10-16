@@ -7,7 +7,7 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
-import { reviewedRecipeClaims } from './claim-reviews.js';
+import { reviewedRecipeClaims, type VisualReviewReadSelection } from './claim-reviews.js';
 import type { GateAcceptanceRead } from './gate-prerequisites.js';
 
 export function claimOverrideAuthority(
@@ -48,6 +48,7 @@ export function projectGateAcceptance(
   run: Run,
   inputs: readonly RecordedEvidencePackageInput[],
   policy?: ProjectVisualClaimReviewPolicy,
+  selection?: VisualReviewReadSelection,
 ): GateAcceptanceRead {
   if (acceptance.ledger?.schemaVersion !== 2) return acceptance;
   const input = inputs.find(
@@ -55,7 +56,7 @@ export function projectGateAcceptance(
   );
   if (!input?.claims) return acceptance;
   const authority = claimOverrideAuthority(run, input);
-  const reviewed = reviewedRecipeClaims(run, input, policy);
+  const reviewed = reviewedRecipeClaims(run, input, policy, selection);
   return {
     ...acceptance,
     ledger: {
