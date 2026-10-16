@@ -383,3 +383,12 @@ test('a legacy target cannot stop a different live worker or authorize a nonterm
   panes.get('%75')!.runnerLive = false;
   assert.match((await stopRunOwnedTmuxWorkers(run)) ?? '', /no exact pane identity/);
 });
+
+test('a legacy numeric index is unknown rather than an absent named window', async () => {
+  const { fix } = sharedFixRun();
+  fix.runnerSessionId = null;
+  fix.runnerSessionPath = null;
+  fix.target = { session: 'mmt-3', window: '1', pane: null, target: 'mmt-3:1.0' };
+  assert.match((await stopRunOwnedTmuxWorkers(run)) ?? '', /no exact pane identity/);
+  assert.deepEqual(commands, []);
+});

@@ -35,6 +35,8 @@ let liveRun: boolean;
 let workerBlocker: string | null;
 let providerCleanups: number;
 let workspaceHelperAlive = false;
+let rawProcessCensus: string | null = null;
+let cwdProcessCensus: string | null = null;
 
 function reapIdentity(cmd: string) {
   const expected = /if \[ "\$scope" != '([0-9a-f]+)' \]/.exec(cmd)?.[1];
@@ -99,10 +101,16 @@ mock.module('../core/index.js', {
     execOnSlot: async (_vars: unknown, cmd: string) => {
       commands.push(cmd);
       if (cmd.startsWith('lsof -a -d cwd'))
-        return { stdout: workspaceHelperAlive ? 'p999\nn/slot\n' : '', stderr: '', exitCode: 0 };
+        return {
+          stdout: cwdProcessCensus ?? (workspaceHelperAlive ? 'p999\nn/slot\n' : ''),
+          stderr: '',
+          exitCode: 0,
+        };
       if (cmd.startsWith('ps -axo'))
         return {
-          stdout: workspaceHelperAlive ? '999 1 999 Fri Oct 9 01:00:00 2026 node\n' : '',
+          stdout:
+            rawProcessCensus ??
+            (workspaceHelperAlive ? '999 1 999 Fri Oct 9 01:00:00 2026 node\n' : ''),
           stderr: '',
           exitCode: 0,
         };
@@ -175,7 +183,8 @@ mock.module('../methods/runtime-capabilities.js', {
   },
 });
 
-const { stopRunOwnedTmuxAndWatches, retryOccupiedRunSlot } = await import('./slot-teardown.js');
+const { slotTeardownBlocker, stopRunOwnedTmuxAndWatches, retryOccupiedRunSlot } =
+  await import('./slot-teardown.js');
 const { releaseCompletedRunSlot } = await import('../methods/run/lifecycle-control.js');
 
 const run = {
@@ -202,6 +211,8 @@ beforeEach(() => {
   workerBlocker = null;
   providerCleanups = 0;
   workspaceHelperAlive = false;
+  rawProcessCensus = null;
+  cwdProcessCensus = null;
 });
 
 test('cancel during or after prepare stops the run prepare-scope holder', async () => {
@@ -400,4 +411,14 @@ test('terminal provider shutdown precedes the workspace occupancy census', async
   assert.equal(workspaceHelperAlive, false);
   assert.equal(providerCleanups, 1);
   assert.equal(slotRow?.lifecycle, 'ready');
+});
+
+test('an unreadable live process identity cannot masquerade as an exited occupant', async () => {
+  cwdProcessCensus = 'p999\nn/slot\n';
+  rawProcessCensus = '999 unreadable identity\n';
+  assert.match((await slotTeardownBlocker(run)) ?? '', /Process 999 still uses/);
+  rawProcessCensus = '';
+  assert.match((await slotTeardownBlocker(run)) ?? '', /identity census is unreadable/);
+  rawProcessCensus = '1000 1 1000 Fri Oct 9 01:00:00 2026 node\n';
+  assert.equal(await slotTeardownBlocker(run), null, 'the original occupant is verifiably gone');
 });

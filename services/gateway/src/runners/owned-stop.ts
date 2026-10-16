@@ -87,6 +87,8 @@ export async function quiescentHistoricalWorkerPanes(
 ): Promise<string[] | null> {
   const target = context.target;
   if (!isTerminalRunStatus(run.status) || !target) return null;
+  // Numeric window/pane indices do not identify a historical named window.
+  if (/^\d+$/.test(target.window ?? '') || /:\d+(?:\.\d+)?$/.test(target.target)) return null;
   if (!target.window && !target.target.includes(':') && !/^@\d+$/.test(target.target)) return null;
   const listed = await execOnSlot(
     vars,

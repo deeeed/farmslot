@@ -242,6 +242,15 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
       }
     }
   }
+  // An unreadable identity is still a live occupant, never evidence of exit.
+  const livePids = new Set(
+    processes.stdout.split('\n').flatMap((line) => {
+      const match = /^\s*(\d+)\s/.exec(line);
+      return match ? [match[1]] : [];
+    }),
+  );
+  if (census.stdout.trim() && livePids.size === 0)
+    return 'Workspace process identity census is unreadable; slot teardown was skipped';
   let pid = '';
   for (const line of census.stdout.split('\n')) {
     if (line.startsWith('p')) pid = line.slice(1);
@@ -249,7 +258,7 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
       const cwd = line.slice(1);
       if (
         (cwd === repo || cwd.startsWith(`${repo}/`)) &&
-        censusRows.some((process) => process.pid === pid) &&
+        livePids.has(pid) &&
         !ownedShells.has(pid) &&
         !passive.has(pid) &&
         !ownedProviders.has(pid)
