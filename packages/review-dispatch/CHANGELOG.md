@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Share publication decision status, AC judgment rows and attestation availability across operator clients.
+- Share AC row state and judgment controls across publication, preview and evidence views in both clients.
 
 - Use gateway device-session expiry in clients instead of the temporary local sign-in lifetime.
 

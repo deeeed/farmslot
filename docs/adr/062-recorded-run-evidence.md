@@ -637,3 +637,27 @@ coordinated protocol/runner/SDK release without a new hook. No endpoint, manifes
 field, task mark, publication identity rule or second reducer is added. Release
 changed installed packages together before provider cutover, under their existing
 experimental versioning.
+
+## Amendment 11: independent visual verification and judgment refresh (2026-10-16)
+
+Accepted by the lead after paired design review of revision 4, with native pipeline review transport required in the same change. Ships in #1185. This supersedes Amendments 7/9 on opt-in pipeline verification, receipt order, manual refresh and the normal publication approver audit. Amendment 10 remains the separate retained-worker repair loop.
+
+Independent pipeline visual verification satisfies an AC by default. The reviewer is a gateway-admitted native `review` context, bound to node, owner, session, generation, lease and command. Its session must differ from every worker/fix session of the run, including their retained session histories.
+
+The native runner adapter declares a structured-result capability. The review command supplies the protocol-owned per-AC result schema. The adapter records one validated typed result for that bound command's completed turn. Gateway collection uses only that result, never assistant prose, tool text, signal files, shared task results or overall code-review PASS. Pipeline reviewers use native transport, including runs with tmux workers. The primary worker retains its transport and session. Existing tmux reviews and unsupported adapters leave visual ACs at "Needs a check"; they do not gain authority retroactively. Existing review budgets remain unchanged.
+
+Retain the review's launch-time execution and input closure. When the publication package freezes the same closure, the existing visual writer stamps `pipeline-reviewed` receipts with the native reviewer identity, existing reviewed-file digests, engine moments and rationale. Mismatches remain unchecked. Stamp once per reviewer binding, closure and AC. That stable key, not the package snapshot, identifies a retry. A stamp at a pending publication gate invokes automatic refresh once; the refreshed package reuses those receipts without re-stamping. Public manual-review RPC requests cannot manufacture this kind. Legacy delegated-service credentials, allowlists, delegators and labels remain unchanged.
+
+Every non-person-only visual AC accepts a qualified pipeline receipt; no receipt means "Needs a check". Add explicit project `personOnly`; retain normalized `personOnlyClaimIds` and ancestor restrictions. IDs apply across that project's tasks. Require delegation fields only for legacy delegation. Configure Extension's person-only criteria before activation. Current policy changes require refresh; historical projections retain frozen qualification.
+
+Within the same execution and closure, the latest person receipt outranks agent receipts; among agent receipts, the latest wins. Only a later person receipt or a new selected execution clears a person Issue. Person confirmation always qualifies; authorized untestable exceptions retain their scope.
+
+A judgment at a pending publication gate automatically invokes the supported package refresh before success. Failure preserves its receipt, reports the refusal and keeps Refresh package available. Retry reuses the receipt. Output-review judgments have no publication package to refresh. Never approve or resolve a gate automatically.
+
+Stamp normal approval's principal ID, name and person/service subject kind on its decision resolution, bound to the package and frozen receipt IDs. Render it in PR provenance. Never mutate the frozen package or infer historical actors; show "Not recorded". Publication authority and other prerequisites remain unchanged.
+
+Both clients use one AC list: "Proven", "Verified by agent", "Checked", "Issue", "Untestable", "Needs a check", or "Needs your check" for person-only. Evidence and optional Looks right / Issue stay in place; only Issue needs prose. Overrides and warnings open on demand. Send back delivery and scoped re-proof remain the authorised follow-up; until then, Issue blocks.
+
+### Public surface
+
+Protocol owns `PipelineVisualJudgments`, native result-schema/result event fields, receipt kind/identity, policy and decision audit. The native runner adapter owns capability declaration, schema-constrained output capture and validation. Native review collection is the named consumer. Public `RunRpc.reviewVisualClaim` keeps manual kinds. SDK and review-dispatch supply both clients. Ship compatible readers and result-capable native adapters before writer activation.

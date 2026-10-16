@@ -1241,3 +1241,11 @@ requires rationale. The SDK's judgment row owns `pending`;
 `visualPrevalidationLabel` in `@farmslot/review-dispatch` supplies the label to
 both clients. These additive exports share the existing package versioning.
 Implementation: [#1179](https://github.com/deeeed/farmslot/pull/1179).
+
+## Independent visual verification
+
+ADR-062 Amendment 11 governs pipeline visual judgments. Native review roles consume the protocol-owned typed result schema, retaining the command identity and execution closure. A worker's overall PASS or task-directory feedback never qualifies a visual claim. Pipeline review transport is native even when the retained producing worker uses tmux. Missing capability or result leaves the claim unchecked, without resetting a review budget.
+
+Qualified per-AC results use the canonical visual writer, bound to recording, closure, file digests, engine moments and reviewer binding. A stable reviewer/closure/claim retry key prevents duplicate stamps and refresh loops. Public manual review RPCs cannot produce pipeline receipts. Person-only project/claim/ancestor policy remains explicit. A person's latest judgment outranks agent receipts within the same execution and closure; later agent results cannot clear a person's Issue.
+
+Every newly recorded judgment on a pending publication gate invokes the supported package refresh before success. A refresh refusal preserves the receipt and leaves an idempotent retry. Resolved/output judgments do not refresh a publication package. Approval never happens automatically. Successful normal approval records the actual person/service principal and binds it to the frozen package and receipt IDs on decision resolution. Historical actors are not inferred.

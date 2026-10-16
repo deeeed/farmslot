@@ -18,7 +18,10 @@ import {
   type ReadyGatePayload,
   validVisualJudgmentReason,
 } from '@farmslot/protocol';
-import { resolveReviewDispatchDefaults } from '@farmslot/review-dispatch';
+import {
+  resolveReviewDispatchDefaults,
+  type VisualJudgmentFeedback,
+} from '@farmslot/review-dispatch';
 
 import '../diff-viewer/diff-review.js';
 import '../recipe-graph/recipe-graph.js';
@@ -60,6 +63,7 @@ import {
 import { readyReviewRequestProgress } from './ready-workspace-review-request-model.js';
 import {
   renderReadyDiffTab,
+  renderReadyPackageMetadata,
   renderReadyTabBar,
   renderReadyTopBar,
 } from './ready-workspace-shell-renderers.js';
@@ -84,6 +88,7 @@ import { renderWorkspaceEvidencePreview } from './workspace-evidence-preview.js'
 export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   @state() private _claimOverrideId: string | null = null;
   @state() private _claimOverrideReason = '';
+  @state() private _visualJudgmentFeedback?: VisualJudgmentFeedback;
   @state() private _visualReviewReasons: Record<string, string> = {};
   @state() private _attestingDecisionId: string | null = null;
   @state() private _evidenceModel: EvidenceReviewModel | null = null;
@@ -156,13 +161,43 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       readErrors: source?.errors ?? readErrors,
     });
   }
+  private async _focusEvidenceClaim(id: string): Promise<void> {
+    const details = this.querySelector<HTMLDetailsElement>('.rdy-review-content');
+    if (details) details.open = true;
+    this._setActiveTab('evidence');
+    this._evidenceModel?.setComparisonFilter('all');
+    this._evidenceModel?.selectClaim(id);
+    this.requestUpdate();
+    await this.updateComplete;
+    this.renderRoot
+      ?.querySelector(`[data-ac="${CSS.escape(id)}"]`)
+      ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }
+  private _visualReviewControls() {
+    return {
+      judgmentRows: this._evidenceModel?.judgmentRows(gateway.authenticatedPrincipal) ?? [],
+      busy: this._acting || this._refreshingPackage,
+      feedback: this._visualJudgmentFeedback,
+      reviewReason: (id: string) => this._visualReviewReasons[id] ?? '',
+      changeReviewReason: (id: string, reason: string) => {
+        this._visualReviewReasons = { ...this._visualReviewReasons, [id]: reason };
+      },
+      recordReview: this.decision?.resolvedAt
+        ? undefined
+        : (id: string, verdict: 'confirmed' | 'rejected') =>
+            void this._recordVisualReview(id, verdict),
+      focusClaim: (id: string) => this._focusEvidenceClaim(id),
+    };
+  }
   private _renderClaimReview() {
     const model = this._evidenceModel;
     if (!model) return nothing;
+    const controls = this._visualReviewControls();
     return renderAcceptancePanel(
       { schemaVersion: 1, criteria: [] },
       {
         evidenceModel: model,
+        judgments: { ...controls, rows: controls.judgmentRows },
         overrideEditor: {
           claimId: this._claimOverrideId,
           reason: this._claimOverrideReason,
@@ -223,6 +258,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     const model = this._evidenceModel;
     if (!model || this._acting) return;
     this._acting = true;
+    this._visualJudgmentFeedback = { claimId, phase: 'saving' };
     try {
       const params = model.visualReviewRequest(
         claimId,
@@ -237,12 +273,15 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       );
       if (params.runId !== this.runId) throw new Error('The run changed. Refresh the evidence.');
       await gateway.request(Methods.RUN_REVIEW_VISUAL_CLAIM, params);
+      this._visualJudgmentFeedback = { claimId, phase: 'refreshing' };
       await this._loadReviewEvidence();
-      this._actionMessage = 'Visual judgment recorded.';
-      this._actionTone = 'success';
+      this._visualJudgmentFeedback = undefined;
     } catch (error) {
-      this._actionMessage = error instanceof Error ? error.message : String(error);
-      this._actionTone = 'error';
+      this._visualJudgmentFeedback = {
+        claimId,
+        phase: 'error',
+        message: error instanceof Error ? error.message : String(error),
+      };
     } finally {
       this._acting = false;
     }
@@ -433,7 +472,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
         this._attestingDecisionId = this.decision?.id ?? null;
       },
       setAttestationReason: (value) => this._setEvidenceAttestationReason(value),
-      acting: this._acting,
+      acting: this._acting || this._refreshingPackage,
       recovering: this._isRecovering,
       diffArtifact,
       fileDiffAvailable: Boolean(this._fileDiff),
@@ -443,27 +482,10 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       openDiff: (title, artifact) => this._openDiffModal(title, artifact),
       openReviewRequestModal: () => this._openReviewRequestModal(),
       confirmAction: (actionId) => this._confirmAction(actionId),
-      claims: this._evidenceModel?.claims,
-      judgmentRows: this._evidenceModel?.judgmentRows(gateway.authenticatedPrincipal),
-      reviewReason: (id) => this._visualReviewReasons[id] ?? '',
-      changeReviewReason: (id, reason) => {
-        this._visualReviewReasons = { ...this._visualReviewReasons, [id]: reason };
-      },
-      recordReview: (id, verdict) => void this._recordVisualReview(id, verdict),
+      ...this._visualReviewControls(),
+      showClaims: false,
       refreshPackage: () => void this._refreshPublishPackage(payload),
       pendingVisualClaimIds: this._evidenceModel?.pendingVisualClaimIds,
-      focusClaim: async (id) => {
-        const details = this.querySelector<HTMLDetailsElement>('.rdy-review-content');
-        if (details) details.open = true;
-        this._setActiveTab('evidence');
-        this._evidenceModel?.setComparisonFilter('all');
-        this._evidenceModel?.selectClaim(id);
-        this.requestUpdate();
-        await this.updateComplete;
-        this.renderRoot
-          ?.querySelector(`[data-ac="${CSS.escape(id)}"]`)
-          ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-      },
     });
   }
 
@@ -549,6 +571,8 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
 
   private _renderTabContent(payload: ReadyGatePayload) {
     switch (this._activeTab) {
+      case 'criteria':
+        return this._renderClaimReview();
       case 'pr-preview':
         return this._renderPrPreviewTab(payload);
       case 'input':
@@ -558,7 +582,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       case 'evidence':
         return this._renderEvidenceTab(payload);
       case 'quality':
-        return this._renderQualityTab(payload);
+        return html`${this._renderPackagePanel(payload)}${this._renderQualityTab(payload)}`;
       case 'recipe':
         return this._renderRecipeTab(payload);
       case 'learnings':
@@ -569,13 +593,27 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   }
 
   private _renderPrPreviewTab(payload: ReadyGatePayload) {
-    return renderReadyPrPreviewTab({
+    return html`${renderReadyPackageMetadata({
+      payload,
+      decision: this.decision,
+      publicationTarget: this._publicationTarget,
+      pendingConfirm: null,
+      acting: this._acting,
+      recovering: this._isRecovering,
+      fileDiffAvailable: Boolean(this._fileDiff),
+      diffArtifact: this._primaryDiffArtifact(payload),
+      actionMessage: '',
+      actionTone: '',
+      openDiff: (title, artifact) => this._openDiffModal(title, artifact),
+      openReviewRequestModal: () => this._openReviewRequestModal(),
+      confirmAction: (id) => this._confirmAction(id),
+    })}${renderReadyPrPreviewTab({
       payload,
       publicationTarget: this._publicationTarget,
       markdown: this._renderPrPreviewMarkdown(payload),
       fallback: () => this._renderDiffTab(),
-      claims: this._renderClaimReview(),
-    });
+      claims: nothing,
+    })}`;
   }
 
   private _renderInputTab(payload: ReadyGatePayload) {
@@ -672,6 +710,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
                 this._visualReviewReasons = { ...this._visualReviewReasons, [id]: reason };
               },
               reviewing: this._acting,
+              feedback: this._visualJudgmentFeedback,
               recordReview: (id, verdict) => this._recordVisualReview(id, verdict),
               artifactUrl: (path) => this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
               changed: () => this.requestUpdate(),

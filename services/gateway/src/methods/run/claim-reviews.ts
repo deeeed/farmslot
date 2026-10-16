@@ -202,7 +202,10 @@ export async function runReviewVisualClaim(
   if (
     source.decisionId &&
     updated.decisions.some(
-      (decision) => decision.id === source.decisionId && decision.payload?.kind === 'ready',
+      (decision) =>
+        decision.id === source.decisionId &&
+        !decision.resolvedAt &&
+        decision.payload?.kind === 'ready',
     )
   ) {
     try {

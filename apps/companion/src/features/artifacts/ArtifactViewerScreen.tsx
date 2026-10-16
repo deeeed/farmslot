@@ -55,6 +55,7 @@ import { gatewayFetch } from '../../lib/gateway-http-auth';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
 import { runRefreshEventMatches } from '../../lib/run-refresh';
 import { baseStyles, spacing } from '../../lib/theme';
+import { recordVisualClaimReview } from '../../lib/visual-claim-review';
 import { selectArtifactWorkspaceDecision } from '../../lib/workspace-decisions';
 import {
   artifactWorkspaceNavCurrent,
@@ -397,6 +398,8 @@ export default function ArtifactViewerScreen() {
         artifacts: manifest,
         package: recordedEvidence?.input,
         contractVersion: recordedEvidence?.contractVersion,
+        visualReviewAuthority: recordedEvidence?.visualReviewAuthority,
+        visualReviewContext: recordedEvidence?.visualReviewContext,
         readErrors: recordedEvidence?.errors,
         artifactPrefix: recordedEvidence?.artifactPrefix,
         packagePath: recordedEvidence?.packagePath,
@@ -725,6 +728,11 @@ export default function ArtifactViewerScreen() {
             <TaskAcceptancePanel
               acceptanceStatus={recordedEvidence?.input?.claims ?? null}
               evidenceModel={evidenceModel}
+              judgmentRows={evidenceModel.judgmentRows(client?.authenticatedPrincipal ?? null)}
+              onRecordVisualReview={async (id, verdict, reason) => {
+                await recordVisualClaimReview(client, runId, evidenceModel, id, verdict, reason);
+                await refreshRecipeRuns('visual review', false);
+              }}
               showOccurrences
               onOpenEvidence={(id, path) => {
                 evidenceModel.selectClaim(id, path);

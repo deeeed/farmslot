@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- Keep evidence warnings behind an on-demand Details control in acceptance views.
+- Use compact shared acceptance rows, inline judgment progress and evidence-first gate tabs with a persistent approval action; keep supporting details on demand.
 
 - Separate publication status, AC judgments, attestation and actions into readable sections.
 

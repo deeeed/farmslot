@@ -63,6 +63,7 @@ export interface WorkspaceEvidenceComparison {
   model: EvidenceReviewModel;
   reviewer?: SelfPrincipalSummary | null;
   reviewing?: boolean;
+  feedback?: import('@farmslot/review-dispatch').VisualJudgmentFeedback;
   reviewReason?(claimId: string): string;
   changeReviewReason?(claimId: string, reason: string): void;
   recordReview?(claimId: string, verdict: 'confirmed' | 'rejected'): void | Promise<void>;
@@ -540,6 +541,7 @@ function renderComparisonPreview(input: WorkspaceEvidenceComparison): TemplateRe
               ? renderVisualClaimJudgment({
                   row: judgment,
                   busy: input.reviewing || !input.recordReview,
+                  feedback: input.feedback,
                   reason: input.reviewReason?.(row.claim.id) ?? '',
                   changeReason: (reason) => input.changeReviewReason?.(row.claim.id, reason),
                   record: (verdict) => {

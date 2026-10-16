@@ -1714,6 +1714,8 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
             </Pressable>
             <TaskAcceptancePanel
               evidenceModel={outputAcceptance.evidenceModel}
+              judgmentRows={outputAcceptance.evidenceModel?.judgmentRows(outputAcceptance.reviewer)}
+              onRecordVisualReview={outputAcceptance.recordVisualReview}
               onMarkUntestable={markOutputClaimUntestable}
               acceptanceStatus={outputAcceptance.acceptanceStatus}
               acceptanceCriteria={outputAcceptance.acceptanceCriteria}
@@ -1988,6 +1990,8 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
             <TaskAcceptancePanel
               acceptanceStatus={null}
               evidenceModel={documentViewer.evidenceModel}
+              judgmentRows={documentViewer.evidenceModel.judgmentRows(outputAcceptance.reviewer)}
+              onRecordVisualReview={outputAcceptance.recordVisualReview}
               onOpenEvidence={(criterionId, path) => {
                 setDocumentViewer(null);
                 router.push(

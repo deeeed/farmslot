@@ -1,18 +1,18 @@
 import { html, nothing } from 'lit';
 
-import {
-  type PublicationGateInput,
-  publicationGateView,
-  visualPrevalidationLabel,
-} from '@farmslot/review-dispatch';
-import { publicationGateColors } from '@farmslot/theme';
+import { type PublicationGateInput, publicationGateView } from '@farmslot/review-dispatch';
+import { publicationGateCssVariables } from '@farmslot/theme';
 
 import { fonts, radii, spacing } from '../../styles/theme-tokens.js';
-
-import { renderVisualClaimJudgment, visualClaimJudgmentStyles } from './visual-claim-judgment.js';
+import {
+  acceptanceClaimListStyles,
+  renderAcceptanceClaimList,
+} from '../progress-tracker/acceptance-claim-list.js';
 
 export interface PublicationGatePanelInput extends PublicationGateInput {
   busy: boolean;
+  showClaims?: boolean;
+  feedback?: import('@farmslot/review-dispatch').VisualJudgmentFeedback;
   reviewReason?: (id: string) => string;
   changeReviewReason?: (id: string, reason: string) => void;
   recordReview?: (id: string, verdict: 'confirmed' | 'rejected') => void;
@@ -29,38 +29,10 @@ export interface PublicationGatePanelInput extends PublicationGateInput {
 export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
   const view = publicationGateView(input);
   return html`<section class="publication-gate" aria-label="Publication decision">
-    <p class="gate-status" role="status">${view.status}</p>
-    ${view.claims.length
+    ${input.showClaims !== false && view.claims.length
       ? html`<section aria-label="Acceptance judgments">
           <h3>Acceptance judgments</h3>
-          <ul class="gate-claims" tabindex="0" aria-label="Acceptance criteria">
-            ${view.claims.map(
-              (claim) =>
-                html`<li data-gate-ac=${claim.id}>
-                  <strong>${claim.id}</strong><span class="gate-claim-text">${claim.text}</span>
-                  <span class="gate-state" data-pending=${claim.pending}>${claim.state}</span>
-                  <button
-                    class="gate-secondary"
-                    type="button"
-                    @click=${() => void input.focusClaim?.(claim.id)}
-                  >
-                    Review
-                    evidence${claim.judgment?.media.clip
-                      ? ` · ${Math.floor(claim.judgment.media.clip.startMs / 1000)}s`
-                      : ''}<span class="gate-sr-only"> for ${claim.id}</span>
-                  </button>
-                  ${claim.judgment
-                    ? renderVisualClaimJudgment({
-                        row: claim.judgment,
-                        busy: input.busy || !input.recordReview,
-                        reason: input.reviewReason?.(claim.id) ?? '',
-                        changeReason: (reason) => input.changeReviewReason?.(claim.id, reason),
-                        record: (verdict) => input.recordReview?.(claim.id, verdict),
-                      })
-                    : html`<span class="gate-prevalidation">${visualPrevalidationLabel()}</span>`}
-                </li>`,
-            )}
-          </ul>
+          ${renderAcceptanceClaimList(view.claims, input)}
         </section>`
       : nothing}
     ${view.attestation && input.attesting
@@ -81,6 +53,13 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
     ${input.resolved
       ? nothing
       : html`<section class="gate-actions" aria-label="Publication actions">
+          <p class="gate-status" role="status">
+            ${input.busy
+              ? input.feedback
+                ? 'Saving judgment and refreshing…'
+                : 'Submitting…'
+              : view.status}
+          </p>
           ${view.refreshRequired && input.refreshPackage
             ? html`<button
                 class="gate-primary"
@@ -147,26 +126,19 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
 }
 
 export function publicationGatePanelStyles() {
-  const variables = (mode: 'dark' | 'light') =>
-    Object.entries(publicationGateColors[mode])
-      .map(([name, value]) => `--gate-${name}: ${value};`)
-      .join('');
   return `
-    ready-workspace .publication-gate { ${variables('dark')}
+    ready-workspace { ${publicationGateCssVariables('dark')} }
+    @media (prefers-color-scheme: light) { ready-workspace { ${publicationGateCssVariables('light')} } }
+    ready-workspace .publication-gate { ${publicationGateCssVariables('dark')}
       color: var(--gate-text); background: var(--gate-background);
-      padding: ${spacing.lg}; border-bottom: 1px solid var(--gate-border);
-      display: grid; gap: ${spacing.lg}; flex-shrink: 0; font-size: ${fonts.sizeMd}; line-height: 1.4;
+      padding: ${spacing.md} ${spacing.lg}; border-top: 1px solid var(--gate-border);
+      position: sticky; bottom: 0; z-index: 2; display: grid; gap: ${spacing.lg}; flex-shrink: 0; font-size: ${fonts.sizeMd}; line-height: 1.4;
     }
-    @media (prefers-color-scheme: light) { ready-workspace .publication-gate { ${variables('light')} } }
+    @media (prefers-color-scheme: light) { ready-workspace .publication-gate { ${publicationGateCssVariables('light')} } }
     ready-workspace .publication-gate h3, ready-workspace .publication-gate p { margin: 0; }
     ready-workspace .publication-gate h3 { font-size: ${fonts.sizeSm}; margin-bottom: ${spacing.sm}; }
-    ready-workspace .gate-status { font-size: ${fonts.sizeMd}; font-weight: 600; }
-    ready-workspace .gate-claims { scroll-padding-block: 12px; list-style: none; margin: 0; padding: 0 0 12px; max-height: 40vh; overflow-y: auto; }
-    ready-workspace .gate-claims li { display: grid; grid-template-columns: 56px minmax(160px, 1fr) auto auto; gap: ${spacing.lg}; align-items: center; padding: ${spacing.md} 0; border-top: 1px solid var(--gate-border); }
-    ${visualClaimJudgmentStyles()}
-    ready-workspace .gate-claim-text { overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-    ready-workspace .gate-state { font-size: ${fonts.sizeSm}; border: 1px solid var(--gate-border); border-radius: ${radii.sm}; padding: ${spacing.sm} ${spacing.md}; white-space: nowrap; background: var(--gate-surface); }
-    ready-workspace .gate-state[data-pending="true"] { color: var(--gate-warning); }
+    ready-workspace .gate-status { flex: 1; min-width: 120px; font-size: ${fonts.sizeMd}; font-weight: 600; }
+    ${acceptanceClaimListStyles()}
     ready-workspace .gate-attestation { display: grid; grid-template-columns: 1fr; gap: ${spacing.lg}; align-items: center; }
     ready-workspace .gate-attestation label { display: grid; gap: ${spacing.sm}; font-weight: 600; }
     ready-workspace .gate-more-actions summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: var(--gate-secondary); padding: ${spacing.md}; }
@@ -181,6 +153,10 @@ export function publicationGatePanelStyles() {
     ready-workspace .rdy-gate-details, ready-workspace .rdy-review-content { padding: ${spacing.md} ${spacing.lg}; }
     ready-workspace .rdy-gate-details > summary, ready-workspace .rdy-review-content > summary, ready-workspace .rdy-package-details > summary { cursor: pointer; padding: ${spacing.md}; min-height: 44px; display: flex; align-items: center; }
     ready-workspace .gate-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-    @media (max-width: 720px) { ready-workspace .gate-claims li { grid-template-columns: 56px minmax(0, 1fr); } ready-workspace .gate-state, ready-workspace .gate-claims li > button { grid-column: 2; justify-self: start; } ready-workspace .gate-attestation { grid-template-columns: 1fr; } }
+    ready-workspace .rdy-tab-bar[role="tablist"] { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) auto; gap: 4px; background: var(--gate-background); }
+    ready-workspace .rdy-tab-bar[role="tablist"] .rdy-tab { min-height: 44px; min-width: 44px; padding: 8px; font-size: ${fonts.sizeSm}; color: var(--gate-text); }
+    ready-workspace .gate-extra-tabs > summary { min-height: 44px; padding: 8px; display: flex; align-items: center; cursor: pointer; }
+    @media (max-width: 720px) { ready-workspace .rdy-tab-bar[role="tablist"] { grid-template-columns: repeat(4, minmax(0, 1fr)); } ready-workspace .gate-extra-tabs { grid-column: 1 / -1; } }
+    @media (max-width: 720px) { ready-workspace .gate-attestation { grid-template-columns: 1fr; } }
   `;
 }

@@ -1,4 +1,7 @@
-import type { EvidenceReviewJudgmentRow } from '@farmslot/adapter-sdk/evidence';
+import type {
+  EvidenceReviewClaim,
+  EvidenceReviewJudgmentRow,
+} from '@farmslot/adapter-sdk/evidence';
 import {
   type AcceptanceCriterionView,
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
@@ -14,6 +17,9 @@ export interface PublicationGateAction extends DecisionAction {
 
 export interface PublicationGateClaim extends AcceptanceCriterionView {
   reviewLabels?: readonly string[];
+  proofKinds?: EvidenceReviewClaim['proofKinds'];
+  requiresPersonReview?: boolean;
+  evidenceLinked?: boolean;
 }
 
 export interface PublicationGateInput {
@@ -28,37 +34,103 @@ export interface PublicationGateInput {
   attesting?: boolean;
 }
 
-/** Presentation only: action availability and evidence judgments remain gateway-owned. */
-export function publicationGateView(input: PublicationGateInput) {
+export type AcceptanceClaimTone =
+  | 'proven'
+  | 'verified'
+  | 'checked'
+  | 'issue'
+  | 'pending'
+  | 'untestable';
+export interface VisualJudgmentFeedback {
+  claimId: string;
+  phase: 'saving' | 'refreshing' | 'error';
+  message?: string;
+}
+
+export interface AcceptanceClaimRow {
+  id: string;
+  text: string;
+  state: string;
+  tone: AcceptanceClaimTone;
+  detail: string;
+  pending: boolean;
+  source?: PublicationGateClaim;
+  judgment?: EvidenceReviewJudgmentRow;
+}
+
+/** One AC presentation for publication gates, previews and evidence panels. */
+export function acceptanceClaimRows(
+  input: Pick<PublicationGateInput, 'claims' | 'judgmentRows' | 'pendingVisualClaimIds'>,
+): AcceptanceClaimRow[] {
   const pending = new Set(input.pendingVisualClaimIds ?? []);
-  const claims = (input.claims ?? input.judgmentRows?.map((row) => row.claim) ?? []).map(
-    (claim) => ({
-      judgment: input.judgmentRows?.find((row) => row.claim.id === claim.id),
-      id: claim.id,
-      text: claim.text,
-      state:
-        claim.status?.verdict === 'failed' && claim.reviewLabels?.length
-          ? 'Issue'
-          : pending.has(claim.id)
-            ? 'Needs judgment'
-            : claim.reviewLabels?.length
-              ? 'Judged'
-              : claim.status?.verdict === 'proven'
-                ? 'Proven'
-                : (claim.status?.verdict ?? 'Not assessed'),
-      pending: pending.has(claim.id),
-    }),
-  );
+  const claims: AcceptanceClaimRow[] = (
+    input.claims ??
+    input.judgmentRows?.map((row) => row.claim) ??
+    []
+  ).map((claim) => ({
+    source: claim,
+    judgment: input.judgmentRows?.find((row) => row.claim.id === claim.id),
+    id: claim.id,
+    text: claim.text,
+    state:
+      claim.status?.verdict === 'failed'
+        ? 'Issue'
+        : pending.has(claim.id) || claim.status?.verdict === 'awaiting-review'
+          ? 'requiresPersonReview' in claim && claim.requiresPersonReview
+            ? 'Needs your check'
+            : 'Needs a check'
+          : claim.status?.verdict === 'proven'
+            ? claim.proofKinds?.includes('person-reviewed')
+              ? 'Checked'
+              : claim.proofKinds?.includes('agent-reviewed')
+                ? 'Verified by agent'
+                : 'Proven'
+            : (claim.status?.verdict ??
+              ('evidenceLinked' in claim && claim.evidenceLinked
+                ? 'Evidence linked'
+                : 'Not assessed')),
+    tone: 'pending',
+    detail: '',
+    pending: pending.has(claim.id),
+  }));
+  for (const row of claims) {
+    row.tone =
+      row.state === 'Issue'
+        ? 'issue'
+        : row.state === 'Checked'
+          ? 'checked'
+          : row.state === 'Verified by agent'
+            ? 'verified'
+            : row.state === 'Proven'
+              ? 'proven'
+              : row.state === 'untestable'
+                ? 'untestable'
+                : 'pending';
+    if (row.tone === 'untestable') row.state = 'Untestable';
+    row.detail = [row.source?.reviewLabels?.join(' · '), row.judgment?.prevalidation?.reason]
+      .filter(Boolean)
+      .join(' · ');
+  }
   for (const id of pending) {
     if (!claims.some((claim) => claim.id === id))
       claims.push({
         id,
+        source: undefined,
         judgment: undefined,
         text: 'Review the recorded criterion.',
-        state: 'Needs judgment',
+        state: 'Needs a check',
+        tone: 'pending',
+        detail: '',
         pending: true,
       });
   }
+  return claims;
+}
+
+/** Presentation only: action availability and evidence judgments remain gateway-owned. */
+export function publicationGateView(input: PublicationGateInput) {
+  const pending = new Set(input.pendingVisualClaimIds ?? []);
+  const claims = acceptanceClaimRows(input);
   const offeredNormal = input.actions.find((action) =>
     ['approve-publish', 'approve-publish-evidence-refresh', 'ready'].includes(action.id),
   );
@@ -99,7 +171,7 @@ export function publicationGateView(input: PublicationGateInput) {
     : refreshRequired
       ? 'Refresh package'
       : pending.size
-        ? `${pending.size} ${pending.size === 1 ? 'criterion needs' : 'criteria need'} your visual judgment`
+        ? `${pending.size} ${pending.size === 1 ? 'criterion needs' : 'criteria need'} a check`
         : approval?.disabledReason ||
           (!approval
             ? attestation
@@ -132,3 +204,11 @@ export function visualPrevalidationLabel(
 ): string {
   return `Agent review · ${row?.prevalidation ? (row.prevalidation.verdict === 'confirmed' ? 'Looks right' : 'Issue') : 'Not recorded'}`;
 }
+
+/** The same evidence-first navigation on desktop and Companion. */
+export const PUBLICATION_GATE_TABS = [
+  { id: 'evidence', label: 'Evidence' },
+  { id: 'criteria', label: 'Criteria' },
+  { id: 'pr-preview', label: 'Package' },
+  { id: 'quality', label: 'Checks & history' },
+] as const;

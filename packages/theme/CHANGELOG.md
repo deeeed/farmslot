@@ -4,6 +4,8 @@ All notable changes to `@farmslot/theme` are tracked here.
 
 ## Unreleased
 
+- Distinguish publication criterion states with readable light and dark colors.
+
 - Add accessible light and dark publication decision tokens.
 
 - Color token for the `pi` runner.

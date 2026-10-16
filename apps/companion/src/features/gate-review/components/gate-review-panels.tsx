@@ -1,14 +1,5 @@
 import { useState } from 'react';
-import {
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  useColorScheme,
-  useWindowDimensions,
-  View,
-} from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, useColorScheme, View } from 'react-native';
 
 import type { EvidenceReviewJudgmentRow } from '@farmslot/adapter-sdk/evidence';
 import { type RunDecision, type RunGateReadiness } from '@farmslot/protocol';
@@ -17,11 +8,10 @@ import {
   type PublicationGateClaim,
   publicationGateView,
   type ReviewDispatchViewModel,
-  visualPrevalidationLabel,
 } from '@farmslot/review-dispatch';
 import { publicationGateColors } from '@farmslot/theme';
 
-import { VisualClaimJudgment } from '../../../components/VisualClaimJudgment';
+import { AcceptanceClaimList } from '../../../components/AcceptanceClaimList';
 import type {
   GateReviewAction,
   GateReviewSummary,
@@ -151,9 +141,11 @@ export function GateActions({
   pendingVisualClaimIds,
   readiness,
   onFocusClaim,
+  showClaims = true,
   disabled = false,
   reviewDisabled = false,
 }: {
+  showClaims?: boolean;
   disabled?: boolean;
   reviewDisabled?: boolean;
   claims?: readonly PublicationGateClaim[];
@@ -176,8 +168,8 @@ export function GateActions({
   onResolve: (action: GateReviewAction, selectionData?: Record<string, unknown>) => void;
 }) {
   const appearance = useColorScheme();
-  const viewport = useWindowDimensions();
   const [attestingDecisionId, setAttestingDecisionId] = useState<string | null>(null);
+  const [judging, setJudging] = useState(false);
   const [moreActions, setMoreActions] = useState(false);
   if (decision.resolvedAt) {
     return (
@@ -202,6 +194,7 @@ export function GateActions({
   const renderAction = (action: PublicationGateAction, primary = false) => {
     const actionDisabled =
       disabled ||
+      judging ||
       Boolean(action.disabledReason) ||
       sendingActionId !== null ||
       (primary && Boolean(view.blockedReason)) ||
@@ -256,61 +249,25 @@ export function GateActions({
         accessibilityRole="header"
         style={[gateStyles.status, { color: palette.text }]}
       >
-        {view.status}
+        {judging
+          ? 'Saving judgment and refreshing…'
+          : sendingActionId === 'refresh-package'
+            ? 'Refreshing…'
+            : view.status}
       </Text>
-      {view.claims.length ? (
+      {showClaims && view.claims.length ? (
         <View accessibilityLabel="Acceptance judgments">
           <Text style={[gateStyles.label, { color: palette.text }]}>Acceptance judgments</Text>
-          <ScrollView nestedScrollEnabled style={{ maxHeight: viewport.height * 0.4 }}>
-            {view.claims.map((claim) => (
-              <View
-                key={claim.id}
-                testID={`gate-ac-${claim.id}`}
-                style={[gateStyles.claim, { borderColor: palette.border }]}
-              >
-                <Text style={[gateStyles.label, { color: palette.text }]}>{claim.id}</Text>
-                <Text numberOfLines={2} style={[gateStyles.claimText, { color: palette.text }]}>
-                  {claim.text}
-                </Text>
-                <Text
-                  style={[
-                    gateStyles.chip,
-                    {
-                      borderColor: palette.border,
-                      color: claim.pending ? palette.warning : palette.text,
-                    },
-                  ]}
-                >
-                  {claim.state}
-                </Text>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Review evidence for ${claim.id}`}
-                  onPress={() => onFocusClaim?.(claim.id)}
-                  style={[
-                    gateStyles.button,
-                    { backgroundColor: palette.surface, borderColor: palette.border },
-                  ]}
-                >
-                  <Text style={{ color: palette.text }}>
-                    Review evidence
-                    {claim.judgment?.media.clip
-                      ? ` · ${Math.floor(claim.judgment.media.clip.startMs / 1000)}s`
-                      : ''}
-                  </Text>
-                </Pressable>
-                {claim.judgment ? (
-                  <VisualClaimJudgment
-                    row={claim.judgment}
-                    onRecord={onRecordVisualReview}
-                    disabled={disabled || sendingActionId !== null}
-                  />
-                ) : (
-                  <Text style={{ color: palette.secondary }}>{visualPrevalidationLabel()}</Text>
-                )}
-              </View>
-            ))}
-          </ScrollView>
+          <View>
+            <AcceptanceClaimList
+              rows={view.claims}
+              onFocus={onFocusClaim}
+              onRecord={onRecordVisualReview}
+              disabled={disabled || judging || sendingActionId !== null}
+              onBusyChange={setJudging}
+              testIDPrefix="gate-ac"
+            />
+          </View>
         </View>
       ) : null}
       {view.attestation && attestingDecisionId === decision.id ? (
@@ -342,7 +299,7 @@ export function GateActions({
             accessibilityRole="button"
             style={gateStyles.button}
             onPress={onRefreshPackage}
-            disabled={disabled || sendingActionId !== null}
+            disabled={disabled || judging || sendingActionId !== null}
           >
             <Text style={{ color: palette.text }}>Refresh package</Text>
           </Pressable>
@@ -391,19 +348,9 @@ export function GateActions({
 }
 
 const gateStyles = StyleSheet.create({
-  panel: { padding: spacing.lg, borderWidth: 1, borderRadius: radii.md, gap: spacing.lg },
+  panel: { padding: spacing.md, borderTopWidth: 1, gap: spacing.md },
   status: { fontSize: fonts.sizeMd, fontWeight: '600' },
   label: { fontSize: fonts.sizeSm, fontWeight: '600' },
-  claim: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: spacing.md,
-    paddingVertical: spacing.md,
-    borderTopWidth: 1,
-  },
-  claimText: { flex: 1, minWidth: 160, fontSize: fonts.sizeSm, lineHeight: 18 },
-  chip: { borderWidth: 1, borderRadius: radii.sm, padding: spacing.sm, fontSize: fonts.sizeSm },
   button: {
     minHeight: 44,
     minWidth: 44,
