@@ -457,3 +457,104 @@ Static tasks MAY render their authored `artifacts/recipe.json` or existing legac
 Default rendering writes only stdout. With `--out`, write the rendered body only after requested validation passes. Refuse outputs that overwrite authored inputs, selection metadata or retained attempt evidence. Rendering MUST NOT change task identities, checklist/signal state, attempt selection or publication authority. Without JSON, `--out` prints the output filename instead of the body. Gateway template checks and publication remain separate and consume the returned temporary output bytes. Its command MUST resolve the reviewed installed gateway-host CLI through the existing executable-selection mechanism, preserving provider resolution; it MUST NOT rely on an arbitrary global `farmslot` on PATH.
 
 Before deletion, compare old/new static and selected-attempt rendering, authored sections, output/JSON consumers, missing prose, invalid selection and validation refusals. Expected selected-attempt differences are the captured recipe replacing the mutable draft and the added public-safe provenance; authored prose and generated section semantics remain equivalent. Migrate active pack, gateway and skill callers and prove installed behavior; remove the old renderer and route without forwarding wrappers.
+
+## Provider operations without a binary (Amendment 6)
+
+**Status:** Proposed by [ADR-068 Amendment 6](../adr/068-project-recipe-binding-and-conformance.md#amendment-6-provider-operations-without-a-provider-binary-2026-10-17). Nothing in this section ships until the amendment is approved and its implementation and coordinated releases are accepted.
+
+A project provider MUST be reachable only through its package module and `farmslot`. It MUST NOT ship a public or internal executable, and the overlay MUST NOT copy one into a checkout. Every command of the removed binary maps to one row below, or has an unused-reference proof under section 6.
+
+### Disposition
+
+| Removed operation                                                      | Replacement                                                                                                                                                                                                 | New surface                   |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| `run`, `call`, `actions`, `status`, `launch`, `stop`, `logs`, `reload` | The same `farmslot recipe` command                                                                                                                                                                          | None                          |
+| `doctor`, `--version`                                                  | `farmslot doctor`; the version is `provider.version` in `--json`                                                                                                                                            | None                          |
+| `last`                                                                 | `farmslot recipe status`, field `lastCommand`                                                                                                                                                               | None                          |
+| `update`                                                               | `farmslot doctor` `update` field for reporting; the operator provider rollout for changes                                                                                                                   | None                          |
+| `help`                                                                 | `farmslot recipe --help`, which appends the resolved provider's guidance                                                                                                                                    | Provider guidance below       |
+| `tutorial`, `setup-base`                                               | Published docs; `farmslot project add` and pack onboarding                                                                                                                                                  | None                          |
+| `review`, `domain`, `checklist`, `task`, `pin`                         | `farmslot review` and `farmslot task` (Amendment 3)                                                                                                                                                         | None                          |
+| `config`, `recipe-quality`                                             | `farmslot config`; `farmslot recipe quality`                                                                                                                                                                | None                          |
+| `completion-candidates`, `completions`                                 | `farmslot completion` from the canonical grammar                                                                                                                                                            | None                          |
+| `self-test`                                                            | `farmslot doctor --conformance`                                                                                                                                                                             | None                          |
+| `install`                                                              | `farmslot doctor --fix`                                                                                                                                                                                     | None                          |
+| `verify`                                                               | `farmslot doctor`, check `overlay`                                                                                                                                                                          | Overlay check below           |
+| `cleanup`                                                              | `farmslot doctor --remove-overlay`                                                                                                                                                                          | Overlay removal below         |
+| `install --runway`, `provision`                                        | Runway provisioning provider action through `farmslot recipe call`                                                                                                                                          | Runtime-free actions below    |
+| `fixtures`, `stop-viewers`, `resolve-extension`                        | Provider actions through `farmslot recipe call`                                                                                                                                                             | Runtime-free actions below    |
+| `check diff`                                                           | A declared project check recipe whose action runs the existing diff check                                                                                                                                   | Runtime-free actions below    |
+| `prepare`                                                              | `farmslot slot prepare` for git and dependencies; declared setup recipes for fixture and readiness steps                                                                                                    | Runtime-free actions below    |
+| `debug`                                                                | A declared provider action through `farmslot recipe call`                                                                                                                                                   | None                          |
+| `runtime-decision`, `ensure-ready`                                     | Provider functions called in-process by the provider's verifier and launch handler                                                                                                                          | None                          |
+| `runtime-launch`                                                       | No external caller. Verified-artifact launch is `farmslot recipe launch` with the provider's declared launch options                                                                                        | None                          |
+| `execution-template`                                                   | `farmslot execution-template`                                                                                                                                                                               | Template selection below      |
+| Pack `recipe_run`, `recipe_action_manifest`, `recipe_doctor` hooks     | Already superseded for any project with a `recipe` binding: the gateway builds `farmslot` commands                                                                                                          | Delete the hooks              |
+| Pack `recipe_harness_install`, `_verify`, `_cleanup` hooks             | No consumer: the eval-harness lifecycle needs a source containing `scripts/recipe-harness.sh`. The Core and Mobile catalogs name a path deleted from MetaMask/skills, and the provider ships no such script | Delete the hooks and catalogs |
+
+Each row MUST keep its existing arguments, output fields, exit codes and refusals, or document the translation. Recovery hints and `next` strings MUST name the replacement command.
+
+### Overlay check
+
+Plain `doctor` MUST call the selected runtime's `harness.verify` and report its result as check `overlay`. A built-in bridge runs its declared verifier. A headless runtime keeps its existing exemption. A failed or missing verifier fails readiness.
+
+The verifier MUST be read-only. It MUST NOT launch, navigate, reload, repair, seed fixtures, call actions or run recipes. It MAY read files and observe a runtime that already exists, for example by classifying a CDP port's holder. Checks a verifier made through an installed runner MUST move to the public host:
+
+- runtime decision and home-tab convergence to `recipe launch --verify`;
+- action-manifest validity to the provider manifest that doctor already validates;
+- the runner smoke to the project's declared live smoke under `doctor --conformance --live`.
+
+### Overlay removal
+
+`doctor --remove-overlay` MUST:
+
+- acquire the checkout lock;
+- run the runtime's existing cleanup leaf, or report no operation for a built-in bridge or headless runtime;
+- emit the doctor JSON envelope with `removed: true | false`.
+
+It MUST refuse when combined with `--fix`, `--conformance`, `--live`, `--print-ready` or `--expect-live`. It MUST NOT stop processes, release resources or touch files outside the overlay paths the cleanup leaf owns. `recipe stop` remains the only owned-process stop.
+
+### Runtime-free actions
+
+An action manifest entry MAY declare `runtime: "none"`. The value `"required"` is the default and keeps today's behavior. `@farmslot/protocol` validates the field, and unknown values MUST refuse.
+
+When every action in a resolved call or graph declares `runtime: "none"`, the host MUST NOT heal, launch, attach to or wait for a runtime. It MUST NOT start runtime capture or HUD. The run records capture and HUD as unsupported with reason `runtime-free`. Everything else stays as today:
+
+- source trust, plan approval, plugin policy and funding authorization;
+- device and port selection, passed to an action that declares those inputs;
+- the checkout lock, signal teardown and provider finalization;
+- artifact validation and the evidence package.
+
+A graph that mixes both kinds MUST use the normal runtime path. Conformance validates the declaration. A runtime-free live smoke still needs an observed effect and an authored teardown assertion.
+
+### Template selection
+
+`farmslot execution-template list` MUST accept `--domain`, `--domain-dir <domain=path>` (repeatable), `--id` and `--json`. `farmslot execution-template materialize <output>` MUST accept the list selectors plus `--provenance <path>`, `--title` and `--force`. Both delegate to the `@farmslot/agent-runtime` selector, keeping its precedence, shadowing, snapshot and provenance rules from ADR-049. Without `--force`, `materialize` MUST refuse to overwrite.
+
+### Provider guidance
+
+`ProjectProvider.commandOptions.help` MAY supply `guidance`, versioned with the provider. When a project resolves, `farmslot recipe --help` and `farmslot recipe <command> --help` MUST append that text after the canonical grammar. Without a resolved project, help prints the grammar alone. This mirrors the existing `recipeQuality.guidance` option. Guidance MUST NOT change parsing or defaults.
+
+### Public surface
+
+| Surface                                               | Owner                                          | Named consumer                                                                       |
+| ----------------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `doctor` check `overlay`                              | `@farmslot/recipe-cli/harness`                 | Pack health and preflight hooks, Skills setup check, former `verify` callers         |
+| `doctor --remove-overlay`                             | `@farmslot/recipe-cli/harness`                 | Core, Mobile and Terminal cleanup scripts                                            |
+| Action manifest `runtime: "none" \| "required"`       | `@farmslot/protocol`                           | MetaMask provider fixture, provisioning, resolution, viewer, check and setup actions |
+| `ActionCatalog` entry `runtime`                       | `@farmslot/adapter-sdk`                        | Project providers that declare runtime-free actions                                  |
+| `ProjectProvider.commandOptions.help.guidance`        | `@farmslot/recipe-cli/harness`                 | MetaMask provider recipe guidance; Skills references to provider help                |
+| `execution-template list` selectors and `materialize` | `@farmslot/cli` over `@farmslot/agent-runtime` | Skills recipe-cook `list-templates` and `template-command`                           |
+
+All of these are additive pre-1.0 changes, released as minor versions with coordinated pins. Existing doctor output only gains a check; no existing field changes meaning.
+
+### Acceptance
+
+Before the binary and its glue are deleted:
+
+- Each row of the disposition table has a differential: the old and new invocation on the same project and target, comparing output, exit code and checkout state.
+- The Extension end-to-end check passes through `recipe launch --verify` and `doctor --conformance --live` on a registered owned target.
+- `doctor --remove-overlay` leaves a clean checkout, and its refusals are tested.
+- A runtime-free call starts no runtime and records capture as unsupported. A mixed graph still heals.
+- `materialize` matches the provider output and provenance on the Skills fixtures.
+- The released packages pass installed-host qualification on every node.

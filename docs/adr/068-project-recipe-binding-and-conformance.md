@@ -193,3 +193,30 @@ Migrate every active consumer before enabling the hosted cutover, then delete th
 ### Public surface and consequences
 
 The [hosted task specification](../reference/project-recipe-contract.md#hosted-task-initialization) defines node-local initialization, private transport, static-task boundaries and retries. The root CLI and gateway consume the existing `@farmslot/agent-runtime` task producer and `@farmslot/recipe-cli/harness` binding/verifier APIs. No second installer, task store, engine, writer or recorder is introduced. Content approval precedes implementation in this same PR.
+
+## Amendment 6: Provider operations without a provider binary, 2026-10-17
+
+**Status:** Proposed. Acceptance follows paired review and lead approval under delegated amendment authority. Earlier decisions retain their status.
+
+### Decision
+
+Finish the Phase 3 disposition so a project provider ships no binary, public or internal. Every remaining operation reaches the provider through `farmslot`:
+
+1. **Overlay verification.** Plain `farmslot doctor` runs the selected runtime's declared `harness.verify` as its `overlay` check. That verifier is read-only and non-launching. It may observe a runtime that already exists, but never navigates, repairs or executes actions.
+2. **End-to-end proof.** A provider proves itself through the public host, not through an executable copied into the checkout. Live end-to-end checks that drove an installed runner use the shared paths instead: `recipe launch --verify` for readiness, the provider's action manifest, and `doctor --conformance --live` for the declared smoke. The overlay installs bridge files only.
+3. **Overlay removal.** `doctor --remove-overlay` runs the runtime's existing cleanup leaf under the checkout lock. Root doctor already owns overlay installation and repair; removal joins them as one more explicit switch.
+4. **Runtime-free actions.** An action manifest entry may declare `runtime: "none"`. When every action in a resolved call or graph declares it, the host executes without healing, attaching, launching or capturing a runtime. All other authorization and lifecycle contracts still apply. Fixtures, Runway provisioning, Extension target resolution, viewer stop, the diff check and setup steps become such provider actions.
+5. **Template materialization.** Root `execution-template` gains the standalone selection that `mm-harness execution-template` provided: domain sources, exact id, JSON output and `materialize`. It delegates to the same ADR-049 selector. This replaces ADR-049's provider command boundary.
+6. **Provider guidance.** `farmslot recipe --help` appends the resolved provider's versioned guidance, as `recipe quality` already does.
+
+All other remaining commands map to existing surfaces, listed in the [specification](../reference/project-recipe-contract.md#provider-operations-without-a-binary-amendment-6). Pack runner hooks for projects with a `recipe` binding are already superseded: since #936 the gateway builds the `farmslot` commands itself. The `recipe_harness_*` hooks have no consumer. The eval-harness lifecycle that runs them needs a source containing `scripts/recipe-harness.sh`; the Core and Mobile catalogs name a path deleted from MetaMask/skills, and the provider ships no such script. Packs delete both kinds of hook.
+
+### Rationale
+
+ADR-068 already states that one CLI owns checkout operations, so no project keeps per-project command glue. Leaving one internal runner binary would keep a second entry point with its own argument parsing and version drift. It would also keep verification proving a copied runner instead of the provider that callers actually use. A runtime-free declaration is needed because setup and resolution actions currently require a launched app before they can run, which is the wrong order.
+
+### Consequences and public surface
+
+`@farmslot/protocol` owns the optional `runtime` action declaration and its validator. `@farmslot/adapter-sdk` carries it in `ActionCatalog`. `@farmslot/recipe-cli/harness` consumes it in call/run/conformance, owns overlay removal and adds the help guidance option. `@farmslot/agent-runtime` keeps the template selector. The named consumers are pack cleanup, setup and fixture scripts, the Extension and Mobile providers, and the Skills recipe-cook template scripts. No engine, recorder, evidence writer, resource allocator or compatibility alias is added.
+
+These are pre-1.0 minor releases with coordinated pins. The provider adopts them and every caller moves before the binary and its glue are deleted, as in the base decision's equivalence rule. Implementation PRs follow content approval.
