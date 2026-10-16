@@ -3,6 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import {
+  applyClaudeInterruptionProbe,
+  buildClaudeInterruptionProbeCommand,
+  parseClaudeInterruptionProbe,
+} from '../../../../services/gateway/src/runners/claude-observability.ts';
+import {
   buildCodexPromptProbeCommand,
   buildCodexSessionBindingProbeCommand,
   buildCodexTurnStateProbeCommand,
@@ -207,6 +212,22 @@ export function nativeState(meta, runner, obsDir) {
           ? 'native-session-read-only'
           : 'native-session';
       observedAt = probe.observedAt;
+    }
+  }
+  if (runner === 'claude') {
+    const command = buildClaudeInterruptionProbeCommand(bound.snapshot, bound.sessionId);
+    if (command) {
+      const turn = applyClaudeInterruptionProbe(
+        bound.snapshot,
+        bound.sessionId,
+        runProbe(command, parseClaudeInterruptionProbe),
+      );
+      if (turn?.value === 'idle') {
+        phase = 'idle';
+        source = 'native-session';
+        turnToken = turn.turnToken || null;
+        observedAt = turn.observedAt;
+      }
     }
   }
   const question =
