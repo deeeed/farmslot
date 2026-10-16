@@ -107,6 +107,8 @@ The selected checklist travels inside `inputs/handoff.json` as `executionTemplat
 
 The root task commands consume `@farmslot/recipe-cli/harness`'s `projectTaskExecution`, `verifySelectedTask` and `withTaskProjectHost`. `TaskInitSpec.execution`, typed by `TaskExecutionInput` in `@farmslot/agent-runtime`, connects that selection to the one task producer. The receipt's `retainedInputs` lists original paths, retained paths and content digests. `pin` identifies the producer-owned installation pin. Verification compares its manifest with the task receipt before loading a recorded executable. The installation pins live under the selected `FARMSLOT_HOME`. The producer and verifier use that existing home selection; task data cannot choose another store or authorize another provider source.
 
+The proposed [hosted initialization contract](project-recipe-contract.md#hosted-task-initialization), ADR-068 Amendment 5, applies this same producer on the execution node. The gateway supplies task data and mirrors its result; it does not replace the generated marker or task provenance. All affected active consumers migrate before activation, and the replaced producer is deleted. Existing tasks and receipts are not upgraded.
+
 ## Handoff metadata
 
 `inputs/handoff.json` is the run's identity for closeout and learning packages:
