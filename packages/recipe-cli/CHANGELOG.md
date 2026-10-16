@@ -6,6 +6,14 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.22.0 - 2026-10-16
+
+- Expose the read-only task Markdown renderer and shared runner revision helper, preserving authored prose, checklists, selected evidence and public-safe provenance.
+
+## 0.21.1 - 2026-10-16
+
+- Align the worker dependency set with Protocol 0.49.0 person-device sessions.
+
 ## 0.21.0 - 2026-10-15
 
 - Preserve the selected project in binding errors so task initialization cannot discard runtime or slot selections.

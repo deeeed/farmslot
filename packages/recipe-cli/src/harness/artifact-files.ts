@@ -10,6 +10,12 @@ export interface ArtifactManifestEntry {
   metadata?: Record<string, unknown>;
 }
 
+/** Keep legacy revision field selection identical for validation and presentation. */
+export function runnerRevision(runner: Record<string, unknown>): string | undefined {
+  const revision = runner.git_ref ?? runner.gitRef ?? runner.ref ?? runner.commit;
+  return typeof revision === 'string' ? revision : undefined;
+}
+
 export async function writeContainedArtifact(
   artifactsDir: string,
   relativePath: string,
@@ -38,6 +44,17 @@ export async function readContainedJsonArtifact<T>(
   maxBytes: number,
   label: string,
 ): Promise<T> {
+  return JSON.parse(
+    await readContainedTextArtifact(artifactsDir, relativePath, maxBytes, label),
+  ) as T;
+}
+
+export async function readContainedTextArtifact(
+  artifactsDir: string,
+  relativePath: string,
+  maxBytes: number,
+  label: string,
+): Promise<string> {
   const file = resolveContainedArtifact(artifactsDir, relativePath, label);
   await assertContainedParent(artifactsDir, file, label);
   await assertNotSymlink(file, label);
@@ -47,7 +64,7 @@ export async function readContainedJsonArtifact<T>(
     if (!info.isFile() || info.size > maxBytes) {
       throw new Error(`${label} is not a bounded regular file.`);
     }
-    return JSON.parse(await handle.readFile('utf8')) as T;
+    return await handle.readFile('utf8');
   } finally {
     await handle.close();
   }

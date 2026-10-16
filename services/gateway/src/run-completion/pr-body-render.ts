@@ -19,7 +19,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import type { Run } from '@farmslot/protocol';
+import { isRecord, type Run } from '@farmslot/protocol';
 import { readPoolFiles } from '@farmslot/protocol/node/slot-by-repo';
 
 import {
@@ -132,8 +132,15 @@ export function __setPrBodyRenderDepsForTest(deps: PrBodyRenderDeps | null): voi
 
 function renderFailureMessage(result: ExecResult): string {
   try {
-    const parsed = JSON.parse(result.stdout) as { error?: unknown };
-    if (typeof parsed.error === 'string' && parsed.error.trim()) return parsed.error.trim();
+    const parsed: unknown = JSON.parse(result.stdout);
+    const error = isRecord(parsed) ? parsed.error : undefined;
+    const message =
+      typeof error === 'string'
+        ? error
+        : isRecord(error) && typeof error.message === 'string'
+          ? error.message
+          : undefined;
+    if (message?.trim()) return message.trim();
   } catch {
     // Not a JSON envelope; the raw streams carry the message.
   }

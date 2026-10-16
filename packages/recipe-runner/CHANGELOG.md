@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.37.2 - 2026-10-16
+
+- Align the worker dependency set with Protocol 0.49.0 person-device sessions.
+
 ## 0.37.1 - 2026-10-15
 
 - Use the operator-wait runtime and protocol dependency set.

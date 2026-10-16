@@ -161,3 +161,19 @@ Deleting project command glue while these callers remain would remove working be
 ### Consequences and public surface
 
 The [helper cutover specification](../reference/project-recipe-contract.md#shared-helper-commands) defines the routes, package owners and equivalence checks. Existing bindings, artifacts, resource authority and engine behavior remain in force. Additive public APIs require reviewed minor releases and coordinated consumers. Each old route is removed only after its callers and behavior have a proven replacement.
+
+## Amendment 4: Authored task Markdown, 2026-10-16
+
+**Status:** Accepted by the lead under delegated amendment authority, 2026-10-16, at content snapshot `2a38e98a81bc8db246997ebb86b97cfe1e3517f6`. Implementation: [#1173](https://github.com/deeeed/farmslot/pull/1173). Earlier decisions retain their status.
+
+### Decision and rationale
+
+Complete Amendment 3's `pr-body render` mapping through `farmslot recipe artifacts <task> --format markdown`. Move the existing renderer into the shared recipe CLI. Preserve authored prose, checklists, generated validation sections and selected-attempt provenance, including static tasks without a run. A filename listing alone does not replace this behavior.
+
+Rendering reads existing evidence. It does not execute recipes, validate publication policy, approve a report or create proof. Explicit output writing remains separate from artifact validation and must not overwrite authored inputs or retained evidence.
+
+### Public surface and consequences
+
+The [authored Markdown specification](../reference/project-recipe-contract.md#authored-task-markdown) defines `--command`, `--out`, JSON metadata and the shared `@farmslot/recipe-cli/harness` renderer. Named consumers are the root CLI, gateway publication renderer, project pack commands and recipe PR-description skills. Providers contribute project data rather than another renderer.
+
+Publish the additive SDK export in a reviewed pre-1.0 minor release. Migrate callers with their argument mapping before deleting the old renderer and route. No compatibility shim, artifact schema, evidence writer, execution engine or resource authority is added. Content approval precedes implementation in the same caller-parity PR.
