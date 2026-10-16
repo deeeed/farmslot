@@ -5,6 +5,12 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Add the Send back repair contract: `RecipeRepairScope`, the engine claim-source selection, the `pipeline-visual-judgments-v2` applicability result, the run-store repair record and a receipt/repair `FeedbackCandidate` variant.
+
+- Add `RunTaskExecution` and optional `RunEngineState.taskExecution`, the start of the dispatch that began the current task identity.
+
+- `extractRunArtifactManifest` keeps a gate's recorded metadata for files the run output captured again, skips host paths and prose in step outputs, and shares `isRunArtifactImagePath` with clients.
+
+- Add `extractRunArtifactManifest`, the one run artifact extractor for Command Center and Companion; it includes captured run output and keeps source metadata.
 - Expose optional dev deployment worker CLI verification health on node and fleet metrics.
 
 - Expose optional provider probe status, load, retry and retained mismatch diagnostics.

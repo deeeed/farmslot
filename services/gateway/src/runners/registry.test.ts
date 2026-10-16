@@ -989,6 +989,34 @@ describe('cursor runner', () => {
     assert.equal(runnerPaneShowsPromptAccepted(after, before, message, 'TASK.md', 'claude'), true);
   });
 
+  it('never counts a prompt left unsent in a busy Codex composer as delivered', () => {
+    const prompt = 'Read .agent/tasks/feat/tat-0000/REVIEW-FIX.md and fix every finding.';
+    // Captured Codex 0.162.1 panes around a busy turn; local paths replaced by <path>.
+    const turn = `› Run the shell command "sleep 60" exactly once, then reply DONE.\n\n• I’ll run sleep 60 once, then reply DONE.\n\n`;
+    const busy = `${turn}• Working (40s • esc to interrupt) · 1 background terminal running · /ps to view · /stop to close\n\n`;
+    const footer = `\n\n  GPT-6.1-Sol low · <path> · …\n`;
+    const unsent = `${busy}› ${prompt}${footer}  tab to queue message\n`;
+    const pasted = `${busy}› [Pasted Content 1423 chars]${footer}  tab to queue message\n`;
+    const accepted = `${turn}• DONE\n\n  Worked for 1m 6s • 12:30 AM\n\n› ${prompt}\n\n• Working (1s • esc to interrupt)\n\n› Ask Codex to do anything${footer}  ? for shortcuts\n`;
+    const steered = `${busy}• Messages to be submitted after next tool call (press esc to interrupt and send immediately)\n  ↳ ${prompt}\n\n› Ask Codex to do anything${footer}  ? for shortcuts\n`;
+    assert.equal(
+      runnerPaneShowsPromptAccepted(unsent, busy, prompt, 'REVIEW-FIX.md', 'codex'),
+      false,
+    );
+    assert.equal(
+      runnerPaneShowsPromptAccepted(pasted, busy, prompt, 'REVIEW-FIX.md', 'codex'),
+      false,
+    );
+    assert.equal(
+      runnerPaneShowsPromptAccepted(accepted, busy, prompt, 'REVIEW-FIX.md', 'codex'),
+      true,
+    );
+    assert.equal(
+      runnerPaneShowsPromptAccepted(steered, busy, prompt, 'REVIEW-FIX.md', 'codex'),
+      true,
+    );
+  });
+
   it('never treats a queue hint, postponed follow-up or Claude queue placeholder as delivery', () => {
     const message =
       'Read temp/tasks/feat/tat-3215-0601-200704/TASK.md and execute all steps. Mark each checkbox as you complete it.';
@@ -1737,14 +1765,9 @@ describe('buildLaunchCommand', () => {
         cmd,
         /installer="\$\{HOME\}\/farmslot-node\/scripts\/install-runner-observability\.mjs"/,
       );
-      assert.match(
-        cmd,
-        /\[ -f "\$\{HOME\}\/farmslot-node\/support\/\$\{support_hash\}\/scripts\/lib\/provider-accounts\.mjs" \]/,
-      );
-      assert.match(
-        cmd,
-        /installer="\$\{HOME\}\/farmslot-node\/support\/\$\{support_hash\}\/scripts\/install-runner-observability\.mjs"/,
-      );
+      assert.match(cmd, /printf '%s\\n' "\$\{HOME\}\/farmslot-node\/support"\/"\$hash"/);
+      assert.match(cmd, /\[ -f "\$support_dir\/scripts\/lib\/provider-accounts\.mjs" \]/);
+      assert.match(cmd, /installer="\$support_dir\/scripts\/install-runner-observability\.mjs"/);
       assert.match(cmd, /node "\$installer"/);
       assert.match(cmd, /--repo "\$\{HOME\}\/work\/repo"/);
       assert.match(cmd, /cd "\$\{HOME\}\/work\/repo" && unset CLAUDECODE/);

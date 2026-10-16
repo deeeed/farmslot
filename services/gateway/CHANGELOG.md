@@ -6,9 +6,21 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Send back to agent: admit a qualified Issue set from the frozen gate, reserve one existing fix round, deliver it through the retained review loop, require unanimous current-head applicability for retained proof and keep each reason as a learning candidate.
 
+- Keep a QA run's evidence window when a dispatch replay resumes the same task. The first dispatch of a task identity records when it began, and QA completion checks recipe evidence against that instead of the latest dispatch. A new task or a fresh dispatch starts a new window. For runs dispatched before this, the primary worker's first launch counts when it happened after the current task was written; their next dispatch records it as the anchor.
+
+- Point a spent review budget at an extension only when the run can receive one; review-pr, published, artifact-only and archived runs now say why their rounds cannot be extended, and the extension refusal names the same reason.
+
+- Never count a prompt left unsent in a busy Codex composer as delivered, on any send attempt. Each review-fix prompt now starts with its delivery identity, so a fix round is proven only by its own runner receipt; a fix sent before this change is still recognized, but only by a receipt after its own delivery. A fix sent without a receipt is acknowledged only by the worker's fix signal, never by pane activity.
+
+- Resolve a Jira-key run's ticket through the project's Jira source when the run is created, and refuse creation when there is no source, no credentials, or the read fails, instead of storing a key-only placeholder ticket.
+
 - Accept only the complete next-tool-call steering block as rendered queue proof; the "tab to queue message" hint, postponed follow-ups and queue placeholders never prove delivery. Buffered input uses the runner's normal submit key.
 
 - Deliver lane handoffs to busy Claude sessions with Enter, and treat a draft in Claude's boxed composer as live input that blocks delivery.
+
+- Read `ci.local_check` through the typed project configuration instead of a local cast.
+
+- Prefer Tailscale pairing addresses over LAN and exclude VPN tunnel addresses from phone pairing candidates.
 
 - Publish the PR title from the approved body's leading `# type(scope): summary` heading, else the ticket title, and refuse approval when neither names more than a ticket key.
 
@@ -43,6 +55,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Refresh the publication package after a visual judgment; preserve the saved judgment and report a recoverable failure when refresh is unavailable.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+- Render `{{node_support_dir}}` in fixtures and `NODE_SUPPORT_DIR` in worker templates from the slot's selected node-support bundle, so pack scripts no longer resolve through the node install root or the old in-checkout support pointer. Fixture checks read the slot's selection without publishing.
 
 ## 0.22.1 - 2026-10-16
 

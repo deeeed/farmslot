@@ -1,9 +1,11 @@
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
-import type {
-  RecipeRunArtifactGroup,
-  Run,
-  RunDecision,
-  SlotRunHistoryEntry,
+import {
+  extractRunArtifactManifest,
+  inferRunArtifactPurpose,
+  type RecipeRunArtifactGroup,
+  type Run,
+  type RunDecision,
+  type SlotRunHistoryEntry,
 } from '@farmslot/protocol';
 
 import {
@@ -13,9 +15,7 @@ import {
   countVisualArtifactPairs,
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-  extractRunArtifactManifest,
   groupVisualArtifactPairs,
-  inferArtifactPurpose,
 } from './artifact-url';
 
 export interface SlotWorkspaceGateSummary {
@@ -404,7 +404,7 @@ function artifactsForPaths(run: Run, artifactPaths: string[]): ArtifactManifestE
   const manifest = extractRunArtifactManifest(run);
   const byPath = new Map(manifest.map((artifact) => [artifact.path, artifact] as const));
   return artifactPaths.map(
-    (path) => byPath.get(path) ?? { path, purpose: inferArtifactPurpose(path) },
+    (path) => byPath.get(path) ?? { path, purpose: inferRunArtifactPurpose(path) },
   );
 }
 
@@ -599,7 +599,7 @@ export function selectSlotGatePreviewArtifacts(
   const byPath = new Map(artifactManifest.map((artifact) => [artifact.path, artifact] as const));
   return gate.artifactPaths
     .slice(0, limit)
-    .map((path) => byPath.get(path) ?? { path, purpose: inferArtifactPurpose(path) });
+    .map((path) => byPath.get(path) ?? { path, purpose: inferRunArtifactPurpose(path) });
 }
 
 export function selectSlotRecipeArtifactsForPreviewScope(

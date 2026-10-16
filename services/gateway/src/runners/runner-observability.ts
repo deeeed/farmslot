@@ -26,6 +26,28 @@ export const RUNNER_OBSERVABILITY_SUPPORT_PATHS = [
   ...RUNNER_OBSERVABILITY_COPY_PATHS,
 ] as const;
 export const NODE_SUPPORT_HASH_FILENAME = 'node-support-hash';
+
+/** Where nodes keep content-addressed support bundles (ADR-035). */
+export const NODE_SUPPORT_ROOT = '~/farmslot-node/support';
+
+/** The slot's node-support bundle selection, outside the checkout (ADR-035). */
+export function nodeSupportHashPath(repo: string, runtimeDir: string): string {
+  return path.posix.join(
+    runnerRuntimeDir(repo, runtimeDir),
+    '.observability',
+    NODE_SUPPORT_HASH_FILENAME,
+  );
+}
+
+/**
+ * Shell printing the slot's selected bundle directory; non-zero without a valid
+ * selection. Case patterns carry a leading `(` so bash 3.2 parses them inside `$(...)`.
+ */
+export function nodeSupportSelectionCommand(repo: string, runtimeDir: string): string {
+  const pointer = shellExpressionForRemotePath(nodeSupportHashPath(repo, runtimeDir));
+  const root = shellExpressionForRemotePath(NODE_SUPPORT_ROOT);
+  return `hash="$(cat ${pointer} 2>/dev/null)"; case "$hash" in (''|*[!0-9a-f]*) false ;; (*) [ \${#hash} -eq 64 ] && printf '%s\\n' ${root}/"$hash" ;; esac`;
+}
 const localHostname = os.hostname().replace(/\.local$/, '');
 
 export function claudeObservabilitySettingsPath(repo: string, runtimeDir: string): string {
@@ -89,21 +111,14 @@ export function buildRunnerObservabilityInstallCommand(
     return `node ${shellExpressionForRemotePath(localInstaller)} ${parts.join(' ')}`;
   }
 
-  const supportHashPath = path.posix.join(
-    runnerRuntimeDir(repo, runtimeDir),
-    '.observability',
-    NODE_SUPPORT_HASH_FILENAME,
-  );
   const fallbackInstaller = '${HOME}/farmslot-node/' + INSTALLER_RELATIVE_PATH;
-  const supportRoot = '${HOME}/farmslot-node/support/${support_hash}';
-  const supportInstaller = `${supportRoot}/${INSTALLER_RELATIVE_PATH}`;
   const supportReady = RUNNER_OBSERVABILITY_SUPPORT_PATHS.map(
-    (relativePath) => `[ -f "${supportRoot}/${relativePath}" ]`,
+    (relativePath) => `[ -f "$support_dir/${relativePath}" ]`,
   ).join(' && ');
   return [
-    `support_hash="$(cat ${shellExpressionForRemotePath(supportHashPath)} 2>/dev/null || true)"`,
+    `support_dir="$(${nodeSupportSelectionCommand(repo, runtimeDir)})" || support_dir=''`,
     `installer="${fallbackInstaller}"`,
-    `case "$support_hash" in ''|*[!0-9a-f]*) ;; *) ${supportReady} && installer="${supportInstaller}" ;; esac`,
+    `if [ -n "$support_dir" ] && ${supportReady}; then installer="$support_dir/${INSTALLER_RELATIVE_PATH}"; fi`,
     `node "$installer" ${parts.join(' ')}`,
   ].join('; ');
 }

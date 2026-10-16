@@ -10,6 +10,7 @@ import '../../runtime/mock-pty.test-support.js';
 
 import {
   admitReviewRound,
+  assertReviewRoundAvailable,
   nextReviewBudgetScopeBrief,
   reviewBudgetScopeBrief,
   runReviewRoundBudget,
@@ -179,4 +180,58 @@ test('revoked authority or generation drift during head read refuses before rece
     /Credential revoked/,
   );
   assert.equal(getRun(run.id)!.reviewBudgetExtensions, undefined);
+});
+
+test('a spent PR budget points at an extension only for the run that can receive one', async (t) => {
+  // core #10855: review-pr run 6e7ec0e1 was told to request an extension the RPC refuses.
+  const owner = fixture(t);
+  const url = `https://github.com/${owner.run.ticketOrPr.replace('#', '/pull/')}`;
+  updateRun(owner.run.id, { links: [{ label: 'PR', url }] });
+  for (let i = 0; i < 5; i++) await admitReviewRound(owner.run.id, `past-${i}`);
+  await runExtendReviewBudget(owner.params, emit, owner.deps);
+  for (let i = 5; i < 7; i++) await admitReviewRound(owner.run.id, `extended-${i}`);
+  const ownerBudget = await runReviewRoundBudget(getRun(owner.run.id)!);
+  assert.match(ownerBudget.diagnosis ?? '', /request a lead-approved scoped extension/);
+
+  const review = createRun({
+    project: 'budget-extension',
+    flowType: 'review-pr',
+    mode: 'autonomous',
+    ticketOrPr: owner.run.ticketOrPr,
+  });
+  t.after(async () => {
+    updateRun(review.id, { status: 'failed' });
+    await deleteRun(review.id);
+  });
+  updateRun(review.id, {
+    links: [{ label: 'PR', url }],
+    branch: 'owned-change',
+    slotId: 'missing-test-slot',
+  });
+  const only =
+    'only the unpublished dev or fix-bug run that owns the branch can be granted more review rounds';
+  await assert.rejects(assertReviewRoundAvailable(getRun(review.id)!), (error: Error) => {
+    assert.equal(
+      error.message,
+      `All 7 review rounds for this work are spent, and this run is a review-pr run; ${only}. Stop and narrow the change or redesign it.`,
+    );
+    return true;
+  });
+  await assert.rejects(
+    runExtendReviewBudget(
+      { ...owner.params, runId: review.id, requestId: randomUUID(), expectedLimit: 7, limit: 8 },
+      emit,
+      owner.deps,
+    ),
+    { message: `Review budget extension refused: this run is a review-pr run; ${only}.` },
+  );
+
+  updateRun(owner.run.id, {
+    engineState: {
+      ...getRun(owner.run.id)!.engineState,
+      publishGate: { publicationStatus: 'published_ready' },
+    },
+  });
+  const published = await runReviewRoundBudget(getRun(owner.run.id)!);
+  assert.match(published.diagnosis ?? '', /this run is already published; only the unpublished/);
 });

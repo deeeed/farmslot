@@ -1,12 +1,11 @@
 import { useRouter } from 'expo-router';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
-import { type Run } from '@farmslot/protocol';
+import { extractRunArtifactManifest, type Run } from '@farmslot/protocol';
 
 import {
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-  extractRunArtifactManifest,
 } from '../../../lib/artifact-url';
 import { runWorkspacePathnameForStatus } from '../../../lib/legacy-run-route';
 import { prRepoFromWorkspaceSource } from '../../../lib/pr-links';

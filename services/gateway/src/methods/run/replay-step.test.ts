@@ -138,6 +138,20 @@ test('fresh dispatch replay drops only retained-handoff flags', () => {
   );
 });
 
+test('only a fresh dispatch replay starts a new task evidence window', () => {
+  const engineState = {
+    flags: { skipPrepare: true },
+    taskExecution: {
+      taskFile: '/farm/tasks/qa/t-1/TASK.md',
+      startedAt: '2026-10-16T15:22:30.000Z',
+    },
+  };
+  assert.deepEqual(freshDispatchEngineStateForReplay(engineState, false), engineState);
+  assert.deepEqual(freshDispatchEngineStateForReplay(engineState, true), {
+    flags: { skipPrepare: true },
+  });
+});
+
 test('uncertain dispatch accepts only a fresh task-local signal with an attempt id', () => {
   const run = {
     steps: [

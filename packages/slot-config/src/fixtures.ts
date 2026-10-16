@@ -14,7 +14,7 @@ import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { ProjectVars, SlotVars } from './config.js';
-import { expandFixturePath, expandTemplate } from './hooks.js';
+import { expandFixturePath, expandTemplate, fixtureTemplateVars } from './hooks.js';
 
 export interface FixturePlanLog {
   /**
@@ -88,7 +88,8 @@ function missingRequiredFixture(src: string, dst: string, project: ProjectVars):
  * and wording sync-fixtures.sh emitted. Directories are handled by the caller.
  */
 export async function computeFixturePlan(opts: FixturePlanOptions): Promise<FixturePlan> {
-  const { slotVars, projectVars, selectionVars = {}, extraVars } = opts;
+  const { slotVars, projectVars, selectionVars = {} } = opts;
+  const extraVars = fixtureTemplateVars(slotVars, projectVars, opts.extraVars);
   const templates = projectVars.projectJson.fixtures?.templates ?? [];
   const fixturesDir = projectVars.projectFixturesDir;
 

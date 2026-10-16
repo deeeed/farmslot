@@ -1,4 +1,5 @@
 import {
+  extractRunArtifactManifest,
   type InteractiveOperatorPacketActionRequest,
   interactiveOperatorPacketActionRequest,
   interactiveOperatorPacketArtifacts,
@@ -10,7 +11,6 @@ import {
   type ArtifactManifestEntry,
   artifactUrl,
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
-  extractRunArtifactManifest,
 } from './artifact-url';
 import { gatewayResourceUrl } from './gateway-http-auth';
 

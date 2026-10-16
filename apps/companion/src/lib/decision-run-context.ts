@@ -1,6 +1,4 @@
-import type { PendingDecision, Run } from '@farmslot/protocol';
-
-import { extractRunArtifactManifest } from './artifact-url';
+import { extractRunArtifactManifest, type PendingDecision, type Run } from '@farmslot/protocol';
 
 type DecisionRunContextLike = Pick<PendingDecision, 'context' | 'runMeta' | 'slotId'>;
 

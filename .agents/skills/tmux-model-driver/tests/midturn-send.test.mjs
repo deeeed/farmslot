@@ -9,6 +9,7 @@ import test from 'node:test';
 
 import { runnerPaneBufferedInstruction } from '../../../../services/gateway/src/runners/runner-pane-input.ts';
 import { acknowledgeAcceptance, paneState, send } from '../scripts/driver.mjs';
+import { acceptedClaudePrompt } from '../scripts/native-evidence.mjs';
 
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'driver-midturn-'));
@@ -133,6 +134,139 @@ test('a working composer left after Enter receives one more Enter and verifies s
   );
   assert.equal(f.keys.filter((args) => args[0] === 'paste-buffer').length, 1);
 });
+
+test('a Codex steering handoff pulled back with ⇧← loses its proof for status and ACK', async (t) => {
+  const f = fixture(t);
+  const message = captured('payload');
+  f.setCapturedPanes(
+    `› ${message}\n\ncontext left`,
+    () =>
+      `• Messages to be submitted after next tool call\n  ↳ ${message}\n\n› Ask Codex to do anything\ncontext left`,
+  );
+  const sent = await send('%1', 'codex', message);
+  assert.equal(sent.evidence.source, 'runner-steering');
+  assert.equal(paneState('%1', 'codex').accepted.source, 'runner-steering');
+  // ⇧← edits the last queued message: the steering block empties into the composer.
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = `› ${message}\n\ncontext left\n  tab to queue message`;
+  assert.equal(paneState('%1', 'codex').accepted, null);
+  const ack = acknowledgeAcceptance('%1', 'codex', sent.evidence.receipt_id);
+  assert.equal(ack.verification, 'receipt_unverified');
+});
+
+const codexSteering = (message) =>
+  `• Messages to be submitted after next tool call\n  ↳ ${message}\n\n› Ask Codex to do anything\ncontext left`;
+const codexPulledBack = (message) => `› ${message}\n\ncontext left\n  tab to queue message`;
+
+for (const draft of ['edited', 'cleared']) {
+  test(`a Codex steering handoff pulled back with ⇧← stays withdrawn once its draft is ${draft}`, async (t) => {
+    const f = fixture(t);
+    const message = captured('payload');
+    f.setCapturedPanes(`› ${message}\n\ncontext left`, () => codexSteering(message));
+    const sent = await send('%1', 'codex', message);
+    assert.equal(sent.evidence.source, 'runner-steering');
+    process.env.TMUX_PANE_STATE_TAIL_CAPTURE = codexPulledBack(message);
+    assert.equal(paneState('%1', 'codex').accepted, null);
+    process.env.TMUX_PANE_STATE_TAIL_CAPTURE =
+      draft === 'edited'
+        ? `› ${message} but skip the e2e step\n\ncontext left`
+        : '› Ask Codex to do anything\ncontext left';
+    assert.equal(paneState('%1', 'codex').accepted, null);
+    process.env.TMUX_MODEL_DRIVER_READ_ONLY = '1';
+    assert.equal(paneState('%1', 'codex').accepted, null, 'read-only status agrees');
+    delete process.env.TMUX_MODEL_DRIVER_READ_ONLY;
+    assert.equal(
+      acknowledgeAcceptance('%1', 'codex', sent.evidence.receipt_id).verification,
+      'receipt_unverified',
+    );
+    const keys = f.keys.length;
+    const again = await send('%1', 'codex', message);
+    assert.equal(again.submitted, false, 'the withdrawn proof is never returned as delivery');
+    assert.equal(again.evidence, null);
+    assert.equal(f.keys.length, keys, 'no key reaches the edited or cleared composer');
+  });
+}
+
+test('a ⇧← seen only by the ACK under its lock is saved as well', async (t) => {
+  const f = fixture(t);
+  const message = captured('payload');
+  f.setCapturedPanes(`› ${message}\n\ncontext left`, () => codexSteering(message));
+  const sent = await send('%1', 'codex', message);
+  // The ACK's first look still shows the steering block; ⇧← lands before its locked look.
+  const frames = [codexSteering(message), codexPulledBack(message)];
+  const fixtureExec = childProcess.execFileSync;
+  t.mock.method(childProcess, 'execFileSync', (command, args, options) =>
+    args[0] === 'capture-pane' ? frames.shift() : fixtureExec(command, args, options),
+  );
+  syncBuiltinESMExports();
+  delete process.env.TMUX_PANE_STATE_TAIL_CAPTURE;
+  const ack = acknowledgeAcceptance('%1', 'codex', sent.evidence.receipt_id);
+  assert.equal(ack.verification, 'receipt_unverified');
+  assert.equal(frames.length, 0);
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = '› Ask Codex to do anything\ncontext left';
+  assert.equal(paneState('%1', 'codex').accepted, null);
+});
+
+test('a steering proof newer than the inspected frame is kept', async (t) => {
+  const f = fixture(t);
+  const message = captured('payload');
+  f.setCapturedPanes(`› ${message}\n\ncontext left`, () => codexSteering(message));
+  await send('%1', 'codex', message);
+  // A retry proved the handoff after this inspection captured its stale pulled-back frame.
+  const [file] = fs.readdirSync(f.dir).filter((name) => /^[a-f0-9]{64}\.json$/.test(name));
+  const receipt = JSON.parse(fs.readFileSync(path.join(f.dir, file), 'utf8'));
+  receipt.accepted.observed_at = Date.now() + 60_000;
+  fs.writeFileSync(path.join(f.dir, file), JSON.stringify(receipt));
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = codexPulledBack(message);
+  assert.equal(paneState('%1', 'codex').accepted.source, 'runner-steering');
+  const saved = JSON.parse(fs.readFileSync(path.join(f.dir, file), 'utf8'));
+  assert.deepEqual(saved.accepted, receipt.accepted);
+});
+
+// Counts attempts to take a receipt lock; each one is a write the inspection wanted to make.
+function lockAttempts(t) {
+  const attempts = [];
+  const mkdir = fs.mkdirSync;
+  t.mock.method(fs, 'mkdirSync', function (target, ...args) {
+    if (String(target).endsWith('.lock')) attempts.push(target);
+    return mkdir.call(fs, target, ...args);
+  });
+  return attempts;
+}
+
+test('a steering block still drawn keeps its saved proof without rewriting it', async (t) => {
+  const f = fixture(t);
+  const message = captured('payload');
+  f.setCapturedPanes(`› ${message}\n\ncontext left`, () => codexSteering(message));
+  const sent = await send('%1', 'codex', message);
+  const attempts = lockAttempts(t);
+  // The same text is also back in the composer, so the saved proof is re-proven from the block.
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = `• Messages to be submitted after next tool call\n  ↳ ${message}\n\n› ${message}\n\ncontext left`;
+  assert.deepEqual(paneState('%1', 'codex').accepted, sent.evidence);
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = codexSteering(message);
+  assert.deepEqual(paneState('%1', 'codex').accepted, sent.evidence);
+  assert.deepEqual(attempts, []);
+});
+
+for (const delivered of [true, false]) {
+  test(`a Codex retry after ⇧← submits the owned composer with Enter only (${delivered ? 'resubmitted' : 'still unsent'})`, async (t) => {
+    const f = fixture(t);
+    const message = captured('payload');
+    f.setCapturedPanes(`› ${message}\n\ncontext left`, () => codexSteering(message));
+    const sent = await send('%1', 'codex', message);
+    assert.equal(sent.evidence.source, 'runner-steering');
+    process.env.TMUX_PANE_STATE_TAIL_CAPTURE = codexPulledBack(message);
+    const keys = f.keys.length;
+    f.setDrop(!delivered);
+    const retry = await send('%1', 'codex', message);
+    assert.equal(retry.typed, false);
+    assert.equal(retry.submitted, delivered);
+    assert.equal(retry.evidence?.source ?? null, delivered ? 'runner-steering' : null);
+    const sentKeys = f.keys.slice(keys);
+    assert.ok(sentKeys.length > 0);
+    assert.ok(sentKeys.every((args) => args[0] === 'send-keys' && args.at(-1) === 'Enter'));
+    if (!delivered) assert.equal(paneState('%1', 'codex').accepted, null);
+  });
+}
 
 test('an unchanged owned composer stops after two Enters without another paste', async (t) => {
   const f = fixture(t);
@@ -666,6 +800,24 @@ test('a resumed Claude session reads its live transcript, not an older copy', as
   assert.equal(result.evidence?.turn_token, 'live');
 });
 
+test('re-proving a saved Claude queue proof takes no lock and writes nothing', async (t) => {
+  const f = claudeFixture(t, 'busy');
+  f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
+    f.record({ type: 'queue-operation', operation: 'enqueue', content: pasted });
+    return claudeBox('Press up to edit queued messages', `❯ ${pasted}`);
+  });
+  const sent = await send('%1', 'claude', f.payload);
+  assert.equal(sent.evidence.source, 'native-queue');
+  const [file] = fs.readdirSync(f.dir).filter((name) => /^[a-f0-9]{64}\.json$/.test(name));
+  const saved = fs.readFileSync(path.join(f.dir, file), 'utf8');
+  const attempts = lockAttempts(t);
+  // Every inspection rechecks the queue proof against the transcript.
+  assert.deepEqual(paneState('%1', 'claude').accepted, sent.evidence);
+  assert.deepEqual(paneState('%1', 'claude').accepted, sent.evidence);
+  assert.deepEqual(attempts, []);
+  assert.equal(fs.readFileSync(path.join(f.dir, file), 'utf8'), saved);
+});
+
 test('a busy Claude turn takes Enter input through its native queue', async (t) => {
   const f = claudeFixture(t, 'busy');
   f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
@@ -716,6 +868,71 @@ const claudeRestored = (text) =>
     '  ⏵⏵ bypass permissions on (shift+tab to cycle)',
   ].join('\n');
 
+test('a Claude queue proof that really changed is still saved', async (t) => {
+  const f = claudeFixture(t, 'busy');
+  f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
+    f.record({ type: 'queue-operation', operation: 'enqueue', content: pasted });
+    return claudeBox('Press up to edit queued messages', `❯ ${pasted}`);
+  });
+  const sent = await send('%1', 'claude', f.payload);
+  assert.equal(sent.evidence.source, 'native-queue');
+  // The operator pulls the text back with Up and queues it again with Enter.
+  const later = new Date(Date.now() + 1000).toISOString();
+  f.record({ type: 'queue-operation', operation: 'popAll', content: f.payload, timestamp: later });
+  f.record({ type: 'queue-operation', operation: 'enqueue', content: f.payload, timestamp: later });
+  const attempts = lockAttempts(t);
+  const requeued = paneState('%1', 'claude').accepted;
+  assert.equal(requeued.observed_at, Date.parse(later));
+  assert.notEqual(requeued.observed_at, sent.evidence.observed_at);
+  assert.equal(attempts.length, 1);
+  const [file] = fs.readdirSync(f.dir).filter((name) => /^[a-f0-9]{64}\.json$/.test(name));
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.dir, file), 'utf8')).accepted, requeued);
+});
+
+for (const delivered of [true, false]) {
+  test(`a flush of Claude input pulled back into the composer is proved only by later records (${delivered ? 'resubmitted' : 'still unsent'})`, async (t) => {
+    const f = claudeFixture(t, 'busy');
+    f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
+      f.record({ type: 'queue-operation', operation: 'enqueue', content: pasted });
+      return claudeBox('Press up to edit queued messages', `❯ ${pasted}`);
+    });
+    const first = await send('%1', 'claude', f.payload);
+    assert.equal(first.evidence.source, 'native-queue');
+    f.record({ type: 'queue-operation', operation: 'popAll', content: f.payload });
+    process.env.TMUX_PANE_STATE_TAIL_CAPTURE = claudeRestored(f.payload);
+    // The turn ends with the text still in the composer; a flush needs an idle pane.
+    fs.writeFileSync(
+      path.join(f.dir, 'claude', 'sessions', '42.json'),
+      JSON.stringify({ pid: 42, sessionId: 'claude-session', startedAt: 2, status: 'idle' }),
+    );
+    f.setCapturedPanes(claudeBox(f.payload), () => {
+      f.record({
+        type: 'user',
+        promptId: 'flushed',
+        message: { role: 'user', content: f.payload },
+      });
+      return claudeBox('');
+    });
+    f.setDrop(!delivered);
+    const flushedAt = Date.now();
+    const flushed = await send('%1', 'claude', '', null, true);
+    assert.equal(flushed.typed, false);
+    assert.equal(
+      f.keys.filter((args) => args[0] === 'paste-buffer').length,
+      1,
+      'never pasted again',
+    );
+    if (delivered) {
+      assert.equal(flushed.verification, 'submitted');
+      assert.equal(flushed.evidence.turn_token, 'flushed');
+      assert.ok(flushed.evidence.observed_at >= flushedAt);
+    } else {
+      assert.equal(flushed.submitted, false);
+      assert.equal(flushed.evidence, null);
+    }
+  });
+}
+
 for (const delivered of [true, false]) {
   test(`Claude input pulled back into the composer gets Enter again, never old evidence (${delivered ? 'resubmitted' : 'still unsent'})`, async (t) => {
     const f = claudeFixture(t, 'busy');
@@ -749,6 +966,113 @@ for (const delivered of [true, false]) {
     }
   });
 }
+
+test('a long handoff is proved only from its whole text, never a truncated record', async (t) => {
+  const f = claudeFixture(t, 'idle');
+  const payload = `Lead: ${'long handoff line\n'.repeat(4000)}end`;
+  f.setCapturedPanes(claudeBox(payload), (key, pasted) => {
+    f.record({
+      type: 'user',
+      promptId: 'cut',
+      message: { role: 'user', content: pasted.slice(0, 1000) },
+    });
+    return claudeBox('');
+  });
+  const cut = await send('%1', 'claude', payload);
+  assert.equal(cut.submitted, false, 'a truncated record never proves the whole handoff');
+});
+
+test('Claude input pulled back into the composer withdraws its saved proof for status and ACK', async (t) => {
+  const f = claudeFixture(t, 'busy');
+  f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
+    f.record({ type: 'queue-operation', operation: 'enqueue', content: pasted });
+    return claudeBox('Press up to edit queued messages', `❯ ${pasted}`);
+  });
+  const first = await send('%1', 'claude', f.payload);
+  assert.equal(first.evidence.source, 'native-queue');
+  assert.equal(paneState('%1', 'claude').accepted.source, 'native-queue');
+
+  f.record({ type: 'queue-operation', operation: 'popAll', content: f.payload });
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = claudeRestored(f.payload);
+  assert.equal(paneState('%1', 'claude').accepted, null);
+  const ack = acknowledgeAcceptance('%1', 'claude', first.evidence.receipt_id);
+  assert.equal(ack.acknowledged, false);
+  assert.equal(ack.verification, 'receipt_unverified');
+});
+
+for (const draft of ['edited', 'cleared']) {
+  test(`a pulled-back Claude handoff stays withdrawn once its draft is ${draft}`, async (t) => {
+    const f = claudeFixture(t, 'busy');
+    f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
+      f.record({ type: 'queue-operation', operation: 'enqueue', content: pasted });
+      return claudeBox('Press up to edit queued messages', `❯ ${pasted}`);
+    });
+    const first = await send('%1', 'claude', f.payload);
+    assert.equal(first.evidence.source, 'native-queue');
+    f.record({ type: 'queue-operation', operation: 'popAll', content: f.payload });
+    process.env.TMUX_PANE_STATE_TAIL_CAPTURE = claudeRestored(
+      draft === 'edited' ? `${f.payload} but skip the e2e step` : '',
+    );
+    assert.equal(paneState('%1', 'claude').accepted, null);
+    process.env.TMUX_MODEL_DRIVER_READ_ONLY = '1';
+    assert.equal(paneState('%1', 'claude').accepted, null, 'read-only status agrees');
+    delete process.env.TMUX_MODEL_DRIVER_READ_ONLY;
+    const ack = acknowledgeAcceptance('%1', 'claude', first.evidence.receipt_id);
+    assert.equal(ack.verification, 'receipt_unverified');
+  });
+}
+
+test('a delivered Claude prompt recalled from history keeps its proof and is never resent', async (t) => {
+  const f = claudeFixture(t, 'idle');
+  f.setDrop(true);
+  f.setCapturedPanes(claudeBox(f.payload));
+  const first = await send('%1', 'claude', f.payload);
+  assert.equal(first.verification, 'not_sent');
+  // The prompt was accepted late, and the operator then recalled it from Up history.
+  f.record({ type: 'user', promptId: 'late', message: { role: 'user', content: f.payload } });
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = claudeRestored(f.payload);
+  assert.equal(paneState('%1', 'claude').accepted.source, 'native-session');
+  const keys = f.keys.length;
+  const retry = await send('%1', 'claude', f.payload);
+  assert.equal(retry.verification, 'submitted');
+  assert.equal(retry.evidence.turn_token, 'late');
+  assert.equal(f.keys.length, keys, 'a delivered prompt is never submitted again');
+  assert.equal(
+    acknowledgeAcceptance('%1', 'claude', retry.evidence.receipt_id).verification,
+    'acceptance_acknowledged',
+  );
+});
+
+test('an enqueue later pulled back by popAll never proves the handoff', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'driver-popall-'));
+  try {
+    const file = path.join(dir, 'claude.jsonl');
+    const now = Date.now();
+    const payload = 'Handoff that the operator pulled back';
+    const at = (ms) => new Date(now + ms).toISOString();
+    const write = (records) =>
+      fs.writeFileSync(file, records.map((record) => `${JSON.stringify(record)}\n`).join(''));
+    const receipt = { payload, sent_at: now, session_offset: 0 };
+    const enqueue = (ms) => ({
+      type: 'queue-operation',
+      operation: 'enqueue',
+      timestamp: at(ms),
+      content: payload,
+    });
+    const popAll = {
+      type: 'queue-operation',
+      operation: 'popAll',
+      timestamp: at(2),
+      content: payload,
+    };
+    write([enqueue(1), popAll]);
+    assert.equal(acceptedClaudePrompt(file, 'session', receipt), null);
+    write([enqueue(1), popAll, enqueue(3)]);
+    assert.equal(acceptedClaudePrompt(file, 'session', receipt).source, 'native-queue');
+  } finally {
+    fs.rmSync(dir, { recursive: true });
+  }
+});
 
 test('a stale Claude record appended after the send never proves it', async (t) => {
   const f = claudeFixture(t, 'busy');

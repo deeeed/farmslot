@@ -10,7 +10,7 @@ import {
 
 import type { RawProjectJson } from '../core/config.js';
 import { fetchGitHubIssue, fetchGitHubPR } from '../external/github.js';
-import { fetchJiraIssue } from '../external/jira.js';
+import { fetchJiraIssue, type JiraConfig, resolveJiraAuth } from '../external/jira.js';
 import { JIRA_KEY_RE } from '../methods/dispatch/ticket-ref.js';
 import { getRun, updateRun } from '../runs/store.js';
 
@@ -195,7 +195,51 @@ export async function fetchPRData(
   return prData;
 }
 
-export async function fetchTicketData(run: Run): Promise<RunTicketData | null> {
+// A Jira key names a real ticket: read it through the project's Jira source,
+// or refuse. A key-only placeholder would reach the worker and the PR title.
+async function fetchRequiredJiraIssue(
+  run: Pick<Run, 'project' | 'ticketOrPr'> & { id?: string },
+): Promise<Partial<RunTicketData>> {
+  const key = run.ticketOrPr;
+  const pv = await loadProjectVarsOrNull(run.project, 'ticket fetch', run.id);
+  const pj: RawProjectJson | undefined = pv?.projectJson;
+  if (!pj?.jira?.base_url) {
+    throw new Error(
+      `${key} is a Jira key, but project ${run.project} has no Jira source. Add jira.base_url and ` +
+        `its credential env names to the project config, or create the work as a manual backlog item.`,
+    );
+  }
+  const config: JiraConfig = {
+    baseUrl: pj.jira.base_url,
+    emailEnv: pj.jira.email_env,
+    apiTokenEnv: pj.jira.api_token_env,
+  };
+  const auth = resolveJiraAuth(config);
+  const missing = [!auth.email && auth.emailVar, !auth.token && auth.tokenVar].filter(Boolean);
+  if (missing.length) {
+    throw new Error(
+      `Cannot read Jira ticket ${key} for project ${run.project}: the gateway has no ${missing.join(' or ')}.`,
+    );
+  }
+  let issue: Partial<RunTicketData>;
+  try {
+    issue = await fetchJiraIssue(key, config);
+  } catch (err) {
+    throw new Error(
+      `Cannot read Jira ticket ${key} for project ${run.project}: ${(err as Error).message}`,
+    );
+  }
+  if (!issue.title?.trim()) {
+    throw new Error(
+      `Cannot read Jira ticket ${key} for project ${run.project}: it has no summary.`,
+    );
+  }
+  return issue;
+}
+
+export async function fetchTicketData(
+  run: Pick<Run, 'project' | 'ticketOrPr'> & { id?: string },
+): Promise<RunTicketData | null> {
   const ticket = run.ticketOrPr;
   if (!ticket) return null;
 
@@ -203,25 +247,8 @@ export async function fetchTicketData(run: Run): Promise<RunTicketData | null> {
   const isJira = JIRA_KEY_RE.test(ticket.toUpperCase());
   const isGitHub = parseGitHubRef(ticket) !== null;
 
-  let jiraData: Partial<RunTicketData> = {};
+  const jiraData: Partial<RunTicketData> = isJira ? await fetchRequiredJiraIssue(run) : {};
   let githubData: Partial<RunTicketData> = {};
-
-  if (isJira) {
-    try {
-      const pv = await loadProjectVarsOrNull(run.project, 'run recovery', run.id);
-      const pj: RawProjectJson | undefined = pv?.projectJson;
-      const baseUrl = pj?.jira?.base_url;
-      if (baseUrl) {
-        jiraData = await fetchJiraIssue(ticket, {
-          baseUrl,
-          emailEnv: pj?.jira?.email_env,
-          apiTokenEnv: pj?.jira?.api_token_env,
-        });
-      }
-    } catch (err) {
-      console.warn(`[run-engine] Jira fetch failed: ${(err as Error).message}`);
-    }
-  }
 
   if (isGitHub) {
     try {

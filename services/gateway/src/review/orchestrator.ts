@@ -1391,8 +1391,13 @@ function reviewFixProgressContract(taskDir: string, taskFile: string): string {
   );
 }
 
-function reviewFixPrompt(basePrompt: string, taskDir: string, taskFile: string, attempt: string) {
-  return `${basePrompt}\n\n${reviewFixProgressContract(taskDir, taskFile)}\n\nFarmslot fix delivery attempt: ${attempt}`;
+// Gateway delivery boundaries and slot receipt clocks can disagree; fix rounds are minutes apart.
+const LEGACY_FIX_RECEIPT_CLOCK_TOLERANCE_MS = 60_000;
+
+// The delivery identity leads the prompt: a runner's prompt receipt digests only its start, so
+// every fix of the same REVIEW-FIX.md would otherwise share one receipt across rounds.
+function reviewFixPrompt(basePrompt: string, taskDir: string, taskFile: string, delivery: string) {
+  return `Farmslot fix delivery ${delivery}.\n\n${basePrompt}\n\n${reviewFixProgressContract(taskDir, taskFile)}`;
 }
 
 /**
@@ -1467,7 +1472,6 @@ export async function resumeReviewFixPromptDelivery(
   const attemptStartedAt = context.attemptStartedAt?.trim();
   if (!attemptStartedAt) return { status: 'deferred' };
   const basePrompt = await deps.resolvePrompt(run.project, { taskFile, taskDir });
-  const prompt = reviewFixPrompt(basePrompt, taskDir, taskFile, attemptStartedAt);
   const primaryContext = selectAgentContext(run, { role: 'primary' });
   const signalRelPath =
     context.signalFile ?? taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.signal);
@@ -1482,7 +1486,14 @@ export async function resumeReviewFixPromptDelivery(
     : new Date().toISOString();
   if (!priorPromptSendAttempted && deliveryStartedAt)
     await deps.recordDeliveryBoundary?.(runId, context, deliveryStartedAt, deliveryGeneration);
-  const result = await deps.deliver({
+  // The worker's own mark-start rewrites attemptStartedAt; the delivery boundary is the sent text.
+  const prompt = reviewFixPrompt(
+    basePrompt,
+    taskDir,
+    taskFile,
+    deliveryStartedAt ?? attemptStartedAt,
+  );
+  const deliveryOptions = {
     vars,
     target,
     runnerId: runner,
@@ -1506,7 +1517,20 @@ export async function resumeReviewFixPromptDelivery(
     recovery: { runId },
     sendLogPrefix: 'review-fix-recovery',
     forceBusyPoll: true,
-  });
+  };
+  let result = await deps.deliver(deliveryOptions);
+  const boundaryMs = Date.parse(deliveryStartedAt ?? '');
+  if (!result.delivered && priorPromptSendAttempted && Number.isFinite(boundaryMs)) {
+    // A fix sent before prompts led with their identity carried this exact text, which
+    // hook digests share across rounds and native readers compare whole. Probe it without
+    // sending, accepting a receipt only after this delivery's own boundary.
+    const legacy = await deps.deliver({
+      ...deliveryOptions,
+      prompt: `${basePrompt}\n\n${reviewFixProgressContract(taskDir, taskFile)}\n\nFarmslot fix delivery attempt: ${attemptStartedAt}`,
+      acknowledgementSinceMs: boundaryMs - LEGACY_FIX_RECEIPT_CLOCK_TOLERANCE_MS,
+    });
+    if (legacy.delivered) result = legacy;
+  }
   if (result.delivered) {
     if (result.acknowledgement === 'structured' && result.turnToken && deliveryStartedAt)
       await deps.rememberAcceptedTurn?.(
@@ -2298,7 +2322,6 @@ async function sendOwnedFeedbackToWorker(
       taskFile: fixTaskFile,
       taskDir,
     });
-    const cmd = reviewFixPrompt(baseCmd, taskDir, fixTaskFile, fixAttemptStartedAt);
     const runner = normalizeRunner(run?.metrics.runner);
     let lastRetainedHoldReason: string | null = null;
     let terminalRetainedHoldReason: string | null = null;
@@ -2307,19 +2330,26 @@ async function sendOwnedFeedbackToWorker(
     let acceptedDeliveryStartedAt: string | undefined;
     let acceptedGeneration: number | undefined;
     let promptSendAttempted = false;
+    let deliveryBoundaryRecorded = false;
     const loggedRetainedHoldReasons = new Set<string>();
     const deliverFixPrompt = async (target: string, forceBusyPoll = false): Promise<boolean> => {
       if (terminalRetainedHoldReason) return false;
-      if (!promptSendAttempted) {
+      // One boundary per attempt: the prompt text follows it, and a retry must never type a
+      // different text over an earlier one left in the composer.
+      if (!deliveryBoundaryRecorded) {
         await upsertAgentContext(runId, 'review-fix', {
           id: fixContext?.id,
           promptDeliveryStartedAt: new Date().toISOString(),
         });
+        deliveryBoundaryRecorded = true;
       }
       const latestRun = getRun(runId);
       const latestPrimaryContext = latestRun
         ? selectAgentContext(latestRun, { role: 'primary' })
         : null;
+      const deliveryStartedAt = latestRun?.agentContexts?.find(
+        (entry) => entry.id === fixContext?.id,
+      )?.promptDeliveryStartedAt;
       const deliveryOptions = {
         vars,
         target,
@@ -2328,7 +2358,12 @@ async function sendOwnedFeedbackToWorker(
         sessionPath: latestPrimaryContext?.runnerSessionPath,
         model: latestRun?.metrics.model,
         effort: latestRun?.effort,
-        prompt: cmd,
+        prompt: reviewFixPrompt(
+          baseCmd,
+          taskDir,
+          fixTaskFile,
+          deliveryStartedAt ?? fixAttemptStartedAt,
+        ),
         safetyTier: latestRun?.safetyTier,
         runtimeDir,
         taskDir,
@@ -2343,9 +2378,6 @@ async function sendOwnedFeedbackToWorker(
         sendLogPrefix: 'review',
         forceBusyPoll,
       };
-      const deliveryStartedAt = latestRun?.agentContexts?.find(
-        (entry) => entry.id === fixContext?.id,
-      )?.promptDeliveryStartedAt;
       const deliveryGeneration = latestRun?.engineState?.generation ?? 0;
       const retained = await deliverPromptToLiveRunner({
         ...deliveryOptions,
@@ -2446,32 +2478,21 @@ async function sendOwnedFeedbackToWorker(
         ...(acceptedTurnToken ? { turnToken: acceptedTurnToken } : {}),
       };
     }
-    // sent=true only proves keystrokes were injected and Enter pressed. A
-    // context-saturated REPL swallows delivered prompts with a frozen pane —
-    // require FURTHER pane activity after the send. The
-    // baseline is captured post-send, so pane changes racing the send's own
-    // busy-poll window cannot masquerade as a reaction. A worker that already
-    // finished the fix before the baseline (fast completion, fully rendered)
-    // shows no further pane delta — the probe also polls the fix signal file,
-    // so a fresh terminal signal counts as a reaction, never a false failure.
-    const paneBaseline = await captureWorkerPaneTail(vars, workerTarget);
-    const reacted = await workerShowsDeliveryReaction(
-      vars,
-      workerTarget,
-      paneBaseline,
-      async () => {
-        const raw = await readOptionalSlotFile(vars, fixSignalPath);
-        return raw != null && raw !== fixSignalBaseline;
-      },
-    );
-    if (!reacted) {
+    // sent=true only proves keystrokes were injected and Enter pressed. Without a
+    // prompt receipt, only the worker's own fix signal proves it took the task: a
+    // busy pane keeps changing while the prompt can still sit unsent in its composer.
+    const acknowledged = await workerAcknowledgesFixTask(async () => {
+      const raw = await readOptionalSlotFile(vars, fixSignalPath);
+      return raw != null && raw !== fixSignalBaseline;
+    });
+    if (!acknowledged) {
       console.warn(
-        `[review] run ${runId.slice(0, 8)} — fix task delivered but worker pane showed no activity within ${REVIEW_DELIVERY_PROBE_TIMEOUT_MS / 1000}s; treating as delivery failure`,
+        `[review] run ${runId.slice(0, 8)} — fix task sent but the worker wrote no fix signal within ${REVIEW_DELIVERY_PROBE_TIMEOUT_MS / 1000}s; treating as delivery failure`,
       );
       await markAgentContextStatus(runId, 'review-fix', 'failed');
       await unwatchContext(vars.slotId, 'review-fix');
       throw new ReviewFixDeliveryError(
-        `review fix task delivered but the worker pane never changed — runner is unresponsive (${fixTaskFile})`,
+        `review fix task was sent but the worker never acknowledged it: no prompt receipt and no fix signal (${fixTaskFile})`,
       );
     }
     return { signalBaseline: fixSignalBaseline };
@@ -2557,39 +2578,12 @@ async function readWorkerContextPct(
   }
 }
 
-async function captureWorkerPaneTail(
-  vars: Awaited<ReturnType<typeof loadSlotVars>>,
-  target: string,
-): Promise<string> {
-  return (
-    await execOnSlot(
-      vars,
-      tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -40`),
-    )
-  ).stdout;
-}
-
-/**
- * Post-delivery responsiveness probe: an accepted fix task keeps changing the
- * pane (spinner, streamed output, tool calls), while the wedged-REPL failure
- * mode leaves it frozen. Compared against a post-send baseline, raced against
- * fix-signal freshness so a worker that completed before the baseline is
- * never marked failed. A busy pane that changes for unrelated reasons yields
- * a false "responsive" — that degrades to the pre-probe behavior (waiting out
- * the fix timeout), never to a false failure.
- */
-async function workerShowsDeliveryReaction(
-  vars: Awaited<ReturnType<typeof loadSlotVars>>,
-  target: string,
-  baseline: string,
-  signalChanged: () => Promise<boolean>,
-): Promise<boolean> {
+/** Polls the worker's fix signal, the only acknowledgement left without a prompt receipt. */
+async function workerAcknowledgesFixTask(signalChanged: () => Promise<boolean>): Promise<boolean> {
   const deadline = Date.now() + REVIEW_DELIVERY_PROBE_TIMEOUT_MS;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, REVIEW_DELIVERY_PROBE_POLL_MS));
     if (await signalChanged()) return true;
-    const pane = await captureWorkerPaneTail(vars, target);
-    if (pane.trim() && pane !== baseline) return true;
   }
   return signalChanged();
 }
@@ -2686,7 +2680,7 @@ async function relaunchWorkerForFix(
           }),
           path.posix.dirname(fixContext.taskFile),
           fixContext.taskFile,
-          fixContext.attemptStartedAt,
+          fixContext.promptDeliveryStartedAt ?? fixContext.attemptStartedAt,
         )
       : 'Continue working on the current TASK.md and review fix feedback.';
   // Inherit parent run's safety tier (ADR-023) so the relaunch stays on the same posture.

@@ -30,6 +30,11 @@ than the process, which names its transcript and busy or idle status. Missing or
 observability means `unknown`, even when the screen looks idle.
 
 `send-and-verify.sh` returns JSON and exits nonzero when refused or unverified.
+Native transcripts and hook logs can outgrow the largest string a process holds, so the
+driver reads them in bounded ranges: recent records for questions and hooks, and the session
+header plus records after the send for proof. Native probes take their script on stdin, so
+payload size has no argument limit. Proof needs the whole message: a hook digest covers only
+its prefix, so it proves only a message that short.
 It refuses the wrong runner, a shell when a model is expected, a pending question
 or a foreign queue. Codex and Claude accept Enter-submitted input during busy or unknown
 phases. Claude also needs its bound native session, because only its transcript proves
@@ -49,8 +54,9 @@ queue can also use its matching truncated steering preview and separate overflow
 Claude transcript records written after the send prove delivery: an exact human prompt
 (`native-session`), or input queued during a turn (`native-queue`) that Claude attaches
 at its next step (`native-steering`). A `native-queue` receipt stays until its caller
-acknowledges delivery. Up pulls queued input back into the composer (`popAll`), which
-withdraws that proof. Claude's own queued input never blocks a handoff; a draft in its
+acknowledges delivery. It is rechecked against the transcript on every inspection: Up pulls
+queued input back (`popAll`), which withdraws it for status, acknowledgement and retries,
+whatever the composer shows next. A delivered prompt recalled from history keeps its proof. Claude's own queued input never blocks a handoff; a draft in its
 boxed composer does.
 Codex native history supplies exact prompt and turn evidence. Native `/goal` delivery requires
 a matching active `thread_goal_updated` objective followed by its new `task_started` turn. Pane-bound hook
@@ -90,8 +96,12 @@ returns `unverified` without typing or Enter. The original receipt remains intac
 
 An unverified send retains a private receipt. A retry of the same owned Codex or Claude prompt
 returns existing delivery evidence without typing, or submits only Enter when the exact
-original remains in the composer. Owned text back in the composer always gets Enter, even
-with retained evidence, and only records after that submission prove it. It never pastes that prompt again. A synchronously
+original remains in the composer. Owned text back in the composer gets Enter once its proof
+is withdrawn (a Claude `popAll`, or Codex steering pulled back with ⇧←), and only records after
+that submission prove it. Once a writable inspection or acknowledgement sees a Codex steering
+withdrawal, it is saved with the receipt, so editing or clearing that draft later does not bring
+the proof back. A delivered prompt recalled from history keeps its proof and is not
+submitted again. It never pastes that prompt again. A synchronously
 native-verified send clears its receipt under the transport lock and returns its
 evidence, so direct callers can send again after the turn completes. Late native acceptance
 remains recorded across inspections. For Codex, an accepted receipt does not block a different

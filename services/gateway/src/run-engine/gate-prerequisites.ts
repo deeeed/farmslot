@@ -30,7 +30,10 @@ import { GatewayMethodError } from '../core/method-error.js';
 import { ORCHESTRATOR_LOCALITY } from '../core/slot-io.js';
 import { assertQaCompletion } from '../qa/completion.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
-import { runReviewRoundBudget } from '../review/review-round-budget.js';
+import {
+  reviewBudgetExtensionRefusal,
+  runReviewRoundBudget,
+} from '../review/review-round-budget.js';
 import { reviewedInputsAwaitingReview } from '../review/reviewed-inputs.js';
 import { reviewResultArtifactPath } from '../review/terminal-result.js';
 import { readReviewWorkspaceCompletion } from '../review-workspaces/task.js';
@@ -491,9 +494,11 @@ export async function collectRunGateReadiness(
     const required = effectiveRequiredReviewCount(policy);
     const budget = await runReviewRoundBudget(run);
     const nextStep =
-      budget.remaining === 0
-        ? `Review budget ${budget.used}/${budget.limit} is exhausted. Ask the lead for a scoped extension, then use farmslot run extend-review-budget ${run.id} and request current-head reviews.`
-        : 'Request reviews for the current head and package.';
+      budget.remaining !== 0
+        ? 'Request reviews for the current head and package.'
+        : reviewBudgetExtensionRefusal(run)
+          ? budget.diagnosis!
+          : `Review budget ${budget.used}/${budget.limit} is exhausted. Ask the lead for a scoped extension, then use farmslot run extend-review-budget ${run.id} and request current-head reviews.`;
     const allowedReviewOverrides: string[] = [];
     if (
       validInputs.filter((review) =>

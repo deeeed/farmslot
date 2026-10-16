@@ -7,9 +7,17 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { farmslotRoot, type ProjectVars, type SlotVars } from '../core/index.js';
-import { RUNNER_OBSERVABILITY_SUPPORT_PATHS } from '../runners/runner-observability.js';
+import {
+  nodeSupportHashPath,
+  RUNNER_OBSERVABILITY_SUPPORT_PATHS,
+} from '../runners/runner-observability.js';
 
-import { ensureNodeSupportBundle, type NodeSupportIo } from './ensure.js';
+import {
+  ensureNodeSupportBundle,
+  fixtureCheckVars,
+  type NodeSupportIo,
+  selectedNodeSupportDir,
+} from './ensure.js';
 import { remapRemoteFarmRefs } from './remote-command.js';
 import { fakeSupportHomeResult, isSupportHomeCommand } from './support-test-fixtures.js';
 
@@ -268,4 +276,50 @@ test('a quoted project Node hook resolves from the remote home instead of the sl
     execFileSync('sh', ['-c', command], { cwd: root, encoding: 'utf8' }).trim(),
     '["setup","slot-6"]',
   );
+});
+
+test('fixture checks read the bundle the slot selected, from the pointer ensure writes', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'node-support-selected-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const vars = { ...remoteVars(), remoteRepo: path.join(root, 'checkout') };
+  const { io, rec } = fakeIo({ remoteManifestHash: null });
+  const state = await ensureNodeSupportBundle(vars, '.agent', { projectVars, io });
+  assert.ok(state?.hash);
+  const pointer = nodeSupportHashPath(vars.remoteRepo, '.agent');
+  assert.ok(!pointer.startsWith(`${vars.remoteRepo}/`), pointer);
+  assert.equal(rec.written.at(-1)?.base, path.dirname(pointer));
+
+  const shellIo: Pick<NodeSupportIo, 'exec'> = {
+    exec: async (_vars, cmd) => {
+      try {
+        const stdout = execFileSync('sh', ['-c', cmd.replaceAll('${HOME}', '${TEST_NODE_HOME}')], {
+          env: { ...process.env, TEST_NODE_HOME: root },
+          encoding: 'utf8',
+        });
+        return { exitCode: 0, stdout, stderr: '' };
+      } catch {
+        return { exitCode: 1, stdout: '', stderr: '' };
+      }
+    },
+  };
+  assert.equal(await selectedNodeSupportDir(vars, '.agent', projectVars, shellIo), undefined);
+  await mkdir(path.dirname(pointer), { recursive: true });
+  await writeFile(pointer, `${state.hash}\n`);
+  assert.equal(
+    await selectedNodeSupportDir(vars, '.agent', projectVars, shellIo),
+    path.join(root, 'farmslot-node/support', state.hash),
+  );
+  await writeFile(pointer, '../../escape\n');
+  assert.equal(await selectedNodeSupportDir(vars, '.agent', projectVars, shellIo), undefined);
+  const local = { ...vars, host: 'localhost', machine: 'local' };
+  assert.equal(await selectedNodeSupportDir(local, '.agent', projectVars, shellIo), farmslotRoot);
+});
+
+test('a fixture check whose node drops renders without a selection instead of failing the check', async () => {
+  const dropped: Pick<NodeSupportIo, 'exec'> = {
+    exec: async () => {
+      throw new Error('node disconnected');
+    },
+  };
+  assert.equal(await fixtureCheckVars(remoteVars(), projectVars, 5_000, dropped), undefined);
 });

@@ -592,6 +592,60 @@ test('non-digest delivery never accepts a prompt left under the Codex queue hint
   );
 });
 
+// Captured Codex 0.162.1: an earlier turn is still working and the prompt sits unsent.
+const busyCodexComposer = (prompt: string) =>
+  [
+    '• Working (40s • esc to interrupt) · 1 background terminal running · /ps to view · /stop to close',
+    '',
+    `› ${prompt}`,
+    '',
+    '  GPT-6.1-Sol low · <path> · …',
+    '  tab to queue message',
+    '',
+  ].join('\n');
+
+for (const entry of [false, true]) {
+  test(`non-digest delivery never accepts a busy Codex composer holding the prompt (${entry ? 'before the first send' : 'across retries'})`, async (t) => {
+    t.after(() => {
+      paneTextAfterLiteralSend = null;
+      paneTextAfterBareSend = null;
+      paneClearsAfterSubmit = true;
+      paneText = '❯\nctx:12%\n';
+    });
+    const taskMessage = 'Read .agent/tasks/feat/tat-0000/REVIEW-FIX.md and fix every finding.';
+    callOrder.length = 0;
+    paneCaptureCount = 0;
+    paneClearsAfterSubmit = false;
+    paneText = entry
+      ? busyCodexComposer(taskMessage)
+      : '› Ask Codex to do anything\n\n  ? for shortcuts\n';
+    paneTextByCapture = null;
+    // Enter never submits here, so every attempt still sees the unsent prompt.
+    paneTextAfterLiteralSend = busyCodexComposer(taskMessage);
+    paneTextAfterBareSend = paneTextAfterLiteralSend;
+    promptAcceptedReading = {
+      value: false,
+      source: 'hook',
+      confidence: 'high',
+      observedAt: Date.now(),
+      exactPromptMatch: false,
+    };
+
+    await assert.rejects(
+      sendRunnerPostLaunchPrompt(vars, target, 'codex', taskMessage, 'REVIEW-FIX.md', '[test]', {
+        readyTimeoutMs: 100,
+        stabilityPolls: 1,
+        pollIntervalMs: 0,
+        verifyWaitMs: 0,
+        requirePromptDigest: false,
+      }),
+      /Prompt delivery failed/,
+    );
+    const typed = callOrder.filter((entry) => entry === 'tmux:send-literal').length;
+    assert.equal(typed, entry ? 0 : 1, 'the unsent prompt is submitted, never typed again');
+  });
+}
+
 test('digest-required prompt delivery does not accept pane-only task progress', async (t) => {
   const reviewMessage = `${message}\nFollow REVIEW.md`;
   callOrder.length = 0;

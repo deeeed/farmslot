@@ -9,8 +9,194 @@ import {
   acceptedPrompt,
   nativeState,
   paneIdentity,
+  readOptional,
+  transcriptQuestion,
   writeSentinel,
 } from '../scripts/native-evidence.mjs';
+
+// A sparse file passes the largest string a process can hold without writing those bytes.
+function oversizedLog(t, head, tail) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'driver-oversized-'));
+  t.after(() => fs.rmSync(dir, { recursive: true }));
+  const file = path.join(dir, 'native.jsonl');
+  fs.writeFileSync(file, head.map((record) => `${JSON.stringify(record)}\n`).join(''));
+  fs.truncateSync(file, 600 * 1024 * 1024);
+  const offset = fs.statSync(file).size;
+  fs.appendFileSync(file, `\n${tail.map(JSON.stringify).join('\n')}\n`);
+  return { file, offset };
+}
+
+test('native logs past the largest string are read in bounded ranges', (t) => {
+  const question = {
+    type: 'response_item',
+    payload: {
+      type: 'function_call',
+      name: 'request_user_input',
+      call_id: 'q1',
+      arguments: JSON.stringify({ questions: [{ question: 'Ship it?' }] }),
+    },
+  };
+  const { file } = oversizedLog(t, [{ type: 'session_meta', payload: { id: 's' } }], [question]);
+  assert.equal(transcriptQuestion(file).questions[0].question, 'Ship it?');
+  assert.throws(
+    () => readOptional(file),
+    /needs a \d+-byte read; native logs are read in bounded ranges/,
+  );
+});
+
+test('a Codex prompt larger than one process argument is proved through the probe', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'driver-large-prompt-'));
+  t.after(() => fs.rmSync(dir, { recursive: true }));
+  fs.mkdirSync(path.join(dir, 'panes'));
+  const native = path.join(dir, 'session.jsonl');
+  const now = Date.now();
+  const timestamp = new Date(now).toISOString();
+  const prompt = `Lead: ${'x'.repeat(2 * 1024 * 1024)}`;
+  const receipt = {
+    payload: prompt,
+    digest: writeSentinel(dir, prompt, now - 1),
+    sent_at: now - 1,
+    session_id: 'fixture',
+    before_turn_token: 'earlier-turn',
+  };
+  const hook = {
+    runner: 'codex',
+    tmuxPane: '%1',
+    session_id: 'fixture',
+    rootSessionId: 'fixture',
+    transcript_path: native,
+    hook_event_name: 'SessionStart',
+    observedAt: now,
+  };
+  fs.writeFileSync(path.join(dir, 'panes', '%251.json'), JSON.stringify(hook));
+  fs.writeFileSync(path.join(dir, 'hooks.jsonl'), `${JSON.stringify(hook)}\n`);
+  const records = [
+    { type: 'session_meta', payload: { id: 'fixture' } },
+    { type: 'event_msg', timestamp, payload: { type: 'task_started', turn_id: 'new-turn' } },
+    {
+      type: 'response_item',
+      timestamp,
+      payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: prompt }] },
+    },
+  ];
+  fs.writeFileSync(native, records.map(JSON.stringify).join('\n') + '\n');
+  const meta = { pane_id: '%1', process_started_at: now - 1000 };
+  assert.equal(acceptedPrompt(meta, 'codex', dir, receipt).turn_token, 'new-turn');
+});
+
+test('proof reads a window after the send even when the session grew far past it', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'driver-grown-session-'));
+  t.after(() => fs.rmSync(dir, { recursive: true }));
+  const file = path.join(dir, 'native.jsonl');
+  const now = Date.now();
+  fs.writeFileSync(
+    file,
+    `${JSON.stringify({ type: 'session_meta', payload: { id: 'goal-session' } })}\n`,
+  );
+  const offset = fs.statSync(file).size;
+  const events = [
+    {
+      type: 'event_msg',
+      timestamp: new Date(now).toISOString(),
+      payload: {
+        type: 'thread_goal_updated',
+        threadId: 'goal-session',
+        goal: { threadId: 'goal-session', objective: 'Finish', status: 'active' },
+      },
+    },
+    {
+      type: 'event_msg',
+      timestamp: new Date(now + 1).toISOString(),
+      payload: { type: 'task_started', turn_id: 'new' },
+    },
+  ];
+  fs.appendFileSync(file, events.map((record) => `${JSON.stringify(record)}\n`).join(''));
+  fs.truncateSync(file, 600 * 1024 * 1024);
+  const receipt = {
+    payload: '/goal Finish',
+    sent_at: now - 1,
+    before_turn_token: 'old',
+    session_offset: offset,
+  };
+  assert.equal(acceptedCodexGoal(file, 'goal-session', receipt).turn_token, 'new');
+});
+
+test('a hook digest proves only a message it covers whole', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'driver-hook-whole-'));
+  t.after(() => fs.rmSync(dir, { recursive: true }));
+  fs.mkdirSync(path.join(dir, 'panes'));
+  const transcript = path.join(dir, 'claude.jsonl');
+  const now = Date.now();
+  const meta = { pane_id: '%1', process_started_at: now - 1000 };
+  for (const [payload, proven] of [
+    [`${'long handoff line '.repeat(40)}end`, false],
+    ['short handoff', true],
+  ]) {
+    const receipt = {
+      payload,
+      digest: writeSentinel(dir, payload, now - 1),
+      sent_at: now - 1,
+      session_id: 'claude-session',
+      before_turn_token: 'earlier-turn',
+      session_offset: 0,
+    };
+    const hook = {
+      runner: 'claude',
+      tmuxPane: '%1',
+      session_id: 'claude-session',
+      rootSessionId: 'claude-session',
+      transcript_path: transcript,
+      hook_event_name: 'UserPromptSubmit',
+      observedAt: now,
+      turnStartedAt: now,
+      turnActive: true,
+      runnerPromptDigest: receipt.digest,
+    };
+    fs.writeFileSync(path.join(dir, 'panes', '%251.json'), JSON.stringify(hook));
+    fs.writeFileSync(path.join(dir, 'hooks.jsonl'), `${JSON.stringify(hook)}\n`);
+    // The runner recorded only the start of the message.
+    const cut = {
+      type: 'user',
+      timestamp: new Date(now).toISOString(),
+      message: { role: 'user', content: payload.slice(0, 5) },
+    };
+    fs.writeFileSync(transcript, `${JSON.stringify(cut)}\n`);
+    assert.equal(
+      acceptedPrompt(meta, 'claude', dir, receipt)?.source ?? null,
+      proven ? 'hook' : null,
+    );
+  }
+});
+
+test('/goal proof reads the session header and only records after the send', (t) => {
+  const now = Date.now();
+  const { file, offset } = oversizedLog(
+    t,
+    [{ type: 'session_meta', payload: { id: 'goal-session' } }],
+    [
+      {
+        type: 'event_msg',
+        timestamp: new Date(now).toISOString(),
+        payload: {
+          type: 'thread_goal_updated',
+          threadId: 'goal-session',
+          goal: { threadId: 'goal-session', objective: 'Finish', status: 'active' },
+        },
+      },
+      {
+        type: 'event_msg',
+        timestamp: new Date(now + 1).toISOString(),
+        payload: { type: 'task_started', turn_id: 'new' },
+      },
+    ],
+  );
+  const receipt = { payload: '/goal Finish', sent_at: now - 1, before_turn_token: 'old' };
+  assert.equal(
+    acceptedCodexGoal(file, 'goal-session', { ...receipt, session_offset: offset }).turn_token,
+    'new',
+  );
+  assert.equal(acceptedCodexGoal(file, 'goal-session', receipt).turn_token, 'new');
+});
 
 test('a pending unknown-session receipt binds only through exact native acceptance on its pane process', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'driver-late-binding-'));

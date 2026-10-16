@@ -56,6 +56,7 @@ import {
   ticketSlug as computeTicketSlug,
 } from '../intelligence/engine.js';
 import { getPRRawData, parseJsonLines } from '../methods/pr/raw-cache.js';
+import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 import { harnessRoot } from '../projects/harness-root.js';
 import { extractRecipeFromPRBody, materializeExtractedRecipe } from '../quality/pr-body-recipe.js';
 import { prepareBranchMaintenance } from '../run-engine/branch-maintenance.js';
@@ -972,6 +973,13 @@ export async function writeTaskFile(
   // Use the same connected installation for task paths and configured commands.
   vars.farmslot_dir = farmslotDirForSlot;
   vars.FARMSLOT_DIR = farmslotDirForSlot;
+  // Pack scripts run from the slot's selected node-support bundle (ADR-035),
+  // the same root its hooks and fixtures use.
+  const support = await ensureNodeSupportBundle(slotVars, projectVars.runtimeDir || '.agent', {
+    projectVars,
+  });
+  vars.node_support_dir = support?.supportDir ?? farmslotDirForSlot;
+  vars.NODE_SUPPORT_DIR = vars.node_support_dir;
 
   // ─── Linked tickets (plural, pre-rendered markdown) ───
   // A PR can reference multiple tickets ("Fixes PROJ-123, PROJ-456"). Templates

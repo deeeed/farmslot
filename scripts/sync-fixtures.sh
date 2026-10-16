@@ -10,6 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 SLOT_ID=""
+NODE_SUPPORT_DIR=""
 
 # Shell-side mirror of DOMAIN_NAME_RE / isValidDomainName in @farmslot/protocol
 # (packages/protocol/src/contracts/runs.ts) — the single contract for domain
@@ -17,6 +18,8 @@ SLOT_ID=""
 # anything outside this allowlist (path separators, sed metacharacters,
 # quotes, spaces) must be rejected here, not sanitized downstream.
 DOMAIN_NAME_RE='^[a-z0-9]([a-z0-9._-]{0,62}[a-z0-9])?$'
+# Held in a variable: a literal ~ in a [[ =~ ]] pattern is tilde-expanded.
+NODE_SUPPORT_DIR_RE='^(/|~/)[A-Za-z0-9._/~+@:-]*$'
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -32,6 +35,14 @@ while [[ $# -gt 0 ]]; do
         exit 1
       fi
       export DOMAIN="$2"; shift 2 ;;
+    --node-support-dir)
+      # Substituted into sed replacement text and fixture bodies: an absolute or
+      # ~/ path without the sed delimiter, quotes or control characters.
+      if ! [[ "$2" =~ $NODE_SUPPORT_DIR_RE ]]; then
+        echo "FAIL: invalid --node-support-dir '$2' — must be an absolute or ~/ path" >&2
+        exit 1
+      fi
+      NODE_SUPPORT_DIR="$2"; shift 2 ;;
     *)           echo "Unknown arg: $1"; exit 1 ;;
   esac
 done
@@ -173,6 +184,7 @@ if [ -n "${SLOT_ID}" ]; then
     ${FLOW_TYPE:+--flow-type "$FLOW_TYPE"} \
     ${APP:+--app "$APP"} \
     ${DOMAIN:+--domain "$DOMAIN"} \
+    ${NODE_SUPPORT_DIR:+--node-support-dir "$NODE_SUPPORT_DIR"} \
     --stage "$FIXTURE_STAGE" --manifest "$FIXTURE_MANIFEST" || {
       fixture_status=$?
       rm -rf "$FIXTURE_STAGE" "$FIXTURE_MANIFEST"
@@ -238,6 +250,8 @@ if [ -n "${SLOT_ID}" ]; then
         -e "s|{{RECIPE_DIR}}|${RECIPE_DIR:-${RUNTIME_DIR:-.agent}/recipes}|g" \
         -e "s|{{domain}}|${DOMAIN:-}|g" \
         -e "s|{{DOMAIN}}|${DOMAIN:-}|g" \
+        -e "s|{{node_support_dir}}|${NODE_SUPPORT_DIR:-$FARMSLOT_DIR}|g" \
+        -e "s|{{NODE_SUPPORT_DIR}}|${NODE_SUPPORT_DIR:-$FARMSLOT_DIR}|g" \
         {} +
     find "$STAGED_DIR" -name '*.bak' -delete
 
@@ -266,6 +280,7 @@ if [ -z "${SLOT_ID}" ]; then
   echo "  --flow-type <type>   Flow type for compose variants (e.g. fix-bug, new-feature, review-pr, personal, default)"
   echo "  --app <path>         Project-specific app selector for template substitution"
   echo "  --domain <name>      Domain overlay name for compose variants + {{domain}} substitution"
+  echo "  --node-support-dir <path>  Selected node-support bundle for {{node_support_dir}} (default: farmslot_dir)"
   exit 1
 fi
 

@@ -29,6 +29,7 @@ import {
 } from '../run-completion/retained-artifacts.js';
 import { BlockedRunError } from '../run-engine/errors.js';
 import { getRun } from '../runs/store.js';
+import { qaEvidenceStartedAt } from '../runs/task-execution.js';
 
 const assertions = new Set(['assert_json', 'assert_output', 'ui.wait_for']);
 const controls = new Set([
@@ -586,7 +587,7 @@ async function readQaCompletion(
         resolvedRecipes,
         artifactPaths: [...artifactPaths],
       },
-      run.steps.find((s) => s.name === 'dispatch')?.startedAt ?? run.startedAt ?? run.createdAt,
+      qaEvidenceStartedAt(run),
       item.smokeProofTarget,
     );
     packages.push({ path: item.path, digest });

@@ -8,6 +8,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 - Allow person confirm-visual without --reason while keeping it mandatory for issues and delegated judgments.
 
+- Use the gateway’s reachable pairing addresses and render the pairing QR on stderr in JSON mode.
+
 - Start the Gateway with its own source mappings so publication checks resolve current workspace dependencies after a clean install.
 
 - Use refresh-only person-device profiles for login, startup and activation; renew access silently, confirm sign-out and hand browsers one-use invitations while preserving service credentials.
@@ -173,6 +175,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 - feat: instant-feedback rule — every human-mode CLI command and TUI action acknowledges within ~200ms via a spinner, first stream line, or immediate pending notice, so no long operation (prepare, release, dispatch, backlog dispatch, bundle import, TUI connect) sits silent until it completes. Spinners/notices go to stderr only and are suppressed in machine mode (`--json` or non-TTY stdout), keeping stdout a single pure envelope even when stdout is piped while stderr stays a TTY.
 - refactor: rename the branch-maintenance flow `merge-main` → `update-branch` in the `run` command flow-type map.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+- Accept `--node-support-dir` in `internal fixture-plan` and render it as `{{node_support_dir}}`.
 
 ## 0.3.0 - 2026-07-13
 

@@ -79,11 +79,13 @@ test('pane and send native preflight share one binding subprocess and the config
   const calls = [];
   const spy = t.mock.method(cp, 'execFileSync', (command, args, options) => {
     calls.push({ command, args, options });
-    if (command === 'bash' && args[1].includes('lsof'))
+    // Probe scripts arrive on stdin, so no payload is bound by the OS argument limit.
+    assert.deepEqual(args, ['-s']);
+    if (command === 'bash' && options.input.includes('lsof'))
       return files.map((file) => `n${file}`).join('\n');
-    if (command === 'bash' && args[1].includes('root_only'))
+    if (command === 'bash' && options.input.includes('root_only'))
       return JSON.stringify({ status: 'matched', sessionId: 'session-0', sessionPath: files[0] });
-    if (command === 'bash' && args[1].includes('reverse_lines'))
+    if (command === 'bash' && options.input.includes('reverse_lines'))
       return JSON.stringify({
         status: 'matched',
         state: 'active',
