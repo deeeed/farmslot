@@ -4,9 +4,11 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Re-claim a failed run's slot before replaying write-task, and refuse the replay before any step runs when another live run holds that slot, naming the holder.
+- Deliver lane handoffs to busy Claude sessions with Enter, and treat a draft in Claude's boxed composer as live input that blocks delivery.
 
 - Publish the PR title from the approved body's leading `# type(scope): summary` heading, else the ticket title, and refuse approval when neither names more than a ticket key.
+
+- Re-claim a failed run's slot before replaying write-task, and refuse the replay before any step runs when another live run holds that slot, naming the holder.
 
 - Submit buffered Codex input with Enter, never Tab, and accept only the next-tool-call steering block as delivery proof; queued follow-up input stays undelivered.
 
