@@ -1,5 +1,4 @@
 import { existsSync } from 'node:fs';
-import { copyFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -14,10 +13,8 @@ import {
 import { selectAgentContext, upsertAgentContext } from '../../agents/contexts.js';
 import {
   claimSlotStatusIf,
-  execLocal,
   execOnSlot,
   farmslotRoot,
-  isLocal,
   loadProjectVars,
   loadSlotVars,
   type RawProjectJson,
@@ -26,7 +23,6 @@ import {
   resolveProjectTaskDirName,
   SLOT_PHASE_RELEASING,
 } from '../../core/index.js';
-import { SSH_CONNECT_SHELL_OPTIONS } from '../../core/ssh-options.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { loadFleetStatus } from '../../fleet/state.js';
 import {
@@ -49,7 +45,7 @@ import {
 } from '../../runners/session-process.js';
 import { runnerSessionContextPatch } from '../../runners/session-record.js';
 import { resolveWorkerNudgePrompt } from '../../runners/worker-prompt.js';
-import { copyPreparedTaskRootSidecars, copyTaskDirSubdirectories } from '../../tasks/sidecars.js';
+import { verifyHostedTaskOnSlot } from '../../tasks/hosted-task-init.js';
 import { unwatchContext, unwatchSlot, watchContext, watchSlot } from '../../tasks/watcher.js';
 
 import { enforceDispatchPressureGate } from './execute.js';
@@ -299,34 +295,8 @@ export async function nudgeDispatch(
   const workerTaskDir = `${taskDirName}/${flowSubdir}/${taskFolderId}`;
   const workerTaskAbs = `${vars.remoteRepo}/${workerTaskDir}`;
 
-  step('copy', `Copying TASK.md to ${workerTaskDir}/TASK.md`);
-  if (isLocal(vars.host, vars.machine)) {
-    await mkdir(workerTaskAbs, { recursive: true });
-    await copyFile(taskFilePath, path.join(workerTaskAbs, 'TASK.md'));
-  } else {
-    await execOnSlot(vars, `mkdir -p ${shellQuote(workerTaskAbs)}`);
-    await execLocal(
-      `scp -q ${SSH_CONNECT_SHELL_OPTIONS} ${shellQuote(taskFilePath)} ${shellQuote(`${vars.sshTarget}:${workerTaskAbs}/TASK.md`)}`,
-    );
-  }
-  for (const sidecar of await copyPreparedTaskRootSidecars({
-    taskDir,
-    workerTaskAbs,
-    host: vars.host,
-    machine: vars.machine,
-    sshTarget: vars.sshTarget,
-  })) {
-    step('copy', `${sidecar} copied`);
-  }
-  for (const subdir of await copyTaskDirSubdirectories({
-    taskDir,
-    workerTaskAbs,
-    host: vars.host,
-    machine: vars.machine,
-    sshTarget: vars.sshTarget,
-  })) {
-    step('copy', `${subdir}/ copied`);
-  }
+  await verifyHostedTaskOnSlot(vars, workerTaskAbs);
+  step('copy', 'Node-owned task verified; task documents and evidence preserved');
 
   // STEP A: resolve the existing worker's role + tmux target. This must NOT mutate any state
   // — if the nudge fails downstream, the prior run is still alive and we don't want to have

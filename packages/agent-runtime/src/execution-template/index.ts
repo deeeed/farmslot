@@ -33,6 +33,7 @@ export {
   projectWorkerTemplateSource,
 } from './resolve.js';
 export {
+  executionTemplateCatalogFlow,
   executionTemplateEntryParticipates,
   executionTemplateSourceParticipates,
   listCompatibleExecutionTemplates,

@@ -19,7 +19,7 @@ import {
   writeResultPackageManifest,
 } from '../evals/package-store.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
-import { writeTaskFile } from '../tasks/writer.js';
+import { writeTaskFixture } from '../tasks/writer.test-support.js';
 
 import { harnessLifecycleForAxes } from './eval/candidate-setup.js';
 import { candidateVariant, evalExperimentCreate, evalTrialStart } from './eval.js';
@@ -484,7 +484,7 @@ test('evalTrialStart creates a catalog candidate without a template axis or orig
   ) as Record<string, unknown>;
   assert.deepEqual(startRefInput, { requestedRef: 'release/v1.0.0', source: 'eval-candidate' });
   assert.equal(result.taskPath, undefined);
-  const normalTaskPath = await writeTaskFile(result.run!, { skipCollisionCheck: true });
+  const normalTaskPath = await writeTaskFixture(result.run!, { skipCollisionCheck: true });
   taskDirs.push(path.dirname(normalTaskPath));
   const normalTask = await readFile(normalTaskPath, 'utf-8');
   assert.match(normalTask, /^# /);

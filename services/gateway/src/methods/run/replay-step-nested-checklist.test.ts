@@ -83,7 +83,6 @@ const { createRun, deleteRun, getRun, updateRun } = await import('../../runs/sto
 const { CHECKLIST_TARGET_BY_AGENT_ROLE, CHECKLIST_TARGET_MANIFEST } =
   await import('../../tasks/checklist-target.js');
 const { resolveWorkerTerminalContract } = await import('../../tasks/worker-terminal-contract.js');
-const { initializeExistingTaskRuntime } = await import('../../tasks/existing-runtime.js');
 const { buildHandoffMetadata, ensureTaskRuntime } = await import('@farmslot/agent-runtime');
 
 for (const stepName of [PS.MONITOR, PS.REVIEW]) {
@@ -220,7 +219,7 @@ for (const authored of [false, true]) {
         await deleteRun(run.id);
       }
     });
-    if (authored) {
+    {
       const terminalContract = {
         ...resolveWorkerTerminalContract(null, run.flowType),
         deterministicChecks: [
@@ -237,8 +236,8 @@ for (const authored of [false, true]) {
         checklistMarkdown: '# Authored checklist\n- [x] Retained work\n',
         terminalContract,
         handoff: buildHandoffMetadata({
-          attemptId: 'authored-task-identity',
-          surface: 'recipe-cook',
+          attemptId: authored ? 'authored-task-identity' : run.id,
+          surface: authored ? 'recipe-cook' : 'farmslot',
           project: run.project,
           flow: run.flowType,
           title: 'Authored task',
@@ -247,7 +246,7 @@ for (const authored of [false, true]) {
         }),
       });
     }
-    await initializeExistingTaskRuntime(run);
+    // Author legacy fixtures through the shared SDK; monitor replay must not initialize or upgrade them.
     const contract = await readFile(
       path.join(path.dirname(taskFile), 'inputs/worker-terminal-contract.json'),
       'utf8',

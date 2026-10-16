@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -106,22 +106,17 @@ test('copyPreparedTaskRootSidecars removes a stale role manifest when the fresh 
   assert.equal(existsSync(path.join(workerTaskAbs, CHECKLIST_TARGET_MANIFEST)), false);
 });
 
-test('TASK_DIR_COPIED_SUBDIRS is the one list dispatch, nudge, and warm handoff share', async () => {
+test('initial staging shares one copy list and retained deliveries verify instead', async () => {
   // subtasks/ travels as a directory (ADR-060), not through TASK_ROOT_SIDECARS.
   assert.deepEqual([...TASK_DIR_COPIED_SUBDIRS], ['assets', 'inputs', 'artifacts', 'subtasks']);
 
-  // The three staging paths must read the constant, never their own array: a
-  // fourth hand-maintained list is how the copy drifts.
+  // The node initializer and same-run legacy dispatch share the transfer list.
   const gatewaySrc = path.resolve(import.meta.dirname, '..');
-  for (const file of [
-    'methods/dispatch/execute.ts',
-    'methods/dispatch/nudge.ts',
-    'methods/dispatch/warm-session-handoff.ts',
-  ]) {
+  for (const file of ['methods/dispatch/execute.ts', 'tasks/hosted-task-init.ts']) {
     const source = await readFile(path.join(gatewaySrc, file), 'utf-8');
     assert.match(
       source,
-      /for \(const subdir of await copyTaskDirSubdirectories\(\{/,
+      /await copyTaskDirSubdirectories\(/,
       `${file} must stage subdirectories through the shared copy helper`,
     );
     assert.doesNotMatch(
@@ -129,6 +124,11 @@ test('TASK_DIR_COPIED_SUBDIRS is the one list dispatch, nudge, and warm handoff 
       /\['assets', 'inputs', 'artifacts'/,
       `${file} must not keep its own copy list`,
     );
+  }
+  for (const file of ['methods/dispatch/nudge.ts', 'methods/dispatch/warm-session-handoff.ts']) {
+    const source = await readFile(path.join(gatewaySrc, file), 'utf8');
+    assert.match(source, /await verifyHostedTaskOnSlot\(vars, workerTaskAbs\)/);
+    assert.doesNotMatch(source, /copyTaskDirSubdirectories/);
   }
 });
 
@@ -184,4 +184,42 @@ test('copyTaskDirSubdirectories stages the shared list and never sends mirror ou
   );
   // assets/ and artifacts/ were absent at the source, so nothing was created.
   assert.equal(existsSync(path.join(workerTaskAbs, 'artifacts')), false);
+});
+
+test('hosted transfer preserves node-produced files while copying control-plane sidecars', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'hosted-sidecar-preserve-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const taskDir = path.join(root, 'gateway');
+  const workerTaskAbs = path.join(root, 'worker');
+  const protectedFiles = [
+    'mark',
+    'CHECKLIST.md',
+    'inputs/handoff.json',
+    'artifacts/harness-provenance.json',
+  ];
+  for (const directory of [taskDir, workerTaskAbs]) {
+    await mkdir(path.join(directory, 'inputs'), { recursive: true });
+    await mkdir(path.join(directory, 'artifacts'), { recursive: true });
+    for (const file of protectedFiles)
+      await writeFile(
+        path.join(directory, file),
+        directory === taskDir ? 'gateway-old' : 'node-current',
+      );
+  }
+  await writeFile(path.join(taskDir, 'inputs/context.json'), '{"ticket":"retained"}');
+  const params = {
+    taskDir,
+    workerTaskAbs,
+    host: 'localhost',
+    machine: 'local',
+    excludeRelativePaths: protectedFiles,
+  };
+  await copyPreparedTaskRootSidecars(params);
+  await copyTaskDirSubdirectories(params);
+  for (const file of protectedFiles)
+    assert.equal(await readFile(path.join(workerTaskAbs, file), 'utf8'), 'node-current');
+  assert.equal(
+    await readFile(path.join(workerTaskAbs, 'inputs/context.json'), 'utf8'),
+    '{"ticket":"retained"}',
+  );
 });

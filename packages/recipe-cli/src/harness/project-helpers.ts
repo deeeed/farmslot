@@ -11,7 +11,7 @@ import { isRecord, type RecipeConformanceSource } from '@farmslot/protocol';
 
 import { optionValues } from './command-contract.js';
 import { recipeConformanceIdentity } from './conformance.js';
-import { readProject } from './context.js';
+import { readProject, recipePackageRoot } from './context.js';
 import { ProjectBindingError } from './context-state.js';
 import {
   type ProjectRecipeHost,
@@ -123,22 +123,36 @@ function readSelection(taskDir: string): TaskProjectSelection {
   };
 }
 
-/** Retain the installed dependency tree without including its owner's product files. */
-function installedInputRoot(providerRoot: string): string {
-  let modules = path.dirname(providerRoot);
-  if (path.basename(modules).startsWith('@')) modules = path.dirname(modules);
-  if (path.basename(modules) !== 'node_modules') return providerRoot;
-  const installation = path.dirname(modules);
-  const manifest = path.join(installation, 'package.json');
-  if (!fs.existsSync(manifest)) return providerRoot;
-  const config: unknown = JSON.parse(fs.readFileSync(manifest, 'utf8'));
-  if (!isRecord(config)) return providerRoot;
-  const installedName = path.relative(modules, providerRoot).split(path.sep).join('/');
-  const declared = ['dependencies', 'devDependencies', 'optionalDependencies'].some((field) => {
-    const dependencies = config[field];
-    return isRecord(dependencies) && typeof dependencies[installedName] === 'string';
-  });
-  return declared ? modules : providerRoot;
+/** Workspace retention never changes the provider's bundled recipe root. */
+function providerWorkspace(host: ProjectRecipeHost): string {
+  const binding = host.context.project;
+  if (!binding) throw new Error('Task initialization requires a resolved project.');
+  if (binding.provider.package) return binding.provider.root;
+  const root = recipePackageRoot(binding.provider.module);
+  const checkout = fs.realpathSync(binding.checkoutRoot);
+  if (
+    root === checkout ||
+    root === fs.realpathSync(host.context.target.value) ||
+    (binding.app && root === path.resolve(checkout, binding.app))
+  ) {
+    const manifest: unknown = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+    if (
+      !isRecord(manifest) ||
+      !Array.isArray(manifest.files) ||
+      manifest.files.length === 0 ||
+      !manifest.files.every(
+        (entry) =>
+          typeof entry === 'string' &&
+          !/[?*{}[\]]/.test(entry.split('/')[0]!) &&
+          !path.isAbsolute(entry) &&
+          !entry.split('/').some((part) => part === '.' || part === '..'),
+      )
+    )
+      throw new Error(
+        'Declare a dedicated tooling workspace or bounded manifest files, without changing the recipe root. The product checkout cannot be retained.',
+      );
+  }
+  return root;
 }
 
 /** Freeze tooling only; the product checkout and task recipes stay editable. */
@@ -148,6 +162,7 @@ export async function projectTaskExecution(
 ): Promise<TaskExecutionInput> {
   const binding = host.context.project;
   if (!binding) throw new Error('Task initialization requires a resolved project.');
+  const workspace = providerWorkspace(host);
   const conformance = await recipeConformanceIdentity(host.engine, {
     project: binding.name,
     app: binding.app,
@@ -203,11 +218,21 @@ export async function projectTaskExecution(
     bindingIdentity,
     inputs: [
       ...new Set([
-        installedInputRoot(binding.root),
-        installedInputRoot(binding.provider.root),
-        ...host.librarySources.map((entry) => installedInputRoot(entry.root)),
+        workspace,
+        binding.provider.root,
+        binding.provider.module,
+        binding.root,
+        ...host.librarySources.map((entry) => entry.root),
         ...configuration.map((entry) => entry.path),
       ]),
+    ],
+    dependencyRoots: [workspace],
+    excludedRoots: [
+      ...(install.excludedRoots ?? []),
+      path.join(binding.root, 'tasks'),
+      path.resolve(binding.checkoutRoot, binding.artifactDir),
+      path.resolve(host.context.target.value, binding.runtimeDir),
+      path.resolve(binding.checkoutRoot, binding.farmRuntimeDir),
     ],
     selectedConfiguration: JSON.stringify(selection),
   };

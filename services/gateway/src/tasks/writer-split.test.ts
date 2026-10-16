@@ -10,6 +10,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { writeTaskFixture } from './writer.test-support.js';
+
 // Both env values must be set before slot-config loads: it resolves the projects
 // dir and the demo-pool opt-in at module evaluation. Hence the dynamic imports.
 process.env.FARMSLOT_DEMO_POOL = '1';
@@ -40,8 +42,8 @@ const ADDENDUM_SOURCE = ['## Tooling', '', 'Marker help: `{{TASK_DIR}}/mark --he
 await mkdir(path.join(tempProject, 'templates', 'worker'), { recursive: true });
 const projectJson = JSON.parse(await readFile(realProjectJson, 'utf-8')) as Record<string, unknown>;
 projectJson.execution_templates = { sources: [] };
-// A pack may route the mark shim through its harness; the value is expanded like any project var.
-projectJson.vars = { mark_cmd: 'mmh checklist mark' };
+// Marker policy is supplied by the provider; retired mark_cmd is absent.
+projectJson.vars = {};
 await writeFile(
   path.join(tempProject, 'project.json'),
   `${JSON.stringify(projectJson, null, 2)}\n`,
@@ -57,7 +59,7 @@ await writeFile(path.join(tempProject, 'templates', 'task-document.md'), ADDENDU
 const { enumerateChecklistCheckboxes } = await import('@farmslot/protocol');
 const { CHECKLIST_MARKER_INPUT } = await import('./sidecars.js');
 const { HANDOFF_INPUT } = await import('@farmslot/agent-runtime');
-const { writeTaskFile } = await import('./writer.js');
+
 type Run = import('@farmslot/protocol').Run;
 
 function sha256(text: string): string {
@@ -118,7 +120,7 @@ test('split layout writes CHECKLIST.md verbatim and TASK.md as the task document
     await rm(projectsDir, { recursive: true, force: true });
   });
 
-  taskFile = await writeTaskFile(run);
+  taskFile = await writeTaskFixture(run);
   const taskDir = path.dirname(taskFile);
   assert.equal(path.basename(taskFile), 'TASK.md');
 
@@ -164,10 +166,15 @@ test('split layout writes CHECKLIST.md verbatim and TASK.md as the task document
   // The pre-0.9 provenance twins are gone; handoff.json is the one task record.
   // No manifest either: absent means CHECKLIST.md + SIGNAL.json.
   await assert.rejects(access(path.join(taskDir, 'checklist-target.json')));
-  // The pack's mark_cmd becomes the shim's recorded command.
+  // This renderer fixture uses the shared SDK. Frozen CLI marking is verified
+  // independently by task-initialization tests.
   assert.match(
     await readFile(path.join(taskDir, CHECKLIST_MARKER_INPUT), 'utf-8'),
-    /exec \$\{FARMSLOT_MARK_CMD:-mmh checklist mark\} "\$DIR" "\$@"/,
+    /mark-checklist-step\.cjs/,
+  );
+  assert.doesNotMatch(
+    await readFile(path.join(taskDir, CHECKLIST_MARKER_INPUT), 'utf-8'),
+    /mmh checklist/,
   );
   await assert.rejects(readFile(path.join(taskDir, 'inputs', 'execution-template.json')));
   await assert.rejects(readFile(path.join(taskDir, 'inputs', 'template-provenance.json')));
@@ -241,7 +248,7 @@ test('split layout writes CHECKLIST.md verbatim and TASK.md as the task document
   await writeFile(path.join(tempProject, 'project.json'), JSON.stringify(projectJson));
   const { invalidateProjectVarsCache } = await import('@farmslot/slot-config');
   invalidateProjectVarsCache('farmslot-farm');
-  const qaTask = await writeTaskFile(qaRun);
+  const qaTask = await writeTaskFixture(qaRun);
   t.after(() => rm(path.dirname(qaTask), { recursive: true, force: true }));
   const qaInputsText = await readFile(path.join(path.dirname(qaTask), 'inputs/qa.json'), 'utf8');
   const qaInput = JSON.parse(qaInputsText);

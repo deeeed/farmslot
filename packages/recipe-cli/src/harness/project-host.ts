@@ -28,7 +28,7 @@ import {
   ProjectBindingError,
   setHarnessContext,
 } from './context-state.js';
-import { providerSourceSnapshot } from './execution-provenance.js';
+import { providerSourceSnapshot, withRetainedSourceProvenance } from './execution-provenance.js';
 import { withHarnessInvocation } from './harness-cli.js';
 import {
   configureHarnessHost,
@@ -283,9 +283,9 @@ export function withProjectRecipeHostContext<T>(
     const finishOutput = options.deferOutput ? deferCommandOutput() : undefined;
     let succeeded = false;
     try {
-      const result = await (needsSignals
-        ? withRecipeSignals(execute, options.signal)
-        : execute(options.signal));
+      const result = await withRetainedSourceProvenance(sourceCeiling, () =>
+        needsSignals ? withRecipeSignals(execute, options.signal) : execute(options.signal),
+      );
       succeeded = true;
       return result;
     } finally {

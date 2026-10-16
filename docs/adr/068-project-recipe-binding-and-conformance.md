@@ -177,3 +177,19 @@ Rendering reads existing evidence. It does not execute recipes, validate publica
 The [authored Markdown specification](../reference/project-recipe-contract.md#authored-task-markdown) defines `--command`, `--out`, JSON metadata and the shared `@farmslot/recipe-cli/harness` renderer. Named consumers are the root CLI, gateway publication renderer, project pack commands and recipe PR-description skills. Providers contribute project data rather than another renderer.
 
 Publish the additive SDK export in a reviewed pre-1.0 minor release. Migrate callers with their argument mapping before deleting the old renderer and route. No compatibility shim, artifact schema, evidence writer, execution engine or resource authority is added. Content approval precedes implementation in the same caller-parity PR.
+
+## Amendment 5: Hosted task initialization, 2026-10-16
+
+**Status:** Accepted by lead amendment authority, 2026-10-16. Implementation: [#1186](https://github.com/deeeed/farmslot/pull/1186). Earlier decisions retain their status.
+
+### Decision and rationale
+
+Complete Amendment 3 on the hosted path. The execution node's immutable Farmslot CLI initializes the task through the existing shared producer, retaining its own implementation and the selected project tooling before emitting a marker. The gateway supplies task data and mirrors the result; it cannot pin its own installation for a different node or regenerate the marker from current pool defaults.
+
+Retain the provider's owning tooling workspace and its declared installed dependencies separately from the recipe library root. Sibling imports and local dependency links must remain usable from the retained copy without changing bundled recipe discovery or freezing the product checkout.
+
+Migrate every active consumer before enabling the hosted cutover, then delete the replaced producer. Every pack consuming that producer is included. There is no project opt-in, compatibility shim or fallback to an unfrozen task. Existing tasks retain their original tooling and evidence.
+
+### Public surface and consequences
+
+The [hosted task specification](../reference/project-recipe-contract.md#hosted-task-initialization) defines node-local initialization, private transport, static-task boundaries and retries. The root CLI and gateway consume the existing `@farmslot/agent-runtime` task producer and `@farmslot/recipe-cli/harness` binding/verifier APIs. No second installer, task store, engine, writer or recorder is introduced. Content approval precedes implementation in this same PR.
