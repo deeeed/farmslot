@@ -1138,6 +1138,47 @@ test('authenticated review uses one engine projection in every view and preserve
       'assertion',
       'person-reviewed',
     ]);
+    const pipeline: RecipeVisualJudgmentReceipt = {
+      ...receipt,
+      kind: 'pipeline-reviewed',
+      reviewerSubjectKind: 'service',
+      approver: { principalId: 'native-review:session:lease', displayName: 'Independent review' },
+      pipeline: {
+        contextId: 'review',
+        sessionId: 'session',
+        generation: 'generation',
+        leaseId: 'lease',
+        commandId: 'command',
+        executionNodeId: 'node',
+        ownerPrincipalId: 'owner',
+      },
+      reviewedFiles: reviewedVisualFiles(input, receipt.claimId),
+    };
+    const verified = createEvidenceReviewModel({
+      package: input,
+      context,
+      visualReviewAuthority: { ...authority, receipts: [pipeline] },
+    });
+    assert.equal(verified.summary.proven, 2);
+    const verifiedClaim = verified.claims.find((c) => c.id === 'check-1')!;
+    assert.deepEqual(verifiedClaim.proofKinds, ['assertion', 'agent-reviewed']);
+    assert.equal(verifiedClaim.requiresPersonReview, false);
+    assert.match(verified.visualReviewMarkdown, /Verified by agent/);
+    assert.equal(
+      verified.judgmentRows(null).find((r) => r.claim.id === 'check-1')!.prevalidation?.reason,
+      receipt.reason,
+    );
+    const personOnly = createEvidenceReviewModel({
+      package: input,
+      context,
+      visualReviewAuthority: {
+        ...authority,
+        receipts: [pipeline],
+        projectPolicy: { personOnlyClaimIds: ['case-1'] },
+      },
+    });
+    assert.equal(personOnly.summary.proven, 0);
+    assert.equal(personOnly.claims.find((c) => c.id === 'check-1')!.requiresPersonReview, true);
     const policy = { delegatedReviewerPrincipalIds: ['lead'], delegatorPrincipalId: 'person' };
     const delegated = createEvidenceReviewModel({
       package: input,
@@ -1192,7 +1233,7 @@ test('authenticated review uses one engine projection in every view and preserve
         ...authority,
         receipts: [
           receipt,
-          { ...receipt, id: 'rejection', verdict: 'rejected', judgedAt: '2026-10-13T00:00:00Z' },
+          { ...receipt, id: 'rejection', verdict: 'rejected', judgedAt: '2026-10-15T00:00:00Z' },
         ],
       },
     });

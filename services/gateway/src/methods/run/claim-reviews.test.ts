@@ -14,9 +14,11 @@ import {
 import {
   type ArtifactRef,
   parseProjectVisualClaimReviewPolicy,
+  type RecipeArtifactManifestEntry,
   type RunDecision,
   type RunReviewVisualClaimParams,
 } from '@farmslot/protocol';
+import { JsonArtifactWriter } from '@farmslot/recipe-runner/writers';
 
 await import('../../runtime/mock-pty.test-support.js');
 const { createRun, updateRun, getRun, runsDirectory } = await import('../../runs/store.js');
@@ -61,6 +63,21 @@ export async function fixture(t: TestContext) {
     });
   }
   const directory = path.join(root, prefix);
+  // The retained legacy fixture predates attempt-local publication manifests.
+  // Generate its candidate with the engine writer before sealing this test capture.
+  const legacy = (await readRecordedEvidencePackage(directory)).input;
+  const writer = new JsonArtifactWriter(directory);
+  const fixtureManifest: { artifacts: RecipeArtifactManifestEntry[] } = JSON.parse(
+    files['artifact-manifest.json']!,
+  );
+  for (const artifact of fixtureManifest.artifacts) writer.register(artifact);
+  await writer.writeEvidenceManifest(legacy.claims!);
+  await writer.write('pass');
+  inventory.push({ path: `${prefix}evidence-manifest.json`, purpose: 'evidence' });
+  for (const artifact of inventory)
+    artifact.sha256 = createHash('sha256')
+      .update(await readFile(path.join(root, artifact.path)))
+      .digest('hex');
   const input = (await readRecordedEvidencePackage(directory)).input;
   assert.equal(validateRecordedEvidencePackage(input).status, 'valid');
   const prepared = makeReadyGatePackage({ evidenceManifest: inventory, selectedEvidenceKeys: [] });

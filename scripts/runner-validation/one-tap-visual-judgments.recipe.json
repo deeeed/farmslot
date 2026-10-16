@@ -57,6 +57,20 @@
           "value": 0
         },
         "intent": "Require the shared package build to succeed.",
+        "next": "native-result"
+      },
+      "native-result": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=${TSX_TSCONFIG_PATH:-services/gateway/tsconfig.json} node --import tsx --experimental-test-module-mocks --test services/gateway/src/review/native-visual-result.rpc.live.ts",
+        "timeout_ms": 300000,
+        "intent": "Use an isolated authenticated gateway and a real provider to inspect red and green squares and return exact schema-bound completed-command results.",
+        "next": "native-result-verified"
+      },
+      "native-result-verified": {
+        "action": "assert_output",
+        "source": "native-result",
+        "assert": { "path": "$.exitCode", "operator": "eq", "value": 0 },
+        "intent": "Require actual native visual inspection and clean process teardown; contract fixtures alone cannot satisfy this proof.",
         "next": "done"
       }
     }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
@@ -20,8 +20,12 @@ process.env.NODE_TEST_CONTEXT = '1';
 process.env.FARMSLOT_RUNS_DIR = path.join(directory, 'runs');
 process.env.FARMSLOT_POOL_DIR = path.join(directory, 'pool');
 const { createRun } = await import('../runs/store.js');
-const { collectPipelineVisualResult, pipelineReviewerBinding, stampPipelineVisualReviews } =
-  await import('./pipeline-visual-review.js');
+const {
+  collectPipelineVisualResult,
+  pipelineReviewerBinding,
+  stampPipelineVisualReviews,
+  capturePipelineVisualInput,
+} = await import('./pipeline-visual-review.js');
 after(() => rm(directory, { force: true, recursive: true }));
 
 const input: RecordedEvidencePackageInput = JSON.parse(
@@ -155,6 +159,17 @@ test('native review results qualify on a tmux run without changing worker owners
   assert.equal(run.nativeOwnerPrincipalId, undefined);
 });
 
+test('a code-only task without a recorded attempt remains reviewable without visual authority', async () => {
+  const { run } = fixture();
+  const task = path.join(directory, 'code-only');
+  await mkdir(path.join(task, 'artifacts'), { recursive: true });
+  await writeFile(path.join(task, 'TASK.md'), '# Code-only task\n');
+  await writeFile(path.join(task, 'artifacts/report.md'), 'No visual criteria.\n');
+  run.taskFile = path.join(task, 'TASK.md');
+  assert.equal(await capturePipelineVisualInput(run.id, 'a'.repeat(40)), undefined);
+  assert.equal(run.visualJudgmentReceipts, undefined);
+});
+
 test('signal or overall PASS cannot replace completed bound native result', () => {
   for (const change of [
     (s: NativeSessionReadResult) => {
@@ -223,6 +238,20 @@ test('worker, fix and retained producing sessions cannot gain visual reviewer au
     });
     assert.throws(() => pipelineReviewerBinding(run, reviewer), /producing worker/);
   }
+  const { run, reviewer } = fixture();
+  run.flowType = 'review-pr';
+  const primaryReviewer = {
+    ...reviewer,
+    id: 'review',
+    nativeSession: undefined,
+    nativeSessionHistory: [{ ...reviewer.nativeSession! }],
+  };
+  run.agentContexts!.push(primaryReviewer);
+  assert.throws(
+    () => pipelineReviewerBinding(run, { ...reviewer, id: 'review' }),
+    /independent admitted/,
+  );
+  assert.throws(() => pipelineReviewerBinding(run, reviewer), /producing worker/);
 });
 
 test('a retained result activates only for its matching head and closure and stamps once across refreshes', async () => {

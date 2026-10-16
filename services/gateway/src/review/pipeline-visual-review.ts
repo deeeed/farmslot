@@ -4,6 +4,7 @@ import {
 } from '@farmslot/adapter-sdk/evidence';
 import {
   type AgentContext,
+  contextIdFor,
   digestRecipeDocument,
   type NativeSessionReadResult,
   nativeStructuredResult,
@@ -11,6 +12,7 @@ import {
   type PipelineVisualReviewerBinding,
   type PipelineVisualReviewInput,
   type PipelineVisualReviewResult,
+  primaryRoleForFlow,
   type RecipeVisualJudgmentReceipt,
   recordedEvidenceClosureIdentity,
   reviewedVisualFiles,
@@ -23,6 +25,7 @@ import { readVisualReviewPolicy } from '../run-engine/claim-reviews.js';
 import {
   readFrozenPublicationRecipeSources,
   readGateRecordedEvidenceSources,
+  recordedEvidenceRoots,
   type RecordedEvidenceSource,
 } from '../run-engine/recorded-evidence-sources.js';
 import { commitRunVisualJudgment, getRun } from '../runs/store.js';
@@ -39,11 +42,27 @@ export async function capturePipelineVisualInput(
     .find((d) => !d.resolvedAt && d.payload?.kind === 'ready')?.payload;
   let sources;
   if (prepared?.kind === 'ready' && prepared.prPackage?.headSha === headSha) {
+    if (
+      !recordedEvidenceRoots(
+        prepared.prPackage.evidenceManifest ?? [],
+        prepared.prPackage.selectedEvidenceKeys,
+      ).length
+    )
+      return;
     sources = await readGateRecordedEvidenceSources(run, prepared.prPackage);
   } else {
     await captureRunOutput(runId);
     run = getRun(runId)!;
     if (!run.output) return;
+    // Code-only reviews still run. No selected engine attempt grants visual authority.
+    if (
+      !run.output.artifactManifest.some(
+        (a) =>
+          a.path === 'artifacts/latest-valid-recipe-run.json' ||
+          a.purpose === 'evidence-manifest-source',
+      )
+    )
+      return;
     sources = await readFrozenPublicationRecipeSources(
       run,
       run.output.artifactManifest,
@@ -53,7 +72,8 @@ export async function capturePipelineVisualInput(
   }
   if (sources.length !== 1) return;
   const { input, artifactPrefix } = sources[0]!;
-  if (!input.claims || validateRecordedEvidencePackage(input).status !== 'valid') return;
+  if (!input.claims || validateRecordedEvidencePackage(input, { headSha }).status !== 'valid')
+    return;
   const policy = await readVisualReviewPolicy(run);
   const claims = deriveReviewedRecipeClaims(input)
     .filter(
@@ -84,8 +104,12 @@ export function pipelineReviewerBinding(
   context: AgentContext,
 ): PipelineVisualReviewerBinding {
   const b = context.nativeSession;
+  const producerId = contextIdFor(primaryRoleForFlow(run.flowType));
+  const producing = (candidate: AgentContext) =>
+    candidate.role !== 'review' || candidate.id === producerId;
   if (
     context.role !== 'review' ||
+    context.id === producerId ||
     context.runId !== run.id ||
     context.slotId !== run.slotId ||
     context.target ||
@@ -98,13 +122,13 @@ export function pipelineReviewerBinding(
   )
     throw new Error('Visual verification requires an independent admitted native review command');
   const producerBindings = (run.agentContexts ?? [])
-    .filter((c) => c.role !== 'review')
+    .filter(producing)
     .flatMap((c) => [c.nativeSession, ...(c.nativeSessionHistory ?? [])]);
   if (
     producerBindings.some((p) => p?.sessionId === b.sessionId) ||
     run.agentContexts?.some(
       (c) =>
-        c.role !== 'review' &&
+        producing(c) &&
         (c.runnerSessionId === context.runnerSessionId ||
           c.nativeSessionOwner?.sessionId === b.sessionId),
     )
@@ -204,7 +228,8 @@ export async function stampPipelineVisualReviews(
         s.input.claims?.recipeRunId === verified.result.recipeRunId &&
         recordedEvidenceClosureIdentity(s.input) === verified.result.closureIdentity,
     );
-    if (!source || validateRecordedEvidencePackage(source.input).status !== 'valid') continue;
+    if (!source || validateRecordedEvidencePackage(source.input, { headSha }).status !== 'valid')
+      continue;
     const claims = deriveReviewedRecipeClaims(source.input);
     for (const judgment of verified.result.judgments) {
       const claim = claims.find((c) => c.id === judgment.claimId);

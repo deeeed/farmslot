@@ -1249,3 +1249,29 @@ ADR-062 Amendment 11 governs pipeline visual judgments. Native review roles cons
 Qualified per-AC results use the canonical visual writer, bound to recording, closure, file digests, engine moments and reviewer binding. A stable reviewer/closure/claim retry key prevents duplicate stamps and refresh loops. Public manual review RPCs cannot produce pipeline receipts. Person-only project/claim/ancestor policy remains explicit. A person's latest judgment outranks agent receipts within the same execution and closure; later agent results cannot clear a person's Issue.
 
 Every newly recorded judgment on a pending publication gate invokes the supported package refresh before success. A refresh refusal preserves the receipt and leaves an idempotent retry. Resolved/output judgments do not refresh a publication package. Approval never happens automatically. Successful normal approval records the actual person/service principal and binds it to the frozen package and receipt IDs on decision resolution. Historical actors are not inferred.
+
+The additive Protocol result contract is `pipeline-visual-judgments-v1`.
+`NativeSessionCreateParams.resultSchema` selects this fixed schema; callers do not
+supply JSON Schema. `NativeSessionCapabilities.structuredResultSchemas` and the
+authenticated node's `supportsStructuredResults` advertise support. Native adapters
+retain the validated `structuredResult` only on the exact completed command.
+Native pipeline collection is the consumer. Missing capability, result, matching
+execution or file/moment binding MUST NOT create a pipeline receipt. Existing
+tmux attempts may finish collection, but new admissions use native review sessions.
+
+`PipelineVisualReviewInput` and `PipelineVisualReviewResult` remain on the admitted
+review context until package preparation matches their head and closure. Receipt
+identity includes the native node/owner/session/generation/lease/command tuple.
+The native reviewer is labelled as a service identity, never as the profile owner
+acting as a person. Public `RunReviewVisualClaimParams.kind` excludes
+`pipeline-reviewed`. The manual RPC MUST refuse attempts to submit that kind.
+
+`visualClaimRequiresPerson` in `@farmslot/protocol` is shared by receipt
+qualification and the SDK's `requiresPersonReview` display. Project `personOnly`
+and normalized ancestor-aware `personOnlyClaimIds` require person review. Legacy
+delegation fields are required together only when granting legacy delegation.
+Normal approval stores `RunDecision.publicationApproval`, including principal,
+subject kind, frozen package hash and receipt IDs. PR provenance renders that
+resolution; historical missing actors display "Not recorded". These additions
+use the existing package release process and require compatible readers before
+the new native result producer is activated.

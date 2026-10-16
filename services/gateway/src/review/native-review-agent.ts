@@ -13,6 +13,7 @@ import { loadProjectVars, loadSlotVars } from '../core/config.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { probeWorkerSignalForRun } from '../run-engine/run-monitor.js';
 import { stackPrBase } from '../run-engine/stack-base.js';
+import { validateNativeRunner } from '../runners/native/manager.js';
 import { nativeReviewerOwner, nativeReviewerResultSchema } from '../runners/native/review-owner.js';
 import { cancelNativeWorkerContext, dispatchNativeWorker } from '../runners/native/worker.js';
 import { readNativeWorkerSnapshot } from '../runners/native/worker-control.js';
@@ -117,6 +118,7 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
   const original = getRun(runId);
   if (!original) throw new Error('Native review run not found');
   assertNativeRunOwner(original);
+  validateNativeRunner(runner, model);
   const ownerPrincipalId = nativeReviewerOwner(original, vars);
   const generation = original.engineState?.generation ?? 0;
   const admit = () => {

@@ -1,6 +1,6 @@
 // Manual loopback protocol proof, outside the default test tier.
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,14 +9,38 @@ import test from 'node:test';
 import { deriveReviewedRecipeClaims } from '@farmslot/adapter-sdk/evidence';
 import { Methods, type RunReviewVisualClaimResult } from '@farmslot/protocol';
 
-import { visualReviewAuthority } from '../../run-engine/claim-reviews.js';
-import { visualReviewSnapshotIdentity } from '../../run-engine/recorded-evidence-sources.js';
-import { getRun } from '../../runs/store.js';
+await import('../../runtime/mock-pty.test-support.js');
 
-import { fixture } from './claim-reviews.test.js';
+const proofRoot = await mkdtemp(path.join(os.tmpdir(), 'one-tap-public-proof-'));
+process.env.NODE_TEST_CONTEXT = '1';
+process.env.FARMSLOT_PROJECTS_DIR = path.join(proofRoot, 'projects');
+process.env.FARMSLOT_RUNS_DIR = path.join(proofRoot, 'runs');
+process.env.FARMSLOT_POOL_DIR = path.join(proofRoot, 'pool');
+process.env.FARMSLOT_TEST_STATUS_FILE = path.join(proofRoot, 'status.json');
+await mkdir(path.join(proofRoot, 'projects/test-project'), { recursive: true });
+await writeFile(
+  path.join(proofRoot, 'projects/test-project/project.json'),
+  JSON.stringify({ name: 'test-project', default_branch: 'main' }),
+);
+const { visualReviewAuthority } = await import('../../run-engine/claim-reviews.js');
+const { visualReviewSnapshotIdentity } =
+  await import('../../run-engine/recorded-evidence-sources.js');
+const { getRun } = await import('../../runs/store.js');
+const { captureRunOutput } = await import('../../run-completion/output.js');
+
+const { fixture } = await import('./claim-reviews.test.js');
 
 test('authenticated public RPC records a text-free confirmation and refuses an empty Issue', async (t) => {
   const f = await fixture(t);
+  t.after(() => rm(proofRoot, { recursive: true, force: true }));
+  const task = path.dirname(f.run.taskFile!);
+  await writeFile(path.join(task, 'TASK.md'), '# Public visual proof fixture\n');
+  await writeFile(
+    path.join(task, 'artifacts/pr-description.md'),
+    '## Summary\n\nIsolated proof.\n',
+  );
+  await writeFile(path.join(task, 'artifacts/report.md'), 'Local proof.\n');
+  await captureRunOutput(f.run.id, false);
   const home = await mkdtemp(path.join(os.tmpdir(), 'one-tap-rpc-'));
   const { createGatewayAuthRuntime } = await import('../../security/auth.js');
   const { createWebSocketServer } = await import('../../server.js');
@@ -57,6 +81,10 @@ test('authenticated public RPC records a text-free confirmation and refuses an e
   assert.equal(result.receipt.approver.personSessionId, grant.session.id);
   assert.equal('reason' in result.receipt, false);
   const current = getRun(f.run.id)!;
+  const refreshed = current.decisions.find((d) => !d.resolvedAt && d.payload?.kind === 'ready');
+  assert.ok(refreshed?.payload?.kind === 'ready' && refreshed.payload.prPackage);
+  assert.notEqual(refreshed.payload.prPackage.packageHash, f.prepared.packageHash);
+  assert.deepEqual(refreshed.payload.prPackage.visualJudgmentReceiptIds, [result.receipt.id]);
   assert.equal(current.visualJudgmentReceipts?.at(-1)?.id, result.receipt.id);
   assert.deepEqual(
     deriveReviewedRecipeClaims(f.input, visualReviewAuthority(current, f.input)).map(
@@ -73,5 +101,17 @@ test('authenticated public RPC records a text-free confirmation and refuses an e
     /written reason/,
   );
   assert.equal(getRun(f.run.id)!.visualJudgmentReceipts?.length, 1);
-  assert.equal(getRun(f.run.id)!.decisions[0]!.resolvedAt, undefined);
+  await assert.rejects(
+    client.call(Methods.RUN_REVIEW_VISUAL_CLAIM, {
+      ...params,
+      kind: 'pipeline-reviewed',
+    }),
+    /Unknown visual judgment kind/,
+  );
+  assert.equal(getRun(f.run.id)!.visualJudgmentReceipts?.length, 1);
+  assert.equal(refreshed.resolvedAt, undefined);
+  assert.equal(
+    current.decisions.some((d) => d.resolvedAction?.startsWith('approve-publish')),
+    false,
+  );
 });
