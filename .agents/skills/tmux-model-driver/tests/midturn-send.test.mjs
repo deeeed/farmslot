@@ -651,6 +651,21 @@ test('a fresh Claude session proves its first prompt once the transcript appears
   assert.equal(result.evidence.turn_token, 'first');
 });
 
+test('a resumed Claude session reads its live transcript, not an older copy', async (t) => {
+  const f = claudeFixture(t, 'idle');
+  const stale = path.join(f.dir, 'claude', 'projects', '-0-older', 'claude-session.jsonl');
+  fs.mkdirSync(path.dirname(stale));
+  fs.writeFileSync(stale, '');
+  fs.utimesSync(stale, new Date(0), new Date(0));
+  f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
+    f.record({ type: 'user', promptId: 'live', message: { role: 'user', content: pasted } });
+    return claudeBox('');
+  });
+  const result = await send('%1', 'claude', f.payload);
+  assert.equal(result.before.session_path.includes('-0-older'), false);
+  assert.equal(result.evidence?.turn_token, 'live');
+});
+
 test('a busy Claude turn takes Enter input through its native queue', async (t) => {
   const f = claudeFixture(t, 'busy');
   f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
