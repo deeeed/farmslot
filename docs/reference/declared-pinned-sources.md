@@ -226,43 +226,71 @@ not stable APIs until the reviewed implementation release ships.
 
 ## Live source status
 
-This section implements [ADR-069 Amendment 1](../adr/069-declared-pinned-sources.md#amendment-1-2026-10-17-live-source-status)
-as the pilot slice of ADR-071 (gateway change notifications, proposed and not yet
-published).
+**Status:** Proposed with [ADR-069 Amendment 1](../adr/069-declared-pinned-sources.md#amendment-1-2026-10-17-live-source-status).
+This is the pilot slice of ADR-071 (gateway change notifications, proposed and
+not yet published).
+
+### Signal
 
 The gateway MUST publish a `ResourceChangedPayload` with `version: 1`, an `epoch`
 and `changes`. `epoch` is an opaque identity created at gateway process start.
-`changes` MUST contain `{ key: { family: 'sources', scope: 'declaration' }, revision, kind: 'updated' }`
-with the declaration revision and the same entry for `scope: 'pin'` with the pin
-revision. Revisions are the existing nonnegative integers returned by
-`sources.status`; clients MUST NOT compare revisions across epochs. The payload
-MUST NOT contain credentials, paths, source IDs or pin contents.
+`changes` MUST contain `{ key: { family: 'sources', scope: 'farm' }, revision, kind: 'updated' }`.
+The revision is a nonnegative safe integer that only increases within an epoch;
+clients MUST NOT compare revisions across epochs. The key is a broad farm scope:
+every source context depends on it. The payload omits credentials, paths, source
+IDs and pin contents.
 
-Until ADR-071 is accepted, every `fleet.updated` event from a gateway with source
-declarations, including the snapshot sent on connection, MUST carry the current
-payload as `resourceChanges`. Every change to the pin revision, including pins
-created with a run, MUST broadcast `fleet.updated` once `sources.status` can
-return the new revision. Declarations load at gateway start, where the new epoch
-and connection snapshot announce them; any later declaration change MUST publish
-the same way. Duplicate and older revisions are harmless.
+The revision MUST advance after any of these changes becomes readable through
+`sources.status`: a declaration load or change, a pin or unpin including pins
+created with a run, a resolution commit, generation, failure or stale transition,
+a persisted lock, a run source plan or provenance write, and a sync or node
+materialization completed through the gateway. Node receipts and drift that a
+node reports only when `sources.status` asks remain current as of that read and
+show their verification time.
+
+`hello` MUST carry the current payload as `resourceChanges` when the gateway has
+source declarations. Until ADR-071 is accepted, every `fleet.updated` from such a
+gateway MUST carry it too, and each revision advance MUST broadcast
+`fleet.updated` with the current fleet. The gateway MAY attach the payload at one
+point for all events. The payload MUST reach only principals that may read
+`sources.status`; events delivered to other principals, such as `run.*`, MUST NOT
+carry it. Duplicate and older revisions are harmless.
+
+### Client behavior
 
 The shared source status controller MUST reread `sources.status` for its current
-context when a `sources` revision is greater than the one in its current status,
-when the epoch differs from the last one seen, and after every reconnect. It
-MUST ignore duplicate and older revisions. If a read returns revisions older
-than the newest observed, it MUST schedule one more read. Panels MUST NOT poll or
-offer Refresh. A failed read MUST stay visible with Retry.
+context when the published revision exceeds the highest revision it has seen,
+when the epoch differs from the last one seen and after every reconnect. It MUST
+ignore duplicate and older revisions. A change observed while a read is in
+flight MUST schedule one more read after it. A change observed while a failed
+read is shown MUST reread. Panels MUST NOT poll or offer Refresh. A failed read
+MUST stay visible with Retry.
 
-A source panel MUST render nothing when its context has no declared sources and
-no pins. Otherwise it MUST summarize each effective pin's source, branch and
-scope in one line and keep other facts behind a one-line toggle. It MUST NOT
-repeat the run ID or add explanatory text for read-only contexts. Pin controls
-remain where the context allows them.
+If `sources.status` reports configured sources and the connection's `hello` had
+no `resourceChanges`, the panel MUST show that live source status is unsupported
+by the gateway, keep its last read and reread only after reconnect.
 
-Acceptance: a pin or unpin made by another client appears in an open panel
-without user action in both clients; an unconfigured, unpinned context renders
-nothing; a change made while disconnected appears after reconnect. Evidence
-includes light and dark screenshots.
+### Panel
+
+A source panel MUST render nothing when its context has no declared sources, no
+pins and no recorded run inputs, or when the viewer cannot read `sources.status`.
+Otherwise it MUST show one line naming each source's effective ref, with branch
+and scope for pins. Errors from `sources.status` MUST stay visible. Resolved and
+base commits, shadowed pins, locks and node receipts sit behind a one-line
+toggle, which satisfies the view requirements in Scoped branch pins. The panel
+MUST NOT repeat the run ID or add explanatory text for read-only contexts. Pin
+controls remain where the context allows them.
+
+### Acceptance
+
+- A pin or unpin made by another client appears in an open panel without user
+  action, in both clients.
+- A run admission and a sync started from another client appear in an open
+  panel.
+- An unconfigured, unpinned context renders nothing.
+- A change made while disconnected appears after reconnect.
+- A gateway without the signal shows the unsupported state.
+- Evidence includes light and dark screenshots.
 
 ## Migration and acceptance
 
