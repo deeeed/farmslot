@@ -8,6 +8,8 @@ import path from 'node:path';
 import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import ts from 'typescript';
+
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // Both the platform matrix and owner cases read generated plists on Linux CI.
@@ -56,6 +58,15 @@ const deployFixture = (t, prefix) => {
     );
     fs.mkdirSync(path.join(root, 'packages', name, 'dist'), { recursive: true });
   }
+  write(
+    'packages/protocol/dist/node/slot-by-repo.js',
+    ts.transpileModule(
+      fs.readFileSync(path.join(repo, 'packages/protocol/src/node/slot-by-repo.ts'), 'utf8'),
+      {
+        compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      },
+    ).outputText,
+  );
   write('node-token', 'fixture-node-credential');
   return { root, write };
 };
@@ -873,7 +884,7 @@ test('deploy-node fails loudly with the fix when the gateway answers but the RPC
       assert.match(
         stderr,
         new RegExp(
-          `farmslot gateway add <name> ws://127\\.0\\.0\\.1:${port} && farmslot login <name>`,
+          `FARMSLOT_HOME=.+ farmslot gateway add <name> ws://127\\.0\\.0\\.1:${port} && FARMSLOT_HOME=.+ farmslot login <name>`,
         ),
       );
       assert.doesNotMatch(`${error.stdout}${stderr}`, /WARNING/);
@@ -1230,5 +1241,73 @@ for (const [name, explicit, expected, instance, authDefault, captureMode = 'reta
       const query = fs.readFileSync(probes, 'utf8');
       assert.ok(query.includes(`com.farmslot.node${instance === 'dev' ? '.dev' : ''}.plist`));
     } else assert.equal(fs.existsSync(probes), false);
+  });
+}
+
+for (const tmuxServer of [true, false]) {
+  test(`deploy-node honors the pool worker profile home (${tmuxServer ? 'tmux' : 'login shell'})`, (t) => {
+    const fixture = cliFixture(t, { tmuxServer });
+    fixture.write('bin/sleep', '#!/bin/sh\nexec /bin/sleep "$@"\n', true);
+    const serviceHome = path.join(fixture.home, "service profiles' literal-$value");
+    fixture.write(
+      'pool/z-configured-worker.json',
+      JSON.stringify({
+        machine: 'fixture-machine',
+        env: { FARMSLOT_HOME: serviceHome },
+      }),
+    );
+    fixture.write(
+      'pool/example.json',
+      JSON.stringify({
+        machine: 'fixture-machine',
+        env: { FARMSLOT_HOME: 'ignored-example' },
+      }),
+    );
+    link(fixture, '.local/bin/farmslot', seedSnapshot(fixture, fixture.sha));
+    const script = fs.readFileSync(path.join(fixture.root, 'scripts/deploy-node.sh'), 'utf8');
+    const start = script.indexOf('  # Verify the way a tmux slot worker runs:');
+    const endMarker = script.indexOf('\nVERIFY\n', start);
+    const end = script.indexOf('\n  fi\n', endMarker) + '\n  fi\n'.length;
+    assert(start >= 0 && endMarker > start && end > endMarker);
+    const env = {
+      HOME: fixture.home,
+      PATH: `${fixture.root}/bin:${fixture.root}/node-bin:/usr/bin:/bin:/usr/sbin:/sbin`,
+      REPO_ROOT: fixture.root,
+      SCRIPT_DIR: path.join(fixture.root, 'scripts'),
+      MACHINE: 'fixture-machine',
+      CLI_ENTRY: fixture.entry,
+      NODE_GATEWAY_URL: 'ws://127.0.0.1:7777',
+      INSTANCE: 'prod',
+      CLI_VERIFY_TIMEOUT_SECONDS: '5',
+      FARMSLOT_NODE_TOKEN: 'fixture-node-credential',
+      FARMSLOT_GATEWAY_TOKEN: 'fixture-control-credential',
+    };
+    execFileSync(
+      'bash',
+      ['-c', 'set -euo pipefail\nrun() { eval "$@"; }\n' + script.slice(start, end)],
+      {
+        env,
+        cwd: fixture.root,
+        stdio: 'pipe',
+        timeout: 10_000,
+      },
+    );
+    const calls = fixture.calls();
+    assert.deepEqual(
+      calls.map(({ argv }) => argv),
+      [['--version'], ['rpc', 'gateway.status']],
+    );
+    for (const call of calls) {
+      assert.equal(
+        call.farmslotHome,
+        serviceHome,
+        'verification must use the configured worker profile store',
+      );
+      assert.deepEqual(
+        call.credentials,
+        [],
+        'node and inherited gateway credentials must remain absent',
+      );
+    }
   });
 }
