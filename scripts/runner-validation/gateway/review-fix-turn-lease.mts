@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+import { runnerRuntimeDir } from '../../lib/runner-runtime.cjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -105,7 +106,7 @@ function emitClaudeLifecycleHook(expectedTurnToken: string, event: string, sourc
   assert.ok(repo);
   const separator = expectedTurnToken.lastIndexOf(':');
   const sessionId = expectedTurnToken.slice(0, separator);
-  const obsDir = path.join(repo, '.agent', '.observability');
+  const obsDir = path.join(runnerRuntimeDir(repo), '.observability');
   const sessionPath = path.join(obsDir, 'sessions', `${encodeURIComponent(sessionId)}.json`);
   const sessionState = JSON.parse(readFileSync(sessionPath, 'utf-8')) as {
     transcript_path?: string;

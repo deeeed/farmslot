@@ -18,6 +18,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { runnerRuntimeDir } from './lib/runner-runtime.cjs';
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function parseArgs(argv) {
@@ -135,11 +137,15 @@ function readProjectRuntimeDir(projectName) {
 }
 
 function obsDirFor(repo, runtimeDir) {
-  return path.resolve(repo, runtimeDir, '.observability');
+  return path.join(runnerRuntimeDir(repo, runtimeDir), '.observability');
 }
 
 function readObsDirFromSettings(repo, runtimeDir) {
-  const settingsPath = path.join(repo, runtimeDir, '.observability', 'claude-settings.json');
+  const settingsPath = path.join(
+    runnerRuntimeDir(repo, runtimeDir),
+    '.observability',
+    'claude-settings.json',
+  );
   if (!fs.existsSync(settingsPath)) return null;
   const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
   const hooks = settings?.hooks?.UserPromptSubmit;
@@ -169,20 +175,6 @@ async function loadPromptDigestModule() {
   runnerPromptDigest = mod.runnerPromptDigest;
 }
 
-function refreshCompatObservabilityLink(repo, runtimeDir) {
-  const compatLink = path.join(repo, '.observability');
-  const target = obsDirFor(repo, runtimeDir);
-  try {
-    if (fs.existsSync(compatLink)) {
-      const stat = fs.lstatSync(compatLink);
-      if (stat.isSymbolicLink()) fs.unlinkSync(compatLink);
-    }
-  } catch {
-    // ignore — installer will create or replace as needed
-  }
-  if (!fs.existsSync(compatLink)) fs.symlinkSync(target, compatLink, 'dir');
-}
-
 function readProbeReport(outPath, attempts = 10) {
   for (let i = 0; i < attempts; i += 1) {
     if (fs.existsSync(outPath)) {
@@ -194,7 +186,6 @@ function readProbeReport(outPath, attempts = 10) {
 }
 
 function installObservability(repo, runtimeDir, slotId) {
-  refreshCompatObservabilityLink(repo, runtimeDir);
   const installer = path.join(ROOT, 'scripts', 'install-runner-observability.mjs');
   execFileSync(
     process.execPath,
@@ -296,6 +287,7 @@ process.exit(pass ? 0 : 1);
 
 function runGatewaySendCheck(slotId, tmuxTarget, agreementDir, message) {
   const snippet = `
+import { runnerRuntimeDir } from './scripts/lib/runner-runtime.cjs';
 import { loadSlotVars } from './services/gateway/src/core/config.ts';
 import { sendRunnerInstructionSafely } from './services/gateway/src/runners/registry.ts';
 import { readAgreementEntriesSince, aggregateAgreementEntries } from './services/gateway/src/runners/observability-agreement-log.ts';
@@ -312,7 +304,7 @@ const vars = await loadSlotVars(slotId);
 const digest = runnerPromptDigest(message);
 const runtimeDir = await resolveProjectRuntimeDir(vars.projectName);
 const repo = vars.remoteRepo;
-const sentinelPath = path.resolve(repo, runtimeDir, '.observability', 'sent', digest + '.json');
+const sentinelPath = path.join(runnerRuntimeDir(repo, runtimeDir), '.observability', 'sent', digest + '.json');
 const ok = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[e2e]', 25000);
 const entries = await readAgreementEntriesSince(since - 5000);
 const agg = aggregateAgreementEntries(entries);

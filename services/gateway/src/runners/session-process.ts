@@ -5,6 +5,7 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
+import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { EXEC_TIMEOUT_EXIT_CODE, execOnSlot, type ExecOnSlotOptions } from '../core/exec.js';
 import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
@@ -300,6 +301,7 @@ from urllib.parse import quote
 repo = ${JSON.stringify(repo)}
 runner = ${JSON.stringify(runner)}
 runtime_dir = ${JSON.stringify(runtimeDir)}
+runner_runtime = ${JSON.stringify(runnerRuntimeDir(repo, runtimeDir))}
 home = Path(${homeRoot === undefined ? 'str(Path.home())' : JSON.stringify(homeRoot)})
 paths = []
 
@@ -354,6 +356,7 @@ else:
     # exist in that case, so directory existence cannot choose the active root.
     # Search both and let exact cwd/session metadata attribution decide.
     session_roots = [
+        Path(runner_runtime).expanduser() / 'codex-home' / 'sessions',
         Path(repo) / runtime_dir / 'codex-home' / 'sessions',
         home / '.codex' / 'sessions',
     ]

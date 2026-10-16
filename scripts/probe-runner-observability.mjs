@@ -11,6 +11,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { runnerRuntimeDir } from './lib/runner-runtime.cjs';
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function parseArgs(argv) {
@@ -23,7 +25,9 @@ function parseArgs(argv) {
     else if (token === '--runner') args.runner = argv[++i];
     else if (token === '--out') args.out = argv[++i];
     else if (token === '--help' || token === '-h') {
-      console.log(`usage: probe-runner-observability.mjs --slot-id <id> --repo <path> [--runtime-dir .agent] [--out report.json]`);
+      console.log(
+        `usage: probe-runner-observability.mjs --slot-id <id> --repo <path> [--runtime-dir .agent] [--out report.json]`,
+      );
       process.exit(0);
     }
   }
@@ -49,7 +53,12 @@ function benchHookWriter(repo, runtimeDir, slotId, runner = 'claude', iterations
     slotId,
   ]);
   const installMs = Date.now() - started;
-  const hookPath = path.join(repo, runtimeDir, '.observability', 'bin', 'farmslot-observability-hook.mjs');
+  const hookPath = path.join(
+    runnerRuntimeDir(repo, runtimeDir),
+    '.observability',
+    'bin',
+    'farmslot-observability-hook.mjs',
+  );
   const samples = [];
   for (let i = 0; i < iterations; i += 1) {
     const payload = JSON.stringify({
@@ -62,7 +71,7 @@ function benchHookWriter(repo, runtimeDir, slotId, runner = 'claude', iterations
       input: payload,
       env: {
         ...process.env,
-        FARMSLOT_OBS_DIR: path.join(repo, runtimeDir, '.observability'),
+        FARMSLOT_OBS_DIR: path.join(runnerRuntimeDir(repo, runtimeDir), '.observability'),
         FARMSLOT_SLOT_ID: slotId,
         FARMSLOT_RUNNER: runner,
         TMUX_PANE: process.env.TMUX_PANE || '%0',
@@ -76,7 +85,7 @@ function benchHookWriter(repo, runtimeDir, slotId, runner = 'claude', iterations
 }
 
 function readHookTail(repo, runtimeDir) {
-  const logPath = path.join(repo, runtimeDir, '.observability', 'hooks.jsonl');
+  const logPath = path.join(runnerRuntimeDir(repo, runtimeDir), '.observability', 'hooks.jsonl');
   if (!fs.existsSync(logPath)) return [];
   return fs
     .readFileSync(logPath, 'utf8')
@@ -93,7 +102,9 @@ function main() {
   const bench = benchHookWriter(args.repo, args.runtimeDir, args.slotId, args.runner);
   const tail = readHookTail(args.repo, args.runtimeDir);
   const inTmux = Boolean(process.env.TMUX_PANE);
-  const tmuxPaneSeen = tail.some((row) => typeof row.tmuxPane === 'string' && row.tmuxPane.length > 0);
+  const tmuxPaneSeen = tail.some(
+    (row) => typeof row.tmuxPane === 'string' && row.tmuxPane.length > 0,
+  );
   const runnerSeen = tail.some((row) => row.runner === args.runner);
   const report = {
     schemaVersion: 1,

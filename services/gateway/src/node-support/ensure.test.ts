@@ -151,7 +151,7 @@ test('a slot on a stale bundle gets the current bundle published and selected; l
   );
   // The slot's pointer is the last write and names the published bundle.
   const selection = rec.written.at(-1)!;
-  assert.equal(selection.base, '/Users/deeeed/dev/x/.agent/.observability');
+  assert.equal(selection.base, '/Users/deeeed/dev/.farmslot-runtime/x/.agent/.observability');
   assert.deepEqual(selection.paths, ['node-support-hash']);
 
   // Next launch on the same slot: one presence check, pointer rewritten, no publish.

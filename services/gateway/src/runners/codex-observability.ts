@@ -1,5 +1,6 @@
 import path from 'node:path';
 
+import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { resolveTmuxPaneId, shellQuote } from '../core/tmux.js';
@@ -467,7 +468,7 @@ import os
 from pathlib import Path
 
 repo = os.path.realpath(${JSON.stringify(options.repo)})
-isolated_root = Path(${JSON.stringify(options.isolatedSessionsRoot)})
+isolated_root = Path(${JSON.stringify(options.isolatedSessionsRoot)}).expanduser()
 global_root = Path(${JSON.stringify(options.globalSessionsRoot ?? '')}) if ${options.globalSessionsRoot ? 'True' : 'False'} else Path.home() / '.codex' / 'sessions'
 not_before_ms = ${Math.floor(options.observedNotBeforeMs)}
 preferred_id = ${options.preferred ? JSON.stringify(options.preferred.sessionId) : 'None'}
@@ -684,8 +685,7 @@ export const codexSessionObservability: RunnerObservability = {
       buildCodexNativeBindingProbeCommand({
         repo: vars.remoteRepo,
         isolatedSessionsRoot: path.posix.join(
-          vars.remoteRepo,
-          runtimeDir,
+          runnerRuntimeDir(vars.remoteRepo, runtimeDir),
           'codex-home',
           'sessions',
         ),

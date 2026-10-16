@@ -1,8 +1,9 @@
 import path from 'node:path';
 
+import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
-import { shellQuote } from '../core/tmux.js';
+import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 
 import type {
   HookRecord,
@@ -311,19 +312,31 @@ export function contextPctFromStatusline(
 }
 
 export function runnerObservabilityDir(repoPath: string, runtimeDir = '.agent'): string {
-  return path.posix.join(repoPath, runtimeDir, '.observability');
+  return path.posix.join(runnerRuntimeDir(repoPath, runtimeDir), '.observability');
 }
 
 export async function runnerObservabilityDirForSlot(vars: SlotVars): Promise<string> {
   const runtimeDir = await resolveProjectRuntimeDir(vars.projectName);
-  return runnerObservabilityDir(vars.remoteRepo, runtimeDir);
+  const external = runnerObservabilityDir(vars.remoteRepo, runtimeDir);
+  const legacyRuntime =
+    runtimeDir.startsWith('/') || runtimeDir.startsWith('~/')
+      ? runtimeDir
+      : path.posix.join(vars.remoteRepo, runtimeDir);
+  const legacy = path.posix.join(legacyRuntime, '.observability');
+  const probe = await execOnSlot(
+    vars,
+    `if [ -f ${shellExpressionForRemotePath(path.posix.join(external, 'install.json'))} ]; then printf external; fi`,
+  );
+  return probe.stdout.trim() === 'external' ? external : legacy;
 }
 
 export async function readRunnerObservabilityFiles(
   vars: SlotVars,
   repoPath = vars.remoteRepo,
 ): Promise<{ hooksRaw: string; statuslineRaw: string }> {
-  const obsDir = shellQuote(await runnerObservabilityDirForSlot({ ...vars, remoteRepo: repoPath }));
+  const obsDir = shellExpressionForRemotePath(
+    await runnerObservabilityDirForSlot({ ...vars, remoteRepo: repoPath }),
+  );
   const hooksPath = `${obsDir}/hooks.jsonl`;
   const statuslinePath = `${obsDir}/statusline.json`;
   const [hooksResult, statuslineResult] = await Promise.all([
@@ -343,7 +356,10 @@ export async function readRunnerSessionObservabilityState(
 ): Promise<HookRecord | null> {
   const obsDir = await runnerObservabilityDirForSlot(vars);
   const statePath = path.posix.join(obsDir, 'sessions', `${encodeURIComponent(sessionId)}.json`);
-  const result = await execOnSlot(vars, `cat ${shellQuote(statePath)} 2>/dev/null || true`);
+  const result = await execOnSlot(
+    vars,
+    `cat ${shellExpressionForRemotePath(statePath)} 2>/dev/null || true`,
+  );
   return parseHookJsonl(result.stdout)[0] ?? null;
 }
 
@@ -354,7 +370,10 @@ export async function readRunnerPaneObservabilityState(
 ): Promise<HookRecord | null> {
   const obsDir = await runnerObservabilityDirForSlot(vars);
   const statePath = path.posix.join(obsDir, 'panes', `${encodeURIComponent(paneId)}.json`);
-  const result = await execOnSlot(vars, `cat ${shellQuote(statePath)} 2>/dev/null || true`);
+  const result = await execOnSlot(
+    vars,
+    `cat ${shellExpressionForRemotePath(statePath)} 2>/dev/null || true`,
+  );
   return parseHookJsonl(result.stdout)[0] ?? null;
 }
 

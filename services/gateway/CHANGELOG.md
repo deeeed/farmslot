@@ -13,6 +13,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+- Keep runner runtime and observability outside product checkouts, preserve active session paths, and retain explicitly indexed hidden proof files in immutable evidence bundles.
+
 ## 0.22.0 - 2026-10-16
 
 - Refresh stale fleet snapshots from the monitor, stop leftover service helpers when their health is down, and re-probe retired worker targets before retaining cleanup holds.

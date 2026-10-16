@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { runnerRuntimeDir } from '../../lib/runner-runtime.cjs';
 import { DEFAULT_PROMPT, PROMPT_MARKER, sleepMs } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 import { runLaunchInTmux } from '../lib/launch.mjs';
@@ -52,7 +53,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     runLaunchInTmux(paneId, repo, runner, runnerAdapter, DEFAULT_PROMPT);
     const completion = waitForRunnerCompletion({
       paneId,
-      logPath: path.join(repo, '.agent', '.observability', 'hooks.jsonl'),
+      logPath: path.join(runnerRuntimeDir(repo), '.observability', 'hooks.jsonl'),
       beforeCount: 0,
       timeoutMs,
     });

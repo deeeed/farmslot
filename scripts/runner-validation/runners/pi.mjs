@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { runnerRuntimeDir } from '../../lib/runner-runtime.cjs';
 import { DEFAULT_PROMPT, shSingleQuote } from '../lib/common.mjs';
 
 export const RUNNER_ID = 'pi';
@@ -53,11 +54,16 @@ export function assertBinary() {
 }
 
 function extensionPath(repo, runtimeDir) {
-  return path.join(repo, runtimeDir, '.observability', 'pi-farmslot-observability.ts');
+  return path.join(
+    runnerRuntimeDir(repo, runtimeDir),
+    '.observability',
+    'bin',
+    'pi-farmslot-observability.ts',
+  );
 }
 
 function obsDir(repo, runtimeDir) {
-  return path.join(repo, runtimeDir, '.observability');
+  return path.join(runnerRuntimeDir(repo, runtimeDir), '.observability');
 }
 
 /** Print mode — fires the same extension hooks as the TUI without a composer. */

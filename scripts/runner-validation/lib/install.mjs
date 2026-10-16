@@ -9,6 +9,7 @@ import {
   tomlDottedParts,
   tomlSectionHeaderIndexes,
 } from '../../../packages/agent-runtime/scripts/toml-scan.cjs';
+import { runnerRuntimeDir } from '../../lib/runner-runtime.cjs';
 
 import { ROOT } from './common.mjs';
 
@@ -78,7 +79,7 @@ function assertIsolatedCodexRouting(repo, runtimeDir) {
   const providerId = rootTomlModelProviderId(operator);
   if (!providerId || !hasModelProviderTable(operator, providerId)) return;
   const isolated = fs.readFileSync(
-    path.join(repo, runtimeDir, 'codex-home', 'config.toml'),
+    path.join(runnerRuntimeDir(repo, runtimeDir), 'codex-home', 'config.toml'),
     'utf8',
   );
   if (rootTomlModelProviderId(isolated) !== providerId) {
@@ -95,7 +96,7 @@ export function readRegisteredEvents(runner, repo, runtimeDir) {
   if (runner === 'claude') {
     const settings = JSON.parse(
       fs.readFileSync(
-        path.join(repo, runtimeDir, '.observability', 'claude-settings.json'),
+        path.join(runnerRuntimeDir(repo, runtimeDir), '.observability', 'claude-settings.json'),
         'utf8',
       ),
     );
@@ -103,16 +104,22 @@ export function readRegisteredEvents(runner, repo, runtimeDir) {
   }
   if (runner === 'pi') {
     const manifest = JSON.parse(
-      fs.readFileSync(path.join(repo, runtimeDir, '.observability', 'install.json'), 'utf8'),
+      fs.readFileSync(
+        path.join(runnerRuntimeDir(repo, runtimeDir), '.observability', 'install.json'),
+        'utf8',
+      ),
     );
     return [...(manifest.events ?? [])].sort();
   }
   const hooksDoc = JSON.parse(
-    fs.readFileSync(path.join(repo, runtimeDir, 'codex-home', 'hooks.json'), 'utf8'),
+    fs.readFileSync(
+      path.join(runnerRuntimeDir(repo, runtimeDir), 'codex-home', 'hooks.json'),
+      'utf8',
+    ),
   );
   return Object.keys(hooksDoc.hooks).sort();
 }
 
 export function obsDirFor(repo, runtimeDir) {
-  return path.join(repo, runtimeDir, '.observability');
+  return path.join(runnerRuntimeDir(repo, runtimeDir), '.observability');
 }
