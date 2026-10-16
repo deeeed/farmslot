@@ -1,0 +1,24 @@
+› Lead, urgent for Operator: his Companion cannot reconnect. QR pairing now fail…
+• Failed (exit 1) PATH=<node-bin>:$PATH yarn workspace @farm…
+  └ (no output)
+    + Show details
+
+• Working (10m 55s • esc to interrupt) · 3 background terminals running · /ps t…
+
+                                             ⚠ weekly limit: 11% left · /status
+
+› sessions). Companion support for device sessions is on main, but no OTA has  ↑
+  shipped it: the latest preview update group is runtime 0.8.0 from 4 days ago,
+  and main is 0.8.1 with no OTA. Ship it through the supported OTA procedure
+  (memory companion-ota): clean worktree at origin/main; check native changes
+  since the 0.8.1 cut (#1064 touched app.config.ts or eas.json after 10-12:
+  decide whether that is native); if none, publish the preview OTA for runtime
+  0.8.1 with apps/companion/scripts/release/release.sh --variant preview
+  --skip-build (dry run first). If there is a native change, report it and do
+  not publish. Android only. Also check that the Companion sign-in path for a
+  person works end to end against the dev gateway: pair, sign in, refresh.
+  Report the update group id and runtime.
+
+
+  GPT-6.1-Sol xhigh · <path> · … Goal achieved (47m)
+  tab to queue message
