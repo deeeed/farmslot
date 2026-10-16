@@ -17,14 +17,14 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Encode artifact URL path segments so publication verifies and embeds filenames containing literal percent escapes and other URL characters.
 - Keep runner runtime and observability outside product checkouts, preserve active session paths, and retain explicitly indexed hidden proof files in immutable evidence bundles.
 
+- Run independent pipeline reviews in native sessions, qualify their recorded visual judgments, and audit publication approval against the frozen evidence.
+- Refresh the publication package after a visual judgment; preserve the saved judgment and report a recoverable failure when refresh is unavailable.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.22.1 - 2026-10-16
 
 - Initialize hosted tasks through the execution node’s immutable CLI and mirror its frozen marker, metadata and receipts instead of rendering a second task.
-
-- Run independent pipeline reviews in native sessions, qualify their recorded visual judgments, and audit publication approval against the frozen evidence.
-- Refresh the publication package after a visual judgment; preserve the saved judgment and report a recoverable failure when refresh is unavailable.
 
 ## 0.22.0 - 2026-10-16
 
