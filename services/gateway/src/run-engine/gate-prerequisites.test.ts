@@ -937,6 +937,35 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
   );
 });
 
+test('publication findings do not become a QA output or review-posting prerequisite', async () => {
+  for (const flowType of ['qa', 'review-pr'] as const) {
+    const run = makeRun({
+      flowType,
+      completionPolicy: 'artifact-only',
+      engineState: {
+        publishGate: {
+          reviews: [
+            {
+              id: 'rv',
+              source: 'pipeline',
+              mode: 'cold',
+              loopNumber: 1,
+              verdict: 'issues',
+              unresolvedCount: 1,
+            },
+          ],
+        },
+      },
+    });
+    const readiness = await collectRunGateReadiness(run, null, {
+      deterministic: passed,
+      acceptance: emptyAcceptance,
+      progress: idle,
+    });
+    assert.ok(!readiness.reasons.some((reason) => reason.code === 'review-fix-required'));
+  }
+});
+
 test('optional reviews still withhold approval for ISSUES with no pending decision until the fixed head passes', async () => {
   const prepared = makeReadyGatePackage({
     reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
@@ -949,7 +978,7 @@ test('optional reviews still withhold approval for ISSUES with no pending decisi
     verdict: 'issues',
     unresolvedCount: 1,
     issues: [{ file: 'icon.service.ts', description: 'Exponential parsing' }],
-    reviewedHeadSha: prepared.headSha,
+    reviewedHeadSha: 'before-fix-head',
     feedbackSent: false,
     recoveryContinuationPending: true,
   };
@@ -1018,6 +1047,7 @@ test('optional reviews still withhold approval for ISSUES with no pending decisi
   const pass: ReviewStatus = {
     ...review,
     id: 'rv4',
+    reviewedHeadSha: prepared.headSha,
     verdict: 'pass',
     unresolvedCount: 0,
     issues: [],
@@ -1085,6 +1115,71 @@ test('optional reviews still withhold approval for ISSUES with no pending decisi
     sources,
   );
   assert.equal(staleReplaced.state, 'not-ready');
+});
+
+test('a different reviewer PASS cannot clear findings on the unchanged head at any review minimum', async () => {
+  for (const minimumReviews of [0, 1, 2]) {
+    const prepared = makeReadyGatePackage({
+      reviewPolicy: { minimumReviews, requestedBy: 'dispatch' },
+    });
+    const issues: ReviewStatus = {
+      id: 'review-a',
+      source: 'human-gate',
+      mode: 'cold',
+      loopNumber: 1,
+      verdict: 'issues',
+      unresolvedCount: 1,
+      issues: [{ file: 'icon.service.ts', description: 'Exponential parsing' }],
+      reviewerSessionId: 'session-a',
+      reviewedHeadSha: prepared.headSha,
+      reviewedReviewSubjectHash: prepared.reviewSubjectHash,
+      reviewSnapshot: prepared.reviewSnapshot,
+      artifactPaths: ['artifacts/review-a/review-result.json'],
+      maxRetriesExhausted: true,
+    };
+    const pass: ReviewStatus = {
+      ...issues,
+      id: 'review-b',
+      reviewerSessionId: 'session-b',
+      verdict: 'pass',
+      unresolvedCount: 0,
+      issues: [],
+      artifactPaths: ['artifacts/review-b/review-result.json'],
+    };
+    const readiness = await collectRunGateReadiness(
+      makeRun({ engineState: { publishGate: { reviews: [issues, pass] } } }),
+      prepared,
+      {
+        deterministic: passed,
+        acceptance: emptyAcceptance,
+        progress: idle,
+        selectedEvidence: passed,
+        reviewedInputsAwaitingReview: async () => null,
+        reviewResult: async (_run, relative) =>
+          JSON.stringify({
+            schemaVersion: 1,
+            verdict: relative.includes('review-a') ? 'issues' : 'pass',
+            issues: relative.includes('review-a')
+              ? [
+                  {
+                    file: 'icon.service.ts',
+                    severity: 'warning',
+                    description: 'Exponential parsing',
+                  },
+                ]
+              : [],
+          }),
+      },
+    );
+    assert.ok(readiness.reasons.some((reason) => reason.code === 'review-fix-required'));
+    assert.deepEqual(
+      gateActionsForReadiness(
+        [{ id: 'approve-publish' }, { id: 'approve-publish-unresolved' }, { id: 'hold' }],
+        readiness,
+      ),
+      [{ id: 'hold' }],
+    );
+  }
 });
 
 test('unresolved approval cannot waive findings, missing reviews or changed inputs', async () => {

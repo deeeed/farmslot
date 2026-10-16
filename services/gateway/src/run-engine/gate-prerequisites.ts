@@ -83,6 +83,7 @@ import {
   publicationReviewBlockingReason,
   publicationReviewMatchesPreparedPackage,
 } from './gate-policy.js';
+import { requiresPublicationApproval } from './publication-policy.js';
 import {
   readFrozenRecordedEvidenceSources,
   readGateRecordedEvidenceSources,
@@ -321,7 +322,9 @@ export async function collectRunGateReadiness(
     }
   }
   const reviewBlock =
-    !publicationFulfilled && publicationReviewBlockingReason(run, preparedPackage);
+    !publicationFulfilled &&
+    (preparedPackage || requiresPublicationApproval(run)) &&
+    publicationReviewBlockingReason(run, preparedPackage);
   if (reviewBlock)
     reasons.push({
       code: 'review-fix-required',

@@ -11,6 +11,7 @@ import {
   evidenceAttestationAvailable,
   isPublishApprovalAction,
   isValidEvidenceAttestationReason,
+  latestReview,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
   type Run,
@@ -152,11 +153,22 @@ export function publicationReviewBlockingReason(
   const reviews = run.engineState?.publishGate?.reviews ?? [];
   // Continuations replace the same row. Its attempts retain the findings even
   // when a blocked fix changes the aggregate verdict to failed.
+  const latest = latestReview(reviews);
+  const head = prepared?.headSha ?? latest?.reviewedHeadSha ?? latest?.reviewSnapshot?.headSha;
+  let currentHeadFindings = 0;
   let count = 0;
   for (const review of reviews) {
     for (const entry of [...(review.attempts ?? []), review]) {
       const findings = Math.max(entry.unresolvedCount ?? 0, entry.issues?.length ?? 0);
-      if (entry.verdict === 'issues' && findings > 0) count = findings;
+      if (entry.verdict === 'issues' && findings > 0) {
+        count = findings;
+        const issueHead =
+          entry === review
+            ? (review.reviewedHeadSha ?? review.reviewSnapshot?.headSha)
+            : entry.reviewSnapshot?.headSha;
+        if (head && issueHead === head)
+          currentHeadFindings = Math.max(currentHeadFindings, findings);
+      }
     }
     if (
       review.verdict === 'pass' &&
@@ -164,6 +176,8 @@ export function publicationReviewBlockingReason(
     )
       count = 0;
   }
+  // A different verdict on unchanged code does not prove the reported fix.
+  count = Math.max(count, currentHeadFindings);
   const fixing =
     run.status === 'fixing' ||
     run.agentContexts?.some(

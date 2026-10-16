@@ -12,6 +12,7 @@ import {
   type PublicationGateClaim,
   publicationGateCriteria,
   publicationGateView,
+  publicationReviewBlockingReason,
 } from '../src/publication-gate.js';
 
 const evidenceOnly: RunGateReadiness = {
@@ -342,4 +343,34 @@ test('failed same-ID continuations retain findings after the fix context is bloc
   const actions = [{ id: 'approve-publish', label: 'Approve publish', style: 'primary' as const }];
   assert.equal(publicationGateView({ actions, run }).approval, null);
   assert.match(publicationGateView({ actions, run }).status, /Review found 1 issue/);
+});
+
+test('unchanged-head PASS retains findings; a PASS on the fixed head clears them', () => {
+  const issue: ReviewStatus = {
+    id: 'a',
+    source: 'human-gate',
+    mode: 'cold',
+    loopNumber: 1,
+    verdict: 'issues',
+    unresolvedCount: 1,
+    reviewedHeadSha: 'bad-head',
+  };
+  const pass: ReviewStatus = { ...issue, id: 'b', verdict: 'pass', unresolvedCount: 0 };
+  const run = {
+    status: 'human-gating' as const,
+    engineState: { publishGate: { reviews: [issue, pass] } },
+  };
+  assert.match(publicationReviewBlockingReason(run) ?? '', /Review found 1 issue/);
+  assert.equal(
+    publicationReviewBlockingReason(
+      {
+        ...run,
+        engineState: {
+          publishGate: { reviews: [issue, { ...pass, reviewedHeadSha: 'fixed-head' }] },
+        },
+      },
+      { headSha: 'fixed-head' },
+    ),
+    undefined,
+  );
 });
