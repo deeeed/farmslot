@@ -53,6 +53,8 @@ export interface TaskExecutionInput {
   inputs: readonly string[];
   /** Selected provider workspaces whose manifest-declared installed dependencies are retained. */
   dependencyRoots?: readonly string[];
+  /** Configured task/artifact/runtime outputs are never retained as tooling inputs. */
+  excludedRoots?: readonly string[];
   /** Host selection data. Its bytes are retained and verified with the tooling. */
   selectedConfiguration?: string;
 }
@@ -313,6 +315,7 @@ export function retainTaskExecution(
     const cli = retainTaskInput(distribution, path.join(staging, 'cli'), [
       path.resolve(taskDir),
       store,
+      ...(input.excludedRoots ?? []),
     ]);
     const retainedInputs: TaskRetainedInput[] = [{ ...cli, path: path.join(pin, 'cli') }];
     for (const source of [
@@ -336,7 +339,7 @@ export function retainTaskExecution(
       const copied = retainTaskInput(
         source,
         path.join(staging, relative),
-        [path.resolve(taskDir), store],
+        [path.resolve(taskDir), store, ...(input.excludedRoots ?? [])],
         {
           dependencies: input.dependencyRoots?.some((root) => fs.realpathSync(root) === source),
           onDependency: (entry) => dependencies.push(entry),

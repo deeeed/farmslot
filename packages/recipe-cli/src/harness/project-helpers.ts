@@ -227,6 +227,13 @@ export async function projectTaskExecution(
       ]),
     ],
     dependencyRoots: [workspace],
+    excludedRoots: [
+      ...(install.excludedRoots ?? []),
+      path.join(binding.root, 'tasks'),
+      path.resolve(binding.checkoutRoot, binding.artifactDir),
+      path.resolve(binding.checkoutRoot, binding.runtimeDir),
+      path.resolve(binding.checkoutRoot, binding.farmRuntimeDir),
+    ],
     selectedConfiguration: JSON.stringify(selection),
   };
 }

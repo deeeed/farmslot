@@ -11,6 +11,8 @@ import {
 
 import type { SlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { expandTemplate } from '../core/hooks.js';
+import { isShellHomePath } from '../core/remote-paths.js';
 import {
   slotDeletePath,
   slotFileExists,
@@ -43,9 +45,11 @@ export interface HostedTaskInput {
 /** Use the node's installed CLI resolver; never select a gateway executable. */
 export async function hostedTaskCommand(slot: SlotVars, args: readonly string[]): Promise<string> {
   const farm = await farmslotDirectoryForSlot(slot);
+  const support = expandTemplate('{{farmslot_dir}}', slot);
+  const supportArg = isShellHomePath(support) ? support : shellQuote(support);
   const script =
-    'farm="$1"; shift; export FARMSLOT_CLI="${FARMSLOT_CLI:-$HOME/.local/bin/farmslot}"; source "$farm/scripts/lib/resolve-farmslot-cli.sh" && exec "$FARMSLOT_CLI" --json "$@"';
-  return `bash -c ${shellQuote(script)} hosted-task ${shellQuote(farm)} ${args.map(shellQuote).join(' ')}`;
+    'farm="$1"; support="$2"; shift 2; export FARMSLOT_ROOT="$support" FARMSLOT_POOL_DIR="${FARMSLOT_POOL_DIR:-$farm/pool}" FARMSLOT_PROJECTS_DIR="${FARMSLOT_PROJECTS_DIR:-$support/projects}" FARMSLOT_CLI="${FARMSLOT_CLI:-$HOME/.local/bin/farmslot}"; source "$support/scripts/lib/resolve-farmslot-cli.sh" && exec "$FARMSLOT_CLI" --json "$@"';
+  return `bash -c ${shellQuote(script)} hosted-task ${shellQuote(farm)} ${supportArg} ${args.map(shellQuote).join(' ')}`;
 }
 
 /** The gateway transports task data and mirrors the one producer's final bytes. */

@@ -504,3 +504,22 @@ test('external providers retain the owning workspace without widening their reci
     assert.equal(host.provider.runtime.id, 'headless');
   });
 });
+
+test('project retention excludes task history while preserving tooling source', async (t) => {
+  const f = fixture(t);
+  fs.writeFileSync(path.join(f.pack, 'package.json'), '{"private":true,"type":"module"}');
+  fs.mkdirSync(path.join(f.pack, 'tasks', 'previous'), { recursive: true });
+  fs.writeFileSync(path.join(f.pack, 'tasks', 'previous', 'TASK.md'), 'old task and evidence');
+  await withProjectRecipeHost(f.options, async (host) => {
+    const execution = await projectTaskExecution(host, {
+      executable: path.join(f.installed, 'farmslot'),
+      packageRoot: f.installed,
+      distributionRoot: f.installed,
+    });
+    const receipt = retainTaskExecution(f.taskDir, execution);
+    const pack = receipt.retainedInputs.find((input) => input.source === f.pack);
+    assert.ok(pack);
+    assert.equal(fs.existsSync(path.join(pack.path, 'provider.mjs')), true);
+    assert.equal(fs.existsSync(path.join(pack.path, 'tasks')), false);
+  });
+});

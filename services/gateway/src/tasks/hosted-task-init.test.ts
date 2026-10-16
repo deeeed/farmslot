@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,6 +9,39 @@ import { projectWorkerTemplateSource, selectExecutionTemplate } from '@farmslot/
 
 import type { SlotVars } from '../core/config.js';
 import * as realExec from '../core/exec.js';
+import { remapRemoteFarmRefs } from '../node-support/remote-command.js';
+
+import * as realRuntime from './agent-runtime-script.js';
+
+let fixtureFarm = '';
+function fixtureSlot(root: string): SlotVars {
+  return {
+    slotId: 'fixture-1',
+    host: 'localhost',
+    machine: 'local',
+    platform: 'cli',
+    sshUser: 'test',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: root,
+    remoteRepo: root,
+    session: 'fixture-1',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'localhost',
+    projectName: 'fixture',
+    resourceVars: {},
+  };
+}
+mock.module('./agent-runtime-script.js', {
+  namedExports: { ...realRuntime, farmslotDirectoryForSlot: async () => fixtureFarm },
+});
 
 mock.module('../core/exec.js', {
   namedExports: {
@@ -16,13 +50,14 @@ mock.module('../core/exec.js', {
   },
 });
 const fresh: string = './hosted-task-init.js?partial-preservation';
-const { initializeHostedTaskOnSlot } = (await import(
+const { initializeHostedTaskOnSlot, hostedTaskCommand } = (await import(
   fresh
 )) as typeof import('./hosted-task-init.js');
 
 test('partial initialization refuses before any gateway sidecar replaces retained files', async (t) => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'partial-hosted-task-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fixtureFarm = root;
   const gateway = path.join(root, 'gateway');
   const worker = path.join(root, 'worker');
   const templates = path.join(root, 'templates');
@@ -54,29 +89,7 @@ test('partial initialization refuses before any gateway sidecar replaces retaine
     'inputs/recipe-binding.json',
   ];
   const before = files.map((file) => fs.readFileSync(path.join(worker, file), 'utf8'));
-  const slot: SlotVars = {
-    slotId: 'fixture-1',
-    host: 'localhost',
-    machine: 'local',
-    platform: 'cli',
-    sshUser: 'test',
-    osType: 'darwin',
-    claudePath: '',
-    codexPath: '',
-    opencodePath: '',
-    cursorPath: '',
-    grokPath: '',
-    dispatchCmd: '',
-    recycleCmd: '',
-    repo: root,
-    remoteRepo: root,
-    session: 'fixture-1',
-    slotMode: 'dispatch',
-    slotEnabled: true,
-    sshTarget: 'localhost',
-    projectName: 'fixture',
-    resourceVars: {},
-  };
+  const slot = fixtureSlot(root);
   await assert.rejects(
     initializeHostedTaskOnSlot(slot, gateway, {
       binding: 'static',
@@ -99,4 +112,51 @@ test('partial initialization refuses before any gateway sidecar replaces retaine
     fs.readdirSync(worker).some((file) => file.startsWith('.task-init-')),
     false,
   );
+});
+
+test('transport forwards node pool and captured pack roots through the installed CLI', async (t) => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'hosted-node-command-')));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fixtureFarm = path.join(root, 'node');
+  const support = path.join(root, 'support');
+  fs.mkdirSync(path.join(support, 'scripts/lib'), { recursive: true });
+  fs.copyFileSync(
+    new URL('../../../../scripts/lib/resolve-farmslot-cli.sh', import.meta.url),
+    path.join(support, 'scripts/lib/resolve-farmslot-cli.sh'),
+  );
+  const cli = path.join(root, 'installed-cli');
+  fs.writeFileSync(
+    cli,
+    `#!${process.execPath}\nprocess.stdout.write(JSON.stringify({args:process.argv.slice(2),root:process.env.FARMSLOT_ROOT,pool:process.env.FARMSLOT_POOL_DIR,projects:process.env.FARMSLOT_PROJECTS_DIR}));\n`,
+    { mode: 0o755 },
+  );
+  const slot = {
+    ...fixtureSlot(root),
+    host: 'remote.invalid',
+    machine: 'remote-node',
+    sshTarget: 'remote.invalid',
+  };
+  const command = await hostedTaskCommand(slot, ['internal', 'slot-vars', 'fixture-1']);
+  assert.match(
+    command,
+    /~\/farmslot-node/,
+    'the existing content-addressed remapper must see the support reference',
+  );
+  const selected = remapRemoteFarmRefs(command, support, ['scripts', 'projects/fixture']);
+  const env: NodeJS.ProcessEnv = { ...process.env, FARMSLOT_CLI: cli };
+  delete env.FARMSLOT_ROOT;
+  delete env.FARMSLOT_POOL_DIR;
+  delete env.FARMSLOT_PROJECTS_DIR;
+  const output = execFileSync('/bin/bash', ['-c', selected], {
+    env,
+    cwd: root,
+    encoding: 'utf8',
+    timeout: 4000,
+  });
+  assert.deepEqual(JSON.parse(output), {
+    args: ['--json', 'internal', 'slot-vars', 'fixture-1'],
+    root: support,
+    pool: path.join(fixtureFarm, 'pool'),
+    projects: path.join(support, 'projects'),
+  });
 });

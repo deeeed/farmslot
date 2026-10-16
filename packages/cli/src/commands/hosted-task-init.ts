@@ -453,6 +453,7 @@ export async function runHostedTaskInit(inputFile: string): Promise<TaskInitResu
         ...installation,
         bindingIdentity: null,
         inputs: [path.dirname(project.projectConfig)],
+        excludedRoots: [path.join(path.dirname(project.projectConfig), 'tasks')],
         selectedConfiguration: '{"identity":null}',
       });
     }
