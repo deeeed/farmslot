@@ -8,6 +8,14 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.22.2 - 2026-10-16
+
+- Consume the recipe-runner 0.38.1 still-filename fix throughout the worker dependency set.
+
+## 0.22.1 - 2026-10-16
+
+- Align the worker dependency set with Protocol 0.50.0 and the qualified one-tap visual review readers.
+
 ## 0.22.0 - 2026-10-16
 
 - Expose the read-only task Markdown renderer and shared runner revision helper, preserving authored prose, checklists, selected evidence and public-safe provenance.

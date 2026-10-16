@@ -4,6 +4,8 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
+- Bound transient gateway reconnects to two seconds and time out stalled WebSocket opening handshakes while preserving authentication refusal pacing.
+
 - Deploy nodes without sourcing checkout authentication or provider settings, preserving installed native ownership.
 
 - Preserve the installed macOS native owner ahead of checkout auth defaults during redeploy; explicit caller replacement or empty disable remains authoritative.

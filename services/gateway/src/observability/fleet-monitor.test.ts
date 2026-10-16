@@ -1,9 +1,32 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import { mock, test } from 'node:test';
 
 import type { FleetStatus, SlotStatus } from '@farmslot/protocol';
 
-import { detectFleetMonitorViolations } from './fleet-monitor.js';
+const realFiles = await import('node:fs/promises');
+mock.module('node:fs/promises', { namedExports: { ...realFiles, writeFile: async () => {} } });
+const realFleet = await import('../methods/fleet.js');
+let cachedFleet: FleetStatus;
+let refreshes = 0;
+mock.module('../methods/fleet.js', {
+  namedExports: {
+    ...realFleet,
+    fleetStatus: () =>
+      realFleet.fleetStatus(
+        {},
+        {
+          load: async () => cachedFleet,
+          refresh: async () => {
+            refreshes++;
+            cachedFleet = { ...cachedFleet, checkedAt: new Date().toISOString(), stale: false };
+            return { fleet: cachedFleet };
+          },
+        },
+      ),
+  },
+});
+const { detectFleetMonitorViolations, startMonitor, stopMonitor } =
+  await import('./fleet-monitor.js');
 
 function slot(overrides: Partial<SlotStatus>): SlotStatus {
   return {
@@ -193,4 +216,26 @@ test('detectFleetMonitorViolations dedupes stuck and idle independently', () => 
     detectFleetMonitorViolations(idle, notified).map((v) => v.type),
     [],
   );
+});
+
+test('the periodic monitor refreshes stale machine probes and publishes the fresh snapshot', async (t) => {
+  cachedFleet = fleet([slot({ lifecycle: 'ready', dispatchable: true })]);
+  refreshes = 0;
+  const published: FleetStatus[] = [];
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  startMonitor({
+    onFleetUpdated: (value) => published.push(value),
+    onDecisionNew() {},
+    onViolation() {},
+  });
+  t.after(stopMonitor);
+  t.mock.timers.tick(30000);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(refreshes, 1);
+  assert.equal(published[0].stale, true);
+  t.mock.timers.tick(30000);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(refreshes, 1, 'fresh snapshots do not repeat expensive probes');
+  assert.equal(published.at(-1)?.stale, false);
+  assert.equal(published.at(-1)?.slots[0].dispatchable, true);
 });

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import {
   isRecipeVisualCaptureAction,
   normalizeRecipeClaimId,
@@ -547,7 +549,8 @@ async function captureAutomaticStill(
     !context.captureRecordingSnapshot
   )
     return undefined;
-  const file = `stills/${encodeURIComponent(context.nodeId)}-${attempt}.png`;
+  const nodeKey = createHash('sha256').update(context.nodeId).digest('hex');
+  const file = `stills/${nodeKey}-${attempt}.png`;
   try {
     const frame = await context.captureRecordingSnapshot(file);
     const artifact = {

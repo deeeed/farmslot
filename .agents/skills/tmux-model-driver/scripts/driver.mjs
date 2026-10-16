@@ -502,7 +502,10 @@ export function refusal(before, runner, flush = false) {
   if (before.confidence !== 'high') return 'unknown';
   if (before.pending_question) return 'pending_question';
   if (before.launch_blocker) return 'launch_blocker';
-  if (before.accepted) return 'acceptance_unacknowledged';
+  // Retain delivery bookkeeping without locking fresh mid-turn handoffs out.
+  // Live queues, questions and drafts still veto below or above.
+  if (before.accepted && (flush || !supportsMidTurnPrompt(runner)))
+    return 'acceptance_unacknowledged';
   if (flush || !supportsMidTurnPrompt(runner)) {
     if (before.delivery_phase === 'busy' || before.phase === 'busy') return 'busy';
     if (before.delivery_phase !== 'idle') return 'observability_unavailable';

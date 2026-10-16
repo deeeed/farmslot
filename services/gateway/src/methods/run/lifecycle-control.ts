@@ -363,11 +363,12 @@ export async function releaseCompletedRunSlot(run: Run): Promise<SlotReleaseResu
     stopRunOwnedTmuxAndWatches,
   } = await import('../../run-lifecycle/slot-teardown.js');
   const workerBlocker = await stopRunOwnedTmuxAndWatches(run);
-  let blocker = await recordSlotTeardownBlocker(run, workerBlocker);
+  let blocker: string | null = workerBlocker;
   const { readSlotRow } = await import('../../core/index.js');
   let fence = { before: await readSlotRow(slotId) };
   try {
     await releaseRunOwnedCapabilities(run);
+    blocker = await recordSlotTeardownBlocker(run, workerBlocker);
     fence = await fenceRunSlotCleanup(run, blocker);
     const { broadcastEvent } = await import('../../server.js');
     const released = await releaseRunSlotOwnership(run, fence, blocker);

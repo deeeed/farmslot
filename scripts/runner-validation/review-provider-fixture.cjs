@@ -1,10 +1,17 @@
 #!/usr/bin/env node
 const fs = require('node:fs');
+const { parseGhFields } = require('./gh-fixture-fields.cjs');
 const file = process.env.PUBLICATION_FIXTURE_STATE;
 if (!file) throw new Error('Fixture state missing; refusing provider access');
 const state = JSON.parse(fs.readFileSync(file, 'utf8'));
 const args = process.argv.slice(2);
 if (args[0] === 'auth' && args[1] === 'token') {
+  (state.accountLookups ??= []).push({
+    named: args.includes('--user'),
+    ambientPatRemoved: !process.env.GH_TOKEN,
+    inheritedToken: process.env.GITHUB_TOKEN === 'fixture-inherited-token',
+  });
+  fs.writeFileSync(file, JSON.stringify(state));
   process.stdout.write('fixture-only-token');
   process.exit(0);
 }
@@ -18,26 +25,58 @@ if (args[0] === 'pr' && args[1] === 'comment') {
   process.exit(0);
 }
 if (args[0] !== 'api') throw new Error('Unbound fixture call');
-const endpoint = args.find((value) => value === 'user' || value.startsWith('repos/'));
+const endpoint = args.find(
+  (value) => value === 'user' || value === 'graphql' || value.startsWith('repos/'),
+);
 const method = args.includes('--method')
   ? args[args.indexOf('--method') + 1]
   : args.includes('-X')
     ? args[args.indexOf('-X') + 1]
     : 'GET';
 let body;
-if (endpoint === 'user') body = { login: 'reviewer' };
+if (endpoint === 'graphql') {
+  const fields = parseGhFields(args);
+  const pr = {
+    id: 'PR_fixture42',
+    headRefOid: state.head,
+    baseRefOid: state.base ?? 'b'.repeat(40),
+  };
+  if (fields.query.includes('markFileAsViewed')) {
+    if (!state.posts && !state.slotReport) throw new Error('Viewed mutation before publication');
+    state.viewedMutations = (state.viewedMutations ?? 0) + 1;
+    body = state.viewedFailure
+      ? { errors: [{ message: 'Viewed unavailable' }] }
+      : {
+          data: Object.fromEntries(
+            Object.keys(fields)
+              .filter((key) => /^path\d+$/.test(key))
+              .map((key) => [key.replace('path', 'file'), { pullRequest: pr }]),
+          ),
+        };
+    fs.writeFileSync(file, JSON.stringify(state));
+  } else if (fields.query.includes('repository(')) {
+    body = {
+      data: {
+        viewer: { login: 'reviewer' },
+        repository: {
+          pullRequest: {
+            ...pr,
+            changedFiles: state.files.length,
+            files: {
+              nodes: state.files.map((file) => ({ path: file.filename })),
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+          },
+        },
+      },
+    };
+  } else body = { data: { node: pr } };
+} else if (endpoint === 'user') body = { login: 'reviewer' };
 else if (endpoint.endsWith('/issues/42/comments')) {
   if (args.includes('--jq')) process.exit(0);
   body = [];
 } else if (endpoint.endsWith('/pulls/42/comments') && method === 'POST') {
-  const fields = Object.fromEntries(
-    args
-      .filter((value) => /^(body|commit_id|path|line|side)=/.test(value))
-      .map((value) => {
-        const split = value.indexOf('=');
-        return [value.slice(0, split), value.slice(split + 1)];
-      }),
-  );
+  const fields = parseGhFields(args);
   (state.slotComments ??= []).push(fields);
   fs.writeFileSync(file, JSON.stringify(state));
   body = { id: state.slotComments.length };

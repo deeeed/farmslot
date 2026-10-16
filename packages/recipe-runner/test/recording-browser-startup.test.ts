@@ -4,7 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { RECIPE_ACTION_MANIFEST_SCHEMA_URL } from '@farmslot/protocol';
+import {
+  RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+  type RecipeArtifactManifestDocument,
+} from '@farmslot/protocol';
 
 import { createStandardCoreAdapters } from '../src/adapters/core.js';
 import { createStandardUiAdapters } from '../src/adapters/ui.js';
@@ -167,6 +170,11 @@ for (const { initialPid, composed } of [
                   action: 'call',
                   intent: 'Run browser setup and proof',
                   ref: 'browser',
+                  next: 'setup-ui',
+                },
+                'setup-ui': {
+                  action: 'ui.wait_for',
+                  intent: 'Confirm the root browser',
                   next: 'done',
                 },
                 done: { action: 'end', status: 'pass' },
@@ -194,6 +202,20 @@ for (const { initialPid, composed } of [
       recordVideo: { mode: 'full-run' },
     });
     assert.equal(result.status, 'pass');
+    const artifactManifest: RecipeArtifactManifestDocument = JSON.parse(
+      await readFile(result.artifactManifestPath, 'utf8'),
+    );
+    const stills = artifactManifest.artifacts
+      .filter((artifact) => artifact.path.startsWith('stills/'))
+      .map((artifact) => artifact.path);
+    assert.equal(stills.length, composed ? 2 : 1);
+    assert.equal(new Set(stills).size, stills.length, 'Nested and flattened ids cannot collide');
+    for (const still of stills) {
+      assert.equal(path.dirname(still), 'stills');
+      assert.match(path.basename(still), /^[A-Za-z0-9._-]+\.png$/);
+      assert.ok(path.basename(still).length < 255);
+      assert.equal(await readFile(path.join(root, 'artifacts', still), 'utf8'), 'PNG fixture');
+    }
     assert.deepEqual(events, [
       'doctor',
       'launch',
@@ -201,6 +223,7 @@ for (const { initialPid, composed } of [
       'acquire',
       'start',
       'ui',
+      ...(composed ? ['ui'] : []),
       'stop',
       'release',
     ]);
