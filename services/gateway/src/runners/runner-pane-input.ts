@@ -58,7 +58,14 @@ export function runnerPaneHasQueuedInstruction(
       )
     );
   if (submittedExact) {
-    if (marker === -1) return false;
+    // Only the Enter steering block proves delivery. Follow-up input waits for the turn to end.
+    if (
+      marker === -1 ||
+      !/^[•│┃║\s]*messages? to be submitted after next tool call/i.test(
+        normalizeInstructionText(lines.slice(marker).join(' ')),
+      )
+    )
+      return false;
     const body = lines.slice(marker + 1);
     const composer = body.map((line) => /^\s*[›❯](?:\s|$)/.test(line)).lastIndexOf(true);
     const firstMessage = body.findIndex((line) => /^\s*[↳›❯](?:\s|$)/.test(line));
