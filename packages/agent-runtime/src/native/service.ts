@@ -1,4 +1,5 @@
 import {
+  isNativeResultSchema,
   Methods,
   type NativeSessionCreateParams,
   type NativeSessionResponse,
@@ -96,6 +97,14 @@ export async function routeNativeSession(
           cwd: string(p, 'cwd'),
         };
         if (p.model !== undefined) params.model = string(p, 'model');
+        if (p.resultSchema !== undefined) {
+          if (!isNativeResultSchema(p.resultSchema))
+            throw new NativeSessionMethodError(
+              'INVALID_PARAMS',
+              'Unsupported native result schema',
+            );
+          params.resultSchema = p.resultSchema;
+        }
         if (p.profileId !== undefined) params.profileId = string(p, 'profileId');
         if (p.accountContextId !== undefined)
           params.accountContextId = string(p, 'accountContextId');

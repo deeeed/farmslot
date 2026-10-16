@@ -89,6 +89,7 @@ export {
   validateRecipeParams,
   validateRecipeParamsSchema,
 } from './params.js';
+export * from './pipeline-visual-judgments.js';
 export type {
   EvidenceManifest,
   EvidenceManifestOmit,

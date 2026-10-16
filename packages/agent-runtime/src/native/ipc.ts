@@ -2,10 +2,11 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { connect } from 'node:net';
 import { join } from 'node:path';
 
-import type {
-  NativeSessionCreateParams,
-  NativeSessionEnsureParams,
-  NativeSessionResponse,
+import {
+  isNativeResultSchema,
+  type NativeSessionCreateParams,
+  type NativeSessionEnsureParams,
+  type NativeSessionResponse,
 } from '@farmslot/protocol';
 
 import {
@@ -154,6 +155,11 @@ export function decodeRequest(value: unknown): HostRequest {
       cwd: string(v, 'cwd'),
     };
     if (v.model !== undefined) params.model = string(v, 'model');
+    if (v.resultSchema !== undefined) {
+      if (!isNativeResultSchema(v.resultSchema))
+        throw new Error('Unsupported native result schema');
+      params.resultSchema = v.resultSchema;
+    }
     if (v.profileId !== undefined) params.profileId = string(v, 'profileId');
     if (v.accountContextId !== undefined) params.accountContextId = string(v, 'accountContextId');
     if (v.mode !== undefined) {
