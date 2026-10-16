@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Submit buffered Codex input with Enter, never Tab, and accept only the next-tool-call steering block as delivery proof; queued follow-up input stays undelivered.
+
 - Keep failed dev worker CLI verification visible as critical node and fleet health.
 
 - Reuse verified parent acceptance for PR follow-up completion, retain proof provenance in completion and PR comments, and keep current-checkout CI independent.
