@@ -104,7 +104,7 @@ Add a project-agnostic validation gate that checks all enabled slots across supp
 
 ## Amendment 1: Fixtures and worker templates use the selected bundle (2026-10-17)
 
-**Status:** Proposed
+**Status:** Accepted (2026-10-17, lead-approved; shipped in #1230)
 
 ### Decision
 
