@@ -11,7 +11,7 @@ defines the machine contract for scripts and agents.
 | Human   | interactive TTY without `--json`                       | Formatted tables/text               |
 
 Progress and spinners are written to stderr only, and only when stderr is a
-TTY — stdout stays pure in machine mode.
+TTY — stdout stays pure in machine mode. `pair` also renders its scannable QR on stderr in machine mode; the same payload remains in the JSON envelope.
 
 ## Envelope shape
 
