@@ -9,6 +9,7 @@ import {
 import {
   type ArtifactRef,
   decisionArtifactBundleRef,
+  INHERITED_ACCEPTANCE_INPUT,
   isRecord,
   type RecipeRunArtifactGroup,
   type Run,
@@ -302,6 +303,7 @@ async function retentionPolicy(): Promise<RunBundleRetentionPolicy> {
 }
 
 const RETAINED_TASK_INPUTS = [
+  INHERITED_ACCEPTANCE_INPUT,
   'inputs/handoff.json',
   'inputs/commit.json',
   WORKER_TERMINAL_CONTRACT_INPUT,

@@ -661,3 +661,43 @@ Both clients use one AC list: "Proven", "Verified by agent", "Checked", "Issue",
 ### Public surface
 
 Protocol owns `PipelineVisualJudgments`, native result-schema/result event fields, receipt kind/identity, legacy delegation policy and decision audit. The native runner adapter owns capability declaration, schema-constrained output capture and validation. Native review collection is the named consumer. Public `RunRpc.reviewVisualClaim` keeps manual kinds. SDK and review-dispatch supply both clients. Ship compatible readers and result-capable native adapters before writer activation.
+
+## Amendment 12 (2026-10-16): Inherited acceptance for PR completion
+
+**Status:** Accepted (Arthur, 2026-10-16)
+
+### Decision
+
+A `pr-complete` run may satisfy acceptance with its parent's approved, retained
+evidence for the same project and pull request. Every registered criterion must
+match and remain proven under the parent's existing evidence and review rules.
+Completion and its PR comment identify the proof as inherited and retain the
+parent run, proof head and original ledger hash. They never claim execution at
+the follow-up head or rebind the parent's task or engine artifacts.
+
+An explicit per-flow `acceptance.requireFresh` keeps acceptance bound to the
+follow-up task. Deterministic checks always validate the follow-up checkout.
+[ADR-065](065-fail-closed-run-lifecycle.md) continues to own all other completion
+prerequisites, including worker idle and publication authority.
+
+### Rationale and consequences
+
+Review and CI follow-ups should not require another product login to repeat
+already approved AC proof. Inheritance preserves the original proof identity;
+missing, corrupt, unrelated or unproven parent evidence grants no completion.
+
+### Public surface
+
+The existing run completion output and PR comment carry inherited provenance.
+`WorkerTerminalAcceptanceRules` in `@farmslot/protocol` gains optional
+`requireFresh`, consumed by the existing contract resolver and gateway completion
+guard. Harnesses inherit this behavior through their existing terminal rules.
+`InheritedAcceptanceProvenance`, `TaskInheritedAcceptanceReference` and
+`INHERITED_ACCEPTANCE_INPUT` in the same package connect gateway preparation,
+retention and the existing runtime artifact checker. The checker accepts only a
+matching provisional reference; gateway completion revalidates parent authority.
+`acceptanceCriteriaMatch` supplies their shared criterion identity/text binding.
+`registeredAcceptanceCriteria` supplies the existing positional registration to
+both runtime and gateway readers.
+There is no new command, endpoint, verdict writer or client gate component.
+The additive contract follows the existing coordinated package versioning.

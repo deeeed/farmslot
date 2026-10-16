@@ -33,6 +33,7 @@ const { atomicWrite } = require('./mark-io.cjs');
  * @typedef {object} WorkerTerminalAcceptanceRules
  * @property {boolean} [require]
  * @property {boolean} [allowWeak]
+ * @property {boolean} [requireFresh]
  */
 
 /**
@@ -265,6 +266,7 @@ function resolveWorkerTerminalContract(projectConfig, flowType, options = {}) {
     ? {
         ...(acceptanceRules.require ? { require: true } : {}),
         ...(acceptanceRules.allowWeak ? { allowWeak: true } : {}),
+        ...(acceptanceRules.requireFresh ? { requireFresh: true } : {}),
       }
     : null;
 

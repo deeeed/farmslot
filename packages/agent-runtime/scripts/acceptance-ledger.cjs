@@ -16,10 +16,13 @@ const { atomicWrite, readJson } = require('./mark-io.cjs');
 const HANDOFF_INPUT = path.join('inputs', 'handoff.json');
 const {
   ACCEPTANCE_STATUS_ARTIFACT,
+  INHERITED_ACCEPTANCE_INPUT,
   ACCEPTANCE_VERDICTS,
   ACCEPTANCE_PROOF_MODES,
   ACCEPTANCE_CRITERION_ID_PATTERN,
   acceptanceCriterionId,
+  acceptanceCriteriaMatch,
+  registeredAcceptanceCriteria,
   validateAcceptanceStatusLedger,
   acceptanceCriteriaView,
   summarizeAcceptanceStatus,
@@ -59,9 +62,7 @@ function handoffAcceptanceCriteria(taskDir) {
 function criteriaFromHandoff(handoff) {
   const task = isRecord(handoff.task) ? handoff.task : {};
   const criteria = Array.isArray(task.acceptanceCriteria) ? task.acceptanceCriteria : [];
-  return criteria
-    .map((text, index) => ({ id: acceptanceCriterionId(index), text: String(text) }))
-    .filter((criterion) => criterion.text.trim().length > 0);
+  return registeredAcceptanceCriteria(criteria);
 }
 
 /**
@@ -198,6 +199,40 @@ function acceptanceContractIssues(taskDir, options = {}) {
     return [err.message];
   }
   if (criteria.length === 0) return [];
+  // This is a cached qualification, not a new verdict or publication authority.
+  // The gateway independently checks the approved original parent at completion.
+  if (!options.requireFresh && fs.existsSync(path.join(taskDir, INHERITED_ACCEPTANCE_INPUT))) {
+    let reference;
+    let handoff;
+    try {
+      reference = readJson(path.join(taskDir, INHERITED_ACCEPTANCE_INPUT));
+      handoff = readJson(path.join(taskDir, HANDOFF_INPUT));
+    } catch (error) {
+      return [`Inherited acceptance reference cannot be read: ${error.message}`];
+    }
+    if (
+      !isRecord(reference) ||
+      reference.schemaVersion !== 1 ||
+      reference.source !== 'parent-run' ||
+      typeof reference.childRunId !== 'string' ||
+      !reference.childRunId ||
+      typeof reference.project !== 'string' ||
+      !reference.project ||
+      handoff.flow !== 'pr-complete' ||
+      reference.childRunId !== handoff.attemptId ||
+      reference.project !== handoff.project ||
+      typeof reference.parentRunId !== 'string' ||
+      !reference.parentRunId ||
+      reference.parentRunId === reference.childRunId ||
+      typeof reference.headSha !== 'string' ||
+      !/^[a-f0-9]{7,40}$/i.test(reference.headSha) ||
+      typeof reference.ledgerHash !== 'string' ||
+      !/^[a-f0-9]{64}$/i.test(reference.ledgerHash) ||
+      !acceptanceCriteriaMatch(criteria, reference.criteria)
+    )
+      return ['Inherited acceptance reference does not match this follow-up task.'];
+    return [];
+  }
   let stored;
   try {
     stored = readAcceptanceLedger(taskDir);

@@ -518,21 +518,54 @@ export async function validateDeterministicChecksForRun(
     throw new Error(
       'Deterministic CI checks require the run checkout; slot is missing or unavailable',
     );
-  const result = await validateTerminalSignalArtifacts(
-    vars.slotId,
-    `${taskDir}/SIGNAL.json`,
-    {
-      status: 'complete',
-      timestamp: new Date().toISOString(),
-    },
-    taskFile,
+  // CI receipts belong to this checkout. Acceptance has its own gate and may
+  // come from a verified parent; re-running the entire terminal contract here
+  // would incorrectly demand a second task-bound acceptance ledger.
+  const checker = await agentRuntimeScriptForSlot(vars, 'worker-terminal-contract.cjs');
+  const checklists = [...new Set(contract.deterministicChecks.map((check) => check.checklist))];
+  const evaluate = [
+    'const {deterministicChecks}=require(process.argv[1]);',
+    'const results=JSON.parse(process.argv[3]).map(c=>deterministicChecks.evaluate(process.argv[2],c));',
+    'process.stdout.write(JSON.stringify(results));',
+    'process.exitCode=results.some(r=>r.issues.length)?1:0;',
+  ].join('');
+  const result = await execOnSlot(
+    vars,
+    [
+      'node',
+      '-e',
+      shellQuote(evaluate),
+      shellQuote(checker),
+      shellQuote(taskDir),
+      shellQuote(JSON.stringify(checklists)),
+    ].join(' '),
+    { timeout: 60_000, maxBuffer: 256 * 1024 },
   );
-  if (!result.ok) throw new Error(`Deterministic CI gate blocked: ${result.message}`);
-  if (!result.deterministicChecks?.length) {
+  if (result.exitCode !== 0)
+    throw new Error(`Deterministic CI gate blocked: ${result.stderr || result.stdout}`);
+  const evaluated: Array<{ checks: DeterministicChecklistCheck[]; issues: string[] }> = JSON.parse(
+    result.stdout,
+  );
+  const checks = evaluated.flatMap((item) => item.checks);
+  if (
+    !checks.length ||
+    evaluated.some((item) => item.issues.length > 0) ||
+    checks.some((check) => check.status !== 'passed') ||
+    contract.deterministicChecks.some(
+      (expected) =>
+        !checks.some(
+          (check) =>
+            check.checklist === expected.checklist &&
+            check.stepNumber === expected.stepNumber &&
+            check.reference === expected.reference &&
+            check.command === expected.command,
+        ),
+    )
+  ) {
     throw new Error(
       `Deterministic CI gate blocked: no verified receipts were returned for ${taskDir}/${input}, ` +
         `which declares ${contract.deterministicChecks.length} check(s). Verify the selected task/checklist contract and rerun its CI mark step.`,
     );
   }
-  return result.deterministicChecks;
+  return checks;
 }

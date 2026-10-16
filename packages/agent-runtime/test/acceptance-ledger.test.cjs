@@ -60,6 +60,69 @@ test('per-flow acceptance overrides inherit unspecified contract keys', () => {
     require: true,
     allowWeak: true,
   });
+  assert.deepEqual(
+    resolveWorkerTerminalContract(
+      {
+        acceptance: { requireFresh: true },
+        flows: { 'pr-complete': { acceptance: { requireFresh: false } } },
+      },
+      'pr-complete',
+    ).acceptance,
+    undefined,
+  );
+  assert.deepEqual(
+    resolveWorkerTerminalContract({ acceptance: { requireFresh: true } }, 'pr-complete').acceptance,
+    { requireFresh: true },
+  );
+});
+
+test('follow-up closeout accepts a matching parent reference without manufacturing a task ledger', (t) => {
+  const dir = taskFixture(t, {
+    attemptId: 'child-run',
+    flow: 'pr-complete',
+    project: 'example',
+    task: { acceptanceCriteria: CRITERIA },
+  });
+  const reference = {
+    schemaVersion: 1,
+    source: 'parent-run',
+    childRunId: 'child-run',
+    project: 'example',
+    parentRunId: 'parent-run',
+    headSha: 'a'.repeat(40),
+    ledgerHash: 'b'.repeat(64),
+    criteria: CRITERIA.map((text, index) => ({ id: `AC-${index + 1}`, text })),
+  };
+  const file = path.join(dir, 'inputs/inherited-acceptance.json');
+  writeFileSync(file, JSON.stringify(reference));
+  writeFileSync(path.join(dir, 'artifacts/comments-report.md'), 'Follow-up source work complete.');
+  writeFileSync(path.join(dir, 'artifacts/learnings.md'), 'Retain original proof identity.');
+  const contract = path.join(dir, 'inputs/worker-terminal-contract.json');
+  writeFileSync(contract, JSON.stringify(resolveWorkerTerminalContract(null, 'pr-complete')));
+  const completed = check(dir, '--contract', contract, '--terminal', 'complete');
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(existsSync(ledgerFile(dir)), false);
+  assert.ok(acceptanceStatusList(dir).every(({ verdict }) => verdict === null));
+  for (const patch of [
+    { childRunId: 'foreign' },
+    { project: 'foreign' },
+    { ledgerHash: 'changed' },
+    { criteria: reference.criteria.slice(1) },
+    { childRunId: undefined },
+  ]) {
+    writeFileSync(file, JSON.stringify({ ...reference, ...patch }));
+    assert.match(acceptanceContractIssues(dir).join(' '), /does not match/);
+  }
+  writeFileSync(file, JSON.stringify(reference));
+  writeFileSync(
+    contract,
+    JSON.stringify(
+      resolveWorkerTerminalContract({ acceptance: { requireFresh: true } }, 'pr-complete'),
+    ),
+  );
+  const fresh = check(dir, '--contract', contract, '--terminal', 'complete');
+  assert.equal(fresh.status, 1);
+  assert.match(fresh.stderr, /acceptance-status.json is missing/);
 });
 
 test('read commands retain the registered order and unassessed rows', (t) => {
