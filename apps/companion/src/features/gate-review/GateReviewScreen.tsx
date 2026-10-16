@@ -9,7 +9,6 @@ import { MediaViewer } from '../../components/MediaViewer';
 import {
   acceptancePanelViewportHeight,
   TaskAcceptancePanel,
-  TaskAcceptanceSkeleton,
 } from '../../components/TaskAcceptancePanel';
 import { baseStyles } from '../../lib/theme';
 
@@ -71,7 +70,7 @@ export function GateReviewScreen({
       {viewModel.error ? <Text style={styles.error}>{viewModel.error}</Text> : null}
       <View style={styles.section}>
         <GateActions
-          loading={!acceptance.view && !acceptance.error}
+          loading={acceptance.loading}
           reviewPicker={viewModel.reviewPicker}
           decision={viewModel.decision}
           actions={viewModel.actions}
@@ -122,27 +121,25 @@ export function GateReviewScreen({
               nestedScrollEnabled
               style={{ height: acceptancePanelViewportHeight(expectedRows, viewport.height) }}
             >
-              {acceptance.view || acceptance.error ? (
-                <TaskAcceptancePanel
-                  evidenceModel={acceptance.evidenceModel}
-                  onMarkUntestable={actions.markUntestable}
-                  acceptanceStatus={acceptance.acceptanceStatus}
-                  acceptanceCriteria={acceptance.acceptanceCriteria}
-                  acceptanceEvidenceLinks={acceptance.acceptanceEvidenceLinks}
-                  error={acceptance.error}
-                  onRetry={acceptance.retry}
-                  onOpenEvidence={actions.openEvidence}
-                />
-              ) : (
-                <TaskAcceptanceSkeleton rows={expectedRows} />
-              )}
+              <TaskAcceptancePanel
+                loading={acceptance.loading}
+                expectedRows={expectedRows}
+                evidenceModel={acceptance.evidenceModel}
+                onMarkUntestable={actions.markUntestable}
+                acceptanceStatus={acceptance.acceptanceStatus}
+                acceptanceCriteria={acceptance.acceptanceCriteria}
+                acceptanceEvidenceLinks={acceptance.acceptanceEvidenceLinks}
+                error={acceptance.error}
+                onRetry={acceptance.retry}
+                onOpenEvidence={actions.openEvidence}
+              />
               {acceptance.view?.rows.length === 0 && !acceptance.error ? (
                 <Text style={styles.muted}>This run registered no acceptance criteria.</Text>
               ) : null}
             </ScrollView>
           </View>
           <EvidenceReviewWorkspace
-            loading={!acceptance.evidenceModel && !acceptance.error}
+            loading={acceptance.loading}
             error={!acceptance.evidenceModel ? acceptance.error : null}
             retry={acceptance.retry}
             runId={viewModel.run.id}
