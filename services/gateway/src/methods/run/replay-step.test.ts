@@ -2731,3 +2731,66 @@ test('runReplayStep recovers slotId from find-slot outputs on dispatch replay', 
   assert.notEqual(replayed.steps.find((step) => step.name === 'dispatch')?.status, 'failed');
   cancelRunEngine(run.id);
 });
+
+test('a write-task replay re-validates its slot binding before the run reaches prepare', async (t) => {
+  // Two runs bound to one slot both failed at write-task, so terminal cleanup
+  // freed the slot while each kept its slotId. The first replay must claim the
+  // slot; the second must be refused at replay time, not fail inside prepare.
+  const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
+  const slotId = 'macwork-ff-8';
+  await writeFile(
+    statusFile,
+    JSON.stringify(
+      { slots: [{ slot: slotId, lifecycle: 'ready', current_run_id: null }] },
+      null,
+      2,
+    ) + '\n',
+  );
+  const failedAtWriteTask = (ticket: string) => {
+    const run = createRun({ flowType: 'dev', project: 'farmslot-farm', ticketOrPr: ticket });
+    return updateRun(run.id, {
+      status: 'failed',
+      error: 'write-task failed',
+      slotId,
+      steps: run.steps.map((step) =>
+        step.name === 'find-slot'
+          ? { ...step, status: 'done' as const, outputs: { selectedSlot: slotId } }
+          : step.name === 'write-task'
+            ? { ...step, status: 'failed' as const, detail: 'write-task failed' }
+            : { ...step, status: 'skipped' as const },
+      ),
+    });
+  };
+  const first = failedAtWriteTask(`PROJ-${Date.now()}1`);
+  const second = failedAtWriteTask(`PROJ-${Date.now()}2`);
+  t.after(async () => {
+    for (const run of [first, second]) cancelRunEngine(run.id);
+    if (priorStatus == null) await rm(statusFile, { force: true });
+    else await writeFile(statusFile, priorStatus);
+    for (const run of [first, second]) await evictTestRun(run.id, 'failed');
+  });
+  const hooks = { startEngine: async () => {} };
+
+  await runReplayStep(
+    { runId: first.id, stepName: 'write-task', triggeredBy: 'operator' },
+    () => {},
+    hooks,
+  );
+  const slotAfterFirst = JSON.parse(await readFile(statusFile, 'utf8')).slots[0];
+  assert.equal(slotAfterFirst.current_run_id, first.id);
+
+  await assert.rejects(
+    () =>
+      runReplayStep(
+        { runId: second.id, stepName: 'write-task', triggeredBy: 'operator' },
+        () => {},
+        hooks,
+      ),
+    new RegExp(`slot ${slotId} is no longer safely reclaimable \\(run ${first.id} holds it\\)`),
+  );
+  const refused = getRun(second.id);
+  assert.ok(refused);
+  assert.equal(refused.status, 'failed');
+  assert.deepEqual(refused.steps, second.steps);
+  assert.equal(JSON.parse(await readFile(statusFile, 'utf8')).slots[0].current_run_id, first.id);
+});
