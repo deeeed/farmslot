@@ -188,11 +188,16 @@ function claudeTranscript(root, sessionId) {
   const key = path.join(root, sessionId);
   if (!claudeTranscripts.has(key)) {
     const projects = path.join(root, 'projects');
-    const directory = (fs.existsSync(projects) ? fs.readdirSync(projects) : []).find((name) =>
-      fs.existsSync(path.join(projects, name, `${sessionId}.jsonl`)),
-    );
-    if (!directory) return null;
-    claudeTranscripts.set(key, path.join(projects, directory, `${sessionId}.jsonl`));
+    // A session resumed from another directory leaves a stale copy behind. The live one is newest.
+    const [latest] = (fs.existsSync(projects) ? fs.readdirSync(projects) : [])
+      .map((name) => path.join(projects, name, `${sessionId}.jsonl`))
+      .flatMap((file) => {
+        const stat = fs.statSync(file, { throwIfNoEntry: false });
+        return stat ? [{ file, modified: stat.mtimeMs }] : [];
+      })
+      .sort((a, b) => b.modified - a.modified);
+    if (!latest) return null;
+    claudeTranscripts.set(key, latest.file);
   }
   return claudeTranscripts.get(key);
 }
