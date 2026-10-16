@@ -154,7 +154,7 @@ describe('buildLaunchCommand — safetyTier selection', () => {
       safetyTier: 'sandboxed',
     });
     assert.doesNotMatch(cmd, /--dangerously-bypass-approvals-and-sandbox/);
-    assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
+    assert.match(cmd, /CODEX_HOME='\/tmp\/\.farmslot-runtime\/repo\/\.agent\/codex-home'/);
     assert.match(cmd, /\/usr\/local\/bin\/codex .*--model gpt-5/);
     assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
     // Omitted effort defaults to high for Codex.
@@ -165,7 +165,7 @@ describe('buildLaunchCommand — safetyTier selection', () => {
     const vars = makeVars({ dispatchCmd: '' });
     const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', 'p', { safetyTier: 'full-auto' });
     assert.doesNotMatch(cmd, /--dangerously-bypass-approvals-and-sandbox/);
-    assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
+    assert.match(cmd, /CODEX_HOME='\/tmp\/\.farmslot-runtime\/repo\/\.agent\/codex-home'/);
     assert.match(
       cmd,
       /codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" --sandbox workspace-write --ask-for-approval never .*--model gpt-5/,
@@ -177,7 +177,7 @@ describe('buildLaunchCommand — safetyTier selection', () => {
   it('codex inline fallback: explicit effort injects a reasoning config override', () => {
     const vars = makeVars({ dispatchCmd: '' });
     const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', 'p', { effort: 'xhigh' });
-    assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
+    assert.match(cmd, /CODEX_HOME='\/tmp\/\.farmslot-runtime\/repo\/\.agent\/codex-home'/);
     assert.match(
       cmd,
       /codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" --config 'model_reasoning_effort="xhigh"' .*--model gpt-5/,
@@ -196,7 +196,7 @@ describe('buildLaunchCommand — safetyTier selection', () => {
   it('codex inline fallback: dangerous tier emits the bypass flag', () => {
     const vars = makeVars({ dispatchCmd: '' });
     const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', 'p', { safetyTier: 'dangerous' });
-    assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
+    assert.match(cmd, /CODEX_HOME='\/tmp\/\.farmslot-runtime\/repo\/\.agent\/codex-home'/);
     assert.match(
       cmd,
       /codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" --dangerously-bypass-approvals-and-sandbox/,
@@ -210,7 +210,7 @@ describe('buildLaunchCommand — safetyTier selection', () => {
     const vars = makeVars({ dispatchCmd: '', codexPath: '', osType: 'darwin' });
     const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', 'p', { safetyTier: 'dangerous' });
     assert.doesNotMatch(cmd, /\/opt\/homebrew\/bin\/codex/);
-    assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
+    assert.match(cmd, /CODEX_HOME='\/tmp\/\.farmslot-runtime\/repo\/\.agent\/codex-home'/);
     assert.match(
       cmd,
       /codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" --dangerously-bypass-approvals-and-sandbox/,
@@ -285,7 +285,10 @@ describe('buildLaunchCommand — {safety_flags} placeholder on dispatch path', (
     });
     // Hardcoded flag stays put — tier override cannot remove it.
     assert.match(cmd, /\/usr\/local\/bin\/claude .*--dangerously-skip-permissions/);
-    assert.match(cmd, /--settings '\/tmp\/repo\/\.agent\/\.observability\/claude-settings\.json'/);
+    assert.match(
+      cmd,
+      /--settings '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json'/,
+    );
   });
 
   it('codex runner-aware dispatch_cmd: tier flags substitute into {safety_flags}', () => {

@@ -187,7 +187,7 @@ describe('codex runner', () => {
     // Use the isolated codex-home only if provisioned; otherwise fall back to global.
     assert.match(
       launch,
-      /if \{ \[ -e '\/workspace\/repo\/\.agent\/codex-home\/auth\.json' \] \|\| \[ -e '\/workspace\/repo\/\.agent\/codex-home\/\.farmslot-provider-auth' \]; \}; then export CODEX_HOME='\/workspace\/repo\/\.agent\/codex-home';.*else unset CODEX_HOME;.*fi/,
+      /if \{ \[ -e '\/workspace\/\.farmslot-runtime\/repo\/\.agent\/codex-home\/auth\.json' \] \|\| \[ -e '\/workspace\/\.farmslot-runtime\/repo\/\.agent\/codex-home\/\.farmslot-provider-auth' \]; \}; then export CODEX_HOME='\/workspace\/\.farmslot-runtime\/repo\/\.agent\/codex-home';.*else unset CODEX_HOME;.*fi/,
     );
     assert.match(
       launch,
@@ -208,7 +208,7 @@ describe('codex runner', () => {
     });
     assert.match(
       launch,
-      /then export CODEX_HOME='\/workspace\/repo\/\.agent\/codex-home';.*else unset CODEX_HOME;.*fi/,
+      /then export CODEX_HOME='\/workspace\/\.farmslot-runtime\/repo\/\.agent\/codex-home';.*else unset CODEX_HOME;.*fi/,
     );
     assert.match(
       launch,
@@ -1637,13 +1637,13 @@ describe('buildLaunchCommand', () => {
       assert.match(cmd, /install-runner-observability\.mjs/);
       assert.match(
         cmd,
-        /cd '\/tmp\/repo' && unset CLAUDECODE && \/usr\/local\/bin\/claude --model sonnet --settings '\/tmp\/repo\/\.agent\/\.observability\/claude-settings\.json'$/,
+        /cd '\/tmp\/repo' && unset CLAUDECODE && \/usr\/local\/bin\/claude --model sonnet --settings '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json'$/,
       );
       assert.match(cmd, /install failed; continuing without hooks/);
-      assert.match(cmd, /mkdir -p '\/tmp\/repo\/\.agent\/\.observability'/);
+      assert.match(cmd, /mkdir -p '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability'/);
       assert.match(
         cmd,
-        /printf '\{\}\\n' > '\/tmp\/repo\/\.agent\/\.observability\/claude-settings\.json'/,
+        /printf '\{\}\\n' > '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json'/,
       );
     });
 
@@ -1658,7 +1658,7 @@ describe('buildLaunchCommand', () => {
       assert.match(cmd, /install-runner-observability\.mjs/);
       assert.match(
         cmd,
-        /unset CLAUDECODE && cd \/tmp\/repo && \/usr\/local\/bin\/claude --settings '\/tmp\/repo\/\.agent\/\.observability\/claude-settings\.json' --model opus \.task\/fix\/abc\/TASK\.md/,
+        /unset CLAUDECODE && cd \/tmp\/repo && \/usr\/local\/bin\/claude --settings '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json' --model opus \.task\/fix\/abc\/TASK\.md/,
       );
     });
 
@@ -1682,7 +1682,7 @@ describe('buildLaunchCommand', () => {
       });
       assert.match(
         cmd,
-        /\/usr\/local\/bin\/claude --settings '\/tmp\/repo\/\.agent\/\.observability\/claude-settings\.json' --model opus; echo ready$/,
+        /\/usr\/local\/bin\/claude --settings '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json' --model opus; echo ready$/,
       );
       assert.doesNotMatch(cmd, /echo ready --settings/);
     });
@@ -1708,7 +1708,7 @@ describe('buildLaunchCommand', () => {
       assert.doesNotMatch(cmd, /--runtime-dir '\.agent'/);
       assert.match(
         cmd,
-        /--settings '\/tmp\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json'/,
+        /--settings '\/tmp\/\.farmslot-runtime\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json'/,
       );
     });
 
@@ -1732,7 +1732,7 @@ describe('buildLaunchCommand', () => {
       assert.match(cmd, /cd "\$\{HOME\}\/work\/repo" && unset CLAUDECODE/);
       assert.match(
         cmd,
-        /--settings "\$\{HOME\}\/work\/repo\/\.agent\/\.observability\/claude-settings\.json"/,
+        /--settings "\$\{HOME\}\/work\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json"/,
       );
     });
 
@@ -1746,7 +1746,7 @@ describe('buildLaunchCommand', () => {
       });
       assert.match(
         cmd,
-        /\/usr\/local\/bin\/claude --model sonnet --settings '\/tmp\/repo\/\.agent\/\.observability\/claude-settings\.json'$/,
+        /\/usr\/local\/bin\/claude --model sonnet --settings '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json'$/,
       );
     });
 
@@ -1773,7 +1773,7 @@ describe('buildLaunchCommand', () => {
       // The dangerous flag only appears when a project/dispatch explicitly opts in.
       const vars = makeVars({ dispatchCmd: '' });
       const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', PROMPT, { safetyTier: 'dangerous' });
-      assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
+      assert.match(cmd, /CODEX_HOME='\/tmp\/\.farmslot-runtime\/repo\/\.agent\/codex-home'/);
       assert.match(
         cmd,
         /codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" --dangerously-bypass-approvals-and-sandbox .*--model gpt-5/,
@@ -1792,7 +1792,7 @@ describe('buildLaunchCommand', () => {
       // Isolated home only when provisioned; else fall back to global ~/.codex.
       assert.match(
         cmd,
-        /if \{ \[ -e '\/tmp\/repo\/\.agent\/codex-home\/auth\.json' \] \|\| \[ -e '\/tmp\/repo\/\.agent\/codex-home\/\.farmslot-provider-auth' \]; \}; then export CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home';.*else unset CODEX_HOME;.*fi && cd \/tmp\/repo && \/usr\/local\/bin\/codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" .*--model gpt-5/,
+        /if \{ \[ -e '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/codex-home\/auth\.json' \] \|\| \[ -e '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/codex-home\/\.farmslot-provider-auth' \]; \}; then export CODEX_HOME='\/tmp\/\.farmslot-runtime\/repo\/\.agent\/codex-home';.*else unset CODEX_HOME;.*fi && cd \/tmp\/repo && \/usr\/local\/bin\/codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" .*--model gpt-5/,
       );
       // Must never seed (copy/symlink) into or write config back to the global ~/.codex.
       assert.doesNotMatch(cmd, /ln -sf "\$HOME\/\.codex/);
@@ -1812,7 +1812,7 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', PROMPT);
       assert.match(
         cmd,
-        /then export CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home';.*else unset CODEX_HOME;.*fi && cd \/tmp\/repo && \/usr\/local\/bin\/codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2"/,
+        /then export CODEX_HOME='\/tmp\/\.farmslot-runtime\/repo\/\.agent\/codex-home';.*else unset CODEX_HOME;.*fi && cd \/tmp\/repo && \/usr\/local\/bin\/codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2"/,
       );
       assert.match(cmd, /model_reasoning_effort="high"/);
       // A template without {model} must still carry the operator's selection.
@@ -1825,7 +1825,7 @@ describe('buildLaunchCommand', () => {
         dispatchCmd: 'cd {repo} && {claude_path}',
       });
       const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', PROMPT, { safetyTier: 'dangerous' });
-      assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
+      assert.match(cmd, /CODEX_HOME='\/tmp\/\.farmslot-runtime\/repo\/\.agent\/codex-home'/);
       assert.match(
         cmd,
         /codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" --dangerously-bypass-approvals-and-sandbox/,
@@ -1917,7 +1917,7 @@ describe('buildLaunchCommand', () => {
       assert.match(cmd, /FARMSLOT_RUNNER=pi/);
       assert.match(
         cmd,
-        /-e '\/tmp\/repo\/\.agent\/\.observability\/bin\/pi-farmslot-observability\.ts'/,
+        /-e '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/bin\/pi-farmslot-observability\.ts'/,
       );
       assert.match(cmd, /--thinking medium/);
       assert.match(cmd, /--model xai\/grok-4\.6/);
@@ -2355,11 +2355,11 @@ describe('buildRunnerSessionReloadCommand', () => {
     assert.match(cmd, /install-runner-observability\.mjs/);
     assert.match(
       cmd,
-      /cd '\/tmp\/repo' && unset CLAUDECODE && \/opt\/bin\/claude --dangerously-skip-permissions --model sonnet --settings '\/tmp\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json' --resume 'session-123' 'Read and execute TASK.md'$/,
+      /cd '\/tmp\/repo' && unset CLAUDECODE && \/opt\/bin\/claude --dangerously-skip-permissions --model sonnet --settings '\/tmp\/\.farmslot-runtime\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json' --resume 'session-123' 'Read and execute TASK.md'$/,
     );
     assert.match(
       cmd,
-      /mkdir -p '\/tmp\/repo\/temp\/recipe\/runtime\/\.observability' && printf '\{\}\\n' > '\/tmp\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json'/,
+      /mkdir -p '\/tmp\/\.farmslot-runtime\/repo\/temp\/recipe\/runtime\/\.observability' && printf '\{\}\\n' > '\/tmp\/\.farmslot-runtime\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json'/,
     );
   });
 
@@ -2371,7 +2371,7 @@ describe('buildRunnerSessionReloadCommand', () => {
       runtimeDir: 'runtime',
     });
     assert.match(cmd, /install-runner-observability\.mjs/);
-    assert.match(cmd, /export CODEX_HOME='\/tmp\/repo\/runtime\/codex-home'/);
+    assert.match(cmd, /export CODEX_HOME='\/tmp\/\.farmslot-runtime\/repo\/runtime\/codex-home'/);
     assert.match(
       cmd,
       /\/opt\/bin\/codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" resume --sandbox workspace-write --ask-for-approval never --config 'model_reasoning_effort="high"' --model gpt-5 'codex-session'$/,

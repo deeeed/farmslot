@@ -1,5 +1,6 @@
 import path from 'node:path';
 
+import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { resolveTmuxPaneId, shellQuote } from '../core/tmux.js';
@@ -684,8 +685,7 @@ export const codexSessionObservability: RunnerObservability = {
       buildCodexNativeBindingProbeCommand({
         repo: vars.remoteRepo,
         isolatedSessionsRoot: path.posix.join(
-          vars.remoteRepo,
-          runtimeDir,
+          runnerRuntimeDir(vars.remoteRepo, runtimeDir),
           'codex-home',
           'sessions',
         ),

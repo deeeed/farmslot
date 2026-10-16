@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { withMachineEnv } from '../../../../services/gateway/src/core/project-env.ts';
 import {
   buildCodexHomeSetup,
@@ -29,8 +30,7 @@ export function runnerLaunch(lane) {
   )
     throw new Error('Unknown safety_tier');
   const cwd = fs.realpathSync(lane.cwd);
-  const runtime = path.resolve(lane.runtime_dir);
-  const relativeRuntime = path.relative(cwd, runtime);
+  const runtime = runnerRuntimeDir(path.resolve(lane.cwd), path.resolve(lane.runtime_dir));
   fs.mkdirSync(runtime, { recursive: true, mode: 0o700 });
   const vars = {
     slotId: lane.id,
@@ -46,7 +46,7 @@ export function runnerLaunch(lane) {
   };
   const opts = {
     repo: cwd,
-    runtimeDir: relativeRuntime,
+    runtimeDir: runtime,
     safetyTier: lane.safety_tier,
     effort: lane.effort,
     codexAccountLabel: lane.account_label,
@@ -72,7 +72,7 @@ export function runnerLaunch(lane) {
       skipUpdateCheck: true,
     });
     command = withMachineEnv(
-      `${buildRunnerObservabilityInstallCommand(vars, lane.runner, cwd, relativeRuntime, { accountLabel: lane.account_label })} && ${buildCodexHomeSetup(cwd, relativeRuntime)} && ${launch}`,
+      `${buildRunnerObservabilityInstallCommand(vars, lane.runner, cwd, runtime, { accountLabel: lane.account_label })} && ${buildCodexHomeSetup(cwd, runtime)} && ${launch}`,
       vars,
     );
   } else {

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { runnerRuntimeDir } from '../../lib/runner-runtime.cjs';
 import { DEFAULT_PROMPT, shSingleQuote } from '../lib/common.mjs';
 import { listSessionCandidates, runnerSessionIdForPath } from '../lib/session-attribution.mjs';
 
@@ -115,7 +116,7 @@ export function buildLaunchCommand(
   model = DEFAULT_MODEL,
 ) {
   assertBinary();
-  const codexHome = path.join(repo, runtimeDir, 'codex-home');
+  const codexHome = path.join(runnerRuntimeDir(repo, runtimeDir), 'codex-home');
   if (!fs.existsSync(codexHome)) {
     throw new Error(`codex-home missing after install: ${codexHome}`);
   }
@@ -137,7 +138,7 @@ export function buildLaunchCommand(
 /** Production-parity: open the interactive TUI; the gateway submits the prompt separately. */
 export function buildInteractiveLaunchCommand(repo, runtimeDir = '.agent', model = DEFAULT_MODEL) {
   assertBinary();
-  const codexHome = path.join(repo, runtimeDir, 'codex-home');
+  const codexHome = path.join(runnerRuntimeDir(repo, runtimeDir), 'codex-home');
   if (!fs.existsSync(codexHome)) {
     throw new Error(`codex-home missing after install: ${codexHome}`);
   }

@@ -15,6 +15,7 @@ import {
 } from '@farmslot/protocol';
 import { currentProjectSources, sourceWorkerEnvironment } from '@farmslot/slot-config';
 
+import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import type { loadSlotVars, ProjectVars, RawPoolJson, RawProjectJson } from '../core/config.js';
 import {
   expandDispatchCmd,
@@ -189,7 +190,12 @@ function piCliModel(model: string): string {
 }
 
 export function piObservabilityExtensionPath(repo: string, runtimeDir = '.agent'): string {
-  return path.posix.join(repo, runtimeDir, '.observability', 'bin', 'pi-farmslot-observability.ts');
+  return path.posix.join(
+    runnerRuntimeDir(repo, runtimeDir),
+    '.observability',
+    'bin',
+    'pi-farmslot-observability.ts',
+  );
 }
 
 export function buildPiLaunch(options: {
@@ -206,7 +212,7 @@ export function buildPiLaunch(options: {
     options.model && options.model !== 'unknown' ? options.model : DEFAULT_PI_MODEL;
   const cliModel = piCliModel(effectiveModel);
   const runtimeDir = options.runtimeDir ?? '.agent';
-  const obsDir = path.posix.join(options.repo, runtimeDir, '.observability');
+  const obsDir = path.posix.join(runnerRuntimeDir(options.repo, runtimeDir), '.observability');
   const extension = piObservabilityExtensionPath(options.repo, runtimeDir);
   const flagList = runnerFlagsForTier('pi', options.safetyTier);
   const flagFragment = flagList.length ? ` ${flagList.join(' ')}` : '';
@@ -543,7 +549,7 @@ export function buildCodexHomeSetup(
   runtimeDir = '.agent',
   options: { resumeSessionId?: string } = {},
 ): string {
-  const codexHome = path.posix.join(repo, runtimeDir, 'codex-home');
+  const codexHome = path.posix.join(runnerRuntimeDir(repo, runtimeDir), 'codex-home');
   // Codex refuses to start when CODEX_HOME points at a non-existent dir ("Error
   // finding codex home"), which leaves dispatch with an empty pane and a false
   // ready-timeout. The observability install (bootstrapCodexHome) provisions this

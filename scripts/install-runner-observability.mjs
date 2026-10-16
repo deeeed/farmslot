@@ -15,6 +15,7 @@ import {
 import { trustGrokFolders } from '../packages/agent-runtime/scripts/workspace-trust.cjs';
 
 import { resolveProviderAccountForSlot } from './lib/provider-accounts.mjs';
+import { runnerRuntimeDir } from './lib/runner-runtime.cjs';
 
 const HOOK_SCRIPT = `import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -768,7 +769,7 @@ async function bootstrapCodexHome({
   accountLabel,
   slotId,
 }) {
-  const codexHomeDir = path.join(repoPath, runtimeDir, 'codex-home');
+  const codexHomeDir = path.join(runnerRuntimeDir(repoPath, runtimeDir), 'codex-home');
   fs.mkdirSync(codexHomeDir, { recursive: true });
   const hooksDoc = readJsonObject(hooksPath);
   const hooks =
@@ -1142,7 +1143,6 @@ function ensureCompatObservabilityLink(repoPath, obsDir) {
     stat = fs.lstatSync(compatObsDir);
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error;
-    fs.symlinkSync(obsDir, compatObsDir, 'dir');
     return;
   }
 
@@ -1163,24 +1163,7 @@ const PI_OBSERVABILITY_FILES = [
 function ensureObservabilityBin(obsDir) {
   fs.mkdirSync(obsDir, { recursive: true });
   const binDir = path.join(obsDir, 'bin');
-  const identity = createHash('sha256').update(fs.realpathSync(obsDir)).digest('hex');
-  const storageDir = path.join(os.homedir(), '.cache', 'farmslot', 'observability-bin', identity);
-  fs.mkdirSync(storageDir, { recursive: true });
-  const existing = fs.lstatSync(binDir, { throwIfNoEntry: false });
-  if (existing?.isSymbolicLink()) {
-    if (fs.realpathSync(binDir) !== fs.realpathSync(storageDir)) {
-      throw new Error('Observability bin symlink points outside its owned storage.');
-    }
-  } else {
-    if (existing) {
-      if (!existing.isDirectory()) throw new Error('Observability bin must be a directory.');
-      // Preserve legacy contents and command paths while keeping executable files
-      // outside repository-wide lint scans, which do not traverse directory links.
-      fs.cpSync(binDir, storageDir, { recursive: true });
-      fs.rmSync(binDir, { recursive: true });
-    }
-    fs.symlinkSync(storageDir, binDir, 'dir');
-  }
+  fs.mkdirSync(binDir, { recursive: true });
   // A different runner may be installed after a legacy extension runtime.
   for (const name of PI_OBSERVABILITY_FILES) {
     const legacyPath = path.join(obsDir, name);
@@ -1194,7 +1177,7 @@ function ensureObservabilityBin(obsDir) {
 
 function installObservabilityBinaries({ repo, runtimeDir, slotId, runner }) {
   const repoPath = path.resolve(repo);
-  const obsDir = path.resolve(repoPath, runtimeDir, '.observability');
+  const obsDir = path.join(runnerRuntimeDir(repoPath, runtimeDir), '.observability');
   const binDir = ensureObservabilityBin(obsDir);
   const hookPath = path.join(binDir, 'farmslot-observability-hook.mjs');
   fs.writeFileSync(hookPath, HOOK_SCRIPT);
@@ -1364,7 +1347,7 @@ function seedPiXaiFromGrokCli() {
 function installPi({ repo, runtimeDir, slotId }) {
   if (!repo) throw new Error('missing --repo');
   const repoPath = path.resolve(repo);
-  const obsDir = path.resolve(repoPath, runtimeDir || '.agent', '.observability');
+  const obsDir = path.join(runnerRuntimeDir(repoPath, runtimeDir), '.observability');
   const binDir = ensureObservabilityBin(obsDir);
   const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'runners');
   for (const name of PI_OBSERVABILITY_FILES) {
@@ -1418,8 +1401,31 @@ function installCursor() {
   fs.renameSync(temporary, configPath);
 }
 
+function relocateRunnerState(repo, runtimeDir = '.agent') {
+  const repoPath = path.resolve(repo);
+  const previous = path.resolve(repoPath, runtimeDir);
+  const external = runnerRuntimeDir(repoPath, runtimeDir);
+  if (previous === external) return;
+  fs.mkdirSync(external, { recursive: true, mode: 0o700 });
+  for (const name of ['.observability', 'codex-home']) {
+    const source = path.join(previous, name);
+    const destination = path.join(external, name);
+    const stat = fs.lstatSync(source, { throwIfNoEntry: false });
+    if (!stat || stat.isSymbolicLink()) continue;
+    if (fs.existsSync(destination)) {
+      // Node-support may have created only its hash before installer migration.
+      fs.cpSync(source, destination, { recursive: true, force: false });
+      fs.rmSync(source, { recursive: true });
+    } else fs.renameSync(source, destination);
+    // Already-running hook commands and session paths retain their identity.
+    // Fresh installs create no alias inside the product checkout.
+    fs.symlinkSync(destination, source, 'dir');
+  }
+}
+
 async function install(args) {
   const runner = args.runner || 'claude';
+  if (['claude', 'codex', 'pi'].includes(runner)) relocateRunnerState(args.repo, args.runtimeDir);
   if (runner === 'claude') installClaude(args);
   else if (runner === 'codex') await installCodex(args);
   else if (runner === 'grok') installGrok(args);

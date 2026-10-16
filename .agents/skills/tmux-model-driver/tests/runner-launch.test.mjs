@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { persistentLaneCommand, runnerLaunch } from '../scripts/runner-launch.mjs';
 
 test('lane launcher delegates fresh and resumed commands to shared runner adapters', () => {
@@ -21,7 +22,10 @@ test('lane launcher delegates fresh and resumed commands to shared runner adapte
     assert.ok(claude.command.includes('install-runner-observability.mjs'));
     assert.ok(claude.command.includes('--dangerously-skip-permissions'));
     assert.equal(claude.goal_supported, false);
-    assert.equal(claude.observability_dir, path.join(dir, 'runtime', '.observability'));
+    assert.equal(
+      claude.observability_dir,
+      path.join(runnerRuntimeDir(dir, 'runtime'), '.observability'),
+    );
     const codex = runnerLaunch({ ...lane, runner: 'codex' });
     assert.ok(codex.command.includes('codex'));
     assert.ok(codex.command.includes('check_for_update_on_startup=false'));

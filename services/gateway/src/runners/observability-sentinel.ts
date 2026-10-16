@@ -1,8 +1,9 @@
 import path from 'node:path';
 
-import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
-import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
+import type { loadSlotVars } from '../core/config.js';
+import { slotWriteFiles } from '../core/slot-io.js';
 
+import { runnerObservabilityDirForSlot } from './observability-files.js';
 import { instructionNeedle, runnerPromptDigest } from './observability-prompt-digest.js';
 
 type SlotVars = Awaited<ReturnType<typeof loadSlotVars>>;
@@ -13,18 +14,17 @@ export async function writeRunnerPromptSentinel(
 ): Promise<{ digest: string; sentAt: number }> {
   const digest = runnerPromptDigest(message);
   const sentAt = Date.now();
-  const runtimeDir = await resolveProjectRuntimeDir(vars.projectName);
-  const relativeSentPath = path.posix.join(
-    runtimeDir,
-    '.observability',
-    'sent',
-    `${digest}.json`,
-  );
+  const obsDir = await runnerObservabilityDirForSlot(vars);
   const payload = JSON.stringify({
     sentAt,
     digest,
     prompt: instructionNeedle(message),
   });
-  await writeTextFileOnSlot(vars, relativeSentPath, `${payload}\n`);
+  await slotWriteFiles(vars, path.posix.join(obsDir, 'sent'), [
+    {
+      path: `${digest}.json`,
+      content: Buffer.from(`${payload}\n`).toString('base64'),
+    },
+  ]);
   return { digest, sentAt };
 }

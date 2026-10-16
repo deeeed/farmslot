@@ -3,6 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { runnerRuntimeDir } from '../../lib/runner-runtime.cjs';
+
 import { sleepMs } from './common.mjs';
 import { runGatewaySessionBinding } from './gateway-post-launch.mjs';
 import { eventName } from './hooks.mjs';
@@ -56,7 +58,7 @@ export function grokSessionsDir(repo) {
 }
 
 export function codexSessionsRoot(repo, runtimeDir) {
-  const slotHome = path.join(repo, runtimeDir, 'codex-home', 'sessions');
+  const slotHome = path.join(runnerRuntimeDir(repo, runtimeDir), 'codex-home', 'sessions');
   if (fs.existsSync(slotHome)) return slotHome;
   return path.join(os.homedir(), '.codex', 'sessions');
 }

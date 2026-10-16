@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { runnerRuntimeDir } from '../../lib/runner-runtime.cjs';
 import { DEFAULT_PROMPT, shSingleQuote } from '../lib/common.mjs';
 
 export const RUNNER_ID = 'claude';
@@ -40,7 +41,11 @@ export function assertBinary() {
 function launchCommand(repo, runtimeDir, model) {
   assertBinary();
   const modelFlag = model ? ` --model ${shSingleQuote(model)}` : '';
-  const settingsPath = path.join(repo, runtimeDir, '.observability', 'claude-settings.json');
+  const settingsPath = path.join(
+    runnerRuntimeDir(repo, runtimeDir),
+    '.observability',
+    'claude-settings.json',
+  );
   return `${shSingleQuote(CLAUDE_BIN)} --dangerously-skip-permissions${modelFlag} --settings ${shSingleQuote(settingsPath)}`;
 }
 
