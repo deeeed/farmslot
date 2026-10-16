@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Align the API reference with the parent acceptance worker release.
+
 - Document node-owned hosted task initialization and workspace dependency retention without changing recipe-library roots.
 
 - Document authored task Markdown rendering and its output controls in the generated recipe CLI reference.
