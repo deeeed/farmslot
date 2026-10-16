@@ -1394,10 +1394,11 @@ async function executeResourceControlWithSources(
       ? await probeResourceProcess(slotVars, pidBeforeBoot)
       : undefined;
 
-  // For shutdown: skip if health check says resource isn't running
+  // A stopped primary service can leave its helpers alive. Always run its
+  // shutdown hook for browsers and dev servers, including their helper processes.
   if (action === 'shutdown' && resourceDef.hooks?.health) {
     const health = await executeResourceHealth(slotId, resourceId, extraVars);
-    if (!health.ok) {
+    if (!health.ok && resourceDef.type !== 'dev-server' && resourceDef.type !== 'browser') {
       return { ok: true, detail: 'already stopped' };
     }
   }
