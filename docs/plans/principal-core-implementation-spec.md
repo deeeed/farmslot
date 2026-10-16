@@ -1093,10 +1093,53 @@ invalidation hook, and **the subscribed session makes no request at any point**.
   it. Missing or stale generations cannot adopt replacement authority. Existing
   id-only automation owner records remain unproven for a replacement and must
   be re-authored under the automation service. No loader upgrades their author.
-- PR push, monitoring and rule owner records remain id-only. They cannot resolve
-  a reused identity, including newly saved records. Generation propagation for
-  these features is a follow-up; they are unsupported for reused ids until then.
-- Native profile ownership is id-only and must be retired before owner-id reuse.
+- Generation-bound stored owners (ADR-051 Amendment 5) cover PR push devices,
+  monitors, project monitor policies and publication enrollments, teams, trigger
+  rules, rule actions, review submissions and intent contributions. Each fresh
+  record carries a server-derived, optional `ownerGeneration`; omission means
+  zero. Requests that supply it are refused.
+- Store schemas accept the optional field, and older files load unchanged. Reads,
+  edits, acknowledgements and idempotency keys keep successive generations of
+  one id apart.
+- Each fire-time authority check resolves the stored owner with
+  `resolvePrincipalId(ownerId, ownerGeneration ?? 0)`. A replacement's fresh
+  records work. A generation-zero record never resolves the replacement.
+- PR monitoring repair and rule dispatch enqueue originators carrying the stored
+  owner's generation. Background scans, enrollment, action delivery and queue
+  admission re-check current authority before acting. An unrelated waking
+  request cannot donate authority. The queue loader validates stored originators
+  with the shared WorkOriginator check.
+- Team notification recipients bind the server-resolved generation when the team
+  is saved. Owner-scoped events check the recipient session's generation as well
+  as its id. Old recipient lists and acknowledgements cannot reach a replacement.
+- Push registration may disable the same token's binding for an older generation
+  of that principal id, inside the authorized registration transaction, before
+  creating a new device. Old deliveries stay with the old device. Token conflicts
+  across principals remain refused.
+- Run creation records `createdByPrincipalGeneration` from the authenticated
+  originator. System-originated child runs inherit it from their parent.
+- Direct and gated publication, automatic QA intake, source-review validation and
+  reviewer continuity match owner id and generation.
+- `generation_mismatch` produces its own denial text. It names the replaced
+  identity and the action to re-create the record, and never reads as a
+  revocation.
+- A contribution whose owner fails with `generation_mismatch` is withdrawn before
+  shared-review admission. Any other loss of authority refuses admission and
+  keeps the contribution held. Restoring that authority admits it without
+  re-authoring.
+- Webhook principals and delegated visual-review delegators named in project
+  configuration resolve at generation zero. A replacement is never credited or
+  empowered, and the denial names the mismatch. Source-pin actors remain
+  display-only.
+- Native execution ownership remains id-only and matches only a generation-zero
+  principal. This covers the configured native profile owner, node native-owner
+  bindings, and run and native-session owners. A replacement identity cannot own
+  native execution.
+- Regressions cover every store above:
+  - a generation-zero record still works for its original identity;
+  - after reuse it is refused with the mismatch reason;
+  - the replacement's fresh record works;
+  - a background effect for the old record never acts as the replacement.
 - Reuse preserves every credential tombstone, unrelated principal tombstones,
   activation and surviving credentials. It never issues a credential. Old
   credential wires and session references remain invalid after replacement.

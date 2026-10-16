@@ -137,10 +137,17 @@ creation never reuses a retired id. Offline replacement requires all gateways
 sharing the identity home to be stopped.
 
 Before reuse, upgrade every gateway sharing the identity home to the
-generation-aware version and retire native id-only owner bindings. A pending
-pairing invitation from the retired identity is invalid; create a new invitation
-for the replacement. PR push, monitoring and rule features are unsupported for
-reused ids until their owner records carry identity generations in a follow-up.
+generation-aware version. A pending pairing invitation from the retired identity
+is invalid; create a new invitation for the replacement.
+
+After reuse, the replacement's fresh PR notifications, watches, teams, rules and
+review requests work. Records the old identity created stay bound to it. They are
+refused with a message naming the replaced identity, and the replacement
+re-creates the configuration it wants. Webhook principals and visual-review
+delegations in project configuration keep naming the original identity, so
+re-point them to the intended service or person. Native execution ownership never
+moves to a replacement identity; keep native profiles owned by the automation
+service.
 
 ## Person-device session contract
 

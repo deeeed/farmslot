@@ -1659,7 +1659,8 @@ be explicitly re-authored. Automation ownership belongs to its service identity,
 not the replacement person.
 PR push, monitoring and rule ownership remains id-only and cannot resolve a reused
 identity. Supporting those features for reused ids needs a separate generation
-propagation change. Native id-only owner bindings must be retired before reuse.
+propagation change (Amendment 5). Native id-only owner bindings must be retired
+before reuse.
 
 ### Public surface
 
@@ -1738,3 +1739,92 @@ clients, refresh failure and sign-out revocation, including HTTP downloads.
 
 The [principal core spec](../plans/principal-core-implementation-spec.md#person-device-sessions)
 owns the normative token, mutation, cutover and regression requirements.
+
+## Amendment 5: generation-bound stored owners, 2026-10-17
+
+**Status:** Proposed. This completes the generation propagation Amendment 3
+deferred. The lead approves it after paired review; one implementation PR follows.
+
+### Decision
+
+Every stored owner or author that later acts records the identity generation of
+the principal that wrote it. It resolves through
+`resolvePrincipalId(id, generation)` when it acts. Coverage:
+
+- PR push devices and acknowledgements.
+- PR monitors, project monitor policies and publication enrollments.
+- Teams and their notification recipients.
+- Trigger rules, rule actions, review submissions and intent contributions.
+- Direct and gated review publication owners.
+- Run creators.
+- The queue originators that PR monitoring and rule dispatch enqueue.
+
+The gateway takes the generation from the authenticated session, or from the
+stored record it acts for. Clients cannot supply it. A missing generation means
+zero, so existing records keep working for their original identities and never
+adopt a replacement.
+
+Reads, edits, acknowledgements and idempotency keys keep successive generations
+of one id apart. Re-saving configuration under the replacement creates new
+generation-bound records. No loader re-authors an old one. Push registration may
+disable only the same token's binding for an older generation of that id, inside
+the authorized registration transaction. Old deliveries stay with the old device.
+
+A generation mismatch is permanent, and denials name it: the record belongs to a
+replaced identity and must be re-created by the intended principal. If a
+contribution's owner fails with a generation mismatch, the contribution is
+withdrawn before shared-review admission, so it cannot block fresh work. Other
+losses of authority, such as a role change, refuse the action but keep the
+record held. Restoring that authority recovers the record without re-authoring.
+
+Admin-authored configuration that names a principal stays id-only and binds
+generation zero. This covers webhook principals and delegated visual-review
+delegators. These references never credit or empower a replacement; the admin
+re-points them to the intended identity. Source-pin actors are display-only and
+grant no authority.
+
+Native execution ownership stays id-only, so only a generation-zero principal
+can match it. That applies to the configured native profile owner, node
+native-owner bindings, and run and native-session owners. A replacement identity
+cannot own native execution until a later decision adds generation-bound native
+bindings.
+
+### Rationale
+
+Amendment 3 made reused ids safe by failing closed. A replacement person then
+cannot use PR notifications, watches, rules or review publication. Binding the
+generation at write time lets the replacement configure these features. Every
+older record stays bound to the identity that created it. Separating a permanent
+mismatch from a recoverable loss of authority means a temporary role change
+never destroys held work. Native ownership controls host profiles and
+long-running processes, so it stays fail-closed instead of widening this change.
+
+### Consequences
+
+The three PR stores, run records and the dispatch queue gain optional generation
+fields. As Amendment 3 already requires, every gateway sharing the identity home
+must read them. Older records load unchanged. A reused person re-creates the PR
+configuration they want; nothing is migrated to them. Background effects
+re-check the stored owner's generation and current authority before acting, and
+a waking request never donates authority. If an id still named by the native
+owner configuration, a webhook or a delegation is reused, those features stay
+refused for the replacement until an admin re-points them.
+
+### Public surface
+
+- `@farmslot/protocol` adds optional, server-derived generation fields:
+  - `ownerGeneration` on the PR push, monitoring and rule contract records.
+  - `createdByPrincipalGeneration` on `Run`.
+
+  Consumers are the gateway stores and dispatchers. Clients see the fields only
+  through existing list and get RPCs. Requests that supply them are refused.
+  There is no new RPC, CLI command or flag.
+
+- Generation-mismatch denials reach Command Center, Companion and the CLI
+  through their existing error surfaces, with the new reason text.
+- These are coordinated farm contracts requiring a protocol release. Harnesses
+  inherit them and gain no alternative authorization path.
+
+The [principal core spec](../plans/principal-core-implementation-spec.md) owns
+the normative store, dispatch and regression requirements. The
+[identity reference](../reference/identity-and-credentials.md) owns operator guidance.
