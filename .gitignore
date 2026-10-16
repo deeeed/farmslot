@@ -44,7 +44,7 @@ projects/*/runs/
 /node_modules
 **/node_modules
 /.yarn/*
-!/.yarn/patches/
+!/.yarn/patches
 /.cache/eslint/
 
 **.DS_Store
