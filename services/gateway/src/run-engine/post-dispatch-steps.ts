@@ -5,6 +5,7 @@ import {
   type DiffStat,
   Events,
   FLOW_STEPS,
+  type InheritedAcceptanceProvenance,
   isInteractiveDevRun,
   isLightweightInteractiveDevRun,
   isPublishEvidenceArtifact,
@@ -1322,9 +1323,7 @@ export async function executeCompleteStep(
 ): Promise<StepIO> {
   const { broadcastFn, getDiffStat, refreshRunLinks } = context;
   let current = getRun(runId)!;
-  let inheritedAcceptance:
-    | import('../run-completion/inherited-acceptance.js').InheritedAcceptanceProvenance
-    | undefined;
+  let inheritedAcceptance: InheritedAcceptanceProvenance | undefined;
   const generation = current.engineState?.generation ?? 0;
   if (current.engineState?.publishGate?.humanPublicationAdoption) {
     const { assertAdoptedPublicationContinuation } =
@@ -1355,9 +1354,11 @@ export async function executeCompleteStep(
       current = latest!;
       try {
         await (context.assertGatePrerequisites ?? assertRunGateReady)(current, null, 'complete');
-        const { readInheritedAcceptanceSource } =
-          await import('../run-completion/inherited-acceptance.js');
-        inheritedAcceptance = (await readInheritedAcceptanceSource(current))?.provenance;
+        if (current.parentRunId) {
+          const { readInheritedAcceptanceSource } =
+            await import('../run-completion/inherited-acceptance.js');
+          inheritedAcceptance = (await readInheritedAcceptanceSource(current))?.provenance;
+        }
         break;
       } catch (error) {
         if (runSupersededSince(getRun(runId), generation))

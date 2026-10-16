@@ -4,7 +4,12 @@ import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { type FlowType, modelsMatch, type Run } from '@farmslot/protocol';
+import {
+  type FlowType,
+  type InheritedAcceptanceProvenance,
+  modelsMatch,
+  type Run,
+} from '@farmslot/protocol';
 
 import { loadProjectVars } from '../core/config.js';
 import { ghRequest } from '../integrations/github-client.js';
@@ -186,7 +191,7 @@ export async function postPRComment(
   prNumber: number,
   options: {
     failOnError?: boolean;
-    inheritedAcceptance?: import('./inherited-acceptance.js').InheritedAcceptanceProvenance;
+    inheritedAcceptance?: InheritedAcceptanceProvenance;
   } = {},
 ): Promise<boolean> {
   // Defensive short-circuit — callers already gate on a non-empty report,

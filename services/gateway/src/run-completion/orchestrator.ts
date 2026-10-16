@@ -12,6 +12,7 @@ import {
   type DiffStat,
   effectiveRequiredReviewCount,
   type GatePolicy,
+  type InheritedAcceptanceProvenance,
   modelsMatch,
   type PublicationStatus,
   type PublicationTarget,
@@ -71,7 +72,6 @@ import {
 import { withPublicationProvenance } from './evidence-attestation.js';
 import type { EvidenceManifest } from './evidence-manifest.js';
 import { evidenceKeyVariants } from './evidence-paths.js';
-import type { InheritedAcceptanceProvenance } from './inherited-acceptance.js';
 import { captureRunOutput, outputManifestDigest } from './output.js';
 import {
   buildPackageEvidenceManifest,

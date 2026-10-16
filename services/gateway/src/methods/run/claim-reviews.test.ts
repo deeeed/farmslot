@@ -180,9 +180,29 @@ test('PR completion consumes the parent visual review without rewriting its awai
   });
   assert.equal(active.state, 'collecting');
   assert.deepEqual(await readFile(path.join(f.directory, 'acceptance-status.json')), before);
+  const receipts = f.run.visualJudgmentReceipts;
   f.run.visualJudgmentReceipts = [];
   const unreviewed = await collectRunGateReadiness(child, null, sources);
   assert.equal(unreviewed.state, 'not-ready');
+  f.run.visualJudgmentReceipts = receipts;
+  const fresh = { ...f.run, flowType: 'pr-complete' as const, decisions: [], engineState: {} };
+  const ownSources = {
+    deterministic: sources.deterministic,
+    progress: sources.progress,
+    acceptance: async () => ({
+      criteria: f.input.claims!.criteria.slice(0, 1).map(({ id, text }) => ({ id, text })),
+      ledger: f.input.claims!,
+      issues: [],
+    }),
+  };
+  const freshReady = await collectRunGateReadiness(fresh, null, ownSources);
+  assert.equal(freshReady.state, 'ready', JSON.stringify(freshReady.reasons));
+  const foreignNamespace = await collectRunGateReadiness(
+    { ...fresh, id: 'foreign-task' },
+    null,
+    ownSources,
+  );
+  assert.equal(foreignNamespace.state, 'not-ready');
 });
 
 test('delegated judgments retain their own identity/digests and drive the same parent reducer', async (t) => {

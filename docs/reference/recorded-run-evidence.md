@@ -1298,5 +1298,22 @@ Unavailable, substituted or insufficient evidence MUST retain normal refusal.
 The frozen per-flow terminal rule `acceptance.requireFresh: true` MUST select
 follow-up evidence instead. Omission permits eligible parent inheritance only
 for `pr-complete`; other flows retain their existing acceptance contract.
+Fresh completion validates the follow-up's retained selected execution and
+its qualified current reviews, without requiring a publication package for
+an already published PR. It MUST NOT substitute a parent's task namespace.
 Current-checkout deterministic checks and every unrelated ADR-065 prerequisite
 MUST still pass independently of the acceptance source.
+
+Before worker delivery, the gateway MAY stage `inputs/inherited-acceptance.json`
+with version 1, child run/project identity, original proof provenance and the
+matching criterion references. This is a provisional task-closeout reference,
+not an engine ledger or publication authority. The local artifact checker MUST
+refuse mismatched identity/criteria and ignore it when fresh proof is required.
+Gateway completion MUST independently qualify the original retained parent;
+a worker-written reference MUST NOT grant completion.
+
+The version-1 reference carries `schemaVersion`, `source`, `childRunId`,
+`project`, `parentRunId`, `headSha`, `ledgerHash` and `criteria` as registered
+`{ id, text }` references. It contains no replacement engine verdicts. Protocol
+owns the shared types and path; gateway preparation stages it, retention freezes
+it, and agent-runtime's existing artifact checker consumes it.

@@ -692,5 +692,10 @@ The existing run completion output and PR comment carry inherited provenance.
 `WorkerTerminalAcceptanceRules` in `@farmslot/protocol` gains optional
 `requireFresh`, consumed by the existing contract resolver and gateway completion
 guard. Harnesses inherit this behavior through their existing terminal rules.
+`InheritedAcceptanceProvenance`, `TaskInheritedAcceptanceReference` and
+`INHERITED_ACCEPTANCE_INPUT` in the same package connect gateway preparation,
+retention and the existing runtime artifact checker. The checker accepts only a
+matching provisional reference; gateway completion revalidates parent authority.
+`acceptanceCriteriaMatch` supplies their shared criterion identity/text binding.
 There is no new command, endpoint, verdict writer or client gate component.
 The additive contract follows the existing coordinated package versioning.

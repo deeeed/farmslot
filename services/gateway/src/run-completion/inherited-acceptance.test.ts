@@ -39,7 +39,8 @@ mock.module('../core/prompt-templates.js', {
 const { makeRun, makeReadyGatePackage } = await import('../run-engine/test-fixtures.js');
 const { runBundleStore } = await import('./retained-artifacts.js');
 const { computeReadyGatePackageHash, sha256Text } = await import('./ready-gate-package.js');
-const { readInheritedAcceptanceSource } = await import('./inherited-acceptance.js');
+const { readInheritedAcceptanceCandidate: readInheritedAcceptanceSource } =
+  await import('./inherited-acceptance.js');
 const { postPRComment } = await import('./pr-publication.js');
 
 async function fixture(t: TestContext, requireFresh = false) {
@@ -88,7 +89,7 @@ async function fixture(t: TestContext, requireFresh = false) {
     resolvedAction: 'approve-publish',
     payload: {
       kind: 'ready',
-      prNumber: 210,
+      prNumber: null,
       repo: 'owner/repo',
       diffStat: { files: 1, additions: 1, deletions: 0 },
       workerReport: 'Report',
@@ -101,6 +102,7 @@ async function fixture(t: TestContext, requireFresh = false) {
     publishGate: {
       approvedPackageHash: prepared.packageHash,
       publicationStatus: 'published_ready',
+      prNumber: 210,
     },
   };
   const child = makeRun({
@@ -130,6 +132,11 @@ test('PR completion selects the approved original parent and records its head an
   });
   assert.deepEqual(proof.run.artifactBundle, f.prepared.artifactBundle);
   assert.equal(parent!.decisions[0]!.payload?.kind, 'ready');
+  parent!.status = 'ci-watching';
+  assert.ok(
+    await readInheritedAcceptanceSource(f.child),
+    'CI follow-up dispatch may overlap the parent settling',
+  );
 });
 
 test('a project requiring fresh proof keeps completion on the follow-up task', async (t) => {

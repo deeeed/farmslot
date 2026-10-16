@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Preserve fresh-proof requirements when resolving per-flow acceptance contracts.
+- Accept qualified parent proof references during PR-follow-up closeout while preserving explicit fresh-proof requirements.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

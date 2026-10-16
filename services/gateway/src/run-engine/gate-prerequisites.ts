@@ -2,18 +2,15 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
+import { type RecordedEvidencePackageInput } from '@farmslot/adapter-sdk/evidence';
 import {
-  type RecordedEvidencePackageInput,
-  validateRecordedEvidencePackage,
-} from '@farmslot/adapter-sdk/evidence';
-import {
+  acceptanceCriteriaMatch,
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   type DecisionAction,
   digestRecipeDocument,
   effectiveRequiredReviewCount,
   EVIDENCE_ATTESTATION_ACTION,
   evidenceAttestationAvailable,
-  isAuthorizedOverride,
   isEvidencePolicyReason,
   isPrerequisiteGatePayload,
   isRecord,
@@ -36,10 +33,7 @@ import { runReviewRoundBudget } from '../review/review-round-budget.js';
 import { reviewedInputsAwaitingReview } from '../review/reviewed-inputs.js';
 import { reviewResultArtifactPath } from '../review/terminal-result.js';
 import { readReviewWorkspaceCompletion } from '../review-workspaces/task.js';
-import {
-  type InheritedAcceptanceSource,
-  readInheritedAcceptanceSource,
-} from '../run-completion/inherited-acceptance.js';
+import type { InheritedAcceptanceCandidate } from '../run-completion/inherited-acceptance.js';
 import { isArtifactOnlyRun } from '../run-completion/orchestrator.js';
 import { verifyRunOutputReview } from '../run-completion/output.js';
 import {
@@ -48,6 +42,7 @@ import {
 } from '../run-completion/ready-gate-package.js';
 import {
   qualifyRetainedRunMetadata,
+  retainedRunArtifactManifest,
   retainedRunTaskDirectory,
 } from '../run-completion/retained-artifacts.js';
 import {
@@ -66,16 +61,8 @@ import {
   validateDeterministicChecksForRun,
 } from '../tasks/worker-terminal-contract.js';
 
-import {
-  appliedClaimOverrideReceiptIds,
-  claimOverrideAuthority,
-  projectGateAcceptance,
-} from './claim-overrides.js';
-import {
-  appliedVisualJudgmentReceiptIds,
-  readVisualReviewPolicy,
-  reviewedRecipeClaims,
-} from './claim-reviews.js';
+import { assessRecordedAcceptance } from './acceptance-proof.js';
+import { readVisualReviewPolicy } from './claim-reviews.js';
 import { readReviewInputSnapshot } from './diff-artifacts.js';
 import {
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
@@ -90,6 +77,7 @@ import {
 } from './gate-policy.js';
 import { requiresPublicationApproval } from './publication-policy.js';
 import {
+  readFrozenPublicationRecipeSources,
   readFrozenRecordedEvidenceSources,
   readGateRecordedEvidenceSources,
 } from './recorded-evidence-sources.js';
@@ -121,7 +109,7 @@ export interface GatePrerequisiteReaders {
 export interface GateAcceptanceRead extends AcceptanceStatusRead {
   /** Refusals from the existing completion guard, never a display-count verdict. */
   issues: readonly string[];
-  inheritedSource?: InheritedAcceptanceSource;
+  inheritedSource?: InheritedAcceptanceCandidate;
 }
 
 const require = createRequire(import.meta.url);
@@ -129,7 +117,7 @@ const { acceptanceContractIssues } =
   require('@farmslot/agent-runtime/scripts/acceptance-ledger.cjs') as {
     acceptanceContractIssues(
       taskDir: string,
-      options: { allowWeak: boolean; deferClaimVerdicts?: boolean },
+      options: { allowWeak: boolean; deferClaimVerdicts?: boolean; requireFresh?: boolean },
     ): string[];
   };
 
@@ -143,22 +131,21 @@ export async function readGateAcceptance(run: Run): Promise<GateAcceptanceRead> 
       error: 'Task registration is missing',
     };
   try {
-    const inheritedSource = await readInheritedAcceptanceSource(run);
+    const inheritedSource = run.parentRunId
+      ? await import('../run-completion/inherited-acceptance.js').then(
+          ({ readInheritedAcceptanceSource }) => readInheritedAcceptanceSource(run),
+        )
+      : null;
     if (inheritedSource) {
       const taskDir = await retainedRunTaskDirectory(run);
       await qualifyRetainedRunMetadata(run);
       const registered = await readHandoffAcceptanceCriteria(ORCHESTRATOR_LOCALITY, taskDir);
-      const acceptance = await readGateAcceptance(inheritedSource.run);
+      const acceptance = inheritedSource.acceptance;
       if (
         (expected.length &&
           (expected.length !== registered.length ||
             expected.some((text, index) => registered[index]?.text.trim() !== text.trim()))) ||
-        registered.length !== acceptance.criteria.length ||
-        registered.some(
-          (criterion, index) =>
-            criterion.id !== acceptance.criteria[index]?.id ||
-            criterion.text.trim() !== acceptance.criteria[index]?.text.trim(),
-        )
+        !acceptanceCriteriaMatch(registered, acceptance.criteria)
       )
         throw new Error('Parent acceptance criteria differ from the follow-up task');
       return { ...acceptance, inheritedSource };
@@ -202,6 +189,10 @@ export async function readGateAcceptance(run: Run): Promise<GateAcceptanceRead> 
         isRecord(contract.acceptance) &&
         contract.acceptance.allowWeak === true,
       deferClaimVerdicts: true,
+      requireFresh:
+        isRecord(contract) &&
+        isRecord(contract.acceptance) &&
+        contract.acceptance.requireFresh === true,
     };
     return { ...acceptance, issues: acceptanceContractIssues(taskDir, options) };
   } catch (error) {
@@ -228,6 +219,12 @@ export async function readGateRecordedEvidence(
   preparedPackage: ReadyGatePrPackage | null,
   qa?: Awaited<ReturnType<typeof assertQaCompletion>>,
 ): Promise<RecordedEvidencePackageInput[]> {
+  if (!preparedPackage && run.flowType === 'pr-complete') {
+    const inventory = await retainedRunArtifactManifest(run);
+    return (await readFrozenPublicationRecipeSources(run, inventory, [], run.artifactBundle)).map(
+      ({ input }) => input,
+    );
+  }
   if (preparedPackage || !isArtifactOnlyRun(run))
     return (await readGateRecordedEvidenceSources(run, preparedPackage)).map(({ input }) => input);
   const decision = capturedOutputReviewDecision(run);
@@ -422,148 +419,29 @@ export async function collectRunGateReadiness(
         const evidencePackage = acceptance.inheritedSource?.prPackage ?? preparedPackage;
         const inputs = await source.recordedEvidence(evidenceRun, evidencePackage, qa);
         const visualPolicy = await readVisualReviewPolicy(evidenceRun);
-        acceptance = projectGateAcceptance(acceptance, evidenceRun, inputs, visualPolicy);
-        const appliedReceipts = appliedClaimOverrideReceiptIds(evidenceRun, inputs);
-        const frozenReceipts =
-          evidencePackage?.claimOverrideReceiptIds ??
-          (outputDecision?.payload?.kind === 'output-review'
-            ? outputDecision.payload.claimOverrideReceiptIds
-            : undefined) ??
-          [];
-        if (!isDeepStrictEqual(appliedReceipts, [...frozenReceipts].sort()))
-          reasons.push({
-            code: 'evidence-override-refresh-required',
-            prerequisite: 'evidence',
-            message: 'Human claim overrides changed. Refresh and review the gate package.',
-            actionId: 'hold',
-          });
-        const visualReceipts = appliedVisualJudgmentReceiptIds(evidenceRun, inputs, visualPolicy);
-        const frozenVisualReceipts =
-          evidencePackage?.visualJudgmentReceiptIds ??
-          (outputDecision?.payload?.kind === 'output-review'
-            ? outputDecision.payload.visualJudgmentReceiptIds
-            : undefined) ??
-          [];
-        if (!isDeepStrictEqual(visualReceipts, [...frozenVisualReceipts].sort()))
-          reasons.push({
-            code: 'evidence-override-refresh-required',
-            prerequisite: 'evidence',
-            actionId: 'hold',
-            message:
-              'Visual review or its delegation policy changed. Refresh and review the gate package.',
-          });
-        const valid =
-          inputs.length > 0 &&
-          inputs.every((input) => validateRecordedEvidencePackage(input).status === 'valid');
-        const projectedRunId = acceptance.ledger?.recipeRunId;
-        const projectedIdentityMatches =
-          (!qaOutput && acceptance.criteria.length === 0) ||
-          (acceptance.ledger?.schemaVersion === 2 &&
-            typeof projectedRunId === 'string' &&
-            projectedRunId.length > 0 &&
-            inputs.some((input) => input.claims?.recipeRunId === projectedRunId));
-        const executionSatisfied = inputs.every(
-          (input) =>
-            isRecord(input.summary) &&
-            input.summary.status === 'pass' &&
-            input.summary.stopAfterNode === undefined,
-        );
-        const reviewed = inputs.map((input) =>
-          valid && input.claims
-            ? reviewedRecipeClaims(evidenceRun, input, visualPolicy)
-            : (input.claims?.criteria ?? []),
-        );
-        const claimsSatisfied = inputs.every(
-          (input, index) =>
-            input.claims &&
-            ['complete', 'not-required'].includes(input.claims.recording.status) &&
-            reviewed[index]!.every(
-              (claim) =>
-                claim.verdict === 'proven' ||
-                // An output review retains unreviewed visual claims for its
-                // reviewer. Completing execution never approves those claims.
-                (qaOutput &&
-                  claim.verdict === 'awaiting-review' &&
-                  ['visual', 'mixed'].includes(claim.proofMode)) ||
-                acceptance.criteria.some(
-                  (criterion) =>
-                    criterion.id === claim.id &&
-                    input.claims?.recipeRunId === projectedRunId &&
-                    input.claims &&
-                    acceptance.ledger?.criteria.some(
-                      (row) =>
-                        row.id === criterion.id &&
-                        isAuthorizedOverride(
-                          row,
-                          input.claims!.criteria.find(({ id }) => id === claim.id)!,
-                          claimOverrideAuthority(evidenceRun, input),
-                        ),
-                    ) &&
-                    acceptance.issues.length === 0,
-                ),
-            ),
-        );
-        const bound = acceptance.criteria.every((criterion) =>
-          inputs.some(
-            (input, index) =>
-              input.claims?.recipeRunId === projectedRunId &&
-              reviewed[index]?.some(
-                (claim) =>
-                  claim.id === criterion.id &&
-                  claim.text.trim() === criterion.text.trim() &&
-                  (claim.verdict ===
-                    acceptance.ledger?.criteria.find((row) => row.id === criterion.id)?.verdict ||
-                    acceptance.ledger?.criteria.some(
-                      (row) =>
-                        row.id === criterion.id &&
-                        isAuthorizedOverride(
-                          row,
-                          input.claims!.criteria.find(({ id }) => id === claim.id)!,
-                          claimOverrideAuthority(evidenceRun, input),
-                        ),
-                    )),
-              ),
-          ),
-        );
-
-        if (!valid || !projectedIdentityMatches || (qaOutput && (!executionSatisfied || !bound))) {
-          reasons.push({
-            code:
-              valid && !projectedIdentityMatches
-                ? 'evidence-execution-mismatch'
-                : 'evidence-invalid',
-            prerequisite: 'evidence',
-            message:
-              valid && !projectedIdentityMatches
-                ? 'Task verdicts belong to another recipe execution. Run the recipe and refresh the gate package.'
-                : 'Required claim evidence is structurally invalid or incomplete.',
-            actionId: 'hold',
-          });
-        } else {
-          const policies: Array<[RunGatePrerequisiteReason['evidencePolicy'], boolean, string]> = [
-            [
-              'execution-verdict',
-              executionSatisfied,
-              'Selected execution results do not satisfy publication policy.',
-            ],
-            [
-              'claim-verdict',
-              claimsSatisfied,
-              'Recorded claim verdicts do not satisfy publication policy.',
-            ],
-            ['criterion-binding', bound, 'Recorded claims do not bind all registered criteria.'],
-          ];
-          for (const [evidencePolicy, satisfied, message] of policies) {
-            if (!satisfied)
-              reasons.push({
-                code: 'evidence-policy-unsatisfied',
-                prerequisite: 'evidence',
-                evidencePolicy,
-                message,
-                actionId: 'hold',
-              });
-          }
-        }
+        const assessed = assessRecordedAcceptance({
+          run: evidenceRun,
+          acceptance,
+          inputs,
+          visualPolicy,
+          qaOutput,
+          reviewBinding:
+            run.flowType === 'pr-complete' && !evidencePackage && !outputDecision
+              ? 'current'
+              : 'captured',
+          claimOverrideReceiptIds:
+            evidencePackage?.claimOverrideReceiptIds ??
+            (outputDecision?.payload?.kind === 'output-review'
+              ? outputDecision.payload.claimOverrideReceiptIds
+              : undefined),
+          visualJudgmentReceiptIds:
+            evidencePackage?.visualJudgmentReceiptIds ??
+            (outputDecision?.payload?.kind === 'output-review'
+              ? outputDecision.payload.visualJudgmentReceiptIds
+              : undefined),
+        });
+        acceptance = assessed.acceptance;
+        reasons.push(...assessed.reasons);
       } catch (error) {
         // An unreadable frozen closure remains an explicit refusal.
         reasons.push({
