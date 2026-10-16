@@ -12,7 +12,6 @@ import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspac
 import {
   acceptancePanelViewportHeight,
   TaskAcceptancePanel,
-  TaskAcceptanceSkeleton,
 } from '../../components/TaskAcceptancePanel';
 import { colors } from '../../lib/theme';
 
@@ -122,17 +121,15 @@ export function SkeletonStoryScreen() {
             nestedScrollEnabled
             style={{ height: acceptancePanelViewportHeight(claims.length, viewport.height) }}
           >
-            {phase === 'loading' ? (
-              <TaskAcceptanceSkeleton rows={claims.length} />
-            ) : (
-              <TaskAcceptancePanel
-                key={phase}
-                acceptanceStatus={phase === 'loaded' ? passed : null}
-                acceptanceCriteria={claims}
-                error={phase === 'error' ? 'Acceptance read unavailable' : null}
-                onRetry={retry}
-              />
-            )}
+            <TaskAcceptancePanel
+              key={phase}
+              loading={phase === 'loading'}
+              expectedRows={claims.length}
+              acceptanceStatus={phase === 'loaded' ? passed : null}
+              acceptanceCriteria={claims}
+              error={phase === 'error' ? 'Acceptance read unavailable' : null}
+              onRetry={retry}
+            />
           </ScrollView>
         ) : (
           <EvidenceReviewWorkspace

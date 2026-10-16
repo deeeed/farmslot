@@ -11,7 +11,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## 0.38.2 - 2026-10-16
 
-- Align the worker dependency set with Protocol 0.50.1.
+- Align the worker dependency set with Protocol 0.51.0.
 
 ## 0.38.1 - 2026-10-16
 

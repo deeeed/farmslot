@@ -68,7 +68,7 @@ import {
   isPackageSelectableEvidenceArtifact,
   mergeEvidenceManifestArtifactRefs,
 } from './draft-pr.js';
-import { withEvidenceAttestation } from './evidence-attestation.js';
+import { withPublicationProvenance } from './evidence-attestation.js';
 import type { EvidenceManifest } from './evidence-manifest.js';
 import { evidenceKeyVariants } from './evidence-paths.js';
 import { captureRunOutput, outputManifestDigest } from './output.js';
@@ -1429,7 +1429,7 @@ export async function publishCompletionPackage(
     };
     const publicationPackage = {
       ...approvedPackage,
-      draftBody: withEvidenceAttestation(run, approvedPackage.draftBody),
+      draftBody: withPublicationProvenance(run, approvedPackage.draftBody),
     };
     reportTemplateDrift(publicationPackage.draftBody, 'approved package');
 

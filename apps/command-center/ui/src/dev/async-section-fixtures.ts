@@ -118,6 +118,13 @@ export class AsyncSectionFixtures extends LitElement {
               { id: 'hold', label: 'Hold', style: 'secondary' },
             ],
             claims,
+            reviewSummary: {
+              noCodeReview: true,
+              reviews: [],
+              passingReviews: 0,
+              totalUnresolved: 0,
+              didAnyReviewTriggerReWork: false,
+            },
             loading: this.phase === 'loading',
             loadError: error,
             retry,

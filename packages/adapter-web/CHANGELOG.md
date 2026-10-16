@@ -8,7 +8,7 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 ## 0.10.11 - 2026-10-16
 
-- Align the worker dependency set with Protocol 0.50.1.
+- Align the worker dependency set with Protocol 0.51.0.
 
 ## 0.10.10 - 2026-10-16
 

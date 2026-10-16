@@ -8,7 +8,7 @@ All notable changes to `@farmslot/adapter-node` are tracked here.
 
 ## 0.1.31 - 2026-10-16
 
-- Align the worker dependency set with Protocol 0.50.1.
+- Align the worker dependency set with Protocol 0.51.0.
 
 ## 0.1.30 - 2026-10-16
 

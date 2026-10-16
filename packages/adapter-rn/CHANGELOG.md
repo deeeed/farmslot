@@ -8,7 +8,7 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## 0.22.20 - 2026-10-16
 
-- Align the worker dependency set with Protocol 0.50.1.
+- Align the worker dependency set with Protocol 0.51.0.
 
 ## 0.22.19 - 2026-10-16
 

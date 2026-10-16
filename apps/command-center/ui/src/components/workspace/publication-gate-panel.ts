@@ -54,6 +54,7 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
             ? html`<farm-skeleton width="42%"></farm-skeleton>`
             : html`<span class="gate-status-message" title=${view.status}>${view.status}</span>`}
     </div>
+    ${view.warnings.map((warning) => html`<div class="gate-status" role="note">${warning}</div>`)}
     ${view.claims.length
       ? html`<section aria-label="Acceptance judgments">
           <h3>Acceptance judgments</h3>
