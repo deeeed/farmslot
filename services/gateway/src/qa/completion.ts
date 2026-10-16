@@ -215,6 +215,39 @@ export interface QaPackage {
   artifactPaths: string[];
 }
 
+const taskDirName = (taskFile: string) => path.basename(path.dirname(taskFile));
+
+/**
+ * QA evidence must not predate the execution of the task it proves. A dispatch
+ * replay that resumes the same task keeps the start of the dispatch that began
+ * it; a new task identity starts its own window. Runs recorded before that
+ * anchor fall back to the primary worker's first launch on the same task.
+ */
+export function qaEvidenceStartedAt(
+  run: Pick<
+    Run,
+    'taskFile' | 'steps' | 'engineState' | 'agentContexts' | 'startedAt' | 'createdAt'
+  >,
+): string {
+  const dispatchStartedAt = run.steps.find((s) => s.name === 'dispatch')?.startedAt;
+  const fallback = dispatchStartedAt ?? run.startedAt ?? run.createdAt;
+  const anchor = run.engineState?.taskExecution;
+  if (anchor) return anchor.taskFile === run.taskFile ? anchor.startedAt : fallback;
+  const primary = run.agentContexts?.find((context) => context.role === 'primary');
+  const legacyStart = primary?.startedAt;
+  const sameTask =
+    run.taskFile &&
+    primary?.taskFile &&
+    taskDirName(primary.taskFile) === taskDirName(run.taskFile);
+  // NaN from an unparseable time compares false, keeping the dispatch start.
+  return sameTask &&
+    legacyStart &&
+    dispatchStartedAt &&
+    Date.parse(legacyStart) <= Date.parse(dispatchStartedAt)
+    ? legacyStart
+    : fallback;
+}
+
 /** Validate runtime traces, not prose, checklist status or an end-only recipe. */
 export function validateQaPackage(
   bundle: QaPackage,
@@ -586,7 +619,7 @@ async function readQaCompletion(
         resolvedRecipes,
         artifactPaths: [...artifactPaths],
       },
-      run.steps.find((s) => s.name === 'dispatch')?.startedAt ?? run.startedAt ?? run.createdAt,
+      qaEvidenceStartedAt(run),
       item.smokeProofTarget,
     );
     packages.push({ path: item.path, digest });

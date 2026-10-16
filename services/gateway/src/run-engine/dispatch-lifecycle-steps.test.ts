@@ -6,6 +6,7 @@ import {
   safeRecipeToolingProvenance,
   safeReferenceRepoProvenance,
   shouldForceNewPrepareBranch,
+  taskExecutionAtDispatch,
 } from './dispatch-lifecycle-steps.js';
 import { makeRun } from './test-fixtures.js';
 
@@ -119,5 +120,31 @@ test('safeReferenceRepoProvenance omits credential-bearing repository URLs', () 
         },
       ],
     },
+  );
+});
+
+test('the first dispatch of a task anchors its execution; a resume of that task keeps it', () => {
+  const steps = [
+    { name: 'dispatch', status: 'running' as const, startedAt: '2026-10-16T19:10:58.213Z' },
+  ];
+  const taskFile = '/farm/tasks/qa/t-2/TASK.md';
+  assert.deepEqual(taskExecutionAtDispatch(makeRun({ taskFile, steps })), {
+    taskFile,
+    startedAt: '2026-10-16T19:10:58.213Z',
+  });
+  const anchored = { taskFile, startedAt: '2026-10-16T15:22:30.000Z' };
+  assert.equal(
+    taskExecutionAtDispatch(makeRun({ taskFile, steps, engineState: { taskExecution: anchored } })),
+    null,
+  );
+  assert.deepEqual(
+    taskExecutionAtDispatch(
+      makeRun({
+        taskFile,
+        steps,
+        engineState: { taskExecution: { ...anchored, taskFile: '/farm/tasks/qa/t-1/TASK.md' } },
+      }),
+    ),
+    { taskFile, startedAt: '2026-10-16T19:10:58.213Z' },
   );
 });

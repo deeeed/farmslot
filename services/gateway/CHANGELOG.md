@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Keep a QA run's evidence window when a dispatch replay resumes the same task. The first dispatch of a task identity records its start, and QA completion checks recipe evidence against it instead of the latest dispatch; a new task file or a fresh native dispatch starts a new window. Runs recorded before this use the primary worker's first launch on the same task.
+
 - Point a spent review budget at an extension only when the run can receive one; review-pr, published, artifact-only and archived runs now say why their rounds cannot be extended, and the extension refusal names the same reason.
 
 - Never count a prompt left unsent in a busy Codex composer as delivered, on any send attempt. Each review-fix prompt now starts with its delivery identity, so a fix round is proven only by its own runner receipt; a fix sent before this change is still recognized, but only by a receipt after its own delivery. A fix sent without a receipt is acknowledged only by the worker's fix signal, never by pane activity.

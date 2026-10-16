@@ -552,12 +552,30 @@ export interface DispatchStepContext {
   blockedRunError: (message: string, reason: string) => Error;
 }
 
+/**
+ * The task-execution anchor after this dispatch starts, or null when it is
+ * unchanged: a dispatch that resumes the anchored task keeps its start.
+ */
+export function taskExecutionAtDispatch(
+  run: Pick<Run, 'taskFile' | 'steps' | 'engineState'>,
+): NonNullable<Run['engineState']>['taskExecution'] | null {
+  const startedAt = run.steps.find((step) => step.name === 'dispatch')?.startedAt;
+  if (!run.taskFile || !startedAt) return null;
+  if (run.engineState?.taskExecution?.taskFile === run.taskFile) return null;
+  return { taskFile: run.taskFile, startedAt };
+}
+
 export async function executeDispatchStep(
   runId: string,
   context: DispatchStepContext,
 ): Promise<StepIO> {
   const { blockedRunError, stepPartialIO } = context;
-  const current = ensureRunSlotBinding(runId);
+  const bound = ensureRunSlotBinding(runId);
+  const taskExecution = taskExecutionAtDispatch(bound);
+  // Every delivery branch below spreads `current.engineState`, so record first.
+  const current = taskExecution
+    ? updateRun(runId, { engineState: { ...bound.engineState, taskExecution } })
+    : bound;
   if (!current.slotId) throw new Error('No slot assigned');
   if (!current.taskFile) throw new Error('No task file specified');
   const inputs: Record<string, unknown> = {

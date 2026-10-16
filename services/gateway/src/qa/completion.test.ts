@@ -10,6 +10,7 @@ import {
 
 import {
   parseQaResult,
+  qaEvidenceStartedAt,
   type QaPackage,
   requireSuiteCoverage,
   validateQaPackage,
@@ -517,4 +518,67 @@ test('QA binds retained change scope, reported revisions and declared suite', ()
   );
   assert.throws(() => validateQaScope(result, { ...source, files: [] }, suite), /scope digest/);
   assert.throws(() => validateQaScope(result, source, { ...suite, cases: [] }), /suite differs/);
+});
+
+test('a dispatch replay resuming the same task keeps its evidence window; a new task starts one', () => {
+  const taskFile = '/farm/projects/ext/tasks/qa/release-1016-232047/TASK.md';
+  const run = {
+    taskFile,
+    startedAt: '2026-10-16T15:20:00.000Z',
+    createdAt: '2026-10-16T13:50:00.000Z',
+    steps: [{ name: 'dispatch', status: 'done' as const, startedAt: '2026-10-16T19:10:58.213Z' }],
+    agentContexts: [],
+  };
+  const original = { taskFile, startedAt: '2026-10-16T15:22:30.000Z' };
+  // Resumed task: evidence produced after the original dispatch stays valid.
+  assert.equal(
+    qaEvidenceStartedAt({ ...run, engineState: { taskExecution: original } }),
+    original.startedAt,
+  );
+  // A new task identity keeps today's window: its own dispatch start.
+  assert.equal(
+    qaEvidenceStartedAt({
+      ...run,
+      engineState: {
+        taskExecution: {
+          taskFile: '/farm/tasks/qa/earlier/TASK.md',
+          startedAt: original.startedAt,
+        },
+      },
+    }),
+    '2026-10-16T19:10:58.213Z',
+  );
+  assert.equal(qaEvidenceStartedAt({ ...run, engineState: {} }), '2026-10-16T19:10:58.213Z');
+});
+
+test('runs without the anchor fall back to the primary worker launch on the same task only', () => {
+  const run = {
+    taskFile: '/farm/projects/ext/tasks/qa/release-1016-232047/TASK.md',
+    startedAt: '2026-10-16T15:20:00.000Z',
+    createdAt: '2026-10-16T13:50:00.000Z',
+    steps: [{ name: 'dispatch', status: 'done' as const, startedAt: '2026-10-16T19:10:58.213Z' }],
+  };
+  const primary = {
+    id: 'primary',
+    runId: 'run-1',
+    slotId: 'macpro-mme-4',
+    role: 'primary' as const,
+    label: 'Primary',
+    status: 'blocked' as const,
+    runner: 'claude',
+    model: 'opus',
+    taskFile: 'temp/tasks/qa/release-1016-232047/TASK.md',
+    startedAt: '2026-10-16T15:22:53.489Z',
+  };
+  assert.equal(qaEvidenceStartedAt({ ...run, agentContexts: [primary] }), primary.startedAt);
+  for (const context of [
+    { ...primary, taskFile: 'temp/tasks/qa/other-task/TASK.md' },
+    { ...primary, role: 'review' as const },
+    { ...primary, startedAt: '2026-10-16T19:30:00.000Z' },
+    { ...primary, startedAt: 'not a time' },
+  ])
+    assert.equal(
+      qaEvidenceStartedAt({ ...run, agentContexts: [context] }),
+      '2026-10-16T19:10:58.213Z',
+    );
 });
