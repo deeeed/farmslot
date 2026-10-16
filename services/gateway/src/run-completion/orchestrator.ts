@@ -71,6 +71,7 @@ import {
 import { withPublicationProvenance } from './evidence-attestation.js';
 import type { EvidenceManifest } from './evidence-manifest.js';
 import { evidenceKeyVariants } from './evidence-paths.js';
+import type { InheritedAcceptanceProvenance } from './inherited-acceptance.js';
 import { captureRunOutput, outputManifestDigest } from './output.js';
 import {
   buildPackageEvidenceManifest,
@@ -202,6 +203,7 @@ export function initRunCompletion(broadcast: BroadcastFn): void {
 }
 
 export interface CompletionResult {
+  inheritedAcceptance?: InheritedAcceptanceProvenance;
   prNumber: number | null;
   ciRepo: string | null;
   artifactsCopied: boolean;
@@ -1055,12 +1057,14 @@ export async function runCompletionPipeline(
     suppressPrMutation?: boolean;
     forPublication?: boolean;
     requireArtifactMirror?: boolean;
+    inheritedAcceptance?: InheritedAcceptanceProvenance;
   },
 ): Promise<CompletionResult> {
   let run = getRun(runId);
   if (!run) throw new Error(`Run not found: ${runId}`);
 
   const flags: CompletionResult = {
+    ...(options?.inheritedAcceptance ? { inheritedAcceptance: options.inheritedAcceptance } : {}),
     prNumber: null,
     ciRepo: null,
     artifactsCopied: false,
@@ -1165,13 +1169,19 @@ export async function runCompletionPipeline(
   // `done` until the whole pipeline returns, so status is `completing` during
   // this call. The fact that we reached step 3 is itself the evidence we need.
   const reportIsSubstantive = typeof report === 'string' && report.trim().length > 0;
-  const shouldPostReport = shouldPostWorkerReportComment(
-    run.flowType,
-    reportArtifact?.fileName,
-    pv?.projectJson.ci?.post_worker_report_comment === true,
-  );
+  const shouldPostReport =
+    Boolean(options?.inheritedAcceptance) ||
+    shouldPostWorkerReportComment(
+      run.flowType,
+      reportArtifact?.fileName,
+      pv?.projectJson.ci?.post_worker_report_comment === true,
+    );
+  if (options?.inheritedAcceptance && !reportIsSubstantive)
+    throw new Error('Inherited acceptance completion requires the follow-up report.');
   if (!isReviewPR && shouldPostReport && ciRepo && prNumber && reportIsSubstantive) {
-    flags.prCommentPosted = await postPRComment(run, report, ciRepo, prNumber);
+    flags.prCommentPosted = await postPRComment(run, report, ciRepo, prNumber, {
+      inheritedAcceptance: options?.inheritedAcceptance,
+    });
   } else if (!isReviewPR && shouldPostReport && ciRepo && prNumber) {
     console.log(
       `[run-completion] skipping pr-comment for ${runId.slice(0, 8)}: status=${run.status} report=${reportIsSubstantive ? 'present' : 'missing'}`,

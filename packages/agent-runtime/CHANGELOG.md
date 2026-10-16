@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve fresh-proof requirements when resolving per-flow acceptance contracts.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.27.0 - 2026-10-16

@@ -36,6 +36,10 @@ import { runReviewRoundBudget } from '../review/review-round-budget.js';
 import { reviewedInputsAwaitingReview } from '../review/reviewed-inputs.js';
 import { reviewResultArtifactPath } from '../review/terminal-result.js';
 import { readReviewWorkspaceCompletion } from '../review-workspaces/task.js';
+import {
+  type InheritedAcceptanceSource,
+  readInheritedAcceptanceSource,
+} from '../run-completion/inherited-acceptance.js';
 import { isArtifactOnlyRun } from '../run-completion/orchestrator.js';
 import { verifyRunOutputReview } from '../run-completion/output.js';
 import {
@@ -55,6 +59,7 @@ import { getRun, updateRun } from '../runs/store.js';
 import {
   type AcceptanceStatusRead,
   readAcceptanceStatusForDisplay,
+  readHandoffAcceptanceCriteria,
 } from '../tasks/acceptance-status.js';
 import {
   readFrozenWorkerTerminalContractForRun,
@@ -116,6 +121,7 @@ export interface GatePrerequisiteReaders {
 export interface GateAcceptanceRead extends AcceptanceStatusRead {
   /** Refusals from the existing completion guard, never a display-count verdict. */
   issues: readonly string[];
+  inheritedSource?: InheritedAcceptanceSource;
 }
 
 const require = createRequire(import.meta.url);
@@ -137,6 +143,26 @@ export async function readGateAcceptance(run: Run): Promise<GateAcceptanceRead> 
       error: 'Task registration is missing',
     };
   try {
+    const inheritedSource = await readInheritedAcceptanceSource(run);
+    if (inheritedSource) {
+      const taskDir = await retainedRunTaskDirectory(run);
+      await qualifyRetainedRunMetadata(run);
+      const registered = await readHandoffAcceptanceCriteria(ORCHESTRATOR_LOCALITY, taskDir);
+      const acceptance = await readGateAcceptance(inheritedSource.run);
+      if (
+        (expected.length &&
+          (expected.length !== registered.length ||
+            expected.some((text, index) => registered[index]?.text.trim() !== text.trim()))) ||
+        registered.length !== acceptance.criteria.length ||
+        registered.some(
+          (criterion, index) =>
+            criterion.id !== acceptance.criteria[index]?.id ||
+            criterion.text.trim() !== acceptance.criteria[index]?.text.trim(),
+        )
+      )
+        throw new Error('Parent acceptance criteria differ from the follow-up task');
+      return { ...acceptance, inheritedSource };
+    }
     if (run.reviewWorkspace) {
       // Workspace review completion already validates its frozen task, result,
       // report and completion guard through the owning review implementation.
@@ -392,12 +418,14 @@ export async function collectRunGateReadiness(
     } else {
       try {
         const qa = qaOutput ? await source.qaCompletion(artifactRun) : undefined;
-        const inputs = await source.recordedEvidence(run, preparedPackage, qa);
-        const visualPolicy = await readVisualReviewPolicy(run);
-        acceptance = projectGateAcceptance(acceptance, run, inputs, visualPolicy);
-        const appliedReceipts = appliedClaimOverrideReceiptIds(run, inputs);
+        const evidenceRun = acceptance.inheritedSource?.run ?? run;
+        const evidencePackage = acceptance.inheritedSource?.prPackage ?? preparedPackage;
+        const inputs = await source.recordedEvidence(evidenceRun, evidencePackage, qa);
+        const visualPolicy = await readVisualReviewPolicy(evidenceRun);
+        acceptance = projectGateAcceptance(acceptance, evidenceRun, inputs, visualPolicy);
+        const appliedReceipts = appliedClaimOverrideReceiptIds(evidenceRun, inputs);
         const frozenReceipts =
-          preparedPackage?.claimOverrideReceiptIds ??
+          evidencePackage?.claimOverrideReceiptIds ??
           (outputDecision?.payload?.kind === 'output-review'
             ? outputDecision.payload.claimOverrideReceiptIds
             : undefined) ??
@@ -409,9 +437,9 @@ export async function collectRunGateReadiness(
             message: 'Human claim overrides changed. Refresh and review the gate package.',
             actionId: 'hold',
           });
-        const visualReceipts = appliedVisualJudgmentReceiptIds(run, inputs, visualPolicy);
+        const visualReceipts = appliedVisualJudgmentReceiptIds(evidenceRun, inputs, visualPolicy);
         const frozenVisualReceipts =
-          preparedPackage?.visualJudgmentReceiptIds ??
+          evidencePackage?.visualJudgmentReceiptIds ??
           (outputDecision?.payload?.kind === 'output-review'
             ? outputDecision.payload.visualJudgmentReceiptIds
             : undefined) ??
@@ -442,7 +470,7 @@ export async function collectRunGateReadiness(
         );
         const reviewed = inputs.map((input) =>
           valid && input.claims
-            ? reviewedRecipeClaims(run, input, visualPolicy)
+            ? reviewedRecipeClaims(evidenceRun, input, visualPolicy)
             : (input.claims?.criteria ?? []),
         );
         const claimsSatisfied = inputs.every(
@@ -468,7 +496,7 @@ export async function collectRunGateReadiness(
                         isAuthorizedOverride(
                           row,
                           input.claims!.criteria.find(({ id }) => id === claim.id)!,
-                          claimOverrideAuthority(run, input),
+                          claimOverrideAuthority(evidenceRun, input),
                         ),
                     ) &&
                     acceptance.issues.length === 0,
@@ -491,7 +519,7 @@ export async function collectRunGateReadiness(
                         isAuthorizedOverride(
                           row,
                           input.claims!.criteria.find(({ id }) => id === claim.id)!,
-                          claimOverrideAuthority(run, input),
+                          claimOverrideAuthority(evidenceRun, input),
                         ),
                     )),
               ),

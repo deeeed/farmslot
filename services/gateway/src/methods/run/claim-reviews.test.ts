@@ -138,6 +138,53 @@ export async function fixture(t: TestContext) {
   return { run, decision, params, dependencies, input, prepared, directory, person, inventory };
 }
 
+test('PR completion consumes the parent visual review without rewriting its awaiting-review ledger', async (t) => {
+  const f = await fixture(t);
+  const before = await readFile(path.join(f.directory, 'acceptance-status.json'));
+  const result = await runReviewVisualClaim(f.params, () => {}, f.dependencies);
+  f.prepared.visualJudgmentReceiptIds = [result.receipt.id];
+  const { makeRun } = await import('../../run-engine/test-fixtures.js');
+  const child = makeRun({ flowType: 'pr-complete', parentRunId: f.run.id });
+  const sources = {
+    deterministic: async () => {},
+    progress: async () => ({ kind: 'idle' as const }),
+    recordedEvidence: async () => [f.input],
+    acceptance: async () => ({
+      criteria: f.input.claims!.criteria.slice(0, 1).map(({ id, text }) => ({ id, text })),
+      ledger: f.input.claims!,
+      issues: [],
+      inheritedSource: {
+        run: f.run,
+        prPackage: f.prepared,
+        provenance: {
+          source: 'parent-run' as const,
+          parentRunId: f.run.id,
+          headSha: 'a'.repeat(40),
+          ledgerHash: 'retained-ledger',
+        },
+      },
+    }),
+  };
+  const ready = await collectRunGateReadiness(child, null, sources);
+  assert.equal(ready.state, 'ready', JSON.stringify(ready.reasons));
+  const staleCI = await collectRunGateReadiness(child, null, {
+    ...sources,
+    deterministic: async () => {
+      throw new Error('Child CI is stale');
+    },
+  });
+  assert.ok(staleCI.reasons.some(({ code }) => code === 'deterministic-not-passed'));
+  const active = await collectRunGateReadiness(child, null, {
+    ...sources,
+    progress: async () => ({ kind: 'making-progress' as const }),
+  });
+  assert.equal(active.state, 'collecting');
+  assert.deepEqual(await readFile(path.join(f.directory, 'acceptance-status.json')), before);
+  f.run.visualJudgmentReceipts = [];
+  const unreviewed = await collectRunGateReadiness(child, null, sources);
+  assert.equal(unreviewed.state, 'not-ready');
+});
+
 test('delegated judgments retain their own identity/digests and drive the same parent reducer', async (t) => {
   const f = await fixture(t);
   const policy = parseProjectVisualClaimReviewPolicy({

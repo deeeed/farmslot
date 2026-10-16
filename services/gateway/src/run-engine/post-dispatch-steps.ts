@@ -1322,6 +1322,9 @@ export async function executeCompleteStep(
 ): Promise<StepIO> {
   const { broadcastFn, getDiffStat, refreshRunLinks } = context;
   let current = getRun(runId)!;
+  let inheritedAcceptance:
+    | import('../run-completion/inherited-acceptance.js').InheritedAcceptanceProvenance
+    | undefined;
   const generation = current.engineState?.generation ?? 0;
   if (current.engineState?.publishGate?.humanPublicationAdoption) {
     const { assertAdoptedPublicationContinuation } =
@@ -1352,6 +1355,9 @@ export async function executeCompleteStep(
       current = latest!;
       try {
         await (context.assertGatePrerequisites ?? assertRunGateReady)(current, null, 'complete');
+        const { readInheritedAcceptanceSource } =
+          await import('../run-completion/inherited-acceptance.js');
+        inheritedAcceptance = (await readInheritedAcceptanceSource(current))?.provenance;
         break;
       } catch (error) {
         if (runSupersededSince(getRun(runId), generation))
@@ -1425,6 +1431,7 @@ export async function executeCompleteStep(
   const completion = await runCompletionPipeline(runId, {
     skipRetrospective,
     suppressPrMutation: noCodeDisposition || artifactOnly,
+    inheritedAcceptance,
   });
   await refreshRunLinks(runId);
   if (completion.prNumber && current.flowType !== 'review-pr') {
@@ -1484,6 +1491,9 @@ export async function executeCompleteStep(
       prTitleUpdated: completion.prTitleUpdated,
       prMarkedReady: completion.prMarkedReady,
       retrospectiveCreated: completion.retrospectiveCreated,
+      ...(completion.inheritedAcceptance
+        ? { inheritedAcceptance: completion.inheritedAcceptance }
+        : {}),
       slotDisposition,
       artifacts: completion.artifacts,
       cliCommand,

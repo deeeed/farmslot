@@ -1278,3 +1278,25 @@ New visual receipts carry `precedence: person-first-v1`; pipeline receipts also
 identify the new precedence contract by kind. Frozen readers retain person-first
 ordering for those receipts. Legacy-only frozen captures keep their shipped
 stored-order interpretation. Policy qualification remains bound to the capture.
+
+## Inherited acceptance for PR completion
+
+Status: Accepted, 2026-10-16, ADR-062 Amendment 12.
+
+For `pr-complete`, the completion guard MAY consume the direct parent's approved
+retained evidence when project, repository, PR number and registered criterion
+identities/text match. It MUST validate the selected parent package and the
+existing verified review projection. A raw `awaiting-review` verdict MUST NOT
+become proven merely because the parent is terminal.
+
+Completion and the published PR comment MUST record `source: parent-run`,
+`parentRunId`, `headSha` and `ledgerHash`, computed from the original retained
+ledger bytes. Original task IDs, recipe run IDs, evidence and frozen decisions
+MUST remain unchanged. Inheritance MUST NOT imply proof at the follow-up head.
+Unavailable, substituted or insufficient evidence MUST retain normal refusal.
+
+The frozen per-flow terminal rule `acceptance.requireFresh: true` MUST select
+follow-up evidence instead. Omission permits eligible parent inheritance only
+for `pr-complete`; other flows retain their existing acceptance contract.
+Current-checkout deterministic checks and every unrelated ADR-065 prerequisite
+MUST still pass independently of the acceptance source.

@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Expose optional provider probe status, load, retry and retained mismatch diagnostics.
+- Add an explicit per-flow requirement for fresh acceptance proof on PR follow-ups.
 
 - Project skipped code review as a nonblocking publication disclosure.
 - Expose optional Viewed-file diagnostics on review publication receipts and slot posting gates.

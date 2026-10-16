@@ -184,7 +184,10 @@ export async function postPRComment(
   report: string | null,
   ciRepo: string,
   prNumber: number,
-  options: { failOnError?: boolean } = {},
+  options: {
+    failOnError?: boolean;
+    inheritedAcceptance?: import('./inherited-acceptance.js').InheritedAcceptanceProvenance;
+  } = {},
 ): Promise<boolean> {
   // Defensive short-circuit — callers already gate on a non-empty report,
   // but this catches any future caller that forgets so we never post a
@@ -213,7 +216,11 @@ export async function postPRComment(
     }
 
     assertPublicationTextSafe(report, workflowMmd ?? '');
-    const generatedComment = await buildPRComment(run, report, workflowMmd);
+    let generatedComment = await buildPRComment(run, report, workflowMmd);
+    if (options.inheritedAcceptance) {
+      const { inheritedAcceptanceMarkdown } = await import('./inherited-acceptance.js');
+      generatedComment += `\n\n${inheritedAcceptanceMarkdown(options.inheritedAcceptance)}`;
+    }
     assertPublicationTextSafe(generatedComment);
     const identityMarker = prCommentIdentityMarker(run.id);
     const comment = generatedComment.includes(identityMarker)

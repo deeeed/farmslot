@@ -60,6 +60,20 @@ test('per-flow acceptance overrides inherit unspecified contract keys', () => {
     require: true,
     allowWeak: true,
   });
+  assert.deepEqual(
+    resolveWorkerTerminalContract(
+      {
+        acceptance: { requireFresh: true },
+        flows: { 'pr-complete': { acceptance: { requireFresh: false } } },
+      },
+      'pr-complete',
+    ).acceptance,
+    undefined,
+  );
+  assert.deepEqual(
+    resolveWorkerTerminalContract({ acceptance: { requireFresh: true } }, 'pr-complete').acceptance,
+    { requireFresh: true },
+  );
 });
 
 test('read commands retain the registered order and unassessed rows', (t) => {
