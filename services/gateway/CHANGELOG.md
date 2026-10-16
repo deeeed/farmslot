@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Prepare a QA run whose ref or range scope names an exact head commit (`expectedHeadSha`, or a full-SHA `ref` or `head`) at that commit, detached when the run has no branch, instead of at the default-branch tip. Dispatch refuses a prepared HEAD that differs and names the frozen head. Start refs also accept 64-hex commit names.
+
 - Point a spent review budget at an extension only when the run can receive one; review-pr, published, artifact-only and archived runs now say why their rounds cannot be extended, and the extension refusal names the same reason.
 
 - Never count a prompt left unsent in a busy Codex composer as delivered, on any send attempt. Each review-fix prompt now starts with its delivery identity, so a fix round is proven only by its own runner receipt; a fix sent before this change is still recognized, but only by a receipt after its own delivery. A fix sent without a receipt is acknowledged only by the worker's fix signal, never by pane activity.
