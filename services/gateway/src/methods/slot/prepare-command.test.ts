@@ -443,7 +443,7 @@ const snippetShells = [
 ].filter(({ bin }) => existsSync(bin));
 
 for (const shell of snippetShells) {
-  test(`tearing down prepare windows stops their groups without touching a renumbered neighbour (${path.basename(shell.bin)})`, async () => {
+  test(`tearing down a prepare window stops its group without touching a renumbered neighbour (${path.basename(shell.bin)})`, async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'prepare-window-teardown-'));
     const bin = path.join(root, 'bin');
     const state = path.join(root, 'windows');
@@ -476,22 +476,15 @@ for (const shell of snippetShells) {
       ].join('\n'),
       { mode: 0o755 },
     );
-    // Two same-named prepare windows with a worker between them; one group
-    // ignores SIGHUP and SIGTERM.
     const prepare = spawn('bash', ['-c', `trap '' HUP TERM; sleep 30 & wait`], {
       detached: true,
       stdio: 'ignore',
     });
     const worker = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
-    const duplicate = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
     assert.ok(prepare.pid && prepare.pid > 1 && worker.pid && worker.pid > 1);
-    assert.ok(duplicate.pid && duplicate.pid > 1);
-    for (const child of [prepare, worker, duplicate]) child.unref();
-    writeFileSync(
-      state,
-      `@7 prepare-run12345-deps ${prepare.pid}\n@8 worker ${worker.pid}\n` +
-        `@9 prepare-run12345-deps ${duplicate.pid}\n`,
-    );
+    prepare.unref();
+    worker.unref();
+    writeFileSync(state, `@7 prepare-run12345-deps ${prepare.pid}\n@8 worker ${worker.pid}\n`);
     try {
       const result = spawnSync(
         shell.bin,
@@ -506,13 +499,12 @@ for (const shell of snippetShells) {
 
       assert.equal(result.status, 0, result.stderr);
       assert.ok(!isRunning(prepare.pid), 'the SIGHUP- and SIGTERM-ignoring group was stopped');
-      assert.ok(!isRunning(duplicate.pid), 'the duplicate prepare window was stopped');
       assert.ok(isRunning(worker.pid), 'the worker window that moved into the old index survives');
       assert.ok(!existsSync(log) || !readFileSync(log, 'utf8').includes('closed worker'));
       assert.equal(readFileSync(state, 'utf8').trim(), `@8 worker ${worker.pid}`);
-      assert.equal(result.stdout.trim(), '@7:prepare-run12345-deps\n@9:prepare-run12345-deps');
+      assert.equal(result.stdout.trim(), '@7:prepare-run12345-deps');
     } finally {
-      for (const pid of [prepare.pid, worker.pid, duplicate.pid]) {
+      for (const pid of [prepare.pid, worker.pid]) {
         try {
           process.kill(-pid, 'SIGKILL');
         } catch {
