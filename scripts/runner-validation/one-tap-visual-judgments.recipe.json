@@ -79,9 +79,9 @@
       },
       "mixed-regressions": {
         "action": "command",
-        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks --test services/gateway/src/run-lifecycle/mixed-review-cleanup.test.ts services/gateway/src/agents/runtime-recovery-mixed.test.ts services/gateway/src/run-engine/review-plan.test.ts packages/protocol/test/recipe/claim-reviews.test.ts",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks --test services/gateway/src/run-lifecycle/mixed-review-cleanup.test.ts services/gateway/src/agents/runtime-recovery-mixed.test.ts services/gateway/src/run-engine/review-plan.test.ts packages/protocol/test/recipe/claim-reviews.test.ts services/gateway/src/runners/session-record.test.ts services/gateway/src/security/native-worker-owner.test.ts services/gateway/src/runners/native/worker-history.test.ts",
         "timeout_ms": 120000,
-        "intent": "Check the cancellation, restart, WARM lineage and frozen-person-precedence regressions alongside the public transport proof.",
+        "intent": "Check retained tmux session hooks and native reviewer owner/context/lease bindings alongside cancellation, restart, WARM lineage and person precedence.",
         "next": "mixed-regressions-verified"
       },
       "mixed-regressions-verified": {
