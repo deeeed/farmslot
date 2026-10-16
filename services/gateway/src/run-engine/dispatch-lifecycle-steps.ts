@@ -26,6 +26,7 @@ import {
 import { captureHostLoadSnapshot } from '../runs/analytics.js';
 import { ensureRunSlotBinding } from '../runs/slot-binding.js';
 import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
+import { taskExecutionAtDispatch } from '../runs/task-execution.js';
 
 import { prepareConfiguredRunCapabilities } from './declared-capabilities.js';
 import { RETAINED_SESSION_HANDOFF_HOLD } from './errors.js';
@@ -557,7 +558,12 @@ export async function executeDispatchStep(
   context: DispatchStepContext,
 ): Promise<StepIO> {
   const { blockedRunError, stepPartialIO } = context;
-  const current = ensureRunSlotBinding(runId);
+  const bound = ensureRunSlotBinding(runId);
+  const taskExecution = taskExecutionAtDispatch(bound);
+  // Every delivery branch below spreads `current.engineState`, so record first.
+  const current = taskExecution
+    ? updateRun(runId, { engineState: { ...bound.engineState, taskExecution } })
+    : bound;
   if (!current.slotId) throw new Error('No slot assigned');
   if (!current.taskFile) throw new Error('No task file specified');
   const inputs: Record<string, unknown> = {
