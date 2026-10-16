@@ -1765,14 +1765,9 @@ describe('buildLaunchCommand', () => {
         cmd,
         /installer="\$\{HOME\}\/farmslot-node\/scripts\/install-runner-observability\.mjs"/,
       );
-      assert.match(
-        cmd,
-        /\[ -f "\$\{HOME\}\/farmslot-node\/support\/\$\{support_hash\}\/scripts\/lib\/provider-accounts\.mjs" \]/,
-      );
-      assert.match(
-        cmd,
-        /installer="\$\{HOME\}\/farmslot-node\/support\/\$\{support_hash\}\/scripts\/install-runner-observability\.mjs"/,
-      );
+      assert.match(cmd, /printf '%s\\n' "\$\{HOME\}\/farmslot-node\/support"\/"\$hash"/);
+      assert.match(cmd, /\[ -f "\$support_dir\/scripts\/lib\/provider-accounts\.mjs" \]/);
+      assert.match(cmd, /installer="\$support_dir\/scripts\/install-runner-observability\.mjs"/);
       assert.match(cmd, /node "\$installer"/);
       assert.match(cmd, /--repo "\$\{HOME\}\/work\/repo"/);
       assert.match(cmd, /cd "\$\{HOME\}\/work\/repo" && unset CLAUDECODE/);
