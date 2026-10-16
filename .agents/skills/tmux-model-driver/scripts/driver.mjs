@@ -127,6 +127,10 @@ function metadata(pane) {
   };
 }
 
+// The live composer holds this receipt's exact text, so it has not been delivered.
+const ownsComposer = (state, runner, receipt) =>
+  state.queue_kind === 'driver-buffer' && bufferedPrompt(state, runner, receipt);
+
 export function processState(meta) {
   const commands = [meta.current_command, ...meta.foreground_commands];
   for (const command of commands) {
@@ -294,6 +298,16 @@ export function paneState(pane, expectedRunner, selection) {
         : accepted.session_id !== native.session_id))
   )
     accepted = null;
+  const buffered = supportsMidTurnPrompt(state) && Boolean(runnerPaneBufferedInstruction(tail));
+  const ownedBuffer = buffered && bufferedPrompt({ ...meta, tail }, state, receipt);
+  // Pulled-back input is not delivered. Claude's queue proof is rechecked against the
+  // transcript (popAll) whatever the composer shows; Codex's rendered steering proof yields
+  // to its owned text back in the composer (⇧←). Native proofs are recomputed below.
+  if (
+    accepted?.source === 'native-queue' ||
+    (accepted?.source === 'runner-steering' && ownedBuffer)
+  )
+    accepted = null;
   if (receipt && runners.has(state)) {
     if (!accepted) {
       accepted = acceptedPrompt({ ...meta, tail }, state, obs, receipt);
@@ -336,8 +350,6 @@ export function paneState(pane, expectedRunner, selection) {
         }),
       )
     : null;
-  const buffered = supportsMidTurnPrompt(state) && Boolean(runnerPaneBufferedInstruction(tail));
-  const ownedBuffer = buffered && bufferedPrompt({ ...meta, tail }, state, receipt);
   // A model receipt stays intact after exit, but cannot be a live shell composer.
   const pendingOtherRunner =
     runners.has(state) && !supportsMidTurnPrompt(state) && Boolean(receipt && !accepted);
@@ -567,8 +579,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
       receipt &&
       receipt.payload_hash === selection.payloadHash &&
       receipt.pane_identity === paneIdentity(state) &&
-      (state.accepted ||
-        (state.queue_kind === 'driver-buffer' && bufferedPrompt(state, runner, receipt)))
+      (state.accepted || ownsComposer(state, runner, receipt))
     );
   };
   if (['queued_input', 'acceptance_unacknowledged'].includes(verification) && ownedRetry(before))
@@ -602,10 +613,9 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
     if (!verification) {
       let receipt = runner === 'shell' ? null : readReceipt(files);
       const retry = ownedRetry(before);
-      // Retained evidence never covers owned text that is back in the composer.
-      const restored =
-        before.queue_kind === 'driver-buffer' && bufferedPrompt(before, runner, receipt);
-      if (retry && before.accepted && !restored) {
+      const restored = ownsComposer(before, runner, receipt);
+      // paneState has already withdrawn pulled-back proofs; a recalled delivered prompt keeps one.
+      if (retry && before.accepted) {
         evidence = before.accepted;
         verification = 'submitted';
       } else if (flush || retry) {
@@ -621,7 +631,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
           verification = 'queued_payload_mismatch';
         payload = receipt.payload;
         if (retry) receipt.queue_was_empty = true;
-        if (retry && receipt.accepted) {
+        if ((retry || flush) && restored) {
           // Only records after this submission can prove it.
           delete receipt.accepted;
           receipt.sent_at = Date.now();
@@ -756,8 +766,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
               !retriedEnter &&
               !flush &&
               !payload.startsWith('/goal ') &&
-              after.queue_kind === 'driver-buffer' &&
-              bufferedPrompt(after, runner, receipt)
+              ownsComposer(after, runner, receipt)
             ) {
               retriedEnter = true;
               tmux(['send-keys', '-t', pane, 'Enter']);
