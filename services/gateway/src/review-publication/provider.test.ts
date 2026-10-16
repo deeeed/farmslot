@@ -17,6 +17,8 @@ import {
   GatewayConnectionError,
 } from '../../../../packages/cli/src/gateway-client.js';
 import { testGatewayIdentity } from '../../../../scripts/lib/test-gateway-identity-source.mjs';
+import { resolveDefaultPublicationAccount } from '../pr-monitoring/github-account.js';
+import { makeRun } from '../run-completion/test-fixtures.js';
 
 import { publishWorkspaceReview, type ReviewPublicationReceipt } from './provider.js';
 
@@ -54,18 +56,28 @@ async function fixture(overrides: Record<string, unknown> = {}) {
   process.env.PUBLICATION_FIXTURE_STATE = stateFile;
   const receiptFile = path.join(directory, 'receipt.json');
   let receipt: ReviewPublicationReceipt | undefined;
-  const run = {
+  const run: Run = {
+    ...makeRun(),
     id: randomUUID(),
     flowType: 'review-pr',
     status: 'done',
     decisions: [],
     ticketOrPr: 'example/app#42',
     createdByPrincipalId: 'owner',
-    reviewWorkspaceSubject: { repository: 'example/app', headSha: head },
+    reviewWorkspaceSubject: {
+      repository: 'example/app',
+      repositoryUrl: 'https://github.com/example/app.git',
+      headSha: head,
+      baseSha: 'b'.repeat(40),
+      branch: 'reviewed',
+      title: 'Fixture',
+      body: '',
+      capturedAt: new Date().toISOString(),
+    },
     reviewResult: {
       recommendation: 'APPROVE',
       reviewMd: 'Checked source. No blocking findings.',
-      reviewSnapshot: { source: 'github-pr', headSha: head },
+      reviewSnapshot: { source: 'github-pr', headSha: head, capturedAt: new Date().toISOString() },
       lineComments: [
         {
           path: 'src/example.ts',
@@ -75,7 +87,7 @@ async function fixture(overrides: Record<string, unknown> = {}) {
         },
       ],
     },
-  } as unknown as Run;
+  };
   const input = {
     run,
     ownerId: 'owner',
@@ -104,14 +116,60 @@ test('one pinned review contains body and inline findings; receipt retries do no
   const receipt = await publishWorkspaceReview(f.input);
   assert.equal(receipt.state, 'published');
   assert.equal(receipt.headSha, head);
+  assert.equal(receipt.viewedFiles?.state, 'complete');
+  assert.deepEqual(receipt.viewedFiles.markedPaths, ['src/example.ts']);
   const state = await f.state();
   assert.equal(state.posts, 1);
   assert.equal(state.payload.commit_id, head);
   assert.equal(state.payload.comments.length, 1);
   assert.equal(state.payload.comments[0].side, 'RIGHT');
   await f.reload();
+  await f.setState({ ...(await f.state()), head: 'c'.repeat(40) });
   assert.deepEqual(await publishWorkspaceReview(f.input), receipt);
   assert.equal((await f.state()).posts, 1);
+  assert.equal((await f.state()).viewedMutations, 1);
+});
+
+test('slot publication freezes its existing default credential without changing the active account', async () => {
+  const f = await fixture();
+  const prior = process.env.GITHUB_TOKEN;
+  process.env.GITHUB_TOKEN = 'fixture-inherited-token';
+  try {
+    const resolved = await resolveDefaultPublicationAccount('fixture-owner');
+    assert.equal(resolved.account.login, 'reviewer');
+    assert.equal(resolved.binding.token, 'fixture-only-token');
+    assert.deepEqual((await f.state()).accountLookups, [
+      {
+        named: false,
+        ambientPatRemoved: true,
+        inheritedToken: true,
+      },
+    ]);
+    assert.equal(process.env.GITHUB_TOKEN, 'fixture-inherited-token');
+  } finally {
+    if (prior === undefined) delete process.env.GITHUB_TOKEN;
+    else process.env.GITHUB_TOKEN = prior;
+  }
+});
+
+test('Viewed failures retain successful publication and its diagnostic, without reposting', async () => {
+  const f = await fixture({ viewedFailure: true });
+  const receipt = await publishWorkspaceReview(f.input);
+  assert.equal(receipt.state, 'published');
+  assert.equal(receipt.viewedFiles?.state, 'failed');
+  assert.match(receipt.viewedFiles.reason ?? '', /Viewed unavailable/);
+  assert.deepEqual(f.receipt(), receipt);
+  assert.deepEqual(await publishWorkspaceReview(f.input), receipt);
+  assert.equal((await f.state()).posts, 1);
+});
+
+test('publication marks the full diff even when no inline findings were selected', async () => {
+  const f = await fixture({
+    files: [{ filename: 'src/deleted.ts' }, { filename: 'src/new name.ts' }],
+  });
+  f.input.run.reviewResult!.lineComments = [];
+  const receipt = await publishWorkspaceReview(f.input);
+  assert.deepEqual(receipt.viewedFiles?.markedPaths, ['src/deleted.ts', 'src/new name.ts']);
 });
 
 test('publication uses the gate recommendation and selected comments without rewriting the saved report', async () => {
@@ -308,6 +366,8 @@ test('production gateway publishes off-diff findings once through the publicatio
     JSON.stringify({ name: 'review', ci: { repo: 'example/app' } }),
   );
   const now = new Date().toISOString();
+  const tmuxDirectory = path.join(gatewayRoot, 'unused-tmux');
+  await mkdir(tmuxDirectory, { mode: 0o700 });
   const account = { host: 'github.com', login: 'reviewer' };
   const teamId = randomUUID();
   await writeFile(
@@ -408,6 +468,9 @@ test('production gateway publishes off-diff findings once through the publicatio
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
+      TMUX: '',
+      TMUX_PANE: '',
+      TMUX_TMPDIR: tmuxDirectory,
       FARMSLOT_ROOT: gatewayRoot,
       FARMSLOT_HOME: path.join(gatewayRoot, 'home'),
       FARMSLOT_RUNS_DIR: path.join(gatewayRoot, 'runs'),

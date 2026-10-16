@@ -18,6 +18,7 @@ import { resolvePRSourceAccount } from '../pr-monitoring/github-account.js';
 
 import { locatePublicationComments } from './diff-comments.js';
 import { selectedReviewResult } from './selection.js';
+import { markReviewedFilesViewed } from './viewed-files.js';
 
 export type { ReviewPublicationReceipt } from '@farmslot/protocol';
 
@@ -187,7 +188,11 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
       publishedAt: review.submitted_at,
     };
     await input.saveReceipt(published);
-    return published;
+    const viewedFiles = await markReviewedFilesViewed(
+      { pr, headSha: subject.headSha, account, binding },
+      async (viewedFiles) => input.saveReceipt({ ...published, viewedFiles }),
+    );
+    return { ...published, viewedFiles };
   };
   if (matches.length) {
     if (!prior)

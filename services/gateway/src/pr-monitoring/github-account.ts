@@ -12,37 +12,54 @@ export async function resolvePRSourceAccount(
   account: PRSourceAccount,
   ownerId: string,
 ): Promise<NonNullable<GhRequestOpts['account']>> {
-  account = { ...account, host: account.host.toLowerCase(), login: account.login.toLowerCase() };
-  assertMonitoredPRIdentity({ host: account.host, repo: 'validation/validation', number: 1 });
-  if (!/^[a-z0-9][a-z0-9-]*$/i.test(account.login)) throw new Error('Invalid GitHub account login');
+  return (await resolveAccount(ownerId, account)).binding;
+}
+
+/** Freeze the slot poster's existing default gh credential without switching accounts. */
+export function resolveDefaultPublicationAccount(ownerId: string) {
+  return resolveAccount(ownerId);
+}
+
+async function resolveAccount(ownerId: string, account?: PRSourceAccount) {
+  if (account) {
+    account = { ...account, host: account.host.toLowerCase(), login: account.login.toLowerCase() };
+    assertMonitoredPRIdentity({ host: account.host, repo: 'validation/validation', number: 1 });
+    if (!/^[a-z0-9][a-z0-9-]*$/i.test(account.login))
+      throw new Error('Invalid GitHub account login');
+  }
+  const host = account?.host ?? 'github.com';
+  const signal = account ? undefined : AbortSignal.timeout(5000);
   const env = { ...process.env };
   delete env.GH_TOKEN;
-  delete env.GITHUB_TOKEN;
-  delete env.GH_ENTERPRISE_TOKEN;
-  delete env.GITHUB_ENTERPRISE_TOKEN;
+  if (account) {
+    delete env.GITHUB_TOKEN;
+    delete env.GH_ENTERPRISE_TOKEN;
+    delete env.GITHUB_ENTERPRISE_TOKEN;
+  }
   let token: string;
   try {
     const result = await execFileAsync(
       'gh',
-      ['auth', 'token', '--hostname', account.host, '--user', account.login],
-      { env, timeout: 15_000, maxBuffer: 64 * 1024 },
+      ['auth', 'token', '--hostname', host, ...(account ? ['--user', account.login] : [])],
+      { env, timeout: 15_000, maxBuffer: 64 * 1024, signal },
     );
     token = result.stdout.trim();
   } catch {
     // Child errors can contain credential output. Return a fixed actionable error instead.
     throw new Error(
-      `GitHub account ${account.login}@${account.host} is unavailable in the gateway keyring`,
+      `GitHub account ${account?.login ?? 'default'}@${host} is unavailable in the gateway keyring`,
     );
   }
   if (!token) throw new Error('GitHub account has no credential');
   const binding = {
-    host: account.host,
+    host,
     token,
-    scope: JSON.stringify([ownerId, account.login.toLowerCase()]),
+    scope: JSON.stringify([ownerId, account?.login ?? 'default-publication']),
   };
-  const { stdout } = await ghRequest(['api', '--hostname', account.host, 'user'], {
+  const { stdout } = await ghRequest(['api', '--hostname', host, 'user'], {
     account: binding,
-    force: true,
+    force: account !== undefined,
+    signal,
   });
   const identity: unknown = JSON.parse(stdout);
   if (
@@ -50,11 +67,12 @@ export async function resolvePRSourceAccount(
     typeof identity !== 'object' ||
     !('login' in identity) ||
     typeof identity.login !== 'string' ||
-    identity.login.toLowerCase() !== account.login.toLowerCase()
+    !/^[a-z0-9][a-z0-9-]*$/i.test(identity.login) ||
+    (account && identity.login.toLowerCase() !== account.login.toLowerCase())
   ) {
     throw new Error('GitHub credential does not match the selected account');
   }
-  return binding;
+  return { binding, account: { host, login: identity.login.toLowerCase() } };
 }
 
 /** Account references can be edited offline; a new binding must resolve to a real gateway credential. */
