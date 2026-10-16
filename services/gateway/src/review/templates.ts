@@ -29,7 +29,6 @@ import { execOnSlot } from '../core/exec.js';
 import {
   assertNoUnknownPlaceholders,
   expandTemplate,
-  expandTemplateWithReservedLast,
   knownTemplatePlaceholders,
 } from '../core/hooks.js';
 import { shellQuote } from '../core/tmux.js';
@@ -38,7 +37,7 @@ import { remoteBranchRefspec } from '../methods/slot/slot-tracking.js';
 import { buildReviewPlanningBrief } from '../run-engine/review-artifacts.js';
 import { publicationBaseForRun } from '../run-engine/stack-base.js';
 import { getRun } from '../runs/store.js';
-import { farmslotDirectoryForSlot } from '../tasks/agent-runtime-script.js';
+import { farmslotDirectoryForSlot, renderRoleTemplate } from '../tasks/agent-runtime-script.js';
 import { REVIEW_FIX_CHECKLIST_TARGET } from '../tasks/checklist-target.js';
 import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-template-catalog.js';
 
@@ -414,7 +413,7 @@ export async function expandReviewFixTemplate(
   const feedbackSection = hasFeedbackList
     ? ''
     : `## Reviewer lane feedback\n\nRead every lane's feedback before applying the findings.\n\n${replacements.REVIEW_FEEDBACK_FILES}\n\n`;
-  return feedbackSection + expandTemplateWithReservedLast(template, vars, pv, replacements);
+  return feedbackSection + (await renderRoleTemplate(template, vars, pv, replacements));
 }
 
 export async function getReviewConfig(project: string): Promise<ReviewConfig> {

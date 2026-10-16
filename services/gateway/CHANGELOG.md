@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Resolve CI and review follow-up helpers from the connected node installation and report retained delivery refusals without labelling every held handoff busy.
 - Recognize quiescent configured slot sessions across completed runs while preserving foreign sessions and live workers during teardown.
 
 - Keep machine connection health current in cached fleet reads and wait for execution nodes at retained publication gates after gateway restart.

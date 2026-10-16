@@ -1,19 +1,23 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 
 import { WebSocket } from 'ws';
 
+import { isRecord, type RequestFrame } from '@farmslot/protocol';
 import { invalidateProjectVarsCache } from '@farmslot/slot-config';
 
 import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
 import { handleNodeResponse } from '../fleet/node-rpc.js';
 import { farmslotRoot } from '../fleet/state.js';
+import { makeRun } from '../run-engine/test-fixtures.js';
+import { makeVars } from '../runners/test-fixtures.js';
 import { createRun, deleteRun, updateRun } from '../runs/store.js';
 
-import { expandReviewTemplate } from './templates.js';
+import { expandReviewFixTemplate, expandReviewTemplate } from './templates.js';
 
 test('configured review depth selects canonical bytes and records provenance without a runtime-to-static fallback', async (t) => {
   const project = `.canonical-review-${process.pid}`;
@@ -224,4 +228,67 @@ test('expandReviewTemplate resolves farmslot_dir placeholders', async (t) => {
     remoteRendered,
     /\/relocated-node\/development\/scripts\/quality\/check-task-artifact-contract\.mjs/,
   );
+});
+
+test('review-fix templates resolve nested helpers in the active node and preserve authored issues', async (t) => {
+  const project = `.review-fix-node-root-${process.pid}`;
+  const root = path.join(farmslotRoot, 'projects', project);
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+    invalidateProjectVarsCache(project);
+  });
+  await mkdir(path.join(root, 'templates/worker'), { recursive: true });
+  await writeFile(
+    path.join(root, 'project.json'),
+    JSON.stringify({
+      name: project,
+      vars: { harness_cmd: 'node "{{farmslot_dir}}/setup/resolve-harness.mjs" "{{FARMSLOT_DIR}}"' },
+    }),
+  );
+  await writeFile(
+    path.join(root, 'templates/worker/review-fix.md'),
+    '{{HARNESS_CMD}}\n{{FARMSLOT_DIR}}\n{{ISSUES}}\n{{REVIEW_FEEDBACK_FILES}}',
+  );
+  invalidateProjectVarsCache(project);
+  const nodeRoot = '/fixture/review-node-dev';
+  const machine = 'review-fix-node-root';
+  const requests: RequestFrame[] = [];
+  const ws = Object.assign(new EventEmitter(), {
+    readyState: WebSocket.OPEN,
+    send(raw: string, callback?: () => void) {
+      const request: RequestFrame = JSON.parse(raw);
+      requests.push(request);
+      callback?.();
+      handleNodeResponse(
+        request.id,
+        true,
+        { exitCode: 0, stdout: nodeRoot + '\n', stderr: '' },
+        undefined,
+        undefined,
+        ws,
+      );
+    },
+  }) as WebSocket;
+  registerNode(machine, 1, ws);
+  t.after(() => unregisterByWs(ws));
+  const vars = makeVars({
+    machine,
+    host: 'remote.invalid',
+    projectName: project,
+    remoteRepo: '/product',
+  });
+  const run = makeRun({ project, slotId: vars.slotId });
+  const description = 'Keep the documented {{farmslot_dir}} token literal.';
+  const rendered = await expandReviewFixTemplate(vars, 'tasks/fix', run, [
+    { file: 'module.ts', line: 7, description },
+  ]);
+  assert.ok(
+    rendered.includes(`node "${nodeRoot}/setup/resolve-harness.mjs" "${nodeRoot}"\n${nodeRoot}\n`),
+  );
+  assert.ok(rendered.includes(description));
+  assert.equal(requests.length, 1);
+  const params = requests[0]?.params;
+  assert.ok(isRecord(params));
+  assert.deepEqual(params.argv, ['node', '-p', 'process.cwd()']);
+  assert.equal(params.cwd, undefined);
 });
