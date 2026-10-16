@@ -98,6 +98,13 @@ test('send permits capable mid-turn input while protecting runner, question and 
       phase === 'busy' ? 'busy' : 'observability_unavailable',
     );
   }
+  // Runners without mid-turn input still wait for an idle pane on a plain send.
+  for (const phase of ['busy', 'unknown']) {
+    assert.equal(
+      refusal({ ...ready, state: 'cursor', delivery_phase: phase, phase }, 'cursor'),
+      phase === 'busy' ? 'busy' : 'observability_unavailable',
+    );
+  }
   assert.equal(refusal({ ...ready, queued: true }, 'codex'), 'queued_input');
   assert.equal(
     refusal({ ...ready, queued: true, queue_kind: 'runner-queue' }, 'codex', true),
