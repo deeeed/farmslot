@@ -18,7 +18,6 @@ import {
   writeEvalExperimentManifest,
   writeResultPackageManifest,
 } from '../evals/package-store.js';
-import { jiraTicketData } from '../run-completion/test-fixtures.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 import { writeTaskFixture } from '../tasks/writer.test-support.js';
 
@@ -571,7 +570,6 @@ test('evalTrialStart reuses a prior run startRef instead of falling back to main
     project: 'farmslot-farm',
     flowType: 'fix-bug',
     ticketOrPr: 'BUG-123',
-    ticketData: jiraTicketData('BUG-123'),
     lane: 'comparison',
     variant: 'original-startref',
     completionPolicy: 'artifact-only',
