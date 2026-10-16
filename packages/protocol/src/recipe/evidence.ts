@@ -217,6 +217,8 @@ export interface RecordedEvidencePackageInput extends RecipeArtifactPackageInput
   claims?: RecipeClaimLedger;
   /** Retained execution-input snapshot; task registration comes from this, never the verdict file. */
   invocation?: unknown;
+  /** Retained repair scope and engine claim-source selection, validated before any projection. */
+  repair?: { scope: unknown; selection: unknown };
 }
 
 export function normalizeRecipeClaimId(id: string): string {

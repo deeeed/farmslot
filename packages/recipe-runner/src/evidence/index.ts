@@ -4,6 +4,12 @@ export type { RecipeComparisonCapture, RecipeComparisonCaptureRow } from './capt
 export { groupRecipeCaptureComparisons } from './capture-comparisons.js';
 export type { OccurrenceRecordingCoverage } from './moments.js';
 export { indexRecordingTimelines, occurrenceRecordingCoverage } from './moments.js';
-export { deriveReviewedRecipeClaims, validateRecordedEvidencePackage } from './package.js';
+export type { RecordedClaimSource } from './package.js';
+export {
+  deriveReviewedRecipeClaims,
+  recordedClaimSources,
+  selectedRecipeClaims,
+  validateRecordedEvidencePackage,
+} from './package.js';
 export { planRecipeEvidence } from './plan.js';
 export type { RecordedEvidencePackageInput } from '@farmslot/protocol';

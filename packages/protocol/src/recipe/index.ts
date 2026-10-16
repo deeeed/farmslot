@@ -104,6 +104,7 @@ export {
   validateRecipeRecordingTimelineBinding,
   validateRecipeRecordingTimelineDocument,
 } from './recording.js';
+export * from './repair.js';
 export {
   RECORDED_EVIDENCE_RUN_CONTRACT_VERSION,
   RecordedEvidenceReadError,
