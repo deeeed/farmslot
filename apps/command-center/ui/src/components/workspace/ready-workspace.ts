@@ -148,6 +148,10 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   private async _readReviewEvidence(scope: EvidenceReadScope, sameScope: boolean): Promise<void> {
     const request = ++this._evidenceRequest;
     if (!sameScope) this._resetReviewEvidence(scope);
+    if (!this._evidenceLoaded) {
+      this._evidenceLoading = true;
+      this._evidenceError = '';
+    }
     if (!this.runId || this.mockData) {
       this._evidenceLoading = false;
       return;

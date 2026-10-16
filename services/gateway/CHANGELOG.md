@@ -4,8 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Initialize hosted tasks through the execution node’s immutable CLI and mirror its frozen marker, metadata and receipts instead of rendering a second task.
-
+- Resolve CI and review follow-up helpers from the connected node installation and report retained delivery refusals without labelling every held handoff busy.
 - Recognize quiescent configured slot sessions across completed runs while preserving foreign sessions and live workers during teardown.
 
 - Keep machine connection health current in cached fleet reads and wait for execution nodes at retained publication gates after gateway restart.
@@ -13,6 +12,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Encode artifact URL path segments so publication verifies and embeds filenames containing literal percent escapes and other URL characters.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+- Initialize hosted tasks through the execution node’s immutable CLI and mirror its frozen marker, metadata and receipts instead of rendering a second task.
 
 ## 0.22.0 - 2026-10-16
 

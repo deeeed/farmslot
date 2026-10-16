@@ -33,7 +33,6 @@ import { execOnSlot } from '../core/exec.js';
 import {
   assertNoUnknownPlaceholders,
   expandSourceBindings,
-  expandTemplateWithReservedLast,
   knownTemplatePlaceholders,
 } from '../core/hooks.js';
 import {
@@ -90,7 +89,7 @@ import {
 } from '../runners/session-record.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
-import { agentRuntimeScriptForSlot } from '../tasks/agent-runtime-script.js';
+import { agentRuntimeScriptForSlot, renderRoleTemplate } from '../tasks/agent-runtime-script.js';
 import {
   CI_FIX_CHECKLIST,
   CI_FIX_CHECKLIST_TARGET,
@@ -261,6 +260,7 @@ export async function sendCiFixNudge(input: {
   sent: boolean;
   sendAttempted: boolean;
   retryable: boolean;
+  deferredReason: string | null;
   turnToken?: string;
   retainedSession: ReturnType<typeof resolveCiFixRetainedSession>;
 }> {
@@ -273,7 +273,13 @@ export async function sendCiFixNudge(input: {
     console.warn(
       `[ci-monitor] run ${input.run?.id.slice(0, 8) ?? 'unknown'} — skipping CI fix delivery: ${retainedSession.reason}`,
     );
-    return { sent: false, sendAttempted: false, retryable: false, retainedSession };
+    return {
+      sent: false,
+      sendAttempted: false,
+      retryable: false,
+      deferredReason: retainedSession.reason,
+      retainedSession,
+    };
   }
   const runtimeDir = input.run ? await resolveProjectRuntimeDir(input.run.project) : undefined;
   const replacementOwner =
@@ -311,6 +317,7 @@ export async function sendCiFixNudge(input: {
     sent: delivery.delivered,
     sendAttempted: delivery.delivered || delivery.sendAttempted === true,
     retryable: delivery.delivered || delivery.retryable !== false,
+    deferredReason: delivery.delivered ? null : delivery.reason,
     ...(delivery.delivered && delivery.turnToken ? { turnToken: delivery.turnToken } : {}),
     retainedSession,
   };
@@ -634,7 +641,7 @@ async function writeCIFixTask(
   // Inline fixes reuse TASK.md, which may predate stack binding or retargeting.
   // Supply current branch instructions even for a project template without the new token.
   const expanded = [
-    expandTemplateWithReservedLast(template, vars, pv, ciReplacements),
+    await renderRoleTemplate(template, vars, pv, ciReplacements),
     ...(template.includes('{{BRANCH_UPDATE_INSTRUCTIONS}}')
       ? []
       : ['', ciReplacements.BRANCH_UPDATE_INSTRUCTIONS]),
@@ -814,6 +821,7 @@ async function attemptInlineCIFix(
       if (!deliveryMutationObserved) ciPromptSendAttempted = false;
     }
     let sent = recoveredContext ? deliveryMutationObserved : false;
+    let lastDeferredReason: string | null = null;
     if (!recoveredContext) {
       const deliveryBaselinePane = await resolveExactTmuxWindowPane(vars, workerTarget);
       if (!deliveryBaselinePane) {
@@ -873,8 +881,9 @@ async function attemptInlineCIFix(
         sendOutcomeUnknown = false;
         possiblePromptMutations = 0;
         retainedSession = initialDelivery.retainedSession;
-        if (retainedSession.reason) {
-          console.warn(`[ci-monitor] run ${runId.slice(0, 8)} — ${retainedSession.reason}`);
+        lastDeferredReason = initialDelivery.deferredReason;
+        if (lastDeferredReason) {
+          console.warn(`[ci-monitor] run ${runId.slice(0, 8)} — ${lastDeferredReason}`);
         }
         sent = initialDelivery.sent;
         let ciDeliveryTerminal = !initialDelivery.retryable;
@@ -912,6 +921,7 @@ async function attemptInlineCIFix(
                 recovery: { runId },
               });
               ciPromptSendAttempted ||= retryDelivery.sendAttempted || sendOutcomeUnknown;
+              lastDeferredReason = retryDelivery.deferredReason;
               sendOutcomeUnknown = false;
               possiblePromptMutations = 0;
               ciDeliveryTerminal ||= !retryDelivery.retryable;
@@ -931,13 +941,14 @@ async function attemptInlineCIFix(
             getRun,
             shouldAbort: () => ciDeliveryTerminal,
             isTargetBound: () => ciPromptSendAttempted || sendOutcomeUnknown,
+            deferredReason: () => lastDeferredReason,
           });
           sent = retry.sent;
           workerTarget = retry.target;
         }
       }
       console.log(
-        `[ci-monitor] run ${runId.slice(0, 8)} — CI fix nudge ${sent ? 'sent' : 'NOT delivered (retry window exhausted)'} to ${workerTarget}`,
+        `[ci-monitor] run ${runId.slice(0, 8)} — CI fix nudge ${sent ? 'sent' : 'NOT delivered (retry window exhausted)'} to ${workerTarget}${!sent && lastDeferredReason ? `: ${lastDeferredReason}` : ''}`,
       );
       if (ciFixHasUnconfirmedPromptSend(sent, ciPromptSendAttempted)) {
         unconfirmedPromptSend = true;
