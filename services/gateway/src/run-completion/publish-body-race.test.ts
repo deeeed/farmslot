@@ -184,6 +184,9 @@ test('a changed title and body do not block approval; the current render is publ
   }
 });
 
+const REFRESH_STEP =
+  /To refresh, click "Refresh current package" on the Ready gate or run: farmslot rpc run\.refreshPublishPackage '\{"runId":"run-1"\}'$/;
+
 test('approval publishes the reviewed body heading, not a ticket-key title', async () => {
   const { root, artifactsDir, run } = await makeTask('TAT-4138');
   try {
@@ -216,16 +219,21 @@ test('approval refuses a package with no reviewed title', async () => {
     });
     await assert.rejects(
       assertReadyGatePackageInputsCurrent(run, packageWith('feat: TAT-4138', draftBody)),
-      /^Error: No reviewed PR title: .*"# type\(scope\): summary" heading/,
+      (error: Error) => {
+        assert.match(
+          error.message,
+          /^No reviewed PR title: .*"# type\(scope\): summary" heading in artifacts\/pr-description\.md/,
+        );
+        assert.match(error.message, /then refresh the package\./);
+        assert.match(error.message, REFRESH_STEP);
+        return true;
+      },
     );
   } finally {
     __setPrBodyRenderDepsForTest(null);
     await rm(root, { recursive: true, force: true });
   }
 });
-
-const REFRESH_STEP =
-  /To refresh, click "Refresh current package" on the Ready gate or run: farmslot rpc run\.refreshPublishPackage '\{"runId":"run-1"\}'$/;
 
 test('an evidence or validation mismatch still blocks, naming the input and the refresh step', async () => {
   const { root, artifactsDir, run } = await makeTask();

@@ -78,6 +78,7 @@ import {
   buildPackageEvidenceManifest,
   readCurrentPackageEvidence,
 } from './package-evidence-manifest.js';
+import { PR_PROSE_ARTIFACT } from './pr-body-render.js';
 import {
   markPRReady,
   postPRComment,
@@ -108,6 +109,7 @@ import {
   computeReadyGateReviewSubjectHash,
   packageChangedError,
   readReadyGatePreparedPackage,
+  refreshPackageStep,
   resolveSelectedEvidenceRef,
   sha256Text,
   sortArtifactRefsForComparison,
@@ -537,9 +539,11 @@ export async function assertReadyGatePackageInputsCurrent(
     artifacts,
   );
   if (!draftTitle) {
+    // Approval renders the retained package inputs; only a refresh reads an edited description.
     throw new Error(
-      'No reviewed PR title: neither a "# type(scope): summary" heading in the PR description ' +
-        'nor the ticket title names the change. Add the heading, then approve again.',
+      `No reviewed PR title: neither a "# type(scope): summary" heading in artifacts/${PR_PROSE_ARTIFACT} ` +
+        `nor the ticket title names the change. Add the heading, then refresh the package. ` +
+        refreshPackageStep(current.id),
     );
   }
   const descriptionChanges = [
