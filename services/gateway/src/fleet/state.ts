@@ -577,12 +577,10 @@ function transformFleet(raw: RawStatus): FleetStatus {
   });
   // Enrich slots with host load from node health
   enrichSlotHostLoad(slots);
-  const machines = getAllMachineHealth();
   return {
     checkedAt: raw.checked_at,
     slots,
     summary: computeSummary(slots),
-    ...(machines.length > 0 ? { machines } : {}),
   };
 }
 
@@ -604,7 +602,7 @@ export function markGhostSlots(fleet: FleetStatus, liveIds: ReadonlySet<string>)
 // ─── Public API ───
 
 export async function loadFleetStatus(forceRefresh = false): Promise<FleetStatus> {
-  if (cachedFleet && !forceRefresh) return cachedFleet;
+  if (cachedFleet && !forceRefresh) return getCachedFleet()!;
   try {
     const content = await readFile(statusFile, 'utf-8');
     const raw: RawStatus = JSON.parse(content);
@@ -631,10 +629,12 @@ export async function loadFleetStatus(forceRefresh = false): Promise<FleetStatus
       },
     };
   }
-  return cachedFleet;
+  return getCachedFleet()!;
 }
 
 export function getCachedFleet(): FleetStatus | null {
+  // Connection health is live state, independent of the status-file snapshot.
+  if (cachedFleet) cachedFleet.machines = getAllMachineHealth();
   return cachedFleet;
 }
 
