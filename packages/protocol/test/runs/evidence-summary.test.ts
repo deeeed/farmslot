@@ -140,3 +140,63 @@ test('captured run output is evidence even when no step lists it; launch diagnos
   );
   assert.equal(summarizeRunEvidence(output).artifactCount, 2);
 });
+
+test('step output prose and host paths are not run artifacts', () => {
+  const artifacts = extractRunArtifactManifest(
+    run({
+      steps: [
+        {
+          name: 'write-task',
+          status: 'done',
+          outputs: {
+            taskFile: '/home/worker/farm/projects/demo/tasks/qa/run-1/TASK.md',
+            subSteps: [{ detail: 'Rendering run-1/CHECKLIST.md' }],
+            artifacts: [{ path: 'inputs/handoff.json', purpose: 'handoff' }],
+            recording: 'artifacts/run.mov',
+          },
+        },
+      ],
+    }),
+  );
+
+  assert.deepEqual(
+    artifacts.map((artifact) => artifact.path),
+    ['inputs/handoff.json', 'artifacts/run.mov'],
+  );
+});
+
+test('a gate keeps the frozen metadata of a file the run output recaptured', () => {
+  const [video] = extractRunArtifactManifest(
+    run({
+      decisions: [
+        {
+          id: 'ready',
+          type: 'engine_human_gate',
+          title: 'Ready',
+          description: 'Ready',
+          actions: [],
+          createdAt: '2026-10-17T00:00:00.000Z',
+          payload: {
+            kind: 'ready',
+            prNumber: 7,
+            repo: 'owner/repo',
+            diffStat: { files: 1, additions: 1, deletions: 0 },
+            workerReport: 'done',
+            branch: 'fix/video',
+            artifactManifest: [
+              { path: 'artifacts/after.mp4', purpose: 'video-after', sha256: 'frozen' },
+            ],
+          },
+        },
+      ],
+      output: {
+        capturedAt: '2026-10-17T00:01:00.000Z',
+        workerFinished: true,
+        manifestDigest: 'digest',
+        artifactManifest: [{ path: 'artifacts/after.mp4', purpose: 'other', sha256: 'recaptured' }],
+      },
+    }),
+  );
+
+  assert.deepEqual([video?.purpose, video?.sha256], ['video-after', 'frozen']);
+});

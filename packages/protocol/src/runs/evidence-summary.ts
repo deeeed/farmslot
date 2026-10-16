@@ -1,4 +1,5 @@
 import type { EvidenceManifestEntry, Run } from '../contracts/runs.js';
+import { isRelativeArtifactPath } from '../recipe/common.js';
 import { isInternalRunArtifactPath } from '../recipes/step-io.js';
 
 /** A run artifact with the metadata its source recorded. */
@@ -49,8 +50,13 @@ export function extractRunArtifactManifest(
       entries.push(...(payload.artifactManifest ?? []));
     }
   }
+  // A gate keeps the frozen metadata of a file the run output captured again
+  // later; the output only fills in what the gate did not record.
+  const declared = new Map(dedupeRunArtifacts(entries).map((entry) => [entry.path, entry]));
   for (const artifact of run.output?.artifactManifest ?? []) {
-    if (!isInternalRunArtifactPath(artifact.path)) entries.push(artifact);
+    if (isInternalRunArtifactPath(artifact.path)) continue;
+    const frozen = declared.get(artifact.path);
+    entries.push(frozen ? { ...artifact, ...frozen } : artifact);
   }
   for (const step of run.steps ?? []) {
     collectRunArtifactEntries(step.outputs, entries);
@@ -96,14 +102,17 @@ export function runArtifactPathsToManifest(paths: readonly string[]): RunArtifac
   return paths.map((path) => ({ path, purpose: inferRunArtifactPurpose(path) }));
 }
 
-const RUN_ARTIFACT_IMAGE_EXTS = /\.(png|jpg|jpeg|gif|svg|webp)$/i;
+/** Image formats the clients show inline; `isRunEvidenceImageArtifact` also counts ones they can't. */
+export function isRunArtifactImagePath(path: string): boolean {
+  return /\.(png|jpg|jpeg|gif|svg|webp)$/i.test(path);
+}
 
 export function inferRunArtifactPurpose(path: string): string {
   const normalized = path.toLowerCase();
   if (/\.(diff|patch)$/.test(normalized)) return 'diff';
   if (normalized.includes('screenshot')) return 'screenshot';
   if (isRunEvidenceVideoArtifact({ path })) return 'video';
-  if (RUN_ARTIFACT_IMAGE_EXTS.test(path)) return 'image';
+  if (isRunArtifactImagePath(path)) return 'image';
   if (/diff[_-]?stat/i.test(normalized)) return 'diff-stat';
   if (/\/diff\.(txt|md)$/i.test(normalized)) return 'diff';
   if (normalized.includes('review')) return 'review';
@@ -115,7 +124,8 @@ export function inferRunArtifactPurpose(path: string): string {
 function collectRunArtifactEntries(value: unknown, entries: RunArtifactManifestEntry[]): void {
   if (value == null) return;
   if (typeof value === 'string') {
-    if (looksLikeRunArtifactPath(value)) {
+    // A bare string is an artifact only as a relative path, never prose or a host path.
+    if (!/\s/.test(value) && isRelativeArtifactPath(value) && looksLikeRunArtifactPath(value)) {
       entries.push({ path: value, purpose: inferRunArtifactPurpose(value) });
     }
     return;
@@ -149,7 +159,7 @@ function collectRunArtifactEntries(value: unknown, entries: RunArtifactManifestE
 
 function looksLikeRunArtifactEntry(record: Record<string, unknown>): boolean {
   const path = record.path;
-  if (typeof path !== 'string') return false;
+  if (typeof path !== 'string' || !isRelativeArtifactPath(path)) return false;
   return (
     typeof record.purpose === 'string' ||
     typeof record.type === 'string' ||
@@ -160,7 +170,7 @@ function looksLikeRunArtifactEntry(record: Record<string, unknown>): boolean {
 
 function looksLikeRunArtifactPath(value: string): boolean {
   return (
-    RUN_ARTIFACT_IMAGE_EXTS.test(value) ||
+    isRunArtifactImagePath(value) ||
     isRunEvidenceVideoArtifact({ path: value }) ||
     /\.(md|json|txt|log|diff|patch)$/i.test(value)
   );
