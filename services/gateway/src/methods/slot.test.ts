@@ -358,14 +358,16 @@ test('buildPrepareNewWindowCommand recreates a missing tmux session before openi
 test('buildPrepareWrappedCommand writes sentinel and preserves output flush on success', () => {
   const command = buildPrepareWrappedCommand('echo ok', '/tmp/prep.exit', '/tmp/prep');
 
-  assert.match(command, /echo "\$__farmslot_status" > '\/tmp\/prep\.exit'/);
+  assert.match(command, /printf '%s\\n' "\$__farmslot_status" > '\/tmp\/prep\.exit'/);
   assert.match(command, /sleep 1\nexit "\$__farmslot_status"/);
   assert.doesNotMatch(command, /\(echo ok; echo \$\? >/);
 });
 
 test('buildPrepareWrappedCommand disarms traps before writing the final child status', () => {
   const command = buildPrepareWrappedCommand('echo ok', '/tmp/prep.exit', '/tmp/prep');
-  const finalTrapIdx = command.indexOf('trap - HUP INT TERM\n' + 'echo "$__farmslot_status"');
+  const finalTrapIdx = command.indexOf(
+    'trap - HUP INT TERM\n' + `printf '%s\\n' "$__farmslot_status"`,
+  );
   const signalTrapIdx = command.indexOf('__farmslot_signal_exit()');
 
   assert(finalTrapIdx > signalTrapIdx);
@@ -378,7 +380,10 @@ test('buildPrepareWrappedCommand runs cmd in a subshell so `exec` inside the hoo
     '/tmp/prep',
   );
 
-  assert.match(command, /\(\nexec bash preflight\.sh\n\)\n__farmslot_status=\$\?/);
+  assert.match(
+    command,
+    /\(\nexec bash preflight\.sh\n\) <&0 &\nwait "\$!"\n__farmslot_status=\$\?/,
+  );
 });
 
 test('buildPrepareWrappedCommand without keepAliveOnSuccess exits normally after sentinel write', () => {
