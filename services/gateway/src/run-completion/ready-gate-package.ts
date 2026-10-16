@@ -177,6 +177,14 @@ export function readyGateCurrentDescription(
   };
 }
 
+/** The one action that rebuilds a package from the current task. */
+export function refreshPackageStep(runId: string): string {
+  return (
+    `To refresh, click "Refresh current package" on the Ready gate or run: ` +
+    `farmslot rpc run.refreshPublishPackage '${JSON.stringify({ runId })}'`
+  );
+}
+
 /**
  * A stale-package refusal at approval: names what changed and the one action
  * that rebuilds the package, so the operator is not left at a dead end.
@@ -184,8 +192,7 @@ export function readyGateCurrentDescription(
 export function packageChangedError(runId: string, detail: string): Error {
   return new Error(
     `Package changed; refresh package and re-review before publishing (${detail}). ` +
-      `To refresh, click "Refresh current package" on the Ready gate or run: ` +
-      `farmslot rpc run.refreshPublishPackage '${JSON.stringify({ runId })}'`,
+      refreshPackageStep(runId),
   );
 }
 

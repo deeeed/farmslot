@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Publish the PR title from the approved body's leading `# type(scope): summary` heading, else the ticket title, and refuse approval when neither names more than a ticket key.
+
 - Submit buffered Codex input with Enter, never Tab, and accept only the next-tool-call steering block as delivery proof; queued follow-up input stays undelivered.
 
 - Keep failed dev worker CLI verification visible as critical node and fleet health.
