@@ -22,6 +22,8 @@ import {
   slotClaimBlockedByRelease,
   slotRepoBlocker,
   slotScore,
+  slotSelectionOptionsFor,
+  type SlotSelectionPlan,
   validateSlot,
   validateSlotForDispatch,
 } from './slot-scoring.js';
@@ -154,6 +156,26 @@ test('slotScore: family affinity bonus and health tiebreakers', () => {
   });
   // cdp 5 + device 5 + fixtures 1
   assert.equal(slotScore(degraded), 11);
+});
+
+test('candidate plans preserve a resolved branch when task creation has not populated it', () => {
+  const targetBranch = 'TAT-4137-feat-chart-native-order-management';
+  const candidate = slot({ slot: 'same-branch', branch: targetBranch });
+  const params = { project: 'demo-farm', flowType: 'pr-complete', ticketOrPr: 'example/app#210' };
+  const options = {
+    targetBranch,
+    plans: new Map<string, SlotSelectionPlan>([
+      [candidate.slot, { params: { ...params, targetBranch: undefined } }],
+    ]),
+  };
+  const selected = slotSelectionOptionsFor(candidate, options);
+  assert.equal(selected?.targetBranch, targetBranch);
+  assert.equal(slotScore(candidate, selected?.targetBranch ?? undefined), -100);
+  assert.equal(findBestSlot([candidate], 'demo-farm', options)?.slot, candidate.slot);
+  options.plans.set(candidate.slot, {
+    params: { ...params, targetBranch: 'different-branch' },
+  });
+  assert.equal(slotSelectionOptionsFor(candidate, options)?.targetBranch, 'different-branch');
 });
 
 test('findBestSlot honors allow-list, identity policy, and CDP preference', () => {
