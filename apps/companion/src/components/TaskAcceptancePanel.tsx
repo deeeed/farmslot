@@ -51,6 +51,7 @@ export function TaskAcceptancePanel({
     evidenceModel ?? undefined,
   );
   const [showDetails, setShowDetails] = React.useState(false);
+  const [showWarnings, setShowWarnings] = React.useState(false);
   const [overrideClaim, setOverrideClaim] = React.useState<string | null>(null);
   const [overrideReason, setOverrideReason] = React.useState('');
   const [rawClaims, setRawClaims] = React.useState<ReadonlySet<string>>(() => new Set());
@@ -79,7 +80,10 @@ export function TaskAcceptancePanel({
       )}
     </View>
   );
-  React.useEffect(() => setShowDetails(false), [evidenceModel]);
+  React.useEffect(() => {
+    setShowDetails(false);
+    setShowWarnings(false);
+  }, [evidenceModel]);
   const packageStatus = evidenceModel?.packageStatus;
   const [expanded, setExpanded] = React.useState(view.hasOpenCriteria || Boolean(error));
   React.useEffect(() => {
@@ -159,13 +163,28 @@ export function TaskAcceptancePanel({
             : null}
         </View>
       ) : null}
-      {expanded
-        ? evidenceModel?.displayWarnings.map((warning) => (
-            <Text key={warning} style={baseStyles.textMuted}>
-              {warning}
+      {expanded && evidenceModel?.displayWarnings.length ? (
+        <View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded: showWarnings }}
+            testID="companion-acceptance-warning-details"
+            onPress={() => setShowWarnings((value) => !value)}
+            style={{ minHeight: 44, minWidth: 44, justifyContent: 'center' }}
+          >
+            <Text style={styles.evidence}>
+              Evidence details ({evidenceModel.displayWarnings.length})
             </Text>
-          ))
-        : null}
+          </Pressable>
+          {showWarnings
+            ? evidenceModel.displayWarnings.map((warning) => (
+                <Text key={warning} style={baseStyles.textMuted}>
+                  {warning}
+                </Text>
+              ))
+            : null}
+        </View>
+      ) : null}
       {expanded
         ? view.rows.map(({ criterion, verdict, color, display, review }) => (
             <View key={criterion.id} style={styles.row} testID={`companion-ac-row-${criterion.id}`}>

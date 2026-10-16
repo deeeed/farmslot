@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Refresh the publication package after a visual judgment; preserve the saved judgment and report a recoverable failure when refresh is unavailable.
+
 - Record one-tap person visual confirmations without invented prose, preserving receipt identity and package refresh requirements.
 - Preserve the task marker and its frozen tooling when switching between worker and review checklists.
 

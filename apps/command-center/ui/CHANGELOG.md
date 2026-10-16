@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Keep evidence warnings behind an on-demand Details control in acceptance views.
+
 - Separate publication status, AC judgments, attestation and actions into readable sections.
 
 - Load inline Markdown evidence through authenticated headers in PR previews, reports and other review views, without credentials in media URLs.

@@ -87,6 +87,12 @@ export const acceptancePanelStyles = css`
   .ac-summary::-webkit-details-marker {
     display: none;
   }
+  .ac-warning-details > summary {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+  }
   .ac-summary:hover {
     background: ${unsafeCSS(colors.bgCardHover)};
   }
@@ -645,7 +651,15 @@ export function renderAcceptancePanel(
                 : nothing}
             </div>`
           : nothing}
-        ${model.displayWarnings.map((warning) => html`<p class="ac-note">${warning}</p>`)}
+        ${model.displayWarnings.length
+          ? html`<details
+              class="ac-note ac-warning-details"
+              data-testid="acceptance-warning-details"
+            >
+              <summary>Evidence details (${model.displayWarnings.length})</summary>
+              ${model.displayWarnings.map((warning) => html`<p>${warning}</p>`)}
+            </details>`
+          : nothing}
         ${options.showOccurrences
           ? model?.occurrences.map(
               (occurrence) =>

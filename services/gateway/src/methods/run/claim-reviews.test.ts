@@ -109,7 +109,14 @@ export async function fixture(t: TestContext) {
     displayName: 'Reviewer',
     subjectKind: 'person' as const,
   };
-  const dependencies = { authorizeVisualClaimReview: () => person };
+  const dependencies = {
+    authorizeVisualClaimReview: () => person,
+    refreshPackage: async ({ runId }: { runId: string }) => {
+      const current = getRun(runId);
+      assert.ok(current);
+      return { run: current };
+    },
+  };
   return { run, decision, params, dependencies, input, prepared, directory, person, inventory };
 }
 
@@ -126,7 +133,11 @@ test('delegated judgments retain their own identity/digests and drive the same p
     subjectKind: 'service' as const,
     delegator: { principalId: 'person', displayName: 'Operator' },
   };
-  const dependencies = { authorizeVisualClaimReview: () => reviewer, policy: async () => policy };
+  const dependencies = {
+    ...f.dependencies,
+    authorizeVisualClaimReview: () => reviewer,
+    policy: async () => policy,
+  };
   const params = { ...f.params, kind: 'lead-agent-reviewed' as const };
   const before = await readFile(path.join(f.directory, 'acceptance-status.json'));
   const result = await runReviewVisualClaim(params, () => {}, dependencies);
@@ -582,7 +593,7 @@ test('QA review consumes only frozen case registration, even when another retain
   assert.deepEqual(await readFile(indexPath), originalIndex);
 });
 
-test('one-tap confirmation has no invented reason, retains identity and requires refresh', async (t) => {
+test('one-tap confirmation has no invented reason and retains identity through refresh', async (t) => {
   const f = await fixture(t);
   const { reason: _reason, ...params } = f.params;
   const before = await readFile(path.join(f.directory, 'acceptance-status.json'));
@@ -619,4 +630,30 @@ test('one-tap confirmation has no invented reason, retains identity and requires
   assert.notEqual(written.receipt.id, result.receipt.id);
   assert.deepEqual(await readFile(path.join(f.directory, 'acceptance-status.json')), before);
   assert.equal(f.decision.resolvedAt, undefined);
+});
+
+test('a failed automatic refresh preserves the judgment and retry reuses its receipt', async (t) => {
+  const f = await fixture(t);
+  const before = await readFile(path.join(f.directory, 'acceptance-status.json'));
+  await assert.rejects(
+    runReviewVisualClaim(f.params, () => {}, {
+      ...f.dependencies,
+      refreshPackage: async () => {
+        throw new Error('Source is unavailable');
+      },
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error && 'code' in error);
+      assert.equal(error.code, 'VISUAL_JUDGMENT_REFRESH_REQUIRED');
+      assert.match(error.message, /Judgment saved.*Source is unavailable/);
+      return true;
+    },
+  );
+  const saved = getRun(f.run.id)?.visualJudgmentReceipts;
+  assert.equal(saved?.length, 1);
+  const result = await runReviewVisualClaim(f.params, () => {}, f.dependencies);
+  assert.equal(result.receipt.id, saved?.[0]?.id);
+  assert.equal(result.run.visualJudgmentReceipts?.length, 1);
+  assert.equal(f.decision.resolvedAt, undefined);
+  assert.deepEqual(await readFile(path.join(f.directory, 'acceptance-status.json')), before);
 });

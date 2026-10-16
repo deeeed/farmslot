@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Keep evidence warnings behind an on-demand Details control in acceptance views.
+
 - Use one publication decision panel for gate and decision workspaces with explicit AC evidence actions.
 
 - Remember person logins through gateway device sessions and confirm revocation before sign-out, while preserving service profiles.
