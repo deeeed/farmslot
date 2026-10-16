@@ -11,6 +11,7 @@ import {
 
 import { latestResolvedHumanGateDecision } from '../run-engine/decision-replay.js';
 import { validatePackageApprovalSelection } from '../run-engine/gate-policy.js';
+import { buildReviewSummary } from '../run-engine/gate-summary.js';
 
 import { replaceMarkdownSection } from './publication-artifacts.js';
 
@@ -46,8 +47,18 @@ export function assertEvidenceAttestationReceipt(
   return receipt;
 }
 
-/** One retained receipt feeds initial publication and subsequent refreshes. */
-export function withEvidenceAttestation(run: Run, body: string): string {
+/** One projection and retained receipt feed publication and subsequent refreshes. */
+export function withPublicationProvenance(run: Run, body: string): string {
+  const noReviewNotice = [
+    '<!-- farmslot-code-review:start -->',
+    'Code review: No code review ran.',
+    '<!-- farmslot-code-review:end -->',
+  ].join('\n');
+  if (buildReviewSummary(run).noCodeReview) {
+    if (!body.includes(noReviewNotice)) body = `${body.trimEnd()}\n\n${noReviewNotice}\n`;
+  } else if (body.includes(noReviewNotice)) {
+    body = body.replace(noReviewNotice, '').trimEnd() + '\n';
+  }
   const decision = latestResolvedHumanGateDecision(run.decisions, true);
   const prepared = decision?.payload?.kind === 'ready' ? decision.payload.prPackage : undefined;
   if (!prepared) return body;

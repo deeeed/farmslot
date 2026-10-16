@@ -322,6 +322,7 @@ test('buildReviewSummary surfaces review skip reason from the pipeline step', ()
   const summary = buildReviewSummary(run);
   assert.equal(summary.review?.status, 'skipped');
   assert.equal(summary.review?.reason, 'interactive-lightweight-policy');
+  assert.equal(summary.noCodeReview, true);
   assert.equal(summary.reviews.length, 0);
 });
 
@@ -358,7 +359,25 @@ test('buildReviewSummary surfaces skip reason when review is a skipped entry', (
   const summary = buildReviewSummary(run);
   assert.equal(summary.review?.status, 'skipped');
   assert.equal(summary.review?.reason, 'disabled-for-project');
+  assert.equal(summary.noCodeReview, true);
   assert.equal(summary.reviews.length, 1);
+});
+
+test('a requested code review clears the skipped-pipeline warning', () => {
+  const run = makeRun({
+    steps: [
+      {
+        name: 'review',
+        status: 'skipped',
+        outputs: { skipped: true, reason: 'disabled-for-project' },
+      },
+    ],
+    engineState: {
+      publishGate: { reviews: [{ ...passingReview, id: 'review-1', source: 'human-gate' }] },
+    },
+  });
+  assert.equal(buildReviewSummary(run).review?.status, 'skipped');
+  assert.equal(buildReviewSummary(run).noCodeReview, undefined);
 });
 
 test('aggregateFamilyChainedLoops rolls up pr-complete/update-branch loops only', () => {

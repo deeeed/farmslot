@@ -30,7 +30,7 @@ const { createRun, getRun, updateRun } = await import('../runs/store.js');
 const { makeReadyGatePackage, deleteTestRunIfPresent, retainRunFixture } =
   await import('../run-engine/test-fixtures.js');
 const { computeReadyGatePackageHash } = await import('../run-completion/ready-gate-package.js');
-const { withEvidenceAttestation } = await import('../run-completion/evidence-attestation.js');
+const { withPublicationProvenance } = await import('../run-completion/evidence-attestation.js');
 const { postProcessPRBody } = await import('../run-completion/publication-artifacts.js');
 
 const approver = { principalId: 'operator', displayName: 'Operator', credentialId: 'credential' };
@@ -136,10 +136,10 @@ test('attested resolve rechecks authority and binds the retained receipt to the 
   const saved = result.run.decisions[0];
   assert.equal(saved.evidenceAttestation?.packageHash, f.prepared.packageHash);
   assert.deepEqual(saved.evidenceAttestation?.approver, approver);
-  const body = withEvidenceAttestation(result.run, '## Summary\n\nChange.');
+  const body = withPublicationProvenance(result.run, '## Summary\n\nChange.');
   assert.match(body, /Inspected the retained evidence/);
   assert.match(body, /Operator \(operator\)/);
-  assert.equal(withEvidenceAttestation(result.run, body), body);
+  assert.equal(withPublicationProvenance(result.run, body), body);
 });
 
 test('authority revocation during awaited validation leaves no approval or receipt', async (t) => {
@@ -187,6 +187,47 @@ test('publication and refresh retain the exact reason despite artifact-path sani
   assert.equal(refreshed, initial);
   assert.equal(refreshed?.split('## Evidence policy attestation').length, 2);
   assert.equal(postedBodies.at(-1), refreshed);
+});
+
+test('publication and refresh disclose skipped code review without duplicating provenance', async (t) => {
+  const f = await fixture(t);
+  f.run.steps = [
+    {
+      name: 'review',
+      status: 'skipped',
+      outputs: { skipped: true, reason: 'disabled-for-project' },
+    },
+  ];
+  const options = {
+    failOnError: true,
+    baseBody: '## Summary\n\nChange.',
+    evidenceManifest: null,
+    checkAuthorChecklist: false,
+  };
+  const body = await postProcessPRBody(f.run, 'example/repo', 42, new Map(), [], options);
+  assert.ok(body?.includes('Code review: No code review ran.'));
+  assert.equal(postedBodies.at(-1), body);
+  const refreshed = await postProcessPRBody(f.run, 'example/repo', 42, new Map(), [], {
+    ...options,
+    baseBody: body!,
+  });
+  assert.equal(refreshed, body);
+  f.run.engineState!.publishGate!.reviews = [
+    {
+      id: 'review-1',
+      source: 'human-gate',
+      mode: 'cold',
+      loopNumber: 1,
+      verdict: 'pass',
+      unresolvedCount: 0,
+      feedbackSent: false,
+    },
+  ];
+  const reviewed = await postProcessPRBody(f.run, 'example/repo', 42, new Map(), [], {
+    ...options,
+    baseBody: body!,
+  });
+  assert.ok(!reviewed?.includes('No code review ran'));
 });
 
 test('stale checked identity and gate replacement leave the decision unresolved', async (t) => {
