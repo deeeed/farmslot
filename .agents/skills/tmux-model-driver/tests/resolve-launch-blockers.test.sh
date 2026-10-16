@@ -14,7 +14,8 @@ printf '{"state":"%s","phase":"unknown","launch_blocker":null,"auto_action":null
 SH
 chmod +x "$TMUX_MODEL_DRIVER_PANE_STATE_SCRIPT"
 printf 'shell\nunknown\nclaude\n' > "$DRIVER_STARTUP_SEQUENCE"
-out="$("$root/scripts/resolve-launch-blockers.sh" '%fixture' claude 2)"
+# Resolving cases return as soon as the runner is ready; the budget only absorbs a slow host.
+out="$("$root/scripts/resolve-launch-blockers.sh" '%fixture' claude 10)"
 python3 -c 'import json,sys; value=json.loads(sys.argv[1]); assert value["resolved"] and value["state"] == "claude"' "$out"
 printf 'codex\n' > "$DRIVER_STARTUP_SEQUENCE"
 if out="$("$root/scripts/resolve-launch-blockers.sh" '%fixture' claude 2)"; then exit 1; fi
@@ -43,7 +44,7 @@ cat > "$DRIVER_STARTUP_SEQUENCE" <<'STATES'
 {"state":"codex","phase":"launch-blocker","launch_blocker":"update-available","auto_action":"codex-skip-update"}
 {"state":"codex","phase":"idle","launch_blocker":null,"auto_action":null}
 STATES
-out="$(bash "$tmp/skill/scripts/resolve-launch-blockers.sh" '%fixture' codex 2)"
+out="$(bash "$tmp/skill/scripts/resolve-launch-blockers.sh" '%fixture' codex 10)"
 python3 -c 'import json,sys; assert json.loads(sys.argv[1])["resolved"]' "$out"
 test "$(wc -l < "$DRIVER_STARTUP_ACTIONS" | tr -d ' ')" = 1
 
