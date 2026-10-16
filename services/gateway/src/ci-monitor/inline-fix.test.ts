@@ -1,17 +1,23 @@
 // @farmslot:serial — creates and removes real template dirs under the shared repo `projects/`.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { buildBranchUpdateInstructions } from '@farmslot/agent-runtime';
-import type { Run } from '@farmslot/protocol';
+import { WebSocket } from 'ws';
 
-import { farmslotRoot } from '../core/config.js';
+import { buildBranchUpdateInstructions } from '@farmslot/agent-runtime';
+import { isRecord, type RequestFrame, type Run } from '@farmslot/protocol';
+
+import { farmslotRoot, type ProjectVars } from '../core/config.js';
+import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
+import { handleNodeResponse } from '../fleet/node-rpc.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 import { runnerPromptDigest } from '../runners/observability-prompt-digest.js';
+import { makeVars } from '../runners/test-fixtures.js';
 
 import {
   ciFixAttemptPrompt,
@@ -19,12 +25,66 @@ import {
   ciFixPromptForRecovery,
   inlineFixRunnerStillBusy,
   recoveredCiFixHasDeliveryProof,
+  renderCiFixTemplate,
   resolveCiFixReplacementOwner,
   resolveCiFixRetainedSession,
   resolveCiFixTemplatePath,
   resolveRecoverableCiFixContext,
   sendCiFixNudge,
 } from './inline-fix.js';
+
+test('CI follow-up commands use the connected node root through nested pack variables', async (t) => {
+  const machine = 'ci-helper-root-fixture';
+  const nodeRoot = '/fixture/active-node-dev';
+  const requests: RequestFrame[] = [];
+  const socket = Object.assign(new EventEmitter(), {
+    readyState: WebSocket.OPEN,
+    send(raw: string, callback?: () => void) {
+      const frame: RequestFrame = JSON.parse(raw);
+      requests.push(frame);
+      callback?.();
+      handleNodeResponse(
+        frame.id,
+        true,
+        { exitCode: 0, stdout: nodeRoot + '\n', stderr: '' },
+        undefined,
+        undefined,
+        socket,
+      );
+    },
+  }) as WebSocket;
+  registerNode(machine, 1, socket);
+  t.after(() => unregisterByWs(socket));
+  const vars = makeVars({ machine, host: 'remote.invalid', remoteRepo: '/product' });
+  const projectVars: ProjectVars = {
+    projectName: 'fixture',
+    projectConfig: '/fixture/project.json',
+    projectFixturesDir: '/fixture/fixtures',
+    projectTemplatesDir: '/fixture/templates',
+    projectJson: {
+      vars: { harness_cmd: 'node "{{farmslot_dir}}/setup/resolve-harness.mjs" "{{FARMSLOT_DIR}}"' },
+    },
+    runtimeDir: '.agent',
+    artifactDir: 'artifacts',
+  };
+  const comment = 'The upstream comment quotes {{farmslot_dir}} literally.';
+  const rendered = await renderCiFixTemplate(
+    '{{HARNESS_CMD}}\n{{FARMSLOT_DIR}}\n{{farmslot_dir}}\n{{CI_ISSUES}}',
+    vars,
+    projectVars,
+    { CI_ISSUES: comment },
+  );
+  assert.equal(
+    rendered,
+    `node "${nodeRoot}/setup/resolve-harness.mjs" "${nodeRoot}"\n${nodeRoot}\n${nodeRoot}\n${comment}`,
+  );
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]?.method, 'exec');
+  const params = requests[0]?.params;
+  assert.ok(isRecord(params));
+  assert.deepEqual(params.argv, ['node', '-p', 'process.cwd()']);
+  assert.equal(params.cwd, undefined);
+});
 
 test('unconfirmed CI fix send blocks automatic resends', () => {
   assert.equal(ciFixHasUnconfirmedPromptSend(false, true), true);
