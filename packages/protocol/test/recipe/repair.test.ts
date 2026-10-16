@@ -21,7 +21,8 @@ import {
 } from '../../src/index.js';
 
 const digest = (char: string) => `sha256:${char.repeat(64)}`;
-const packageHash = digest('b');
+// The ready gate's package identity is a bare sha256 hex digest.
+const packageHash = 'b'.repeat(64);
 
 function scopeFixture(overrides: Partial<RecipeRepairScope> = {}): RecipeRepairScope {
   const base: Omit<RecipeRepairScope, 'repairId'> = {
@@ -96,7 +97,7 @@ test('repair identity binds the package and sorted rejection receipts', () => {
   assert.notEqual(left, recipeRepairId({ runId: 'r', packageHash, receiptIds: ['a'] }));
   assert.notEqual(
     left,
-    recipeRepairId({ runId: 'r', packageHash: digest('9'), receiptIds: ['a'] }),
+    recipeRepairId({ runId: 'r', packageHash: '9'.repeat(64), receiptIds: ['a'] }),
   );
   assert.match(left, /^repair-[a-f0-9]{24}$/u);
 });

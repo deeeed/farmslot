@@ -355,7 +355,7 @@ async function resumeVisualRepairOnce(
       resumeFromResult: {
         ...reviewResultFromInterruptedReview(review),
         verdict: 'issues',
-        issues: visualRepairIssues(repair.scope),
+        issues: visualRepairIssues(repair.scope, taskDir),
         retryCount: repair.reservedRetryCount,
         feedbackSent: false,
         recoveryContinuationPending: false,

@@ -99,9 +99,16 @@ export function recordedClaimSources(input: RecordedEvidencePackageInput): Recor
 }
 
 /** Retained media stays in its original package; display paths resolve from the fresh root. */
-function selectedRow(row: RecipeClaimEvidence, artifactRoot?: string): RecipeClaimEvidence {
-  return artifactRoot
-    ? { ...row, evidence: row.evidence.map((file) => `${artifactRoot}/${file}`) }
+function selectedRow(
+  row: RecipeClaimEvidence,
+  source: Pick<RecordedClaimSource, 'input' | 'artifactRoot'>,
+): RecipeClaimEvidence {
+  return source.artifactRoot
+    ? {
+        ...row,
+        evidence: row.evidence.map((file) => `${source.artifactRoot}/${file}`),
+        retainedFrom: source.input.claims!.recipeRunId,
+      }
     : row;
 }
 
@@ -109,10 +116,7 @@ function selectedRow(row: RecipeClaimEvidence, artifactRoot?: string): RecipeCla
 export function selectedRecipeClaims(input: RecordedEvidencePackageInput): RecipeClaimEvidence[] {
   if (!input.repair) return input.claims?.criteria ?? [];
   return recordedClaimSources(input).map((source) =>
-    selectedRow(
-      source.input.claims!.criteria.find(({ id }) => id === source.claimId)!,
-      source.artifactRoot,
-    ),
+    selectedRow(source.input.claims!.criteria.find(({ id }) => id === source.claimId)!, source),
   );
 }
 
@@ -155,7 +159,7 @@ export function deriveReviewedRecipeClaims(
   };
   if (!input.repair) return rows(input);
   return recordedClaimSources(input).map((source) =>
-    selectedRow(rows(source.input).find(({ id }) => id === source.claimId)!, source.artifactRoot),
+    selectedRow(rows(source.input).find(({ id }) => id === source.claimId)!, source),
   );
 }
 

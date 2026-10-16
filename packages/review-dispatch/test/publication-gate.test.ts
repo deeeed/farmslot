@@ -404,7 +404,7 @@ const repairScope: RecipeRepairScope = {
   runId: 'run',
   generation: 1,
   decisionId: 'gate',
-  packageHash: `sha256:${'b'.repeat(64)}`,
+  packageHash: 'b'.repeat(64),
   packageHeadSha: 'c'.repeat(40),
   reviewBaseSha: 'd'.repeat(40),
   reviewId: 'review',

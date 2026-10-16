@@ -8,7 +8,7 @@ import { recipeRepairId, type RecipeRepairScope } from '@farmslot/protocol';
 
 import { resolveTaskRepairScope } from '../src/harness/repair-scope.js';
 
-const packageHash = `sha256:${'b'.repeat(64)}`;
+const packageHash = 'b'.repeat(64);
 const scope: RecipeRepairScope = {
   schemaVersion: 1,
   repairId: recipeRepairId({ runId: 'run-1', packageHash, receiptIds: ['receipt-2'] }),

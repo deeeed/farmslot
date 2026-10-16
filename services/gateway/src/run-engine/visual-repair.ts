@@ -386,7 +386,7 @@ export async function visualRepairOffered(
 }
 
 /** Rendered through the existing REVIEW-FIX task; no second sender or template. */
-export function visualRepairIssues(scope: RecipeRepairScope): ReviewIssue[] {
+export function visualRepairIssues(scope: RecipeRepairScope, taskDir: string): ReviewIssue[] {
   const roots = new Map(scope.sources.map((source) => [source.recipeRunId, source.artifactRoot]));
   return [
     {
@@ -396,7 +396,7 @@ export function visualRepairIssues(scope: RecipeRepairScope): ReviewIssue[] {
         `Fix the cause, then write a complete standalone repair recipe at ${scope.repairRecipe} ` +
         'with normal composition, explicit prerequisites, its own workflow.entry and normal teardown. ' +
         'Leave the main task recipe unchanged. Do not skip nodes or stop early. ' +
-        `Run it with \`farmslot recipe run ${scope.repairRecipe}\` until it passes; ` +
+        `Run it task-bound until it passes: \`RECIPE_TASK_DIR="$(cd ${taskDir} && pwd)" farmslot recipe run ${taskDir}/${scope.repairRecipe}\`; ` +
         'the engine keeps the unchanged criteria from the original evidence.',
     },
     ...scope.rejected.map((rejection) => ({

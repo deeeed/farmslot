@@ -120,7 +120,7 @@ async function originalFixture(t: test.TestContext) {
   const read = await readRecordedEvidencePackage(originalDir);
   const recipeRunId = original.claims.recipeRunId;
   const closureIdentity = recordedEvidenceClosureIdentity(read.input);
-  const packageHash = `sha256:${'b'.repeat(64)}`;
+  const packageHash = 'b'.repeat(64);
   const scope: RecipeRepairScope = {
     schemaVersion: 1,
     repairId: recipeRepairId({ runId: 'run-1', packageHash, receiptIds: ['receipt-2'] }),
@@ -208,9 +208,22 @@ test('a repair re-proves the rejected criterion and selects retained siblings by
       ['AC-3', 'proven'],
     ],
   );
+  // Retained rows name their original execution, so their moments stay valid in the task ledger.
   assert.deepEqual(
-    deriveReviewedRecipeClaims(read.input).map(({ id, verdict }) => [id, verdict]),
-    selected.map(({ id, verdict }) => [id, verdict]),
+    selected.map(({ id, retainedFrom }) => [id, retainedFrom]),
+    [
+      ['AC-1', recipeRunId],
+      ['AC-2', undefined],
+      ['AC-3', recipeRunId],
+    ],
+  );
+  assert.deepEqual(
+    deriveReviewedRecipeClaims(read.input).map(({ id, verdict, retainedFrom }) => [
+      id,
+      verdict,
+      retainedFrom,
+    ]),
+    selected.map(({ id, verdict, retainedFrom }) => [id, verdict, retainedFrom]),
   );
   // Original bytes are never rewritten.
   assert.deepEqual(

@@ -145,6 +145,8 @@ export interface RecipeClaimEvidence {
   /** Honest timing limitations, independent of the semantic verdict. */
   timing?: 'measured' | 'untimed' | 'outside-recording';
   note?: string;
+  /** Repair selection only: the original execution whose proof this row keeps. */
+  retainedFrom?: string;
 }
 
 export interface RecipeClaimLedger {

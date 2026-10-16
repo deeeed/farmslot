@@ -127,6 +127,8 @@ export function selectRepairClaimSources(
 }
 
 const DIGEST = /^sha256:[a-f0-9]{64}$/u;
+/** The ready gate's frozen package identity: a bare sha256 hex digest. */
+const PACKAGE_HASH = /^[a-f0-9]{64}$/u;
 const COMMIT = /^[a-f0-9]{40,64}$/u;
 const EXECUTION = /^[A-Za-z0-9._-]+$/u;
 const PROOF_MODES: readonly string[] = ['state', 'visual', 'mixed'];
@@ -184,7 +186,7 @@ export function validateRecipeRepairScope(value: unknown): RecipeValidationResul
     if (!isNonEmptyString(value[field])) issue(field, `${field} is required.`);
   if (!Number.isInteger(value.generation) || Number(value.generation) < 0)
     issue('generation', 'A run generation is required.');
-  if (typeof value.packageHash !== 'string' || !DIGEST.test(value.packageHash))
+  if (typeof value.packageHash !== 'string' || !PACKAGE_HASH.test(value.packageHash))
     issue('packageHash', 'A frozen package digest is required.');
   for (const field of ['packageHeadSha', 'reviewBaseSha'])
     if (typeof value[field] !== 'string' || !COMMIT.test(value[field]))

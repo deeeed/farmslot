@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import {
   type AgentContext,
+  isRecipeRepairScope,
   type RecipeClaimVerdict,
   recipeRepairId,
   type RecipeRepairScope,
@@ -16,6 +17,7 @@ import {
 } from '@farmslot/protocol';
 
 import { repairFeedbackCandidates } from '../intelligence/feedback-candidates.js';
+import { computeReadyGatePackageHash } from '../run-completion/ready-gate-package.js';
 
 import { stampPublishGateReviewStatusForPackage } from './gate-policy.js';
 import { makeReadyGatePackage, makeRun } from './test-fixtures.js';
@@ -62,8 +64,23 @@ const original = recorded('original', [
   ['AC-2', 'awaiting-review'],
 ]);
 const closure = recordedEvidenceClosureIdentity(original);
-const packageHash = sha('package');
 const head = 'e'.repeat(40);
+const unhashed = makeReadyGatePackage({
+  headSha: head,
+  reviewSubjectHash: 'subject',
+  reviewSnapshot: {
+    source: 'local-git',
+    baseRef: 'origin/main',
+    baseSha: 'd'.repeat(40),
+    headSha: head,
+    diffHash: 'diff',
+    diffStat: { files: 1, additions: 1, deletions: 0 },
+    capturedAt: '2026-10-16T00:00:00.000Z',
+  },
+});
+// The scope binds the gate's own package identity, in its production format.
+const pkg = { ...unhashed, packageHash: computeReadyGatePackageHash(unhashed) };
+const packageHash = pkg.packageHash;
 const scope: RecipeRepairScope = {
   schemaVersion: 1,
   repairId: recipeRepairId({ runId: 'run-1', packageHash, receiptIds: ['receipt-2'] }),
@@ -122,19 +139,6 @@ const fresh: RecordedEvidencePackageInput = {
     },
   },
 };
-const pkg = makeReadyGatePackage({
-  headSha: head,
-  reviewSubjectHash: 'subject',
-  reviewSnapshot: {
-    source: 'local-git',
-    baseRef: 'origin/main',
-    baseSha: 'd'.repeat(40),
-    headSha: head,
-    diffHash: 'diff',
-    diffStat: { files: 1, additions: 1, deletions: 0 },
-    capturedAt: '2026-10-16T00:00:00.000Z',
-  },
-});
 const review = (id: string): ReviewStatus =>
   stampPublishGateReviewStatusForPackage(
     {
@@ -204,6 +208,7 @@ const codes = (run: Run, prepared = pkg) =>
   visualRepairEvidenceReasons(run, [fresh], prepared).map(({ code }) => code);
 
 test('repair evidence needs an authorised scope at the frozen review base', () => {
+  assert.ok(isRecipeRepairScope(scope), 'a scope bound to a real gate package is valid');
   assert.deepEqual(codes(repairRun([])), ['evidence-repair-unbound']);
   assert.deepEqual(
     codes(repairRun([record({ applicability: [row('ctx-1', true)] })]), {
@@ -279,10 +284,13 @@ test('the reservation is one persisted increment of the named loop and an identi
 });
 
 test('the existing REVIEW-FIX renderer receives the repair contract and each rejected criterion', () => {
-  const [contract, issue] = visualRepairIssues(scope);
+  const [contract, issue] = visualRepairIssues(scope, 'tasks/dev/PROOF-1');
   assert.equal(contract!.file, 'artifacts/visual-repair-scope.json');
   assert.match(contract!.description, /recipes\/visual-repair\.json/u);
-  assert.match(contract!.description, /farmslot recipe run recipes\/visual-repair\.json/u);
+  assert.match(
+    contract!.description,
+    /RECIPE_TASK_DIR="\$\(cd tasks\/dev\/PROOF-1 && pwd\)" farmslot recipe run tasks\/dev\/PROOF-1\/recipes\/visual-repair\.json/u,
+  );
   assert.match(contract!.description, /Leave the main task recipe unchanged/u);
   assert.equal(issue!.file, 'artifacts/recipe-runs/original/stills/chart.png');
   assert.equal(

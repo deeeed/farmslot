@@ -526,7 +526,7 @@ function sendBackFixture(t: import('node:test').TestContext, ticket: string) {
   });
   updateRun(run.id, { status: 'done', decisions: [gate('gate-1'), gate('gate-2')] });
   t.after(async () => deleteRun(run.id));
-  const packageHash = `sha256:${'b'.repeat(64)}`;
+  const packageHash = 'b'.repeat(64);
   const scope: RecipeRepairScope = {
     schemaVersion: 1,
     repairId: recipeRepairId({ runId: run.id, packageHash, receiptIds: ['receipt-1'] }),
