@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Re-claim a failed run's slot before replaying write-task, and refuse the replay before any step runs when another live run holds that slot, naming the holder.
+
 - Submit buffered Codex input with Enter, never Tab, and accept only the next-tool-call steering block as delivery proof; queued follow-up input stays undelivered.
 
 - Keep failed dev worker CLI verification visible as critical node and fleet health.
