@@ -6,7 +6,10 @@ export function runnerPaneContainsInstruction(pane: string, message: string): bo
   return normalizeInstructionText(pane).includes(needle);
 }
 
-export function runnerPaneBufferedInstruction(pane: string): string {
+// The live composer: the line span holding unsent input and its normalized text.
+function liveComposer(
+  pane: string,
+): { lines: string[]; start: number; end: number; text: string } | null {
   const lines = pane
     .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
     .trimEnd()
@@ -29,7 +32,12 @@ export function runnerPaneBufferedInstruction(pane: string): string {
         .join('\n')
         .replace(/^\s*❯\s?/, ''),
     );
-    return text === 'Press up to edit queued messages' ? '' : text;
+    return {
+      lines,
+      start: boxStart + 1,
+      end: boxEnd,
+      text: text === 'Press up to edit queued messages' ? '' : text,
+    };
   }
   const footer = lines
     .map((line) =>
@@ -40,15 +48,29 @@ export function runnerPaneBufferedInstruction(pane: string): string {
     .lastIndexOf(true);
   const content = footer === -1 ? lines : lines.slice(0, footer);
   const composer = content.map((line) => /^\s*[›❯](?:\s|$)/.test(line)).lastIndexOf(true);
-  if (composer === -1 || (footer === -1 && composer !== lines.length - 1)) return '';
+  if (composer === -1 || (footer === -1 && composer !== lines.length - 1)) return null;
   const body = content.slice(composer);
   // Only the bottom composer above the status footer is live input. Transcript prompts are history.
   const separator = body.map((line) => !line.trim()).lastIndexOf(true);
-  const buffered = (separator === -1 ? body : body.slice(0, separator))
+  const end = composer + (separator === -1 ? body.length : separator);
+  const buffered = lines
+    .slice(composer, end)
     .map((line, index) => (index === 0 ? line.replace(/^\s*[›❯]\s?/, '') : line))
     .join('\n');
   const text = normalizeInstructionText(buffered);
-  return text === 'Ask Codex to do anything' ? '' : text;
+  return { lines, start: composer, end, text: text === 'Ask Codex to do anything' ? '' : text };
+}
+
+export function runnerPaneBufferedInstruction(pane: string): string {
+  return liveComposer(pane)?.text ?? '';
+}
+
+/** The pane without its live composer lines, so unsent input never reads as runner output. */
+export function runnerPaneWithoutComposer(pane: string): string {
+  const composer = liveComposer(pane);
+  return composer
+    ? [...composer.lines.slice(0, composer.start), ...composer.lines.slice(composer.end)].join('\n')
+    : pane;
 }
 
 export function runnerPaneHasBufferedInstruction(pane: string, message: string): boolean {
