@@ -199,7 +199,9 @@ async function fixture(t: TestContext, scenario = 'matching') {
 test('an ingested PASS regains its launch snapshot and exact structured result without a new review', async (t) => {
   const f = await fixture(t);
   assert.equal((await f.readiness()).state, 'not-ready');
-  assert.deepEqual((await f.recover()).recoveredIds, ['review-2']);
+  const recovery = await f.recover();
+  assert.deepEqual(recovery.repairedIds, ['review-2']);
+  assert.deepEqual(recovery.recoveredIds, []);
   const after = getRun(f.run.id)!;
   const reviews = after.engineState!.publishGate!.reviews!;
   assert.equal(reviews.length, 1);
@@ -242,7 +244,9 @@ test('failed artifact capture leaves the same review repairable without spending
   const f = await fixture(t, 'capture-error');
   assert.deepEqual((await f.recover()).recoveredIds, []);
   assert.deepEqual(getRun(f.run.id)!.engineState!.publishGate!.reviews, [f.existing]);
-  assert.deepEqual((await f.recover()).recoveredIds, ['review-2']);
+  const recovery = await f.recover();
+  assert.deepEqual(recovery.repairedIds, ['review-2']);
+  assert.deepEqual(recovery.recoveredIds, []);
   assert.equal(f.captureCalls(), 2);
   assert.equal(getRun(f.run.id)!.engineState!.publishGate!.reviews![0].attempts?.length, 1);
   assert.equal((await f.readiness()).state, 'ready');
@@ -251,7 +255,9 @@ test('failed artifact capture leaves the same review repairable without spending
 for (const scenario of ['missing-snapshot', 'wrong-head', 'wrong-attempt', 'foreign-session']) {
   test(`recovered verdict refuses ${scenario} without replacing its recorded attempt`, async (t) => {
     const f = await fixture(t, scenario);
-    assert.deepEqual((await f.recover()).recoveredIds, [], scenario);
+    const recovery = await f.recover();
+    assert.deepEqual(recovery.recoveredIds, [], scenario);
+    assert.deepEqual(recovery.repairedIds ?? [], [], scenario);
     assert.deepEqual(getRun(f.run.id)!.engineState!.publishGate!.reviews, [f.existing]);
     assert.equal((await f.readiness()).state, 'not-ready');
   });
@@ -260,7 +266,9 @@ for (const scenario of ['missing-snapshot', 'wrong-head', 'wrong-attempt', 'fore
 for (const scenario of ['changed-subject', 'changed-diff']) {
   test(`metadata repair preserves ${scenario} freshness refusal`, async (t) => {
     const f = await fixture(t, scenario);
-    assert.deepEqual((await f.recover()).recoveredIds, ['review-2']);
+    const recovery = await f.recover();
+    assert.deepEqual(recovery.repairedIds, ['review-2']);
+    assert.deepEqual(recovery.recoveredIds, []);
     assert.equal(getRun(f.run.id)!.engineState!.publishGate!.reviews!.length, 1);
     assert.equal((await f.readiness()).state, 'not-ready', scenario);
   });

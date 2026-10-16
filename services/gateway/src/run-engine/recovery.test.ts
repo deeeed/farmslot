@@ -1142,6 +1142,32 @@ test('recovery replays the human gate before reconciliation when a reviewer comp
   assert.equal(calls.broadcasted, 0);
 });
 
+test('startup replays the gate for repaired review metadata without a fresh review', async () => {
+  const run = withRecoverableReviewer(
+    minimalActiveRun({
+      ticketOrPr: 'RECOVERY-REVIEW-REPAIR',
+      familyRootTicketOrPr: 'RECOVERY-REVIEW-REPAIR',
+      taskFile: '/tmp/farmslot-recovery-review-repair/TASK.md',
+      status: 'blocked',
+      steps: [{ name: 'human-gate', status: 'running' }],
+      decisions: [humanGateDecision('gate-review-repair')],
+    }),
+  );
+  const { deps, calls } = publicationReviewRecoveryDeps(run);
+  deps.recoverInflightPublicationReviews = async () => ({
+    recoveredIds: [],
+    repairedIds: ['rev3'],
+    terminalErrors: [],
+  });
+
+  await recoverActiveRuns(deps);
+
+  assert.deepEqual(calls.replayed, [run.id]);
+  assert.deepEqual(calls.rearmed, []);
+  assert.equal(calls.reconciled, 0);
+  assert.equal(calls.broadcasted, 0);
+});
+
 test('recovery retries gate replay after a completed reviewer was ingested', async () => {
   const run = withRecoverableReviewer(
     minimalActiveRun({

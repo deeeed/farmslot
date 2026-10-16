@@ -66,12 +66,25 @@ export { isTerminalReviewArtifactError, TerminalReviewArtifactError };
 
 export interface PublicationReviewRecoveryResult {
   recoveredIds: string[];
+  repairedIds?: string[];
   relaunchIds?: string[];
   terminalErrors: Array<{ contextId: string; message: string }>;
 }
 
+/** Metadata repairs must replay the gate without restamping a review to a new package. */
+export function publicationReviewRecoveryNeedsReplay(
+  result: PublicationReviewRecoveryResult,
+): boolean {
+  return (
+    result.recoveredIds.length > 0 ||
+    (result.repairedIds?.length ?? 0) > 0 ||
+    (result.relaunchIds?.length ?? 0) > 0
+  );
+}
+
 type RecoveredReviewerAction =
   | { kind: 'recovered'; id: string }
+  | { kind: 'repaired'; id: string }
   | { kind: 'relaunch'; id: string }
   | null;
 
@@ -539,6 +552,7 @@ export async function recoverInflightPublicationReviews(
       : undefined;
 
   const recoveredIds: string[] = [];
+  const repairedIds: string[] = [];
   const relaunchIds: string[] = [];
   const terminalErrors: PublicationReviewRecoveryResult['terminalErrors'] = [];
   for (const ctx of candidates) {
@@ -553,6 +567,7 @@ export async function recoverInflightPublicationReviews(
         options,
       );
       if (action?.kind === 'recovered') recoveredIds.push(action.id);
+      if (action?.kind === 'repaired') repairedIds.push(action.id);
       if (action?.kind === 'relaunch') relaunchIds.push(action.id);
     } catch (err) {
       if (isTerminalReviewArtifactError(err)) {
@@ -568,7 +583,7 @@ export async function recoverInflightPublicationReviews(
       );
     }
   }
-  return { recoveredIds, relaunchIds, terminalErrors };
+  return { recoveredIds, repairedIds, relaunchIds, terminalErrors };
 }
 
 /**
@@ -762,7 +777,7 @@ async function ingestRecoveredReviewer(
   console.log(
     `[run-engine] run ${runId.slice(0, 8)} — recovered in-flight publication review ${persisted.id} (verdict ${persisted.verdict}) from reviewer context ${ctx.id}`,
   );
-  return { kind: 'recovered', id: persisted.id };
+  return { kind: repairing ? 'repaired' : 'recovered', id: persisted.id };
 }
 
 async function persistRecoveredFailedReviewer(
