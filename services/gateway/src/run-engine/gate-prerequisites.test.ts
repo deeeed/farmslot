@@ -981,6 +981,21 @@ test('optional reviews still withhold approval for ISSUES with no pending decisi
     );
     assert.deepEqual(gateActionsForReadiness(actions, readiness), [{ id: 'hold' }]);
   }
+  const failedContinuation: ReviewStatus = {
+    ...review,
+    verdict: 'failed',
+    feedbackSent: true,
+    attempts: [
+      { mode: 'cold', loopNumber: 1, verdict: 'issues', unresolvedCount: 1, issues: review.issues },
+      { mode: 'warm', loopNumber: 2, verdict: 'failed', unresolvedCount: 1 },
+    ],
+  };
+  const failed = await collectRunGateReadiness(
+    { ...run, engineState: { publishGate: { reviews: [failedContinuation] } } },
+    prepared,
+    sources,
+  );
+  assert.deepEqual(gateActionsForReadiness(actions, failed), [{ id: 'hold' }]);
   const activeFix = await collectRunGateReadiness(
     {
       ...run,
@@ -1023,6 +1038,53 @@ test('optional reviews still withhold approval for ISSUES with no pending decisi
     sources,
   );
   assert.equal(stale.state, 'not-ready');
+  const replacedPass = {
+    ...pass,
+    attempts: [
+      {
+        mode: 'cold' as const,
+        loopNumber: 1,
+        verdict: 'issues' as const,
+        unresolvedCount: 1,
+        issues: review.issues,
+      },
+      {
+        mode: 'warm' as const,
+        loopNumber: 2,
+        verdict: 'pass' as const,
+        unresolvedCount: 0,
+        reviewSnapshot: prepared.reviewSnapshot,
+      },
+    ],
+  };
+  const replaced = await collectRunGateReadiness(
+    { ...run, engineState: { publishGate: { reviews: [replacedPass] } } },
+    prepared,
+    sources,
+  );
+  assert.equal(replaced.state, 'ready');
+  const staleReplaced = await collectRunGateReadiness(
+    {
+      ...run,
+      engineState: {
+        publishGate: {
+          reviews: [
+            {
+              ...replacedPass,
+              reviewedHeadSha: 'old-head',
+              attempts: replacedPass.attempts.map((attempt) => ({
+                ...attempt,
+                reviewSnapshot: undefined,
+              })),
+            },
+          ],
+        },
+      },
+    },
+    prepared,
+    sources,
+  );
+  assert.equal(staleReplaced.state, 'not-ready');
 });
 
 test('unresolved approval cannot waive findings, missing reviews or changed inputs', async () => {

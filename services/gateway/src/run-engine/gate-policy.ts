@@ -10,7 +10,6 @@ import {
   isPublishApprovalAction,
   isQualifyingReview,
   latestExhaustedReview,
-  latestReview,
   type NoChangeGatePayload,
   PUBLISH_APPROVAL_ACTIONS,
   qualifyingPassingReviews,
@@ -29,7 +28,9 @@ import {
   type WorkerTerminalDisposition,
   type WorkerTerminalEvidence,
 } from '@farmslot/protocol';
-import { resolveReviewMode } from '@farmslot/review-dispatch';
+import { publicationReviewBlockingReason, resolveReviewMode } from '@farmslot/review-dispatch';
+
+export { publicationReviewBlockingReason } from '@farmslot/review-dispatch';
 
 import { REQUESTED_REVIEW_SOURCE, reviewLoopNumberFromId } from '../quality/review-sources.js';
 import type { ReviewResult } from '../review/orchestrator.js';
@@ -67,40 +68,6 @@ export function reviewerIsActiveForReview(
       ['launching', 'working', 'waiting'].includes(context.status) &&
       context.artifactScope === review.id,
   );
-}
-
-/** An optional review policy never waives findings from a review that actually ran. */
-export function publicationReviewBlockingReason(
-  run: Pick<Run, 'status' | 'agentContexts' | 'engineState'>,
-  prepared?: Pick<ReadyGatePrPackage, 'headSha'> | null,
-): string | undefined {
-  const reviews = run.engineState?.publishGate?.reviews ?? [];
-  const latest = latestReview(reviews);
-  const count =
-    latest?.verdict === 'issues'
-      ? Math.max(latest.unresolvedCount ?? 0, latest.issues?.length ?? 0)
-      : 0;
-  const fixing =
-    run.status === 'fixing' ||
-    run.agentContexts?.some(
-      (context) =>
-        context.role === 'review-fix' &&
-        ['launching', 'working', 'waiting'].includes(context.status),
-    );
-  if (fixing)
-    return count
-      ? `Review found ${count} issue${count === 1 ? '' : 's'}, fix in progress.`
-      : 'Review fix in progress.';
-  if (count)
-    return `Review found ${count} issue${count === 1 ? '' : 's'}. Fix and pass review before publishing.`;
-  if (
-    prepared &&
-    reviews.some((review) => review.verdict === 'issues' && review.unresolvedCount > 0) &&
-    (latest?.verdict !== 'pass' ||
-      (latest.reviewedHeadSha ?? latest.reviewSnapshot?.headSha) !== prepared.headSha)
-  )
-    return 'Review fixes need a passing review of the current head.';
-  return undefined;
 }
 
 export function publicationGateDecisionActions(opts: {

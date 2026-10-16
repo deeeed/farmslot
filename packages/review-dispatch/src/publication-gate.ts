@@ -12,6 +12,8 @@ import {
   isPublishApprovalAction,
   isValidEvidenceAttestationReason,
   type ReadyGatePayload,
+  type ReadyGatePrPackage,
+  type Run,
   type RunGateReadiness,
 } from '@farmslot/protocol';
 
@@ -26,6 +28,8 @@ export interface PublicationGateClaim extends AcceptanceCriterionView {
 }
 
 export interface PublicationGateInput {
+  run?: Pick<Run, 'status' | 'agentContexts' | 'engineState'> | null;
+
   actions: readonly PublicationGateAction[];
   claims?: readonly PublicationGateClaim[];
   judgmentRows?: readonly EvidenceReviewJudgmentRow[];
@@ -140,13 +144,49 @@ export function acceptanceClaimRows(
   return claims;
 }
 
+/** An optional review policy never waives findings from a review that actually ran. */
+export function publicationReviewBlockingReason(
+  run: Pick<Run, 'status' | 'agentContexts' | 'engineState'>,
+  prepared?: Pick<ReadyGatePrPackage, 'headSha'> | null,
+): string | undefined {
+  const reviews = run.engineState?.publishGate?.reviews ?? [];
+  // Continuations replace the same row. Its attempts retain the findings even
+  // when a blocked fix changes the aggregate verdict to failed.
+  let count = 0;
+  for (const review of reviews) {
+    for (const entry of [...(review.attempts ?? []), review]) {
+      const findings = Math.max(entry.unresolvedCount ?? 0, entry.issues?.length ?? 0);
+      if (entry.verdict === 'issues' && findings > 0) count = findings;
+    }
+    if (
+      review.verdict === 'pass' &&
+      (!prepared || (review.reviewedHeadSha ?? review.reviewSnapshot?.headSha) === prepared.headSha)
+    )
+      count = 0;
+  }
+  const fixing =
+    run.status === 'fixing' ||
+    run.agentContexts?.some(
+      (context) =>
+        context.role === 'review-fix' &&
+        ['launching', 'working', 'waiting'].includes(context.status),
+    );
+  if (fixing)
+    return count
+      ? `Review found ${count} issue${count === 1 ? '' : 's'}, fix in progress.`
+      : 'Review fix in progress.';
+  if (count)
+    return `Review found ${count} issue${count === 1 ? '' : 's'}. Fix and pass review before publishing.`;
+  return undefined;
+}
+
 /** Presentation only: action availability and evidence judgments remain gateway-owned. */
 export function publicationGateView(input: PublicationGateInput) {
   const pending = new Set(input.pendingVisualClaimIds ?? []);
   const claims = acceptanceClaimRows(input);
-  const reviewBlock = input.readiness?.reasons.find(
-    (reason) => reason.code === 'review-fix-required',
-  );
+  const reviewBlock =
+    (input.run && publicationReviewBlockingReason(input.run)) ||
+    input.readiness?.reasons.find((reason) => reason.code === 'review-fix-required')?.message;
   const actions =
     reviewBlock || input.resolved
       ? input.actions.filter((action) => !isPublishApprovalAction(action.id))
@@ -189,7 +229,7 @@ export function publicationGateView(input: PublicationGateInput) {
   const blockedReason = input.resolved
     ? 'This decision is resolved.'
     : reviewBlock
-      ? reviewBlock.message
+      ? reviewBlock
       : refreshRequired
         ? 'Refresh package'
         : pending.size

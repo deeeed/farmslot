@@ -90,3 +90,27 @@ test('a newer publication gate clears old request progress and rejections', () =
   };
   assert.equal(readyReviewRequestProgress(run), '');
 });
+
+test('retained ISSUES and active fixing keep a status without a pending decision', () => {
+  const run: NonNullable<Parameters<typeof readyReviewRequestProgress>[0]> = {
+    status: 'human-gating',
+    decisions: [],
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            id: 'rv3',
+            source: 'human-gate',
+            mode: 'cold',
+            loopNumber: 3,
+            verdict: 'issues',
+            unresolvedCount: 1,
+          },
+        ],
+      },
+    },
+  };
+  assert.match(readyReviewRequestProgress(run), /Review found 1 issue/);
+  run.status = 'fixing';
+  assert.equal(readyReviewRequestProgress(run), 'Review found 1 issue, fix in progress.');
+});

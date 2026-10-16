@@ -6,6 +6,7 @@ import {
   deriveRunLifecycleView,
   type GitBranchDiffFile,
   type ReadyGatePayload,
+  type Run,
   type RunDecision,
 } from '@farmslot/protocol';
 import {
@@ -23,6 +24,7 @@ import { workspaceArtifactBasename } from './workspace-artifacts.js';
 import type { ReadyWorkspaceTab } from './workspace-url-state.js';
 
 export function renderReadyTopBar(input: {
+  run?: Run | null;
   payload: ReadyGatePayload;
   decision?: RunDecision;
   publicationTarget: 'draft' | 'ready';
@@ -62,6 +64,7 @@ export function renderReadyTopBar(input: {
     (!input.payload.prPackage ? [{ id: 'ready', label: 'Mark Ready', style: 'primary' }] : []);
   return html`
     ${renderPublicationGatePanel({
+      run: input.run,
       actions,
       showClaims: input.showClaims,
       feedback: input.feedback,

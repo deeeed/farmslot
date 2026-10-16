@@ -11,12 +11,13 @@ import {
 } from 'react-native';
 
 import type { EvidenceReviewJudgmentRow } from '@farmslot/adapter-sdk/evidence';
-import { type RunDecision, type RunGateReadiness } from '@farmslot/protocol';
+import { type Run, type RunDecision, type RunGateReadiness } from '@farmslot/protocol';
 import {
   type PublicationGateAction,
   type PublicationGateClaim,
   publicationGateCriteria,
   publicationGateView,
+  publicationReviewBlockingReason,
   type ReviewDispatchViewModel,
 } from '@farmslot/review-dispatch';
 import { gateClaimsHeight, publicationGateColors, skeletonTokens } from '@farmslot/theme';
@@ -139,6 +140,7 @@ export function GateReviewVerdicts({ reviews }: { reviews: GateReviewVerdict[] }
 }
 
 export function GateActions({
+  run,
   decision,
   actions,
   sendingActionId,
@@ -158,6 +160,7 @@ export function GateActions({
   disabled = false,
   reviewDisabled = false,
 }: {
+  run?: Run | null;
   showClaims?: boolean;
   loading?: boolean;
   disabled?: boolean;
@@ -190,13 +193,14 @@ export function GateActions({
     return (
       <View style={styles.resolvedCard} testID="companion-gate-review-resolved">
         <Text style={styles.resolvedText}>
-          Resolved: {decision.resolvedAction ?? 'resolved'} ·{' '}
-          {new Date(decision.resolvedAt).toLocaleString()}
+          {(run && publicationReviewBlockingReason(run)) ||
+            `Resolved: ${decision.resolvedAction ?? 'resolved'} · ${new Date(decision.resolvedAt).toLocaleString()}`}
         </Text>
       </View>
     );
   }
   const view = publicationGateView({
+    run,
     actions,
     claims,
     judgmentRows,
