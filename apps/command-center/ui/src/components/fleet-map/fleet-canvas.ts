@@ -71,6 +71,7 @@ import {
   fleetCanvasUrlStateHash,
   type FleetCanvasViewMode,
 } from './fleet-canvas-url-state.js';
+import { renderFleetSkeleton } from './fleet-skeleton.js';
 import type { MachinePauseBusyAction } from './machine-pause-dialog.js';
 import {
   machinePauseShouldRefetch,
@@ -1355,10 +1356,10 @@ export class FleetCanvas extends LitElement {
   }
   private renderGroupView() {
     if (this.bootstrapFailed && this.slots.length === 0) {
-      return html`<div class="empty">Fleet refresh failed — no cached fleet data available</div>`;
+      return renderFleetSkeleton('Fleet unavailable', () => gateway.reconnect());
     }
     if (this.hydrating && this.slots.length === 0) {
-      return html`<farm-hydrating message="Loading fleet data…"></farm-hydrating>`;
+      return renderFleetSkeleton();
     }
     if (this.groups.length === 0) {
       return html`<div class="empty">
@@ -1406,10 +1407,10 @@ export class FleetCanvas extends LitElement {
 
   private renderResourceView() {
     if (this.bootstrapFailed && this.slots.length === 0) {
-      return html`<div class="empty">Fleet refresh failed — no cached fleet data available</div>`;
+      return renderFleetSkeleton('Fleet unavailable', () => gateway.reconnect());
     }
     if (this.hydrating && this.slots.length === 0) {
-      return html`<farm-hydrating message="Loading fleet data…"></farm-hydrating>`;
+      return renderFleetSkeleton();
     }
     // Never block the pressure section on the slower per-slot resource
     // batches. machine-pressure-overview paints from the fast history read

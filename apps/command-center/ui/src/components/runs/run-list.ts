@@ -69,6 +69,7 @@ import {
   showsRunProgress,
   TERMINAL_STATUSES,
 } from './run-list-model.js';
+import { renderRunListSkeleton } from './run-list-skeleton.js';
 import {
   FLOW_OPTIONS,
   LANE_OPTIONS,
@@ -640,9 +641,9 @@ export class RunList extends RunListState {
           ? html`<div class="rehydrating-banner">Reconnecting… showing last snapshot</div>`
           : nothing}
       ${this.bootstrapFailed && this.runs.length === 0
-        ? html`<div class="empty">Run refresh failed — no cached runs available</div>`
+        ? renderRunListSkeleton('Runs unavailable', () => gateway.reconnect())
         : this.hydrating && this.runs.length === 0
-          ? html`<farm-hydrating message="Loading runs…"></farm-hydrating>`
+          ? renderRunListSkeleton()
           : (() => {
               const list = html`${this.queueItems.length > 0
                 ? html`<div class="queue-preview">

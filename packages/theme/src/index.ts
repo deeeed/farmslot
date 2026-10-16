@@ -5,3 +5,4 @@ export { colors } from './palette';
 export { PROJECT_COLORS, projectColor } from './project';
 export { publicationGateColors } from './publication-gate';
 export { RUNNER_COLORS, runnerColor } from './runner';
+export { gateClaimsHeight, type SkeletonKind, skeletonTokens } from './skeleton';

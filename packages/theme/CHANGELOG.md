@@ -4,6 +4,8 @@ All notable changes to `@farmslot/theme` are tracked here.
 
 ## Unreleased
 
+- Share skeleton shapes, sizing and appearance tokens across clients.
+
 - Add accessible light and dark publication decision tokens.
 
 - Color token for the `pi` runner.
