@@ -1690,7 +1690,6 @@ export function runnerPaneShowsSubmittedInstruction(
   }
 }
 
-/** Pre-send duplicate guard — stricter than post-send acceptance for Grok MCP races. */
 /**
  * A busy Codex turn keeps its progress on screen while the prompt sits unsent in
  * the live composer, so progress with the prompt visible proves nothing there.
@@ -1707,6 +1706,7 @@ function runnerPaneHoldsUnsentCodexPrompt(
   );
 }
 
+/** Pre-send duplicate guard — stricter than post-send acceptance for Grok MCP races. */
 export function runnerPaneShowsPreSendDuplicateInstruction(
   pane: string,
   message: string,

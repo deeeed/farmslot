@@ -1500,11 +1500,12 @@ export async function resumeReviewFixPromptDelivery(
   let result = await deps.deliver(deliveryOptions);
   const boundaryMs = Date.parse(deliveryStartedAt ?? '');
   if (!result.delivered && priorPromptSendAttempted && Number.isFinite(boundaryMs)) {
-    // A fix sent before prompts led with their identity left only the shared-prefix receipt.
-    // Probe it without sending, accepting a receipt only after this delivery's own boundary.
+    // A fix sent before prompts led with their identity carried this exact text, which
+    // hook digests share across rounds and native readers compare whole. Probe it without
+    // sending, accepting a receipt only after this delivery's own boundary.
     const legacy = await deps.deliver({
       ...deliveryOptions,
-      prompt: `${basePrompt}\n\n${reviewFixProgressContract(taskDir, taskFile)}`,
+      prompt: `${basePrompt}\n\n${reviewFixProgressContract(taskDir, taskFile)}\n\nFarmslot fix delivery attempt: ${attemptStartedAt}`,
       acknowledgementSinceMs: boundaryMs - LEGACY_FIX_RECEIPT_CLOCK_TOLERANCE_MS,
     });
     if (legacy.delivered) result = legacy;

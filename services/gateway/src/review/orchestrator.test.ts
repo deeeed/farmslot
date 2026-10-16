@@ -685,7 +685,13 @@ test('recovery recognizes a fix sent in the old prompt format only after its own
     'recovery only probes, never resends',
   );
   assert.match(calls[0].prompt, /^Farmslot fix delivery 2026-10-16T10:53:17\.568Z\./);
-  assert.match(calls[1].prompt, /^read tasks\/run-1\/REVIEW-FIX\.md\n\nFollow /);
+  // Byte-equal to the text the previous release sent and rebuilt, so native readers that
+  // compare the whole prompt (Codex, Grok) and prefix digests (Claude) both recognize it.
+  const mark = 'tasks/run-1/mark --checklist REVIEW-FIX.md --signal REVIEW-FIX-SIGNAL.json';
+  assert.equal(
+    calls[1].prompt,
+    `read tasks/run-1/REVIEW-FIX.md\n\nFollow tasks/run-1/REVIEW-FIX.md top-to-bottom. After EVERY checklist step run ${mark} N (bootstrap with ${mark} start). Skipping ${mark} leaves the fix timeout blind to real progress. On success finish with ${mark} complete --mark-last; when applicable use ${mark} no-change --reason \"…\" or ${mark} blocked --reason \"…\" instead.\n\nFarmslot fix delivery attempt: 2026-10-16T10:54:03.119Z`,
+  );
   assert.equal(calls[1].sinceMs, Date.parse(boundary) - 60_000);
 });
 

@@ -639,8 +639,10 @@ for (const entry of [false, true]) {
         verifyWaitMs: 0,
         requirePromptDigest: false,
       }),
-      /Prompt delivery failed|not ready|readiness/,
+      /Prompt delivery failed/,
     );
+    const typed = callOrder.filter((entry) => entry === 'tmux:send-literal').length;
+    assert.equal(typed, entry ? 0 : 1, 'the unsent prompt is submitted, never typed again');
   });
 }
 
