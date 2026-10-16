@@ -127,7 +127,8 @@ test('wrong runner, shell, question, busy and foreign queue receive no keystroke
   process.env.TMUX_PANE_STATE_TAIL_CAPTURE = 'Do you want to continue? [y/n]';
   assert.equal((await send(pane, 'claude', 'blind answer')).verification, 'pending_question');
   process.env.TMUX_PANE_STATE_TAIL_CAPTURE = 'tab to queue message';
-  assert.equal((await send(pane, 'claude', 'busy')).verification, 'busy');
+  // Claude takes input mid-turn; only a flush still waits for an idle pane.
+  assert.equal((await send(pane, 'claude', '', null, true)).verification, 'busy');
   process.env.TMUX_PANE_STATE_TAIL_CAPTURE = '1 queued message';
   assert.equal((await send(pane, 'claude', 'queue')).verification, 'queued_input');
   assert.deepEqual(received(), []);
@@ -199,10 +200,11 @@ test('late acceptance survives repeated inspection until the lane owner acknowle
   assert.equal(first.accepted.receipt_id, receipt.receipt_id);
   assert.deepEqual(first.accepted, second.accepted);
   assert.equal(second.queued, false);
-  assert.equal(
-    (await send(pane, 'claude', 'late accepted prompt')).verification,
-    'acceptance_unacknowledged',
-  );
+  // A same-prompt retry returns the retained evidence without a key.
+  const retry = await send(pane, 'claude', 'late accepted prompt');
+  assert.equal(retry.verification, 'submitted');
+  assert.equal(retry.typed, false);
+  assert.equal(retry.evidence.receipt_id, receipt.receipt_id);
   assert.equal(
     acknowledgeAcceptance(pane, 'claude', 'a-different-receipt').verification,
     'receipt_mismatch',
@@ -239,25 +241,20 @@ test('an overlapping inspection cannot overwrite a newer receipt', async (t) => 
     payload: 'newer queued prompt',
     sent_at: Date.now() + 1000,
   };
-  const read = fs.readFileSync;
+  const mkdir = fs.mkdirSync;
   let overlapped = false;
   const lock = file.replace(/\.json$/, '.lock');
-  t.mock.method(fs, 'readFileSync', function (target, ...args) {
-    const value = read.call(fs, target, ...args);
-    if (target === file && !overlapped) {
+  // Another process replaces the receipt after this inspection read it, just before it locks.
+  t.mock.method(fs, 'mkdirSync', function (target, ...args) {
+    if (target === lock && !overlapped) {
       overlapped = true;
-      fs.mkdirSync(lock);
-      try {
-        fs.writeFileSync(file, JSON.stringify(newer), { mode: 0o600 });
-      } finally {
-        fs.rmdirSync(lock);
-      }
+      fs.writeFileSync(file, JSON.stringify(newer), { mode: 0o600 });
     }
-    return value;
+    return mkdir.call(fs, target, ...args);
   });
   paneState(pane, 'claude');
   assert.equal(overlapped, true);
-  assert.deepEqual(JSON.parse(read.call(fs, file, 'utf8')), newer);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), newer);
 });
 
 test('duplicate late acknowledgement preserves an intervening delivery', async () => {
@@ -300,8 +297,10 @@ test('explicit question answer requires the captured fingerprint and expected ru
 test('unverified receipt blocks duplicate sends; explicit flush sends only Enter', async () => {
   reset('drop');
   assert.equal((await send(pane, 'claude', 'buffered prompt')).verification, 'unverified');
-  assert.equal((await send(pane, 'claude', 'buffered prompt')).verification, 'queued_input');
-  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = 'buffered prompt';
+  // The uncertain original is never typed again while the pane does not show it.
+  assert.equal((await send(pane, 'claude', 'buffered prompt')).verification, 'unverified');
+  // Only Claude's boxed composer counts as live input.
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = `${'─'.repeat(40)}\n❯ buffered prompt\n${'─'.repeat(40)}\n  ⏵⏵ bypass permissions on (shift+tab to cycle)`;
   assert.equal(
     (await send(pane, 'claude', 'different prompt', null, true)).verification,
     'queued_payload_mismatch',
