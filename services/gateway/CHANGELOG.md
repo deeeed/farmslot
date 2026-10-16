@@ -52,6 +52,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+- Render `{{node_support_dir}}` in fixtures and `NODE_SUPPORT_DIR` in worker templates from the slot's selected node-support bundle, so pack scripts no longer resolve through the node install root or the old in-checkout support pointer. Fixture checks read the slot's selection without publishing.
+
 ## 0.22.1 - 2026-10-16
 
 - Initialize hosted tasks through the execution node’s immutable CLI and mirror its frozen marker, metadata and receipts instead of rendering a second task.

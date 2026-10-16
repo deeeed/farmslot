@@ -418,6 +418,7 @@ export function registerInternalCommand(program: Command): void {
     .option('--flow-type <type>', 'Compose selection value (the FLOW_TYPE variant key)')
     .option('--app <path>', 'APP compose selection value')
     .option('--domain <name>', 'Domain overlay for {{domain}} and overlay path selection')
+    .option('--node-support-dir <path>', 'Selected node-support bundle for {{node_support_dir}}')
     .requiredOption('--stage <dir>', 'Existing directory to write rendered fixture files into')
     .requiredOption('--manifest <file>', 'File to write the dst→staged-file manifest into')
     .action(
@@ -427,6 +428,7 @@ export function registerInternalCommand(program: Command): void {
           flowType?: string;
           app?: string;
           domain?: string;
+          nodeSupportDir?: string;
           stage: string;
           manifest: string;
         },
@@ -445,10 +447,13 @@ export function registerInternalCommand(program: Command): void {
             domain: opts.domain,
             slotMode: vars.slotMode,
           });
-          // Only DOMAIN flows into template expansion as an extra var, matching the
-          // bash expand_slot_template contract (--var domain=$DOMAIN); FLOW_TYPE/APP
-          // are compose-selection keys, not {{placeholders}}.
-          const extraVars = opts.domain ? { domain: opts.domain } : undefined;
+          // DOMAIN and the selected node-support bundle flow into template
+          // expansion as extra vars; FLOW_TYPE/APP are compose-selection keys,
+          // not {{placeholders}}.
+          const extraVars = {
+            ...(opts.domain ? { domain: opts.domain } : {}),
+            ...(opts.nodeSupportDir ? { node_support_dir: opts.nodeSupportDir } : {}),
+          };
           const plan = await computeFixturePlan({
             slotVars: vars,
             projectVars,

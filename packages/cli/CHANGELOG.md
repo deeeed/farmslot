@@ -176,6 +176,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 - refactor: rename the branch-maintenance flow `merge-main` → `update-branch` in the `run` command flow-type map.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+- Accept `--node-support-dir` in `internal fixture-plan` and render it as `{{node_support_dir}}`.
+
 ## 0.3.0 - 2026-07-13
 
 - feat: TUI viewport windowing — fleet/backlog lists scroll inside the terminal height with a position indicator (38 slots no longer overflow a 30-row terminal); Enter on a runs row opens a run-detail pane (status, flow, ticket, slot, mode, gate history via `run.get`), Esc closes it.

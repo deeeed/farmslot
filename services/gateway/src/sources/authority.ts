@@ -592,7 +592,7 @@ export class SourceAuthority {
           collect(project);
           for (const text of texts) {
             for (const match of text.matchAll(
-              /\{\{(?:farmslot_dir|FARMSLOT_DIR)\}\}\/projects\/([a-zA-Z0-9._-]+)/g,
+              /\{\{(?:farmslot_dir|FARMSLOT_DIR|node_support_dir|NODE_SUPPORT_DIR)\}\}\/projects\/([a-zA-Z0-9._-]+)/g,
             )) {
               const referenced = this.configuration.packs[match[1]];
               if (!referenced) throw new Error('Pack references an undeclared pack');

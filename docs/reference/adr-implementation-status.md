@@ -173,6 +173,7 @@ yarn farmslot recipe validate ../../docs/examples/recipes/farmslot/command-cente
 | `scripts/check-node-support-bundles.ts` gate  | Shipped | CI/check script                                    |
 | Every remote farm-script call uses the bundle | Shipped | `execOnSlot` → `node-support/remote-command.ts`    |
 | All hook-heavy projects declare bundles       | Partial | Optional per ADR; project adoption varies          |
+| Amendment 1: fixtures and worker templates    | Shipped | `node_support_dir` in fixture sync and task writer |
 
 ---
 

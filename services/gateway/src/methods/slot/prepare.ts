@@ -571,6 +571,7 @@ async function slotPrepareInner(
       logPath: syncLogPath,
       signal,
       prepareProfile: profileName(),
+      nodeSupportDir: hookSupportDir,
     });
     step('fixtures', `Fixtures synced (log: ${syncLogPath})`);
     fixturesSynced = true;
