@@ -22,7 +22,156 @@ import {
   readRunnerPaneObservabilityState,
   readRunnerSessionObservabilityState,
 } from './observability-files.js';
-import type { RunnerObservability, SlotVars } from './observability-types.js';
+import type {
+  HookRecord,
+  ObservabilityReading,
+  RunnerObservability,
+  RunnerSessionDeliveryState,
+  SlotVars,
+} from './observability-types.js';
+
+type ClaudeInterruptionProbe =
+  | { status: 'interrupted'; sessionId: string; observedAt: number }
+  | { status: 'unavailable' };
+
+export function parseClaudeInterruptionProbe(raw: string): ClaudeInterruptionProbe {
+  const value: unknown = JSON.parse(raw);
+  if (value && typeof value === 'object' && 'status' in value) {
+    if (value.status === 'unavailable') return { status: 'unavailable' };
+    if (
+      value.status === 'interrupted' &&
+      'sessionId' in value &&
+      typeof value.sessionId === 'string' &&
+      'observedAt' in value &&
+      typeof value.observedAt === 'number' &&
+      Number.isFinite(value.observedAt)
+    )
+      return { status: 'interrupted', sessionId: value.sessionId, observedAt: value.observedAt };
+  }
+  throw new Error('Invalid native interruption probe');
+}
+
+/** An interrupt may end the parent without Stop; child hooks do not end that parent. */
+export function buildClaudeInterruptionProbeCommand(
+  record: HookRecord | null,
+  sessionId: string,
+): string | null {
+  if (
+    deriveRunnerSessionDeliveryState(record, sessionId)?.value !== 'active' ||
+    !record?.transcript_path ||
+    path.basename(record.transcript_path) !== `${sessionId}.jsonl` ||
+    (record.rootSessionId && record.rootSessionId !== sessionId) ||
+    typeof record.turnStartedAt !== 'number' ||
+    !Number.isFinite(record.turnStartedAt) ||
+    record.turnStartedAt <= 0
+  )
+    return null;
+  return `python3 - <<'PY'
+import json, os
+from datetime import datetime
+from pathlib import Path
+session = ${JSON.stringify(sessionId)}
+transcript = Path(${JSON.stringify(record.transcript_path)})
+since = ${Math.floor(record.turnStartedAt)}
+def unavailable():
+    print(json.dumps({'status': 'unavailable'}))
+    raise SystemExit(0)
+try:
+    with transcript.open('rb') as stream:
+        before = os.fstat(stream.fileno())
+        offset = max(0, before.st_size - 8 * 1024 * 1024)
+        stream.seek(offset)
+        data = stream.read(8 * 1024 * 1024 + 1)
+        after = os.fstat(stream.fileno())
+    current = transcript.stat()
+except OSError:
+    unavailable()
+identity = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns)
+if identity(before) != identity(after) or identity(after) != identity(current) or not data.endswith(b'\\n'):
+    unavailable()
+if offset:
+    boundary = data.find(b'\\n')
+    if boundary < 0:
+        unavailable()
+    data = data[boundary + 1:]
+candidate = None
+markers = ('[Request interrupted by user]', '[Request interrupted by user for tool use]')
+for line in reversed(data.splitlines()):
+    if not line.strip():
+        continue
+    try:
+        row = json.loads(line)
+    except (ValueError, UnicodeError):
+        unavailable()
+    if not isinstance(row, dict):
+        unavailable()
+    if row.get('sessionId') != session or row.get('isSidechain') is not False:
+        continue
+    kind = row.get('type')
+    if kind not in ('user', 'assistant'):
+        continue
+    message = row.get('message')
+    if not isinstance(message, dict) or message.get('role') != kind:
+        unavailable()
+    content = message.get('content')
+    blocks = content if isinstance(content, list) else []
+    prompt = row.get('promptId')
+    if candidate is not None:
+        if kind == 'user' and prompt == candidate[0]:
+            print(json.dumps({'status': 'interrupted', 'sessionId': session, 'observedAt': candidate[1]}))
+            raise SystemExit(0)
+        continue
+    if kind == 'assistant':
+        unavailable()  # Later root work, unlike child progress, supersedes an interrupt.
+    control = (len(blocks) == 1 and isinstance(blocks[0], dict) and
+               blocks[0].get('type') == 'text' and blocks[0].get('text') in markers and
+               row.get('isMeta') is not True and isinstance(prompt, str) and bool(prompt))
+    if control:
+        try:
+            stamp = datetime.fromisoformat(row['timestamp'].replace('Z', '+00:00'))
+            if stamp.tzinfo is None:
+                unavailable()
+            observed = round(stamp.timestamp() * 1000)
+        except (KeyError, TypeError, ValueError, AttributeError):
+            unavailable()
+        if observed < since:
+            unavailable()
+        candidate = (prompt, observed)
+    elif not blocks or any(not isinstance(b, dict) or b.get('type') != 'tool_result' for b in blocks):
+        unavailable()  # A new root prompt is not the earlier interrupted request.
+unavailable()
+PY`;
+}
+
+export function applyClaudeInterruptionProbe(
+  record: HookRecord | null,
+  sessionId: string,
+  probe: ClaudeInterruptionProbe,
+): ObservabilityReading<RunnerSessionDeliveryState> | null {
+  const hook = deriveRunnerSessionDeliveryState(record, sessionId);
+  if (
+    hook?.value === 'active' &&
+    probe.status === 'interrupted' &&
+    probe.sessionId === sessionId &&
+    typeof record?.turnStartedAt === 'number' &&
+    probe.observedAt >= record.turnStartedAt
+  )
+    return { ...hook, value: 'idle', source: 'signal', observedAt: probe.observedAt };
+  return hook;
+}
+
+async function readClaudeSessionTurnState(
+  vars: SlotVars,
+  record: HookRecord | null,
+  sessionId: string,
+) {
+  const command = buildClaudeInterruptionProbeCommand(record, sessionId);
+  if (!command) return deriveRunnerSessionDeliveryState(record, sessionId);
+  const result = await execOnSlot(vars, command, { timeout: 10000, maxBuffer: 4096 });
+  const probe: ClaudeInterruptionProbe =
+    result.exitCode === 0 ? parseClaudeInterruptionProbe(result.stdout) : { status: 'unavailable' };
+  return applyClaudeInterruptionProbe(record, sessionId, probe);
+}
 
 async function loadObservabilitySnapshot(vars: SlotVars, target: string) {
   const { hooksRaw, statuslineRaw } = await readRunnerObservabilityFiles(vars);
@@ -144,6 +293,8 @@ PY`,
   },
   async getActivity(vars, target) {
     const { hooks, statusline } = await loadObservabilitySnapshot(vars, target);
+    const turn = await claudeHookObservability.getTurnState?.(vars, target);
+    if (turn?.value === 'idle' && turn.source === 'signal') return { ...turn, value: 'idle' };
     return deriveRunnerActivity(hooks, statusline);
   },
 
@@ -161,14 +312,14 @@ PY`,
       if (sessionState?.session_id !== expectedSessionId) return null;
       if (!(await sessionPaneMoveIsSafe(vars, sessionState.tmuxPane, paneId))) return null;
       if (paneState?.rootSessionId && paneState.rootSessionId !== expectedSessionId) return null;
-      return deriveRunnerSessionDeliveryState(sessionState, expectedSessionId);
+      return readClaudeSessionTurnState(vars, sessionState, expectedSessionId);
     }
     const paneId = await resolveTmuxPaneId(vars, target);
     if (!paneId) return null;
     const paneState = await readRunnerPaneObservabilityState(vars, paneId);
     const sessionId = paneState?.session_id;
     if (!sessionId) return null;
-    return deriveRunnerSessionDeliveryState(paneState, sessionId);
+    return readClaudeSessionTurnState(vars, paneState, sessionId);
   },
 
   async getContextPct(vars, target) {
@@ -232,6 +383,6 @@ PY`,
     if (paneState && !hookRecordMatchesRunnerSession(paneState, expected)) {
       return null;
     }
-    return deriveRunnerSessionDeliveryState(sessionState, sessionId);
+    return readClaudeSessionTurnState(vars, sessionState, sessionId);
   },
 };

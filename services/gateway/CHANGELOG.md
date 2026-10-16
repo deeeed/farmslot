@@ -7,6 +7,11 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Run independent pipeline reviews in native sessions, qualify their recorded visual judgments, and audit publication approval against the frozen evidence.
 
 - Refresh the publication package after a visual judgment; preserve the saved judgment and report a recoverable failure when refresh is unavailable.
+- Keep machine connection health current in cached fleet reads and wait for execution nodes at retained publication gates after gateway restart.
+- Read native parent interruption receipts when hooks retain an active turn, preserving child-stop and later-parent activity guards.
+- Encode artifact URL path segments so publication verifies and embeds filenames containing literal percent escapes and other URL characters.
+
+- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.22.0 - 2026-10-16
 
