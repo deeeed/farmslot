@@ -16,6 +16,7 @@
 // verdict into `reviews`, mirroring fix-pass recovery.
 
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
   type AgentContext,
@@ -36,14 +37,17 @@ import { REQUESTED_REVIEW_SOURCE } from '../quality/review-sources.js';
 import { readReviewFeedback } from '../review/feedback.js';
 import type { ReviewResult } from '../review/orchestrator.js';
 import {
+  persistReviewOutputArtifacts,
   resumeReviewAgentPromptDelivery,
   reviewerFeedbackRelPath,
 } from '../review/review-agent.js';
 import { recordReviewedInputs } from '../review/reviewed-inputs.js';
+import { readPersistedReviewSnapshot, reviewArtifactDir } from '../review/snapshots.js';
 import { getReviewConfig } from '../review/templates.js';
 import {
   isSuccessfulTerminalReviewSignal,
   isTerminalReviewArtifactError,
+  reviewResultArtifactPath,
   TerminalReviewArtifactError,
 } from '../review/terminal-result.js';
 import { getRun, updateRun } from '../runs/store.js';
@@ -55,6 +59,7 @@ import {
   reviewNeedsContinuation,
 } from './gate-policy.js';
 import { persistReviewArtifactsForRun, readPreparedPackage } from './ready-gate.js';
+import { copyWorkerArtifacts } from './review-artifacts.js';
 import { reviewerContextEffort } from './review-plan.js';
 
 export { isTerminalReviewArtifactError, TerminalReviewArtifactError };
@@ -81,6 +86,12 @@ export function recoveredReviewerActionForPromptRecovery(
 
 interface PublicationReviewRecoveryOptions {
   shouldAbort?: () => boolean;
+  captureArtifacts?: typeof copyWorkerArtifacts;
+  readers?: {
+    slot?: typeof loadSlotVars;
+    config?: typeof getReviewConfig;
+    package?: typeof readPreparedPackage;
+  };
 }
 
 async function markRecoveredReviewerContext(
@@ -189,11 +200,40 @@ type RecoverableReviewRecord = Pick<ReviewStatus, 'id'> &
       | 'maxRetries'
       | 'maxRetriesExhausted'
       | 'attempts'
+      | 'artifactPaths'
+      | 'reviewSnapshot'
+      | 'reviewerSessionId'
+      | 'reviewedHeadSha'
+      | 'startedAt'
     >
   >;
 
+type RecoveryContext = Pick<
+  AgentContext,
+  'role' | 'status' | 'artifactScope' | 'reviewResultFile' | 'runnerSessionId' | 'attemptStartedAt'
+>;
+
+/** Repair only a completed attempt's missing evidence, never reopen a different review. */
+export function recoveredReviewNeedsArtifactRepair(
+  ctx: RecoveryContext,
+  review: RecoverableReviewRecord,
+): boolean {
+  return (
+    ctx.role === 'review' &&
+    ctx.status === 'complete' &&
+    !!ctx.reviewResultFile?.trim() &&
+    !!ctx.runnerSessionId &&
+    !!ctx.attemptStartedAt &&
+    ctx.artifactScope?.trim() === review.id &&
+    review.reviewerSessionId === ctx.runnerSessionId &&
+    (review.attempts?.at(-1)?.startedAt ?? review.startedAt) === ctx.attemptStartedAt &&
+    (review.verdict === 'pass' || review.verdict === 'issues') &&
+    (!review.reviewSnapshot || !reviewResultArtifactPath(review))
+  );
+}
+
 export function reviewerContextNeedsRecovery(
-  ctx: Pick<AgentContext, 'role' | 'status' | 'artifactScope'>,
+  ctx: RecoveryContext,
   reviews: RecoverableReviewRecord[],
   options: { includeFailed?: boolean; includeBlocked?: boolean } = {},
 ): boolean {
@@ -206,6 +246,11 @@ export function reviewerContextNeedsRecovery(
   const recordedIndex = reviews.findIndex((review) => review.id === artifactScope);
   if (recordedIndex < 0) return ctx.status !== 'failed';
   const recorded = reviews[recordedIndex];
+  if (
+    !hasLaterSettledReview(reviews, recordedIndex) &&
+    recoveredReviewNeedsArtifactRepair(ctx, recorded)
+  )
+    return true;
   if (
     ctx.status !== 'failed' &&
     recorded.source !== undefined &&
@@ -369,82 +414,27 @@ export function buildRecoveredReview(params: {
   };
 }
 
-function isOptionalStringOrNull(value: object, key: string): boolean {
-  const field = Reflect.get(value, key);
-  return field === undefined || field === null || typeof field === 'string';
-}
-
-function isReviewDiffSnapshot(value: unknown): value is ReviewDiffSnapshot {
-  if (typeof value !== 'object' || value === null) return false;
-  const source = Reflect.get(value, 'source');
-  if (
-    (source !== 'local-git' && source !== 'github-pr' && source !== 'unavailable') ||
-    typeof Reflect.get(value, 'capturedAt') !== 'string'
-  ) {
-    return false;
-  }
-  for (const key of ['baseRef', 'baseSha', 'headRef', 'headSha', 'diffPath', 'diffHash']) {
-    if (!isOptionalStringOrNull(value, key)) return false;
-  }
-  for (const key of ['missingReason', 'error']) {
-    const field = Reflect.get(value, key);
-    if (field !== undefined && typeof field !== 'string') return false;
-  }
-  const diffStat = Reflect.get(value, 'diffStat');
-  if (
-    diffStat !== undefined &&
-    (typeof diffStat !== 'object' ||
-      diffStat === null ||
-      !Number.isFinite(Reflect.get(diffStat, 'files')) ||
-      !Number.isFinite(Reflect.get(diffStat, 'additions')) ||
-      !Number.isFinite(Reflect.get(diffStat, 'deletions')))
-  ) {
-    return false;
-  }
-  const headSha = Reflect.get(value, 'headSha');
-  return (
-    source !== 'local-git' || (typeof headSha === 'string' && /^[0-9a-f]{7,40}$/i.test(headSha))
-  );
-}
-
-function parseRecoveredReviewSnapshot(raw: string): ReviewDiffSnapshot | undefined {
-  if (!raw.trim()) return undefined;
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    return isReviewDiffSnapshot(parsed) ? parsed : undefined;
-  } catch (err) {
-    // A malformed snapshot cannot certify a package. Keep the recovered verdict
-    // unstamped so publication remains blocked and a fresh review is required.
-    console.warn(
-      `[run-engine] ignoring invalid recovered reviewer snapshot: ${(err as Error).message}`,
-    );
-    return undefined;
-  }
-}
-
 async function readRecoveredReviewSnapshot(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   taskDir: string,
+  ctx: AgentContext,
   reviewId: string,
-): Promise<ReviewDiffSnapshot | undefined> {
-  const scope = `${vars.remoteRepo}/${taskDir}/artifacts/${reviewId}`;
-  const command = [
-    `scope=${shellQuote(scope)}`,
-    'latest=""',
-    'for candidate in "$scope"/review-loop-*/review-diff-stat.json; do',
-    '  [ -f "$candidate" ] || continue',
-    '  if [ -z "$latest" ] || [ "$candidate" -nt "$latest" ]; then latest="$candidate"; fi',
-    'done',
-    '[ -z "$latest" ] || cat "$latest"',
-  ].join('\n');
-  const result = await execOnSlot(vars, command, { timeout: 10_000 });
-  if (result.exitCode !== 0) {
-    console.warn(
-      `[run-engine] recovered-review snapshot read failed for ${reviewId}: ${(result.stderr || result.stdout || `exit ${result.exitCode}`).slice(0, 200)}`,
+) {
+  const directory = path.posix.isAbsolute(taskDir) ? taskDir : `${vars.remoteRepo}/${taskDir}`;
+  const scopes: Array<string | undefined> = [ctx.artifactScope?.trim() || reviewId];
+  // Older pipeline contexts had no scope until recovery assigned their review id.
+  // Read their recorded loop, never whichever historical file has the newest mtime.
+  if (!ctx.artifactScope || ctx.reviewId?.startsWith('pipeline-review-')) scopes.push(undefined);
+  for (const scope of scopes) {
+    const captured = await readPersistedReviewSnapshot(
+      vars,
+      directory,
+      ctx.reviewLoopNumber ?? 1,
+      scope,
     );
-    return undefined;
+    if (captured) return captured;
   }
-  return parseRecoveredReviewSnapshot(result.stdout);
+  return undefined;
 }
 
 export function recoveredReviewArtifactScope(
@@ -532,11 +522,11 @@ export async function recoverInflightPublicationReviews(
     reviewerContextNeedsRecovery(ctx, reviews, { includeFailed: true, includeBlocked: true }),
   );
   if (candidates.length === 0) return { recoveredIds: [], terminalErrors: [] };
-  const vars = await loadSlotVars(slotId);
+  const vars = await (options.readers?.slot ?? loadSlotVars)(slotId);
 
-  const reviewConfig = await getReviewConfig(run.project);
+  const reviewConfig = await (options.readers?.config ?? getReviewConfig)(run.project);
   const recoveryContinuationPending = Math.max(0, reviewConfig.max_retries ?? 1) > 0;
-  const reviewedPackage = await readPreparedPackage(run);
+  const reviewedPackage = await (options.readers?.package ?? readPreparedPackage)(run);
   // Stamp recovered reviews against the prepared package only when the slot HEAD
   // still matches it — a lost review certifies the HEAD it saw, and at the human
   // gate the worker is idle so an unchanged HEAD proves the reviewer saw exactly
@@ -657,12 +647,13 @@ async function ingestRecoveredReviewer(
       `[run-engine] recovered reviewer ${ctx.id} has no persisted artifact scope; falling back to ${artifactScope}`,
     );
   }
-  const reviewSnapshot = await readRecoveredReviewSnapshot(vars, taskDir, artifactScope);
+  const snapshotCapture = await readRecoveredReviewSnapshot(vars, taskDir, ctx, artifactScope);
+  const reviewSnapshot = snapshotCapture?.snapshot;
   if (options.shouldAbort?.()) return null;
   const review = buildRecoveredReview({
     run: latest,
     ctx,
-    signal: freshSignal,
+    signal,
     feedback,
     reviewSnapshot,
     reviewedPackage: stampablePackage,
@@ -671,31 +662,76 @@ async function ingestRecoveredReviewer(
   if (!review) return null;
 
   const existingReview = priorReviews.find((candidate) => candidate.id === review.id);
-  if (existingReview && recoveredReviewAlreadyIngested(existingReview, review)) return null;
+  const repairing = existingReview
+    ? recoveredReviewNeedsArtifactRepair(ctx, existingReview)
+    : false;
+  if (existingReview && !repairing && recoveredReviewAlreadyIngested(existingReview, review))
+    return null;
   if (
     existingReview &&
+    !repairing &&
     !isFailedReviewPlaceholder(existingReview) &&
     existingReview.verdict !== 'skipped' &&
     !reviewNeedsContinuation(existingReview)
   ) {
     return null;
   }
-  const reviewToPersist = existingReview
-    ? appendRecoveredContinuationAttempt(existingReview, review)
+  const recovered = existingReview
+    ? repairing
+      ? repairRecoveredReviewArtifacts(existingReview, review)
+      : appendRecoveredContinuationAttempt(existingReview, review)
     : review;
+  if (!recovered) return null;
+  const output = await persistReviewOutputArtifacts({
+    vars,
+    taskDir,
+    taskMdPath: ctx.taskFile!,
+    signalBasename: path.posix.basename(ctx.signalFile ?? ''),
+    feedbackRelPath: reviewerFeedbackRelPath(ctx.id),
+    resultRelPath: ctx.reviewResultFile,
+    artifactDir: reviewArtifactDir(ctx.reviewLoopNumber ?? 1, artifactScope),
+    feedbackIncomplete: false,
+  });
+  if (options.shouldAbort?.()) return null;
+  const capturedPaths = [...(snapshotCapture?.artifactPaths ?? []), ...output.artifactPaths];
+  const reviewToPersist: ReviewStatus = {
+    ...recovered,
+    artifactPaths: [...new Set([...(recovered.artifactPaths ?? []), ...capturedPaths])],
+    taskProgressArtifactPath: output.taskProgressArtifactPath,
+    attempts: recovered.attempts?.map((attempt, index, attempts) =>
+      index === attempts.length - 1
+        ? {
+            ...attempt,
+            artifactPaths: [...new Set([...(attempt.artifactPaths ?? []), ...capturedPaths])],
+            taskProgressArtifactPath: output.taskProgressArtifactPath,
+          }
+        : attempt,
+    ),
+  };
   const [persisted] = await persistReviewArtifactsForRun(latest, [reviewToPersist]);
+  if (options.shouldAbort?.()) return null;
+  // Startup consumes the recovery before replaying the gate. Retain its native
+  // copies before committing a complete row, including when replay finds no new reviews.
+  await (options.captureArtifacts ?? copyWorkerArtifacts)(runId);
   if (options.shouldAbort?.()) return null;
   const finalRun = getRun(runId)!;
   const finalReviews = finalRun.engineState?.publishGate?.reviews ?? [];
   const existingIndex = finalReviews.findIndex((candidate) => candidate.id === persisted.id);
   if (
+    repairing &&
+    (existingIndex < 0 || !isDeepStrictEqual(finalReviews[existingIndex], existingReview))
+  )
+    return null;
+  if (
     existingIndex >= 0 &&
+    !repairing &&
     recoveredReviewAlreadyIngested(finalReviews[existingIndex]!, persisted)
   ) {
     return null;
   }
   if (
     existingIndex >= 0 &&
+    !repairing &&
     !isFailedReviewPlaceholder(finalReviews[existingIndex]!) &&
     finalReviews[existingIndex]!.verdict !== 'skipped' &&
     !reviewNeedsContinuation(finalReviews[existingIndex]!)
@@ -708,7 +744,8 @@ async function ingestRecoveredReviewer(
   if (options.shouldAbort?.()) return null;
   const contextSettled = await markRecoveredReviewerContext(runId, ctx, 'complete', {
     artifactScope,
-    lastSignalAt: new Date().toISOString(),
+    lastSignalAt: repairing ? ctx.lastSignalAt : new Date().toISOString(),
+    ...(repairing && ctx.completedAt ? { completedAt: ctx.completedAt } : {}),
   });
   if (!contextSettled) return null;
   updateRun(runId, {
@@ -721,7 +758,7 @@ async function ingestRecoveredReviewer(
     },
   });
   // A recovered pass vouches for what its document gave the reviewer (F42).
-  if (persisted.verdict === 'pass') await recordReviewedInputs(runId);
+  if (persisted.verdict === 'pass' && !repairing) await recordReviewedInputs(runId);
   console.log(
     `[run-engine] run ${runId.slice(0, 8)} — recovered in-flight publication review ${persisted.id} (verdict ${persisted.verdict}) from reviewer context ${ctx.id}`,
   );
@@ -847,6 +884,35 @@ export function normalizeExhaustedReviewContinuationsForRun(runId: string): Revi
     `[run-engine] run ${runId.slice(0, 8)} — restored pending final findings from an exhausted review loop`,
   );
   return normalized;
+}
+
+/** Keep the original verdict, budget, timestamps and package attestation on evidence-only repair. */
+export function repairRecoveredReviewArtifacts(
+  existing: ReviewStatus,
+  recovered: ReviewStatus,
+): ReviewStatus | null {
+  const snapshot = recovered.reviewSnapshot;
+  if (
+    !snapshot ||
+    snapshot.source === 'unavailable' ||
+    snapshot.headSha !== (existing.reviewedHeadSha ?? existing.reviewSnapshot?.headSha) ||
+    !recoveredReviewAlreadyIngested(existing, recovered) ||
+    !isDeepStrictEqual(existing.issues ?? [], recovered.issues ?? [])
+  )
+    return null;
+  if (
+    existing.reviewSnapshot &&
+    (existing.reviewSnapshot.baseSha !== snapshot.baseSha ||
+      existing.reviewSnapshot.diffHash !== snapshot.diffHash)
+  )
+    return null;
+  return {
+    ...existing,
+    reviewSnapshot: snapshot,
+    attempts: existing.attempts?.map((attempt, index, attempts) =>
+      index === attempts.length - 1 ? { ...attempt, reviewSnapshot: snapshot } : attempt,
+    ),
+  };
 }
 
 export function recoveredReviewAlreadyIngested(
