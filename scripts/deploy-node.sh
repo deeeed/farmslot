@@ -932,7 +932,8 @@ REFRESH
   # this node dials, and no control-plane credential is set, so the CLI
   # authenticates with the stored profile for that URL exactly as a tmux worker
   # does. Honor the selected pool's explicit FARMSLOT_HOME, as worker launches
-  # already do. Without an override, retain the login-shell home.
+  # already do. Without an override, retain the login-shell home; native workers
+  # retain their node's home.
   echo "[deploy] verifying node CLI from a worker shell..."
   WORKER_ENV_PREFIX=$(< "$SCRIPT_DIR/lib/worker-env-prefix.sh")
   TMUX_BIN_LOOKUP=$(< "$SCRIPT_DIR/lib/tmux-bin.sh")
@@ -1011,7 +1012,8 @@ if ! farmslot rpc gateway.status < /dev/null > /dev/null; then
   fi
   echo "[deploy] ERROR: farmslot rpc gateway.status failed against $GW_URL" >&2
   echo "  fix: store a service gateway profile for that URL in ${FARMSLOT_HOME:-$HOME/.farmslot}/gateways.json:" >&2
-  echo "    farmslot gateway add <name> $GW_URL && farmslot login <name>" >&2
+  profile_home="${FARMSLOT_HOME:-$HOME/.farmslot}"
+  printf '    FARMSLOT_HOME=%q farmslot gateway add <name> %q && FARMSLOT_HOME=%q farmslot login <name>\n' "$profile_home" "$GW_URL" "$profile_home" >&2
   exit 1
 fi
 echo "  farmslot rpc gateway.status ok ($GW_URL)"

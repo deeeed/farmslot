@@ -884,7 +884,7 @@ test('deploy-node fails loudly with the fix when the gateway answers but the RPC
       assert.match(
         stderr,
         new RegExp(
-          `farmslot gateway add <name> ws://127\\.0\\.0\\.1:${port} && farmslot login <name>`,
+          `FARMSLOT_HOME=.+ farmslot gateway add <name> ws://127\\.0\\.0\\.1:${port} && FARMSLOT_HOME=.+ farmslot login <name>`,
         ),
       );
       assert.doesNotMatch(`${error.stdout}${stderr}`, /WARNING/);
@@ -1247,9 +1247,10 @@ for (const [name, explicit, expected, instance, authDefault, captureMode = 'reta
 for (const tmuxServer of [true, false]) {
   test(`deploy-node honors the pool worker profile home (${tmuxServer ? 'tmux' : 'login shell'})`, (t) => {
     const fixture = cliFixture(t, { tmuxServer });
+    fixture.write('bin/sleep', '#!/bin/sh\nexec /bin/sleep "$@"\n', true);
     const serviceHome = path.join(fixture.home, "service profiles' literal-$value");
     fixture.write(
-      'pool/custom-name.json',
+      'pool/z-configured-worker.json',
       JSON.stringify({
         machine: 'fixture-machine',
         env: { FARMSLOT_HOME: serviceHome },
