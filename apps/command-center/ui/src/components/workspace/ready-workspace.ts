@@ -513,6 +513,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   private _renderTopBar(payload: ReadyGatePayload) {
     const diffArtifact = this._primaryDiffArtifact(payload);
     return renderReadyTopBar({
+      run: this.run,
       payload,
       decision: this.decision,
       publicationTarget: this._publicationTarget,

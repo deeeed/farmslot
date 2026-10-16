@@ -9,9 +9,13 @@ import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   type DecisionAction,
   evidenceAttestationAvailable,
+  isPublishApprovalAction,
   isValidEvidenceAttestationReason,
+  latestReview,
   type ReadyGatePayload,
+  type ReadyGatePrPackage,
   type ReviewSummary,
+  type Run,
   type RunGateReadiness,
 } from '@farmslot/protocol';
 
@@ -26,6 +30,8 @@ export interface PublicationGateClaim extends AcceptanceCriterionView {
 }
 
 export interface PublicationGateInput {
+  run?: Pick<Run, 'status' | 'agentContexts' | 'engineState'> | null;
+
   actions: readonly PublicationGateAction[];
   claims?: readonly PublicationGateClaim[];
   judgmentRows?: readonly EvidenceReviewJudgmentRow[];
@@ -141,11 +147,67 @@ export function acceptanceClaimRows(
   return claims;
 }
 
+/** An optional review policy never waives findings from a review that actually ran. */
+export function publicationReviewBlockingReason(
+  run: Pick<Run, 'status' | 'agentContexts' | 'engineState'>,
+  prepared?: Pick<ReadyGatePrPackage, 'headSha'> | null,
+): string | undefined {
+  const reviews = run.engineState?.publishGate?.reviews ?? [];
+  // Continuations replace the same row. Its attempts retain the findings even
+  // when a blocked fix changes the aggregate verdict to failed.
+  const latest = latestReview(reviews);
+  const head = prepared?.headSha ?? latest?.reviewedHeadSha ?? latest?.reviewSnapshot?.headSha;
+  let currentHeadFindings = 0;
+  let count = 0;
+  for (const review of reviews) {
+    for (const entry of [...(review.attempts ?? []), review]) {
+      const findings = Math.max(entry.unresolvedCount ?? 0, entry.issues?.length ?? 0);
+      if (entry.verdict === 'issues' && findings > 0) {
+        count = findings;
+        const issueHead =
+          entry === review
+            ? (review.reviewedHeadSha ?? review.reviewSnapshot?.headSha)
+            : entry.reviewSnapshot?.headSha;
+        if (head && issueHead === head)
+          currentHeadFindings = Math.max(currentHeadFindings, findings);
+      }
+    }
+    if (
+      review.verdict === 'pass' &&
+      (!prepared || (review.reviewedHeadSha ?? review.reviewSnapshot?.headSha) === prepared.headSha)
+    )
+      count = 0;
+  }
+  // A different verdict on unchanged code does not prove the reported fix.
+  count = Math.max(count, currentHeadFindings);
+  const fixing =
+    run.status === 'fixing' ||
+    run.agentContexts?.some(
+      (context) =>
+        context.role === 'review-fix' &&
+        ['launching', 'working', 'waiting'].includes(context.status),
+    );
+  if (fixing)
+    return count
+      ? `Review found ${count} issue${count === 1 ? '' : 's'}, fix in progress.`
+      : 'Review fix in progress.';
+  if (count)
+    return `Review found ${count} issue${count === 1 ? '' : 's'}. Fix and pass review before publishing.`;
+  return undefined;
+}
+
 /** Presentation only: action availability and evidence judgments remain gateway-owned. */
 export function publicationGateView(input: PublicationGateInput) {
   const pending = new Set(input.pendingVisualClaimIds ?? []);
   const claims = acceptanceClaimRows(input);
-  const offeredNormal = input.actions.find((action) =>
+  const reviewBlock =
+    (input.run && publicationReviewBlockingReason(input.run)) ||
+    input.readiness?.reasons.find((reason) => reason.code === 'review-fix-required')?.message;
+  const actions =
+    reviewBlock || input.resolved
+      ? input.actions.filter((action) => !isPublishApprovalAction(action.id))
+      : input.actions;
+  const offeredNormal = actions.find((action) =>
     ['approve-publish', 'approve-publish-evidence-refresh', 'ready'].includes(action.id),
   );
   const normal =
@@ -161,7 +223,7 @@ export function publicationGateView(input: PublicationGateInput) {
             'Publication prerequisites are not satisfied.',
         }
       : offeredNormal;
-  const offeredAttestation = input.actions.find(
+  const offeredAttestation = actions.find(
     (action) => action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   );
   const attestation =
@@ -182,16 +244,18 @@ export function publicationGateView(input: PublicationGateInput) {
     ) ?? false;
   const blockedReason = input.resolved
     ? 'This decision is resolved.'
-    : refreshRequired
-      ? 'Refresh package'
-      : pending.size
-        ? `${pending.size} ${pending.size === 1 ? 'criterion needs' : 'criteria need'} a check`
-        : approval?.disabledReason ||
-          (!approval
-            ? attestation
-              ? 'Choose evidence attestation.'
-              : input.blockedReason || 'Publication prerequisites are not satisfied.'
-            : '');
+    : reviewBlock
+      ? reviewBlock
+      : refreshRequired
+        ? 'Refresh package'
+        : pending.size
+          ? `${pending.size} ${pending.size === 1 ? 'criterion needs' : 'criteria need'} a check`
+          : approval?.disabledReason ||
+            (!approval
+              ? attestation
+                ? 'Choose evidence attestation.'
+                : input.blockedReason || 'Publication prerequisites are not satisfied.'
+              : '');
   const reasonRequired = approval?.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION;
   return {
     warnings: input.reviewSummary?.noCodeReview ? ['No code review ran'] : [],
@@ -206,7 +270,7 @@ export function publicationGateView(input: PublicationGateInput) {
     approval,
     attestation,
     refreshRequired,
-    secondaryActions: input.actions.filter(
+    secondaryActions: actions.filter(
       (action) => action.id !== normal?.id && action.id !== offeredAttestation?.id,
     ),
   };

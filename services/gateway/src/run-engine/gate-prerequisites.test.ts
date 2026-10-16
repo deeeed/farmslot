@@ -937,7 +937,252 @@ test('the shared reader accepts a frozen required claim and refuses changed or u
   );
 });
 
-test('unresolved approval requires real current-head review inputs and cannot waive changed inputs', async () => {
+test('publication findings do not become a QA output or review-posting prerequisite', async () => {
+  for (const flowType of ['qa', 'review-pr'] as const) {
+    const run = makeRun({
+      flowType,
+      completionPolicy: 'artifact-only',
+      engineState: {
+        publishGate: {
+          reviews: [
+            {
+              id: 'rv',
+              source: 'pipeline',
+              mode: 'cold',
+              loopNumber: 1,
+              verdict: 'issues',
+              unresolvedCount: 1,
+            },
+          ],
+        },
+      },
+    });
+    const readiness = await collectRunGateReadiness(run, null, {
+      deterministic: passed,
+      acceptance: emptyAcceptance,
+      progress: idle,
+    });
+    assert.ok(!readiness.reasons.some((reason) => reason.code === 'review-fix-required'));
+  }
+});
+
+test('optional reviews still withhold approval for ISSUES with no pending decision until the fixed head passes', async () => {
+  const prepared = makeReadyGatePackage({
+    reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+  });
+  const review: ReviewStatus = {
+    id: 'rv3',
+    source: 'human-gate',
+    mode: 'cold',
+    loopNumber: 3,
+    verdict: 'issues',
+    unresolvedCount: 1,
+    issues: [{ file: 'icon.service.ts', description: 'Exponential parsing' }],
+    reviewedHeadSha: 'before-fix-head',
+    feedbackSent: false,
+    recoveryContinuationPending: true,
+  };
+  const sources = {
+    deterministic: passed,
+    acceptance: emptyAcceptance,
+    progress: idle,
+    selectedEvidence: passed,
+    reviewedInputsAwaitingReview: async () => null,
+    reviewResult: async () => undefined,
+  };
+  const actions = [
+    { id: 'approve-publish' },
+    { id: 'approve-publish-unresolved' },
+    { id: 'approve-publish-evidence-attested' },
+    { id: 'hold' },
+  ];
+  const run = makeRun({
+    status: 'human-gating',
+    decisions: [],
+    engineState: { publishGate: { reviews: [review] } },
+  });
+  for (const status of ['human-gating', 'fixing'] as const) {
+    const readiness = await collectRunGateReadiness({ ...run, status }, prepared, sources);
+    assert.equal(readiness.state, 'not-ready');
+    assert.match(
+      readiness.reasons[0].message,
+      status === 'fixing' ? /fix in progress/ : /Review found 1 issue/,
+    );
+    assert.deepEqual(gateActionsForReadiness(actions, readiness), [{ id: 'hold' }]);
+  }
+  const failedContinuation: ReviewStatus = {
+    ...review,
+    verdict: 'failed',
+    feedbackSent: true,
+    attempts: [
+      { mode: 'cold', loopNumber: 1, verdict: 'issues', unresolvedCount: 1, issues: review.issues },
+      { mode: 'warm', loopNumber: 2, verdict: 'failed', unresolvedCount: 1 },
+    ],
+  };
+  const failed = await collectRunGateReadiness(
+    { ...run, engineState: { publishGate: { reviews: [failedContinuation] } } },
+    prepared,
+    sources,
+  );
+  assert.deepEqual(gateActionsForReadiness(actions, failed), [{ id: 'hold' }]);
+  const activeFix = await collectRunGateReadiness(
+    {
+      ...run,
+      agentContexts: [
+        {
+          id: 'review-fix',
+          role: 'review-fix',
+          label: 'Fix',
+          status: 'working',
+          slotId: run.slotId!,
+          runId: run.id,
+        },
+      ],
+    },
+    prepared,
+    sources,
+  );
+  assert.match(activeFix.reasons[0].message, /fix in progress/);
+  assert.deepEqual(gateActionsForReadiness(actions, activeFix), [{ id: 'hold' }]);
+  const pass: ReviewStatus = {
+    ...review,
+    id: 'rv4',
+    reviewedHeadSha: prepared.headSha,
+    verdict: 'pass',
+    unresolvedCount: 0,
+    issues: [],
+  };
+  const ready = await collectRunGateReadiness(
+    { ...run, engineState: { publishGate: { reviews: [review, pass] } } },
+    prepared,
+    sources,
+  );
+  assert.equal(ready.state, 'ready');
+  assert.deepEqual(gateActionsForReadiness(actions.slice(0, 1), ready), actions.slice(0, 1));
+  const stale = await collectRunGateReadiness(
+    {
+      ...run,
+      engineState: { publishGate: { reviews: [review, { ...pass, reviewedHeadSha: 'old-head' }] } },
+    },
+    prepared,
+    sources,
+  );
+  assert.equal(stale.state, 'not-ready');
+  const replacedPass = {
+    ...pass,
+    attempts: [
+      {
+        mode: 'cold' as const,
+        loopNumber: 1,
+        verdict: 'issues' as const,
+        unresolvedCount: 1,
+        issues: review.issues,
+      },
+      {
+        mode: 'warm' as const,
+        loopNumber: 2,
+        verdict: 'pass' as const,
+        unresolvedCount: 0,
+        reviewSnapshot: prepared.reviewSnapshot,
+      },
+    ],
+  };
+  const replaced = await collectRunGateReadiness(
+    { ...run, engineState: { publishGate: { reviews: [replacedPass] } } },
+    prepared,
+    sources,
+  );
+  assert.equal(replaced.state, 'ready');
+  const staleReplaced = await collectRunGateReadiness(
+    {
+      ...run,
+      engineState: {
+        publishGate: {
+          reviews: [
+            {
+              ...replacedPass,
+              reviewedHeadSha: 'old-head',
+              attempts: replacedPass.attempts.map((attempt) => ({
+                ...attempt,
+                reviewSnapshot: undefined,
+              })),
+            },
+          ],
+        },
+      },
+    },
+    prepared,
+    sources,
+  );
+  assert.equal(staleReplaced.state, 'not-ready');
+});
+
+test('a different reviewer PASS cannot clear findings on the unchanged head at any review minimum', async () => {
+  for (const minimumReviews of [0, 1, 2]) {
+    const prepared = makeReadyGatePackage({
+      reviewPolicy: { minimumReviews, requestedBy: 'dispatch' },
+    });
+    const issues: ReviewStatus = {
+      id: 'review-a',
+      source: 'human-gate',
+      mode: 'cold',
+      loopNumber: 1,
+      verdict: 'issues',
+      unresolvedCount: 1,
+      issues: [{ file: 'icon.service.ts', description: 'Exponential parsing' }],
+      reviewerSessionId: 'session-a',
+      reviewedHeadSha: prepared.headSha,
+      reviewedReviewSubjectHash: prepared.reviewSubjectHash,
+      reviewSnapshot: prepared.reviewSnapshot,
+      artifactPaths: ['artifacts/review-a/review-result.json'],
+      maxRetriesExhausted: true,
+    };
+    const pass: ReviewStatus = {
+      ...issues,
+      id: 'review-b',
+      reviewerSessionId: 'session-b',
+      verdict: 'pass',
+      unresolvedCount: 0,
+      issues: [],
+      artifactPaths: ['artifacts/review-b/review-result.json'],
+    };
+    const readiness = await collectRunGateReadiness(
+      makeRun({ engineState: { publishGate: { reviews: [issues, pass] } } }),
+      prepared,
+      {
+        deterministic: passed,
+        acceptance: emptyAcceptance,
+        progress: idle,
+        selectedEvidence: passed,
+        reviewedInputsAwaitingReview: async () => null,
+        reviewResult: async (_run, relative) =>
+          JSON.stringify({
+            schemaVersion: 1,
+            verdict: relative.includes('review-a') ? 'issues' : 'pass',
+            issues: relative.includes('review-a')
+              ? [
+                  {
+                    file: 'icon.service.ts',
+                    severity: 'warning',
+                    description: 'Exponential parsing',
+                  },
+                ]
+              : [],
+          }),
+      },
+    );
+    assert.ok(readiness.reasons.some((reason) => reason.code === 'review-fix-required'));
+    assert.deepEqual(
+      gateActionsForReadiness(
+        [{ id: 'approve-publish' }, { id: 'approve-publish-unresolved' }, { id: 'hold' }],
+        readiness,
+      ),
+      [{ id: 'hold' }],
+    );
+  }
+});
+
+test('unresolved approval cannot waive findings, missing reviews or changed inputs', async () => {
   const prepared = makeReadyGatePackage({
     reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
   });
@@ -978,13 +1223,12 @@ test('unresolved approval requires real current-head review inputs and cannot wa
       prepared,
       inputs,
     );
-    assert.deepEqual(
-      gateActionsForReadiness(actions, readiness),
-      reviews[0] === review ? actions : actions.slice(1),
-    );
+    assert.deepEqual(gateActionsForReadiness(actions, readiness), actions.slice(1));
     assert.match(
       readiness.reasons.find((reason) => reason.prerequisite === 'review')!.message,
-      /current-head.*structured.*request/i,
+      reviews.length
+        ? /Review found 1 issue|passing review of the current head/
+        : /current-head.*structured.*request/i,
     );
   }
   const exhausted = await collectRunGateReadiness(exhaustedRun, prepared, inputs);

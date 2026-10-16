@@ -101,6 +101,7 @@ import {
   buildEvidenceRefreshAction,
   buildPublishGateReviewStatus,
   buildUnavailableSnapshotAction,
+  CONTINUE_REVIEW_FIX_ACTION,
   countStalePublicationReviews,
   hasValidPrNumber,
   isPublishApprovalAction,
@@ -242,7 +243,9 @@ async function resumeInterruptedPublicationReviewOnce(
       validationDepth: interrupted.validationDepth ?? 'full-live',
       artifactScope: interrupted.id,
       reviewId: interrupted.id,
-      mode: 'warm',
+      // Continue the recorded mode. A cold unpublished review has no PR-bound
+      // warm lineage, but its findings still need delivery and a cold recheck.
+      mode: interrupted.mode ?? 'cold',
       publicationReview: true,
       resumeFromResult: reviewResultFromInterruptedReview(interrupted),
     });
@@ -783,11 +786,17 @@ export async function executeReadyGate(
         // Unavailable source is a durable operator wait, never permission to fail
         // the run and tear down its retained worker, slot or proof.
         const message = `Publication package is unavailable: ${error instanceof Error ? error.message : String(error)}. Restore the owned source and retry this gate.`;
+        // Fix delivery must remain reachable when its own CI receipt blocks
+        // packaging. It regenerates the role checklist through the existing owner.
+        const fixActions = publicationGateDecisionActions({
+          reviewSatisfied: false,
+          pendingReviewContinuation: interruptedPublicationReview(getRun(runId)!),
+        }).filter((action) => action.id === CONTINUE_REVIEW_FIX_ACTION);
         recoveredAction = await decide(
           runId,
           'human_gate',
           message,
-          [{ id: 'hold', label: 'Retry Gate', style: 'secondary' }],
+          [...fixActions, { id: 'hold', label: 'Retry Gate', style: 'secondary' }],
           {
             kind: 'ready',
             prNumber: null,
@@ -809,6 +818,7 @@ export async function executeReadyGate(
           latest!.status === 'cancelled'
         )
           return 'abort';
+        if (recoveredAction === CONTINUE_REVIEW_FIX_ACTION) return recoveredAction;
         current = latest!;
       }
     }

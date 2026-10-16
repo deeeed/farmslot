@@ -126,6 +126,7 @@ import {
   assertPublicationReviewPolicySatisfied,
   assertUnavailableSnapshotOverrideAvailable,
   isPublishApprovalAction,
+  publicationReviewBlockingReason,
   validatePackageApprovalSelection,
 } from '../run-engine/gate-policy.js';
 import {
@@ -1900,6 +1901,10 @@ export async function resolveRunDecision(
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
   assertNativeRunOwner(existing);
+  if (requiresPublicationApproval(existing) && isPublishApprovalAction(params.actionId)) {
+    const reviewBlock = publicationReviewBlockingReason(existing);
+    if (reviewBlock) throw new GatewayMethodError('RUN_GATE_NOT_READY', reviewBlock);
+  }
 
   let decision = existing.decisions.find((d) => d.id === params.decisionId);
   if (!decision) throw new Error(`Decision not found: ${params.decisionId}`);

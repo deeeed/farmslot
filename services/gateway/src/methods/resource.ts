@@ -940,10 +940,15 @@ function buildPressureConcerns(
     concerns.push({ severity: 'critical', reason: 'Machine is offline.' });
   } else {
     for (const provider of health.providerCliHealth ?? []) {
-      if (!provider.ok)
+      if (provider.confirmedMismatch)
         concerns.push({
           severity: 'critical',
-          reason: `Provider CLI ${provider.packageName}: ${provider.reason ?? 'PATH drift'}`,
+          reason: `Provider CLI ${provider.packageName}: ${provider.confirmedMismatch.reason} (confirmed ${provider.confirmedMismatch.checkedAt})`,
+        });
+      if (!provider.ok)
+        concerns.push({
+          severity: provider.status === 'probe-timeout' ? 'warn' : 'critical',
+          reason: `Provider CLI ${provider.packageName}: ${provider.reason ?? 'probe failed'}`,
         });
     }
     if (health.headroom === 'red') {

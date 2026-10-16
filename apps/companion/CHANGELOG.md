@@ -6,6 +6,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 - Show evidence loading and Retry independently of acceptance criteria, retaining loaded evidence if a refresh fails.
 
+- Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review.
+
 - Use compact shared acceptance rows, inline judgment progress and evidence-first gate tabs with a persistent approval action; keep supporting details on demand.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
