@@ -113,6 +113,16 @@ test('session identifiers still block in credential-bearing cookie and token con
   assert.ok(scanForFloorSecrets(JSON.stringify(words)).some(({ kind }) => kind === 'srp'));
 });
 
+test('Markdown emphasis cannot hide a twelve-word recovery phrase', () => {
+  const phrase =
+    'abandon ability able about above absent absorb abstract absurd abuse access accident';
+  for (const marker of ['_', '__']) {
+    assert.ok(
+      scanForFloorSecrets(`${marker}${phrase}${marker}`).some(({ kind }) => kind === 'srp'),
+    );
+  }
+});
+
 test('UNION-only: farm extra patterns ADD blocks and can never loosen the floor', () => {
   const farmPattern = { kind: 'farm-fixture-tag', pattern: /FARM-FIXTURE-SECRET-[0-9]+/g };
 

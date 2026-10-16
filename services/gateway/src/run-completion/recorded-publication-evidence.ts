@@ -230,13 +230,21 @@ export async function verifyFrozenPublicationEvidence(
   }
   // This inventory is the frozen publication closure, not the task's historical
   // artifacts. Media pixels retain their existing visual-review requirements.
+  // Selected before roots were validated above even though only the head ledger
+  // is returned as verdict authority.
+  const textPrefixes = [
+    ...new Set([
+      ...sources.map(({ artifactPrefix }) => artifactPrefix),
+      ...roots.map((root) => `${root}/`),
+    ]),
+  ];
   const textEntries = inventory.filter(
     (artifact) =>
       !isUploadableMediaPath(artifact.path) &&
       (artifact.purpose === 'evidence-manifest' ||
         artifact.purpose === 'evidence-manifest-source' ||
         artifact.path === SELECTION_MANIFEST_PATH ||
-        sources.some((source) => artifact.path.startsWith(source.artifactPrefix))),
+        textPrefixes.some((prefix) => artifact.path.startsWith(prefix))),
   );
   // The canonical closure above and retained reader check the byte identities.
   // Its valid empty logs must not inherit the selected-media non-empty rule.

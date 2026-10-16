@@ -105,6 +105,10 @@ const CLEAN_TEXTS: { label: string; text: string }[] = [
     }),
   },
   {
+    label: 'numbered single-word identifiers are not a recovery phrase',
+    text: JSON.stringify(Array.from({ length: 12 }, (_, index) => `legal_${index}`)),
+  },
+  {
     label: 'checksummed ETH address (42 chars)',
     text: `to: 0x${'Ab12'.repeat(10)}`,
   },

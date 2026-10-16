@@ -272,7 +272,7 @@ test('task declarations cannot select a retained artifact owned by another recip
   });
 });
 
-async function baselineFixture(t: TestContext) {
+async function baselineFixture(t: TestContext, baselineLog?: string) {
   const { createRecipeRunner, createStandardCoreAdapters, readRecordedEvidencePackage } =
     await import('@farmslot/recipe-runner');
   const { buildRunRecord } = await import('../runs/store.js');
@@ -364,6 +364,10 @@ async function baselineFixture(t: TestContext) {
     await writeFile(path.join(dir, 'proof.png'), `capture ${root}`);
     await indexFixtureArtifact(dir, 'proof.png');
     if (root === baselineRoot) {
+      if (baselineLog !== undefined) {
+        await writeFile(path.join(dir, 'diagnostics-app-log.txt'), baselineLog);
+        await indexFixtureArtifact(dir, 'diagnostics-app-log.txt', 'log');
+      }
       await writeFile(path.join(dir, 'product-provenance.json'), JSON.stringify(provenance));
       const filename = path.join(dir, 'artifact-manifest.json');
       const manifest = JSON.parse(await readFile(filename, 'utf8'));
@@ -474,6 +478,38 @@ test('same-run clean baseline freezes as before evidence without supplying head 
     'changed baseline capture',
   );
   await assert.rejects(verifyFrozenPublicationEvidence(f.run, inventory, keys), /hash mismatch/);
+});
+
+test('selected baseline text is scanned without promoting baseline verdicts', async (t) => {
+  const value = `private_key = ${'1'.repeat(64)}`;
+  const f = await baselineFixture(t, value);
+  await retainRunFixture(f.run);
+  const effective = await readEvidenceManifest(f.run);
+  const inventory = await buildPackageEvidenceManifest(
+    f.taskDir,
+    f.inventory,
+    effective,
+    1,
+    publicationBaselineContext(f.run),
+  );
+  await retainRunFixture(f.run);
+  const keys = [`artifacts/${f.baselineRoot}/proof.png`, `artifacts/${f.headRoot}/proof.png`];
+  const { readFrozenPublicationRecipeSources } =
+    await import('../run-engine/recorded-evidence-sources.js');
+  const sources = await readFrozenPublicationRecipeSources(f.run, inventory, keys);
+  assert.equal(sources.length, 1);
+  assert.equal(sources[0]?.input.claims?.recipeRunId, f.head.claims.recipeRunId);
+  await assert.rejects(
+    verifyFrozenPublicationEvidence(f.run, inventory, keys),
+    /Publication blocked by secret values: private-key sha256:/,
+  );
+  assert.equal(
+    await readFile(
+      path.join(f.taskDir, 'artifacts', f.baselineRoot, 'diagnostics-app-log.txt'),
+      'utf8',
+    ),
+    value,
+  );
 });
 
 test('baseline declarations refuse other roles, source changes and incomplete captured closures', async (t) => {

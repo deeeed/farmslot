@@ -174,7 +174,10 @@ function detectMnemonics(text: string): FloorHit[] {
   const tokens = text
     .toLowerCase()
     .replace(/\\[ntr]/g, ' ')
-    .split(/[^a-z_]+/);
+    // Keep identifier runs separate before removing Markdown emphasis edges.
+    .replace(/\b[a-z0-9]+(?:_[a-z0-9]+)+\b/g, '_')
+    .split(/[^a-z_]+/)
+    .map((token) => token.replace(/^_+|_+$/g, ''));
   const hits: FloorHit[] = [];
   let runStart = -1;
   for (let i = 0; i <= tokens.length; i += 1) {
