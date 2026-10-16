@@ -939,6 +939,13 @@ function buildPressureConcerns(
   } else if (!health.online) {
     concerns.push({ severity: 'critical', reason: 'Machine is offline.' });
   } else {
+    for (const provider of health.providerCliHealth ?? []) {
+      if (!provider.ok)
+        concerns.push({
+          severity: 'critical',
+          reason: `Provider CLI ${provider.packageName}: ${provider.reason ?? 'PATH drift'}`,
+        });
+    }
     if (health.headroom === 'red') {
       concerns.push({ severity: 'critical', reason: 'Machine headroom is red.' });
     } else if (health.headroom === 'yellow') {

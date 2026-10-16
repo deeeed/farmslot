@@ -8,6 +8,7 @@ import type {
 } from '@farmslot/protocol';
 
 import {
+  getAllMachineHealth,
   getMachineHealth,
   getMachinePressureHistory,
   getMachineProcessInventory,
@@ -213,4 +214,40 @@ test('node restart replaces process generation and stale same-generation samples
   assert.equal(getMachineProcessInventory(machine)?.health.lastError, 'ps timed out');
   updateMachineMetrics(machine, metrics('generation-b', 1, new Date(now + 2_000).toISOString()));
   assert.equal(getMachineProcessInventory(machine)?.generation, 'generation-b');
+});
+
+test('provider PATH drift remains a node health failure visible to fleet readers', () => {
+  const machine = `provider-drift-${Date.now()}`;
+  const metrics: NodeMetricsSample = {
+    cpuPercent: 1,
+    memoryPercent: 2,
+    memoryUsedGb: 1,
+    memoryTotalGb: 16,
+    diskPercent: 3,
+    loadAvg1: 0,
+    loadAvg5: 0,
+    collectedAt: new Date().toISOString(),
+    providerCliHealth: [
+      {
+        root: '/fixture/provider',
+        packageName: '@fixture/provider',
+        expectedVersion: '1.2.3',
+        ok: false,
+        checkedAt: new Date().toISOString(),
+        reason: 'non-interactive fixture-tool: 1.0.0, expected 1.2.3',
+        binaries: [],
+      },
+    ],
+  };
+  updateMachineMetrics(machine, metrics);
+  assert.equal(getMachineHealth(machine)?.headroom, 'red');
+  assert.equal(getMachineHealth(machine)?.providerCliHealth?.[0].ok, false);
+  assert.equal(
+    getAllMachineHealth().find((health) => health.machine === machine)?.providerCliHealth?.[0]
+      .reason,
+    metrics.providerCliHealth?.[0].reason,
+  );
+  metrics.providerCliHealth![0].ok = true;
+  updateMachineMetrics(machine, metrics);
+  assert.equal(getMachineHealth(machine)?.headroom, 'green');
 });

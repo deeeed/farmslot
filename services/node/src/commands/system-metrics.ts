@@ -9,6 +9,7 @@ import type {
   NodeProcessSample,
 } from '@farmslot/protocol';
 
+import { getProviderCliHealth } from './provider-cli-health.js';
 import { getCachedResourceWatchPids, getResourceWatchRuntimeStats } from './resource-watch.js';
 import { getCachedTmuxPanePids } from './tmux.js';
 
@@ -359,12 +360,13 @@ function processInventoryDue(params: Parameters<typeof processInventoryCadenceMs
 }
 
 export async function collectMetrics(
-  options: { consumeProcessInventory?: boolean } = {},
+  options: { consumeProcessInventory?: boolean; machine?: string } = {},
 ): Promise<SystemMetrics> {
   const { usedBytes: usedMem, totalBytes: totalMem } = getMemoryUsage();
   const [loadAvg1, loadAvg5] = os.loadavg();
   const cpuCores = os.cpus().length;
   const cpuPercent = getCpuPercent();
+  const providerCliHealth = options.machine ? getProviderCliHealth(options.machine) : undefined;
   const memoryPercent = Math.round((usedMem / totalMem) * 100);
   const diskPercent = getDiskPercent();
   const thermalPressure = getThermalPressure();
@@ -428,6 +430,7 @@ export async function collectMetrics(
       load5: ratio(loadAvg5 / Math.max(1, cpuCores)),
     },
     ...(processInventory ? { processInventory } : {}),
+    providerCliHealth,
     thermalPressure,
     resourceWatches: getResourceWatchRuntimeStats(),
     collectedAt: new Date().toISOString(),
@@ -443,6 +446,7 @@ let subscriptionCollecting = false;
 export function startMetricsSubscription(
   intervalMs: number,
   callback: (m: SystemMetrics) => void,
+  machine?: string,
 ): void {
   stopMetricsSubscription();
   onMetrics = callback;
@@ -453,7 +457,7 @@ export function startMetricsSubscription(
       return;
     }
     subscriptionCollecting = true;
-    void collectMetrics()
+    void collectMetrics({ machine })
       .then((metrics) => onMetrics?.(metrics))
       .finally(() => {
         subscriptionCollecting = false;
