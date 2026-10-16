@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -23,6 +24,13 @@ const PREPARE_SCOPE_SENTINEL_MARKER = 'farmslot-prepare-scope';
 /** The identity file holds `pgid\tsentinel pid\tscope` (written by the prepare wrapper). */
 const PREPARE_IDENTITY_SCOPE_FIELD = 2;
 const PREPARE_TAIL_POLL_INTERVAL_MS = 1500;
+/**
+ * `group_alive <pgid>`: whether any member of the process group is still
+ * running. Linux still delivers `kill -0 -PGID` to a zombie, so a killed member
+ * its parent has not reaped yet would read as alive. Count only members ps does
+ * not report as Z (BSD ps and procps agree).
+ */
+const PREPARE_GROUP_ALIVE_FN = `group_alive() { ps -A -o pgid= -o stat= 2>/dev/null | awk -v g="$1" '$1 == g && $2 !~ /^Z/ { f = 1 } END { exit !f }'; }`;
 export const PREPARE_DEPS_TIMEOUT_MS = 90 * 60_000;
 export const PREPARE_PREFLIGHT_TIMEOUT_MS = 15 * 60_000;
 
@@ -263,12 +271,39 @@ export function buildPrepareKillWindowsByNameCommand(
   sessionName: string,
   windowName: string,
 ): string {
+  return buildPrepareWindowTeardownCommand(
+    sessionName,
+    `awk -F: -v want=${shellQuote(windowName)} '$2 == want { print $1 ":" $2 }'`,
+  );
+}
+
+/**
+ * Tear down the prepare windows a selector picks: stop each pane's process
+ * group, then close the window. Closing only the window SIGHUPs the pane, and a
+ * tree that ignores SIGHUP (corepack, yarn) outlives it while still holding the
+ * phase's locks. The pane process leads its own group under tmux; a pane that
+ * does not is left to the window close. TERM gives the wrapper's trap its
+ * cleanup, and a group that survives the grace period is killed.
+ */
+function buildPrepareWindowTeardownCommand(sessionName: string, selectWindows: string): string {
+  const session = shellQuote(sessionName);
   return tmuxShellSnippet(
-    `list-windows -t ${shellQuote(sessionName)} -F '#{window_index}:#{window_name}' 2>/dev/null | ` +
-      `awk -F: -v want=${shellQuote(windowName)} '$2 == want { print $1 ":" $2 }' | sort -t: -nr -k1,1 | ` +
+    `list-windows -t ${session} -F '#{window_index}:#{window_name}' 2>/dev/null | ` +
+      `${selectWindows} | sort -t: -nr -k1,1 | ` +
       `while IFS=: read -r idx name; do ` +
       `echo "$idx:$name"; ` +
-      `"$TMUX_BIN" kill-window -t ${shellQuote(sessionName)}:"$idx" 2>/dev/null || true; ` +
+      `for pane in $("$TMUX_BIN" list-panes -t ${session}:"$idx" -F '#{pane_pid}' 2>/dev/null); do ` +
+      `case "$pane" in ''|*[!0-9]*) continue ;; esac; ` +
+      `[ "$pane" -gt 1 ] || continue; ` +
+      `[ "$(ps -o pgid= -p "$pane" 2>/dev/null | tr -d '[:space:]')" = "$pane" ] || continue; ` +
+      `kill -TERM -"$pane" 2>/dev/null || continue; ` +
+      // Wait about 2s on the cheap signal probe; it also counts zombies, so the
+      // KILL decision uses the zombie-aware check.
+      `n=0; while kill -0 -"$pane" 2>/dev/null && [ "$n" -lt 20 ]; do sleep 0.1; n=$((n+1)); done; ` +
+      `${PREPARE_GROUP_ALIVE_FN}; ` +
+      `if group_alive "$pane"; then kill -KILL -"$pane" 2>/dev/null; fi; ` +
+      `done; ` +
+      `"$TMUX_BIN" kill-window -t ${session}:"$idx" 2>/dev/null || true; ` +
       `done`,
   );
 }
@@ -280,13 +315,9 @@ export function buildPreparePreLaunchSweepCommand(sessionName: string, labelPart
   // The `index:name` delimiter is safe here because only Farmslot-generated
   // `prepare-*` names are eligible for killing, and prepare names never contain
   // `:`.
-  return tmuxShellSnippet(
-    `list-windows -t ${shellQuote(sessionName)} -F '#{window_index}:#{window_name}' 2>/dev/null | ` +
-      `awk -F: -v keep=${shellQuote(`^prepare-${labelPart}($|-)`)} '$2 ~ /^prepare-/ && $2 !~ keep { print $1 ":" $2 }' | sort -t: -nr -k1,1 | ` +
-      `while IFS=: read -r idx name; do ` +
-      `echo "$idx:$name"; ` +
-      `"$TMUX_BIN" kill-window -t ${shellQuote(sessionName)}:"$idx" 2>/dev/null || true; ` +
-      `done`,
+  return buildPrepareWindowTeardownCommand(
+    sessionName,
+    `awk -F: -v keep=${shellQuote(`^prepare-${labelPart}($|-)`)} '$2 ~ /^prepare-/ && $2 !~ keep { print $1 ":" $2 }'`,
   );
 }
 
@@ -303,10 +334,7 @@ export function buildPrepareIdentityReapCommand(
     : [];
   const awaitExit = opts.awaitExit
     ? [
-        // Linux still delivers `kill -0 -PGID` to a zombie, so a killed member
-        // its parent has not reaped yet would read as surviving SIGKILL. Count
-        // only members ps does not report as Z (BSD ps and procps agree).
-        `    group_alive() { ps -A -o pgid= -o stat= 2>/dev/null | awk -v g="$1" '$1 == g && $2 !~ /^Z/ { f = 1 } END { exit !f }'; }`,
+        `    ${PREPARE_GROUP_ALIVE_FN}`,
         '    n=0; while group_alive "$pgid" && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n+1)); done',
         '    if group_alive "$pgid"; then kill -KILL -"$pgid" 2>/dev/null; sleep 0.2; fi',
         '    if group_alive "$pgid"; then echo "preflight group $pgid survived SIGKILL" >&2; exit 1; fi',
@@ -418,9 +446,14 @@ export function buildPrepareWrappedCommand(
     keepAliveOnSuccess?: boolean;
     workspaceRoot?: string | null;
     prepareScope?: { token: string; identityPath: string };
+    /** Recorded beside the exit code so the gateway accepts only this launch's sentinel. */
+    attemptNonce?: string;
   },
 ): string {
   const quotedSentinelPath = shellQuote(sentinelPath);
+  const nonceSuffix = opts?.attemptNonce ? ` ${opts.attemptNonce}` : '';
+  const writeSentinel = (code: string) =>
+    `printf '%s\\n' "${code}${nonceSuffix}" > ${quotedSentinelPath}`;
   const keepAliveOnSuccess = opts?.keepAliveOnSuccess === true;
   // Pack runway scripts default the workspace to $HOME/farmslot when
   // FARMSLOT_WORKSPACE is unset. The prepare window inherits the gateway env,
@@ -448,12 +481,12 @@ export function buildPrepareWrappedCommand(
   return [
     'unset FORCE_COLOR',
     ...workspaceExports,
-    `mkdir -p ${shellQuote(scratchDir)} || { echo 1 > ${quotedSentinelPath}; exit 1; }`,
+    `mkdir -p ${shellQuote(scratchDir)} || { ${writeSentinel('1')}; exit 1; }`,
     // tmux 3.7 can ignore -c when its server's cwd was deleted. Establish the
     // phase directory in the child before hooks, Node or scope setup run.
     ...(opts?.cwd
       ? [
-          `cd -- ${shellQuote(opts.cwd)} || { echo ${shellQuote(`Prepare working directory unavailable: ${opts.cwd}`)} >&2; echo 1 > ${quotedSentinelPath}; exit 1; }`,
+          `cd -- ${shellQuote(opts.cwd)} || { echo ${shellQuote(`Prepare working directory unavailable: ${opts.cwd}`)} >&2; ${writeSentinel('1')}; exit 1; }`,
         ]
       : []),
     '__farmslot_kill_tree() {',
@@ -472,16 +505,29 @@ export function buildPrepareWrappedCommand(
     '    esac',
     '  fi',
     '}',
+    // A member that left the tree (its parent exited) is still in the pane's
+    // process group. Signal the group only when this wrapper leads it, sparing
+    // the wrapper and the prepare-scope holder its reap verifies.
+    '__farmslot_signal_group() {',
+    '  local group member',
+    "  group=$(ps -o pgid= -p $$ 2>/dev/null | tr -d '[:space:]')",
+    '  [ "$group" = "$$" ] || return 0',
+    `  for member in $(ps -A -o pid= -o pgid= 2>/dev/null | awk -v g="$group" -v self="$$" -v keep="\${FARMSLOT_PREPARE_SENTINEL_PID:-}" '$2 == g && $1 != self && $1 != keep { print $1 }'); do`,
+    '    kill -"$1" "$member" 2>/dev/null || true',
+    '  done',
+    '}',
     '__farmslot_cleanup_descendants() {',
     '  __farmslot_kill_tree "$$" TERM',
+    '  __farmslot_signal_group TERM',
     '  sleep 2',
     '  __farmslot_kill_tree "$$" KILL',
+    '  __farmslot_signal_group KILL',
     '}',
     '__farmslot_signal_exit() {',
     '  local code="$1"',
     '  trap - HUP INT TERM',
     '  __farmslot_cleanup_descendants',
-    `  echo "$code" > ${quotedSentinelPath}`,
+    `  ${writeSentinel('$code')}`,
     '  sleep 1',
     '  exit "$code"',
     '}',
@@ -493,9 +539,15 @@ export function buildPrepareWrappedCommand(
     // signals to the real binary) would otherwise replace this wrapping bash
     // entirely, skipping the sentinel write below and stranding prepare with no
     // exit code — gateway then reports "prepare failed" even on clean runs.
+    // Background plus `wait`: bash defers a trap until a foreground child
+    // returns, so a closed window's tree kept running and kept its phase lock.
+    // `wait` returns as soon as a trapped signal arrives. The explicit stdin
+    // keeps the pane's terminal, which an asynchronous command would otherwise
+    // trade for /dev/null.
     '(',
     cmd,
-    ')',
+    ') <&0 &',
+    'wait "$!"',
     '__farmslot_status=$?',
     'if [ "$__farmslot_status" -ne 0 ]; then',
     '  __farmslot_cleanup_descendants',
@@ -504,7 +556,7 @@ export function buildPrepareWrappedCommand(
     // A later tmux cleanup can send SIGHUP during the drain sleep; if the traps
     // stay armed, that late signal overwrites a successful phase with 129.
     'trap - HUP INT TERM',
-    `echo "$__farmslot_status" > ${quotedSentinelPath}`,
+    writeSentinel('$__farmslot_status'),
     'sleep 1',
     // On a successful preflight, keep this wrapping bash alive so the tmux pane
     // stays open. Long-running dev servers spawned by the hook (e.g. `expo start &`)
@@ -521,6 +573,17 @@ export function buildPrepareWrappedCommand(
       : []),
     'exit "$__farmslot_status"',
   ].join('\n');
+}
+
+/**
+ * The exit code a prepare sentinel records for this launch. A sentinel without
+ * this launch's nonce belongs to another launch and is not a result.
+ */
+export function parsePrepareSentinel(content: string, attemptNonce: string): number | null {
+  const [code, nonce] = content.trim().split(/\s+/);
+  if (!code || nonce !== attemptNonce) return null;
+  const parsed = Number.parseInt(code, 10);
+  return Number.isFinite(parsed) ? parsed : 1;
 }
 
 export function buildDevServerPortCleanup(
@@ -603,8 +666,13 @@ export async function runPrepareCommand(
   // the target path must exist there.
   const slotHostScratchDir = '/tmp/farmslot-prepare';
   const phasePart = '';
-  const sentinelPath = `${slotHostScratchDir}/${sessionName}-${windowName}${phasePart}.exit`;
-  const slotHostLogPath = `${slotHostScratchDir}/${sessionName}-${windowName}${phasePart}.log`;
+  const phaseBase = `${slotHostScratchDir}/${sessionName}-${windowName}${phasePart}`;
+  // Each launch owns its sentinel and staged script. A tree left by an earlier
+  // launch of this phase (a re-driven prepare after a gateway restart) writes
+  // its late exit code to its own sentinel, never into this launch's result.
+  const attemptNonce = randomUUID().replaceAll('-', '').slice(0, 12);
+  const sentinelPath = `${phaseBase}-${attemptNonce}.exit`;
+  const slotHostLogPath = `${phaseBase}.log`;
   // Trailing `sleep 1` flushes pipe-pane's final bytes before bash exits. Do not
   // use tmux `remain-on-exit` for prepare panes: prepare output is already
   // streamed into the run log, and a dead prepare pane is not an actionable
@@ -622,6 +690,7 @@ export async function runPrepareCommand(
     cwd: windowCwd,
     keepAliveOnSuccess: opts?.phase === 'preflight',
     workspaceRoot: resolveWorkspaceRoot(),
+    attemptNonce,
     ...(opts?.prepareScope ? { prepareScope: opts.prepareScope } : {}),
   });
   // Stage the wrapped command in a temp script so tmux respawn-pane can exec
@@ -629,7 +698,7 @@ export async function runPrepareCommand(
   // shell-command through `default-shell` (often /bin/zsh on macOS), and zsh's
   // parser chokes on the bash subshell syntax `(...)` we use for sentinel
   // capture. Writing to a script keeps zsh out of the loop entirely.
-  const wrappedScriptPath = `${slotHostScratchDir}/${sessionName}-${windowName}${phasePart}.sh`;
+  const wrappedScriptPath = `${phaseBase}-${attemptNonce}.sh`;
   // Ensure session exists (idle slots may not have one yet) and add the prepare window.
   // tmuxShellSnippet handles the PATH-fallback for remote ssh shells where /opt/homebrew/bin
   // isn't on $PATH by default.
@@ -723,7 +792,7 @@ export async function runPrepareCommand(
   // call can exec it directly without going through a host-shell parser.
   const stageHeredocLimit = `__FARMSLOT_PREPARE_${windowName.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()}__`;
   const stageR = await exec(
-    `mkdir -p ${shellQuote(slotHostScratchDir)} && rm -f ${shellQuote(sentinelPath)} && : > ${shellQuote(slotHostLogPath)} && cat > ${shellQuote(wrappedScriptPath)} <<'${stageHeredocLimit}'\n${wrappedCmd}\n${stageHeredocLimit}\n`,
+    `mkdir -p ${shellQuote(slotHostScratchDir)} && rm -f -- ${shellQuote(phaseBase)}.exit ${shellQuote(phaseBase)}-*.exit ${shellQuote(phaseBase)}.sh ${shellQuote(phaseBase)}-*.sh && : > ${shellQuote(slotHostLogPath)} && cat > ${shellQuote(wrappedScriptPath)} <<'${stageHeredocLimit}'\n${wrappedCmd}\n${stageHeredocLimit}\n`,
     { cwd: opts?.cwd, timeout: 10_000 },
   );
   if (stageR.exitCode !== 0) {
@@ -873,10 +942,8 @@ export async function runPrepareCommand(
         `test -f ${shellQuote(sentinelPath)} && cat ${shellQuote(sentinelPath)}`,
         SENTINEL_RECOVERY_POLL_TIMEOUT_MS,
       );
-      if (r && r.exitCode === 0 && r.stdout.trim()) {
-        const parsed = Number.parseInt(r.stdout.trim(), 10);
-        if (Number.isFinite(parsed)) return parsed;
-      }
+      const recovered = r && r.exitCode === 0 ? parsePrepareSentinel(r.stdout, attemptNonce) : null;
+      if (recovered !== null) return recovered;
       await new Promise((res) => setTimeout(res, 500));
     }
     return 1;
@@ -925,9 +992,10 @@ export async function runPrepareCommand(
       `test -f ${shellQuote(sentinelPath)} && cat ${shellQuote(sentinelPath)}`,
       PREPARE_SENTINEL_POLL_TIMEOUT_MS,
     );
-    if (checkR && checkR.exitCode === 0 && checkR.stdout.trim()) {
-      const parsed = Number.parseInt(checkR.stdout.trim(), 10);
-      exitCode = Number.isFinite(parsed) ? parsed : 1;
+    const recorded =
+      checkR && checkR.exitCode === 0 ? parsePrepareSentinel(checkR.stdout, attemptNonce) : null;
+    if (recorded !== null) {
+      exitCode = recorded;
       break;
     }
     // If the prepare window died without writing a sentinel, treat as failure rather than spin.
@@ -991,9 +1059,12 @@ export async function runPrepareCommand(
     } else {
       await killWindow();
     }
-    await exec(`rm -f ${shellQuote(sentinelPath)} ${shellQuote(slotHostLogPath)}`, {
-      timeout: 5_000,
-    }).catch(() => undefined);
+    await exec(
+      `rm -f ${shellQuote(sentinelPath)} ${shellQuote(wrappedScriptPath)} ${shellQuote(slotHostLogPath)}`,
+      {
+        timeout: 5_000,
+      },
+    ).catch(() => undefined);
   } else {
     // Always kill failed/aborted/timeout prepare windows. On failure we keep the
     // slot-host log + sentinel on disk for later inspection.

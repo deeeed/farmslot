@@ -22,8 +22,10 @@ import { resolveWorkspaceRoot } from '../../projects/repo-root.js';
 
 import {
   buildPrepareIdentityReapCommand,
+  buildPrepareKillWindowsByNameCommand,
   buildPrepareWrappedCommand,
   clearStalePrepareProcess,
+  parsePrepareSentinel,
   prepareSignalHint,
 } from './prepare-command.js';
 
@@ -364,4 +366,131 @@ test('clearStalePrepareProcess returns false when there is no live tracked prefl
   ]);
 
   assert.equal(killed, false);
+});
+
+function isRunning(pid: number): boolean {
+  const stat = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' });
+  return stat.stdout.trim() !== '' && !stat.stdout.trim().startsWith('Z');
+}
+
+async function waitFor(condition: () => boolean, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (condition()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return condition();
+}
+
+test('a closed prepare pane stops a command that ignores SIGHUP and SIGTERM at once', async () => {
+  // corepack/yarn ignored the window close: the wrapper waited on its
+  // foreground subshell, so its HUP trap never ran and the tree kept the lock.
+  const root = mkdtempSync(path.join(os.tmpdir(), 'prepare-wrapper-hup-'));
+  const sentinel = path.join(root, 'deps.exit');
+  const pidFile = path.join(root, 'child.pid');
+  const script = path.join(root, 'deps.sh');
+  const nonce = 'a1b2c3d4e5f6';
+  writeFileSync(
+    script,
+    buildPrepareWrappedCommand(
+      `trap '' HUP TERM; sleep 30 & echo $! > ${shellQuote(pidFile)}; wait`,
+      sentinel,
+      root,
+      { attemptNonce: nonce },
+    ),
+  );
+  const pane = spawn('bash', [script], { detached: true, stdio: 'ignore' });
+  assert.ok(pane.pid && pane.pid > 1);
+  pane.unref();
+  let child = 0;
+  try {
+    assert.ok(
+      await waitFor(
+        () => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '',
+        5_000,
+      ),
+    );
+    child = Number(readFileSync(pidFile, 'utf8').trim());
+    // A closed pane hangs up its whole foreground group.
+    process.kill(-pane.pid, 'SIGHUP');
+
+    assert.ok(
+      await waitFor(() => existsSync(sentinel), 4_500),
+      'the trap must run without waiting for the command',
+    );
+    assert.equal(readFileSync(sentinel, 'utf8').trim(), `129 ${nonce}`);
+    assert.ok(!isRunning(child), 'the HUP- and TERM-ignoring child must be stopped');
+  } finally {
+    try {
+      process.kill(-pane.pid, 'SIGKILL');
+    } catch {
+      // Already stopped.
+    }
+    if (child && isRunning(child)) process.kill(child, 'SIGKILL');
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('tearing down a prepare window stops its process group before closing it', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'prepare-window-teardown-'));
+  const bin = path.join(root, 'bin');
+  const log = path.join(root, 'tmux.log');
+  mkdirSync(bin);
+  // A stand-in tmux: no server is started. It reports one matching prepare
+  // window whose pane process is the group below, and records whether that
+  // group was still running when the window was closed.
+  writeFileSync(
+    path.join(bin, 'tmux'),
+    [
+      '#!/bin/sh',
+      'case "$1" in',
+      "  list-windows) printf '%s\\n' '3:prepare-run12345-deps' '4:worker' ;;",
+      `  list-panes) printf '%s\\n' "$PANE_PID" ;;`,
+      '  kill-window)',
+      `    if ps -A -o pgid= -o stat= | awk -v g="$PANE_PID" '$1 == g && $2 !~ /^Z/ { f = 1 } END { exit !f }'; then echo "kill-window $3 group-alive" >> "$LOG"; else echo "kill-window $3 group-stopped" >> "$LOG"; fi ;;`,
+      'esac',
+    ].join('\n'),
+    { mode: 0o755 },
+  );
+  const pane = spawn('bash', ['-c', `trap '' HUP TERM; sleep 30 & wait`], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  assert.ok(pane.pid && pane.pid > 1);
+  pane.unref();
+  try {
+    const result = spawnSync(
+      'bash',
+      ['-c', buildPrepareKillWindowsByNameCommand('mm-1', 'prepare-run12345-deps')],
+      {
+        encoding: 'utf8',
+        timeout: 10_000,
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH}`,
+          PANE_PID: String(pane.pid),
+          LOG: log,
+        },
+      },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), '3:prepare-run12345-deps');
+    assert.equal(readFileSync(log, 'utf8').trim(), 'kill-window mm-1:3 group-stopped');
+  } finally {
+    try {
+      process.kill(-pane.pid, 'SIGKILL');
+    } catch {
+      // Already stopped.
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a prepare sentinel without this launch nonce is not a result', () => {
+  assert.equal(parsePrepareSentinel('0 a1b2c3d4e5f6\n', 'a1b2c3d4e5f6'), 0);
+  assert.equal(parsePrepareSentinel('129 a1b2c3d4e5f6', 'a1b2c3d4e5f6'), 129);
+  assert.equal(parsePrepareSentinel('129\n', 'a1b2c3d4e5f6'), null, 'a pre-nonce orphan');
+  assert.equal(parsePrepareSentinel('143 0123456789ab', 'a1b2c3d4e5f6'), null, 'another launch');
+  assert.equal(parsePrepareSentinel('', 'a1b2c3d4e5f6'), null);
 });
