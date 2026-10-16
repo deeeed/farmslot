@@ -470,7 +470,11 @@ export async function executeReviewGate(runId: string): Promise<void> {
                   timeout: 120_000,
                   maxBuffer: 10 * 1024 * 1024,
                   env: publicationAccount
-                    ? { ...process.env, GITHUB_TOKEN: publicationAccount.binding.token }
+                    ? {
+                        ...process.env,
+                        GH_HOST: publicationAccount.binding.host,
+                        GITHUB_TOKEN: publicationAccount.binding.token,
+                      }
                     : process.env,
                 },
                 (err, stdout, stderr) => {

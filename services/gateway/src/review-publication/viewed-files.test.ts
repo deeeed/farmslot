@@ -21,6 +21,7 @@ let liveHead: string;
 let actor: string;
 let mutationErrors: boolean;
 let moveBeforeMutation: boolean;
+let moveAfterFirstMutation: boolean;
 let mutationCount: number;
 let saved: ReviewViewedFilesResult | undefined;
 const reset = () => {
@@ -29,6 +30,7 @@ const reset = () => {
   actor = 'reviewer';
   mutationErrors = false;
   moveBeforeMutation = false;
+  moveAfterFirstMutation = false;
   mutationCount = 0;
   calls.length = 0;
   saved = undefined;
@@ -64,6 +66,7 @@ mock.module('../integrations/github-client.js', {
               mutationErrors && index === 1 ? null : { pullRequest: pr() },
             ]),
         );
+        if (moveAfterFirstMutation && mutationCount === 1) liveHead = 'c'.repeat(40);
       } else if (fields.query.includes('repository(')) {
         const index = Number(fields.cursor ?? 0);
         data = {
@@ -141,4 +144,17 @@ test('partial provider failures and diagnostic persistence failure stay best eff
   });
   assert.equal(unretained.state, 'complete');
   assert.match(unretained.reason ?? '', /could not be retained/);
+});
+
+test('large diffs use bounded batches and stop before marking a newer head', async () => {
+  for (const advanced of [false, true]) {
+    reset();
+    pages = [Array.from({ length: 45 }, (_, i) => `src/file-${i}.ts`)];
+    moveAfterFirstMutation = advanced;
+    const result = await markReviewedFilesViewed(input, save);
+    assert.equal(result.state, advanced ? 'partial' : 'complete');
+    assert.equal(mutationCount, advanced ? 1 : 3);
+    assert.deepEqual(result.markedPaths, pages[0].slice(0, advanced ? 20 : 45));
+    assert.deepEqual(saved, result);
+  }
 });
