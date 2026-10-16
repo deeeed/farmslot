@@ -1115,7 +1115,10 @@ invalidation hook, and **the subscribed session makes no request at any point**.
   queue admission re-check current authority before acting. An unrelated waking
   request cannot donate authority.
 - The queue loader validates each stored originator with the shared WorkOriginator
-  check. An invalid row refuses only itself.
+  check. An invalid row refuses only itself and stays visible as blocked, with its
+  reason.
+- Rule dispatch matches owner id and generation in its prior-review domain lookup
+  and in its requeue check.
 - `PRTeamProfile.notificationPrincipalGenerations` binds the current generation
   of each recipient id newly added to `config.notificationPrincipalIds` at save.
   - Recipients already on the team keep their stored generation.
@@ -1128,8 +1131,8 @@ invalidation hook, and **the subscribed session makes no request at any point**.
   across principals remain refused.
 - Run creation records `createdByPrincipalGeneration` from the authenticated
   originator. System-originated child runs inherit it from their parent.
-- Gated publication of slot reviews, automatic QA intake, source-review validation
-  and reviewer continuity all match owner id and generation.
+- Direct and gated review publication, automatic QA intake, source-review
+  validation and reviewer continuity all match owner id and generation.
 - `generation_mismatch` has its own denial text. It names the replaced identity
   and the action that re-creates the record, and never reads as a revocation.
 - A contribution whose owner fails with `generation_mismatch` is withdrawn before
@@ -1143,16 +1146,24 @@ invalidation hook, and **the subscribed session makes no request at any point**.
   principal. `requireNativeProfileOwner`, `resolveNativeWorkerOwner`,
   `resolveReviewWorkspaceOwner`, node bindings and native-session owners refuse
   any principal whose generation is not zero.
-- Workspace review runs, direct static publication and gated workspace publication
-  are therefore refused for a replacement, with a native-ownership denial.
+- Static review runs, whether direct or admitted from a rule or submission, run
+  under native execution ownership. So does review publication.
+  - Both are refused for a replacement, with a native-ownership denial.
+  - An admitted intent shows that reason as its waiting reason.
+  - The replacement's rules and submissions still drive notifications, monitoring
+    and runtime-slot QA.
 - Regressions:
   - For each generation-bound store: a generation-zero record still works for its
     original identity. After reuse it is refused or absent. The replacement's
-    fresh record works. A background effect for the old record never acts as the
-    replacement.
-  - For a replacement: native ownership, workspace review, direct static
-    publication, webhook principals, delegators and delegated reviewers are
-    refused with their named reasons.
+    fresh record works. For review submissions and contributions, "works" means
+    store admission plus runtime-slot QA dispatch. A background effect for the
+    old record never acts as the replacement.
+  - For a replacement, these are refused with their named reasons: native
+    ownership, direct static review, static review admitted from a rule or
+    submission, review publication, webhook principals, delegators and delegated
+    reviewers.
+  - Team re-save: kept recipients keep their stored generation, newly added ids
+    bind the current generation, and unresolved ids are refused.
   - Push: the older-generation binding for the same token is disabled, and
     conflicts across principals stay refused.
   - Contributions: withdrawn on mismatch, held on role loss, admitted after the

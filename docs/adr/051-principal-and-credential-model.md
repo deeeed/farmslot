@@ -1803,16 +1803,19 @@ bindings, and run and native-session owners. Amendment 3's retirement
 precondition for native bindings still applies; the generation-zero check is the
 runtime backstop.
 
-Workspace review runs, direct static review publication and gated workspace
-publication all depend on native execution ownership. A replacement identity is
-therefore refused there, with a denial that names native ownership. Slot reviews
-admitted through the replacement's own rules or submissions do work, and so does
-their gated publication.
+Static review runs on a review workspace under native execution ownership. That
+holds whether the review is created directly or admitted from a rule or
+submission. Direct and gated review publication publish as that owner.
+
+A replacement identity is therefore refused static review and review
+publication, with a denial that names native ownership. An admitted intent shows
+that reason while it waits. The replacement keeps rules and submissions for
+notifications, monitoring and runtime-slot QA.
 
 ### Rationale
 
 Amendment 3 made reused ids safe by failing closed. A replacement person then
-cannot use PR notifications, watches, rules or rule-driven review. Binding the
+cannot use PR notifications, watches, rules or rule-driven QA. Binding the
 generation at write time lets the replacement configure these features. Every
 older record stays bound to the identity that created it. Separating a permanent
 mismatch from a recoverable loss of authority means a temporary role change never
@@ -1837,7 +1840,9 @@ configuration; nothing migrates to them.
 - `@farmslot/protocol` adds optional, server-derived fields:
   - `ownerGeneration` on `PRMonitor`, `PRProjectMonitorPolicy`, `PRTeamProfile`,
     `PRTriggerRule`, `PRRuleActionRecord`, `PRReviewSubmission`,
-    `PRReviewContribution`, `PRWorkReference.review` and `AssessmentRecord`.
+    `PRReviewContribution`, `PRWorkReference.review` and `AssessmentRecord`. It
+    is the owner's identity generation, unrelated to
+    `PRMonitor.observationGeneration`.
   - `notificationPrincipalGenerations` on `PRTeamProfile`, keyed by recipient id
     and kept outside the client-edited `config`.
   - `createdByPrincipalGeneration` on `Run`.
