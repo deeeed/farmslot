@@ -80,6 +80,7 @@ import {
   buildEvidenceRefreshAction,
   buildUnavailableSnapshotAction,
   isPublishApprovalAction,
+  publicationReviewBlockingReason,
   publicationReviewMatchesPreparedPackage,
 } from './gate-policy.js';
 import {
@@ -319,6 +320,15 @@ export async function collectRunGateReadiness(
       });
     }
   }
+  const reviewBlock =
+    !publicationFulfilled && publicationReviewBlockingReason(run, preparedPackage);
+  if (reviewBlock)
+    reasons.push({
+      code: 'review-fix-required',
+      prerequisite: 'review',
+      message: reviewBlock,
+      actionId: 'continue-review-fix',
+    });
   const artifactRun = preparedPackage?.artifactBundle
     ? { ...run, artifactBundle: preparedPackage.artifactBundle }
     : run;

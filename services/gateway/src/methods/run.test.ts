@@ -10,6 +10,7 @@ import {
   buildRunResolveDecisionParams,
   createReviewCuration,
   DEFAULT_CURSOR_MODEL,
+  PUBLISH_APPROVAL_ACTIONS,
   type ReadyGatePrPackage,
   type ReviewGatePayload,
   type RunDecision,
@@ -563,6 +564,56 @@ test('assertDecisionStillUnresolved lets a first resolver through and blocks a r
     /Decision already resolved/,
   );
   assert.throws(() => assertDecisionStillUnresolved(run.id, 'missing-id'), /already resolved/);
+});
+
+test('publication RPC refuses unresolved findings without a pending decision, including an active fix', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'review-fix-refusal',
+    ticketOrPr: 'TAT-REVIEW-FIX',
+    transport: 'tmux',
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+  updateRun(run.id, {
+    status: 'human-gating',
+    decisions: [],
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            id: 'rv3',
+            source: 'human-gate',
+            mode: 'cold',
+            loopNumber: 3,
+            verdict: 'issues',
+            unresolvedCount: 1,
+            issues: [{ file: 'icon.service.ts', description: 'Exponential parsing' }],
+            feedbackSent: false,
+          },
+        ],
+      },
+    },
+  });
+  for (const status of ['human-gating', 'fixing'] as const) {
+    updateRun(run.id, { status });
+    const before = structuredClone(getRun(run.id));
+    for (const actionId of PUBLISH_APPROVAL_ACTIONS) {
+      await assert.rejects(
+        runResolveDecision({ runId: run.id, decisionId: 'no-pending-decision', actionId }, () =>
+          assert.fail('no side effects'),
+        ),
+        (error: unknown) =>
+          error instanceof GatewayMethodError &&
+          error.code === 'RUN_GATE_NOT_READY' &&
+          /Review found 1 issue/.test(error.message),
+      );
+    }
+    assert.deepEqual(getRun(run.id), before);
+  }
 });
 
 test('runResolveDecision keeps publish gate pending when approved package selection is stale', async (t) => {

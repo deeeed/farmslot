@@ -377,18 +377,7 @@ export function GateActions({
             <Text style={{ color: palette.text }}>Refresh package</Text>
           </Pressable>
         ) : null}
-        {view.approval ? (
-          renderAction(view.approval, true)
-        ) : (
-          <Pressable
-            disabled
-            accessibilityRole="button"
-            accessibilityState={{ disabled: true }}
-            style={[gateStyles.button, gateStyles.disabled, { backgroundColor: palette.accent }]}
-          >
-            <Text style={{ color: palette.onAccent }}>Approve publish</Text>
-          </Pressable>
-        )}
+        {view.approval ? renderAction(view.approval, true) : null}
         {view.attestation || view.secondaryActions.length ? (
           <Pressable
             style={gateStyles.button}

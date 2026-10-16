@@ -202,3 +202,42 @@ test('older gate row counts use the same recorded fallback in both clients', () 
   );
   assert.deepEqual(publicationGateCriteria(undefined), []);
 });
+
+test('both publication clients hide all approval variants behind an unresolved-review status', () => {
+  const actions = [
+    { id: 'approve-publish', label: 'Approve publish', style: 'primary' as const },
+    { ...EVIDENCE_ATTESTATION_ACTION },
+    {
+      id: 'approve-publish-unresolved',
+      label: 'Accept findings and publish',
+      style: 'danger' as const,
+    },
+    { id: 'continue-review-fix', label: 'Continue fixing', style: 'primary' as const },
+  ];
+  for (const message of [
+    'Review found 1 issue. Fix and pass review before publishing.',
+    'Review found 1 issue, fix in progress.',
+  ]) {
+    const view = publicationGateView({
+      actions,
+      readiness: {
+        state: 'not-ready',
+        identity: evidenceOnly.identity,
+        reasons: [{ code: 'review-fix-required', prerequisite: 'review', message }],
+      },
+    });
+    assert.equal(view.status, message);
+    assert.equal(view.approval, null);
+    assert.equal(view.attestation, null);
+    assert.deepEqual(
+      view.secondaryActions.map((action) => action.id),
+      ['continue-review-fix'],
+    );
+  }
+  const ready = publicationGateView({
+    actions,
+    readiness: { state: 'ready', identity: evidenceOnly.identity, reasons: [] },
+  });
+  assert.equal(ready.approval?.id, 'approve-publish');
+  assert.equal(publicationGateView({ actions, resolved: true }).approval, null);
+});

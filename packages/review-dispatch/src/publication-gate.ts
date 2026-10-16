@@ -6,6 +6,7 @@ import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   type DecisionAction,
   evidenceAttestationAvailable,
+  isPublishApprovalAction,
   isValidEvidenceAttestationReason,
   type ReadyGatePayload,
   type RunGateReadiness,
@@ -74,7 +75,14 @@ export function publicationGateView(input: PublicationGateInput) {
         pending: true,
       });
   }
-  const offeredNormal = input.actions.find((action) =>
+  const reviewBlock = input.readiness?.reasons.find(
+    (reason) => reason.code === 'review-fix-required',
+  );
+  const actions =
+    reviewBlock || input.resolved
+      ? input.actions.filter((action) => !isPublishApprovalAction(action.id))
+      : input.actions;
+  const offeredNormal = actions.find((action) =>
     ['approve-publish', 'approve-publish-evidence-refresh', 'ready'].includes(action.id),
   );
   const normal =
@@ -90,7 +98,7 @@ export function publicationGateView(input: PublicationGateInput) {
             'Publication prerequisites are not satisfied.',
         }
       : offeredNormal;
-  const offeredAttestation = input.actions.find(
+  const offeredAttestation = actions.find(
     (action) => action.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   );
   const attestation =
@@ -111,16 +119,18 @@ export function publicationGateView(input: PublicationGateInput) {
     ) ?? false;
   const blockedReason = input.resolved
     ? 'This decision is resolved.'
-    : refreshRequired
-      ? 'Refresh package'
-      : pending.size
-        ? `${pending.size} ${pending.size === 1 ? 'criterion needs' : 'criteria need'} your visual judgment`
-        : approval?.disabledReason ||
-          (!approval
-            ? attestation
-              ? 'Choose evidence attestation.'
-              : input.blockedReason || 'Publication prerequisites are not satisfied.'
-            : '');
+    : reviewBlock
+      ? reviewBlock.message
+      : refreshRequired
+        ? 'Refresh package'
+        : pending.size
+          ? `${pending.size} ${pending.size === 1 ? 'criterion needs' : 'criteria need'} your visual judgment`
+          : approval?.disabledReason ||
+            (!approval
+              ? attestation
+                ? 'Choose evidence attestation.'
+                : input.blockedReason || 'Publication prerequisites are not satisfied.'
+              : '');
   const reasonRequired = approval?.id === APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION;
   return {
     claims,
@@ -134,7 +144,7 @@ export function publicationGateView(input: PublicationGateInput) {
     approval,
     attestation,
     refreshRequired,
-    secondaryActions: input.actions.filter(
+    secondaryActions: actions.filter(
       (action) => action.id !== normal?.id && action.id !== offeredAttestation?.id,
     ),
   };

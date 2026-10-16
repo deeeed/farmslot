@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review.
+
 - Reserve loading layouts and retries for gate, output-review acceptance, evidence and run views with shared skeleton shapes.
 
 - Use one publication decision panel for gate and decision workspaces with explicit AC evidence actions.

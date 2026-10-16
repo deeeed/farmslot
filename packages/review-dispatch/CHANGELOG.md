@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review.
+
 - Share declared gate criteria across client loading layouts.
 
 - Share publication decision status, AC judgment rows and attestation availability across operator clients.

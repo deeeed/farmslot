@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review.
+
 - Restore the publication decision after recovered review findings were already ingested, instead of polling indefinitely with no operator action.
 
 - Resolve PR and ticket branches before automatic slot scoring, preferring a free matching checkout without prompting that every branch is stale.
