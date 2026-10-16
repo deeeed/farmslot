@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Retain recovered publication reviews' original snapshots and structured artifacts, repairing missing evidence without another review or budget spend.
+- Preserve the task marker and its frozen tooling when switching between worker and review checklists.
 
 - Refuse publication and evidence refresh when frozen text or PR prose contains detected secret values, preserving retained bytes and reporting only fingerprints.
 - Surface structured recipe artifact renderer failures during PR-body publication preparation.

@@ -3,9 +3,18 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { test, type TestContext } from 'node:test';
+import { after, test, type TestContext } from 'node:test';
 
 import type { AgentContext, ReviewStatus, WorkerSignal } from '@farmslot/protocol';
+
+const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'recovered-review-artifacts-'));
+process.env.FARMSLOT_HOME = path.join(fixtureRoot, 'home');
+process.env.FARMSLOT_RUNS_DIR = path.join(fixtureRoot, 'runs');
+process.env.FARMSLOT_POOL_DIR = path.join(fixtureRoot, 'pool');
+process.env.FARMSLOT_PROJECTS_DIR = path.join(fixtureRoot, 'projects');
+await mkdir(process.env.FARMSLOT_POOL_DIR, { recursive: true });
+await mkdir(process.env.FARMSLOT_PROJECTS_DIR, { recursive: true });
+after(() => rm(fixtureRoot, { recursive: true, force: true }));
 
 await import('../runtime/mock-pty.test-support.js');
 const { recoverInflightPublicationReviews } = await import('./recover-inflight-reviews.js');
@@ -14,10 +23,25 @@ const { collectRunGateReadiness, gateActionsForReadiness } =
 const { reviewResultArtifactPath } = await import('../review/terminal-result.js');
 const { createRun, getRun, updateRun } = await import('../runs/store.js');
 const { makeReadyGatePackage, deleteTestRunIfPresent } = await import('./test-fixtures.js');
-const { makeVars } = await import('../runners/test-fixtures.js');
+const { copyWorkerArtifacts } = await import('./review-artifacts.js');
+const { readRetainedRunText } = await import('../run-completion/retained-artifacts.js');
 
 async function fixture(t: TestContext, scenario = 'matching') {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'recovered-review-artifacts-'));
+  const root = await mkdtemp(path.join(fixtureRoot, 'worker-'));
+  const slotId = path.basename(root);
+  const taskRel = `temp/tasks/${slotId}`;
+  await writeFile(
+    path.join(process.env.FARMSLOT_POOL_DIR!, `${slotId}.json`),
+    JSON.stringify({
+      machine: 'localhost',
+      project: 'generic-project',
+      platform: 'cli',
+      os: 'darwin',
+      host: 'localhost',
+      ssh_user: 'fixture',
+      slots: [{ id: slotId, enabled: true, repo: root, session: slotId }],
+    }),
+  );
   t.after(() => rm(root, { recursive: true, force: true }));
   execFileSync('git', ['init', '-q', root]);
   execFileSync('git', [
@@ -37,7 +61,8 @@ async function fixture(t: TestContext, scenario = 'matching') {
   const head = execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   const startedAt = '2026-10-16T01:33:44.793Z';
   const completedAt = '2026-10-16T01:39:26.860Z';
-  const taskDir = path.join(root, 'task');
+  const taskDir = path.join(root, taskRel);
+  const gatewayDir = path.join(root, 'gateway/tasks', slotId);
   const snapshot = {
     source: 'local-git' as const,
     headSha: head,
@@ -57,7 +82,7 @@ async function fixture(t: TestContext, scenario = 'matching') {
     flowType: 'dev',
     project: 'generic-project',
     ticketOrPr: 'TEST-1',
-    slotId: 'fixture-slot',
+    slotId,
   });
   t.after(() => deleteTestRunIfPresent(run.id));
   const ctx: AgentContext = {
@@ -66,7 +91,7 @@ async function fixture(t: TestContext, scenario = 'matching') {
     label: 'Fixture reviewer',
     status: 'complete',
     runId: run.id,
-    slotId: 'fixture-slot',
+    slotId,
     runner: 'claude',
     model: 'opus',
     runnerSessionId: 'reviewer-session',
@@ -79,8 +104,8 @@ async function fixture(t: TestContext, scenario = 'matching') {
     updatedAt: completedAt,
     lastSignalAt: completedAt,
     signalAttemptId: 'attempt-1',
-    taskFile: 'task/REVIEW.rev-fixture.md',
-    signalFile: 'task/REVIEW.rev-fixture-SIGNAL.json',
+    taskFile: `${taskRel}/REVIEW.rev-fixture.md`,
+    signalFile: `${taskRel}/REVIEW.rev-fixture-SIGNAL.json`,
     reviewResultFile: 'artifacts/review-result.rev-fixture.json',
   };
   const existing: ReviewStatus = {
@@ -103,7 +128,7 @@ async function fixture(t: TestContext, scenario = 'matching') {
       { mode: 'cold', loopNumber: 1, verdict: 'pass', unresolvedCount: 0, startedAt, completedAt },
     ],
   };
-  await mkdir(path.join(root, 'gateway/artifacts'), { recursive: true });
+  await mkdir(path.join(gatewayDir, 'artifacts'), { recursive: true });
   await mkdir(path.join(taskDir, 'artifacts/pipeline-review-loop-1'), { recursive: true });
   await mkdir(path.join(taskDir, 'artifacts/pipeline-review-loop-2'), { recursive: true });
   await writeFile(
@@ -142,7 +167,7 @@ async function fixture(t: TestContext, scenario = 'matching') {
   );
   updateRun(run.id, {
     status: 'blocked',
-    taskFile: path.join(root, 'gateway/TASK.md'),
+    taskFile: path.join(gatewayDir, 'TASK.md'),
     agentContexts: [ctx],
     engineState: {
       publishGate: {
@@ -152,11 +177,10 @@ async function fixture(t: TestContext, scenario = 'matching') {
       },
     },
   });
-  const vars = { ...makeVars(), host: 'localhost', repo: root, remoteRepo: root };
   let captureCalls = 0;
   let failCapture = scenario === 'capture-error';
   const recover = () =>
-    recoverInflightPublicationReviews(run.id, 'fixture-slot', {
+    recoverInflightPublicationReviews(run.id, slotId, {
       captureArtifacts: async () => {
         captureCalls++;
         assert.equal(
@@ -167,9 +191,9 @@ async function fixture(t: TestContext, scenario = 'matching') {
           failCapture = false;
           throw new Error('Fixture capture unavailable');
         }
+        await copyWorkerArtifacts(run.id);
       },
       readers: {
-        slot: async () => vars,
         config: async () => ({ enabled: true, max_retries: 3 }),
         package: async () => prepared,
       },
@@ -181,7 +205,6 @@ async function fixture(t: TestContext, scenario = 'matching') {
       progress: async () => ({ kind: 'idle' }),
       selectedEvidence: async () => {},
       reviewedInputsAwaitingReview: async () => null,
-      reviewResult: async (_run, relative) => readFile(path.join(taskDir, relative), 'utf8'),
     });
   return {
     run,
@@ -189,6 +212,7 @@ async function fixture(t: TestContext, scenario = 'matching') {
     existing,
     raw,
     taskDir,
+    gatewayDir,
     prepared,
     recover,
     readiness,
@@ -227,6 +251,8 @@ test('an ingested PASS regains its launch snapshot and exact structured result w
   const result = reviewResultArtifactPath(repaired);
   assert.equal(result, 'artifacts/review-2/review-loop-1/review-result.json');
   assert.equal(await readFile(path.join(f.taskDir, result), 'utf8'), f.raw);
+  assert.equal(await readRetainedRunText(after, result), f.raw);
+  assert.equal(await readFile(path.join(f.gatewayDir, result), 'utf8'), f.raw);
   assert.equal(await readFile(path.join(f.taskDir, f.ctx.reviewResultFile!), 'utf8'), f.raw);
   assert.equal(after.agentContexts?.[0].completedAt, f.ctx.completedAt);
   const ready = await f.readiness();
@@ -238,6 +264,10 @@ test('an ingested PASS regains its launch snapshot and exact structured result w
   assert.deepEqual((await f.recover()).recoveredIds, []);
   assert.equal(f.captureCalls(), 1);
   assert.deepEqual(getRun(f.run.id)!.engineState!.publishGate!.reviews, reviews);
+  await rm(f.taskDir, { recursive: true, force: true });
+  await rm(f.gatewayDir, { recursive: true, force: true });
+  assert.equal((await f.readiness()).state, 'ready');
+  assert.equal(await readRetainedRunText(getRun(f.run.id)!, result), f.raw);
 });
 
 test('failed artifact capture leaves the same review repairable without spending another attempt', async (t) => {

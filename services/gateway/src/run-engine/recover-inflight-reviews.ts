@@ -15,6 +15,7 @@
 // persisted reviewer contexts for a completed signal + feedback and ingest the
 // verdict into `reviews`, mirroring fix-pass recovery.
 
+import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -32,6 +33,7 @@ import { resolveReviewMode } from '@farmslot/review-dispatch';
 import { upsertAgentContext } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { slotCopyFile } from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
 import { REQUESTED_REVIEW_SOURCE } from '../quality/review-sources.js';
 import { readReviewFeedback } from '../review/feedback.js';
@@ -654,6 +656,7 @@ async function ingestRecoveredReviewer(
   }
 
   const latest = getRun(runId)!;
+  if (!latest.taskFile) return null;
   const priorReviews = latest.engineState?.publishGate?.reviews ?? [];
   const reviewId = REQUESTED_REVIEW_SOURCE.artifactRefs(priorReviews.length + 1).id;
   const artifactScope = recoveredReviewArtifactScope(ctx, reviewId);
@@ -709,6 +712,24 @@ async function ingestRecoveredReviewer(
   });
   if (options.shouldAbort?.()) return null;
   const capturedPaths = [...(snapshotCapture?.artifactPaths ?? []), ...output.artifactPaths];
+  // The general mirror excludes numeric review directories because the gateway
+  // owns them. Transfer this exact recovery's named files before retaining them.
+  const workerTaskDir = path.posix.isAbsolute(taskDir)
+    ? taskDir
+    : path.posix.join(vars.remoteRepo, taskDir);
+  for (const relative of new Set(capturedPaths)) {
+    if (!relative.startsWith('artifacts/') || path.posix.normalize(relative) !== relative)
+      throw new Error(`Invalid recovered review artifact path: ${relative}`);
+    const destination = path.join(path.dirname(latest.taskFile), relative);
+    await mkdir(path.dirname(destination), { recursive: true });
+    await slotCopyFile(vars, path.posix.join(workerTaskDir, relative), destination, {
+      phase: 'mirror',
+      runId,
+      slotId: vars.slotId,
+      label: relative,
+    });
+    if (options.shouldAbort?.()) return null;
+  }
   const reviewToPersist: ReviewStatus = {
     ...recovered,
     artifactPaths: [...new Set([...(recovered.artifactPaths ?? []), ...capturedPaths])],
