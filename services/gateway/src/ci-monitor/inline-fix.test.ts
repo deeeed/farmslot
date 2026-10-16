@@ -18,6 +18,7 @@ import { handleNodeResponse } from '../fleet/node-rpc.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 import { runnerPromptDigest } from '../runners/observability-prompt-digest.js';
 import { makeVars } from '../runners/test-fixtures.js';
+import { renderRoleTemplate } from '../tasks/agent-runtime-script.js';
 
 import {
   ciFixAttemptPrompt,
@@ -25,7 +26,6 @@ import {
   ciFixPromptForRecovery,
   inlineFixRunnerStillBusy,
   recoveredCiFixHasDeliveryProof,
-  renderCiFixTemplate,
   resolveCiFixReplacementOwner,
   resolveCiFixRetainedSession,
   resolveCiFixTemplatePath,
@@ -68,7 +68,7 @@ test('CI follow-up commands use the connected node root through nested pack vari
     artifactDir: 'artifacts',
   };
   const comment = 'The upstream comment quotes {{farmslot_dir}} literally.';
-  const rendered = await renderCiFixTemplate(
+  const rendered = await renderRoleTemplate(
     '{{HARNESS_CMD}}\n{{FARMSLOT_DIR}}\n{{farmslot_dir}}\n{{CI_ISSUES}}',
     vars,
     projectVars,

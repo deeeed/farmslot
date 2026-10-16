@@ -26,16 +26,13 @@ import {
   farmslotRoot,
   loadProjectVars,
   loadSlotVars,
-  type ProjectVars,
   resolveProjectRuntimeDir,
   resolveProjectTaskDirName,
-  type SlotVars,
 } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import {
   assertNoUnknownPlaceholders,
   expandSourceBindings,
-  expandTemplateWithReservedLast,
   knownTemplatePlaceholders,
 } from '../core/hooks.js';
 import {
@@ -92,10 +89,7 @@ import {
 } from '../runners/session-record.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
-import {
-  agentRuntimeScriptForSlot,
-  farmslotDirectoryForSlot,
-} from '../tasks/agent-runtime-script.js';
+import { agentRuntimeScriptForSlot, renderRoleTemplate } from '../tasks/agent-runtime-script.js';
 import {
   CI_FIX_CHECKLIST,
   CI_FIX_CHECKLIST_TARGET,
@@ -557,18 +551,6 @@ async function resolveSlotTaskDir(runId: string, project: string): Promise<strin
   }
 }
 
-export async function renderCiFixTemplate(
-  template: string,
-  vars: SlotVars,
-  projectVars: ProjectVars,
-  replacements: Record<string, string>,
-): Promise<string> {
-  const farmslotDir = await farmslotDirectoryForSlot(vars);
-  return expandTemplateWithReservedLast(template, vars, projectVars, replacements, {
-    farmslot_dir: farmslotDir,
-  });
-}
-
 /** Write CI-FIX.md to the slot's task dir using the ci-fix template */
 async function writeCIFixTask(
   slotId: string,
@@ -659,7 +641,7 @@ async function writeCIFixTask(
   // Inline fixes reuse TASK.md, which may predate stack binding or retargeting.
   // Supply current branch instructions even for a project template without the new token.
   const expanded = [
-    await renderCiFixTemplate(template, vars, pv, ciReplacements),
+    await renderRoleTemplate(template, vars, pv, ciReplacements),
     ...(template.includes('{{BRANCH_UPDATE_INSTRUCTIONS}}')
       ? []
       : ['', ciReplacements.BRANCH_UPDATE_INSTRUCTIONS]),

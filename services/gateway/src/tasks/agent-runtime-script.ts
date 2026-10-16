@@ -1,7 +1,8 @@
 import path from 'node:path';
 
-import { farmslotRoot, type SlotVars } from '../core/config.js';
+import { farmslotRoot, type ProjectVars, type SlotVars } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
+import { expandTemplateWithReservedLast } from '../core/hooks.js';
 import { shellQuote } from '../core/tmux.js';
 import { nodeExecArgv } from '../fleet/node-rpc.js';
 
@@ -60,4 +61,16 @@ export async function farmslotDirectoryForSlot(
       `The connected node ${vars.machine} cannot resolve its Farmslot installation directory.`,
     );
   return directory;
+}
+
+export async function renderRoleTemplate(
+  template: string,
+  vars: SlotVars,
+  projectVars: ProjectVars | undefined,
+  replacements: Record<string, string>,
+): Promise<string> {
+  const farmslotDir = await farmslotDirectoryForSlot(vars);
+  return expandTemplateWithReservedLast(template, vars, projectVars, replacements, {
+    farmslot_dir: farmslotDir,
+  });
 }

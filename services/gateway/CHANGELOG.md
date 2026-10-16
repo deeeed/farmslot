@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Resolve CI follow-up helpers from the connected node installation and report retained delivery refusals without labelling every held handoff busy.
+- Resolve CI and review follow-up helpers from the connected node installation and report retained delivery refusals without labelling every held handoff busy.
 
 - Keep machine connection health current in cached fleet reads and wait for execution nodes at retained publication gates after gateway restart.
 - Read native parent interruption receipts when hooks retain an active turn, preserving child-stop and later-parent activity guards.
