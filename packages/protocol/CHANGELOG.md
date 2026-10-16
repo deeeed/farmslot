@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Remove person-only visual claim policy; qualified independent pipeline receipts satisfy every visual AC without project setup.
+
 - Bind pipeline visual verification to native review commands, person-only policy and publication approval receipts.
 
 - Active-development baseline; add user-facing changes here before release or package publication.

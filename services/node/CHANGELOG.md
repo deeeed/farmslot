@@ -5,6 +5,8 @@ All notable changes to `@farmslot/node` are tracked here.
 ## Unreleased
 
 - Advertise support for schema-bound native review results to the gateway.
+- Read worker pane observations from the external slot runtime after checkout cleanup.
+
 - Bound transient gateway reconnects to two seconds and time out stalled WebSocket opening handshakes while preserving authentication refusal pacing.
 
 - Deploy nodes without sourcing checkout authentication or provider settings, preserving installed native ownership.

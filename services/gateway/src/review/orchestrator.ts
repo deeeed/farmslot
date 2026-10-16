@@ -2099,6 +2099,7 @@ export async function retryDeferredFixDelivery({
   getRun: getRunDep,
   shouldAbort = () => false,
   isTargetBound = () => false,
+  deferredReason,
   retryIntervalMs = REVIEW_DELIVERY_RETRY_INTERVAL_MS,
   retryWindowMs = REVIEW_DELIVERY_RETRY_WINDOW_MS,
 }: {
@@ -2110,6 +2111,7 @@ export async function retryDeferredFixDelivery({
   getRun: typeof getRun;
   shouldAbort?: () => boolean;
   isTargetBound?: () => boolean;
+  deferredReason?: () => string | null;
   retryIntervalMs?: number;
   retryWindowMs?: number;
 }): Promise<FixDeliveryRetryResult> {
@@ -2128,7 +2130,7 @@ export async function retryDeferredFixDelivery({
     }
     attempt += 1;
     console.warn(
-      `[review] run ${runId.slice(0, 8)} — fix task send deferred (attempt ${attempt - 1}); worker busy, retrying in ${retryIntervalMs / 1000}s`,
+      `[review] run ${runId.slice(0, 8)} — fix task send deferred (attempt ${attempt - 1}); ${deferredReason?.() || 'delivery not yet acknowledged'}, retrying in ${retryIntervalMs / 1000}s`,
     );
     await new Promise((r) => setTimeout(r, retryIntervalMs));
     if (!isTargetBound()) {
@@ -2377,6 +2379,7 @@ async function sendOwnedFeedbackToWorker(
         getRun,
         shouldAbort: () => terminalRetainedHoldReason != null,
         isTargetBound: () => promptSendAttempted,
+        deferredReason: () => lastRetainedHoldReason,
       });
       sent = retry.sent;
       workerTarget = retry.target;

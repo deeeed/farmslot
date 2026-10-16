@@ -885,10 +885,9 @@ sessions and client actor strings grant neither kind. No agent may use a person'
 credential or be recorded as a person reviewer.
 
 `ProjectVisualClaimReviewPolicy` contains `delegatedReviewerPrincipalIds`,
-`delegatorPrincipalId` and optional `personOnlyClaimIds`. Without an explicit
+`delegatorPrincipalId`. Without an explicit
 delegation, agent review is refused. The delegator is an identified person; the
-reviewer must be listed for this project. Person-only applies to the normalized
-claim and its parents, so reviewing a child cannot bypass it. Policy comes from
+reviewer must be listed for this project. Policy comes from
 the existing trusted project configuration, never from task/recipe input or a
 review RPC. The gateway rechecks policy and identity before persisting. It retains
 the checked policy digest with the receipt; changed policy holds current gates
@@ -1246,7 +1245,7 @@ Implementation: [#1179](https://github.com/deeeed/farmslot/pull/1179).
 
 ADR-062 Amendment 11 governs pipeline visual judgments. Native review roles consume the protocol-owned typed result schema, retaining the command identity and execution closure. A worker's overall PASS or task-directory feedback never qualifies a visual claim. Pipeline review transport is native even when the retained producing worker uses tmux. Missing capability or result leaves the claim unchecked, without resetting a review budget.
 
-Qualified per-AC results use the canonical visual writer, bound to recording, closure, file digests, engine moments and reviewer binding. A stable reviewer/closure/claim retry key prevents duplicate stamps and refresh loops. Public manual review RPCs cannot produce pipeline receipts. Person-only project/claim/ancestor policy remains explicit. A person's latest judgment outranks agent receipts within the same execution and closure; later agent results cannot clear a person's Issue.
+Qualified per-AC results use the canonical visual writer, bound to recording, closure, file digests, engine moments and reviewer binding. A stable reviewer/closure/claim retry key prevents duplicate stamps and refresh loops. Public manual review RPCs cannot produce pipeline receipts. Every visual AC accepts a qualified pipeline receipt without project configuration. Person-only policy does not exist. A person may choose Looks right or Issue on any visual AC. A person's latest judgment outranks agent receipts within the same execution and closure; later agent results cannot clear a person's Issue.
 
 Every newly recorded judgment on a pending publication gate invokes the supported package refresh before success. A refresh refusal preserves the receipt and leaves an idempotent retry. Resolved/output judgments do not refresh a publication package. Approval never happens automatically. Successful normal approval records the actual person/service principal and binds it to the frozen package and receipt IDs on decision resolution. Historical actors are not inferred.
 
@@ -1266,10 +1265,9 @@ The native reviewer is labelled as a service identity, never as the profile owne
 acting as a person. Public `RunReviewVisualClaimParams.kind` excludes
 `pipeline-reviewed`. The manual RPC MUST refuse attempts to submit that kind.
 
-`visualClaimRequiresPerson` in `@farmslot/protocol` is shared by receipt
-qualification and the SDK's `requiresPersonReview` display. Project `personOnly`
-and normalized ancestor-aware `personOnlyClaimIds` require person review. Legacy
-delegation fields are required together only when granting legacy delegation.
+Legacy delegation fields are required together only for the public delegated-service
+judgment RPC, CLI and client action. They MUST NOT restrict native pipeline
+verification. Removed person-only configuration is not parsed or enforced.
 Normal approval stores `RunDecision.publicationApproval`, including principal,
 subject kind, frozen package hash and receipt IDs. PR provenance renders that
 resolution; historical missing actors display "Not recorded". These additions

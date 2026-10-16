@@ -21,7 +21,6 @@ export interface PublicationGateAction extends DecisionAction {
 export interface PublicationGateClaim extends AcceptanceCriterionView {
   reviewLabels?: readonly string[];
   proofKinds?: EvidenceReviewClaim['proofKinds'];
-  requiresPersonReview?: boolean;
   evidenceLinked?: boolean;
 }
 
@@ -91,9 +90,7 @@ export function acceptanceClaimRows(
       claim.status?.verdict === 'failed'
         ? 'Issue'
         : pending.has(claim.id) || claim.status?.verdict === 'awaiting-review'
-          ? 'requiresPersonReview' in claim && claim.requiresPersonReview
-            ? 'Needs your check'
-            : 'Needs a check'
+          ? 'Needs a check'
           : claim.status?.verdict === 'proven'
             ? claim.proofKinds?.includes('person-reviewed')
               ? 'Checked'

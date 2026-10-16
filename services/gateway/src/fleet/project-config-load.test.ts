@@ -47,7 +47,6 @@ writeProject(ROOT, 'opted-in', {
   visual_claim_review: {
     delegatedReviewerPrincipalIds: ['lead-reviewer'],
     delegatorPrincipalId: 'person',
-    personOnlyClaimIds: ['ac1'],
   },
   runtime_capabilities: {
     providers: { 'browser-cdp': provider },
@@ -79,7 +78,6 @@ test('loadProjectConfigs produces runtimeCapabilities, including the pressure op
   assert.deepEqual(optedIn.visualClaimReview, {
     delegatedReviewerPrincipalIds: ['lead-reviewer'],
     delegatorPrincipalId: 'person',
-    personOnlyClaimIds: ['AC-1'],
   });
 });
 

@@ -15,6 +15,7 @@ import {
 } from '@farmslot/protocol';
 import { currentProjectSources, sourceWorkerEnvironment } from '@farmslot/slot-config';
 
+import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import type { loadSlotVars, ProjectVars, RawPoolJson, RawProjectJson } from '../core/config.js';
 import {
   expandDispatchCmd,
@@ -189,7 +190,12 @@ function piCliModel(model: string): string {
 }
 
 export function piObservabilityExtensionPath(repo: string, runtimeDir = '.agent'): string {
-  return path.posix.join(repo, runtimeDir, '.observability', 'pi-farmslot-observability.ts');
+  return path.posix.join(
+    runnerRuntimeDir(repo, runtimeDir),
+    '.observability',
+    'bin',
+    'pi-farmslot-observability.ts',
+  );
 }
 
 export function buildPiLaunch(options: {
@@ -206,7 +212,7 @@ export function buildPiLaunch(options: {
     options.model && options.model !== 'unknown' ? options.model : DEFAULT_PI_MODEL;
   const cliModel = piCliModel(effectiveModel);
   const runtimeDir = options.runtimeDir ?? '.agent';
-  const obsDir = path.posix.join(options.repo, runtimeDir, '.observability');
+  const obsDir = path.posix.join(runnerRuntimeDir(options.repo, runtimeDir), '.observability');
   const extension = piObservabilityExtensionPath(options.repo, runtimeDir);
   const flagList = runnerFlagsForTier('pi', options.safetyTier);
   const flagFragment = flagList.length ? ` ${flagList.join(' ')}` : '';
@@ -218,14 +224,14 @@ export function buildPiLaunch(options: {
       : path.posix.join(options.repo, options.taskFile)
     : '';
   const envPrefix = [
-    `FARMSLOT_OBS_DIR=${shellQuote(obsDir)}`,
+    `FARMSLOT_OBS_DIR=${shellExpressionForRemotePath(obsDir)}`,
     `FARMSLOT_SLOT_ID=${shellQuote(options.slotId ?? '')}`,
     'FARMSLOT_RUNNER=pi',
     `FARMSLOT_THINKING=${shellQuote(thinking)}`,
     `FARMSLOT_MODEL=${shellQuote(cliModel)}`,
     ...(taskFile ? [`FARMSLOT_TASK_FILE=${shellQuote(taskFile)}`] : []),
   ].join(' ');
-  return `cd ${shellQuote(options.repo)} && ${envPrefix} ${options.binary}${flagFragment}${thinkingFlag} --approve -e ${shellQuote(extension)} --model ${quoteRunnerArgValue(assertedModel(cliModel))}`;
+  return `cd ${shellQuote(options.repo)} && ${envPrefix} ${options.binary}${flagFragment}${thinkingFlag} --approve -e ${shellExpressionForRemotePath(extension)} --model ${quoteRunnerArgValue(assertedModel(cliModel))}`;
 }
 
 /**
@@ -543,7 +549,7 @@ export function buildCodexHomeSetup(
   runtimeDir = '.agent',
   options: { resumeSessionId?: string } = {},
 ): string {
-  const codexHome = path.posix.join(repo, runtimeDir, 'codex-home');
+  const codexHome = path.posix.join(runnerRuntimeDir(repo, runtimeDir), 'codex-home');
   // Codex refuses to start when CODEX_HOME points at a non-existent dir ("Error
   // finding codex home"), which leaves dispatch with an empty pane and a false
   // ready-timeout. The observability install (bootstrapCodexHome) provisions this
@@ -554,15 +560,15 @@ export function buildCodexHomeSetup(
   // Otherwise fall back to the global ~/.codex with no farmslot observability, so a
   // codex worker launches regardless. We never create or write the home here — that
   // keeps the global config clean and avoids a half-built home that codex would reject.
-  const provisioned = `{ [ -e ${shellQuote(`${codexHome}/auth.json`)} ] || [ -e ${shellQuote(`${codexHome}/.farmslot-provider-auth`)} ]; }`;
+  const provisioned = `{ [ -e ${shellExpressionForRemotePath(`${codexHome}/auth.json`)} ] || [ -e ${shellExpressionForRemotePath(`${codexHome}/.farmslot-provider-auth`)} ]; }`;
   // Codex resumes only from $CODEX_HOME/sessions. A session started on the global
   // home (before its node's codex-home was usable) keeps resuming there.
   const rollout = options.resumeSessionId ? shellQuote(`*${options.resumeSessionId}*.jsonl`) : null;
   const resumable = rollout
-    ? ` && { find ${shellQuote(`${codexHome}/sessions`)} -name ${rollout} 2>/dev/null | grep -q . || ! find "$HOME/.codex/sessions" -name ${rollout} 2>/dev/null | grep -q .; }`
+    ? ` && { find ${shellExpressionForRemotePath(`${codexHome}/sessions`)} -name ${rollout} 2>/dev/null | grep -q . || ! find "$HOME/.codex/sessions" -name ${rollout} 2>/dev/null | grep -q .; }`
     : '';
   return (
-    `if ${provisioned}${resumable}; then export CODEX_HOME=${shellQuote(codexHome)}; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1='--config'; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2='features.hooks=true'; ` +
+    `if ${provisioned}${resumable}; then export CODEX_HOME=${shellExpressionForRemotePath(codexHome)}; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1='--config'; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2='features.hooks=true'; ` +
     `else unset CODEX_HOME; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1='--disable'; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2='plugin_hooks'; echo "[farmslot] codex-home not selected; using global ~/.codex without observability" >&2; fi`
   );
 }

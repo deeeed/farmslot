@@ -9,7 +9,6 @@
 // slot prepared earlier on a bundle that could not launch the runner. Every
 // launch path now calls ensureNodeSupportBundle first, which is a no-op when the
 // slot already points at the current bundle.
-
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -20,6 +19,7 @@ import {
 } from '@farmslot/protocol/node/pack-portability';
 import { currentProjectSources } from '@farmslot/slot-config';
 
+import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { execOnSlot } from '../core/exec.js';
 import {
   farmslotRoot,
@@ -238,13 +238,17 @@ export async function ensureNodeSupportBundle(
   // Always rewritten: another gateway or a prepare may have repointed the slot
   // since this process last looked, and the write is one small file.
   const persistSelection = async (how: 'published' | 'current') => {
-    await io.writeFiles(vars, path.posix.join(vars.remoteRepo, runtimeDir, '.observability'), [
-      {
-        path: NODE_SUPPORT_HASH_FILENAME,
-        content: Buffer.from(`${manifest.hash}\n`).toString('base64'),
-        mode: 0o644,
-      },
-    ]);
+    await io.writeFiles(
+      vars,
+      path.posix.join(runnerRuntimeDir(vars.remoteRepo, runtimeDir), '.observability'),
+      [
+        {
+          path: NODE_SUPPORT_HASH_FILENAME,
+          content: Buffer.from(`${manifest.hash}\n`).toString('base64'),
+          mode: 0o644,
+        },
+      ],
+    );
     console.log(
       `[node-support] ${vars.slotId} now on bundle ${manifest.hash.slice(0, 8)} (${how}, ${files.length} files)`,
     );

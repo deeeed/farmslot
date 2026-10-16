@@ -7,10 +7,12 @@ import path from 'node:path';
 import test, { after } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 
+import { readRecordedEvidencePackage } from '@farmslot/adapter-sdk';
 import {
   createEvidenceReviewModel,
   readEvidenceReviewReport,
 } from '@farmslot/adapter-sdk/evidence';
+import { validateArtifactManifestDocument } from '@farmslot/protocol';
 import { openRunBundleStore } from '@farmslot/run-bundle';
 
 import '../runtime/mock-pty.test-support.js';
@@ -321,4 +323,37 @@ test('a metadata capture preserves the source video when bundle capacity defers 
   );
   assert.equal(await readRetainedRunText(captured, 'artifacts/report.html'), f.body);
   assert.deepEqual(await readFile(path.join(taskDir, 'artifacts/capture.mp4')), video);
+});
+
+test('capture retains declared hidden package JSON after the source task is removed', async () => {
+  const f = await fixture();
+  const packagePath = 'artifacts/recipe-runs/attempt-final';
+  const indexedPath = '.agent/recipes/observation-id/observations.json';
+  const observations = JSON.stringify({ observations: [{ id: 'icons', status: 'pass' }] });
+  const manifest = { version: 1, artifacts: [{ path: indexedPath, type: 'json' }] };
+  const directory = path.join(f.taskDir, packagePath);
+  await mkdir(path.dirname(path.join(directory, indexedPath)), { recursive: true });
+  await writeFile(path.join(directory, indexedPath), observations);
+  await writeFile(path.join(directory, 'artifact-manifest.json'), JSON.stringify(manifest));
+  await writeFile(path.join(directory, '.agent/unselected-secret.json'), 'not indexed');
+  await captureRunOutput(f.runId, false, true);
+  const output = getRun(f.runId)!.output!;
+  const ref = output.artifactManifest.find((file) => file.path === `${packagePath}/${indexedPath}`);
+  assert.equal(ref?.sha256, createHash('sha256').update(observations).digest('hex'));
+  assert.equal(
+    output.artifactManifest.some((file) => file.path.endsWith('unselected-secret.json')),
+    false,
+  );
+  await rm(f.taskDir, { recursive: true });
+  assert.equal(
+    await readRetainedRunText(getRun(f.runId)!, `${packagePath}/${indexedPath}`),
+    observations,
+  );
+  const { retainedRunTaskDirectory } = await import('./retained-artifacts.js');
+  const retained = await retainedRunTaskDirectory(getRun(f.runId)!);
+  const { input } = await readRecordedEvidencePackage(path.join(retained, packagePath));
+  assert.equal(
+    validateArtifactManifestDocument(input.manifest, { artifactPaths: input.artifactPaths }).status,
+    'valid',
+  );
 });

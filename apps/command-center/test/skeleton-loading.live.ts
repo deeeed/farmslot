@@ -185,18 +185,53 @@ test(
     await waitReads(1);
     const loadedMetadata = await measure();
     assert.equal(loadedMetadata.below, compact.below);
+    const output = process.env.FARMSLOT_SKELETON_PROOF_DIR;
+    if (output) await mkdir(output, { recursive: true });
     const first = pending.shift();
     assert.ok(first);
-    reply(first.socket, first.id, { recipeRuns: [], selectedRecipeRunId: null });
+    reply(first.socket, first.id, null, 'Cold evidence read failure');
+    await waitFor("document.querySelector('.gate-read-error')");
+    const coldError = await measure();
+    assert.equal(coldError.below, compact.below);
+    if (output) await cdp('screenshot', route, path.join(output, 'cold-error.png'));
+    await cdp('click', route, '.gate-status button');
+    await waitReads(2);
+    if (output) await cdp('screenshot', route, path.join(output, 'cold-retry.png'));
+    assert.equal(
+      await cdp(
+        'eval',
+        route,
+        "return document.querySelector('.publication-gate')?.getAttribute('aria-busy');",
+      ),
+      'true',
+      'A cold Retry must show loading until evidence arrives',
+    );
+    assert.equal(
+      await cdp(
+        'eval',
+        route,
+        "return document.querySelectorAll('.gate-loading-judgment').length;",
+      ),
+      '4',
+    );
+    assert.equal(
+      await cdp('eval', route, "return Boolean(document.querySelector('.gate-read-error'));"),
+      'false',
+    );
+    const coldRetry = await measure();
+    assert.equal(coldRetry.below, compact.below);
+    const coldRetried = pending.shift();
+    assert.ok(coldRetried);
+    reply(coldRetried.socket, coldRetried.id, { recipeRuns: [], selectedRecipeRunId: null });
     await waitFor(
       "document.querySelector('.publication-gate')?.getAttribute('aria-busy')==='false'",
     );
     const loaded = await measure();
     assert.equal(loaded.below, compact.below);
     await cdp('click', route, '[data-workspace-phase=refreshing]');
-    await waitReads(2);
+    await waitReads(3);
     await cdp('click', route, '[data-workspace-phase=refreshing]');
-    assert.equal(reads, 2);
+    assert.equal(reads, 3);
     assert.equal(
       await cdp(
         'eval',
@@ -214,7 +249,7 @@ test(
     const error = await measure();
     assert.equal(error.below, compact.below);
     await cdp('click', route, '.gate-status button');
-    await waitReads(3);
+    await waitReads(4);
     const retried = pending.shift();
     assert.ok(retried);
     reply(retried.socket, retried.id, { recipeRuns: [], selectedRecipeRunId: null });
@@ -230,13 +265,22 @@ test(
     );
     const paused = await measure();
     assert.equal(paused.below, compact.below);
-    const output = process.env.FARMSLOT_SKELETON_PROOF_DIR;
     if (output) {
-      await mkdir(output, { recursive: true });
       await writeFile(
         path.join(output, 'workspace-layout.json'),
         JSON.stringify(
-          { compact, loadedMetadata, loaded, refreshing, error, paused, reads, maxShift: 0 },
+          {
+            compact,
+            loadedMetadata,
+            coldError,
+            coldRetry,
+            loaded,
+            refreshing,
+            error,
+            paused,
+            reads,
+            maxShift: 0,
+          },
           null,
           2,
         ),

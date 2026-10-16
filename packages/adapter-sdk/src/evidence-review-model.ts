@@ -37,7 +37,6 @@ import {
   summarizeAcceptanceStatus,
   validateRecipeRecordingTimelineBinding,
   validVisualJudgmentReason,
-  visualClaimRequiresPerson,
 } from '@farmslot/protocol';
 import {
   deriveReviewedRecipeClaims,
@@ -138,7 +137,6 @@ export interface EvidenceReviewArtifactPair<T> {
 }
 
 export interface EvidenceReviewClaim extends AcceptanceCriterionView {
-  requiresPersonReview: boolean;
   proofKinds: readonly EvidenceReviewProofKind[];
   reviewLabels: readonly string[];
   kind: RecipeClaimKind;
@@ -461,9 +459,6 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     ledger,
   ).map((claim) => ({
     ...claim,
-    requiresPersonReview: pkg
-      ? visualClaimRequiresPerson(pkg, claim.id, input.visualReviewAuthority?.projectPolicy)
-      : false,
     proofKinds: [
       ...new Set<EvidenceReviewProofKind>([
         ...(packageClaims && !errors.length && claim.status?.assertionIndices?.length
@@ -809,7 +804,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       return null;
     if (principal?.subjectKind === 'person') return 'person-reviewed';
     return principal?.subjectKind === 'service' &&
-      delegatedVisualClaimAllowed(pkg, claimId, principal.id, authority.projectPolicy)
+      delegatedVisualClaimAllowed(principal.id, authority.projectPolicy)
       ? 'lead-agent-reviewed'
       : null;
   };

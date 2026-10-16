@@ -204,7 +204,7 @@ test('delegated judgments retain their own identity/digests and drive the same p
   );
 });
 
-test('person-only parents and changed delegation refuse a write without modifying captured evidence', async (t) => {
+test('missing and changed delegation refuse a write without modifying captured evidence', async (t) => {
   const f = await fixture(t);
   const policy = {
     delegatedReviewerPrincipalIds: ['lead-reviewer'],
@@ -221,9 +221,9 @@ test('person-only parents and changed delegation refuse a write without modifyin
   await assert.rejects(
     runReviewVisualClaim(params, () => {}, {
       authorizeVisualClaimReview: () => reviewer,
-      policy: async () => ({ ...policy, personOnlyClaimIds: ['case-1'] }),
+      policy: async () => ({ ...policy, delegatedReviewerPrincipalIds: [] }),
     }),
-    /person review/,
+    /no matching project delegation/,
   );
   let reads = 0;
   await assert.rejects(

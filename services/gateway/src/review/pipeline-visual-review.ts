@@ -17,11 +17,9 @@ import {
   recordedEvidenceClosureIdentity,
   reviewedVisualFiles,
   type Run,
-  visualClaimRequiresPerson,
 } from '@farmslot/protocol';
 
 import { captureRunOutput } from '../run-completion/output.js';
-import { readVisualReviewPolicy } from '../run-engine/claim-reviews.js';
 import {
   readFrozenPublicationRecipeSources,
   readGateRecordedEvidenceSources,
@@ -74,14 +72,12 @@ export async function capturePipelineVisualInput(
   const { input, artifactPrefix } = sources[0]!;
   if (!input.claims || validateRecordedEvidencePackage(input, { headSha }).status !== 'valid')
     return;
-  const policy = await readVisualReviewPolicy(run);
   const claims = deriveReviewedRecipeClaims(input)
     .filter(
       (claim) =>
         claim.verdict === 'awaiting-review' &&
         ['visual', 'mixed'].includes(claim.proofMode) &&
-        claim.assertionIndices.length &&
-        !visualClaimRequiresPerson(input, claim.id, policy),
+        claim.assertionIndices.length,
     )
     .map((claim) => ({
       claimId: claim.id,
@@ -210,7 +206,6 @@ export async function stampPipelineVisualReviews(
   sources: readonly RecordedEvidenceSource[],
   headSha: string,
 ): Promise<void> {
-  const policy = await readVisualReviewPolicy(run);
   const generation = run.engineState?.generation ?? 0;
   const taskFile = run.taskFile;
   const slotId = run.slotId;
@@ -236,7 +231,6 @@ export async function stampPipelineVisualReviews(
       if (
         !claim ||
         claim.verdict !== 'awaiting-review' ||
-        visualClaimRequiresPerson(source.input, claim.id, policy) ||
         digestRecipeDocument(judgment.reviewedFiles) !==
           digestRecipeDocument(reviewedVisualFiles(source.input, claim.id)) ||
         digestRecipeDocument(judgment.moments) !== digestRecipeDocument(claim.moments)
@@ -280,9 +274,7 @@ export async function stampPipelineVisualReviews(
             digestRecipeDocument(latest.pipelineVisualReviewResult) !==
               digestRecipeDocument(verified) ||
             digestRecipeDocument(pipelineReviewerBinding(current, latest)) !==
-              digestRecipeDocument(verified.binding) ||
-            digestRecipeDocument(await readVisualReviewPolicy(current)) !==
-              digestRecipeDocument(policy)
+              digestRecipeDocument(verified.binding)
           )
             throw new Error(
               'The qualified pipeline review changed before its receipt was retained',

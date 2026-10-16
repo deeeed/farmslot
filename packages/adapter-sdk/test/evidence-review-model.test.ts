@@ -1162,23 +1162,11 @@ test('authenticated review uses one engine projection in every view and preserve
     assert.equal(verified.summary.proven, 2);
     const verifiedClaim = verified.claims.find((c) => c.id === 'check-1')!;
     assert.deepEqual(verifiedClaim.proofKinds, ['assertion', 'agent-reviewed']);
-    assert.equal(verifiedClaim.requiresPersonReview, false);
     assert.match(verified.visualReviewMarkdown, /Verified by agent/);
     assert.equal(
       verified.judgmentRows(null).find((r) => r.claim.id === 'check-1')!.prevalidation?.reason,
       receipt.reason,
     );
-    const personOnly = createEvidenceReviewModel({
-      package: input,
-      context,
-      visualReviewAuthority: {
-        ...authority,
-        receipts: [pipeline],
-        projectPolicy: { personOnlyClaimIds: ['case-1'] },
-      },
-    });
-    assert.equal(personOnly.summary.proven, 0);
-    assert.equal(personOnly.claims.find((c) => c.id === 'check-1')!.requiresPersonReview, true);
     const policy = { delegatedReviewerPrincipalIds: ['lead'], delegatorPrincipalId: 'person' };
     const delegated = createEvidenceReviewModel({
       package: input,
@@ -1297,19 +1285,6 @@ test('the shared visual review request binds an eligible claim to its captured s
   assert.throws(
     () => model.visualReviewRequest('check-1', lead, 'confirmed', ''),
     /needs a reason/,
-  );
-  const personOnly = createEvidenceReviewModel({
-    package: input,
-    visualReviewAuthority: {
-      ...authority,
-      projectPolicy: { ...authority.projectPolicy, personOnlyClaimIds: ['check-1'] },
-    },
-    visualReviewContext: { snapshotIdentity: 'frozen' },
-  });
-  assert.equal(personOnly.visualReviewKind('check-1', lead), null);
-  assert.equal(
-    personOnly.visualReviewKind('check-1', { ...lead, subjectKind: 'person' }),
-    'person-reviewed',
   );
   assert.equal(
     createEvidenceReviewModel({

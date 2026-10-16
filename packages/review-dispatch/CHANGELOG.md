@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Remove person-only visual claim policy; qualified independent pipeline receipts satisfy every visual AC without project setup.
+
 - Share AC row state and judgment controls across publication, preview and evidence views in both clients.
 - Share declared gate criteria across client loading layouts.
 

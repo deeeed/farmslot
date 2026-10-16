@@ -11,7 +11,6 @@ import {
 } from './visual-claim-judgment.js';
 const row: EvidenceReviewJudgmentRow = {
   claim: {
-    requiresPersonReview: false,
     id: 'AC-1',
     text: 'Order price is visible',
     status: {

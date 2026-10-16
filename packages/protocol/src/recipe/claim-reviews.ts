@@ -6,11 +6,7 @@ import {
 import { recordedEvidenceClosureIdentity } from './claim-overrides.js';
 import { isRecord } from './common.js';
 import { digestRecipeDocument } from './digest.js';
-import {
-  normalizeRecipeClaimId,
-  type RecipeVisualJudgment,
-  type RecordedEvidencePackageInput,
-} from './evidence.js';
+import { type RecipeVisualJudgment, type RecordedEvidencePackageInput } from './evidence.js';
 
 export const CONFIRM_VISUAL_CLAIM_ACTION = 'confirm-visual';
 export const REJECT_VISUAL_CLAIM_ACTION = 'reject-visual';
@@ -32,8 +28,6 @@ export function validVisualJudgmentReason(
 export interface ProjectVisualClaimReviewPolicy {
   delegatedReviewerPrincipalIds?: string[];
   delegatorPrincipalId?: string;
-  personOnly?: boolean;
-  personOnlyClaimIds?: string[];
 }
 
 export type RecipeVisualReviewer = EvidenceAttestationApprover & {
@@ -48,24 +42,14 @@ export function parseProjectVisualClaimReviewPolicy(
   if (value === undefined) return undefined;
   if (
     !isRecord(value) ||
-    (value.personOnly !== undefined && typeof value.personOnly !== 'boolean') ||
     ((value.delegatorPrincipalId !== undefined ||
       value.delegatedReviewerPrincipalIds !== undefined) &&
       (typeof value.delegatorPrincipalId !== 'string' ||
         !value.delegatorPrincipalId.trim() ||
         !Array.isArray(value.delegatedReviewerPrincipalIds) ||
         value.delegatedReviewerPrincipalIds.some((id) => typeof id !== 'string' || !id.trim()))) ||
-    (value.personOnlyClaimIds !== undefined &&
-      (!Array.isArray(value.personOnlyClaimIds) ||
-        value.personOnlyClaimIds.some((id) => typeof id !== 'string' || !id.trim()))) ||
     Object.keys(value).some(
-      (key) =>
-        ![
-          'delegatedReviewerPrincipalIds',
-          'delegatorPrincipalId',
-          'personOnlyClaimIds',
-          'personOnly',
-        ].includes(key),
+      (key) => !['delegatedReviewerPrincipalIds', 'delegatorPrincipalId'].includes(key),
     )
   )
     throw new TypeError('Invalid project visualClaimReview policy.');
@@ -78,46 +62,14 @@ export function parseProjectVisualClaimReviewPolicy(
           ].sort(),
         }
       : {}),
-    ...(typeof value.personOnly === 'boolean' ? { personOnly: value.personOnly } : {}),
-    ...(value.personOnlyClaimIds
-      ? {
-          personOnlyClaimIds: [
-            ...new Set((value.personOnlyClaimIds as string[]).map(normalizeRecipeClaimId)),
-          ].sort(),
-        }
-      : {}),
   };
 }
 
 export function delegatedVisualClaimAllowed(
-  input: RecordedEvidencePackageInput,
-  claimId: string,
   reviewerPrincipalId: string,
   policy: ProjectVisualClaimReviewPolicy | undefined,
 ): boolean {
-  return (
-    Boolean(policy?.delegatedReviewerPrincipalIds?.includes(reviewerPrincipalId)) &&
-    !visualClaimRequiresPerson(input, claimId, policy)
-  );
-}
-
-/** One ancestor-aware policy predicate for receipt qualification and client labels. */
-export function visualClaimRequiresPerson(
-  input: RecordedEvidencePackageInput,
-  claimId: string,
-  policy?: ProjectVisualClaimReviewPolicy,
-): boolean {
-  if (policy?.personOnly) return true;
-  const personOnly = new Set((policy?.personOnlyClaimIds ?? []).map(normalizeRecipeClaimId));
-  let claim = input.claims?.criteria.find(({ id }) => id === normalizeRecipeClaimId(claimId));
-  if (!claim) return true;
-  const visited = new Set<string>();
-  while (claim) {
-    if (personOnly.has(claim.id) || visited.has(claim.id)) return true;
-    visited.add(claim.id);
-    claim = input.claims?.criteria.find(({ id }) => id === claim!.parentId);
-  }
-  return false;
+  return Boolean(policy?.delegatedReviewerPrincipalIds?.includes(reviewerPrincipalId));
 }
 
 export interface PipelineVisualReviewerBinding {
@@ -249,9 +201,7 @@ export function recordedVisualJudgments(
           ].every((key) =>
             Boolean(receipt.pipeline?.[key as keyof PipelineVisualReviewerBinding]),
           ) ||
-          !receipt.reviewedFiles?.length ||
-          (!authority.historical &&
-            visualClaimRequiresPerson(input, receipt.claimId, authority.projectPolicy)))) ||
+          !receipt.reviewedFiles?.length)) ||
       (delegated &&
         (!receipt.approver.credentialId ||
           !receipt.reviewedFiles?.length ||
@@ -259,12 +209,7 @@ export function recordedVisualJudgments(
           !receipt.delegation?.displayName.trim() ||
           !/^sha256:[a-f0-9]{64}$/u.test(receipt.delegation.policyDigest) ||
           (!authority.historical &&
-            (!delegatedVisualClaimAllowed(
-              input,
-              receipt.claimId,
-              receipt.approver.principalId,
-              authority.projectPolicy,
-            ) ||
+            (!delegatedVisualClaimAllowed(receipt.approver.principalId, authority.projectPolicy) ||
               receipt.delegation.principalId !== authority.projectPolicy?.delegatorPrincipalId ||
               receipt.delegation.policyDigest !== digestRecipeDocument(authority.projectPolicy)))))
     )

@@ -1,16 +1,31 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { runnerRuntimeDir } from './lib/runner-runtime.cjs';
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const temporaryDirectories = new Set();
+function temporaryDirectory(prefix) {
+  const directory = fs.mkdtempSync(prefix);
+  temporaryDirectories.add(directory);
+  runtimeRoots.add(path.dirname(runnerRuntimeDir(directory)));
+  return directory;
+}
+const runtimeRoots = new Set();
+after(() => {
+  for (const dir of [...runtimeRoots, ...temporaryDirectories])
+    fs.rmSync(dir, { recursive: true, force: true });
+});
 const INSTALLER = path.join(ROOT, 'scripts', 'install-runner-observability.mjs');
 
 function installToTempDir(runner = 'claude', existingRepo, env) {
-  const repo = existingRepo ?? fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-'));
+  const repo = existingRepo ?? temporaryDirectory(path.join(os.tmpdir(), 'obs-install-'));
   execFileSync(
     process.execPath,
     [
@@ -26,7 +41,8 @@ function installToTempDir(runner = 'claude', existingRepo, env) {
     ],
     { stdio: 'pipe', ...(env ? { env: { ...process.env, ...env } } : {}) },
   );
-  const obsDir = path.join(repo, '.agent', '.observability');
+  runtimeRoots.add(path.dirname(runnerRuntimeDir(repo)));
+  const obsDir = path.join(runnerRuntimeDir(repo), '.observability');
   const hookPath = path.join(obsDir, 'bin', 'farmslot-observability-hook.mjs');
   const claudeSettingsPath = path.join(obsDir, 'claude-settings.json');
   return { repo, obsDir, hookPath, claudeSettingsPath };
@@ -42,6 +58,93 @@ function runHook(hookPath, obsDir, payload, runner = 'claude') {
       FARMSLOT_RUNNER: runner,
       TMUX_PANE: '%1',
     },
+  });
+}
+
+for (const runner of ['claude', 'pi']) {
+  test(`${runner} fresh install leaves git status and repository lint unchanged`, async () => {
+    const { ESLint } = createRequire(path.join(ROOT, 'packages/agent-runtime/package.json'))(
+      'eslint',
+    );
+    const scratch = temporaryDirectory(path.join(os.tmpdir(), 'obs-clean-checkout-'));
+    const repo = path.join(scratch, 'product');
+    fs.mkdirSync(repo);
+    fs.writeFileSync(path.join(repo, 'source.js'), 'const source = 1;\n');
+    execFileSync('git', ['init', '-q', repo]);
+    const status = () =>
+      execFileSync('git', ['-C', repo, 'status', '--porcelain'], { encoding: 'utf8' });
+    const before = status();
+    const { obsDir } = installToTempDir(runner, repo, {
+      HOME: scratch,
+      GROK_HOME: path.join(scratch, '.grok'),
+    });
+    assert.equal(status(), before);
+    assert.equal(fs.existsSync(path.join(repo, '.agent')), false);
+    assert.equal(fs.existsSync(path.join(repo, '.observability')), false);
+    assert.ok(!obsDir.startsWith(repo + path.sep));
+    const lint = new ESLint({
+      cwd: repo,
+      overrideConfigFile: true,
+      overrideConfig: [{ files: ['**/*.js', '**/*.mjs', '**/*.ts'] }],
+    });
+    const results = await lint.lintFiles(['.']);
+    assert.deepEqual(
+      results.map((result) => path.relative(repo, result.filePath)),
+      ['source.js'],
+    );
+    assert.equal(
+      results.reduce((count, result) => count + result.errorCount, 0),
+      0,
+    );
+  });
+}
+
+for (const runner of ['claude', 'pi']) {
+  test(`${runner} executable helpers stay outside product lint, including legacy installs`, async (t) => {
+    const { ESLint } = createRequire(path.join(ROOT, 'packages/agent-runtime/package.json'))(
+      'eslint',
+    );
+    const scratch = temporaryDirectory(path.join(os.tmpdir(), 'obs-lint-regression-'));
+    t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+    const temporary = path.join(scratch, 'temporary');
+    const home = path.join(scratch, 'home');
+    fs.mkdirSync(temporary);
+    fs.mkdirSync(home);
+    const repo = path.join(scratch, runner);
+    const obsDir = path.join(repo, '.agent', '.observability');
+    const binDir = path.join(obsDir, 'bin');
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.writeFileSync(path.join(binDir, 'retained.mjs'), 'export const retained = true;\n');
+    const legacyExtension = path.join(obsDir, 'pi-farmslot-task.mjs');
+    fs.writeFileSync(legacyExtension, 'export const legacy = true;\n');
+    fs.writeFileSync(path.join(obsDir, 'session.json'), '{"retained":true}\n');
+    fs.writeFileSync(path.join(repo, 'source.js'), 'const source = 1;\n');
+    const env = { HOME: home, GROK_HOME: path.join(home, '.grok'), TMPDIR: temporary };
+    installToTempDir(runner, repo, env);
+    assert.ok(fs.lstatSync(obsDir).isSymbolicLink());
+    assert.ok(!fs.realpathSync(binDir).startsWith(repo + path.sep));
+    assert.equal(fs.readFileSync(path.join(obsDir, 'session.json'), 'utf8'), '{"retained":true}\n');
+    assert.ok(fs.existsSync(path.join(binDir, 'retained.mjs')));
+    assert.equal(fs.existsSync(legacyExtension), false);
+    assert.ok(fs.existsSync(path.join(binDir, 'pi-farmslot-task.mjs')));
+    installToTempDir(runner, repo, env);
+    const otherTemporary = path.join(scratch, 'other-temporary');
+    fs.mkdirSync(otherTemporary);
+    installToTempDir(runner, repo, { ...env, TMPDIR: otherTemporary });
+    const lint = new ESLint({
+      cwd: repo,
+      overrideConfigFile: true,
+      overrideConfig: [{ files: ['**/*.js', '**/*.mjs', '**/*.ts'] }],
+    });
+    const results = await lint.lintFiles(['.']);
+    assert.deepEqual(
+      results.map((result) => path.relative(repo, result.filePath)),
+      ['source.js'],
+    );
+    assert.equal(
+      results.reduce((total, result) => total + result.errorCount, 0),
+      0,
+    );
   });
 }
 
@@ -65,7 +168,7 @@ test('claude install registers hooks in Farmslot runtime without modifying repos
 });
 
 test('claude install removes legacy Farmslot-only repository settings', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-legacy-only-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-legacy-only-'));
   const settingsDir = path.join(repo, '.claude');
   fs.mkdirSync(settingsDir);
   fs.writeFileSync(
@@ -93,7 +196,7 @@ test('claude install removes legacy Farmslot-only repository settings', () => {
 });
 
 test('claude install preserves non-Farmslot repository settings while removing legacy entries', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-legacy-mixed-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-legacy-mixed-'));
   const settingsDir = path.join(repo, '.claude');
   const settingsPath = path.join(settingsDir, 'settings.local.json');
   fs.mkdirSync(settingsDir);
@@ -126,8 +229,8 @@ test('claude install preserves non-Farmslot repository settings while removing l
 });
 
 test('claude install does not traverse a symlinked repository settings directory', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-linked-dir-'));
-  const externalDir = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-external-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-linked-dir-'));
+  const externalDir = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-external-'));
   const externalSettings = path.join(externalDir, 'settings.local.json');
   const original = JSON.stringify({
     hooks: {
@@ -148,11 +251,11 @@ test('claude install does not traverse a symlinked repository settings directory
 });
 
 test('claude install sanitizes a linked settings file without mutating its target', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-linked-file-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-linked-file-'));
   const settingsDir = path.join(repo, '.claude');
   const settingsPath = path.join(settingsDir, 'settings.local.json');
   const externalSettings = path.join(
-    fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-external-')),
+    temporaryDirectory(path.join(os.tmpdir(), 'obs-install-external-')),
     'settings.json',
   );
   const original = JSON.stringify({
@@ -177,7 +280,7 @@ test('claude install sanitizes a linked settings file without mutating its targe
 });
 
 test('claude install relocates a legacy backup after Farmslot settings were removed', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-legacy-backup-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-legacy-backup-'));
   const settingsDir = path.join(repo, '.claude');
   const backupPath = path.join(settingsDir, 'settings.local.json.farmslot-backup');
   fs.mkdirSync(settingsDir);
@@ -193,7 +296,7 @@ test('claude install relocates a legacy backup after Farmslot settings were remo
 });
 
 test('claude install replaces a stale compatibility symlink and remains idempotent', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-stale-link-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-stale-link-'));
   const compat = path.join(repo, '.observability');
   fs.symlinkSync(path.join(repo, '.agent', '.observability'), compat, 'dir');
 
@@ -215,7 +318,8 @@ test('claude install replaces a stale compatibility symlink and remains idempote
     );
   }
 
-  const expected = path.join(repo, 'temp', 'recipe', 'runtime', '.observability');
+  const expected = path.join(runnerRuntimeDir(repo, 'temp/recipe/runtime'), '.observability');
+  runtimeRoots.add(runnerRuntimeDir(repo, 'temp/recipe/runtime'));
   assert.equal(path.resolve(repo, fs.readlinkSync(compat)), expected);
   assert.ok(fs.existsSync(path.join(expected, 'bin', 'farmslot-observability-hook.mjs')));
   const settings = fs.readFileSync(path.join(expected, 'claude-settings.json'), 'utf8');
@@ -224,7 +328,7 @@ test('claude install replaces a stale compatibility symlink and remains idempote
 });
 
 test('claude install preserves a non-symlink compatibility directory', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-real-dir-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-real-dir-'));
   const compat = path.join(repo, '.observability');
   fs.mkdirSync(compat);
   fs.writeFileSync(path.join(compat, 'operator-file'), 'keep\n');
@@ -312,10 +416,10 @@ function installGrokTrust(repo, env) {
 }
 
 test('grok install seeds directory trust in ~/.grok/trusted_folders.toml and stays idempotent', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-home-'));
+  const home = temporaryDirectory(path.join(os.tmpdir(), 'grok-home-'));
   // `#` and `]` inside the quoted key are content, not TOML syntax; a re-install
   // must still recognise the entry it wrote.
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'grok repo #] "q"-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'grok repo #] "q"-'));
   const trustedPath = path.join(home, '.grok', 'trusted_folders.toml');
   fs.mkdirSync(path.dirname(trustedPath), { recursive: true });
   fs.writeFileSync(
@@ -348,9 +452,9 @@ test('grok install seeds directory trust in ~/.grok/trusted_folders.toml and sta
 });
 
 test('grok install honours GROK_HOME and creates the trust store when absent', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-home-unused-'));
-  const grokHome = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-home-override-'));
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-repo-'));
+  const home = temporaryDirectory(path.join(os.tmpdir(), 'grok-home-unused-'));
+  const grokHome = temporaryDirectory(path.join(os.tmpdir(), 'grok-home-override-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'grok-repo-'));
   installGrokTrust(repo, { HOME: home, GROK_HOME: grokHome });
   assert.ok(!fs.existsSync(path.join(home, '.grok')), 'HOME is untouched when GROK_HOME is set');
   const content = fs.readFileSync(path.join(grokHome, 'trusted_folders.toml'), 'utf8');
@@ -358,8 +462,8 @@ test('grok install honours GROK_HOME and creates the trust store when absent', (
 });
 
 test('grok install trusts the shared Git root for a worktree', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-home-worktree-'));
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-repo-worktree-'));
+  const home = temporaryDirectory(path.join(os.tmpdir(), 'grok-home-worktree-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'grok-repo-worktree-'));
   const worktree = path.join(path.dirname(repo), `${path.basename(repo)}-slot`);
   execFileSync('git', ['init', '-q', repo]);
   execFileSync('git', [
@@ -388,7 +492,7 @@ test('grok install trusts the shared Git root for a worktree', () => {
 });
 
 test('codex install keeps project hooks and config clean while isolating managed hooks', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-codex-'));
   fs.mkdirSync(path.join(repo, '.codex'), { recursive: true });
   fs.writeFileSync(
     path.join(repo, '.codex', 'hooks.json'),
@@ -435,7 +539,7 @@ test('codex install keeps project hooks and config clean while isolating managed
     '[features]\nhooks = true\n',
   );
 
-  const codexHome = path.join(repo, '.agent', 'codex-home');
+  const codexHome = path.join(runnerRuntimeDir(repo), 'codex-home');
   const hooksDoc = JSON.parse(fs.readFileSync(path.join(codexHome, 'hooks.json'), 'utf8'));
   const stopEntries = hooksDoc.hooks.Stop;
   assert.ok(Array.isArray(stopEntries));
@@ -464,7 +568,7 @@ test('codex install keeps project hooks and config clean while isolating managed
   assert.match(codexHomeConfig, /trusted_hash = "sha256:[a-f0-9]{64}"/);
   assert.ok(fs.existsSync(path.join(codexHome, 'hooks.json')));
 
-  const obsDir = path.join(repo, '.agent', '.observability');
+  const obsDir = path.join(runnerRuntimeDir(repo), '.observability');
   const hookPath = path.join(obsDir, 'bin', 'farmslot-observability-hook.mjs');
   runHook(hookPath, obsDir, { hook_event_name: 'UserPromptSubmit', session_id: 'c1' }, 'codex');
   const row = JSON.parse(fs.readFileSync(path.join(obsDir, 'hooks.jsonl'), 'utf8').trim());
@@ -472,7 +576,7 @@ test('codex install keeps project hooks and config clean while isolating managed
 });
 
 test('codex install preserves live project-hook edits during legacy cleanup', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-migrate-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-codex-migrate-'));
   const codexDir = path.join(repo, '.codex');
   fs.mkdirSync(codexDir, { recursive: true });
   const originalHook = { type: 'command', command: 'node /tmp/original.mjs' };
@@ -518,7 +622,7 @@ test('codex install preserves live project-hook edits during legacy cleanup', ()
   );
   installToTempDir('codex', repo);
   const isolatedHooks = fs.readFileSync(
-    path.join(repo, '.agent', 'codex-home', 'hooks.json'),
+    path.join(runnerRuntimeDir(repo), 'codex-home', 'hooks.json'),
     'utf8',
   );
   assert.match(fs.readFileSync(path.join(codexDir, 'hooks.json'), 'utf8'), /latest\.mjs/u);
@@ -530,7 +634,7 @@ test('codex install preserves live project-hook edits during legacy cleanup', ()
   fs.unlinkSync(path.join(codexDir, 'hooks.json'));
   installToTempDir('codex', repo);
   const isolatedWithoutProjectHooks = fs.readFileSync(
-    path.join(repo, '.agent', 'codex-home', 'hooks.json'),
+    path.join(runnerRuntimeDir(repo), 'codex-home', 'hooks.json'),
     'utf8',
   );
   assert.doesNotMatch(isolatedWithoutProjectHooks, /latest\.mjs/u);
@@ -585,7 +689,7 @@ test('codex legacy cleanup restores owned project files without losing operator 
   ];
 
   for (const { files, expected, missing = [] } of cases) {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-clean-migrate-'));
+    const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-codex-clean-migrate-'));
     const codexDir = path.join(repo, '.codex');
     fs.mkdirSync(codexDir, { recursive: true });
     for (const [name, content] of Object.entries(files)) {
@@ -600,7 +704,7 @@ test('codex legacy cleanup restores owned project files without losing operator 
 });
 
 test('codex legacy cleanup replaces a hook symlink without modifying its target', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-symlink-migrate-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-codex-symlink-migrate-'));
   const codexDir = path.join(repo, '.codex');
   const target = path.join(repo, 'shared-hooks.json');
   const content = `${JSON.stringify({
@@ -627,10 +731,10 @@ test('codex install never writes through a stale codex-home config.toml symlink 
   // (left by an older launch path) made the installer read the global config, append its hook-trust
   // block, and write it BACK through the symlink — corrupting the global config (duplicate [features],
   // which broke codex everywhere). The installer must drop the symlink and write a real isolated file.
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-symlink-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-symlink-'));
   const sentinel = path.join(repo, 'sentinel-global.toml');
   fs.writeFileSync(sentinel, '[features]\nhooks = true\n\n[notice]\nx = 1\n');
-  const codexHome = path.join(repo, '.agent', 'codex-home');
+  const codexHome = path.join(runnerRuntimeDir(repo), 'codex-home');
   fs.mkdirSync(codexHome, { recursive: true });
   const homeConfig = path.join(codexHome, 'config.toml');
   fs.symlinkSync(sentinel, homeConfig);
@@ -692,7 +796,7 @@ function installCodexHome(repo, home, slotId = 'install-test-codex-lb') {
     ],
     { stdio: 'pipe', env: { ...process.env, HOME: home } },
   );
-  return fs.readFileSync(path.join(repo, '.agent', 'codex-home', 'config.toml'), 'utf8');
+  return fs.readFileSync(path.join(runnerRuntimeDir(repo), 'codex-home', 'config.toml'), 'utf8');
 }
 
 const CODEX_LB_TABLE = [
@@ -704,8 +808,8 @@ const CODEX_LB_TABLE = [
 ].join('\n');
 
 test('codex-home ignores model_provider lines inside a root multiline string', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-multiline-'));
-  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-multiline-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-multiline-'));
+  const fakeHome = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-home-multiline-'));
   writeOperatorCodexConfig(
     fakeHome,
     [
@@ -726,8 +830,8 @@ test('codex-home ignores model_provider lines inside a root multiline string', (
 });
 
 test('codex-home config copies operator model_provider routing without writing through to global', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-lb-routing-'));
-  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-codex-lb-routing-'));
+  const fakeHome = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-home-'));
   const globalConfig = writeOperatorCodexConfig(
     fakeHome,
     [
@@ -756,10 +860,10 @@ test('codex-home config copies operator model_provider routing without writing t
 });
 
 test('codex-home is marked usable without auth.json only while its provider needs no OpenAI auth', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-provider-auth-'));
-  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-provider-auth-'));
-  const marker = path.join(repo, '.agent', 'codex-home', '.farmslot-provider-auth');
-  const authLink = path.join(repo, '.agent', 'codex-home', 'auth.json');
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-provider-auth-'));
+  const fakeHome = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-home-provider-auth-'));
+  const marker = path.join(runnerRuntimeDir(repo), 'codex-home', '.farmslot-provider-auth');
+  const authLink = path.join(runnerRuntimeDir(repo), 'codex-home', 'auth.json');
   writeOperatorCodexConfig(
     fakeHome,
     ['model_provider = "codex-lb"', '', CODEX_LB_TABLE, 'requires_openai_auth = false', ''].join(
@@ -818,8 +922,8 @@ test('codex-home is marked usable without auth.json only while its provider need
 });
 
 test('codex-home config copies a custom provider table that matches model_provider', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-custom-lb-'));
-  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-custom-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-custom-lb-'));
+  const fakeHome = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-home-custom-'));
   writeOperatorCodexConfig(
     fakeHome,
     [
@@ -837,8 +941,8 @@ test('codex-home config copies a custom provider table that matches model_provid
 });
 
 test('codex-home config does not copy a model_provider with no matching table', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-dangling-'));
-  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-dangling-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-dangling-'));
+  const fakeHome = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-home-dangling-'));
   writeOperatorCodexConfig(fakeHome, 'model_provider = "missing-lb"\n');
   const isolated = installCodexHome(repo, fakeHome, 'install-test-dangling');
   assert.doesNotMatch(isolated, /model_provider = "missing-lb"/);
@@ -846,8 +950,8 @@ test('codex-home config does not copy a model_provider with no matching table', 
 });
 
 test('codex-home config copies a quoted provider table name', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-quoted-'));
-  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-quoted-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-quoted-'));
+  const fakeHome = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-home-quoted-'));
   writeOperatorCodexConfig(
     fakeHome,
     [
@@ -865,8 +969,8 @@ test('codex-home config copies a quoted provider table name', () => {
 });
 
 test('codex-home does not copy nested provider tables without the base table', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-nested-only-'));
-  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-nested-only-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-nested-only-'));
+  const fakeHome = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-home-nested-only-'));
   writeOperatorCodexConfig(
     fakeHome,
     [
@@ -883,8 +987,8 @@ test('codex-home does not copy nested provider tables without the base table', (
 });
 
 test('codex-home config copies nested provider tables and commented headers', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-nested-'));
-  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-nested-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-nested-'));
+  const fakeHome = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-home-nested-'));
   writeOperatorCodexConfig(
     fakeHome,
     [
@@ -898,7 +1002,7 @@ test('codex-home config copies nested provider tables and commented headers', ()
       '',
     ].join('\n'),
   );
-  const isolatedPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  const isolatedPath = path.join(runnerRuntimeDir(repo), 'codex-home', 'config.toml');
   const isolated = installCodexHome(repo, fakeHome, 'install-test-nested');
   assert.match(isolated, /^model_provider = "home-lb"$/m);
   assert.match(isolated, /\[model_providers\.home-lb\]/);
@@ -908,13 +1012,13 @@ test('codex-home config copies nested provider tables and commented headers', ()
 });
 
 test('codex-home re-install keeps model_provider keys outside the root table', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-profile-'));
-  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-profile-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-profile-'));
+  const fakeHome = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-home-profile-'));
   writeOperatorCodexConfig(
     fakeHome,
     ['model_provider = "codex-lb"', '', CODEX_LB_TABLE, ''].join('\n'),
   );
-  const isolatedPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  const isolatedPath = path.join(runnerRuntimeDir(repo), 'codex-home', 'config.toml');
   installCodexHome(repo, fakeHome, 'install-test-profile');
   fs.appendFileSync(
     isolatedPath,
@@ -936,15 +1040,15 @@ test('codex-home re-install keeps model_provider keys outside the root table', (
 });
 
 test('codex-home re-install does not strip a quoted provider whose id only shares a prefix', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-prefix-'));
-  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-prefix-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-prefix-'));
+  const fakeHome = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-home-prefix-'));
   writeOperatorCodexConfig(
     fakeHome,
     ['model_provider = "foo"', '', '[model_providers.foo]', 'base_url = "http://foo"', ''].join(
       '\n',
     ),
   );
-  const isolatedPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  const isolatedPath = path.join(runnerRuntimeDir(repo), 'codex-home', 'config.toml');
   installCodexHome(repo, fakeHome, 'install-test-prefix');
   fs.appendFileSync(
     isolatedPath,
@@ -964,13 +1068,13 @@ test('codex-home re-install does not strip a quoted provider whose id only share
 });
 
 test('codex-home routing keeps leftover isolated root keys out of the provider table', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-root-keys-'));
-  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-root-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-root-keys-'));
+  const fakeHome = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-home-root-'));
   writeOperatorCodexConfig(
     fakeHome,
     ['model_provider = "codex-lb"', '', CODEX_LB_TABLE, ''].join('\n'),
   );
-  const isolatedPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  const isolatedPath = path.join(runnerRuntimeDir(repo), 'codex-home', 'config.toml');
   installCodexHome(repo, fakeHome, 'install-test-root-keys');
   fs.writeFileSync(isolatedPath, `model = "keep-root"\n${fs.readFileSync(isolatedPath, 'utf8')}`);
   const isolated = installCodexHome(repo, fakeHome, 'install-test-root-keys');
@@ -982,13 +1086,13 @@ test('codex-home routing keeps leftover isolated root keys out of the provider t
 });
 
 test('codex-home inject replaces an unmarked root provider key and keeps its table', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-replace-root-'));
-  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-replace-root-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-replace-root-'));
+  const fakeHome = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-home-replace-root-'));
   writeOperatorCodexConfig(
     fakeHome,
     ['model_provider = "codex-lb"', '', CODEX_LB_TABLE, ''].join('\n'),
   );
-  const isolatedPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  const isolatedPath = path.join(runnerRuntimeDir(repo), 'codex-home', 'config.toml');
   fs.mkdirSync(path.dirname(isolatedPath), { recursive: true });
   fs.writeFileSync(
     isolatedPath,
@@ -1004,10 +1108,10 @@ test('codex-home inject replaces an unmarked root provider key and keeps its tab
 });
 
 test('codex-home re-install keeps unmarked isolated routing when operator has none', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-unmarked-'));
-  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-unmarked-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-unmarked-'));
+  const fakeHome = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-home-unmarked-'));
   writeOperatorCodexConfig(fakeHome, 'model = "gpt-5.6-sol"\n');
-  const isolatedPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  const isolatedPath = path.join(runnerRuntimeDir(repo), 'codex-home', 'config.toml');
   fs.mkdirSync(path.dirname(isolatedPath), { recursive: true });
   fs.writeFileSync(
     isolatedPath,
@@ -1021,10 +1125,10 @@ test('codex-home re-install keeps unmarked isolated routing when operator has no
 });
 
 test('codex-home ignores a farmslot ownership stamp inside a root multiline string', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-stamp-multiline-'));
-  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-stamp-multiline-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-stamp-multiline-'));
+  const fakeHome = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-home-stamp-multiline-'));
   writeOperatorCodexConfig(fakeHome, 'model = "gpt-5.6-sol"\n');
-  const isolatedPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  const isolatedPath = path.join(runnerRuntimeDir(repo), 'codex-home', 'config.toml');
   fs.mkdirSync(path.dirname(isolatedPath), { recursive: true });
   fs.writeFileSync(
     isolatedPath,
@@ -1053,8 +1157,8 @@ test('codex-home ignores a farmslot ownership stamp inside a root multiline stri
 });
 
 test('codex-home config refreshes operator routing on re-install and drops it when gone', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-refresh-'));
-  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-refresh-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-refresh-'));
+  const fakeHome = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-home-refresh-'));
   writeOperatorCodexConfig(
     fakeHome,
     ['model_provider = "codex-lb"', '', CODEX_LB_TABLE, ''].join('\n'),
@@ -1081,10 +1185,10 @@ test('codex-home config refreshes operator routing on re-install and drops it wh
 });
 
 test('codex install is idempotent for isolated codex-home config.toml', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-idempotent-'));
-  fs.mkdirSync(path.join(repo, '.agent', 'codex-home'), { recursive: true });
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-codex-idempotent-'));
+  fs.mkdirSync(path.join(runnerRuntimeDir(repo), 'codex-home'), { recursive: true });
   fs.writeFileSync(
-    path.join(repo, '.agent', 'codex-home', 'config.toml'),
+    path.join(runnerRuntimeDir(repo), 'codex-home', 'config.toml'),
     '[features]\nhooks = false\ncustom_flag = true\n\n[tui.model_availability_nux]\n"gpt-5.5" = 1\n\n[features]\nhooks = true\n\n[features]\nhooks = true\n',
   );
 
@@ -1107,7 +1211,7 @@ test('codex install is idempotent for isolated codex-home config.toml', () => {
   }
 
   const homeContent = fs.readFileSync(
-    path.join(repo, '.agent', 'codex-home', 'config.toml'),
+    path.join(runnerRuntimeDir(repo), 'codex-home', 'config.toml'),
     'utf8',
   );
   assert.equal((homeContent.match(/^\[features\]/gm) || []).length, 1);
@@ -1118,41 +1222,47 @@ test('codex install is idempotent for isolated codex-home config.toml', () => {
 });
 
 test('codex install preserves multiline arrays inside the features section', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-array-'));
-  fs.mkdirSync(path.join(repo, '.agent', 'codex-home'), { recursive: true });
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-codex-array-'));
+  fs.mkdirSync(path.join(runnerRuntimeDir(repo), 'codex-home'), { recursive: true });
   fs.writeFileSync(
-    path.join(repo, '.agent', 'codex-home', 'config.toml'),
+    path.join(runnerRuntimeDir(repo), 'codex-home', 'config.toml'),
     '[features]\nexperimental = [\n  "alpha",\n  "beta",\n]\nhooks = false\n\n[operator]\nname = "arthur"\n',
   );
 
   installToTempDir('codex', repo);
 
-  const content = fs.readFileSync(path.join(repo, '.agent', 'codex-home', 'config.toml'), 'utf8');
+  const content = fs.readFileSync(
+    path.join(runnerRuntimeDir(repo), 'codex-home', 'config.toml'),
+    'utf8',
+  );
   assert.match(content, /experimental = \[\n {2}"alpha",\n {2}"beta",\n\]/);
   assert.match(content, /hooks = true/);
   assert.match(content, /\[operator\]\nname = "arthur"/);
 });
 
 test('codex install does not treat nested multiline array values as TOML sections', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-nested-array-'));
-  fs.mkdirSync(path.join(repo, '.agent', 'codex-home'), { recursive: true });
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-codex-nested-array-'));
+  fs.mkdirSync(path.join(runnerRuntimeDir(repo), 'codex-home'), { recursive: true });
   fs.writeFileSync(
-    path.join(repo, '.agent', 'codex-home', 'config.toml'),
+    path.join(runnerRuntimeDir(repo), 'codex-home', 'config.toml'),
     '[features]\nmodels = [\n  ["alpha"],\n  ["beta"]\n]\nhooks = false\n\n[operator]\nname = "arthur"\n',
   );
 
   installToTempDir('codex', repo);
 
-  const content = fs.readFileSync(path.join(repo, '.agent', 'codex-home', 'config.toml'), 'utf8');
+  const content = fs.readFileSync(
+    path.join(runnerRuntimeDir(repo), 'codex-home', 'config.toml'),
+    'utf8',
+  );
   assert.match(content, /models = \[\n {2}\["alpha"\],\n {2}\["beta"\]\n\]/);
   assert.match(content, /hooks = true/);
   assert.match(content, /\[operator\]\nname = "arthur"/);
 });
 
 test('codex install is idempotent when multiline strings contain section-like text', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-string-'));
-  fs.mkdirSync(path.join(repo, '.agent', 'codex-home'), { recursive: true });
-  const configPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-codex-string-'));
+  fs.mkdirSync(path.join(runnerRuntimeDir(repo), 'codex-home'), { recursive: true });
+  const configPath = path.join(runnerRuntimeDir(repo), 'codex-home', 'config.toml');
   fs.writeFileSync(
     configPath,
     '[operator]\nnotes = """\n[features]\n[not-a-section]\n"""\n\n[features]\n# first copy\nhooks = false\n\n[features]\n# second copy\ncustom_flag = true\n',
@@ -1171,9 +1281,9 @@ test('codex install is idempotent when multiline strings contain section-like te
 });
 
 test('codex install handles multiline string closers with trailing quote content', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-string-closer-'));
-  fs.mkdirSync(path.join(repo, '.agent', 'codex-home'), { recursive: true });
-  const configPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-codex-string-closer-'));
+  fs.mkdirSync(path.join(runnerRuntimeDir(repo), 'codex-home'), { recursive: true });
+  const configPath = path.join(runnerRuntimeDir(repo), 'codex-home', 'config.toml');
   fs.writeFileSync(
     configPath,
     "[operator]\nmodels = [\n  \"\"\"foo\"\"\"\",\n  '''bar'''''\n]\n\n[features]\nhooks = false\n",
@@ -1189,7 +1299,7 @@ test('codex install handles multiline string closers with trailing quote content
 });
 
 test('codex install rebinds auth.json symlink from account A to B without touching source files', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-auth-rebind-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-auth-rebind-'));
   const accountA = path.join(repo, 'accounts', 'a', 'auth.json');
   const accountB = path.join(repo, 'accounts', 'b', 'auth.json');
   fs.mkdirSync(path.dirname(accountA), { recursive: true });
@@ -1220,7 +1330,7 @@ test('codex install rebinds auth.json symlink from account A to B without touchi
   };
 
   runInstall(accountA);
-  const destAuth = path.join(repo, '.agent', 'codex-home', 'auth.json');
+  const destAuth = path.join(runnerRuntimeDir(repo), 'codex-home', 'auth.json');
   assert.ok(fs.lstatSync(destAuth).isSymbolicLink());
   assert.equal(path.resolve(fs.readlinkSync(destAuth)), path.resolve(accountA));
 
@@ -1232,11 +1342,11 @@ test('codex install rebinds auth.json symlink from account A to B without touchi
 });
 
 test('codex install relinks a dangling auth.json symlink', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-dangling-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-dangling-'));
   const realAuth = path.join(repo, 'accounts', 'real', 'auth.json');
   fs.mkdirSync(path.dirname(realAuth), { recursive: true });
   fs.writeFileSync(realAuth, '{"ok":true}');
-  const codexHome = path.join(repo, '.agent', 'codex-home');
+  const codexHome = path.join(runnerRuntimeDir(repo), 'codex-home');
   fs.mkdirSync(codexHome, { recursive: true });
   const destAuth = path.join(codexHome, 'auth.json');
   fs.symlinkSync(path.join(repo, 'accounts', 'missing', 'auth.json'), destAuth);
@@ -1264,11 +1374,11 @@ test('codex install relinks a dangling auth.json symlink', () => {
 });
 
 test('codex install refuses to unlink a regular auth.json file', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-regular-auth-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-regular-auth-'));
   const realAuth = path.join(repo, 'accounts', 'real', 'auth.json');
   fs.mkdirSync(path.dirname(realAuth), { recursive: true });
   fs.writeFileSync(realAuth, '{"ok":true}');
-  const codexHome = path.join(repo, '.agent', 'codex-home');
+  const codexHome = path.join(runnerRuntimeDir(repo), 'codex-home');
   fs.mkdirSync(codexHome, { recursive: true });
   const destAuth = path.join(codexHome, 'auth.json');
   const regular = '{"placed-by-operator":true}';
@@ -1300,8 +1410,8 @@ test('codex install refuses to unlink a regular auth.json file', () => {
 });
 
 test('codex install resolves --account-label from FARMSLOT_HOME on this host', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-label-'));
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'farmslot-home-label-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-label-'));
+  const home = temporaryDirectory(path.join(os.tmpdir(), 'farmslot-home-label-'));
   const authA = path.join(home, 'accounts', 'a', 'auth.json');
   const authB = path.join(home, 'accounts', 'b', 'auth.json');
   fs.mkdirSync(path.dirname(authA), { recursive: true });
@@ -1340,14 +1450,14 @@ test('codex install resolves --account-label from FARMSLOT_HOME on this host', (
     },
   );
 
-  const destAuth = path.join(repo, '.agent', 'codex-home', 'auth.json');
+  const destAuth = path.join(runnerRuntimeDir(repo), 'codex-home', 'auth.json');
   assert.ok(fs.lstatSync(destAuth).isSymbolicLink());
   assert.equal(path.resolve(fs.readlinkSync(destAuth)), path.resolve(authB));
 });
 
 test('codex install uses node active profile when no label/binding', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-active-'));
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'farmslot-home-active-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-active-'));
+  const home = temporaryDirectory(path.join(os.tmpdir(), 'farmslot-home-active-'));
   const authB = path.join(home, 'accounts', 'b', 'auth.json');
   fs.mkdirSync(path.dirname(authB), { recursive: true });
   fs.writeFileSync(authB, '{"b":1}');
@@ -1384,13 +1494,13 @@ test('codex install uses node active profile when no label/binding', () => {
     },
   );
 
-  const destAuth = path.join(repo, '.agent', 'codex-home', 'auth.json');
+  const destAuth = path.join(runnerRuntimeDir(repo), 'codex-home', 'auth.json');
   assert.equal(path.resolve(fs.readlinkSync(destAuth)), path.resolve(authB));
 });
 
 test('codex install fails closed when bound account auth path is missing', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-missing-'));
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'farmslot-home-missing-'));
+  const repo = temporaryDirectory(path.join(os.tmpdir(), 'obs-install-missing-'));
+  const home = temporaryDirectory(path.join(os.tmpdir(), 'farmslot-home-missing-'));
   const missingAuth = path.join(home, 'accounts', 'gone', 'auth.json');
   fs.writeFileSync(
     path.join(home, 'provider-accounts.json'),
@@ -1429,20 +1539,20 @@ test('codex install fails closed when bound account auth path is missing', () =>
 });
 
 test('pi install copies the Farmslot observability extension into the slot runtime dir', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-install-home-'));
+  const home = temporaryDirectory(path.join(os.tmpdir(), 'pi-install-home-'));
   const { repo, obsDir } = installToTempDir('pi', undefined, { HOME: home });
-  assert.equal(fs.existsSync(path.join(obsDir, 'pi-farmslot-observability.ts')), true);
-  assert.equal(fs.existsSync(path.join(obsDir, 'pi-farmslot-hook-writer.mjs')), true);
-  assert.equal(fs.existsSync(path.join(obsDir, 'pi-farmslot-providers.mjs')), true);
-  assert.equal(fs.existsSync(path.join(obsDir, 'pi-farmslot-task.mjs')), true);
+  assert.equal(fs.existsSync(path.join(obsDir, 'bin', 'pi-farmslot-observability.ts')), true);
+  assert.equal(fs.existsSync(path.join(obsDir, 'bin', 'pi-farmslot-hook-writer.mjs')), true);
+  assert.equal(fs.existsSync(path.join(obsDir, 'bin', 'pi-farmslot-providers.mjs')), true);
+  assert.equal(fs.existsSync(path.join(obsDir, 'bin', 'pi-farmslot-task.mjs')), true);
   const manifest = JSON.parse(fs.readFileSync(path.join(obsDir, 'install.json'), 'utf8'));
   assert.equal(manifest.runner, 'pi');
   assert.equal(manifest.xaiSeed, 'no-grok-xai');
-  assert.ok(fs.existsSync(path.join(repo, '.observability')));
+  assert.equal(fs.existsSync(path.join(repo, '.observability')), false);
 });
 
 test('pi install continues when Grok auth.json is unreadable', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-bad-grok-'));
+  const home = temporaryDirectory(path.join(os.tmpdir(), 'pi-bad-grok-'));
   const grokDir = path.join(home, '.grok');
   fs.mkdirSync(grokDir, { recursive: true });
   fs.writeFileSync(path.join(grokDir, 'auth.json'), '{not-json');
@@ -1450,11 +1560,11 @@ test('pi install continues when Grok auth.json is unreadable', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(obsDir, 'install.json'), 'utf8'));
   assert.equal(manifest.runner, 'pi');
   assert.equal(manifest.xaiSeed, 'no-grok-xai');
-  assert.equal(fs.existsSync(path.join(obsDir, 'pi-farmslot-observability.ts')), true);
+  assert.equal(fs.existsSync(path.join(obsDir, 'bin', 'pi-farmslot-observability.ts')), true);
 });
 
 test('pi install seeds PI xAI oauth from Grok CLI when PI has none', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-seed-home-'));
+  const home = temporaryDirectory(path.join(os.tmpdir(), 'pi-seed-home-'));
   const grokDir = path.join(home, '.grok');
   fs.mkdirSync(grokDir, { recursive: true });
   const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
@@ -1485,7 +1595,7 @@ test('pi install seeds PI xAI oauth from Grok CLI when PI has none', () => {
 });
 
 test('cursor launch setup disables commit attribution and preserves unrelated settings', (t) => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-attribution-'));
+  const home = temporaryDirectory(path.join(os.tmpdir(), 'cursor-attribution-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   for (const location of ['home', 'xdg', 'override']) {
     const dir = path.join(home, location);
@@ -1523,7 +1633,7 @@ test('cursor launch setup disables commit attribution and preserves unrelated se
 });
 
 test('cursor launch setup creates missing config and refuses malformed config', (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-attribution-empty-'));
+  const dir = temporaryDirectory(path.join(os.tmpdir(), 'cursor-attribution-empty-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const env = { HOME: dir, CURSOR_CONFIG_DIR: dir, XDG_CONFIG_HOME: '' };
   const config = path.join(dir, 'cli-config.json');
@@ -1535,4 +1645,63 @@ test('cursor launch setup creates missing config and refuses malformed config', 
   fs.writeFileSync(config, '{invalid');
   assert.throws(() => installToTempDir('cursor', dir, env));
   assert.equal(fs.readFileSync(config, 'utf8'), '{invalid');
+});
+
+test('installer expands an explicit home runtime on the execution host without checkout files', () => {
+  const scratch = temporaryDirectory(path.join(os.tmpdir(), 'obs-home-runtime-'));
+  const repo = path.join(scratch, 'product');
+  const home = path.join(scratch, 'home');
+  fs.mkdirSync(repo);
+  fs.mkdirSync(home);
+  execFileSync(
+    process.execPath,
+    [
+      INSTALLER,
+      '--runner',
+      'claude',
+      '--repo',
+      repo,
+      '--runtime-dir',
+      '~/runner-state',
+      '--slot-id',
+      'home-runtime',
+    ],
+    { cwd: repo, env: { ...process.env, HOME: home }, stdio: 'pipe' },
+  );
+  const obs = path.join(home, 'runner-state/.observability');
+  assert.ok(fs.existsSync(path.join(obs, 'claude-settings.json')));
+  assert.equal(fs.existsSync(path.join(repo, '~')), false);
+  assert.deepEqual(fs.readdirSync(repo), []);
+  const settings = JSON.parse(fs.readFileSync(path.join(obs, 'claude-settings.json'), 'utf8'));
+  assert.ok(settings.hooks.UserPromptSubmit[0].hooks[0].command.includes(obs));
+});
+
+test('private native runtime install preserves the primary checkout observation alias', () => {
+  const scratch = temporaryDirectory(path.join(os.tmpdir(), 'obs-native-isolation-'));
+  const repo = path.join(scratch, 'product');
+  const primary = path.join(repo, '.agent/.observability');
+  fs.mkdirSync(primary, { recursive: true });
+  fs.writeFileSync(path.join(primary, 'hooks.jsonl'), 'primary');
+  fs.symlinkSync(primary, path.join(repo, '.observability'));
+  installToTempDir('claude', repo);
+  const before = fs.readlinkSync(path.join(repo, '.observability'));
+  const native = path.join(scratch, 'private-native');
+  execFileSync(
+    process.execPath,
+    [
+      INSTALLER,
+      '--runner',
+      'claude',
+      '--repo',
+      repo,
+      '--runtime-dir',
+      native,
+      '--slot-id',
+      'private-native',
+    ],
+    { stdio: 'pipe' },
+  );
+  assert.equal(fs.readlinkSync(path.join(repo, '.observability')), before);
+  assert.equal(fs.readFileSync(path.join(repo, '.observability/hooks.jsonl'), 'utf8'), 'primary');
+  assert.ok(fs.existsSync(path.join(native, '.observability/claude-settings.json')));
 });

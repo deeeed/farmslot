@@ -61,7 +61,7 @@ test('review labels alone never imply proven visual meaning', () => {
   );
 });
 
-test('all AC views distinguish assertions, qualified reviews and required person checks', () => {
+test('all AC views distinguish assertions, qualified reviews and unchecked visuals', () => {
   const proven = (
     id: string,
     proofKinds: PublicationGateClaim['proofKinds'],
@@ -77,17 +77,16 @@ test('all AC views distinguish assertions, qualified reviews and required person
       proven('AC-2', ['agent-reviewed']),
       proven('AC-3', ['person-reviewed']),
       { id: 'AC-4', text: 'Visual proof missing', status: null },
-      { id: 'AC-5', text: 'Person check required', status: null, requiresPersonReview: true },
     ],
-    pendingVisualClaimIds: ['AC-4', 'AC-5'],
+    pendingVisualClaimIds: ['AC-4'],
   });
   assert.deepEqual(
     rows.map((row) => row.state),
-    ['Proven', 'Verified by agent', 'Checked', 'Needs a check', 'Needs your check'],
+    ['Proven', 'Verified by agent', 'Checked', 'Needs a check'],
   );
   assert.deepEqual(
     rows.map((row) => row.tone),
-    ['proven', 'verified', 'checked', 'pending', 'pending'],
+    ['proven', 'verified', 'checked', 'pending'],
   );
 });
 

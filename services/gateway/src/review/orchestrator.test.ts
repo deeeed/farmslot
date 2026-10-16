@@ -3,6 +3,8 @@ import test from 'node:test';
 
 import type { AgentContext, ReviewIssue, WorkerSignal } from '@farmslot/protocol';
 
+import { makeRun } from '../run-engine/test-fixtures.js';
+
 import { parseReviewIssueBullets } from './issues.js';
 import {
   canRecoverReviewFixPass,
@@ -19,6 +21,29 @@ import {
   shouldSkipForDisabledReviewConfig,
 } from './orchestrator.js';
 import type { ReviewAgentResult } from './review-agent.js';
+
+test('deferred handoffs name a missing prior-task receipt instead of claiming worker activity', async (t) => {
+  const warnings: string[] = [];
+  t.mock.method(console, 'warn', (message: string) => warnings.push(message));
+  const reason =
+    'Live cursor prior task is not terminal at REVIEW-FIX-SIGNAL.json; refusing process replacement';
+  const run = makeRun({ status: 'monitoring' });
+  const result = await retryDeferredFixDelivery({
+    runId: run.id,
+    target: 'fixture:dev',
+    send: async () => true,
+    rediscover: async () => ({ target: 'fixture:dev', window: 'dev', seenWindows: [] }),
+    persistTarget: async () => {},
+    getRun: () => run,
+    deferredReason: () => reason,
+    retryIntervalMs: 1,
+    retryWindowMs: 100,
+  });
+  assert.equal(result.sent, true);
+  assert.equal(warnings.length, 1);
+  assert.ok(warnings[0]?.includes(reason));
+  assert.ok(!warnings[0]?.includes('worker busy'));
+});
 
 test('recovered fix delivery prepares declared capabilities before sending any instruction', async () => {
   const events: string[] = [];

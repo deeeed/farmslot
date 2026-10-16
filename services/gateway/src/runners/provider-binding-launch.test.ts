@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 
+import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
+
 import { buildCodexHomeSetup, buildLaunchCommand } from './launch-command.js';
 import { buildRunnerObservabilityInstallCommand } from './runner-observability.js';
 import { makeVars } from './test-fixtures.js';
@@ -72,9 +74,11 @@ describe('codex launch picks the isolated home only when the install completed i
     );
 
   it('uses codex-home with hooks for a linked auth.json or a provider-auth marker, else global', (t) => {
-    const repo = mkdtempSync(path.join(tmpdir(), 'codex-home-gate-'));
-    t.after(() => rmSync(repo, { recursive: true, force: true }));
-    const home = path.join(repo, '.agent', 'codex-home');
+    const root = mkdtempSync(path.join(tmpdir(), 'codex-home-gate-'));
+    const repo = path.join(root, 'repo');
+    mkdirSync(repo);
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const home = path.join(runnerRuntimeDir(repo), 'codex-home');
     mkdirSync(home, { recursive: true });
     writeFileSync(path.join(home, 'config.toml'), '');
 
@@ -96,7 +100,7 @@ describe('codex resume stays on the home that holds its session', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'codex-home-resume-'));
     t.after(() => rmSync(root, { recursive: true, force: true }));
     const repo = path.join(root, 'repo');
-    const home = path.join(repo, '.agent', 'codex-home');
+    const home = path.join(runnerRuntimeDir(repo), 'codex-home');
     const fakeHome = path.join(root, 'home');
     mkdirSync(path.join(fakeHome, '.codex', 'sessions', '2026', '10', '09'), { recursive: true });
     mkdirSync(path.join(home, 'sessions', '2026', '10', '09'), { recursive: true });

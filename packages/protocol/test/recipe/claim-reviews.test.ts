@@ -11,7 +11,6 @@ import {
   recordedVisualJudgments,
   reviewedVisualFiles,
   validVisualJudgmentReason,
-  visualClaimRequiresPerson,
 } from '../../src/recipe/index.js';
 
 const input: RecordedEvidencePackageInput = JSON.parse(
@@ -58,32 +57,18 @@ const pipelineReceipt = (): RecipeVisualJudgmentReceipt => ({
   },
 });
 
-test('qualified pipeline receipts satisfy visual claims by default and respect explicit person policy', () => {
+test('qualified pipeline receipts satisfy visual claims without project configuration', () => {
   const pipeline = pipelineReceipt();
   assert.equal(recordedVisualJudgments(input, authority([pipeline]))[0]?.kind, 'pipeline-reviewed');
-  assert.deepEqual(parseProjectVisualClaimReviewPolicy({ personOnly: true }), { personOnly: true });
-  assert.deepEqual(parseProjectVisualClaimReviewPolicy({ personOnlyClaimIds: ['ac1'] }), {
-    personOnlyClaimIds: ['AC-1'],
-  });
-  for (const policy of [
-    { personOnly: true },
-    { personOnlyClaimIds: ['check-1'] },
-    { personOnlyClaimIds: ['case-1'] },
-  ]) {
-    assert.equal(visualClaimRequiresPerson(input, receipt.claimId, policy), true);
-    assert.equal(
-      recordedVisualJudgments(input, { ...authority([pipeline]), projectPolicy: policy }).length,
-      0,
-    );
-    assert.equal(
-      recordedVisualJudgments(input, {
-        ...authority([pipeline]),
-        projectPolicy: policy,
-        historical: true,
-      }).length,
-      1,
-    );
-  }
+  const delegatedPolicy = {
+    delegatedReviewerPrincipalIds: ['unrelated-service'],
+    delegatorPrincipalId: 'person',
+  };
+  assert.equal(
+    recordedVisualJudgments(input, { ...authority([pipeline]), projectPolicy: delegatedPolicy })
+      .length,
+    1,
+  );
   for (const invalid of [
     { ...pipeline, pipeline: undefined },
     { ...pipeline, reviewedFiles: [] },
@@ -125,7 +110,7 @@ test('a person Issue outranks later agent confirmations until a later person con
   );
 });
 
-test('delegated receipts bind own identity, policy, parent restrictions and checked visual bytes', () => {
+test('delegated receipts bind own identity, policy and checked visual bytes', () => {
   const policy = parseProjectVisualClaimReviewPolicy({
     delegatedReviewerPrincipalIds: ['lead-reviewer'],
     delegatorPrincipalId: 'person-1',
@@ -190,11 +175,7 @@ test('delegated receipts bind own identity, policy, parent restrictions and chec
       recordedVisualJudgments(input, { ...authorized, receipts: [{ ...delegated, ...patch }] }),
       [],
     );
-  for (const changed of [
-    { ...policy, delegatedReviewerPrincipalIds: ['foreign-reviewer'] },
-    { ...policy, personOnlyClaimIds: ['check-1'] },
-    { ...policy, personOnlyClaimIds: ['case-1'] },
-  ])
+  for (const changed of [{ ...policy, delegatedReviewerPrincipalIds: ['foreign-reviewer'] }])
     assert.deepEqual(
       recordedVisualJudgments(input, {
         ...authorized,
@@ -210,9 +191,11 @@ test('delegated receipts bind own identity, policy, parent restrictions and chec
     );
 });
 
-test('project review policy rejects malformed grants and normalizes claim identifiers', () => {
+test('project review policy rejects malformed grants and removed person-only configuration', () => {
   assert.equal(parseProjectVisualClaimReviewPolicy(undefined), undefined);
   for (const policy of [
+    { personOnly: true },
+    { personOnlyClaimIds: ['check-1'] },
     { delegatorPrincipalId: '', delegatedReviewerPrincipalIds: [] },
     { delegatorPrincipalId: 'person', delegatedReviewerPrincipalIds: [''] },
     { delegatorPrincipalId: 'person', delegatedReviewerPrincipalIds: [], actor: 'spoof' },
@@ -222,12 +205,10 @@ test('project review policy rejects malformed grants and normalizes claim identi
     parseProjectVisualClaimReviewPolicy({
       delegatorPrincipalId: 'person',
       delegatedReviewerPrincipalIds: ['lead', 'lead'],
-      personOnlyClaimIds: ['ac1'],
     }),
     {
       delegatorPrincipalId: 'person',
       delegatedReviewerPrincipalIds: ['lead'],
-      personOnlyClaimIds: ['AC-1'],
     },
   );
 });

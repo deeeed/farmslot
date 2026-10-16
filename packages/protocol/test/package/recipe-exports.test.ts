@@ -97,7 +97,6 @@ test('recipe module exposes only the public recipe protocol surface', async () =
     'validateRecipeSuiteScopeDocument',
     'validateRecipeWithManifest',
     'validateResolvedRecipeActionNode',
-    'visualClaimRequiresPerson',
     'waitForHudPaint',
   ]);
 });

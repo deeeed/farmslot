@@ -98,11 +98,8 @@ export async function runReviewVisualClaim(
   if (validateRecordedEvidencePackage(input).status !== 'valid')
     throw new Error('The selected recorded evidence failed integrity validation.');
   const claim = deriveReviewedRecipeClaims(input).find(({ id }) => id === claimId);
-  if (
-    delegated &&
-    (!delegator || !delegatedVisualClaimAllowed(input, claimId, approver.principalId, policy))
-  )
-    throw new Error('This project/claim requires person review or has no matching delegation.');
+  if (delegated && (!delegator || !delegatedVisualClaimAllowed(approver.principalId, policy)))
+    throw new Error('This reviewer has no matching project delegation.');
   if (
     !claim ||
     claim.verdict !== 'awaiting-review' ||

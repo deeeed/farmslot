@@ -93,6 +93,24 @@
           "value": 0
         },
         "intent": "Require the migration regressions, including controls known to fail with the old branches.",
+        "next": "policy-default"
+      },
+      "policy-default": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --experimental-test-module-mocks --test packages/protocol/test/recipe/claim-reviews.test.ts packages/adapter-sdk/test/evidence-review-model.test.ts packages/review-dispatch/test/publication-gate.test.ts services/gateway/src/review/pipeline-visual-review.test.ts",
+        "timeout_ms": 120000,
+        "intent": "Require visual ACs to accept qualified pipeline receipts without project setup, reject removed person-only configuration and use the shared unchecked label.",
+        "next": "policy-default-verified"
+      },
+      "policy-default-verified": {
+        "action": "assert_output",
+        "source": "policy-default",
+        "assert": {
+          "path": "$.exitCode",
+          "operator": "eq",
+          "value": 0
+        },
+        "intent": "Require the default verification, precedence and no-policy regression checks to pass.",
         "next": "done"
       }
     }

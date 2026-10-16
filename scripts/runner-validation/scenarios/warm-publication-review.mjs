@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { runnerRuntimeDir } from '../../lib/runner-runtime.cjs';
 import { ROOT, shSingleQuote, sleepMs } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 import { installHooks } from '../lib/install.mjs';
@@ -185,11 +186,11 @@ exec node '${ROOT}/packages/agent-runtime/scripts/mark-checklist-step.cjs' '${re
     ]);
     sleepMs(500);
     sendShellScript(bootstrapPane, repo, [
-      `DISABLE_OMC=1 DISABLE_OMX=1 ${shSingleQuote(runnerAdapter.binaryPath())} --dangerously-skip-permissions --model claude-opus-5-5 --settings ${shSingleQuote(path.join(repo, '.agent/.observability/claude-settings.json'))} 'Reply exactly READY and remain available for another task.'`,
+      `DISABLE_OMC=1 DISABLE_OMX=1 ${shSingleQuote(runnerAdapter.binaryPath())} --dangerously-skip-permissions --model claude-opus-5-5 --settings ${shSingleQuote(path.join(runnerRuntimeDir(repo), '.observability/claude-settings.json'))} 'Reply exactly READY and remain available for another task.'`,
     ]);
     const bootstrapState = path.join(
-      repo,
-      '.agent/.observability/panes',
+      runnerRuntimeDir(repo),
+      '.observability/panes',
       `${encodeURIComponent(bootstrapPane)}.json`,
     );
     const bootstrapDeadline = Date.now() + 90_000;
