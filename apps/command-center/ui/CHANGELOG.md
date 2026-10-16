@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- Keep async gate and panel layouts stable with component-specific skeletons and in-place retries.
+- Keep async gate and panel layouts stable with component-specific skeletons and visible retries after loading errors.
 
 ## 0.21.0 - 2026-10-16
 
