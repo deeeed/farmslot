@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { buildMarkShim, quoteMarkCommandWord } from '@farmslot/agent-runtime';
+import { quoteMarkCommandWord } from '@farmslot/agent-runtime';
 import {
   CHECKLIST_TARGET_MANIFEST,
   type ChecklistTarget,
@@ -38,14 +38,13 @@ export {
   WORKER_SIGNAL_FILE,
 } from '@farmslot/protocol/checklist-target';
 
-import { loadProjectVars, type loadSlotVars, type ProjectVars } from '../core/config.js';
+import type { loadSlotVars, ProjectVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
 import { shellQuote } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 
 import { agentRuntimeScriptForSlot, farmslotDirectoryForSlot } from './agent-runtime-script.js';
-import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
 import { syncTerminalContractForFlowOnSlot } from './worker-terminal-contract.js';
 
 export function checklistTargetForAgentRole(
@@ -147,28 +146,14 @@ export async function markCommandForSlot(
   return `node ${quoteMarkCommandWord(helper)}`;
 }
 
-export async function syncChecklistMarkerOnSlot(
-  vars: Awaited<ReturnType<typeof loadSlotVars>>,
-  taskDir: string,
-): Promise<void> {
-  const markRel = taskDirRelPath(taskDir, CHECKLIST_MARKER_INPUT);
-  const projectVars = await loadProjectVars(vars.projectName);
-  const content = buildMarkShim(await markCommandForSlot(vars, projectVars));
-  await writeTextFileOnSlot(vars, markRel, content);
-  await execOnSlot(
-    vars,
-    `chmod +x ${shellQuote(`${vars.remoteRepo}/${markRel}`)}`,
-    vars.remoteRepo,
-  );
-}
-
 export async function syncChecklistTarget(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   taskDir: string,
   target: ChecklistTarget,
 ): Promise<void> {
+  // The task producer owns its marker and tooling selection. Role changes only
+  // select a checklist; rewriting mark would discard the task's frozen CLI gates.
   await writeTextFileOnSlot(vars, manifestRelPath(taskDir), serializeManifest(target));
-  await syncChecklistMarkerOnSlot(vars, taskDir);
 }
 
 export async function restoreWorkerChecklistTargetOnSlot(
@@ -189,7 +174,6 @@ export async function restoreWorkerChecklistTargetOnSlot(
       `rm -f ${shellQuote(`${vars.remoteRepo}/${manifestRelPath(taskDir)}`)}`,
       vars.remoteRepo,
     );
-    await syncChecklistMarkerOnSlot(vars, taskDir);
     return;
   }
   await syncChecklistTargetOnSlot(vars, taskDir, checklist);
