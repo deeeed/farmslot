@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -42,6 +43,55 @@ function runHook(hookPath, obsDir, payload, runner = 'claude') {
       FARMSLOT_RUNNER: runner,
       TMUX_PANE: '%1',
     },
+  });
+}
+
+for (const runner of ['claude', 'pi']) {
+  test(`${runner} executable helpers stay outside product lint, including legacy installs`, async (t) => {
+    const { ESLint } = createRequire(path.join(ROOT, 'packages/agent-runtime/package.json'))(
+      'eslint',
+    );
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-lint-regression-'));
+    t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+    const temporary = path.join(scratch, 'temporary');
+    const home = path.join(scratch, 'home');
+    fs.mkdirSync(temporary);
+    fs.mkdirSync(home);
+    const repo = path.join(scratch, runner);
+    const obsDir = path.join(repo, '.agent', '.observability');
+    const binDir = path.join(obsDir, 'bin');
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.writeFileSync(path.join(binDir, 'retained.mjs'), 'export const retained = true;\n');
+    const legacyExtension = path.join(obsDir, 'pi-farmslot-task.mjs');
+    fs.writeFileSync(legacyExtension, 'export const legacy = true;\n');
+    fs.writeFileSync(path.join(obsDir, 'session.json'), '{"retained":true}\n');
+    fs.writeFileSync(path.join(repo, 'source.js'), 'const source = 1;\n');
+    const env = { HOME: home, GROK_HOME: path.join(home, '.grok'), TMPDIR: temporary };
+    installToTempDir(runner, repo, env);
+    assert.ok(fs.lstatSync(binDir).isSymbolicLink());
+    assert.ok(!fs.realpathSync(binDir).startsWith(repo + path.sep));
+    assert.equal(fs.readFileSync(path.join(obsDir, 'session.json'), 'utf8'), '{"retained":true}\n');
+    assert.ok(fs.existsSync(path.join(binDir, 'retained.mjs')));
+    assert.equal(fs.existsSync(legacyExtension), false);
+    assert.ok(fs.existsSync(path.join(binDir, 'pi-farmslot-task.mjs')));
+    installToTempDir(runner, repo, env);
+    const alias = path.join(scratch, runner + '-alias');
+    fs.symlinkSync(repo, alias, 'dir');
+    installToTempDir(runner, alias, env);
+    const lint = new ESLint({
+      cwd: repo,
+      overrideConfigFile: true,
+      overrideConfig: [{ files: ['**/*.js', '**/*.mjs', '**/*.ts'] }],
+    });
+    const results = await lint.lintFiles(['.']);
+    assert.deepEqual(
+      results.map((result) => path.relative(repo, result.filePath)),
+      ['source.js'],
+    );
+    assert.equal(
+      results.reduce((total, result) => total + result.errorCount, 0),
+      0,
+    );
   });
 }
 
@@ -1431,10 +1481,10 @@ test('codex install fails closed when bound account auth path is missing', () =>
 test('pi install copies the Farmslot observability extension into the slot runtime dir', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-install-home-'));
   const { repo, obsDir } = installToTempDir('pi', undefined, { HOME: home });
-  assert.equal(fs.existsSync(path.join(obsDir, 'pi-farmslot-observability.ts')), true);
-  assert.equal(fs.existsSync(path.join(obsDir, 'pi-farmslot-hook-writer.mjs')), true);
-  assert.equal(fs.existsSync(path.join(obsDir, 'pi-farmslot-providers.mjs')), true);
-  assert.equal(fs.existsSync(path.join(obsDir, 'pi-farmslot-task.mjs')), true);
+  assert.equal(fs.existsSync(path.join(obsDir, 'bin', 'pi-farmslot-observability.ts')), true);
+  assert.equal(fs.existsSync(path.join(obsDir, 'bin', 'pi-farmslot-hook-writer.mjs')), true);
+  assert.equal(fs.existsSync(path.join(obsDir, 'bin', 'pi-farmslot-providers.mjs')), true);
+  assert.equal(fs.existsSync(path.join(obsDir, 'bin', 'pi-farmslot-task.mjs')), true);
   const manifest = JSON.parse(fs.readFileSync(path.join(obsDir, 'install.json'), 'utf8'));
   assert.equal(manifest.runner, 'pi');
   assert.equal(manifest.xaiSeed, 'no-grok-xai');
@@ -1450,7 +1500,7 @@ test('pi install continues when Grok auth.json is unreadable', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(obsDir, 'install.json'), 'utf8'));
   assert.equal(manifest.runner, 'pi');
   assert.equal(manifest.xaiSeed, 'no-grok-xai');
-  assert.equal(fs.existsSync(path.join(obsDir, 'pi-farmslot-observability.ts')), true);
+  assert.equal(fs.existsSync(path.join(obsDir, 'bin', 'pi-farmslot-observability.ts')), true);
 });
 
 test('pi install seeds PI xAI oauth from Grok CLI when PI has none', () => {

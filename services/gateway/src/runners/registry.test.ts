@@ -1917,7 +1917,7 @@ describe('buildLaunchCommand', () => {
       assert.match(cmd, /FARMSLOT_RUNNER=pi/);
       assert.match(
         cmd,
-        /-e '\/tmp\/repo\/\.agent\/\.observability\/pi-farmslot-observability\.ts'/,
+        /-e '\/tmp\/repo\/\.agent\/\.observability\/bin\/pi-farmslot-observability\.ts'/,
       );
       assert.match(cmd, /--thinking medium/);
       assert.match(cmd, /--model xai\/grok-4\.6/);

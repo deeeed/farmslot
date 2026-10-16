@@ -53,7 +53,7 @@ export function assertBinary() {
 }
 
 function extensionPath(repo, runtimeDir) {
-  return path.join(repo, runtimeDir, '.observability', 'pi-farmslot-observability.ts');
+  return path.join(repo, runtimeDir, '.observability', 'bin', 'pi-farmslot-observability.ts');
 }
 
 function obsDir(repo, runtimeDir) {

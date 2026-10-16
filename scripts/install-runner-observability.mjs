@@ -1153,12 +1153,50 @@ function ensureCompatObservabilityLink(repoPath, obsDir) {
   fs.symlinkSync(obsDir, compatObsDir, 'dir');
 }
 
+const PI_OBSERVABILITY_FILES = [
+  'pi-farmslot-observability.ts',
+  'pi-farmslot-hook-writer.mjs',
+  'pi-farmslot-providers.mjs',
+  'pi-farmslot-task.mjs',
+];
+
+function ensureObservabilityBin(obsDir) {
+  fs.mkdirSync(obsDir, { recursive: true });
+  const binDir = path.join(obsDir, 'bin');
+  const identity = createHash('sha256').update(fs.realpathSync(obsDir)).digest('hex');
+  const storageDir = path.join(os.tmpdir(), 'farmslot-observability-bin', identity);
+  fs.mkdirSync(storageDir, { recursive: true });
+  const existing = fs.lstatSync(binDir, { throwIfNoEntry: false });
+  if (existing?.isSymbolicLink()) {
+    if (fs.realpathSync(binDir) !== fs.realpathSync(storageDir)) {
+      throw new Error('Observability bin symlink points outside its owned storage.');
+    }
+  } else {
+    if (existing) {
+      if (!existing.isDirectory()) throw new Error('Observability bin must be a directory.');
+      // Preserve legacy contents and command paths while keeping executable files
+      // outside repository-wide lint scans, which do not traverse directory links.
+      fs.cpSync(binDir, storageDir, { recursive: true });
+      fs.rmSync(binDir, { recursive: true });
+    }
+    fs.symlinkSync(storageDir, binDir, 'dir');
+  }
+  // A different runner may be installed after a legacy extension runtime.
+  for (const name of PI_OBSERVABILITY_FILES) {
+    const legacyPath = path.join(obsDir, name);
+    if (fs.lstatSync(legacyPath, { throwIfNoEntry: false })) {
+      fs.copyFileSync(legacyPath, path.join(binDir, name));
+      fs.unlinkSync(legacyPath);
+    }
+  }
+  return binDir;
+}
+
 function installObservabilityBinaries({ repo, runtimeDir, slotId, runner }) {
   const repoPath = path.resolve(repo);
   const obsDir = path.resolve(repoPath, runtimeDir, '.observability');
-  const binDir = path.join(obsDir, 'bin');
+  const binDir = ensureObservabilityBin(obsDir);
   const hookPath = path.join(binDir, 'farmslot-observability-hook.mjs');
-  fs.mkdirSync(binDir, { recursive: true });
   fs.writeFileSync(hookPath, HOOK_SCRIPT);
   execFileSync(process.execPath, ['--check', hookPath], { stdio: 'pipe' });
   ensureCompatObservabilityLink(repoPath, obsDir);
@@ -1327,17 +1365,12 @@ function installPi({ repo, runtimeDir, slotId }) {
   if (!repo) throw new Error('missing --repo');
   const repoPath = path.resolve(repo);
   const obsDir = path.resolve(repoPath, runtimeDir || '.agent', '.observability');
-  fs.mkdirSync(obsDir, { recursive: true });
+  const binDir = ensureObservabilityBin(obsDir);
   const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'runners');
-  for (const name of [
-    'pi-farmslot-observability.ts',
-    'pi-farmslot-hook-writer.mjs',
-    'pi-farmslot-providers.mjs',
-    'pi-farmslot-task.mjs',
-  ]) {
+  for (const name of PI_OBSERVABILITY_FILES) {
     const source = path.join(srcDir, name);
     if (!fs.existsSync(source)) throw new Error(`missing PI observability file: ${source}`);
-    fs.copyFileSync(source, path.join(obsDir, name));
+    fs.copyFileSync(source, path.join(binDir, name));
   }
   const xaiSeed = seedPiXaiFromGrokCli();
   writeObservabilityInstallManifest(obsDir, {

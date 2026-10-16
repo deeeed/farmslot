@@ -189,7 +189,7 @@ function piCliModel(model: string): string {
 }
 
 export function piObservabilityExtensionPath(repo: string, runtimeDir = '.agent'): string {
-  return path.posix.join(repo, runtimeDir, '.observability', 'pi-farmslot-observability.ts');
+  return path.posix.join(repo, runtimeDir, '.observability', 'bin', 'pi-farmslot-observability.ts');
 }
 
 export function buildPiLaunch(options: {
