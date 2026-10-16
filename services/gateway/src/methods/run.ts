@@ -206,6 +206,7 @@ import {
   isInternalArtifactOnlyEvalTicket,
   isManualBacklogRef,
   isValidTicketForFlow,
+  jiraTicketDataForCreate,
 } from './run/ticket-policy.js';
 import { normalizeRunCreateMode } from './run-create-mode.js';
 
@@ -835,6 +836,10 @@ async function runCreateWithSources(
   const expectedQa = options.expectedQa ? structuredClone(options.expectedQa) : undefined;
   const plan = preparedPlan ?? (await planRunCreation(params, options));
   params = { ...plan.params, ...(preparedPlan ? { slotId: params.slotId } : {}) };
+  // Read once, after the planner's local checks; the planner also runs per
+  // candidate slot and on source replans.
+  const ticketData = await jiraTicketDataForCreate(params);
+  if (ticketData !== params.ticketData) params = { ...params, ticketData };
   const createRecord = (): Run => {
     options.beforeCreate?.();
     if (plan.workspaceAdmission) assertReviewWorkspaceAdmitted(plan.workspaceAdmission);

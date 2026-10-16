@@ -3,7 +3,6 @@ import test from 'node:test';
 
 import { makeRun } from '../family-observability/test-fixtures.js';
 
-import { mergeInitialContextIntoTicketData } from './task-steps.js';
 import { fetchTicketData } from './ticket-data.js';
 
 test('free-text fetch derives a title once and preserves the full task description', async () => {
@@ -15,18 +14,13 @@ test('free-text fetch derives a title once and preserves the full task descripti
 });
 
 for (const key of ['TAT-78001', 'ABC2-145']) {
-  test(`${key} fetch fallback still merges its attached backlog spec and acceptance criteria`, async () => {
-    const data = await fetchTicketData(
-      makeRun({ project: 'missing-title-test-project', ticketOrPr: key }),
+  test(`${key} without a Jira source refuses instead of a key-only ticket`, async () => {
+    await assert.rejects(
+      fetchTicketData(makeRun({ project: 'missing-title-test-project', ticketOrPr: key })),
+      new RegExp(
+        `^Error: ${key} is a Jira key, but project missing-title-test-project has no Jira source`,
+      ),
     );
-    assert.equal(data?.source, 'manual');
-    assert.equal(data?.description, '');
-    const merged = mergeInitialContextIntoTicketData(
-      data!,
-      'Backlog specification\n\n## Acceptance Criteria\n- Preserve the attached specification',
-    );
-    assert.match(merged.description, /Backlog specification/);
-    assert.deepEqual(merged.acceptanceCriteria, ['Preserve the attached specification']);
   });
 }
 

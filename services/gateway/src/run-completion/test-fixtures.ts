@@ -13,6 +13,11 @@ export function manualTicketData(title: string): RunTicketData {
   };
 }
 
+/** A ticket as read from Jira for `key`; run creation accepts it without a Jira read. */
+export function jiraTicketData(key: string, title = `Ticket ${key}`): RunTicketData {
+  return { ...manualTicketData(title), source: 'jira', jiraKey: key };
+}
+
 export function makeRun(overrides: Partial<Run> = {}): Run {
   return {
     id: overrides.id ?? 'run-1',

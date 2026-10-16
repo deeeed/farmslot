@@ -23,7 +23,7 @@ import { GatewayMethodError } from '../core/method-error.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { admitReviewRound } from '../review/review-round-budget.js';
 import { computeReadyGatePackageHash } from '../run-completion/ready-gate-package.js';
-import { manualTicketData } from '../run-completion/test-fixtures.js';
+import { jiraTicketData, manualTicketData } from '../run-completion/test-fixtures.js';
 import { overwriteRetainedFixture, retainRunFixture } from '../run-engine/test-fixtures.js';
 import { createRun, deleteRun, getAllRuns, getRun, updateRun } from '../runs/store.js';
 import { runWithSessionOriginator } from '../security/work-originator.js';
@@ -46,10 +46,12 @@ test('planning resolves the same dispatch defaults without creating a run or con
   const before = getAllRuns().map((run) => run.id);
   let claimed = true;
   let synchronousChecks = 0;
+  const tatKey = `TAT-${Date.now()}`;
   const params = {
     flowType: 'dev' as const,
     project: 'farmslot-farm',
-    ticketOrPr: `TAT-${Date.now()}`,
+    ticketOrPr: tatKey,
+    ticketData: jiraTicketData(tatKey),
   };
   const plan = await planRunCreation(params, {
     beforeCreate: () => {
@@ -1464,6 +1466,7 @@ test('runCreate rejects direct prior-run startRef provenance', async (t) => {
           flowType: 'dev',
           project: baseline.project,
           ticketOrPr: baseline.ticketOrPr,
+          ticketData: jiraTicketData(baseline.ticketOrPr),
           familyId: baseline.familyId,
           parentRunId: baseline.id,
           lane: 'comparison',
@@ -1497,11 +1500,13 @@ test('runCreate defaults omitted dev mode to autonomous when interactive templat
     }
   });
 
+  const tatKey = `TAT-${Date.now()}`;
   const result = await runCreate(
     {
       flowType: 'dev',
       project: 'farmslot-farm',
-      ticketOrPr: `TAT-${Date.now()}`,
+      ticketOrPr: tatKey,
+      ticketData: jiraTicketData(tatKey),
     },
     () => {},
   );
@@ -1531,11 +1536,13 @@ test('runCreate permits explicit fresh replacement for a non-PR flow', async (t)
     }
   });
 
+  const tatKey = `TAT-${Date.now()}`;
   const result = await runCreate(
     {
       flowType: 'fix-bug',
       project: 'farmslot-farm',
-      ticketOrPr: `TAT-${Date.now()}`,
+      ticketOrPr: tatKey,
+      ticketData: jiraTicketData(tatKey),
       slotId: 'demo-ff-1',
       freshReuse: true,
     },

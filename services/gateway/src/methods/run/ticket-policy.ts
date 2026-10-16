@@ -1,8 +1,14 @@
 import { randomUUID } from 'node:crypto';
 
-import { type FlowType, PR_BOUND_FLOW_TYPES, type RunCreateParams } from '@farmslot/protocol';
+import {
+  type FlowType,
+  PR_BOUND_FLOW_TYPES,
+  type RunCreateParams,
+  type RunTicketData,
+} from '@farmslot/protocol';
 
-import { validateTicketRef } from '../dispatch/ticket-ref.js';
+import { fetchTicketData } from '../../run-engine/ticket-data.js';
+import { JIRA_KEY_RE, normalizeTicketRef, validateTicketRef } from '../dispatch/ticket-ref.js';
 
 export function isInternalArtifactOnlyEvalTicket(
   params: Pick<
@@ -39,6 +45,37 @@ export function isStoredManualBacklogRun(
     isManualBacklogRef(run.ticketOrPr) &&
     !PR_BOUND_FLOW_TYPES.has(run.flowType as FlowType)
   );
+}
+
+/**
+ * A run for a Jira key starts from that ticket, read through the project's
+ * Jira source: the caller's copy when it was read from Jira for the same key
+ * (eval and successor runs copy it), else a fresh read that refuses instead of
+ * storing a key-only placeholder.
+ */
+export async function jiraTicketDataForCreate(
+  params: RunCreateParams,
+): Promise<RunTicketData | undefined> {
+  const ref = normalizeTicketRef(params.ticketOrPr);
+  const key = ref.toUpperCase();
+  if (
+    !params.project ||
+    params.flowType === 'qa' ||
+    PR_BOUND_FLOW_TYPES.has(params.flowType as FlowType) ||
+    isInternalArtifactOnlyEvalTicket(params) ||
+    isManualBacklogRef(key) ||
+    !JIRA_KEY_RE.test(key)
+  ) {
+    return params.ticketData;
+  }
+  const supplied = params.ticketData;
+  if (
+    (supplied?.source === 'jira' || supplied?.source === 'both') &&
+    supplied.jiraKey?.toUpperCase() === key
+  ) {
+    return supplied;
+  }
+  return (await fetchTicketData({ project: params.project, ticketOrPr: ref })) ?? undefined;
 }
 
 export function isValidTicketForFlow(

@@ -38,8 +38,9 @@ const withoutSim = `${machine}-1`;
 const withSim = `${machine}-2`;
 const slot = (id, resources) => ({ id, repo, session: id, resources });
 const runs = [];
+// Run creation accepts a Jira-key ticket only as read from Jira for that key.
 const ticketData = {
-  source: 'manual',
+  source: 'jira',
   issueType: 'Task',
   title: 'Companion proof',
   description: 'Companion device validation',
@@ -183,7 +184,7 @@ try {
     const { run } = rpc('run.create', {
       ...request(slotId, ticketOrPr),
       runner: 'claude',
-      ticketData,
+      ticketData: { ...ticketData, jiraKey: ticketOrPr },
     });
     assert.ok(run?.id);
     runs.push(run.id);
