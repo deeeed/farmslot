@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Keep machine connection health current in cached fleet reads and wait for execution nodes at retained publication gates after gateway restart.
+
 - Refresh stale fleet snapshots from the monitor, stop leftover service helpers when their health is down, and re-probe retired worker targets before retaining cleanup holds.
 - Record one-tap person visual confirmations without invented prose, preserving receipt identity and package refresh requirements.
 - Preserve the task marker and its frozen tooling when switching between worker and review checklists.

@@ -67,7 +67,8 @@ import {
 
 const GATEWAY_URL = process.env.GATEWAY_URL ?? 'ws://localhost:7777';
 const MACHINE_NAME = process.env.MACHINE_NAME ?? hostname();
-const MAX_BACKOFF = 30_000;
+const MAX_TRANSPORT_BACKOFF = 2_000;
+const AUTH_RETRY_DELAY = 30_000;
 const nativeSessions = new NativeNodeSessions(MACHINE_NAME);
 const sources = new NodeSources(MACHINE_NAME);
 
@@ -83,7 +84,7 @@ function connect(): void {
   if (disposed) return;
 
   console.log(`Connecting to gateway at ${GATEWAY_URL} as "${MACHINE_NAME}"...`);
-  const socket = new WebSocket(GATEWAY_URL);
+  const socket = new WebSocket(GATEWAY_URL, { handshakeTimeout: 5_000 });
   ws = socket;
   const requests = new ExecRequests();
   execConnections.set(socket, requests);
@@ -139,7 +140,7 @@ function scheduleReconnect(): void {
   if (disposed) return;
   console.log(`Reconnecting in ${backoff}ms...`);
   setTimeout(() => connect(), backoff);
-  backoff = Math.min(backoff * 2, MAX_BACKOFF);
+  backoff = Math.min(backoff * 2, MAX_TRANSPORT_BACKOFF);
 }
 
 /**
@@ -189,7 +190,7 @@ async function handshake(socket: WebSocket): Promise<void> {
       // credential-issue hint applies ONLY to the node-subject rejection;
       // other refusals (bad token, rate limit, owner mismatch) already carry
       // the gateway's own message, and each hint prints once per process.
-      backoff = MAX_BACKOFF;
+      backoff = AUTH_RETRY_DELAY;
       if (/node-subject principal/i.test(failure.message) && lastAuthHint !== 'node-subject') {
         lastAuthHint = 'node-subject';
         console.error(

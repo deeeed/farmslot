@@ -1676,7 +1676,8 @@ async function executeStep(runId: string, step: string, generation: number): Pro
         step === S.WRITE_TASK ||
         step === S.PREPARE ||
         step === S.DISPATCH ||
-        step === S.MONITOR
+        step === S.MONITOR ||
+        step === S.HUMAN_GATE
       ) {
         return await withNodeReconnectWait(operation, () => {
           const live = current();
