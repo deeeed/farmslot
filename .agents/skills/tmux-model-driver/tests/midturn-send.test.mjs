@@ -868,6 +868,71 @@ const claudeRestored = (text) =>
     '  ⏵⏵ bypass permissions on (shift+tab to cycle)',
   ].join('\n');
 
+test('a Claude queue proof that really changed is still saved', async (t) => {
+  const f = claudeFixture(t, 'busy');
+  f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
+    f.record({ type: 'queue-operation', operation: 'enqueue', content: pasted });
+    return claudeBox('Press up to edit queued messages', `❯ ${pasted}`);
+  });
+  const sent = await send('%1', 'claude', f.payload);
+  assert.equal(sent.evidence.source, 'native-queue');
+  // The operator pulls the text back with Up and queues it again with Enter.
+  const later = new Date(Date.now() + 1000).toISOString();
+  f.record({ type: 'queue-operation', operation: 'popAll', content: f.payload, timestamp: later });
+  f.record({ type: 'queue-operation', operation: 'enqueue', content: f.payload, timestamp: later });
+  const attempts = lockAttempts(t);
+  const requeued = paneState('%1', 'claude').accepted;
+  assert.equal(requeued.observed_at, Date.parse(later));
+  assert.notEqual(requeued.observed_at, sent.evidence.observed_at);
+  assert.equal(attempts.length, 1);
+  const [file] = fs.readdirSync(f.dir).filter((name) => /^[a-f0-9]{64}\.json$/.test(name));
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.dir, file), 'utf8')).accepted, requeued);
+});
+
+for (const delivered of [true, false]) {
+  test(`a flush of Claude input pulled back into the composer is proved only by later records (${delivered ? 'resubmitted' : 'still unsent'})`, async (t) => {
+    const f = claudeFixture(t, 'busy');
+    f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {
+      f.record({ type: 'queue-operation', operation: 'enqueue', content: pasted });
+      return claudeBox('Press up to edit queued messages', `❯ ${pasted}`);
+    });
+    const first = await send('%1', 'claude', f.payload);
+    assert.equal(first.evidence.source, 'native-queue');
+    f.record({ type: 'queue-operation', operation: 'popAll', content: f.payload });
+    process.env.TMUX_PANE_STATE_TAIL_CAPTURE = claudeRestored(f.payload);
+    // The turn ends with the text still in the composer; a flush needs an idle pane.
+    fs.writeFileSync(
+      path.join(f.dir, 'claude', 'sessions', '42.json'),
+      JSON.stringify({ pid: 42, sessionId: 'claude-session', startedAt: 2, status: 'idle' }),
+    );
+    f.setCapturedPanes(claudeBox(f.payload), () => {
+      f.record({
+        type: 'user',
+        promptId: 'flushed',
+        message: { role: 'user', content: f.payload },
+      });
+      return claudeBox('');
+    });
+    f.setDrop(!delivered);
+    const flushedAt = Date.now();
+    const flushed = await send('%1', 'claude', '', null, true);
+    assert.equal(flushed.typed, false);
+    assert.equal(
+      f.keys.filter((args) => args[0] === 'paste-buffer').length,
+      1,
+      'never pasted again',
+    );
+    if (delivered) {
+      assert.equal(flushed.verification, 'submitted');
+      assert.equal(flushed.evidence.turn_token, 'flushed');
+      assert.ok(flushed.evidence.observed_at >= flushedAt);
+    } else {
+      assert.equal(flushed.submitted, false);
+      assert.equal(flushed.evidence, null);
+    }
+  });
+}
+
 for (const delivered of [true, false]) {
   test(`Claude input pulled back into the composer gets Enter again, never old evidence (${delivered ? 'resubmitted' : 'still unsent'})`, async (t) => {
     const f = claudeFixture(t, 'busy');

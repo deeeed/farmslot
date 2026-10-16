@@ -205,6 +205,11 @@ test('late acceptance survives repeated inspection until the lane owner acknowle
   assert.equal(retry.verification, 'submitted');
   assert.equal(retry.typed, false);
   assert.equal(retry.evidence.receipt_id, receipt.receipt_id);
+  // An explicit flush still waits for the owner to acknowledge the accepted receipt.
+  assert.equal(
+    (await send(pane, 'claude', '', null, true)).verification,
+    'acceptance_unacknowledged',
+  );
   assert.equal(
     acknowledgeAcceptance(pane, 'claude', 'a-different-receipt').verification,
     'receipt_mismatch',
@@ -298,8 +303,10 @@ test('unverified receipt blocks duplicate sends; explicit flush sends only Enter
   reset('drop');
   assert.equal((await send(pane, 'claude', 'buffered prompt')).verification, 'unverified');
   // The uncertain original is never typed again while the pane does not show it.
-  assert.equal((await send(pane, 'claude', 'buffered prompt')).verification, 'unverified');
-  // Only Claude's boxed composer counts as live input.
+  const repeated = await send(pane, 'claude', 'buffered prompt');
+  assert.equal(repeated.verification, 'unverified');
+  assert.equal(repeated.typed, false);
+  // A rendered composer, not bare text, counts as live input.
   process.env.TMUX_PANE_STATE_TAIL_CAPTURE = `${'─'.repeat(40)}\n❯ buffered prompt\n${'─'.repeat(40)}\n  ⏵⏵ bypass permissions on (shift+tab to cycle)`;
   assert.equal(
     (await send(pane, 'claude', 'different prompt', null, true)).verification,
