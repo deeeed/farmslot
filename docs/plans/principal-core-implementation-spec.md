@@ -1093,53 +1093,73 @@ invalidation hook, and **the subscribed session makes no request at any point**.
   it. Missing or stale generations cannot adopt replacement authority. Existing
   id-only automation owner records remain unproven for a replacement and must
   be re-authored under the automation service. No loader upgrades their author.
-- Generation-bound stored owners (ADR-051 Amendment 5) cover PR push devices,
-  monitors, project monitor policies and publication enrollments, teams, trigger
-  rules, rule actions, review submissions and intent contributions. Each fresh
-  record carries a server-derived, optional `ownerGeneration`; omission means
-  zero. Requests that supply it are refused.
-- Store schemas accept the optional field, and older files load unchanged. Reads,
-  edits, acknowledgements and idempotency keys keep successive generations of
-  one id apart.
+- Generation-bound stored owners (ADR-051 Amendment 5) cover the following. Each
+  fresh record carries a server-derived `ownerGeneration`, omitted for zero and
+  otherwise a positive safe integer. A missing value means zero. Request
+  parameters that supply it are refused, and `config` objects never carry it.
+  - PR monitors, project monitor policies and monitor publication enrollments.
+  - Teams, trigger rules, rule actions, review submissions and contributions.
+  - The PR work review owner.
+  - Push devices and acknowledgements, as gateway-internal store fields.
+  - Assessment records.
+- Store schemas accept the new fields, and older files load unchanged. Reads,
+  edits, acknowledgements, idempotency keys and loader uniqueness keys include the
+  generation. A replacement saving the same project, idempotency key or
+  subscription produces a store that reloads.
+- Old records are inert for a replacement and absent from its owner-scoped views
+  and assessment reports. No loader re-authors them.
 - Each fire-time authority check resolves the stored owner with
-  `resolvePrincipalId(ownerId, ownerGeneration ?? 0)`. A replacement's fresh
-  records work. A generation-zero record never resolves the replacement.
-- PR monitoring repair and rule dispatch enqueue originators carrying the stored
-  owner's generation. Background scans, enrollment, action delivery and queue
-  admission re-check current authority before acting. An unrelated waking
-  request cannot donate authority. The queue loader validates stored originators
-  with the shared WorkOriginator check.
-- Team notification recipients bind the server-resolved generation when the team
-  is saved. Owner-scoped events check the recipient session's generation as well
-  as its id. Old recipient lists and acknowledgements cannot reach a replacement.
+  `resolvePrincipalId(ownerId, ownerGeneration ?? 0)`.
+- PR monitoring repair and rule dispatch enqueue originators that carry the
+  stored owner's generation. Background scans, enrollment, action delivery and
+  queue admission re-check current authority before acting. An unrelated waking
+  request cannot donate authority.
+- The queue loader validates each stored originator with the shared WorkOriginator
+  check. An invalid row refuses only itself.
+- `PRTeamProfile.notificationPrincipalGenerations` binds the current generation
+  of each recipient id newly added to `config.notificationPrincipalIds` at save.
+  - Recipients already on the team keep their stored generation.
+  - An id that does not resolve at save is refused.
+  - Owner-scoped events and notification reads check the recipient session's
+    generation as well as its id.
 - Push registration may disable the same token's binding for an older generation
   of that principal id, inside the authorized registration transaction, before
   creating a new device. Old deliveries stay with the old device. Token conflicts
   across principals remain refused.
 - Run creation records `createdByPrincipalGeneration` from the authenticated
   originator. System-originated child runs inherit it from their parent.
-- Direct and gated publication, automatic QA intake, source-review validation and
-  reviewer continuity match owner id and generation.
-- `generation_mismatch` produces its own denial text. It names the replaced
-  identity and the action to re-create the record, and never reads as a
-  revocation.
+- Gated publication of slot reviews, automatic QA intake, source-review validation
+  and reviewer continuity all match owner id and generation.
+- `generation_mismatch` has its own denial text. It names the replaced identity
+  and the action that re-creates the record, and never reads as a revocation.
 - A contribution whose owner fails with `generation_mismatch` is withdrawn before
-  shared-review admission. Any other loss of authority refuses admission and
-  keeps the contribution held. Restoring that authority admits it without
-  re-authoring.
-- Webhook principals and delegated visual-review delegators named in project
-  configuration resolve at generation zero. A replacement is never credited or
-  empowered, and the denial names the mismatch. Source-pin actors remain
-  display-only.
+  shared-review admission. Any other loss of authority refuses admission and keeps
+  the contribution held. Restoring that authority admits it without re-authoring.
+- Webhook principals, delegated visual-review delegators and
+  `delegatedReviewerPrincipalIds` resolve at generation zero. A replacement is
+  never credited or empowered, and the denial names the mismatch. Source-pin
+  actors remain display-only.
 - Native execution ownership remains id-only and matches only a generation-zero
-  principal. This covers the configured native profile owner, node native-owner
-  bindings, and run and native-session owners. A replacement identity cannot own
-  native execution.
-- Regressions cover every store above:
-  - a generation-zero record still works for its original identity;
-  - after reuse it is refused with the mismatch reason;
-  - the replacement's fresh record works;
-  - a background effect for the old record never acts as the replacement.
+  principal. `requireNativeProfileOwner`, `resolveNativeWorkerOwner`,
+  `resolveReviewWorkspaceOwner`, node bindings and native-session owners refuse
+  any principal whose generation is not zero.
+- Workspace review runs, direct static publication and gated workspace publication
+  are therefore refused for a replacement, with a native-ownership denial.
+- Regressions:
+  - For each generation-bound store: a generation-zero record still works for its
+    original identity. After reuse it is refused or absent. The replacement's
+    fresh record works. A background effect for the old record never acts as the
+    replacement.
+  - For a replacement: native ownership, workspace review, direct static
+    publication, webhook principals, delegators and delegated reviewers are
+    refused with their named reasons.
+  - Push: the older-generation binding for the same token is disabled, and
+    conflicts across principals stay refused.
+  - Contributions: withdrawn on mismatch, held on role loss, admitted after the
+    role is restored.
+  - Client-supplied generation fields are refused.
+  - Each store reloads after both generations of one id have saved records.
+  - One live gateway-RPC proof runs on an isolated identity home.
 - Reuse preserves every credential tombstone, unrelated principal tombstones,
   activation and surviving credentials. It never issues a credential. Old
   credential wires and session references remain invalid after replacement.

@@ -140,14 +140,21 @@ Before reuse, upgrade every gateway sharing the identity home to the
 generation-aware version. A pending pairing invitation from the retired identity
 is invalid; create a new invitation for the replacement.
 
-After reuse, the replacement's fresh PR notifications, watches, teams, rules and
-review requests work. Records the old identity created stay bound to it. They are
-refused with a message naming the replaced identity, and the replacement
-re-creates the configuration it wants. Webhook principals and visual-review
-delegations in project configuration keep naming the original identity, so
-re-point them to the intended service or person. Native execution ownership never
-moves to a replacement identity; keep native profiles owned by the automation
-service.
+Once a gateway that implements ADR-051 Amendment 5 is rolled out:
+
+- A replacement's fresh PR notifications, watches, teams and rules work, along
+  with slot reviews admitted through its own rules or submissions.
+- Records the old identity created stay bound to it. They are absent from the
+  replacement's views, and actions on them are refused with a message naming the
+  replaced identity. The replacement re-creates the configuration it wants.
+- Workspace reviews and direct static publication run under native execution
+  ownership. Native execution ownership never moves to a replacement identity, so
+  keep native profiles owned by the automation service and re-point native owner
+  configuration before reuse.
+- Webhook principals and visual-review delegations in project configuration keep
+  naming the original identity. Re-point them to another service or person.
+
+Until that version is deployed, a reused identity cannot use PR features.
 
 ## Person-device session contract
 
