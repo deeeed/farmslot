@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Encode artifact URL path segments so publication verifies and embeds filenames containing literal percent escapes and other URL characters.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.22.0 - 2026-10-16

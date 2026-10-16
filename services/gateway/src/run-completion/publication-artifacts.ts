@@ -126,8 +126,14 @@ async function fileDigestPrefix(filePath: string): Promise<string> {
     .slice(0, 16);
 }
 
+/** Preserve artifact hierarchy while treating every filename as literal URL data. */
+export function uploadedArtifactUrl(baseUrl: string, file: string, digest: string): string {
+  const encodedPath = file.split('/').map(encodeURIComponent).join('/');
+  return `${baseUrl}/${encodedPath}?sha=${digest}`;
+}
+
 /** Git push can succeed locally while raw.githubusercontent.com is still 404 — verify before PR embed. */
-async function assertUploadedArtifactUrlsReachable(
+export async function assertUploadedArtifactUrlsReachable(
   urlMap: Map<string, string>,
   options: { failOnError?: boolean },
 ): Promise<void> {
@@ -395,7 +401,7 @@ export async function uploadArtifacts(
     const baseUrl = `https://raw.githubusercontent.com/${artifactsRepo}/main/${flowDir}/${publicationId}`;
     for (const f of files) {
       const digest = await fileDigestPrefix(path.join(artifactsDir, f));
-      urlMap.set(f, `${baseUrl}/${f}?sha=${digest}`);
+      urlMap.set(f, uploadedArtifactUrl(baseUrl, f, digest));
     }
     console.log(`[run-completion] uploaded ${files.length} artifact(s): ${files.join(', ')}`);
     await assertUploadedArtifactUrlsReachable(urlMap, options);
