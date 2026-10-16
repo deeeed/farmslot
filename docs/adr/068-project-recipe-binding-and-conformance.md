@@ -186,6 +186,8 @@ Publish the additive SDK export in a reviewed pre-1.0 minor release. Migrate cal
 
 Complete Amendment 3 on the hosted path. The execution node's immutable Farmslot CLI initializes the task through the existing shared producer, retaining its own implementation and the selected project tooling before emitting a marker. The gateway supplies task data and mirrors the result; it cannot pin its own installation for a different node or regenerate the marker from current pool defaults.
 
+Retain the provider's owning tooling workspace and its declared installed dependencies separately from the recipe library root. Sibling imports and local dependency links must remain usable from the retained copy without changing bundled recipe discovery or freezing the product checkout.
+
 Migrate every active consumer before enabling the hosted cutover, then delete the replaced producer. Every pack consuming that producer is included. There is no project opt-in, compatibility shim or fallback to an unfrozen task. Existing tasks retain their original tooling and evidence.
 
 ### Public surface and consequences

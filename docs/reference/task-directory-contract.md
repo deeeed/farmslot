@@ -109,6 +109,8 @@ The root task commands consume `@farmslot/recipe-cli/harness`'s `projectTaskExec
 
 The proposed [hosted initialization contract](project-recipe-contract.md#hosted-task-initialization), ADR-068 Amendment 5, applies this same producer on the execution node. The gateway supplies task data and mirrors its result; it does not replace the generated marker or task provenance. All affected active consumers migrate before activation, and the replaced producer is deleted. Existing tasks and receipts are not upgraded.
 
+Provider retention includes its owning tooling workspace and declared installed dependency closure, independently of recipe-library discovery. The existing retained-input mappings and digests cover sibling imports and local dependency links without widening the selected recipe root or retaining the product checkout.
+
 ## Handoff metadata
 
 `inputs/handoff.json` is the run's identity for closeout and learning packages:
