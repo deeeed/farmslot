@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 
-import type { RunGateReadiness } from '@farmslot/protocol';
+import {
+  dedupeRunArtifacts,
+  extractRunArtifactManifest,
+  inferRunArtifactPurpose,
+  type Run,
+  type RunGateReadiness,
+} from '@farmslot/protocol';
 
 import {
   artifactsForRecipeRun,
@@ -8,10 +14,7 @@ import {
   artifactUrl,
   classifyArtifact,
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
-  dedupeArtifacts,
-  extractRunArtifactManifest,
   groupVisualArtifactPairs,
-  inferArtifactPurpose,
   resolveRecipeRunSelection,
 } from './artifact-url';
 import { type PendingDecisionLike, presentDecision } from './decision-presentation';
@@ -200,12 +203,12 @@ assert.equal(unassigned.pairs.length, 0, 'filenames and purposes cannot bind AC 
 assert.equal(unassigned.singles.length, 3, 'all original unassigned media remains readable');
 
 assert.equal(
-  inferArtifactPurpose('artifacts/evidence/diff-screenshot.png'),
+  inferRunArtifactPurpose('artifacts/evidence/diff-screenshot.png'),
   'screenshot',
   'screenshot evidence should not be reclassified as a diff because its filename mentions diff',
 );
 assert.equal(
-  inferArtifactPurpose('artifacts/review.patch'),
+  inferRunArtifactPurpose('artifacts/review.patch'),
   'diff',
   'patch artifacts should still be classified as diffs',
 );
@@ -250,7 +253,7 @@ assert.equal(
 );
 
 assert.deepEqual(
-  dedupeArtifacts([
+  dedupeRunArtifacts([
     { path: 'artifacts/replay.mp4', purpose: 'video' },
     { path: 'artifacts/replay.mp4', purpose: 'video-before' },
   ]),
@@ -258,7 +261,7 @@ assert.deepEqual(
   'dedupe should keep the more specific purpose when manifests reuse a path',
 );
 assert.deepEqual(
-  dedupeArtifacts([
+  dedupeRunArtifacts([
     { path: 'artifacts/metrics/cpu', purpose: 'other' },
     {
       path: 'artifacts/metrics/cpu',
@@ -282,7 +285,7 @@ assert.deepEqual(
   'dedupe should preserve typed metadata when duplicate artifact paths merge',
 );
 assert.deepEqual(
-  dedupeArtifacts([
+  dedupeRunArtifacts([
     {
       path: 'artifacts/summary',
       purpose: 'report',
@@ -304,7 +307,7 @@ assert.deepEqual(
   'dedupe should not erase typed metadata when a weaker duplicate appears later',
 );
 assert.deepEqual(
-  dedupeArtifacts([
+  dedupeRunArtifacts([
     {
       path: 'artifacts/summary',
       purpose: 'report',
@@ -470,37 +473,39 @@ assert.deepEqual(
   'recipe run artifacts should retain the group id needed by /api/run-artifact',
 );
 
-assert.deepEqual(
-  extractRunArtifactManifest({
-    id: 'run-1',
-    familyId: 'family-1',
-    ticketOrPr: 'PROJ-1',
-    project: 'farm',
-    flowType: 'fix-bug',
-    lane: 'production',
-    status: 'done',
-    slotId: null,
-    branch: null,
-    taskFile: null,
-    createdAt: '2026-05-21T00:00:00.000Z',
-    updatedAt: '2026-05-21T00:00:00.000Z',
-    steps: [
-      {
-        name: 'complete',
-        status: 'done',
-        startedAt: '2026-05-21T00:00:00.000Z',
-        completedAt: '2026-05-21T00:01:00.000Z',
-        outputs: {
-          artifacts: [
-            { path: 'artifacts/before.png', purpose: 'screenshot-before', sizeBytes: 10 },
-            'artifacts/report.md',
-          ],
-        },
+const retrospectiveRun: Run = {
+  id: 'run-1',
+  familyId: 'family-1',
+  ticketOrPr: 'PROJ-1',
+  project: 'farm',
+  flowType: 'fix-bug',
+  lane: 'production',
+  status: 'done',
+  slotId: null,
+  branch: null,
+  taskFile: null,
+  createdAt: '2026-05-21T00:00:00.000Z',
+  updatedAt: '2026-05-21T00:00:00.000Z',
+  steps: [
+    {
+      name: 'complete',
+      status: 'done',
+      startedAt: '2026-05-21T00:00:00.000Z',
+      completedAt: '2026-05-21T00:01:00.000Z',
+      outputs: {
+        artifacts: [
+          { path: 'artifacts/before.png', purpose: 'screenshot-before', sizeBytes: 10 },
+          'artifacts/report.md',
+        ],
       },
-    ],
-    decisions: [],
-    metrics: { nudgeCount: 0, model: 'gpt-test', runner: 'codex' },
-  }).map((artifact) => ({
+    },
+  ],
+  decisions: [],
+  metrics: { nudgeCount: 0, model: 'gpt-test', runner: 'codex' },
+};
+
+assert.deepEqual(
+  extractRunArtifactManifest(retrospectiveRun).map((artifact) => ({
     path: artifact.path,
     purpose: artifact.purpose,
     sizeBytes: artifact.sizeBytes,

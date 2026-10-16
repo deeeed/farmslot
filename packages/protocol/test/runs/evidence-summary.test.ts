@@ -2,9 +2,15 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 
 import type { Run } from '../../src/contracts/runs.js';
-import { runEvidenceArtifacts, summarizeRunEvidence } from '../../src/runs/evidence-summary.js';
+import {
+  extractRunArtifactManifest,
+  runEvidenceArtifacts,
+  summarizeRunEvidence,
+} from '../../src/runs/evidence-summary.js';
 
-function run(overrides: Partial<Run> = {}): Pick<Run, 'decisions' | 'steps' | 'liveRecipeContext'> {
+function run(
+  overrides: Partial<Run> = {},
+): Pick<Run, 'decisions' | 'steps' | 'output' | 'liveRecipeContext'> {
   return {
     decisions: [],
     steps: [],
@@ -108,4 +114,29 @@ test('run evidence summary includes selected live recipe context artifacts', () 
 
   assert.equal(summary.artifactCount, 1);
   assert.equal(summary.videoCount, 1);
+});
+
+test('captured run output is evidence even when no step lists it; launch diagnostics are not', () => {
+  const output = run({
+    output: {
+      capturedAt: '2026-10-16T00:00:00.000Z',
+      workerFinished: true,
+      manifestDigest: 'digest',
+      reportPath: 'artifacts/report.html',
+      artifactManifest: [
+        { path: 'artifacts/report.html', purpose: 'report', sizeBytes: 10, sha256: 'r' },
+        { path: 'artifacts/cases/login/after.png', purpose: 'screenshot', sha256: 'a' },
+        { path: 'artifacts/harness-launch/stdout.log', purpose: 'other' },
+      ],
+    },
+  });
+
+  assert.deepEqual(
+    extractRunArtifactManifest(output).map((artifact) => [artifact.path, artifact.purpose]),
+    [
+      ['artifacts/report.html', 'report'],
+      ['artifacts/cases/login/after.png', 'screenshot'],
+    ],
+  );
+  assert.equal(summarizeRunEvidence(output).artifactCount, 2);
 });

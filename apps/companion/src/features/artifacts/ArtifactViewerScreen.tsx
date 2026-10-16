@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createEvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import {
   Events,
+  extractRunArtifactManifest,
   Methods,
   type RecipeRunArtifactGroup,
   type Run,
@@ -40,7 +41,6 @@ import {
   countVisualArtifactPairs,
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-  extractRunArtifactManifest,
   resolveRecipeRunSelection,
 } from '../../lib/artifact-url';
 import {

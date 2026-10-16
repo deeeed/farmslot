@@ -9,6 +9,7 @@ import {
   type DecisionAction,
   type ReadyGatePayload,
   type ReviewStatus,
+  type Run,
   type RunDecision,
 } from '@farmslot/protocol';
 import { colors } from '@farmslot/theme';
@@ -404,4 +405,44 @@ test('a gate is guarded with its own review requirement and the run it belongs t
   assert.deepEqual(humanGateGuard(null, gateDecision(), judged).guard.acceptanceReasons, [
     "Acceptance criteria unavailable: the gate's run is not loaded",
   ]);
+});
+
+test('open findings or a running fix withhold every publish approval, overrides included', () => {
+  const judged = { view: acceptance(['AC-1', 'AC-2']), error: null };
+  const gate = gateDecision({ actions: [...OVERRIDES, GATE_ACTIONS[0]] });
+  const findings: Pick<Run, 'status' | 'agentContexts' | 'engineState'> = {
+    status: 'human-gating',
+    agentContexts: [],
+    engineState: {
+      publishGate: { reviews: [review({ verdict: 'issues', unresolvedCount: 2 })] },
+    },
+  };
+  assert.deepEqual(
+    humanGateGuard(findings, gate, judged).actions.map((action) => [
+      action.id,
+      action.disabledReason,
+    ]),
+    [
+      [
+        APPROVE_PUBLISH_UNRESOLVED_ACTION,
+        'Review found 2 issues. Fix and pass review before publishing.',
+      ],
+      [
+        APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
+        'Review found 2 issues. Fix and pass review before publishing.',
+      ],
+      ['ready', 'Review found 2 issues. Fix and pass review before publishing.'],
+      ['hold', null],
+      ['approve-publish', 'Review found 2 issues. Fix and pass review before publishing.'],
+    ],
+  );
+  const fixing: Pick<Run, 'status' | 'agentContexts' | 'engineState'> = {
+    status: 'fixing',
+    agentContexts: [],
+    engineState: { publishGate: { reviews: [review({})] } },
+  };
+  assert.equal(
+    humanGateGuard(fixing, gate, judged).actions.at(-1)?.disabledReason,
+    'Review fix in progress.',
+  );
 });

@@ -1,9 +1,10 @@
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
 import {
   type ArtifactRef,
+  dedupeRunArtifacts,
+  inferRunArtifactPurpose,
   isRunEvidenceVideoArtifact,
   type RecipeRunArtifactGroup,
-  type Run,
   withArtifactBundleDigest,
 } from '@farmslot/protocol';
 
@@ -93,48 +94,9 @@ export function artifactUrlForEntry(
   );
 }
 
-/**
- * Pull the artifact manifest off a run's first ready-gate decision payload.
- * Returns [] when the run has no ready-gate or no manifest.
- */
-export function extractArtifactManifest(run: Run): ArtifactManifestEntry[] {
-  const entries: ArtifactManifestEntry[] = [];
-  for (const d of run.decisions ?? []) {
-    const payload = d.payload;
-    if (payload?.kind === 'ready') {
-      entries.push(...(payload.artifactManifest ?? []));
-      entries.push(...(payload.prPackage?.evidenceManifest ?? []));
-      for (const check of payload.prPackage?.deterministicChecks ?? []) {
-        if (check.logPath) {
-          entries.push({
-            path: check.logPath,
-            purpose: 'ci-parity-log',
-            type: 'log',
-            label: `${check.reference} · ${check.status}`,
-          });
-        }
-      }
-    } else if (payload?.kind === 'review') {
-      entries.push(...(payload.artifactManifest ?? []));
-      entries.push(...artifactPathsToManifest(payload.reviewInputArtifactPaths ?? []));
-    } else if (payload?.kind === 'no-change') {
-      entries.push(...(payload.artifactManifest ?? []));
-    }
-  }
-  return dedupeArtifacts(entries);
-}
-
-export function extractRunArtifactManifest(run: Run): ArtifactManifestEntry[] {
-  const entries = [...extractArtifactManifest(run)];
-  for (const step of run.steps ?? []) {
-    collectArtifactManifestEntries(step.outputs, entries);
-  }
-  return dedupeArtifacts(entries);
-}
-
 export function artifactsForRecipeRun(group: RecipeRunArtifactGroup): ArtifactManifestEntry[] {
   const recipeRunId = group.groupKind === CURRENT_ARTIFACTS_RECIPE_RUN_PARAM ? undefined : group.id;
-  return dedupeArtifacts(
+  return dedupeRunArtifacts(
     (group.artifactManifest ?? []).map((artifact) => ({
       ...artifact,
       recipeRunId,
@@ -165,14 +127,6 @@ function wsToHttpBase(wsUrl: string): string {
 
 const IMAGE_EXTS = /\.(png|jpg|jpeg|gif|svg|webp)$/i;
 const DOC_EXTS = /\.(md|txt|json|log)$/i;
-const NEUTRAL_VISUAL_PURPOSES = new Set([
-  'image',
-  'screenshot',
-  'debug-screenshot',
-  'video',
-  'visual',
-]);
-
 export type ArtifactMediaType = 'image' | 'video' | 'document' | 'other';
 
 export function classifyArtifact(
@@ -180,7 +134,7 @@ export function classifyArtifact(
 ): ArtifactMediaType {
   const artifact =
     typeof pathOrArtifact === 'string'
-      ? { path: pathOrArtifact, purpose: inferArtifactPurpose(pathOrArtifact) }
+      ? { path: pathOrArtifact, purpose: inferRunArtifactPurpose(pathOrArtifact) }
       : pathOrArtifact;
   const path = artifact.path;
   const type = artifact.type?.toLowerCase();
@@ -211,152 +165,6 @@ export function classifyArtifact(
   if (IMAGE_EXTS.test(path)) return 'image';
   if (isRunEvidenceVideoArtifact({ path })) return 'video';
   return 'other';
-}
-
-export function inferArtifactPurpose(path: string): string {
-  const normalized = path.toLowerCase();
-  if (/\.(diff|patch)$/.test(normalized)) return 'diff';
-  if (normalized.includes('screenshot')) return 'screenshot';
-  if (isRunEvidenceVideoArtifact({ path })) return 'video';
-  if (IMAGE_EXTS.test(path)) return 'image';
-  if (/diff[_-]?stat/i.test(normalized)) return 'diff-stat';
-  if (/\/diff\.(txt|md)$/i.test(normalized)) return 'diff';
-  if (normalized.includes('review')) return 'review';
-  if (normalized.includes('report')) return 'report';
-  if (normalized.includes('recipe')) return 'recipe';
-  return 'artifact';
-}
-
-function collectArtifactManifestEntries(value: unknown, entries: ArtifactManifestEntry[]): void {
-  if (value == null) return;
-  if (typeof value === 'string') {
-    if (looksLikeArtifactPath(value)) {
-      entries.push({ path: value, purpose: inferArtifactPurpose(value) });
-    }
-    return;
-  }
-  if (Array.isArray(value)) {
-    value.forEach((item) => collectArtifactManifestEntries(item, entries));
-    return;
-  }
-  if (typeof value !== 'object') return;
-
-  const record = value as Record<string, unknown>;
-  if (typeof record.path === 'string' && looksLikeArtifactEntry(record)) {
-    entries.push({
-      path: record.path,
-      purpose:
-        typeof record.purpose === 'string' ? record.purpose : inferArtifactPurpose(record.path),
-      ...(typeof record.sizeBytes === 'number' ? { sizeBytes: record.sizeBytes } : {}),
-      ...(typeof record.type === 'string' ? { type: record.type as ArtifactManifestType } : {}),
-      ...(typeof record.label === 'string' ? { label: record.label } : {}),
-      ...(typeof record.mimeType === 'string' ? { mimeType: record.mimeType } : {}),
-      ...(typeof record.sha256 === 'string' ? { sha256: record.sha256 } : {}),
-      ...(typeof record.timelinePath === 'string' ? { timelinePath: record.timelinePath } : {}),
-      ...(typeof record.timelineUnavailableReason === 'string'
-        ? { timelineUnavailableReason: record.timelineUnavailableReason }
-        : {}),
-    });
-  }
-
-  Object.values(record).forEach((item) => collectArtifactManifestEntries(item, entries));
-}
-
-function looksLikeArtifactEntry(record: Record<string, unknown>): boolean {
-  const path = record.path;
-  if (typeof path !== 'string') return false;
-  return (
-    typeof record.purpose === 'string' ||
-    typeof record.type === 'string' ||
-    typeof record.mimeType === 'string' ||
-    looksLikeArtifactPath(path)
-  );
-}
-
-function looksLikeArtifactPath(value: string): boolean {
-  return (
-    IMAGE_EXTS.test(value) ||
-    isRunEvidenceVideoArtifact({ path: value }) ||
-    /\.(md|json|txt|log|diff|patch)$/i.test(value)
-  );
-}
-
-export function artifactPathsToManifest(paths: string[]): ArtifactManifestEntry[] {
-  return paths.map((path) => ({
-    path,
-    purpose: inferArtifactPurpose(path),
-  }));
-}
-
-export function dedupeArtifacts(entries: ArtifactManifestEntry[]): ArtifactManifestEntry[] {
-  const merged = new Map<string, ArtifactManifestEntry>();
-  for (const entry of entries) {
-    const existing = merged.get(entry.path);
-    if (!existing) {
-      merged.set(entry.path, entry);
-      continue;
-    }
-    merged.set(entry.path, mergeArtifactMetadata(existing, entry));
-  }
-  return [...merged.values()];
-}
-
-function mergeArtifactMetadata(
-  existing: ArtifactManifestEntry,
-  incoming: ArtifactManifestEntry,
-): ArtifactManifestEntry {
-  const merged = { ...existing };
-  for (const key of [
-    'sha256',
-    'timelinePath',
-    'timelineUnavailableReason',
-    'bundleDigest',
-  ] as const) {
-    if (incoming[key] !== undefined) merged[key] = incoming[key];
-  }
-  const incomingPurposeSpecificity = artifactPurposeSpecificity(incoming.purpose);
-  const existingPurposeSpecificity = artifactPurposeSpecificity(existing.purpose);
-  const incomingIsMoreSpecific = incomingPurposeSpecificity > existingPurposeSpecificity;
-  if (incomingIsMoreSpecific) {
-    merged.purpose = incoming.purpose;
-  }
-  if (
-    incoming.sizeBytes !== undefined &&
-    (merged.sizeBytes === undefined || incomingIsMoreSpecific)
-  )
-    merged.sizeBytes = incoming.sizeBytes;
-  if (incoming.type !== undefined && (merged.type === undefined || incomingIsMoreSpecific))
-    merged.type = incoming.type;
-  if (incoming.label !== undefined && (merged.label === undefined || incomingIsMoreSpecific))
-    merged.label = incoming.label;
-  if (incoming.nodeId !== undefined && (merged.nodeId === undefined || incomingIsMoreSpecific))
-    merged.nodeId = incoming.nodeId;
-  if (incoming.mimeType !== undefined && (merged.mimeType === undefined || incomingIsMoreSpecific))
-    merged.mimeType = incoming.mimeType;
-  if (
-    incoming.recipeRunId !== undefined &&
-    (merged.recipeRunId === undefined || incomingIsMoreSpecific)
-  )
-    merged.recipeRunId = incoming.recipeRunId;
-  if (
-    incoming.sourceLabel !== undefined &&
-    (merged.sourceLabel === undefined || incomingIsMoreSpecific)
-  )
-    merged.sourceLabel = incoming.sourceLabel;
-  if (
-    incoming.sourceStatus !== undefined &&
-    (merged.sourceStatus === undefined || incomingIsMoreSpecific)
-  )
-    merged.sourceStatus = incoming.sourceStatus;
-  return merged;
-}
-
-function artifactPurposeSpecificity(purpose: string): number {
-  if (/\b(before|after|current|candidate|baseline|reference)\b/.test(purpose)) return 3;
-  if (purpose === 'other') return 0;
-  if (!NEUTRAL_VISUAL_PURPOSES.has(purpose) && purpose !== 'artifact') return 2;
-  if (purpose === 'artifact') return 0;
-  return 1;
 }
 
 export function isBeforeVisualArtifact(

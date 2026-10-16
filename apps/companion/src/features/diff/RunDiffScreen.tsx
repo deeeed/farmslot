@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
   Events,
+  extractRunArtifactManifest,
   type GitDiffResult,
   Methods,
   type RecipeRunArtifactGroup,
@@ -21,7 +22,6 @@ import {
   artifactUrlForEntry,
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-  extractRunArtifactManifest,
   groupVisualArtifactPairs,
   resolveRecipeRunSelection,
 } from '../../lib/artifact-url';
