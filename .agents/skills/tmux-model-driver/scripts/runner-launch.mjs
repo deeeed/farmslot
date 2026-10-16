@@ -33,13 +33,14 @@ export function runnerLaunch(lane) {
   const configuredCwd = path.resolve(expandTilde(lane.cwd));
   const cwd = fs.realpathSync(configuredCwd);
   const configuredRuntime = path.resolve(expandTilde(lane.runtime_dir));
-  const runtime = runnerRuntimeDir(configuredCwd, configuredRuntime);
+  const configuredDestination = runnerRuntimeDir(configuredCwd, configuredRuntime);
   // Keep the original namespace for installer migration, even when cwd is a
   // filesystem alias. The resolved destination is for prompts/returned paths.
   const installRuntime =
-    runtime === configuredRuntime
+    configuredDestination === configuredRuntime
       ? configuredRuntime
       : path.relative(configuredCwd, configuredRuntime);
+  const runtime = runnerRuntimeDir(cwd, installRuntime);
   fs.mkdirSync(runtime, { recursive: true, mode: 0o700 });
   const vars = {
     slotId: lane.id,

@@ -322,3 +322,35 @@ test('release archives external observations as bytes and clears them while reta
   assert.equal(existsSync(obs), false);
   assert.equal(readFileSync(path.join(runtime, 'codex-home/history.jsonl'), 'utf8'), 'history');
 });
+
+for (const homeRelative of [false, true]) {
+  test(`release archives configured ${homeRelative ? 'home-relative' : 'absolute'} runtime bytes`, async (t) => {
+    const f = fixture(t);
+    const beforeHome = process.env.HOME;
+    try {
+      process.env.HOME = f.root;
+      const runtime = path.join(f.root, 'state');
+      const obs = path.join(runtime, '.observability');
+      mkdirSync(obs, { recursive: true });
+      writeFileSync(path.join(obs, 'hooks.jsonl'), 'configured hooks');
+      const result = await archiveSlotScaffolding(
+        f.vars,
+        { paths: { runtime_dir: homeRelative ? '~/state' : runtime } },
+        { destination: f.destination, taskRelativeDir: null, beforeRemove: async () => undefined },
+      );
+      const extracted = path.join(f.root, 'extracted-observations');
+      mkdirSync(extracted);
+      execFileSync('tar', [
+        '-xf',
+        path.join(result.directory, 'runner-observability.tar'),
+        '-C',
+        extracted,
+      ]);
+      assert.equal(readFileSync(path.join(extracted, 'hooks.jsonl'), 'utf8'), 'configured hooks');
+      assert.equal(existsSync(obs), false);
+    } finally {
+      if (beforeHome === undefined) delete process.env.HOME;
+      else process.env.HOME = beforeHome;
+    }
+  });
+}

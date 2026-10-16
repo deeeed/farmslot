@@ -171,7 +171,7 @@ export async function slotReadFile(ctx: SlotLocality, filePath: string): Promise
 }
 
 export async function slotRealpath(ctx: SlotLocality, filePath: string): Promise<string> {
-  if (local(ctx)) return realpath(filePath);
+  if (local(ctx)) return realpath(expandTilde(filePath));
   const result = (await requestFor(ctx)('fs.realpath', {
     ...nodePathParams(filePath),
   })) as { path: string };
@@ -182,7 +182,7 @@ export async function slotRealpath(ctx: SlotLocality, filePath: string): Promise
 
 export async function slotFileExists(ctx: SlotLocality, filePath: string): Promise<boolean> {
   if (local(ctx)) {
-    return existsSync(filePath);
+    return existsSync(expandTilde(filePath));
   }
   const result = (await requestFor(ctx)('fs.exists', {
     ...nodePathParams(filePath),

@@ -188,3 +188,16 @@ test('readPaneSignals uses external configured observations without a checkout a
   assert.equal(signals?.statusline?.ctxPct, 42);
   assert.equal(signals?.statusline?.busy, false);
 });
+
+test('a pane with a deleted cwd does not break the node signal inventory', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'node-deleted-pane-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const previous = process.env.FARMSLOT_POOL_DIR;
+  try {
+    process.env.FARMSLOT_POOL_DIR = root;
+    assert.equal(await readPaneSignals(path.join(root, 'deleted-checkout')), undefined);
+  } finally {
+    if (previous === undefined) delete process.env.FARMSLOT_POOL_DIR;
+    else process.env.FARMSLOT_POOL_DIR = previous;
+  }
+});

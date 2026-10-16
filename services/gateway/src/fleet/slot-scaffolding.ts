@@ -39,7 +39,12 @@ function relativeNamespace(value: string): string {
 
 export function slotScaffoldingPaths(projectJson: RawProjectJson) {
   const task = relativeNamespace(resolveProjectTaskDirName(projectJson));
-  const runtime = relativeNamespace(resolveProjectRuntimeDirName(projectJson));
+  const configuredRuntime = resolveProjectRuntimeDirName(projectJson);
+  const externalRuntime =
+    path.posix.isAbsolute(configuredRuntime) ||
+    configuredRuntime === '~' ||
+    configuredRuntime.startsWith('~/');
+  const runtime = externalRuntime ? configuredRuntime : relativeNamespace(configuredRuntime);
   // Retain the pre-existing exclusions for legacy generated support files.
   return {
     task,
@@ -47,7 +52,7 @@ export function slotScaffoldingPaths(projectJson: RawProjectJson) {
     owned: [
       ...new Set([
         task,
-        runtime,
+        ...(externalRuntime ? [] : [runtime]),
         DEFAULT_TASK_DIR,
         '.agent',
         '.observability',
@@ -122,7 +127,9 @@ export async function archiveSlotScaffolding(
   const roots = [
     ...new Set([
       ...taskRoots,
-      `${runtime}/.observability`,
+      ...(path.posix.isAbsolute(runtime) || runtime === '~' || runtime.startsWith('~/')
+        ? []
+        : [`${runtime}/.observability`]),
       '.agent/.observability',
       '.observability',
     ]),
@@ -137,14 +144,20 @@ export async function archiveSlotScaffolding(
       throw new Error(`Scaffolding parent escapes slot repository: ${relative}`);
     sources.push({ relative, absolute, resolved: await slotRealpath(vars, absolute) });
   }
-  const external = path.posix.join(runnerRuntimeDir(vars.remoteRepo, runtime), '.observability');
-  if (await slotFileExists(vars, external)) {
-    const resolved = await slotRealpath(vars, external);
-    if (
-      resolved !==
-      path.posix.join(await slotRealpath(vars, path.posix.dirname(external)), '.observability')
-    )
+  const configuredExternal = path.posix.join(
+    runnerRuntimeDir(vars.remoteRepo, runtime),
+    '.observability',
+  );
+  let external: string | null = null;
+  if (await slotFileExists(vars, configuredExternal)) {
+    const resolved = await slotRealpath(vars, configuredExternal);
+    const expected = path.posix.join(
+      await slotRealpath(vars, path.posix.dirname(configuredExternal)),
+      '.observability',
+    );
+    if (resolved !== expected)
       throw new Error('External runner observations must be an owned directory');
+    external = resolved;
     sources.push({ relative: 'runner-observability', absolute: external, resolved });
   }
   const directory = path.join(options.destination, randomUUID());
@@ -173,7 +186,7 @@ export async function archiveSlotScaffolding(
     });
     if ((await stat(archive)).size !== (await slotStat(vars, remoteArchive)).size)
       throw new Error('Scaffolding archive transfer incomplete');
-    if (sources.some((source) => source.absolute === external)) {
+    if (external) {
       const externalArchive = path.posix.join(temporary, 'runner-observability.tar');
       const packedExternal = await execOnSlot(
         vars,

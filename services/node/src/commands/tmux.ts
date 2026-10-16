@@ -231,7 +231,14 @@ export async function readPaneSignals(
 ): Promise<NodeTmuxPaneSignals | undefined> {
   if (!cwd) return undefined;
   if (!runtimeDir && existsSync(resolveExecPoolDir())) {
-    const match = await findSlotByRepo<RawPoolJson>(resolveExecPoolDir(), await realpath(cwd));
+    const concrete = await realpath(cwd).catch((error: NodeJS.ErrnoException) => {
+      // Stale tmux panes can retain a deleted cwd; they have no registered slot.
+      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
+      throw error;
+    });
+    const match = concrete
+      ? await findSlotByRepo<RawPoolJson>(resolveExecPoolDir(), concrete)
+      : null;
     if (match?.pool.project) {
       const project = parseJsonObject(
         await readOptionalText(
