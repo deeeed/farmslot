@@ -187,6 +187,86 @@ test('missing declared dependency refuses before a receipt can authorize a marke
   assert.equal(fs.existsSync(path.join(taskDir, 'artifacts', 'harness-provenance.json')), false);
 });
 
+for (const physicalPeer of [false, true]) {
+  test(`hoisted dependency retains its ${physicalPeer ? 'physical' : 'workspace'} peer after source removal`, async (t) => {
+    const { root, provider, taskDir, input } = fixture(t);
+    const hoisted = path.join(root, 'node_modules', 'hoisted');
+    const workspacePeer = path.join(provider, 'node_modules', 'peer');
+    const installedPeer = path.join(root, 'node_modules', 'peer');
+    const writePackage = (directory: string, manifest: object, code: string): void => {
+      fs.mkdirSync(directory, { recursive: true });
+      fs.writeFileSync(
+        path.join(directory, 'package.json'),
+        JSON.stringify({ type: 'module', main: 'action.mjs', ...manifest }),
+      );
+      fs.writeFileSync(path.join(directory, 'action.mjs'), code);
+    };
+    writePackage(
+      provider,
+      { private: true, files: ['action.mjs'], dependencies: { hoisted: '1', peer: '2' } },
+      'export { default } from "hoisted";',
+    );
+    writePackage(
+      hoisted,
+      { name: 'hoisted', peerDependencies: { peer: '*' } },
+      'export { default } from "peer";',
+    );
+    writePackage(workspacePeer, { name: 'peer', version: '2' }, 'export default 2;');
+    if (physicalPeer)
+      writePackage(installedPeer, { name: 'peer', version: '1' }, 'export default 1;');
+    const receipt = retainTaskExecution(taskDir, {
+      ...input,
+      inputs: [provider],
+      dependencyRoots: [provider],
+    });
+    const retained = receipt.retainedInputs.find(
+      (entry) => entry.source === fs.realpathSync(provider),
+    );
+    assert.ok(retained);
+    const peer = path.join(retained.path, 'node_modules', 'hoisted', 'node_modules', 'peer');
+    assert.ok(fs.realpathSync(peer).startsWith(`${fs.realpathSync(receipt.pin)}${path.sep}`));
+    fs.rmSync(provider, { recursive: true });
+    fs.rmSync(path.join(root, 'node_modules'), { recursive: true });
+    fs.rmSync(input.distributionRoot, { recursive: true });
+    const { pathToFileURL } = await import('node:url');
+    const module = await import(pathToFileURL(path.join(retained.path, 'action.mjs')).href);
+    assert.equal(module.default, physicalPeer ? 1 : 2);
+    assert.deepEqual(verifyTaskExecutionProvenance(taskDir, null), receipt);
+  });
+}
+
+for (const optionalPeer of [false, true]) {
+  test(`workspace peer lookup cannot repair a missing dependency${optionalPeer ? ' also declared as an optional peer' : ''}`, (t) => {
+    const { root, provider, taskDir, input } = fixture(t);
+    const hoisted = path.join(root, 'node_modules', 'hoisted');
+    const ambient = path.join(provider, 'node_modules', 'ambient');
+    fs.mkdirSync(hoisted, { recursive: true });
+    fs.mkdirSync(ambient, { recursive: true });
+    fs.writeFileSync(
+      path.join(provider, 'package.json'),
+      JSON.stringify({ private: true, dependencies: { hoisted: '1', ambient: '1' } }),
+    );
+    fs.writeFileSync(
+      path.join(hoisted, 'package.json'),
+      JSON.stringify({
+        name: 'hoisted',
+        dependencies: { ambient: '1' },
+        ...(optionalPeer && {
+          peerDependencies: { ambient: '1' },
+          peerDependenciesMeta: { ambient: { optional: true } },
+        }),
+      }),
+    );
+    fs.writeFileSync(path.join(ambient, 'package.json'), JSON.stringify({ name: 'ambient' }));
+    assert.throws(
+      () =>
+        retainTaskExecution(taskDir, { ...input, inputs: [provider], dependencyRoots: [provider] }),
+      /Declared task dependency ambient is not installed/,
+    );
+    assert.equal(fs.existsSync(path.join(taskDir, 'artifacts', 'harness-provenance.json')), false);
+  });
+}
+
 test('a relocated receipt refuses with the original bytes preserved', (t) => {
   const { root, taskDir, input } = fixture(t);
   retainTaskExecution(taskDir, input);

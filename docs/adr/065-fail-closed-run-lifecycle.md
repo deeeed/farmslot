@@ -35,7 +35,7 @@ again when resolving a decision. It requires successful declared deterministic
 steps, a complete registered AC ledger, valid evidence under ADR-062, and the
 required ADR-063 reviewer result artifacts for the selected revision. Unknown,
 missing, stale and failed prerequisites prevent advancement. Both clients show
-the gateway's reasons and progress through one shared presentation contract.
+the gateway's reasons and progress through one shared presentation contract. When project policy skips code review, the gate and published PR disclose "No code review ran" without blocking approval (lead, 2026-10-16).
 Inspection, evidence judgments, hold and authorized recovery remain available
 while prerequisites are incomplete. Collecting reviews is distinct from a gate
 ready for approval; prerequisite checks must not prevent the reviews needed to

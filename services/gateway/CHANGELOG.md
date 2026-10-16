@@ -6,6 +6,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Resolve PR and ticket branches before automatic slot scoring, preferring a free matching checkout without prompting that every branch is stale.
 
+- Disclose skipped code review in the publish gate and published PR provenance while preserving project approval policy.
+
 - Resolve CI and review follow-up helpers from the connected node installation and report retained delivery refusals without labelling every held handoff busy.
 - Recognize quiescent configured slot sessions across completed runs while preserving foreign sessions and live workers during teardown.
 

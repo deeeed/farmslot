@@ -156,7 +156,7 @@ export function GateReviewScreen({
               pairs={viewModel.pairs}
               evidenceModel={acceptance.evidenceModel}
               loading={acceptance.loading}
-              error={!acceptance.evidenceModel ? acceptance.error : null}
+              error={acceptance.error ?? undefined}
               retry={acceptance.retry}
               onFocusClaim={(y) =>
                 scroll.current?.scrollTo({ y: evidenceOffset.current + y, animated: true })

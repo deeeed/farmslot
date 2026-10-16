@@ -42,6 +42,7 @@ export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
     aria-busy=${String(Boolean(input.loading))}
     style=${`--gate-row-count:${view.claims.length}`}
   >
+    ${view.warnings.map((warning) => html`<div class="gate-status" role="note">${warning}</div>`)}
     ${input.showClaims !== false && view.claims.length
       ? html`<section aria-label="Acceptance judgments">
           <h3>Acceptance judgments</h3>

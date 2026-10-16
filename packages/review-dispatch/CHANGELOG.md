@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Share the gateway no-code-review warning without disabling publication approval.
+
 - Share declared gate criteria across client loading layouts.
 
 - Share publication decision status, AC judgment rows and attestation availability across operator clients.

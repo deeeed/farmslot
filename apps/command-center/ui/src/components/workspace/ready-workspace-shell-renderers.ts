@@ -76,6 +76,7 @@ export function renderReadyTopBar(input: {
       refreshPackage: input.refreshPackage,
       pendingVisualClaimIds: input.pendingVisualClaimIds,
       readiness: input.payload.gateReadiness,
+      reviewSummary: input.payload.gateSummary?.review,
       blockedReason: readyReviewBlockingReason(input.payload),
       attestationReason: input.attestationReason,
       attesting: input.attesting,

@@ -23,6 +23,27 @@ const evidenceOnly: RunGateReadiness = {
   ],
 };
 
+test('a gateway skipped-review warning is visible without withholding approval', () => {
+  const input = {
+    actions: [{ id: 'approve-publish', label: 'Approve publish', style: 'primary' as const }],
+    readiness: { ...evidenceOnly, state: 'ready' as const, reasons: [] },
+    reviewSummary: {
+      noCodeReview: true,
+      reviews: [],
+      passingReviews: 0,
+      totalUnresolved: 0,
+      didAnyReviewTriggerReWork: false,
+    },
+  };
+  const view = publicationGateView(input);
+  assert.deepEqual(view.warnings, ['No code review ran']);
+  assert.equal(view.approval?.id, 'approve-publish');
+  assert.equal(view.blockedReason, '');
+  assert.equal(view.status, 'Ready to publish');
+  assert.deepEqual(publicationGateView({ ...input, reviewSummary: undefined }).warnings, []);
+  assert.ok(publicationGateView({ ...input, readiness: evidenceOnly }).blockedReason);
+});
+
 test('pending judgments have separate labeled rows and withhold attestation and approval', () => {
   const view = publicationGateView({
     actions: [EVIDENCE_ATTESTATION_ACTION],

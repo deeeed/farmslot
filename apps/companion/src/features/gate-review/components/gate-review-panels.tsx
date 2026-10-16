@@ -202,6 +202,8 @@ export function GateActions({
     judgmentRows,
     pendingVisualClaimIds,
     readiness,
+    reviewSummary:
+      decision.payload?.kind === 'ready' ? decision.payload.gateSummary?.review : undefined,
     attestationReason,
     attesting: attestingDecisionId === decision.id,
   });
@@ -276,6 +278,15 @@ export function GateActions({
             ? 'Refreshing…'
             : view.status}
       </Text>
+      {view.warnings.map((warning) => (
+        <Text
+          key={warning}
+          testID="companion-gate-review-warning"
+          style={[gateStyles.status, { color: palette.text }]}
+        >
+          {warning}
+        </Text>
+      ))}
       {showClaims && rowCount ? (
         <View accessibilityLabel="Acceptance judgments">
           <Text style={[gateStyles.label, { color: palette.text }]}>Acceptance judgments</Text>
