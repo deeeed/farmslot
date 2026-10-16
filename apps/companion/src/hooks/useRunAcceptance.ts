@@ -39,6 +39,8 @@ import { useConnectedTransport } from './useConnectedTransport';
 export interface RunAcceptance {
   /** No acceptance data or read error is available yet. */
   loading: boolean;
+  evidenceLoading: boolean;
+  evidenceError: string | null;
   /** Re-read acceptance and selected evidence even when the run has not changed. */
   retry(): void;
   evidenceModel: EvidenceReviewModel | null;
@@ -79,6 +81,7 @@ export function useRunAcceptance(
   const [evidence, setEvidence] = useState<RunRecipeRunsForRunResult | null>(null);
   const [data, setData] = useState<AcceptanceData | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
+  const [evidenceRequestError, setEvidenceRequestError] = useState<string | null>(null);
   const [broadcasts, setBroadcasts] = useState(0);
   const requestRef = useRef(0);
   const runId = run?.id;
@@ -105,6 +108,7 @@ export function useRunAcceptance(
     setData(null);
     setEvidence(null);
     setRequestError(null);
+    setEvidenceRequestError(null);
   }, [
     authorityEpoch,
     runId,
@@ -125,6 +129,7 @@ export function useRunAcceptance(
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
     if (!data) setRequestError(null);
+    if (!evidence) setEvidenceRequestError(null);
     client
       .request<TaskProgressResult>(Methods.TASK_PROGRESS, target)
       .then(async (result) => {
@@ -144,18 +149,15 @@ export function useRunAcceptance(
                   : {}),
             },
           );
-          if (requestRef.current === requestId) setEvidence(source);
+          if (requestRef.current === requestId) {
+            setEvidence(source);
+            setEvidenceRequestError(null);
+          }
         } catch (error) {
           if (requestRef.current === requestId)
-            setEvidence({
-              recipeRuns: [],
-              selectedRecipeRunId: null,
-              recordedEvidence: {
-                artifactPrefix: '',
-                contractVersion: run?.recordedEvidenceContractVersion ?? 0,
-                errors: [error instanceof Error ? error.message : String(error)],
-              },
-            });
+            setEvidenceRequestError(
+              `Evidence unavailable: ${error instanceof Error ? error.message : String(error)}`,
+            );
         }
       })
       .catch((err: Error) => {
@@ -222,7 +224,9 @@ export function useRunAcceptance(
           claimOverrideAuthority: evidence?.recordedEvidence?.claimOverrideAuthority,
           visualReviewAuthority: evidence?.recordedEvidence?.visualReviewAuthority,
           visualReviewContext: evidence?.recordedEvidence?.visualReviewContext,
-          readErrors: evidence?.recordedEvidence?.errors,
+          readErrors:
+            evidence?.recordedEvidence?.errors ??
+            (evidenceRequestError ? [evidenceRequestError] : undefined),
           artifactPrefix: evidence?.recordedEvidence?.artifactPrefix,
           packagePath: evidence?.recordedEvidence?.packagePath,
           report: evidence?.recordedEvidence?.report,
@@ -231,6 +235,8 @@ export function useRunAcceptance(
       : null;
     return {
       loading: !data && !error,
+      evidenceLoading: !evidence && !error && !evidenceRequestError,
+      evidenceError: error ?? evidenceRequestError,
       retry() {
         setBroadcasts((value) => value + 1);
       },
@@ -261,6 +267,7 @@ export function useRunAcceptance(
     evidence,
     noSurface,
     requestError,
+    evidenceRequestError,
     run?.output,
     run?.links,
     gate,
