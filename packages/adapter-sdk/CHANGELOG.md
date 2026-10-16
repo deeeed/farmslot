@@ -4,9 +4,11 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 ## Unreleased
 
-- Share recorded pre-validation and one-tap visual judgment requests across operator clients.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.16.0 - 2026-10-16
+
+- Share recorded pre-validation and one-tap visual judgment requests across operator clients.
 
 ## 0.15.2 - 2026-10-16
 

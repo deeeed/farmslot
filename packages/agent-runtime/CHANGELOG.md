@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.25.3 - 2026-10-16
+
+- Align the worker dependency set with Protocol 0.50.0 and the qualified one-tap visual review readers.
+
 ## 0.25.2 - 2026-10-16
 
 - Align the worker dependency set with Protocol 0.49.0 person-device sessions.
