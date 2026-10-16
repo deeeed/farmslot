@@ -315,6 +315,8 @@ export interface RawProjectJson {
     /** Opt in to model, cost, and token fields in formal review comments. Defaults to false. */
     include_internal_metrics_in_pr_comments?: boolean;
     default_scope?: string;
+    /** Portable shell command run by the CI parity checklist step (ADR-064). */
+    local_check?: string;
     watch_checks?: string[];
     check_groups?: Array<{
       name: string;

@@ -218,7 +218,6 @@ test('local helpers preserve their installation selection', async () => {
 
 test('project command expansion uses its connected installation', async (t) => {
   const { roots, vars, requests, activate } = await fixture(t);
-  const localCi = { enabled: true, local_check: 'printf parity' };
   const project: ProjectVars = {
     projectName: 'demo',
     projectConfig: '/pack/project.json',
@@ -226,7 +225,7 @@ test('project command expansion uses its connected installation', async (t) => {
     projectTemplatesDir: '/pack/templates',
     projectJson: {
       name: 'demo',
-      ci: localCi,
+      ci: { local_check: 'printf parity' },
       vars: {
         resolver: 'node "{{farmslot_dir}}/resolve.mjs" "{{FARMSLOT_DIR}}"',
       },
