@@ -153,6 +153,60 @@ test('a Codex steering handoff pulled back with ⇧← loses its proof for statu
   assert.equal(ack.verification, 'receipt_unverified');
 });
 
+const codexSteering = (message) =>
+  `• Messages to be submitted after next tool call\n  ↳ ${message}\n\n› Ask Codex to do anything\ncontext left`;
+const codexPulledBack = (message) => `› ${message}\n\ncontext left\n  tab to queue message`;
+
+for (const draft of ['edited', 'cleared']) {
+  test(`a Codex steering handoff pulled back with ⇧← stays withdrawn once its draft is ${draft}`, async (t) => {
+    const f = fixture(t);
+    const message = captured('payload');
+    f.setCapturedPanes(`› ${message}\n\ncontext left`, () => codexSteering(message));
+    const sent = await send('%1', 'codex', message);
+    assert.equal(sent.evidence.source, 'runner-steering');
+    process.env.TMUX_PANE_STATE_TAIL_CAPTURE = codexPulledBack(message);
+    assert.equal(paneState('%1', 'codex').accepted, null);
+    process.env.TMUX_PANE_STATE_TAIL_CAPTURE =
+      draft === 'edited'
+        ? `› ${message} but skip the e2e step\n\ncontext left`
+        : '› Ask Codex to do anything\ncontext left';
+    assert.equal(paneState('%1', 'codex').accepted, null);
+    process.env.TMUX_MODEL_DRIVER_READ_ONLY = '1';
+    assert.equal(paneState('%1', 'codex').accepted, null, 'read-only status agrees');
+    delete process.env.TMUX_MODEL_DRIVER_READ_ONLY;
+    assert.equal(
+      acknowledgeAcceptance('%1', 'codex', sent.evidence.receipt_id).verification,
+      'receipt_unverified',
+    );
+    const keys = f.keys.length;
+    const again = await send('%1', 'codex', message);
+    assert.equal(again.submitted, false, 'the withdrawn proof is never returned as delivery');
+    assert.equal(again.evidence, null);
+    assert.equal(f.keys.length, keys, 'no key reaches the edited or cleared composer');
+  });
+}
+
+for (const delivered of [true, false]) {
+  test(`a Codex retry after ⇧← submits the owned composer with Enter only (${delivered ? 'resubmitted' : 'still unsent'})`, async (t) => {
+    const f = fixture(t);
+    const message = captured('payload');
+    f.setCapturedPanes(`› ${message}\n\ncontext left`, () => codexSteering(message));
+    const sent = await send('%1', 'codex', message);
+    assert.equal(sent.evidence.source, 'runner-steering');
+    process.env.TMUX_PANE_STATE_TAIL_CAPTURE = codexPulledBack(message);
+    const keys = f.keys.length;
+    f.setDrop(!delivered);
+    const retry = await send('%1', 'codex', message);
+    assert.equal(retry.typed, false);
+    assert.equal(retry.submitted, delivered);
+    assert.equal(retry.evidence?.source ?? null, delivered ? 'runner-steering' : null);
+    const sentKeys = f.keys.slice(keys);
+    assert.ok(sentKeys.length > 0);
+    assert.ok(sentKeys.every((args) => args[0] === 'send-keys' && args.at(-1) === 'Enter'));
+    if (!delivered) assert.equal(paneState('%1', 'codex').accepted, null);
+  });
+}
+
 test('an unchanged owned composer stops after two Enters without another paste', async (t) => {
   const f = fixture(t);
   f.setDrop(true);

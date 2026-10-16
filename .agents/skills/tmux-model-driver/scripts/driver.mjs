@@ -262,6 +262,25 @@ function wasAcknowledged(files, id) {
   return JSON.parse(readOptional(files.acknowledged) || '[]').includes(id);
 }
 
+// An inspection may finish after another process has acknowledged or sent. Persist only
+// under the shared mutation lock and for the same receipt; a null change writes nothing.
+function updateReceipt(files, receipt, change) {
+  if (process.env.TMUX_MODEL_DRIVER_READ_ONLY === '1' || !acquireLock(files)) return;
+  try {
+    const current = readReceipt(files);
+    if (
+      current &&
+      receiptIdentity(current) === receiptIdentity(receipt) &&
+      current.payload_hash === receipt.payload_hash
+    ) {
+      const next = change(current);
+      if (next) durableWrite(files.receipt, next);
+    }
+  } finally {
+    fs.rmdirSync(files.lock);
+  }
+}
+
 function clearAcceptedReceipt(files, receipt) {
   const ids = JSON.parse(readOptional(files.acknowledged) || '[]');
   const id = receiptIdentity(receipt);
@@ -303,37 +322,25 @@ export function paneState(pane, expectedRunner, selection) {
   // Pulled-back input is not delivered. Claude's queue proof is rechecked against the
   // transcript (popAll) whatever the composer shows; Codex's rendered steering proof yields
   // to its owned text back in the composer (⇧←). Native proofs are recomputed below.
-  if (
-    accepted?.source === 'native-queue' ||
-    (accepted?.source === 'runner-steering' && ownedBuffer)
-  )
-    accepted = null;
+  const pulledBack = accepted?.source === 'runner-steering' && ownedBuffer ? accepted : null;
+  if (accepted?.source === 'native-queue' || pulledBack) accepted = null;
   if (receipt && runners.has(state)) {
     if (!accepted) {
       accepted = acceptedPrompt({ ...meta, tail }, state, obs, receipt);
       if (accepted) {
         accepted.payload_hash = receipt.payload_hash;
         accepted.receipt_id = receiptIdentity(receipt);
-        // An inspection may finish after another process has acknowledged or sent.
-        // Persist only under the shared mutation lock and for the same receipt.
-        if (process.env.TMUX_MODEL_DRIVER_READ_ONLY !== '1' && acquireLock(files)) {
-          try {
-            const current = readReceipt(files);
-            if (
-              current &&
-              receiptIdentity(current) === accepted.receipt_id &&
-              current.payload_hash === accepted.payload_hash
-            ) {
-              durableWrite(files.receipt, {
-                ...current,
-                session_id: accepted.session_id,
-                accepted,
-              });
-            }
-          } finally {
-            fs.rmdirSync(files.lock);
-          }
-        }
+        updateReceipt(files, receipt, (current) => ({
+          ...current,
+          session_id: accepted.session_id,
+          accepted,
+        }));
+      } else if (pulledBack) {
+        // The steering block is gone, so a later edit or clear of the composer must not bring
+        // the old proof back. A proof saved meanwhile by a retry is newer and stays.
+        updateReceipt(files, receipt, ({ accepted: saved, ...current }) =>
+          JSON.stringify(saved) === JSON.stringify(pulledBack) ? current : null,
+        );
       }
     }
   }
