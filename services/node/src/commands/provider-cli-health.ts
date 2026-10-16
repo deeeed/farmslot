@@ -76,7 +76,11 @@ async function sample(
     if (selected) {
       const roots = await poolProviderRoots(selected.file);
       for (const root of roots) {
-        const prior = previous?.health.find((item) => item.root === root);
+        // Unrelated pool edits do not change this immutable provider selection.
+        const prior =
+          cached?.machine === machine
+            ? cached.health.find((item) => item.root === root)
+            : undefined;
         if (prior?.status === 'probe-timeout' && !retryReady(prior)) {
           health.push(prior);
           continue;

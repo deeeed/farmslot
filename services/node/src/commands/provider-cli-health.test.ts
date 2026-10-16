@@ -89,13 +89,22 @@ test('a timed-out probe waits for load to fall and gets only one retry', async (
   await collectProviderCliHealth('retry', probe);
   assert.equal(calls, 2, 'a failed retry stays unverified without looping');
 
-  // A new pool selection starts a new qualification, independent of the old timeout.
   await writeFile(
     pool,
-    JSON.stringify({ machine: 'retry', env: { TOOL_PACKAGE_ROOT: root }, revision: 2 }),
+    JSON.stringify({
+      machine: 'retry',
+      env: { TOOL_PACKAGE_ROOT: root },
+      revision: 2,
+    }),
   );
-  const verified = await collectProviderCliHealth('retry', async () => ({
+  await collectProviderCliHealth('retry', probe);
+  assert.equal(calls, 2, 'an unrelated pool edit cannot grant extra retries');
+  // A new provider selection starts a qualification independent of the old timeout.
+  const nextRoot = path.join(root, 'next');
+  await writeFile(pool, JSON.stringify({ machine: 'retry', env: { TOOL_PACKAGE_ROOT: nextRoot } }));
+  const verified = await collectProviderCliHealth('retry', async (selected) => ({
     ...(await probe()),
+    root: selected,
     ok: true,
     status: 'verified',
     reason: undefined,
@@ -173,7 +182,18 @@ test('confirmed drift survives a later sample timeout until successful requalifi
     checkedAt: mismatch.checkedAt,
     reason: mismatch.reason,
   });
-  await collectProviderCliHealth('drift-timeout', probe);
+  await writeFile(
+    path.join(root, 'pool.json'),
+    JSON.stringify({
+      machine: 'drift-timeout',
+      env: { TOOL_PACKAGE_ROOT: root },
+      revision: 2,
+    }),
+  );
+  assert.deepEqual(
+    (await collectProviderCliHealth('drift-timeout', probe))[0].confirmedMismatch,
+    timeout.confirmedMismatch,
+  );
   assert.equal(calls, 2, 'the timeout still waits for load to fall');
   load = 22;
   const verified = (await collectProviderCliHealth('drift-timeout', probe))[0];
