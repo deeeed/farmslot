@@ -208,7 +208,7 @@ try {
     hooks: {},
     paths: { runtimeDir: 'runtime', artifactDir: 'artifacts' },
     recipe: { adapter: 'proof-canvas', provider: { module: 'provider.mjs' } },
-    review: { enabled: true, runner, max_retries: 3, mode: 'cold' },
+    review: { enabled: true, runner, model: 'sonnet', max_retries: 3, mode: 'cold' },
     execution_templates: {
       sources: [{ id: 'proof:shared', kind: 'workspace', root: { projectPath: 'shared' } }],
     },
