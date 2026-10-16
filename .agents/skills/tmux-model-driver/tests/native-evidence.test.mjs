@@ -9,8 +9,70 @@ import {
   acceptedPrompt,
   nativeState,
   paneIdentity,
+  readOptional,
+  transcriptQuestion,
   writeSentinel,
 } from '../scripts/native-evidence.mjs';
+
+// A sparse file passes the largest string a process can hold without writing those bytes.
+function oversizedLog(t, head, tail) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'driver-oversized-'));
+  t.after(() => fs.rmSync(dir, { recursive: true }));
+  const file = path.join(dir, 'native.jsonl');
+  fs.writeFileSync(file, head.map((record) => `${JSON.stringify(record)}\n`).join(''));
+  fs.truncateSync(file, 600 * 1024 * 1024);
+  const offset = fs.statSync(file).size;
+  fs.appendFileSync(file, `\n${tail.map(JSON.stringify).join('\n')}\n`);
+  return { file, offset };
+}
+
+test('native logs past the largest string are read in bounded ranges', (t) => {
+  const question = {
+    type: 'response_item',
+    payload: {
+      type: 'function_call',
+      name: 'request_user_input',
+      call_id: 'q1',
+      arguments: JSON.stringify({ questions: [{ question: 'Ship it?' }] }),
+    },
+  };
+  const { file } = oversizedLog(t, [{ type: 'session_meta', payload: { id: 's' } }], [question]);
+  assert.equal(transcriptQuestion(file).questions[0].question, 'Ship it?');
+  assert.throws(
+    () => readOptional(file),
+    /needs a \d+-byte read; native logs are read in bounded ranges/,
+  );
+});
+
+test('/goal proof reads the session header and only records after the send', (t) => {
+  const now = Date.now();
+  const { file, offset } = oversizedLog(
+    t,
+    [{ type: 'session_meta', payload: { id: 'goal-session' } }],
+    [
+      {
+        type: 'event_msg',
+        timestamp: new Date(now).toISOString(),
+        payload: {
+          type: 'thread_goal_updated',
+          threadId: 'goal-session',
+          goal: { threadId: 'goal-session', objective: 'Finish', status: 'active' },
+        },
+      },
+      {
+        type: 'event_msg',
+        timestamp: new Date(now + 1).toISOString(),
+        payload: { type: 'task_started', turn_id: 'new' },
+      },
+    ],
+  );
+  const receipt = { payload: '/goal Finish', sent_at: now - 1, before_turn_token: 'old' };
+  assert.equal(
+    acceptedCodexGoal(file, 'goal-session', { ...receipt, session_offset: offset }).turn_token,
+    'new',
+  );
+  assert.equal(acceptedCodexGoal(file, 'goal-session', receipt).turn_token, 'new');
+});
 
 test('a pending unknown-session receipt binds only through exact native acceptance on its pane process', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'driver-late-binding-'));

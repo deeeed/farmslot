@@ -39,26 +39,37 @@ import {
   runnerPaneHasQueuedInstruction,
 } from '../../../../services/gateway/src/runners/runner-pane-input.ts';
 
-// A positive start reads from that byte offset; a negative start reads that many trailing bytes.
-export function readOptional(file, start = 0) {
+// Native logs grow past the largest string a process can hold, so they are read in ranges.
+const READ_LIMIT_BYTES = 64 * 1024 * 1024;
+// Unresolved questions block the turn and acceptance follows the send: both are recent.
+const RECENT_NATIVE_BYTES = 8 * 1024 * 1024;
+const SESSION_HEADER_BYTES = 1024 * 1024;
+
+// Reads `length` bytes from `start`; a negative start counts back from the end of the file.
+export function readOptional(file, start = 0, length = Infinity) {
+  let fd;
   try {
-    if (!start) return fs.readFileSync(file, 'utf8');
-    const fd = fs.openSync(file, 'r');
-    try {
-      const size = fs.fstatSync(fd).size;
-      const from = start < 0 ? Math.max(0, size + start) : start;
-      if (from > size) return '';
-      const buffer = Buffer.alloc(size - from);
-      fs.readSync(fd, buffer, 0, buffer.length, from);
-      return buffer.toString('utf8');
-    } finally {
-      fs.closeSync(fd);
-    }
+    fd = fs.openSync(file, 'r');
   } catch (error) {
     if (error.code === 'ENOENT') return null;
     throw error;
   }
+  try {
+    const size = fs.fstatSync(fd).size;
+    const from = start < 0 ? Math.max(0, size + start) : start;
+    if (from > size) return '';
+    const bytes = Math.min(size - from, length);
+    if (bytes > READ_LIMIT_BYTES)
+      throw new Error(`${file} needs a ${bytes}-byte read; native logs are read in bounded ranges`);
+    const buffer = Buffer.alloc(bytes);
+    fs.readSync(fd, buffer, 0, bytes, from);
+    return buffer.toString('utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
 }
+
+const readRecent = (file) => readOptional(file, -RECENT_NATIVE_BYTES);
 
 export function sessionSize(sessionPath) {
   try {
@@ -116,7 +127,7 @@ export function hookSnapshot(meta, runner, obsDir) {
     return null;
   const sessionId = snapshot.rootSessionId || snapshot.session_id;
   if (!sessionId || snapshot.session_id !== sessionId) return null;
-  const hooks = parseHookJsonl(readOptional(path.join(obsDir, 'hooks.jsonl'))).filter(
+  const hooks = parseHookJsonl(readRecent(path.join(obsDir, 'hooks.jsonl'))).filter(
     (record) =>
       record.tmuxPane === meta.pane_id &&
       record.runner === runner &&
@@ -142,7 +153,7 @@ function unansweredQuestion(hooks, transcriptPath) {
       pending = null;
   }
   if (!pending) return null;
-  const records = transcriptPath ? parseHookJsonl(readOptional(transcriptPath)) : [];
+  const records = transcriptPath ? parseHookJsonl(readRecent(transcriptPath)) : [];
   const tools = records
     .flatMap((record) => record.message?.content || [])
     .filter((item) => item?.type === 'tool_use' && item.name === 'AskUserQuestion');
@@ -154,10 +165,10 @@ function unansweredQuestion(hooks, transcriptPath) {
   };
 }
 
-export function transcriptQuestion(transcriptPath, start = 0) {
+export function transcriptQuestion(transcriptPath) {
   if (!transcriptPath) return null;
   const unresolved = new Map();
-  for (const record of parseHookJsonl(readOptional(transcriptPath, start))) {
+  for (const record of parseHookJsonl(readRecent(transcriptPath))) {
     const items =
       record.type === 'response_item' ? [record.payload] : record.message?.content || [];
     for (const item of items) {
@@ -220,8 +231,6 @@ function claudeProcessSession(meta) {
       processBound: true,
       status: record.status,
       observedAt: record.statusUpdatedAt || null,
-      // An unanswered question blocks the turn, so it is in the latest records.
-      questionStart: -4 * 1024 * 1024,
     };
   }
   return null;
@@ -314,8 +323,7 @@ export function nativeState(meta, runner, obsDir) {
     }
   }
   const question =
-    transcriptQuestion(bound.sessionPath, bound.questionStart) ||
-    unansweredQuestion(bound.hooks, bound.sessionPath);
+    transcriptQuestion(bound.sessionPath) || unansweredQuestion(bound.hooks, bound.sessionPath);
   return {
     phase,
     source,
@@ -480,8 +488,13 @@ export function acceptedClaudePrompt(sessionPath, sessionId, receipt) {
 
 export function acceptedCodexGoal(sessionPath, sessionId, receipt) {
   if (!receipt.payload.startsWith('/goal ')) return null;
-  const records = parseHookJsonl(readOptional(sessionPath));
-  if (records[0]?.type !== 'session_meta' || records[0]?.payload?.id !== sessionId) return null;
+  const header = parseHookJsonl(readOptional(sessionPath, 0, SESSION_HEADER_BYTES))[0];
+  if (header?.type !== 'session_meta' || header?.payload?.id !== sessionId) return null;
+  const records = parseHookJsonl(
+    Number.isSafeInteger(receipt.session_offset)
+      ? readOptional(sessionPath, receipt.session_offset)
+      : readRecent(sessionPath),
+  );
   let applied = null;
   for (const record of records) {
     const payload = record.payload || {};

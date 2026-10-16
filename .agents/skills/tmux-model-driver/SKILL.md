@@ -30,6 +30,11 @@ than the process, which names its transcript and busy or idle status. Missing or
 observability means `unknown`, even when the screen looks idle.
 
 `send-and-verify.sh` returns JSON and exits nonzero when refused or unverified.
+A payload over 256 KiB is refused before typing (`payload_too_large`); native proof cannot
+verify it. Native transcripts and hook logs can outgrow the largest string a process holds,
+so the driver reads them in bounded ranges: recent records for questions and hooks, and the
+session header plus records after the send for proof. Exact proof never accepts a truncated
+message.
 It refuses the wrong runner, a shell when a model is expected, a pending question
 or a foreign queue. Codex and Claude accept Enter-submitted input during busy or unknown
 phases. Claude also needs its bound native session, because only its transcript proves
