@@ -8,10 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { durableWrite } from '../../../../packages/agent-runtime/src/native/storage.ts';
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { readPaneStateFromCapture } from '../../../../services/gateway/src/runners/pane-state-script.ts';
-import {
-  runnerBufferedInstructionSubmitKey,
-  runnerLaunchBlockerAutoActionKey,
-} from '../../../../services/gateway/src/runners/registry.ts';
+import { runnerLaunchBlockerAutoActionKey } from '../../../../services/gateway/src/runners/registry.ts';
 import { runnerPaneBufferedInstruction } from '../../../../services/gateway/src/runners/runner-pane-input.ts';
 
 import {
@@ -151,7 +148,7 @@ export function processState(meta) {
   return shellNames.has(meta.current_command) ? 'shell' : 'unknown';
 }
 
-// Rendered text is a fail-closed veto only. It never proves readiness or delivery.
+// Rendered text vetoes unsafe sends. Only receipt-bound steering can prove delivery.
 export function paneSafety(tail, runner) {
   const lines = tail.trimEnd().split('\n');
   const footer = lines.slice(-5).join('\n');
@@ -281,12 +278,14 @@ export function paneState(pane, expectedRunner, selection) {
     : { phase: state === 'shell' ? 'idle' : 'unknown', source: 'process', question: null };
   const receipt = readReceipt(files);
   let accepted = receipt?.accepted || null;
+  // Old Tab receipts prove postponed input only, not an Enter steering delivery.
+  if (accepted?.source === 'runner-queue') accepted = null;
   if (
     accepted &&
     (accepted.receipt_id !== receiptIdentity(receipt) ||
       accepted.payload_hash !== receipt.payload_hash ||
       accepted.session_id !== receipt.session_id ||
-      (accepted.source === 'runner-queue'
+      (accepted.source === 'runner-steering'
         ? receipt.pane_identity !== paneIdentity(meta) ||
           (receipt.session_id && native.session_id && receipt.session_id !== native.session_id)
         : accepted.session_id !== native.session_id))
@@ -600,7 +599,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
       const retry = ownedRetry(before);
       if (retry && before.accepted) {
         evidence = before.accepted;
-        verification = evidence.source === 'runner-queue' ? 'queued' : 'submitted';
+        verification = 'submitted';
       } else if (flush || retry) {
         receipt = JSON.parse(fs.readFileSync(files.receipt, 'utf8'));
         if (
@@ -672,20 +671,16 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
               ? 'busy'
               : null;
         if (!verification) {
-          const submitKey =
-            supportsMidTurnPrompt(runner) && !payload.startsWith('/goal ')
-              ? runnerBufferedInstructionSubmitKey(after.tail, runner)
-              : 'Enter';
-          tmux(['send-keys', '-t', pane, submitKey]);
+          tmux(['send-keys', '-t', pane, 'Enter']);
           if (receipt) {
             receipt.submitted_at = Date.now();
-            receipt.submit_key = submitKey;
+            receipt.submit_key = 'Enter';
             durableWrite(files.receipt, receipt);
           }
         }
         verification ||= 'unverified';
         let deadline = Date.now() + timeout;
-        let queuedWithTab = receipt?.submit_key === 'Tab';
+        let retriedEnter = false;
         if (verification === 'unverified') {
           do {
             after = paneState(pane, runner, selection);
@@ -715,11 +710,11 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
                   verification = 'receipt_mismatch';
                   break;
                 }
-                if (evidence.source === 'runner-queue')
+                if (evidence.source === 'runner-steering')
                   durableWrite(files.receipt, { ...current, accepted: evidence });
                 else clearAcceptedReceipt(files, current);
               }
-              verification = evidence.source === 'runner-queue' ? 'queued' : 'submitted';
+              verification = 'submitted';
               break;
             }
             if (after.pending_question) {
@@ -734,22 +729,21 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
                 receipt_id: receiptIdentity(receipt),
                 payload_hash: receipt.payload_hash,
               };
-              verification = 'queued';
+              verification = payload.startsWith('/goal ') ? 'queued' : 'submitted';
               break;
             }
-            // Only this receipt's unchanged live composer can authorize queue recovery.
+            // Only this receipt's unchanged live composer can authorize another Enter.
             // Historical prompt text and foreign queues never authorize another key.
             if (
-              !queuedWithTab &&
+              !retriedEnter &&
               !flush &&
               !payload.startsWith('/goal ') &&
               after.queue_kind === 'driver-buffer' &&
-              bufferedPrompt(after, runner, receipt) &&
-              runnerBufferedInstructionSubmitKey(after.tail, runner) === 'Tab'
+              bufferedPrompt(after, runner, receipt)
             ) {
-              queuedWithTab = true;
-              tmux(['send-keys', '-t', pane, 'Tab']);
-              receipt.submit_key = 'Tab';
+              retriedEnter = true;
+              tmux(['send-keys', '-t', pane, 'Enter']);
+              receipt.submit_key = 'Enter';
               receipt.submitted_at = Date.now();
               durableWrite(files.receipt, receipt);
               deadline = Date.now() + timeout;
@@ -757,6 +751,12 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
             }
             await delay(40);
           } while (Date.now() < deadline);
+          if (
+            verification === 'unverified' &&
+            supportsMidTurnPrompt(runner) &&
+            (bufferedPrompt(after, runner, receipt) || hasSubmittedQueue(runner, after.tail))
+          )
+            verification = 'not_sent';
         }
       }
     }

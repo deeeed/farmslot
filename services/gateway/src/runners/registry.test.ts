@@ -987,7 +987,7 @@ describe('cursor runner', () => {
     assert.equal(runnerPaneShowsPromptAccepted(after, before, message, 'TASK.md', 'claude'), true);
   });
 
-  it('uses Tab to submit buffered Codex prompts when the TUI requests queueing', () => {
+  it('submits buffered Codex prompts with Enter despite the queue hint', () => {
     const pane = `
 › Read temp/tasks/feat/tat-3215-0601-200704/TASK.md and execute all steps. Mark each checkbox as you complete it.
 
@@ -995,7 +995,7 @@ describe('cursor runner', () => {
   tab to queue message                                                                                                100% context left
 `;
 
-    assert.equal(runnerBufferedInstructionSubmitKey(pane, 'codex'), 'Tab');
+    assert.equal(runnerBufferedInstructionSubmitKey(pane, 'codex'), 'Enter');
     assert.equal(runnerBufferedInstructionSubmitKey(pane, 'claude'), 'Enter');
     assert.equal(
       runnerBufferedInstructionSubmitKey(

@@ -6,7 +6,7 @@ description: Send to a model in tmux with process identity checks, native turn p
 # Tmux model driver
 
 Use this transport for lane messages. The shared runner adapter selects the submission key.
-For a working Codex composer that requests `Tab`, the driver queues its owned paste with `Tab`.
+Codex submission always uses `Enter`, including steering a busy turn. Never press `Tab`.
 The shell entry points resolve their TypeScript loader from the owning Farmslot checkout,
 so they also work when invoked from another checkout or a temporary directory.
 
@@ -31,25 +31,23 @@ observability means `unknown`, even when the screen looks idle.
 It refuses the wrong runner, a shell when a model is expected, a pending question
 or a foreign queue. Codex accepts Enter-submitted steering during busy or unknown
 phases. Other runners and explicit flush still require idle native readiness.
-It pastes the payload once. If `Enter` leaves its exact owned text in a working composer,
-the driver may queue it once with `Tab` and re-verify. It never answers a question.
+It pastes the payload once and presses `Enter`. If the exact owned text remains in the
+composer, it presses `Enter` once more and re-verifies. An unchanged composer then reports
+`not_sent`; its receipt is retained. The driver never presses `Tab` or answers a question.
 
 `submitted` requires exact acceptance of the owned prompt. Codex native history
 can prove steering within the active turn, without claiming a new turn started.
-A complete driver-owned "Messages to be submitted after next tool call" block reports
-`queued`, with `submitted: true`, for the same pane process. The newer
-"Queued follow-up inputs" block uses the same receipt and exact-content checks.
-This proves queue delivery,
-with no new-turn claim. Its receipt stays until the owner acknowledges delivery.
-Cancellation or a disappearing banner never clears that evidence.
-A marker or shared prefix alone is insufficient for an older uncertain receipt.
-For this driver's fresh submit into an empty queue, a single native truncated preview
-with its matching visible text and overflow line also proves queue delivery.
+A complete driver-owned "Messages to be submitted after next tool call" steering block
+reports `submitted`, for the same pane process. This proves steering
+delivery at the next tool call, with no new-turn claim. "Queued follow-up inputs" is
+postponed input and never proves delivery. Its receipt is preserved without another key.
+A marker or shared prefix alone is insufficient. A fresh Enter submission into an empty
+queue can also use its matching truncated steering preview and separate overflow line.
 Codex native history supplies exact prompt and turn evidence. Native `/goal` delivery requires
 a matching active `thread_goal_updated` objective followed by its new `task_started` turn. Pane-bound hook
 digests supply acceptance and new-turn evidence for hook-capable runners.
 Rendered output vetoes questions, foreign queues and launch gates. The exact owned
-Codex submitted-queue block also proves delivery. It does not establish a native turn.
+Codex steering block also proves delivery. It does not establish a native turn.
 Callers must use the driver's structured result. A matching prefix anywhere in a pane,
 an empty composer, or a working indicator never authorizes a caller to claim delivery,
 paste again, pull back a queued message, or acknowledge another caller's receipt.
