@@ -1,4 +1,4 @@
-import type { Run } from '@farmslot/protocol';
+import { isTerminalRunStatus, type Run } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
 
@@ -53,6 +53,20 @@ export function resolveReviewWorkspaceOwner(expectedOwner?: string): string {
     );
   }
   return owner;
+}
+
+/**
+ * The owner a new run inherits from its parent. A finished run of a retired
+ * principal is history, not current ownership, so the new run resolves its own
+ * owner. Live parents and reused ids (no longer listed as retired) keep the
+ * parent's owner and its guards.
+ */
+export function inheritableParentOwner(
+  parent: Pick<Run, 'status' | 'nativeOwnerPrincipalId'> | undefined,
+): string | undefined {
+  const owner = parent?.nativeOwnerPrincipalId;
+  if (!owner || !isTerminalRunStatus(parent.status)) return owner;
+  return loadCredentialStore().retiredPrincipalIds?.includes(owner) ? undefined : owner;
 }
 
 export function assertNativeRunOwner(
