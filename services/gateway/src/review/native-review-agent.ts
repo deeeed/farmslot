@@ -10,6 +10,8 @@ import { resolveEffectiveDomain } from '@farmslot/slot-config';
 
 import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.js';
 import { loadProjectVars, loadSlotVars } from '../core/config.js';
+import { execOnSlot } from '../core/exec.js';
+import { shellQuote } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { probeWorkerSignalForRun } from '../run-engine/run-monitor.js';
 import { stackPrBase } from '../run-engine/stack-base.js';
@@ -48,6 +50,7 @@ import {
 import {
   capturePipelineVisualInput,
   collectPipelineVisualResult,
+  pipelineReviewResultSchema,
   pipelineVisualReviewPrompt,
 } from './pipeline-visual-review.js';
 import { startProgressWatcher } from './progress.js';
@@ -243,13 +246,30 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
         snapshot.snapshot.source === 'unavailable'
       )
         throw new Error('Native reviewer requires immutable captured base/head commits');
-      const visualInput = recovering
+      const range = { baseSha: snapshot.snapshot.baseSha, headSha: snapshot.snapshot.headSha };
+      let visualInput = recovering
         ? context?.pipelineVisualReviewInput
         : nativeReviewerResultSchema(vars, runner)
-          ? await capturePipelineVisualInput(runId, snapshot.snapshot.headSha)
+          ? await capturePipelineVisualInput(
+              runId,
+              range,
+              async (ancestor, head) =>
+                (
+                  await execOnSlot(
+                    vars,
+                    `git merge-base --is-ancestor ${shellQuote(ancestor)} ${shellQuote(head)}`,
+                    { timeout: 10_000 },
+                  )
+                ).exitCode === 0,
+            )
           : undefined;
-      if (!recovering)
-        resultSchema = visualInput ? nativeReviewerResultSchema(vars, runner) : undefined;
+      if (!recovering) {
+        // A repair review needs its own result contract; without it there is no visual authority.
+        resultSchema = visualInput
+          ? nativeReviewerResultSchema(vars, runner, pipelineReviewResultSchema(visualInput))
+          : undefined;
+        if (!resultSchema) visualInput = undefined;
+      }
       if (retained && warm?.nativeSession?.resultSchema !== resultSchema)
         throw new WarmReviewRefusal(
           'session-unavailable',

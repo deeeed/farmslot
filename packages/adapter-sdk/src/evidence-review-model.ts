@@ -11,7 +11,9 @@ import {
   type DeterministicChecklistCheck,
   EVIDENCE_PADDING_MS,
   type EvidenceMomentRef,
+  isRecipeRepairScope,
   isRecord,
+  normalizeRecipeClaimId,
   type OutputReviewPayload,
   projectClaimUntestableOverride,
   type RecipeClaimDeclaration,
@@ -44,6 +46,8 @@ import {
   occurrenceRecordingCoverage,
   planRecipeEvidence,
   proofDocument,
+  recordedClaimSources,
+  selectedRecipeClaims,
   validateRecordedEvidencePackage,
 } from '@farmslot/recipe-runner/evidence';
 
@@ -147,6 +151,8 @@ export interface EvidenceReviewClaim extends AcceptanceCriterionView {
   moments: readonly EvidenceMomentRef[];
   clips: readonly EvidenceReviewClip[];
   occurrences: readonly EvidenceReviewOccurrence[];
+  /** Repair: older proof kept from its original execution and recorded revision. */
+  retained?: { recipeRunId: string; revision?: string };
 }
 
 /** Qualified visual review only; assertions and worker notes are not pre-validation. */
@@ -367,13 +373,52 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     packageClaims && pkg && errors.length === 0
       ? deriveReviewedRecipeClaims(pkg, input.visualReviewAuthority)
       : packageClaims?.criteria;
+  // A repair selects each claim's source; retained originals keep their execution, media and receipts.
+  const retainedSources = new Map(
+    (pkg?.repair && packageClaims && errors.length === 0 ? recordedClaimSources(pkg) : []).flatMap(
+      (source) =>
+        source.artifactRoot
+          ? [[source.claimId, { input: source.input, prefix: `${source.artifactRoot}/` }] as const]
+          : [],
+    ),
+  );
+  const retainedRevisions = new Map(
+    pkg?.repair && isRecipeRepairScope(pkg.repair.scope)
+      ? pkg.repair.scope.sources.map((source) => [source.recipeRunId, source.headSha] as const)
+      : [],
+  );
+  const selectedRaw =
+    packageClaims && pkg && errors.length === 0
+      ? selectedRecipeClaims(pkg)
+      : packageClaims?.criteria;
+  // Retained claims inherit an authority only when it vouches for this exact package.
+  const sourceAuthority = <T extends { recipeRunId: string; closureIdentity: string }>(
+    authority: T | undefined,
+    claimId: string,
+  ): T | undefined => {
+    const retained = retainedSources.get(normalizeRecipeClaimId(claimId));
+    if (!retained) return authority;
+    return authority &&
+      pkg &&
+      authority.recipeRunId === packageClaims?.recipeRunId &&
+      authority.closureIdentity === recordedEvidenceClosureIdentity(pkg)
+      ? {
+          ...authority,
+          recipeRunId: retained.input.claims!.recipeRunId,
+          closureIdentity: recordedEvidenceClosureIdentity(retained.input),
+        }
+      : undefined;
+  };
   const ledger = packageClaims
     ? {
         ...packageClaims,
         criteria: (reviewed ?? []).map((claim) => {
-          const original = packageClaims.criteria.find(({ id }) => id === claim.id)!;
-          const override = overrideAuthority
-            ? projectClaimUntestableOverride(original, overrideAuthority)
+          const original = (selectedRaw ?? packageClaims.criteria).find(
+            ({ id }) => id === claim.id,
+          )!;
+          const authority = sourceAuthority(overrideAuthority, claim.id);
+          const override = authority
+            ? projectClaimUntestableOverride(original, authority)
             : original;
           return override !== original ? override : claim;
         }),
@@ -432,7 +477,19 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
   const links = new Map((input.evidenceLinks ?? []).map((link) => [link.id, link.evidence]));
   const judgments =
     pkg && input.visualReviewAuthority && !errors.length
-      ? recordedVisualJudgments(pkg, input.visualReviewAuthority)
+      ? [
+          ...recordedVisualJudgments(pkg, input.visualReviewAuthority).filter(
+            (judgment) => !retainedSources.has(normalizeRecipeClaimId(judgment.claimId)),
+          ),
+          ...[...retainedSources].flatMap(([claimId, retained]) => {
+            const authority = sourceAuthority(input.visualReviewAuthority, claimId);
+            return authority
+              ? recordedVisualJudgments(retained.input, authority).filter(
+                  (judgment) => normalizeRecipeClaimId(judgment.claimId) === claimId,
+                )
+              : [];
+          }),
+        ]
       : [];
   const latestJudgments = new Map(judgments.map((judgment) => [judgment.claimId, judgment]));
   function reviewContributions(id: string) {
@@ -450,7 +507,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     }
     return [...ids].flatMap((claimId) => {
       const judgment = latestJudgments.get(claimId);
-      const claim = packageClaims?.criteria.find(({ id }) => id === claimId);
+      const claim = selectedRaw?.find(({ id }) => id === claimId);
       return judgment && claim?.verdict === 'awaiting-review' ? [judgment] : [];
     });
   }
@@ -478,7 +535,21 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     kind: claim.status?.kind ?? 'acceptance',
     ...(claim.status?.parentId ? { parentId: claim.status.parentId } : {}),
     caption: claimCaption(claim),
-    timing: packageClaims?.criteria.find((status) => status.id === claim.id)?.timing,
+    timing: selectedRaw?.find((status) => status.id === claim.id)?.timing,
+    ...(retainedSources.has(claim.id)
+      ? {
+          retained: {
+            recipeRunId: retainedSources.get(claim.id)!.input.claims!.recipeRunId,
+            ...(retainedRevisions.get(retainedSources.get(claim.id)!.input.claims!.recipeRunId)
+              ? {
+                  revision: retainedRevisions.get(
+                    retainedSources.get(claim.id)!.input.claims!.recipeRunId,
+                  ),
+                }
+              : {}),
+          },
+        }
+      : {}),
     evidence: artifacts(
       claim.status?.evidence ?? links.get(claim.id) ?? [],
       packageClaims ? input.artifactPrefix : undefined,
@@ -602,6 +673,8 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     occurrences.map((occurrence) => [occurrence.traceIndex, occurrence]),
   );
   for (const claim of claims) {
+    // Retained assertion indices belong to their original trace, never this execution's.
+    if (retainedSources.has(claim.id)) continue;
     claim.occurrences = (claim.status?.assertionIndices ?? []).flatMap((index) => {
       const occurrence = byOccurrence.get(index);
       return occurrence ? [occurrence] : [];
@@ -663,11 +736,40 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       };
     });
   };
+  const retainedClipsFor = (claimId: string, traceIndex: number): EvidenceReviewClip[] => {
+    const retained = retainedSources.get(claimId)!;
+    const sourceTimelines = new Map(
+      Object.values(retained.input.timelines).map((timeline) => [
+        `${retained.prefix}${timeline.videoPath}`,
+        { ...timeline, videoPath: `${retained.prefix}${timeline.videoPath}` },
+      ]),
+    );
+    const sourceSegments = (retained.input.claims?.recording.segments ?? []).map((segment) => ({
+      ...segment,
+      videoPath: `${retained.prefix}${segment.videoPath}`,
+    }));
+    const coverage = occurrenceRecordingCoverage(traceIndex, sourceSegments, sourceTimelines);
+    if (coverage.timing !== 'measured') return [];
+    return coverage.segments.map((segment) => {
+      const timeline = sourceTimelines.get(segment.videoPath)!;
+      const marker = timeline.markers.find((entry) => entry.traceIndex === traceIndex)!;
+      return {
+        ...clipForSpan(timeline, marker, marker, marker.nodeId, segment.videoDigest),
+        moment: {
+          recipeRunId: retained.input.claims!.recipeRunId,
+          videoDigest: segment.videoDigest,
+          traceIndex,
+        },
+      };
+    });
+  };
   // Long recordings may list every original in the retained ledger. Present
   // only this claim's measured originals; the full file inventory stays browsable.
   for (const claim of claims) {
+    const claimClips = (traceIndex: number) =>
+      retainedSources.has(claim.id) ? retainedClipsFor(claim.id, traceIndex) : clipsFor(traceIndex);
     claim.clips = [...new Set(claim.moments.map((moment) => moment.traceIndex))]
-      .flatMap(clipsFor)
+      .flatMap(claimClips)
       .filter((clip) =>
         claim.moments.some(
           (moment) =>
@@ -676,7 +778,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       );
     const measured = new Set(
       claim.moments.flatMap((moment) =>
-        clipsFor(moment.traceIndex)
+        claimClips(moment.traceIndex)
           .filter((clip) => clip.videoDigest === moment.videoDigest)
           .map((clip) => clip.videoPath),
       ),
@@ -985,7 +1087,9 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
         runId: input.visualReviewAuthority.runId,
         decisionId: input.visualReviewContext.decisionId,
         snapshotIdentity: input.visualReviewContext.snapshotIdentity,
-        recipeRunId: packageClaims.recipeRunId,
+        // A retained claim is judged against its original execution.
+        recipeRunId:
+          retainedSources.get(claimId)?.input.claims!.recipeRunId ?? packageClaims.recipeRunId,
         claimId,
         kind,
         verdict,

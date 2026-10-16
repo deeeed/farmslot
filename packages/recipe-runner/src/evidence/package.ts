@@ -124,16 +124,26 @@ export function deriveReviewedRecipeClaims(
   const validation = validateRecordedEvidencePackage(input);
   if (validation.status !== 'valid' || !input.claims)
     throw new TypeError('Visual review requires a valid retained engine claim package.');
+  // Retained originals inherit the caller's receipts only when it vouches for this package.
+  const vouched =
+    authority !== undefined &&
+    authority.recipeRunId === input.claims.recipeRunId &&
+    authority.closureIdentity === recordedEvidenceClosureIdentity(input);
   const reviewed = new Map<RecordedEvidencePackageInput, RecipeClaimEvidence[]>();
   const rows = (source: RecordedEvidencePackageInput) => {
     let derived = reviewed.get(source);
     if (!derived) {
       // Each source keeps the receipts qualified for its own execution and closure.
-      const scoped = authority && {
-        ...authority,
-        recipeRunId: source.claims!.recipeRunId,
-        closureIdentity: recordedEvidenceClosureIdentity(source),
-      };
+      const scoped =
+        source === input
+          ? authority
+          : vouched
+            ? {
+                ...authority,
+                recipeRunId: source.claims!.recipeRunId,
+                closureIdentity: recordedEvidenceClosureIdentity(source),
+              }
+            : undefined;
       derived = deriveClaimsFromInput(
         source,
         [],
@@ -330,7 +340,8 @@ function validatePackage(
     } catch (error) {
       issue(String(ref.artifactRoot), error instanceof Error ? error.message : String(error));
     }
-    const validation = validatePackage(child, nextAncestors, snapshot);
+    // A repair keeps original proof at the revision it was recorded; only the fresh attempt binds this head.
+    const validation = validatePackage(child, nextAncestors, input.repair ? undefined : snapshot);
     findings.push(
       ...validation.findings.map((finding) => ({
         ...finding,

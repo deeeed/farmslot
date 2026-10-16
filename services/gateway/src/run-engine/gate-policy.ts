@@ -24,6 +24,7 @@ import {
   type ReviewStatus,
   type Run,
   type RunDecision,
+  SEND_BACK_TO_AGENT_ACTION,
   stampReviewRetryCap,
   type WorkerTerminalDisposition,
   type WorkerTerminalEvidence,
@@ -77,6 +78,8 @@ export function publicationGateDecisionActions(opts: {
   evidenceRefreshAction?: DecisionAction | null;
   unavailableSnapshotAction?: DecisionAction | null;
   pendingReviewContinuation?: ReviewStatus;
+  /** Qualified Issues can return to the retained worker within the existing fix budget. */
+  sendBackToAgent?: boolean;
   reviews?: ReviewStatus[];
   preparedPackage?: Pick<
     ReadyGatePrPackage,
@@ -114,6 +117,9 @@ export function publicationGateDecisionActions(opts: {
             style: 'primary' as const,
           },
         ]
+      : []),
+    ...(opts.sendBackToAgent
+      ? [{ id: SEND_BACK_TO_AGENT_ACTION, label: 'Send back to agent', style: 'primary' as const }]
       : []),
     { id: 'hold', label: 'Hold', style: 'secondary' as const },
     {
@@ -863,6 +869,16 @@ function reviewCertifiesPreparedPackage(
   return publicationReviewMatchesPreparedPackage(review, preparedPackage);
 }
 
+/** Fresh qualifying PASS reviews that certify this exact prepared package. */
+export function certifyingPublicationReviews(
+  current: Run,
+  preparedPackage: ReadyGatePrPackage,
+): ReviewStatus[] {
+  return qualifyingPassingReviews(current.engineState?.publishGate?.reviews ?? []).filter(
+    (review) => reviewCertifiesPreparedPackage(review, preparedPackage),
+  );
+}
+
 export function assertPublicationReviewPolicySatisfied(
   current: Run,
   preparedPackage: ReadyGatePrPackage,
@@ -871,9 +887,7 @@ export function assertPublicationReviewPolicySatisfied(
   if (blocked) throw new Error(`Publication approval requires passing reviews: ${blocked}`);
   const reviewPolicy = preparedPackage.reviewPolicy ?? publicationReviewPolicyForRun(current);
   const reviews = current.engineState?.publishGate?.reviews ?? [];
-  const freshReviews = qualifyingPassingReviews(reviews).filter((review) =>
-    reviewCertifiesPreparedPackage(review, preparedPackage),
-  );
+  const freshReviews = certifyingPublicationReviews(current, preparedPackage);
   const unavailableOverrideApproved =
     snapshotUnavailableOverrideWasApproved(current, preparedPackage) &&
     unavailableSnapshotOverrideAvailable(reviews, preparedPackage, reviewPolicy);

@@ -1,3 +1,4 @@
+import { selectedRecipeClaims } from '@farmslot/adapter-sdk/evidence';
 import {
   type ClaimOverrideAuthority,
   projectClaimUntestableOverride,
@@ -7,7 +8,12 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
-import { reviewedRecipeClaims, type VisualReviewReadSelection } from './claim-reviews.js';
+import {
+  claimSourceInput,
+  reviewedRecipeClaims,
+  selectedSourceInputs,
+  type VisualReviewReadSelection,
+} from './claim-reviews.js';
 import type { GateAcceptanceRead } from './gate-prerequisites.js';
 
 export function claimOverrideAuthority(
@@ -30,13 +36,17 @@ export function appliedClaimOverrideReceiptIds(
     ...new Set(
       inputs.flatMap((input) => {
         if (!input.claims) return [];
-        const authority = claimOverrideAuthority(run, input);
-        return input.claims.criteria.flatMap(
-          (claim) =>
-            projectClaimUntestableOverride(claim, authority).overrides?.map(
-              ({ receiptId }) => receiptId,
-            ) ?? [],
-        );
+        return selectedSourceInputs(input).flatMap((source) => {
+          const authority = claimOverrideAuthority(run, source.input);
+          return source.input
+            .claims!.criteria.filter(({ id }) => source.claimIds.has(id))
+            .flatMap(
+              (claim) =>
+                projectClaimUntestableOverride(claim, authority).overrides?.map(
+                  ({ receiptId }) => receiptId,
+                ) ?? [],
+            );
+        });
       }),
     ),
   ].sort();
@@ -55,14 +65,14 @@ export function projectGateAcceptance(
     (input) => input.claims?.recipeRunId === acceptance.ledger?.recipeRunId,
   );
   if (!input?.claims) return acceptance;
-  const authority = claimOverrideAuthority(run, input);
   const reviewed = reviewedRecipeClaims(run, input, policy, selection);
+  const selected = selectedRecipeClaims(input);
   return {
     ...acceptance,
     ledger: {
       ...acceptance.ledger,
       criteria: acceptance.ledger.criteria.map((row) => {
-        const claim = input.claims!.criteria.find(({ id }) => id === row.id);
+        const claim = selected.find(({ id }) => id === row.id);
         if (
           !claim ||
           row.overrides !== undefined ||
@@ -70,7 +80,10 @@ export function projectGateAcceptance(
           row.text !== claim.text
         )
           return row;
-        const projected = projectClaimUntestableOverride(claim, authority);
+        const projected = projectClaimUntestableOverride(
+          claim,
+          claimOverrideAuthority(run, claimSourceInput(input, row.id) ?? input),
+        );
         return projected.verdict === 'untestable'
           ? { ...row, ...projected, evidence: row.evidence }
           : { ...row, ...reviewed.find(({ id }) => id === row.id), evidence: row.evidence };

@@ -1,5 +1,6 @@
 import type { PipelineVisualReviewerBinding } from '../recipe/claim-reviews.js';
 import type { PipelineRepairApplicability } from '../recipe/pipeline-visual-judgments.js';
+import type { RecipeRepairScope } from '../recipe/repair.js';
 import type { ArtifactRef, ReviewIssue } from '../recipes/step-io.js';
 import type {
   WorkerOperatorWait,
@@ -553,6 +554,8 @@ export interface VisualRepairApplicability extends PipelineRepairApplicability {
 /** Gateway-owned Send back to agent repair (ADR-062 Amendment 10). */
 export interface VisualRepairRecord {
   repairId: string;
+  /** The frozen gateway scope; the run store keeps it authoritative over any task file. */
+  scope: RecipeRepairScope;
   scopeDigest: string;
   decisionId: string;
   packageHash: string;

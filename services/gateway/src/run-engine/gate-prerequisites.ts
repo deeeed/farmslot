@@ -89,6 +89,7 @@ import {
 } from './review-artifacts.js';
 import { runSupersededSince } from './run-generation.js';
 import { readTaskArtifactText } from './task-artifacts.js';
+import { visualRepairEvidenceReasons } from './visual-repair.js';
 
 export interface GatePrerequisiteReaders {
   deterministic(run: Run): Promise<unknown>;
@@ -437,7 +438,10 @@ export async function collectRunGateReadiness(
               : undefined),
         });
         acceptance = assessed.acceptance;
-        reasons.push(...assessed.reasons);
+        reasons.push(
+          ...assessed.reasons,
+          ...visualRepairEvidenceReasons(evidenceRun, inputs, evidencePackage),
+        );
       } catch (error) {
         // An unreadable frozen closure remains an explicit refusal.
         reasons.push({

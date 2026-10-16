@@ -54,6 +54,7 @@ import { readyGateReviewSubjectMatches } from './post-dispatch-steps.js';
 import { publicationReviewPolicyForRun } from './publication-policy.js';
 import { refreshReviewDiffIdentities } from './review-diff-refresh.js';
 import { getDiffStat } from './task-artifacts.js';
+import { visualRepairOffered } from './visual-repair.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 
@@ -480,6 +481,7 @@ async function refreshPublishPackageTransitionLocked(
       pendingReview && !reviewerIsActiveForReview(refreshedRun, pendingReview)
         ? pendingReview
         : undefined,
+    sendBackToAgent: await visualRepairOffered(refreshedRun, prPackage),
     reviews,
     preparedPackage: prPackage,
   });

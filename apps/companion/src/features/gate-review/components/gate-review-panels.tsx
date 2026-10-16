@@ -216,13 +216,17 @@ export function GateActions({
   ).length;
   const rowCount = Math.max(view.claims.length, declaredRows);
   const palette = publicationGateColors[appearance === 'light' ? 'light' : 'dark'];
-  const renderAction = (action: PublicationGateAction, primary = false) => {
+  const renderAction = (
+    action: PublicationGateAction,
+    primary = false,
+    blockedByGate = primary,
+  ) => {
     const actionDisabled =
       disabled ||
       judging ||
       Boolean(action.disabledReason) ||
       sendingActionId !== null ||
-      (primary && Boolean(view.blockedReason)) ||
+      (blockedByGate && Boolean(view.blockedReason)) ||
       (action.id === 'request-review' && reviewDisabled);
     const guarded = { ...action, disabledReason: action.disabledReason ?? null };
     if (action.id === 'request-review')
@@ -357,6 +361,7 @@ export function GateActions({
             <Text style={{ color: palette.text }}>Refresh package</Text>
           </Pressable>
         ) : null}
+        {view.sendBack ? renderAction(view.sendBack, true, false) : null}
         {view.approval ? renderAction(view.approval, true) : null}
         {view.attestation || view.secondaryActions.length ? (
           <Pressable

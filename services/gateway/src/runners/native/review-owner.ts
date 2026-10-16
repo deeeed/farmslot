@@ -40,12 +40,13 @@ export function nativeReviewerOwner(
 export function nativeReviewerResultSchema(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runner: string,
+  schema: NativeResultSchema = PIPELINE_VISUAL_RESULT_SCHEMA,
 ): NativeResultSchema | undefined {
-  if (!runnerNativeResultSchemas(runner).includes(PIPELINE_VISUAL_RESULT_SCHEMA)) return undefined;
+  if (!runnerNativeResultSchemas(runner).includes(schema)) return undefined;
   if (
     !isLocal(vars.host, vars.machine) &&
     !getNode(vars.machine)?.nativeSessions?.supportsStructuredResults
   )
     return undefined;
-  return PIPELINE_VISUAL_RESULT_SCHEMA;
+  return schema;
 }

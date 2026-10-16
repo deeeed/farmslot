@@ -17,6 +17,9 @@ import {
   validateRecipeClaimDeclarations,
 } from './evidence.js';
 
+/** The publication gate action that returns qualified Issues to the retained worker. */
+export const SEND_BACK_TO_AGENT_ACTION = 'send-feedback';
+
 /** Gateway-written worker input; the run store keeps its authoritative digest. */
 export const RECIPE_REPAIR_SCOPE_TASK_PATH = 'artifacts/visual-repair-scope.json';
 /** Checked scope copy retained in the fresh attempt. */

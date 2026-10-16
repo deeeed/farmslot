@@ -175,6 +175,14 @@ export interface ReviewOptions {
   priorAttempts?: ReviewAttempt[];
   /** Continue an operator-approved fix loop from findings already produced by this run. */
   resumeFromResult?: ReviewResult;
+  /** Send back: the first resumed fix pass is already charged by a persisted reservation. */
+  reservedFixPass?: ReservedFixPass;
+}
+
+/** One pre-charged worker-fix pass; the loop consumes it without another increment. */
+export interface ReservedFixPass {
+  /** Called once the retained worker accepts the reserved fix turn. */
+  onDelivered?: () => void;
 }
 
 const DEFAULT_REVIEW_TIMEOUT_MIN = 30;
@@ -403,6 +411,7 @@ async function executeOwnedReview(
         validationDepth,
         artifactScope,
         mode,
+        ...(options.reservedFixPass ? { reservedFixPass: options.reservedFixPass } : {}),
       });
       return {
         ...retryResult,
@@ -730,6 +739,7 @@ export async function runReviewRetryLoop({
   mode = resolveReviewMode(),
   feedbackAlreadySent = false,
   priorAttempts = [],
+  reservedFixPass,
   deps = PRODUCTION_DEPS,
 }: {
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
@@ -750,6 +760,7 @@ export async function runReviewRetryLoop({
   mode?: ReviewMode;
   feedbackAlreadySent?: boolean;
   priorAttempts?: ReviewAttempt[];
+  reservedFixPass?: ReservedFixPass;
   deps?: ReviewRetryDeps;
 }): Promise<ReviewResult> {
   const reviewGeneration = deps.getRun(runId)?.engineState?.generation ?? 0;
@@ -761,7 +772,12 @@ export async function runReviewRetryLoop({
       : [reviewAttemptFromResult(result, retryCount + 1)];
 
   let roundLimitReason: string | undefined;
-  while (result.verdict === 'issues' && result.issues.length > 0 && retryCount < maxRetries) {
+  let reserved = reservedFixPass;
+  while (
+    result.verdict === 'issues' &&
+    result.issues.length > 0 &&
+    (reserved !== undefined || retryCount < maxRetries)
+  ) {
     assertNativeReviewOperationCurrent();
     const budgetRun = getRun(runId);
     const budget = budgetRun ? await runReviewRoundBudget(budgetRun) : undefined;
@@ -938,7 +954,12 @@ export async function runReviewRetryLoop({
       }
     }
     const fixStartedAt = new Date().toISOString();
-    retryCount += 1;
+    // A reserved pass was charged before delivery; any later pass spends the budget here.
+    if (reserved) {
+      // Deferred acknowledgement is uncertain; recovery keeps the same charge and turn.
+      if (!fixDeliveryDeferred) reserved.onDelivered?.();
+      reserved = undefined;
+    } else retryCount += 1;
     feedbackSent = true;
     // A pane reaction or signal baseline cannot establish fix acceptance.
     // Only this delivery's exact structured turn may report fixing.
