@@ -4,14 +4,16 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Bind pipeline visual verification to native review commands and publication approval receipts, with no person-only policy or project setup.
+
 - Project skipped code review as a nonblocking publication disclosure.
-
-- Share existing template provenance validators with node-local hosted task initialization.
-
-- Active-development baseline; add user-facing changes here before release or package publication.
 - Expose optional Viewed-file diagnostics on review publication receipts and slot posting gates.
 
-- Bind pipeline visual verification to native review commands and publication approval receipts, with no person-only policy or project setup.
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.51.0 - 2026-10-16
+
+- Share existing template provenance validators with node-local hosted task initialization.
 
 ## 0.50.0 - 2026-10-16
 
