@@ -630,6 +630,65 @@ test('a recovered fix prompt is the sent text and its receipt never matches anot
   assert.notEqual(runnerPromptDigest(prompts[0]), runnerPromptDigest(prompts[1]));
 });
 
+test('recovery recognizes a fix sent in the old prompt format only after its own boundary', async () => {
+  const run = {
+    id: 'run-1',
+    project: 'farmslot-farm',
+    flowType: 'fix-bug',
+    metrics: { runner: 'claude', model: 'opus' },
+    agentContexts: [],
+  };
+  const calls: Array<{ prompt: string; sinceMs?: number; prior?: boolean }> = [];
+  const remembered: string[] = [];
+  const boundary = '2026-10-16T10:53:17.568Z';
+  const result = await resumeReviewFixPromptDelivery(
+    { remoteRepo: '/repo', projectName: 'farmslot-farm' } as never,
+    'run-1',
+    {
+      id: 'review-fix',
+      runner: 'claude',
+      model: 'opus',
+      taskFile: 'tasks/run-1/REVIEW-FIX.md',
+      signalFile: 'tasks/run-1/REVIEW-FIX-SIGNAL.json',
+      target: { session: 'ff-1', window: 'bugfix', target: 'ff-1:bugfix' },
+      attemptStartedAt: '2026-10-16T10:54:03.119Z',
+      promptDeliveryStartedAt: boundary,
+    },
+    {
+      getRun: (() => run) as never,
+      resolvePrompt: async (_project, input) => `read ${input.taskFile}`,
+      resolveRuntimeDir: async () => '.sandbox/farmslot-farm/agent',
+      readLaunchAck: async () => null,
+      syncChecklistTarget: async () => {},
+      ensureTarget: async () => 'ff-1:bugfix',
+      persistTarget: async () => {},
+      deliver: async (options) => {
+        calls.push({
+          prompt: options.prompt,
+          sinceMs: options.acknowledgementSinceMs,
+          prior: options.priorPromptSendAttempted,
+        });
+        return options.acknowledgementSinceMs === undefined
+          ? { delivered: false, disposition: 'hold', reason: 'unacknowledged', retryable: true }
+          : { delivered: true, acknowledgement: 'structured', turnToken: 'legacy-turn' };
+      },
+      rememberAcceptedTurn: async (_runId, _runner, turnToken) => {
+        remembered.push(turnToken);
+      },
+    },
+  );
+  assert.deepEqual(result, { status: 'delivered', turnToken: 'legacy-turn' });
+  assert.deepEqual(remembered, ['legacy-turn']);
+  assert.equal(calls.length, 2);
+  assert.ok(
+    calls.every((call) => call.prior === true),
+    'recovery only probes, never resends',
+  );
+  assert.match(calls[0].prompt, /^Farmslot fix delivery 2026-10-16T10:53:17\.568Z\./);
+  assert.match(calls[1].prompt, /^read tasks\/run-1\/REVIEW-FIX\.md\n\nFollow /);
+  assert.equal(calls[1].sinceMs, Date.parse(boundary) - 60_000);
+});
+
 test('restart recovery preserves a persisted fix prompt delivery boundary when the runner exits', async () => {
   const run = {
     id: 'run-1',

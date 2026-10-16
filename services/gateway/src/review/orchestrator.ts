@@ -1370,6 +1370,9 @@ function reviewFixProgressContract(taskDir: string, taskFile: string): string {
   );
 }
 
+// Gateway delivery boundaries and slot receipt clocks can disagree; fix rounds are minutes apart.
+const LEGACY_FIX_RECEIPT_CLOCK_TOLERANCE_MS = 60_000;
+
 // The delivery identity leads the prompt: a runner's prompt receipt digests only its start, so
 // every fix of the same REVIEW-FIX.md would otherwise share one receipt across rounds.
 function reviewFixPrompt(basePrompt: string, taskDir: string, taskFile: string, delivery: string) {
@@ -1469,7 +1472,7 @@ export async function resumeReviewFixPromptDelivery(
     taskFile,
     deliveryStartedAt ?? attemptStartedAt,
   );
-  const result = await deps.deliver({
+  const deliveryOptions = {
     vars,
     target,
     runnerId: runner,
@@ -1493,7 +1496,19 @@ export async function resumeReviewFixPromptDelivery(
     recovery: { runId },
     sendLogPrefix: 'review-fix-recovery',
     forceBusyPoll: true,
-  });
+  };
+  let result = await deps.deliver(deliveryOptions);
+  const boundaryMs = Date.parse(deliveryStartedAt ?? '');
+  if (!result.delivered && priorPromptSendAttempted && Number.isFinite(boundaryMs)) {
+    // A fix sent before prompts led with their identity left only the shared-prefix receipt.
+    // Probe it without sending, accepting a receipt only after this delivery's own boundary.
+    const legacy = await deps.deliver({
+      ...deliveryOptions,
+      prompt: `${basePrompt}\n\n${reviewFixProgressContract(taskDir, taskFile)}`,
+      acknowledgementSinceMs: boundaryMs - LEGACY_FIX_RECEIPT_CLOCK_TOLERANCE_MS,
+    });
+    if (legacy.delivered) result = legacy;
+  }
   if (result.delivered) {
     if (result.acknowledgement === 'structured' && result.turnToken && deliveryStartedAt)
       await deps.rememberAcceptedTurn?.(
@@ -2293,14 +2308,18 @@ async function sendOwnedFeedbackToWorker(
     let acceptedDeliveryStartedAt: string | undefined;
     let acceptedGeneration: number | undefined;
     let promptSendAttempted = false;
+    let deliveryBoundaryRecorded = false;
     const loggedRetainedHoldReasons = new Set<string>();
     const deliverFixPrompt = async (target: string, forceBusyPoll = false): Promise<boolean> => {
       if (terminalRetainedHoldReason) return false;
-      if (!promptSendAttempted) {
+      // One boundary per attempt: the prompt text follows it, and a retry must never type a
+      // different text over an earlier one left in the composer.
+      if (!deliveryBoundaryRecorded) {
         await upsertAgentContext(runId, 'review-fix', {
           id: fixContext?.id,
           promptDeliveryStartedAt: new Date().toISOString(),
         });
+        deliveryBoundaryRecorded = true;
       }
       const latestRun = getRun(runId);
       const latestPrimaryContext = latestRun

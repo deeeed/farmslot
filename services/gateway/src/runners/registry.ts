@@ -1691,11 +1691,28 @@ export function runnerPaneShowsSubmittedInstruction(
 }
 
 /** Pre-send duplicate guard — stricter than post-send acceptance for Grok MCP races. */
+/**
+ * A busy Codex turn keeps its progress on screen while the prompt sits unsent in
+ * the live composer, so progress with the prompt visible proves nothing there.
+ */
+function runnerPaneHoldsUnsentCodexPrompt(
+  pane: string,
+  message: string,
+  runnerId?: string | null,
+): boolean {
+  return (
+    normalizeRunner(runnerId) === 'codex' &&
+    !runnerPaneHasQueuedInstruction(pane, message) &&
+    runnerPaneHasBufferedInstruction(pane, message, runnerId)
+  );
+}
+
 export function runnerPaneShowsPreSendDuplicateInstruction(
   pane: string,
   message: string,
   runnerId?: string | null,
 ): boolean {
+  if (runnerPaneHoldsUnsentCodexPrompt(pane, message, runnerId)) return false;
   const runner = normalizeRunner(runnerId);
   if (runner === 'grok') {
     if (
@@ -1772,6 +1789,7 @@ export function runnerPaneShowsTaskAlreadyRunning(
   runnerId?: string | null,
 ): boolean {
   if (!runnerPaneShowsCurrentInteractiveProgress(pane, runnerId)) return false;
+  if (runnerPaneHoldsUnsentCodexPrompt(pane, message, runnerId)) return false;
   const tail = paneTailText(pane, 80);
   return runnerPaneContainsInstruction(tail, message) || Boolean(marker && tail.includes(marker));
 }
@@ -1784,14 +1802,8 @@ export function runnerPaneShowsPromptAccepted(
   runnerId?: string | null,
 ): boolean {
   if (pane === previousPane) return false;
-  // A busy Codex turn keeps its progress on screen while the prompt sits unsent in the
-  // live composer, so progress with the prompt visible proves nothing there.
-  const unsentCodexPrompt =
-    normalizeRunner(runnerId) === 'codex' &&
-    !runnerPaneHasQueuedInstruction(pane, message) &&
-    runnerPaneHasBufferedInstruction(pane, message, runnerId);
   if (
-    !unsentCodexPrompt &&
+    !runnerPaneHoldsUnsentCodexPrompt(pane, message, runnerId) &&
     runnerPaneShowsCurrentInteractiveProgress(pane, runnerId) &&
     (runnerPaneContainsInstruction(pane, message) ||
       (marker && paneTailText(pane, 16).includes(marker)))
@@ -3731,7 +3743,9 @@ export async function sendRunnerPostLaunchPrompt(
     const immediatePaneClaimsTaskActive =
       runnerPaneShowsPreSendDuplicateInstruction(immediatePane, message, runner) ||
       runnerPaneShowsTaskAlreadyRunning(immediatePane, message, marker, runner) ||
-      (sentAttempts > 0 && runnerPaneShowsCurrentInteractiveProgress(immediatePane, runner));
+      (sentAttempts > 0 &&
+        runnerPaneShowsCurrentInteractiveProgress(immediatePane, runner) &&
+        !runnerPaneHoldsUnsentCodexPrompt(immediatePane, message, runner));
     if (immediatePaneClaimsTaskActive) {
       if (requirePromptDigest) {
         await new Promise((resolve) =>
@@ -3786,7 +3800,9 @@ export async function sendRunnerPostLaunchPrompt(
       const preSendPaneClaimsTaskActive =
         runnerPaneShowsPreSendDuplicateInstruction(preSendPane, message, runner) ||
         runnerPaneShowsTaskAlreadyRunning(preSendPane, message, marker, runner) ||
-        (sentAttempts > 0 && runnerPaneShowsCurrentInteractiveProgress(preSendPane, runner));
+        (sentAttempts > 0 &&
+          runnerPaneShowsCurrentInteractiveProgress(preSendPane, runner) &&
+          !runnerPaneHoldsUnsentCodexPrompt(preSendPane, message, runner));
       // The previous attempt's prompt may have been accepted just after its verify
       // window closed. Pane progress prevents a duplicate transport send, but an
       // exact-ack caller must keep waiting for structured evidence.

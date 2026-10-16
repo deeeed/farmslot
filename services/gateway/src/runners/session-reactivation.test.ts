@@ -380,6 +380,35 @@ test('Cursor recovery accepts only prior structured evidence and never relaunche
   );
 });
 
+test('a recorded prior send is proven only by a receipt after its own boundary when bounded', async (t) => {
+  commands.length = 0;
+  paneCount = 1;
+  promptAccepted = true;
+  promptAcceptedAt = 1_000;
+  t.after(() => {
+    promptAcceptedAt = null;
+  });
+  const probe = (acknowledgementSinceMs?: number) =>
+    deliverPromptToLiveRunner({
+      vars,
+      target: '%1',
+      runnerId: 'claude',
+      prompt: 'Read and execute REVIEW-FIX.md',
+      promptMarker: 'REVIEW-FIX.md',
+      priorPromptSendAttempted: true,
+      ...(acknowledgementSinceMs === undefined ? {} : { acknowledgementSinceMs }),
+    });
+  assert.equal((await probe()).delivered, true, 'unbounded probes keep accepting any time');
+  assert.equal((await probe(500)).delivered, true);
+  const earlier = await probe(2_000);
+  assert.equal(earlier.delivered, false, 'an earlier round cannot prove a later send');
+  assert.equal(
+    commands.some((command) => command.includes('send-keys') || command.includes('paste-buffer')),
+    false,
+    'a prior-send probe never types',
+  );
+});
+
 test('Cursor argv handoff refuses delivery without a task signal contract', async () => {
   commands.length = 0;
   paneCount = 1;
