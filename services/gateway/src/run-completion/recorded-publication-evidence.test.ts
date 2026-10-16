@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
-import type { ArtifactRef, Run } from '@farmslot/protocol';
+import type { ArtifactRef, RecipeArtifactManifestEntry, Run } from '@farmslot/protocol';
 
 await import('../runtime/mock-pty.test-support.js');
 const { readFrozenRecordedEvidenceSources, readGateRecordedEvidenceSources } =
@@ -37,10 +37,31 @@ test('a publication with no retained evidence needs no invented artifact directo
   );
 });
 
-async function indexMedia(root: string, filename: string) {
+test('selected standalone metadata cannot disclose a credential through its file name', async () => {
+  const file = `artifacts/ghp_${'x'.repeat(36)}.png`;
+  await assert.rejects(
+    verifyFrozenPublicationEvidence(
+      makeRun({ taskFile: null }),
+      [{ path: file, purpose: 'screenshot' }],
+      ['proof.png', file],
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /Publication blocked by secret values: github-token sha256:/);
+      assert.ok(!error.message.includes(file));
+      return true;
+    },
+  );
+});
+
+async function indexFixtureArtifact(
+  root: string,
+  filename: string,
+  type: RecipeArtifactManifestEntry['type'] = 'screenshot',
+) {
   const manifestPath = path.join(root, 'artifact-manifest.json');
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-  manifest.artifacts.push({ path: filename, type: 'screenshot', label: 'Captured still' });
+  manifest.artifacts.push({ path: filename, type, label: 'Captured artifact' });
   await writeFile(manifestPath, JSON.stringify(manifest));
 }
 
@@ -58,7 +79,7 @@ async function fixture(t: TestContext) {
     { recursive: true },
   );
   await writeFile(path.join(root, 'proof.png'), 'captured HUD image');
-  await indexMedia(root, 'proof.png');
+  await indexFixtureArtifact(root, 'proof.png');
   const manifest = {
     version: 1,
     standalone: [{ label: 'Observed claim', file: 'recipe-run/proof.png' }],
@@ -80,10 +101,7 @@ test('frozen indexed text is scanned without changing bytes or admitting histori
   const phrase = Array<string>(12).fill('abandon').join(' ');
   const log = path.join(root, 'observed.log');
   await writeFile(log, JSON.stringify({ arbitrary: phrase }));
-  const packageManifestPath = path.join(root, 'artifact-manifest.json');
-  const packageManifest = JSON.parse(await readFile(packageManifestPath, 'utf8'));
-  packageManifest.artifacts.push({ path: 'observed.log', type: 'log' });
-  await writeFile(packageManifestPath, JSON.stringify(packageManifest));
+  await indexFixtureArtifact(root, 'observed.log', 'log');
   artifacts.push({ path: 'artifacts/recipe-run/observed.log', purpose: 'other' });
   const inventory = await buildPackageEvidenceManifest(taskDir, artifacts, manifest);
   await retainRunFixture(run);
@@ -102,10 +120,25 @@ test('frozen indexed text is scanned without changing bytes or admitting histori
     clean.artifacts,
     clean.manifest,
   );
+  cleanInventory.push({
+    path: 'artifacts/historical/old.log',
+    purpose: 'evidence-dependency',
+    sha256: digest(Buffer.from(phrase)),
+  });
   await retainRunFixture(clean.run);
   await verifyFrozenPublicationEvidence(clean.run, cleanInventory, [
     'artifacts/recipe-run/proof.png',
   ]);
+});
+
+test('a declared empty diagnostic log remains valid publication evidence', async (t) => {
+  const { taskDir, root, run, artifacts, manifest } = await fixture(t);
+  await writeFile(path.join(root, 'diagnostics-app-log.txt'), '');
+  await indexFixtureArtifact(root, 'diagnostics-app-log.txt', 'log');
+  artifacts.push({ path: 'artifacts/recipe-run/diagnostics-app-log.txt', purpose: 'other' });
+  const inventory = await buildPackageEvidenceManifest(taskDir, artifacts, manifest);
+  await retainRunFixture(run);
+  await verifyFrozenPublicationEvidence(run, inventory, ['artifacts/recipe-run/proof.png']);
 });
 
 test('selected evidence retains labelled comparisons and external captures with frozen declarations', async (t) => {
@@ -329,7 +362,7 @@ async function baselineFixture(t: TestContext) {
   for (const root of [baselineRoot, headRoot]) {
     const dir = path.join(taskDir, 'artifacts', root);
     await writeFile(path.join(dir, 'proof.png'), `capture ${root}`);
-    await indexMedia(dir, 'proof.png');
+    await indexFixtureArtifact(dir, 'proof.png');
     if (root === baselineRoot) {
       await writeFile(path.join(dir, 'product-provenance.json'), JSON.stringify(provenance));
       const filename = path.join(dir, 'artifact-manifest.json');
@@ -726,7 +759,7 @@ test('selection manifest substitution and files added after approval cannot repl
   await assert.rejects(readFrozenPublicationManifest(run, inventory), /hash mismatch/);
   await overwriteRetainedFixture(run, path.relative(taskDir, manifestPath), originalManifest);
   await writeFile(path.join(root, 'new.png'), 'new media');
-  await indexMedia(root, 'new.png');
+  await indexFixtureArtifact(root, 'new.png');
   await overwriteRetainedFixture(
     run,
     path.relative(taskDir, path.join(root, 'artifact-manifest.json')),
@@ -773,7 +806,7 @@ test('a selection manifest changed between selection and freezing is refused', a
 test('omitted media is frozen for validation without becoming selectable public evidence', async (t) => {
   const { taskDir, root, artifacts, manifest } = await fixture(t);
   await writeFile(path.join(root, 'private.png'), 'orientation still');
-  await indexMedia(root, 'private.png');
+  await indexFixtureArtifact(root, 'private.png');
   artifacts.push({ path: 'artifacts/recipe-run/private.png', purpose: 'screenshot' });
   const inventory = await buildPackageEvidenceManifest(taskDir, artifacts, manifest);
   assert.equal(
@@ -797,7 +830,7 @@ test('omitted media is frozen for validation without becoming selectable public 
 test('an omitted paired image stays retained but never enters expanded publication selection', async (t) => {
   const { taskDir, root, artifacts } = await fixture(t);
   await writeFile(path.join(root, 'private.png'), 'before still omitted by author');
-  await indexMedia(root, 'private.png');
+  await indexFixtureArtifact(root, 'private.png');
   artifacts.push({ path: 'artifacts/recipe-run/private.png', purpose: 'screenshot' });
   const manifest = {
     version: 1,

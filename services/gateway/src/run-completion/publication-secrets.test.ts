@@ -27,3 +27,13 @@ test('integrity and transaction hashes remain publishable', () => {
     'Recipe passed. No secrets are included.',
   );
 });
+
+test('a reused clean verdict cannot authorize changed text', () => {
+  const text = 'Repeated immutable diagnostic input.';
+  assertPublicationTextSafe(text);
+  assertPublicationTextSafe(text);
+  assert.throws(
+    () => assertPublicationTextSafe(`${text}\nprivate_key = ${'1'.repeat(64)}`),
+    PublicationSecretError,
+  );
+});

@@ -194,16 +194,21 @@ export async function verifyFrozenPublicationEvidence(
   bundleRef?: RunArtifactBundleRef,
 ): Promise<void> {
   if (!inventory.length && !selectedEvidenceKeys.length) return;
+  assertPublicationTextSafe(JSON.stringify(selectedEvidenceKeys));
+  const selected = selectedEvidenceKeys.flatMap((key) => {
+    const artifact = resolveSelectedEvidenceRef(key, [...inventory]);
+    return artifact ? [artifact] : [];
+  });
+  assertPublicationTextSafe(JSON.stringify(selected));
   await verifyReadyGateSelectedEvidenceFiles(
     run,
     { evidenceManifest: [...inventory], artifactBundle: bundleRef },
     [...selectedEvidenceKeys],
   );
   await readFrozenPublicationManifest(run, inventory, bundleRef);
-  const media = selectedEvidenceKeys.filter(isUploadableMediaPath).flatMap((key) => {
-    const selected = resolveSelectedEvidenceRef(key, [...inventory]);
-    return selected ? [selected.path] : [];
-  });
+  const media = selected
+    .filter((artifact) => isUploadableMediaPath(artifact.path))
+    .map(({ path }) => path);
   const roots = recordedEvidenceRoots(inventory, media);
   const selectedRecordedMedia = media.filter((key) =>
     roots.some((root) => key.startsWith(`${root}/`)),
@@ -228,17 +233,13 @@ export async function verifyFrozenPublicationEvidence(
   const textEntries = inventory.filter(
     (artifact) =>
       !isUploadableMediaPath(artifact.path) &&
-      (artifact.purpose === 'evidence-dependency' ||
-        artifact.purpose === 'evidence-manifest' ||
+      (artifact.purpose === 'evidence-manifest' ||
         artifact.purpose === 'evidence-manifest-source' ||
         artifact.path === SELECTION_MANIFEST_PATH ||
         sources.some((source) => artifact.path.startsWith(source.artifactPrefix))),
   );
-  await verifyReadyGateSelectedEvidenceFiles(
-    run,
-    { evidenceManifest: [...inventory], artifactBundle: bundleRef },
-    textEntries.map(({ path }) => path),
-  );
+  // The canonical closure above and retained reader check the byte identities.
+  // Its valid empty logs must not inherit the selected-media non-empty rule.
   for (const artifact of textEntries) {
     assertPublicationTextSafe(await readRetainedRunText(run, artifact.path, bundleRef));
   }

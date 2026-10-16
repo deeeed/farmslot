@@ -99,7 +99,7 @@ import {
   assertPublicationEvidenceSelection,
   defaultSelectedEvidenceKeysForPublication,
 } from './publication-evidence-policy.js';
-import { assertPublicationTextSafe } from './publication-secrets.js';
+import { assertPublicationTextSafe, PublicationSecretError } from './publication-secrets.js';
 import {
   computeReadyGatePackageHash,
   computeReadyGatePackageInputHash,
@@ -1177,7 +1177,8 @@ export async function runCompletionPipeline(
     try {
       await updatePRTitle(run, ciRepo, prNumber);
       flags.prTitleUpdated = true;
-    } catch {
+    } catch (err) {
+      if (err instanceof PublicationSecretError) throw err;
       /* tracked via flag */
     }
   }

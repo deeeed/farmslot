@@ -92,6 +92,19 @@ const CLEAN_TEXTS: { label: string; text: string }[] = [
     text: 'id: 550e8400-e29b-41d4-a716-446655440000',
   },
   {
+    label: 'opaque diagnostic session identifiers are not credential labels',
+    text: JSON.stringify({
+      session_id: '550e8400-e29b-41d4-a716-446655440000',
+      sessionId: 'ab12'.repeat(8),
+    }),
+  },
+  {
+    label: 'separate dictionary-word recipe identifiers are not a recovery phrase',
+    text: JSON.stringify({
+      nodes: Array.from({ length: 8 }, (_, index) => `legal_winner_thank_year_${index}`),
+    }),
+  },
+  {
     label: 'checksummed ETH address (42 chars)',
     text: `to: 0x${'Ab12'.repeat(10)}`,
   },

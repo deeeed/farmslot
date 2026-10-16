@@ -11,7 +11,7 @@ import { ghRequest } from '../integrations/github-client.js';
 import { formatPrTitleSuffix } from '../tasks/writer.js';
 
 import { localPrBodyPathResidues } from './publication-artifacts.js';
-import { assertPublicationTextSafe } from './publication-secrets.js';
+import { assertPublicationTextSafe, PublicationSecretError } from './publication-secrets.js';
 
 // ─── PR comment ───
 
@@ -151,6 +151,7 @@ async function buildPRComment(
 
   if (!template) return buildPRCommentHardcoded(run, report, workflowMmd);
 
+  assertPublicationTextSafe(template);
   try {
     const { callLLM } = await import('../llm/index.js');
     const { getLLMConfig } = await import('../llm/config.js');
@@ -161,6 +162,7 @@ async function buildPRComment(
       model: cfg.intelligenceModel,
       provider: cfg.defaultProvider,
     });
+    assertPublicationTextSafe(result.text);
     if (result.text.length > 50 && result.text.length < 10000) {
       return result.text;
     }
@@ -168,6 +170,7 @@ async function buildPRComment(
       `[run-completion] LLM pr-comment output out of bounds (${result.text.length} chars), using hardcoded`,
     );
   } catch (err) {
+    if (err instanceof PublicationSecretError) throw err;
     console.warn(
       `[run-completion] LLM pr-comment failed, using hardcoded: ${(err as Error).message}`,
     );
@@ -253,6 +256,7 @@ export async function postPRComment(
     console.log(`[run-completion] posted comment on PR #${prNumber}`);
     return true;
   } catch (err) {
+    if (err instanceof PublicationSecretError) throw err;
     if (options.failOnError) throw err;
     console.warn(`[run-completion] PR comment failed: ${(err as Error).message}`);
     return false;

@@ -87,11 +87,12 @@ const FLOOR_PATTERNS: FloorPattern[] = [
     kind: 'oauth-token',
     pattern: /\b(?:access|refresh)[_-]?token["'\s\\]*[:=>]+["'\s\\]*[A-Za-z0-9._~+/-]{20,}\b/gi,
   },
-  // Session/auth-token assignments with a value-shaped token on the right.
+  // Token labels identify credentials; a session ID alone may be a public run
+  // or analytics identifier. Cookie/header contexts are checked separately.
   {
     kind: 'session-token',
     pattern:
-      /\b(?:session[_-]?(?:id|token)|auth[_-]?token)["'\s\\]*[:=>]+["'\s\\]*[A-Za-z0-9+/_.-]{16,}\b/gi,
+      /\b(?:session[_-]?token|auth[_-]?token)["'\s\\]*[:=>]+["'\s\\]*[A-Za-z0-9+/_.-]{16,}\b/gi,
   },
 ];
 
@@ -160,7 +161,9 @@ function unescapeOnce(text: string): string {
  * (labels, prefixes) that would break exact-length matching, while 12+
  * consecutive BIP-39 words in genuine prose is practically nonexistent (the
  * clean-prose suite guards the false-positive side).
- * Tokenizing on any non-letter boundary catches common accidental separators —
+ * Preserve underscores inside identifiers so dictionary-word node IDs do not
+ * compose a mnemonic across separate array entries. Other non-letter boundaries
+ * catch common accidental separators —
  * newlines, commas, numbered list prefixes — since natural prose breaks such
  * runs with stopwords long before 12 words. Literal escape sequences (\n, \t,
  * \r) become separators first so a phrase inside a JSON-stringified blob (a
@@ -171,7 +174,7 @@ function detectMnemonics(text: string): FloorHit[] {
   const tokens = text
     .toLowerCase()
     .replace(/\\[ntr]/g, ' ')
-    .split(/[^a-z]+/);
+    .split(/[^a-z_]+/);
   const hits: FloorHit[] = [];
   let runStart = -1;
   for (let i = 0; i <= tokens.length; i += 1) {
