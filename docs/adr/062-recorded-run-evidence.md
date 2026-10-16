@@ -638,6 +638,60 @@ field, task mark, publication identity rule or second reducer is added. Release
 changed installed packages together before provider cutover, under their existing
 experimental versioning.
 
+## Amendment 10: return rejected criteria to the retained worker (2026-10-16)
+
+**Status:** Proposed. The lead selected ADR-062 as owner. Wording acceptance is
+required before lifecycle implementation. This is the authorised follow-up to
+the gate redesign; it does not change publication authority.
+
+### Decision
+
+When a package contains qualified visual Issues, both clients offer one primary
+action, "Send back to agent". The gateway derives its ACs, reasons and exact
+files/moments from the current trusted receipts. The existing `send-feedback`
+action enters the retained self-review fix path and its delivery recovery.
+Writing feedback alone is not delivery. One accepted request spends one existing
+worker-fix round; a duplicate or uncertain retry keeps the same charge and turn.
+
+The retained worker fixes and records only the rejected criteria, with their
+setup/teardown dependencies. The engine retains the previous proof packages and
+writes one explicit claim-to-source selection covering the whole task. Each
+selected claim keeps its original execution, closure, media and receipt identity.
+Neither a client-combined ledger nor relabelled old proof is permitted.
+
+Retaining bytes alone does not prove applicability after a source change.
+An independent native reviewer must explicitly assess each retained claim
+against the actual repair diff at the new head. Its typed result binds the
+repair scope and old source closure to that head. A missing or negative result
+requires fresh proof; it cannot clear an Issue. Earlier confirmed receipts are
+qualified against their original sources and are never reissued. Source changes
+outside the repair scope stop the loop for a new operator decision.
+
+Completion refreshes the package and returns the same run to its gate only after
+current-head CI, required reviews and complete qualifying proof pass. Reasons
+remain attached to the repair and enter the existing retrospective learning
+path. No automatic publication or direct recipe-library write is introduced.
+
+### Rationale and consequences
+
+The current publication reader accepts one selected attempt. Its retained
+baseline media is not current claim authority. Explicit engine-owned source
+selection is necessary to re-prove a subset without discarding valid judgments
+or pretending a skipped check ran. It also makes older proof visible as older
+proof. Reuse fails closed when its current applicability is unverified.
+
+### Public surface
+
+The CLI and clients retain `run.resolveDecision` / `run gate --action send-feedback`.
+Protocol owns the frozen repair scope, source selection and typed applicability
+result. The existing recipe-runner request receives that scope from the hosted
+task wrapper; engine finalization writes its selection. SDK/review-dispatch
+project the selected sources into the existing shared AC list. Harnesses inherit
+the normal wrapper and compatible package cut, with no manifest-writing hook or
+new shell flag. These experimental additions require coordinated minor releases
+and compatible readers before producer activation. Normative details follow in
+[the recorded-evidence specification](../reference/recorded-run-evidence.md#rejected-criterion-repair-proposed).
+
 ## Amendment 11: independent visual verification and judgment refresh (2026-10-16)
 
 Accepted by the lead after paired design review of revision 4, with native pipeline review transport required in the same change. Updated by Arthur at 14:40 to remove all person-only policy. Ships in #1185. This supersedes Amendments 7/9 on opt-in pipeline verification, person-only policy, receipt order, manual refresh and the normal publication approver audit. Amendment 10 remains the separate retained-worker repair loop.

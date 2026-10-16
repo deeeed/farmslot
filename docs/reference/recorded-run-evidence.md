@@ -1278,3 +1278,100 @@ New visual receipts carry `precedence: person-first-v1`; pipeline receipts also
 identify the new precedence contract by kind. Frozen readers retain person-first
 ordering for those receipts. Legacy-only frozen captures keep their shipped
 stored-order interpretation. Policy qualification remains bound to the capture.
+
+## Rejected-criterion repair (Proposed)
+
+This section implements Proposed ADR-062 Amendment 10. It is not an active
+contract until that amendment is accepted and its implementation is released.
+
+### Admission and delivery
+
+`send-feedback` MUST derive the repair from the frozen decision/package and the
+latest qualified rejected receipts. The client MUST NOT supply replacement AC
+text, evidence, receipt authority or a worker target. The scope MUST retain the
+run/generation, package hash, full task registration, rejected receipt IDs,
+ACs/reasons/files/moments, original evidence sources and retained worker owner.
+Stale selection, missing rationale, ownership conflict, another active fix or
+exhausted existing fix/review budget MUST refuse before dispatch.
+The scope MUST name the retained review loop whose existing worker-fix budget
+is used; an unavailable loop is a refusal, not permission to create a counter.
+
+The gateway MUST persist one repair identity, budget reservation and delivery
+state before calling the existing self-review `sendFeedbackToWorker` path. The
+identity MUST include the package and sorted rejection receipt IDs. Retry MUST
+reuse that identity, reservation and retained turn. Delivery uses the existing
+structured acceptance and uncertain-delivery recovery; artifact creation or
+terminal text MUST NOT establish acceptance. No second sender or retry counter
+is permitted. An unaccepted reservation MUST remain recoverable and MUST NOT
+make its capacity available to a concurrent request.
+
+### Scoped recording and retained claims
+
+The gateway-owned scope is `RecipeRepairScope` in `@farmslot/protocol`, retained
+as `artifacts/visual-repair-scope.json`. The normal hosted task recipe wrapper
+passes its checked contents through `RecipeRunRequest.repairScope` in
+`@farmslot/recipe-runner`. The scope authorises the rejected ACs and their declared
+setup/teardown; it MUST NOT suppress a required assertion within those ACs.
+
+The existing engine closure-retention/finalization utilities MUST retain each
+referenced original package and write `repair-selection.json` as engine-owned
+publication evidence. `RecipeRepairSelection`, owned by Protocol, binds the
+scope digest, fresh execution and exactly one source per registered AC. A fresh
+claim MUST come from the new attempt; a retained claim MUST name its immutable
+original execution and checked closure. Rejected ACs MUST select fresh proof.
+Missing/duplicate/foreign claims, changed text, invalid media, altered closures
+or an unmatched gateway scope MUST fail validation. The attempt manifest MUST
+include the selection and all dependency bytes consumed by its reader.
+
+Canonical package validation MUST validate each source with its own invocation,
+recorded source revision and receipt authority. Retained source heads MUST NOT
+be rewritten to the repair head. The shared reader MUST select claims according
+to the engine selection before the existing claim reducer and UI projection;
+there is no fabricated combined execution or client ledger writer.
+
+An independent native review of the actual old-head/new-head repair diff MUST
+explicitly classify each retained AC as unaffected. The typed applicability
+result MUST bind current head, scope digest, AC ID, original source closure and
+rationale to the admitted review command. Missing or affected claims require
+fresh proof and block return to a publishable gate. Changed source outside the
+authorised repair MUST hold for an operator decision. Old confirmed receipts
+remain valid only for their original qualifying source; this applicability
+result MUST NOT restamp, replace or override any person's Issue.
+
+### Gate return, learning and conformance
+
+The same run MUST remain non-publishable during delivery, repair, proof and
+review. Its normal complete/refresh path returns to the gate only with current
+CI and required current-head PASS results, a valid full selection and no Issue.
+Both clients MUST use the existing shared action/list model and show progress
+or recovery at the triggering action. No automatic approval is permitted.
+
+Every reason MUST remain bound to its source receipt and repair ID in retained
+feedback and the existing retrospective learning input. Learning adoption and
+recipe-library publication retain their existing authority.
+
+Conformance MUST cover one rejected AC with a retained confirmed sibling,
+current-head applicability refusal, changed/foreign source refusal, no omitted
+required check, duplicate and uncertain delivery, exhausted budgets, restart
+recovery, learning retention and gate refresh. Live proof MUST use a disposable
+retained worker through the production delivery path, with no publication.
+
+### Public surface and release
+
+The existing `run.resolveDecision` and CLI `send-feedback` action are the only
+operator entry points. Protocol owns `RecipeRepairScope`,
+`RecipeRepairSelection` and a versioned native applicability-result schema;
+gateway recovery and recipe-runner are their consumers. The native adapter MUST
+advertise that result capability before the gateway admits its review. SDK and
+review-dispatch consume the canonical selected sources for both clients.
+`PipelineRepairVisualJudgments` uses `pipeline-visual-judgments-v2`: current
+`headSha`, `scopeDigest`, per-source existing visual-judgment results, and retained
+rows containing `claimId`, original `recipeRunId`/`closureIdentity`, `unaffected`
+and `reason`. Every required independent reviewer MUST agree on applicability.
+This is the structured result of the normal admitted review, not another review
+admission or a task-file assertion.
+Harnesses consume `RecipeRunRequest.repairScope` through their existing hosted
+recipe wrapper. No manual manifest/pointer writer or separate proof command is
+added. Publish and qualify compatible Protocol/runtime/runner/SDK/provider
+versions before activating this producer; existing v1 review results retain
+their current meaning and cannot supply repair applicability.
