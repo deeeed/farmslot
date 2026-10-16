@@ -98,8 +98,9 @@ An unverified send retains a private receipt. A retry of the same owned Codex or
 returns existing delivery evidence without typing, or submits only Enter when the exact
 original remains in the composer. Owned text back in the composer gets Enter once its proof
 is withdrawn (a Claude `popAll`, or Codex steering pulled back with ⇧←), and only records after
-that submission prove it. A Codex steering withdrawal is saved with the receipt, so editing or
-clearing that draft later never brings the proof back. A delivered prompt recalled from history keeps its proof and is not
+that submission prove it. Once a writable inspection or acknowledgement sees a Codex steering
+withdrawal, it is saved with the receipt, so editing or clearing that draft later does not bring
+the proof back. A delivered prompt recalled from history keeps its proof and is not
 submitted again. It never pastes that prompt again. A synchronously
 native-verified send clears its receipt under the transport lock and returns its
 evidence, so direct callers can send again after the turn completes. Late native acceptance

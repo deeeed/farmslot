@@ -263,9 +263,12 @@ function wasAcknowledged(files, id) {
 }
 
 // An inspection may finish after another process has acknowledged or sent. Persist only
-// under the shared mutation lock and for the same receipt; a null change writes nothing.
-function updateReceipt(files, receipt, change) {
-  if (process.env.TMUX_MODEL_DRIVER_READ_ONLY === '1' || !acquireLock(files)) return;
+// under the shared mutation lock (taken here unless the caller holds it) and for the same
+// receipt; a null change writes nothing.
+function updateReceipt(files, receipt, change, held = false) {
+  if (process.env.TMUX_MODEL_DRIVER_READ_ONLY === '1') return;
+  const owned = !held && acquireLock(files);
+  if (!held && !owned) return;
   try {
     const current = readReceipt(files);
     if (
@@ -277,7 +280,7 @@ function updateReceipt(files, receipt, change) {
       if (next) durableWrite(files.receipt, next);
     }
   } finally {
-    fs.rmdirSync(files.lock);
+    if (owned) fs.rmdirSync(files.lock);
   }
 }
 
@@ -293,6 +296,7 @@ export function paneState(pane, expectedRunner, selection) {
   const meta = metadata(pane);
   const state = processState(meta);
   const runner = expectedRunner || state;
+  const capturedAt = Date.now();
   const tail =
     process.env.TMUX_PANE_STATE_TAIL_CAPTURE ??
     tmux(['capture-pane', '-p', '-t', pane, '-S', '-40']);
@@ -321,8 +325,12 @@ export function paneState(pane, expectedRunner, selection) {
   const ownedBuffer = buffered && bufferedPrompt({ ...meta, tail }, state, receipt);
   // Pulled-back input is not delivered. Claude's queue proof is rechecked against the
   // transcript (popAll) whatever the composer shows; Codex's rendered steering proof yields
-  // to its owned text back in the composer (⇧←). Native proofs are recomputed below.
-  const pulledBack = accepted?.source === 'runner-steering' && ownedBuffer ? accepted : null;
+  // to its owned text back in the composer (⇧←), unless a retry proved it after this capture.
+  // Native proofs are recomputed below.
+  const pulledBack =
+    accepted?.source === 'runner-steering' && ownedBuffer && !(accepted.observed_at > capturedAt)
+      ? accepted
+      : null;
   if (accepted?.source === 'native-queue' || pulledBack) accepted = null;
   if (receipt && runners.has(state)) {
     if (!accepted) {
@@ -330,16 +338,21 @@ export function paneState(pane, expectedRunner, selection) {
       if (accepted) {
         accepted.payload_hash = receipt.payload_hash;
         accepted.receipt_id = receiptIdentity(receipt);
-        updateReceipt(files, receipt, (current) => ({
-          ...current,
-          session_id: accepted.session_id,
-          accepted,
-        }));
+        updateReceipt(
+          files,
+          receipt,
+          (current) => ({ ...current, session_id: accepted.session_id, accepted }),
+          selection?.held,
+        );
       } else if (pulledBack) {
         // The steering block is gone, so a later edit or clear of the composer must not bring
         // the old proof back. A proof saved meanwhile by a retry is newer and stays.
-        updateReceipt(files, receipt, ({ accepted: saved, ...current }) =>
-          JSON.stringify(saved) === JSON.stringify(pulledBack) ? current : null,
+        updateReceipt(
+          files,
+          receipt,
+          ({ accepted: saved, ...current }) =>
+            JSON.stringify(saved) === JSON.stringify(pulledBack) ? current : null,
+          selection?.held,
         );
       }
     }
@@ -420,7 +433,8 @@ export function acknowledgeAcceptance(pane, runner, receiptId) {
         verification = wasAcknowledged(files, receiptId) ? 'already_acknowledged' : 'driver_busy';
     }
     if (!verification) {
-      const current = paneState(pane, runner, selection);
+      // Under this lock, so a withdrawal seen only now is saved too.
+      const current = paneState(pane, runner, { ...selection, held: true });
       if (current.state !== runner) verification = 'wrong_runner';
       else if (wasAcknowledged(files, receiptId)) {
         const pending = readReceipt(files);
