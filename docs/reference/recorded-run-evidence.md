@@ -933,15 +933,15 @@ follow the same stored-order and submission-snapshot rules as person review.
 
 | Entry                                                                                                                                                                | Owner and named consumer                                                                        | Change                                                                                         |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `RecipeVisualJudgmentKind`, extended `RecipeVisualJudgmentReceipt` and `ProjectVisualClaimReviewPolicy`/`ProjectConfig.visualClaimReview`                            | `@farmslot/protocol`; gateway, installed project config and both clients                        | One receipt contract; explicit project delegation and person-only rules                        |
+| `RecipeVisualJudgmentKind`, extended `RecipeVisualJudgmentReceipt` and `ProjectVisualClaimReviewPolicy`/`ProjectConfig.visualClaimReview`                            | `@farmslot/protocol`; gateway, installed project config and both clients                        | One receipt contract; explicit project delegation                                              |
 | Existing `RunRpc.reviewVisualClaim` optional `kind`; `farmslot run gate --action confirm-visual\|reject-visual --judgment-kind person-reviewed\|lead-agent-reviewed` | Gateway/CLI; authenticated person and delegated lead reviewer                                   | Omitted kind selects person review; identity, files/digests and delegator remain gateway-owned |
 | Existing `deriveReviewedRecipeClaims`, `RecipeVisualReviewAuthority` and `createEvidenceReviewModel`                                                                 | Runner and `@farmslot/adapter-sdk/evidence`; gateway, Command Center, Companion and PR renderer | Same reducer; qualified review kind/label, no new writer or review model                       |
 
 These contracts are experimental and ship through coordinated package versioning.
 Required incompatible type changes use the existing breaking-release rule.
 Update the generated API/CLI reference and project-policy guide. Conformance MUST
-cover authorized own-agent review, absent/foreign-project delegation, person-only
-claims/parents, actor/person impersonation refusal, evidence mutation,
+cover authorized own-agent review, absent/foreign-project delegation,
+actor/person impersonation refusal, evidence mutation,
 policy change, retry/restart, visible proof labels and unchanged publication gates.
 Prove this writer through public CLI/RPC and the shared gate before starting the
 comparison implementation. It MUST work with selected retained evidence without
@@ -1194,14 +1194,14 @@ retained inventory's relationships MUST survive through the actual display reade
 
 ## Per-criterion confirmation
 
-**Status:** Accepted under ADR-062 Amendment 9 on 2026-10-16. Enable after coordinated reader and writer deployment.
+**Status:** Accepted under ADR-062 Amendment 9 on 2026-10-16. Amendment 11 below supersedes its pipeline policy, manual refresh and approval audit rules. Enable after coordinated reader and writer deployment.
 
 Clients MUST show a qualified delegated receipt's visual verdict, written rationale
 and bound still/moment as the recorded pre-validation. Engine assertions MUST be
 labeled checks, never visual pre-validation. Task-ledger/worker notes MUST NOT
 substitute. Absent visual review MUST show "Not recorded". A permitted qualified
 delegated receipt already satisfies its AC under Amendment 7; another person
-confirmation is optional, and person-only restrictions remain unchanged.
+confirmation is optional. Amendment 11 removes all person-only restrictions.
 
 The existing authenticated visual writer MUST accept `person-reviewed` +
 `confirmed` without `reason`. Both clients MUST offer "Looks right" in one tap.
@@ -1226,8 +1226,8 @@ waiver retains its explicit reason and scope.
 
 Conformance MUST cover person confirmation without prose, blank rejection and
 blank delegated judgment refusal, raw reasonless embedded judgment refusal,
-recorded/missing pre-validation, unchanged delegated qualification, person-only
-criteria, identity/snapshot/selection refusals, refreshed receipt binding and
+recorded/missing pre-validation, unchanged delegated qualification,
+identity/snapshot/selection refusals, refreshed receipt binding and
 normal approval without redundant text. All gate actions MUST provide at least
 44-pixel touch targets and MUST NOT depend on hover.
 

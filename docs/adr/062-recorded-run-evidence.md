@@ -640,7 +640,7 @@ experimental versioning.
 
 ## Amendment 11: independent visual verification and judgment refresh (2026-10-16)
 
-Accepted by the lead after paired design review of revision 4, with native pipeline review transport required in the same change. Updated by Arthur at 14:40 to remove all person-only policy. Ships in #1185. This supersedes Amendments 7/9 on opt-in pipeline verification, receipt order, manual refresh and the normal publication approver audit. Amendment 10 remains the separate retained-worker repair loop.
+Accepted by the lead after paired design review of revision 4, with native pipeline review transport required in the same change. Updated by Arthur at 14:40 to remove all person-only policy. Ships in #1185. This supersedes Amendments 7/9 on opt-in pipeline verification, person-only policy, receipt order, manual refresh and the normal publication approver audit. Amendment 10 remains the separate retained-worker repair loop.
 
 Independent pipeline visual verification satisfies an AC by default. The reviewer is a gateway-admitted native `review` context, bound to node, owner, session, generation, lease and command. Its session must differ from every worker/fix session of the run, including their retained session histories.
 
