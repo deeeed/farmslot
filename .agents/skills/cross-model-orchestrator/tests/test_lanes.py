@@ -305,10 +305,9 @@ class LaneTests(unittest.TestCase):
         self.assertEqual(sum(Path(argv[1]).name == "ack-acceptance.sh" for argv in calls), 1)
 
     def test_concurrent_acknowledgements_do_not_abort_observers(self):
-        # No retry window: a lock still held at the deadline leaves the receipt for the next observer.
-        self.config["lanes"][0]["send_timeout"] = 0
         for verification in ("driver_busy", "no_accepted_receipt"):
-            with self.subTest(verification=verification):
+            # No retry window: a lock still held at the deadline leaves the receipt for the next observer.
+            with self.subTest(verification=verification), patch.object(lanes, "ACK_BUSY_SECONDS", 0):
                 def command(argv, **kwargs):
                     if "list-panes" in argv:
                         return result("%1\n")
@@ -357,24 +356,26 @@ class LaneTests(unittest.TestCase):
         self.assertEqual(lanes._record(self.config, "two")["last_delivery"],
                          {**evidence, "pulled_back": True})
 
-    def test_pulled_back_observation_keeps_a_newer_delivery(self):
-        for recorded, pulled_back in (("withdrawn", True), ("newer", False)):
-            with self.subTest(recorded=recorded):
+    def test_pulled_back_observation_keeps_a_later_delivery(self):
+        withdrawn = {"receipt_id": "withdrawn", "payload_hash": "handoff", "observed_at": 1}
+        # Another sender recorded a delivery between this ACK and the registry update. A retry
+        # of the owned composer is re-proven under the same receipt.
+        for case, later in (("none", None), ("newer", {"receipt_id": "newer"}),
+                            ("retried", {**withdrawn, "observed_at": 2})):
+            with self.subTest(case=case):
                 def command(argv, **kwargs):
                     if "list-panes" in argv:
                         return result("%1\n")
                     if Path(argv[1]).name == "ack-acceptance.sh":
-                        # Another sender recorded its own delivery while this one was pulled back.
-                        lanes._update(self.config, "two", {"last_delivery": {"receipt_id": recorded}})
+                        if later:
+                            lanes._update(self.config, "two", {"last_delivery": later})
                         return result(json.dumps({"acknowledged": False,
                                                   "verification": "receipt_unverified"}), 2)
-                    return result(json.dumps({"state": "claude", "phase": "busy", "accepted": {
-                        "receipt_id": "withdrawn", "payload_hash": "handoff"}}))
+                    return result(json.dumps({"state": "claude", "phase": "busy", "accepted": withdrawn}))
                 with patch.object(lanes, "run", side_effect=command):
                     self.assertEqual(lanes.observe(self.config, "two")["status"], "busy")
-                delivery = lanes._record(self.config, "two")["last_delivery"]
-                self.assertEqual(delivery["receipt_id"], recorded)
-                self.assertEqual(delivery.get("pulled_back", False), pulled_back)
+                self.assertEqual(lanes._record(self.config, "two")["last_delivery"],
+                                 later or {**withdrawn, "pulled_back": True})
 
     def test_send_records_its_queue_delivery_before_acknowledging_the_exact_receipt(self):
         accepted = {"receipt_id": "this-handoff", "payload_hash": "payload", "source": "runner-queue", "session_id": None}

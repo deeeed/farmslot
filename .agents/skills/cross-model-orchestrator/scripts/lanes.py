@@ -12,6 +12,7 @@ from common import DRIVER_DIR, append_report, driver_env, read_json, resolve_pat
 
 
 COMMANDS = {"lanes-status", "launch", "restore", "send", "flush", "reserve", "transfer"}
+ACK_BUSY_SECONDS = 5
 
 
 def lane_by_id(config, lane_id):
@@ -123,8 +124,9 @@ def _env(config, lane, record):
 def _pulled_back(config, lane, accepted):
     with _registry(config) as registry:
         record = registry["lanes"][lane["id"]]
-        # A newer delivery recorded meanwhile keeps its own outcome.
-        if (record.get("last_delivery") or {}).get("receipt_id") == accepted["receipt_id"]:
+        # A delivery recorded meanwhile, including a retry re-proven under the same receipt,
+        # keeps its own outcome.
+        if record.get("last_delivery") == accepted:
             record["last_delivery"] = {**accepted, "pulled_back": True}
 
 
@@ -133,7 +135,7 @@ def _acknowledge(config, lane, pane, accepted):
         return None
     # A concurrent send or inspection holds the driver lock only briefly. An unacknowledged
     # receipt would hand its retained evidence to a later identical payload, so wait it out.
-    deadline = time.monotonic() + lane.get("send_timeout", 30)
+    deadline = time.monotonic() + ACK_BUSY_SECONDS
     while True:
         result = run(["bash", str(DRIVER_DIR / "ack-acceptance.sh"), pane, lane["runner"],
                       accepted["receipt_id"]], cwd=str(DRIVER_DIR.parents[3]),
@@ -142,7 +144,7 @@ def _acknowledge(config, lane, pane, accepted):
         verification = acknowledgement.get("verification")
         if verification != "driver_busy" or time.monotonic() >= deadline:
             break
-        time.sleep(0.1)
+        time.sleep(0.25)
     if verification == "receipt_unverified":
         # The runner no longer proves the recorded delivery: its input was pulled back unsent.
         _pulled_back(config, lane, accepted)
