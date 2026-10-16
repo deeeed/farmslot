@@ -750,7 +750,7 @@ for (const delivered of [true, false]) {
   });
 }
 
-test('a long handoff is delivered whole or refused before typing, never truncated', async (t) => {
+test('a long handoff is proved only from its whole text, never a truncated record', async (t) => {
   const f = claudeFixture(t, 'idle');
   const payload = `Lead: ${'long handoff line\n'.repeat(4000)}end`;
   f.setCapturedPanes(claudeBox(payload), (key, pasted) => {
@@ -763,10 +763,6 @@ test('a long handoff is delivered whole or refused before typing, never truncate
   });
   const cut = await send('%1', 'claude', payload);
   assert.equal(cut.submitted, false, 'a truncated record never proves the whole handoff');
-
-  const tooLarge = await send('%1', 'claude', 'x'.repeat(256 * 1024 + 1));
-  assert.equal(tooLarge.verification, 'payload_too_large');
-  assert.equal(tooLarge.typed, false);
 });
 
 test('a stale Claude record appended after the send never proves it', async (t) => {

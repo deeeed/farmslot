@@ -70,6 +70,13 @@ export function readOptional(file, start = 0, length = Infinity) {
 }
 
 const readRecent = (file) => readOptional(file, -RECENT_NATIVE_BYTES);
+// Proof follows the send, so it is among the records written just after the send offset.
+const recordsSinceSend = (sessionPath, receipt) =>
+  parseHookJsonl(
+    Number.isSafeInteger(receipt.session_offset)
+      ? readOptional(sessionPath, receipt.session_offset, RECENT_NATIVE_BYTES)
+      : readRecent(sessionPath),
+  );
 
 export function sessionSize(sessionPath) {
   try {
@@ -104,9 +111,11 @@ export function nativeProbeTimeoutMs() {
   return timeout;
 }
 
+// Probes embed the payload; stdin carries any size, while one argument is capped by the OS.
 function runProbe(command, parse) {
   return parse(
-    execFileSync('bash', ['-c', command], {
+    execFileSync('bash', ['-s'], {
+      input: command,
       encoding: 'utf8',
       timeout: nativeProbeTimeoutMs(),
     }),
@@ -423,6 +432,8 @@ export function acceptedPrompt(meta, runner, obsDir, receipt) {
     Number.isSafeInteger(receipt.session_offset) &&
     acceptedClaudePrompt(bound.sessionPath, bound.sessionId, receipt);
   if (transcript) return transcript;
+  // A hook digest covers only the message prefix, so it never proves a longer message whole.
+  if (instructionNeedle(receipt.payload) !== normalizeInstructionText(receipt.payload)) return null;
   const proof = promptAcceptedFromHooks(
     bound.hooks,
     receipt.digest,
@@ -454,7 +465,7 @@ export function acceptedClaudePrompt(sessionPath, sessionId, receipt) {
   if (!sessionPath) return null;
   const expected = normalizeInstructionText(receipt.payload);
   let queued = null;
-  for (const record of parseHookJsonl(readOptional(sessionPath, receipt.session_offset))) {
+  for (const record of recordsSinceSend(sessionPath, receipt)) {
     const observed = Date.parse(record.timestamp);
     if (!(observed >= receipt.sent_at) || (record.sessionId && record.sessionId !== sessionId))
       continue;
@@ -490,13 +501,8 @@ export function acceptedCodexGoal(sessionPath, sessionId, receipt) {
   if (!receipt.payload.startsWith('/goal ')) return null;
   const header = parseHookJsonl(readOptional(sessionPath, 0, SESSION_HEADER_BYTES))[0];
   if (header?.type !== 'session_meta' || header?.payload?.id !== sessionId) return null;
-  const records = parseHookJsonl(
-    Number.isSafeInteger(receipt.session_offset)
-      ? readOptional(sessionPath, receipt.session_offset)
-      : readRecent(sessionPath),
-  );
   let applied = null;
-  for (const record of records) {
+  for (const record of recordsSinceSend(sessionPath, receipt)) {
     const payload = record.payload || {};
     const observed = Date.parse(record.timestamp);
     if (record.type !== 'event_msg' || !Number.isFinite(observed) || observed < receipt.sent_at)

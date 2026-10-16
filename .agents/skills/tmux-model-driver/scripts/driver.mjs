@@ -30,8 +30,6 @@ const shellNames = new Set(['zsh', 'bash', 'sh', 'fish', 'dash']);
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const hash = (text) => createHash('sha256').update(text).digest('hex');
 const quote = (text) => `'${text.replaceAll("'", "'\\''")}'`;
-// Native prompt probes carry the payload in one process argument. Refuse what they cannot verify.
-const MAX_PAYLOAD_BYTES = 256 * 1024;
 
 export function tmux(args, input) {
   const socket = process.env.TMUX_MODEL_DRIVER_SOCKET;
@@ -558,8 +556,6 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
   let before = paneState(pane, runner, selection);
   let after = before;
   let verification = refusal(before, runner, flush);
-  if (!verification && payload && Buffer.byteLength(payload) > MAX_PAYLOAD_BYTES)
-    verification = 'payload_too_large';
   let evidence = null;
   let typed = false;
   const files = paths(before, selection);
