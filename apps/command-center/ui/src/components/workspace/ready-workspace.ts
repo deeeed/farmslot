@@ -84,6 +84,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   @state() private _claimOverrideId: string | null = null;
   @state() private _claimOverrideReason = '';
   @state() private _visualReviewReasons: Record<string, string> = {};
+  @state() private _attestingDecisionId: string | null = null;
   @state() private _evidenceModel: EvidenceReviewModel | null = null;
   private _evidenceRequest = 0;
   private _evidenceScope = '';
@@ -419,6 +420,10 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       publicationTarget: this._publicationTarget,
       pendingConfirm: this._pendingConfirm,
       attestationReason: this._evidenceAttestationReason,
+      attesting: this._attestingDecisionId === this.decision?.id,
+      chooseAttestation: () => {
+        this._attestingDecisionId = this.decision?.id ?? null;
+      },
       setAttestationReason: (value) => this._setEvidenceAttestationReason(value),
       acting: this._acting,
       recovering: this._isRecovering,
@@ -430,8 +435,11 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       openDiff: (title, artifact) => this._openDiffModal(title, artifact),
       openReviewRequestModal: () => this._openReviewRequestModal(),
       confirmAction: (actionId) => this._confirmAction(actionId),
+      claims: this._evidenceModel?.claims,
       pendingVisualClaimIds: this._evidenceModel?.pendingVisualClaimIds,
       focusClaim: async (id) => {
+        const details = this.querySelector<HTMLDetailsElement>('.rdy-review-content');
+        if (details) details.open = true;
         this._setActiveTab('evidence');
         this._evidenceModel?.setComparisonFilter('all');
         this._evidenceModel?.selectClaim(id);

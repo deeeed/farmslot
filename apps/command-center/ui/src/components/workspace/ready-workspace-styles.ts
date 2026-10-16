@@ -1,9 +1,11 @@
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
+import { publicationGatePanelStyles } from './publication-gate-panel.js';
 import { readyWorkspaceReviewModalStyles } from './ready-workspace-review-modal-styles.js';
 
 export function readyWorkspaceLightStyles(): string {
   return `
+      ${publicationGatePanelStyles()}
       ready-workspace {
         display: flex; flex-direction: column; height: 100%;
         font-family: ${fonts.mono}; font-size: ${fonts.sizeSm};
@@ -14,9 +16,9 @@ export function readyWorkspaceLightStyles(): string {
         height: 100%; color: ${colors.textMuted};
       }
       ready-workspace .rdy-top-bar {
-        display: flex; align-items: center; gap: ${spacing.md};
+        display: flex; align-items: center; gap: ${spacing.md}; flex-wrap: wrap;
         padding: ${spacing.sm} ${spacing.lg};
-        background: ${colors.bgCard}; border-bottom: 1px solid #2a2a44; flex-shrink: 0;
+        background: ${colors.bgCard}; border-bottom: 1px solid ${colors.bgCardHover}; flex-shrink: 0;
       }
       ready-workspace .rdy-branch {
         font-weight: 700; font-size: 12px; color: ${colors.accent};
@@ -30,7 +32,7 @@ export function readyWorkspaceLightStyles(): string {
       }
       ready-workspace .rdy-pr-link:hover { text-decoration: underline; }
       ready-workspace .rdy-diff-stat {
-        font-size: 11px; display: flex; gap: 4px; align-items: center;
+        font-size: 11px; display: flex; gap: 4px; align-items: center; min-height: 44px;
         border: 1px solid transparent; background: transparent; padding: 2px 4px;
         border-radius: ${radii.sm}; font-family: ${fonts.mono}; cursor: pointer;
       }
@@ -56,18 +58,6 @@ export function readyWorkspaceLightStyles(): string {
         color: ${colors.statusFail};
       }
       ready-workspace .rdy-spacer { flex: 1; }
-      ready-workspace .rdy-attestation-field {
-        display: flex; flex-direction: column; gap: ${spacing.xs};
-        color: ${colors.textSecondary}; font-size: ${fonts.sizeXs};
-      }
-      ready-workspace .rdy-attestation-reason {
-        font: inherit; color: ${colors.textPrimary}; background: ${colors.bgSurface};
-        border: 1px solid ${colors.bgCardHover}; border-radius: ${radii.md};
-        padding: ${spacing.sm}; min-height: 56px; resize: vertical;
-      }
-      ready-workspace .rdy-attestation-reason:focus-visible {
-        outline: 2px solid ${colors.accent}; outline-offset: 2px;
-      }
       ready-workspace .rdy-btn {
         font-family: ${fonts.mono}; font-size: 12px; font-weight: 600;
         padding: 6px 16px; border-radius: ${radii.md};

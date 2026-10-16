@@ -1,0 +1,151 @@
+import { html, nothing } from 'lit';
+
+import { type PublicationGateInput, publicationGateView } from '@farmslot/review-dispatch';
+import { publicationGateColors } from '@farmslot/theme';
+
+import { fonts, radii, spacing } from '../../styles/theme-tokens.js';
+
+export interface PublicationGatePanelInput extends PublicationGateInput {
+  busy: boolean;
+  pendingConfirm: string | null;
+  reviewDisabled: boolean;
+  changeReason: (reason: string) => void;
+  chooseAttestation: () => void;
+  focusClaim?: (id: string) => void | Promise<void>;
+  invoke: (id: string) => void;
+  requestReview: () => void;
+}
+
+export function renderPublicationGatePanel(input: PublicationGatePanelInput) {
+  const view = publicationGateView(input);
+  return html`<section class="publication-gate" aria-label="Publication decision">
+    <p class="gate-status" role="status">${view.status}</p>
+    ${view.claims.length
+      ? html`<section aria-label="Acceptance judgments">
+          <h3>Acceptance judgments</h3>
+          <ul class="gate-claims">
+            ${view.claims.map(
+              (claim) =>
+                html`<li data-gate-ac=${claim.id}>
+                  <strong>${claim.id}</strong><span class="gate-claim-text">${claim.text}</span>
+                  <span class="gate-state" data-pending=${claim.pending}>${claim.state}</span>
+                  <button
+                    class="gate-secondary"
+                    type="button"
+                    @click=${() => void input.focusClaim?.(claim.id)}
+                  >
+                    Review evidence<span class="gate-sr-only"> for ${claim.id}</span>
+                  </button>
+                </li>`,
+            )}
+          </ul>
+        </section>`
+      : nothing}
+    ${view.attestation && input.attesting
+      ? html`<section class="gate-attestation" aria-label="Evidence attestation">
+          <label
+            >Reason for evidence policy attestation
+            <textarea
+              data-testid="evidence-attestation-reason"
+              aria-label="Reason for evidence policy attestation"
+              .value=${input.attestationReason ?? ''}
+              ?disabled=${input.busy}
+              @input=${(event: Event) =>
+                input.changeReason((event.target as HTMLTextAreaElement).value)}
+            ></textarea>
+          </label>
+        </section>`
+      : nothing}
+    ${input.resolved
+      ? nothing
+      : html`<section class="gate-actions" aria-label="Publication actions">
+          <button
+            class="gate-primary"
+            data-testid="gate-approve"
+            type="button"
+            ?disabled=${input.busy || Boolean(view.blockedReason) || !view.approval}
+            title=${view.blockedReason}
+            @click=${() => view.approval && input.invoke(view.approval.id)}
+          >
+            ${input.busy
+              ? 'Submitting…'
+              : input.pendingConfirm === view.approval?.id
+                ? view.attestation
+                  ? 'Confirm attestation and publish?'
+                  : 'Confirm Publish?'
+                : (view.approval?.label ?? 'Approve publish')}
+          </button>
+          ${view.attestation || view.secondaryActions.length
+            ? html`<details class="gate-more-actions">
+                <summary>More actions</summary>
+                ${view.attestation && !input.attesting
+                  ? html`<button
+                      class="gate-secondary"
+                      title=${view.attestation.description ?? ''}
+                      @click=${input.chooseAttestation}
+                    >
+                      Attest evidence
+                    </button>`
+                  : nothing}
+                ${view.secondaryActions.map(
+                  (action) =>
+                    html`<button
+                      class="gate-secondary"
+                      type="button"
+                      data-action=${action.id}
+                      title=${action.description ?? ''}
+                      ?disabled=${input.busy ||
+                      Boolean(action.disabledReason) ||
+                      (action.id === 'request-review' && input.reviewDisabled)}
+                      @click=${() =>
+                        action.id === 'request-review'
+                          ? input.requestReview()
+                          : input.invoke(action.id)}
+                    >
+                      ${input.pendingConfirm === action.id
+                        ? `Confirm ${action.label}?`
+                        : action.label}
+                    </button>`,
+                )}
+              </details>`
+            : nothing}
+        </section>`}
+  </section>`;
+}
+
+export function publicationGatePanelStyles() {
+  const variables = (mode: 'dark' | 'light') =>
+    Object.entries(publicationGateColors[mode])
+      .map(([name, value]) => `--gate-${name}: ${value};`)
+      .join('');
+  return `
+    ready-workspace .publication-gate { ${variables('dark')}
+      color: var(--gate-text); background: var(--gate-background);
+      padding: ${spacing.lg}; border-bottom: 1px solid var(--gate-border);
+      display: grid; gap: ${spacing.lg}; overflow: auto; max-height: 54vh; flex-shrink: 0;
+    }
+    @media (prefers-color-scheme: light) { ready-workspace .publication-gate { ${variables('light')} } }
+    ready-workspace .publication-gate h3, ready-workspace .publication-gate p { margin: 0; }
+    ready-workspace .publication-gate h3 { font-size: ${fonts.sizeSm}; margin-bottom: ${spacing.sm}; }
+    ready-workspace .gate-status { font-size: ${fonts.sizeMd}; font-weight: 600; }
+    ready-workspace .gate-claims { list-style: none; margin: 0; padding: 0; }
+    ready-workspace .gate-claims li { display: grid; grid-template-columns: 56px minmax(160px, 1fr) auto auto; gap: ${spacing.lg}; align-items: center; padding: ${spacing.md} 0; border-top: 1px solid var(--gate-border); }
+    ready-workspace .gate-claim-text { overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    ready-workspace .gate-state { font-size: ${fonts.sizeXs}; border: 1px solid var(--gate-border); border-radius: ${radii.sm}; padding: ${spacing.sm} ${spacing.md}; white-space: nowrap; background: var(--gate-surface); }
+    ready-workspace .gate-state[data-pending="true"] { color: var(--gate-warning); }
+    ready-workspace .gate-attestation { display: grid; grid-template-columns: 1fr; gap: ${spacing.lg}; align-items: center; }
+    ready-workspace .gate-attestation label { display: grid; gap: ${spacing.sm}; font-weight: 600; }
+    ready-workspace .gate-more-actions summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: var(--gate-secondary); padding: ${spacing.md}; }
+    ready-workspace .gate-attestation textarea { font: inherit; min-height: 64px; padding: ${spacing.md}; color: var(--gate-text); background: var(--gate-surface); border: 1px solid var(--gate-border); border-radius: ${radii.md}; resize: vertical; }
+    ready-workspace .gate-actions { display: flex; align-items: center; flex-wrap: wrap; gap: ${spacing.md}; }
+    ready-workspace .gate-primary, ready-workspace .gate-secondary { min-height: 44px; min-width: 44px; font: inherit; font-weight: 600; border-radius: ${radii.md}; padding: ${spacing.md} ${spacing.lg}; cursor: pointer; }
+    ready-workspace .gate-primary { border: 1px solid var(--gate-accent); background: var(--gate-accent); color: var(--gate-onAccent); }
+    ready-workspace .gate-secondary { border: 1px solid var(--gate-border); background: var(--gate-surface); color: var(--gate-text); }
+    ready-workspace .publication-gate button:disabled { opacity: 0.65; cursor: not-allowed; }
+    ready-workspace .publication-gate :focus-visible { outline: 2px solid var(--gate-accent); outline-offset: 2px; }
+    ready-workspace .rdy-gate-details, ready-workspace .rdy-review-content { padding: ${spacing.md} ${spacing.lg}; }
+    ready-workspace .rdy-gate-details > summary, ready-workspace .rdy-review-content > summary, ready-workspace .rdy-package-details > summary { cursor: pointer; padding: ${spacing.md}; min-height: 44px; display: flex; align-items: center; }
+    ready-workspace .gate-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+    @media (max-width: 720px) { ready-workspace .gate-claims li { grid-template-columns: 56px 1fr; } ready-workspace .gate-attestation { grid-template-columns: 1fr; } }
+  `;
+}

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Share publication decision status, AC judgment rows and attestation availability across operator clients.
+
 - Use gateway device-session expiry in clients instead of the temporary local sign-in lifetime.
 
 - Document modelPickerState as the renderer API and remove the unused modelChoices method.

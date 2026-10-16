@@ -1180,3 +1180,29 @@ identity refusal, unknown criterion/path refusal, separate error captions, ledge
 precedence, no parsing for uninventoried tasks and unchanged original bytes. The
 retained inventory's relationships MUST survive through the actual display reader,
 `task.progress` and shared model without fabricated status or timeline fields.
+
+## Per-criterion confirmation
+
+**Status:** Proposed under ADR-062 Amendment 9; not implemented or active yet.
+
+- Clients MUST show the selected AC's recorded pre-validation verdict, short note
+  and bound still/moment before its confirmation controls. They MUST say "Not
+  recorded" for absent pre-validation, and MUST distinguish it from person review.
+- "Looks right" MUST submit `confirmed` through the existing authenticated visual
+  writer in one tap without requiring or inventing prose. "Issue" MUST submit
+  `rejected` with a nonblank reason; the gateway MUST refuse its omission.
+- The request and stored receipt MAY omit `reason` only for `confirmed`. The
+  protocol validator, gateway writer, existing reducer, shared SDK and both
+  clients MUST agree. Historical receipts MUST retain their original bytes.
+- Normal approval after all required ACs are satisfied MUST NOT ask for another
+  evidence-attestation reason. It MUST bind the trusted approver and the reviewed
+  receipt IDs, and MUST retain all other publication prerequisites. Refresh after
+  changed judgments remains required. Approval MUST NOT confirm an unjudged AC.
+- A separately offered policy waiver MUST retain its explicit scope and reason;
+  one-tap AC confirmation does not waive integrity, missing evidence or CI.
+- Conformance MUST cover one-tap confirmation, reasonless rejection refusal,
+  recorded/missing pre-validation, identity/snapshot/selection refusals, receipt
+  refresh, mixed judged/pending ACs, and approval without redundant text after
+  every required confirmation. Both clients MUST use the shared presentation.
+
+The public surfaces and coordinated release are specified in ADR-062 Amendment 9.

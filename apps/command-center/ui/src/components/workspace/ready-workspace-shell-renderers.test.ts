@@ -27,6 +27,18 @@ function gateFixture(): ReadyGatePayload {
     workerReport: 'Completed work.',
     diffStat: { files: 0, additions: 0, deletions: 0 },
     reviews: [],
+    gateReadiness: {
+      state: 'not-ready',
+      identity: { runId: 'run', generation: 1 },
+      reasons: [
+        {
+          code: 'evidence-policy-unsatisfied',
+          prerequisite: 'evidence',
+          evidencePolicy: 'execution-verdict',
+          message: 'Evidence policy needs attestation.',
+        },
+      ],
+    },
     prPackage: {
       id: 'package',
       gatePolicy: { owner: 'human', publishAuthority: 'human', reason: 'Operator review' },
@@ -60,6 +72,7 @@ function topBarFixture(payload = gateFixture()): Parameters<typeof renderReadyTo
     publicationTarget: 'draft',
     pendingConfirm: EVIDENCE_ATTESTATION_ACTION.id,
     attestationReason: 'Inspected retained evidence.',
+    attesting: true,
     acting: false,
     recovering: false,
     fileDiffAvailable: false,
@@ -75,10 +88,10 @@ test('the existing top bar shows the shared attestation reason and explicit conf
   const text = litText(renderReadyTopBar(topBarFixture()));
   assert.match(text, /Reason for evidence policy attestation/);
   assert.match(text, /Confirm attestation and publish/);
-  assert.match(text, /Integrity, source, CI and review checks remain required/);
+  assert.doesNotMatch(text, /Integrity, source, CI and review checks remain required/);
 });
 
-test('blocked visual claims show linked criteria instead of a disabled publication explanation', () => {
+test('blocked visual claims show judgment rows and keep attestation out of the action row', () => {
   const payload = gateFixture();
   payload.gateReadiness = {
     state: 'not-ready',
@@ -99,8 +112,9 @@ test('blocked visual claims show linked criteria instead of a disabled publicati
       focusClaim: () => undefined,
     }),
   );
-  assert.match(text, /AC-1.*AC-2.*need a visual judgment/s);
-  assert.doesNotMatch(text, /Recorded claim verdicts do not satisfy publication policy/);
+  assert.match(text, /2 criteria need your visual judgment.*AC-1.*AC-2/s);
+  assert.doesNotMatch(text, /Reason for evidence policy attestation/);
+  assert.match(text, /Review evidence/);
 });
 
 const files: GitBranchDiffFile[] = [

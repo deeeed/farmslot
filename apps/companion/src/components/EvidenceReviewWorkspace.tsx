@@ -41,6 +41,7 @@ interface EvidenceReviewWorkspaceProps {
     reason: string,
   ): Promise<void>;
   onFocusClaim?(offset: number): void;
+  focusClaim?: { claimId: string };
   onOpenRecordedEvidence?(model: EvidenceReviewModel, path: string): void;
   onOpenVisual: (uri: string) => void;
   onOpenDocument: (artifact: ArtifactManifestEntry) => void;
@@ -82,6 +83,7 @@ export function EvidenceReviewWorkspace({
   reviewer,
   onRecordVisualReview,
   onFocusClaim,
+  focusClaim,
   onOpenRecordedEvidence,
   onOpenVisual,
   onOpenDocument,
@@ -156,6 +158,19 @@ export function EvidenceReviewWorkspace({
   useEffect(() => {
     setCompareIndex(0);
   }, [compareIdentity]);
+
+  useEffect(() => {
+    if (!focusClaim || !evidenceModel) return;
+    const id = focusClaim.claimId;
+    const offset = layouts.current.rows[id];
+    if (evidenceModel.comparisonFilter === 'all' && typeof offset === 'number')
+      onFocusClaim?.(layouts.current.workspace + layouts.current.rail + offset);
+    else {
+      layouts.current.pending = id;
+      evidenceModel.setComparisonFilter('all');
+      refreshComparisons((value) => value + 1);
+    }
+  }, [focusClaim, evidenceModel]);
 
   return (
     <View
