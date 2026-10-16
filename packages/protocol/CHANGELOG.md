@@ -4,6 +4,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `extractRunArtifactManifest` keeps a gate's recorded metadata for files the run output captured again, skips host paths and prose in step outputs, and shares `isRunArtifactImagePath` with clients.
+
+- Add `extractRunArtifactManifest`, the one run artifact extractor for Command Center and Companion; it includes captured run output and keeps source metadata.
+
 - Expose optional dev deployment worker CLI verification health on node and fleet metrics.
 
 - Expose optional provider probe status, load, retry and retained mismatch diagnostics.

@@ -750,6 +750,21 @@ for (const delivered of [true, false]) {
   });
 }
 
+test('a long handoff is proved only from its whole text, never a truncated record', async (t) => {
+  const f = claudeFixture(t, 'idle');
+  const payload = `Lead: ${'long handoff line\n'.repeat(4000)}end`;
+  f.setCapturedPanes(claudeBox(payload), (key, pasted) => {
+    f.record({
+      type: 'user',
+      promptId: 'cut',
+      message: { role: 'user', content: pasted.slice(0, 1000) },
+    });
+    return claudeBox('');
+  });
+  const cut = await send('%1', 'claude', payload);
+  assert.equal(cut.submitted, false, 'a truncated record never proves the whole handoff');
+});
+
 test('a stale Claude record appended after the send never proves it', async (t) => {
   const f = claudeFixture(t, 'busy');
   f.setCapturedPanes(claudeBox(f.payload), (key, pasted) => {

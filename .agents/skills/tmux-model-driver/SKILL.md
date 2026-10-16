@@ -30,6 +30,11 @@ than the process, which names its transcript and busy or idle status. Missing or
 observability means `unknown`, even when the screen looks idle.
 
 `send-and-verify.sh` returns JSON and exits nonzero when refused or unverified.
+Native transcripts and hook logs can outgrow the largest string a process holds, so the
+driver reads them in bounded ranges: recent records for questions and hooks, and the session
+header plus records after the send for proof. Native probes take their script on stdin, so
+payload size has no argument limit. Proof needs the whole message: a hook digest covers only
+its prefix, so it proves only a message that short.
 It refuses the wrong runner, a shell when a model is expected, a pending question
 or a foreign queue. Codex and Claude accept Enter-submitted input during busy or unknown
 phases. Claude also needs its bound native session, because only its transcript proves

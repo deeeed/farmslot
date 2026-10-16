@@ -4,7 +4,12 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { isTerminalRunStatus, normalizeRunTags, type Run } from '@farmslot/protocol';
+import {
+  extractRunArtifactManifest,
+  isTerminalRunStatus,
+  normalizeRunTags,
+  type Run,
+} from '@farmslot/protocol';
 import { FLOW_COLORS, FLOW_LABELS, projectColor, RUNNER_COLORS } from '@farmslot/theme';
 
 import { BeforeAfterPreview } from '../../components/BeforeAfterPreview';
@@ -16,7 +21,6 @@ import {
   artifactUrlForEntry,
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-  extractRunArtifactManifest,
   groupVisualArtifactPairs,
 } from '../../lib/artifact-url';
 import { diffArtifactCandidate } from '../../lib/diff';

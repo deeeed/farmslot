@@ -8,6 +8,8 @@ import { test } from 'node:test';
 
 import type { FleetStatus, SlotStatus } from '@farmslot/protocol';
 
+import { jiraTicketData } from '../run-completion/test-fixtures.js';
+
 const testDir = mkdtempSync(path.join(os.tmpdir(), 'farmslot-soft-link-test-'));
 process.env.FARMSLOT_BACKLOG_FILE = path.join(testDir, 'backlog.json');
 process.env.FARMSLOT_DISPATCH_QUEUE_FILE = path.join(testDir, 'queue.json');
@@ -238,6 +240,7 @@ test('runCreate soft-links jira backlog item by sourceRef and stamps run.backlog
       flowType: 'fix-bug',
       project: 'farmslot-farm',
       ticketOrPr: SOURCE_REF_RUNCREATE,
+      ticketData: jiraTicketData(SOURCE_REF_RUNCREATE),
       mode: 'autonomous',
       initialContext: 'Direct CLI run.create for existing backlog sourceRef',
     },
@@ -288,6 +291,7 @@ test('runCreate carries matching backlog spec context through a direct soft-link
       flowType: 'dev',
       project: 'farmslot-farm',
       ticketOrPr: SOURCE_REF_RECONCILE,
+      ticketData: jiraTicketData(SOURCE_REF_RECONCILE),
       mode: 'autonomous',
     },
     () => {},
@@ -331,6 +335,7 @@ test('runCreate skips soft-link when params.backlogItemId is set (queue handoff 
       flowType: 'fix-bug',
       project: 'farmslot-farm',
       ticketOrPr: SOURCE_REF_SKIP,
+      ticketData: jiraTicketData(SOURCE_REF_SKIP),
       mode: 'autonomous',
       initialContext: 'Queue-claimed create with backlogItemId already set',
       backlogItemId: created.item.id,
@@ -378,6 +383,7 @@ test('runCreate awaitPersist soft-links after durable stamp and persists backlog
       flowType: 'fix-bug',
       project: 'farmslot-farm',
       ticketOrPr: SOURCE_REF_AWAIT,
+      ticketData: jiraTicketData(SOURCE_REF_AWAIT),
       mode: 'autonomous',
       initialContext: 'Queue claim without backlogItemId uses awaitPersist soft-link branch',
     },

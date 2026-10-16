@@ -38,19 +38,54 @@ export function pairingCandidates(params: PairingCandidatesParams = {}): Pairing
   return { candidates: reachablePairingCandidates(Number.isFinite(port) ? port : 7777) };
 }
 
-export function reachablePairingCandidates(port: number): PairingCandidate[] {
-  const host = hostname().replace(/\.local$/, '');
-  const candidates: PairingCandidate[] = lanIPv4s().map((ip) => ({
-    gatewayUrl: `ws://${ip}:${port}/ws`,
-    profileName: `${host} (LAN)`,
-    kind: 'lan',
-  }));
-  const tailnet = tailscaleDnsName();
-  if (tailnet) {
+export function reachablePairingCandidates(
+  port: number,
+  interfaces = networkInterfaces(),
+  tailnet = tailscaleDnsName(),
+  host = hostname().replace(/\.local$/, ''),
+): PairingCandidate[] {
+  const lan: string[] = [];
+  const publicAddresses: string[] = [];
+  const tailnetAddresses: string[] = [];
+  for (const [name, entries] of Object.entries(interfaces)) {
+    for (const entry of entries ?? []) {
+      if (entry.family !== 'IPv4' || entry.internal) continue;
+      const ip = entry.address;
+      // Tailscale uses 100.64/10 and can itself live on a macOS utun interface.
+      if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(ip)) {
+        tailnetAddresses.push(ip);
+        continue;
+      }
+      if (
+        /^(utun|tun|tap|wg|ppp|ipsec)/i.test(name) ||
+        /^10\.8\./.test(ip) ||
+        /^169\.254\./.test(ip)
+      )
+        continue;
+      const isPrivate =
+        /^10\./.test(ip) || /^192\.168\./.test(ip) || /^172\.(1[6-9]|2\d|3[01])\./.test(ip);
+      (isPrivate ? lan : publicAddresses).push(ip);
+    }
+  }
+  const candidates: PairingCandidate[] = [];
+  if (tailnet)
     candidates.push({
       gatewayUrl: `ws://${tailnet}:${port}/ws`,
       profileName: `${host} (Tailscale)`,
       kind: 'tailnet',
+    });
+  for (const ip of new Set(tailnetAddresses)) {
+    candidates.push({
+      gatewayUrl: `ws://${ip}:${port}/ws`,
+      profileName: `${host} (Tailscale)`,
+      kind: 'tailnet',
+    });
+  }
+  for (const ip of new Set(lan.length ? lan : publicAddresses)) {
+    candidates.push({
+      gatewayUrl: `ws://${ip}:${port}/ws`,
+      profileName: `${host} (LAN)`,
+      kind: 'lan',
     });
   }
   return candidates;
@@ -63,19 +98,6 @@ function tailscaleDnsName(): string | null {
   });
   if (result.error || result.status !== 0) return null;
   return parseTailscaleDnsNameFromStatus(result.stdout);
-}
-
-function lanIPv4s(): string[] {
-  const all: string[] = [];
-  for (const list of Object.values(networkInterfaces())) {
-    for (const iface of list ?? []) {
-      if (iface.family === 'IPv4' && !iface.internal) all.push(iface.address);
-    }
-  }
-  const isPrivate = (ip: string): boolean =>
-    /^10\./.test(ip) || /^192\.168\./.test(ip) || /^172\.(1[6-9]|2\d|3[01])\./.test(ip);
-  const priv = all.filter(isPrivate);
-  return [...new Set(priv.length > 0 ? priv : all)];
 }
 
 export function pairingCreate(

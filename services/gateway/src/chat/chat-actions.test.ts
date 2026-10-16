@@ -71,6 +71,12 @@ function testTicket(): string {
   return `PROJ-${ticketSeq}`;
 }
 
+// A chat card cannot carry ticket data, so run.create cards use an issue ref.
+function testIssueRef(): string {
+  ticketSeq += 1;
+  return `example-org/example-mobile#${ticketSeq}`;
+}
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -126,7 +132,7 @@ function runCreateAction(): ChatSuggestedAction {
     params: {
       flowType: 'fix-bug',
       project: 'example-mobile-farm',
-      ticketOrPr: testTicket(),
+      ticketOrPr: testIssueRef(),
       runner: 'claude',
       model: 'opus',
       ignored: 'not stored',
@@ -228,7 +234,7 @@ await test('failed execution does not consume a still-valid confirmation', async
   const blockingRun = createRun({
     flowType: 'fix-bug',
     project: 'example-mobile-farm',
-    ticketOrPr: testTicket(),
+    ticketOrPr: testIssueRef(),
   });
   const [issued] = issueChatSuggestedActions(
     'manual:test',

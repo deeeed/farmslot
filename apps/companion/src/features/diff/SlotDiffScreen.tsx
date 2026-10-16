@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
   Events,
+  extractRunArtifactManifest,
   type GitDiffResult,
   Methods,
   type RecipeRunArtifactGroup,
@@ -17,11 +18,11 @@ import { BeforeAfterPreview } from '../../components/BeforeAfterPreview';
 import { MobileDiffViewer } from '../../components/MobileDiffViewer';
 import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
 import {
+  type ArtifactManifestEntry,
   artifactsForRecipeRun,
   artifactUrlForEntry,
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-  extractRunArtifactManifest,
   groupVisualArtifactPairs,
 } from '../../lib/artifact-url';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
@@ -283,7 +284,9 @@ export default function SlotDiffViewerScreen() {
     : null;
   const recipeAvailable = recipeArtifactCount === null ? undefined : recipeArtifactCount > 0;
   const diffAvailable = loading ? undefined : diffText.length > 0;
-  const runArtifacts = currentRun ? extractRunArtifactManifest(currentRun) : [];
+  const runArtifacts: ArtifactManifestEntry[] = currentRun
+    ? extractRunArtifactManifest(currentRun)
+    : [];
   const navVisualPairs = navRunId
     ? groupVisualArtifactPairs(runArtifacts, (artifact) =>
         artifactUrlForEntry(gatewayUrl, navRunId, artifact),

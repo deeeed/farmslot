@@ -1,10 +1,14 @@
-import { deriveRunLifecycleView, type PendingDecision, type RunStatus } from '@farmslot/protocol';
+import {
+  dedupeRunArtifacts,
+  deriveRunLifecycleView,
+  type PendingDecision,
+  runArtifactPathsToManifest,
+  type RunStatus,
+} from '@farmslot/protocol';
 
 import {
   type ArtifactManifestEntry,
-  artifactPathsToManifest,
   countVisualArtifactPairs,
-  dedupeArtifacts,
   isVisualMediaArtifact,
 } from './artifact-url';
 
@@ -242,21 +246,21 @@ function artifactsForPayload(
   const contextArtifacts = evidenceManifestField(context, 'artifactManifest') ?? [];
   if (!payload) return contextArtifacts;
   if (kind === 'ready') {
-    return dedupeArtifacts([
+    return dedupeRunArtifacts([
       ...(evidenceManifestField(payload, 'artifactManifest') ?? []),
       ...(evidenceManifestField(recordField(payload, 'prPackage'), 'evidenceManifest') ?? []),
       ...contextArtifacts,
     ]);
   }
   if (kind === 'review' || kind === 'no-change') {
-    return dedupeArtifacts([
+    return dedupeRunArtifacts([
       ...(evidenceManifestField(payload, 'artifactManifest') ?? []),
-      ...artifactPathsToManifest(stringArrayField(payload, 'reviewInputArtifactPaths')),
+      ...runArtifactPathsToManifest(stringArrayField(payload, 'reviewInputArtifactPaths')),
       ...contextArtifacts,
     ]);
   }
-  if (kind === 'retrospective') return dedupeArtifacts(contextArtifacts);
-  return dedupeArtifacts(contextArtifacts);
+  if (kind === 'retrospective') return dedupeRunArtifacts(contextArtifacts);
+  return dedupeRunArtifacts(contextArtifacts);
 }
 
 function criteriaForPayload(payload: PayloadRecord | undefined): string[] {

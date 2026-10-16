@@ -878,6 +878,15 @@ if [ ! -f "$snapshot/DEPLOYED-REVISION.json" ]; then
     echo "  fix: commit the yarn.lock that yarn install produces, then redeploy" >&2
     exit 1
   fi
+  # The CLI runs from source, but task tooling retained from this snapshot is
+  # loaded by plain node (QA finalize, farmslot-agent) through package exports
+  # that name dist/. The recipe-cli build builds the packages it depends on.
+  if ! (cd "$partial" && $yarn_run workspace @farmslot/recipe-cli build) >> "$log" 2>&1; then
+    tail -20 "$log" >&2
+    echo "[deploy] ERROR: building the node CLI's packages failed; full log: $log" >&2
+    echo "  fix: resolve the error in that log, then redeploy" >&2
+    exit 1
+  fi
   rm -f "$log" "$partial/.yarn.lock.deployed"
   printf '{\n  "sha": "%s",\n  "sha256": "%s"\n}\n' "$sha" "$sha256" > "$partial/DEPLOYED-REVISION.json"
   # Without the marker, a directory here is an install that never finished.

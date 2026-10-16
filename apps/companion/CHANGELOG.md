@@ -4,6 +4,10 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Stop listing host paths and log lines from step outputs as Evidence files.
+
+- Show captured run output in output review Evidence when no step lists it, and keep every publish approval, overrides included, unavailable in the decision workspace while review findings or a fix are open.
+
 - Show evidence loading and Retry independently of acceptance criteria, retaining loaded evidence if a refresh fails.
 
 - Withhold publication approval while review findings or a fix remain unresolved, and show the shared review status until the fixed head passes review.
