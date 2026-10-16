@@ -135,6 +135,24 @@ test('a working composer left after Enter receives one more Enter and verifies s
   assert.equal(f.keys.filter((args) => args[0] === 'paste-buffer').length, 1);
 });
 
+test('a Codex steering handoff pulled back with ⇧← loses its proof for status and ACK', async (t) => {
+  const f = fixture(t);
+  const message = captured('payload');
+  f.setCapturedPanes(
+    `› ${message}\n\ncontext left`,
+    () =>
+      `• Messages to be submitted after next tool call\n  ↳ ${message}\n\n› Ask Codex to do anything\ncontext left`,
+  );
+  const sent = await send('%1', 'codex', message);
+  assert.equal(sent.evidence.source, 'runner-steering');
+  assert.equal(paneState('%1', 'codex').accepted.source, 'runner-steering');
+  // ⇧← edits the last queued message: the steering block empties into the composer.
+  process.env.TMUX_PANE_STATE_TAIL_CAPTURE = `› ${message}\n\ncontext left\n  tab to queue message`;
+  assert.equal(paneState('%1', 'codex').accepted, null);
+  const ack = acknowledgeAcceptance('%1', 'codex', sent.evidence.receipt_id);
+  assert.equal(ack.verification, 'receipt_unverified');
+});
+
 test('an unchanged owned composer stops after two Enters without another paste', async (t) => {
   const f = fixture(t);
   f.setDrop(true);

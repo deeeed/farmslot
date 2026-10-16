@@ -298,9 +298,16 @@ export function paneState(pane, expectedRunner, selection) {
         : accepted.session_id !== native.session_id))
   )
     accepted = null;
-  // Queued Claude input can be pulled back (popAll) at any time, so a saved queue proof is
-  // rechecked against the transcript on every inspection, whatever the composer shows.
-  if (accepted?.source === 'native-queue') accepted = null;
+  const buffered = supportsMidTurnPrompt(state) && Boolean(runnerPaneBufferedInstruction(tail));
+  const ownedBuffer = buffered && bufferedPrompt({ ...meta, tail }, state, receipt);
+  // Pulled-back input is not delivered. Claude's queue proof is rechecked against the
+  // transcript (popAll) whatever the composer shows; Codex's rendered steering proof yields
+  // to its owned text back in the composer (⇧←). Native proofs are recomputed below.
+  if (
+    accepted?.source === 'native-queue' ||
+    (accepted?.source === 'runner-steering' && ownedBuffer)
+  )
+    accepted = null;
   if (receipt && runners.has(state)) {
     if (!accepted) {
       accepted = acceptedPrompt({ ...meta, tail }, state, obs, receipt);
@@ -343,8 +350,6 @@ export function paneState(pane, expectedRunner, selection) {
         }),
       )
     : null;
-  const buffered = supportsMidTurnPrompt(state) && Boolean(runnerPaneBufferedInstruction(tail));
-  const ownedBuffer = buffered && bufferedPrompt({ ...meta, tail }, state, receipt);
   // A model receipt stays intact after exit, but cannot be a live shell composer.
   const pendingOtherRunner =
     runners.has(state) && !supportsMidTurnPrompt(state) && Boolean(receipt && !accepted);
@@ -609,9 +614,8 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
       let receipt = runner === 'shell' ? null : readReceipt(files);
       const retry = ownedRetry(before);
       const restored = ownsComposer(before, runner, receipt);
-      // Codex steering pulled back (⇧←) leaves its rendered proof saved; the composer decides.
-      // Claude queue withdrawal comes from the transcript, so a recalled delivered prompt keeps it.
-      if (retry && before.accepted && !(restored && before.accepted.source === 'runner-steering')) {
+      // paneState has already withdrawn pulled-back proofs; a recalled delivered prompt keeps one.
+      if (retry && before.accepted) {
         evidence = before.accepted;
         verification = 'submitted';
       } else if (flush || retry) {

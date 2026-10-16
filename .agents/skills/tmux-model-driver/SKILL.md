@@ -96,8 +96,10 @@ returns `unverified` without typing or Enter. The original receipt remains intac
 
 An unverified send retains a private receipt. A retry of the same owned Codex or Claude prompt
 returns existing delivery evidence without typing, or submits only Enter when the exact
-original remains in the composer. Owned text back in the composer always gets Enter, even
-with retained evidence, and only records after that submission prove it. It never pastes that prompt again. A synchronously
+original remains in the composer. Owned text back in the composer gets Enter once its proof
+is withdrawn (a Claude `popAll`, or Codex steering pulled back with ⇧←), and only records after
+that submission prove it. A delivered prompt recalled from history keeps its proof and is not
+submitted again. It never pastes that prompt again. A synchronously
 native-verified send clears its receipt under the transport lock and returns its
 evidence, so direct callers can send again after the turn completes. Late native acceptance
 remains recorded across inspections. For Codex, an accepted receipt does not block a different
