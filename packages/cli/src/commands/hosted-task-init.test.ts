@@ -226,6 +226,7 @@ test('hosted task host options let the slot select its adapter, not its device p
     remoteRepo: pack,
     projectName: 'example',
     slotId: 'fixture-ext-1',
+    platform: 'chrome-extension',
     resourceVars: {},
   });
   assert.deepEqual(host.tokens, [
@@ -252,6 +253,28 @@ test('hosted task host options let the slot select its adapter, not its device p
     ),
     /does not support chrome-extension/,
   );
+});
+
+test('a native slot keeps selecting its provider family by device platform', async () => {
+  for (const platform of ['ios', 'android']) {
+    const host = await hostedTaskRecipeHostOptions({
+      remoteRepo: '/fixture/checkout',
+      projectName: 'example',
+      slotId: `fixture-${platform}-1`,
+      platform,
+      resourceVars: {},
+    });
+    assert.deepEqual(host.tokens, [
+      '--target',
+      '/fixture/checkout',
+      '--project',
+      'example',
+      '--platform',
+      platform,
+      '--slot',
+      `fixture-${platform}-1`,
+    ]);
+  }
 });
 
 test('normal hosted tasks cannot weaken configured terminal gates', async () => {
