@@ -231,7 +231,7 @@ export async function projectTaskExecution(
       ...(install.excludedRoots ?? []),
       path.join(binding.root, 'tasks'),
       path.resolve(binding.checkoutRoot, binding.artifactDir),
-      path.resolve(binding.checkoutRoot, binding.runtimeDir),
+      path.resolve(host.context.target.value, binding.runtimeDir),
       path.resolve(binding.checkoutRoot, binding.farmRuntimeDir),
     ],
     selectedConfiguration: JSON.stringify(selection),

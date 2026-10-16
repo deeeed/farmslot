@@ -523,3 +523,47 @@ test('project retention excludes task history while preserving tooling source', 
     assert.equal(fs.existsSync(path.join(pack.path, 'tasks')), false);
   });
 });
+
+test('nested app retention excludes app-relative recipe runtime output', async (t) => {
+  const f = fixture(t);
+  const app = path.join(f.checkout, 'apps/web');
+  const recipe = path.join(app, 'recipe');
+  fs.mkdirSync(path.join(recipe, 'runtime'), { recursive: true });
+  fs.writeFileSync(
+    path.join(app, 'package.json'),
+    JSON.stringify({ private: true, type: 'module', files: ['recipe'] }),
+  );
+  fs.copyFileSync(path.join(f.pack, 'provider.mjs'), path.join(recipe, 'provider.mjs'));
+  fs.writeFileSync(path.join(recipe, 'runtime/state.json'), '{"state":"runtime output"}');
+  const config = f.options.projects?.[0]?.config;
+  assert.ok(config?.recipe);
+  const selected = {
+    ...config,
+    apps: ['apps/web'],
+    recipe: {
+      ...config.recipe,
+      provider: { module: 'provider.mjs', root: { projectPath: 'apps/web/recipe' } },
+    },
+  };
+  fs.writeFileSync(path.join(f.pack, 'project.json'), JSON.stringify(selected));
+  await withProjectRecipeHost(
+    {
+      ...f.options,
+      projects: [{ root: f.pack, config: selected }],
+      tokens: ['--project', 'example', '--app', 'apps/web', '--runtime-dir', 'recipe/runtime'],
+    },
+    async (host) => {
+      assert.equal(host.context.target.value, app);
+      const execution = await projectTaskExecution(host, {
+        executable: path.join(f.installed, 'farmslot'),
+        packageRoot: f.installed,
+        distributionRoot: f.installed,
+      });
+      const receipt = retainTaskExecution(f.taskDir, execution);
+      const retainedApp = receipt.retainedInputs.find((input) => input.source === app);
+      assert.ok(retainedApp);
+      assert.equal(fs.existsSync(path.join(retainedApp.path, 'recipe/provider.mjs')), true);
+      assert.equal(fs.existsSync(path.join(retainedApp.path, 'recipe/runtime/state.json')), false);
+    },
+  );
+});
